@@ -74,14 +74,15 @@ export const perf = {
 
   /**
    * Call once per animation frame while a round is playing (not paused). now: the frame's
-   * timestamp; work: milliseconds the game's update + draw took this frame.
+   * timestamp; work: milliseconds the game's update + draw took this frame; budget: the frame
+   * length the game aims for (33 ms when it runs at 30 fps, so those frames don't count as slow).
    */
-  frame(id, now, work) {
+  frame(id, now, work, budget = 16.7) {
     const dt = lastFrame ? now - lastFrame : 0; lastFrame = now;
     if (dt <= 0 || dt > GAP_MS) return;   // first frame, or the app was away
     for (const c of [pending.games[id + '|' + form()] ||= blank(), local[id] ||= blank()]) {
       c.f++; c.ms += dt; c.w += Math.min(work, dt);
-      if (dt >= SLOW_MS) c.sl++;
+      if (dt >= Math.max(SLOW_MS, budget * 1.5)) c.sl++;
       if (dt >= FREEZE_MS) c.h++;
       if (dt > c.x) c.x = dt;
     }

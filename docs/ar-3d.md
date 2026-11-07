@@ -51,9 +51,14 @@ estimate. So the 3D camera moves when the player walks, and things stay put on t
   "⇕ Floor" chip (bottom left, while the camera is on) reopens it. While it's open
   `v.calibrating` is true: games must skip their update (that pauses timers and enemies) and send
   their input through `v.input(...)` first.
-- **Light estimation.** Every few frames the camera picture is shrunk to 8 x 6 pixels; its average
+- **Light estimation.** Twice a second the camera picture is shrunk to 8 x 6 pixels; its average
   brightness and colour drive the sky light, sun and reflections, so objects get darker in a dim
-  room and pick up warm or cool light.
+  room and pick up warm or cool light. (Reading pixels back stalls the graphics chip, so it isn't
+  done every frame.)
+- **Camera picture under the 3D.** In look-around mode the camera's video element sits under the
+  see-through 3D canvas (CSS `object-fit: cover`, the same crop as before), so the picture isn't
+  redrawn into the game's canvas every frame. Tests and screenshots (`__hd.direct = false`) still
+  draw it into the canvas.
 - **Less drift.** On Android the kit uses the compass-locked orientation
   (`deviceorientationabsolute`), so "straight ahead" can't slowly turn. iPhones use the gyro reading, which drifts very
   little over a short game.

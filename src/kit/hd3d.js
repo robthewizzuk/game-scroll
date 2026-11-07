@@ -13,21 +13,31 @@
 //
 // Performance: the kit watches frame times and adapts. It first lowers the render resolution
 // (down to 55%), then drops a quality tier (ultra: AO + MSAA + 1024 shadows -> high -> medium ->
-// low: no shadows, no AO, half-size bloom). Tiers are listed in TIERS below.
+// low: no shadows, no AO). Tiers are listed in TIERS below. The starting tier and frame rate come
+// from the phone's class (src/kit/speed.js: a top phone starts on ultra at 120 fps), and where a game
+// settled is remembered for its next round.
+//
+// Speed tricks that keep the picture the same:
+//  - the 3D canvas is shown directly on the playing card, under the card's 2D canvas (which keeps
+//    the HUD), instead of being copied into it every frame. When the 3D canvas moves to another
+//    card, the last frame is baked into the old card so it keeps its picture.
+//  - bloom, tone mapping and the colour grade run as one final full-screen pass, and the bloom is a
+//    small down/up-sampling chain at half resolution and below.
+//  - shadow maps are only redrawn when something that casts a shadow (or a light) has moved.
 import {
   WebGLRenderer, Scene, Color, FogExp2, PerspectiveCamera, HemisphereLight, PointLight, SpotLight, DirectionalLight,
   MeshStandardMaterial, MeshPhysicalMaterial, ShaderMaterial, BufferGeometry, BufferAttribute, Points, AdditiveBlending, NormalBlending,
   CanvasTexture, RepeatWrapping, SRGBColorSpace, NoColorSpace, PCFSoftShadowMap, ACESFilmicToneMapping, HalfFloatType,
-  WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry,
+  WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry, LinearFilter, AdditiveBlending as ADD,
 } from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor } from './speed.js';
 
 export * as THREE from 'three';
 
@@ -42,39 +52,58 @@ export function rbox(w, h, d, r = Math.min(w, h, d) * .2) {
 /* ---------- quality tiers ---------- */
 // px: most pixels rendered per frame before scaling up; shadow: shadow map size (0 = off);
 // lights: how many nearby lamps get a real light (the rest just glow); ao: screen-space ambient
-// occlusion; msaa: multisample count; bloom: bloom resolution scale.
+// occlusion; msaa: multisample count (0 = a cheap edge smoothing in the final pass instead);
+// bloom: bloom resolution scale. 2x MSAA (not 4x) costs phone GPUs far less memory traffic, and the
+// time saved goes into more pixels.
 export const TIERS = [
-  { name: 'low', px: .45e6, shadow: 0, lights: 2, ao: false, msaa: 0, bloom: .5 },
-  { name: 'medium', px: .75e6, shadow: 512, lights: 3, ao: false, msaa: 0, bloom: .5 },
-  { name: 'high', px: 1.1e6, shadow: 1024, lights: 4, ao: false, msaa: 4, bloom: .5 },
-  { name: 'ultra', px: 1.7e6, shadow: 1024, lights: 4, ao: true, msaa: 4, bloom: .5 },
+  { name: 'low', px: .5e6, shadow: 0, lights: 2, ao: false, msaa: 0, bloom: .5 },
+  { name: 'medium', px: .85e6, shadow: 512, lights: 3, ao: false, msaa: 0, bloom: .5 },
+  { name: 'high', px: 1.3e6, shadow: 1024, lights: 4, ao: false, msaa: 2, bloom: .5 },
+  { name: 'ultra', px: 2e6, shadow: 1024, lights: 4, ao: true, msaa: 2, bloom: .5 },
 ];
-// Phones start on high and can climb to ultra if they keep up; desktops start on ultra.
-const touchy = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+// Where a phone starts: top phones (Fold 8, recent iPhone Pro) on ultra, others on high or medium.
+const START = { top: 3, mid: 2, low: 1 };
 // Resolution moves in a few fixed steps (each step reallocates the render targets, so it must be
 // rare): drop a step after two slow windows of ~45 frames, climb back after ~6 s at full speed, and
 // never climb back above a step that already proved too slow (for 30 s). Tiers change the same way.
+// The frame budget follows the game's frame rate (8.3 ms at 120 fps, 16.7 at 60, 33 at 30). At 120
+// fps a struggling game first gives up a little resolution, then drops to 60 fps at full resolution
+// (keeping the picture); at the lowest tier and resolution it can drop to 30.
 const LEVELS = [1, .85, .7, .55];
-const Q = { tier: touchy ? 2 : 3, lvl: 0, sum: 0, cnt: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, force: null };
+const Q = { tier: 2, lvl: 0, sum: 0, cnt: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, force: null, game: undefined, easy: 0, fpsT: 0 };
+// a new game is on screen: start from where it settled last time, or from the phone's class
+function startGame(def) {
+  Q.game = def; const s = settledFor(def?.id);
+  Q.tier = s?.tier ?? START[phoneClass()] ?? 2; Q.lvl = 0; Q.ceil = 0; Q.tierCeil = 3; Q.sum = Q.cnt = Q.slow = Q.fast = Q.easy = 0; Q.lastT = 0;
+}
 function adapt(gap) {
   if (Q.force != null || !(gap > 0 && gap < 100)) return;
   Q.sum += gap; if (++Q.cnt < 45) return;
-  const a = Q.sum / Q.cnt, now = performance.now(); Q.sum = Q.cnt = 0;
+  const a = Q.sum / Q.cnt, now = performance.now(), fps = Q.game ? fpsFor(Q.game) : 60, budget = 1000 / fps; Q.sum = Q.cnt = 0;
   if (now - Q.ceilT > 30000) { Q.ceil = 0; Q.tierCeil = 3; }
-  if (a > 21) {
-    Q.fast = 0; if (++Q.slow < 2) return; Q.slow = 0; Q.ceilT = now;
-    if (Q.lvl < LEVELS.length - 1) { Q.lvl++; Q.ceil = Q.lvl; } else if (Q.tier > 0) { Q.tierCeil = Q.tier - 1; Q.tier--; Q.lvl = 1; Q.ceil = 1; }
-  } else if (a < 17.4) {
+  const tier0 = Q.tier;
+  if (a > budget * 1.26) {
+    Q.fast = 0; Q.easy = 0; if (++Q.slow < 2) return; Q.slow = 0; Q.ceilT = now;
+    if (fps > 60 && Q.lvl >= 1 && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; }
+    else if (Q.lvl < LEVELS.length - 1) { Q.lvl++; Q.ceil = Q.lvl; }
+    else if (Q.tier > 0) { Q.tierCeil = Q.tier - 1; Q.tier--; Q.lvl = 1; Q.ceil = 1; }
+    else if (stepDown(Q.game)) { Q.lvl = 1; Q.fpsT = now; }
+  } else if (a < budget * 1.044) {
     Q.slow = 0; if (++Q.fast < 8) return; Q.fast = 0;
     if (Q.lvl > Q.ceil) Q.lvl--; else if (Q.lvl === 0 && Q.tier < Math.min(Q.tierCeil, TIERS.length - 1)) { Q.tier++; Q.lvl = 1; }
+    // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
+    else if (Q.lvl === 0 && Q.tier === TIERS.length - 1 && ++Q.easy >= 3 && now - Q.fpsT > 60000 && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; }
   } else { Q.slow = 0; Q.fast = 0; }
+  if (Q.tier !== tier0) settle(Q.game?.id, { tier: Q.tier });
 }
 /** Current quality: { tier, name, res }. Set HD.force = 0..3 to pin a tier (tests, screenshots). */
 export const HD = {
   get tier() { return Q.force ?? Q.tier; }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
-  /** Last frame: draw calls, triangles, and milliseconds spent in render() on the CPU. */
-  info: { calls: 0, tris: 0, cpu: 0 },
+  /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
+  info: { calls: 0, tris: 0, cpu: 0, shadows: false },
+  /** Show the 3D canvas directly on the card (false: copy each frame into the card's canvas, as tests and screenshots need). */
+  direct: typeof navigator === 'undefined' || !navigator.webdriver,
 };
 const tier = () => TIERS[HD.tier];
 if (typeof window !== 'undefined') window.__hd = HD;   // test hook: __hd.force = 3 pins ultra
@@ -85,10 +114,10 @@ function renderer() {
   if (R || broken) return R;
   try {
     const cv = document.createElement('canvas');
-    R = new WebGLRenderer({ canvas: cv, alpha: true, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance', stencil: false });
+    R = new WebGLRenderer({ canvas: cv, alpha: true, antialias: false, preserveDrawingBuffer: false, powerPreference: 'high-performance', stencil: false });
     R.setPixelRatio(1); R.outputColorSpace = SRGBColorSpace;
     R.toneMapping = ACESFilmicToneMapping; R.toneMappingExposure = 1;
-    R.shadowMap.enabled = true; R.shadowMap.type = PCFSoftShadowMap;
+    R.shadowMap.enabled = true; R.shadowMap.type = PCFSoftShadowMap; R.shadowMap.autoUpdate = false;   // redrawn only when something moved
     cv.addEventListener('webglcontextlost', e => e.preventDefault());
     const pm = new PMREMGenerator(R); envTex = pm.fromScene(new RoomEnvironment(), .04).texture; pm.dispose();
   } catch (e) { broken = true; R = null; }
@@ -97,23 +126,99 @@ function renderer() {
 /** True if this device can draw Next Gen games. */
 export const hasHD = () => !!renderer();
 
-// Colour grade, after tone mapping: vignette, fine film grain, a touch of lens fringing at the
-// edges, and a hurt tint the game can pulse (v.hurt = 0..1).
-const GRADE = {
-  uniforms: { tDiffuse: { value: null }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, px: { value: new Vector2(1, 1) } },
-  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float t, hurt, vig; uniform vec2 px; varying vec2 vUv;
-    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-    void main(){
-      vec2 d = vUv - .5; float r2 = dot(d, d);
-      vec2 off = d * r2 * .012;
-      vec3 col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
-      col *= 1. - vig * smoothstep(.12, .62, r2 * 1.6);
-      col += (h(vUv / px + t) - .5) * .035;
-      col = mix(col, col * vec3(1.25, .45, .4) + vec3(.12, 0., 0.), hurt * smoothstep(.04, .4, r2));
-      gl_FragColor = vec4(col, 1.);
-    }`,
-};
+// The final pass: bloom, tone mapping, sRGB and the colour grade in one full-screen pass (they used
+// to be four: bloom blend, output, grade, plus bloom's own full-size copy). The grade is a vignette,
+// fine film grain, a touch of lens fringing at the edges, and a hurt tint the game can pulse
+// (v.hurt = 0..1). With no MSAA the same pass smooths jagged edges (a light FXAA).
+//
+// Bloom is a small chain: the bright parts are picked out into a half-size buffer, shrunk four more
+// times, then grown back up, each step adding a softer copy. That's 9 tiny passes, where the old
+// bloom took 13 bigger ones.
+const QV = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+const qmat = (fs, uniforms, o = {}) => new ShaderMaterial({ uniforms, vertexShader: QV, fragmentShader: fs, depthTest: false, depthWrite: false, ...o });
+// bright parts only (anything brighter than the threshold keeps its full colour, fading in just under it), 4 taps
+const BRIGHT = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float thr; varying vec2 vUv;
+  vec3 pick(vec2 o){ vec3 c = texture2D(tDiffuse, vUv + o * px).rgb; float l = dot(c, vec3(.2126, .7152, .0722));
+    return c * smoothstep(thr - .05, thr + .05, l); }
+  void main(){ vec3 c = pick(vec2(-1., -1.)) + pick(vec2(1., -1.)) + pick(vec2(-1., 1.)) + pick(vec2(1., 1.)); gl_FragColor = vec4(c * .25, 1.); }`;
+const DOWN = `uniform sampler2D tDiffuse; uniform vec2 px; varying vec2 vUv;
+  void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb * 4.;
+    c += texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(-px.x, px.y)).rgb + texture2D(tDiffuse, vUv + px).rgb;
+    gl_FragColor = vec4(c / 8., 1.); }`;
+const UP = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float k; varying vec2 vUv;
+  void main(){ vec3 c = texture2D(tDiffuse, vUv + vec2(-2. * px.x, 0.)).rgb + texture2D(tDiffuse, vUv + vec2(2. * px.x, 0.)).rgb + texture2D(tDiffuse, vUv + vec2(0., -2. * px.y)).rgb + texture2D(tDiffuse, vUv + vec2(0., 2. * px.y)).rgb;
+    c += 2. * (texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(-px.x, px.y)).rgb + texture2D(tDiffuse, vUv + px).rgb);
+    gl_FragColor = vec4(c / 12. * k, 1.); }`;
+const FINAL = `uniform sampler2D tDiffuse, tBloom; uniform float t, hurt, vig, bloom; uniform vec2 px; varying vec2 vUv;
+  // (three.js adds its tone mapping and sRGB helpers to every ShaderMaterial)
+  float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+  vec3 tex(vec2 p){ return texture2D(tDiffuse, p).rgb; }
+  float luma(vec3 c){ float l = dot(c, vec3(.299, .587, .114)); return l / (1. + l); }
+  void main(){
+    vec2 d = vUv - .5; float r2 = dot(d, d);
+  #ifdef FXAA
+    // light edge smoothing: find the edge direction from the four diagonal neighbours, blur along it
+    vec3 cM = tex(vUv); float lM = luma(cM), lNW = luma(tex(vUv + vec2(-1., -1.) * px)), lNE = luma(tex(vUv + vec2(1., -1.) * px)),
+      lSW = luma(tex(vUv + vec2(-1., 1.) * px)), lSE = luma(tex(vUv + vec2(1., 1.) * px));
+    float lo = min(lM, min(min(lNW, lNE), min(lSW, lSE))), hi = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+    vec3 col = cM;
+    if (hi - lo > max(.04, hi * .125)) {
+      vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));
+      float rcp = 1. / (min(abs(dir.x), abs(dir.y)) + max((lNW + lNE + lSW + lSE) * .03125, .0078125));
+      dir = clamp(dir * rcp, -8., 8.) * px;
+      vec3 a = .5 * (tex(vUv + dir * (1. / 3. - .5)) + tex(vUv + dir * (2. / 3. - .5)));
+      vec3 b = a * .5 + .25 * (tex(vUv - dir * .5) + tex(vUv + dir * .5));
+      float lb = luma(b); col = lb < lo || lb > hi ? a : b;
+    }
+  #else
+    vec2 off = d * r2 * .012;
+    vec3 col = vec3(tex(vUv + off).r, tex(vUv).g, tex(vUv - off).b);
+  #endif
+    col += texture2D(tBloom, vUv).rgb * bloom;
+    col = ACESFilmicToneMapping(col);
+    col = sRGBTransferOETF(vec4(col, 1.)).rgb;
+    col *= 1. - vig * smoothstep(.12, .62, r2 * 1.6);
+    col += (h(vUv / px + t) - .5) * .035;
+    col = mix(col, col * vec3(1.25, .45, .4) + vec3(.12, 0., 0.), hurt * smoothstep(.04, .4, r2));
+    gl_FragColor = vec4(col, 1.);
+  }`;
+const MIPS = 5;
+class FinalPass extends Pass {
+  constructor() {
+    super(); this.needsSwap = false;
+    this.bright = qmat(BRIGHT, { tDiffuse: { value: null }, px: { value: new Vector2() }, thr: { value: .82 } });
+    this.down = qmat(DOWN, { tDiffuse: { value: null }, px: { value: new Vector2() } });
+    this.up = qmat(UP, { tDiffuse: { value: null }, px: { value: new Vector2() }, k: { value: 1 } }, { blending: ADD });
+    this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 } }, { defines: { SRGB_TRANSFER: '' } });
+    this.quad = new FullScreenQuad(null); this.mips = []; this.scale = .5; this.w = 0; this.h = 0; this.fxaa = false; this.strength = .7;
+  }
+  setSize(w, h) {
+    this.w = w; this.h = h;
+    const bw = Math.max(1, Math.round(w * this.scale)), bh = Math.max(1, Math.round(h * this.scale));
+    if (this.mips[0] && this.mips[0].width === bw && this.mips[0].height === bh) return;
+    for (const m of this.mips) m.dispose(); this.mips = [];
+    for (let i = 0, x = bw, y = bh; i < MIPS && x >= 2 && y >= 2; i++, x = Math.max(1, x >> 1), y = Math.max(1, y >> 1))
+      this.mips.push(new WebGLRenderTarget(x, y, { type: HalfFloatType, depthBuffer: false, minFilter: LinearFilter, magFilter: LinearFilter }));
+  }
+  setFxaa(on) { if (this.fxaa === on) return; this.fxaa = on; if (on) this.final.defines.FXAA = ''; else delete this.final.defines.FXAA; this.final.needsUpdate = true; }
+  pass(r, mat, target) { this.quad.material = mat; r.setRenderTarget(target); this.quad.render(r); }
+  render(r, writeBuffer, readBuffer) {
+    const M = this.mips, F = this.final.uniforms, auto = r.autoClear;
+    const on = this.strength > 0 && M.length > 1;
+    if (on) {
+      const b = this.bright.uniforms; b.tDiffuse.value = readBuffer.texture; b.px.value.set(.5 / readBuffer.width, .5 / readBuffer.height);
+      this.pass(r, this.bright, M[0]);
+      for (let i = 1; i < M.length; i++) { const u = this.down.uniforms; u.tDiffuse.value = M[i - 1].texture; u.px.value.set(1 / M[i - 1].width, 1 / M[i - 1].height); this.pass(r, this.down, M[i]); }
+      r.autoClear = false;   // grow back up, adding each softer level onto the sharper one
+      for (let i = M.length - 1; i > 0; i--) { const u = this.up.uniforms; u.tDiffuse.value = M[i].texture; u.px.value.set(.5 / M[i].width, .5 / M[i].height); u.k.value = 1; this.pass(r, this.up, M[i - 1]); }
+      r.autoClear = auto;
+    }
+    F.tDiffuse.value = readBuffer.texture; F.tBloom.value = M[0]?.texture ?? null; F.bloom.value = on ? this.strength * .8 : 0;
+    F.toneMappingExposure.value = r.toneMappingExposure; F.px.value.set(1 / readBuffer.width, 1 / readBuffer.height);
+    this.pass(r, this.final, this.renderToScreen ? null : writeBuffer);
+  }
+  dispose() { for (const m of this.mips) m.dispose(); for (const m of [this.bright, this.down, this.up, this.final]) m.dispose(); this.quad.dispose(); }
+}
 function chain(r, w, h) {
   const T = tier();
   if (comp && compKey !== T.msaa) {   // MSAA on/off: re-create just the two buffers
@@ -127,10 +232,8 @@ function chain(r, w, h) {
     P.render = new RenderPass(new Scene(), new PerspectiveCamera());
     P.ao = new GTAOPass(new Scene(), new PerspectiveCamera(), w, h);
     P.ao.updateGtaoMaterial({ radius: .6, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 }); P.ao.blendIntensity = .9;
-    P.bloom = new UnrealBloomPass(new Vector2(w, h), .7, .5, .82);
-    P.out = new OutputPass();
-    P.grade = new ShaderPass(GRADE);
-    for (const p of [P.render, P.ao, P.bloom, P.out, P.grade]) comp.addPass(p);
+    P.final = new FinalPass();
+    for (const p of [P.render, P.ao, P.final]) comp.addPass(p);
     comp.setSize(w, h); comp.cw = w; comp.ch = h;
   }
   return comp;
@@ -305,36 +408,111 @@ export class HDView {
   /** Called when the quality tier changes: let the game switch shadows on lights it owns. */
   onTier(fn) { this.tierFn = fn; return this; }
 
-  /** Render the frame into 2D canvas c (logical units w x h), with post-processing. */
-  render(c, w = this.W, h = this.H) {
+  /**
+   * A number that changes whenever anything that casts a shadow moves, turns, appears or hides, or a
+   * shadow light changes. While it stays the same, the shadow maps from last frame are still right.
+   */
+  shadowKey() {
+    let h = 0, i = 0;
+    this.scene.traverseVisible(o => {
+      if (!o.castShadow) return;
+      const e = o.matrixWorld.elements, w = (++i % 89) + 1;
+      h += (e[0] * 1.3 + e[1] * 1.7 + e[2] * 2.3 + e[4] * 2.9 + e[5] * 3.1 + e[6] * 3.7 + e[8] * 4.1 + e[9] * 4.3 + e[10] * 4.7 + e[12] * 5.3 + e[13] * 5.9 + e[14] * 6.1) * w;
+      if (o.isInstancedMesh) h += (o.instanceMatrix.version + o.count * 7) * w;
+      if (o.isLight) h += (o.shadow.mapSize.x + (o.target ? o.target.matrixWorld.elements[12] * 3 + o.target.matrixWorld.elements[14] * 5 : 0) + o.angle * 11 + o.distance * 13) * w;
+    });
+    return h + i * 1e-4;
+  }
+  /** Redraw the shadow maps next frame even if nothing seems to have moved (e.g. after changing a geometry in place). */
+  shadowsDirty() { this.shKey = null; return this; }
+  /**
+   * The 3D canvas belongs to another card now: draw this view's last frame under the HUD already on
+   * its canvas (and the camera picture under that, for AR), so the card keeps its picture.
+   */
+  bake(c) {
+    const r = renderer(); if (!r) return;
+    this.render(c, this.W, this.H, true);
+    const u = this.under;
+    c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-over';
+    const W = c.canvas.width, H = c.canvas.height;
+    if (u?.videoWidth) { const s = Math.max(W / u.videoWidth, H / u.videoHeight); c.drawImage(u, (W - u.videoWidth * s) / 2, (H - u.videoHeight * s) / 2, u.videoWidth * s, u.videoHeight * s); }
+    else if (this.clearBg) { c.fillStyle = '#151a22'; c.fillRect(0, 0, W, H); }
+    c.restore();
+  }
+
+  /**
+   * Render the frame for 2D canvas c (logical units w x h), with post-processing. Normally the 3D
+   * canvas is shown on the card right under c, and c is cleared so the game draws its HUD on top.
+   * For a game in the AR kit, v.under (an element, the camera video) is shown under the 3D canvas and
+   * v.underCss is a CSS background for it. With HD.direct off (tests), the frame is copied into c.
+   */
+  render(c, w = this.W, h = this.H, baking = false) {
     this.fit(w, h);
     const r = renderer();
     if (!r) { c.fillStyle = this.scene.background ? '#' + this.scene.background.getHexString() : '#0b0f14'; c.fillRect(0, 0, w, h); c.fillStyle = '#fff'; c.font = '600 12px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('This device cannot show 3D', w / 2, h / 2); return; }
-    // adaptive quality: first resolution, then tier
-    const now = performance.now(), gap = now - (Q.lastT || now); Q.lastT = now; adapt(gap);
+    const now = performance.now();
+    // where the frame goes: straight onto the card (moving the 3D canvas here first, which bakes the
+    // last frame into the card it leaves), or copied into c
+    const direct = HD.direct && !baking && !!c.canvas.parentNode && mount(r.domElement, c, this);
+    if (!baking) {
+      if (Q.game !== speed.game) startGame(speed.game);
+      // adaptive quality: first resolution, then tier (and frame rate)
+      const gap = now - (Q.lastT || now); Q.lastT = now; adapt(gap);
+    }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
     let pw = c.canvas.width, ph = c.canvas.height; const q = Math.min(1, Math.sqrt(T.px / (pw * ph))) * HD.res;
     pw = Math.max(16, Math.round(pw * q)); ph = Math.max(16, Math.round(ph * q));
     const cv = r.domElement; if (cv.width !== pw || cv.height !== ph) r.setSize(pw, ph, false);
     const cp = this.clearBg ? seeThrough(r, pw, ph) : chain(r, pw, ph); if (cp.cw !== pw || cp.ch !== ph) { cp.setSize(pw, ph); cp.cw = pw; cp.ch = ph; }
-    r.shadowMap.enabled = T.shadow > 0;
     this.scene.environment = envTex; this.scene.environmentIntensity = this.envI;
     r.toneMappingExposure = this.exposure;
     if (this.clearBg) { P.arRender.scene = this.scene; P.arRender.camera = this.cam; } else { P.render.scene = P.ao.scene = this.scene; P.render.camera = P.ao.camera = this.cam; }
     for (const p of this.parts) p.mat.uniforms.scale.value = ph / (2 * Math.tan(this.cam.fov * Math.PI / 360));
-    this.t += 1 / 60;
+    if (!baking) this.t += 1 / 60;
     if (!this.clearBg) {
-      P.ao.enabled = T.ao; P.bloom.strength = this.bloom;
-      P.bloom.resolution.set(pw * T.bloom, ph * T.bloom);
-      P.grade.uniforms.t.value = this.t % 10; P.grade.uniforms.hurt.value = this.hurt; P.grade.uniforms.px.value.set(1 / pw, 1 / ph);
+      const F = P.final; P.ao.enabled = T.ao; F.strength = this.bloom; F.scale = T.bloom; F.setFxaa(!T.msaa);
+      F.final.uniforms.t.value = this.t % 10; F.final.uniforms.hurt.value = this.hurt;
     }
     if (!this.warmed) this.warm();
+    // shadows: redraw the maps only when a shadow caster or a shadow light moved (or the tier, view or map changed)
+    this.scene.updateMatrixWorld();
+    r.shadowMap.enabled = T.shadow > 0;
+    let shadows = false;
+    if (T.shadow > 0) { const k = this.shadowKey(); if (k !== this.shKey || lastView !== this) { this.shKey = k; r.shadowMap.needsUpdate = shadows = true; } }
+    lastView = this;
     r.info.autoReset = false; r.info.reset();
-    cp.render();
-    HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now;
-    c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high'; c.drawImage(cv, 0, 0, pw, ph, 0, 0, w, h); c.restore();
+    const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
+    try { cp.render(); } finally { this.scene.matrixWorldAutoUpdate = mwa; }
+    if (!baking) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; }
+    if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
+    c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+    if (baking) { c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-over'; c.drawImage(cv, 0, 0, pw, ph, 0, 0, c.canvas.width, c.canvas.height); }
+    else c.drawImage(cv, 0, 0, pw, ph, 0, 0, w, h);
+    c.restore();
   }
+}
+
+/* ---------- showing the 3D canvas on the card ---------- */
+// The 3D canvas (and, for AR, the camera video under it) sits inside the card's screen, right before
+// the card's own canvas, filling the same box (CSS .hd-layer). The card's canvas stays on top for the
+// HUD and takes all the touches.
+let host = null, lastView = null;
+function mount(cv, c, view) {
+  const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
+  if (host && host.canvas !== hc) {
+    const old = host; host = null;
+    if (old.canvas.isConnected) try { old.view.bake(old.ctx); } catch (_) { /* best effort */ }
+    old.canvas.classList.remove('hd-host');
+  }
+  if (hc.previousSibling !== cv) par.insertBefore(cv, hc);
+  cv.classList.add('hd-layer'); hc.classList.add('hd-host');
+  const u = view.under || null;
+  if (prevUnder && prevUnder !== u) prevUnder.remove();
+  if (u) { u.classList.add('hd-layer'); if (cv.previousSibling !== u) par.insertBefore(u, cv); }
+  const bg = view.underCss || ''; if (cv._bg !== bg) { cv._bg = bg; cv.style.background = bg; }
+  host = { canvas: hc, ctx: c, view, under: u };
+  return true;
 }
 
 /**

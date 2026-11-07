@@ -25,6 +25,7 @@ import { nativeARProbe, nativeARSupported } from './kit/native-ar.js';
 import { hearts } from './hearts.js';
 import { playstats } from './playstats.js';
 import { perf } from './perf.js';
+import { speed, fpsFor, tick as tickHz } from './kit/speed.js';
 import { history } from './history.js';
 import { savesFor } from './saves.js';
 import { geoFor, roundStarted, roundEnded } from './geo.js';
@@ -329,7 +330,7 @@ function openShared(id){
 function setActive(s){
   if(active===s)return;
   stopMusic();if(active&&active.state!=='ready')resetSlide(active);
-  feed.classList.remove('locked');active=s;s.dirty=true;if(STREAM)remote.touch(s.def.id);playstats.shown(s.def.id);perf.shown(s.def.id);
+  feed.classList.remove('locked');active=s;speed.game=s.def;s.dirty=true;if(STREAM)remote.touch(s.def.id);playstats.shown(s.def.id);perf.shown(s.def.id);
   topUp();schedulePrune();
 }
 
@@ -364,9 +365,14 @@ io=new IntersectionObserver(es=>{if(performance.now()-resizeAt<500)return;for(co
 const DBG=import.meta.env.MODE==='bundled'?makeDebug():null;
 let lastT=performance.now();
 function frame(now){
-  let dt=Math.min(.033,(now-lastT)/1000);lastT=now;
   requestAnimationFrame(frame);
+  tickHz(now);
   const s=active;
+  // Frame rate per game and phone (src/kit/speed.js): on a 120 Hz screen a 60 fps game skips every
+  // other refresh, which saves battery and heat. A little slack so a slightly early refresh still counts.
+  const fps=s?fpsFor(s.def):60;
+  if(s&&now-lastT<1000/fps-2.5)return;
+  let dt=Math.min(Math.max(.033,1.25/fps),(now-lastT)/1000);lastT=now;
   if(s){
     // one broken game must never stop the loop (that froze every game): end its round instead
     try{
@@ -377,7 +383,7 @@ function frame(now){
       if(s.state!=='ready'||s.dirty||(DBG&&DBG.on)){paint(s);s.dirty=false}
       if(DBG&&DBG.on)DBG.after(s,timed?t1-t0:0,performance.now()-t1,now);
       // frame timing for the anonymous stutter reports (src/perf.js)
-      if(timed&&s.state==='playing')perf.frame(s.def.id,now,performance.now()-t0);else perf.gap();
+      if(timed&&s.state==='playing')perf.frame(s.def.id,now,performance.now()-t0,1000/fps);else perf.gap();
     }catch(e){console.error(s.def.id,e);perf.error(e,s.def.id);s.dirty=false;if(s.state==='playing')try{gameOver(s)}catch(_){}}
   }
 }

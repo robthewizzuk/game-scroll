@@ -27,7 +27,7 @@ ceilings).
 - **Lamp light pool** (`v.lampLights(range)` then `v.placeLamps(spots, x, y, z, t)` each frame):
   a level can have dozens of lamps; the nearest few get real point lights (with flicker) and the
   rest only glow. Light count stays fixed, so shaders never recompile mid-game.
-- **Post-processing**, one shared chain: HDR render with MSAA, ground-truth ambient occlusion
+- **Post-processing**, one shared chain: HDR render with MSAA (or a light FXAA on lower tiers), ground-truth ambient occlusion
   (GTAO), bloom (anything brighter than about 1 glows: emissive above 1, particle colours above
   1), ACES filmic tone mapping, and a colour grade (vignette, film grain, slight lens fringing at
   the edges, and a red "hurt" tint you set with `v.hurt = 0..1`).
@@ -39,23 +39,54 @@ ceilings).
 
 Phones must stay smooth, so the kit adapts on its own:
 
-| Tier | Pixels per frame | Shadows | Real lamp lights | AO | MSAA |
+| Tier | Pixels per frame | Shadows | Real lamp lights | AO | Anti-aliasing |
 | --- | --- | --- | --- | --- | --- |
-| ultra | 1.7 M | 1024 | 4 | yes | 4x |
-| high | 1.1 M | 1024 | 4 | no | 4x |
-| medium | 0.75 M | 512 | 3 | no | none |
-| low | 0.45 M | off | 2 | no | none |
+| ultra | 2.0 M | 1024 | 4 | yes | 2x MSAA |
+| high | 1.3 M | 1024 | 4 | no | 2x MSAA |
+| medium | 0.85 M | 512 | 3 | no | light FXAA |
+| low | 0.5 M | off | 2 | no | light FXAA |
 
-Phones start on **high**, desktops on **ultra**. Frame times are averaged over 45-frame windows.
-After two slow windows (slower than about 48 fps) the render resolution steps down one fixed level
-(100%, 85%, 70%, 55%), then the tier drops. It only climbs back after eight fast windows in a row,
-and never above a level that was too slow in the last 30 seconds, so it does not bounce up and down
-(each step reallocates render targets, which used to cause the occasional stutter).
+**Phone class and frame rate** (`src/kit/speed.js`). Each phone is sorted into top, mid or low from
+its graphics chip (Adreno 830, Mali-G720, ...), its model for iPhones, and its cores and memory.
+That picks where 3D games start and how fast they run:
+
+| Class | Starts on | 3D frame rate | Other games |
+| --- | --- | --- | --- |
+| top (Fold 8, recent iPhone Pro, desktops) | ultra | 120 fps (where the screen does 120 Hz) | screen rate |
+| mid | high | 60 fps | screen rate |
+| low | medium | 30 fps | 60 fps |
+
+The feed loop skips screen refreshes to hold a game at its rate (a 60 fps game on a 120 Hz screen
+draws every other refresh), which saves battery and heat. Settings has Auto / 120 / 60 / 30
+(battery saver); a game can also set `fps: 30` in its definition to cap itself.
+
+Frame times are averaged over 45-frame windows and compared with the frame budget for the game's rate
+(8.3 ms at 120 fps, 16.7 ms at 60). After two slow windows the render resolution steps down one fixed
+level (100%, 85%, 70%, 55%), then the tier drops. At 120 fps a struggling game first gives up one
+resolution step, then drops to 60 fps at full resolution, keeping the picture; at the lowest tier and
+resolution a 60 fps game can drop to 30. It only climbs back after eight fast windows in a row, and
+never above a level that was too slow in the last 30 seconds, so it does not bounce up and down (each
+step reallocates render targets). Where a game settles (tier and frame rate) is remembered per game,
+so its next round starts there instead of stuttering down again.
+
+**Speed tricks that keep the picture the same:**
+
+- The 3D canvas is shown directly on the playing card, under the card's own canvas, which is cleared
+  each frame so the game's 2D HUD sits on top. Nothing is copied. When another 3D card starts, the
+  last frame is baked into the card being left, so it keeps its picture. (Tests and screenshots run
+  with `__hd.direct = false`, the old copy-into-the-card path; that's automatic under Playwright.)
+  Don't draw anything into the card's canvas before `v.render()`: it is cleared there.
+- Bloom, tone mapping and the colour grade are one final full-screen pass. The bloom is a short
+  down/up-sampling chain at half resolution and below (9 small passes, was 13 bigger ones plus two
+  full-screen ones).
+- Shadow maps are only redrawn when a shadow caster or a shadow light has moved, turned, appeared or
+  hidden (`__hd.info.shadows` says whether the last frame redrew them). If you change a mesh's
+  geometry in place without moving it, call `v.shadowsDirty()`.
 
 Shaders are compiled up front: the first `render()` calls `v.warm()`, which compiles every material
 in the scene, including hidden ones, with shadows on and off. If you build new geometry or
 materials later (a new floor), set `v.warmed = false` so the next frame warms again before play.
-`__hd.info` reports `{ calls, tris, cpu }` for the last frame. The 3D frame is scaled up into the slide's canvas; the 2D HUD is always drawn at
+`__hd.info` reports `{ calls, tris, cpu, shadows }` for the last frame. The 3D frame is rendered at the tier's pixel count and stretched to the card; the 2D HUD is always drawn at
 full resolution on top. `v.onTier(T => ...)` lets a game react (for example `spotLight.setTier(T)`).
 
 Rules of thumb:

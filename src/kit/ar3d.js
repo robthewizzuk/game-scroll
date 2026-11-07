@@ -24,7 +24,7 @@
 // comes from the lowest surface the phone finds (no calibration needed), and light from the
 // phone's own estimate. v.mode says which is running ('world' or 'look'); v.surfaces() lists found
 // surfaces and v.hit(x, y) finds where a screen point meets one. Everything else works the same.
-import { HDView, pbr, surface, speckle, sun, THREE } from './hd3d.js';
+import { HDView, HD, pbr, surface, speckle, sun, THREE } from './hd3d.js';
 import { startCamera, stopCamera, orientation, haptic } from './device.js';
 import { store } from '../util.js';
 import { nativeStart, nativeStop, nativeHit } from './native-ar.js';
@@ -310,10 +310,11 @@ export class ARView extends HDView {
   }
 
   /* ---------- light estimation ---------- */
-  // Every few frames, shrink the camera picture to 8 x 6 pixels and read its average brightness
-  // and colour. The lights ease towards that, so a dim room gives dim, warm or cool objects.
+  // Twice a second, shrink the camera picture to 8 x 6 pixels and read its average brightness and
+  // colour (reading pixels back makes the graphics chip wait, so not every frame). The lights ease
+  // towards that, so a dim room gives dim, warm or cool objects.
   estimateLight(video) {
-    if (this.lightN++ % 6) return;
+    const now = performance.now(); if (now - this.lightN < 500) return; this.lightN = now;
     try {
       const cv = this.lightCv ||= Object.assign(document.createElement('canvas'), { width: 8, height: 6 });
       const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(video, 0, 0, 8, 6);
@@ -321,7 +322,7 @@ export class ARView extends HDView {
       for (let i = 0; i < d.length; i += 4) { r += (d[i] / 255) ** 2.2; gr += (d[i + 1] / 255) ** 2.2; b += (d[i + 2] / 255) ** 2.2; }
       const n = d.length / 4; r /= n; gr /= n; b /= n;
       const lum = Math.min(1, Math.pow(.2126 * r + .7152 * gr + .0722 * b, 1 / 2.2)), m = Math.max(r, gr, b, 1e-3);
-      const k = .15; this.lum += (lum - this.lum) * k;
+      const k = .45; this.lum += (lum - this.lum) * k;
       this.tint = this.tint.map((t, i) => t + ((.55 + .45 * [r, gr, b][i] / m) - t) * k);
     } catch { /* picture not readable yet */ }
   }
@@ -350,19 +351,24 @@ export class ARView extends HDView {
     let fov = 62;
     if (this.nat) {
       // the camera picture is drawn natively behind the page: leave the canvas see-through
+      this.under = null; this.underCss = '';
       c.clearRect(0, 0, W, H); this.room.visible = false; this.nativeLight(); this.applyLight(true);
       this.projectNative(c); this.render(c, W, H); return;
     }
     if (this.seeing) {
       const v = this.camera.video, vw = v.videoWidth, vh = v.videoHeight, s = Math.max(W / vw, H / vh);
-      c.drawImage(v, (W - vw * s) / 2, (H - vh * s) / 2, vw * s, vh * s);
+      // the video itself sits under the 3D canvas (CSS object-fit: cover crops it the same way), so
+      // it isn't redrawn every frame; tests and screenshots (no direct mode) still draw it here
+      this.underCss = '';
+      if (HD.direct) this.under = v; else { this.under = null; c.drawImage(v, (W - vw * s) / 2, (H - vh * s) / 2, vw * s, vh * s); }
       // match the 3D lens to what the camera shows, so placed things don't slide as you turn
       const f = Math.max(vw, vh) / 2 / Math.tan(LONG_FOV * Math.PI / 360);
       fov = 2 * Math.atan(H / s / 2 / f) * 180 / Math.PI;
       this.room.visible = false; this.estimateLight(v); this.applyLight(true);
     } else {
-      this.applyLight(false);
-      const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#2b3442'); g.addColorStop(1, '#151a22'); c.fillStyle = g; c.fillRect(0, 0, W, H);
+      this.applyLight(false); this.under = null;
+      if (HD.direct) this.underCss = 'linear-gradient(#2b3442, #151a22)';
+      else { const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#2b3442'); g.addColorStop(1, '#151a22'); c.fillStyle = g; c.fillRect(0, 0, W, H); }
       this.room.visible = true;
     }
     if (Math.abs(this.cam.fov - fov) > .05) { this.cam.fov = fov; this.cam.updateProjectionMatrix(); }

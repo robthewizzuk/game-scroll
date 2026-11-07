@@ -4,6 +4,7 @@ import { fmt } from './util.js';
 import { playstats } from './playstats.js';
 import { HEARTS_URL } from './hearts.js';
 import { nativeARSupported } from './kit/native-ar.js';
+import { fpsPick, setFpsPick, autoFps, phoneClass, screenHz } from './kit/speed.js';
 import { geoSettings } from './geo.js';
 
 const size = b => b < 1024 * 1024 ? `${Math.ceil(b / 1024)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
@@ -23,6 +24,11 @@ export function openSettings({ stream, cached, clear, arTest }) {
              <div class="qa-actions"><button class="set-clear"${c.games ? '' : ' disabled'}>Clear cache</button></div>`
           : `<p class="qa-help">This is a test build with every game built in, so there's nothing to cache.</p>`}
         ${note ? `<p class="set-note" role="status">${note}</p>` : ''}
+      </section>
+      <section class="set-row">
+        <h3>Frame rate</h3>
+        <p class="qa-help">Auto picks by phone: on this one ${Math.min(autoFps({ era: 'nextgen' }), screenHz())} fps for 3D games and ${Math.min(autoFps({}), screenHz())} fps for the rest (${{ top: 'a top-end', mid: 'a mid-range', low: 'an entry-level' }[phoneClass()]} phone with a ${screenHz()} Hz screen), and 3D games step down if the phone can't keep up. A lower rate saves battery and keeps the phone cooler.</p>
+        <div class="qa-actions set-fps">${['auto', 120, 60, 30].map(v => `<button data-fps="${v}"${fpsPick() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}${v !== 'auto' && v > screenHz() ? ' disabled' : ''}>${v === 'auto' ? 'Auto' : v === 30 ? '30 · battery saver' : v}</button>`).join('')}</div>
       </section>
       ${arTest ? `<section class="set-row">
         <h3>AR test</h3>
@@ -55,6 +61,7 @@ export function openSettings({ stream, cached, clear, arTest }) {
       <footer class="set-made">Made by <b>Rob</b></footer>`;
     el.querySelector('.qa-x').onclick = () => el.close();
     el.querySelector('.set-ar')?.addEventListener('click', () => { el.close(); arTest(); });
+    el.querySelectorAll('.set-fps button').forEach(b => b.addEventListener('click', () => { setFpsPick(b.dataset.fps); render(); }));
     el.querySelector('.set-loc').addEventListener('change', e => { geoSettings.enabled = e.target.checked; });
     el.querySelector('.set-stats')?.addEventListener('change', e => { playstats.enabled = e.target.checked; });
     el.querySelector('.set-clear')?.addEventListener('click', async e => {
