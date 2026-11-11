@@ -78,18 +78,32 @@ export const gpuMaterials = {
     for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];   // (as three's own NodeLibrary.fromMaterial)
     const H = texture(P.height), rp = P.height.repeat, depth = float(P.depth);
     const base = uv().mul(vec2(rp.x, rp.y)).add(vec2(P.height.offset.x, P.height.offset.y));
+    // how many of the surface's texels one drawn pixel covers: its relief goes first (4 to 10), then its pattern
+    const SIZE = P.height.image?.width || 256;
+    const tpp = max(length(dFdx(base)), length(dFdy(base))).mul(SIZE).toVar('pomTpp'), far = smoothstep(4, 10, tpp).toVar('pomFar');
     const puv = Fn(() => {
       const gx = dFdx(base).mul(MIP_K), gy = dFdy(base).mul(MIP_K), h = q => H.sample(q).grad(gx, gy).r;
       const V = parallaxDirection.normalize(), N = 16, step = float(1 / N);
-      const d = V.xy.div(max(V.z, .25)).mul(depth).mul(step);   // (flat angles capped, or the march runs off sideways)
+      // far off the relief is finer than the picture can show: marched there it only crawls as the camera moves
+      // (roof tiles through a swaying scope), so it flattens out and the march stops
+      const near = float(1).sub(far).toVar();
+      const d = V.xy.div(max(V.z, .25)).mul(depth).mul(near).mul(step);   // (flat angles capped, or the march runs off sideways)
       const cur = base.toVar(), lay = float(0).toVar(), mapD = float(1).sub(h(base)).toVar();
-      Loop(N, () => { If(lay.greaterThanEqual(mapD), () => { Break(); }); cur.subAssign(d); lay.addAssign(step); mapD.assign(float(1).sub(h(cur))); });
+      Loop(N, () => { If(lay.greaterThanEqual(mapD).or(near.lessThanEqual(0)), () => { Break(); }); cur.subAssign(d); lay.addAssign(step); mapD.assign(float(1).sub(h(cur))); });
       const prev = cur.add(d), after = mapD.sub(lay), before = float(1).sub(h(prev)).sub(lay).add(step);
       return mix(cur, prev, after.div(after.sub(before)).clamp(0, 1));
     })().toVar('pomUV');
-    const at = (t, q) => texture(t, q).grad(dFdx(base).mul(MIP_K), dFdy(base).mul(MIP_K));   // (MIP_K: sharper under SGSR 2, see sharpMips)
-    if (gm.map) m.colorNode = at(gm.map, puv).mul(materialColor);
-    if (gm.normalMap) m.normalNode = normalMap(at(gm.normalMap, puv), uniform(gm.normalScale));
+    // The maps: sharper under SGSR 2 (MIP_K, see sharpMips) while the pattern is big enough to show. A pattern
+    // only a few drawn pixels across (a roof's tiles from a hill away) is too fine for the upscaler to hold steady
+    // from frame to frame: a tile's bump catches the light on one frame and not the next, and the roof shimmers.
+    // So as it gets that small (a tenth of the texture is taken as one tile, brick or plank: 5 pixels across
+    // down to 1.6) the bumps flatten and the colour goes over to the texture's own average: a calm, even surface.
+    // (Measured on Long Shadow's tiled roofs under a slow pan, upscaled 1.5 times: the change from frame to frame
+    // that steady motion doesn't explain fell to under a third where a tile is 2 pixels, a fifth where it is under 1.)
+    const calm = smoothstep(SIZE / 50, SIZE / 16, tpp).toVar('pomCalm'), K = mix(MIP_K, float(1), calm).toVar('pomK');
+    const at = (t, q) => texture(t, q).grad(dFdx(base).mul(K), dFdy(base).mul(K)), even = t => texture(t, base).level(Math.max(0, Math.log2(SIZE) - 2));
+    if (gm.map) m.colorNode = mix(at(gm.map, puv), even(gm.map), calm).mul(materialColor);
+    if (gm.normalMap) m.normalNode = normalMap(mix(at(gm.normalMap, puv), vec4(.5, .5, 1, 1), calm), uniform(gm.normalScale));
     if (gm.roughnessMap) m.roughnessNode = at(gm.roughnessMap, puv).g.mul(materialRoughness);
     m.map = m.normalMap = m.roughnessMap = null;   // (read above at the marched place; three's materialColor would multiply the map in again)
     m.name = gm.name || 'pom';

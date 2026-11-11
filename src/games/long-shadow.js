@@ -33,6 +33,7 @@ const { Zipline } = gs.gadgets;
 const { Campaign } = gs.campaign;
 const { shatter } = gs.destruction;
 const { human } = gs.models;
+const { keys } = gs.poses;
 const { Group, Mesh, InstancedMesh, Object3D, Vector3, BoxGeometry, CylinderGeometry, PlaneGeometry, SphereGeometry, TorusGeometry, Color } = THREE;
 
 let W = 300, H = 420;
@@ -54,7 +55,9 @@ const driftAt = (d, w) => .5 * WIND_K * w * (d / V0) ** 2 / d; // radians to aim
 // x runs west to east, z south (+) to north (-), y up. The river winds along x; the Ashvale ridge is
 // south (your side), the village of Larkford and the rail line north, a stream and dam north-east.
 const RIVER = x => 6 * Math.sin(x * .011);
-const RAILZ = -42, RAILH = 4.6, STREAMX = 140, ROADBANK = 7.1;
+const RAILZ = -42, RAILH = 4.6, STREAMX = 140, ROADBANK = 7.1, LAKE = 12.6, CROSSX = 33.1;   // (LAKE: the reservoir's level, under the dam's crest; CROSSX: where the road crosses the line)
+// the top of the track's bed of stone (and the planks of the crossing) where it stands above the ground, for feet
+const trackY = (x, z) => { const d = Math.abs(z - RAILZ); return d > 3.3 || Math.abs(x - STREAMX) < 17 ? -99 : Math.abs(x - CROSSX) < 3.2 ? RAILH + .215 - .44 * sm(1.68, 3.3, d) : d < 2.1 ? RAILH - .03 - .19 * sm(1.55, 2.1, d) : -99; };
 function shape(x, z) {
   // the ridge rises concave (steeper near the top) so the nests up there see down into the valley
   let h = 2 + 30 * clamp((z - 20) / 150, 0, 1) ** 1.6 - sm(190, 300, z) * 14 + sm(-38, -62, z) * 4 + sm(-165, -300, z) * 40;
@@ -67,8 +70,16 @@ function shape(x, z) {
   const emb = (1 - sm(4.5, 10, Math.abs(z - roadZ(x)))) * (1 - sm(24, 34, sx)) * sm(-30, -60, z);
   h = lerp(h, ROADBANK, emb);
   const rz = Math.abs(z - RIVER(x)); h -= 6.5 * (1 - sm(5, 15, rz));
-  const rk = (1 - sm(5, 12, Math.abs(z - RAILZ))) * sm(10, 24, sx);
-  h = lerp(h, RAILH - .4, rk);
+  // the reservoir behind the dam: the stream's valley dug out into a basin that narrows up the hill, its banks
+  // above the water all the way round (the water is a flat sheet: it must never show past its shore)
+  if (z < -209) {
+    const u = (-209 - z) / 88, ax = sx / lerp(31, 9, Math.min(1, u));
+    if (ax < 1.6) { const rim = lerp(Math.max(h, LAKE + 2.5), h, sm(1.25, 1.6, ax)); h = lerp(Math.min(rim, LAKE - 6 + 9 * u), rim, sm(.55, 1, ax)); }
+  }
+  // Larkford's shelf of level ground, and then the railway, cut through whatever lies in its way
+  const vd = Math.hypot(x + 15, z + 108); if (vd < 88) { const k = vd <= 58 ? 1 : 1 - (vd - 58) / 30; h += (6.4 - h) * k * k * (3 - 2 * k); }
+  const rk = (1 - sm(5, 12, Math.abs(z - RAILZ))) * sm(12, 17.5, sx);
+  h = lerp(h, RAILH - .2, rk);
   return h;
 }
 const ROADS = [
@@ -386,7 +397,7 @@ function villageTextures() {
     const rows = 8, per = 10, th = S / rows, tw = S / per, grey = q => `rgb(${q = Math.round(q * 255)},${q},${q})`;
     for (let j = 0; j < rows; j++) for (let i = -1; i <= per; i++) {
       const x = (i + (j % 2) * .5) * tw, y = j * th, hue = 10 + R() * 12, sat = 40 + R() * 20, l = 30 + R() * 13;
-      const g = col.createLinearGradient(x, 0, x + tw, 0); g.addColorStop(0, `hsl(${hue},${sat}%,${l * .5}%)`); g.addColorStop(.42, `hsl(${hue},${sat}%,${l * 1.18}%)`); g.addColorStop(1, `hsl(${hue},${sat}%,${l * .45}%)`);
+      const g = col.createLinearGradient(x, 0, x + tw, 0); g.addColorStop(0, `hsl(${hue},${sat}%,${l * .7}%)`); g.addColorStop(.42, `hsl(${hue},${sat}%,${l * 1.1}%)`); g.addColorStop(1, `hsl(${hue},${sat}%,${l * .66}%)`);   // (the barrel's own shading, kept gentle: strong stripes this fine shimmer through a swaying scope)
       col.fillStyle = g; col.fillRect(x, y, tw, th);
       // height (read by the roofs' depth): a round barrel across each tile
       const hg = h.createLinearGradient(x, 0, x + tw, 0); for (let k = 0; k <= 8; k++) hg.addColorStop(k / 8, grey(.16 + .84 * Math.sqrt(1 - (k / 4 - 1) ** 2))); h.fillStyle = hg; h.fillRect(x, y, tw, th);
@@ -395,7 +406,7 @@ function villageTextures() {
     for (let j = 0; j < rows; j++) {
       const y = j * th, lap = h.createLinearGradient(0, y, 0, y + th), sh = col.createLinearGradient(0, y, 0, y + 10);
       lap.addColorStop(0, 'rgba(0,0,0,.5)'); lap.addColorStop(1, 'rgba(0,0,0,0)'); h.fillStyle = lap; h.fillRect(0, y, S, th);
-      sh.addColorStop(0, 'rgba(24,10,4,.62)'); sh.addColorStop(1, 'rgba(24,10,4,0)'); col.fillStyle = sh; col.fillRect(0, y, S, 10);
+      sh.addColorStop(0, 'rgba(24,10,4,.46)'); sh.addColorStop(1, 'rgba(24,10,4,0)'); col.fillStyle = sh; col.fillRect(0, y, S, 10);
     }
     speckle(col, S, 2400, '#2e2216', 2, .3); blot(col, S, 10, 'rgba(70,84,40,.35)', 'rgba(60,70,36,.25)', [8, 20]);
   }, { strength: 3.6 });
@@ -443,8 +454,7 @@ function world() {
   // ---- land, with the nests and the village levelled, painted by the ground shader
   const tex = groundDetail();
   const land = new Land({ kind: shape, size: 640, segments: 128, material: groundMat(tex) });
-  land.flatten(-15, -108, 58, 6.4, 30);
-  for (const n of Object.values(NESTS)) land.flatten(n.x, n.z, 5, undefined, 6);
+  for (const n of Object.values(NESTS)) land.flatten(n.x, n.z, 5, undefined, n === NESTS.tower ? 3.5 : 6);   // (the water tower stands by the railway: its level ground stops short of the track's bed)
   land.flatten(MILL.x, MILL.z - 3, 9, 4.2, 6);
   land.masks(groundMasks);
   v.scene.add(land.object);
@@ -458,13 +468,21 @@ function world() {
   };
   const river = new Water({ level: -1.4, waves: .08, size: 640, segments: 40, material: waterMat('#1c2824', 70) });
   v.scene.add(river.mesh);
-  const lake = new Water({ level: 23, waves: .18, size: 150, segments: 20, material: waterMat('#283639', 16) });
-  lake.mesh.position.set(STREAMX, 0, -282); v.scene.add(lake.mesh);
+  const lake = new Water({ level: LAKE, waves: .1, size: 96, segments: 16, material: waterMat('#283639', 10) });
+  lake.mesh.position.set(STREAMX, 0, -254); lake.mesh.scale.x = .72; v.scene.add(lake.mesh);   // (from the dam's face up the basin, no wider than the dam)
   const ripples = [river.mesh.material.normalMap, lake.mesh.material.normalMap];
 
   // ---- materials (built once)
   const VT = villageTextures(), { plaster, tiles, stone } = VT;
   const wood = surface(128, ({ col, h, size: S }) => { col.fillStyle = '#6b4a30'; col.fillRect(0, 0, S, S); for (let i = 0; i < 40; i++) { col.fillStyle = `rgba(30,18,10,${Math.random() * .3})`; col.fillRect(0, Math.random() * S, S, 1 + Math.random() * 2); } h.fillStyle = '#888'; h.fillRect(0, 0, S, S); });
+  // the track's bed: broken grey stone, each piece with its own shade and height
+  const gravel = surface(128, ({ col, h, r, size: S }) => {
+    const R = rng(41); col.fillStyle = '#6f6a62'; col.fillRect(0, 0, S, S); h.fillStyle = '#505050'; h.fillRect(0, 0, S, S); r.fillStyle = '#e8e8e8'; r.fillRect(0, 0, S, S);
+    for (let i = 0; i < 700; i++) { const x = R() * S, y = R() * S, a = 2 + R() * 3.4, b = a * (.55 + R() * .4), t = R() * 3.14, l = 105 + R() * 75, w = R() * 14 - 4, hh = 120 + R() * 130 | 0;
+      for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { if (x + ox < -8 || x + ox > S + 8 || y + oy < -8 || y + oy > S + 8) continue;
+        col.fillStyle = `rgb(${l + w | 0},${l | 0},${l - w * 1.3 | 0})`; col.beginPath(); col.ellipse(x + ox, y + oy, a, b, t, 0, 6.3); col.fill();
+        h.fillStyle = `rgb(${hh},${hh},${hh})`; h.beginPath(); h.ellipse(x + ox, y + oy, a * .85, b * .85, t, 0, 6.3); h.fill(); } }
+  }, { strength: 3 });
   // the stone stands out from its mortar as you look across it (parallax occlusion, WebGPU)
   const M = {
     wall: pbr('#ffffff', { tex: plaster, rep: [2, 2], rough: .92 }),
@@ -474,13 +492,13 @@ function world() {
     stoneV: pbr('#ffffff', { tex: stone, rough: .9, vertexColors: true, depth: .035 }), woodV: pbr('#ffffff', { tex: VT.boards, rough: .82, vertexColors: true }),
     strawV: pbr('#ffffff', { tex: VT.straw, rough: 1, vertexColors: true }), lit: pbr('#2a2018', { rough: .3, glow: 0, glowCol: '#ffb860' }),
     glass: pbr('#1a2128', { rough: .15, metal: .4, glow: 0, glowCol: '#ffb860' }), iron: pbr('#3a3c3e', { rough: .45, metal: .8 }),
-    rail: pbr('#6a6560', { rough: .35, metal: .9 }), dark: pbr('#24221f', { rough: .8 }), sand: pbr('#a39270', { rough: 1 }),
+    rail: pbr('#8d8a86', { rough: .42, metal: .9 }), rust: pbr('#4d3527', { rough: .9, metal: .25 }), sleeper: pbr('#ffffff', { tex: wood, rough: .92 }), ballast: pbr('#ffffff', { tex: gravel, rough: 1, vertexColors: true }), dark: pbr('#24221f', { rough: .8 }), sand: pbr('#a39270', { rough: 1 }),
     drum: pbr('#a8352a', { rough: .5, metal: .3, clear: .3 }), green: pbr('#4c5a32', { rough: .7 }), brass: pbr('#c8a24a', { rough: .25, metal: 1 }),
     cloth: pbr('#c9bc8e', { rough: 1, side: THREE.DoubleSide }), canvas: pbr('#5d6150', { rough: 1 }), lamp: pbr('#ffcf80', { glow: 3 }),
     plant: pbr('#ffffff', { vertexColors: true, rough: .9 }), rock: rockMat(tex),
   };
   M.glass.emissive = new Color('#ffb860'); M.glass.emissiveIntensity = 0; M.lit.emissive = new Color('#ffb060'); M.lit.emissiveIntensity = 0;
-  WD = { v, sl, land, river, lake, M, ripples, lodK: 1, ground: (x, z) => land.height(x, z), chims: [], winSpots: [], deckY: bridgeDeck(land) };
+  WD = { v, sl, land, river, lake, M, ripples, lodK: 1, ground: (x, z) => Math.max(land.height(x, z), trackY(x, z)), chims: [], winSpots: [], deckY: bridgeDeck(land) };
   // real light from lit windows at dusk (mood() turns the pool on; draw() moves it to the windows nearest where you look)
   v.lampLights(6.5); for (const l of v.lamps) l.visible = false;
   const solids = WD.solids = [];   // boxes that stop bullets: { x0, y0, z0, x1, y1, z1, kind }
@@ -496,7 +514,7 @@ function world() {
 
   // ---- the village: plastered houses on stone plinths, tile roofs with deep eaves, shutters, chimneys,
   // doors, carts, barrels and hay, all merged into one mesh per material
-  const K = { wall: solid(), roof: solid(), wood: solid(), stone: solid(), glass: solid(), lit: solid(), straw: solid() }, HR = rng(17), pick = a => a[HR() * a.length | 0];
+  const K = { wall: solid(), roof: solid(), wood: solid(), stone: solid(), glass: solid(), lit: solid(), straw: solid(), ballast: solid() }, HR = rng(17), pick = a => a[HR() * a.length | 0];
   const o = new Object3D();
   const C_ = c => new Color(c), DARKWOOD = C_('#6a5444'), BEAM = C_('#5a4636'), SILL = C_('#cfc8bb'), WHITE = C_('#ffffff');
   const UP = new Vector3(0, 1, 0);
@@ -658,13 +676,22 @@ function world() {
     }
   }
 
-  // the railway: sleepers, rails and the iron bridge over the stream
-  const sleepers = new InstancedMesh(new BoxGeometry(2.6, .18, .4), M.wood, 520); let si = 0;
-  for (let x = -318; x < 318; x += 1.24) { o.position.set(x, RAILH, RAILZ); o.rotation.set(0, Math.PI / 2, 0); o.scale.set(1, 1, 1); o.updateMatrix(); sleepers.setMatrixAt(si++, o.matrix); }
+  // the railway: a bed of broken stone with sloping shoulders, tarred sleepers bedded in it (no two quite alike),
+  // rails with a foot, a web and a head worn bright, planks where the road crosses, and the iron bridge over the stream
+  { const GREY = C_('#b9b4aa'), y0 = RAILH - .24, y1 = RAILH - .03, P = (x, y, dz) => new Vector3(x, y, RAILZ + dz), B = K.ballast;
+    for (const [xa, xb] of [[-318, STREAMX - 17], [STREAMX + 17, 318]]) for (let x = xa; x < xb; x += 24) { const x2 = Math.min(xb, x + 24);
+      B.face([P(x, y1, 1.55), P(x2, y1, 1.55), P(x2, y1, -1.55), P(x, y1, -1.55)], GREY, .55)
+        .face([P(x, y0, 2.1), P(x2, y0, 2.1), P(x2, y1, 1.55), P(x, y1, 1.55)], GREY, .55).face([P(x, y1, -1.55), P(x2, y1, -1.55), P(x2, y0, -2.1), P(x, y0, -2.1)], GREY, .55); }
+    const xa = CROSSX - 3.2, xb = CROSSX + 3.2, top = RAILH + .215, yb = RAILH - .24, DIRT = C_('#8a7f6c'), PL = C_('#5a4a3c');
+    B.face([P(xa, yb, 3.3), P(xb, yb, 3.3), P(xb, top, 1.68), P(xa, top, 1.68)], DIRT, .55).face([P(xa, top, -1.68), P(xb, top, -1.68), P(xb, yb, -3.3), P(xa, yb, -3.3)], DIRT, .55);
+    for (const [dz, d] of [[0, 1.28], [-1.22, .9], [1.22, .9]]) for (let i = 0; i < 4; i++) K.wood.box(CROSSX, RAILH + .05, RAILZ + dz + (i - 1.5) * d / 4, 6.4, .165 - (i % 2) * .008, d / 4 - .012, 0, PL, .6); }
+  const sleepers = new InstancedMesh(new BoxGeometry(2.5, .13, .24), M.sleeper, 1000), SR = rng(5), sc = new Color(); let si = 0;
+  for (let x = -318; x < 318; x += .65) { o.position.set(x + (SR() - .5) * .05, RAILH - (SR() * .012), RAILZ + (SR() - .5) * .05); o.rotation.set(0, Math.PI / 2 + (SR() - .5) * .035, 0); o.scale.set(1, 1, 1); o.updateMatrix(); sleepers.setMatrixAt(si, o.matrix); const l = .34 + SR() * .2; sleepers.setColorAt(si++, sc.setRGB(l, l * .92, l * .84)); }
   sleepers.count = si; sleepers.receiveShadow = true; v.scene.add(sleepers);
-  for (const s of [-.72, .72]) mesh(new BoxGeometry(636, .14, .1), M.rail, 0, RAILH + .16, RAILZ + s).castShadow = false;
+  for (const s of [-.7175, .7175]) for (const [w, hh, y, mat] of [[.068, .04, .195, M.rail], [.022, .09, .13, M.rust], [.13, .022, .076, M.rust]]) mesh(new BoxGeometry(636, hh, w), mat, 0, RAILH + y, RAILZ + s).castShadow = false;
   for (const s of [-1, 1]) { mesh(new BoxGeometry(34, .4, .4), M.iron, STREAMX, RAILH + 3.2, RAILZ + s * 2); for (let i = -4; i <= 4; i++) mesh(new BoxGeometry(.3, 3.2, .3), M.iron, STREAMX + i * 4, RAILH + 1.6, RAILZ + s * 2).rotation.z = i % 2 ? .6 : -.6; }
   mesh(new BoxGeometry(34, .5, 4.4), M.iron, STREAMX, RAILH - .3, RAILZ);
+  for (const sd of [-1, 1]) K.stone.box(STREAMX + sd * 19.4, RAILH - 4.2, RAILZ, 5.2, 4.1, 5.6, 0, C_('#b9b2a4'), .5);   // its stone abutments, under the ends of the track's bed
   // the culvert where the east road crosses the stream: a stone face each side with the arch the water runs through
   {
     const cz = roadZ(STREAMX), bed = ground(STREAMX, cz + 12), hgt = ROADBANK - bed + .9;
@@ -680,21 +707,37 @@ function world() {
   const tw = { x: NESTS.tower.x, z: NESTS.tower.z + 2.2 }, ty = ground(NESTS.tower.x, NESTS.tower.z);
   for (const [dx, dz] of [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]]) mesh(new CylinderGeometry(.18, .22, 10, 6), M.iron, tw.x + dx, ty + 5, tw.z + dz);
   mesh(new CylinderGeometry(2.7, 2.7, 3.2, 20), M.wood, tw.x, ty + 11.4, tw.z);
-  // the dam up the stream, holding the lake
-  const dy = 0;
-  mesh(rbox(70, 26, 7, .3), M.stone, STREAMX, dy + 1, -206); for (let i = -2; i <= 2; i++) mesh(rbox(3, 3, 8, .2), M.stone, STREAMX + i * 12, dy + 15.5, -206);
+  // the dam up the stream, holding the reservoir: a stone wall leaning back, buttresses down its face, a walk along
+  // the crest between parapets and the valve house in the middle
+  { const zc = -206, X0 = STREAMX - 35, X1 = STREAMX + 35, top = 14, base = -2, zb = zc - 3.5, zt = zc + 1.2, zf = zc + 6.5, DS = C_('#bdb6a8'), DK = C_('#9d978b'), CP = C_('#d6d0c2'), Q = (x, y, z) => new Vector3(x, y, z), S = K.stone;
+    S.face([Q(X0, base, zf), Q(X1, base, zf), Q(X1, top, zt), Q(X0, top, zt)], DS, .5).face([Q(X1, base, zb), Q(X0, base, zb), Q(X0, top, zb), Q(X1, top, zb)], DK, .5)
+      .face([Q(X0, top, zt), Q(X1, top, zt), Q(X1, top, zb), Q(X0, top, zb)], CP, .5)
+      .face([Q(X0, base, zb), Q(X0, base, zf), Q(X0, top, zt), Q(X0, top, zb)], DK, .5).face([Q(X1, base, zf), Q(X1, base, zb), Q(X1, top, zb), Q(X1, top, zt)], DK, .5);
+    for (let i = -3; i <= 3; i++) { const x = STREAMX + i * 10, a = x - 1.1, b = x + 1.1, y1 = top - 1.5, y2 = top - .9;
+      S.face([Q(a, base, zf + 1.8), Q(b, base, zf + 1.8), Q(b, y1, zt + .9), Q(a, y1, zt + .9)], CP, .5).face([Q(a, y1, zt + .9), Q(b, y1, zt + .9), Q(b, y2, zt + .3), Q(a, y2, zt + .3)], CP, .5)
+        .face([Q(a, base, zf), Q(a, base, zf + 1.8), Q(a, y1, zt + .9), Q(a, y2, zt + .3)], DK, .5).face([Q(b, base, zf + 1.8), Q(b, base, zf), Q(b, y2, zt + .3), Q(b, y1, zt + .9)], DK, .5); }
+    S.box(STREAMX, top, zt - .2, 70, .95, .36, 0, CP, .5).box(STREAMX, top, zb + .2, 70, .95, .36, 0, CP, .5);
+    S.box(STREAMX, top, zc - 1.1, 5, 3.3, 3.5, 0, DS, .5); K.roof.spire(STREAMX, top + 3.3, zc - 1.1, 3.6, 2.1, 4, C_('#e4cbb6'), .38, Math.PI / 4);
+    K.wood.box(STREAMX, top, zc + .66, 1, 2, .06, 0, C_('#3c342c'), .5); for (const sx of [-1.6, 1.6]) K.glass.box(STREAMX + sx, top + 1.5, zc + .66, .7, .9, .05, 0, WHITE, 1); }
   // the chapel belfry on the south bank (M2's first nest)
   const ch = NESTS.chapel, chy = ground(ch.x, ch.z) - .2;
   mesh(rbox(4.4, 11, 4.4, .1), M.stone, ch.x, chy + 5.5, ch.z); box(ch.x, chy, ch.z, 4.4, 11, 4.4, 'stone');
   for (const [dx, dz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]]) mesh(new BoxGeometry(.5, 2.6, .5), M.stone, ch.x + dx, chy + 12.3, ch.z + dz);
   K.roof.spire(ch.x, chy + 13.6, ch.z, 3.4, 3.6, 4, WHITE, .38, Math.PI / 4);
   { // the ladder up the belfry's east face (Wren climbs it at the start of mission 2)
-    const lx = ch.x + 2.2 + .18, top = chy + 11.6, LW = C_('#6a5444');
-    for (const sz of [-.26, .26]) K.wood.box(lx, chy - .2, ch.z + sz, .07, top - chy + .2, .07, 0, LW, .6);
-    for (let y = chy + .3; y < top; y += .32) K.wood.box(lx, y, ch.z, .05, .045, .5, 0, LW, .6);
-    WD.ladder = { x: lx + .32, z: ch.z, y0: ground(lx + .4, ch.z), y1: chy + 11 };
+    // (its rungs and rail ends are where her hands and feet go: MOVES has the numbers; the rails stand a
+    // metre proud of the floor at the top, to hold as she steps in between them)
+    const lx = ch.x + 2.2 + .18, r0 = chy + .3, LW = C_('#6a5444');
+    for (const sz of [-.26, .26]) K.wood.box(lx, chy - .2, ch.z + sz, .07, r0 + MOVES.RAIL - chy + .2, .07, 0, LW, .6);
+    for (let n = 0; n <= MOVES.TOP; n++) K.wood.box(lx, r0 + n * MOVES.GAP - .022, ch.z, .05, .045, .5, 0, LW, .6);
+    WD.ladder = { lx, x: lx + MOVES.BACK, z: ch.z, cx: ch.x, y0: ground(lx + MOVES.BACK, ch.z), r0 };
+    // the chapel's lamp, on a bracket beside the ladder's foot (lit at dusk, as the windows are)
+    { const wx = ch.x + 2.2, lz = ch.z + .95, ly = chy + 2.25, IRON = C_('#2b2622');
+      K.wood.box(wx + .13, ly + .3, lz, .3, .035, .035, 0, IRON, .5); K.wood.box(wx + .26, ly + .25, lz, .2, .05, .2, 0, IRON, .5); K.wood.box(wx + .26, ly - .03, lz, .16, .03, .16, 0, IRON, .5);
+      K.lit.box(wx + .26, ly, lz, .13, .25, .13, 0, WHITE, 1);
+      WD.winSpots.push({ x: wx + .85, y: ly + .2, z: lz + .1, col: '#ffb468', i: 4.2 }); }
   }
-  gabled(ch.x, ch.z + 6.5, 10, 6, 5.5, Math.PI / 2, { kw: K.stone, wc: C_('#e6dfd2'), y0: chy, plinth: false, pitch: .5 });
+  gabled(ch.x, ch.z + 6.5, 10, 6, 5.5, Math.PI / 2, { kw: K.stone, wc: C_('#e6dfd2'), y0: chy, plinth: false, pitch: .5 }); box(ch.x, chy, ch.z + 6.5, 6, 6, 10, 'stone');   // (solid, like the tower: a round stops in it, and Wren and the camera go round it, not through)
   // the windmill on the ridge (M2's second nest) with turning sails
   const wm = { x: NESTS.mill2.x, z: NESTS.mill2.z + 3.4 }, wmy = ground(wm.x, wm.z) - .2;
   mesh(new CylinderGeometry(2.4, 3.6, 10, 12), M.wall, wm.x, wmy + 5, wm.z);
@@ -705,9 +748,10 @@ function world() {
   const spin = new Group(); spin.add(...sails.children); sails.add(spin); WD.sails = spin;
   sails.traverse(m => { if (m.isMesh) m.castShadow = true; }); v.scene.add(sails);
   WD.flagB = flag(v, M, ch.x + 12, chy + 6.8, ch.z - 4);
-  { // the zip line from the ridge rocks down to the water tower: a pole and stays at the top, the cable
+  { // the zip line from the ridge rocks down to the water tower: a pole and stays at the top, the cable (it
+    // starts beside the nest, its bar where she can reach it from the ground, and clear of her line of sight)
     const eye = n => ({ x: n.x, y: land.height(n.x, n.z) + n.up + .5, z: n.z }), a = eye(NESTS.ridge), b = eye(NESTS.tower);
-    const A = new Vector3(a.x, a.y + 2.2, a.z), B = new Vector3(b.x, b.y + 1.6, b.z), d = B.clone().sub(A), L = d.length();
+    const A = new Vector3(a.x - 2.5, a.y + .45, a.z), B = new Vector3(b.x, b.y + 1.6, b.z), d = B.clone().sub(A), L = d.length();
     const cable = mesh(new CylinderGeometry(.03, .03, L, 5, 1, true), M.iron, (A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2); cable.quaternion.setFromUnitVectors(UP, d.normalize()); cable.castShadow = false;
     K.wood.cyl(new Vector3(A.x - d.x * .6, ground(A.x - d.x * .6, A.z - d.z * .6) - .3, A.z - d.z * .6), UP, .13, .1, A.y - ground(A.x, A.z) + 1, 7, C_('#5a4636'), .5);
     WD.zipA = A; WD.zipB = B;
@@ -720,7 +764,7 @@ function world() {
   mesh(new CylinderGeometry(.22, .25, 3.2, 8), M.wood, rd.x, ry - .02, rd.z - 1.8).rotation.z = Math.PI / 2;
   // the village's merged meshes, one per material
   const vmesh = (kit, mat, cast = true) => { if (kit.empty) return null; const m = new Mesh(kit.geo(), mat); m.castShadow = cast; m.receiveShadow = true; v.scene.add(m); return m; };
-  vmesh(K.wall, M.wallV); vmesh(K.roof, M.roofV); vmesh(K.wood, M.woodV); vmesh(K.stone, M.stoneV); vmesh(K.glass, M.glass, false); vmesh(K.straw, M.strawV);
+  vmesh(K.wall, M.wallV); vmesh(K.roof, M.roofV); vmesh(K.wood, M.woodV); vmesh(K.stone, M.stoneV); vmesh(K.glass, M.glass, false); vmesh(K.straw, M.strawV); vmesh(K.ballast, M.ballast, false);
   WD.wins = vmesh(K.lit, M.lit, false);
 
   // ---- field walls along the south road and north bank: cover for advancing squads
@@ -744,7 +788,7 @@ function world() {
     // far away: an impostor (gs.outdoors: cards with baked pictures of the leafy tree), or the painted
     // cards when there's no 3D to bake with; the painted cards still cast the far shadows
     const near = make_(1), cards = make_(2), imp = impostor(make_(0), leaves, { cards: 3, size: 256, round: .6, material: { roughness: .85 } });
-    const lod = imp ? [[TREE_LOD[0], near], [TREE_LOD[1], imp.geometry, imp.material], [1e9, cards]] : [[TREE_LOD[0], near], [TREE_LOD[1], cards]];
+    const D = k === 'fir' ? FIR_LOD : TREE_LOD, lod = imp ? [[D[0], near], [D[1], imp.geometry, imp.material], [1e9, cards]] : [[D[0], near], [D[1], cards]];
     if (imp) looks.leaves(imp.material, { time: GU.uTime, wind: AIR, sun: GU.uSun, sway: .004, above: 3, atlas: [768, 256] });
     const m = props.kind(k, make_(0), leaves, { lod, shadowFar: 70 });
     m.addShadowLOD(near, 0);   // close shadows from the leafy shape, far ones from the cards
@@ -757,7 +801,8 @@ function world() {
     if (z > -60 && z < 150 && x > -150 && x < 110) return true;
     return false;
   };
-  land.scatter(props, 'fir', 190, { below: 70, steep: .6, gap: 5.5, seed: 3, keepOut: (x, z) => clear(x, z) || z > -150, scale: [.8, 1.35] });
+  // the fir woods on the hills behind the village: thick enough to close over (far off they are a few cards each)
+  land.scatter(props, 'fir', 1100, { below: 70, steep: .6, gap: 3.4, seed: 3, keepOut: (x, z) => clear(x, z) || z > -150 || (z < -200 && Math.abs(x - STREAMX) < 44 && land.height(x, z) < LAKE + 1.2), scale: [.7, 1.5] });
   land.scatter(props, 'oak', 170, { steep: .5, gap: 8, seed: 5, keepOut: (x, z) => clear(x, z) || z < -170, scale: [.75, 1.25] });
   // poplars in lines along the lanes and the river banks, away from the lines of fire
   const R = rng(11), rows = [];
@@ -924,7 +969,7 @@ const PEOPLE_SPEC = (() => {
       belt: { colour: '#2b2723', buckle: '#6d6c62' }, webbing: { colour: '#2b2723', pouches: 2 }, extras: { scarf: '#55584a' } } }],
     ally: [hale({ skin: '#e0b28b', hair: '#3a2a1a', iris: '#5a4a34', stubble: .3 }), hale({ skin: '#b98a68', hair: '#1e1814', iris: '#3f3428', stubble: .5, face: { jaw: 1.05, nose: 1.1 } }), hale({ skin: '#e6bea0', hair: '#9a6a3a', iris: '#5a7a8a', stubble: .1, face: { jaw: .95, chin: .95 } })],
     // Wren: a brushed camouflage smock, its hood thrown back, her hair tied up out of the scope's way
-    wren: [{ sex: 'f', skin: '#e2b490', hair: '#4a3424', hairStyle: 'bun', iris: '#6b7a58', lips: '#b0756a', outfit: {
+    wren: [{ sex: 'f', hands: 'grip', skin: '#e2b490', hair: '#4a3424', hairStyle: 'bun', iris: '#6b7a58', lips: '#b0756a', outfit: {
       top: { kind: 'smock', colour: '#5f6742', camo: ['#3c472b', '#7b6b47'], collar: null, pockets: 4 }, legs: { kind: 'trousers', colour: '#4b4d33' }, feet: { kind: 'boots', colour: '#2a221a' },
       belt: { colour: '#5e5640', buckle: '#8a7a50' }, webbing: { colour: '#5e5640', pouches: 2 }, extras: { scarf: '#6b6a45', bag: '#545238' } },
       gear: [{ name: 'hood', bone: 'spine', shapes: [{ ball: [.105, .042, .06], at: [0, 1.5, -.08], rot: [.35, 0, 0], slot: 'top', lumpy: [.03, .006], blend: 0 }, { ball: [.088, .085, .036], at: [0, 1.43, -.118], rot: [.12, 0, 0], slot: 'top', lumpy: [.03, .006], blend: .03 }] }] }],
@@ -1012,6 +1057,124 @@ const GRIP = [0, -.03, .05], FORE = [0, -.028, -.21], IN_HANDS = { rifle: 1, cs:
 const SHOULDER = () => ({ j: { spine: [.14, -.6, 0], head: [.3, .52, .25], armR: [-1.1, 0, .9], foreR: [-1.9, 0, 0], armL: [-1.3, .2, -.2], foreL: [-.5, 0, 0] }, drop: 0 });
 // on the radio: the handset up at his ear
 const CALL = () => ({ j: { spine: [.04, .1, 0], head: [.05, -.15, .12], armR: [-.75, 0, .5], foreR: [-2.25, 0, 0], armL: [0, 0, -.08], foreL: [-.3, 0, 0] }, drop: 0 });
+// ---- moves
+// Wren's and the soldiers' own moves. A pose is a few key frames (gs.poses keys) that the rig fills in
+// between; on the ladder and the zip line her hands and feet are then put on the rungs and the bar
+// (human.touch). This block stands alone (it needs only keys and TAU), so it can be tried out by itself.
+const MOVES = (() => {
+  const S = Math.sin, PI = Math.PI, mix = (a, b, k) => a + (b - a) * k, sm = (a, b, x) => { x = Math.min(1, Math.max(0, (x - a) / (b - a))); return x * x * (3 - 2 * x); };
+  // Up a ladder, hand over hand. One cycle is two rungs: each hand and foot holds its rung while she rises
+  // past it, then goes up two. [when in the cycle it lets go, its rung at the bottom, how far out to the side]:
+  // left hand, right foot, right hand, left foot, the way people climb.
+  const GAP = .32, SWING = .36, LEAD = .2, BACK = .3, LIMBS = { handL: [0, 6, .19], footR: [.08, 2, -.1], handR: [.5, 7, -.19], footL: [.58, 3, .1] };
+  // y: her feet line above the first rung (m). Gives where each hand and foot is in the ladder's own space
+  // (x along the rungs, her left +; y up from the first rung; z out from the ladder), `at` for the body's pose
+  // and `rise`, the surge as each leg pushes. Above rung `top` her hands take the rails, up to `rail`.
+  function ladder(y, top = 1e3, rail = 1e3, out = {}) {
+    const c = y / (GAP * 2) + LEAD; out.at = c - Math.floor(c);
+    for (const k in LIMBS) {
+      const [o, n0, x] = LIMBS[k], hand = k[0] === 'h', i = Math.floor(c - o), u = (c - o - i) / SWING, e = u < 1 ? sm(0, 1, u) : 1, nA = 2 * i + n0 - 2, n = nA + 2 * e;
+      const cap = hand ? rail - .05 : 1e3, yA = Math.min(nA * GAP, cap), yB = Math.min((nA + 2) * GAP, cap), lift = u < 1 ? S(PI * u) * (yB - yA) / (2 * GAP) : 0, p = out[k] ||= { x: 0, y: 0, z: 0 };
+      p.rail = hand ? sm(top, top + 1, n) : 0; p.x = x * mix(1, 1.37, p.rail); p.y = mix(yA, yB, e) + (hand ? 0 : .03); p.z = lift * (hand ? .09 : .13); p.lift = lift;
+    }
+    out.rise = .018 * S(2 * TAU * c + 1);
+    return out;
+  }
+  // The belfry ladder: its top rung, and the floor and the rail ends above the first rung. Her feet reach the
+  // top two rungs when her feet line is at Y_END; then she pulls herself in between the rails and over the sill.
+  const TOP = 33, FLOOR = 10.7, RAIL = 11.8, Y_END = ((TOP - 1) / 2 - LEAD) * 2 * GAP, OVER = 1.8;
+  const track = pts => { const f = keys(pts.map(([t, v]) => [t, { v }])); return t => f(t).j.v; }, fy = n => n * GAP + .03 - FLOOR, E = ladder(Y_END, TOP, RAIL);
+  const over = {
+    root: track([[0, [0, Y_END - FLOOR, BACK]], [.3, [.02, Y_END - FLOOR + .1, BACK - .03]], [.85, [0, -.24, -.06]], [1.25, [0, -.12, -.52]], [OVER, [0, -.3, -.9]]]),
+    footR: track([[0, [-.1, fy(TOP - 1), 0]], [.22, [-.12, -.2, .14]], [.45, [-.13, .14, -.18]], [.6, [-.13, .015, -.4]]]),
+    footL: track([[0, [.1, fy(TOP), 0]], [.85, [.1, fy(TOP), 0]], [1.05, [.12, .17, -.38]], [1.25, [.11, .015, -.78]]]),
+  };
+  // t seconds into that: her feet line, hands and feet (x her left, y up from the floor she steps onto, z out
+  // from the ladder), how firmly her hands still hold the rails, and `at` for the body's pose (topout)
+  function topOut(t, out = {}) {
+    for (const k of ['root', 'footL', 'footR']) { const v = over[k](t), p = out[k] ||= { x: 0, y: 0, z: 0 }; p.x = v[0]; p.y = v[1]; p.z = v[2]; }
+    for (const k of ['handL', 'handR']) { const p = out[k] ||= { x: 0, y: 0, z: 0 }; p.x = E[k].x; p.y = E[k].y - FLOOR; p.z = 0; }
+    out.grip = 1 - sm(.85, 1.15, t); out.at = Math.min(1, t / OVER); out.done = t >= OVER;
+    return out;
+  }
+  const STAND = { hips: [0, 0, 0], spine: [.03, 0, 0], head: [0, 0, 0], armL: [0, 0, .06], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [0, 0, -.06], foreR: [-.2, 0, 0], handR: [0, 0, 0], legL: [0, 0, 0], shinL: [.05, 0, 0], footL: [0, 0, 0], legR: [0, 0, 0], shinR: [.05, 0, 0], footR: [0, 0, 0] };
+  const poses = {
+    topout: [keys([
+      [0, { hips: [.06, 0, 0], spine: [.1, 0, 0], head: [-.42, 0, 0], armL: [-2.3, 0, -.1], foreL: [-.5, 0, 0], handL: [0, 0, 0], armR: [-2.3, 0, .1], foreR: [-.5, 0, 0], handR: [0, 0, 0], legL: [-.8, 0, 0], shinL: [1.1, 0, 0], footL: [.1, 0, 0], legR: [-.8, 0, 0], shinR: [1.1, 0, 0], footR: [.1, 0, 0] }],
+      [.17, { hips: [.1, .12, 0], spine: [.3, -.12, 0], head: [-.2, 0, 0] }],
+      [.33, { hips: [.2, .05, 0], spine: [.55, 0, 0], head: [-.05, 0, 0] }],
+      [.48, { hips: [.25, 0, 0], spine: [.62, 0, 0], head: [-.25, 0, 0], armL: [-1.2, 0, -.2], foreL: [-.9, 0, 0], armR: [-1.2, 0, .2], foreR: [-.9, 0, 0] }],
+      [.7, { hips: [.25, 0, 0], spine: [.5, 0, 0], head: [-.3, 0, 0], armL: [-.25, 0, -.14], foreL: [-.9, 0, 0], armR: [-.25, 0, .14], foreR: [-.9, 0, 0] }],
+      [1, { hips: [.2, 0, 0], spine: [.42, 0, 0], head: [-.28, .25, 0], armL: [-.1, 0, -.1], foreL: [-1.1, 0, 0], armR: [-.1, 0, .1], foreR: [-1.1, 0, 0] }],
+    ]), { time: OVER, once: true }],
+    // A soldier knocked out, by where the round came from: thrown back off his feet; down on his knees and onto
+    // his face; or spun and dropped on his side. He goes limp, hits the ground, settles. (His left is +x: an arm
+    // or leg out to his left turns +z, to his right -z.)
+    fallBack: [keys([
+      [0, { ...STAND, drop: 0, shift: [0, 0, 0] }],
+      [.1, { hips: [-.12, 0, 0], spine: [-.28, .1, 0], head: [-.35, 0, 0], armL: [-.5, 0, .6], foreL: [-.5, 0, 0], armR: [-.3, 0, -.8], foreR: [-.7, 0, 0], legL: [-.1, 0, 0], shinL: [.3, 0, 0], legR: [.1, 0, 0], shinR: [.25, 0, 0], drop: .02, shift: [0, 0, -.03] }],
+      [.38, { hips: [-.55, 0, .05], spine: [-.2, 0, 0], head: [-.1, 0, 0], armL: [-.9, 0, 1], foreL: [-.6, 0, 0], armR: [-.7, 0, -1.1], foreR: [-.5, 0, 0], legL: [-.75, 0, .08], shinL: [1.5, 0, 0], legR: [-.5, 0, -.1], shinR: [1.3, 0, 0], drop: .2, shift: [0, 0, -.22] }],
+      [.62, { hips: [-1.42, 0, .06], spine: [.12, 0, 0], head: [.3, 0, 0], armL: [-.5, 0, 1.2], foreL: [-.5, 0, 0], armR: [-.3, 0, -1], foreR: [-.8, 0, 0], legL: [-.9, 0, .12], shinL: [1.5, 0, 0], legR: [-.5, 0, -.2], shinR: [1, 0, 0], drop: .5, shift: [0, 0, -.5] }],
+      [.74, { hips: [-1.5, 0, .06], spine: [.02, 0, 0], head: [-.05, .1, 0], drop: .475 }],
+      [1, { hips: [-1.5, 0, .06], spine: [.08, 0, 0], head: [.15, .45, 0], armL: [-.25, 0, 1.15], foreL: [-.35, 0, 0], armR: [-.1, 0, -.55], foreR: [-1, 0, 0], legL: [-.55, 0, .14], shinL: [1.1, 0, 0], legR: [-.12, 0, -.24], shinR: [.3, 0, 0], drop: .49, shift: [0, 0, -.52] }],
+    ]), { time: 1.05, once: true }],
+    fallFront: [keys([
+      [0, { ...STAND, drop: 0, shift: [0, 0, 0] }],
+      [.1, { hips: [.1, 0, 0], spine: [.3, -.1, 0], head: [.3, 0, 0], armL: [-.3, 0, .5], foreL: [-.6, 0, 0], armR: [-.2, 0, -.6], foreR: [-.8, 0, 0], legL: [-.25, 0, 0], shinL: [.5, 0, 0], legR: [.05, 0, 0], shinR: [.4, 0, 0], drop: .03, shift: [0, 0, .03] }],
+      [.36, { hips: [.35, 0, 0], spine: [.45, 0, 0], head: [.1, 0, 0], armL: [-1.2, 0, .4], foreL: [-.9, 0, 0], armR: [-.9, 0, -.5], foreR: [-1.1, 0, 0], legL: [-.35, 0, 0], shinL: [1.7, 0, 0], legR: [-.2, 0, 0], shinR: [1.6, 0, 0], drop: .26, shift: [0, 0, .12] }],
+      [.62, { hips: [1.4, 0, .05], spine: [-.1, 0, 0], head: [-.35, .5, 0], armL: [-3, 0, .8], foreL: [-.4, 0, 0], armR: [.05, 0, -.9], foreR: [-.3, 0, 0], legL: [.02, 0, .1], shinL: [.5, 0, 0], legR: [.05, 0, -.15], shinR: [.9, 0, 0], drop: .5, shift: [0, 0, .48] }],
+      [.75, { hips: [1.47, 0, .05], drop: .478 }],
+      [1, { hips: [1.47, 0, .05], spine: [-.08, 0, 0], head: [-.3, .7, 0], armL: [-3, 0, .9], foreL: [-.3, 0, 0], armR: [.1, 0, -1], foreR: [-.2, 0, 0], legL: [0, 0, .12], shinL: [.15, 0, 0], legR: [.04, 0, -.2], shinR: [.7, 0, 0], drop: .49, shift: [0, 0, .5] }],
+    ]), { time: 1.05, once: true }],
+    fallRight: [keys([
+      [0, { ...STAND, drop: 0, shift: [0, 0, 0] }],
+      [.1, { hips: [0, .15, .1], spine: [.05, .25, .22], head: [0, .2, .3], armL: [-.4, 0, .9], foreL: [-.5, 0, 0], armR: [-.2, 0, -.3], foreR: [-.6, 0, 0], legL: [-.1, 0, 0], shinL: [.3, 0, 0], legR: [0, 0, 0], shinR: [.3, 0, 0], drop: .02, shift: [-.03, 0, 0] }],
+      [.38, { hips: [.1, .3, .55], spine: [.2, .2, .2], head: [.1, 0, .2], armL: [-.8, 0, .9], foreL: [-.8, 0, 0], armR: [-.6, 0, -.4], foreR: [-1, 0, 0], legL: [-.5, 0, 0], shinL: [1.3, 0, 0], legR: [-.7, 0, 0], shinR: [1.5, 0, 0], drop: .22, shift: [-.2, 0, 0] }],
+      [.62, { hips: [.1, .35, 1.4], spine: [.25, .1, .05], head: [.1, 0, -.25], armL: [-1, 0, .2], foreL: [-.9, 0, 0], armR: [-1.2, 0, -.2], foreR: [-.7, 0, 0], legL: [-.7, 0, 0], shinL: [1.2, 0, 0], legR: [-.3, 0, 0], shinR: [.9, 0, 0], drop: .47, shift: [-.46, 0, 0] }],
+      [.75, { hips: [.1, .35, 1.47], drop: .45 }],
+      [1, { hips: [.1, .35, 1.47], spine: [.3, .1, .05], head: [.2, 0, -.3], armL: [-.9, 0, .15], foreL: [-1, 0, 0], armR: [-1.3, 0, -.2], foreR: [-.6, 0, 0], legL: [-.8, 0, 0], shinL: [1.25, 0, 0], legR: [-.25, 0, 0], shinR: [.7, 0, 0], drop: .46, shift: [-.48, 0, 0] }],
+    ]), { time: 1.05, once: true }],
+    // down on his right knee to fire, bladed to his target (the arms are then brought onto the rifle)
+    kneel: [p => { const b = S(p * TAU) * .006; return { j: { hips: [.04, -.25, 0], spine: [.14 + b, .2, 0], head: [-.05, .05, 0], legL: [-1.45, 0, .1], shinL: [1.45, 0, 0], footL: [0, 0, 0], legR: [.38, 0, -.06], shinR: [1.22, 0, 0], footR: [1, 0, 0], armL: [-.5, 0, .1], foreL: [-1, 0, 0], armR: [-.3, 0, -.1], foreR: [-1.2, 0, 0] }, drop: .21 }; }, { time: 4 }],
+    // right down behind cover, on the balls of his feet, his head under the top of a low wall
+    duck: [p => { const b = S(p * TAU) * .005; return { j: { hips: [.25, 0, 0], spine: [.62 + b, 0, 0], head: [.05, 0, 0], legL: [-2.05, 0, .16], shinL: [2.45, 0, 0], footL: [-.25, 0, 0], legR: [-1.9, 0, -.14], shinR: [2.5, 0, 0], footR: [-.3, 0, 0], armL: [-.75, 0, .12], foreL: [-1.3, 0, 0], armR: [-.6, 0, -.1], foreR: [-1.4, 0, 0] }, drop: .33 }; }, { time: 3.5 }],
+    // a round cracks past: he ducks his head into his shoulders, half down, and looks for where it came from
+    flinch: [keys([
+      [0, { ...STAND, drop: 0 }],
+      [.22, { hips: [.12, 0, 0], spine: [.5, .15, 0], head: [.35, .2, 0], armL: [-1.1, 0, .35], foreL: [-2, 0, 0], armR: [-.9, 0, -.3], foreR: [-1.9, 0, 0], legL: [-.55, 0, .05], shinL: [1.1, 0, 0], legR: [-.4, 0, -.05], shinR: [1, 0, 0], drop: .075 }],
+      [.6, { spine: [.45, .1, 0], head: [.2, -.35, 0], drop: .07 }],
+      [1, { hips: [.03, 0, 0], spine: [.15, 0, 0], head: [0, 0, 0], armL: [-.2, 0, .1], foreL: [-.7, 0, 0], armR: [-.2, 0, -.1], foreR: [-.8, 0, 0], legL: [-.15, 0, 0], shinL: [.3, 0, 0], legR: [-.1, 0, 0], shinR: [.25, 0, 0], drop: .015 }],
+    ]), { time: .6, once: true }],
+    // The zip line. Under the bar with both hands on it: a look down the line, she sinks, then springs and her knees come up
+    zipReady: [keys([
+      [0, { hips: [0, 0, 0], spine: [-.04, 0, 0], head: [.02, 0, 0], legL: [-.06, 0, -.04], shinL: [.12, 0, 0], footL: [0, 0, 0], legR: [.05, 0, .04], shinR: [.1, 0, 0], footR: [0, 0, 0], armL: [-2.9, 0, -.2], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [-2.9, 0, .2], foreR: [-.2, 0, 0], handR: [0, 0, 0], drop: 0 }],
+      [.4, { head: [.16, .12, 0], spine: [0, .05, 0] }],
+      [.72, { hips: [.14, 0, 0], spine: [.12, 0, 0], head: [-.05, 0, 0], legL: [-.55, 0, -.04], shinL: [1.05, 0, 0], legR: [-.45, 0, .04], shinR: [.95, 0, 0], drop: .085 }],
+      [1, { hips: [-.12, 0, 0], spine: [.04, 0, 0], head: [-.2, 0, 0], legL: [-1.0, 0, -.06], shinL: [1.6, 0, 0], footL: [.45, 0, 0], legR: [-.6, 0, .06], shinR: [1.25, 0, 0], footR: [.45, 0, 0], drop: 0 }],
+    ]), { time: 1, once: true }],
+    // riding it: tucked up under the bar, the legs working a little against the swing
+    zipRide: [p => { const s = S(p * TAU), c = S(p * TAU * 2 + .7); return { j: { hips: [-.16 + .03 * s, .05 * s, 0], spine: [.08, -.05 * s, 0], head: [-.22, .14 * s, 0], legL: [-1.05 + .07 * s, 0, -.06], shinL: [1.62 + .08 * c, 0, 0], footL: [.45, 0, 0], legR: [-.8 - .07 * s, 0, .06], shinR: [1.38 - .08 * c, 0, 0], footR: [.45, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0] }, drop: 0 }; }, { time: 2.6 }],
+    // coming in: the feet out in front to take the roof
+    zipBrace: [() => ({ j: { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, -.07], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, .07], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0] }, drop: 0 }), 0],
+    // the feet strike, she folds right down over them, a hand out for balance, then up and a look across the valley
+    zipLand: [keys([
+      [0, { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, -.07], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, .07], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0], drop: 0 }],
+      [.1, { hips: [0, 0, 0], spine: [.2, 0, 0], legL: [-.7, 0, -.08], shinL: [.6, 0, 0], footL: [0, 0, 0], legR: [-.5, 0, .08], shinR: [.7, 0, 0], footR: [0, 0, 0], armL: [-2.3, 0, -.4], foreL: [-.5, 0, 0], armR: [-2.3, 0, .4], foreR: [-.5, 0, 0], drop: .04 }],
+      [.3, { hips: [.3, 0, 0], spine: [.6, 0, 0], head: [-.45, 0, 0], legL: [-1.8, 0, -.14], shinL: [2.25, 0, 0], footL: [.25, 0, 0], legR: [-1.45, 0, .14], shinR: [2.15, 0, 0], footR: [.5, 0, 0], armL: [-.95, 0, -.3], foreL: [-.5, 0, 0], armR: [-.5, 0, .45], foreR: [-.9, 0, 0], drop: .43 }],
+      [.52, { hips: [.26, 0, 0], spine: [.52, 0, 0], head: [-.4, .1, 0], drop: .4 }],
+      [.82, { hips: [.06, 0, 0], spine: [.14, 0, 0], head: [-.05, .3, 0], legL: [-.16, 0, -.05], shinL: [.3, 0, 0], footL: [0, 0, 0], legR: [.02, 0, .05], shinR: [.22, 0, 0], footR: [0, 0, 0], armL: [-.08, 0, -.1], foreL: [-.35, 0, 0], armR: [.05, 0, .1], foreR: [-.3, 0, 0], drop: .03 }],
+      [1, { hips: [.02, 0, 0], spine: [.05, .1, 0], head: [0, .42, 0], legL: [-.06, 0, -.04], shinL: [.12, 0, 0], legR: [.05, 0, .04], shinR: [.1, 0, 0], armL: [0, 0, -.08], foreL: [-.25, 0, 0], armR: [0, 0, .08], foreR: [-.25, 0, 0], drop: 0 }],
+    ]), { time: 1.35, once: true }],
+    // her body on the ladder (the arms and legs are placed on the rungs): leaning in, looking up, the hips
+    // swinging over the foot that pushes
+    ladder: [p => { const s = S(p * TAU); return { j: { hips: [.06, .05 * s, .03 * s], spine: [.1, -.09 * s, .07 * s], head: [-.42, 0, -.03 * s], armL: [-2.3, 0, -.1], foreL: [-.5, 0, 0], handL: [0, 0, 0], armR: [-2.3, 0, .1], foreR: [-.5, 0, 0], handR: [0, 0, 0], legL: [-.2, 0, 0], shinL: [.35, 0, 0], footL: [.1, 0, 0], legR: [-.2, 0, 0], shinR: [.35, 0, 0], footR: [.1, 0, 0] }, drop: 0, shift: [.035 * s, 0, 0] }; }, 0],
+  };
+  // (the same to his left: left and right swapped, turned the other way)
+  const flip = f => p => { const s = f(p), j = {}; for (const k in s.j) { const a = s.j[k], c = k[k.length - 1]; j[c === 'L' ? k.slice(0, -1) + 'R' : c === 'R' ? k.slice(0, -1) + 'L' : k] = [a[0], -a[1], -a[2]]; } return { j, drop: s.drop, shift: s.shift && [-s.shift[0], s.shift[1], s.shift[2]] }; };
+  poses.fallLeft = [flip(poses.fallRight[0]), poses.fallRight[1]];
+  return { GAP, BACK, TOP, FLOOR, RAIL, Y_END, OVER, ladder, topOut, poses };
+})();
+// ---- end moves
 const POOL = {};
 function man(look) {
   const list = POOL[look] ||= [];
@@ -1020,7 +1183,7 @@ function man(look) {
   const firsts = people()[look], root = list.length < firsts.length ? firsts[list.length] : firsts[list.length % firsts.length].twin();
   const none = { visible: true }, gun = look === 'officer' ? null : soldierRifle(look === 'rook' || look === 'wren');
   if (gun) { root.bones.spine.add(gun); gun.position.copy(HOLDS.slung.p); gun.quaternion.copy(HOLDS.slung.q); }
-  root.rig.add('shoulder', SHOULDER).add('call', CALL);
+  root.rig.add('shoulder', SHOULDER).add('call', CALL); for (const k in MOVES.poses) root.rig.add(k, ...MOVES.poses[k]);
   root.userData = { used: true, look, rifle: gun || none, gun, pack: root.gear.pack || none, aerial: none, helmet: root.gear.hat || none, k: 0 };
   root.lod = 2;   // far off until see() says otherwise (behind the field file nobody is looked at, and a squad at full detail is a lot to draw)
   list.push(root); WD.v.scene.add(root);
@@ -1045,13 +1208,9 @@ function carry(m, h, dt, close, pitch = 0) {
   if (k > .5 && close) m.hold(g, GRIP, FORE);
 }
 // Wren up close (the ladder, the zip line, the train): the same kind of person, in her scrim hood and
-// scarf, the scoped rifle slung across her back; her own materials, so the dusk can warm her alone
+// scarf, the scoped rifle slung across her back (at dusk the lamps of a move light her: see STAGE)
 function wrenFigure() {
   const w = man('wren'); POOL.wren.length = 0; w.userData.gun.position.copy(HOLDS.back.p); w.userData.gun.quaternion.copy(HOLDS.back.q); w.userData.gun = null;
-  w.mats = [];
-  for (const m of w.lods) { m.material = m.material.map(q => q.clone()); w.mats.push(...m.material); }
-  for (const m of w.mats) if (m.emissive) { m.emissive.set('#ffb57a'); m.emissiveIntensity = 0; }
-  WD.wrenMats = w.mats;
   return w;
 }
 function freeMen() { for (const k in POOL) for (const f of POOL[k]) { f.userData.used = false; f.visible = false; } }
@@ -1105,9 +1264,9 @@ const MOODS = {
   },
 };
 // trees swap to fewer leaves past these distances (further when you look through the scope)
-const TREE_LOD = [85, 240];
+const TREE_LOD = [85, 240], FIR_LOD = [60, 130];   // (the firs are a wood seen from far off: many, and cards sooner)
 // lit windows at dusk: the strength of the light each throws, and the height the village stands at (to find where you look)
-const WIN_LIGHT = 6, VILLAGE_Y = 6;
+const WIN_LIGHT = 6, VILLAGE_Y = 6, STAGE = [6, 1.3];
 
 // ------------------------------------------------------------------ the game
 function make(api) {
@@ -1197,7 +1356,7 @@ function make(api) {
   const tmpV = new Vector3(), tmpA = new Vector3(), tmpB = new Vector3();
   const HOLD = 1.25;   // seconds the camera holds on a hit
   const nestEye = n => { const y = WD.land.height(n.x, n.z) + n.up + .5; return { x: n.x + (n.ex || 0), y, z: n.z + (n.ez || 0) }; };
-  const groundAt = (x, z) => (Math.abs(x - BRIDGE.x) < 3 && z > BRIDGE.z0 && z < BRIDGE.z1) ? WD.deckY(z) : WD.land.height(x, z);
+  const groundAt = (x, z) => (Math.abs(x - BRIDGE.x) < 3 && z > BRIDGE.z0 && z < BRIDGE.z1) ? WD.deckY(z) : WD.ground(x, z);
   const dirOf = (yaw, pitch, out = tmpV) => out.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
   const fovNow = () => 62 / (scoped ? zoom : glass ? 3.2 : 1);
 
@@ -1207,8 +1366,8 @@ function make(api) {
     const s = { get down() { return this.ko; }, get alive() { return !this.ko; }, kind: 'rifle', x: 0, y: 0, yaw: 0, hp: 1, maxHp: 1, ko: false, alert: false, route: null, ri: 0, wt: 0, speed: 0, path: null, pathTo: null, fireT: rnd(1, 3), order: { do: 'hold' }, tagged: false, look: look_, sus: 0, crouch: false, aimAt: null, vx: 0, vy: 0, ...o, m };
     m.userData.pack.visible = s.kind === 'radio' || s.look === 'ally';
     m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer';
-    m.rig.play('idle', { fade: 0 }); m.rig.upper(null);
-    s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0); m.position.set(s.x, s.gy, s.y); m.rotation.y = s.yaw;
+    m.rig.play('idle', { fade: 0 }); m.rig.upper(null); m.rig.layers[m.rig.layers.length - 1].phase = Math.random(); m.rig.sw = null;   // (each breathes and shifts his weight in his own time)
+    s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0); m.position.set(s.x, s.gy, s.y); m.rotation.set(0, s.yaw, 0);
     return s;
   }
   const alive = list => list.filter(s => !s.ko);
@@ -1220,13 +1379,39 @@ function make(api) {
     if (!s.mind) s.mind = riflemen.mind();
     if (why === 'body') say('Man down! Sniper!', 'GREY ORDER', 1.6, true);
   };
-  function knockOut(s, head, d, viaCam) {
+  // He goes down the way the round throws him: onto his knees and face when it comes from behind, back off his
+  // feet when it meets him, onto his side from the side; never into a wall, and he ends lying along the slope.
+  const FALLS = { fallFront: [0, 1], fallBack: [0, -1], fallLeft: [1, 0], fallRight: [-1, 0] };
+  function fall(s, from) {
+    const m = s.m, rel = from ? angDiff(Math.atan2(s.x - from.x, s.y - from.z), s.yaw) : rnd(-Math.PI, Math.PI), sy = Math.sin(s.yaw), cy = Math.cos(s.yaw);   // the way the round travels, against the way he faces
+    const order = Math.abs(rel) < .8 ? ['fallFront', 'fallLeft', 'fallRight', 'fallBack'] : Math.abs(rel) > 2.3 ? ['fallBack', 'fallRight', 'fallLeft', 'fallFront'] : rel > 0 ? ['fallLeft', 'fallBack', 'fallFront', 'fallRight'] : ['fallRight', 'fallBack', 'fallFront', 'fallLeft'];
+    const at = (lx, lz, r) => [s.x + (lx * cy + lz * sy) * r, s.y + (-lx * sy + lz * cy) * r];
+    const pick = order.find(n => { const [x, z] = at(...FALLS[n], 1.2); return !solidAt(x, z, WD.solids); }) || order[0];
+    // (a man on a knee or ducked is already half way down: his fall starts there, not from standing)
+    m.rig.play(pick, { fade: s.crouch ? .16 : .1, again: true, from: s.low ? .36 : s.crouch ? .3 : 0 }); m.rig.upper(null);
+    const g = (lx, lz) => { const [x, z] = at(lx, lz, .7); return groundAt(x, z); };
+    s.tilt = s.deck == null ? [Math.atan2(g(0, -1) - g(0, 1), 1.4), Math.atan2(g(1, 0) - g(-1, 0), 1.4)] : null; s.fallT = 0; s.still = false; s.act = null; s.thud = false;
+  }
+  // a man who is down: his fall plays out, his body comes to lie along the ground, and then he is left be
+  function lie(s, dt) {
+    const m = s.m; if (s.still) return;
+    m.rig.update(dt, { speed: 0 });
+    if (s.tilt) { const k = sm(.3, .72, m.rig.phase); m.rotation.order = 'YXZ'; m.rotation.x = s.tilt[0] * k; m.rotation.z = s.tilt[1] * k; }
+    if (!s.thud && m.rig.phase > .6) {   // he meets the ground: dust (mud in the rain) from under him
+      s.thud = true; const [fx_, fz_] = FALLS[m.rig.state] || [0, 0], sy = Math.sin(s.yaw), cy = Math.cos(s.yaw), x = s.x + (fx_ * cy + fz_ * sy) * .5, z = s.y + (-fx_ * sy + fz_ * cy) * .5;
+      if (s.deck == null) for (let i = 0; i < 7; i++) WD.dust.emit({ x: x + rnd(-.4, .4), y: s.gy + .08, z: z + rnd(-.4, .4), vx: rnd(-.9, .9), vy: rnd(.2, .9), vz: rnd(-.9, .9), life: rnd(.8, 1.4), size: .28, grow: 2.2, col: rain.amount > .2 ? [.3, .27, .21] : [.56, .49, .37], a: .32, drag: 2.2, fadeIn: true });
+    }
+    if (m.rig.done && (s.fallT += dt) > .7) s.still = true;
+  }
+  // a round cracks past, or the man beside him drops: he ducks his head into his shoulders
+  function flinch(s) { if (s.ko || s.act || s.fixed || s.kind !== 'rifle') return; s.act = 'flinch'; s.m.rig.play('flinch', { fade: .08, again: true }); }
+  function knockOut(s, head, d, viaCam, from = null) {
     if (warming) return;
     if (s.ko) return;
-    s.ko = true; s.m.rig.play('downed', { fade: .25 }); s.m.rig.upper(null); dropRifle(s);
+    s.ko = true; fall(s, from); dropRifle(s);
     // a long duel was a good fight; dropping in the open in his first seconds was a dull one
     endMind(s, s.alert ? (s.alertT > 7 ? .5 : s.alertT < 2 && s.plan !== 'hold' ? -.2 : 0) : 0);
-    for (const o of men) if (o !== s && !o.ko && Math.hypot(o.x - s.x, o.y - s.y) < 16) o.shaken = Math.max(o.shaken || 0, .75);
+    for (const o of men) if (o !== s && !o.ko && Math.hypot(o.x - s.x, o.y - s.y) < 16) { o.shaken = Math.max(o.shaken || 0, .75); if (Math.hypot(o.x - s.x, o.y - s.y) < 7) flinch(o); }
     squad.hurt(s); squad.cover.free(s);
     bodies.add(s.x, s.y, s);
     let pts = 100; const tags = [];
@@ -1447,7 +1632,7 @@ function make(api) {
     if (h.s) {
       { const sc = (h.d || 0) * (h.head ? 1.3 : 1) * (b.masked ? 1.1 : 1);   // the round's best shot, for the replay at the end
         if (!bestShot || sc > bestShot.sc) { const rel = Math.atan2(wind.z, wind.x) + Math.atan2(-(x - b.x0), -(z - b.z0)); bestShot = { sc, s: h.s, head: h.head, d: Math.round(h.d || 0), from: { x: b.x0, y: b.y0, z: b.z0 }, to: { x, y, z }, wind: Math.cos(rel) * Math.hypot(wind.x, wind.z), covered: b.masked }; } }
-      knockOut(h.s, h.head, h.d, viaCam);
+      knockOut(h.s, h.head, h.d, viaCam, { x: b.x0, z: b.z0 });
       if (firstShotHit == null) firstShotHit = true;
       if (h.s === cs && gun.shotsAtCs === 1) cs.oneShot = true;
     } else {
@@ -1455,6 +1640,16 @@ function make(api) {
       if (h.bell) { ringBell(x, y, z); return; }
       const stoneHit = h.box && h.box.kind !== 'house';
       for (const f of WD.flocks) if (Math.hypot(f.x - x, f.z - z) < 35) flush(f, 'hit');
+      // into the river or the reservoir: a spout of water where the round went in, and nothing of the bed below
+      { const lvl = z < -206 && Math.abs(x - STREAMX) < 36 ? LAKE : -1.4;
+        if (h.ground && y < lvl - .05) {
+          const k = b.vy < -1 ? (y - lvl) / b.vy : 0, sx = x - b.vx * k, sz = z - b.vz * k;
+          for (let i = 0; i < 16; i++) WD.dust.emit({ x: sx, y: lvl + .05, z: sz, vx: rnd(-1.1, 1.1), vy: rnd(3, 8), vz: rnd(-1.1, 1.1), life: 1.2, size: rnd(.05, .11), col: [.84, .88, .9], a: .9, grav: 12, floor: lvl });
+          for (let i = 0; i < 7; i++) WD.dust.emit({ x: sx, y: lvl + .2, z: sz, vx: rnd(-.5, .5), vy: rnd(1.5, 4.5), vz: rnd(-.5, .5), life: rnd(.7, 1.2), size: .4, grow: 2.6, col: [.8, .85, .88], a: .45, drag: 2.2, grav: 5, fadeIn: true });
+          for (let i = 0; i < 10; i++) { const a = i / 10 * TAU; WD.dust.emit({ x: sx, y: lvl + .04, z: sz, vx: Math.cos(a) * 1.6, vy: .25, vz: Math.sin(a) * 1.6, life: .9, size: .16, grow: 1.5, col: [.78, .83, .86], a: .4, drag: 1.6 }); }
+          noise(.22, { vol: .05 * (viaCam ? 1 : .45), from: 1600, to: 300, filter: 'bandpass', q: .8 });
+          return;
+        } }
       const wet = rain.amount > .2 && h.ground, col = stoneHit ? [.7, .68, .62] : h.box ? [.74, .66, .54] : wet ? [.32, .27, .2] : [.52, .44, .32];
       const bl = Math.hypot(b.vx, b.vy, b.vz) || 1, bx = -b.vx / bl, bz = -b.vz / bl;   // back towards the shooter, the way debris flies
       for (let i = 0; i < 12; i++) WD.dust.emit({ x, y: y + .1, z, vx: rnd(-1.5, 1.5) + bx * 1.5, vy: rnd(.5, 3.5), vz: rnd(-1.5, 1.5) + bz * 1.5, life: rnd(1, 1.6), size: .4, grow: 2.2, col, a: .8, drag: 2.5, grav: 3, fadeIn: true });
@@ -1465,7 +1660,7 @@ function make(api) {
       // a near miss makes them jumpy (and the smack of it is heard round about)
       noises.make(x, z, 28);
       if (cs && !cs.ko && !(cs.hideT > 0) && Math.hypot(cs.x - x, cs.y - z) < 6) rookHide(cs, .25);   // a near miss sends Rook behind the bell
-      for (const s of men) if (!s.ko && Math.hypot(s.x - x, s.y - z) < 8) { s.sus = 1; s.shaken = 1; if (!b.masked || Math.hypot(s.x - x, s.y - z) < 3) wakeUp(s, 'miss'); }
+      for (const s of men) if (!s.ko && Math.hypot(s.x - x, s.y - z) < 8) { s.sus = 1; s.shaken = 1; flinch(s); if (!b.masked || Math.hypot(s.x - x, s.y - z) < 3) wakeUp(s, 'miss'); }
     }
     if (h.drum) drumHit(h.drum);
   }
@@ -1625,6 +1820,7 @@ function make(api) {
   }
 
   // ---- moving between nests
+  const RUN_V = 5.6, CLIMB_V = 1.05, GAITS = { walk: 1.5, jog: 3.2, run: 5.6 }, KNEES = { L: [.3, -.1, 1], R: [-.3, -.1, 1] }, ELBOWS = { L: [.3, -1, -.05], R: [-.3, -1, -.05] };
   function nextNest() { const list = mission.nests; const i = list.indexOf(nestId); return list[i + 1] || (mid === 'm2' ? list[0] : null); }
   // Moving shows Wren doing it, in third person: riding the zip line, running the last stretch and
   // climbing in (a ladder or a door), or climbing the belfry at the start. Tap to skip; the fight goes on.
@@ -1634,15 +1830,18 @@ function make(api) {
     const dest = NESTS[to];
     if (!kind && nestId === 'ridge' && to === 'tower') {
       zip = new Zipline(WD.zipA, WD.zipB, { gravity: 170, drag: .14 });
-      move = { to, kind: 'zip', t: 0, fade: 0, land: -1, sw: 0, swv: 0, lastV: 0, passed: false, hum: 0 };   // she clips on, jumps, then rides (zip.ride at 1 s)
+      move = { to, kind: 'zip', t: 0, fade: 0, land: -1, sw: 0, swv: 0, lastV: 0, passed: false, hum: 0 };   // she takes the bar, springs, then rides (zip.ride at ZIP_GO)
       say('Riding the line down. Keep your head low.', OAKE, 2.4);
     } else {
       // the last 24 m of the run, from the side of the old nest, then in at the door or up the ladder
-      const climb = to === 'chapel', foot = climb ? { x: WD.ladder.x + .3, z: WD.ladder.z } : { x: dest.x, z: dest.z + 3.4 + 3.7 }, from = nest && kind !== 'climb' ? nest : { x: foot.x + 16, z: foot.z + 22 };
+      const climb = to === 'chapel', foot = climb ? { x: WD.ladder.x, z: WD.ladder.z } : { x: dest.x, z: dest.z + 3.4 + 3.7 + 1.7 }, from = nest && kind !== 'climb' ? nest : { x: foot.x + 16, z: foot.z + 22 };
       // her way there goes round walls and houses (the same paths as the soldiers), and we see the end of it
       const pts = runRoute(from, foot, kind === 'climb' ? 14 : 26), len = pts.reduce((a, p, i) => i ? a + Math.hypot(p.x - pts[i - 1].x, p.z - pts[i - 1].z) : 0, 0);
-      const runT = Math.max(.6, len / 5.6), climbT_ = climb ? 3 : 0, inT = climb ? 0 : .9;
-      move = { to, kind: kind || 'run', t: 0, start: pts[0], foot, pts, len, runT, climbT: climbT_, inT, dur: runT + climbT_ + inT + .5, side: Math.random() < .5 ? -1 : 1, fade: 1, yaw: null };
+      // flat out, slowing into the door or the foot of the ladder; then a walk in at the door, or onto the ladder,
+      // the first stretch of the climb, (a cut) the last stretch and in over the sill
+      const vEnd = climb ? .8 : 2.4, slow = Math.min(.7, len / RUN_V * .5), runT = Math.max(.6, (len - (RUN_V + vEnd) / 2 * slow) / RUN_V + slow);
+      move = { to, kind: kind || 'run', climb, t: 0, start: pts[0], foot, pts, len, runT, slow, vEnd, mountT: climb ? .6 : 0, climbA: climb ? 2.3 : 0, climbB: climb ? 2.5 : 0, inT: climb ? MOVES.OVER : 1.1, side: Math.random() < .5 ? -1 : 1, fade: 1, yaw: null };
+      move.dur = runT + move.mountT + move.climbA + move.climbB + move.inT + (climb ? .05 : .25);
     }
     haptic('medium');
   }
@@ -1669,82 +1868,133 @@ function make(api) {
     }
     return { x: pts[0].x, z: pts[0].z, yaw: 0 };
   }
-  // where Wren is and how she moves at time t of the trip, and where the camera is
-  function tripAt(m) {
-    const t = m.t;
+  // where Wren is and how she moves at time t of the trip, and where the camera is (dt: this frame's step; 0 reads it again)
+  function tripAt(m, dt = 0) {
     if (m.kind === 'zip') return zipAt(m);
-    const { foot: f } = m;
-    let fig, cam, yawRun = m.camYaw ?? 0;
+    const t = m.t, f = m.foot, now = m.now ||= { fig: { x: 0, y: 0, z: 0, yaw: 0, speed: 0, turn: 0, pose: null, at: null, fade: .15, touch: null, how: null }, cam: { p: [0, 0, 0], l: [0, 0, 0], fov: 60 } }, fig = now.fig, cam = now.cam;
+    fig.pose = null; fig.at = null; fig.touch = null; fig.turn = 0; fig.fade = .15; cam.fov = 58;
     if (t < m.runT) {
-      const k = t / m.runT, { x, z, yaw } = along(m.pts, k * m.len), look = along(m.pts, Math.min(m.len, k * m.len + 4));
-      yawRun = Math.atan2(look.x - x, look.z - z) || yaw;
-      // the camera turns smoothly as she rounds a corner
-      m.camYaw = m.camYaw == null ? yawRun : m.camYaw + angDiff(yawRun, m.camYaw) * Math.min(1, (t - (m.lastT ?? t)) * 3 + .02); m.lastT = t; yawRun = m.camYaw;
-      fig = { x, y: groundAt(x, z), z, yaw, pose: 'run', speed: 5.6 };
-      const sx = Math.cos(yawRun) * m.side, sz = -Math.sin(yawRun) * m.side, back = lerp(5, 1.5, k);
-      // not inside a wall, and nothing between us and her: try her side, then the other side, then straight behind
-      const her = { x, y: fig.y + 1.2, z }, at = (sd, off) => ({ x: x + sx * sd * off - Math.sin(yawRun) * back, y: fig.y + 2.1, z: z + sz * sd * off - Math.cos(yawRun) * back });
+      const t1 = m.runT - m.slow, u = Math.max(0, t - t1), v = RUN_V + (m.vEnd - RUN_V) * u / m.slow, s0 = m.len - RUN_V * t1 - (RUN_V + m.vEnd) / 2 * m.slow;
+      const s = clamp(s0 + RUN_V * Math.min(t, t1) + RUN_V * u + (m.vEnd - RUN_V) * u * u / (2 * m.slow), 0, m.len), k = t / m.runT;
+      const { x, z, yaw } = along(m.pts, s), look = along(m.pts, Math.min(m.len, s + 4)), yawL = Math.atan2(look.x - x, look.z - z) || yaw;
+      // she turns into a corner rather than snapping round it (and leans into it), and squares up to the ladder or the door
+      const want = t > m.runT - .3 ? (m.climb ? -Math.PI / 2 : Math.PI) : yaw, was = m.yaw ?? want;
+      if (dt > 0) { m.yaw = was + angDiff(want, was) * Math.min(1, dt * 10); m.turn = angDiff(m.yaw, was) / dt; } else m.yaw ??= want;
+      fig.x = x; fig.z = z; fig.y = groundAt(x, z); fig.yaw = m.yaw; fig.speed = v; fig.turn = m.turn || 0;
+      // the camera runs with her, low and a little behind on one side: not inside a wall, and nothing between us and her
+      // (her side, then the other side, then straight behind); it glides to its place, so a wall taking its spot never jolts it
+      const yawC = m.camYaw = m.camYaw == null ? yawL : m.camYaw + angDiff(yawL, m.camYaw) * Math.min(1, dt * 3);
+      const sx = Math.cos(yawC) * m.side, sz = -Math.sin(yawC) * m.side, back = lerp(3, 2, k);
+      // (and never down in the grass: on a bank beside her it keeps its own height over its own ground)
+      const her = { x, y: fig.y + 1.2, z }, at = (sd, off) => { const qx = x + sx * sd * off - Math.sin(yawC) * back, qz = z + sz * sd * off - Math.cos(yawC) * back; return { x: qx, y: Math.max(fig.y + 1.35, groundAt(qx, qz) + 1.3), z: qz }; };
       let cp = null;
-      for (const sd of [1, -1]) { for (let off = 6; off >= 1.5 && !cp; off -= .75) { const q = at(sd, off); if (roomAt(q) && clearLine(q, her)) cp = q; } if (cp) break; }
-      cp ||= { x: x - Math.sin(yawRun) * 2.5, y: fig.y + 2.3, z: z - Math.cos(yawRun) * 2.5 };
-      cam = { p: [cp.x, cp.y, cp.z], l: [x + Math.sin(yawRun) * 2, fig.y + 1.1, z + Math.cos(yawRun) * 2] };
-    } else if (t < m.runT + m.climbT) {
-      // up the ladder, facing the wall (-x)
-      const k = sm(0, 1, (t - m.runT) / m.climbT), L = WD.ladder, y = lerp(L.y0, L.y1, k);
-      fig = { x: L.x, y, z: L.z, yaw: -Math.PI / 2, pose: 'ladder', speed: 1.4 };
-      const cc = climbCam(); cam = { p: [cc.x, L.y0 + 1.5 + (y - L.y0) * .6, cc.z], l: [L.x, y + .9, L.z] };   // a clear spot off the east face
+      for (const sd of [1, -1]) { for (let off = 3; off >= 1.2 && !cp; off -= .6) { const q = at(sd, off); if (q.y < fig.y + 2.4 && roomAt(q) && clearLine(q, her)) cp = q; } if (cp) break; }   // (not from up a steep bank either)
+      if (!cp) { const bx = x - Math.sin(yawC) * 2.5, bz = z - Math.cos(yawC) * 2.5; cp = { x: bx, y: Math.max(fig.y + 2.1, groundAt(bx, bz) + 1.3), z: bz }; }
+      const c0 = m.cp ||= { ...cp }, kc = Math.min(1, dt * 6); c0.x += (cp.x - c0.x) * kc; c0.y += (cp.y - c0.y) * kc; c0.z += (cp.z - c0.z) * kc;
+      if (dt > 0 && (solidAt(c0.x, c0.z, WD.solids) || !clearLine(c0, her))) { c0.x = cp.x; c0.y = cp.y; c0.z = cp.z; }   // (round a corner the glide would take it through the wall: there it cuts to its new place)
+      cam.p[0] = c0.x; cam.p[1] = c0.y + Math.sin(t * 10.3) * .012; cam.p[2] = c0.z;
+      cam.l[0] = x + Math.sin(yawC) * 1.6; cam.l[1] = fig.y + 1.15 + Math.sin(t * 7.1) * .015; cam.l[2] = z + Math.cos(yawC) * 1.6; cam.fov = 60;
+    } else if (!m.climb) {
+      // down to a walk, up to the door and into the dark
+      const k = clamp((t - m.runT) / m.inT, 0, 1), vIn = 1.3, x = f.x, z = f.z - (m.vEnd * k - (m.vEnd - vIn) * k * k / 2) * m.inT;
+      fig.x = x; fig.z = z; fig.y = groundAt(x, z); fig.yaw = Math.PI; fig.speed = lerp(m.vEnd, vIn, k);
+      cam.p[0] = x + 2.4 * m.side; cam.p[2] = f.z + 3.6 - k * .5; cam.p[1] = Math.max(fig.y + 1.45, groundAt(cam.p[0], cam.p[2]) + 1.3); cam.l[0] = x; cam.l[1] = fig.y + 1.2; cam.l[2] = z - 1.5; cam.fov = 56;
     } else {
-      // over the top into the belfry, or in through the door
-      const k = clamp((t - m.runT - m.climbT) / Math.max(.01, m.inT || .5), 0, 1);
-      if (m.climbT) { const L = WD.ladder, cc = climbCam(); fig = { x: L.x - k * 1.2, y: L.y1 + k * .3, z: L.z, yaw: -Math.PI / 2, pose: 'climb', speed: 0 }; cam = { p: [cc.x, L.y0 + 1.5 + (L.y1 - L.y0) * .6, cc.z], l: [L.x - k * .8, L.y1 + .9, L.z] }; }
-      else { const x = f.x, z = f.z - k * 1.6; fig = { x, y: groundAt(x, z), z, yaw: Math.PI, pose: 'walk', speed: 1.8 }; cam = { p: [x + 3.5 * m.side, fig.y + 1.8, f.z + 5], l: [x, fig.y + 1.3, z - 2] }; }
-    }
-    return { fig, cam };
-  }
-  // The zip line, in four shots: a low shot as she clips on and jumps; riding with her, the view
-  // widening as she speeds up; a camera on the line further down that she whooshes past; and from
-  // the tower top as she comes in, lets go and drops onto the tank.
-  const ZIP_PASS = .7;   // where on the line the fly-by camera waits
-  function zipAt(m) {
-    const t = m.t, h = zip.hands, d = zip.dir, yaw = Math.atan2(d.x, d.z), sx = Math.cos(yaw), sz = -Math.sin(yaw), A = WD.zipA, B = WD.zipB;
-    const sp = clamp(zip.speed / 45, 0, 1), k = zip.t;
-    let fig, cam;
-    if (t < 1) {
-      // on the rocks under the line: a crouch, then up to grab the bar (seen from the valley side, the pole behind her)
-      const gy = WD.land.height(A.x, A.z), up = sm(.45, .85, t), y = lerp(gy + .02, h.y - 2.02, up);
-      fig = { x: h.x, y, z: h.z, yaw, pose: t < .45 ? 'crouch' : t < .8 ? 'jump' : 'hang', speed: 0 };
-      cam = { p: [A.x + d.x * 4.5 - sx * 3.6, A.y - .9, A.z + d.z * 4.5 - sz * 3.6], l: [h.x, lerp(gy + 1, A.y - 1, up), h.z], fov: 56 };
-    } else if (m.land >= 0) {
-      // lets go over the tank: drops, lands crouched, stands
-      const fy = WD.land.height(NESTS.tower.x, NESTS.tower.z) + 13.02, drop = Math.max(0, (h.y - 2.02) - fy), q = sm(0, .22, m.land);
-      fig = { x: h.x + d.x * q * .8, y: fy + drop * (1 - q * q), z: h.z + d.z * q * .8, yaw, pose: m.land < .1 ? 'jump' : m.land < .75 ? 'land' : 'idle', speed: 0 };
-      cam = { p: [B.x + d.x * 3.6 + sx * 2.6, fy + 1.5, B.z + d.z * 3.6 + sz * 2.6], l: [fig.x, fy + .9, fig.z], fov: 60 };
-    } else {
-      fig = { x: h.x, y: h.y - 2.02, z: h.z, yaw, pose: 'hang', speed: 0, sw: m.sw, roll: Math.sin(t * 2.3) * .05 * sp };
-      if (k < ZIP_PASS - .09) {
-        // with her: behind and off to one side, pulling back and widening as she picks up speed
-        const back = 3.4 + sp * 1.4, j = sp * .05;
-        cam = { p: [h.x - d.x * back + sx * 1.8 + rnd(-j, j), h.y - d.y * back + .25 + rnd(-j, j), h.z - d.z * back + sz * 1.8], l: [h.x + d.x * 10, h.y + d.y * 10 - 1.6, h.z + d.z * 10], fov: 62 + sp * 14 };
-      } else if (k < .93) {
-        // waiting on the line: she comes at us and flashes past
-        const P = { x: A.x + (B.x - A.x) * ZIP_PASS, y: A.y + (B.y - A.y) * ZIP_PASS, z: A.z + (B.z - A.z) * ZIP_PASS };
-        cam = { p: [P.x - sx * 4.2 + d.x * 2, P.y - 2.6, P.z - sz * 4.2 + d.z * 2], l: [h.x, h.y - 1.2, h.z], fov: 50 };
+      // the belfry ladder: hands and feet on the rungs, then the rails, then in over the sill
+      const L = WD.ladder, tc = t - m.runT, a = tc - m.mountT, fy = L.r0 + MOVES.FLOOR, G = m.G ||= {};
+      const T = m.T ||= { handL: new Vector3(), handR: new Vector3(), footL: new Vector3(), footR: new Vector3() };
+      const how = m.how ||= { knees: KNEES, elbows: ELBOWS, palms: { L: [0, 0, 0], R: [0, 0, 0] }, level: { L: 0, R: 0 }, blend: { handL: 1, handR: 1, footL: 1, footR: 1 } }, b = how.blend;
+      // (she faces the wall, -x: the ladder's own x, y, z are the world's z, y, x here; a palm faces the rung, or across to the other rail)
+      const put = (g, y0) => { for (const k in T) T[k].set(L.lx + g[k].z, y0 + g[k].y, L.z + g[k].x); }, palm = (p, sd, r) => { p[0] = -(1 - .7 * r); p[1] = -.35 * (1 - r); p[2] = -sd * r; };
+      fig.x = L.x; fig.z = L.z; fig.yaw = -Math.PI / 2; fig.speed = 0; fig.touch = T; fig.how = how;
+      if (a < m.climbA + m.climbB) {
+        const on = clamp(tc / m.mountT, 0, 1), y = a < m.climbA ? (L.y0 - L.r0) + Math.max(0, a) * CLIMB_V : MOVES.Y_END - (m.climbA + m.climbB - a) * CLIMB_V;
+        MOVES.ladder(y, MOVES.TOP, MOVES.RAIL, G); put(G, L.r0);
+        fig.y = L.r0 + y + G.rise * on; fig.pose = 'ladder'; fig.at = G.at; fig.fade = .3;
+        palm(how.palms.L, 1, G.handL.rail); palm(how.palms.R, -1, G.handR.rail);
+        how.level.L = .7 * (1 - G.footL.lift * .6); how.level.R = .7 * (1 - G.footR.lift * .6);
+        b.handR = sm(0, .5, on); b.handL = sm(.15, .7, on); b.footL = sm(.3, .85, on); b.footR = sm(.55, 1, on);   // she takes hold, then steps on
+        if (a < m.climbA) {
+          // from the ground by the foot of the tower, looking up after her
+          const q = climbCam(), k = clamp(tc / (m.mountT + m.climbA), 0, 1);
+          cam.p[0] = lerp(q.x, L.x, k * .12); cam.p[1] = L.y0 + .35; cam.p[2] = lerp(q.z, L.z, k * .12);
+          cam.l[0] = L.lx; cam.l[1] = fig.y + 1.25; cam.l[2] = L.z; cam.fov = 58;
+        } else {
+          // from above, by the belfry's corner: she comes up at us, the drop below her
+          cam.p[0] = L.lx + 1.3; cam.p[1] = fy + 2.1; cam.p[2] = L.z - 1.6; cam.l[0] = L.x - .1; cam.l[1] = fig.y + 1.25; cam.l[2] = L.z; cam.fov = 66;
+        }
       } else {
-        // from the tower top, looking back up the line
-        const fy = WD.land.height(NESTS.tower.x, NESTS.tower.z) + 13.02;
-        cam = { p: [B.x + d.x * 3.6 + sx * 2.6, fy + 1.5, B.z + d.z * 3.6 + sz * 2.6], l: [h.x, h.y - 1.3, h.z], fov: 60 };
+        const O = m.O ||= {}; MOVES.topOut(a - m.climbA - m.climbB, O); put(O, fy);
+        fig.x = L.lx + O.root.z; fig.y = fy + O.root.y; fig.z = L.z + O.root.x; fig.pose = 'topout'; fig.at = O.at; fig.fade = .12;
+        palm(how.palms.L, 1, 1); palm(how.palms.R, -1, 1); how.level.L = how.level.R = 1;
+        b.handL = b.handR = O.grip; b.footL = b.footR = 1;
+        // from inside the belfry: she comes in between the rails with the valley behind her
+        cam.p[0] = L.cx - .9 + O.at * .25; cam.p[1] = fy + .95; cam.p[2] = L.z + 1.05; cam.l[0] = L.lx - .4; cam.l[1] = fy + 1; cam.l[2] = L.z; cam.fov = 56;
       }
     }
-    return { fig, cam };
+    return now;
+  }
+  // The zip line, in six shots: from down the slope as she takes the bar and springs; over her shoulder as
+  // she gathers speed; alongside, the valley behind her; a camera on the line further down that she
+  // whooshes past; behind her as the tower comes up; and from the tower top as she comes in feet first and
+  // folds down onto the tank.
+  const ZIP_PASS = .8, ZIP_OVER = .3, ZIP_GO = .9, HANG = 2.1;   // where on the line the fly-by camera waits; when she lifts her feet; her hands above her feet line
+  function zipAt(m) {
+    const t = m.t, h = zip.hands, d = zip.dir, yaw = Math.atan2(d.x, d.z), sx = Math.cos(yaw), sz = -Math.sin(yaw), A = WD.zipA, B = WD.zipB;
+    const sp = clamp(zip.speed / 45, 0, 1), k = zip.t, fy = WD.land.height(NESTS.tower.x, NESTS.tower.z) + 13.02;
+    const len = m.len ||= Math.hypot(B.x - A.x, B.y - A.y, B.z - A.z), run = k * len, pass = ZIP_PASS * len;   // (metres down the line: the shots change by how far she is from each camera)
+    const lit = m.lit ||= (() => { const sun = WD.v.sunDir(tmpA); return sun.x * sx + sun.z * sz > 0 ? 1 : -1; })();   // the sunny side of the line: a camera there has the sun behind it
+    const now = m.now ||= { fig: { x: 0, y: 0, z: 0, yaw: 0, speed: 0, turn: 0, pose: null, at: null, fade: .15, sw: 0, roll: 0, touch: null, how: null }, cam: { p: [0, 0, 0], l: [0, 0, 0], fov: 60 } }, fig = now.fig, cam = now.cam;
+    // her hands on the trolley's bar, palms forward
+    const T = m.T ||= { handL: new Vector3(), handR: new Vector3() }, how = m.how ||= { palms: { L: [d.x, -.25, d.z], R: [d.x, -.25, d.z] }, elbows: { L: [.6, .2, .4], R: [-.6, .2, .4] }, blend: { handL: 1, handR: 1 } };
+    T.handL.set(h.x + sx * .19, h.y - .15, h.z + sz * .19); T.handR.set(h.x - sx * .19, h.y - .15, h.z - sz * .19);
+    fig.x = h.x; fig.z = h.z; fig.yaw = yaw; fig.speed = 0; fig.at = null; fig.sw = 0; fig.roll = 0; fig.touch = T; fig.how = how; fig.fade = .25; how.blend.handL = how.blend.handR = 1;
+    const set = (px, py, pz, lx, ly, lz, fov) => { cam.p[0] = px; cam.p[1] = py; cam.p[2] = pz; cam.l[0] = lx; cam.l[1] = ly; cam.l[2] = lz; cam.fov = fov; };
+    if (m.land >= 0) {
+      // lets go over the tank: her feet take it, she folds down and comes up looking out over the valley
+      const q = m.land, go = 1 - (1 - Math.min(1, q / .55)) ** 2, off = 1 - sm(.02, .16, q);
+      fig.x = h.x + d.x * go * 1.1; fig.z = h.z + d.z * go * 1.1; fig.y = Math.max(fy, lerp(h.y - HANG, fy, sm(0, .14, q))); fig.pose = 'zipLand'; fig.at = Math.min(1, q / 1.35); fig.sw = m.sw * off;
+      how.blend.handL = how.blend.handR = off;
+      set(B.x + d.x * 3.4 + sx * 2.5 * lit, fy + 1.15, B.z + d.z * 3.4 + sz * 2.5 * lit, fig.x, fy + .95 - sm(.1, .4, q) * .25 + sm(.7, 1.2, q) * .25, fig.z, 56);
+    } else if (t < ZIP_GO) {
+      // under the line on the ridge: both hands on the bar, a look down the line, she sinks and springs (seen from down the slope)
+      const gy = WD.land.height(A.x, A.z);
+      fig.y = lerp(gy + .02, h.y - HANG, sm(.7, ZIP_GO, t)); fig.pose = 'zipReady'; fig.at = t / (ZIP_GO + .1); fig.fade = 0;
+      set(A.x + d.x * 3.3 - sx * 2.3, gy + 1.05, A.z + d.z * 3.3 - sz * 2.3, h.x, gy + 1.3, h.z, 50);
+    } else {
+      fig.y = h.y - HANG; fig.pose = k > .9 ? 'zipBrace' : t < ZIP_GO + .1 ? 'zipReady' : 'zipRide'; if (fig.pose === 'zipReady') fig.at = t / (ZIP_GO + .1);
+      fig.sw = m.sw; fig.roll = Math.sin(t * 2.3) * .05 * sp; fig.yaw = yaw + Math.sin(t * 1.7) * .12 * sp;
+      const j = sp * .025, jx = Math.sin(t * 23) * j, jy = Math.sin(t * 31 + 1) * j;
+      if (k < .035) set(A.x + d.x * 3.3 - sx * 2.3, WD.land.height(A.x, A.z) + 1.05, A.z + d.z * 3.3 - sz * 2.3, h.x, h.y - 1, h.z, 50);   // (still the first shot as she swings off)
+      else if (k < ZIP_OVER) {
+        // over her shoulder, the line running away ahead: pulling back and widening as she picks up speed
+        const back = 2.5 + sp * 1;
+        set(h.x - d.x * back + sx * .95 + jx, h.y - d.y * back - .5 + jy, h.z - d.z * back + sz * .95, h.x + d.x * 12, h.y + d.y * 12 - 1.9, h.z + d.z * 12, 62 + sp * 14);
+      } else if (run < pass - 18) {
+        // alongside her, on the sunny side (into the sun she is a shadow in the glare): the camera starts ahead of her
+        // and below, and she draws past it against the valley
+        const u = (run - ZIP_OVER * len) / Math.max(1, pass - 18 - ZIP_OVER * len), fwd = lerp(4.2, -2.4, u), out = lerp(5.6, 4.3, u) * lit;
+        set(h.x + sx * out + d.x * fwd + jx, h.y - lerp(2, .7, u) + jy, h.z + sz * out + d.z * fwd, h.x, h.y - .95, h.z, 46);
+      } else if (run < pass + 24) {
+        // waiting on the line: she comes at us and flashes past
+        const P = { x: A.x + (B.x - A.x) * ZIP_PASS, y: A.y + (B.y - A.y) * ZIP_PASS, z: A.z + (B.z - A.z) * ZIP_PASS };
+        set(P.x + sx * 3.6 * lit + d.x * 2, P.y - 2.7, P.z + sz * 3.6 * lit + d.z * 2, h.x, h.y - 1.1, h.z, 52);
+      } else {
+        // behind her for the run in (back up the line is into the sun and the haze): the tank on its tower comes up fast
+        const u = sm(pass + 24, len - 4, run), back = lerp(6.5, 3.4, u);
+        set(h.x - d.x * back + sx * 1.3 * lit + jx, h.y - d.y * back + .35 + jy, h.z - d.z * back + sz * 1.3 * lit, lerp(h.x, B.x, .5), lerp(h.y - 1.2, fy + .6, .5), lerp(h.z, B.z, .5), lerp(42, 58, u));
+      }
+    }
+    return now;
   }
   // the ride itself: she swings back as she speeds up and forward as the line levels out; sparks off
   // the trolley, a hum that rises with speed, a whoosh past the camera, a thump on the tank
   function zipTick(m, dt) {
-    if (m.t >= 1 && !zip.riding && !zip.done) { zip.ride(); noise(.2, { vol: .05, from: 2400, to: 900 }); metal(0, 1400, .04); haptic('light'); }
+    if (m.t >= ZIP_GO && !zip.riding && !zip.done) { zip.ride(); noise(.2, { vol: .05, from: 2400, to: 900 }); metal(0, 1400, .04); haptic('light'); }
     if (m.land >= 0) {
       const was = m.land; m.land += dt;
-      if (was < .22 && m.land >= .22) { const fy = WD.land.height(NESTS.tower.x, NESTS.tower.z) + 13.02, h = zip.hands; noise(.12, { vol: .07, from: 400, to: 90 }); haptic('medium'); fx.shake(4); for (let i = 0; i < 10; i++) WD.dust.emit({ x: h.x + rnd(-.6, .6), y: fy + .1, z: h.z + rnd(-.6, .6), vx: rnd(-1.5, 1.5), vy: rnd(.3, 1.2), vz: rnd(-1.5, 1.5), life: rnd(.6, 1.1), size: .3, grow: 2.5, col: [.6, .55, .46], a: .35, drag: 2.5 }); }
-      if (m.land > 1.25) { m.fade = Math.min(1, m.fade + dt * 4); if (m.fade >= 1) endMove(); }
+      if (was < .14 && m.land >= .14) { const fy = WD.land.height(NESTS.tower.x, NESTS.tower.z) + 13.02, h = zip.hands; noise(.12, { vol: .07, from: 400, to: 90 }); haptic('medium'); fx.shake(4); for (let i = 0; i < 10; i++) WD.dust.emit({ x: h.x + rnd(-.6, .6), y: fy + .1, z: h.z + rnd(-.6, .6), vx: rnd(-1.5, 1.5), vy: rnd(.3, 1.2), vz: rnd(-1.5, 1.5), life: rnd(.6, 1.1), size: .3, grow: 2.5, col: [.6, .55, .46], a: .35, drag: 2.5 }); }
+      if (m.land > 1.5) { m.fade = Math.min(1, m.fade + dt * 4); if (m.fade >= 1) endMove(); }
       return;
     }
     zip.update(dt);
@@ -1753,6 +2003,9 @@ function make(api) {
     m.swv += (clamp(acc * .035, -.5, .5) - m.sw) * 22 * dt - m.swv * 3.2 * dt; m.sw += m.swv * dt;
     const sp = clamp(zip.speed / 45, 0, 1), h = zip.hands;
     if ((m.hum -= dt) <= 0) { m.hum = .11; noise(.16, { vol: .012 + sp * .035, from: 900 + sp * 2600, to: 700 + sp * 2000, filter: 'bandpass', q: 4 }); }
+    // the air going by: motes that whip past her and the camera
+    // flecks in the air rushing past her shoulder (only in the shot that looks down the line: round another camera they would be a fog)
+    if (sp > .25 && zip.t < ZIP_OVER - .05) { const dr = zip.dir, r = rnd(9, 24), a = rnd(0, TAU), o = rnd(1.2, 4.5); WD.dust.emit({ x: h.x + dr.x * r + Math.cos(a) * o, y: h.y - 1 + Math.sin(a) * o * .7, z: h.z + dr.z * r - Math.sin(a) * o * .3, life: .7, size: rnd(.03, .07), col: [.95, .93, .86], a: .5 }); }
     if (sp > .35 && frame % 2 === 0) WD.sparks.emit({ x: h.x, y: h.y + .02, z: h.z, vx: -zip.dir.x * 6 + rnd(-1, 1), vy: rnd(.5, 2), vz: -zip.dir.z * 6 + rnd(-1, 1), life: rnd(.12, .3), size: .08, col: [3, 2.2, 1.1] });
     if (!m.passed && zip.t > ZIP_PASS) { m.passed = true; noise(.45, { vol: .09, from: 600, to: 2600, filter: 'bandpass', q: 2 }); noise(.5, { vol: .06, from: 2600, to: 500, filter: 'bandpass', q: 2, at: .25 }); haptic('light'); }
   }
@@ -1769,17 +2022,15 @@ function make(api) {
     }
     return true;
   }
-  // could a shot from the eye e reach this man? (walls and buildings, then the ground, as the bullets see it)
+  // Could a shot from the eye e reach this man? (walls and buildings, then the ground, as the bullets see it.)
+  // His whole head must show: the top of a helmet over a parapet is no target, so a man like that counts as
+  // hidden, and comes out. (Kneeling his head is at 1.3 m, right down behind cover under 1 m.)
   function shootable(e, s) {
-    const top = s.gy + (s.crouch ? 1.05 : 1.6);
-    for (const y of [top, top - .45]) {
-      const p = { x: s.x, y, z: s.y };
-      if (!clearLine(e, p)) continue;
-      const L = Math.hypot(p.x - e.x, p.z - e.z), n = Math.ceil(L / 2); let ok = true;
-      for (let i = 1; i < n; i++) { const k = i / n; if (e.y + (p.y - e.y) * k < WD.land.height(e.x + (p.x - e.x) * k, e.z + (p.z - e.z) * k)) { ok = false; break; } }
-      if (ok) return true;
-    }
-    return false;
+    const p = { x: s.x, y: s.gy + (s.low ? .62 : s.crouch ? 1.02 : 1.44), z: s.y };
+    if (!clearLine(e, p)) return false;
+    const L = Math.hypot(p.x - e.x, p.z - e.z), n = Math.ceil(L / 2);
+    for (let i = 1; i < n; i++) { const k = i / n; if (e.y + (p.y - e.y) * k < WD.land.height(e.x + (p.x - e.x) * k, e.z + (p.z - e.z) * k)) return false; }
+    return true;
   }
   // the nearest open ground, a few cells round him, that a shot from e reaches (standing), not right under the nest
   function seenSpot(s, e) {
@@ -1797,15 +2048,16 @@ function make(api) {
   }
   // room round a camera spot: no wall within about a metre and a half, so a corner doesn't fill the shot
   function roomAt(q) { for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (solidAt(q.x + dx, q.z + dz, WD.solids)) return false; return true; }
-  // where the camera watches the belfry climb from: the first spot east of the ladder that sees all of it
+  // where the camera watches her start up the belfry from: a spot on the ground near the foot of the ladder, clear of
+  // walls, that sees her at the bottom and a few metres up
   function climbCam() {
     if (WD.climbCam) return WD.climbCam;
-    const L = WD.ladder, lo = { x: L.x, y: L.y0 + 1, z: L.z }, hi = { x: L.x, y: L.y1 + .5, z: L.z };
-    for (const r of [5, 6.5, 8.5]) for (const a of [-.55, -.3, -.8, 0, -1.05, .3, .55]) {
-      const q = { x: L.x + Math.cos(a) * r, y: L.y0 + 1.5 + (L.y1 - L.y0) * .5, z: L.z + Math.sin(a) * r };
+    const L = WD.ladder, lo = { x: L.x, y: L.y0 + 1, z: L.z }, hi = { x: L.x, y: L.y0 + 4, z: L.z };
+    for (const r of [3.4, 4.2, 5.2]) for (const a of [-.75, -.4, -1.05, 0, .4, .75]) {
+      const q = { x: L.x + Math.cos(a) * r, y: L.y0 + .35, z: L.z + Math.sin(a) * r };
       if (roomAt(q) && clearLine(q, lo) && clearLine(q, hi)) return WD.climbCam = q;
     }
-    return WD.climbCam = { x: L.x + 5.2, z: L.z - 3.6 };
+    return WD.climbCam = { x: L.x + 2.6, z: L.z - 2.4 };
   }
   function endMove() { WD.wren.rotation.x = 0; WD.wren.rotation.z = 0; WD.wren.visible = false; WD.trolley.visible = false; arrive(move.to, move.kind === 'climb'); }
   function arrive(to, quiet = false) {
@@ -1826,7 +2078,7 @@ function make(api) {
   function say(text, who = null, time = 2.6, enemy = false) { lineFx = { text, who, life: time, t: 0, enemy }; }
 
   // ---- Hale's squad (mission 2)
-  function allyDown(a) { if (a.ko) return; a.ko = true; a.m.rig.play('downed'); dropRifle(a); say(a.name + ' is down!', HALE, 2); haptic('warning'); }
+  function allyDown(a) { if (a.ko) return; a.ko = true; fall(a, null); dropRifle(a); say(a.name + ' is down!', HALE, 2); haptic('warning'); }
 
   // ---- the watchtower and its fuel drums (mission 2)
   function buildTower() {
@@ -2018,12 +2270,12 @@ function make(api) {
     hold ||= { x: B.x - ux * 4.5, y: B.y + .5, z: B.z - uz * 4.5 };
     const tag = [r.d + ' M', r.head ? 'HEAD' : null, Math.abs(r.wind) > .4 ? 'WIND ' + Math.abs(r.wind).toFixed(1) + (r.wind > 0 ? ' ▸' : ' ◂') : null, r.covered ? 'COVERED' : null].filter(Boolean).join(' · ');
     return [
-      { at: 0, do: () => { r.s.m.rig.play('idle', { fade: 0 }); WD.bullet.visible = true; } },
+      { at: 0, do: () => { const q = r.s; q.m.rig.play('idle', { fade: 0 }); q.m.rotation.set(0, q.yaw, 0); q.tilt = null; q.still = false; q.fallT = -9; WD.bullet.visible = true; } },
       // the camera rides the round's own path (it was clear: the round flew it), just above and to the side
       { at: 0, cam: [{ x: A.x - ux * 2 + sx * .3, y: A.y + .3, z: A.z - uz * 2 + sz * .3 }, { x: B.x - ux * 4.5 + sx * .3, y: B.y + .3, z: B.z - uz * 4.5 + sz * .3 }], time: T, ease: 'linear',
         look: tt => { const p = at(clamp(tt / T, 0, 1)); WD.bullet.position.set(p.x, p.y, p.z); WD.bullet.rotation.set(0, 0, 0); WD.bullet.lookAt(p.x + ux, p.y + uy, p.z + uz); WD.bullet.rotateX(Math.PI / 2); return { x: p.x + ux * 3, y: p.y + uy * 3, z: p.z + uz * 3 }; } },
       { at: .1, say: tag, who: 'BEST SHOT', time: T + 1.2 },
-      { at: T, do: () => { WD.bullet.visible = false; r.s.m.rig.play('downed', { fade: .2 }); for (let i = 0; i < 14; i++) WD.sparks.emit({ x: B.x, y: B.y, z: B.z, vx: rnd(-2.4, 2.4), vy: rnd(1, 3), vz: rnd(-2.4, 2.4), life: .8, size: .035, col: [2.2, 1.7, .5], drag: 1.5, grav: 6 }); } },
+      { at: T, do: () => { WD.bullet.visible = false; fall(r.s, A); for (let i = 0; i < 14; i++) WD.sparks.emit({ x: B.x, y: B.y, z: B.z, vx: rnd(-2.4, 2.4), vy: rnd(1, 3), vz: rnd(-2.4, 2.4), life: .8, size: .035, col: [2.2, 1.7, .5], drag: 1.5, grav: 6 }); } },
       { at: T, cam: [{ ...hold, x: hold.x + (hold.x - r.s.x) * .15, z: hold.z + (hold.z - r.s.y) * .15 }, hold], look: { x: r.s.x, y: r.s.gy + .7, z: r.s.y }, time: 1.4, ease: 'out' },
     ];
   }
@@ -2106,12 +2358,13 @@ function make(api) {
   function hiddenFor(s, dt, stand) {
     if (!nest || move || state !== 'play') return s.hidT = 0;
     if ((s.chkT = (s.chkT ?? Math.random() * .5) - dt) <= 0) {
-      s.chkT = .5; const c = s.crouch; if (stand) s.crouch = false;
-      const ok = shootable(nestEye(nest), s); s.crouch = c;
+      s.chkT = .5; const c = s.crouch, l = s.low; if (stand) s.crouch = s.low = false;   // (stand: as he is when he rises to fire)
+      const ok = shootable(nestEye(nest), s); s.crouch = c; s.low = l;
       s.hidT = ok ? 0 : (s.hidT || 0) + .5; s.inView = ok;
     }
     return s.hidT || 0;
   }
+  const STRIDES = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 };
   function updateMen(dt) {
     if (warming) return;
     const eye = WD.v.cam.position; pathBudget = 1; thinkBudget = 1; let plantN = 6;
@@ -2122,9 +2375,9 @@ function make(api) {
     if (nest && !move && state === 'play') { const e = nestEye(nest); wrenT ||= {}; wrenT.x = e.x; wrenT.y = e.z; wrenT.hidden = false; } else wrenT = null;
     wrenLight = (mid === 'm2' ? .3 : .5) * (t - lastShotT < 2 ? 2.2 : 1) * (scoped || glass ? 1.3 : 1);
     for (const s of men) {
-      const m = s.m; let speed = 0;
-      if (s.ko) { m.rig.update(dt, { speed: 0 }); if (s.koFx) s.koFx.t += dt; continue; }
-      s.vx = s.vy = 0;
+      const m = s.m; let speed = 0, stance = 'idle';
+      if (s.ko) { lie(s, dt); if (s.koFx) s.koFx.t += dt; continue; }
+      s.vx = s.vy = 0; s.low = false;
       if (s.kind === 'radio') {
         // paces the balcony; steps inside (behind the wall) now and then
         if (s.route) { const r = s.route[s.ri]; if (Math.hypot(r[0] - s.x, r[1] - s.y) > .2) { const d = Math.hypot(r[0] - s.x, r[1] - s.y), k = Math.min(1, 1.1 * dt / d); s.vx = (r[0] - s.x) / d * 1.1; s.vy = (r[1] - s.y) / d * 1.1; s.x += (r[0] - s.x) * k; s.y += (r[1] - s.y) * k; speed = 1.1; s.yaw = turnTo(s.yaw, Math.atan2(r[0] - s.x, r[1] - s.y), dt * 4); } else if ((s.wt += dt) > r[2]) { s.wt = 0; s.ri = (s.ri + 1) % s.route.length; } }
@@ -2150,9 +2403,9 @@ function make(api) {
             if (s.see >= 1 && (s.fireT -= dt) <= 0) { s.aimT = ROOK_AIM; s.fireT = 3.4; tone(1500, { len: .08, wave: 'sine', vol: .03 }); haptic('warning'); }
           }
         }
-        m.rig.play('crouch'); m.rig.upper('aim');
+        stance = 'kneel'; m.rig.upper('aim');
       } else if (s.kind === 'mg' || s.kind === 'mg2') {
-        m.rig.play('crouch'); m.rig.upper(s.kind === 'mg' || men.find(o => o.kind === 'mg').ko ? 'aim' : null);
+        stance = 'kneel'; m.rig.upper(s.kind === 'mg' || men.find(o => o.kind === 'mg').ko ? 'aim' : null);
         const gunner = s.kind === 'mg' || men.find(o => o.kind === 'mg')?.ko;
         if (mgOn && gunner && (s.fireT -= dt) <= 0) {
           s.fireT = rnd(.12, .2); s.burst = (s.burst || 0) + 1; if (s.burst > 8) { s.burst = 0; s.fireT = 1.4; }
@@ -2163,7 +2416,7 @@ function make(api) {
         if (s.kind === 'mg2' && men.find(o => o.kind === 'mg').ko && !s.moved) { s.moved = true; s.x = mgNest.x; s.y = mgNest.z; }
       } else if (s.kind === 'cargun') {
         m.visible = !!car?.on; if (car) { s.x = car.x; s.y = car.z + .4; s.yaw = Math.PI / 2 + Math.PI; }
-        m.rig.play('idle'); m.rig.upper('aim');
+        m.rig.upper('aim');
       } else if (s.alert) {
         s.alertT += dt; s.thinkDt += dt; s.shaken = Math.max(0, (s.shaken || 0) - dt * .2);
         // nobody hides for good: a man the nest can't reach for a few seconds steps out to where it can, and shoots back from there
@@ -2194,7 +2447,8 @@ function make(api) {
           s.order = { do: 'hold' };
           if (nest && !move && Math.hypot(s.x - nest.x, s.y - nest.z) < 40) { const e = nestEye(nest); setTimeout0(2, () => { if (nestId && !move && nest && Math.hypot(e.x - nest.x, e.z - nest.z) < 1) { hurtMe(24, { x: s.x, y: s.gy, z: s.y }); fx.shake(8); noise(.8, { vol: .4, from: 800, to: 60 }); } }); say('Grenade!', null, 1.2); }
         } else { s.crouch = !!o.spot || s.shaken > .3; if (allies) { const ally = nearestAlly(s); if (ally && (s.fireT -= dt) <= 0) { s.fireT = rnd(2, 3.5); enemyShot(s, ally, 'rifle'); } } }
-        m.rig.play(speed > 0 ? 'run' : s.crouch ? 'crouch' : 'idle'); m.rig.upper(speed > 0 ? null : 'aim');
+        // stopped: on a knee with his rifle up, or (between shots from cover) right down behind it
+        s.low = s.crouch && o.do === 'shoot' && !speed; stance = s.low ? 'duck' : s.crouch ? 'kneel' : 'idle'; m.rig.upper(speed > 0 || s.low ? null : 'aim');
       } else {
         // calm: patrol or stand; suspicion grows when bullets land near or a friend drops
         // eyes and ears (gs.senses): he hears shots and near misses and turns to look; close enough,
@@ -2219,9 +2473,13 @@ function make(api) {
         }
         if (s.sus > .5 && !wary) { s.yaw += Math.sin(t * 2 + s.x) * dt; }
         s.sus = Math.max(0, s.sus - dt * .05);
-        m.rig.play(speed > 2 ? 'run' : speed > 0 ? 'walk' : 'idle'); m.rig.upper(wary && sn.mood === 'searching' ? 'aim' : null);   // searching: rifle up, scanning
+        m.rig.upper(wary && sn.mood === 'searching' ? 'aim' : null);   // searching: rifle up, scanning
         if (s.spotter && spotting) { s.yaw = turnTo(s.yaw, Math.atan2(eye.x - s.x, eye.z - s.y), dt * 2); m.rig.upper('aim'); }
       }
+      // his body: a flinch plays right through; else his stride by how fast he goes (easing into it and out), or his stance once he stops
+      s.av = (s.av || 0) + clamp(speed - (s.av || 0), -dt * 9, dt * 12);
+      if (s.act && (m.rig.done || m.rig.state !== s.act)) s.act = null;
+      if (!s.act) { if (s.av > .15) m.rig.blend(STRIDES, s.av); else m.rig.play(stance, { fade: .22 }); }
       s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0);
       m.position.set(s.x, s.gy, s.y); m.rotation.y = s.yaw;
       // indoors (through the mill's balcony door): out of sight and out of reach
@@ -2233,7 +2491,8 @@ function make(api) {
       // a rifleman shoulders his rifle to aim (the gunners and the officer keep the plain pose: hands out to what they hold)
       const armed = IN_HANDS[s.kind] && m.userData.gun; if (armed && m.rig.topOn && m.rig.top === 'aim') m.rig.top = 'shoulder';
       if (!far || (frame + (s.x | 0)) % 3 === 0) {
-        m.rig.update(far ? dt * 3 : dt, { speed, aim: s.alert ? -.05 : 0 });
+        const step = far ? dt * 3 : dt, turn = clamp(angDiff(s.yaw, s.yawWas ?? s.yaw) / step, -6, 6); s.yawWas = s.yaw;   // (he leans into his turns)
+        m.rig.update(step, { speed: s.av, aim: s.alert ? -.05 : 0, turn });
         if (!s.inside) { m.see(WD.v.cam, 1000); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
       }
       // through the scope his feet meet the slope he stands on (foot IK), for the few men in view
@@ -2261,9 +2520,13 @@ function make(api) {
         }
         if (allyGo !== a.lastGo) { a.lastGo = allyGo; a.leg = 0; }
       }
+      a.m.see(WD.v.cam, 1000);
+      if (a.ko) { lie(a, dt); continue; }
       a.gy = groundAt(a.x, a.y); a.m.position.set(a.x, a.gy, a.y); a.m.rotation.y = a.yaw;
-      if (!a.ko) a.m.rig.play(speed > 0 ? 'run' : a.crouch ? 'crouch' : 'idle');
-      a.m.rig.update(dt, { speed }); a.m.see(WD.v.cam, 1000); if (!a.ko) carry(a.m, 1, dt, a.m.lod < 2);
+      a.av = (a.av || 0) + clamp(speed - (a.av || 0), -dt * 9, dt * 12);
+      if (a.av > .15) a.m.rig.blend(STRIDES, a.av); else a.m.rig.play(a.crouch ? 'kneel' : 'idle', { fade: .22 });
+      const turn = clamp(angDiff(a.yaw, a.yawWas ?? a.yaw) / Math.max(dt, 1e-3), -6, 6); a.yawWas = a.yaw;
+      a.m.rig.update(dt, { speed: a.av, turn }); carry(a.m, 1, dt, a.m.lod < 2);
     }
     if (allies.filter(a => a.ko).length >= 2) mission.fail('Hale\'s squad was lost on the bridge.');
   }
@@ -2375,7 +2638,7 @@ function make(api) {
     // Wren herself, seen when she moves between nests
     WD.wren ||= wrenFigure(); WD.wren.visible = false;
     echoFor(missions[id]?.weather === 'rain');   // made here (silent) rather than in the first frame of play
-    if (!WD.wren.rig.poses.ladder) WD.wren.rig.add('ladder', ph => { const q = Math.sin(ph * TAU); return { j: { spine: [.12, 0, 0], head: [-.35, 0, 0], armL: [-2.5 + .45 * q, 0, -.12], armR: [-2.5 - .45 * q, 0, .12], foreL: [-.6 - .4 * Math.max(0, -q), 0, 0], foreR: [-.6 - .4 * Math.max(0, q), 0, 0], legL: [-.95 - .45 * q, 0, 0], shinL: [1.3 + .5 * q, 0, 0], legR: [-.95 + .45 * q, 0, 0], shinR: [1.3 - .5 * q, 0, 0] }, drop: 0 }; }, .8); tower?.g.removeFromParent(); for (const p of tower?.pieces || []) { p.removeFromParent(); p.geometry?.dispose(); }
+    tower?.g.removeFromParent(); for (const p of tower?.pieces || []) { p.removeFromParent(); p.geometry?.dispose(); }
     tower = null; drums = null; car = null; op = null; cs = null; boom.list.length = 0; if (WD.bags) WD.bags.visible = false;
     WD.solids = WD.solids.filter(b => !b.temp);
     for (const h of WD.helmets) { h.life = 0; h.m.visible = false; }
@@ -2656,19 +2919,23 @@ function make(api) {
         if (bulletCam.hold > 0) { bulletCam.hold -= dtReal; if (bulletCam.hold <= 0) { bulletCam = null; WD.bullet.visible = false; } }
         else if (bulletCam.b.dead || bulletCam.t > 4) { bulletCam = null; WD.bullet.visible = false; }
       }
-      // moving between nests
+      // moving between nests (her shots keep the sun's veil down: a camera that turns towards the sun must still show her)
+      { const md = MOODS[mid] || MOODS.m1, g = md.glare * (move ? .45 : 1); if (WD.v.glare !== g) { WD.v.glare = g; WD.v.shafts = md.shafts * (move ? .5 : 1); } }
       if (move) {
         move.t += dt;
         if (move.kind === 'zip') zipTick(move, dt);
         else if (move.t >= move.dur) endMove();
         if (move) {
-          const f = tripAt(move).fig, w = WD.wren; w.visible = true; w.position.set(f.x, f.y, f.z); w.rotation.order = 'YXZ'; w.rotation.y = f.yaw; w.rotation.x = f.sw || 0; w.rotation.z = f.roll || 0;
-          if (f.sw) { const s_ = Math.sin(f.sw), c_ = Math.cos(f.sw); w.position.x -= 2.02 * s_ * Math.sin(f.yaw); w.position.y += 2.02 * (1 - c_); w.position.z -= 2.02 * s_ * Math.cos(f.yaw); }   // she swings from her hands, not her feet
-          WD.trolley.visible = move.kind === 'zip' && move.t >= .6; if (move.kind === 'zip') { const h = zip.hands; WD.trolley.position.set(h.x, h.y + .05, h.z); WD.trolley.rotation.y = f.yaw; }
-          w.rig.play(f.pose, { fade: .15 }); w.rig.update(dt, { speed: f.speed }); w.see(WD.v.cam, 1000);
-          for (const m of WD.wrenMats) m.emissiveIntensity = mid === 'm2' ? .1 : 0;   // a little warm light on her at dusk, or she's lost against the dark stone
+          const f = tripAt(move, dt).fig, w = WD.wren; w.visible = true; w.position.set(f.x, f.y, f.z); w.rotation.order = 'YXZ'; w.rotation.y = f.yaw; w.rotation.x = f.sw || 0; w.rotation.z = f.roll || 0;
+          if (f.sw) { const s_ = Math.sin(f.sw), c_ = Math.cos(f.sw); w.position.x -= HANG * s_ * Math.sin(f.yaw); w.position.y += HANG * (1 - c_); w.position.z -= HANG * s_ * Math.cos(f.yaw); }   // she swings from her hands, not her feet
+          WD.trolley.visible = move.kind === 'zip'; if (move.kind === 'zip') { const h = zip.hands; WD.trolley.position.set(h.x, h.y + .05, h.z); WD.trolley.rotation.y = f.yaw; }
+          if (f.pose) w.rig.play(f.pose, { fade: f.fade ?? .15, at: f.at }); else w.rig.blend(GAITS, f.speed);   // a named move, or her stride by how fast she goes
+          w.rig.update(dt, { speed: f.speed, turn: f.turn || 0 }); w.see(WD.v.cam, 1000);
+          if (f.touch) w.touch(f.touch, f.how);
           // footsteps on the run, rungs on the ladder
-          if (f.speed > 0 && Math.floor(move.t * (f.pose === 'ladder' ? 3 : 3.4)) !== move.step) { move.step = Math.floor(move.t * (f.pose === 'ladder' ? 3 : 3.4)); if (f.pose === 'ladder') tone(220, { len: .04, wave: 'triangle', vol: .02 }); else noise(.07, { vol: .025, from: 700, to: 200 }); }
+          if (f.pose === 'ladder') { const up = move.up ||= {}; for (const k in move.T) { const on = move.G[k].lift > 0; if (up[k] && !on) { if (k[0] === 'f') noise(.05, { vol: .03, from: 500, to: 160 }); tone(k[0] === 'f' ? 170 : 240, { len: .04, wave: 'triangle', vol: k[0] === 'f' ? .022 : .012 }); } up[k] = on; } }
+          else if (!f.pose && f.speed > 0) { const st = Math.floor((w.rig.blendPhase ?? 0) * 2); if (st !== move.step) { move.step = st; noise(.07, { vol: .012 + f.speed * .003, from: 700, to: 200 });
+            if (f.speed > 2.4) for (let i = 0; i < 3; i++) WD.dust.emit({ x: f.x + rnd(-.12, .12), y: f.y + .06, z: f.z + rnd(-.12, .12), vx: rnd(-.4, .4), vy: rnd(.25, .8), vz: rnd(-.4, .4), life: rnd(.5, .9), size: .15, grow: 2.4, col: rain.amount > .2 ? [.3, .27, .21] : [.56, .49, .37], a: .3, drag: 2, fadeIn: true }); } }   // (and what her feet kick up)
         }
       }
       arrivedT = Math.max(0, arrivedT - dt);
@@ -2695,7 +2962,7 @@ function make(api) {
       } else if ((state === 'intro' || state === 'outro') && cut?.shot) {
         const s = cut.shot; cam.position.set(s.x, s.y, s.z); if (s.look) cam.lookAt(s.look.x, s.look.y, s.look.z);
       } else if (move) {
-        const c_ = tripAt(move).cam; cam.position.set(...c_.p); cam.lookAt(...c_.l);
+        const c_ = (move.now || tripAt(move)).cam; cam.position.set(...c_.p); cam.lookAt(...c_.l);
       } else if (bulletCam && bulletCam.hold <= 0 && !bulletCam.b.dead) {
         const b = bulletCam.b, l = Math.hypot(b.vx, b.vy, b.vz), dx = b.vx / l, dy = b.vy / l, dz = b.vz / l;
         // just behind and above the round: it sits low in a tall screen, where it is headed above it
@@ -2716,11 +2983,11 @@ function make(api) {
         gunVis = !scoped && !glass && state === 'play';
       }
       WD.gun.visible = gunVis; if (gunVis) { WD.gun.position.y = -.3 - (boltT > 0 ? Math.sin(boltT * 3) * .03 : 0); WD.bolt.position.z = .05 + (boltT > .2 && boltT < .9 ? .06 : 0); }
-      const f = (state === 'play' && !move && !bulletCam) ? fovNow() : move ? tripAt(move).cam.fov ?? 62 : bulletCam && bulletCam.hold > 0 ? 46 : 62;
+      const f = (state === 'play' && !move && !bulletCam) ? fovNow() : move ? (move.now || tripAt(move)).cam.fov ?? 62 : bulletCam && bulletCam.hold > 0 ? 46 : 62;
       if (Math.abs(cam.fov - f) > .01) { cam.fov = f; cam.updateProjectionMatrix(); }
       // trees keep their leaves further out through the scope
       const lk = clamp(62 / cam.fov, 1, 12);
-      if (Math.abs(lk - WD.lodK) > .05) { WD.lodK = lk; for (const k of ['oak', 'poplar', 'fir']) { const m = WD.props.mesh(k); m.updateLOD(1, TREE_LOD[0] * lk); m.updateLOD(2, TREE_LOD[1] * lk); m.updateShadowLOD(1, 70 * lk); } }
+      if (Math.abs(lk - WD.lodK) > .05) { WD.lodK = lk; for (const k of ['oak', 'poplar', 'fir']) { const m = WD.props.mesh(k), D = k === 'fir' ? FIR_LOD : TREE_LOD; m.updateLOD(1, D[0] * lk); m.updateLOD(2, D[1] * lk); m.updateShadowLOD(1, 70 * lk); } }
       // the sun's shadows cover what you can see (sharp round the target through the scope)
       WD.sl.fit(v, { far: scoped ? 700 : 320, near: scoped || glass ? 0 : 40, ground: WD.ground, around: scoped || glass ? 1.3 : 0, tall: 22 });
       // through the scope, what's in front of and behind the target goes soft (high and ultra)
@@ -2731,7 +2998,17 @@ function make(api) {
       if (WD.train.visible) { WD.train.position.set(train.x, RAILH, RAILZ); }
       // lit windows shine on their walls, the wet road and whoever walks past: the engine's pool of real lights
       // (a few on WebGL, many on WebGPU) sits at the windows nearest the place the camera looks at
-      if (winLit && frame % 5 === 0) {
+      if (winLit && move && WD.wren.visible) {
+        // a move at dusk is lit as a film would light it: a warm lamp beside the camera and a cool one from her far
+        // side, so she has shape against the dark stone (two of the pool's lights, for as long as the shot lasts)
+        const w = WD.wren.position, S = WD.stage ||= [{ x: 0, y: 0, z: 0, col: '#ffc48a', i: STAGE[0] }, { x: 0, y: 0, z: 0, col: '#9db4dc', i: STAGE[1] }], L = WD.stageSpots ||= [...S, ...WD.winSpots];
+        // (close to her and low in strength: a lamp's light falls off with the square of the distance, so a wall she
+        // runs along stays dark stone instead of burning out; and each lamp takes the side of her that has room for it)
+        tmpA.set(cam.position.x - w.x, 0, cam.position.z - w.z).normalize();
+        const put = (q, f, sd, r, up) => { for (const k of [sd, -sd]) { q.x = w.x + (tmpA.x * f - tmpA.z * k) * r; q.z = w.z + (tmpA.z * f + tmpA.x * k) * r; if (roomAt(q)) break; } q.y = w.y + up; };
+        put(S[0], .78, .62, 1.5, 1.7); put(S[1], -.3, -.95, 1.3, 1.6);
+        v.placeLamps(L, w.x, w.y + 1.5, w.z);
+      } else if (winLit && frame % 5 === 0) {
         cam.getWorldDirection(tmpA); const d = clamp(tmpA.y < -.01 ? (cam.position.y - VILLAGE_Y) / -tmpA.y : 160, 6, 420) - 5;   // (a little short of it: the walls facing you first)
         v.placeLamps(WD.winSpots, cam.position.x + tmpA.x * d, VILLAGE_Y + 2, cam.position.z + tmpA.z * d);
       }
@@ -2744,7 +3021,7 @@ function make(api) {
       if (state === 'brief') return briefTap(x, y);
       if (state === 'intro' && cut) { cut.skip(); return; }
       if (state !== 'play') return;
-      if (move) { if (move.kind === 'zip') { zip.t = 1; zip.riding = false; zip.done = true; move.t = Math.max(move.t, 1); move.land = 1.25; } else move.t = Math.max(move.t, move.dur - .35); return; }
+      if (move) { if (move.kind === 'zip') { zip.t = 1; zip.riding = false; zip.done = true; move.t = Math.max(move.t, 1); move.land = 1.5; } else move.t = Math.max(move.t, move.dur - .35); return; }
       if (qte.active) { qte.down(x, y); ptr.set(id, { x, y, sx: x, sy: y, role: 'qte' }); return; }
       if (bulletCam) { bulletCam = null; WD.bullet.visible = false; return; }
       if (inBtn(BTN.fire, x, y)) { fire(); ptr.set(id, { role: 'fire', x, y }); return; }

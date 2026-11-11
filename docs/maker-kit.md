@@ -1795,6 +1795,18 @@ idle, walk, run, sprint, crouch, sneak, aim, jump, fall, land, hang, shimmy, cli
 punch, takedown, downed, wave, sit, or your own. Walk and run cycles follow `speed` so feet don't
 slide; `upper('aim')` aims over the legs. Works on your own models too (pass their joints).
 
+**Lifelike motion** (`gs.poses`): `LIFELIKE` is a set of idle, walk, jog, run, sprint and sneak drawn from where
+the feet go (the heel lands, the foot lies flat, the toes push off; the legs are bent to put it there, so a
+planted foot doesn't slide), with a turning pelvis, countering shoulders and swinging arms:
+`new Rig(parts, { poses: LIFELIKE, weight: 1 })`, then `rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, speed)`.
+`weight` gives the body weight: it leans into a spurt, rocks back as it stops and banks into a turn
+(`rig.update(dt, { speed, turn })`). Your own actions are key poses: `keys([[0, { spine: [.2, 0, 0] }], [.4, { armL:
+[-1, 0, 0], drop: .1 }], [1, {}]])` glides through them on curves that never overshoot (a key names only what
+changes; `drop` lowers the hips, `shift: [x, y, z]` moves them, in metres). `rig.add('vault', keys([...]), { time:
+1.2, once: true })` plays by the clock and holds its end (`rig.done`); `rig.play('climb', { at: rungs % 1 })` lets
+the game hold the phase itself, in step with a ladder or a cutscene. `gs.models.human` people use all of this, and
+`person.touch({ handL, footR, ... })` then puts hands and feet on points in the world (a rung, a bar, a ledge).
+
 **Missions** (`gs.missions`): write a mission as a script that reads like the plan:
 `Mission(function* (m) { m.objective('Reach the roof'); yield m.until(() => roof.has(me)); m.checkpoint();
 m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` makes areas, `all()` and

@@ -185,6 +185,10 @@ so its next round starts there instead of stuttering down again.
   raised parts of its height layer stand up and hide what's behind them as you look across the surface
   (bricks, cobbles, planks, tiles), with no extra triangles. `depth` is in texture widths. WebGL keeps
   the normal map's shading. Use it on big flat surfaces seen at a slant, where it shows the most.
+  It looks after itself far off: the relief flattens where a drawn pixel covers more than a few texels
+  (it couldn't be seen, only crawl), and where the pattern itself gets down to a few pixels (a tenth of
+  the texture is taken as one tile or brick) its bumps flatten and its colour goes over to the texture's
+  average, so a tiled roof a hill away is a calm, even red and not a shimmer.
   `gs.models.relief(mesh)` makes the same height layer into real triangles instead (on WebGL too): see
   [Things made in code](#things-made-in-code-gsmodels).
 - `pbr(col, { sss: true | { colour, power, scale, distortion, ambient, attenuation } })`: subsurface
@@ -824,11 +828,15 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   collar, pockets, buttons and belt, a blouse, a smock, breeches, tall boots, gaiters), hats (helmet, cap,
   beret, wool cap, hood), webbing, pouches, a pack. Creases, collars and hat brims sit in soft shadow worked
   out from the shapes themselves, so there is still no texture file. It stands on `gs.poses`' skeleton (`rig`,
-  `bones`: the same poses, blends and foot planting) in three levels of detail: call
+  `bones`: the same poses, blends and foot planting; it moves with `gs.poses.LIFELIKE`, strides that land on
+  the heel and push off the toes, and has weight: `rig.update(dt, { speed, turn })`) in three levels of detail: call
   `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after
-  `rig.update()`), and `person.gear.hat.visible = false` takes the hat off (also `gear.pack`, and your own
+  `rig.update()`), `person.touch({ handL, handR, footL, footR }, { palms, level, elbows, knees, blend })` puts
+  hands and feet on points in the world (a rung, a bar, a ledge: the grip of a closed hand or the palm of an
+  open one, and the ball of a foot, land on the point; `palms: { L: [x, y, z] }` is the way a palm faces,
+  `level` holds a sole flat, `blend` fades it in), and `person.gear.hat.visible = false` takes the hat off (also `gear.pack`, and your own
   `gear: [{ name, bone, shapes, hide: true }]`); `person.gear.hat.loose()` is a loose copy of it (a plain
   mesh, its middle at its origin, `userData.at` where that sits on its bone) for the helmet that flies off.
   Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle`, `iris`, `lips`, `moustache`, `stubble`, `face`
