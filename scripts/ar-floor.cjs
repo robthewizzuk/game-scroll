@@ -16,7 +16,7 @@ const argv = process.argv.slice(2), opt = name => { const i = argv.indexOf(name)
 const SHOTS = opt('--shots'), SIZE = opt('--size');   // --size 884x1104: another screen (an unfolded foldable, say) rather than a phone
 const GPU = argv.includes('--webgpu');
 const only = argv.find(a => !a.startsWith('--'));
-const GAME = 'bin-flick';
+const GAME = 'bin-flick', LAB_SLOW = 6;   // (seconds more for AR Lab's floor search: settle() below)
 const floorPts = (n, y, o = {}) => `Array.from({ length: ${n} }, () => ({ x: ${o.x ?? 0} + (s.rng() - .5) * ${o.w ?? 2.6}, y: ${y}, z: ${o.z ?? -2} + (s.rng() - .5) * ${o.d ?? 2.6} }))`;
 
 // Each scene: set(s) arranges the pretend room (s = window.__ar, run in the page), then run(t) plays it.
@@ -104,7 +104,7 @@ const scenes = [
       t.ok(down && !down.wall && down.ny > .95, `a tap on the floor (${JSON.stringify(down)})`); await t.shot('walls');
     } },
   { name: 'room: walls not asked of an older phone', game: 'ar-lab', set: `s.can.walls = false; s.planes = [{ id: 'w', x: 0, y: -.3, z: -3, w: 3, d: 2, kind: 'wall', nx: 0, nz: 1 }, { id: 'f', x: 0, y: -1.3, z: -2, w: 3, d: 3 }]`,
-    async run(t) { const r = await t.settle(4); t.is(r.src, 'plane'); t.is(r.walls, 0); } },
+    async run(t) { const r = await t.settle(4); t.is(r.src, 'plane'); t.is(r.walls, 0); t.note(`found in ${r.secs} s`); } },
   { name: 'room: the sun turns to the real light (the phone says where it is)', game: 'ar-lab', set: `s.planes = [{ id: 'f', x: 0, y: -1.3, z: -2, w: 3, d: 3 }]; s.sun = { x: -1, y: 1, z: .2 }`,
     async run(t) {
       await t.settle(4); await t.until(s => s.light === 'real' && s.sun && s.sun[0] < -.55, 5); const s = await t.state(); t.is(s.light, 'real');
@@ -194,8 +194,11 @@ const scenes = [
       wait: ms => page.waitForTimeout(ms),
       async until(fn, secs) { const end = Date.now() + secs * 1000; for (;;) { const s = await state(); if (fn(s) || Date.now() > end) return s; await page.waitForTimeout(80); } },
       // wait for the floor search to end; says how long it took and what the player was told
-      // (WebGPU is drawn in software here, several times slower: the same scene is given longer)
-      async settle(secs) { const s = await t.until(s => s.nat && !s.scan && s.src, GPU ? secs * 3 : secs); return { ...s, secs: +((Date.now() - t0) / 1000).toFixed(1) }; },
+      // (WebGPU is drawn in software here, several times slower: the same scene is given longer. So is AR Lab:
+      // it builds its shaders in its first second, one frozen frame of two seconds or more in software graphics,
+      // and the floor finder's clock counts a tenth of a second for any frame, so its second of waiting for
+      // feature points ends that much later: 3.2 s on a quiet machine, 4.4 to 4.9 s on a busy one)
+      async settle(secs) { const s = await t.until(s => s.nat && !s.scan && s.src, (secs + (sc.game === 'ar-lab' ? LAB_SLOW : 0)) * (GPU ? 3 : 1)); return { ...s, secs: +((Date.now() - t0) / 1000).toFixed(1) }; },
       ok(c, msg) { if (!c) bad.push(msg); },
       note(msg) { notes.push(msg); },   // timings are shown, not judged: a slow test machine isn't a bug
       is(a, e) { if (a !== e) bad.push(`expected ${e}, got ${a}`); },
