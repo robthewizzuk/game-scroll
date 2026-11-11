@@ -73,6 +73,13 @@ export const ROOMS = {
   sunroom: { bg: '#a8c4dc', wall: '#e4decd', floor: ['tiles', { colour: '#dcd5c6', grout: '#a39c8f' }], rug: '#5c9a72', wood: '#c09a68', felt: null, lamp: '#fff6e4', power: .62, sky: '#e6eefa', ground: '#a8987c', amb: .4, env: .42, grade: { saturation: 1.1, contrast: 1, shadows: '#e6eefa', highlights: '#fffaf0' } },
 };
 const roomLook = r => { const o = typeof r === 'string' ? { like: r } : r || {}; return { ...(ROOMS[o.like] || ROOMS.study), ...o }; };
+// The room's floor, rug and felt keep their painted textures: no close-up shader (gs.models.material's
+// closeUp, WebGPU). The camera never comes within reach of it (half a metre at the nearest), but it
+// sits inside the big floor's bounding sphere, which counts as close: the whole floor went over to the
+// recipe worked out per pixel, which has no filtering, so far off every thin gap between the boards
+// broke into dashes that crawled from frame to frame, and the floor vanished for a moment about a
+// second into each game while the new shader was built.
+const BAKED = { closeUp: false };
 
 const woods = new Map();
 /**
@@ -181,16 +188,16 @@ export class Table {
       else { top = latheMesh([[0, topY], [R - tt * .3, topY], [R, topY - tt * .3], [R, topY - tt * .7], [R - tt * .3, topY - tt], [0, topY - tt]], wd, 72); flatUV(top.geometry, R * 2); }
       top.castShadow = false; top.receiveShadow = true; g.add(top);
       if (L.felt) {
-        const felt = new Mesh(shape === 'square' ? new PlaneGeometry(R * 1.9, R * 1.9).rotateX(-Math.PI / 2) : new CircleGeometry(R * .9, 72).rotateX(-Math.PI / 2), material('fabric', { colour: L.felt, repeat: [22, 22], rough: .95 }));
+        const felt = new Mesh(shape === 'square' ? new PlaneGeometry(R * 1.9, R * 1.9).rotateX(-Math.PI / 2) : new CircleGeometry(R * .9, 72).rotateX(-Math.PI / 2), material('fabric', { colour: L.felt, repeat: [22, 22], rough: .95, ...BAKED }));
         felt.position.y = topY + S * .002; felt.receiveShadow = true; g.add(felt);
       }
       const leg = latheMesh([[0, topY - tt], [R * .16, topY - tt], [R * .1, topY - tt - K * .08], [R * .075, floorY + K * .2], [R * .2, floorY + K * .06], [R * .46, floorY + K * .02], [R * .46, floorY], [0, floorY]], wd, 24);
       leg.castShadow = false; g.add(leg);
     }
     const [recipe, look] = L.floor;
-    const fl = new Mesh(new PlaneGeometry(K * 9, K * 9).rotateX(-Math.PI / 2), material(recipe, { ...look, repeat: recipe === 'planks' ? [9, 18] : [9, 9] })); fl.position.y = floorY; fl.receiveShadow = true; g.add(fl);
+    const fl = new Mesh(new PlaneGeometry(K * 9, K * 9).rotateX(-Math.PI / 2), material(recipe, { ...look, repeat: recipe === 'planks' ? [9, 18] : [9, 9], ...BAKED })); fl.position.y = floorY; fl.receiveShadow = true; g.add(fl);
     if (L.rug) {
-      const rug = new Mesh(new CircleGeometry(R * 1.9, 64).rotateX(-Math.PI / 2), material('fabric', { colour: L.rug, repeat: [30, 30], rough: 1 })); rug.position.y = floorY + S * .004; rug.receiveShadow = true; g.add(rug);
+      const rug = new Mesh(new CircleGeometry(R * 1.9, 64).rotateX(-Math.PI / 2), material('fabric', { colour: L.rug, repeat: [30, 30], rough: 1, ...BAKED })); rug.position.y = floorY + S * .004; rug.receiveShadow = true; g.add(rug);
       const trim = new Mesh(new TorusGeometry(R * 1.82, S * .012, 6, 64).rotateX(Math.PI / 2), pbr(new Color(L.rug).multiplyScalar(1.7).getStyle(), { rough: 1 })); trim.position.y = floorY + S * .006; g.add(trim);
     }
     const wallTex = surface(128, ({ col, size: Z }) => { col.fillStyle = '#fff'; col.fillRect(0, 0, Z, Z); speckle(col, Z, 500, '#000', 1.4, .08); });
