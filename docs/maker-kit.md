@@ -80,7 +80,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Chapters, stars, collectibles, unlocks | `gs.campaign` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds placed in 3D, music that builds up | `gs.sound.Ears`, `music({ layers })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
-| Materials, props, sculpted shapes, trees, buildings and close-up people made in code (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
+| Materials, props, sculpted shapes, trees, buildings and close-up people made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
 | Planes, boats, hover craft, floating crates | `gs.craft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |

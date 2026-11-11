@@ -56,6 +56,7 @@ import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.mo
 import { Occlusion } from './occlusion.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
 import { own } from './cleanup.js';
+import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -197,6 +198,8 @@ export const HD = {
   get pack() { return packing.on; }, set pack(v) { packing.on = v !== false; }, get packed() { return { textures: packing.packed, savedMB: +(packing.saved / 1048576).toFixed(1), failed: packing.failed }; },
   /** Cluster detail for big still meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is taken; detailPx: pixels its simpler parts may be out by. */
   detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
+  /** Real surface detail (gs.models.relief): false draws those meshes flat, as they were. */
+  relief: true,
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -800,9 +803,11 @@ export function surface(size, paint, { strength = 2.5, metal = false } = {}) {
   nc.putImageData(out, 0, 0);
   const tx = (cv, srgb, pack = true) => { const t = new CanvasTexture(cv); t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = srgb ? SRGBColorSpace : NoColorSpace; t.anisotropy = 4; t.minFilter = LinearMipmapLinearFilter; if (pack) t.userData.gsPack = srgb ? 'srgb' : 'linear'; return t; };
   const base = { map: tx(C, true), normal: tx(N), rough: roughMips(tx(Rc, false, false), g.r.getImageData(0, 0, size, size).data, nf, size), height: tx(Hc), nf, size, rd: g.r.getImageData(0, 0, size, size).data, ...(Mc ? { metal: tx(Mc) } : {}), canvases: { col: C, h: Hc, r: Rc, ...(Mc ? { m: Mc } : {}) } };
+  noteHeight(base.normal, base.height);   // (which height picture a material's bumps came from: real surface detail reads it, relief.js)
   const set = (u, v, b = base) => {
     if (u === 1 && v === 1) return { ...b, repeat: set };
     const cl = {}; for (const k of ['map', 'normal', 'rough', 'height', 'metal']) { if (!b[k]) continue; cl[k] = b[k].clone(); cl[k].repeat.set(u, v); cl[k].needsUpdate = true; }
+    noteHeight(cl.normal, cl.height);
     return { ...cl, repeat: set };
   };
   return { ...base, repeat: set };
@@ -827,9 +832,11 @@ export function detail(big, fine, { times = 4, strength = .7 } = {}) {
   x.putImageData(im, 0, 0);
   const t = new CanvasTexture(c); t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = NoColorSpace; t.anisotropy = 4; t.minFilter = LinearMipmapLinearFilter; t.userData.gsPack = 'linear';
   const base = { ...big, normal: t, nf: out, rough: big.rd ? roughMips(big.rough.clone(), big.rd, out, n) : big.rough };
+  noteHeight(base.normal, base.height);
   const set = (u, v, b = base) => {
     if (u === 1 && v === 1) return { ...b, repeat: set };
     const cl = { ...b }; for (const k of ['map', 'normal', 'rough', 'height']) if (b[k]) { cl[k] = b[k].clone(); cl[k].repeat.set(u, v); cl[k].needsUpdate = true; }
+    noteHeight(cl.normal, cl.height);
     return { ...cl, repeat: set };
   };
   return { ...base, repeat: set };
@@ -2633,21 +2640,44 @@ function detailMaterial(m) {
   return true;
 }
 const detailVersion = g => g.attributes.position.version + (g.index ? g.index.version * 65537 : 0);
-function detailable(o) {
+// a mesh a twin can stand in for: still, drawn the ordinary way, on the ordinary layer
+function detailFits(o) {
   if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isSkinnedMesh || o.morphTargetInfluences) return false;
   const ud = o.userData; if (ud.detail === false || ud.gsTwin || ud.gsReflect || ud.decal) return false;
-  const g = ud.gsLod?.base || o.geometry;
-  if (!g || NO_DETAIL.has(g) || !detailMaterial(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
-  if ((o.layers.mask & ~SH_BITS) !== 1 || !o.frustumCulled || o.onBeforeRender !== OBR || o.onAfterRender !== OAR) return false;
+  if (!detailMaterial(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
+  return (o.layers.mask & ~SH_BITS) === 1 && o.frustumCulled && o.onBeforeRender === OBR && o.onAfterRender === OAR;
+}
+function detailable(o) {
+  if (!detailFits(o)) return false;
+  const ud = o.userData, g = ud.gsLod?.base || o.geometry;
+  if (!g || NO_DETAIL.has(g)) return false;
   if (g.groups.length > 1 || g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;
   const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
   return tris >= (ud.detail ? DETAIL_OWN_TRIS : HD.detailMin) && canCluster(g);
 }
+// Real surface detail (gs.models.relief, relief.js): a mesh whose relief has arrived is drawn by a twin
+// made from the relief's geometry, however few triangles the mesh itself has. The mesh keeps its own
+// simple geometry for the game. The twin's material is the mesh's own without its parallax (the depth
+// is real now), a copy kept for each material.
+const RELIEF_MATS = new WeakMap();
+function reliefMaterial(m) {
+  if (!m.userData?.pom) return m;
+  let f = RELIEF_MATS.get(m);
+  if (!f) {
+    const ud = m.userData; m.userData = {};   // (three copies userData through JSON, which would write the height picture out as text)
+    try { f = m.clone(); } finally { m.userData = ud; }
+    f.userData = { ...ud }; delete f.userData.pom; delete f.userData.gsLooks; if (f.userData.gsGpu === 'pom') delete f.userData.gsGpu;
+    for (const n of looksOf(m)) lookPatch(f, n, lookSpec(m, n));
+    RELIEF_MATS.set(m, f);
+  }
+  return f;
+}
+const reliefReady = (o, R) => R?.state === 'ready' && (o.userData.gsLod?.base || o.geometry) === R.base && R.base.attributes.position.version === R.ver;
 function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
 function detailDrop(v, e, never = false) {
   const o = e.o, D = v.details;
   D.map.delete(o); e.gone = true;
-  if (never) NO_DETAIL.add(e.g);
+  if (never && !e.relief) NO_DETAIL.add(e.g);
   if (e.twin) { e.twin.removeFromParent(); e.twin.dispose(); e.twin = null; }
   if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
   if (o.userData.gsLod === null) o.userData.gsLod = undefined;   // (automatic LOD may have it again)
@@ -2659,19 +2689,21 @@ function autoDetail(v, now, quiet) {
   if (!quiet) { detailTick(); detailFrame(v.cam); }
   if (HD.detail === false) { if (D.map.size) detailDropAll(v); return; }
   for (const e of D.map.values()) {
-    const o = e.o, g = e.g, tw = e.twin, m = o.userData.gsGlMat || o.material;
+    const o = e.o, g = e.g, base = e.base, tw = e.twin, m0 = o.userData.gsGlMat || o.material, m = e.relief && m0 ? reliefMaterial(m0) : m0;
     // the game changed it: back to drawing as itself (a geometry whose points changed under us is left alone from then on)
-    const changed = detailVersion(g) !== e.ver;
+    const changed = detailVersion(base) !== e.ver, R = reliefOf(o);
     const ud0 = o.userData, lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);   // (1: drawing as itself; BATCH_BIT: its twin is; anything else: the game moved it to a layer of its own)
-    if (changed || e.failed || (o.geometry !== g && ud0.gsLod?.base !== g) || ud0.detail === false || ud0.gsReflect || !detailMaterial(m) || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || !o.frustumCulled || o.onBeforeRender !== OBR || !inScene(o, v.scene)) { detailDrop(v, e, changed || e.failed); continue; }
+    if (changed || e.failed || (o.geometry !== base && ud0.gsLod?.base !== base) || ud0.detail === false || ud0.gsReflect || !detailMaterial(m0) || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || !o.frustumCulled || o.onBeforeRender !== OBR || !inScene(o, v.scene)) { detailDrop(v, e, changed || e.failed); continue; }
+    if (e.relief ? R !== e.relief || HD.relief === false : R?.state === 'ready' && HD.relief !== false) { detailDrop(v, e); D.t = 0; continue; }   // (its relief was taken off or turned off, or has just arrived: looked at again below)
     if (!tw) {
       if (!e.cl) continue;   // still being built
-      if (e.cl.coarseTris > e.cl.fullTris * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
-      if (o.geometry !== g) o.geometry = g;
+      if (!e.relief && e.cl.coarseTris > e.cl.fullTris * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
+      if (o.geometry !== base) o.geometry = base;
       o.userData.gsLod = null;
       const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : null });
       t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
-      v.scene.add(t);
+      // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
+      v.scene.add(t); const ch = v.scene.children; ch.unshift(ch.pop());
     }
     const t = e.twin, ud = o.userData, td = t.userData;
     o.updateWorldMatrix(true, false);
@@ -2679,16 +2711,20 @@ function autoDetail(v, now, quiet) {
     t.visible = shownInScene(o, v.scene);
     if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
     t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : null;
-    td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold;
+    // (once it has drawn it is never hidden for a shader again: its mesh would have to stand in with a shader of its own to build, and for a moment neither drew)
+    td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold || e.shown;
   }
   // now and then: the scene's big meshes that aren't in yet (their clusters come from memory at once, or are asked for, a couple at a time)
-  if (quiet || now - D.t < DETAIL_SCAN) return; D.t = now;
+  if (quiet || (now - D.t < DETAIL_SCAN && D.news === reliefNews.n)) return; D.t = now; D.news = reliefNews.n;
   v.scene.traverseVisible(o => {
-    if (D.map.has(o) || !detailable(o)) return;
+    if (D.map.has(o)) return;
+    const R = o.isMesh ? reliefOf(o) : undefined;
+    if (R && HD.relief !== false && reliefReady(o, R)) { if (detailFits(o)) D.map.set(o, { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), cl: R.clusters, twin: null, failed: false, gone: false, relief: R, shown: false }); return; }
+    if (!detailable(o)) return;
     const g = o.userData.gsLod?.base || o.geometry;
     let cl = null; try { cl = clustersNow(g); } catch (e) { NO_DETAIL.add(g); return; }
     if (!cl && detailAsking >= DETAIL_ASK) return;
-    const e = { o, g, ver: detailVersion(g), cl, twin: null, failed: false, gone: false };
+    const e = { o, g, base: g, ver: detailVersion(g), cl, twin: null, failed: false, gone: false, relief: null, shown: false };
     D.map.set(o, e);
     if (cl) return;
     detailAsking++;
@@ -2700,8 +2736,10 @@ function detailShow(v) {
   const D = v.details; if (!D?.map.size) return;
   for (const e of D.map.values()) {
     const t = e.twin, o = e.o; if (!t) continue;
-    if (t.layers.mask & HOLD_BIT) { if (o.layers.mask === BATCH_BIT) o.layers.mask = 1; }
-    else if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
+    if (t.layers.mask & HOLD_BIT) {
+      if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
+      else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twin: it never waits as well)
+    } else { e.shown = true; if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); } }
   }
 }
 // shadowLights(): scratch (no garbage per frame)

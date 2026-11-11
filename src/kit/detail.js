@@ -327,6 +327,10 @@ function theWorker() {
   return worker;
 }
 const ask = (msg, transfer = []) => new Promise((res, rej) => { const w = theWorker(); if (!w) { rej(new Error('worker')); return; } const id = ++seq; waiting.set(id, { res, rej }); w.postMessage({ id, ...msg }, transfer); });
+/** Asks the detail worker for a job (kit use: relief.js); rejects when there is no worker. */
+export const work = (msg, transfer) => ask(msg, transfer);
+/** Is there a worker to ask? (false in Node, and after one failed to start) */
+export const canWork = () => !workerOff;
 // no workers here (or Node): built on the spot
 async function buildHere(input, o) { const B = await import('./detail-build.js'); await B.buildReady; return B.buildFrom(input, o); }
 function tidy() {

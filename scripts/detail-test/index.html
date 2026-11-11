@@ -134,6 +134,7 @@ try {
   const tw = twinOf(r0); v.scene.remove(r0); await draw(S, 2);
   check('a mesh taken out of the scene takes its twin with it', !v.details.map.has(r0) && !tw.parent && (r0.layers.mask & 1));
   r2.geometry = new T.BoxGeometry(3, 3, 3); await draw(S, 2);
+  for (let i = 0; i < 100 && !(r2.layers.mask & 1); i++) { await draw(S); await new Promise(r => setTimeout(r, 30)); }   // (its new material has never drawn on a plain mesh: it may wait a frame or two for that shader, as any new thing does)
   check('a mesh given another geometry draws as itself again', !v.details.map.has(r2) && (r2.layers.mask & 1));
   v.detail(S.parts[5], false); await draw(S, 2);
   check('v.detail(mesh, false) draws it whole', !v.details.map.has(S.parts[5]) && (S.parts[5].layers.mask & 1));

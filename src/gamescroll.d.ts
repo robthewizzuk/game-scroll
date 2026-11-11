@@ -1966,6 +1966,16 @@ export interface ModelsPart {
   /** The building styles (copy one and change it: { ...gs.models.buildings.brick, bay: 3 }). */
   readonly buildings: Record<string, Record<string, Loose>>;
   /**
+   * Real surface detail for a mesh (or every mesh under a group): the bumps its material only paints (the height layer of pbr({ tex: surface() }) or gs.models.material(): roof tiles, mortar, bark) made into real triangles in a worker and drawn by the Next Gen view through cluster detail, so they cost triangles only where near enough to show. The mesh draws as before until its relief arrives and keeps its own geometry (raycasts and physics are unchanged; nothing is pushed out, only in). Returns what it was given.
+   * Lengths in metres: depth (how far the lowest parts go in; default the material's parallax depth, or 3% of a tile), fine (the smallest detail made, half the depth), coarse (no edge longer than this), error (how far it may be from the picture, a tenth of the depth), maxTris (150,000 a mesh), height (a surface() set or its height texture, when the material has none), mid (0..1: the height that stays where the flat surface was; 1, nothing is pushed out).
+   * relief(target, false) takes it off. mesh.userData.relief: 'building' | 'ready' | 'failed'. Not for materials laid on by position (solid, scatter), skinned, morphing, instanced, multi-material or see-through meshes.
+   */
+  relief: {
+    <M = Loose>(target: M, o?: false | { depth?: number; fine?: number; coarse?: number; error?: number; maxTris?: number; height?: Loose; mid?: number }): M;
+    /** Resolves once the relief of every mesh under target has arrived (or failed), with the number that arrived. */
+    ready(target: Loose): Promise<number>;
+  };
+  /**
    * A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail.
    * Returns a Group with rig, bones, mesh, lods, lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), face.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.

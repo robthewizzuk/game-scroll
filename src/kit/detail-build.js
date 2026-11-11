@@ -19,7 +19,7 @@ import { MeshoptClusterizer } from 'three/examples/jsm/libs/meshopt_clusterizer.
 /** Resolves once buildClusters() can run. */
 export const buildReady = Promise.all([MeshoptSimplifier.ready, MeshoptClusterizer.ready]);
 
-export const BUILD_VERSION = 1;   // (part of every saved build's key: raise it when the tables change)
+export const BUILD_VERSION = 2;   // (part of every saved build's key: raise it when the tables change)
 const MAX_VERTS = 256, HUGE = 3e38;
 
 // one level's clusters from a triangle list: [{ idx (into the caller's points), sphere [x, y, z, r] }]
@@ -110,7 +110,10 @@ function partition(clusters, adj, size) {
  * attrs: the other numbers of each point the simplifier should keep true (normals, UVs, colours), `stride`
  * floats a point, each weighed by `weights` (0.5 suits normals); o: { maxTris: triangles in a cluster (512),
  * group: clusters simplified together (8), sloppy: let a patch that won't simplify any other way be
- * simplified roughly (true) }.
+ * simplified roughly (true); layer and inLayer(triangles, points): for a mesh that is a thin layer of
+ * detail on a simpler surface (relief-build.js), how thick the layer is, and whether a simplified patch
+ * (its triangles, as numbers into `points`, the mesh's point numbers) still lies in it: simplifying inside
+ * the layer is then never counted as more than its thickness, however many levels do it }.
  * Returns { index, start, count, refined, sphere, gFirst, gCount, gSphere, gError, roots, levels, tris, version }:
  *   index: every cluster's triangles, one after another (Uint16Array when the points allow)
  *   cluster c: index[start[c] .. start[c] + count[c]), its own bounding sphere (sphere[c * 4 ..]), and
@@ -119,7 +122,7 @@ function partition(clusters, adj, size) {
  *     it (gSphere) and the error, in the mesh's units, of drawing its coarser version instead (gError)
  *   roots: the first `roots` clusters are the coarsest ones (where picking starts)
  */
-export function buildClusters({ positions, index, attrs = null, stride = 0, weights = null }, { maxTris = 512, group = 8, sloppy = true } = {}) {
+export function buildClusters({ positions, index, attrs = null, stride = 0, weights = null }, { maxTris = 512, group = 8, sloppy = true, layer = 0, inLayer = null } = {}) {
   const nv = positions.length / 3, remap = MeshoptSimplifier.generatePositionRemap(positions, 3);
   const A = attrs && stride > 0 ? attrs : new Float32Array(0), S = attrs && stride > 0 ? stride : 0, W = S ? Array.from(weights || new Array(S).fill(.5)) : [];
   const mark = new Uint32Array(nv), vGroup = new Int32Array(nv), locked = new Uint8Array(nv), loc = new Int32Array(nv).fill(-1);
@@ -156,13 +159,19 @@ export function buildClusters({ positions, index, attrs = null, stride = 0, weig
       if (out.length > enough) { for (const c of members) retry.push(c); continue; }   // stuck: these try again next level, grouped with others
       // the group: a sphere round everything under it, and an error no smaller than anything under it
       const cs = new Float32Array(members.length * 3), rs = new Float32Array(members.length); let worst = 0;
-      members.forEach((c, i) => { cs[i * 3] = c.lod[0]; cs[i * 3 + 1] = c.lod[1]; cs[i * 3 + 2] = c.lod[2]; rs[i] = c.lod[3]; worst = Math.max(worst, c.err); });
-      const sb = MeshoptClusterizer.computeSphereBounds(cs, 3, rs, 1), sphere = [sb.centerX, sb.centerY, sb.centerZ, sb.radius], e = worst + err;
+      let flat = 0, rest = 0;
+      members.forEach((c, i) => { cs[i * 3] = c.lod[0]; cs[i * 3 + 1] = c.lod[1]; cs[i * 3 + 2] = c.lod[2]; rs[i] = c.lod[3]; worst = Math.max(worst, c.err); flat = Math.max(flat, c.flat || 0); rest = Math.max(rest, c.rest || 0); });
+      const sb = MeshoptClusterizer.computeSphereBounds(cs, 3, rs, 1), sphere = [sb.centerX, sb.centerY, sb.centerZ, sb.radius];
+      // Its own error on top of the worst under it, as the simplifier's own measure adds up (squares summed).
+      // Kept in two parts: what was lost inside a layer of detail (flat: never more than the layer is thick)
+      // and the rest.
+      if (layer > 0 && inLayer && out.length && inLayer(out, ids)) flat = Math.min(layer, Math.hypot(flat, err)); else rest = Math.hypot(rest, err);
+      const e = Math.max(worst, Math.hypot(flat, rest));
       const g = groups.length; groups.push({ members, sphere, err: e });
       for (const c of members) c.owner = g;
       // its coarser version, cut into clusters (none left: a small loose part that simplified away to nothing)
       const made = out.length ? clusterize(out, lp, maxTris, ids) : [{ idx: new Uint32Array(0), sphere, lod: null, err: 0, refined: -1, owner: -1, empty: true }];
-      for (const c of made) { c.refined = g; c.lod = sphere; c.err = e; all.push(c); if (!c.empty) next.push(c); }
+      for (const c of made) { c.refined = g; c.lod = sphere; c.err = e; c.flat = flat; c.rest = rest; all.push(c); if (!c.empty) next.push(c); }
       levelTris += out.length / 3;
     }
     if (!next.length) break;   // nothing simplified this level: the mesh is as coarse as it gets
