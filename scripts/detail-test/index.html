@@ -1,0 +1,145 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Cluster detail (src/kit/detail.js, and the view's use of it in hd3d.js) for scripts/detail-test.cjs: a
+// dense scene drawn whole ('plain'), then with the view taking its big meshes by itself ('auto'), to
+// compare the two pictures and count what each drew; then the twins are checked to follow their meshes.
+//   ?gpu  WebGPU    ?n=400  squares along the land's side    ?tier=2    ?w=360&h=480    ?cams=near,far
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { clearBuilds } from '../../src/kit/detail.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480);
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0;
+if (Q.has('fresh')) await clearBuilds();
+// a bumpy hillside, n x n squares
+function land(n, size) {
+  const g = new T.PlaneGeometry(size, size, n, n).rotateX(-Math.PI / 2), p = g.attributes.position;
+  const h = (x, z) => 5 * Math.sin(x * .05) * Math.cos(z * .07) + 1.2 * Math.sin(x * .31 + z * .17) + .25 * Math.sin(x * 1.7) * Math.sin(z * 2.3) + .04 * Math.sin(x * 6.1 + 1) * Math.sin(z * 5.7);
+  for (let i = 0; i < p.count; i++) p.setY(i, h(p.getX(i), p.getZ(i)));
+  g.computeVertexNormals(); return g;
+}
+// a knobbly rock: a ball pushed in and out
+function rock(n, r, seed) {
+  const g = new T.SphereGeometry(r, n * 2, n), p = g.attributes.position, v = new T.Vector3();
+  for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const k = 1 + .18 * Math.sin(v.x * 3 / r + seed) * Math.sin(v.y * 4 / r + seed * 2) + .06 * Math.sin(v.z * 11 / r + seed) * Math.sin(v.x * 13 / r) + .015 * Math.sin(v.y * 37 / r + seed) * Math.sin(v.z * 41 / r); p.setXYZ(i, v.x * k, v.y * k, v.z * k); }
+  g.computeVertexNormals(); return g;
+}
+function scene() {
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .0015, amb: .35 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 3, 60, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const n = +(Q.get('n') || 400), parts = [];
+  const add = (g, m, at) => { const mesh = new T.Mesh(g, m); mesh.position.set(...at); mesh.castShadow = mesh.receiveShadow = true; v.scene.add(mesh); parts.push(mesh); return mesh; };
+  add(land(n, 240), gs.hd.pbr('#6f8a52', { rough: .9 }), [0, 0, 0]);
+  const stone = gs.hd.pbr('#9a948a', { rough: .7 });
+  for (let i = 0; i < 6; i++) add(rock(110, 2 + (i % 3), i * 1.7), stone, [-14 + i * 6 + (i % 2) * 3, 1.5 + (i % 3) * .8, -6 - i * 9]);
+  // a small thing too, which stays as it is
+  add(new T.BoxGeometry(2, 2, 2), gs.hd.pbr('#b0503a'), [6, 3, 6]);
+  return { v, c, x, parts };
+}
+const out = {}, info = {}, pix = {}, checks = [];
+// ?bench: a dense valley (several million triangles in land, rocks and houses) flown through with cluster
+// detail off and on: what each frame draws and what the picking costs. ?size=1 is about 4 million triangles.
+async function bench() {
+  const k = +(Q.get('size') || 1), frames = +(Q.get('frames') || 40), res = {};
+  const house = (w, h, d, seed) => {   // a box with brick courses pressed into its walls
+    const g = new T.BoxGeometry(w, h, d, Math.round(60 * k), Math.round(48 * k), Math.round(60 * k)), p = g.attributes.position, nrm = g.attributes.normal;
+    for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), b = .035 * Math.sign(Math.sin(y * 9 + seed)) * (Math.sin((x + z) * 5 + Math.floor(y * 9 / Math.PI) * 1.3) > -.9 ? 1 : -1.5); p.setXYZ(i, x + nrm.getX(i) * b, y + nrm.getY(i) * b, z + nrm.getZ(i) * b); }
+    g.computeVertexNormals(); return g;
+  };
+  for (const mode of ['plain', 'auto']) {
+    HD.detail = mode === 'auto'; HD.autoLod = true;
+    const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .0015, amb: .35 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+    const sun = gs.hd.sun('#fff2d8', 3, 80, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const parts = [], add = (g, m, at) => { const mesh = new T.Mesh(g, m); mesh.position.set(...at); mesh.castShadow = mesh.receiveShadow = true; v.scene.add(mesh); parts.push(mesh); };
+    add(land(Math.round(700 * k), 420), gs.hd.pbr('#6f8a52', { rough: .9 }), [0, 0, 0]);
+    const stone = gs.hd.pbr('#9a948a', { rough: .7 }), wall = gs.hd.pbr('#b9a78c', { rough: .8 });
+    const rocks = [0, 1, 2, 3, 4, 5].map(i => rock(Math.round(110 * k), 2 + (i % 3), i * 1.7));   // six kinds, placed 36 times
+    for (let i = 0; i < 36; i++) add(rocks[i % 6], stone, [Math.sin(i * 2.4) * (30 + i * 4.5), 2 + (i % 3), Math.cos(i * 2.4) * (30 + i * 4.5)]);
+    const houses = [0, 1, 2].map(i => house(8 + i * 2, 6 + i, 7 + i, i));
+    for (let i = 0; i < 18; i++) add(houses[i % 3], wall, [Math.cos(i * 1.9) * (45 + i * 7), 4, Math.sin(i * 1.9) * (45 + i * 7)]);
+    let full = 0; for (const m of parts) full += m.geometry.index.count / 3;
+    const t0 = performance.now();
+    v.cam.position.set(0, 9, 150); v.cam.lookAt(0, 4, 0);
+    const big = parts.filter(m => m.geometry.index.count / 3 >= HD.detailMin).length;
+    if (mode === 'auto') for (let i = 0; i < 4000; i++) { v.t = 0; v.render(x, W, H); await new Promise(r => setTimeout(r, 50)); const es = [...v.details.map.values()]; if (es.length === big && es.every(e => e.twin && !(e.twin.layers.mask & (1 << 29)))) break; }
+    const ready = performance.now() - t0, sum = { tris: 0, calls: 0, cpu: 0, dtris: 0, picks: 0, ms: 0, draws: 0 };
+    let worst = 0;
+    for (let f = 0; f < frames; f++) {   // a walk down the valley, turning as it goes
+      const a = f / frames; v.cam.position.set(Math.sin(a * 3) * 40, 7 + 3 * Math.sin(a * 9), 150 - a * 260); v.cam.lookAt(Math.sin(a * 3 + .6) * 30, 4, 100 - a * 260); v.cam.updateMatrixWorld();
+      v.t = 0; v.render(x, W, H); await nextFrame();
+      const I = HD.info; sum.tris += I.tris; sum.calls += I.calls; sum.cpu += I.cpu; sum.dtris += I.detail.tris; sum.picks += I.detail.picks; sum.ms += I.detail.ms; sum.draws += I.detail.draws; worst = Math.max(worst, I.detail.ms);
+      if (f === Math.floor(frames / 2)) out['bench-' + mode] = c.toDataURL();
+    }
+    for (const key in sum) sum[key] = +(sum[key] / frames).toFixed(key === 'ms' || key === 'cpu' ? 2 : 0);
+    let bytes = 0; const seen = new Set(); for (const e of v.details?.map.values() || []) if (e.cl && !seen.has(e.cl)) { seen.add(e.cl); bytes += e.cl.bytes; }
+    res[mode] = { backend: HD.info.backend, meshes: parts.length, big, taken: [...(v.details?.map.values() || [])].filter(e => e.twin).length, full, ready: Math.round(ready), perFrame: sum, worstPickMs: +worst.toFixed(2), clusterMB: +(bytes / 1048576).toFixed(1) };
+    HD.detail = false; v.render(x, W, H);   // (lets go of the twins before the next scene)
+  }
+  HD.detail = true;
+  return res;
+}
+if (Q.has('bench')) { try { window.result = { out, info: await bench(), checks: [] }; } catch (e) { window.result = { error: String(e && e.stack || e) }; } throw new Error('bench done'); }
+const CAMS = { near: [[0, 9, 26], [0, 3, -10]], far: [[60, 40, 150], [0, 0, 0]], low: [[-6, 6.5, 8], [10, 5, -40]] };
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+const draw = async (S, frames = 1) => { for (let i = 0; i < frames; i++) { S.v.t = 0; S.v.render(S.x, W, H); if (i < frames - 1) await nextFrame(); } };
+const twins = S => [...(S.v.details?.map.values() || [])].filter(e => e.twin && !(e.twin.layers.mask & (1 << 29)));
+try {
+  let A = null;
+  for (const mode of ['plain', 'auto']) {
+    HD.detail = mode === 'auto'; HD.autoLod = mode === 'auto';   // (plain: every triangle, the picture to match)
+    const t0 = performance.now(), S = scene(); let build = 0;
+    S.v.cam.position.set(...CAMS.near[0]); S.v.cam.lookAt(...CAMS.near[1]);
+    if (mode === 'auto') {   // the view takes the seven big meshes by itself, once their clusters are built and their shader is ready
+      A = S;
+      for (let i = 0; i < 3000 && twins(S).length < 7; i++) { await draw(S); await new Promise(r => setTimeout(r, 30)); }
+      build = performance.now() - t0;
+      check('the view took the 7 big meshes by itself', twins(S).length === 7, twins(S).length + ' of 7 after ' + Math.round(build) + ' ms');
+      check('the small box was left alone', !S.v.details.map.has(S.parts[7]) && (S.parts[7].layers.mask & 1));
+    }
+    for (const [name, [at, to]] of Object.entries(CAMS)) {
+      if (Q.get('cams') && !Q.get('cams').split(',').includes(name)) continue;
+      S.v.cam.position.set(...at); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld();
+      await draw(S, 5);
+      out[mode + '-' + name] = S.c.toDataURL(); pix[mode + '-' + name] = S.x.getImageData(0, 0, W, H).data;
+      info[mode + '-' + name] = { backend: HD.info.backend, tris: HD.info.tris, calls: HD.info.calls, cpu: +HD.info.cpu.toFixed(2), detail: { ...HD.info.detail }, build: Math.round(build) };
+    }
+  }
+  // the two pictures, pixel by pixel
+  for (const name of Object.keys(CAMS)) {
+    const a = pix['plain-' + name], b = pix['auto-' + name]; if (!a || !b) continue;
+    let sum = 0, off = 0; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 24) off++; }
+    const mean = sum / (a.length / 4), share = off / (a.length / 4), P = info['plain-' + name], D = info['auto-' + name];
+    info['auto-' + name].diff = { mean: +mean.toFixed(3), off: +(share * 100).toFixed(3) };
+    check(name + ': the picture matches the full meshes', mean < 1 && share < .003, `mean ${mean.toFixed(2)} of 255, ${(share * 100).toFixed(2)}% of pixels off`);
+    check(name + ': far fewer triangles', D.tris < P.tris * .4, `${D.tris} against ${P.tris}`);
+  }
+  // the twins follow their meshes
+  const S = A, v = S.v, [ground, r0, r1, r2] = S.parts, twinOf = o => v.details.map.get(o)?.twin;
+  v.cam.position.set(...CAMS.near[0]); v.cam.lookAt(...CAMS.near[1]); v.cam.updateMatrixWorld();
+  check('a hidden mesh is on the layer no camera draws, still in the scene', ground.parent === v.scene && ground.visible && !(ground.layers.mask & 1));
+  const ray = new T.Raycaster(v.cam.position.clone(), new T.Vector3(0, 3, -10).sub(v.cam.position).normalize()), hits = ray.intersectObjects(v.scene.children, true);
+  check('a ray hits the game\'s own meshes, never a twin', hits.length > 0 && hits.every(h => S.parts.includes(h.object)) && hits.some(h => h.object === ground) && new Set(hits.map(h => h.object.id + ':' + h.faceIndex)).size === hits.length, hits.map(h => h.object.isDetailMesh ? 'twin' : h.object.type + S.parts.indexOf(h.object)).join(' '));
+  r0.position.y += 3; r0.rotation.y = 1; await draw(S, 2);
+  check('a moved mesh takes its twin with it', twinOf(r0) && twinOf(r0).matrixWorld.equals(r0.matrixWorld));
+  r1.visible = false; await draw(S, 2);
+  check('a hidden mesh hides its twin', twinOf(r1) && twinOf(r1).visible === false);
+  r1.visible = true; r1.castShadow = false; await draw(S, 2);
+  check('shadow casting follows', twinOf(r1).visible === true && twinOf(r1).castShadow === false);
+  const paint = gs.hd.pbr('#4a6fa0', { rough: .4 }); r2.material = paint; await draw(S, 2);
+  check('a new material follows', twinOf(r2) && (twinOf(r2).userData.gsGlMat || twinOf(r2).material) === paint);
+  const tw = twinOf(r0); v.scene.remove(r0); await draw(S, 2);
+  check('a mesh taken out of the scene takes its twin with it', !v.details.map.has(r0) && !tw.parent && (r0.layers.mask & 1));
+  r2.geometry = new T.BoxGeometry(3, 3, 3); await draw(S, 2);
+  check('a mesh given another geometry draws as itself again', !v.details.map.has(r2) && (r2.layers.mask & 1));
+  v.detail(S.parts[5], false); await draw(S, 2);
+  check('v.detail(mesh, false) draws it whole', !v.details.map.has(S.parts[5]) && (S.parts[5].layers.mask & 1));
+  HD.detail = false; await draw(S, 2);
+  check('HD.detail = false puts every mesh back', v.details.map.size === 0 && (ground.layers.mask & 1) && !v.scene.children.some(o => o.isDetailMesh));
+  HD.detail = true;
+  window.result = { out, info, checks };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

@@ -54,6 +54,8 @@ import { packing } from './pack.js';
 import { makeRenderer } from './renderer.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
+import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
+import { own } from './cleanup.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -193,6 +195,8 @@ export const HD = {
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
   get pack() { return packing.on; }, set pack(v) { packing.on = v !== false; }, get packed() { return { textures: packing.packed, savedMB: +(packing.saved / 1048576).toFixed(1), failed: packing.failed }; },
+  /** Cluster detail for big still meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is taken; detailPx: pixels its simpler parts may be out by. */
+  detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -1271,7 +1275,10 @@ export class HDView {
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
     this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.cascade = null; this.beams = null; this.motionBlur = null;
     this.upscaler = undefined;   // 'sgsr1' keeps this view on Snapdragon GSR 1 (lots of fast movers: SGSR 2 can leave a short soft trail)
+    this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
+  /** Called when the card leaves the feed (cleanup.js): lets go of what this view holds on the graphics chip for cluster detail. */
+  free() { detailDropAll(this); }
   /**
    * Outdoor air for every lit material in the scene: haze (how thick the air is: .001 is about 1 km of
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
@@ -1429,6 +1436,18 @@ export class HDView {
     return room;
   }
   /**
+   * Cluster detail (a Nanite-style level of detail; see autoDetail below) happens by itself for big still
+   * meshes. This asks for it on smaller ones too, or changes how fine it is: meshes (or groups) and
+   * { px } pixels their simpler parts may be out by (default HD.detailPx, 1; lower is finer and costs
+   * more). v.detail(meshes, false) keeps them out and draws them whole. v.details.map.size: how many
+   * meshes are in; HD.info.detail: what the last frame drew through it.
+   */
+  detail(meshes, o = {}) {
+    const set = o === false ? false : typeof o.px === 'number' ? o.px : true;
+    for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh) x.userData.detail = set; });
+    return this;
+  }
+  /**
    * Occlusion culling: skip what's fully hidden behind big solid boxes before the frame is drawn (city
    * blocks behind a row of buildings, rooms behind walls). list: boxes { x0, x1, y0, y1, z0, z1 } in
    * world metres (city.occluders() gives them), Box3s, or solid box-like meshes; null turns it off.
@@ -1510,6 +1529,7 @@ export class HDView {
    */
   release() {
     if (this.batches?.list.length) unbatchAll(this);
+    detailDropAll(this);
     if (this.held?.size) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
     this.showHidden();
     return this;
@@ -1799,14 +1819,14 @@ export class HDView {
       const tw = o.userData.gsTwin;
       if (tw) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
-      else if (o.isInstancedMesh2 || o.isBatchedMesh) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
+      else if (o.isInstancedMesh2 || (o.isBatchedMesh && !o.isDetailMesh)) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
       if (o.isSkinnedMesh && o.skeleton) { const b = o.skeleton.bones; for (let j = 0; j < b.length; j += 3) { const m = b[j].matrixWorld.elements; h += (m[12] * 1.1 + m[13] * 1.9 + m[14] * 2.7 + m[0] + m[5] * 1.3) * (j + 1); } wide = true; }
       // still or moving: frames since it last changed
       let rec = SH_LAST.get(o); if (!rec) SH_LAST.set(o, rec = { h, still: 0 }); else if (rec.h !== h) { rec.h = h; rec.still = 0; } else if (rec.still < 1e4) rec.still++;
       const still = rec.still >= (HD.shadowStill ?? SH_STILL) && !held, bit = held ? 0 : still ? SH_STILL_BIT : SH_MOVE_BIT;
       if ((o.layers.mask & SH_BITS) !== bit) o.layers.mask = (o.layers.mask & ~SH_BITS) | bit;
       const g = o.geometry, bs = !wide && g && (g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere));
-      const tris = g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
+      const tris = o.isDetailMesh ? o.fullTris : g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
       if (bs) SH_S.copy(bs).applyMatrix4(o.matrixWorld);
       for (let i = 0; i < n; i++) {
         const l = L[i];
@@ -1872,6 +1892,7 @@ export class HDView {
     if (this.probes.length > 1) this.blendProbes();
     // (built for the screen, not the chain's own picture: a pipeline built for that picture also bound it to read, which WebGPU refuses)
     this.holdNew(r, baking || off, now);
+    detailShow(this);
     const shc = this.shadowCams ||= []; shc.length = 0;
     if (tier().shadow > 0) this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
@@ -1983,7 +2004,7 @@ export class HDView {
     }
     if (!baking && !off) {
       gpuTime(r);
-      HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr;
+      HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
       HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0;
     }
   }
@@ -2116,6 +2137,7 @@ export class HDView {
     const ow = up || s2on ? fw : pw, oh = up || s2on ? fh : ph;
     const cv = r.domElement; if (cv.width !== ow || cv.height !== oh) r.setSize(ow, oh, false);
     if (!baking && !off) speed.gpu = !!G;   // (frame generation needs the game on screen drawn with WebGPU)
+    autoDetail(this, now, !!(baking || off));
     if (this.occlusion && HD.occlude !== false) { this.cullHidden(); HD.info.occluded = this.occlusion.stats.hidden; } else if (this.occHid?.size) this.showHidden();
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
     else {
@@ -2128,6 +2150,7 @@ export class HDView {
     this.patchAir(); this.airUniforms();
     if (this.gi || this.rooms?.length) this.bakeExtras(null, r);
     this.holdNew(r, baking || off, now, this.clearBg ? null : cp.readBuffer);
+    detailShow(this);
     r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
     if (this.clearBg) { P.arRender.scene = this.scene; P.arRender.camera = this.cam; } else { P.render.scene = P.ao.scene = this.scene; P.render.camera = P.ao.camera = this.cam; }
     // reflections (ultra, and only if the game marked shiny surfaces): SSR draws the scene itself
@@ -2198,7 +2221,7 @@ export class HDView {
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     try { cp.render(); } finally { this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); }
-    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; }
+    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
     c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
@@ -2462,6 +2485,7 @@ function autoLod(v, ph) {
     if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.userData.noLod) return;
     let L = o.userData.gsLod;
     if (L === undefined) {
+      if (v.details?.map.has(o)) return;   // (cluster detail has it, or its clusters are on their way)
       const g = o.geometry;
       if (!g?.index || g.groups.length > 1 || Array.isArray(o.material) || o.material.transparent || g.index.count < LOD_MIN_TRIS * 3) { o.userData.gsLod = null; return; }
       if (!g.boundingSphere) g.computeBoundingSphere();
@@ -2502,7 +2526,7 @@ class Eye {
   // read now and then (one read at a time)
   want() { return !this.busy && ++this.n % 6 === 0; }
 }
-const OCC_LAYER = 30;
+const OCC_LAYER = 30, OCC_BIT = 1 << OCC_LAYER;
 // Automatic static batching (HD.batch, on by default): the many small still things of a level (crates,
 // posts, rocks, walls, lamps) that share a material are merged into one mesh per material and area, one
 // draw call (and one shadow draw) where there were dozens: Unity's static batching, done by itself.
@@ -2581,6 +2605,105 @@ function unbatch(B, b) {
   b.mesh.removeFromParent(); b.mesh.geometry.dispose(); B.list.splice(B.list.indexOf(b), 1);
 }
 function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B.list[0]); }
+// Cluster detail (HD.detail, on by default; detail.js): a Nanite-style level of detail for the game's big
+// still meshes (HD.detailMin triangles or more: a hillside, a cliff, a cathedral made in code). Where
+// automatic LOD above swaps a whole mesh for a simpler copy, here the mesh is cut into clusters of a few
+// hundred triangles with coarser and coarser versions of each neighbourhood, and every frame each part of
+// it is drawn only as finely as shows in the picture (within HD.detailPx pixels) and not at all where it
+// is out of view: the near end of a long wall at full detail, the far end at a fraction, with no cracks
+// between them. Shadow maps pick for themselves the same way. So a model can carry far more triangles
+// close up without costing more far away.
+// The clusters take a second or so for each quarter of a million triangles, in a worker; the mesh draws
+// whole until they arrive (and until the cluster shader has built, in the background), and they are kept
+// by the mesh's content (memory, then IndexedDB), so the next round and the next visit have them at once.
+// The game's mesh stays in the scene, untouched, for the game and for raycasts, on the batch layer no
+// camera draws; a DetailMesh twin is drawn in its place and follows its place, material, shadows and
+// visibility. The moment the mesh's geometry or material stops fitting, or it leaves the scene, the twin
+// goes and the mesh draws as itself again. Not for: skinned, morphing, instanced, see-through,
+// alpha-tested, multi-material and moving-vertex meshes (leaves, grass, water), marked reflectors, and
+// mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
+const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6;
+const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock']);   // kit looks that leave the points where they are
+const NO_DETAIL = new WeakSet();   // geometries that can't be clustered, aren't worth it, or keep changing
+let detailAsking = 0;
+const OBR = Object3D.prototype.onBeforeRender, OAR = Object3D.prototype.onAfterRender;
+function detailMaterial(m) {
+  if (!m || Array.isArray(m) || m.transparent || m.alphaTest > 0 || m.alphaHash || m.wireframe || m.displacementMap || m.positionNode || m.isShaderMaterial || m.isRawShaderMaterial) return false;
+  if (Object.hasOwn(m, 'onBeforeCompile') && m.onBeforeCompile !== BASE_OBC) { const l = looksOf(m); if (!l.length || !l.every(n => DETAIL_LOOKS.has(n))) return false; }
+  return true;
+}
+const detailVersion = g => g.attributes.position.version + (g.index ? g.index.version * 65537 : 0);
+function detailable(o) {
+  if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isSkinnedMesh || o.morphTargetInfluences) return false;
+  const ud = o.userData; if (ud.detail === false || ud.gsTwin || ud.gsReflect || ud.decal) return false;
+  const g = ud.gsLod?.base || o.geometry;
+  if (!g || NO_DETAIL.has(g) || !detailMaterial(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
+  if ((o.layers.mask & ~SH_BITS) !== 1 || !o.frustumCulled || o.onBeforeRender !== OBR || o.onAfterRender !== OAR) return false;
+  if (g.groups.length > 1 || g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;
+  const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
+  return tris >= (ud.detail ? DETAIL_OWN_TRIS : HD.detailMin) && canCluster(g);
+}
+function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
+function detailDrop(v, e, never = false) {
+  const o = e.o, D = v.details;
+  D.map.delete(o); e.gone = true;
+  if (never) NO_DETAIL.add(e.g);
+  if (e.twin) { e.twin.removeFromParent(); e.twin.dispose(); e.twin = null; }
+  if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
+  if (o.userData.gsLod === null) o.userData.gsLod = undefined;   // (automatic LOD may have it again)
+}
+function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.map.values()]) detailDrop(v, e); }
+// before the frame's other housekeeping: new big meshes are found and asked for, twins are made and follow their meshes
+function autoDetail(v, now, quiet) {
+  const D = v.details ||= { map: new Map(), t: 0 };
+  if (!quiet) { detailTick(); detailFrame(v.cam); }
+  if (HD.detail === false) { if (D.map.size) detailDropAll(v); return; }
+  for (const e of D.map.values()) {
+    const o = e.o, g = e.g, tw = e.twin, m = o.userData.gsGlMat || o.material;
+    // the game changed it: back to drawing as itself (a geometry whose points changed under us is left alone from then on)
+    const changed = detailVersion(g) !== e.ver;
+    const ud0 = o.userData, lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);   // (1: drawing as itself; BATCH_BIT: its twin is; anything else: the game moved it to a layer of its own)
+    if (changed || e.failed || (o.geometry !== g && ud0.gsLod?.base !== g) || ud0.detail === false || ud0.gsReflect || !detailMaterial(m) || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || !o.frustumCulled || o.onBeforeRender !== OBR || !inScene(o, v.scene)) { detailDrop(v, e, changed || e.failed); continue; }
+    if (!tw) {
+      if (!e.cl) continue;   // still being built
+      if (e.cl.coarseTris > e.cl.fullTris * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
+      if (o.geometry !== g) o.geometry = g;
+      o.userData.gsLod = null;
+      const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : null });
+      t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
+      v.scene.add(t);
+    }
+    const t = e.twin, ud = o.userData, td = t.userData;
+    o.updateWorldMatrix(true, false);
+    t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld);
+    t.visible = shownInScene(o, v.scene);
+    if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
+    t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : null;
+    td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold;
+  }
+  // now and then: the scene's big meshes that aren't in yet (their clusters come from memory at once, or are asked for, a couple at a time)
+  if (quiet || now - D.t < DETAIL_SCAN) return; D.t = now;
+  v.scene.traverseVisible(o => {
+    if (D.map.has(o) || !detailable(o)) return;
+    const g = o.userData.gsLod?.base || o.geometry;
+    let cl = null; try { cl = clustersNow(g); } catch (e) { NO_DETAIL.add(g); return; }
+    if (!cl && detailAsking >= DETAIL_ASK) return;
+    const e = { o, g, ver: detailVersion(g), cl, twin: null, failed: false, gone: false };
+    D.map.set(o, e);
+    if (cl) return;
+    detailAsking++;
+    clustersFor(g).then(c => { e.cl = c; }, () => { e.failed = true; }).finally(() => { detailAsking--; });
+  });
+}
+// after the shader hold: a mesh hides once its twin is drawing (a twin whose shader is still building waits, and the mesh draws on)
+function detailShow(v) {
+  const D = v.details; if (!D?.map.size) return;
+  for (const e of D.map.values()) {
+    const t = e.twin, o = e.o; if (!t) continue;
+    if (t.layers.mask & HOLD_BIT) { if (o.layers.mask === BATCH_BIT) o.layers.mask = 1; }
+    else if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
+  }
+}
 // shadowLights(): scratch (no garbage per frame)
 let SH_H = new Float64Array(40); const SH_S = new Sphere(), SH_P = new Vector3(), SH_LAST = new WeakMap();
 // the still/moving shadow split: frames before a thing counts as still, the layers that pick still or

@@ -131,6 +131,34 @@ so its next round starts there instead of stuttering down again.
   same. The copies share the original's points, so normals, UVs and bone weights stay exact. Off for
   instanced and multi-material meshes, see-through ones and `mesh.userData.noLod = true`;
   `__hd.autoLod = false` turns it off. (gs.props makes LODs for instanced props.)
+- Cluster detail (a Nanite-style level of detail, by itself): a big still mesh (20,000 triangles or
+  more: a hillside, a cliff, a hall made in code) is cut into clusters of a few hundred triangles with
+  coarser and coarser versions of each neighbourhood, and every frame each part of it is drawn only as
+  finely as shows in the picture (within a pixel) and not at all where it is out of view. So the near
+  end of a long wall is at full detail and the far end at a fraction, with no cracks where they meet,
+  and a model can carry far more triangles close up without costing more far away. Shadow maps pick
+  their own level the same way. On a test hillside with rocks, a view of 1.3 million triangles drew as
+  160,000 and matched the full picture more closely than the whole-mesh copies above did.
+  - The clusters are made in a worker (about a second for each quarter of a million triangles) while
+    the mesh draws whole, and are kept by the mesh's content in memory and in IndexedDB, so the next
+    round and the next visit have them at once. Nothing is built on the main thread.
+  - The game's mesh stays in the scene as it is (for the game, and for raycasts, which test the full
+    mesh); a twin named `gs-detail` is drawn in its place and follows its place, material, shadows and
+    visibility. The moment the mesh stops fitting (another geometry or material, taken out of the
+    scene) it draws as itself again. A geometry whose points change after it was taken is left alone
+    from then on.
+  - Taken: plain meshes with one solid material. Not taken: skinned, morphing and instanced meshes,
+    see-through and alpha-tested materials, materials that move their points (leaves, grass, water,
+    your own shader), multi-material meshes and `v.reflect()` ones. Those keep what they had.
+  - `v.detail(meshes)` asks for it on smaller meshes too (from 2,000 triangles), `v.detail(meshes,
+    { px: .5 })` makes them finer (pixels the simpler parts may be out by; default 1), and
+    `v.detail(meshes, false)` or `mesh.userData.detail = false` draws them whole.
+    `__hd.detail = false` turns it all off, `__hd.detailMin` is the triangle count, `__hd.detailPx` the
+    pixels, and `__hd.info.detail` says what the last frame drew through it (`meshes`, `tris` drawn
+    of `full`, `draws`, `picks`).
+  - Works the same on WebGL (one multi-draw call for each mesh) and WebGPU (one small draw for each
+    run of clusters). `node scripts/detail-test.cjs [--webgpu]` checks the picture against the full
+    meshes.
 - Static batching (WebGL, by itself): small still things that share a material (crates, posts, rocks,
   walls) are merged into one mesh per material and area after about 1.5 s still, one draw call where
   there were dozens (Unity's static batching). A piece that moves, hides or changes material goes back

@@ -2205,5 +2205,66 @@ console.log('physics ok');
   console.log('gs.outdoors meadow ok');
 }
 
+// cluster detail (detail.js, detail-build.js): a Nanite-style level of detail. A mesh cut into clusters with
+// coarser versions of each neighbourhood; any camera's pick of them is whole (no cracks between fine and coarse)
+{
+  const { PlaneGeometry, SphereGeometry, MeshStandardMaterial, PerspectiveCamera, Raycaster, Vector3 } = await import('three');
+  const { DetailMesh, clustersFor, clustersNow, canCluster, keyOf, stats, frame, tick } = await import('../src/kit/detail.js');
+  const n = 160, size = 100, H = (x, z) => 6 * Math.sin(x * .05) * Math.cos(z * .07) + 1.5 * Math.sin(x * .31 + z * .17) + .1 * Math.sin(x * 1.7) * Math.sin(z * 2.3);
+  const g = new PlaneGeometry(size, size, n, n).rotateX(-Math.PI / 2), P = g.attributes.position;
+  for (let i = 0; i < P.count; i++) P.setY(i, H(P.getX(i), P.getZ(i)));
+  g.computeVertexNormals();
+  assert.ok(canCluster(g) && !canCluster(new PlaneGeometry(1, 1).deleteAttribute('position')), 'a plain triangle mesh can be clustered');
+  const cl = await clustersFor(g), full = n * n * 2;
+  assert.equal(cl.fullTris, full, 'the finest level is the mesh itself');
+  assert.ok(cl.coarseTris < full * .02 && cl.levels >= 5, 'coarser and coarser levels: ' + cl.levels + ' of them, down to ' + cl.coarseTris + ' triangles');
+  assert.ok(cl.index.length < full * 3 * 2.3, 'all the levels together are about twice the mesh: ' + (cl.index.length / 3 / full).toFixed(2) + ' x');
+  assert.ok(clustersNow(g) === cl && await clustersFor(g) === cl, 'found again in memory, by the mesh\'s content');
+  const g2 = g.clone(); assert.ok(keyOf(g2) === keyOf(g) && clustersNow(g2) === cl, 'a copy of the mesh has the same clusters');
+  // every group is at least as wrong as the groups its members came from, and its sphere holds theirs: what makes any pick whole
+  let wrong = 0;
+  for (let gr = 0; gr < cl.groups; gr++) for (let c = cl.gFirst[gr]; c < cl.gFirst[gr] + cl.gCount[gr]; c++) {
+    const r = cl.refined[c]; if (r < 0) continue;
+    if (cl.gError[r] > cl.gError[gr] + 1e-9) wrong++;
+    if (Math.hypot(cl.gSphere[gr * 4] - cl.gSphere[r * 4], cl.gSphere[gr * 4 + 1] - cl.gSphere[r * 4 + 1], cl.gSphere[gr * 4 + 2] - cl.gSphere[r * 4 + 2]) + cl.gSphere[r * 4 + 3] > cl.gSphere[gr * 4 + 3] * 1.0001 + 1e-5) wrong++;
+  }
+  assert.equal(wrong, 0, 'errors and spheres only grow up the levels');
+  // picks from different places: every edge is shared by two triangles, except along the mesh's own rim
+  const rim = i => { const x = i % (n + 1), y = Math.floor(i / (n + 1)); return x === 0 || y === 0 || x === n || y === n; }, K = 1000 / (2 * Math.tan(35 * Math.PI / 180));
+  const cut = (cam, k) => {
+    const m = cl.pick(cam[0], cam[1], cam[2], k, .05, false, null), edges = new Map(), N1 = P.count; let tris = 0;
+    for (let i = 0; i < m; i++) { const c = cl.out[i]; for (let t = cl.start[c]; t < cl.start[c] + cl.count[c]; t += 3) { tris++; for (let e = 0; e < 3; e++) { const a = cl.index[t + e], b = cl.index[t + (e + 1) % 3], key = a < b ? a * N1 + b : b * N1 + a; edges.set(key, (edges.get(key) || 0) + 1); } } }
+    let open = 0; for (const [key, uses] of edges) if (uses > 2 || (uses === 1 && !(rim(Math.floor(key / N1)) && rim(key % N1)))) open++;
+    return { tris, open };
+  };
+  const near = cut([0, 10, 0], K), corner = cut([-45, 5, -45], K), mid = cut([0, 120, 0], K), far = cut([0, 1e6, 0], K), all = cut([0, 10, 0], 1e9);
+  assert.equal(near.open + corner.open + mid.open + far.open + all.open, 0, 'no cracks in any pick');
+  assert.equal(all.tris, full, 'asked for everything, every triangle is drawn');
+  assert.ok(far.tris === cl.coarseTris && near.tris >= mid.tris && corner.tris < full * .9 && mid.tris < full * .6 && mid.tris > far.tris * 4, 'fewer triangles from further away: ' + [near.tris, corner.tris, mid.tris, far.tris].join(', ') + ' of ' + full);
+  // the mesh that draws them: runs of the index list for a camera, again only when the camera moved
+  const mesh = new DetailMesh(g, new MeshStandardMaterial(), cl), cam = new PerspectiveCamera(60, 1, .1, 2000);
+  cam.position.set(0, 12, 40); cam.lookAt(0, 0, 0); cam.updateMatrixWorld(); mesh.updateMatrixWorld();
+  tick(); frame(cam);
+  mesh._updateDrawParameters(cam, mesh.geometry, mesh.material, 'multiDraw', 1000, false);
+  let sum = 0; for (let i = 0; i < mesh._multiDrawCount; i++) sum += mesh._multiDrawCounts[i];
+  assert.ok(mesh._multiDrawCount > 0 && sum / 3 === stats.tris && stats.tris < full && stats.full === full && stats.meshes === 1, 'draws ' + stats.tris + ' of ' + full + ' triangles in ' + mesh._multiDrawCount + ' runs');
+  const picks = stats.picks; mesh._updateDrawParameters(cam, mesh.geometry, mesh.material, 'multiDraw', 1000, false);
+  assert.equal(stats.picks, picks, 'a still camera is not picked for again');
+  const before = stats.tris; cam.position.set(0, 400, 600); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+  tick(); frame(cam); mesh._updateDrawParameters(cam, mesh.geometry, mesh.material, 'multiDraw', 1000, false);
+  assert.ok(stats.tris < before / 3, 'further away: ' + stats.tris + ' against ' + before);
+  cam.position.set(0, 12, 40); cam.lookAt(0, 0, 500); cam.updateMatrixWorld();   // looking away from most of it
+  tick(); frame(cam); mesh._updateDrawParameters(cam, mesh.geometry, mesh.material, 'multiDraw', 1000, false);
+  assert.ok(stats.tris < before / 2, 'what is out of view is not drawn: ' + stats.tris + ' against ' + before);
+  const hits = new Raycaster(new Vector3(3, 100, 4), new Vector3(0, -1, 0)).intersectObject(mesh);
+  assert.ok(hits.length === 1 && hits[0].object === mesh && Math.abs(hits[0].point.y - H(3, 4)) < .1, 'a ray hits the full mesh');
+  mesh.dispose(); assert.equal(cl.users, 0, 'dispose lets go of the clusters');
+  // a faceted ball (every triangle its own points) still clusters; its picks are whole too by position
+  const ball = new SphereGeometry(3, 96, 64).toNonIndexed(); ball.computeVertexNormals();
+  const cb = await clustersFor(ball);
+  assert.ok(cb.fullTris === ball.attributes.position.count / 3 && cb.coarseTris <= cb.fullTris, 'a mesh with no index list: ' + cb.fullTris + ' triangles, down to ' + cb.coarseTris);
+  console.log('gs.hd cluster detail ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
