@@ -43,8 +43,9 @@ export function bakeSet(name, look, size, seed) {
  * rust, paint, fabric, leather, marble, dirt, sand, snow. Options: the recipe's colours (colour, dark,
  * mortar, rust, vein...), seed (another pattern), repeat ([u, v] tiles across the mesh's UVs), size
  * (texture pixels, 256), depth (parallax depth on WebGPU), and on WebGPU: closeUp (true: finest detail
- * worked out per pixel near the camera), solid (true: laid on by position, no UVs or seams; a number is
- * metres per tile), scatter (true: each tile turned and moved so big floors don't show a repeat).
+ * worked out per pixel near the camera, on the pixels the textures are stretched over), solid (true: laid
+ * on by position, no UVs or seams; a number is metres per tile), scatter (true: each tile turned and moved
+ * so big floors don't show a repeat; with closeUp the recipe is worked out four times a pixel up close).
  * Other options go to gs.hd.pbr (glow, clear, wet...).
  */
 export function material(name, o = {}) {
