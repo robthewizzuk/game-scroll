@@ -84,6 +84,47 @@ try {
   // vision library loads (no camera here)
   try { new gs.vision.Face(); } catch (x) { e = x; } ok(e?.kitLoading, 'vision StillLoading'); await e.kitLoading; const f = new gs.vision.Face(); const task = await f.makeTask(); ok(!!task, 'face model loads');
   const hands = new gs.vision.Hands(); ok(!!(await hands.makeTask()), 'hand model loads');
+  {
+    // a camera that knows things: a made-up camera (a canvas) shows codes to the Scanner and a plain wall to Objects
+    const { Scanner, Objects } = gs.vision, frame = () => new Promise(r => requestAnimationFrame(r));
+    const QR = '111111101100101111111 100000101001001000001 101110101001101011101 101110101100001011101 101110101011001011101 100000100110101000001 111111101010101111111 000000001010100000000 011010110011001011111 100110001111011010011 110001101011100111000 000100011010111000100 101100110110100101110 000000001001010101111 111111101000100111101 100000100010101101101 101110101011111101111 101110100011011010110 101110101011001000101 100000101001110001011 111111100001001011101'.split(' ');   // 'GAME SCROLL 42'
+    const EAN = ['10100011010110011001101101111010100011011100101010101000010001001001000111010011100101110010101'];   // 5012345678900
+    const cam = document.createElement('canvas'); cam.width = 640; cam.height = 480; const cc = cam.getContext('2d');
+    let show = null;   // { rows, x, y, cell, tall, quiet }: a code's dots at x, y, each `cell` wide, with `quiet` cells of white at its sides
+    const paint = setInterval(() => {
+      cc.fillStyle = '#9ab'; cc.fillRect(0, 0, 640, 480);
+      if (show) { const { rows, x, y, cell, tall = cell, quiet = 4 } = show; cc.fillStyle = '#fff'; cc.fillRect(x - cell * quiet, y - cell * 4, rows[0].length * cell + cell * quiet * 2, rows.length * tall + cell * 8); cc.fillStyle = '#000'; rows.forEach((l, j) => [...l].forEach((ch, i) => { if (ch === '1') cc.fillRect(x + i * cell, y + j * tall, cell, tall); })); }
+      cc.fillStyle = `rgb(${(performance.now() / 4) % 255 | 0},0,0)`; cc.fillRect(0, 0, 4, 4);   // (so every frame is a new one)
+    }, 33);
+    const real = navigator.mediaDevices.getUserMedia; navigator.mediaDevices.getUserMedia = async () => cam.captureStream(30);
+    const until = async (sc, n = 300) => { let got = null; for (let i = 0; i < n && !got; i++) { await frame(); sc.update(); got = sc.scan(); } return got; };
+    const sc = new Scanner({ shape: 1 }); ok(sc.picture === null && !sc.ready && Scanner.kinds.length === 13, 'vision: a Scanner is made straight away (nothing to load first), 13 kinds of code');
+    show = { rows: QR, x: 330, y: 160, cell: 8 }; await sc.start();
+    ok(sc.ready && !sc.failed && (sc.backend === 'zxing' || sc.backend === 'phone'), 'vision: the scanner starts on the ' + (sc.backend === 'phone' ? "phone's own reader" : 'ZXing reader' + (sc.worker ? ', in a background worker' : '')));
+    let got = await until(sc);
+    ok(got?.text === 'GAME SCROLL 42' && got.kind === 'qr' && got.seed === Scanner.seed('GAME SCROLL 42') && got.seed === 55429877, 'vision: a QR code read from the camera, and its seed (' + got?.text + ', ' + got?.seed + ')');
+    // (the 640 x 480 camera is cut to its middle 480 x 480: the code's middle at 414, 244 is at (414 - 80) / 480, 244 / 480)
+    ok(sc.picture?.width === 480 && sc.picture.height === 480 && got && Math.abs(got.x - 334 / 480) < .03 && Math.abs(got.y - 244 / 480) < .03 && Math.abs(got.w - 168 / 480) < .04 && got.corners.length === 4, 'vision: the picture is the shape asked for and the code is where it was shown');
+    ok(sc.scan() === null && sc.code?.text === 'GAME SCROLL 42' && sc.found, 'vision: scan() gives a code once; code stays while it is in view');
+    show = null; for (let i = 0; i < 90; i++) { await frame(); sc.update(); } ok(sc.code === null && !sc.found, 'vision: gone when it leaves the picture');
+    show = { rows: EAN, x: 130, y: 180, cell: 4, tall: 120, quiet: 12 }; got = await until(sc);   // (a shop code needs 11 cells of white before it)
+    ok(got?.text === '5012345678900' && got.kind === 'ean-13' && got.seed === Scanner.seed('5012345678900'), 'vision: a shop barcode read (' + got?.kind + ' ' + got?.text + ')');
+    sc.stop(); ok(!sc.running && sc.picture === null && sc.code === null, 'vision: stop()');
+    const sf = new Scanner({ camera: 'front', kinds: ['qr'] }); show = { rows: QR, x: 60, y: 100, cell: 7 }; await sf.start(); got = await until(sf);
+    ok(got?.text === 'GAME SCROLL 42' && Math.abs(got.x - (1 - 133.5 / 640)) < .03, 'vision: the front camera is mirrored, and the code still reads (x ' + got?.x.toFixed(2) + ')'); sf.stop();
+    let bad = null; try { new Scanner({ kinds: ['qrr'] }); } catch (x) { bad = x; } ok(/doesn't read "qrr"/.test(bad?.message), 'vision: a kind it does not read says so');
+    // Objects: the model loads and looks; a plain wall has nothing on it
+    show = null; ok(Objects.names.length === 80 && Object.isFrozen(Objects.names), 'vision: Objects knows 80 things');
+    bad = null; try { new Objects({ want: ['cupp'] }); } catch (x) { bad = x; } ok(/doesn't know "cupp"/.test(bad?.message), 'vision: a thing it does not know says so');
+    const eyes = new Objects({ want: ['cup', 'phone'], shape: 300 / 460 }); ok(eyes.want.join() === 'cup,cell phone', 'vision: other words for things (phone)');
+    await eyes.start(); ok(eyes.ready && !eyes.failed && !!eyes.task, 'vision: the object model loads');
+    let looked = false; for (let i = 0; i < 600 && !looked; i++) { await frame(); looked = eyes.update(); }
+    ok(looked && !eyes.error && eyes.list.length === 0 && !eyes.found && eyes.seen() === null && eyes.seeing('cup') === 0 && eyes.count('cup') === 0, 'vision: a look at a plain wall finds nothing' + (eyes.error ? ' (' + eyes.error + ')' : ''));
+    ok(eyes.picture && Math.abs(eyes.picture.width / eyes.picture.height - 300 / 460) < .01, 'vision: its picture is the card\'s shape (' + eyes.picture?.width + ' x ' + eyes.picture?.height + ')');
+    eyes.take([{ name: 'cup', sure: .8, x: .5, y: .5, w: .2, h: .2, left: .4, top: .4 }]); ok(!eyes.seen('cup'), 'vision: one look is not yet "seen"');
+    eyes.take([{ name: 'cup', sure: .7, x: .5, y: .5, w: .2, h: .2, left: .4, top: .4 }]); ok(eyes.seen('mug') && !eyes.seen('cup') && eyes.seeing('cup') === .7 && eyes.count('cup') === 1 && eyes.top.name === 'cup', 'vision: two looks running are: seen() once, seeing(), count(), top');
+    eyes.stop(); clearInterval(paint); navigator.mediaDevices.getUserMedia = real;
+  }
   // ai, math, moves, pad
   const crowd = new gs.ai.Crowd(); crowd.add(0, 0).chase({ x: 50, y: 50 }); crowd.update(.1); ok(true, 'ai');
   const m = new gs.moves.Moves(); m.update(); m.stop(); ok(true, 'moves'); ok(gs.pad.pad() === null, 'no pad');
@@ -158,6 +199,40 @@ try {
   // made levels load rot.js and WaveFunctionCollapse on first use, like the other lazy parts
   { let ge; try { gs.gen.dungeon(30, 20, { seed: 1 }); } catch (x) { ge = x; } ok(ge?.kitLoading, 'gs.gen StillLoading first'); await ge.kitLoading;
     ok(gs.gen.dungeon(30, 20, { seed: 1 }).text.includes('S') && !!gs.gen.pattern('.#.\n###\n.#.', 12, 12, { seed: 3 }), 'dungeon and pattern in the browser'); }
+  // Classic Console 2.0: real toon shadows, the rim of light, retro looks (drawn for real; the test switch draws shadows whatever this machine is)
+  {
+    const { View, part, G } = gs.toon, T3 = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+    ok(window.__toon?.shadows === true && !('TOON' in gs.toon), 'Console test switches: under automation only, and not on gs.toon');
+    const draw = async (opts, more) => {
+      const cv = document.createElement('canvas'); cv.width = 384; cv.height = 320; const x = cv.getContext('2d'); x.setTransform(2, 0, 0, 2, 0, 0);
+      const v = new View({ bg: '#88c8f0', ...opts }); v.board(192, 160, .9);
+      v.scene.add(part(new T3.BoxGeometry(30, 30, 30), '#e04848', { y: 15 })); more?.(v);
+      for (let i = 0; i < 3; i++) { v.render(x, 192, 160); await frame(); }
+      return { v, d: x.getImageData(0, 0, 384, 320).data };
+    };
+    const at = (d, px, py) => [d[(py * 384 + px) * 4], d[(py * 384 + px) * 4 + 1], d[(py * 384 + px) * 4 + 2]], lum = p => p[0] * .3 + p[1] * .6 + p[2] * .1;
+    const on = await draw({}), off = await draw({ shadows: false }), sky = await draw({ floor: false }), dull = await draw({ rim: 0 });
+    // the sun is up and to the left, towards the camera: the box's shadow falls to its right on the bare background
+    const SH = [236, 150], BG = [40, 40], bg = lum(at(on.d, ...BG)), sh = lum(at(on.d, ...SH));
+    ok(sh < bg * .9 && sh > bg * .6 && Math.abs(lum(at(off.d, ...SH)) - bg) < 2 && Math.abs(lum(at(sky.d, ...SH)) - bg) < 2, `a real shadow on the bare background: ${sh.toFixed(0)} against ${bg.toFixed(0)}; none with shadows: false or floor: false (${on.v.onGpu ? 'WebGPU' : 'WebGL'})`);
+    ok(on.d[(SH[1] * 384 + SH[0]) * 4 + 3] === 255, 'the picture stays solid under the shadow');
+    // the rim: only brighter pixels, a thin line of them (on the box's sunny edges)
+    let lit = 0, darker = 0; for (let i = 0; i < on.d.length; i += 4) { const a = on.d[i] + on.d[i + 1] + on.d[i + 2], b = dull.d[i] + dull.d[i + 1] + dull.d[i + 2]; if (a > b + 12) lit++; else if (a < b - 12) darker++; }
+    ok(lit > 60 && lit < 4000 && darker === 0, `the rim of light: ${lit} brighter pixels along the sunny edges, none darker`);
+    // a wall's shadow on a lit floor has one clean edge: the floor shows two shades, not a ramp of them
+    const fl = await draw({}, v => { v.add(part(G.plane, '#b4bcac', { sx: 400, sz: 400, line: false })); });
+    const shades = new Set(); for (let px = 200; px < 330; px += 2) shades.add(at(fl.d, px, 150).join()); const lf = lum(at(fl.d, 40, 40)), sf = lum(at(fl.d, ...SH));
+    ok(sf < lf * .9 && shades.size <= 4, `on a toon floor the shadow is the ramp's dark band (${sf.toFixed(0)} against ${lf.toFixed(0)}) with a clean edge (${shades.size} shades across it)`);
+    // retro looks: fewer lines up the picture, 32 shades a colour with a dither, scanlines
+    const chunky = await draw({ retro: 'chunky' }), soft = await draw({ retro: 'soft' }), tube = await draw({ retro: 'tube' });
+    // (ink lines and the background's shadow are laid over the picture afterwards: they are the few that aren't)
+    const grid = d => { let o = 0, n = 0; for (let i = 0; i < d.length; i += 4 * 37) for (let k = 0; k < 3; k++) { n++; const q = d[i + k] / 255 * 31; if (Math.abs(q - Math.round(q)) > .08) o++; } return o / n; };
+    ok(grid(chunky.d) < .08 && grid(soft.d) > .5, `chunky: colours are cut to 32 shades, the background's too (${(grid(chunky.d) * 100).toFixed(1)}% of samples are not, against ${(grid(soft.d) * 100).toFixed(0)}% in the soft look)`);
+    let rows = 0; for (let y = 1; y < 320; y++) { let same = true; for (let px = 0; px < 384 && same; px += 3) if (chunky.d[(y * 384 + px) * 4] !== chunky.d[((y - 1) * 384 + px) * 4]) same = false; if (!same) rows++; }
+    ok(rows <= 240, `chunky: hard pixels, ${rows} different rows up a 320-row picture`);
+    const mean = d => { let m = 0; for (let i = 0; i < d.length; i += 4) m += d[i] + d[i + 1] + d[i + 2]; return m / (d.length / 4 * 3); };
+    ok(mean(tube.d) < mean(soft.d) * .95 && mean(tube.d) > mean(soft.d) * .75, `tube: scanlines darken the soft picture (${mean(tube.d).toFixed(0)} against ${mean(soft.d).toFixed(0)})`);
+  }
   // round 6: 3D levels from text, sky and weather, a car with suspension
   {
     const { Level3D } = gs.level3d, { Sky, Weather } = gs.sky, { View, toon } = gs.toon, { HDView } = gs.hd;
@@ -374,6 +449,33 @@ try {
   ok(await new gs.phoneai.PhoneAI().ask('hi', { fallback: 'ok' }) === 'ok', 'phone AI falls back with no model');
 }
 {
+  // gs.fluid (Real 3D liquids): in a Next Gen view and in a Console view, poured, drawn and counted
+  // (kit-test.mjs has the liquid's rules; look-compare.cjs gpu-fluid --webgpu holds the graphics chip's version to this one)
+  const { Fluid, KINDS } = gs.fluid, T3 = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  ok(Object.keys(gs.fluid).sort().join() === 'Fluid,KINDS' && Object.isFrozen(gs.fluid.KINDS.water) && window.__fluid && Fluid.max() >= 600, 'gs.fluid: Fluid and KINDS, test switches under automation only (' + Fluid.max() + ' drops here)');
+  const blue = d => { let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 2] > d[i] * 1.5 && d[i + 2] > 90) n++; return n / (d.length / 4); };
+  const hv = new gs.hd.HDView({ bg: '#404040', amb: .5 }), hc = document.createElement('canvas'); hc.width = 160; hc.height = 160; const hx = hc.getContext('2d');
+  hv.cam.position.set(0, 2.2, 4.2); hv.cam.lookAt(0, .5, 0); hv.cam.updateMatrixWorld();
+  const sl = gs.hd.sun('#fff', 2.5, 12, [-.4, 1, .4]); hv.scene.add(sl, sl.target); hv.sun = sl;
+  window.__fluid.klass = 'top';   // (the same drops on every machine)
+  const f = new Fluid(hv, { box: [-1.5, 0, -1, 1.5, 2, 1], volume: 2, drops: 1500 }), cup = f.tube({ x: .8, y: .45, z: 0, r: .5, h: .9, hollow: .06 });
+  hv.render(hx, 160, 160); const dry = blue(hx.getImageData(0, 0, 160, 160).data);
+  const put = f.fill({ x1: -.5, y1: .7 }), tap = f.pour({ x: .8, y: 1.6, z: 0, rate: .25, speed: 2 });
+  for (let i = 0; i < 90; i++) { f.update(1 / 60); hv.render(hx, 160, 160); if (i % 6 === 0) await frame(); }
+  for (let i = 0; i < 6; i++) { f.update(0); hv.render(hx, 160, 160); await frame(); }
+  const wetPx = blue(hx.getImageData(0, 0, 160, 160).data), inCup = f.amount(cup.inside());
+  ok(dry < .005 && wetPx > .04, `fluid: drawn in a Next Gen view (${(wetPx * 100).toFixed(1)}% of the picture is water, ${(dry * 100).toFixed(1)}% before; runs on the ${f.backend === 'gpu' ? 'graphics chip' : 'CPU'}, ${f.count} drops)`);
+  ok(Math.abs(f.amount() - put - .25 * 1.5) < .08 && inCup > .25 && f.level(-1, 0) > .15 && f.level(1.3, .8) > .1, `fluid: a dam break spreads over the floor and the tap fills the cup (${inCup.toFixed(2)} in it; ${f.amount().toFixed(2)} in all, levels ${f.level(-1, 0)?.toFixed(2)} and ${f.level(1.3, .8)?.toFixed(2)})`);
+  tap.remove(); f.dispose(); ok(!hv.sims.includes(f) && !f.mesh.parent, 'fluid: dispose() takes it out of the view');
+  // a Console view runs the smaller version, drawn as beads in its scene
+  const cv = new gs.toon.View({ bg: '#404040' }), cc = document.createElement('canvas'); cc.width = 192; cc.height = 160; const cx2 = cc.getContext('2d'); cv.board(192, 160, .9);
+  const cf = new Fluid(cv, { box: [-40, 0, -40, 40, 60, 40], volume: 140000, gravity: 300, kind: 'slime' }); cf.fill({ y1: 20 });
+  for (let i = 0; i < 30; i++) { cf.update(1 / 60); cv.render(cx2, 192, 160); if (i % 6 === 0) await frame(); }
+  const cd = cx2.getImageData(0, 0, 192, 160).data; let green = 0; for (let i = 0; i < cd.length; i += 4) if (cd[i + 1] > cd[i] * 1.3 && cd[i + 1] > cd[i + 2] * 1.3 && cd[i + 1] > 80) green++;
+  ok(cf.backend === 'cpu' && cf.count > 300 && green / (cd.length / 4) > .03 && Math.abs(cf.level(0, 0) - 20) < 5, `fluid: slime in a Console view, in its own units (${cf.count} drops, level ${cf.level(0, 0).toFixed(1)})`);
+  cf.dispose(); window.__fluid.klass = null;
+}
+{
   // Swarm: the WebGPU compute version matches the CPU one (where this browser has WebGPU)
   const { Swarm } = gs.ai, mk = gpu => new Swarm({ count: 1200, w: 400, h: 400, speed: 60, seed: 9, gpu });
   const c = mk(false), g = mk(true);
@@ -386,6 +488,87 @@ try {
     g.kill(3); g.update(1 / 60); await g.sync(); ok(g.near(g.x[3], g.y[3], .01).indexOf(3) < 0 && g.gpu, 'swarm: kill on the GPU');
     g.dispose(); ok(!g.gpu, 'swarm: dispose');
   }
+}
+// loading without holding the feed still (src/kit/slices.js, jobs.js): the number work a loading card
+// leaves with background workers gives the same pixels and meshes as doing it here
+{
+  const slices = await import('/src/kit/slices.js'), jobs = await import('/src/kit/jobs.js'), { surfaceMath } = await import('/src/kit/surface-math.js');
+  const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  const pix = cv => cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cv.width, cv.height).data;
+  ok(jobs.canRun(), 'workers: this browser has them');
+  // a surface's bumps: the worker job against the same numbers made here
+  const S = 64, hd = new Uint8ClampedArray(S * S * 4), rd = new Uint8ClampedArray(S * S * 4);
+  for (let i = 0; i < S * S; i++) { hd[i * 4] = (Math.sin(i * .37) * .5 + .5) * 255; rd[i * 4 + 1] = (i * 7) % 256; hd[i * 4 + 3] = rd[i * 4 + 3] = 255; }
+  const here = surfaceMath(hd, rd, S, 2.5), there = await jobs.run('surface', { hd: hd.slice(), rd: rd.slice(), size: S, strength: 2.5 });
+  ok(same(here.out, there.out) && same(here.nf, there.nf) && here.mips.length === 6 && here.mips.every((m, i) => same(m, there.mips[i])), 'workers: a surface made in a worker is the same, number for number');
+  // a whole surface: made while a card loads (the card waits for the worker), against made on the spot
+  const paint = g => { g.col.fillStyle = '#a63'; g.col.fillRect(0, 0, g.size, g.size); g.h.fillStyle = '#fff'; g.h.fillRect(8, 8, 24, 40); g.r.fillStyle = '#222'; g.r.fillRect(0, 20, g.size, 9); };
+  const plain = gs.hd.surface(64, paint), card = {};
+  slices.begin(card); const lazy = gs.hd.surface(64, paint), copy = lazy.repeat(2, 3); const blank = pix(lazy.normal.image).every(v => v === 0); const wait = slices.end(card, true);
+  ok(blank && wait instanceof Promise && plain.core.nf && !lazy.core.nf, 'loading: a surface comes back at once, its bumps still with the worker, and the card is told to wait');
+  const v0 = copy.normal.version; await wait;
+  ok(same(pix(plain.normal.image), pix(lazy.normal.image)) && same(plain.core.nf, lazy.core.nf), 'loading: the bumps that arrive are the ones made on the spot');
+  ok(lazy.rough.mipmaps.length === 7 && copy.rough.mipmaps.length === 7 && lazy.rough.mipmaps.every((m, i) => same(pix(m), pix(plain.rough.mipmaps[i]))) && copy.normal.version > v0, 'loading: and every copy made meanwhile gets them (rougher small copies too)');
+  const det = gs.hd.detail(plain, lazy, { times: 2 }); ok(det.normal.isTexture && det.core.nf.length === 64 * 64 * 3, 'detail() of two surfaces');
+  // a recipe material: painted in the worker while loading, the same pixels as painted here
+  const c2 = {}; slices.begin(c2); const mLazy = gs.models.material('brick', { size: 64, seed: 5 }); const w2 = slices.end(c2, true); await w2;
+  const { paintRecipe } = await import('/src/kit/models/recipe-paint.js'), { JS } = await import('/src/kit/models/ops.js'), { RECIPES } = await import('/src/kit/models/recipes.js');
+  const K = {}; for (const k in RECIPES.brick.look) K[k] = JS.rgb(RECIPES.brick.look[k]); const L = paintRecipe('brick', K, 64, 5);
+  // (the colour layer goes through a canvas and back, which may round a channel by one)
+  const near = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) <= 1);
+  ok(w2 instanceof Promise && near(pix(mLazy.map.image), L.col) && same(pix(mLazy.userData.recipeHeight.image), L.h), 'loading: a recipe material painted in a worker is the recipe');
+  // a sculpted mesh: the card waits for the worker, the next pass has the mesh
+  const shapes = [{ ball: .4 }, { box: [.3, .3, .3], at: [.35, 0, 0], colour: '#f00' }], { sculptArrays } = await import('/src/kit/models/sculpt-arrays.js');
+  const c3 = {}; let hold = null; slices.begin(c3); try { gs.models.sculpt(shapes, { res: 20 }); } catch (x) { hold = x; } slices.end(c3, false);
+  ok(hold?.kitLoading && hold.what === 'Models', 'loading: a sculpt waits for its worker'); await hold.kitLoading;
+  slices.begin(c3); const geo = gs.models.sculpt(shapes, { res: 20 }); slices.end(c3, true); const ref = sculptArrays(shapes, { res: 20 });
+  ok(geo.isBufferGeometry && same(geo.attributes.position.array, ref.P) && same(geo.index.array, ref.I) && gs.models.sculpt(shapes, { res: 20 }) === geo, 'loading: and the mesh that comes back is the one made here, kept for next time');
+  // a path map: built in its own worker and read back in
+  { const { THREE: T } = gs, fl = new T.Mesh(new T.BoxGeometry(12, .2, 12)); fl.position.y = -.1; fl.updateMatrixWorld();
+    const c4 = {}; let h4 = null; slices.begin(c4); try { new gs.nav3d.NavMesh3D([fl], { radius: .35 }); } catch (x) { h4 = x; } slices.end(c4, false);
+    ok(h4?.kitLoading && h4.what === 'Path map', 'loading: a path map waits for its worker'); await h4.kitLoading;
+    slices.begin(c4); const nav = new gs.nav3d.NavMesh3D([fl], { radius: .35 }); slices.end(c4, true);
+    ok(jobs.navStats.done === 1 && nav.path({ x: -4, y: 0, z: -4 }, { x: 4, y: 0, z: 4 }).length >= 2, 'loading: and the map read back in finds a path');
+    // a level that is different every pass must not wait for ever: the second answer nobody asked for ends the waiting
+    const c5 = {}, lvl = k => { const m = new T.Mesh(new T.BoxGeometry(10 + k, .2, 10)); m.position.y = -.1; m.updateMatrixWorld(); return [m]; }; let h5 = null;
+    slices.begin(c5); try { new gs.nav3d.NavMesh3D(lvl(1)); } catch (x) { h5 = x; } slices.end(c5, false); await h5.kitLoading;
+    slices.begin(c5); const n5 = new gs.nav3d.NavMesh3D(lvl(2)); slices.end(c5, true);
+    ok(h5?.kitLoading && n5.path({ x: -3, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }).length >= 2, 'loading: a level that changes every pass is built here on the second pass, not waited for again');
+  }
+}
+{
+  // gs.models.creature: sculpted in a worker while the card waits, saved on the phone, drawn in a Next Gen view, moved, twinned
+  // (kit-test.mjs has the plans, bones and gaits; scripts/creatures.cjs draws every animal to look over)
+  const { creature } = gs.models, frame = () => new Promise(r => requestAnimationFrame(r));
+  await creature.clear();
+  ok(creature.kinds.join() === 'quad,bird,fish,insect,monster' && Object.keys(creature.likes).length === 35 && creature.likes.owl === 'bird', 'creature: five kinds, 35 animals');
+  let wait = null; try { creature({ like: 'cat' }); } catch (x) { wait = x; }
+  ok(wait?.kitLoading && wait.what === 'gs.models.creature', 'creature: a shape this phone has not made yet makes the card wait'); const t0 = performance.now(); await wait?.kitLoading;
+  const cat = creature({ like: 'cat' }), ms = Math.round(performance.now() - t0);
+  ok(cat.isGroup && cat.kind === 'quad' && cat.like === 'cat' && cat.mesh.isSkinnedMesh && cat.lods.length === 3 && cat.tris[0] > cat.tris[1] && cat.tris[1] > cat.tris[2] && cat.size.height > .2 && cat.size.height < .5, `creature: a cat sculpted in the background in ${ms} ms (${cat.tris.join(' / ')} triangles, ${cat.size.height.toFixed(2)} m tall)`);
+  // other colours and sizes of the same shape need no more sculpting; a twin shares everything but its skeleton
+  let again = null; try { again = creature.all([{ like: 'cat', colour: '#202020', pattern: 'plain' }, { like: 'cat', size: 2 }]); } catch (x) { again = x; }
+  const twin = cat.twin();
+  ok(Array.isArray(again) && again[1].size.height > cat.size.height * 3 && twin.mesh.geometry === cat.mesh.geometry && twin.bones.head !== cat.bones.head && again[0].mesh.geometry !== cat.mesh.geometry, 'creature: a black cat and a giant one come straight back; a twin shares its mesh');
+  // drawn in a Next Gen view, walking; far away it is the far level
+  const hv = new gs.hd.HDView({ bg: '#404040', amb: .5 }), hc = document.createElement('canvas'); hc.width = 160; hc.height = 160; const hx = hc.getContext('2d');
+  hv.cam.position.set(.45, .32, .62); hv.cam.lookAt(0, .16, .05); hv.cam.updateMatrixWorld();
+  const sl = gs.hd.sun('#fff', 2.5, 4, [-.4, 1, .4]); hv.scene.add(sl, sl.target); hv.sun = sl;
+  for (let i = 0; i < 3; i++) { hv.render(hx, 160, 160); await frame(); } const before = hx.getImageData(0, 0, 160, 160).data;
+  hv.scene.add(cat); const rest = cat.bones.legFL.rotation.x; for (let i = 0; i < 6; i++) { cat.move(1 / 30, cat.speeds.walk, { turn: .3 }); hv.render(hx, 160, 160); await frame(); }
+  const after = hx.getImageData(0, 0, 160, 160).data; let px = 0; for (let i = 0; i < after.length; i += 4) if (Math.abs(after[i] - before[i]) + Math.abs(after[i + 1] - before[i + 1]) + Math.abs(after[i + 2] - before[i + 2]) > 40) px++;
+  ok(px / (160 * 160) > .03 && cat.bones.legFL.rotation.x !== rest && cat.bones.legFL.rotation.x !== cat.bones.legFR.rotation.x, `creature: drawn walking in a Next Gen view (${(px / 256).toFixed(1)}% of the picture)`);
+  const near = cat.see(hv.cam, 800); hv.cam.position.set(30, 20, 40); hv.cam.updateMatrixWorld(); const far = cat.see(hv.cam, 800);
+  ok(near === 0 && far === 2 && cat.lods[2].visible && !cat.lods[0].visible, 'creature: close it is the fine level, far off the coarse one');
+  // a bird beats its wings in the air and folds them on the ground; an unknown animal says so
+  await creature.ready([{ like: 'crow' }]); const crow = creature({ like: 'crow' });
+  crow.move(.05, 0); crow.move(.3, 0); const folded = crow.bones.wingL.rotation.y; for (let i = 0; i < 8; i++) crow.move(.05, crow.speeds.fly, { fly: true });
+  ok(folded > 1 && Math.abs(crow.bones.wingL.rotation.y) < .05 && crow.bones.wingL.rotation.z !== 0 && crow.speeds.fly > crow.speeds.run, 'creature: a crow folds its wings on the ground and beats them in the air');
+  let bad = null; try { creature({ like: 'unicorn' }); } catch (x) { bad = x; } ok(/nothing called 'unicorn'/.test(bad?.message) && !bad.kitLoading, 'creature: an animal it does not know is an error that names the ones it does');
+  // the sculpt was saved on the phone
+  await new Promise(r => setTimeout(r, 300));
+  const kept = await new Promise(res => { const rq = indexedDB.open('gs-creatures'); rq.onsuccess = () => { try { const c = rq.result.transaction('pieces').objectStore('pieces').count(); c.onsuccess = () => res(c.result); c.onerror = () => res(-1); } catch (x) { res(-1); } }; rq.onerror = () => res(-1); });
+  ok(kept >= 2, 'creature: ' + kept + ' sculpts saved for next time');
 }
 window.result = out;
 </script>

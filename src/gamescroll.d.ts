@@ -585,7 +585,50 @@ export interface VisionPart {
   CutOut: new (o?: { soft?: number; size?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; amount: number; soft: number; picture: HTMLCanvasElement | null };
   /** Hand signs: thumbs-up, thumbs-down, victory, open-palm, fist, point-up, love. */
   Signs: new (o?: { max?: number; sure?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; list: { sign: string; score: number; side: 'left' | 'right'; x: number; y: number }[]; sign: string; made: string | null; showing(name: string): boolean };
+  /**
+   * Spots everyday things with the back camera, 80 of them (Objects.names: 'cup', 'banana', 'book', 'dog', 'chair'...), a few times a
+   * second: scavenger hunts and "show me a...". Positions are 0..1 of `picture`, the camera picture cut to `shape` (width / height).
+   */
+  Objects: {
+    new (o?: { /** Names to look for (default: all 80). */ want?: string[]; /** How sure before a thing counts, 0..1 (.5). */ sure?: number; /** How many things at once (5). */ max?: number;
+      /** Seconds between looks (.25). */ every?: number; /** Width / height the game draws the picture at (default: the camera's own). */ shape?: number; camera?: 'back' | 'front' }): VisionObjects;
+    /** The 80 things it knows. */ readonly names: readonly string[];
+  };
+  /**
+   * Reads barcodes and QR codes with the back camera: the same code gives the same `seed` on every phone, to make a creature, a level or
+   * loot from anything in the house. The phone's own reader where it has one, ZXing elsewhere. Not lazy: make it any time.
+   */
+  Scanner: {
+    new (o?: { /** Which kinds to read (default: all of Scanner.kinds). */ kinds?: VisionCodeKind[]; /** Seconds between looks (.15). */ every?: number;
+      /** Width / height the game draws the picture at (default: the camera's own). */ shape?: number; camera?: 'back' | 'front'; /** How many codes at once (1). */ max?: number }): VisionScanner;
+    readonly kinds: readonly VisionCodeKind[];
+    /** The seed a text gives (the one a code with that text gives), 0 to 4,294,967,295: for a typed word in place of a code. */
+    seed(text: string): number;
+  };
   loadVision(): Promise<Loose>;
+}
+export type VisionCodeKind = 'qr' | 'ean-13' | 'ean-8' | 'upc-a' | 'upc-e' | 'code-128' | 'code-39' | 'code-93' | 'codabar' | 'itf' | 'data-matrix' | 'aztec' | 'pdf417';
+/** Something Objects found: x, y is its middle, left, top its corner, all 0..1 of the picture. */
+export interface VisionThing { name: string; sure: number; x: number; y: number; w: number; h: number; left: number; top: number }
+/** A code Scanner read: its text, kind and seed; x, y is its middle, left, top its corner, corners its four corners, all 0..1 of the picture. */
+export interface VisionCode { text: string; kind: VisionCodeKind; seed: number; x: number; y: number; w: number; h: number; left: number; top: number; corners: XY[] }
+interface VisionLooker {
+  /** Asks for the camera (call it from a tap). `failed` says why if it couldn't. */ start(): Promise<unknown>; stop(): void;
+  /** Every update: true when a look has just come back. */ update(): boolean;
+  ready: boolean; running: boolean; failed: unknown; found: boolean;
+  /** The camera picture, already the shape asked for: c.drawImage(picture, 0, 0, W, H). null until the camera runs. */ readonly picture: HTMLCanvasElement | null;
+}
+export interface VisionObjects extends VisionLooker {
+  /** What this look found, surest first. */ list: VisionThing[]; /** The surest (or null). */ top: VisionThing | null;
+  /** True once for each time one comes into view. With no name: which thing just came into view (or null). */
+  seen(name: string): boolean; seen(): string | null;
+  /** How sure it is that one is in view now (0 when not). */ seeing(name: string): number;
+  /** How many of them are in the picture now. */ count(name: string): number;
+}
+export interface VisionScanner extends VisionLooker {
+  /** The code that has just been read, once for each time one comes into view (else null). */ scan(): VisionCode | null;
+  /** The code in view now (or null). */ code: VisionCode | null; list: VisionCode[];
+  /** 'phone' (the phone's own reader) or 'zxing'; null until started. */ backend: 'phone' | 'zxing' | null;
 }
 
 type LatLon = { lat: number; lon: number };
@@ -905,6 +948,73 @@ export interface VoxelsPart {
   Voxels: new (o?: { size?: [number, number, number]; chunk?: number; scale?: number; shadows?: boolean; worker?: boolean; rough?: number }) => VoxelWorld;
   BLOCKS: Readonly<Record<'air' | 'grass' | 'dirt' | 'stone' | 'sand' | 'water' | 'wood' | 'leaves' | 'snow' | 'brick' | 'glass' | 'lava' | 'gold' | 'coal' | 'plank' | 'ice', number>>;
 }
+/** A solid thing in a liquid (fluid.ball, fluid.box, fluid.tube). */
+export interface FluidSolid {
+  x: number; y: number; z: number;
+  /** Puts it somewhere (and turns it: a three.js Quaternion). Call it each frame for a thing that moves: the liquid feels how fast it goes. */
+  set(x: number, y: number, z: number, turn?: Loose): this;
+  /** A box round the room inside a hollow solid, [x0, y0, z0, x1, y1, z1], for fluid.amount() (right while it stands upright). */
+  inside(): [number, number, number, number, number, number];
+  /** Fills a hollow solid's room with liquid at rest, up to this much of its height (0..1). Returns how much went in. */
+  fill(part?: number): number;
+  remove(): void;
+}
+export interface FluidSolidOpts { x?: number; y?: number; z?: number; turn?: Loose; hollow?: number; open?: boolean; follow?: Loose }
+/** A tap (fluid.pour): change any of these while it runs. */
+export interface FluidTap { x: number; y: number; z: number; dir: [number, number, number]; rate: number; speed: number; spread: number; r: number | null; on: boolean; remove(): void }
+export interface FluidDrain { x: number; y: number; z: number; r: number; readonly amount: number; remove(): void }
+export type FluidKind = 'water' | 'lava' | 'slime' | 'honey';
+export interface FluidT {
+  /** 'gpu' when the fluid runs on the graphics chip (WebGPU), else 'cpu' (fewer, bigger drops). */
+  readonly backend: 'gpu' | 'cpu';
+  /** Drops in the fluid now, and the most it can have. */
+  readonly count: number; readonly max: number;
+  /** How much liquid one drop is (units cubed), and how wide a drop is. */
+  readonly drop: number; readonly dropSize: number;
+  /** How much more liquid fits; full: none (taps stop until some drains away). */
+  readonly room: number; readonly full: boolean;
+  /** Units a second squared. Change it any time (tilt the world). */
+  gravity: { x: number; y: number; z: number };
+  /** A tap: a stream from x, y, z going dir (down if you don't say) at speed (units a second), rate units cubed a second. */
+  pour(o?: { x?: number; y?: number; z?: number; dir?: [number, number, number]; rate?: number; speed?: number; spread?: number; r?: number | null; on?: boolean }): FluidTap;
+  /** A burst of liquid at a place. Returns how much went in. */
+  splash(x: number, y: number, z: number, o?: { amount?: number; speed?: number; up?: number }): number;
+  /** Liquid at rest in a block (any side you leave out is the box's own). Returns how much went in. */
+  fill(block?: { x0?: number; y0?: number; z0?: number; x1?: number; y1?: number; z1?: number }): number;
+  /** Takes all the liquid away (taps, solids and drains stay). */
+  clear(): this;
+  /** A solid ball. hollow: a wall this thick with room inside (open: a bowl; open: false: a sealed globe). */
+  ball(o?: FluidSolidOpts & { r?: number }): FluidSolid;
+  /** A solid box. hollow: a tank with walls this thick, open at the top (open: false: sealed). */
+  box(o?: FluidSolidOpts & { w?: number; h?: number; d?: number }): FluidSolid;
+  /** A solid post standing on its end. hollow: a cup with walls this thick, open at the top. */
+  tube(o?: FluidSolidOpts & { r?: number; h?: number }): FluidSolid;
+  /** The ground under the liquid: (x, z) => y. Call it again when the ground changes; null takes it away. */
+  ground(fn: ((x: number, z: number) => number) | null): this;
+  /** A drain: drops that reach it go, and its amount counts them. */
+  drain(o?: { x?: number; y?: number; z?: number; r?: number }): FluidDrain;
+  /** A blast: liquid within radius is thrown outwards at up to strength (units a second), and upwards at up. */
+  push(x: number, y: number, z: number, o?: { radius?: number; strength?: number; up?: number }): this;
+  update(dt: number): this;
+  /** How much liquid there is (units cubed), in the whole fluid or in a box [x0, y0, z0, x1, y1, z1]. */
+  amount(box?: readonly number[] | null): number;
+  /** The height of the liquid's top at x, z, or null where it's dry. */
+  level(x: number, z: number): number | null;
+  /** How wet a place is: 0 dry .. 1 under the liquid. */
+  wet(x: number, y: number, z: number): number;
+  dispose(): void;
+}
+export interface FluidPart {
+  /** A liquid in a box of your world: make it once with the scene, and clear() it each round. */
+  Fluid: (new (view: Loose, o?: {
+    box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: string | false;
+    thick?: number; rough?: number; glow?: number; gravity?: number | { x?: number; y?: number; z?: number }; drops?: number; size?: number; shadows?: boolean; gpu?: boolean; seed?: number;
+  }) => FluidT) & {
+    /** The most drops this phone runs well (on the graphics chip where it can). */
+    max(): number;
+  };
+  KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>;
+}
 export interface TickPart {
   /** Ticks per second for the game being played; 0 when it runs one update per frame. */
   readonly rate: number; readonly on: boolean; readonly dt: number;
@@ -1059,7 +1169,23 @@ export interface BonesPart { Rig: typeof Rig }
 
 // ---------- 3D and AI parts (load on first use; the app loads them before a game that needs them) ----------
 
-export interface ToonPart { View: new (...a: Loose[]) => Loose; G: Loose; part: Loose; grp: Loose; blob: Loose; toon: Loose; flat: Loose; dude: Loose; has3D(): boolean; THREE: Loose }
+/** What new gs.toon.View({ ... }) takes. */
+export interface ToonViewOptions {
+  bg?: string; fog?: [colour: string, near: number, far: number] | null; sun?: [number, number, number]; sunI?: number; sky?: string; ground?: string; amb?: number;
+  /** false: blob() discs and no real shadows. (Real shadows are also off on low-end phones, where the discs show.) */
+  shadows?: boolean;
+  /** 0..1: how bright the rim of light on the sunny side of things is (default .35; 0 for none). */
+  rim?: number;
+  /** false if the bare background of a board view isn't ground (a drop, the sky): no shadows land on it. */
+  floor?: boolean;
+  /** A retro look: 'chunky' (240 lines, hard pixels, corners that snap, 32 shades a colour with a dither), 'soft' (240 lines scaled up smoothly), 'tube' (soft with scanlines), or your own mix. */
+  retro?: 'chunky' | 'soft' | 'tube' | { lines?: number; smooth?: boolean; snap?: boolean; bits?: number; scan?: number } | null;
+}
+export interface ToonPart {
+  View: new (o?: ToonViewOptions) => Loose; G: Loose; part: Loose; grp: Loose; blob: Loose; toon: Loose; flat: Loose; dude: Loose; has3D(): boolean; THREE: Loose;
+  /** A jointed cel-shaded person h units tall (best 24 or more) with the gs.poses joints: figure().rig.play('walk'), rig.update(dt, { speed }) each frame. */
+  figure(o?: { h?: number; body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string | null }): Loose & { rig: RigT };
+}
 /** An HDView's extras for the ray-traced look: v.reflect(...meshes) (reflections on top-end phones), v.contact({ y, size }) (soft contact shadows) (mesh.userData.noAO = true keeps a mesh out of ambient occlusion). */
 /** HDView extras: v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.occluders(boxes | null, { max, w }) (occlusion culling: skip what's hidden behind big solid boxes { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; userData.noOcclude to always draw; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off). */
 export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose; HDView: new (...a: Loose[]) => Loose; HD: Loose; TIERS: Loose; hasHD(): boolean; pbr: Loose; rbox: Loose; surface: Loose; speckle: Loose; /** pbr(col, { rough, metal, glow, clear, sheen, tex, depth (parallax occlusion on WebGPU, in texture widths, e.g. .05), sss: true | { colour, power, scale, distortion, ambient, attenuation }, aniso (brushed metal streaks 0..1), anisoDir (radians), film (soap bubble / oil rainbow 0..1), glass: true | { thickness, ior, tint, distance }, wet (rain-soaked 0..1, porosity) }) (sss: subsurface scattering, light glowing through skin, wax, leaves). */ /** detail(big, fine, { times, strength }): mix a fine surface() normal (repeated `times` over) into a big one, so close-ups keep grain. Give it sets without repeat. */ detail(big: Loose, fine: Loose, o?: { times?: number; strength?: number }): Loose; /** panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). */ panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose; /** lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. */ lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose; /** pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). */ pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose; Particles: Loose;
@@ -1083,7 +1209,13 @@ export interface HdAir {
 export interface HdGrade { saturation?: number; contrast?: number; shadows?: Loose; highlights?: Loose }
 /** What sun().fit(view, o) covered, in metres. */
 export interface HdShadowFit { width: number; height: number; texel: number }
-export interface ArPart { ARView: new (...a: Loose[]) => Loose; FLOOR: Loose; arNote: Loose; THREE: Loose }
+/**
+ * AR (docs/ar-3d.md). new ARView({ occlude: true, walls: true, light: 'real' }) turns on AR phase 2 with native AR:
+ * real things hide virtual ones, walls are mapped (surfaces() and hit() give them), and the sun and
+ * reflections follow the room's real light. v.anchor(p, q) holds a real spot; v.marker(picture, { width })
+ * finds a picture in the room (markerArt(seed) draws one phones find easily).
+ */
+export interface ArPart { ARView: new (...a: Loose[]) => Loose; FLOOR: Loose; arNote: Loose; markerArt: (seed?: number, size?: number) => HTMLCanvasElement; THREE: Loose }
 export interface BricksPart { BRICK: Loose; BRICK_KEYS: Loose; STUD: Loose; brick: Loose; brick3d: Loose; stud: Loose; stud3d: Loose }
 /** Rapier 3D (lazy). */
 export interface Physics3dPart { World3D: new (o?: Loose) => Loose; loadPhysics3D(): Promise<Loose>; physics3DReady(): boolean }
@@ -1814,6 +1946,43 @@ export interface ArenaPart {
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
   chaseBall(car: BallCar, arena: Loose, o?: { skill?: number }): { throttle: number; steer: number; boost: boolean; jump: boolean };
 }
+/** What gs.models.creature takes. Colours are '#rrggbb'. */
+export interface CreatureOptions {
+  kind?: 'quad' | 'bird' | 'fish' | 'insect' | 'monster';
+  like?: 'dog' | 'cat' | 'horse' | 'deer' | 'cow' | 'pig' | 'bear' | 'rabbit' | 'mouse' | 'lizard' | 'songbird' | 'crow' | 'duck' | 'hawk' | 'owl' | 'chicken' | 'heron' | 'fish' | 'shark' | 'eel' | 'puffer' | 'angler' | 'beetle' | 'ladybird' | 'ant' | 'bee' | 'butterfly' | 'dragonfly' | 'spider' | 'dragon' | 'beast' | 'ogre' | 'imp' | 'blob' | 'serpent';
+  /** Its own build, coat, pattern and size (none: the animal as the book shows it). */
+  seed?: number;
+  /** Metres from nose to rump (a bird: beak to tail; one that stands up: its height). An insect is tiny at its real size: give it one the camera can see. */
+  size?: number;
+  colour?: string; color?: string; belly?: string; accent?: string;
+  pattern?: 'plain' | 'spots' | 'stripes' | 'patches' | 'bands' | 'socks' | 'back' | 'tips' | 'hood';
+  /** Colours of its parts: eyes (the iris), horn, hoof, claw, beak, legs (a bird's, an insect's), comb, mane, wing, fin, nose, shell, lure. */
+  eyes?: string; horn?: string; hoof?: string; claw?: string; beak?: string; legs?: string; comb?: string; mane?: string; wing?: string; fin?: string; nose?: string; shell?: string; lure?: string;
+  /** Any of its measures by name, as creature.look.build lists them ({ neck: .5, horns: 'antlers', wings: 1 }). */
+  build?: Record<string, number | string>;
+  /** .5 coarser .. 2 finer (1). */
+  detail?: number; shadows?: boolean;
+  /** Sculpt on the spot (tools and tests: the page stops while it does). */
+  now?: boolean;
+}
+export type CreatureT = Loose & {
+  rig: RigT;
+  /** Moves its legs, wings, fins or coils for a speed in metres a second (0: it stands, hovers or drifts). fly: in the air; swim: a serpent in water; turn: -1..1, it leans. */
+  move(dt: number, speed?: number, o?: { fly?: boolean; swim?: boolean; turn?: number }): CreatureT;
+  /** Metres a second where each of its gaits sits. */
+  speeds: { walk?: number; trot?: number; run?: number; fly?: number; swim?: number };
+  bones: Record<string, Loose>; mesh: Loose; lods: Loose[];
+  /** 0 close .. 2 far. */
+  lod: number;
+  /** Picks the level of detail by its size on screen; returns it. */
+  see(camera: Loose, screenHeightPx?: number): number;
+  size: { length: number; height: number; width: number };
+  /** What the seed chose: kind, like, seed, size, colour, belly, accent, pattern, eyes, build (its measures). */
+  look: Record<string, Loose>;
+  kind: string; like: string;
+  /** Another of the very same creature, sharing everything but its skeleton. */
+  twin(): CreatureT;
+};
 export interface RigT {
   state: string;
   play(name: string, o?: { fade?: number }): RigT; upper(name: string | null): RigT; add(name: string, fn: Loose, rate?: number): RigT;
@@ -1827,7 +1996,7 @@ export interface RigT {
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
-  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose> }) => RigT;
+  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; joints?: string[] }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
   person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: number; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose & { rig: RigT; face: FaceT; mesh: Loose; bones: Record<string, Loose> };
   Face: CharactersPart['Face']; shapes: CharactersPart['shapes']; visemes: CharactersPart['visemes']; FACE_SHAPES: string[];
@@ -1979,6 +2148,29 @@ export interface ModelsPart {
     need(list: Loose[]): void;
     /** For tools and tests: resolves once human(options) for each of these would come straight back. */
     ready(list: Loose | Loose[]): Promise<boolean>;
+    /** Forgets every saved sculpt. */
+    clear(): Promise<void>;
+  };
+  /**
+   * An animal or a monster made in code from a seed, sculpted the way gs.models.human is (no model or texture files): one skinned mesh in three levels of detail on a skeleton of its own, with gaits made for its own legs, wings, fins or coils.
+   * like: 'dog' | 'cat' | 'horse' | 'deer' | 'cow' | 'pig' | 'bear' | 'rabbit' | 'mouse' | 'lizard' (kind 'quad'), 'songbird' | 'crow' | 'duck' | 'hawk' | 'owl' | 'chicken' | 'heron' ('bird'), 'fish' | 'shark' | 'eel' | 'puffer' | 'angler' ('fish'), 'beetle' | 'ladybird' | 'ant' | 'bee' | 'butterfly' | 'dragonfly' | 'spider' ('insect'), 'dragon' | 'beast' | 'ogre' | 'imp' | 'blob' | 'serpent' ('monster').
+   * No seed: the animal as the book shows it. A seed: its own build, coat, pattern and size, the same on every phone. kind alone: the seed picks which animal of that kind; neither: any creature at all.
+   * Returns a Group, feet at y = 0 (a fish: its middle), facing +z: move(dt, speed, { fly, swim, turn }) each frame (the easy way: it picks and blends walk, trot, run, fly or swim for a speed in metres a second), or rig.play('eat') and rig.update(dt, { speed }) yourself; speeds (where each gait sits), bones, lod / see(camera, screenHeightPx), size (metres), look (what the seed chose), twin() (another of the very same creature, nearly free: a herd).
+   * Poses by kind: 'idle', 'walk', 'run', 'attack', 'hurt', 'dead' everywhere; four legs add 'trot', 'eat', 'sit', 'jump'; birds 'fly', 'glide', 'hover', 'eat', 'sit', 'jump'; fish 'swim'; flying insects 'fly', 'hover'; a dragon and an imp 'fly', 'glide', 'hover'; an ogre and an imp every pose a person has; a serpent 'rear', 'swim'.
+   * A shape this phone hasn't sculpted yet takes a few tenths of a second in the background: the app shows "Loading…" and makes the game again (make creatures in make() or reset()); it is then saved. Several kinds: creature.all([...]) first thing. Creatures of one shape share it whatever their colours and size.
+   */
+  creature: {
+    (o?: CreatureOptions): CreatureT;
+    /** The kinds: 'quad', 'bird', 'fish', 'insect', 'monster'. */
+    readonly kinds: readonly string[];
+    /** Every animal a creature can be like, and its kind: { dog: 'quad', owl: 'bird', ... }. */
+    readonly likes: Readonly<Record<string, string>>;
+    /** Several creatures at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
+    all(list: CreatureOptions[]): CreatureT[];
+    /** Starts sculpting whatever these creatures still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
+    need(list: CreatureOptions[]): void;
+    /** For tools and tests: resolves once creature(options) for each of these would come straight back. */
+    ready(list: CreatureOptions | CreatureOptions[]): Promise<boolean>;
     /** Forgets every saved sculpt. */
     clear(): Promise<void>;
   };
@@ -2205,7 +2397,7 @@ export interface GS {
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;

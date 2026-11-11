@@ -1,6 +1,6 @@
-// Gets the face and hand tracking files (gs.vision, MediaPipe, Apache-2.0) ready to serve:
+// Gets the face, hand and body tracking, object spotting and sound recognition files (gs.vision, gs.hear; MediaPipe, Apache-2.0) ready to serve:
 //   node scripts/fetch-ml.mjs [outDir]      (default: ml-cache/, which the dev server serves at /ml/)
-// Writes <outDir>/<ML_VERSION>/: the MediaPipe wasm (from node_modules) and the two models (from
+// Writes <outDir>/<ML_VERSION>/: the MediaPipe wasm (from node_modules) and the models (from
 // Google's model storage). The games workflow uploads them to assets.game-scroll.com/ml/ once, and
 // the app downloads them from there the first time a face or hands game is played. The small
 // loader script stays inside the app (the app may only run scripts that ship with it).

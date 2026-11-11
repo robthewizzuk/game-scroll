@@ -28,7 +28,7 @@
 //   gs.ai        steering, flocking, path finding, state machines (Yuka)
 //   gs.toon      Classic Console 3D (cel-shaded)       gs.hd   Next Gen 3D (PBR, bloom, shadows; upscaling and frame generation built in)
 //   gs.ar        AR 3D (camera + gyro)                 gs.fx3d 3D text, 3D particles, outline/glitch/trails
-//   gs.vision    face and hand tracking (on the phone's AI chip in the apps, else MediaPipe)   gs.geo  distances and bearings for location games
+//   gs.vision    face and hand tracking (on the phone's AI chip in the apps, else MediaPipe), object spotting, barcodes   gs.geo  distances and bearings for location games
 //   gs.things    game objects: tags, "what did this hit", nearest, reuse; Node: parent and child places
 //   gs.rounds    scenes (intro, play, clear...) with timed changes, and level lists
 //   gs.pacing    spawners, waves with breathers, a difficulty director
@@ -64,6 +64,7 @@
 //   gs.solve     Puzzle (one-answer puzzles: solve, carve clues, grade, fair hints) and Search (turn-based opponents: minimax, MCTS, skill)
 //   gs.tabletop  Board games: a table in a room (3D) or in your real room (AR), camera, picking, moves, dice, pieces, chess rules and opponent
 //   gs.voxels    editable 3D block worlds: chunks meshed in a worker, ray picks, a box mover, world makers (3D; lazy)
+//   gs.fluid     real 3D liquids: a particle fluid to pour, splash and fill things with (on the graphics chip with WebGPU, smaller elsewhere)
 //   gs.tick      the fixed game tick (tick: 60 in the definition): rate, alpha for drawing between ticks, mix, turn
 //   gs.paths     smooth paths through points (2D or 3D): steady-speed followers, lanes, nearest point
 //   gs.bones     2D bone characters: parts that hang off each other, poses, clips, reach (IK), wobble
@@ -185,7 +186,9 @@ export const HIDDEN = {
   phoneai: ['phoneAIStatus'],
   brains: ['liveBrains', 'brainStats'],   // the debug overlay's list of live brains
   hd: ['FINAL_EFFECTS', 'gpuFits'],
+  toon: ['TOON', 'celReady'],   // test switches, and whether three's toon shader still has the lines the cel look changes
   props: ['simplifyReady'],
+  fluid: ['FLUID', 'RHO', 'K', 'G0', 'VMAX', 'LO', 'WALL', 'SOLIDS', 'SINKS', 'PUSHES', 'IN', 'RAD', 'SKIN', 'REACH', 'viscosity', 'bulk', 'thin', 'foamOf'],   // the fluid's numbers (shared with its WebGPU twin) and test switches
   tabletop: ['loadChess'],
   models: ['ready'],   // (the app waits for the saved bakes while the 3D parts load)   // the Next Gen screen shader in pieces, for the WebGPU port (docs/webgpu-move.md)
 };
@@ -224,12 +227,12 @@ function readOnly(o) {
 // code). The app loads the parts a streamed game needs before running it, so games don't notice;
 // if a part isn't in yet, reading it throws StillLoading and the app shows "Loading…".
 const GROUPS = {
-  '3d': { parts: ['toon', 'hd', 'ar', 'bricks', 'physics3d', 'fx3d', 'camera', 'nav3d', 'characters', 'level3d', 'sky', 'poses', 'destruction', 'props', 'outdoors', 'city', 'models', 'voxels', 'tabletop', 'THREE'],
+  '3d': { parts: ['toon', 'hd', 'ar', 'bricks', 'physics3d', 'fx3d', 'camera', 'nav3d', 'characters', 'level3d', 'sky', 'poses', 'destruction', 'props', 'outdoors', 'city', 'models', 'voxels', 'fluid', 'tabletop', 'THREE'],
     // (with WebGPU picked in Settings, its renderer gets ready alongside: src/kit/gpu.js)
     load: () => Promise.all([import('./gs-3d.js').then(m => Promise.all([m.props.simplifyReady, m.models.ready()]).then(() => m)), import('./kit/gpu.js').then(g => g.prepareGPU())]).then(([m]) => ({ toon: pick('toon', m.toon), hd: pick('hd', m.hd), ar: pick('ar', m.ar), bricks: pick('bricks', m.bricks),
       physics3d: pick('physics3d', m.physics3d), fx3d: pick('fx3d', m.fx3d), camera: pick('camera', m.camera), nav3d: pick('nav3d', m.nav3d),
       characters: pick('characters', m.characters), level3d: pick('level3d', m.level3d), sky: pick('sky', m.sky),
-      poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city), models: pick('models', m.models), voxels: pick('voxels', m.voxels), tabletop: pick('tabletop', m.tabletop), THREE: m.THREE })) },
+      poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), tabletop: pick('tabletop', m.tabletop), THREE: m.THREE })) },
   ai: { parts: ['ai'], load: () => import('./kit/ai.js').then(m => ({ ai: pick('ai', m) })) },
   action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena'],
     load: () => import('./gs-action.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
@@ -250,7 +253,9 @@ export const LAZY_PARTS = Object.freeze(Object.keys(groupOf));
 /** Loads the parts these names need ('toon', 'hd.HDView', ...), or every part if none are given. */
 export function loadParts(names) {
   const tops = names ? [...new Set(names.map(n => n.split('.')[0]))] : LAZY_PARTS;
-  return Promise.all([...new Set(tops.filter(t => groupOf[t]).map(t => groupOf[t]))].map(loadGroup)).then(() => {});
+  const groups = Promise.all([...new Set(tops.filter(t => groupOf[t]).map(t => groupOf[t]))].map(loadGroup));
+  // a Console game draws on its own WebGPU renderer where the device has one (src/kit/gpu.js): ready before the game runs
+  return (tops.includes('toon') ? groups.then(() => import('./kit/gpu.js')).then(g => g.prepareConsoleGPU()) : groups).then(() => {});
 }
 /** Are these parts loaded? */
 export const partsReady = names => (names || LAZY_PARTS).every(n => !groupOf[n.split('.')[0]] || n.split('.')[0] in loaded);
@@ -327,7 +332,7 @@ const gs = {};
 for (const [k, v] of Object.entries(core)) Object.defineProperty(gs, k, { value: v, enumerable: true });
 for (const k of LAZY_PARTS) Object.defineProperty(gs, k, {
   enumerable: true,
-  get() { if (k in loaded) return loaded[k]; throw new StillLoading('gs.' + k, loadGroup(groupOf[k])); },
+  get() { if (k in loaded) return loaded[k]; throw new StillLoading('gs.' + k, loadParts([k])); },
 });
 Object.freeze(gs);
 export default gs;

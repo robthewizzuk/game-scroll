@@ -1,8 +1,9 @@
 // Checks what the app itself does around a game (not what a game does): keeping the screen on during a
 // round, finer touch, even pixels and the LCD look for pocket games, the one-line soundtrack, the bigger
 // save that stays on the phone, the font library, the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons),
-// and the phone test tour (a bot that plays as a guest, the frame report, the plugin check).
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour]   (SHOTS=<dir> saves a picture of every font and look)
+// the phone test tour (a bot that plays as a guest, the frame report, the plugin check), and loading a big
+// 3D game a little each frame (each pass on a fresh copy of the game's file).
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading]   (SHOTS=<dir> saves a picture of every font and look)
 const { chromium } = require('playwright');
 
 let failed = 0;
@@ -645,10 +646,58 @@ async function tour(b) {
   await p.done();
 }
 
+/* ---------- a big 3D game is made a little each frame, each pass on a fresh copy of its file ---------- */
+async function loading(b) {
+  console.log('\nLoading');
+  const p = await open(b);
+  // A made-up Next Gen game that keeps its world at the top of its file, as the starter templates do
+  // (`if (!world) setup()`). The kit stops a pass partway through setup(); if the next pass shared
+  // that world it would find it half built. file() stands for the game's file: each call is a copy
+  // with its own top-level memory.
+  const play = (id, how) => p.evaluate(async ([id, how]) => {
+    const gs = (await __gs.gs()).default;
+    const file = () => {
+      let world = null;
+      const setup = () => {
+        world = { things: [] };
+        world.things.push(gs.models.sculpt([{ ball: .4 }, { box: [.5, .3, .4], at: [.2, .1, 0], round: .05 }], { res: 26 }));
+        for (let i = 0; i < 6; i++) world.things.push(gs.models.prop(['crate', 'barrel', 'chair', 'table', 'bench', 'bucket'][i], { seed: 9100 + i + id.length }));
+        world.done = true;
+      };
+      return { id, likes: 1, title: 'Loading test', tag: 'Next Gen · Test', retro: true, era: 'nextgen', pal: 'grape', w: 300, h: 300, goal: 1, hint: 'A test.', creator: 'Test',
+        make: () => ({ reset() { if (!world) setup(); if (!world.done) throw new Error('the world was left half built'); }, update() {}, draw(c) { c.fillStyle = '#123'; c.fillRect(0, 0, 300, 300); } }) };
+    };
+    const def = file(); __gs.GAMES.push(def);
+    let copies = 0; if (how === 'fresh') __gs.fresh[id] = () => { copies++; return Promise.resolve(file()); };
+    __gs.only(id, true);
+    await new Promise(res => { const t = setInterval(() => { if (__gs.active && __gs.active.def.id === id && (!__gs.active.loading || __gs.active.failed)) { clearInterval(t); res(); } }, 50); });
+    await new Promise(res => setTimeout(res, 400));
+    return { passes: __gs.passes.filter(x => x.id === id).map(x => ({ built: x.built, made: x.made, whole: x.whole })), copies, failed: __gs.active.failed || null };
+  }, [id, how]);
+  let r = await play('zz-loading-a', 'fresh');
+  check(!r.failed && r.passes.length > 1 && r.passes.at(-1).made, 'a game that keeps its world at the top of its file loads in several passes, never half built', JSON.stringify(r));
+  check(r.copies === r.passes.length && r.passes.every(x => !x.whole), 'each pass ran on a fresh copy of the file', JSON.stringify(r));
+  check(r.passes.some(x => !x.made && x.built > 0), 'and a pass that had built something was stopped to let a frame go by', JSON.stringify(r.passes));
+  // no way to get a fresh copy: the game is made in one go, on the copy the app has
+  r = await play('zz-loading-bb', 'none');
+  check(!r.failed && r.passes.length === 1 && r.passes[0].whole && r.passes[0].made, 'a game with no fresh copy to be had is made in one go', JSON.stringify(r));
+  await p.done();
+  // a real board game: its textures' number work goes to the workers, and nothing is left unmade
+  const q = await open(b);
+  const before = await q.evaluate(() => ({ ...__gs.jobs }));
+  await q.evaluate(() => __gs.only('tavern-dice', true));
+  await q.waitForFunction(() => __gs.active && __gs.active.def.id === 'tavern-dice' && !__gs.active.loading, null, { timeout: 120000 });
+  const jobs = await q.evaluate(() => ({ ...__gs.jobs }));
+  check(jobs.done - before.done >= 4 && jobs.failed === before.failed && jobs.started === jobs.done, 'a board game\'s textures are finished by the background workers before its card shows', JSON.stringify({ before, jobs }));
+  await q.evaluate(() => __gs.start()); await q.waitForTimeout(1500);
+  check(await q.evaluate(() => __gs.active.state === 'playing' && !__gs.active.failed), 'and it plays');
+  await q.done();
+}
+
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour };
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading };
   for (const [name, fn] of Object.entries(parts)) if (!only.length || only.includes(name)) await fn(b);
   await b.close(); server.httpServer.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall app checks passed'); process.exit(failed ? 1 : 0);

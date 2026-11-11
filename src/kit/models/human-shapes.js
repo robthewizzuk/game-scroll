@@ -326,7 +326,7 @@ const fake = i => [((i * 53) % 7) / 6, ((i * 29) % 5) / 4, ((i * 17) % 3) / 2];
  * and bones of each (SI, SW 8-bit), and three sets of triangles (I: close, middle, far), all plain arrays.
  * bones(x, y, z, shape) => [[bone, weight]...].
  */
-function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null }) {
+export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null }) {
   const m = meshOf(shapes, { cell, blend, reach, keep: keep[0], error: err[0] });
   let { P, N, I } = m; const n0 = m.n, slots = [], names = [];
   let slot = new Uint8Array(n0), ao = m.ao, SI = new Uint8Array(n0 * 4), SW = new Float32Array(n0 * 4);

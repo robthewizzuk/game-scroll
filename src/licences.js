@@ -23,6 +23,8 @@ export const OPEN_SOURCE = [
   { name: 'ONNX Runtime', for: "running the face, hand and sound models on the phone's AI chip, by Microsoft", licence: 'MIT', spdx: 'MIT', native: 'plugins/npu/android/build.gradle', notice: '© Microsoft Corporation' },
   { name: 'CameraX', for: 'the front camera for face and hand tracking on Android, by Google', licence: 'Apache 2.0', spdx: 'Apache-2.0', native: 'plugins/npu/android/build.gradle' },
   { name: 'YAMNet', for: 'recognising everyday sounds, by Google (model downloaded on first use)', licence: 'Apache 2.0', spdx: 'Apache-2.0', vendored: 'src/kit/vision-files.js' },
+  { name: 'EfficientDet-Lite0', for: 'spotting everyday objects with the camera, by Google (model downloaded on first use)', licence: 'Apache 2.0', spdx: 'Apache-2.0', vendored: 'src/kit/vision-files.js' },
+  { name: 'ZXing-C++ (zxing-wasm)', for: 'reading barcodes and QR codes on phones with no reader of their own; ZXing-C++ by the ZXing authors (Apache 2.0), its WebAssembly build by Ze-Zheng Wu (MIT)', licence: 'MIT and Apache 2.0', spdx: 'MIT', packages: ['zxing-wasm'] },
   { name: 'Quick, Draw! dataset', for: 'the drawings the doodle recogniser learned from, by Google', licence: 'CC BY 4.0', spdx: 'CC-BY-4.0', vendored: 'src/kit/doodle-model.js', notice: 'Quick, Draw! drawings © Google, CC BY 4.0, quickdraw.withgoogle.com/data' },
   { name: 'Yuka', for: 'game AI', licence: 'MIT', spdx: 'MIT', packages: ['yuka'] },
   { name: 'mistreevous', for: 'behaviour trees', licence: 'MIT', spdx: 'MIT', packages: ['mistreevous'] },

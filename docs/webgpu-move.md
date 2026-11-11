@@ -9,7 +9,8 @@ default where it's supported, with WebGL kept for older phones.
 Gen and AR views draw on WebGPU
 whenever everything in the view has a WebGPU version, and quietly stay on WebGL otherwise (checked every
 frame, so a game that adds an unported effect mid-round moves back before it draws). Classic Console
-stays on WebGL for now.
+views do the same on a WebGPU renderer of their own (2026-11-11: `gpu.js prepareConsoleGPU()`, the passes
+in `src/kit/toon3d-gpu.js`), made on the Next Gen renderer's device when the first Console game loads.
 
 The rules for new 3D code until then:
 
@@ -54,11 +55,32 @@ The rules for new 3D code until then:
 
 | Part | Where | What it needs for WebGPU |
 | --- | --- | --- |
-| Classic Console | `src/kit/toon3d.js` ink pass; toon shading is already stock `MeshToonMaterial` | A TSL edge-detect pass, then Console views on WebGPU |
 | Sky glow cap and shafts threshold | `sky.js` soft knee in the physical dome, `v.shaftsAt`; `hd3d.js` `ShaftsPass.bright()` (`thr`/`hi`/`cap`/`gain`) | The same knee in `gpuMaterials.skyDome` and the same mask numbers in `GpuChain`'s shafts |
 | Sized points | `gs.sky` stars and snow (`PointsMaterial` with `size`) | WebGPU draws points 1 pixel wide whatever the size: sprites (instanced quads) instead. They don't keep a view on WebGL; they are just thin |
 
 Status from `gpu-games.cjs` (2026-11-09): all 20 Next Gen and AR games draw on WebGPU with no errors.
+2026-11-11: all 18 Classic Console games do too.
+
+## Classic Console on WebGPU
+
+The WebGL Console renderer draws straight to its canvas, so everything happens in the screen's colours:
+see-through things blend there, fog mixes there and the ink is laid over colours that are already as the
+screen shows them. The WebGPU Console renderer draws the same way, so the two pictures match
+(`PICK=console,console-floor,console-side,console-persp,console-figure,console-chunky,console-soft,console-tube
+node scripts/look-compare.cjs save base`, then `check base --webgpu`: under 1/255 apart):
+
+- An 8-bit canvas and 8-bit passes, no tone mapping, and a renderer-wide `getOutput` (`celOut`) that turns
+  every material's finished colour into the screen's colours as it is written, mixes the fog in after
+  that, and cuts it to a retro look's few shades. three's own fog and background are off while it draws;
+  the clear colour is the background as the screen shows it.
+- The cel look's twin is a lighting model (`CelModel`): the ramp read at N·L, and the sun's shadow folded
+  in as the ramp's dark band with one smoothed edge, the same sum as the GLSL in `toon3d.js`.
+- One set of passes for every Console view: the scene in colour, the scene again as normals and depth
+  (things on layer 0), then the ink and the rim of light over the colour.
+- Each renderer has a shadow object of its own for a view's sun (a shadow's map belongs to the renderer
+  that made it), so a view can move between the two.
+- The looks that have twins are listed in `toon3d.js` `PORTED`; a view holding anything else (a
+  `ShaderMaterial`, another `lookPatch`) stays on WebGL from then on, and `window.__toon.why` says what.
 
 ## Done: gs.fx3d, reflections and light probes on both
 
@@ -104,6 +126,16 @@ Checked by `look-compare` (`fx-text`, `fx-parts`, `fx-outline`, `fx-pixelate`, `
 `gs.hd.GPUParticles` is the first part made WebGPU-first: a TSL compute pass (`src/kit/particles-gpu.js`)
 moves them in storage buffers that the sprites read, with the same rules run on the CPU for WebGL. The
 look-compare `sparks` scene checks the two match.
+
+## Real 3D liquids
+
+`gs.fluid` is WebGPU-first too: MLS-MPM as six TSL compute passes a step (`src/kit/fluid-gpu.js`: clear
+the grid, drops to grid with atomics in fixed point, the grid's weight with the walls' mirrors folded
+in, the push of squeezed liquid, the grid's speeds, grid to drops), the drops drawn from the same
+storage buffers, and the drops' places copied back every few frames for the game's questions and its
+drains. `src/kit/fluid.js` runs the same steps line for line in JavaScript for WebGL, with fewer drops.
+The look-compare `gpu-fluid` scene runs a dam break with a tap, a cup and a drain on whichever backend
+is drawing and fails if liquid is lost or comes to rest somewhere else.
 
 ## Done for Long Shadow and Deep Pressure
 

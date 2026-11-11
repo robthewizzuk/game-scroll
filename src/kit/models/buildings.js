@@ -5,6 +5,7 @@
 // wear(). For a whole made-up town far off, gs.city is cheaper; this is for the buildings the player
 // walks up to.
 // Kit use only: games reach it as gs.models.building.
+import { pause, built, loading } from '../slices.js';
 import { Group, Mesh, Shape, ExtrudeGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Build, boxUV, rngOf } from './props.js';
@@ -42,7 +43,10 @@ export function building(o = {}) {
   const { w = 8, d = 6, floors = 2, roof = st.kind, floor: fh = st.floor, bay = st.bay, win = st.win, lit = 0, colour = o.color, door = true, seed = 0, wear: wr = {} } = o;
   const key = JSON.stringify([st, w, d, floors, roof, fh, bay, win, lit, colour, door, seed, wr]);
   let parts = made.get(key);
-  if (!parts) { parts = make(st, { w, d, floors, roof, fh, bay, win, lit, colour, door, seed, wr }); if (made.size >= 32) made.delete(made.keys().next().value); made.set(key, parts); }
+  if (!parts) {
+    pause('Models');   // (while a card loads, a frame may go by before each new building: slices.js)
+    parts = make(st, { w, d, floors, roof, fh, bay, win, lit, colour, door, seed, wr }); if (made.size >= 32 && !loading()) made.delete(made.keys().next().value); made.set(key, parts); built();
+  }
   const out = new Group(); out.name = 'building'; out.userData.building = o.style || 'custom';
   for (const p of parts) { const m = new Mesh(p.geo, p.mat); m.castShadow = p.shadow; m.receiveShadow = true; m.name = p.slot; out.add(m); }
   return out;

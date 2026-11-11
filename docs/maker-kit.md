@@ -80,7 +80,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Chapters, stars, collectibles, unlocks | `gs.campaign` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds placed in 3D, music that builds up | `gs.sound.Ears`, `music({ layers })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
-| Materials, props, sculpted shapes, trees, buildings and close-up people made in code (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
+| Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
 | Planes, boats, hover craft, floating crates | `gs.craft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -100,8 +100,10 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Puzzles with exactly one answer, graded, with fair hints; computer opponents for board games | `gs.solve` | [Puzzles and opponents](#puzzles-and-opponents) |
 | A board game on a table in 3D that also plays on your floor in AR: camera, picking, turns, real dice, pieces, chess | `gs.tabletop` | [board-games.md](board-games.md) |
 | Play with your whole body; put the player inside the game; thumbs up and other hand signs | `gs.vision.Body`, `CutOut`, `Signs` | [Body, cut-outs and hand signs](#body-cut-outs-and-hand-signs) |
+| A scavenger hunt for real things ("find a cup!"); scan a barcode or QR code to make a creature or a level | `gs.vision.Objects`, `Scanner` | [A camera that knows things](#a-camera-that-knows-things) |
 | Walk to play, lift the phone, a dark room, a hand over the phone | `gs.device.steps()`, `pressure()`, `light()`, `near()` | [Steps, air pressure, light, proximity](#steps-air-pressure-light-proximity) |
 | Block worlds to dig, build and craft in | `gs.voxels` | [Voxel worlds](#voxel-worlds) |
+| Liquid you can pour, splash and fill things with, in 3D | `gs.fluid` | [Real 3D liquids](#real-3d-liquids) |
 | Night in the game when it is night outside; the real moon; plug in to charge; headphones in | `gs.real` (SunCalc) | [The real world: sun, moon, battery, headphones](#the-real-world-sun-moon-battery-headphones) |
 
 ## What `gs` has, and what it doesn't
@@ -112,7 +114,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 `replay`, `look2d`, `brains`, `tweak`, `board`, `battle`, `gen`, `drag`, `idle`, `party`, `rhythm`,
 `strokes`, `vehicles`, `paths`, `bones`, `level3d`, `sky`, `camera`, `nav3d`, `characters`, the action kits (`combat`,
 `tactics`, `climb`, `poses`, `missions`, `cutscene`, `prompts`, `destruction`, `stealth`, `gadgets`,
-`campaign`, `arena`, `props`), `outdoors`, `craft`, `soft`, `cards`, `dice`, `words`, `ui`, `solve`, `tick`, `voxels`, `toon` (Classic
+`campaign`, `arena`, `props`), `outdoors`, `craft`, `soft`, `cards`, `dice`, `words`, `ui`, `solve`, `tick`, `voxels`, `fluid`, `toon` (Classic
 Console 3D), `hd` (Next Gen 3D), `ar`, `fx3d`, `vision`, `geo`, `real`, `fonts`, `sketch`, `icons` and `THREE`.
 It is the only thing a game may import (`src/game-modules.js`); `npm run games` refuses anything
 else and the PR check flags it.
@@ -130,6 +132,33 @@ dictionary (`gs.words`) and the UI layout engine (`gs.ui`) are a
 few MB, so the app loads them the first time a game needs them. Create those things in `make()` or
 `reset()`: if the library isn't in yet, the app shows "Loading…" on the card and makes your game
 again once it is. Don't create them later (in `update()` or a tap), or the game will stop with an error.
+
+**Loading doesn't hold the feed still.** A big 3D game (a board game's room, a level with twenty
+textures made in code) used to stop the feed for a third of a second or more while it was made. Now
+its card says "Loading…" with a bar, and the feed and the game being played keep moving. You don't
+write anything for it:
+
+- The heavy number work goes to background workers: a `surface()` texture's bumps, a recipe
+  material's pixels, a sculpted mesh, a 3D path map. The game is made straight away with what it
+  asked for, and the card waits until the workers have filled it in.
+- The kit's builders that keep what they make (props, trees, buildings, recipe materials, sculpts,
+  `rbox()` rounded boxes, a city's textures and street furniture) build a little each frame: when a pass of `make()` has used its share of the frame, the builder
+  stops it, and the app makes the game again on the next frame, when everything already built
+  comes straight back.
+- Each of those passes runs on a fresh copy of your game's file, and the copy that gets to the end
+  is the game. So a world kept at the top of the file (`let view; ... if (!view) setup()`, as the
+  templates do) is never left half built by a pass that was stopped.
+- A game whose own code is the slow part (more than about 30 ms of its own maths and painting in a
+  pass) is made in one go, as before: running that again every frame would cost more than it saves.
+  The workers still take the number work.
+
+What it means for a game: `make()` and `reset()` may run more than once before the first round, so
+keep things that must happen once (a save written, a sound played) out of them. That was already
+the rule for the big parts above. Build the world in `make()` or the first `reset()`; a builder
+called later (in `update()`, or in a new round) just builds on the spot.
+
+`node scripts/load-time.cjs <id> --passes` shows how long a game's making holds the main thread,
+in how many passes, and how much of that is the game's own code ([testing.md](testing.md)).
 
 **Your game leads, the kit helps.** The kits work out the fiddly parts (what hit what, when to
 spawn, where a guard looks, where the camera goes) and hand you the answers. How things look, the
@@ -1067,6 +1096,8 @@ update(dt) { g.agent.goto(hero.position); crowd.update(dt); g.mesh.position.copy
 - `path(a, b)` → corners `[Vector3]` (or `[]`), `reachable(a, b)`, `closest(p)`, `random(p, radius)`.
 - Agents: `goto(p)`, `stop()`, `place(p)`, `arrived()`, `position`, `velocity`, `speed`, `remove()`.
 - Set `mesh.userData.noNav = true` on things that shouldn't count (decorations, the player).
+- While a card is loading, the map is made in a background worker and the card waits for it, so a big
+  level doesn't hold the feed still. A new round's map (a level that changes) is made on the spot.
 
 ## Living characters and ragdolls
 
@@ -2146,6 +2177,74 @@ More of `gs.vision`, used like `Face` and `Hands` (make in `make()` or `reset()`
 
 Like every camera game, keep a touch way to play.
 
+## A camera that knows things
+
+Two more of `gs.vision`, and these look out of the **back** of the phone at the room: `Objects` knows
+80 everyday things by name, and `Scanner` reads barcodes and QR codes. Make them in `make()` or
+`reset()`, `start()` them from a tap, call `update()` every frame.
+
+```js
+const { Objects, Scanner } = gs.vision;
+
+// a scavenger hunt
+reset() { eyes = new Objects({ want: ['cup', 'banana', 'book', 'spoon'], shape: W / H }); }
+down()  { eyes.start(); }                               // from a tap: asks for the camera
+update(dt) {
+  eyes.update();
+  if (eyes.seen(target)) { score++; api.score(score); feel.coin(W / 2, H / 2); target = nextThing(); }
+}
+draw(c) {
+  if (eyes.picture) c.drawImage(eyes.picture, 0, 0, W, H);          // the camera, already W x H shaped
+  for (const o of eyes.list) c.strokeRect(o.left * W, o.top * H, o.w * W, o.h * H);
+}
+```
+
+- **`Objects({ want, sure, max, every, shape, camera })`**: `want` is the names to look for (leave it
+  out for all 80: `Objects.names` lists them, from `'cup'`, `'fork'`, `'banana'`, `'book'`, `'clock'`
+  and `'scissors'` to `'dog'`, `'chair'`, `'bicycle'` and `'teddy bear'`; a few other words work too,
+  such as `'phone'`, `'sofa'`, `'fridge'` and `'mug'`). A name it doesn't know throws when the game
+  is made, so a typo shows up straight away. `sure` is how sure it must be (0..1, `.5`), `max` how many
+  things at once (5), `every` the seconds between looks (`.25`).
+  - `seen(name)`: true **once** each time one comes into view (it has to be there two looks running,
+    so one blurry frame doesn't count). `seen()` with no name gives the name of whatever just arrived.
+  - `seeing(name)`: how sure it is that one is in view now (0 when not). `count(name)`: how many.
+  - `list`: what this look found, surest first: `{ name, sure, x, y, w, h, left, top }` (`x`, `y` is
+    the middle). `top` is the surest, `found` whether there is anything.
+- **`Scanner({ kinds, every, shape, camera })`**: reads QR codes and the striped codes on anything from
+  a cereal box to a library book (`Scanner.kinds`: `'qr'`, `'ean-13'`, `'ean-8'`, `'upc-a'`, `'upc-e'`,
+  `'code-128'`, `'code-39'`, `'code-93'`, `'codabar'`, `'itf'`, `'data-matrix'`, `'aztec'`, `'pdf417'`).
+  - `scan()`: the code that has just been read, **once** each time one comes into view (else null):
+    `{ text, kind, seed, x, y, w, h, left, top, corners }`.
+  - `seed` is a whole number made from the text, the same for the same code on every phone and far
+    apart for codes one digit apart: hand it to `gs.art.creature(seed)`, `gs.gen.dungeon(40, 30, { seed })`,
+    `gs.math.rng(seed)`. A whole kitchen becomes a deck of monsters.
+  - `code` is the code in view now (or null), `list` all of them, `backend` which reader is at work.
+  - `Scanner.seed('any text')` gives the seed for a typed word.
+
+```js
+reset() { scanner = new Scanner({ shape: 1 }); monster = null; }
+down(x, y) { if (shuffle.hit(x, y)) monster = gs.art.creature(Math.random() * 1e9 | 0); else scanner.start(); }   // "Surprise me"
+update(dt) { scanner.update(); const code = scanner.scan(); if (code) { monster = gs.art.creature(code.seed); feel.powerup(W / 2, H / 2); } }
+draw(c) { if (scanner.picture) c.drawImage(scanner.picture, 30, 60, 300, 300); /* a square window onto the camera */ }
+```
+
+**The picture and positions.** `picture` is a canvas of what the camera sees, already cut to the
+`shape` you asked for (width / height: `W / H` for the whole card, `1` for a square window), so draw
+it as it is and nothing is stretched. Every position is 0..1 of that picture: multiply by the size you
+drew it at. `{ camera: 'front' }` uses the selfie camera, mirrored. `ready` turns true once the camera
+is running; `failed` says why if the player said no or the phone has no camera.
+
+**How they work.** Everything happens on the phone and no picture leaves it. `Objects` is Google's
+EfficientDet-Lite0 through MediaPipe (a 7 MB model, downloaded the first time such a game is played).
+It takes a few hundredths of a second a look, which is why it looks four times a second and not every
+frame. `Scanner` uses the phone's own barcode reader where the web view has one (Android) and ZXing
+elsewhere (iPhone), reading in the background so the game never waits for it.
+
+**Always give another way in.** Not everyone has a banana or a barcode to hand, and some players say
+no to the camera: a "Skip" for a thing nobody can find, a "Surprise me" button beside "Scan". The
+model knows what a cup looks like in most kitchens, not in all of them, so score finding things, never
+failing to.
+
 ## Steps, air pressure, light, proximity
 
 On `gs.device`, each starts the first time you read it and stops when the round ends; each returns
@@ -2220,3 +2319,57 @@ update(dt) { world.update(); me.vy -= 25 * dt; if (world.move(me, vx * dt, me.vy
   them to place a block on it); `move(box, dx, dy, dz, { step })` walks a box through the blocks
   (`ground`, `inWater`, and which axes were stopped).
 - `pack()` / `unpack()`: the world as a short string (runs of the same block).
+
+## Real 3D liquids
+
+`gs.fluid.Fluid` (3D): a particle fluid in a box of your world. Drops fall, pile up, slosh, run round
+solid things and settle level. On phones with WebGPU the whole fluid runs on the graphics chip (tens
+of thousands of drops, drawn as one smooth body); everywhere else the same maths runs with fewer,
+bigger drops (600 to 2,000, drawn as beads). The game code is the same for both.
+
+```js
+const { Fluid } = gs.fluid;
+function setup() {                                                                     // once, with the scene
+  fluid = new Fluid(view, { box: [-2, 0, -2, 2, 3, 2], volume: 4, kind: 'water' });  // where it can go, and the most it holds
+  tap = fluid.pour({ x: 0, y: 2.5, z: 0, rate: .6, speed: 2 });                        // a stream straight down
+  cup = fluid.tube({ x: 1, y: .4, z: 0, r: .4, h: .8, hollow: .05 });                  // an open cup
+  ball = fluid.ball({ r: .3 });                                                        // something to push the liquid about
+}
+reset() { fluid.clear(); fluid.fill({ y1: .3 }); }                                     // each round: empty it, start with the floor wet
+update(dt) { tap.on = pressed; ball.set(px, py, pz); fluid.update(dt);
+             if (fluid.amount(cup.inside()) > .25) api.win(); }
+```
+
+- Everything is in your world's units: places, sizes, speeds (units a second), amounts (units cubed).
+- `new Fluid(view, { box, volume, kind, open, gravity, drops, size, shadows })`: `box` is
+  `[x0, y0, z0, x1, y1, z1]` with walls all round (`open: true`: a floor and no walls, and drops that leave it vanish). `volume` is
+  the most liquid it has to hold (a quarter of the box if you don't say): the kit picks how many drops
+  the phone can run (`Fluid.max()`) and sizes them so that much fits, so say what you need and no more
+  (less volume: finer drops). `kind`: `'water'`, `'lava'`, `'slime'`, `'honey'` (`gs.fluid.KINDS`), or
+  your own `colour`, `foam` (the colour of spray and fast liquid, or `false`), `thick` (0 water .. 1
+  honey), `rough`, `glow`. `gravity`: a number (9.8) or `{ x, y, z }`; set `fluid.gravity` any time to
+  tilt the world.
+- Putting liquid in: `fluid.pour({ x, y, z, dir, rate, speed, spread, r })` is a tap (change its fields
+  or `tap.on` any time; `tap.remove()`), `fluid.fill({ y1: 1 })` is liquid at rest in a block (sides you
+  leave out are the box's), `fluid.splash(x, y, z, { amount, speed, up })` a burst, `cup.fill(.8)` fills a
+  hollow thing. `fluid.full` / `fluid.room`: when the drops run out, taps stop until some drains away.
+- Solid things: `fluid.ball({ x, y, z, r })`, `fluid.box({ w, h, d, turn })`, `fluid.tube({ r, h, turn })`
+  (up to 8). `hollow: .05` makes a bowl, a tank or a cup with walls that thick, open at the top
+  (`open: false`: sealed). Move one with `thing.set(x, y, z, turn)` each frame, or pass
+  `follow: mesh` and it follows a three.js object: the liquid is pushed by how fast it moves, and
+  pours out of a cup you tip. You draw the things; the fluid only needs their shapes.
+- The world: `fluid.ground((x, z) => y)` lets it flow over land; `fluid.drain({ x, y, z, r })` swallows
+  drops that reach it (`drain.amount` counts how much); `fluid.push(x, y, z, { radius, strength, up })`
+  is a blast.
+- Questions: `fluid.amount()` or `fluid.amount(box)` (units cubed; `cup.inside()` is the box of a hollow
+  thing's room), `fluid.level(x, z)` (the height of its top there, or null where it's dry),
+  `fluid.wet(x, y, z)` (0 dry .. 1 under), `fluid.count`, `fluid.backend` (`'gpu'` or `'cpu'`). On WebGPU
+  the answers are a few frames old, and under a tap `level()` is the top of the stream.
+- Make the fluid once, with the scene, and `clear()` it in `reset()`. Keep the box no bigger than the
+  liquid needs: the drops get bigger with the box. View: an `HDView` (Next Gen, AR, Board) for the
+  WebGPU version; in a Console `View` it runs the smaller one.
+- Build for the smaller version. Without WebGPU the drops are about three times as wide, so a cup,
+  a pipe or a gap has to be wide enough for those: at least six drops across inside
+  (`fluid.dropSize` is a drop's width). `new Fluid(view, { gpu: false, drops: 600 })` runs what the
+  slowest phones run, on any machine: play your game with it once. It pours and fills the same way
+  every time (`seed` changes its dice), so a level that works once keeps working.

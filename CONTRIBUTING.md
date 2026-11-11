@@ -250,8 +250,8 @@ start. Good for platformers, RPG battles, karts and tactics.
 ### Classic · Console (3D)
 
 Home-console and PC inspired games from the 32 to 128-bit era (they appear under **Classic · Console**). These are real-time 3D using three.js through the shared kit
-`gs.toon` (`src/kit/toon3d.js`): toon shading with a three-band light ramp and ink outlines, giving a cel-shaded
-cartoon look. The HUD and text are drawn in normal 2D on top, at full resolution.
+`gs.toon` (`src/kit/toon3d.js`): toon shading with a three-band light ramp, ink outlines, real toon shadows and
+a rim of light, giving a cel-shaded cartoon look. The HUD and text are drawn in normal 2D on top, at full resolution.
 
 ```js
 import gs from '../gamescroll.js';
@@ -268,9 +268,10 @@ function view3d(W, H) {
 // in draw(c): const v = view3d(W, H); v.frame(); v.put('hero', v.at(x, y)); v.render(c, W, H); then 2D HUD
 ```
 
-Read [`docs/console-3d.md`](docs/console-3d.md) for cameras (`board`, `side`, `persp`), prefabs and
-performance rules. Never create your own WebGL renderer: phones only allow a few, so all Console games
-share one. A Console game should look clearly 3D; if yours doesn't, make it an Advance game instead.
+Read [`docs/console-3d.md`](docs/console-3d.md) for cameras (`board`, `side`, `persp`), prefabs, shadows,
+retro looks (`new View({ retro: 'chunky' })`), jointed characters (`figure()`) and performance rules. Never
+create your own renderer: phones only allow a few, so all Console games share one (WebGPU where the phone
+has it, WebGL elsewhere). A Console game should look clearly 3D; if yours doesn't, make it an Advance game instead.
 Run `npm run sweep` on Console games (see [Testing](#testing-your-game)).
 
 ### Next Gen · Console (HD 3D)
@@ -307,7 +308,9 @@ never create your own. Run `npm run sweep` on Next Gen games too. These appear u
 gyro turns the view, so objects stay put while the player turns and tilts the phone to find them
 (look-around AR; walking isn't tracked). They use `gs.ar` (`src/kit/ar3d.js`) on top of the Next Gen
 renderer, with real-time shadows cast onto the real floor. Every AR game must also play with no
-camera (a virtual room is drawn instead) and with no gyro (drag to look). Read
+camera (a virtual room is drawn instead) and with no gyro (drag to look). In the phone app the
+player can walk around, and a game can ask for more of the real room (real things hiding virtual
+ones, walls, the room's light, anchors, picture markers). Read
 [`docs/ar-3d.md`](docs/ar-3d.md) for the kit, sizes and testing. These appear under **AR · 3D**.
 
 ### Board
@@ -386,7 +389,7 @@ any other app code. The full guide is [docs/maker-kit.md](docs/maker-kit.md). Th
 - `gs.anim`, `gs.story`, `gs.replay`: sprite animation states, ink dialogue with typewriter text, ghosts and replays.
 - `gs.look2d`: 2D lights with shadows, screen effects (CRT, bloom, glitch; pixi-filters), fast WebGL sprites (PixiJS).
 - `gs.camera`, `gs.nav3d`, `gs.characters`: 3D camera rigs, 3D path finding, look-at, IK, stepping feet (ragdolls in `gs.physics3d`).
-- `gs.vision`: face and hand tracking (MediaPipe). `gs.fx3d`: 3D text, 3D particles, outlines and glitches.
+- `gs.vision`: face and hand tracking, spotting everyday objects (MediaPipe), reading barcodes and QR codes. `gs.fx3d`: 3D text, 3D particles, outlines and glitches.
 - `gs.device`: `haptic('light' | 'tick' | 'success' | 'warning' ...)`, `buzz()` patterns,
   `tilt()`, `onShake(cb)`, `heading()` (compass), `faceDown()`, `startMic()`,
   `startCamera()`, `orientation()` (raw gyro, used by the AR kit).

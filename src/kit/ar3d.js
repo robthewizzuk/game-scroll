@@ -28,13 +28,29 @@
 // v.surfaces() lists found surfaces and v.hit(x, y) finds where a screen point meets one. If the
 // phone can't track the room at all (too dark, nothing to see) the player can carry on in
 // look-around mode. Everything else works the same.
+//
+// AR phase 2 (world mode only, and each part only when the game asks for it, so a game that doesn't
+// plays exactly as before):
+//  - new ARView({ occlude: true }): real things hide virtual ones. The phone's depth picture becomes
+//    an invisible mesh (ar-room.js) that only fills the depth buffer, so what is behind a real sofa
+//    isn't drawn. v.occluding says whether it is at work.
+//  - { walls: true }: walls are mapped as well as floors and tables. surfaces() lists them (wall:
+//    true, with n: the way they face) and hit() can land on one.
+//  - { light: 'real' }: the sun moves to where the room's light really comes from, and shiny things
+//    reflect the phone's picture of the room around it.
+//  - v.anchor(p, q): hold a real spot, so a thing stays put while the phone corrects its map.
+//  - v.marker(picture, { width }): find a picture in the room (a printed card, another screen).
 import { HDView, HD, pbr, surface, speckle, sun, THREE } from './hd3d.js';
+import { pause, built, later } from './slices.js';
 import { startCamera, stopCamera, orientation, haptic } from './device.js';
 import { store } from '../util.js';
 import { prefs } from './prefs.js';
-import { nativeStart, nativeStop, nativeHit, nativePoints } from './native-ar.js';
+import { nativeStart, nativeStop, nativeHit, nativePoints, nativeAnchor, nativeUnanchor, nativeImages } from './native-ar.js';
 import { FloorFinder, FLOOR_MAX } from './ar-floor.js';
-const { Matrix4, Plane, Raycaster, Vector2, Group, Mesh, PlaneGeometry, BoxGeometry, ShadowMaterial, MeshBasicMaterial, CanvasTexture, SRGBColorSpace, Vector3, Quaternion, Euler, BackSide, GridHelper } = THREE;
+import { depthMesh, depthOf, flatOf, floorFlat, envOf, envLight, envChange, envPaint, sunDir, turnY } from './ar-room.js';
+import { rng } from './math.js';
+const { Matrix4, Plane, Raycaster, Vector2, Group, Mesh, PlaneGeometry, BoxGeometry, ShadowMaterial, MeshBasicMaterial, CanvasTexture, SRGBColorSpace, Vector3, Quaternion, Euler, BackSide, GridHelper,
+  BufferGeometry, BufferAttribute, DynamicDrawUsage, DoubleSide, SphereGeometry, Scene } = THREE;
 
 // A 50 cm grid of bright lines that fades out towards its edges, for showing where the floor is.
 // White: the material's colour makes it teal on a found floor and amber on an estimated one.
@@ -61,7 +77,8 @@ const LONG_FOV = 64;
 
 let ROOM = null;
 function roomLooks() {
-  if (ROOM) return ROOM;
+  if (ROOM) { for (const s of ROOM.sets) if (s.core.wait) later(s.core.wait); return ROOM; }   // (still with a worker: this card waits for it too)
+  pause('Textures');   // (while a card loads, a frame may go by first: slices.js)
   const wood = surface(256, ({ col, h, r, size: S }) => {
     for (let y = 0; y < S; y += 32) {
       const v = 120 + Math.random() * 30 | 0; col.fillStyle = `rgb(${v + 40},${v},${v - 40})`; col.fillRect(0, y, S, 32);
@@ -72,7 +89,8 @@ function roomLooks() {
     speckle(col, S, 900, '#3a2210', 2, .25);
   }, { strength: 2 });
   const paint = surface(128, ({ col, size: S }) => { col.fillStyle = '#d9d4ca'; col.fillRect(0, 0, S, S); speckle(col, S, 600, '#a09888', 1.2, .25); });
-  ROOM = { floor: pbr('#ffffff', { tex: wood.repeat(6, 6), rough: .7 }), wall: pbr('#bdb6aa', { tex: paint.repeat(4, 2), rough: .95, side: BackSide }) };
+  ROOM = { floor: pbr('#ffffff', { tex: wood.repeat(6, 6), rough: .7 }), wall: pbr('#bdb6aa', { tex: paint.repeat(4, 2), rough: .95, side: BackSide }), sets: [wood, paint] };
+  built();
   return ROOM;
 }
 
@@ -94,12 +112,98 @@ let KEPT = null, TOLD = false;
 const RAYS = [[.5, .6], [.28, .72], [.72, .72]];
 // a fresh native-AR state: the latest pose and projection, how native space maps to game space,
 // and the floor search (scan: the "Find your floor" step is open; lost: tracking has dropped out)
+// (on: which AR phase 2 parts this phone gave; depthT, depthN: when the last depth picture came and how
+// many; env: the phone's picture of the room's light, envN how many; flats: mapped surfaces for the depth mesh)
 const natState = eye => ({ pose: new Matrix4(), proj: new Matrix4(), has: false, tracking: 'PAUSED', why: 'NONE', light: null, planes: [], pts: 0, yaw0: null, x0: 0, z0: 0, yOff: null, yOffT: 0, M: new Matrix4(), t0: performance.now(),
-  ff: new FloorFinder({ eye: Math.max(.7, Math.min(1.7, eye)), kept: KEPT }), fed: false, scan: true, scanT: 0, asking: false, shown: 0, grow: 1, est: false, say: null, sayT: 0, badT: 0, lost: false, lookT: 0, skip: null });
+  ff: new FloorFinder({ eye: Math.max(.7, Math.min(1.7, eye)), kept: KEPT }), fed: false, scan: true, scanT: 0, asking: false, shown: 0, grow: 1, est: false, say: null, sayT: 0, badT: 0, lost: false, lookT: 0, skip: null,
+  on: { depth: false, walls: false, light: false }, depthT: 0, depthN: 0, flats: null, env: null, envN: 0, envSeen: 0, envT: -1e9, envYaw: null, envMean: 1, envDir: null, sunSet: false });
+
+/* ---------- AR phase 2: the pieces ---------- */
+const ONE = new Vector3(1, 1, 1), UP = new Vector3(0, 1, 0), tp = new Vector3(), tq = new Quaternion(), vx = new Vector3(), vz = new Vector3(), SUN = new Vector3(), T2 = [0, 0], T3 = [0, 0, 0];
+// The mesh made from the phone's depth picture. It writes depth and no colour, and is drawn before
+// everything else, so the camera picture shows wherever a real thing is nearer than a virtual one.
+let HIDE = null, SHOW = null;
+const hideLook = () => HIDE ||= new MeshBasicMaterial({ colorWrite: false, side: DoubleSide });
+const showLook = () => SHOW ||= new MeshBasicMaterial({ color: TEAL, wireframe: true, transparent: true, opacity: .45, depthWrite: false, toneMapped: false });
+function occluder(w, h) {
+  const pos = new Float32Array(w * h * 3), idx = new Uint16Array((w - 1) * (h - 1) * 6), g = new BufferGeometry();
+  const pa = new BufferAttribute(pos, 3), ia = new BufferAttribute(idx, 1); pa.setUsage(DynamicDrawUsage); ia.setUsage(DynamicDrawUsage);
+  g.setAttribute('position', pa); g.setIndex(ia); g.setDrawRange(0, 0);
+  const mesh = new Mesh(g, hideLook());
+  mesh.name = 'ar-occluder'; mesh.frustumCulled = false; mesh.matrixAutoUpdate = false; mesh.renderOrder = -1000; mesh.visible = false; mesh.userData.noContact = true;
+  return { w, h, pos, idx, mm: new Uint16Array(w * h), mesh, count: 0 };
+}
+// What shiny things reflect with { light: 'real' }: a ball round the scene, each corner coloured from
+// the phone's picture of the room (ar-room.js envPaint). The view's reflections are made from it.
+// How bright to paint it: at 1.8 an evenly lit room lights a matt ball exactly as the kit's studio
+// does (measured with the sun and sky light off; scripts/ar-floor.cjs "an even room" holds it there).
+// So turning { light: 'real' } on changes where the light comes from, not how bright things are:
+// that still follows the phone's own reading of the room (applyLight).
+const SKY_LEVEL = 1.8;
+function roomSky() {
+  const g = new SphereGeometry(40, 48, 24), p = g.attributes.position, n = p.count, dirs = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { tp.fromBufferAttribute(p, i).normalize(); dirs[i * 3] = tp.x; dirs[i * 3 + 1] = tp.y; dirs[i * 3 + 2] = tp.z; }
+  g.setAttribute('color', new BufferAttribute(col, 3));
+  const mesh = new Mesh(g, new MeshBasicMaterial({ vertexColors: true, side: BackSide, toneMapped: false, fog: false })), scene = new Scene();
+  scene.add(mesh);
+  return { scene, mesh, dirs, col };
+}
+// A turn that stands a thing on a surface: on a wall its +z points out of the wall, on a floor or a
+// table towards the phone; +y is up either way.
+function facing(n, p, eye, wall) {
+  if (wall) { vz.copy(n); if (vz.dot(tp.copy(eye).sub(p)) < 0) vz.negate(); } else vz.copy(eye).sub(p);
+  vz.y = 0; if (vz.lengthSq() < 1e-8) vz.set(0, 0, 1); vz.normalize();
+  vx.crossVectors(UP, vz);
+  return new Quaternion().setFromRotationMatrix(mB.makeBasis(vx, UP, vz));
+}
+// The pictures the phone is looking for now (one set for the whole app: the phone keeps one list).
+const SENT = { key: '', ok: new Set(), bad: new Set(), asking: null };
+let AID = 0;
+const textKey = t => { let h = 2166136261; for (let i = 0; i < t.length; i += 7) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
+
+/**
+ * A picture phones find easily, for v.marker(): busy, high in contrast, not the same any way up, and
+ * the same for the same seed. Show it on another screen or print it; `size` is its width in pixels.
+ */
+export function markerArt(seed = 1, size = 512) {
+  const cv = Object.assign(document.createElement('canvas'), { width: size, height: size }), g = cv.getContext('2d'), r = rng(seed), S = size;
+  const INK = ['#10151c', '#1b2a44', '#7a1626', '#0d4a45', '#3a2466', '#8a5a10'], pick = () => INK[r() * INK.length | 0];
+  g.fillStyle = '#f6f3ea'; g.fillRect(0, 0, S, S);
+  // a few big shapes, then a jittered grid of small ones: corners of every size for the phone to hold on to
+  for (let i = 0; i < 7; i++) {
+    g.fillStyle = pick(); g.globalAlpha = .85; g.beginPath();
+    const x = r() * S, y = r() * S, n = 3 + (r() * 3 | 0), k = S * (.12 + r() * .16);
+    for (let j = 0; j < n; j++) { const a = j / n * 6.283 + r() * .9, d = k * (.5 + r() * .7); g[j ? 'lineTo' : 'moveTo'](x + Math.cos(a) * d, y + Math.sin(a) * d); }
+    g.closePath(); g.fill();
+  }
+  g.globalAlpha = 1;
+  const N = 9, cell = S / N;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const x = (i + .5 + (r() - .5) * .5) * cell, y = (j + .5 + (r() - .5) * .5) * cell, k = cell * (.22 + r() * .28), kind = r() * 5 | 0, a = r() * 6.283;
+    g.save(); g.translate(x, y); g.rotate(a); g.fillStyle = r() < .25 ? '#f6f3ea' : pick(); g.strokeStyle = g.fillStyle; g.lineWidth = Math.max(2, cell * .09);
+    if (kind === 0) g.fillRect(-k, -k * .45, k * 2, k * .9);
+    else if (kind === 1) { g.beginPath(); g.moveTo(-k, k); g.lineTo(k, k); g.lineTo(-k * .2, -k); g.closePath(); g.fill(); }
+    else if (kind === 2) { g.beginPath(); g.arc(0, 0, k * .8, 0, 4.4); g.stroke(); }
+    else if (kind === 3) { g.fillRect(-k, -k, k * .8, k * .8); g.fillRect(k * .1, k * .1, k * .9, k * .9); }
+    else { g.beginPath(); g.moveTo(-k, -k); g.lineTo(k, -k * .3); g.lineTo(k * .2, k * .2); g.lineTo(k * .6, k); g.lineTo(-k * .7, k * .5); g.closePath(); g.fill(); }
+    g.restore();
+  }
+  // a frame, heavier at one corner, so it reads as a card and has a top
+  g.strokeStyle = '#10151c'; g.lineWidth = S * .03; g.strokeRect(S * .015, S * .015, S * .97, S * .97);
+  g.fillStyle = '#10151c'; g.fillRect(0, 0, S * .16, S * .16); g.fillStyle = '#f6f3ea'; g.fillRect(S * .045, S * .045, S * .07, S * .07);
+  return cv;
+}
 
 export class ARView extends HDView {
+  /**
+   * o: the HDView options, and AR phase 2 (native AR only; each is off unless asked for):
+   *   occlude: true     real things hide virtual ones behind them (phones that can measure depth)
+   *   walls: true       map walls as well as floors: surfaces() and hit() then give them
+   *   light: 'real'     the sun and the reflections follow the room's real light
+   */
   constructor(o = {}) {
-    super({ bg: '#0b0f14', env: .7, amb: .9, sky: '#e8eef8', ground: '#6a5e50', fov: 62, ...o });
+    const { occlude = false, walls: mapWalls = false, light = null, ...rest } = o;
+    super({ bg: '#0b0f14', env: .7, amb: .9, sky: '#e8eef8', ground: '#6a5e50', fov: 62, ...rest });
     this.scene.background = null; this.clearBg = true; this.cam.far = 60;
     // sunlight from above-behind; its shadows land on an invisible floor that only shows shadow
     this.sunL = sun('#fff4e4', 2.4, 7, [-.35, 1, .45]); this.scene.add(this.sunL, this.sunL.target); this.sunL.follow(0, FLOOR, -2);
@@ -122,6 +226,8 @@ export class ARView extends HDView {
     this.lightCv = null; this.lightN = 0; this.lum = .45; this.tint = [1, 1, 1];
     this.camState = 'off'; this.camera = null; this.yaw0 = null; this.yaw = 0; this.pitch = 0; this.sensor = false;
     this.camQ = new Quaternion(); this.nat = null; this.rect = null; this.noNative = false;
+    this.ask = { depth: !!occlude, walls: !!mapWalls, light: light === 'real' ? 'real' : null };
+    this.occ = null; this.depthShown = false; this.anchors = []; this.markers = []; this.sky = null;
     views.add(new WeakRef(this));   // camera off when the app hides (one listener for all views, below)
   }
   /** Let a game react to quality changes (the kit already handles the sun's shadows). */
@@ -140,9 +246,13 @@ export class ARView extends HDView {
     });
     if (this.noNative) { web(); return this; }   // the player chose look-around mode (toLook)
     // native AR first (phone app with ARKit / ARCore), else the web camera with the gyro
-    nativeStart(this).then(r => {
+    nativeStart(this, this.ask).then(r => {
       if (this.camState !== 'asking') { if (r.started) nativeStop(this); return; }
-      if (r.started) { this.camState = 'native'; this.nat = natState(this.eye ?? -FLOOR); this.cal = null; this.calGrid.visible = false; this.feed(true); return; }
+      if (r.started) {
+        this.camState = 'native'; this.nat = natState(this.eye ?? -FLOOR); this.cal = null; this.calGrid.visible = false;
+        this.nat.on = { depth: !!r.depth, walls: !!r.walls, light: r.light === 'real' };   // (an older app answers none of these: all off)
+        this.feed(true); this.sendMarkers(); return;
+      }
       if (r.reason === 'camera') { this.camState = 'denied'; return; }   // camera refused: don't ask twice
       web();
     });
@@ -151,7 +261,7 @@ export class ARView extends HDView {
   /** Stop the camera (call from reset() and before api.over()). Denied stays denied for this game. */
   off() {
     if (this.camState === 'on' || this.camState === 'asking') stopCamera();
-    nativeStop(this); this.nat = null;
+    nativeStop(this); this.nat = null; this.letGo();
     if (this.cal?.world) { this.cal = null; this.calGrid.visible = false; }   // lining the floor up by hand in world mode
     if (this.camState !== 'denied') this.camState = 'off'; this.camera = null; return this;
   }
@@ -161,7 +271,7 @@ export class ARView extends HDView {
    */
   toLook() {
     if (!this.nat) return this;
-    this.noNative = true; this.nat = null; this.cal = null; this.calGrid.visible = false; this.yaw0 = null;
+    this.noNative = true; this.nat = null; this.letGo(); this.cal = null; this.calGrid.visible = false; this.yaw0 = null;
     this.camState = 'asking';
     // the phone has to let go of the camera before the page can have it
     Promise.resolve(nativeStop(this)).then(() => new Promise(r => setTimeout(r, 250))).then(() => {
@@ -194,22 +304,29 @@ export class ARView extends HDView {
     n.has = true;
     this.floorNews();
     if (n.yOff == null) n.yOff = n.yOffT;
+    if (d.images) this.images(d.images);
   }
   // mapped surfaces, and (while the floor isn't settled) the feature points the phone is tracking
-  planes(list, pts) {
+  // (and where the phone now holds each anchor)
+  planes(list, pts, anchors) {
     const n = this.nat; if (!n) return;
-    n.planes = list;
+    n.planes = list; n.flats = null;
     if (!n.has) return;
     if (pts) { n.pts = pts.length / 3 | 0; n.ff.points(pts, .001); }
-    n.ff.planes(list.map(p => ({ x: p.pose[12], y: p.pose[13], z: p.pose[14], a: p.w * p.d, kind: p.kind })));
+    // (a wall is never the floor)
+    n.ff.planes(list.filter(p => p.kind !== 'wall').map(p => ({ x: p.pose[12], y: p.pose[13], z: p.pose[14], a: p.w * p.d, kind: p.kind })));
     this.floorNews();
+    if (anchors) for (const s of anchors) {
+      const a = this.anchors.find(a => a.id === s.id); if (!a?.to || !s.pose) continue;
+      mA.fromArray(s.pose).decompose(a.to.p, a.to.q, sc); a.tracked = s.tracked !== false; a.held = true;
+    }
   }
   // Ask the phone for its feature points only while they can still change the answer.
   feed(on) { const n = this.nat; if (!n || n.fed === on) return; n.fed = n.ff.expect = on; nativePoints(on); if (!on) { n.pts = 0; n.ff.clearPoints(); } }
   // The floor finder has news: move the room onto the floor and tell the player.
   floorNews() {
     const n = this.nat, f = n.ff, ev = f.take(); if (!ev) return;
-    n.yOffT = FLOOR - f.floor;
+    n.yOffT = FLOOR - f.floor; n.flats = null;
     KEPT = { y: f.floor, src: f.src, sure: f.sure };
     if (f.src === 'plane' || f.src === 'hand') this.feed(false);
     if (ev === 'moved') return;
@@ -231,21 +348,175 @@ export class ARView extends HDView {
     n.scanT = n.scan ? .2 : .5; n.asking = true;   // (less often once the round is running on an estimate)
     Promise.all(RAYS.map(([u, v]) => nativeHit(r.left + r.width * u, r.top + r.height * v))).then(all => {
       n.asking = false; if (this.nat !== n) return;
-      for (const hs of all) for (const h of hs) n.ff.hit(h.pose[12], h.pose[13], h.pose[14], h.kind, h.surface);
+      for (const hs of all) for (const h of hs) if (h.surface !== 'wall') n.ff.hit(h.pose[12], h.pose[13], h.pose[14], h.kind, h.surface);
       this.floorNews();
     });
   }
+  /* ---------- AR phase 2 (called by native-ar.js, and by lookNative) ---------- */
+  // A depth picture from the phone, about ten a second: how far away the real room is at a grid of
+  // spots over the view. It becomes the mesh that hides virtual things behind real ones.
+  depth(d) {
+    const n = this.nat; if (!n?.has || !n.on.depth || !d?.d || !d.pose || !d.proj) return;
+    const w = d.w | 0, h = d.h | 0; if (w < 2 || h < 2 || w * h > 16384) return;
+    let o = this.occ;
+    if (!o || o.w !== w || o.h !== h) {
+      if (o) { this.scene.remove(o.mesh); o.mesh.geometry.dispose(); }
+      o = this.occ = occluder(w, h); o.mesh.material = this.depthShown ? showLook() : hideLook(); this.scene.add(o.mesh);
+    }
+    n.flats ||= this.flats();
+    o.count = depthMesh(depthOf(d.d, w * h, o.mm), w, h, d.pose, d.proj, o.pos, o.idx, { flats: n.flats });
+    const g = o.mesh.geometry; g.setDrawRange(0, o.count); g.attributes.position.needsUpdate = true; g.index.needsUpdate = true;
+    n.depthT = performance.now(); n.depthN++;
+  }
+  // the floor and the mapped surfaces, for the depth mesh: a spot seen on one goes just behind it,
+  // so things standing on the real floor (and their shadows) aren't cut into
+  flats() {
+    const n = this.nat, f = n.ff, out = [];
+    if (f.floor != null) out.push(floorFlat(f.floor, f.sure ? 0 : .25));   // (an estimated floor may be well out)
+    for (const s of n.planes) if (s.pose && s.w > 0 && s.d > 0) out.push(flatOf(s.pose, s.w, s.d));
+    return out;
+  }
+  /** True while real things are hiding virtual ones ({ occlude: true }, a phone that measures depth, and the room in view). */
+  get occluding() { return !!(this.nat && this.occ?.mesh.visible); }
+  /** Draw the depth mesh as teal lines rather than hide with it: what the phone makes of the room (test scenes). */
+  get showDepth() { return this.depthShown; }
+  set showDepth(on) { this.depthShown = !!on; if (this.occ) this.occ.mesh.material = on ? showLook() : hideLook(); }
+  // The phone's picture of the light around it, every couple of seconds ({ light: 'real' }).
+  roomLight(d) {
+    const n = this.nat; if (!n || !n.on.light || !d?.px || !(d.size > 0)) return;
+    const env = envOf(d), e = envLight(env);
+    n.envDir = e.sharp > .08 ? [e.x, e.y, e.z] : null;   // an evenly lit room has no "where the light is"
+    // the reflections are made again only when the room's light has really changed (making them costs a frame or two)
+    if (!n.env || envChange(n.env, n.envMean, env, e.mean) > .12) { n.env = env; n.envMean = e.mean; n.envN++; }
+  }
+  // The sun goes where the room's light is, and the reflections are painted from the room.
+  realLight(dt) {
+    const n = this.nat, s = this.sunL, now = performance.now();
+    // the phone's own answer where it gives one (Android), else the brightest part of its picture of the room
+    const d = n.light?.dir || n.envDir;
+    if (d) {
+      turnY(d[0], d[2], -n.yaw0, T2); sunDir(T2[0], d[1], T2[1], T3); SUN.set(T3[0], T3[1], T3[2]);
+      const off = s.dir.angleTo(SUN);
+      if (!n.sunSet || off > .02) {
+        // (it swings round over a second or so, in steps the shadows can follow)
+        if (n.sunSet) SUN.lerpVectors(s.dir, SUN, Math.min(1, Math.max(1 - Math.exp(-dt * 3), .02 / off))).normalize();
+        n.sunSet = true; s.aim(SUN); s.follow(0, FLOOR, -2);
+      }
+    }
+    if (n.env && (n.envSeen !== n.envN || n.envYaw !== n.yaw0) && now - n.envT > (n.envYaw !== n.yaw0 ? 500 : 3000)) {
+      const k = this.sky ||= roomSky(); let made = false;
+      envPaint(n.env, k.dirs, n.yaw0, k.col, { level: SKY_LEVEL, mean: n.envMean });
+      k.mesh.geometry.attributes.color.needsUpdate = true;
+      try { made = !!this.envFrom(k.scene); } catch (e) { /* the studio reflections stay */ }
+      // (not made: the view has no renderer to make them on yet. It tries again in half a second.)
+      n.envT = now; if (made) { n.envSeen = n.envN; n.envYaw = n.yaw0; }
+    }
+  }
+  // Pictures the phone can see now: [{ name, pose, w, tracked }], with each frame that has any.
+  images(list) {
+    const now = performance.now();
+    for (const s of list) {
+      const m = this.markers.find(m => m.name === s.name); if (!m || !s.pose) continue;
+      (m.nat ||= new Matrix4()).fromArray(s.pose); m.fresh ||= !m.found;
+      m.found = true; m.tracked = s.tracked !== false; m.seenT = now; if (s.w > 0) m.w = s.w;
+    }
+  }
+  // anchors and found pictures: where they are in game space now, and whatever is attached goes there
+  holdOn(dt) {
+    const n = this.nat, k = 1 - Math.exp(-dt * 10), now = performance.now();
+    for (const a of this.anchors) {
+      if (a.nat) {
+        a.nat.p.lerp(a.to.p, k); a.nat.q.slerp(a.to.q, k);   // the phone's corrections ease in
+        mA.compose(a.nat.p, a.nat.q, ONE).premultiply(n.M).decompose(a.p, a.q, sc);
+      }
+      for (const o of a.objs) { o.position.copy(a.p); o.quaternion.copy(a.q); }
+    }
+    for (const m of this.markers) {
+      if (!m.nat) continue;
+      if (m.tracked && now - m.seenT > 700) m.tracked = false;   // out of sight: it stays where it was last seen
+      mA.copy(m.nat).premultiply(n.M).decompose(tp, tq, sc);
+      if (m.fresh) { m.fresh = false; m.p.copy(tp); m.q.copy(tq); } else { const j = 1 - Math.exp(-dt * 18); m.p.lerp(tp, j); m.q.slerp(tq, j); }
+      for (const o of m.objs) { o.position.copy(m.p); o.quaternion.copy(m.q); }
+    }
+  }
+  // the round is over (or native AR has gone): the phone lets go of its anchors, and what it saw is stale
+  letGo() {
+    for (const a of this.anchors) { a.held = false; a.nat = a.to = null; }
+    this.anchors.length = 0;
+    for (const m of this.markers) { m.found = m.tracked = false; m.nat = null; }
+    if (this.occ) this.occ.mesh.visible = false;
+  }
   /**
-   * Surfaces native AR has found, in game space: [{ id, p (centre), q (turn), w, d, floor, kind }]. w runs
+   * Hold a real spot. Give a place (and a turn) in game space, from hit() or once floorFound is true:
+   * the phone then keeps that spot fixed to the room while it learns the room better and corrects its
+   * map (without one, things can creep a few centimetres over a long round). Returns { p, q (where it
+   * is now, in game space), held (the phone is holding it), tracked, attach(object3D), remove() }.
+   * attach() keeps an object on the spot (an object placed straight in the scene, not inside a turned
+   * or moved group). In look mode, or on a phone that can't, the spot stays where it was put. Anchors
+   * last one round: off() lets them all go, so make them again after reset(). Sixteen at most.
+   */
+  anchor(p, q) {
+    const a = { id: 'a' + (++AID), p: new Vector3().copy(p), q: q ? new Quaternion().copy(q) : new Quaternion(), held: false, tracked: true, nat: null, to: null, objs: [] };
+    a.attach = o => { a.objs.push(o); o.position.copy(a.p); o.quaternion.copy(a.q); return a; };
+    a.remove = () => { const i = this.anchors.indexOf(a); if (i >= 0) this.anchors.splice(i, 1); if (a.nat) nativeUnanchor(a.id); a.held = false; a.nat = a.to = null; };
+    this.anchors.push(a);
+    const n = this.nat;
+    if (n?.has && this.anchors.length <= 16) {
+      // the spot in the phone's own space: it rides with the room from now on, held by the phone or not
+      const np = new Vector3(), nq = new Quaternion(); mA.compose(a.p, a.q, ONE).premultiply(mB.copy(n.M).invert()).decompose(np, nq, sc);
+      a.nat = { p: np, q: nq }; a.to = { p: np.clone(), q: nq.clone() };
+      nativeAnchor(a.id, np.toArray(), nq.toArray()).then(ok => { if (ok && a.nat && this.anchors.includes(a)) a.held = true; });
+    }
+    return a;
+  }
+  /**
+   * Look for a picture in the room: a printed card, or another screen showing it. picture is a canvas
+   * (markerArt(seed) draws one phones find easily; a plain or repeating picture is turned down).
+   * width is how wide it really is where the player sees it, in metres, if the game knows (a printed
+   * card): the phone then places it at once. Without it the phone works the size out as it looks,
+   * which takes a moment longer. Returns { found (seen this round), tracked (in sight now), p (its
+   * middle), q (its turn: x to the picture's right, y out of it, z down it), w (its width as
+   * measured), ok (null while the phone decides, false if it turned the picture down or can't look
+   * for pictures), attach(object3D), remove() }. attach() keeps an object on the picture once it is
+   * found. Never found in look mode: give players another way to place the thing (a tap).
+   */
+  marker(picture, { width = 0, name } = {}) {
+    const m = { name: name || 'gs-' + (this.markers.length + 1), width: width > 0 ? width : 0, png: null, key: '', ok: null, found: false, tracked: false, fresh: false, p: new Vector3(), q: new Quaternion(), w: width > 0 ? width : .1, nat: null, seenT: 0, objs: [] };
+    m.attach = o => { m.objs.push(o); return m; };
+    m.remove = () => { const i = this.markers.indexOf(m); if (i >= 0) { this.markers.splice(i, 1); this.sendMarkers(); } };
+    try { m.png = picture.toDataURL('image/png').split(',')[1] || null; } catch { /* not a canvas that can be read */ }
+    if (m.png) m.key = `${m.name}:${width}:${m.png.length}:${textKey(m.png)}`; else m.ok = false;
+    this.markers.push(m); this.sendMarkers();
+    return m;
+  }
+  // tell the phone which pictures to look for (only when the set has changed: it takes it a moment)
+  sendMarkers() {
+    if (!this.nat) return;
+    const list = this.markers.filter(m => m.png), key = list.map(m => m.key).join('|');
+    if (key === SENT.key && !SENT.asking) { for (const m of list) m.ok = SENT.ok.has(m.name); return; }
+    if (!key && !SENT.key) return;
+    const mine = SENT.asking = {};
+    nativeImages(list.map(m => ({ name: m.name, png: m.png, width: m.width }))).then(r => {
+      if (SENT.asking !== mine) return;   // a newer set has gone since
+      SENT.asking = null;
+      if (!r) { for (const m of list) m.ok = false; return; }   // this phone or app can't look for pictures
+      SENT.key = key; SENT.ok = new Set(r.added); SENT.bad = new Set(r.rejected || []);
+      for (const m of list) m.ok = SENT.ok.has(m.name);
+    });
+  }
+
+  /**
+   * Surfaces native AR has found, in game space: [{ id, p (centre), q (turn), w, d, floor, kind, wall, n }]. w runs
    * along the surface's own x and d along its z. kind is 'floor' | 'table' | 'seat' | 'other' where the
-   * phone can tell (iPhones), else undefined. Empty in look mode.
+   * phone can tell (iPhones), 'wall' for a wall ({ walls: true }), else undefined. wall is true for a
+   * wall and n is the way the surface faces (up for a floor, out into the room for a wall). Empty in look mode.
    */
   surfaces() {
     const n = this.nat; if (!n?.has) return [];
     const fy = n.ff.floor;
     return n.planes.map(s => {
-      const p = new Vector3(), q = new Quaternion(); mA.fromArray(s.pose).premultiply(n.M).decompose(p, q, sc);
-      return { id: s.id, p, q, w: s.w, d: s.d, floor: fy != null && Math.abs(s.pose[13] - fy) < .05, kind: s.kind && s.kind !== 'none' ? s.kind : undefined };
+      const p = new Vector3(), q = new Quaternion(), wall = s.kind === 'wall'; mA.fromArray(s.pose).premultiply(n.M).decompose(p, q, sc);
+      return { id: s.id, p, q, w: s.w, d: s.d, floor: !wall && fy != null && Math.abs(s.pose[13] - fy) < .05, kind: s.kind && s.kind !== 'none' ? s.kind : undefined, wall, n: new Vector3(0, 1, 0).applyQuaternion(q) };
     });
   }
   /** True once native AR has found the real floor (not while it is only estimated). */
@@ -259,27 +530,39 @@ export class ARView extends HDView {
   /**
    * What the AR system is doing, for test scenes (AR Lab): { mode, tracking, why (why tracking is poor),
    * surfaces and points (how many it has), floor (as floorSource), sure, layer (how well a flat layer of
-   * points is supported) }.
+   * points is supported) }, and for AR phase 2: depth ('off': not asked for, 'no': this phone can't,
+   * 'waiting': no depth picture yet, 'on'), walls (how many are mapped), light ('real' or 'ambient'),
+   * sun (where the kit's sun is, as a direction in game space), anchors (how many the phone holds),
+   * markers (how many pictures are in sight).
    */
   status() {
     const n = this.nat, f = n?.ff;
     return { mode: this.mode, tracking: n ? n.tracking : this.sensor ? 'gyro' : 'none', why: n?.why || 'NONE', surfaces: n ? n.planes.length : 0,
-      points: n ? n.pts : 0, floor: f?.src ?? null, sure: !!f?.sure, layer: f?.layer ? f.layer.n : 0 };
+      points: n ? n.pts : 0, floor: f?.src ?? null, sure: !!f?.sure, layer: f?.layer ? f.layer.n : 0,
+      depth: !this.ask.depth ? 'off' : !n ? 'waiting' : !n.on.depth ? 'no' : this.occluding ? 'on' : 'waiting', walls: n ? n.planes.filter(p => p.kind === 'wall').length : 0,
+      light: n?.on.light ? 'real' : 'ambient', sun: this.sunL.dir.toArray(), anchors: this.anchors.filter(a => a.held).length, markers: this.markers.filter(m => m.tracked).length };
   }
   /**
-   * Where game point (x, y) on the screen meets a real surface: resolves { p: Vector3, kind } or null.
-   * kind is 'plane' or 'point' (native AR) or 'floor' (look mode: the line of sight hits FLOOR).
+   * Where game point (x, y) on the screen meets a real surface: resolves { p: Vector3, kind, wall, n, q } or null.
+   * kind is 'plane' or 'point' (native AR) or 'floor' (look mode: the line of sight hits FLOOR). wall
+   * is true on a wall ({ walls: true }); n is the way the surface faces, and q a turn that stands a
+   * thing there (its +z out of a wall, or towards the phone on a floor or a table; +y up).
    */
   async hit(x, y) {
     const n = this.nat, r = this.rect;
     if (n?.has && r) {
       const h = (await nativeHit(r.left + x / this.W * r.width, r.top + y / this.H * r.height))[0];
-      if (h && this.nat === n) return { p: new Vector3().setFromMatrixPosition(mA.fromArray(h.pose).premultiply(n.M)), kind: h.kind };
+      if (h && this.nat === n) {
+        mA.fromArray(h.pose).premultiply(n.M);
+        const p = new Vector3().setFromMatrixPosition(mA), wall = h.surface === 'wall', nn = h.kind === 'plane' ? new Vector3().setFromMatrixColumn(mA, 1).normalize() : new Vector3(0, 1, 0);
+        if (wall && nn.dot(tp.copy(this.cam.position).sub(p)) < 0) nn.negate();   // out of the wall, towards the room
+        return { p, kind: h.kind, wall, n: nn, q: facing(nn, p, this.cam.position, wall) };
+      }
       if (h) return null;
     }
     ray.setFromCamera(v2.set(x / this.W * 2 - 1, 1 - y / this.H * 2), this.cam);
     const p = ray.ray.intersectPlane(floorPl, new Vector3());
-    return p && p.distanceTo(this.cam.position) < 15 ? { p, kind: 'floor' } : null;
+    return p && p.distanceTo(this.cam.position) < 15 ? { p, kind: 'floor', wall: false, n: new Vector3(0, 1, 0), q: facing(UP, p, this.cam.position, false) } : null;
   }
   // native pose -> 3D camera; called from look()
   lookNative() {
@@ -293,6 +576,12 @@ export class ARView extends HDView {
       n.M.makeTranslation(-n.x0, 0, -n.z0).premultiply(mB.makeRotationY(-n.yaw0)).premultiply(mC.makeTranslation(0, n.yOff, 0));
       mA.multiplyMatrices(n.M, n.pose).decompose(this.cam.position, this.cam.quaternion, sc);
       this.scanFloor(dt);
+      // AR phase 2: the depth mesh rides with the room (it is gone when the phone stops sending it),
+      // anchors and found pictures take their places, and the light follows the room's
+      const o = this.occ;
+      if (o) { o.mesh.visible = good && n.on.depth && o.count > 0 && now - n.depthT < 2000; if (o.mesh.visible) { o.mesh.matrix.copy(n.M); o.mesh.matrixWorldNeedsUpdate = true; } }
+      if (this.anchors.length || this.markers.length) this.holdOn(dt);
+      if (n.on.light) this.realLight(dt);
       // The teal grid means "this is your floor": it spreads out over the floor when it is found (amber
       // when it is only estimated) and shows while the player lines it up by hand. Never while searching.
       const g = this.calGrid, cal = this.cal;

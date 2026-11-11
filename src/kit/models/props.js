@@ -3,6 +3,7 @@
 // wear(), so a game needs no model files. Each comes back as a Group holding one mesh per material
 // (few draw calls), its foot at y = 0, facing +z, ready to place.
 // Kit use only: games reach it as gs.models.prop.
+import { pause, built, loading } from '../slices.js';
 import { BoxGeometry, CylinderGeometry, SphereGeometry, TorusGeometry, LatheGeometry, Group, Mesh, Matrix4, Euler, Quaternion, Vector3, Vector2, BufferAttribute } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -173,6 +174,7 @@ export function prop(name, o = {}) {
   const key = JSON.stringify([name, seed, colour, w, tile, lit, o.size]);
   let parts = made.get(key);
   if (!parts) {
+    pause('Models');   // (while a card loads, a frame may go by before each new prop: slices.js)
     const r = rngOf(seed + 1), b = new Build(); let first = true; parts = [];
     P.make(b, r, o);
     for (const [slot, spec] of Object.entries(P.slots)) {
@@ -182,8 +184,8 @@ export function prop(name, o = {}) {
       if (spec) { first = false; if (w !== false) wear(m, { seed, ...w }); }
       parts.push({ slot, geo: m.geometry, mat: m.material, shadow: !!spec });
     }
-    if (made.size >= 96) made.delete(made.keys().next().value);
-    made.set(key, parts);
+    if (made.size >= 96 && !loading()) made.delete(made.keys().next().value);   // (a loading card keeps all it has made: it is asked for them again next pass)
+    made.set(key, parts); built();
   }
   const out = new Group(); out.name = 'prop:' + name; out.userData.prop = name;
   for (const p of parts) { const m = new Mesh(p.geo, p.mat); m.castShadow = p.shadow; m.receiveShadow = true; m.name = p.slot; out.add(m); }

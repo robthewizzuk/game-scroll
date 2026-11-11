@@ -49,6 +49,9 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SGSR } from './sgsr.js';
 import { SGSR2, SgsrFrame } from './sgsr2.js';
 import { lookPatch, looksOf, lookSpec } from './looks.js';
+import { loading, later, after, pause, built } from './slices.js';
+import { surfaceMath, roughMipsMath } from './surface-math.js';
+import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU } from './gpu.js';
 import { packing } from './pack.js';
 import { makeRenderer } from './renderer.js';
@@ -66,7 +69,8 @@ const rbs = new Map();
 /** A bevelled box w x h x d with corner radius r (cached): real highlights on every edge. */
 export function rbox(w, h, d, r = Math.min(w, h, d) * .2) {
   const k = [w, h, d, r].join();
-  if (!rbs.has(k)) rbs.set(k, new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2, h / 2, d / 2) * .999));
+  // (a level's worth of new sizes adds up: while a card loads they are made a few a frame, slices.js)
+  if (!rbs.has(k)) { pause('Models'); rbs.set(k, new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2, h / 2, d / 2) * .999)); built(); }
   return rbs.get(k);
 }
 
@@ -777,32 +781,60 @@ export function pbr(col = '#ffffff', { rough = .6, metal = 0, glow = 0, glowCol,
  * rough). The kit turns the height layer into a normal map. Returns { map, normal, rough,
  * repeat(u, v) } where repeat() returns a copy with that tiling.
  */
-export function surface(size, paint, { strength = 2.5, metal = false } = {}) {
+export function surface(size, paint, { strength = 2.5, metal = false, worker = null } = {}) {
+  // (worker, kit use: ['recipe', data], a job that paints the same layers as paint() off the main thread)
   const mk = () => { const c = document.createElement('canvas'); c.width = c.height = size; return c; };
-  const C = mk(), Hc = mk(), Rc = mk(), g = { col: C.getContext('2d'), h: Hc.getContext('2d', { willReadFrequently: true }), r: Rc.getContext('2d', { willReadFrequently: true }), size };
+  const C = mk(), Hc = mk(), Rc = mk(), N = mk(), g = { col: C.getContext('2d'), h: Hc.getContext('2d', { willReadFrequently: true }), r: Rc.getContext('2d', { willReadFrequently: true }), size };
   g.h.fillStyle = '#808080'; g.h.fillRect(0, 0, size, size); g.r.fillStyle = '#999'; g.r.fillRect(0, 0, size, size);
   const Mc = metal ? mk() : null; if (Mc) { g.m = Mc.getContext('2d'); g.m.fillStyle = '#000'; g.m.fillRect(0, 0, size, size); }   // (metal: white = metal; its blue is what three reads)
-  paint(g);
-  // height -> tangent-space normal map (wrapping Sobel)
-  const hd = g.h.getImageData(0, 0, size, size).data, N = mk(), nc = N.getContext('2d'), out = nc.createImageData(size, size), nf = new Float32Array(size * size * 3);
-  const at = (x, y) => hd[(((y + size) % size) * size + ((x + size) % size)) * 4] / 255;
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    const dx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1)) - (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1));
-    const dy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1)) - (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
-    let nx = -dx * strength, ny = dy * strength, nz = 1; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
-    const j = (y * size + x) * 3; nf[j] = nx; nf[j + 1] = ny; nf[j + 2] = nz;
-    const i = (y * size + x) * 4; out.data[i] = (nx * .5 + .5) * 255; out.data[i + 1] = (ny * .5 + .5) * 255; out.data[i + 2] = (nz * .5 + .5) * 255; out.data[i + 3] = 255;
-  }
-  nc.putImageData(out, 0, 0);
   const tx = (cv, srgb, pack = true) => { const t = new CanvasTexture(cv); t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = srgb ? SRGBColorSpace : NoColorSpace; t.anisotropy = 4; t.minFilter = LinearMipmapLinearFilter; if (pack) t.userData.gsPack = srgb ? 'srgb' : 'linear'; return t; };
-  const base = { map: tx(C, true), normal: tx(N), rough: roughMips(tx(Rc, false, false), g.r.getImageData(0, 0, size, size).data, nf, size), height: tx(Hc), nf, size, rd: g.r.getImageData(0, 0, size, size).data, ...(Mc ? { metal: tx(Mc) } : {}), canvases: { col: C, h: Hc, r: Rc, ...(Mc ? { m: Mc } : {}) } };
+  // core: what every copy of this set shares. nf (the normals as numbers) and rd (the roughness pixels)
+  // are there once the number work is done; until then `wait` is its promise and `open` every texture
+  // made so far, to be marked changed when the pixels arrive.
+  const core = { size, strength, nf: null, rd: null, wait: null, open: [], g, N };
+  const base = { map: tx(C, true), normal: tx(N), rough: tx(Rc, false, false), height: tx(Hc), size, core, ...(Mc ? { metal: tx(Mc) } : {}), canvases: { col: C, h: Hc, r: Rc, ...(Mc ? { m: Mc } : {}) } };
+  for (const k of TEX) if (base[k]) core.open.push([k, base[k]]);
+  // The number work (height -> normal map, rougher small copies of the roughness map) is four fifths of
+  // a surface's cost. While a card loads it goes to a background worker and the card waits for it
+  // (slices.js later()); anywhere else, or with no workers, it is done here and now.
+  const off = loading() && canRunJob();
+  if (off && worker) core.wait = runJob(worker[0], { ...worker[1], strength });   // (painted there too)
+  else {
+    paint(g);
+    // (reading the two layers back is put off too, a few surfaces a frame: slices.js after())
+    if (off) core.wait = after(() => { if (core.nf) return null; const hd = g.h.getImageData(0, 0, size, size).data, rd = g.r.getImageData(0, 0, size, size).data; return runJob('surface', { hd, rd, size, strength }, [hd.buffer, rd.buffer]); });
+  }
+  if (core.wait) {
+    core.paint = worker ? paint : null;
+    core.wait = core.wait.then(r => bakeDone(core, r), () => bakeDone(core, null));
+    if (!later(core.wait)) bakeDone(core, null);
+  } else bakeDone(core, surfaceMath(g.h.getImageData(0, 0, size, size).data, g.r.getImageData(0, 0, size, size).data, size, strength));
   const set = (u, v, b = base) => {
     if (u === 1 && v === 1) return { ...b, repeat: set };
-    const cl = {}; for (const k of ['map', 'normal', 'rough', 'height', 'metal']) { if (!b[k]) continue; cl[k] = b[k].clone(); cl[k].repeat.set(u, v); cl[k].needsUpdate = true; }
-    return { ...cl, repeat: set };
+    const cl = {}; for (const k of TEX) { if (!b[k]) continue; cl[k] = b[k].clone(); cl[k].repeat.set(u, v); cl[k].needsUpdate = true; if (core.open) core.open.push([k, cl[k]]); }
+    return { ...cl, core, repeat: set };
   };
   return { ...base, repeat: set };
 }
+const TEX = ['map', 'normal', 'rough', 'height', 'metal'];
+// a surface's number work is in (r), or couldn't be done in a worker (null: done here from the canvases)
+function bakeDone(core, r) {
+  if (core.nf) return;
+  const { size, g, N } = core, put = (ctx, d) => ctx.putImageData(new ImageData(d, size, size), 0, 0);
+  if (!r) { if (core.paint) core.paint(g); r = surfaceMath(g.h.getImageData(0, 0, size, size).data, g.r.getImageData(0, 0, size, size).data, size, core.strength); }
+  else if (r.layers) { put(g.col, r.layers.col); put(g.h, r.layers.h); put(g.r, r.layers.r); if (g.m) put(g.m, r.layers.m); }   // (painted in the worker)
+  put(N.getContext('2d'), r.out);
+  core.nf = r.nf; core.rd = r.rd;
+  const mips = r.mips && mipCanvases(r.mips);
+  for (const [k, t] of core.open) { if (k === 'rough' && mips) { t.mipmaps = [t.image, ...mips]; t.generateMipmaps = false; } t.needsUpdate = true; }
+  core.open = core.wait = core.paint = null;
+}
+// the roughness map's smaller copies (surface-math.js) as canvases, the way three takes mipmaps
+function mipCanvases(mips) {
+  return mips.map(d => { const s = Math.sqrt(d.length / 4), cv = document.createElement('canvas'); cv.width = cv.height = s; cv.getContext('2d').putImageData(new ImageData(d, s, s), 0, 0); return cv; });
+}
+// a set whose number work is in (done here and now if a worker still has it: detail() needs the numbers)
+function baked(set) { const core = set.core; if (core && !core.nf) bakeDone(core, null); return core; }
 /**
  * Detail normals: a fine surface's bumps laid over a big one's, `times` repeats of the fine one across the
  * big one (pores on skin, weave on cloth, grain on wood, scratches on metal), so a surface stays detailed
@@ -811,7 +843,8 @@ export function surface(size, paint, { strength = 2.5, metal = false } = {}) {
  * Returns a surface set like surface()'s.
  */
 export function detail(big, fine, { times = 4, strength = .7 } = {}) {
-  const n = big.size, A = big.nf, B = fine.nf, m = fine.size, out = new Float32Array(n * n * 3);
+  const bc = baked(big), fc = baked(fine);
+  const n = big.size, A = bc.nf, B = fc.nf, m = fine.size, out = new Float32Array(n * n * 3);
   const c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d'), im = x.createImageData(n, n);
   for (let y = 0; y < n; y++) for (let X = 0; X < n; X++) {
     const i = (y * n + X) * 3, fx = Math.floor(X * times * m / n) % m, fy = Math.floor(y * times * m / n) % m, j = (fy * m + fx) * 3;
@@ -822,40 +855,15 @@ export function detail(big, fine, { times = 4, strength = .7 } = {}) {
   }
   x.putImageData(im, 0, 0);
   const t = new CanvasTexture(c); t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = NoColorSpace; t.anisotropy = 4; t.minFilter = LinearMipmapLinearFilter; t.userData.gsPack = 'linear';
-  const base = { ...big, normal: t, nf: out, rough: big.rd ? roughMips(big.rough.clone(), big.rd, out, n) : big.rough };
+  const rough = big.rough.clone(), mips = roughMipsMath(bc.rd, out, n);
+  if (mips) { rough.mipmaps = [rough.image, ...mipCanvases(mips)]; rough.generateMipmaps = false; }
+  const base = { ...big, normal: t, rough, core: { size: n, nf: out, rd: bc.rd, wait: null, open: null } };
   const set = (u, v, b = base) => {
     if (u === 1 && v === 1) return { ...b, repeat: set };
     const cl = { ...b }; for (const k of ['map', 'normal', 'rough', 'height']) if (b[k]) { cl[k] = b[k].clone(); cl[k].repeat.set(u, v); cl[k].needsUpdate = true; }
     return { ...cl, repeat: set };
   };
   return { ...base, repeat: set };
-}
-// Specular anti-aliasing for bumpy surfaces (Toksvig; the way Filament's roughness-prefilter and
-// Unreal's normal-map roughness do it). Far away, a texture's smaller copies average many tiny bumps
-// into one pixel; a shiny surface then sparkles as the bumps' highlights flick on and off. Here
-// each smaller copy of the roughness map is made a little rougher by how much the normals under it
-// disagree (the shorter their average, the more they disagree), so the highlight spreads into the
-// soft sheen the bumps would really make. three.js already does the same for curved shapes
-// (geometry roughness); this adds the bumps. Close up (the full-size copy) nothing changes.
-function roughMips(t, rd, nf, size) {
-  if (size & (size - 1)) return t;   // whole halvings only
-  let n = nf, r = new Float32Array(size * size); for (let i = 0; i < r.length; i++) r[i] = rd[i * 4 + 1] / 255;
-  const mips = [t.image];
-  for (let s = size >> 1; s >= 1; s >>= 1) {
-    const S = s * 2, n2 = new Float32Array(s * s * 3), r2 = new Float32Array(s * s), cv = document.createElement('canvas'); cv.width = cv.height = s;
-    const ctx = cv.getContext('2d'), im = ctx.createImageData(s, s);
-    for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
-      const a = (y * 2 * S + x * 2), q = [a, a + 1, a + S, a + S + 1], o = y * s + x;
-      let nx = 0, ny = 0, nz = 0, rr = 0; for (const k of q) { nx += n[k * 3]; ny += n[k * 3 + 1]; nz += n[k * 3 + 2]; rr += r[k]; }
-      nx /= 4; ny /= 4; nz /= 4; rr /= 4; n2[o * 3] = nx; n2[o * 3 + 1] = ny; n2[o * 3 + 2] = nz; r2[o] = rr;
-      // the averaged normal's length -> how spread the bumps are (von Mises-Fisher), added to the roughness (alpha = r^2)
-      const len = Math.min(.9999, Math.hypot(nx, ny, nz)), kappa = (3 * len - len * len * len) / (1 - len * len);
-      const a2 = Math.min(1, rr ** 4 + Math.min(2 / kappa, .18)), v = Math.round(Math.sqrt(Math.sqrt(a2)) * 255), i = o * 4;
-      im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255;
-    }
-    ctx.putImageData(im, 0, 0); mips.push(cv); n = n2; r = r2;
-  }
-  t.mipmaps = mips; t.generateMipmaps = false; return t;
 }
 /** Speckle noise helper for surface painters: n dots of colour col, radius up to r. */
 // The lens dirt for v.flare: smudges, specks and a few wipe marks, drawn once in code (no image file),
@@ -977,10 +985,12 @@ export function pulse(m, { at, radius, strength, color = [.15, .95, 1], width = 
 
 export function noiseTex() {
   if (noiseT) return noiseT;
+  pause('Textures');   // (while a card loads, a frame may go by first: slices.js)
   const S = 256, data = new Uint8Array(S * S * 4);
   [[4, 5, 1], [8, 4, 2], [16, 3, 3], [2, 5, 4]].forEach(([b, o, seed], ch) => { const f = tileNoise(S, b, o, seed); for (let i = 0; i < S * S; i++) data[i * 4 + ch] = Math.round(f[i] * 255); });
   noiseT = new DataTexture(data, S, S, RGBAFormat); noiseT.wrapS = noiseT.wrapT = RepeatWrapping;
   noiseT.magFilter = LinearFilter; noiseT.minFilter = LinearMipmapLinearFilter; noiseT.generateMipmaps = true; noiseT.needsUpdate = true;
+  built();
   return noiseT;
 }
 
@@ -1797,7 +1807,8 @@ export class HDView {
       let h = ((o.geometry?.id ?? 0) % 97 * .37 + e[0] * 1.3 + e[1] * 1.7 + e[2] * 2.3 + e[4] * 2.9 + e[5] * 3.1 + e[6] * 3.7 + e[8] * 4.1 + e[9] * 4.3 + e[10] * 4.7 + e[12] * 5.3 + e[13] * 5.9 + e[14] * 6.1 + (held ? .5 : 0)) * w;
       let wide = false, copies = 1;   // instanced and skinned things: counted for every light (their bounds move without the object)
       const tw = o.userData.gsTwin;
-      if (tw) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
+      if (tw?.matrixWorld) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
+      else if (o.userData.gsMoved !== undefined) { h += (o.userData.gsMoved + 1) * 7 * w; wide = true; copies = o.count ?? 1; }   // (moved on the graphics chip: a count that goes up when it does, gs.fluid's drops)
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
       else if (o.isInstancedMesh2 || o.isBatchedMesh) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
       if (o.isSkinnedMesh && o.skeleton) { const b = o.skeleton.bones; for (let j = 0; j < b.length; j += 3) { const m = b[j].matrixWorld.elements; h += (m[12] * 1.1 + m[13] * 1.9 + m[14] * 2.7 + m[0] + m[5] * 1.3) * (j + 1); } wide = true; }

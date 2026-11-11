@@ -1,8 +1,8 @@
-// Plays Next Gen and AR games on WebGPU and on WebGL and compares them: which games draw on WebGPU
-// (the rest stay on WebGL by themselves, hd3d.js gpuFits), errors on either, and how different the
+// Plays Next Gen, AR, Board and Classic Console games on WebGPU and on WebGL and compares them: which games
+// draw on WebGPU (the rest stay on WebGL by themselves, hd3d.js / toon3d.js gpuFits), errors on either, and how different the
 // first moments of play look (each game's own randomness moves things a little, so it's a guide, not a test). Uses SwiftShader's Vulkan driver, so it runs in CI without a GPU.
 //   npm run build:bundled && node scripts/gpu-games.cjs [id ...] [--shots dir] [--tier 0..3]
-// Without ids it plays every Next Gen and AR game. Fails if a game throws on WebGPU.
+// Without ids it plays every Next Gen, AR, Board and Console game. Fails if a game throws on WebGPU.
 const { chromium, devices } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
@@ -16,8 +16,10 @@ const fs = require('fs'), path = require('path');
   const p = await ctx.newPage(); let errs = [];
   p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if ((m.type() === 'error' && !/^Failed to load resource/.test(m.text())) || /WebGPU did not start|WebGPU:/.test(m.text())) errs.push(m.text()); });
   await p.goto('http://localhost:4185/'); await p.waitForFunction(() => window.__gs, null, { timeout: 20000 }); await p.waitForTimeout(400);
-  const ids = argv.length ? argv : await p.evaluate(() => __gs.GAMES.filter(g => g.era === 'nextgen' || g.era === 'ar' || g.era === 'board').map(g => g.id));
-  const pick = async v => p.evaluate(async v => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick(v); return v === 'webgpu' ? !!(await window.__gpu.ready()) : true; }, v);
+  const eras = await p.evaluate(() => Object.fromEntries(__gs.GAMES.map(g => [g.id, g.era])));
+  const ids = argv.length ? argv : Object.keys(eras).filter(id => ['nextgen', 'ar', 'board', 'console'].includes(eras[id]));
+  // (Console games have a WebGPU renderer of their own: gpu.js prepareConsoleGPU, reached here as __toon.ready)
+  const pick = async v => p.evaluate(async v => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick(v); if (v !== 'webgpu') return true; const ok = !!(await window.__gpu.ready()); await window.__toon?.ready(); return ok; }, v);
   const card = async () => { const r = await p.evaluate(() => { const c = __gs.active.canvas.getBoundingClientRect(); return { x: c.x, y: c.y, width: c.width, height: c.height }; }); return p.screenshot({ clip: r }); };
   const diff = (a, c) => p.evaluate(async ([a, c]) => {
     const load = u => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = 'data:image/png;base64,' + u; });
@@ -48,7 +50,8 @@ const fs = require('fs'), path = require('path');
         await p.mouse.move(r.x + Math.random() * r.w, r.y + Math.random() * r.h, { steps: 3 });
         await p.waitForTimeout(Math.random() * 120); await p.mouse.up();
       }
-      back[v] = await p.evaluate(() => window.__hd?.info.backend); if (v === 'webgpu') back.why = await p.evaluate(() => window.__hd?.info.webgl);
+      const con = eras[id] === 'console';
+      back[v] = await p.evaluate(con => (con ? window.__toon?.backend : window.__hd?.info.backend), con); if (v === 'webgpu') back.why = await p.evaluate(con => (con ? window.__toon?.why : window.__hd?.info.webgl), con);
       bad[v] = errs.slice();
     }
     const d = await diff(look.webgl, look.webgpu), ok = !bad.webgpu.length;

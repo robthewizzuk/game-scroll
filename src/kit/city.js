@@ -39,12 +39,13 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { rng, makeNoise } from './math.js';
-import { Props } from './props.js';
+import { Props, simplify, simplifyReady } from './props.js';
 import { Path } from './paths.js';
 import { tree } from './outdoors.js';
 import { phoneClass } from './speed.js';
 import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
+import { pause, built } from './slices.js';
 
 /* ---------- looks ---------- */
 
@@ -241,6 +242,7 @@ const texSize = () => phoneClass() === 'low' ? 256 : 512;
 // A facade: colour (with glass and frames), light (lit windows at night) and roughness (glass is smooth).
 function facadeTex(name) {
   if (TEX.has(name)) return TEX.get(name);
+  pause('Textures');
   const F = FACADES[name], S = texSize(), c = S / CELLS, R = rng(name.length * 977 + name.charCodeAt(0));
   const col = canvas(S, S), em = canvas(S, S), ro = canvas(S, S), g = col.getContext('2d'), e = em.getContext('2d'), r = ro.getContext('2d');
   e.fillStyle = '#000'; e.fillRect(0, 0, S, S);
@@ -272,11 +274,12 @@ function facadeTex(name) {
   }
   if (F.kind === 'curtain') { g.fillStyle = shade(F.trim, .8); for (let i = 0; i < CELLS; i++) g.fillRect(0, i * c + c * .78, S, c * .26); }
   const t = { map: texOf(col), light: texOf(em), rough: texOf(ro, false) };
-  TEX.set(name, t); return t;
+  TEX.set(name, t); built(); return t;
 }
 // Shop fronts: big lit windows under a sign band, one bay every 5 m.
 function shopTex() {
   if (TEX.has('shop')) return TEX.get('shop');
+  pause('Textures');
   const S = texSize(), h = S / 4, bays = 4, c = S / bays, R = rng(4242);
   const col = canvas(S, h), em = canvas(S, h), ro = canvas(S, h), g = col.getContext('2d'), e = em.getContext('2d'), r = ro.getContext('2d');
   g.fillStyle = '#2c2a28'; g.fillRect(0, 0, S, h); e.fillStyle = '#000'; e.fillRect(0, 0, S, h); r.fillStyle = '#d0d0d0'; r.fillRect(0, 0, S, h);
@@ -293,11 +296,12 @@ function shopTex() {
     e.fillStyle = mixHex('#ffd9a0', '#fff4e0', R()); e.globalAlpha = .55 + R() * .4; e.fillRect(x + c * .06, h * .32, c * .88, h * .66); e.globalAlpha = 1;
   }
   const t = { map: texOf(col), light: texOf(em), rough: texOf(ro, false) };
-  TEX.set('shop', t); return t;
+  TEX.set('shop', t); built(); return t;
 }
 // Tiling ground textures: asphalt, paving slabs, grass, gravel roofs, roof tiles.
 function groundTex(kind, base) {
   const key = kind + base; if (TEX.has(key)) return TEX.get(key);
+  pause('Textures');
   const S = 256, cv = canvas(S, S), g = cv.getContext('2d'), R = rng(kind.length * 31 + 7);
   g.fillStyle = base; g.fillRect(0, 0, S, S);
   const dots = (n, col, a, size) => { for (let i = 0; i < n; i++) { g.globalAlpha = R() * a; g.fillStyle = col; g.fillRect(R() * S, R() * S, R() * size + .5, R() * size + .5); } g.globalAlpha = 1; };
@@ -306,7 +310,7 @@ function groundTex(kind, base) {
   else if (kind === 'grass') { for (let i = 0; i < 5000; i++) { g.globalAlpha = .25; g.fillStyle = R() < .5 ? shade(base, .7 + R() * .2) : shade(base, 1.15 + R() * .2); g.fillRect(R() * S, R() * S, 1, 2 + R() * 3); } g.globalAlpha = 1; }
   else if (kind === 'gravel') dots(5000, R() < .5 ? '#000' : '#fff', .25, 2);
   else if (kind === 'tiles') { g.fillStyle = shade(base, .7); for (let y = 0; y < S; y += 16) { g.fillRect(0, y, S, 2); for (let x = (y / 16 % 2) * 12; x < S; x += 24) g.fillRect(x, y, 2, 16); } dots(800, '#000', .15, 2); }
-  const t = texOf(cv); TEX.set(key, t); return t;
+  const t = texOf(cv); TEX.set(key, t); built(); return t;
 }
 // a speck for compiling materials up front (the attributes chunk meshes have: position, normal, uv, colour)
 let warmGeo = null;
@@ -484,6 +488,24 @@ const SHAPES = {
   signal: () => mergeGeometries([coloured(at(new CylinderGeometry(.08, .1, 4.4, 6), 0, 2.2, 0), '#2e3236'), coloured(at(new BoxGeometry(.38, 1.1, .34), 0, 4.5, 0), '#1e2022')]),
   hydrant: () => mergeGeometries([coloured(at(new CylinderGeometry(.16, .2, .6, 8), 0, .3, 0), '#c0302a'), coloured(at(new SphereGeometry(.17, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), 0, .6, 0), '#c0302a')]),
 };
+
+// The furniture's shapes and their simpler far-away copies are made once and kept (each city draws its
+// own copies of them): the simpler copies are most of the work.
+const FURNITURE = {
+  tree: [() => tree({ kind: 'round', height: 6.5, leaves: '#4c7a3c', trunk: '#5a4632' }), [70, 160]],
+  pine: [() => tree({ kind: 'pine', height: 7, leaves: '#3a6a3e', trunk: '#5a4632' }), [70, 160]],
+  lamp: [SHAPES.lamp, [60]], lamphead: [SHAPES.lamphead, []], tank: [SHAPES.tank, [90]], hvac: [SHAPES.hvac, [90]],
+  mast: [SHAPES.mast, []], bench: [SHAPES.bench, [50]], signal: [SHAPES.signal, [80]], hydrant: [SHAPES.hydrant, []],
+};
+const KEEP = [.45, .15], SHAPED = new Map();
+let canKeep = false; simplifyReady.then(() => { canKeep = true; });   // (before the simplifier is in, a "simpler" copy isn't: not one to keep)
+function shaped(name) {
+  let k = SHAPED.get(name);
+  if (!k) { pause('Models'); const [make, lod] = FURNITURE[name], geo = make(); k = { geo, lod: lod.map((d, i) => [d, simplify(geo, KEEP[i])]) }; if (canKeep) SHAPED.set(name, k); built(); }
+  return k;
+}
+// a kind of prop from a kept shape: its own copies of the shape and the far-away ones
+const furniture = (props, name, material, o) => { const k = shaped(name); return props.kind(name, k.geo.clone(), material, { ...o, lod: k.lod.map(([d, g]) => [d, g.clone()]) }); };
 
 /* ---------- traffic ---------- */
 
@@ -766,6 +788,13 @@ export class City {
   constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true, ...over } = {}) {
     this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
+    // What a city keeps from one making to the next comes first: its textures and materials, and the
+    // street furniture's shapes. While a card loads, a pass of make() can be stopped between these and
+    // the next pass has them already (slices.js); the rest is this city's own and is made in one go.
+    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop']); for (const b of P.buildings) kinds.add('f:' + b.facade);
+    for (const k of kinds) chunkMat(k, S);
+    groundTex('grass', '#4f7a3a'); asphaltMat(S.ground);
+    for (const name in FURNITURE) shaped(name);
     if (occlude) view.occluders?.(this.occluders());   // what's behind the buildings isn't drawn (occlude: false to draw it all)
     this.group = new Group(); this.group.name = 'city'; view.scene.add(this.group);
     this.t = 0; this._night = -1; this.night = night;
@@ -805,7 +834,6 @@ export class City {
     // The far chunks are built as you get near them, and their materials (a facade first seen there)
     // would compile then, mid-round: a stutter. One tiny hidden mesh per material the plan can use lets
     // the view compile them all with the rest before play (HDView.warm / prepare draw hidden things too).
-    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop']); for (const b of P.buildings) kinds.add('f:' + b.facade);
     this.warmers = new Group(); this.warmers.name = 'city shaders';
     for (const k of kinds) { const m = new Mesh(WARM_GEO(), chunkMat(k, P.style)); m.castShadow = m.receiveShadow = true; m.visible = false; m.frustumCulled = false; this.warmers.add(m); }
     this.group.add(this.warmers);
@@ -818,17 +846,17 @@ export class City {
   /** The street furniture and roof things, as gs.props (culled, and simpler far away). */
   furnish() {
     const P = this.plan, props = new Props(this.group, { renderer: this.view.renderer || null }), pm = plainMat();
-    props.kind('tree', tree({ kind: 'round', height: 6.5, leaves: '#4c7a3c', trunk: '#5a4632' }), pm, { lod: [70, 160], capacity: 512 });
-    props.kind('pine', tree({ kind: 'pine', height: 7, leaves: '#3a6a3e', trunk: '#5a4632' }), pm, { lod: [70, 160], capacity: 256 });
-    props.kind('lamp', SHAPES.lamp(), pm, { lod: [60], capacity: 256 });
+    furniture(props, 'tree', pm, { capacity: 512 });
+    furniture(props, 'pine', pm, { capacity: 256 });
+    furniture(props, 'lamp', pm, { capacity: 256 });
     this.lampGlow = new MeshStandardMaterial({ color: '#fff4dc', emissive: new Color('#ffd49a'), emissiveIntensity: 0, roughness: .4 });
-    props.kind('lamphead', SHAPES.lamphead(), this.lampGlow, { shadows: false, capacity: 256 });
-    props.kind('tank', SHAPES.tank(), pm, { lod: [90], capacity: 128 });
-    props.kind('hvac', SHAPES.hvac(), pm, { lod: [90], capacity: 256 });
-    props.kind('mast', SHAPES.mast(), pm, { capacity: 32 });
-    props.kind('bench', SHAPES.bench(), pm, { lod: [50], capacity: 64 });
-    props.kind('signal', SHAPES.signal(), pm, { lod: [80], capacity: 256 });
-    props.kind('hydrant', SHAPES.hydrant(), pm, { shadows: false, capacity: 128 });
+    furniture(props, 'lamphead', this.lampGlow, { shadows: false, capacity: 256 });
+    furniture(props, 'tank', pm, { capacity: 128 });
+    furniture(props, 'hvac', pm, { capacity: 256 });
+    furniture(props, 'mast', pm, { capacity: 32 });
+    furniture(props, 'bench', pm, { capacity: 64 });
+    furniture(props, 'signal', pm, { capacity: 256 });
+    furniture(props, 'hydrant', pm, { shadows: false, capacity: 128 });
     for (const t of P.trees) props.add(t.kind === 'pine' ? 'pine' : 'tree', t.x, KERB, t.z, { rot: t.x * 1.7, scale: t.s });
     this.lampSpots = [];
     for (const l of P.lamps) { props.add('lamp', l.x, KERB, l.z, { rot: l.face }); props.add('lamphead', l.x, KERB, l.z, { rot: l.face }); this.lampSpots.push({ x: l.x + Math.cos(l.face) * 1.35, y: KERB + 5.6, z: l.z - Math.sin(l.face) * 1.35, col: '#ffd8a8', i: 0 }); }

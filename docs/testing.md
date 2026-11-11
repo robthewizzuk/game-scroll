@@ -31,12 +31,14 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Sound (`src/sfx.js`, `src/kit/sound.js`, `instruments.js`) | `npm run sound-test [sounds\|band\|clock]`: renders the sound off screen and measures it (every ready-made sound is heard and none is too loud, the limiter holds, instrument sets are as loud as each other, the music clock keeps the beat through a frozen frame) | about 90 s |
 | A starter template (`scripts/templates/`) | `npm run new zz-try --style <style>`, then lint, types and smoke it like any game, and delete it | under 30 s |
 | The 3D look (hd3d, toon3d, post effects, a three.js update) | `node scripts/look-compare.cjs save base` **before** the change, `check base` after; add `--webgpu` to check the WebGPU path | about 16 s each |
-| The AR kit (`ar3d.js`, `ar-floor.js`, `native-ar.js`) or a native AR plugin | `npm run kit-test` (rooms played through the floor search), then `node scripts/ar-floor.cjs [word] [--shots dir]`: Bin Flick against a pretend native AR phone ([ar-3d.md](ar-3d.md), Testing). Then AR Lab on a real phone | about 2 min |
-| Next Gen / AR on WebGPU | `node scripts/gpu-games.cjs [id ...]` | about 25 s a game |
+| The AR kit (`ar3d.js`, `ar-floor.js`, `ar-room.js`, `native-ar.js`) or a native AR plugin | `npm run kit-test` (rooms played through the floor search, depth pictures and room light through the room maths), then `node scripts/ar-floor.cjs [word] [--shots dir] [--webgpu]`: Bin Flick and AR Lab against a pretend native AR phone ([ar-3d.md](ar-3d.md), Testing). Then AR Lab on a real phone | about 4 min |
+| Creatures (`gs.models.creature`: `src/kit/models/creature*.js`) | `npm run kit-test` and `npm run kit-browser` (every animal's bones, poses, speeds and sculpt), then `node scripts/creatures.cjs sheet.png [like=dog,cat] [seed=3] [cols=walk@.25:side,fly:three] [lod=1] [bones] [--webgpu]`: a sheet with one row an animal and one column a pose, to look at; `PICK=creatures node scripts/look-compare.cjs` for the look | about 20 s, then 2 s an animal |
+| Next Gen / AR / Board / Console on WebGPU | `node scripts/gpu-games.cjs [id ...]` | about 25 s a game (Console: 12 s) |
 | Shaders built mid-round (hd3d `holdNew`) | `node scripts/shader-hold.cjs [--webgpu]` | about a minute |
 | Frame generation | `node scripts/framegen-test.cjs --check` (13 suites against `scripts/framegen-test/baseline.json`; `--save` after a change meant to move the numbers), `node scripts/framegen-games.cjs [--jobs n]` | about 3 min, then 1 to 4 min |
 | The upscalers (SGSR 1 and 2, `hd3d-gpu.js` `sgsr2Gpu`, `sgsr2.js`) | `node scripts/upscale-compare.cjs [--webgpu] [--scale 1.8] [--tier 2] [--warm 80]`: error and flicker against the scene drawn at twice the size; fails if SGSR 2 is worse than a plain stretch, our changes to it worse than Qualcomm's shader as it was, or (WebGPU, on its textured scene) the sharper textures under SGSR 2 not clearly closer than without. `--scenes textured` runs only those; the PR check runs it with `--webgpu`, and without for the WebGL shader in `sgsr2.js` | about 5 min, 2 min |
 | Engine speed (CPU per frame) | `node scripts/perf-bench.cjs [id ...] --json before.json` before, `--vs before.json` after (see below) | about 15 s a game per backend |
+| Loading (how long a game's making holds the main thread; `src/kit/slices.js`, `jobs.js`, the builders that pause) | `npm run kit-test` and `npm run kit-browser` (the workers' answers against the same work done on the spot), then `node scripts/load-time.cjs [id ...] --json before.json` before, `--vs before.json` after (see below) | about 5 s a game |
 | The frame lab (`src/framelab.js`) | `node scripts/framelab-test.cjs [2d-id] [3d-id] [--shots dir] [--report file.html]` | about 3 min |
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
@@ -190,6 +192,29 @@ To see whether WebGPU builds shaders during play (a hitch each time), hook
 `renderer.debug.onNodeBuilderCreated` on `webgpu().r` (from `src/kit/gpu.js`, importable in the dev
 server) and count the calls per second.
 
+## Measuring loading: load-time
+
+```bash
+npm run build:bundled
+node scripts/load-time.cjs --json /tmp/before.json           # every 3D game, a fresh page each
+# ...change the engine, build again...
+node scripts/load-time.cjs --vs /tmp/before.json             # prints "(was N)" beside each number
+node scripts/load-time.cjs gloomwick-hall --passes           # each pass of one game's making
+CPU=4 node scripts/load-time.cjs living-chess                # on a 4 times slower processor
+OUT=/tmp/dist-before node scripts/load-time.cjs              # another build (vite build --outDir)
+```
+
+A game is made a little each frame while its card says "Loading…" (`src/kit/slices.js`), each pass
+on a fresh copy of the game's file, with the heavy number work in background workers
+(`src/kit/jobs.js`). For each game this prints `worst` (the longest single run of `make()` +
+`reset()` on the main thread: what a player scrolling past feels), `total` (all passes added up),
+the number of passes, the jobs the workers did and when the card became playable. It times one card
+on a fresh page: the first time a player meets the game. `--passes` shows, for each pass, how much
+of it was the game's own code (and kit work nobody keeps, such as a texture the game painted): that
+part is run again every pass, so a game with more than 30 ms of it is "made in one go" from there.
+The numbers move 10 to 20% between runs, and first-frame costs (shader builds, texture uploads,
+drawing) are not in them: `perf-bench.cjs` and `shader-hold.cjs` measure those.
+
 ## Pictures: proving a change doesn't change the look
 
 - `look-compare.cjs` draws fixed, seeded scenes (Next Gen at every tier, Console) and fails on a
@@ -198,6 +223,10 @@ server) and count the calls per second.
   renderer holds (and how many textures are packed) every 3 s and says when the graphics queue stops
   answering; `Q=nopack` draws code-made textures uncompressed on WebGPU; `Q=hdr` turns on HDR output (as on an HDR
   phone screen; the saved pictures clip it to white).
+- Real liquids (`gs.fluid`): `PICK=gpu-fluid node scripts/look-compare.cjs save <dir> --webgpu` runs a dam
+  break round a cup with a tap, a ball, a blast and a drain on the graphics chip, with the JavaScript
+  version beside it, and fails if the two part by more than a hundredth of a cell or liquid is lost;
+  without `--webgpu` it draws the JavaScript version. `npm run kit-test` has the liquid's rules.
 - GPU culling of `gs.props`: `PICK=gpu-cull-cpu,gpu-cull node scripts/look-compare.cjs save <dir> --webgpu`
   draws the same forest culled on the CPU and on the GPU (`Q=n=6000` sets the number of trees). The two
   pictures should match, and each line gives the CPU time per frame and the time spent building the lists.
