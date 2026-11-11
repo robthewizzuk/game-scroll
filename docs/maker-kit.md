@@ -80,7 +80,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Chapters, stars, collectibles, unlocks | `gs.campaign` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds placed in 3D, music that builds up | `gs.sound.Ears`, `music({ layers })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
-| Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
+| Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
 | Planes, boats, hover craft, floating crates | `gs.craft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -2099,7 +2099,7 @@ planet. Nodes have `x`, `y`, `angle`, `scale` relative to their parent; `root.up
 mark on a surface that wraps over its shape (scorches, footprints, paint; capped at 40, oldest
 first), `v.bakeLight([x, y, z], { radius })` bakes the light around a point into a light probe so rooms
 and caves pick up the colour of their walls and windows (several blend as the camera, or
-`v.probeAt`, moves; bake once after building the level: it returns a promise and joins a frame or two later), `v.bounce(box)` adds bounce light over a level (a grid of probes: a red wall tints the floor, light from a door fills a room; WebGL and WebGPU), `v.room(box)` gives shiny things in a room box-projected reflections of that room, `v.occluders(boxes)` skips drawing what's hidden behind big solid boxes (occlusion culling; `gs.city` does it for its buildings), and `v.shafts = 1` adds sun shafts streaming
+`v.probeAt`, moves; bake once after building the level: it returns a promise and joins a frame or two later), `v.bounce(box)` adds bounce light over a level (a grid of probes: a red wall tints the floor, light from a door fills a room; WebGL and WebGPU), `v.room(box)` gives shiny things in a room box-projected reflections of that room, `v.detail(meshes)` asks for cluster detail on meshes under 20,000 triangles (big still meshes get it by themselves: each part is drawn only as finely as shows, see docs/nextgen-3d.md; `v.detail(meshes, false)` draws them whole), `v.occluders(boxes)` skips drawing what's hidden behind big solid boxes (occlusion culling; `gs.city` does it for its buildings), and `v.shafts = 1` adds sun shafts streaming
 past whatever blocks the sky (not on the lowest tier).
 
 ## Fixed game tick

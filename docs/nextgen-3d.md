@@ -134,6 +134,36 @@ so its next round starts there instead of stuttering down again.
   same. The copies share the original's points, so normals, UVs and bone weights stay exact. Off for
   instanced and multi-material meshes, see-through ones and `mesh.userData.noLod = true`;
   `__hd.autoLod = false` turns it off. (gs.props makes LODs for instanced props.)
+- Cluster detail (a Nanite-style level of detail, by itself): a big still mesh (20,000 triangles or
+  more: a hillside, a cliff, a hall made in code) is cut into clusters of a few hundred triangles with
+  coarser and coarser versions of each neighbourhood, and every frame each part of it is drawn only as
+  finely as shows in the picture (within a pixel) and not at all where it is out of view. So the near
+  end of a long wall is at full detail and the far end at a fraction, with no cracks where they meet,
+  and a model can carry far more triangles close up without costing more far away. Shadow maps pick
+  their own level the same way. On a test hillside with rocks, a view of 1.3 million triangles drew as
+  160,000 and matched the full picture more closely than the whole-mesh copies above did.
+  - The clusters are made in a worker (about a second for each quarter of a million triangles) while
+    the mesh draws whole, and are kept by the mesh's content in memory and in IndexedDB, so the next
+    round and the next visit have them at once. Nothing is built on the main thread.
+  - The game's mesh stays in the scene as it is (for the game, and for raycasts, which test the full
+    mesh); a twin named `gs-detail` is drawn in its place and follows its place, material, shadows and
+    visibility. The moment the mesh stops fitting (another geometry or material, taken out of the
+    scene) it draws as itself again. A geometry whose points change after it was taken is left alone
+    from then on.
+  - Taken: plain meshes with one solid material. Not taken: skinned, morphing and instanced meshes,
+    see-through and alpha-tested materials, materials that move their points (leaves, grass, water,
+    your own shader), multi-material meshes and `v.reflect()` ones. Those keep what they had.
+  - `v.detail(meshes)` asks for it on smaller meshes too (from 2,000 triangles), `v.detail(meshes,
+    { px: .5 })` makes them finer (pixels the simpler parts may be out by; default 1), and
+    `v.detail(meshes, false)` or `mesh.userData.detail = false` draws them whole.
+    `__hd.detail = false` turns it all off, `__hd.detailMin` is the triangle count, `__hd.detailPx` the
+    pixels, and `__hd.info.detail` says what the last frame drew through it (`meshes`, `tris` drawn
+    of `full`, `draws`, `picks`).
+  - Works the same on WebGL (one multi-draw call for each mesh) and WebGPU (one small draw for each
+    run of clusters). `node scripts/detail-test.cjs [--webgpu]` checks the picture against the full
+    meshes.
+  - Real surface detail (`gs.models.relief`, below) is drawn through it: a roof's tiles as real
+    triangles close up, the flat roof again far away.
 - Static batching (WebGL, by itself): small still things that share a material (crates, posts, rocks,
   walls) are merged into one mesh per material and area after about 1.5 s still, one draw call where
   there were dozens (Unity's static batching). A piece that moves, hides or changes material goes back
@@ -159,6 +189,8 @@ so its next round starts there instead of stuttering down again.
   (it couldn't be seen, only crawl), and where the pattern itself gets down to a few pixels (a tenth of
   the texture is taken as one tile or brick) its bumps flatten and its colour goes over to the texture's
   average, so a tiled roof a hill away is a calm, even red and not a shimmer.
+  `gs.models.relief(mesh)` makes the same height layer into real triangles instead (on WebGL too): see
+  [Things made in code](#things-made-in-code-gsmodels).
 - `pbr(col, { sss: true | { colour, power, scale, distortion, ambient, attenuation } })`: subsurface
   scattering for skin, wax, leaves, jade and ears against the light: light passing through glows out
   of the far side in `colour` (default a skin red). On WebGPU this is three.js's MeshSSSNodeMaterial
@@ -758,6 +790,39 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   (metres, 8 x 6), `floors`, `roof`, `floor` (storey height), `bay` (metres per window), `win` ([w, h]), `lit` (0..1
   of windows glowing), `colour` (walls), `door: false`, `seed`, `wear`. Its door faces +z. About 0.1 to 0.25 s
   each, so make them while loading; for a whole town in the distance `gs.city` is far cheaper.
+- **`relief(target, o)`**: real surface detail. The bumps a material only paints (the height layer its
+  texture was made with: the barrels of roof tiles, the mortar between bricks, the ridges of bark) are
+  made into real triangles, so they stand out against the sky and hide what is behind them from every
+  angle, on WebGL and WebGPU alike, and that mesh no longer needs the parallax shader. It is built in
+  a worker (a second or two for a roof) and kept by the mesh's content in IndexedDB; the mesh draws as
+  it did until its relief arrives. From then on the view draws it through cluster detail, so it costs
+  triangles only where it is near enough to show: in the test scene a tiled roof of 4 triangles is
+  17,000 at arm's length, a few thousand from across the yard, and the same 4 again once the tiles are
+  smaller than a pixel.
+
+```js
+const roof = new THREE.Mesh(roofGeometry, gs.hd.pbr('#ffffff', { tex: tiles, depth: .024 }));
+gs.models.relief(roof);                      // its depth: the material's own
+gs.models.relief(house, { depth: .02 });     // every mesh under a group that has a height layer
+```
+
+  The height comes from the material: one made with `pbr({ tex: surface(...) })` or
+  `gs.models.material(name)` has it (a copy made by `wear()` too); or pass `height` (a `surface()` set
+  or its height texture). Lengths are in metres: `depth` (how far the lowest parts go in; default the
+  material's parallax depth, or 3% of a tile), `fine` (the smallest detail made, half the depth),
+  `error` (how far it may be from the picture, a tenth of the depth), `maxTris` (150,000 a mesh).
+  Nothing is pushed out (only in), and the game's mesh keeps its own simple geometry, so raycasts,
+  physics and anything else that reads it are as they were and nothing sticks out of what the game
+  knows. `mesh.userData.relief` says how it stands (`'building'`, `'ready'`, `'failed'`: it then just
+  draws flat), `await gs.models.relief.ready(target)` waits for it, `relief(target, false)` takes it off
+  and `__hd.relief = false` draws them all flat.
+  It pays where the depth shows: roofs, stone walls, bark and cobbles seen close or against the light.
+  A brick wall's thin mortar takes a great many triangles for little you can see; leave that to the
+  normal map, or give it a larger `fine`. Not for materials laid on by position or scattered (`solid`,
+  `scatter`), skinned, morphing, instanced or multi-material meshes, or see-through ones.
+  `node scripts/detail-test.cjs --page relief [--webgpu]` draws a roof, a brick house and a trunk flat
+  and with relief, and measures how much each flickers under a sliding camera (about the same in that
+  scene: the gain is real depth that holds at glancing angles and along edges, not less shimmer).
 - **`human(o)`**: a person to see up close, sculpted in code: a head with a brow, cheekbones, a nose, lips,
   ears and eyes with lids; hands with fingers; clothes cut the way a tailor cuts them (a tunic with its
   collar, pockets, buttons and belt, a blouse, a smock, breeches, tall boots, gaiters), hats (helmet, cap,

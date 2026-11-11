@@ -1,0 +1,31 @@
+// Cluster detail (src/kit/detail.js, a Nanite-style level of detail) in the browser: scripts/detail-test/
+// draws a dense scene whole and through the view's automatic cluster detail, and this checks the two
+// pictures match, that far fewer triangles were drawn, and that the twins follow their meshes.
+//   node scripts/detail-test.cjs [--webgpu] [--shots dir] [--q "n=600&tier=3"]
+//   node scripts/detail-test.cjs --bench [--webgpu] [--q "size=1&frames=40"]   a dense valley flown through with it off and on: triangles, draws and picking time a frame
+//   node scripts/detail-test.cjs --page relief [--webgpu] [--shots dir]      real surface detail (gs.models.relief): a roof, a brick house and a trunk, flat against relief
+const { chromium } = require('playwright');
+const fs = require('fs'), path = require('path');
+(async () => {
+  const argv = process.argv.slice(2), gpu = argv.includes('--webgpu'), arg = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
+  const shots = arg('--shots'), bench = argv.includes('--bench'), q = (bench ? 'bench&' : '') + (arg('--q') || ''), page = arg('--page');
+  const vite = await import('vite');
+  const port = +(process.env.PORT || 4187), server = await vite.createServer({ server: { port }, mode: 'bundled', logLevel: 'error' }); await server.listen();
+  const icd = path.join(path.dirname(chromium.executablePath()), 'vk_swiftshader_icd.json');
+  const b = await chromium.launch(gpu
+    ? { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--use-angle=vulkan', '--enable-features=Vulkan'], env: { ...process.env, VK_ICD_FILENAMES: icd } }
+    : { args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] }), p = await b.newPage();
+  const errs = [], warns = new Set(); p.on('pageerror', e => { if (e.message !== 'bench done') errs.push(e.message); }); p.on('console', m => { if ((m.type() === 'warning' || m.type() === 'error') && !/GPU stall due to ReadPixels/.test(m.text())) warns.add(m.text().slice(0, 400)); });
+  await p.goto(`http://localhost:${port}/scripts/detail-test/${page ? page + '.html' : ''}?${gpu ? 'gpu&' : ''}${q}`);
+  await p.waitForFunction(() => window.result, null, { timeout: 900000 });
+  const res = await p.evaluate(() => window.result);
+  await b.close(); await server.close();
+  for (const w of warns) console.log('console:', w);
+  if (res.error || errs.length) { console.log('FAIL', res.error || errs.join('\n')); process.exit(1); }
+  if (shots) { fs.mkdirSync(shots, { recursive: true }); for (const [k, url] of Object.entries(res.out)) fs.writeFileSync(path.join(shots, (gpu ? 'gpu-' : 'gl-') + (page ? page + '-' : '') + k + '.png'), Buffer.from(url.split(',')[1], 'base64')); }
+  for (const [k, i] of Object.entries(res.info)) console.log(k.padEnd(12), JSON.stringify(i));
+  let bad = 0; for (const c of res.checks) { if (!c.ok) bad++; console.log(c.ok ? '  ok  ' : '  FAIL', c.name, c.note ? '(' + c.note + ')' : ''); }
+  if (bench) process.exit(0);
+  console.log(bad ? `detail-test${page ? ' ' + page : ''}: ${bad} of ${res.checks.length} checks failed` : `detail-test${page ? ' ' + page : ''}: ${res.checks.length} checks passed (${gpu ? 'WebGPU' : 'WebGL'})`);
+  process.exit(bad ? 1 : 0);
+})();
