@@ -46,7 +46,7 @@ export const LOCATION_LEVELS = ['coarse', 'precise'];
 // Which phone sensors a game uses, worked out from the gs parts it uses (gsNeeds), so the feed can
 // say so before Play and ask for motion access on the Play tap. Games don't declare it themselves.
 const SENSORS = {
-  camera: ['device.startCamera', 'vision.Face', 'vision.Hands', 'vision.Body', 'vision.CutOut', 'vision.Signs', 'vision', 'ar.ARView', 'ar'],
+  camera: ['device.startCamera', 'vision.Face', 'vision.Hands', 'vision.Body', 'vision.CutOut', 'vision.Signs', 'vision.Objects', 'vision.Scanner', 'vision', 'ar.ARView', 'ar'],
   mic: ['device.startMic', 'hear.Sounds', 'hear.Voice', 'hear'],
   steps: ['device.steps'],
   pressure: ['device.pressure'],

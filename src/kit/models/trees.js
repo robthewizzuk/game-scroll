@@ -6,6 +6,7 @@ import { Group, Mesh, DoubleSide, MeshStandardMaterial } from 'three';
 import { getLeafTexture } from './tree-textures.js';
 import { material } from './materials.js';
 import { looks } from '../looks.js';
+import { pause, built, loading } from '../slices.js';
 
 const PRESET = { oak: 'Oak', ash: 'Ash', aspen: 'Aspen', pine: 'Pine' }, SIZES = { small: 'Small', medium: 'Medium', large: 'Large' };
 const HEIGHT = { oak: 9, ash: 10, aspen: 11, pine: 12, bush: 1.4 };
@@ -44,6 +45,7 @@ export function tree(kind = 'oak', o = {}) {
   const key = JSON.stringify([kind, size, seed, height, leaves, bark, typeof wind === 'number' ? wind : !!wind]);
   let parts = made.get(key);
   if (!parts) {
+    pause('Models');   // (while a card loads, a frame may go by before each new tree: slices.js)
     const name = kind === 'bush' ? 'Bush ' + (1 + (seed % 3)) : PRESET[kind] + ' ' + SIZES[size];
     const t = new lib.Tree(); t.options.copy(structuredClone(lib.TreePreset[name]));
     t.options.seed = (t.options.seed + seed * 7919) >>> 0;
@@ -57,8 +59,8 @@ export function tree(kind = 'oak', o = {}) {
     const bm = material('bark', { colour: bark, repeat: [2, Math.max(2, Math.round(height / 2))] });
     t.leavesMesh.material.dispose(); t.branchesMesh.material.dispose();
     parts = { bg, lg, bm, lm: leafMat(t.options.leaves.type, leaves, wind) };
-    if (made.size >= 48) made.delete(made.keys().next().value);
-    made.set(key, parts);
+    if (made.size >= 48 && !loading()) made.delete(made.keys().next().value);
+    made.set(key, parts); built();
   }
   const out = new Group(); out.name = 'tree:' + kind; out.userData.tree = kind;
   const b = new Mesh(parts.bg, parts.bm), l = new Mesh(parts.lg, parts.lm);

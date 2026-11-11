@@ -9,7 +9,7 @@
 // Not for games to import: they get everything through gamescroll.js.
 
 export class StillLoading extends Error {
-  constructor(name, promise) { super(`${name} is still loading`); this.name = 'StillLoading'; this.kitLoading = promise; }
+  constructor(name, promise) { super(`${name} is still loading`); this.name = 'StillLoading'; this.kitLoading = promise; this.what = name; }   // (what: shown under the card's loading bar)
 }
 
 // A load that fails (offline, a file that didn't arrive) rejects the promise the app is waiting on,

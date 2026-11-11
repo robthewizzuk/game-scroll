@@ -21,6 +21,8 @@
 // more exact but slower to build. Like physics, the engine loads the first time a game needs it.
 
 import { lazy } from './lazy.js';
+import { need, pause, built } from './slices.js';
+import { runNav, canRunNav } from './jobs.js';
 import { Vector3, Mesh } from 'three';
 
 const engine = lazy('3D path finding', () => Promise.all([import('recast-navigation'), import('recast-navigation/generators')]).then(async ([core, gen]) => {
@@ -34,6 +36,14 @@ const live = [];
 const v3 = p => p instanceof Vector3 ? p : new Vector3(p.x ?? p[0], p.y ?? p[1], p.z ?? p[2]);
 const plain = p => ({ x: p.x ?? p[0], y: p.y ?? p[1], z: p.z ?? p[2] });
 
+// a short name for a level: every number of its triangles and settings folded together
+function hashOf(P, I, cfg) {
+  let h = 2166136261; const mix = v => { h ^= v; h = Math.imul(h, 16777619); };
+  const b = new Uint32Array(P.buffer, 0, P.length); for (let i = 0; i < b.length; i++) mix(b[i]);
+  for (let i = 0; i < I.length; i++) mix(I[i]);
+  const c = JSON.stringify(cfg); for (let i = 0; i < c.length; i++) mix(c.charCodeAt(i));
+  return (h >>> 0).toString(36) + '.' + P.length + '.' + I.length;
+}
 /** The triangles of these meshes (and their children), in world space. */
 function triangles(objects) {
   const pos = [], idx = [], v = new Vector3();
@@ -57,7 +67,13 @@ export class NavMesh3D {
     if (!idx.length) throw new Error('NavMesh3D: no meshes to build from');
     const cs = cell ?? Math.max(.05, radius / 2), ch = cs / 2;
     const cfg = { cs, ch, walkableRadius: Math.ceil(radius / cs), walkableHeight: Math.ceil(height / ch), walkableClimb: Math.floor(climb / ch), walkableSlopeAngle: slope, maxEdgeLen: Math.round(maxEdge / cs), maxSimplificationError: 1.3, minRegionArea: 8, mergeRegionArea: 20, maxVertsPerPoly: 6, detailSampleDist: 6, detailSampleMaxError: 1 };
-    const res = R.generateSoloNavMesh(pos, idx, cfg);
+    // While a card loads, the map is built in a background worker and read back in here (the card waits
+    // for it: slices.js need). What is asked is the level itself: its triangles and the walker's size.
+    const P = new Float32Array(pos), I = new Uint32Array(idx);
+    const bytes = need('Path map', 'nav|' + hashOf(P, I, cfg), () => canRunNav() && runNav({ pos: P, idx: I, cfg }));
+    let res = null;
+    if (bytes) { try { res = { success: true, navMesh: R.importNavMesh(bytes).navMesh }; } catch (e) { res = null; } }
+    if (!res) { pause('Path map'); res = R.generateSoloNavMesh(P, I, cfg); built(); }
     if (!res.success) throw new Error('NavMesh3D: could not build the walkable map (' + (res.error || 'unknown') + ')');
     this.mesh = res.navMesh; this.query = new R.NavMeshQuery(this.mesh); this.reach = { x: radius * 4 + 1, y: height + climb + 1, z: radius * 4 + 1 };
     // wasm memory isn't freed by the garbage collector: keep the few newest maps, free older ones

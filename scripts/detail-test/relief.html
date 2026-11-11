@@ -10,6 +10,7 @@ import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 import { clearBuilds } from '../../src/kit/detail.js';
 import { reliefOf } from '../../src/kit/relief.js';
+import { begin, end } from '../../src/kit/slices.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -63,12 +64,17 @@ const CAMS = { roof: [[-9.5, 3.6, 5.2], [-4, 3.4, 0]], wall: [[1.2, 1.5, 3.3], [
 const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
 const draw = async (S, frames = 1) => { for (let i = 0; i < frames; i++) { S.v.t = 0; S.v.render(S.x, W, H); if (i < frames - 1) await nextFrame(); } };
 const twins = S => [...(S.v.details?.map.values() || [])].filter(e => e.relief && e.twin && !(e.twin.layers.mask & (1 << 29)));
-// how much the picture flickers: the camera slides a few centimetres over 12 frames; what changes from frame to frame beyond the slide itself
+// how much the picture flickers: the camera slides a few centimetres over 16 frames; what changes from frame
+// to frame beyond the slide itself (the middle value of the frames, after the view has settled where it
+// starts, so a shader that arrives part-way, a one-off change, is not counted as flicker)
 async function flicker(S, at, to) {
-  const frames = []; let sum = 0;
-  for (let i = 0; i < 12; i++) { S.v.cam.position.set(at[0] + i * .012, at[1], at[2]); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld(); await draw(S, 2); frames.push(S.x.getImageData(0, 0, W, H).data); }
-  for (let f = 2; f < frames.length; f++) { const a = frames[f - 2], b = frames[f - 1], c = frames[f]; let s = 0; for (let i = 0; i < a.length; i += 4) s += Math.abs(b[i + 1] - (a[i + 1] + c[i + 1]) / 2); sum += s / (a.length / 4); }
-  return +(sum / (frames.length - 2)).toFixed(3);
+  const frames = [], each = [];
+  S.v.cam.position.set(...at); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld();
+  for (let i = 0; i < 12; i++) { await draw(S, 2); await new Promise(r => setTimeout(r, 150)); }
+  for (let i = 0; i < 16; i++) { S.v.cam.position.set(at[0] + i * .012, at[1], at[2]); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld(); await draw(S, 2); frames.push(S.x.getImageData(0, 0, W, H).data); }
+  for (let f = 2; f < frames.length; f++) { const a = frames[f - 2], b = frames[f - 1], c = frames[f]; let s = 0; for (let i = 0; i < a.length; i += 4) s += Math.abs(b[i + 1] - (a[i + 1] + c[i + 1]) / 2); each.push(s / (a.length / 4)); }
+  each.sort((p, q) => p - q);
+  return +((each[6] + each[7]) / 2).toFixed(3);
 }
 try {
   let R = null;
@@ -123,6 +129,15 @@ try {
   HD.detail = true;
   for (let i = 0; i < 400 && twins(S).length < 2; i++) { await draw(S); await new Promise(r => setTimeout(r, 30)); }   // (on WebGPU a new twin waits for its shader)
   check('and on again brings the reliefs back', twins(S).length === 2, twins(S).length + ' of 2');
+  // while a card loads, a recipe's layers are painted in a worker: a relief asked for then waits for the picture
+  {
+    const card = {}; begin(card, 5, true);
+    const late = new T.Mesh(new T.CylinderGeometry(.4, .5, 3.2, 28, 1, true), gs.models.material('bark', { repeat: [3, 3], seed: 9 }));
+    gs.models.relief(late, { depth: .03 });
+    const waits = end(card, true), waited = !!reliefOf(late)?.waiting;
+    await waits; const n = await gs.models.relief.ready(late), tris = reliefOf(late)?.info?.tris;
+    check('a relief asked for while its material is still being painted (a card loading) waits for the picture', n === 1 && tris > 3000 && late.userData.relief === 'ready', `${waited ? 'waited' : 'the picture was in already'}, ${tris} triangles`);
+  }
   window.scene = S;   // (for looking closer from a test script)
   window.result = { out, info, checks };
 } catch (e) { window.result = { error: String(e && e.stack || e) }; }

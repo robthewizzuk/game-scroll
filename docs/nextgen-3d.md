@@ -21,7 +21,10 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
   On WebGPU the colour, normal, height and metal maps are packed into the phone's own compressed
   formats (ASTC or ETC2; BC on desktops) on the graphics chip by spark.js, so they take about a quarter
   of the memory; each draws plain for its first few frames until its packed copy is ready.
-  `speckle()` adds grime and noise.
+  `speckle()` adds grime and noise. While a card is loading, the bumps (the normal map and the
+  rougher small copies) are worked out in a background worker: `surface()` hands the textures back at
+  once and the card stays "Loading…" until they are filled in, so twenty textures no longer hold the
+  feed still.
 - **Bevelled boxes** (`rbox(w, h, d, r)`): rounded edges catch highlights, which reads as
   "modern" far more than sharp boxes.
 - **Real-time shadows** (`spot(...)`): a shadow-casting spotlight whose shadow map size follows
@@ -682,6 +685,33 @@ const leafLook = looks.leaves(leafMaterial, { wind: .6 });      // sway, sun glo
 - Every look is a named effect (`material.userData.gsLooks` lists them), so the WebGPU version can
   swap each one for a node later (see `docs/webgpu-move.md`). Road segments: up to 32.
 
+## Real 3D liquids: gs.fluid
+
+`new gs.fluid.Fluid(view, { box, volume, kind })` is liquid you can pour, splash and fill things with:
+a particle fluid (MLS-MPM) whose drops fall, pile up, slosh round solid things and settle level. With
+WebGPU it runs as compute passes on the graphics chip with tens of thousands of drops (40,000 on a top
+phone), drawn from the same buffers as lit round cards that read as one smooth body, with foam where
+the liquid is thin or fast; they cast and take shadows and carry motion for frame generation. On WebGL
+the same steps run in JavaScript with 600 to 2,000 bigger drops drawn as beads, so a game plays the
+same on both and only looks finer on WebGPU.
+
+```js
+const { Fluid } = gs.fluid;
+fluid = new Fluid(v, { box: [-2, 0, -1, 2, 3, 1], volume: 4, kind: 'water' });   // once, in setup()
+tap = fluid.pour({ x: -1.2, y: 2.4, z: 0, rate: 1, speed: 2.5 });
+cup = fluid.tube({ x: 1, y: .5, z: 0, r: .5, h: 1, hollow: .06 });
+// each frame
+fluid.update(dt); if (fluid.amount(cup.inside()) > .3) api.win();
+```
+
+Taps, bursts and blocks of liquid, solid balls, boxes and tubes (hollow ones are bowls, tanks and
+cups; they push the liquid as they move and pour when tipped), ground to flow over, drains, blasts,
+and the questions `amount(box)`, `level(x, z)` and `wet(x, y, z)`: the full list is in
+[maker-kit.md](maker-kit.md#real-3d-liquids). `fluid.backend` says which version is running. The
+liquid is opaque (coloured, glossy), so it sits in the solid pass with everything else and costs no
+extra screen passes. `scripts/look-compare.cjs` draws it (`gpu-fluid`) and checks that the version on
+the graphics chip keeps its liquid and comes to rest where the other does.
+
 ## Things made in code: gs.models
 
 A game stays one `.js` file with no image or model files, so `gs.models` makes the materials and
@@ -725,7 +755,9 @@ wear(wall, { moss: .7 });                                                    // 
   `blend` (how softly it melts in, metres), `cut: true` (carved away) and `colour` (vertex colours: give the
   mesh a material with `vertexColors: true`). Or pass a distance function `(x, y, z) => d` with `bounds`.
   Options `blend` (.08), `res` (cells along the longest side, 48, up to 128). About 0.1 s each, so make them
-  in `make()` or `reset()`; the same shapes again give back the same geometry.
+  in `make()` or `reset()`; the same shapes again give back the same geometry. While a card is loading,
+  a sculpt given as a list of shapes is made in a background worker and the card waits for it (one
+  given as a distance function is made on the spot: a function can't be sent to a worker).
 
 ```js
 const snowman = gs.models.sculpt([
@@ -780,8 +812,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   normal map, or give it a larger `fine`. Not for materials laid on by position or scattered (`solid`,
   `scatter`), skinned, morphing, instanced or multi-material meshes, or see-through ones.
   `node scripts/detail-test.cjs --page relief [--webgpu]` draws a roof, a brick house and a trunk flat
-  and with relief; there a roof under a sliding camera flickers about a fifth less than with the
-  parallax shader.
+  and with relief, and measures how much each flickers under a sliding camera (about the same in that
+  scene: the gain is real depth that holds at glancing angles and along edges, not less shimmer).
 - **`human(o)`**: a person to see up close, sculpted in code: a head with a brow, cheekbones, a nose, lips,
   ears and eyes with lids; hands with fingers; clothes cut the way a tailor cuts them (a tunic with its
   collar, pockets, buttons and belt, a blouse, a smock, breeches, tall boots, gaiters), hats (helmet, cap,
@@ -806,3 +838,43 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   several kinds, make them together and first: `const [a, b] = human.all([optsA, optsB])` (or
   `human.need([...])` before anything costly is built, then `human(opts)` wherever you like).
   Faces don't blink or speak yet (`person.face` is there, with nothing to move).
+- **`creature(o)`**: an animal or a monster made in code from a seed, built the way people are (soft shapes
+  melted into one skin, creases in soft shadow, eyes that catch the light, no model or texture file). 35 to
+  start from, in five kinds: four legs (`dog`, `cat`, `horse`, `deer`, `cow`, `pig`, `bear`, `rabbit`, `mouse`,
+  `lizard`), birds (`songbird`, `crow`, `duck`, `hawk`, `owl`, `chicken`, `heron`), fish (`fish`, `shark`, `eel`,
+  `puffer`, `angler`), insects (`beetle`, `ladybird`, `ant`, `bee`, `butterfly`, `dragonfly`, `spider`) and
+  monsters (`dragon`, `beast`, `ogre`, `imp`, `blob`, `serpent`).
+  ```js
+  const [stag, crow] = gs.models.creature.all([{ like: 'deer', seed: 7 }, { like: 'crow' }]);   // first thing in make()
+  view.add(stag); view.add(crow);
+  // each frame: the easy way picks and blends the gaits for a speed (metres a second)
+  stag.move(dt, speed, { turn });          // walk, trot, gallop in step with the ground
+  crow.move(dt, speed, { fly: flying });   // hop about, or beat its wings
+  stag.see(view.cam, H);                   // three levels of detail by its size on screen
+  ```
+  `like` picks the animal; with no `seed` it is the animal as the book shows it, and a `seed` gives it its
+  own build (longer legs, a shorter neck, antlers or none), coat, pattern and size, the same on every phone.
+  `kind` alone (`'quad'`, `'bird'`, `'fish'`, `'insect'`, `'monster'`) lets the seed pick which animal too. Over
+  that you can set `size` (metres from nose to rump; a bird beak to tail; an ogre or imp its height),
+  `colour`, `belly`, `accent`, `pattern` (`plain`, `spots`, `stripes`, `patches`, `bands`, `socks`, `back`, `tips`,
+  `hood`), `eyes` and the colour of any part (`horn`, `hoof`, `claw`, `beak`, `legs`, `comb`, `mane`, `wing`, `fin`,
+  `nose`, `shell`, `lure`), and any measure by name: `build: { neck: .5, horns: 'antlers', wings: 1 }` (a dog
+  with wings is a fair monster; `creature.look.build` lists a creature's measures).
+  The gaits are worked out from the creature itself: which legs it has and how long they are, its wings, its
+  tail, its size. So a seed that changes the animal changes its stride to match, feet don't slide, a mouse
+  scurries where a horse strides, and a small bird beats its wings ten times a second where a dragon beats
+  them once. `creature.speeds` says where each gait sits (`{ walk, trot, run, fly, swim }`, metres a second).
+  For a pose by name use the rig yourself: `creature.rig.play('eat'); creature.rig.update(dt, { speed })`.
+  Every kind has `idle`, `walk`, `run`, `attack`, `hurt` and `dead`; four legs add `trot`, `eat`, `sit`, `jump`
+  (a rabbit hops); birds `fly`, `glide`, `hover`, `eat`, `sit`, `jump`; fish `swim`; flying insects `fly` and
+  `hover`; a dragon and an imp `fly`, `glide`, `hover`; an ogre and an imp stand on a person's joints, so they
+  have every `gs.poses` pose; a serpent `rear` and `swim`. `creature.bones` holds the joints (`bones.head`,
+  `bones.jaw`, `bones.tail1`, `bones.wingL`...) for a rider, a hat or a hit box.
+  `creature.twin()` is another of the very same creature for almost nothing (a herd, a flock, a swarm), and
+  creatures of one shape share it whatever their colours and size. An insect is tiny at its real size: give
+  it a `size` your camera can see.
+  **A shape this phone hasn't made yet takes a few tenths of a second to sculpt, in the background**, as
+  people do: the app shows "Loading…" and makes the game again, and the shape is saved on the phone. So make
+  creatures in `make()` or `reset()`, and several kinds together and first (`creature.all([...])`, or
+  `creature.need([...])` before anything costly is built). `node scripts/creatures.cjs sheet.png` draws every
+  animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.

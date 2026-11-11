@@ -3,7 +3,8 @@
 // AR (hd3d.js) and the speed check (speed.js) all come here, so the move to WebGPU (docs/webgpu-move.md)
 // changes this file instead of every kit. On any device that offers WebGPU, prepareGPU() makes the one
 // WebGPURenderer that Next Gen and AR views draw with when everything in them has a WebGPU version
-// (hd3d.js); renderer.js makes the WebGL ones, used everywhere else.
+// (hd3d.js), and prepareConsoleGPU() the one Classic Console views draw with (toon3d.js); renderer.js
+// makes the WebGL ones, used everywhere else.
 // No three.js here (the app loads it only with the first 3D game): three's WebGPU build is a dynamic import.
 // Not for games: they get 3D through gs.toon, gs.hd and gs.ar.
 import { installPack } from './pack.js';
@@ -113,7 +114,7 @@ export function prepareGPU() {
       fx.manyLights(r);
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
       installPack(r);   // code-made textures packed into the chip's compressed formats (spark.js)
-      r.backend.device?.lost?.then(info => { console.warn('WebGPU device lost:', info?.reason, info?.message); if (gpu?.r === r) gpu = null; gpuLoad = null; });   // the GPU went away: back to WebGL
+      r.backend.device?.lost?.then(info => { console.warn('WebGPU device lost:', info?.reason, info?.message); if (gpu?.r === r) { gpu = null; con = null; conLoad = null; conTried = false; } gpuLoad = null; });   // the GPU went away: back to WebGL
       return gpu = { r, W, fx };
     } catch (e) { console.warn('WebGPU did not start:', e); gpuLoad = null; return null; }
   })();
@@ -125,6 +126,31 @@ export function setHdr(v) { hdrPick = v; }
 function hdrScreen() { try { return hdrPick ?? (typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches); } catch (_) { return false; } }
 /** The ready WebGPU setup { r (WebGPURenderer), W (three/webgpu), fx (hd3d-gpu.js) }, or null (not supported, not ready, or WebGL forced for a test). */
 export const webgpu = () => pick === 'webgpu' ? gpu : null;
+
+/* ---------- Classic Console on WebGPU ---------- */
+// Console games get a renderer of their own on the same device: a plain 8-bit canvas (no HDR) that draws
+// in the screen's colours the way the WebGL Console renderer does (toon3d-gpu.js), and whose size and
+// settings never fight the Next Gen renderer's. Made the first time a Console game asks (toon3d.js View).
+let con = null, conLoad = null, conTried = false;
+/** Gets the Console WebGPU renderer ready (once). Never rejects; resolves to what consoleGPU() returns. */
+export function prepareConsoleGPU() {
+  if (pick !== 'webgpu') return Promise.resolve(null);
+  return conLoad ||= (async () => {
+    try {
+      const G = await prepareGPU(); if (!G) return null;
+      const fx = await import('./toon3d-gpu.js');
+      const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false });
+      await r.init();
+      if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
+      r.gsBackend = 'webgpu'; fx.setup(r);
+      return con = { r, W: G.W, fx };
+    } catch (e) { console.warn('Console WebGPU did not start:', e); return null; } finally { conTried = true; }
+  })();
+}
+/** The ready Console WebGPU setup { r, W, fx (toon3d-gpu.js) }, or null (no WebGPU, not ready, or WebGL forced for a test). */
+export const consoleGPU = () => pick === 'webgpu' ? con : null;
+/** A promise to wait for if the Console WebGPU renderer could be had but hasn't been tried yet, else null. */
+export const consoleWait = () => (webgpu() && !conTried ? prepareConsoleGPU() : null);
 
 /* ---------- compute only (no drawing): gs.ai Swarm and other number crunching ---------- */
 let compute = null;

@@ -22,6 +22,8 @@ import { initWallet, toast, shopHTML, bindShop } from './kit/wallet-ui.js';
 import { haptic, want } from './kit/device.js';
 import { pollPads } from './kit/gamepad.js';
 import { stopAll, pauseAll, resumeAll, ownedBy, release } from './kit/cleanup.js';
+import * as slices from './kit/slices.js';
+import { stats as jobStats } from './kit/jobs.js';
 import { tickRate, runTicks, beforeDraw, resetTicks } from './kit/tick.js';
 // Things a game may leave running (music, the camera for face tracking, motion moves): stopped when a round ends or the player leaves.
 const stopKits=stopAll;   // every kit registers its own stop (src/kit/cleanup.js)
@@ -48,7 +50,7 @@ import { makeDebug } from './debug.js';
 import { show as showTweaks } from './kit/tweak.js';
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
-import BUNDLED from 'virtual:bundled-games';
+import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
 
 /* ---------- catalogue ---------- */
 // The app streams every game from the game host (src/remote.js): GAMES holds each game's metadata from
@@ -63,30 +65,89 @@ if (STREAM) remote.init(meta => { const g = { likes: 300 + hash(meta.id) % 6000,
 
 /* ---------- feed engine ---------- */
 const feed=document.getElementById('feed');
-let slides=[],active=null,filter='all',lastId=null,io;
+let slides=[],active=null,filter='all',lastId=null,io,solo=false;   // (solo, tests: the game picked with __gs.only(id, true) goes on one card, not six)
 // Guest: while the phone test tour's bot plays (src/tour.js; the driver is further down), nothing it does
 // is kept. Cards made meanwhile get saves and brains that go nowhere (guest is the function that makes
 // them), and a round pays no credits, sets no best, sends no score or play stats and teaches no brain.
 // Frame timings and errors still count: those are real ones from this phone.
 let guest=null;
 
+// How far along a loading card is: the passes it has taken (each wait for a library, a background worker
+// or the next frame is one, src/kit/slices.js) out of how many this game took the last time it loaded
+// on this phone. The first time there is nothing to go by, so the bar eases along and never quite fills.
+const LOADS=store.get('gs_loads',{});
+const loadFrac=s=>{const n=s.passes||0,of=LOADS[s.def.id];return Math.min(.96,of>1?n/of:1-Math.exp(-n/6))};
+const loadDone=s=>{const n=s.passes||0;s.passes=0;if(n<2||LOADS[s.def.id]===n)return;LOADS[s.def.id]=n;const k=Object.keys(LOADS);if(k.length>400)delete LOADS[k[0]];store.set('gs_loads',LOADS)};
 // Makes the game. A game whose kit is still loading (the physics engine is a few MB, so it loads the
 // first time it's needed) throws an error carrying e.kitLoading: show a "loading" screen until it's in,
 // then make the game again. A kit that fails to load, or a game that throws while it's being made or
 // reset, must not take the feed with it: its card says so and a tap tries again.
-const stubGame=(s,msg)=>({reset(){},update(){},draw(c){const w=s.w||s.def.w,h=s.h||s.def.h;c.fillStyle='#111';c.fillRect(0,0,w,h);c.fillStyle='#bbb';c.font=`${Math.round(Math.min(w,h)/14)}px sans-serif`;c.textAlign='center';c.textBaseline='middle';c.fillText(msg,w/2,h/2)}});
-function bootGame(s){
+const stubGame=(s,msg,what='')=>({reset(){},update(){},draw(c){const w=s.w||s.def.w,h=s.h||s.def.h,f=Math.round(Math.min(w,h)/14);c.fillStyle='#111';c.fillRect(0,0,w,h);c.fillStyle='#bbb';c.font=`${f}px sans-serif`;c.textAlign='center';c.textBaseline='middle';c.fillText(msg,w/2,h/2);
+  if(!s.loading||s.failed)return;   // (a card that is loading: its bar, and what it is waiting for)
+  const bw=Math.round(w*.5),bh=Math.max(2,Math.round(f/5)),bx=Math.round((w-bw)/2),by=Math.round(h/2+f);c.fillStyle='#333';c.fillRect(bx,by,bw,bh);c.fillStyle='#bbb';c.fillRect(bx,by,Math.round(bw*loadFrac(s)),bh);
+  if(what){c.fillStyle='#777';c.font=`${Math.max(6,Math.round(f*.55))}px sans-serif`;c.fillText(what,w/2,by+bh+f*.7)}}});
+// A big 3D game is made a little each frame while its card says "Loading…" (src/kit/slices.js): a kit
+// builder that has used the frame's share stops the pass, like a library that isn't in yet, and the next
+// pass gets what is already built straight back. A pass that is stopped must leave nothing of the game
+// behind (a game that keeps its world between makes, `if (!view) setup()`, would find it half built), so
+// each pass runs on a fresh copy of the game's file, and the copy that reaches the end is the game from
+// then on: KEPT has its make(), and cards of the game made later share what it built, as they always did.
+const SLICED=new Set(['nextgen','ar','board']);
+const KEPT=new WeakMap();   // definition -> make() of the copy that finished loading
+const BUSY=new WeakMap();   // definition -> the promise of work a card of it left with the workers, while it is out
+let copies=0;
+// a fresh copy of the game's file: its definition, a promise of it (the test build fetches the file again), or null
+const freshCopy=def=>{try{return(STREAM?remote.fresh(def.id):FRESH[def.id]?.(++copies))||null}catch(e){return null}};
+// slice false: a game swapped in mid-round by hot reload is made in one go, so the round it was in can be put back
+function bootGame(s,slice=true){
   s.failed=null;resetTicks(s);
-  // (a game made again after "Loading…" is a new game: tell it the size its card already has, as fit() told the first)
-  try{ownedBy(s,()=>{s.game=s.def.make(s.api);s.game.reset();if(s.w&&(s.w!==s.def.w||s.h!==s.def.h)&&s.game.resize)s.game.resize(s.w,s.h)});s.loading=false}
-  catch(e){
-    if(e&&e.kitLoading){
-      s.loading=true;s.game=stubGame(s,'Loading…');
-      e.kitLoading.then(()=>{if(s.dropped)return;bootGame(s);s.dirty=true;renderOverlay(s)},err=>{if(s.dropped)return;console.warn('kit failed to load',err);broken(s,'Couldn\u2019t load this game. Check the connection and try again.')});
+  s.passes=(s.passes||0)+1;
+  const turn=s.turn=(s.turn||0)+1,kept=KEPT.get(s.def);   // (turn: a pass that was asked for before this one is out of date)
+  if(slice&&!kept&&SLICED.has(s.def.era)){
+    const f=freshCopy(s.def);
+    if(f&&f.then){
+      s.loading=true;s.game=stubGame(s,'Loading…',s.what||'');
+      f.then(d=>d,()=>null).then(d=>{if(s.dropped||s.turn!==turn)return;const ok=!!(d&&typeof d.make==='function');makeGame(s,ok?d.make:s.def.make,ok,slice);s.dirty=true;renderOverlay(s)});
       return;
     }
-    gameFault(s,e);
+    if(f&&typeof f.make==='function'){makeGame(s,f.make,true,slice);return}
   }
+  makeGame(s,kept||s.def.make,false,slice);
+}
+// One pass of make() + reset(). fresh: on a copy of the game's file that nothing else has seen, so the
+// kit's builders may stop it; otherwise it runs to the end (work can still be left with the workers).
+function makeGame(s,make,fresh,slice){
+  // (a game being played leaves a loading neighbour a smaller share of each frame)
+  if(slice)slices.begin(s,active&&active!==s&&active.state==='playing'?3:6,!fresh);else slices.forget(s);
+  try{
+    // (a game made again after "Loading…" is a new game: tell it the size its card already has, as fit() told the first)
+    ownedBy(s,()=>{s.game=make(s.api);s.game.reset();if(s.w&&(s.w!==s.def.w||s.h!==s.def.h)&&s.game.resize)s.game.resize(s.w,s.h)});
+    let more=slices.end(s,true);
+    if(fresh)KEPT.set(s.def,make);
+    // (another card of this game may have left work with the workers that this one shares: wait for that too)
+    const also=BUSY.get(s.def);
+    if(more||also){const all=more&&also?Promise.all([more,also]):more||also;BUSY.set(s.def,all);all.then(()=>{if(BUSY.get(s.def)===all)BUSY.delete(s.def)});more=all}
+    if(more)holdGame(s,more);else{s.loading=false;loadDone(s)}
+  }catch(e){
+    slices.end(s,false);
+    if(e&&e.kitLoading){
+      release(s);   // what the unfinished pass started (a physics world, a sensor) is let go now, not when the card leaves
+      s.loading=true;s.what=e.what||'';s.game=stubGame(s,'Loading…',s.what);
+      const turn=s.turn;
+      e.kitLoading.then(()=>{if(s.dropped||s.turn!==turn)return;bootGame(s,slice);s.dirty=true;renderOverlay(s)},err=>{if(s.dropped||s.turn!==turn)return;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
+      return;
+    }
+    s.passes=0;slices.forget(s);gameFault(s,e);
+  }
+}
+// The game is made, but number work its builders left with background workers (a texture's bumps) is still
+// out: the card says "Loading…" a moment longer, then shows the game it already has. Folding the phone
+// or dropping the card meanwhile reaches the real game through the stand-in.
+function holdGame(s,more){
+  const g=s.game,stub=stubGame(s,'Loading…','Textures');
+  stub.dispose=()=>g.dispose?.();if(g.resize)stub.resize=(w,h)=>ownedBy(s,()=>g.resize(w,h));
+  s.loading=true;s.game=stub;
+  more.then(()=>{if(s.dropped||s.game!==stub)return;s.game=g;s.loading=false;loadDone(s);s.dirty=true;renderOverlay(s)});
 }
 function gameFault(s,e){console.error(s.def.id,e);perf.error(e,s.def.id);broken(s,'This game hit a problem.')}
 function broken(s,why){if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
@@ -411,6 +472,7 @@ let queue=[];
 // ar:'world' games need native AR (walking around), so the feed leaves them out on phones without it.
 function inPool(g){return (filter.startsWith('id:')||!isHidden(g.id)&&!(g.ar==='world'&&nativeARSupported()!==true))&&(filter==='all'||(filter.startsWith('id:')?g.id===filter.slice(3):filter==='pocket'?g.retro&&g.era!=='console'&&g.era!=='nextgen'&&g.era!=='ar'&&g.era!=='board':filter==='console'?g.era==='console':filter==='nextgen'?g.era==='nextgen':filter==='ar'?g.era==='ar':filter==='board'?g.era==='board':!g.retro))}
 function pickDefs(n=6){
+  if(solo&&slides.length&&filter.startsWith('id:'))return[];
   let pool=GAMES.filter(inPool);
   if(!pool.length)pool=GAMES;
   const out=[],later=[];let tries=pool.length*2+n;
@@ -722,7 +784,7 @@ function hotSwap(d){
     if(playing&&s.game.snapshot)try{snap=s.game.snapshot()}catch(e){console.warn('[hot] snapshot',e)}
     if(s===active)stopKits();
     try{s.game.dispose?.()}catch(_){}release(s);
-    s.def=g;s.w=g.w;s.h=g.h;bootGame(s);fit(s);
+    KEPT.delete(g);s.def=g;s.w=g.w;s.h=g.h;bootGame(s,false);fit(s);
     if(playing&&snap!==undefined&&s.game.restore)try{ownedBy(s,()=>s.game.restore(snap))}catch(e){console.warn('[hot] restore',e)}
     else if(playing){s.score=0;s.scoreEl.textContent='0'}
     else if(s.state==='over'){s.state='ready';s.el.classList.remove('over');renderOverlay(s)}
@@ -898,6 +960,15 @@ function start(){
   feedMsg('loading');
   remote.refresh().then(()=>GAMES.length?boot():feedMsg('offline'));
 }
+// Test hook used by scripts/smoke.cjs and the other browser tests: dev and test builds, and any build
+// driven by a test browser. Never in the store apps, where a game could use it to reach the wallet.
+// Tests: each pass of a card's making is kept for them to read (__gs.passes), and the feed can start on
+// one game alone on one card (?only=<id>), so nothing else is made beside it (scripts/load-time.cjs).
+const TEST=import.meta.env.MODE!=='production'||navigator.webdriver,PASSES=[];
+if(TEST){
+  slices.onPass(x=>{PASSES.push({id:x.card.def&&x.card.def.id,at:performance.now(),ms:x.ms,own:x.own,built:x.built,off:x.off,whole:x.whole,made:x.made,waits:x.waits});if(PASSES.length>600)PASSES.shift()});
+  const one=/[?&]only=([a-z0-9-]+)/.exec(location.search);if(one){filter='id:'+one[1];solo=true}
+}
 nativeARProbe();   // ask early whether walk-around AR games can go in the feed
 start();
 // Coming back to the app: look for game updates (cheap: one small catalogue file).
@@ -905,6 +976,4 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
 
-// Test hook used by scripts/smoke.cjs and the other browser tests: dev and test builds, and any build
-// driven by a test browser. Never in the store apps, where a game could use it to reach the wallet.
-if(import.meta.env.MODE!=='production'||navigator.webdriver)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active),brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id){filter='id:'+id;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active),brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

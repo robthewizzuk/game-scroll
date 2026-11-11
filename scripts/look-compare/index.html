@@ -4,7 +4,7 @@
 // Console toon + ink), for scripts/look-compare.cjs to compare two versions of the engine (or,
 // later, WebGPU against WebGL) pixel by pixel. Everything here is seeded: no randomness, no time.
 import gs, { loadParts } from '../../src/gamescroll.js';
-import { setGpuPick, prepareGPU, setHdr } from '../../src/kit/gpu.js';
+import { setGpuPick, prepareGPU, prepareConsoleGPU, setHdr } from '../../src/kit/gpu.js';
 import '@fontsource/rubik/latin-400.css'; import '@fontsource/rubik/latin-700.css'; import '@fontsource/press-start-2p/latin-400.css';   // the app's own fonts (3D text)
 // ?hdr: WebGPU's HDR output on (a half-float, extended-range canvas), as on an HDR phone screen
 if (new URLSearchParams(location.search).has('hdr')) setHdr(true);
@@ -12,7 +12,7 @@ if (new URLSearchParams(location.search).has('hdr')) setHdr(true);
 const GPU = new URLSearchParams(location.search).has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
-if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+if (GPU && !(await prepareGPU() && await prepareConsoleGPU())) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const T = gs.THREE, out = {}, backends = {};
 // ?dbg: every 3 s, what the renderer holds and has drawn (look-compare.cjs prints it with ALLWARN=1)
 if (new URLSearchParams(location.search).has('dbg')) { const g = GPU ? await prepareGPU() : null; setInterval(() => { const r = g?.r, i = r?.info; const dev = r?.backend?.device; if (dev) { let ok = false; dev.queue.onSubmittedWorkDone().then(() => { ok = true; }); setTimeout(() => { if (!ok) console.warn('DBG queue stuck 2.5 s'); }, 2500); } console.warn('DBG', JSON.stringify({ hdr: window.__hd.info.hdr, packed: window.__hd.packed,  tex: i?.memory?.textures, geo: i?.memory?.geometries, frame: i?.render?.frame, calls: i?.render?.calls, held: window.__hd.info.held, still: window.__hd.info.still, be: window.__hd.info.backend })); }, 3000); }
@@ -354,6 +354,25 @@ async function humansScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend + ', human ' + ms.join(', ') + ' ms'];
 }
+// gs.models.creature: animals and monsters from a seed, each held at one moment of its own gait
+async function creaturesScene() {
+  window.__hd.force = 2;
+  const v = new HV({ bg: '#9ab4d0', fog: 0, env: .5, amb: .35 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
+  v.cam.position.set(.2, 1.55, 3.9); v.cam.lookAt(.05, .95, -.6); v.cam.updateMatrixWorld();
+  const sun = gs.hd.sun('#fff2d8', 2.4, 6, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const floor = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8468', { rough: .95 })); floor.receiveShadow = true; v.scene.add(floor);
+  // [what, where, which way it faces, pose, how far round its cycle]
+  const cast = [[{ like: 'horse' }, [-1.25, 0, -1.7], .95, 'walk', .3], [{ like: 'deer', seed: 8 }, [1.25, 0, -.9], -.9, 'run', .3], [{ like: 'dog' }, [-.95, 0, .35], .8, 'sit', 0], [{ like: 'cat' }, [-.25, 0, 1.25], 1.25, 'walk', .6],
+    [{ like: 'owl' }, [.5, 0, 1.2], -.4, 'idle', 0], [{ like: 'crow' }, [-.75, 2.35, -.4], 1.1, 'fly', .2], [{ like: 'ogre', seed: 3 }, [.45, 0, -3.3], -.15, 'idle', 0], [{ like: 'blob', seed: 8, size: .5 }, [1.05, 0, .75], -.5, 'idle', 0], [{ like: 'spider', size: .45 }, [.1, 0, 2.05], 2.6, 'walk', .2]];
+  const ts = performance.now(); await gs.models.creature.ready(cast.map(q => q[0])); const ms = Math.round(performance.now() - ts);
+  for (const [o, at, turn, pose, ph] of cast) {
+    const a = gs.models.creature(o); a.position.set(...at); a.rotation.y = turn; v.scene.add(a);
+    a.rig.layers = [{ name: pose, w: 1, phase: ph }]; a.rig.state = pose; a.rig.update(0); a.see(v.cam, 320);
+  }
+  const t1 = performance.now(); while (performance.now() - t1 < 1500) { v.t = 0; v.render(x, 240, 320); await frame(); }
+  v.t = 0; v.render(x, 240, 320);
+  return [c.toDataURL(), window.__hd.info.backend + ', creatures sculpted in ' + ms + ' ms'];
+}
 // soft shadows (sun().softShadows): a post, a raised slab and a crate sitting on the ground: the
 // crate's shadow sharp at its foot, the post's and slab's spreading the further they fall
 async function pcssScene() {
@@ -483,6 +502,74 @@ async function floodScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend + (water.twin ? ', flood on the graphics chip' : '')];
 }
+// real liquid (gs.fluid): a dam breaks round a cup while a tap runs, a ball is swept through it and a blast
+// goes off; then a drain opens. On WebGPU the liquid runs on the graphics chip, and the same liquid is
+// run beside it in JavaScript (the version WebGL gets): the two must agree drop for drop. On both, no
+// liquid may be lost: what the drain took and what is left add up to what there was.
+async function fluidScene() {
+  window.__hd.force = 3;
+  const { Fluid } = gs.fluid, F = window.__fluid, was = F.force; F.force = 3000;
+  try {
+    const v = new HV({ bg: '#9ab4d0', fog: .002, amb: .35 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
+    v.cam.position.set(1.2, 3.4, 5.6); v.cam.lookAt(0, .6, 0); v.cam.updateMatrixWorld();
+    const sun = gs.hd.sun('#fff2d8', 3, 12, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#6a7a58', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    const mk = view => {
+      const f = new Fluid(view, { box: [-2, 0, -1, 2, 3, 1], volume: 4, kind: 'water', gpu: !!view }); f.fill({ x1: -.9, y1: 1.3 });
+      const cup = f.tube({ x: 1, y: .5, z: 0, r: .5, h: 1, hollow: .08 }); cup.fill(.6);
+      return { f, cup, ball: f.ball({ x: -.2, y: .3, z: .4, r: .3 }), tap: f.pour({ x: .2, y: 2.4, z: -.4, rate: .5, speed: 2 }) };
+    };
+    const a = mk(v), b = GPU ? mk(null) : null, both = b ? [a, b] : [a], cup0 = a.f.amount(a.cup.inside());
+    const cupM = new T.Mesh(new T.CylinderGeometry(.5, .5, 1, 32, 1, true), gs.hd.pbr('#e8e2d4', { rough: .5 })); cupM.material.side = T.DoubleSide; cupM.position.set(1, .5, 0); cupM.castShadow = true; v.scene.add(cupM);
+    const ballM = new T.Mesh(new T.SphereGeometry(.3, 24, 16), gs.hd.pbr('#d9482b', { rough: .35 })); ballM.castShadow = true; v.scene.add(ballM);
+    const step = async (i, dt = 1 / 60) => {
+      for (const k of both) { if (i < 60) k.ball.set(-.2 + i * .012, .3, .4); if (i === 30) k.f.push(0, .2, 0, { radius: 1, strength: 2, up: 1.5 }); k.f.update(dt); }
+      ballM.position.set(a.ball.x, a.ball.y, a.ball.z); v.t = 0; v.render(x, 240, 320); if (i % 5 === 0) await frame();
+    };
+    for (let i = 0; i < 60; i++) await step(i);
+    const onChip = a.f.backend === 'gpu' && !!a.f.twin;
+    if (GPU && !onChip) throw new Error('gs.fluid did not run on the graphics chip on WebGPU');
+    if (onChip) {
+      const P = await a.f.twin.drops(a.f.twin.r), Q = b.f.sim.P, d = []; let odd = 0;
+      for (let p = 0; p < b.f.sim.N; p++) { const k = p * 4, g = P[k + 3] > 0, q = Q[k + 3] > 0; if (g && q) d.push(Math.hypot(P[k] - Q[k], P[k + 1] - Q[k + 1], P[k + 2] - Q[k + 2])); else if (g !== q) odd++; }
+      d.sort((m, n) => m - n); const mid = d[d.length >> 1], p90 = d[Math.floor(d.length * .9)];
+      if (!(d.length > 2500 && odd === 0 && mid < .01 && p90 < .05)) throw new Error(`gs.fluid on the graphics chip left the JavaScript version: ${d.length} drops in both, ${odd} in one only, apart by ${mid} (middle) and ${p90} (nine in ten) cells`);
+    }
+    // the drain: taps off, and what it takes is counted
+    a.tap.on = false; const drain = a.f.drain({ x: -1.6, y: .1, z: .6, r: .35 });
+    const had = a.f.amount();
+    for (let i = 61; i < 90; i++) await step(i);
+    if (onChip) await a.f.twin.drops(a.f.twin.r);   // (on the graphics chip the count is a few frames old: this brings it up to date)
+    const left = a.f.amount(), took = drain.amount;
+    if (!(took > a.f.drop * 20 && Math.abs(left + took - had) < a.f.drop * 1.5)) throw new Error(`gs.fluid lost liquid: ${had} before the drain, ${left} left and ${took} down the drain`);
+    const inCup = a.f.amount(a.cup.inside()); if (!(cup0 > .15 && inCup > cup0 * .8)) throw new Error(`gs.fluid: the cup did not hold its liquid (${cup0} at first, ${inCup} at the end)`);
+    v.t = 0; v.render(x, 240, 320); const pic = c.toDataURL();
+    for (const k of both) k.f.dispose();
+    // the rest of the kit, on the graphics chip against JavaScript again (not in the picture): honey in an open
+    // box on sloping ground, a turned box in its way, a bowl that tips it out, and gravity that swings round
+    if (onChip) {
+      const mk2 = view => {
+        const f = new Fluid(view, { box: [-1.5, 0, -1, 1.5, 2, 1], volume: 1.5, open: true, kind: 'honey', gpu: !!view });
+        f.ground((gx, gz) => .25 + gx * .2 + Math.sin(gz * 2) * .05);
+        f.box({ x: -.3, y: .6, z: 0, w: .8, h: .3, d: 1.2, turn: new T.Quaternion().setFromEuler(new T.Euler(.3, .5, .2)) });
+        const bowl = f.ball({ x: .7, y: 1.1, z: 0, r: .45, hollow: .06 }); bowl.fill(1);
+        f.fill({ x0: -1.3, x1: -.4, y0: 1.1, y1: 1.5, z0: -.8, z1: .8 });
+        return { f, bowl, n0: f.count };
+      };
+      const a2 = mk2(v), b2 = mk2(null), q = new T.Quaternion(), ax = new T.Vector3(0, 0, 1);
+      for (let i = 0; i < 70; i++) {
+        for (const k of [a2, b2]) { q.setFromAxisAngle(ax, Math.min(1, i / 40) * 1.8); k.bowl.set(.7, 1.1, 0, q); if (i === 35) k.f.gravity = { x: -4, y: -9, z: 2 }; k.f.update(1 / 60); }
+        v.t = 0; v.render(x, 240, 320); if (i % 5 === 0) await frame();
+      }
+      const P = await a2.f.twin.drops(a2.f.twin.r), Q = b2.f.sim.P, d = []; let odd = 0;
+      for (let p = 0; p < b2.f.sim.N; p++) { const k = p * 4, g = P[k + 3] > 0, w = Q[k + 3] > 0; if (g && w) d.push(Math.hypot(P[k] - Q[k], P[k + 1] - Q[k + 1], P[k + 2] - Q[k + 2])); else if (g !== w) odd++; }
+      d.sort((m, n) => m - n); const mid = d[d.length >> 1], p90 = d[Math.floor(d.length * .9)];
+      if (!(a2.n0 > 600 && d.length > 300 && d.length < a2.n0 && odd <= 2 && mid < .01 && p90 < .05)) throw new Error(`gs.fluid (open box, ground, turned box, bowl, gravity) on the graphics chip left the JavaScript version: ${a2.n0} drops at first, ${d.length} left in both, ${odd} in one only, apart by ${mid} (middle) and ${p90} (nine in ten) cells`);
+      a2.f.dispose(); b2.f.dispose();
+    }
+    return [pic, window.__hd.info.backend + (onChip ? `, ${a.f.max} drops on the graphics chip, matching the JavaScript version` : `, ${a.f.max} drops in JavaScript`)];
+  } finally { F.force = was; }
+}
 // an outdoor valley (gs.outdoors looks, gs.sky, gs.props): painted ground with fields, a lane and mud,
 // far hills, mossy rocks, leaf cards and their impostors, a sky with clouds and its own reflections,
 // air with cloud shadows, rain-wet surfaces, a near shadow cascade, sun shafts and depth of field.
@@ -542,14 +629,59 @@ async function cityScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend + ', ' + (v.occlusion?.stats.hidden ?? 0) + ' hidden, ' + (v.occlusion?.stats.boxes ?? 0) + ' boxes'];
 }
-function consoleScene() {
-  const { View, part, G } = gs.toon, v = new View(), c = document.createElement('canvas'); c.width = 192; c.height = 160; const x = c.getContext('2d');
-  v.board(192, 160, .9);
-  for (let i = 0; i < 4; i++) { const m = part(new T.BoxGeometry(24, 24, 24), ['#e44', '#4c4', '#46e', '#ec4'][i], { x: -60 + i * 40, y: 12, ry: i * .5 }); v.scene.add(m); }
-  v.scene.add(part(new T.SphereGeometry(16, 20, 14), '#fa6', { y: 16, z: 30 }));
-  v.render(x, 192, 160);
-  return c.toDataURL();
+// Classic Console (gs.toon): cel shading with ink lines, real toon shadows and the rim of light, drawn on
+// WebGL or (with ?gpu) on the Console WebGPU renderer, which should give the same picture.
+//   plain   boxes and a ball on the bare background of a board view (the background takes their shadows)
+//   floor   a floor of its own, things with blob() discs (their real shadows take the discs' place), a disc
+//           on its own under a ball in the air (stays) and under a box on the ground (goes), see-through
+//           and glowing things, a fan on the ground, a wall whose shadow falls on a box
+//   side    a side view: a ledge, a back wall that takes shadows, a dude and a jointed figure
+//   persp   a free camera down a foggy road with posts
+//   chunky, soft, tube   the retro looks on the floor scene
+//   figure  jointed figures in a few poses
+//   noink   the plain scene with no ink pass (v.ink = false): no outlines and no rim
+async function consoleScene(kind = 'plain') {
+  const { View, part, grp, G, blob, dude, figure, toon, flat } = gs.toon, retro = ['chunky', 'soft', 'tube'].includes(kind) ? kind : null;
+  const c = document.createElement('canvas'); c.width = 384; c.height = 320; const x = c.getContext('2d'); x.setTransform(2, 0, 0, 2, 0, 0);
+  let v;
+  if (kind === 'plain' || kind === 'noink') {
+    v = new View(); v.board(192, 160, .9); if (kind === 'noink') v.ink = false;
+    for (let i = 0; i < 4; i++) { const m = part(new T.BoxGeometry(24, 24, 24), ['#e44', '#4c4', '#46e', '#ec4'][i], { x: -60 + i * 40, y: 12, ry: i * .5 }); v.scene.add(m); }
+    v.scene.add(part(new T.SphereGeometry(16, 20, 14), '#fa6', { y: 16, z: 30 }));
+  } else if (kind === 'side') {
+    v = new View({ bg: '#20142c', sun: [-.5, .9, .8], sunI: 2.4, amb: .9, sky: '#c0a0ff', ground: '#402030' }); v.side(192, 160, 32, 0, 20);
+    v.add(part(G.box, '#5a4a70', { sx: 400, sy: 20, sz: 120, y: -70, z: -30 }), part(G.box, '#3a2c50', { sx: 400, sy: 200, sz: 4, y: 30, z: -92 }), part(G.box, '#806090', { sx: 50, sy: 8, sz: 40, x: 40, y: -30, z: -20 }));
+    v.def('dude', () => dude({ h: 26, body: '#d04848' })).def('fig', () => figure({ h: 40, body: '#3a8ad0' })).def('ball', () => part(G.ball, '#f0c040', { s: 7 }));
+    v.frame(); v.put('dude', v.sv(50, 140, 0)); const f = v.put('fig', v.sv(110, 140, 0), { ry: -.5 }); f.rig.play('walk'); f.rig.update(.35, { speed: 1.5 }); v.put('ball', v.sv(140, 60, -20));
+  } else if (kind === 'persp') {
+    v = new View({ bg: '#f6efdc', fog: ['#f6efdc', 10, 44], sun: [-.5, 1, .6], sunI: 2.2, amb: 1.15 }); v.persp(192, 160, 60, .1, 200);
+    v.cam.position.set(0, 2.6, 6); v.cam.lookAt(0, .8, -6);
+    v.add(part(G.plane, '#d9c49a', { sx: 60, sz: 120, z: -50, line: false }), part(G.plane, '#fdfbf4', { sx: 3.7, sz: 120, z: -50, y: .005, line: false }));
+    v.def('post', () => grp(part(G.cyl, '#d83a50', { sx: .2, sy: 2.4, sz: .2, y: 1.2 }), part(G.ball, '#3a6ad8', { s: .4, y: 2.6 }))).def('run', () => dude({ h: 1.6, body: '#e06030' }));
+    v.frame(); for (let i = 0; i < 9; i++) for (const sx of [-1, 1]) v.put('post', [sx * 2.6, 0, 2 - i * 5]); v.put('run', [.5, 0, -1], { ry: Math.PI });
+  } else if (kind === 'figure') {
+    v = new View({ bg: '#5cb84c', sun: [-.8, 1, .35], sunI: 2.6, amb: .9 }); v.board(192, 160, .9);
+    v.add(part(G.plane, '#62c050', { sx: 2000, sz: 2000, y: -.5, line: false }));
+    v.def('fig', () => figure({ h: 40, body: '#c8483c', hair: '#402010' }));
+    v.frame(); ['idle', 'walk', 'run', 'wave'].forEach((pose, i) => { const f = v.put('fig', v.at(30 + i * 44, 118), { ry: i * .5 - .6 }); f.rig.play(pose); for (let k = 0; k < 12; k++) f.rig.update(.05, { speed: pose === 'run' ? 4 : pose === 'walk' ? 1.5 : 0 }); });
+  } else {
+    v = new View({ bg: '#7a8aa0', sun: [-.6, 1, .45], sunI: 2.4, amb: 1, retro });
+    v.board(192, 160, .9);
+    v.add(part(G.plane, '#b4bcac', { sx: 150, sz: 150, x: -30, line: false }), part(G.box, '#806090', { sx: 6, sy: 30, sz: 60, x: -80, y: 15, z: -10 }));
+    v.def('crate', () => grp(part(G.box, '#b08850', { s: 16, y: 8 }), blob(12, .3))).def('tree', () => grp(part(G.cyl, '#6a4a2a', { sx: 2, sy: 10, sz: 2, y: 5 }), part(G.blob, '#3a9c3a', { s: 9, y: 16 }), blob(8, .3)));
+    v.def('blob', () => blob(1, .35)).def('ball', () => part(G.ball, '#f04060', { s: 6 })).def('lamp', () => part(G.gem, '#ffe080', { s: 6, glow: .8 }));
+    v.def('ghost', () => part(G.box, toon('#80c0ff', { opacity: .45 }), { s: 14 })).def('ring', () => part(G.hoop, flat('#ffffff', .8)));
+    v.frame();
+    v.put('crate', v.at(40, 60)); v.put('crate', v.at(150, 40), { ry: .6 }); v.put('tree', v.at(84, 50)); v.put('tree', v.at(170, 110));
+    v.put('blob', v.at(60, 120, .2), { s: 7 }); v.put('ball', v.at(60, 120, 30));        // in the air: the disc stays
+    v.put('blob', v.at(110, 120, .2), { s: 9 }); v.put('crate', v.at(110, 120), { s: .7 });   // stood on: the disc goes
+    v.put('lamp', v.at(120, 76, 10)); v.put('ghost', v.at(30, 110, 7)); v.put('ring', v.at(96, 100, .4), { s: 12 });
+    v.fan([[96, 140], [130, 150], [140, 128]], '#ffffff', .3);
+  }
+  for (let i = 0; i < 3; i++) { v.render(x, 192, 160); await frame(); }
+  return [c.toDataURL(), v.onGpu ? 'webgpu' : 'webgl'];
 }
+const CONSOLE = { console: 'plain', 'console-floor': 'floor', 'console-side': 'side', 'console-persp': 'persp', 'console-figure': 'figure', 'console-chunky': 'chunky', 'console-soft': 'soft', 'console-tube': 'tube', 'console-noink': 'noink' };
 // gs.props on WebGPU with GPU culling (HD.gpuCull) on ('gpu-cull') and off ('gpu-cull-cpu'): a forest of
 // ?n= (default 6000) trees with a simpler far shape and sun shadows; the two should match, and the text
 // gives the CPU time per frame of each
@@ -650,7 +782,7 @@ async function shadowOffScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
-const SCENES = { 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene() };
+const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
 const PICK = new URLSearchParams(location.search).get('pick');
 if (PICK) try { for (const n of PICK.split(',')) if (n === 'beams') { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; } else [out[n], backends[n]] = await SCENES[n](); } catch (e) { out.error = String(e && e.stack || e); }
 else try {
@@ -686,15 +818,17 @@ else try {
   [out.trees, backends.trees] = await treesScene();
   [out.buildings, backends.buildings] = await buildingsScene();
   [out.humans, backends.humans] = await humansScene();
+  [out.creatures, backends.creatures] = await creaturesScene();
   { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; }
   [out.river, backends.river] = await riverScene();
   [out.flood, backends.flood] = await floodScene();
+  [out['gpu-fluid'], backends['gpu-fluid']] = await fluidScene();
   [out.city, backends.city] = await cityScene();
   for (const t of [1, 3]) [out['outdoor-tier' + t], backends['outdoor-tier' + t]] = await outdoor(t);
   [out['outdoor-physical'], backends['outdoor-physical']] = await outdoor(3, true);
   for (const k of ['text', 'parts', 'outline', 'pixelate', 'trails', 'probe']) [out['fx-' + k], backends['fx-' + k]] = await fxScene(k);
   for (const k of ['glitch', 'reflect']) [out['gpu-fx-' + k], backends['gpu-fx-' + k]] = await fxScene(k);
-  out.console = consoleScene();
+  for (const n in CONSOLE) [out[n], backends[n]] = await consoleScene(CONSOLE[n]);
 } catch (e) { out.error = String(e && e.stack || e); }
 window.__hd.force = null;
 out.backends = backends;

@@ -50,28 +50,86 @@ estimate. So the 3D camera moves when the player walks, and things stay put on t
 - `recenter()` (from a game's reset) puts the player at x = z = 0 straight away, so a game can
   place a new round's things from `eyePos` at once.
 - `recenter()` makes where the phone points and stands now "straight ahead" at x = z = 0.
-- `v.surfaces()` lists found surfaces `{ id, p, q, w, d, floor, kind }` (empty in look mode;
-  `kind` is `'floor'`, `'table'`, `'seat'` or `'other'` on phones that can tell, else undefined).
+- `v.surfaces()` lists found surfaces `{ id, p, q, w, d, floor, kind, wall, n }` (empty in look mode;
+  `kind` is `'floor'`, `'table'`, `'seat'` or `'other'` on phones that can tell, else undefined;
+  `n` is the way the surface faces. Walls are listed only when the game asks for them, see below).
 - `v.floorFound` is true once the phone has really seen the floor (or the player set it by hand),
   and false while play runs on an estimate. `v.floorSource` says where the height comes from:
   `'plane'`, `'points'`, `'hits'`, `'hand'` (seen or set), `'kept'`, `'rough'`, `'guess'`
   (estimates), or null. `FLOOR` is right to use either way; a game that needs the true floor (to
   measure a jump, say) can wait for `floorFound`.
 - `v.status()` gives the whole picture for a debug readout: `{ mode, tracking, why, surfaces,
-  points, floor, sure, layer }`.
-- `await v.hit(x, y)` finds where a screen point meets a real surface: `{ p, kind }` with kind
+  points, floor, sure, layer }`, and for the parts below `{ depth, walls, light, sun, anchors, markers }`.
+- `await v.hit(x, y)` finds where a screen point meets a real surface: `{ p, kind, wall, n, q }` with kind
   `'plane'` or `'point'`, or `'floor'` in look mode (the line of sight meets `FLOOR`), or null.
+  `n` is the way the surface faces and `q` a turn that stands a thing there (its +z out of a wall, or
+  towards the phone on a floor or a table).
   Feature-check new methods (`v.hit?.(...)`, `v.surfaces?.()`, `v.status?.()`) so a game still runs
   on an older app.
 - `ar: 'world'` on a game definition means it only makes sense walking around; the feed leaves it
   out on phones without native AR. Leave it off for games that play fine in look mode.
 - `AR Lab` (`src/games/ar-lab.js`, benched, opened from Settings > AR test) is the test scene: a
   cube on the floor, found surfaces drawn as outlines, and a status panel that says what the phone
-  is tracking, why not if it isn't, and what the floor height comes from.
+  is tracking, why not if it isn't, and what the floor height comes from. Its chips (Hide, Walls,
+  Light, Mesh, Marker) switch on the parts below one at a time.
 - The plugin sends feature points only while the kit asks for them (`points({ on })`): during the
   search, and for up to 40 s after a round starts on an estimate.
 - ARCore is optional in the Android manifest, so the app still installs on phones without it; the
   first native AR game may ask to install Google Play Services for AR. The privacy page says so.
+
+## The real room joins in (AR phase 2)
+
+With native AR a game can ask for more of the real room. Each part is off unless the game asks for
+it, so a game that doesn't plays exactly as before; and each is a bonus: in look-around mode, on the
+web, or on a phone that can't do it, the game still plays (nothing is hidden, the light is the usual
+one, a marker is never found), so none of them may be the only way to play.
+
+```js
+const v = new ARView({ occlude: true, walls: true, light: 'real' });
+```
+
+- **Real things hide virtual ones** (`occlude: true`). The phone measures how far away the room is
+  (most ARCore phones; iPhones with a LiDAR scanner) and about ten times a second the kit turns that
+  depth picture into an invisible mesh that only fills the depth buffer (`src/kit/ar-room.js`), so
+  the part of a robot behind a real sofa isn't drawn. Phone depth is a few centimetres out, so every
+  spot is set back a little, and a spot seen on the mapped floor or a mapped wall goes just behind
+  it: things standing on the real floor, and their shadows, are never cut into. Where the phone
+  knows nothing (too near, beyond 8 m, shiny or dark things) nothing is hidden. `v.occluding` is true
+  while it is at work. Things that should always show (a HUD marker in the scene) can be drawn over
+  it with `material.depthTest = false`.
+- **Walls** (`walls: true`). Walls are mapped as well as floors and tables: `v.surfaces()` lists them
+  with `wall: true` and `kind: 'wall'`, and `v.hit(x, y)` can land on one (`wall: true`; stand a
+  thing there with `obj.position.copy(h.p); obj.quaternion.copy(h.q)`). A wall is never taken for the
+  floor.
+- **The room's real light** (`light: 'real'`). The sun moves to where the room's light really comes
+  from (a window, a lamp), so virtual shadows fall the same way as real ones, and shiny things
+  reflect the phone's picture of the room rather than the kit's studio. Android gives the direction
+  itself; on iPhones the kit finds the brightest part of the room's picture. The sun is never lower
+  than 25 degrees, so shadows don't stretch right across the floor, and an evenly lit room keeps the
+  usual sun. Brightness and colour still come from the light estimate as before.
+- **Anchors** (`v.anchor(p, q)`). The phone keeps correcting its map of the room as it learns it,
+  and over a long round things can creep a few centimetres. An anchor is a spot the phone holds on
+  to: `const a = v.anchor(h.p, h.q); a.attach(mesh)` keeps the mesh there (`a.p`, `a.q` are where it
+  is now; `a.held` says the phone has it; `a.remove()` lets go). Sixteen at most. Anchors last one
+  round: `off()` lets them all go, so make them again after `reset()`. In look mode the spot simply
+  stays where it was put.
+- **Picture markers** (`v.marker(picture, { width, name })`). The phone looks for a picture in the
+  room: a printed card, or another screen showing it. `picture` is a canvas, and
+  `gs.ar.markerArt(seed)` draws one that phones find easily (a plain or repeating picture is turned
+  down: `m.ok` is false). `m.attach(mesh)` puts the mesh on the picture once it is found; `m.found`,
+  `m.tracked` (in sight now), `m.p`, `m.q` (x to the picture's right, y out of it, z down it) and
+  `m.w` (its measured width) say the rest. Give `width` in metres when the game knows it (a printed
+  card): the phone then places it at once; without it the phone works the size out as it looks. Two
+  phones looking at the same card see the same place, which is one way to start a shared board.
+
+All five are new and have run only against the pretend phone below, not on a real one: try AR Lab's
+chips on a phone before building a game on them.
+
+For the plugins (`plugins/native-ar`): `start({ depth, walls, light: 'real' })` answers which of the
+three this phone gave; depth pictures arrive as a `depth` event (a grid of 16-bit millimetres), the
+room's light as an `env` event (a small cube map) and, on Android, a direction in each frame's
+`light.dir`; `anchor()`, `removeAnchor()` and `images()` do the rest. The header of
+`NativeARPlugin.java` has the exact shapes, and `scripts/lib/fake-native-ar.js` speaks the same.
 
 ## Fitting the real room
 
@@ -170,7 +228,12 @@ that sways as if in a hand, with whatever the scene sets up in `window.__ar` (ma
 points, rough hit points, tracking state and the reason it is poor, an older app that sends less). It
 checks that the floor is found from each kind of evidence, that a table is not taken for the floor,
 that a round never waits for ever, and that Skip, the Floor chip, lost tracking and "Play without room
-tracking" work. `--shots <dir>` saves screenshots; a word after the script name runs only the scenes
+tracking" work. Its "room:" scenes play AR Lab in a pretend room with a box, walls, a lamp, a map that
+shifts and a marker card, and check each AR phase 2 part: the box hides the cube behind it (and the
+cube's shadow still shows), noisy depth doesn't cut into the floor, walls are mapped and never taken
+for the floor, the sun turns to the light, an evenly lit room looks like the studio, an anchor follows
+the map, a marker is found, and an older app or a phone that can't do a part still plays. `--shots
+<dir>` saves screenshots; `--webgpu` runs on WebGPU; a word after the script name runs only the scenes
 whose name contains it. The floor search itself is plain JavaScript, and `npm run kit-test` plays
 about thirty rooms through it in Node. Neither replaces a real room: ARCore and ARKit decide what
 they map and when, so try AR Lab on a phone after changing the search.

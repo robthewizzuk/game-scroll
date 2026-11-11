@@ -99,6 +99,9 @@ by name: `stone`, `brick`, `plaster`, `concrete`, `glass`, `dark`, `silver`, `ho
   come back somewhere nearer and out of sight. How many follows the phone's speed.
 - Facade textures are made once and shared by every city (smaller on slower phones). Each building
   starts at a different window, so the lit windows don't repeat.
+- While the card says "Loading…", the textures and the street furniture's shapes are made a few each
+  frame (they are kept, so the feed keeps moving); the streets and blocks round the start are then
+  made in one go, which is the longest single step of a city game's loading.
 - Stock three.js materials only (no shader patches), so it draws the same on WebGL and WebGPU.
 
 ## Credits

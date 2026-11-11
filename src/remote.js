@@ -140,17 +140,22 @@ export const SHADOWED = ['window', 'self', 'globalThis', 'top', 'parent', 'frame
   'WebTransport', 'RTCPeerConnection', 'Worker', 'SharedWorker', 'importScripts', 'postMessage', 'BroadcastChannel', 'Capacitor',
   'Function', '__gs', '__hd'];
 
+// Returns { def, again }: again() runs the file once more and gives a fresh copy of the game, with
+// its own top-level memory (the app loads a big 3D game on fresh copies: main.js bootGame).
 function evaluate(id, code) {
-  const module = { exports: {} };
   const require = spec => { const m = spec.startsWith('gs:') && spec[3] !== '@' && KIT[spec.slice(3)]; if (!m) throw new Error('missing shared module ' + spec); return m; };
   // The game is the inner function, so its own top-level names (a `let top`) never clash with the
   // shadowed ones. Strict, as the module it was written as (and so `this` is never the window).
   // sourceURL names the file in error reports (src/perf.js) instead of an anonymous function.
   const wrap = new Function(...SHADOWED, 'return function (require, module, exports) { \'use strict\';\n' + code + '\n}\n//# sourceURL=games/' + String(id).replace(/[^a-z0-9-]/g, '') + '.js');
-  wrap()(require, module, module.exports);
-  const def = module.exports.default;
-  if (!def || def.id !== id || typeof def.make !== 'function') throw new Error('bad game file for ' + id);
-  return def;
+  const again = () => {
+    const module = { exports: {} };
+    wrap()(require, module, module.exports);
+    const def = module.exports.default;
+    if (!def || def.id !== id || typeof def.make !== 'function') throw new Error('bad game file for ' + id);
+    return def;
+  };
+  return { def: again(), again };
 }
 
 async function fetchCode(g) {
@@ -208,6 +213,9 @@ export const remote = {
     this.load(d.id); return null;
   },
 
+  /** A fresh copy of a loaded game (its file run again, so nothing it kept at the top level carries over), or null. */
+  fresh(id) { const g = entries.get(id), l = loaded.get(id); return g && l && l.hash === g.hash ? l.again() : null; },
+
   /** Can this game be shown soon? (In the catalogue and not just failed to download.) */
   has(id) { const t = failed.get(id); return entries.has(id) && !(t && Date.now() - t < 20000); },
 
@@ -222,8 +230,8 @@ export const remote = {
     const p = Promise.all([fetchCode(g), loadParts(need)]).then(([code]) => {
       // the parts that just loaded are checked in full now (an older app may lack something newer)
       if (!hasAll(gs, need)) throw new Error('needs a newer app');
-      const def = { ...known.get(id), ...evaluate(id, code) };
-      loaded.set(id, { hash: g.hash, def }); failed.delete(id); return def;
+      const file = evaluate(id, code), def = { ...known.get(id), ...file.def };
+      loaded.set(id, { hash: g.hash, def, again: file.again }); failed.delete(id); return def;
     }).catch(e => { console.warn('[games]', id, e.message); failed.set(id, Date.now()); return null; })
       .finally(() => inflight.delete(id));
     inflight.set(id, p); return p;

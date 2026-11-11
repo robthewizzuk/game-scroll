@@ -30,6 +30,7 @@
 import { CanvasTexture, CircleGeometry, Color, CylinderGeometry, DoubleSide, ExtrudeGeometry, Group, IcosahedronGeometry, LatheGeometry, Matrix4, Mesh, MeshBasicMaterial, Plane, PlaneGeometry, Quaternion, Ray, Raycaster, ShadowMaterial, Shape, SphereGeometry, SRGBColorSpace, TorusGeometry, Vector2, Vector3, BackSide, BoxGeometry } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { HDView, Particles, pbr, rbox, surface, speckle, spot } from './hd3d.js';
+import { pause, built, later } from './slices.js';
 import { ARView, arNote, FLOOR } from './ar3d.js';
 import { material } from './models/materials.js';
 import { World3D } from './physics3d.js';
@@ -90,6 +91,7 @@ const woods = new Map();
 export function wood(colour = '#7a4c2a', { repeat = [1, 1], clear = .25 } = {}) {
   let set = woods.get(colour);
   if (!set) {
+    pause('Textures');   // (while a card loads, a frame may go by before each new wood: slices.js)
     const tone = k => new Color(colour).multiplyScalar(k).getStyle();
     set = surface(512, ({ col, h, r, size: Z }) => {
       col.fillStyle = colour; col.fillRect(0, 0, Z, Z);
@@ -102,8 +104,8 @@ export function wood(colour = '#7a4c2a', { repeat = [1, 1], clear = .25 } = {}) 
       for (let i = 0; i < 120; i++) { h.strokeStyle = Math.random() < .5 ? '#767676' : '#8a8a8a'; h.lineWidth = 1; const y = Math.random() * Z; h.beginPath(); h.moveTo(0, y); h.lineTo(Z, y); h.stroke(); }
       r.fillStyle = '#8c8c8c'; r.fillRect(0, 0, Z, Z);
     }, { strength: .8 });
-    woods.set(colour, set);
-  }
+    woods.set(colour, set); built();
+  } else if (set.core.wait) later(set.core.wait);   // (still with a worker: this card waits for it too)
   return pbr('#ffffff', { tex: set.repeat(repeat[0], repeat[1]), rough: 1, clear });
 }
 // Lays a texture flat across a turned shape (a table top), so wood grain runs straight rather than out from the middle.

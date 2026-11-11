@@ -52,9 +52,12 @@ function picture(t) {
 }
 // which height picture a normal map was made from (surface() says so): found through the material's normal
 // map, so a copy of the material (wear() makes one) still has it
-const BUMPS = new WeakMap();
-/** Kit use (surface()): this normal map was made from that height picture. */
-export const noteHeight = (normal, height) => { if (normal && height) BUMPS.set(normal, height); };
+const BUMPS = new WeakMap(), CORES = new WeakMap();
+/**
+ * Kit use (surface()): this normal map was made from that height picture. core: the surface's shared
+ * part, whose `wait` is a promise while its layers are still being painted in a worker (a card loading).
+ */
+export const noteHeight = (normal, height, core = null) => { if (normal && height) BUMPS.set(normal, height); if (height && core) CORES.set(height, core); };
 const heightOf = (m, o) => { const t = (o.height?.isTexture ? o.height : o.height?.height) || (m.normalMap && BUMPS.get(m.normalMap)) || m.userData.pom?.height || m.userData.recipeHeight; return t && t.isTexture && t.image ? t : null; };   // (a texture has a height of its own: its picture's)
 const plain = (a, size) => a && !a.isInterleavedBufferAttribute && a.array instanceof Float32Array && a.itemSize === size;
 const num = x => +(+x).toPrecision(6);
@@ -104,6 +107,16 @@ function start(mesh, o) {
   if (m.userData.recipe && (m.userData.recipe.solid || m.userData.recipe.scatter)) return false;
   const tex = heightOf(m, o), g = mesh.userData.gsLod?.base || mesh.geometry, A = g?.attributes;
   if (!tex || !A || !canCluster(g) || !plain(A.normal, 3) || !plain(A.uv, 2) || g.groups.length > 1) return false;
+  // a recipe's layers painted in a worker while its card loads: the picture isn't in yet, so start when it is
+  const wait = CORES.get(tex)?.wait;
+  if (wait) {
+    const was = RELIEF.get(mesh); if (was && was.waiting === wait) return true;
+    const R = { state: 'building', key: null, geometry: null, clusters: null, info: null, base: g, ver: A.position.version, error: null, done: null, waiting: wait };
+    RELIEF.set(mesh, R); mesh.userData.relief = 'building';
+    const go = () => { if (RELIEF.get(mesh) !== R) return false; RELIEF.delete(mesh); delete mesh.userData.relief; return start(mesh, o) ? RELIEF.get(mesh).done : false; };
+    R.done = wait.then(go, go);
+    return true;
+  }
   const pic = picture(tex); if (!pic) return false;
   // lengths are given in metres as the mesh stands in the world; the builder works in the mesh's own units
   mesh.updateWorldMatrix(true, false);

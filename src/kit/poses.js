@@ -66,12 +66,14 @@ const TIMED = { idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, do
 /**
  * Joints hooked up to a character. parts: { hips, spine, head, armL, foreL, armR, foreR, legL, shinL,
  * legR, shinR } (any can be left out). fade: seconds to blend to a new pose. height: of the figure,
- * for how far the hips drop when crouching.
+ * for how far the hips drop when crouching. joints: the names the poses turn, for a skeleton with other
+ * joints than a person's (a creature's wings, tail and four legs: gs.models.creature). A pose may also say
+ * how fast it runs when it doesn't follow the ground: { cycle, rate: 0, per: cycles a second }.
  */
 export class Rig {
-  constructor(parts, { fade = .18, height = 1.8, poses = {} } = {}) {
+  constructor(parts, { fade = .18, height = 1.8, poses = {}, joints = JOINTS } = {}) {
     this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses };
-    this.base = new Map(); for (const k of JOINTS) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
+    this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
     this.hip0 = parts.hips ? parts.hips.position.y : 0;
     this.layers = [{ name: 'idle', w: 1, phase: 0 }]; this.top = null; this.topW = 0; this.phase = 0; this.state = 'idle'; this.cur = {};
   }
@@ -138,13 +140,13 @@ export class Rig {
     this.blendK = Math.max(0, Math.min(1, (this.blendK || 0) + (this.blendOn ? 1 : -1) * dt / Math.max(.01, this.fade)));
     if (this.blendK > 0 && this.bw) {
       let rate = 0, timed = 0;
-      for (const [n, w] of Object.entries(this.bw)) { const def = this.poses[n]; if (!def) continue; if (def.rate) rate += def.rate * w; else timed += (TIMED[n] ?? .2) * w; }
+      for (const [n, w] of Object.entries(this.bw)) { const def = this.poses[n]; if (!def) continue; if (def.rate) rate += def.rate * w; else timed += (def.per ?? TIMED[n] ?? .2) * w; }
       this.blendPhase = ((this.blendPhase ?? 0) + speed * rate * dt + timed * dt) % 1;
     } else if (!this.blendOn) this.blendPhase = null;
     // advance phases: cycles by distance, still poses by time
     for (const l of this.layers) {
       const def = this.poses[l.name]; if (!def) continue;
-      l.phase = (l.phase + (def.rate ? speed * def.rate * dt : (TIMED[l.name] ?? .2) * dt)) % 1;
+      l.phase = (l.phase + (def.rate ? speed * def.rate * dt : (def.per ?? TIMED[l.name] ?? .2) * dt)) % 1;
     }
     const k = this.fadeT > 0 ? Math.min(1, dt / this.fadeT) : 1;
     const last = this.layers[this.layers.length - 1]; last.w = Math.min(1, last.w + k);

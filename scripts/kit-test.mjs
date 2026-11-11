@@ -1686,6 +1686,64 @@ console.log('physics ok');
   console.log('gs.models: sculpted people ok');
 }
 
+// gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
+{
+  const CS = await import('../src/kit/models/creature-shapes.js'), MV = await import('../src/kit/models/creature-moves.js'), { Rig } = await import('../src/kit/poses.js'), THREE = await import('three');
+  await CS.thinReady;
+  const likes = Object.keys(CS.CREATURE_LIKES);
+  assert.equal(likes.length, 35); assert.deepEqual(CS.CREATURE_KINDS, ['quad', 'bird', 'fish', 'insect', 'monster']);
+  for (const k of CS.CREATURE_KINDS) assert.ok(likes.some(l => CS.CREATURE_LIKES[l] === k), 'animals of kind ' + k);
+  // the same seed makes the same creature; colours and size don't change its shape; another seed does
+  const a = CS.planOf({ like: 'deer', seed: 5 }), b = CS.planOf({ like: 'deer', seed: 5 }), c = CS.planOf({ like: 'deer', seed: 5, colour: '#ff0000', size: 3, pattern: 'spots' }), d = CS.planOf({ like: 'deer', seed: 6 }), book = CS.planOf({ like: 'deer' });
+  assert.deepEqual(a, b, 'the same seed, the same plan'); assert.equal(c.key, a.key, 'colours and size share the sculpt'); assert.notEqual(d.key, a.key, 'another seed, another build');
+  assert.ok(c.size === 3 && c.look.colour === '#ff0000' && c.look.pattern === 'spots' && book.size === 1.5 && book.look.colour === '#a9743e', 'what was asked for is kept; no seed: the animal as the book shows it');
+  assert.ok(Math.abs(a.size - 1.5) < .2 && a.size !== 1.5 && a.p.H !== undefined && a.p.H !== book.p.H, 'a seed moves its size and measures a little');
+  assert.throws(() => CS.planOf({ like: 'unicorn' }), /nothing called 'unicorn'/); assert.throws(() => CS.planOf({ kind: 'robot' }), /no kind called 'robot'/);
+  for (const kind of CS.CREATURE_KINDS) { const got = new Set(); for (let seed = 1; seed <= 40; seed++) { const p = CS.planOf({ kind, seed }); assert.equal(p.kind, kind); got.add(p.like); } assert.ok(got.size >= 4, kind + ': the seed picks among ' + got.size + ' animals'); }
+  const winged = CS.planOf({ like: 'dog', build: { wings: 1, horns: 'curved', nonsense: 4 } });
+  assert.ok(winged.p.wings === 1 && winged.p.horns === 'curved' && !('nonsense' in winged.p) && winged.key !== CS.planOf({ like: 'dog' }).key, 'build sets its measures by name (and only real ones)');
+  // every animal: a skeleton that hangs together, and cycles that only turn its own bones, in step with its size
+  for (const like of likes) for (const seed of [undefined, 3]) {
+    const plan = CS.planOf({ like, seed }), B = CS.build(plan), names = B.bones.map(q => q.name), set = new Set(names), m = B.meta, scale = plan.size / m.span;
+    assert.ok(names[0] === 'hips' && B.bones[0].parent === null && set.size === names.length, like + ': one root, no bone twice');
+    for (const q of B.bones.slice(1)) assert.ok(set.has(q.parent) && names.indexOf(q.parent) < names.indexOf(q.name), like + ': ' + q.name + ' hangs from a bone made before it');
+    assert.ok(m.span > .3 && m.H > 0 && set.has(m.head) && m.legs.every(l => set.has(l.up) && set.has(l.lo)) && m.tail.every(n => set.has(n)) && (m.wings || []).flat().every(n => set.has(n)), like + ': what moving it needs');
+    const mv = MV.movesFor(m, scale), twice = MV.movesFor(m, scale * 2);
+    for (const need of ['idle', 'attack', 'hurt', 'dead']) assert.ok(mv.poses[need], like + ' can ' + need);
+    for (const [name, def] of Object.entries(mv.poses)) for (const ph of [0, .13, .37, .5, .61, .9]) {
+      const s = def.cycle(ph); assert.ok(Number.isFinite(s.drop), like + ' ' + name + ': drop');
+      for (const [j, t] of Object.entries(s.j)) assert.ok(set.has(j) && t.length === 3 && t.every(Number.isFinite), like + ' ' + name + ' turns ' + j);
+    }
+    const space = mv.ground || mv.water; assert.ok(space && space.idle === 0, like + ': somewhere to stand');
+    for (const [g, v] of Object.entries(mv.speeds)) { assert.ok(v > 0 && v < 40 && mv.poses[g], like + ': ' + g + ' at ' + v); assert.ok(twice.speeds[g] > v, like + ': twice the size is faster'); }
+    const gait = mv.poses.walk ? 'walk' : 'swim'; if (mv.poses[gait]?.rate) assert.ok(Math.abs(mv.poses[gait].rate / twice.poses[gait].rate - 2) < 1e-6, like + ': twice the size, twice the stride');
+    if (m.wings) assert.ok(mv.air && mv.poses.fly && mv.speeds.fly > (mv.speeds.walk || 0), like + ' flies'); else assert.equal(mv.air, null);
+  }
+  // a walk covers what its feet sweep: a dog's stride from its own legs
+  { const plan = CS.planOf({ like: 'dog' }), B = CS.build(plan), sc = plan.size / B.meta.span, mv = MV.movesFor(B.meta, sc), L = B.meta.legs.reduce((s, l) => s + l.L, 0) / 4;
+    assert.ok(Math.abs(1 / mv.poses.walk.rate - 4 * L * Math.sin(.36) * sc) < 1e-9, 'a stride is twice the sweep of a standing foot'); assert.deepEqual(Object.keys(mv.ground), ['idle', 'walk', 'trot', 'run']);
+    assert.ok(!MV.movesFor(CS.build(CS.planOf({ like: 'rabbit' })).meta, .4).poses.trot, 'a rabbit hops: no trot'); }
+  // sculpts: three levels, every point on real bones with whole weights, both sides alike, feet on the ground, the same every time
+  for (const like of ['dog', 'owl', 'shark', 'bee', 'ogre', 'blob']) {
+    const plan = CS.planOf({ like }), B = CS.build(plan), set = new Set(B.bones.map(q => q.name)), p = CS.sculpt(plan), t = p.I.map(i => i.length / 3);
+    assert.ok(p.n > 1500 && t[0] > t[1] && t[1] > t[2] && t[2] > 150 && t[0] < 36000, like + ': ' + t.join(' / ') + ' triangles');
+    assert.ok(p.names.every(n => set.has(n)), like + ': weights name real bones'); assert.ok(['eye0', 'eye1', 'eye2', 'eye3', 'hide'].every(sl => p.slots.includes(sl)), like + ': a coat and eyes');
+    let lo = [9, 9, 9], hi = [-9, -9, -9];
+    for (let i = 0; i < p.n; i++) { const w = p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3]; assert.ok(w >= 254 && w <= 256, like + ': whole weights'); for (let k = 0; k < 3; k++) { const v = p.P[i * 3 + k]; assert.ok(Number.isFinite(v)); if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; } }
+    assert.ok(like === 'blob' || Math.abs(lo[0] + hi[0]) < .02, like + ': the same on both sides'); if (plan.kind !== 'fish') assert.ok(lo[1] > -.05 && lo[1] < .03, like + ': feet at ' + lo[1].toFixed(3));
+    if (like === 'dog') { const q = CS.sculpt(CS.planOf({ like, colour: '#123456' })); assert.ok(q.n === p.n && q.P.every((v, i) => v === p.P[i]), 'the same sculpt every time'); assert.ok(p.slots.includes('nose')); }
+  }
+  // on gs.poses' Rig: its own joints and cycles; a cycle that says how fast it runs keeps its own time
+  { const plan = CS.planOf({ like: 'crow' }), B = CS.build(plan), sc = plan.size / B.meta.span, mv = MV.movesFor(B.meta, sc), parts = Object.fromEntries(B.bones.map(q => [q.name, new THREE.Object3D()]));
+    parts.hips.position.y = B.meta.H; const rig = new Rig(parts, { height: B.meta.H, joints: Object.keys(parts), poses: mv.poses, fade: 0 });
+    rig.play('fly', { fade: 0 }).update(.05); const z1 = parts.wingL.rotation.z; rig.update(.05);
+    assert.ok(Math.abs(parts.wingL.rotation.z + parts.wingR.rotation.z) < 1e-9 && parts.wingL.rotation.z !== z1, 'wings beat together, by the clock'); assert.ok(Math.abs(rig.phase - mv.poses.fly.per * .1) < 1e-9, 'at its own beats a second');
+    rig.play('walk', { fade: 0 }).update(.1, { speed: mv.speeds.walk }); assert.ok(parts.legL.rotation.x !== parts.legR.rotation.x && Math.abs(parts.wingL.rotation.y) > 1, 'it walks with its wings folded');
+    rig.blend(mv.ground, mv.speeds.run).update(.1, { speed: mv.speeds.run }); assert.ok(rig.bw.run === 1, 'the blend space reaches its run'); }
+  assert.ok(typeof CS.VERSION === 'number' || typeof CS.VERSION === 'string');
+  console.log('gs.models: creatures ok');
+}
+
 // fixed game tick: the same updates at 30, 60, 90 and 120 fps; alpha between ticks; physics draws smoothly
 {
   const T = await import('../src/kit/tick.js'), { ownedBy } = await import('../src/kit/cleanup.js');
@@ -2158,6 +2216,420 @@ console.log('physics ok');
   assert.ok(E.gsGpuKey === undefined && F.gsGpuKey === undefined, 'a look that reads from the material being drawn shares one shader (3D text)');
   assert.ok(B.customProgramCacheKey() === C.customProgramCacheKey(), 'WebGL still shares one program between them (its numbers are uniforms there)');
   console.log('looks on WebGPU: a key for each material that holds its own numbers ok');
+}
+
+// loading without holding the feed still (src/kit/slices.js): pause() lets a frame go by once a pass has
+// used its share, need() waits for a worker's answer, later() keeps the card waiting for work left behind
+{
+  const slices = await import('../src/kit/slices.js');
+  const busy = ms => { const t = performance.now(); while (performance.now() - t < ms); };
+  const seen = []; slices.onPass(x => seen.push(x));
+  // outside a card's making, builders just build
+  slices.pause('Models'); assert.equal(slices.need('Models', 'k', () => Promise.resolve(1)), undefined, 'need: nothing to wait for outside a pass');
+  assert.equal(slices.later(Promise.resolve()), false, 'later: not taken on outside a pass'); assert.equal(slices.loading(), false);
+  // a pass: the first heavy build always goes ahead; once the share is spent the next one waits for a frame
+  const card = {}; slices.begin(card, 5); assert.equal(slices.loading(), true);
+  slices.pause('Models'); busy(8); slices.built();
+  let t = null; try { slices.pause('Textures'); } catch (e) { t = e; }
+  assert.ok(t?.kitLoading instanceof Promise && t.what === 'Textures' && t.name === 'StillLoading', 'pause: the share is spent, so the next build waits (as a library that is not in yet does)');
+  assert.equal(slices.end(card, false), null); assert.equal(slices.loading(), false);
+  await t.kitLoading;
+  // the next pass: the game's own code takes a moment to get back here (12 ms), so the pass builds at
+  // least that long before it waits again: loading in passes never costs twice the work
+  // (a short build then a long one, so a busy test machine that stalls the test for a moment doesn't change the answer)
+  slices.begin(card, 5); busy(12); slices.pause('Models'); busy(3); slices.built(); slices.pause('Models'); busy(40); slices.built();
+  t = null; try { slices.pause('Models'); } catch (e) { t = e; } assert.ok(t?.kitLoading, 'pause: a pass builds at least as long as the game\'s own code ran, then waits');
+  slices.end(card, false);
+  assert.ok(seen.length === 2 && seen[1].built === 2 && seen[1].own >= 11 && seen[1].own < 30 && seen[1].ms >= 54 && !seen[1].off && seen[1].card === card, 'the pass is reported: ' + JSON.stringify({ ...seen[1], card: 0 }));
+  // a build inside another build (a prop that needs a material) never stops: the outer one has to finish
+  slices.begin(card, 5); slices.pause('Models'); busy(20); slices.pause('Textures'); busy(20); slices.built(); slices.pause('Textures'); slices.built(); slices.built();
+  t = null; try { slices.pause('Models'); } catch (e) { t = e; } assert.ok(t?.kitLoading, 'pause: a build inside a build goes ahead, and the next one outside waits');
+  slices.end(card, false);
+  // a game whose own code is the slow part (40 ms before it asks the kit for anything heavy): stopping
+  // would mean running that again every pass, so it is made in one go from there
+  slices.begin(card, 5); busy(40); slices.pause('Models'); busy(8); slices.built(); slices.pause('Models'); busy(8); slices.built(); slices.pause('Models'); slices.built();
+  assert.equal(slices.need('Models', 'slow', () => new Promise(() => {})), undefined, 'need: no waiting either once the card is made in one go');
+  assert.equal(slices.end(card, true), null); assert.ok(seen[seen.length - 1].off && seen[seen.length - 1].made, 'a pass with 40 ms of the game\'s own code is not stopped');
+  // a whole pass (not on a fresh copy of the game: nothing of it may be left half made): never stopped
+  const cw = {}; slices.begin(cw, 5, true); slices.pause('Models'); busy(8); slices.built(); slices.pause('Models'); slices.built();
+  assert.equal(slices.need('Models', 'whole', () => new Promise(() => {})), undefined, 'need: a whole pass does not wait');
+  assert.equal(slices.later(Promise.resolve()), true, 'later: a whole pass still leaves work with the workers'); await slices.end(cw, true);
+  // need(): waits for the answer, hands it over on the next pass, gives up on a job that failed
+  const c2 = {}; let give; const answer = new Promise(r => { give = r; });
+  slices.begin(c2); t = null; try { slices.need('Models', 'a', () => answer); } catch (e) { t = e; } slices.end(c2, false);
+  assert.ok(t?.kitLoading && t.what === 'Models', 'need: the card waits for the worker'); give(42); await t.kitLoading;
+  slices.begin(c2); assert.equal(slices.need('Models', 'a', () => { throw new Error('asked twice'); }), 42, 'need: the answer is there on the next pass');
+  t = null; try { slices.need('Models', 'b', () => Promise.reject(new Error('worker'))); } catch (e) { t = e; } slices.end(c2, false); await t.kitLoading;
+  slices.begin(c2); assert.equal(slices.need('Models', 'a', null), 42); assert.equal(slices.need('Models', 'b', () => Promise.resolve(1)), undefined, 'need: a job that failed is made here');
+  assert.equal(slices.need('Models', 'c', () => null), undefined, 'need: no worker for it, made here'); slices.end(c2, true);
+  // a game that asks for something different every pass must not wait for ever
+  const c3 = {}; slices.begin(c3); t = null; try { slices.need('Path map', 'level-1', () => Promise.resolve('one')); } catch (e) { t = e; } slices.end(c3, false); await t.kitLoading;
+  slices.begin(c3); assert.equal(slices.need('Path map', 'level-2', () => { throw new Error('should not start'); }), undefined, 'need: last pass\'s answer was not wanted again, so no more waiting for that name');
+  assert.equal(slices.need('Path map', 'level-3', () => Promise.resolve('x')), undefined); slices.end(c3, true);
+  // later(): the card is told to wait until the work left behind is in
+  const c4 = {}; let finish; const work = new Promise(r => { finish = r; });
+  slices.begin(c4); assert.equal(slices.later(work), true); const wait = slices.end(c4, true);
+  assert.ok(wait instanceof Promise, 'later: the game is made, but the card waits'); let settled = false; wait.then(() => { settled = true; });
+  await new Promise(r => setTimeout(r, 5)); assert.equal(settled, false); finish(); await wait;
+  slices.begin(c4); assert.equal(slices.end(c4, true), null, 'nothing left to wait for');
+  slices.onPass(null);
+  // the number work itself (surface-math.js): unit normals, flat where the height is flat, and the rougher small copies
+  const { surfaceMath } = await import('../src/kit/surface-math.js');
+  const S = 16, hd = new Uint8ClampedArray(S * S * 4), rd = new Uint8ClampedArray(S * S * 4).fill(51);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) hd[(y * S + x) * 4] = x < 8 ? 0 : 255;   // a step up half way across
+  const m = surfaceMath(hd, rd, S, 2);
+  let unit = true; for (let i = 0; i < S * S; i++) unit &&= Math.abs(Math.hypot(m.nf[i * 3], m.nf[i * 3 + 1], m.nf[i * 3 + 2]) - 1) < 1e-5;
+  assert.ok(unit && m.nf[(3 * S + 3) * 3 + 2] === 1 && m.nf[(3 * S + 8) * 3] < -.9 && m.out[(3 * S + 3) * 4 + 2] === 255, 'surfaceMath: unit normals, flat on the flat, leaning at the step');
+  assert.ok(m.mips.length === 4 && m.mips[0].length === 8 * 8 * 4 && m.mips[3].length === 4, 'surfaceMath: a smaller roughness copy for each halving');
+  const flat = m.mips[0][(3 * 8 + 2) * 4], edge = m.mips[0][(3 * 8 + 4) * 4];
+  assert.ok(flat >= 51 && flat <= 54 && edge > flat + 10, 'surfaceMath: the small copies are rougher only where the bumps under them disagree (' + flat + ' on the flat, ' + edge + ' at the step)');
+  assert.equal(surfaceMath(new Uint8ClampedArray(12 * 12 * 4), new Uint8ClampedArray(12 * 12 * 4), 12, 2).mips, null, 'surfaceMath: no small copies for a size that does not halve evenly');
+  // a recipe painted as plain numbers (what the worker runs) repeats exactly and changes with the seed
+  const { paintRecipe } = await import('../src/kit/models/recipe-paint.js'), { JS } = await import('../src/kit/models/ops.js'), { RECIPES } = await import('../src/kit/models/recipes.js');
+  const K = {}; for (const k in RECIPES.planks.look) K[k] = JS.rgb(RECIPES.planks.look[k]);
+  const p1 = paintRecipe('planks', K, 32, 0), p2 = paintRecipe('planks', K, 32, 0), p3 = paintRecipe('planks', K, 32, 9);
+  assert.ok(p1.col.length === 32 * 32 * 4 && p1.col.every((v, i) => v === p2.col[i]) && p1.h.some((v, i) => v !== p3.h[i]) && p1.m.every((v, i) => i % 4 === 3 ? v === 255 : v === 0), 'paintRecipe: the same every time, another pattern for another seed');
+  // a sculpt as plain arrays (what the worker runs) is the mesh gs.models.sculpt gives
+  const { sculptArrays } = await import('../src/kit/models/sculpt-arrays.js'), { sculpt } = await import('../src/kit/models/sculpt.js');
+  const sh = [{ ball: .3 }, { ball: .2, at: [.3, 0, 0] }], arr = sculptArrays(sh, { res: 16 }), geo = sculpt(sh, { res: 16 });
+  assert.ok(arr.P.length === geo.attributes.position.array.length && arr.P.every((v, i) => v === geo.attributes.position.array[i]) && arr.I.length === geo.index.count && arr.C === null, 'sculptArrays: the same mesh as sculpt()');
+  console.log('loading: pause, need and later; a surface\'s number work, a recipe and a sculpt as plain arrays ok');
+}
+
+// the physics engine as real .wasm files (vite.config.js rapierWasmFiles): the built app loads the file the
+// package ships, and a package whose file doesn't match its text is left as it is
+{
+  const { rapierWasmFiles } = await import('../vite.config.js'), { readFileSync } = await import('node:fs'), { resolve } = await import('node:path');
+  const plug = rapierWasmFiles(), warned = [], ctx = { warn: m => warned.push(m) };
+  for (const pack of ['rapier2d-compat', 'rapier2d-simd-compat', 'rapier3d-compat', 'rapier3d-simd-compat']) {
+    const id = resolve('node_modules/@dimforge', pack, 'dist/rapier.mjs'), code = readFileSync(id, 'utf8'), out = plug.transform.call(ctx, code, id);
+    const file = `rapier_wasm${pack.slice(6, 8)}_bg.wasm`;
+    assert.ok(out && out.code.includes(`module_or_path:new URL("./${file}", import.meta.url)`) && !out.code.includes('AGFzbQ') && out.code.length < code.length / 10, pack + ': loads ' + file + ' in place of the text');
+  }
+  const id = resolve('node_modules/@dimforge/rapier3d-compat/dist/rapier.mjs'), code = readFileSync(id, 'utf8');
+  assert.equal(plug.transform.call(ctx, code.replace('"AGFzbQEAAAAB', '"AGFzbQEAAAAC'), id), null, 'text that is not the file\'s bytes: left alone');
+  assert.equal(plug.transform.call(ctx, 'export const a = 1;', resolve('src/kit/physics.js')), null, 'other files: untouched');
+  assert.ok(warned.length === 1 && plug.apply === 'build', 'and it says so; build only');
+  console.log('rapier as .wasm files: all four packages, left alone when the file does not match ok');
+  // the games built into dev and test builds: each behind a small module that knows its own address,
+  // so the app can load the file again as a fresh copy (src/main.js bootGame)
+  const { bundledGames } = await import('../vite.config.js');
+  const games = bundledGames(false), ONE = 'virtual:bundled-games/stack.js';
+  games.configResolved({ command: 'build' });
+  const all = games.load(games.resolveId('virtual:bundled-games'));
+  assert.ok(all.includes('import("' + ONE + '")') && /export const fresh = \{\};/.test(all) && all.includes('"copy=" + n'), 'bundled games: each is loaded through its own small module, and fresh() loads it again');
+  assert.ok(games.resolveId(ONE) && games.load(games.resolveId(ONE)).includes('export const url = import.meta.url;') && games.load(games.resolveId(ONE)).includes(resolve('src/games/stack.js')), 'in a build the small module\'s address is the game\'s chunk');
+  games.configResolved({ command: 'serve' });
+  assert.ok(games.load(games.resolveId(ONE)).includes('"/src/games/stack.js"'), 'on the dev server it is the game\'s file');
+  assert.equal(games.resolveId('virtual:something-else'), null);
+  assert.equal(bundledGames(true).load(games.resolveId('virtual:bundled-games')), 'export default [];\nexport const fresh = {};', 'the streamed app has no games built in');
+  console.log('bundled games: a fresh copy of each game file can be loaded ok');
+}
+
+// ---- Classic Console 2.0 (toon3d.js): real toon shadows, the rim of light, retro looks, a jointed figure
+{
+  const T = await import('three');
+  const { View, part, grp, G, blob, figure, toon, flat, celReady, TOON } = await import('../src/kit/toon3d.js');
+  const { HIDDEN } = await import('../src/gamescroll.js');
+  // the cel look folds the sun's shadow into the ramp by changing two pieces of three's toon shader: if a
+  // three.js update rewrites them, this is where it shows (the look would fall back to no real shadows)
+  assert.ok(celReady, 'three\'s toon shader still has the lines the cel look changes');
+  assert.ok(HIDDEN.toon.includes('TOON') && HIDDEN.toon.includes('celReady'), 'the test switches stay off gs.toon');
+  const lit = toon('#c04040'), glass = toon('#80c0ff', { opacity: .4 }), paint = flat('#ffffff', .8);
+  assert.deepEqual([lit.userData.gsLooks, paint.userData.gsLooks], [['cel'], ['retro']], 'toon() carries the cel look, flat() the retro one');
+  // who casts and who takes shadows: lit solid things cast, see-through and flat ones don't, blob() discs never
+  const was = TOON.shadows; TOON.shadows = true;
+  const v = new View(); v.board(192, 160, .9);
+  assert.deepEqual([v.shadows, v.rim, v.floor, v.retro], [true, .35, true, null], 'a view: shadows, a rim of light and a floor under a board by default; no retro look');
+  const wall = v.add(part(G.box, '#806090', { sx: 6, sy: 30, sz: 60, x: -80, y: 15 })), floor = v.add(part(G.plane, '#b4bcac', { sx: 150, sz: 150, line: false })), pane = v.add(part(G.box, glass, { s: 14 }));
+  v.def('crate', () => grp(part(G.box, '#b08850', { s: 16, y: 8 }), blob(12, .3))).def('mark', () => blob(1, .35)).def('ball', () => part(G.ball, '#f04060', { s: 6 }));
+  v.frame();
+  const crate = v.put('crate', v.at(40, 60)), air = v.put('mark', v.at(60, 120, .2), { s: 7 }), under = v.put('mark', v.at(110, 120, .2), { s: 9 });
+  v.put('ball', v.at(60, 120, 30)); v.put('crate', v.at(110, 120), { s: .7 });
+  assert.equal(v.prep(true), '', 'three\'s own materials with the kit\'s looks: the view can draw on WebGPU');
+  assert.ok(v.shadowsOn && v.sun.castShadow && v.catcher.visible, 'shadows on: the sun casts, the bare background of a board takes them');
+  assert.deepEqual([wall.castShadow, wall.receiveShadow, floor.castShadow, floor.receiveShadow, pane.castShadow], [true, true, false, true, false], 'a wall casts and takes; a flat floor only takes; a see-through box casts nothing');
+  let disc; crate.traverse(k => { if (k.userData.gsBlob) disc = k; });
+  assert.ok(disc && !disc.visible && !disc.castShadow && crate.children[0].castShadow, 'a thing with a blob() disc: its real shadow takes the disc\'s place');
+  assert.deepEqual([air.visible, under.visible], [true, false], 'a disc put on its own stays under a ball in the air and goes when a crate stands on it');
+  // off: discs again, nothing cast
+  TOON.shadows = false; v.frame(); v.put('crate', v.at(40, 60)); v.prep(false);
+  assert.ok(!v.shadowsOn && !v.sun.castShadow && !v.catcher.visible && disc.visible, 'no shadows (a low-end phone): the discs show, as they always did');
+  TOON.shadows = true;
+  const off = new View({ shadows: false, floor: false, rim: 0 }); off.board(192, 160); off.prep(false);
+  assert.ok(!off.shadowsOn && !off.sun.castShadow && off.rim === 0, 'new View({ shadows: false }): the game\'s own choice');
+  const sky = new View({ floor: false }); sky.board(192, 160); sky.prep(false);
+  assert.ok(sky.shadowsOn && !sky.catcher.visible, 'floor: false: nothing lands on the background');
+  const side = new View(); side.side(192, 160); side.prep(false);
+  assert.ok(side.shadowsOn && !side.catcher.visible, 'a side view has no floor under it');
+  // a material with its own shader keeps the view on WebGL, and says why
+  v.add(new T.Mesh(G.box, new T.ShaderMaterial()));
+  assert.match(v.prep(true), /its own shader \(ShaderMaterial\)/, 'a ShaderMaterial has no WebGPU version: the view says so');
+  // the sun's shadow is fitted to the view without moving the game's sun
+  const at = v.sun.position.clone(), sh = v.sun.shadow;
+  v.render({ canvas: { width: 384, height: 320 }, fillRect() {}, set fillStyle(_) {} });   // (no renderer in Node: the frame is prepared and the background filled)
+  v.scene.updateMatrixWorld(); sh.updateMatrices(v.sun);
+  assert.ok(v.sun.position.equals(at) && Math.abs(sh.camera.right - v.fit.r) < 1e-6 && v.fit.r > 100 && v.fit.r < 250, 'the shadow covers the board (' + v.fit.r.toFixed(0) + ' units round) and the sun stays where the game put it');
+  const eye = new T.Vector3().setFromMatrixPosition(sh.camera.matrixWorld), dir = at.clone().normalize();
+  assert.ok(eye.clone().normalize().distanceTo(dir) < 1e-4 && Math.abs(eye.length() - v.fit.r * 3) < 1e-3, 'its camera looks along the sun\'s direction from outside the view');
+  const fog = new View({ fog: ['#fff', 10, 44] }); fog.persp(192, 160, 60, .1, 200); fog.cam.position.set(0, 2.6, 6); fog.cam.lookAt(0, .8, -6); fog.cam.updateMatrixWorld();
+  fog.render({ canvas: { width: 384, height: 320 }, fillRect() {}, set fillStyle(_) {} });
+  assert.ok(fog.fit.snap && Math.abs(fog.fit.r - 44 * .55) < 1e-6 && fog.fit.c.z < -10, 'a free camera: the shadow reaches as far as the fog, ahead of the camera, stepping a texel at a time');
+  // retro looks
+  const R = k => new View({ retro: k }).retro;
+  assert.deepEqual(R('chunky'), { lines: 240, smooth: false, snap: true, bits: 5, scan: 0 });
+  assert.ok(R('soft').smooth && !R('soft').snap && R('tube').scan > 0 && R('nope') === null, 'soft, tube; an unknown name is no look');
+  assert.deepEqual(R({ lines: 120, bits: 4 }), { lines: 120, smooth: false, snap: false, bits: 4, scan: 0 }, 'your own mix');
+  // the jointed figure
+  const f = figure({ h: 30, hair: null }), box = new T.Box3().setFromObject(f);
+  assert.ok(Math.abs(box.min.y) < .8 && box.max.y > 28 && box.max.y < 34, 'figure(): 30 units tall with its feet on the ground (' + box.min.y.toFixed(1) + ' to ' + box.max.y.toFixed(1) + ')');
+  assert.ok(f.rig && ['hips', 'spine', 'head', 'armL', 'foreL', 'armR', 'foreR', 'legL', 'shinL', 'legR', 'shinR'].every(k => f.rig.parts[k]?.isObject3D), 'it has the gs.poses joints');
+  const legX = () => f.rig.parts.legL.rotation.x; const still = legX();
+  f.rig.play('walk'); let swing = 0; for (let i = 0; i < 40; i++) { f.rig.update(1 / 30, { speed: 1.5 }); swing = Math.max(swing, Math.abs(legX() - still)); }
+  assert.ok(swing > .2, 'rig.play(\'walk\'): its legs swing (' + swing.toFixed(2) + ' rad)');
+  v.def('hero', () => figure({ h: 24 })); v.frame(); const a = v.put('hero', v.at(20, 20)), b2 = v.put('hero', v.at(60, 20), { s: 2 });
+  assert.ok(a.rig && b2.rig && a.rig !== b2.rig && b2.scale.x === 2 && b2.children[0].scale.x === 24 / 1.8, 'each copy a view draws has a rig of its own, and put()\'s size multiplies the figure\'s');
+  assert.equal(v.pools.get('hero').casts, true, 'and it casts a shadow');
+  TOON.shadows = was;
+  console.log('Classic Console 2.0: who casts and takes shadows, discs out of the way, the fitted shadow, retro looks, the jointed figure ok');
+}
+
+// gs.fluid (Real 3D liquids): the version phones without WebGPU run, which is also what the graphics chip's
+// version is held to, drop for drop (scripts/look-compare.cjs gpu-fluid --webgpu)
+{
+  const F = await import('../src/kit/fluid.js'), { Fluid, FLUID, KINDS } = F, T3 = await import('three');
+  const view = () => ({ scene: new T3.Scene() });
+  const run = (f, n, each) => { for (let i = 0; i < n; i++) { each?.(i); f.update(1 / 60); } };
+  const each = (f, fn) => { const S = f.sim; for (let p = 0; p < S.N; p++) { const a = p * 4; if (S.P[a + 3] > 0) fn(S.ox + S.P[a] * S.h, S.oy + S.P[a + 1] * S.h, S.oz + S.P[a + 2] * S.h, Math.hypot(S.V[a], S.V[a + 1], S.V[a + 2]) * S.h / S.dt); } };
+  const outside = f => { const B = f.bounds; let n = 0; each(f, (x, y, z) => { if (!(x >= B[0] && x <= B[3] && y >= B[1] && y <= B[4] && z >= B[2] && z <= B[5])) n++; }); return n; };
+  const most = (f, k) => { let m = -1e9; each(f, (x, y, z, v) => { m = Math.max(m, [x, y, z, v][k]); }); return m; };
+  FLUID.klass = 'low'; assert.equal(Fluid.max(), 600, 'a slow phone runs 600 drops'); FLUID.klass = 'top'; assert.equal(Fluid.max(), 2000, 'a fast one 2,000 (without WebGPU)');
+  {
+    // a pool: the liquid asked for goes in, keeps its depth, comes to rest and stays in its box
+    const f = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2.2 }), put = f.fill({ y1: .5 }); run(f, 180);
+    assert.ok(put > 1.7 && put < 2.05 && f.amount() === put, 'fill() puts in the block asked for: ' + put);
+    for (const [x, z] of [[-.7, 0], [0, 0], [.7, .6]]) assert.ok(Math.abs(f.level(x, z) - .5) < .08, `a pool half a unit deep stays that deep: ${f.level(x, z)} at ${x}, ${z}`);
+    assert.ok(most(f, 3) < .2 && outside(f) === 0, 'and comes to rest inside its box (fastest drop ' + most(f, 3).toFixed(3) + ' units a second)');
+    assert.ok(f.mesh.count === f.count && f.mesh.visible && f.mesh.parent?.isScene && f.backend === 'cpu', 'a ball a drop, in the view\'s scene');
+    assert.ok(f.wet(0, .1, 0) > .7 && f.wet(0, 1.5, 0) === 0 && f.level(5, 0) === null && Math.abs(f.amount([-1, 0, -1, 0, 2, 1]) / f.amount() - .5) < .05, 'wet(), level() and amount(box) answer from the drops');
+    // full: no more goes in, and taps wait
+    f.fill({ y0: .6, y1: 2 }); assert.ok(f.full && f.room === 0 && f.count === f.max, 'the fluid fills up at its budget of drops');
+    const t0 = f.pour({ x: 0, y: 1.8, z: 0, rate: 1 }); run(f, 10); assert.equal(f.count, f.max, 'a tap adds nothing to a full fluid'); t0.remove();
+    f.clear(); assert.ok(f.count === 0 && f.level(0, 0) === null && f.amount() === 0, 'clear() empties it');
+    // a tap pours what it says; a drain swallows it and counts every drop
+    const tap = f.pour({ x: 0, y: 1.5, z: 0, rate: .5, speed: 2 }); run(f, 60); assert.ok(Math.abs(f.amount() - .5) < .05, 'a tap of half a unit a second: ' + f.amount() + ' after a second');
+    tap.on = false; const had = f.amount(), d = f.drain({ x: 0, y: .1, z: 0, r: .4 }); run(f, 240);
+    assert.ok(d.amount > .3 && Math.abs(d.amount + f.amount() - had) < f.drop / 2, `a drain takes liquid and counts it: ${d.amount} of ${had}`);
+    d.remove(); tap.remove(); assert.ok(f.drains.length === 0 && f.taps.length === 0, 'remove()');
+  }
+  {
+    // a dam break: across the tank in a second, never out of it, level in the end; honey is slower
+    const mk = kind => { const f = new Fluid(view(), { box: [-2, 0, -.5, 2, 2, .5], volume: 1.6, kind }); f.fill({ x1: -1, y1: 1.5 }); return f; };
+    const f = mk('water'), a0 = f.amount(); run(f, 60); assert.ok(f.level(1.5, 0) > .1 && outside(f) === 0, 'a dam break reaches the far side in a second');
+    run(f, 540); for (const x of [-1.5, 0, 1.5]) assert.ok(f.level(x, 0) > .2 && f.level(x, 0) < .6, 'and levels out: ' + f.level(x, 0) + ' at ' + x);
+    assert.ok(f.amount() === a0 && outside(f) === 0 && most(f, 3) < 3, 'with every drop still in the tank');
+    const w = mk('water'), h = mk('honey'); run(w, 40); run(h, 40); assert.ok(most(h, 0) < most(w, 0) - .3, `honey runs slower than water: ${most(h, 0).toFixed(2)} against ${most(w, 0).toFixed(2)}`);
+    assert.ok(KINDS.lava.glow > 0 && KINDS.water.thick === 0 && h.mu > w.mu, 'the ready-made kinds');
+  }
+  {
+    // a cup holds what is poured into it and gives it up when tipped
+    const f = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 1 }), cup = f.tube({ x: 0, y: .5, z: 0, r: .4, h: .8, hollow: .06 }), c0 = cup.fill(.8); run(f, 90);
+    assert.ok(c0 > .1 && f.amount(cup.inside()) >= c0 * .97 && f.amount() - f.amount(cup.inside()) < f.drop / 2, `a hollow tube keeps its liquid in: ${f.amount(cup.inside())} of ${c0}`);
+    const q = new T3.Quaternion(), ax = new T3.Vector3(0, 0, 1); run(f, 120, i => { q.setFromAxisAngle(ax, Math.min(1, i / 60) * 2.6); cup.set(0, .6, 0, q); });
+    let low = 0; each(f, (x, y) => { if (y < .2) low++; }); assert.ok(low * f.drop > c0 * .7 && outside(f) === 0, 'tipped over, it pours out onto the floor: ' + (low * f.drop).toFixed(3));
+    cup.remove(); assert.equal(f.solids.length, 0);
+    // a tap over an open cup: the stream falls freely into it (nothing of the cup stands above its rim to hold it up)
+    const g = new Fluid(view(), { box: [-1.5, 0, -1, 1.5, 2, 1], volume: 2, drops: 1500 }), mug = g.tube({ x: .8, y: .45, z: 0, r: .5, h: .9, hollow: .06 });
+    g.pour({ x: .8, y: 1.6, z: 0, rate: .25, speed: 2 }); run(g, 90);
+    assert.ok(g.amount(mug.inside()) > .25 && g.amount() - g.amount([.3, 0, -.5, 1.3, 2, .5]) < g.drop / 2, 'a tap fills a cup: ' + g.amount(mug.inside()).toFixed(3) + ' of ' + g.amount().toFixed(3) + ' poured is in it after a second and a half');
+  }
+  {
+    // a ball swept through a pool pushes the liquid ahead of it; a blast throws it up
+    const mk = () => { const f = new Fluid(view(), { box: [-2, 0, -.5, 2, 2, .5], volume: 1.6 }); f.fill({ y1: .4 }); run(f, 90); return f; };
+    const f = mk(), a0 = f.amount(), ball = f.ball({ x: -1.6, y: .2, z: 0, r: .3 }); run(f, 60, i => ball.set(-1.6 + i * .04, .2, 0));
+    assert.ok(f.level(1.6, 0) > f.level(-1.5, 0) + .2 && f.amount() === a0 && outside(f) === 0, `a moving ball pushes liquid ahead: ${f.level(-1.5, 0)} behind it, ${f.level(1.6, 0)} ahead`);
+    const mesh = new T3.Object3D(), led = f.ball({ r: .2, follow: mesh }); mesh.position.set(1, .3, .1); run(f, 2); assert.ok(led.x === 1 && led.y === .3 && Math.abs(led.z - .1) < 1e-6, 'follow: a solid follows a three.js object');
+    const g = mk(), before = most(g, 1); g.push(0, .1, 0, { radius: .8, strength: 2, up: 3 }); let peak = 0; run(g, 30, () => { peak = Math.max(peak, most(g, 1)); });
+    assert.ok(peak > before + .15 && outside(g) === 0, `a blast throws liquid up: ${before.toFixed(2)} to ${peak.toFixed(2)}`);
+  }
+  {
+    // ground to run down, an open box to run off, and gravity that can point anywhere
+    const g = new Fluid(view(), { box: [-2, 0, -.5, 2, 2, .5], volume: 1 }); g.ground(x => Math.max(0, x * .4)); g.fill({ x0: .5, x1: 2, y0: .9, y1: 1.3 }); run(g, 300);
+    assert.ok(g.amount([-2, 0, -.5, 0, 2, .5]) / g.amount() > .6 && g.level(1.5, 0) === null && g.level(-1.5, 0) > .15, 'liquid runs downhill and leaves the slope dry');
+    const o = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 1, open: true }); o.fill({ x0: -.4, x1: .4, z0: -.4, z1: .4, y1: .8 }); const o0 = o.count; run(o, 30);
+    assert.ok(o.count > o0 * .5 && most(o, 1) < 1 && outside(o) === 0, 'an open box keeps its floor'); run(o, 210); assert.ok(o.count < o0 * .2, 'and the liquid runs off its edges: ' + o0 + ' drops, then ' + o.count);
+    const s = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 1 }); s.fill({ y1: .4 }); s.gravity = { x: 9.8, y: 0, z: 0 }; run(s, 240);
+    assert.ok(s.amount([.4, 0, -1, 1, 2, 1]) / s.amount() > .9, 'gravity turned sideways piles the liquid on that wall');
+  }
+  {
+    // the same liquid at another size (the graphics chip handing over to this version), copies back from the chip, and the fluid's own dice
+    const f = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2 }); f.fill({ y1: .5 }); run(f, 30); const a0 = f.amount();
+    FLUID.klass = 'low'; f.resize(false); FLUID.klass = 'top'; assert.ok(f.max === 600 && Math.abs(f.amount() / a0 - 1) < .02, 'resized to 600 drops it is the same liquid: ' + a0 + ' and ' + f.amount());
+    run(f, 60); assert.ok(Math.abs(f.level(0, 0) - .5) < .1 && outside(f) === 0, 'which settles where it was');
+    const r = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2 }); r.fill({ y1: .3 }); const d = r.drain({ x: 0, y: 0, z: 0, r: .01 }); run(r, 5);
+    r.mode = 'gpu'; r.cpuOwns = false; const P = r.sim.P.slice(); P[3] = -1; P[7] = 0; const c0 = r.count; r.read(P, r.sim.steps + 1);
+    assert.ok(r.count === c0 - 2 && Math.abs(d.amount - r.drop) < 1e-9, 'a copy back from the graphics chip: one drop down drain 1, one out of the box');
+    const mk = seed => { const g = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2, seed }); g.fill({ x1: 0, y1: .8 }); g.pour({ x: .5, y: 1.5, z: 0, rate: .3 }); run(g, 30); return g.sim.P.slice(0, 400); };
+    const A = mk(7), B = mk(7), C = mk(8); assert.ok(A.every((v, i) => v === B[i]) && A.some((v, i) => v !== C[i]), 'the same seed makes the same liquid, drop for drop');
+    const n0 = f.view.sims.length; f.dispose(); assert.ok(f.view.sims.length === n0 - 1 && !f.mesh.parent, 'dispose()');
+  }
+  FLUID.klass = null;
+  const { HIDDEN } = await import('../src/gamescroll.js');
+  assert.deepEqual(Object.keys(F).filter(k => !HIDDEN.fluid.includes(k)).sort(), ['Fluid', 'KINDS'], 'gs.fluid is Fluid and KINDS: the numbers and test switches stay off it');
+  console.log('gs.fluid: pools, taps, drains, a dam break, cups, a ball, blasts, ground, an open box, sideways gravity, resizing, copies back, seeds ok');
+}
+
+// gs.vision: what the camera knows (vision-know.js): the 80 things, barcode kinds, seeds, the cut to a game's shape, what is in view
+{
+  const K = await import('../src/kit/vision-know.js'), { existsSync, readFileSync } = await import('node:fs');
+  assert.ok(K.NAMES.length === 80 && new Set(K.NAMES).size === 80 && Object.isFrozen(K.NAMES), 'the 80 things, each once');
+  assert.ok(K.nameOf('Cup ') === 'cup' && K.nameOf('phone') === 'cell phone' && K.nameOf('sofa') === 'couch' && K.nameOf('cupp') === null && K.nameOf() === null, 'names: as the model says them, a few other words, null for the rest');
+  // the model's own list of names (when npm run ml has fetched it): ours is the same, in the same order
+  const model = new URL('../ml-cache/mediapipe-1.2.2/efficientdet_lite0.tflite', import.meta.url);
+  if (existsSync(model)) { const buf = readFileSync(model), at = buf.indexOf('person\nbicycle\n'); assert.ok(at > 0, 'the model carries its names'); const theirs = buf.subarray(at, at + 700).toString().split('\n').slice(0, 90).filter(n => n !== '???'); assert.deepEqual(theirs, [...K.NAMES], 'the names are the model\'s own'); }
+  // kinds: both readers' names for a code come to ours
+  assert.ok(K.KINDS.length === 13 && K.kindOf('qr_code') === 'qr' && K.kindOf('QRCode') === 'qr' && K.kindOf('QRCodeModel2') === 'qr' && K.kindOf('ISBN') === 'ean-13' && K.kindOf('ITF14') === 'itf' && K.kindOf('MaxiCode') === null, 'kinds: the phone reader\'s names and ZXing\'s');
+  assert.deepEqual(K.phoneKinds(['qr', 'ean-13']), ['qr_code', 'ean_13']); assert.deepEqual(K.zxingKinds(['qr', 'ean-13']), ['QRCode', 'EAN13']);
+  assert.ok(K.phoneKinds(K.KINDS).length === 13 && K.zxingKinds(K.KINDS).length === 13, 'every kind has a name in both readers');
+  // seeds: whole numbers, the same every time, far apart for neighbours, one for a UPC-A and its EAN-13 form
+  const a = K.seedOf('5012345678900'), b = K.seedOf('5012345678901');
+  assert.ok(Number.isInteger(a) && a >= 0 && a <= 0xffffffff && a === K.seedOf(' 5012345678900 ') && a !== b, 'a seed is a whole number, the same for the same text');
+  let flips = 0; for (let i = 0; i < 32; i++) flips += ((a ^ b) >>> i) & 1; assert.ok(flips >= 8, 'codes one digit apart give seeds far apart (' + flips + ' of 32 bits differ)');
+  assert.equal(K.seedOf('012345678905'), K.seedOf('0012345678905'), 'a 12-digit code and the same code with a 0 in front are one seed');
+  const seeds = new Set(); for (let i = 0; i < 5000; i++) seeds.add(K.seedOf('50' + String(10000000000 + i * 7919))); assert.ok(seeds.size === 5000, '5,000 shop codes, 5,000 seeds');
+  // the cut: the middle of the camera picture, in the game's shape, no bigger than asked and never bigger than the camera gave
+  assert.deepEqual(K.cut(1280, 720, 1, 720), { sx: 280, sy: 0, sw: 720, sh: 720, w: 720, h: 720 }, 'a square out of a wide picture');
+  assert.deepEqual(K.cut(720, 1280, 300 / 460, 720), { sx: 0, sy: (1280 - 720 / (300 / 460)) / 2, sw: 720, sh: 720 / (300 / 460), w: Math.round(720 * 720 / (720 / (300 / 460))), h: 720 }, 'a card shape out of a tall one');
+  assert.deepEqual(K.cut(640, 480, 0, 720), { sx: 0, sy: 0, sw: 640, sh: 480, w: 640, h: 480 }, 'no shape: the camera\'s own, not scaled up');
+  assert.ok(K.cut(1920, 1080, 0, 720).w === 720 && K.cut(1920, 1080, 0, 720).h === 405, 'scaled down to the size asked');
+  // in view: there after two looks running, gone after three without, arrivals reported once
+  const v = new K.InView({ hold: 2, gone: 3 }), see = (...ks) => v.look(new Map(ks.map(k => [k, { k }])));
+  assert.deepEqual(see('cup'), []); assert.ok(!v.on('cup'), 'one look is not enough');
+  assert.deepEqual(see('cup', 'dog'), ['cup']); assert.ok(v.on('cup') && !v.on('dog') && v.it('cup').k === 'cup');
+  assert.deepEqual(see('cup'), [], 'no second arrival'); assert.ok(!v.on('dog'), 'a thing seen once and then not starts again');
+  see(); see(); assert.ok(v.on('cup'), 'two blurry looks do not lose it'); see(); assert.ok(!v.on('cup') && v.all().length === 0, 'three do');
+  see('cup'); assert.deepEqual(see('cup'), ['cup'], 'and it arrives again when it comes back');
+  const v1 = new K.InView({ hold: (k, it) => it.k === 'qr' ? 1 : 2 }); assert.deepEqual(v1.look(new Map([['a', { k: 'qr' }], ['b', { k: 'ean' }]])), ['a'], 'hold can depend on what was seen');
+  // one look's finds, tidied: names, boxes in 0..1, the wanted ones, surest first, mirrored for the front camera
+  const det = (name, score, x, y, w, h) => ({ categories: [{ categoryName: name, score }], boundingBox: { originX: x, originY: y, width: w, height: h } });
+  const res = { detections: [det('cup', .6, 64, 48, 128, 96), det('cell phone', .9, 320, 240, 400, 300), det('dog', .4, 0, 0, 10, 10), det('???', .9, 0, 0, 10, 10)] };
+  let f = K.finds(res, 640, 480, { sure: .5 });
+  assert.ok(f.length === 2 && f[0].name === 'cell phone' && f[1].name === 'cup', 'surest first, the unsure and the nameless left out');
+  assert.ok(Math.abs(f[1].left - .1) < 1e-9 && Math.abs(f[1].top - .1) < 1e-9 && Math.abs(f[1].w - .2) < 1e-9 && Math.abs(f[1].x - .2) < 1e-9 && Math.abs(f[1].y - .2) < 1e-9, 'a box in 0..1 with its middle');
+  assert.ok(Math.abs(f[0].w - .5) < 1e-9 && Math.abs(f[0].h - .5) < 1e-9, 'a box that runs off the picture is cut at its edge');
+  f = K.finds(res, 640, 480, { sure: .5, want: ['cup'], mirror: true }); assert.ok(f.length === 1 && Math.abs(f[0].left - .7) < 1e-9 && Math.abs(f[0].x - .8) < 1e-9, 'only what was wanted; mirrored for the front camera');
+  assert.equal(K.finds(res, 640, 480, { sure: .3, max: 2 }).length, 2, 'max'); assert.deepEqual(K.finds(null, 1, 1), []);
+  // one look's codes, tidied
+  const sq = (x, y, s) => [{ x, y }, { x: x + s, y }, { x: x + s, y: y + s }, { x, y: y + s }];
+  let r = K.reads([{ text: 'HELLO', format: 'qr_code', corners: sq(160, 120, 160) }, { text: '', format: 'QRCode', corners: sq(0, 0, 9) }, { text: 'X', format: 'MaxiCode', corners: [] }], 640, 480);
+  assert.ok(r.length === 1 && r[0].kind === 'qr' && r[0].seed === K.seedOf('HELLO') && Math.abs(r[0].x - .375) < 1e-9 && Math.abs(r[0].w - .25) < 1e-9 && r[0].corners.length === 4, 'a code: kind, seed, where it is');
+  r = K.reads([{ text: '0012345678905', format: 'EAN13', corners: sq(0, 0, 64) }], 640, 480, { kinds: ['ean-13'] });
+  assert.ok(r.length === 1 && r[0].kind === 'upc-a' && r[0].text === '012345678905' && r[0].seed === K.seedOf('012345678905'), 'an EAN-13 that starts with 0 is the 12-digit UPC-A on every phone');
+  assert.equal(K.reads([{ text: 'A', format: 'Code128', corners: [] }], 1, 1, { kinds: ['qr'] }).length, 0, 'kinds not asked for are left out');
+  assert.ok(Math.abs(K.reads([{ text: 'A', format: 'QRCode', corners: sq(0, 0, 64) }], 640, 480, { mirror: true })[0].x - .95) < 1e-9, 'mirrored for the front camera');
+  assert.ok(K.looksFor('qr') === 1 && K.looksFor('ean-13') === 2, 'square codes are believed at one look, stripes at two alike');
+  // the card says "camera" for games that use them
+  const { sensorsOf } = await import('../src/game-modules.js');
+  assert.deepEqual(sensorsOf(['vision.Objects']), ['camera']); assert.deepEqual(sensorsOf(['vision.Scanner']), ['camera']);
+  console.log('gs.vision: the 80 things, barcode kinds, seeds, the cut, in view, finds and reads ok');
+}
+
+// gs.ar phase 2: the room maths (ar-room.js): the phone's depth picture as a mesh that hides virtual things,
+// and the room's light as a sun direction and reflections
+{
+  const R = await import('../src/kit/ar-room.js');
+  const b64 = bytes => Buffer.from(bytes).toString('base64');
+  // a depth picture is 16-bit millimetres, low byte first
+  assert.deepEqual([...R.depthOf(b64([0x34, 0x12, 0xff, 0xff, 0, 0]), 4)], [0x1234, 65535, 0, 0], 'depth pictures decode (and a short one is padded with "not known")');
+
+  // a pretend room seen by a camera 1.3 m up, looking 52 degrees down (so the whole picture is within reach): a floor, and a box 1 m ahead
+  const pitch = -.9, cp = Math.cos(pitch), sp = Math.sin(pitch), pose = [1, 0, 0, 0, 0, cp, sp, 0, 0, -sp, cp, 0, .1, 0, 0, 1];
+  const f = 1 / Math.tan(Math.PI / 6), asp = .5, proj = [f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, -1.001, -1, 0, 0, -.1, 0];
+  const W = 24, H = 48, FLOORY = -1.3, box = { x0: -.4, x1: .4, y1: -.6, z0: -1.2, z1: -.9 };
+  const ray = (i, j) => { const cx = (2 * i / (W - 1) - 1) / proj[0], cy = (1 - 2 * j / (H - 1)) / proj[5]; return [pose[0] * cx + pose[4] * cy - pose[8], pose[1] * cx + pose[5] * cy - pose[9], pose[2] * cx + pose[6] * cy - pose[10]]; };   // (one metre along the camera's view)
+  const cast = (d, o = [pose[12], pose[13], pose[14]]) => {
+    let best = d[1] < 0 ? (FLOORY - o[1]) / d[1] : Infinity;
+    const lo = [box.x0, FLOORY, box.z0], hi = [box.x1, box.y1, box.z1]; let t0 = 0, t1 = best;
+    for (let k = 0; k < 3; k++) { const a = (lo[k] - o[k]) / d[k], c = (hi[k] - o[k]) / d[k]; t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c)); }
+    return t0 <= t1 && t0 > 0 ? { t: t0, box: true } : { t: best, box: false };
+  };
+  const mm = new Uint16Array(W * H), what = [];
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const h = cast(ray(i, j)); mm[j * W + i] = h.t < 60 ? Math.round(h.t * 1000) : 0; what.push(h); }   // (t is along a ray of depth 1: it is the depth)
+  const pos = new Float32Array(W * H * 3), idx = new Uint16Array((W - 1) * (H - 1) * 6);
+  // with no mapped surfaces every spot is set back a little along its line of sight, and no further
+  let n = R.depthMesh(mm, W, H, pose, proj, pos, idx);
+  assert.equal(n, (W - 1) * (H - 1) * 6, 'a whole depth picture makes a whole mesh');
+  let worst = 0, behind = 0;
+  for (let k = 0; k < W * H; k++) {
+    const d = ray(k % W, k / W | 0), t = mm[k] / 1000, px = pose[12] + d[0] * t, py = pose[13] + d[1] * t, pz = pose[14] + d[2] * t;
+    const off = Math.hypot(pos[k * 3] - px, pos[k * 3 + 1] - py, pos[k * 3 + 2] - pz), far = Math.hypot(pos[k * 3] - pose[12], pos[k * 3 + 1] - pose[13], pos[k * 3 + 2] - pose[14]) - Math.hypot(d[0], d[1], d[2]) * t;
+    worst = Math.max(worst, off / (.02 + .02 * t * Math.hypot(d[0], d[1], d[2]) + .002)); if (far > 0) behind++;
+  }
+  assert.ok(worst < 1.6 && behind === W * H, `every spot sits just behind where the phone measured it (${worst.toFixed(2)}, ${behind})`);
+  // with the floor mapped, the floor's spots go 3 cm under it (so things standing on it and their shadows show), the box's stay
+  n = R.depthMesh(mm, W, H, pose, proj, pos, idx, { flats: [R.floorFlat(FLOORY)] });
+  let lowF = Infinity, highF = -Infinity, boxTop = 0, boxN = 0;
+  for (let k = 0; k < W * H; k++) { const y = pos[k * 3 + 1]; if (what[k].box) { if (Math.abs(y - box.y1) < .08) boxTop++; boxN++; } else if (mm[k] < 4000) { lowF = Math.min(lowF, y); highF = Math.max(highF, y); } }
+  assert.ok(Math.abs(lowF - (FLOORY - .03)) < 1e-3 && Math.abs(highF - (FLOORY - .03)) < 1e-3, `floor spots lie 3 cm under the mapped floor (${lowF.toFixed(3)} to ${highF.toFixed(3)})`);
+  assert.ok(boxN > 40 && boxTop > 10, `the box still stands above it (${boxN} spots, ${boxTop} on its top)`);
+  // depth that is 2.5 cm out here and there still never cuts into the floor
+  const rnd = (s => () => ((s = Math.imul(s ^ s >>> 15, 2246822507) ^ Math.imul(s ^ s >>> 13, 3266489909), (s ^= s >>> 16) >>> 0) / 4294967296))(7);
+  const noisy = mm.map(v => Math.max(1, Math.round(v + (rnd() - .5) * 50)));
+  R.depthMesh(noisy, W, H, pose, proj, pos, idx, { flats: [R.floorFlat(FLOORY)] });
+  let above = 0; for (let k = 0; k < W * H; k++) if (!what[k].box && mm[k] < 4000 && pos[k * 3 + 1] > FLOORY - .02) above++;
+  assert.equal(above, 0, 'noisy depth: no floor spot comes up through the floor');
+  // an estimated floor that is 15 cm too low still has the real floor's spots moved under it
+  R.depthMesh(mm, W, H, pose, proj, pos, idx, { flats: [R.floorFlat(FLOORY - .15, .25)] });
+  above = 0; for (let k = 0; k < W * H; k++) if (!what[k].box && mm[k] < 4000 && pos[k * 3 + 1] > FLOORY - .15 - .02) above++;
+  assert.equal(above, 0, 'an estimated floor is given more room');
+  // spots the phone knows nothing about, or too near or too far to trust, leave holes
+  const holes = Uint16Array.from(mm); holes[5 * W + 5] = 0; holes[20 * W + 10] = 100; holes[30 * W + 3] = 9000;
+  n = R.depthMesh(holes, W, H, pose, proj, pos, idx);
+  assert.equal(n, ((W - 1) * (H - 1) * 2 - 18) * 3, 'three unknown spots take six triangles each out of the mesh');
+  const gone = new Set([5 * W + 5, 20 * W + 10, 30 * W + 3]); let used = 0; for (let k = 0; k < n; k++) if (gone.has(idx[k])) used++;
+  assert.equal(used, 0, 'no triangle uses an unknown spot'); assert.ok(pos.every(v => v === v), 'every number is a number for the graphics chip');
+  // a mapped wall: spots on it go 3 cm behind it, inside its edges only
+  const wallPose = [1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, -2, 1];   // y axis (0, 0, 1): it faces the camera
+  const flatW = R.flatOf(wallPose, 1, 1), level = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], wd = new Uint16Array(9).fill(2000), wp = new Float32Array(27), wi = new Uint16Array(24);
+  R.depthMesh(wd, 3, 3, level, proj, wp, wi, { flats: [flatW] });
+  assert.ok(Math.abs(wp[4 * 3 + 2] - -2.03) < 1e-3, `a spot on the wall goes 3 cm behind it (${wp[4 * 3 + 2].toFixed(3)})`);
+  assert.ok(Math.abs(wp[2] - -2.03) > .02, 'a spot beyond the wall\'s edge is left to the usual set-back');
+
+  // the room's light: packed as the phone sends it and opened again
+  const N = 16, env = { size: N, rgb: new Float32Array(6 * N * N * 3) }, sun = [-.6, .7, .39], sl = Math.hypot(...sun);
+  const face = (fc, a, b) => fc === 0 ? [1, -b, -a] : fc === 1 ? [-1, -b, a] : fc === 2 ? [a, 1, b] : fc === 3 ? [a, -1, -b] : fc === 4 ? [a, -b, 1] : [-a, -b, -1];
+  const fill = (e, lamp) => { let at = 0; for (let fc = 0; fc < 6; fc++) for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) { const v = face(fc, (c + .5) / N * 2 - 1, (r + .5) / N * 2 - 1), l = Math.hypot(...v); let x = v[1] > 0 ? .5 : .2; if (lamp && (v[0] * lamp[0] + v[1] * lamp[1] + v[2] * lamp[2]) / l / Math.hypot(...lamp) > .93) x = 14; e.rgb[at++] = x; e.rgb[at++] = x * .9; e.rgb[at++] = x * .7; } return e; };
+  fill(env, sun);
+  const back = R.envOf(R.envPack(env)); let err = 0; for (let i = 0; i < env.rgb.length; i++) err = Math.max(err, Math.abs(back.rgb[i] - env.rgb[i]) / (env.rgb[i] + .05));
+  assert.ok(back.size === N && err < .08, `the room's picture survives the trip from the phone (${err.toFixed(3)})`);
+  // looking the picture up by direction lands on the dot that direction came from
+  const c3 = [0, 0, 0]; let wrong = 0;
+  for (let fc = 0; fc < 6; fc++) for (const [c, r] of [[0, 0], [15, 0], [7, 8], [3, 12], [15, 15]]) { const v = face(fc, (c + .5) / N * 2 - 1, (r + .5) / N * 2 - 1); R.envAt(env, v[0] * 3, v[1] * 3, v[2] * 3, c3); if (c3[0] !== env.rgb[((fc * N + r) * N + c) * 3]) wrong++; }
+  assert.equal(wrong, 0, 'a direction finds its own dot on every face');
+  // where the light is: the lamp's direction, and how much of the light it is
+  const L = R.envLight(back), ang = Math.acos((L.x * sun[0] + L.y * sun[1] + L.z * sun[2]) / sl) * 180 / Math.PI;
+  assert.ok(ang < 6 && L.sharp > .3, `the lamp is found (${ang.toFixed(1)} degrees off, sharp ${L.sharp.toFixed(2)})`);
+  const even = R.envLight(fill({ size: N, rgb: new Float32Array(env.rgb.length) }, null));
+  assert.ok(even.sharp === 0 && Math.abs(even.mean - (.5 + .2) / 2 * (.2126 + .7152 * .9 + .0722 * .7)) < .01, `an evenly lit room has no "where the light is" (mean ${even.mean.toFixed(3)})`);
+  // two lamps on opposite sides: bright, but not from any one place
+  const two = fill({ size: N, rgb: new Float32Array(env.rgb.length) }, [1, .3, 0]); { const o = fill({ size: N, rgb: new Float32Array(env.rgb.length) }, [-1, .3, 0]); for (let i = 0; i < two.rgb.length; i++) two.rgb[i] = Math.max(two.rgb[i], o.rgb[i]); }
+  assert.ok(R.envLight(two).sharp < .5 * L.sharp, 'two lamps on opposite sides are a weaker "where" than one');
+  // painting it on the ball of reflections: turned into game space, levelled, and capped
+  const out = new Float32Array(6), gz = R.turnY(sun[0], sun[2], -.7);   // the lamp's direction in a game whose "ahead" is .7 radians round
+  R.envPaint(back, [gz[0], sun[1], gz[1], -gz[0], -sun[1], -gz[1]], .7, out, { level: 1.8, cap: 24 });
+  assert.ok(out[0] > 20 && out[0] <= 1.8 * 24 + 1e-3 && out[3] < 1.8, `the lamp is where it should be after the turn (${out[0].toFixed(1)} against ${out[3].toFixed(2)} opposite)`);
+  const flat = fill({ size: N, rgb: new Float32Array(env.rgb.length) }, null); flat.rgb.fill(.37); R.envPaint(flat, [0, 1, 0, 1, 0, 0], 2, out, { level: 1.8 });
+  assert.ok(Math.abs(out[0] - 1.8) < 1e-3 && Math.abs(out[3] - 1.8) < 1e-3, 'an even room is painted at the level asked for, however bright the room');
+  // has the light changed? only where it is counts, not how bright the room is
+  const dim = { size: N, rgb: back.rgb.map(v => v * .4) }, moved = R.envOf(R.envPack(fill({ size: N, rgb: new Float32Array(env.rgb.length) }, [.7, .6, -.2])));
+  assert.ok(R.envChange(back, L.mean, back, L.mean) === 0 && R.envChange(back, L.mean, dim, L.mean * .4) < .01 && R.envChange(back, L.mean, moved, R.envLight(moved).mean) > .12, 'a dimmer room is the same light, a lamp moved is not');
+  // the sun for a real light: never lower than 25 degrees, the same way round the room
+  const s3 = [0, 0, 0];
+  R.sunDir(-1, 1, .2, s3); assert.ok(Math.abs(Math.hypot(...s3) - 1) < 1e-9 && s3[1] > .69 && s3[0] < -.69, 'a high light is used as it is');
+  R.sunDir(0, .05, 1, s3); assert.ok(Math.abs(s3[1] - .42) < 1e-9 && s3[2] > .9 && Math.abs(Math.hypot(...s3) - 1) < 1e-9, 'a low light is lifted');
+  R.sunDir(.5, -.8, 0, s3); assert.ok(Math.abs(s3[1] - .42) < 1e-9 && s3[0] > .9, 'a light from below (a lamp on the floor) too');
+  R.sunDir(0, -1, 0, s3); assert.deepEqual(s3, [0, 1, 0], 'and with nothing to go on, the sun is overhead');
+  console.log('gs.ar phase 2: depth pictures to a mesh (floors, walls, holes, noise), the room\'s light (packed, looked up, the lamp found, painted, changed) and the sun for it ok');
 }
 
 // gs.outdoors: the meadow (grass tufts that keep around the camera)

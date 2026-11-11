@@ -5,15 +5,12 @@
 // Kit use only: games reach it as gs.models.material.
 import { JS } from './ops.js';
 import { RECIPES, NAMES } from './recipes.js';
+import { seeded, paintRecipe } from './recipe-paint.js';
 import * as cache from './cache.js';
 import { pbr, surface } from '../hd3d.js';
+import { pause, built, later } from '../slices.js';
 
-// the recipe's noise reseeded: every hash gets the seed added, so seed 3 is a different plank pattern
-export function seeded(O, seed) {
-  if (!seed) return O;
-  const k = (seed * 7919) | 0;
-  return { ...O, noise: (p, P, s = 0) => O.noise(p, P, s + k), fbm: (p, P, oct, s = 0) => O.fbm(p, P, oct, s + k), cells: (p, P, s = 0, j) => O.cells(p, P, s + k, j), rand: (x, y, s = 0) => O.rand(x, y, s + k) };
-}
+export { seeded };
 export function lookOf(name, o) {
   const R = RECIPES[name], look = {};
   for (const k in R.look) look[k] = o[k] ?? (k === 'colour' ? o.color : undefined) ?? R.look[k];
@@ -22,30 +19,22 @@ export function lookOf(name, o) {
 const sets = new Map();   // this run's sets, by key
 /** The texture set for a recipe (as surface() returns), painted or read back from the saved bakes. */
 export function bakeSet(name, look, size, seed) {
-  const R = RECIPES[name], key = `${name}|${size}|${seed}|${Object.values(look).join(',')}|1`;
-  let set = sets.get(key); if (set) return set;
-  const saved = cache.get(key);
+  const key = `${name}|${size}|${seed}|${Object.values(look).join(',')}|1`;
+  let set = sets.get(key); if (set) { if (set.core.wait) later(set.core.wait); return set; }   // (still with a worker: this card waits for it too)
+  pause('Textures');   // (while a card loads, a frame may go by before each new recipe: slices.js)
+  const saved = cache.get(key), K = {}; for (const k in look) K[k] = JS.rgb(look[k]);
   set = surface(size, g => {
     if (saved) {   // drawn back from last launch's pictures
       const L = saved.layers; g.col.drawImage(L.col, 0, 0); g.h.drawImage(L.h, 0, 0); g.r.drawImage(L.r, 0, 0); if (L.m) g.m.drawImage(L.m, 0, 0);
       return;
     }
-    const O = seeded(JS, seed), K = {}; for (const k in look) K[k] = O.rgb(look[k]);
-    const n = size * size, C = g.col.createImageData(size, size), H = g.h.createImageData(size, size), Rr = g.r.createImageData(size, size), M = g.m.createImageData(size, size);
-    const p = { x: 0, y: 0 }, f = R.P / size;
-    for (let y = 0, i = 0; y < size; y++) for (let x = 0; x < size; x++, i += 4) {
-      p.x = (x + .5) * f; p.y = (y + .5) * f;
-      const r = R.f(O, p, K), c = r.col;
-      C.data[i] = c[0] * 255; C.data[i + 1] = c[1] * 255; C.data[i + 2] = c[2] * 255; C.data[i + 3] = 255;
-      const h = Math.min(1, Math.max(0, r.h)) * 255; H.data[i] = H.data[i + 1] = H.data[i + 2] = h; H.data[i + 3] = 255;
-      const ro = Math.min(1, Math.max(0, r.rough)) * 255; Rr.data[i] = Rr.data[i + 1] = Rr.data[i + 2] = ro; Rr.data[i + 3] = 255;
-      const me = Math.min(1, Math.max(0, r.metal)) * 255; M.data[i] = M.data[i + 1] = M.data[i + 2] = me; M.data[i + 3] = 255;
-    }
-    void n;
-    g.col.putImageData(C, 0, 0); g.h.putImageData(H, 0, 0); g.r.putImageData(Rr, 0, 0); g.m.putImageData(M, 0, 0);
-  }, { metal: true, strength: 2 });
-  if (!saved) cache.put(key, set.canvases);
-  sets.set(key, set);
+    const L = paintRecipe(name, K, size, seed), put = (ctx, d) => ctx.putImageData(new ImageData(d, size, size), 0, 0);
+    put(g.col, L.col); put(g.h, L.h); put(g.r, L.r); put(g.m, L.m);
+    // (worker: while a card loads, a recipe that isn't saved yet is painted off the main thread; the same pixels)
+  }, { metal: true, strength: 2, worker: saved ? null : ['recipe', { name, K, size, seed }] });
+  // (kept for next time once its layers are in: a worker may still be painting them)
+  if (!saved) { const put = () => cache.put(key, set.canvases), w = set.core.wait; if (w) w.then(put); else put(); }
+  sets.set(key, set); built();
   return set;
 }
 

@@ -4,6 +4,8 @@
 // up), you cut out of the camera picture and put inside the game (CutOut), or hand signs (Signs:
 // thumbs up, victory, open palm...). Body, CutOut and Signs run in the web view (MediaPipe on the
 // graphics chip); Face and Hands use the phone's AI chip in the apps.
+// And out of the back of the phone: Objects spots 80 everyday things by name (scavenger hunts), and
+// Scanner reads barcodes and QR codes into seeds (a creature from every cereal box). See the end of the file.
 //
 //   const { Face, Hands } = gs.vision;
 //   reset() { face = new Face(); }            // make it in make() or reset(): the library loads first
@@ -26,6 +28,8 @@ import { register } from './cleanup.js';
 import { ML_VERSION } from './vision-files.js';
 import { npuInfo, loadModel, npuCamera, npuCameraDone, engine } from './npu.js';
 import { FacePipe, HandPipe } from './vision-npu.js';
+import { NAMES, KINDS, nameOf, phoneKinds, zxingKinds, seedOf, cut, InView, finds, reads, looksFor } from './vision-know.js';
+import { runCode, canRunCode } from './jobs.js';
 
 const BASE = String((import.meta.env && import.meta.env.VITE_GAMES_URL) || '').replace(/\/+$/, '');
 const ML = BASE ? `${BASE}/ml/${ML_VERSION}/` : `ml/${ML_VERSION}/`;   // no games server (dev, tests): served with the app (npm run ml)
@@ -64,7 +68,15 @@ const TASKS = {
   body: { task: 'PoseLandmarker', file: 'pose_landmarker_lite.task', opts: t => ({ runningMode: 'VIDEO', numPoses: t.max || 1 }) },
   cutout: { task: 'ImageSegmenter', file: 'selfie_segmenter.tflite', opts: () => ({ runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false }) },
   signs: { task: 'GestureRecognizer', file: 'gesture_recognizer.task', opts: t => ({ runningMode: 'VIDEO', numHands: t.max || 2 }) },
+  objects: { task: 'ObjectDetector', file: 'efficientdet_lite0.tflite', opts: t => ({ runningMode: 'VIDEO', maxResults: Math.max(5, t.max * 2), scoreThreshold: Math.min(.3, t.sure), ...(t.want ? { categoryAllowlist: t.want } : {}) }) },
 };
+// makes the MediaPipe task a tracker runs on the web (on the graphics chip where it can, else the CPU)
+async function buildTask(t) {
+  if (t.L.native) t.L = await mediapipe();
+  const { m, files } = t.L, k = TASKS[t.kind], Task = m[k.task];
+  const make = delegate => Task.createFromOptions(files, { baseOptions: { modelAssetPath: ML + k.file, delegate }, ...k.opts(t) });
+  return t.task = await make('GPU').catch(() => make('CPU'));
+}
 
 class Tracker {
   constructor(kind) { this.L = lib.get(); this.kind = kind; this.ready = false; this.failed = null; this.running = false; this.lastT = -1; }
@@ -101,12 +113,7 @@ class Tracker {
     this.native = { pipe: this.kind === 'face' ? new FacePipe(engine) : new HandPipe(engine, { max: this.max || 2 }), last: -1, busy: false, fresh: null };
     this.backend = 'npu'; this.ready = true;
   }
-  async makeTask() {
-    if (this.L.native) this.L = await mediapipe();
-    const { m, files } = this.L, k = TASKS[this.kind], Task = m[k.task];
-    const make = delegate => Task.createFromOptions(files, { baseOptions: { modelAssetPath: ML + k.file, delegate }, ...k.opts(this) });
-    return this.task = await make('GPU').catch(() => make('CPU'));
-  }
+  makeTask() { return buildTask(this); }
   stop() {
     if (!this.running) return;
     this.running = false; this.ready = false; live.delete(this);
@@ -319,3 +326,228 @@ export class Signs extends Tracker {
     if (this.held === 2 && s !== this.sign) { this.sign = s; if (s !== 'none') this.made = s; }
   }
 }
+
+/* ---------- a camera that knows things: everyday objects (Objects) and barcodes (Scanner) ---------- */
+
+// These two look out of the back of the phone (or the front, { camera: 'front' }) a few times a second
+// and keep their own picture of what the camera shows, cut to the shape the game draws it in, so the
+// game draws `picture` as it is and every position lines up with it.
+
+// one camera stream per side of the phone, shared by whoever is looking through it
+const eyes = {};
+async function openEye(facing) {
+  const e = eyes[facing] ||= { users: 0, cam: null, ask: null };
+  e.users++;
+  try {
+    e.cam ||= await (e.ask ||= (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+        try { const video = document.createElement('video'); video.playsInline = true; video.muted = true; video.srcObject = stream; await video.play(); return { video, stream }; }
+        catch (err) { stream.getTracks().forEach(t => t.stop()); throw err; }   // (a camera that won't play is let go, so its light goes off)
+      } finally { e.ask = null; }
+    })());
+    return e.cam;
+  } catch (err) { e.users = Math.max(0, e.users - 1); throw err; }
+}
+function closeEye(facing) {
+  const e = eyes[facing]; if (!e) return;
+  e.users = Math.max(0, e.users - 1);
+  if (!e.users && e.cam) { e.cam.stream.getTracks().forEach(t => t.stop()); e.cam = null; }
+}
+
+class Looker {
+  constructor({ camera = 'back', shape = 0, every = .2, size = 720 } = {}) {
+    this.facing = camera === 'front' ? 'user' : 'environment'; this.mirror = camera === 'front';
+    this.shape = shape; this.every = every; this.size = size;
+    this.ready = false; this.failed = null; this.running = false; this.held = false;
+    this.video = null; this.lastT = -1; this.lookT = -1e9; this.busy = false; this.drawn = false; this.fresh = false; this.box = null;
+    this.canvas = document.createElement('canvas'); this.ctx = this.canvas.getContext('2d');
+  }
+  /** Asks for the camera and gets the reader ready (call it from a tap). Safe to call again. failed: why it couldn't. */
+  async start() {
+    if (this.running) return this;
+    this.running = true; this.failed = null; live.add(this);
+    const [c, p] = await Promise.allSettled([openEye(this.facing), this.prepare()]);
+    const ok = c.status === 'fulfilled' && p.status === 'fulfilled';
+    if (!ok || !this.running) {
+      if (c.status === 'fulfilled') closeEye(this.facing);
+      if (!ok && this.running) { this.failed = c.reason || p.reason || new Error('camera'); this.running = false; live.delete(this); }
+      return this;
+    }
+    this.video = c.value.video; this.held = true; this.ready = true;
+    return this;
+  }
+  stop() {
+    if (!this.running) return;
+    this.running = false; this.ready = false; live.delete(this);
+    if (this.held) { this.held = false; closeEye(this.facing); }
+    this.video = null; this.drawn = false; this.lastT = -1; this.lookT = -1e9; this.forget();
+  }
+  /** Call every update: keeps the picture up to date and looks at it every `every` seconds. True when a look has just come back. */
+  update() {
+    const v = this.video; if (!this.ready || !v || v.readyState < 2 || !v.videoWidth) return false;
+    const t = v.currentTime;
+    if (t !== this.lastT) { this.lastT = t; this.snap(v); }
+    if (!this.busy && this.drawn && Math.abs(t - this.lookT) >= this.every) {
+      this.lookT = t; this.busy = true;
+      Promise.resolve().then(() => this.look(v)).then(() => { this.fresh = true; }, e => { this.error = e; }).finally(() => { this.busy = false; });   // (a look that fails is skipped: error keeps why, for debugging)
+    }
+    const f = this.fresh; this.fresh = false; return f;
+  }
+  // the newest camera frame, cut to the game's shape, into our own canvas (flipped like a mirror for the front camera)
+  snap(v) {
+    const b = this.box = cut(v.videoWidth, v.videoHeight, this.shape, this.size), cv = this.canvas;
+    if (cv.width !== b.w || cv.height !== b.h) { cv.width = b.w; cv.height = b.h; }
+    this.paint(this.ctx, v, b.w, b.h, this.mirror); this.drawn = true;
+  }
+  paint(c, v, w, h, mirror) {
+    const b = this.box;
+    if (mirror) { c.save(); c.translate(w, 0); c.scale(-1, 1); c.drawImage(v, b.sx, b.sy, b.sw, b.sh, 0, 0, w, h); c.restore(); }
+    else c.drawImage(v, b.sx, b.sy, b.sw, b.sh, 0, 0, w, h);
+  }
+  // the picture a reader looks at: never flipped (a mirrored barcode is a different barcode), no bigger than `most` on its long side
+  plain(v, most = 1e9, read = false) {
+    const b = this.box, k = Math.min(1, most / Math.max(b.w, b.h)), w = Math.max(1, Math.round(b.w * k)), h = Math.max(1, Math.round(b.h * k));
+    if (!this.mirror && k === 1 && !read) return this.canvas;
+    const key = read ? 'readCanvas' : 'plainCanvas';
+    const cv = this[key] ||= document.createElement('canvas'), c = this[key + 'Ctx'] ||= cv.getContext('2d', read ? { willReadFrequently: true } : undefined);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    this.paint(c, v, w, h, false);
+    return cv;
+  }
+  /** The camera picture (a canvas, already the shape you asked for): c.drawImage(eyes.picture, 0, 0, W, H). null until the camera is running. */
+  get picture() { return this.drawn ? this.canvas : null; }
+}
+
+/**
+ * Spots everyday things with the back camera: 80 of them, from 'cup', 'banana' and 'book' to 'dog',
+ * 'chair' and 'teddy bear' (Objects.names). For scavenger hunts and "show me a...".
+ *   new Objects({ want: ['cup', 'banana'], sure: .5, max: 5, every: .25, shape: W / H, camera: 'back' })
+ * want: the names to look for (leave out for all 80); sure: how sure before a thing counts (0..1);
+ * max: how many things at once; every: seconds between looks; shape: the width / height the game draws
+ * the picture at; camera: 'back' or 'front' (mirrored like a selfie).
+ *   seen(name)    true once for each time one comes into view (seen() with no name: which one, or null)
+ *   seeing(name)  how sure it is that one is in view now (0 when not)
+ *   count(name)   how many of them are in the picture now
+ *   list          what this look found: [{ name, sure, x, y (its middle), w, h, left, top }] in 0..1 of the picture
+ *   top           the surest of them (or null); found: anything at all
+ *   picture       the camera picture to draw (a canvas of the shape asked for)
+ * Runs in the web view (MediaPipe, on the phone); the model is about 7 MB, downloaded the first time
+ * a game that uses it is played. Give players another way too: not everyone has a banana.
+ */
+export class Objects extends Looker {
+  constructor({ want = null, sure = .5, max = 5, every = .25, shape = 0, camera = 'back', size = 720 } = {}) {
+    super({ camera, shape, every, size });
+    this.L = lib.get(); this.kind = 'objects';
+    if (want) for (const n of want) if (!nameOf(n)) throw new Error(`gs.vision.Objects doesn't know "${n}": see Objects.names for the 80 things it does`);
+    this.want = want ? [...new Set(want.map(nameOf))] : null; this.sure = sure; this.max = max;
+    this.view = new InView({ hold: 2, gone: 3 }); this.news = [];
+    this.list = []; this.top = null; this.found = false;
+  }
+  prepare() { return this.task || (this.making ||= buildTask(this).finally(() => { this.making = null; })); }
+  look(v) {
+    const src = this.plain(v);
+    this.take(finds(this.task.detectForVideo(src, performance.now()), src.width, src.height, this));
+  }
+  // one look's finds (from finds()): the list for drawing, and what has come into view
+  take(list) {
+    this.list = list; this.top = list[0] || null; this.found = list.length > 0;
+    const best = new Map(); for (const o of list) if (!best.has(o.name)) best.set(o.name, o);
+    for (const n of this.view.look(best)) { if (!this.news.includes(n)) this.news.push(n); }
+  }
+  forget() { this.view.clear(); this.news.length = 0; this.list = []; this.top = null; this.found = false; }
+  seen(name) {
+    if (name === undefined) return this.news.length ? this.news.shift() : null;
+    const i = this.news.indexOf(nameOf(name)); if (i < 0) return false;
+    this.news.splice(i, 1); return true;
+  }
+  seeing(name) { return this.view.it(nameOf(name))?.sure || 0; }
+  count(name) { const n = nameOf(name); return this.list.reduce((a, o) => a + (o.name === n), 0); }
+}
+/** The 80 things Objects knows, by name. */
+Objects.names = NAMES;
+
+// The barcode reader: the phone's own where the web view has one (BarcodeDetector: Android), else
+// ZXing (zxing-wasm, MIT; ZXing-C++, Apache-2.0), which ships inside the app and loads on first use.
+// ZXing reads in a background worker (code-worker.js), so a look never holds a frame up; where there
+// are no workers it reads here.
+let phoneHas = null;
+const phoneFormats = () => phoneHas ||= (async () => {
+  try { return typeof BarcodeDetector === 'function' ? await BarcodeDetector.getSupportedFormats() : []; } catch { return []; }
+})();
+let zx = null;
+const zxing = () => zx ||= (async () => {
+  const [m, wasm] = await Promise.all([import('zxing-wasm/reader'), import('zxing-wasm/reader/zxing_reader.wasm?url')]);
+  await m.prepareZXingModule({ overrides: { locateFile: (path, prefix) => path.endsWith('.wasm') ? wasm.default : prefix + path }, fireImmediately: true });
+  return m;
+})().catch(e => { zx = null; throw e; });
+const corners = r => [r.position.topLeft, r.position.topRight, r.position.bottomRight, r.position.bottomLeft];
+
+/**
+ * Reads barcodes and QR codes with the back camera, to turn anything in the house into a creature, a
+ * level or a loot drop: the same code gives the same seed on every phone.
+ *   new Scanner({ kinds: ['qr', 'ean-13'], every: .15, shape: 1, camera: 'back' })
+ * kinds: which to read (leave out for all of Scanner.kinds: 'qr', 'ean-13', 'ean-8', 'upc-a', 'upc-e',
+ * 'code-128', 'code-39', 'code-93', 'codabar', 'itf', 'data-matrix', 'aztec', 'pdf417').
+ *   scan()     the code that has just been read, once for each time one comes into view (else null):
+ *              { text, kind, seed, x, y (its middle), w, h, left, top, corners } in 0..1 of the picture
+ *   code       the code in view now (or null); list: all of them; found: there is one
+ *   picture    the camera picture to draw (a canvas of the shape asked for)
+ *   backend    'phone' (the phone's own reader) or 'zxing'
+ * Scanner.seed(text) gives the seed for any text, so a typed word can stand in for a code: always
+ * give players without a barcode to hand (or a camera) such a way in.
+ */
+export class Scanner extends Looker {
+  constructor({ kinds = null, every = .15, shape = 0, camera = 'back', size = 720, max = 1 } = {}) {
+    super({ camera, shape, every, size });
+    if (kinds) for (const k of kinds) if (!KINDS.includes(k)) throw new Error(`gs.vision.Scanner doesn't read "${k}": see Scanner.kinds`);
+    this.kinds = kinds ? [...new Set(kinds)] : [...KINDS]; this.max = max;
+    // a shop's 12-digit code can come back as either of these, so asking for one asks the reader for both
+    this.ask = this.kinds.includes('ean-13') || this.kinds.includes('upc-a') ? [...new Set([...this.kinds, 'ean-13', 'upc-a'])] : this.kinds;
+    this.opts = { formats: zxingKinds(this.ask), tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, textMode: 'Plain', maxNumberOfSymbols: max };
+    this.view = new InView({ hold: (k, c) => looksFor(c.kind), gone: 4 }); this.news = [];
+    this.list = []; this.code = null; this.found = false; this.backend = null; this.phone = null; this.zx = null; this.worker = false; this.missed = 0;
+  }
+  async prepare() {
+    if (this.backend) return;
+    const have = await phoneFormats(), formats = phoneKinds(this.ask);
+    if (formats.length && formats.every(f => have.includes(f))) {
+      try { this.phone = new BarcodeDetector({ formats }); this.backend = 'phone'; return; } catch { /* ours instead */ }
+    }
+    await this.ours();
+  }
+  // ZXing: in its worker (a first job with no picture gets it loaded), or here where a worker can't be had
+  async ours() {
+    this.phone = null;
+    if (canRunCode()) { try { await runCode({}); this.worker = true; this.backend = 'zxing'; return; } catch { /* here instead */ } }
+    this.worker = false; this.zx = await zxing(); this.backend = 'zxing';
+  }
+  async look(v) {
+    let list, w, h;
+    if (this.phone) {
+      const src = this.plain(v); w = src.width; h = src.height;
+      try { list = (await this.phone.detect(src)).map(b => ({ text: b.rawValue, format: b.format, corners: b.cornerPoints })); }
+      catch (e) { await this.ours(); return; }   // the phone's reader has given up (its files aren't on this phone): ours from here on
+    } else {
+      const src = this.plain(v, 800, true); w = src.width; h = src.height;
+      const img = this.readCanvasCtx.getImageData(0, 0, w, h);
+      if (this.worker) {
+        try { list = await runCode({ pixels: img.data.buffer, w, h, opts: this.opts }, [img.data.buffer]); this.missed = 0; }
+        catch (e) { if (++this.missed >= 2 || !canRunCode()) { this.worker = false; this.zx = await zxing(); } return; }   // a worker that keeps failing: read here from now on
+      } else list = (await this.zx.readBarcodes(img, this.opts)).map(r => ({ text: r.text, format: r.format, corners: corners(r) }));
+    }
+    if (this.running) this.take(reads(list, w, h, this));
+  }
+  // one look's codes (from reads()): what is in view, and what has just been read
+  take(list) {
+    const now = new Map(); for (const c of list) now.set(c.kind + '|' + c.text, c);
+    for (const k of this.view.look(now)) { this.news.push(now.get(k)); if (this.news.length > 8) this.news.shift(); }
+    this.list = this.view.all(); this.code = this.list[0] || null; this.found = !!this.code;
+  }
+  forget() { this.view.clear(); this.news.length = 0; this.list = []; this.code = null; this.found = false; }
+  scan() { return this.news.shift() || null; }
+}
+/** The kinds of code Scanner reads. */
+Scanner.kinds = KINDS;
+/** The seed a text gives (the same one a code with that text gives): a whole number, 0 to 4,294,967,295. */
+Scanner.seed = seedOf;

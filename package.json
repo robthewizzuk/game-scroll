@@ -134,6 +134,7 @@
     "wavefunctioncollapse": "2.1.0",
     "wordlist-english": "1.2.1",
     "yoga-layout": "3.2.1",
-    "yuka": "0.7.8"
+    "yuka": "0.7.8",
+    "zxing-wasm": "3.1.6"
   }
 }
