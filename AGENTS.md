@@ -184,7 +184,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   `gs.vehicles` (`Car`, `Kart`, `Laps`; `World3D.vehicle()` for suspension), `gs.level3d.Level3D(text)`, `gs.sky`
   (`Sky` time of day, `Weather` rain/snow/storm).
 - Action and adventure: `gs.combat` (`Gun`, `Shots`, `arc`/`lob`, `Health`, `Markers`, `Explosives`), `gs.tactics`
-  (`CoverMap`, `Squad`, `Route`), `gs.climb` (`Ledges`, `Climber`, `Rope`), `gs.poses` (`figure`, `person` skinned with a face, `Rig` with `blend`/`blend2` blend spaces and `plant` foot IK), `gs.missions`
+  (`CoverMap`, `Squad`, `Route`), `gs.climb` (`Ledges`, `Climber`, `Rope`), `gs.poses` (`figure`, `person` skinned with a face, `Rig` with `blend`/`blend2` blend spaces and `plant` foot IK, `LIFELIKE` strides whose feet don't slide, `keys([...])` key-pose actions), `gs.missions`
   (`Mission` scripts, `zone`), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`),
   `gs.stealth` (`lightAt`, `Takedown`, `Bodies`, `Floors`, `Disguise`), `gs.gadgets` (`Grapple`, `Zipline`, `Wires`, `Lock`,
   `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound) and
@@ -193,7 +193,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   traffic at the lights, people; `update(dt, player)`, `avoid`, `collide`, `ray`, `route`, `spot('door'|'rooftop'...)`, `cars.hit`, `people.scare`, `plan`, `drawMap`); guide `docs/city.md`.
 - Things made in code (Next Gen; no image or model files): `gs.models` (`material(name)` 17 recipes like wood, brick, rust, fabric;
   `wear(mesh)` worn edges, grime, moss, snow; `prop('crate'|'barrel'|...)` 18 props; `sculpt([{ ball }, { box, cut }...])`;
-  `tree('oak'|'pine'|...)`; `building({ style, floors })`; `human(opts)` a sculpted close-up person: face, hands, clothes, hats, kit, three detail levels, `twin()`, `hold()`; several kinds: `human.all([...])` first thing in make();
+  `tree('oak'|'pine'|...)`; `building({ style, floors })`; `human(opts)` a sculpted close-up person: face, hands, clothes, hats, kit, three detail levels, `twin()`, `hold()`, `touch()` (hands and feet onto a rung, a bar, a ledge); several kinds: `human.all([...])` first thing in make();
   `creature({ like: 'deer', seed })` an animal or monster from a seed with gaits made for its own legs and wings: 35 to start from (`dog`, `horse`, `owl`, `shark`, `bee`, `spider`, `dragon`, `ogre`, `blob`...; kinds `quad`, `bird`, `fish`, `insect`, `monster`), `move(dt, speed, { fly })` each frame, `speeds`, `rig.play('eat')`, `twin()` for a herd, `creature.all([...])` first thing in make()); guide in `docs/nextgen-3d.md`.
 - Worlds, craft, soft things, cards and menus: `gs.outdoors` (`Land` terrain + `grass`/`scatter`/`meadow` (thick grass that keeps round the camera), `Water`, `River` (water/lava look for gs.flow), `FloodWater` (GPU on WebGPU), `tree`, `rock`, `Wind`, `impostor`),
   `gs.craft` (`Plane`, `Boat`, `Hover`, `Floater`), `gs.soft` (`Soft` cloth/rope/jelly with `grab`/`cut`, `Liquid`),

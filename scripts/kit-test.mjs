@@ -1473,6 +1473,44 @@ console.log('physics ok');
   const ff = new Face(m, { blinkEvery: 0 }); ff.set('tall', 1); for (let i = 0; i < 60; i++) ff.update(1 / 60); assert.ok(m.morphTargetInfluences[0] > .9, 'eased');
   console.log('skinned person, face shapes, lip sync, blend spaces, foot IK ok');
 }
+// lifelike motion: key poses that never overshoot, poses by the clock and driven by the game, gaits whose planted foot stays put, a body with weight
+{
+  const { Rig, LIFELIKE, keys } = await import('../src/kit/poses.js');
+  const { Object3D, Vector3 } = await import('three');
+  // keys(): a key names only what changes; curves pass through every key and never go beyond the keys either side
+  const k = keys([[0, { spine: [0, 0, 0], armL: [-1, 0, 0] }], [.3, { spine: [.6, 0, 0], drop: .2 }], [.5, { spine: [.6, 0, 0] }], [1, { spine: [.1, 0, 0], shift: [0, 0, .5] }]]);
+  assert.ok(Math.abs(k(.3).j.spine[0] - .6) < 1e-6 && Math.abs(k(1).j.spine[0] - .1) < 1e-6 && Math.abs(k(.3).drop - .2) < 1e-6, 'through its keys');
+  assert.equal(k(.7).j.armL[0], -1, 'a joint a key leaves out stays where it was');
+  let over = 0; for (let i = 0; i <= 200; i++) { const p = i / 200, v = k(p).j.spine[0], d = k(p).drop; if (v < -1e-6 || v > .6 + 1e-6 || d < -1e-6 || d > .2 + 1e-6) over++; if (p > .3 && p < .5 && Math.abs(v - .6) > 1e-6) over++; }
+  assert.equal(over, 0, 'no overshoot, and flat between two equal keys');
+  assert.ok(Math.abs(k(1).shift[2] - .5) < 1e-6 && k(0).shift[2] === 0, 'the hips move in metres');
+  const loop = keys([[0, { head: [0, 0, 0] }], [.5, { head: [.4, 0, 0] }]], { loop: true });
+  assert.ok(Math.abs(loop(.999).j.head[0] - loop(0).j.head[0]) < .01 && loop(.75).j.head[0] > .05, 'a loop joins its end to its start');
+  // a bare skeleton with a person's proportions
+  const B = {}, root = new Object3D(), mk = (n, parent, x, y, z) => { const o = new Object3D(); o.position.set(x, y, z); (parent || root).add(o); B[n] = o; };
+  mk('hips', null, 0, 1, 0); mk('spine', B.hips, 0, .1, 0); mk('head', B.spine, 0, .5, 0);
+  for (const [sd, s] of [['L', 1], ['R', -1]]) { mk('leg' + sd, B.hips, s * .094, -.045, 0); mk('shin' + sd, B['leg' + sd], 0, -.435, 0); mk('foot' + sd, B['shin' + sd], 0, -.435, 0); mk('arm' + sd, B.spine, s * .2, .4, 0); mk('fore' + sd, B['arm' + sd], 0, -.3, 0); mk('hand' + sd, B['fore' + sd], 0, -.27, 0); }
+  const rig = new Rig(B, { poses: LIFELIKE });
+  // a planted foot stays where it landed while the body passes over it (the flat part of each stance)
+  for (const [name, v, lo, hi] of [['walk', 1.36, .12, .4], ['jog', 3.4, .07, .24], ['run', 5.6, .07, .19], ['sneak', 1, .12, .48]]) {
+    rig.play(name, { fade: 0 }); let x = 0, n = 0, last = 0, a = Infinity, b = -Infinity, low = Infinity; const at = new Vector3();
+    for (let i = 0; i < 960; i++) { rig.update(1 / 240, { speed: v }); x += v / 240; root.position.z = x; root.updateMatrixWorld(true); B.footL.getWorldPosition(at); const ph = rig.phase; if (ph < last) n++; last = ph; low = Math.min(low, at.y); if (n === 1 && ph > lo && ph < hi) { a = Math.min(a, at.z); b = Math.max(b, at.z); } }
+    assert.ok(b - a < .012, name + ': the planted foot slides ' + (b - a).toFixed(4) + ' m'); assert.ok(low > .08, name + ': no foot goes through the floor ' + low.toFixed(3));
+  }
+  // a pose by the clock: once plays through and holds (rig.done); at: the game holds the phase
+  rig.add('vault', keys([[0, { spine: [0, 0, 0] }], [1, { spine: [1, 0, 0] }]]), { time: .5, once: true }); rig.play('vault', { fade: 0 });
+  for (let i = 0; i < 20; i++) rig.update(1 / 60); assert.ok(!rig.done && rig.phase > .6 && rig.phase < .72, 'part way through ' + rig.phase.toFixed(2));
+  for (let i = 0; i < 20; i++) rig.update(1 / 60); assert.ok(rig.done && Math.abs(B.spine.rotation.x - 1) < 1e-3, 'played through, and holding its end');
+  rig.play('vault', { again: true, fade: 0 }); rig.update(1 / 60); assert.ok(!rig.done && rig.phase < .1, 'again starts it over');
+  rig.add('climb', keys([[0, { spine: [0, 0, 0] }], [.5, { spine: [.5, 0, 0] }]], { loop: true })); rig.play('climb', { at: .5, fade: 0 });
+  for (let i = 0; i < 30; i++) rig.update(1 / 60, { speed: 3 }); assert.ok(Math.abs(B.spine.rotation.x - .5) < 1e-3 && rig.phase === .5, 'a pose the game drives stays where the game put it');
+  // a body with weight leans into a spurt, and settles again at a steady speed
+  const heavy = new Rig(B, { poses: LIFELIKE, weight: 1 }); heavy.play('idle', { fade: 0 }); for (let i = 0; i < 30; i++) heavy.update(1 / 60, { speed: 0 });
+  let lean = 0; for (let i = 0; i < 20; i++) { heavy.update(1 / 60, { speed: i * .3 }); lean = Math.max(lean, heavy.sw.lean); }
+  assert.ok(lean > .05, 'leans into speeding up ' + lean.toFixed(3));
+  for (let i = 0; i < 180; i++) heavy.update(1 / 60, { speed: 6 }); assert.ok(Math.abs(heavy.sw.lean) < .01, 'upright again at a steady speed');
+  console.log('lifelike motion: key poses, clocked and driven poses, planted feet, weight ok');
+}
 
 // occlusion culling: a wall hides what's behind it, never what's in front, beside or above it
 {

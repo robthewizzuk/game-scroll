@@ -1985,18 +1985,33 @@ export type CreatureT = Loose & {
 };
 export interface RigT {
   state: string;
-  play(name: string, o?: { fade?: number }): RigT; upper(name: string | null): RigT; add(name: string, fn: Loose, rate?: number): RigT;
+  /** True once a pose added with { once: true } has played through (it then holds its last frame). */
+  readonly done: boolean;
+  /** How far through its cycle the pose is, 0..1 (blendPhase: the same for a blend space: footsteps fall at 0 and .5). */
+  phase: number; blendPhase: number;
+  /** Lean and bank (0: none; 1: a person): the body tips into a change of speed and into a turn (update's speed and turn). */
+  weight: number;
+  /** Blends to a pose. at: where in the pose it stands (0..1), for a pose the game drives itself (call each frame); from: where it starts; again: start a playing pose over. */
+  play(name: string, o?: { fade?: number; at?: number | null; from?: number | null; again?: boolean }): RigT; upper(name: string | null): RigT;
+  /** Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. rate: cycles a metre moved; or { time: seconds a cycle, once: play through and hold the end }. keys() makes fn from key poses. */
+  add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number }): RigT;
   /** 1D blend space: { pose: value }, mixed at v with every cycle in step. */
   blend(space: Record<string, number>, v: number): RigT;
   /** 2D blend space: { pose: [x, y] }, mixed at (x, y). */
   blend2(space: Record<string, [number, number]>, x: number, y: number): RigT;
   /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. */
   plant(ground: (x: number, z: number) => number, body: Loose, o?: { most?: number }): RigT;
+  /** speed: metres a second (strides follow it); aim: up/down aim for the upper layer (radians); turn: radians a second (with weight: banks into it). */
   update(dt: number, o?: { speed?: number; aim?: number; turn?: number }): RigT;
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
-  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; joints?: string[] }) => RigT;
+  /** Lifelike idle, walk, jog, run, sprint and sneak for a figure with feet and hands (heel strike, push off the toes, planted feet that don't slide): new Rig(parts, { poses: LIFELIKE, weight: 1 }). gs.models.human people move with it. */
+  LIFELIKE: Record<string, Loose>;
+  /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
+  keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] };
+  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. */
+  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; joints?: string[] }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
   person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: number; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose & { rig: RigT; face: FaceT; mesh: Loose; bones: Record<string, Loose> };
   Face: CharactersPart['Face']; shapes: CharactersPart['shapes']; visemes: CharactersPart['visemes']; FACE_SHAPES: string[];
@@ -2136,7 +2151,7 @@ export interface ModelsPart {
   readonly buildings: Record<string, Record<string, Loose>>;
   /**
    * A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail.
-   * Returns a Group with rig, bones, mesh, lods, lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), face.
+   * Returns a Group with rig, bones, mesh, lods, lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), face.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
    * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
