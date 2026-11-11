@@ -74,11 +74,12 @@ export const ROOMS = {
 };
 const roomLook = r => { const o = typeof r === 'string' ? { like: r } : r || {}; return { ...(ROOMS[o.like] || ROOMS.study), ...o }; };
 // The room's floor, rug and felt keep their painted textures: no close-up shader (gs.models.material's
-// closeUp, WebGPU). The camera never comes within reach of it (half a metre at the nearest), but it
-// sits inside the big floor's bounding sphere, which counts as close: the whole floor went over to the
-// recipe worked out per pixel, which has no filtering, so far off every thin gap between the boards
-// broke into dashes that crawled from frame to frame, and the floor vanished for a moment about a
-// second into each game while the new shader was built.
+// closeUp, WebGPU). Close is judged by a mesh's bounding sphere, and the camera always sits inside the
+// big floor's: the whole floor went over to the recipe worked out per pixel, which has no filtering, so
+// far off every thin gap between the boards broke into dashes that crawled from frame to frame, and
+// the floor vanished for a moment about a second into each game while the new shader was built. The
+// camera stays most of a metre above the floor and rug; it comes within a hand of the felt's near
+// edge only at the lowest, closest view, where the painted weave is drawn at about twice its size.
 const BAKED = { closeUp: false };
 
 const woods = new Map();
