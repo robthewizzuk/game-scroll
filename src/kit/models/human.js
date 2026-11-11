@@ -12,11 +12,11 @@
 // each piece is saved on the phone, so the next launch has them at once. People in the same cut of
 // clothes share their pieces whatever their colours; twin() makes another of the very same person for free.
 // Kit use only: games reach it as gs.models.human.
-import { Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix4, Mesh, Object3D, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
+import { Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix4, Mesh, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
 import { lumps } from './field.js';
 import { BONES, PARENT, AT, HC, ARM, ss, bump, jobsFor, sculpt, mirrored, turned, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
-import { Rig } from '../poses.js';
+import { Rig, LIFELIKE } from '../poses.js';
 import { reach } from '../characters.js';
 import { Face } from '../skin.js';
 import { pbr, HD } from '../hd3d.js';
@@ -288,7 +288,7 @@ export function human(o = {}) {
     const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(skel, new Matrix4()); m.visible = L === 0; return m; });
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B;
-    root.rig = new Rig(B, { height: 1.8 }); root.rig.feet = [B.footL, B.footR];
+    root.rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale }); root.rig.feet = [B.footL, B.footR];   // people move the lifelike way: feet that roll, hips and shoulders that turn
     root.face = new Face(lods[0]);
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) { v = Math.max(0, Math.min(2, v | 0)); if (v !== cur) { lods[cur].visible = false; lods[v].visible = true; cur = v; } } });
@@ -314,6 +314,51 @@ export function human(o = {}) {
         if (!pt) continue;
         tgt.set(pt[0], pt[1], pt[2]).applyMatrix4(thing.matrixWorld); pole.set(el[0], el[1], el[2]).applyMatrix4(B.spine.matrixWorld);
         reach(B['arm' + sd], B['fore' + sd], tgt, { pole, end: palm[sd] });
+      }
+      return root;
+    };
+    // hands and feet onto things in the world: the ball of each foot, the middle of a closed hand, each limb bent to reach
+    const ball = {}, fist = {}; for (const sd of ['L', 'R']) { const q = new Object3D(); q.position.set(0, -.07, .1); B['foot' + sd].add(q); ball[sd] = q; const f = new Object3D(); f.position.set(sd === 'L' ? -.03 : .03, -.104, .004); B['hand' + sd].add(f); fist[sd] = sp.hands === 'grip' ? f : palm[sd]; }
+    const q0 = new Quaternion(), q1 = new Quaternion(), q2 = new Quaternion(), q3 = new Quaternion(), ax = new Vector3(), nn = new Vector3(), dd = new Vector3(), cr = new Vector3();
+    /**
+     * Hands and feet onto points in the world (a rung, a ledge, a bar, a wheel): touch({ handL: point, handR: point,
+     * footL: point, footR: point }), any of them. A hand meets its point with the palm (hands: 'grip' close round
+     * it), a foot with the ball of the foot. Options: blend 0..1 how far each is carried there from its pose (a
+     * number, or one a limb: { handL: .5 }), to ease a grip on and off; elbows, knees: { L, R } where each points,
+     * in the chest's (hips') space; palms: { L, R } the way each palm faces, in the world (the forearm turns);
+     * level: 0..1 how flat each foot is held to the floor he stands on (a number, or { L, R }). After rig.update().
+     */
+    root.touch = (pts, { blend = 1, elbows = {}, knees = {}, palms = {}, level = 0 } = {}) => {
+      root.updateMatrixWorld(true);
+      for (const [name, sd, up, low, end, at, bend] of [['handL', 'L', B.armL, B.foreL, fist.L, B.spine, elbows.L || [.45, -.5, -.25]], ['handR', 'R', B.armR, B.foreR, fist.R, B.spine, elbows.R || [-.45, -.5, -.25]],
+        ['footL', 'L', B.legL, B.shinL, ball.L, B.hips, knees.L || [.14, -.3, 1]], ['footR', 'R', B.legR, B.shinR, ball.R, B.hips, knees.R || [-.14, -.3, 1]]]) {
+        const pt = pts[name], k = typeof blend === 'number' ? blend : blend[name] ?? 1; if (!pt || k <= 0) continue;
+        const hand = name[0] === 'h', tip = hand ? B['hand' + sd] : B['foot' + sd];
+        q0.copy(up.quaternion); q1.copy(low.quaternion); q2.copy(tip.quaternion); q3.copy(tip.quaternion);
+        pole.set(bend[0], bend[1], bend[2]).applyMatrix4(at.matrixWorld);
+        tgt.set(pt.x ?? pt[0], pt.y ?? pt[1], pt.z ?? pt[2]);
+        reach(up, low, tgt, { pole, end });
+        const face = hand ? palms[sd] : null, flat = hand ? 0 : typeof level === 'number' ? level : level[sd] ?? 0;
+        if (face) {
+          // turn the forearm about its own length until the palm faces that way (as far as a wrist goes)
+          low.updateWorldMatrix(true, true);
+          ax.copy(tip.position).normalize(); const local = ax.clone(); ax.transformDirection(low.matrixWorld);
+          nn.set(sd === 'L' ? -1 : 1, 0, 0).transformDirection(tip.matrixWorld); nn.addScaledVector(ax, -nn.dot(ax));
+          dd.set(face.x ?? face[0], face.y ?? face[1], face.z ?? face[2]); dd.addScaledVector(ax, -dd.dot(ax));
+          if (nn.lengthSq() > 1e-6 && dd.lengthSq() > 1e-6) {
+            const an = Math.atan2(cr.crossVectors(nn, dd).dot(ax), nn.dot(dd));
+            low.quaternion.multiply(q2.setFromAxisAngle(local, Math.max(-1.9, Math.min(1.9, an)))); q2.copy(tip.quaternion);
+            reach(up, low, tgt, { pole, end });
+          }
+        }
+        if (flat > 0) {
+          // the sole flat to his own floor, the toes the way he faces; then the leg again, as the ball of the foot has moved
+          low.updateWorldMatrix(true, false);
+          low.getWorldQuaternion(q2).invert().multiply(root.getWorldQuaternion(new Quaternion()));
+          tip.quaternion.slerp(q2, flat); q2.copy(tip.quaternion);
+          reach(up, low, tgt, { pole, end });
+        }
+        if (k < 1) { up.quaternion.slerpQuaternions(q0, q2.copy(up.quaternion), k); low.quaternion.slerpQuaternions(q1, q2.copy(low.quaternion), k); tip.quaternion.slerpQuaternions(q3, q2.copy(tip.quaternion), k); }
       }
       return root;
     };
