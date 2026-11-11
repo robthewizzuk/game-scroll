@@ -1946,6 +1946,43 @@ export interface ArenaPart {
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
   chaseBall(car: BallCar, arena: Loose, o?: { skill?: number }): { throttle: number; steer: number; boost: boolean; jump: boolean };
 }
+/** What gs.models.creature takes. Colours are '#rrggbb'. */
+export interface CreatureOptions {
+  kind?: 'quad' | 'bird' | 'fish' | 'insect' | 'monster';
+  like?: 'dog' | 'cat' | 'horse' | 'deer' | 'cow' | 'pig' | 'bear' | 'rabbit' | 'mouse' | 'lizard' | 'songbird' | 'crow' | 'duck' | 'hawk' | 'owl' | 'chicken' | 'heron' | 'fish' | 'shark' | 'eel' | 'puffer' | 'angler' | 'beetle' | 'ladybird' | 'ant' | 'bee' | 'butterfly' | 'dragonfly' | 'spider' | 'dragon' | 'beast' | 'ogre' | 'imp' | 'blob' | 'serpent';
+  /** Its own build, coat, pattern and size (none: the animal as the book shows it). */
+  seed?: number;
+  /** Metres from nose to rump (a bird: beak to tail; one that stands up: its height). An insect is tiny at its real size: give it one the camera can see. */
+  size?: number;
+  colour?: string; color?: string; belly?: string; accent?: string;
+  pattern?: 'plain' | 'spots' | 'stripes' | 'patches' | 'bands' | 'socks' | 'back' | 'tips' | 'hood';
+  /** Colours of its parts: eyes (the iris), horn, hoof, claw, beak, legs (a bird's, an insect's), comb, mane, wing, fin, nose, shell, lure. */
+  eyes?: string; horn?: string; hoof?: string; claw?: string; beak?: string; legs?: string; comb?: string; mane?: string; wing?: string; fin?: string; nose?: string; shell?: string; lure?: string;
+  /** Any of its measures by name, as creature.look.build lists them ({ neck: .5, horns: 'antlers', wings: 1 }). */
+  build?: Record<string, number | string>;
+  /** .5 coarser .. 2 finer (1). */
+  detail?: number; shadows?: boolean;
+  /** Sculpt on the spot (tools and tests: the page stops while it does). */
+  now?: boolean;
+}
+export type CreatureT = Loose & {
+  rig: RigT;
+  /** Moves its legs, wings, fins or coils for a speed in metres a second (0: it stands, hovers or drifts). fly: in the air; swim: a serpent in water; turn: -1..1, it leans. */
+  move(dt: number, speed?: number, o?: { fly?: boolean; swim?: boolean; turn?: number }): CreatureT;
+  /** Metres a second where each of its gaits sits. */
+  speeds: { walk?: number; trot?: number; run?: number; fly?: number; swim?: number };
+  bones: Record<string, Loose>; mesh: Loose; lods: Loose[];
+  /** 0 close .. 2 far. */
+  lod: number;
+  /** Picks the level of detail by its size on screen; returns it. */
+  see(camera: Loose, screenHeightPx?: number): number;
+  size: { length: number; height: number; width: number };
+  /** What the seed chose: kind, like, seed, size, colour, belly, accent, pattern, eyes, build (its measures). */
+  look: Record<string, Loose>;
+  kind: string; like: string;
+  /** Another of the very same creature, sharing everything but its skeleton. */
+  twin(): CreatureT;
+};
 export interface RigT {
   state: string;
   play(name: string, o?: { fade?: number }): RigT; upper(name: string | null): RigT; add(name: string, fn: Loose, rate?: number): RigT;
@@ -1959,7 +1996,7 @@ export interface RigT {
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
-  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose> }) => RigT;
+  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; joints?: string[] }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
   person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: number; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose & { rig: RigT; face: FaceT; mesh: Loose; bones: Record<string, Loose> };
   Face: CharactersPart['Face']; shapes: CharactersPart['shapes']; visemes: CharactersPart['visemes']; FACE_SHAPES: string[];
@@ -2111,6 +2148,29 @@ export interface ModelsPart {
     need(list: Loose[]): void;
     /** For tools and tests: resolves once human(options) for each of these would come straight back. */
     ready(list: Loose | Loose[]): Promise<boolean>;
+    /** Forgets every saved sculpt. */
+    clear(): Promise<void>;
+  };
+  /**
+   * An animal or a monster made in code from a seed, sculpted the way gs.models.human is (no model or texture files): one skinned mesh in three levels of detail on a skeleton of its own, with gaits made for its own legs, wings, fins or coils.
+   * like: 'dog' | 'cat' | 'horse' | 'deer' | 'cow' | 'pig' | 'bear' | 'rabbit' | 'mouse' | 'lizard' (kind 'quad'), 'songbird' | 'crow' | 'duck' | 'hawk' | 'owl' | 'chicken' | 'heron' ('bird'), 'fish' | 'shark' | 'eel' | 'puffer' | 'angler' ('fish'), 'beetle' | 'ladybird' | 'ant' | 'bee' | 'butterfly' | 'dragonfly' | 'spider' ('insect'), 'dragon' | 'beast' | 'ogre' | 'imp' | 'blob' | 'serpent' ('monster').
+   * No seed: the animal as the book shows it. A seed: its own build, coat, pattern and size, the same on every phone. kind alone: the seed picks which animal of that kind; neither: any creature at all.
+   * Returns a Group, feet at y = 0 (a fish: its middle), facing +z: move(dt, speed, { fly, swim, turn }) each frame (the easy way: it picks and blends walk, trot, run, fly or swim for a speed in metres a second), or rig.play('eat') and rig.update(dt, { speed }) yourself; speeds (where each gait sits), bones, lod / see(camera, screenHeightPx), size (metres), look (what the seed chose), twin() (another of the very same creature, nearly free: a herd).
+   * Poses by kind: 'idle', 'walk', 'run', 'attack', 'hurt', 'dead' everywhere; four legs add 'trot', 'eat', 'sit', 'jump'; birds 'fly', 'glide', 'hover', 'eat', 'sit', 'jump'; fish 'swim'; flying insects 'fly', 'hover'; a dragon and an imp 'fly', 'glide', 'hover'; an ogre and an imp every pose a person has; a serpent 'rear', 'swim'.
+   * A shape this phone hasn't sculpted yet takes a few tenths of a second in the background: the app shows "Loading…" and makes the game again (make creatures in make() or reset()); it is then saved. Several kinds: creature.all([...]) first thing. Creatures of one shape share it whatever their colours and size.
+   */
+  creature: {
+    (o?: CreatureOptions): CreatureT;
+    /** The kinds: 'quad', 'bird', 'fish', 'insect', 'monster'. */
+    readonly kinds: readonly string[];
+    /** Every animal a creature can be like, and its kind: { dog: 'quad', owl: 'bird', ... }. */
+    readonly likes: Readonly<Record<string, string>>;
+    /** Several creatures at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
+    all(list: CreatureOptions[]): CreatureT[];
+    /** Starts sculpting whatever these creatures still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
+    need(list: CreatureOptions[]): void;
+    /** For tools and tests: resolves once creature(options) for each of these would come straight back. */
+    ready(list: CreatureOptions | CreatureOptions[]): Promise<boolean>;
     /** Forgets every saved sculpt. */
     clear(): Promise<void>;
   };

@@ -354,6 +354,25 @@ async function humansScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend + ', human ' + ms.join(', ') + ' ms'];
 }
+// gs.models.creature: animals and monsters from a seed, each held at one moment of its own gait
+async function creaturesScene() {
+  window.__hd.force = 2;
+  const v = new HV({ bg: '#9ab4d0', fog: 0, env: .5, amb: .35 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
+  v.cam.position.set(.2, 1.55, 3.9); v.cam.lookAt(.05, .95, -.6); v.cam.updateMatrixWorld();
+  const sun = gs.hd.sun('#fff2d8', 2.4, 6, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const floor = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8468', { rough: .95 })); floor.receiveShadow = true; v.scene.add(floor);
+  // [what, where, which way it faces, pose, how far round its cycle]
+  const cast = [[{ like: 'horse' }, [-1.25, 0, -1.7], .95, 'walk', .3], [{ like: 'deer', seed: 8 }, [1.25, 0, -.9], -.9, 'run', .3], [{ like: 'dog' }, [-.95, 0, .35], .8, 'sit', 0], [{ like: 'cat' }, [-.25, 0, 1.25], 1.25, 'walk', .6],
+    [{ like: 'owl' }, [.5, 0, 1.2], -.4, 'idle', 0], [{ like: 'crow' }, [-.75, 2.35, -.4], 1.1, 'fly', .2], [{ like: 'ogre', seed: 3 }, [.45, 0, -3.3], -.15, 'idle', 0], [{ like: 'blob', seed: 8, size: .5 }, [1.05, 0, .75], -.5, 'idle', 0], [{ like: 'spider', size: .45 }, [.1, 0, 2.05], 2.6, 'walk', .2]];
+  const ts = performance.now(); await gs.models.creature.ready(cast.map(q => q[0])); const ms = Math.round(performance.now() - ts);
+  for (const [o, at, turn, pose, ph] of cast) {
+    const a = gs.models.creature(o); a.position.set(...at); a.rotation.y = turn; v.scene.add(a);
+    a.rig.layers = [{ name: pose, w: 1, phase: ph }]; a.rig.state = pose; a.rig.update(0); a.see(v.cam, 320);
+  }
+  const t1 = performance.now(); while (performance.now() - t1 < 1500) { v.t = 0; v.render(x, 240, 320); await frame(); }
+  v.t = 0; v.render(x, 240, 320);
+  return [c.toDataURL(), window.__hd.info.backend + ', creatures sculpted in ' + ms + ' ms'];
+}
 // soft shadows (sun().softShadows): a post, a raised slab and a crate sitting on the ground: the
 // crate's shadow sharp at its foot, the post's and slab's spreading the further they fall
 async function pcssScene() {
@@ -763,7 +782,7 @@ async function shadowOffScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
-const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene() };
+const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
 const PICK = new URLSearchParams(location.search).get('pick');
 if (PICK) try { for (const n of PICK.split(',')) if (n === 'beams') { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; } else [out[n], backends[n]] = await SCENES[n](); } catch (e) { out.error = String(e && e.stack || e); }
 else try {
@@ -799,6 +818,7 @@ else try {
   [out.trees, backends.trees] = await treesScene();
   [out.buildings, backends.buildings] = await buildingsScene();
   [out.humans, backends.humans] = await humansScene();
+  [out.creatures, backends.creatures] = await creaturesScene();
   { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; }
   [out.river, backends.river] = await riverScene();
   [out.flood, backends.flood] = await floodScene();

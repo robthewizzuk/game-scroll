@@ -1686,6 +1686,64 @@ console.log('physics ok');
   console.log('gs.models: sculpted people ok');
 }
 
+// gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
+{
+  const CS = await import('../src/kit/models/creature-shapes.js'), MV = await import('../src/kit/models/creature-moves.js'), { Rig } = await import('../src/kit/poses.js'), THREE = await import('three');
+  await CS.thinReady;
+  const likes = Object.keys(CS.CREATURE_LIKES);
+  assert.equal(likes.length, 35); assert.deepEqual(CS.CREATURE_KINDS, ['quad', 'bird', 'fish', 'insect', 'monster']);
+  for (const k of CS.CREATURE_KINDS) assert.ok(likes.some(l => CS.CREATURE_LIKES[l] === k), 'animals of kind ' + k);
+  // the same seed makes the same creature; colours and size don't change its shape; another seed does
+  const a = CS.planOf({ like: 'deer', seed: 5 }), b = CS.planOf({ like: 'deer', seed: 5 }), c = CS.planOf({ like: 'deer', seed: 5, colour: '#ff0000', size: 3, pattern: 'spots' }), d = CS.planOf({ like: 'deer', seed: 6 }), book = CS.planOf({ like: 'deer' });
+  assert.deepEqual(a, b, 'the same seed, the same plan'); assert.equal(c.key, a.key, 'colours and size share the sculpt'); assert.notEqual(d.key, a.key, 'another seed, another build');
+  assert.ok(c.size === 3 && c.look.colour === '#ff0000' && c.look.pattern === 'spots' && book.size === 1.5 && book.look.colour === '#a9743e', 'what was asked for is kept; no seed: the animal as the book shows it');
+  assert.ok(Math.abs(a.size - 1.5) < .2 && a.size !== 1.5 && a.p.H !== undefined && a.p.H !== book.p.H, 'a seed moves its size and measures a little');
+  assert.throws(() => CS.planOf({ like: 'unicorn' }), /nothing called 'unicorn'/); assert.throws(() => CS.planOf({ kind: 'robot' }), /no kind called 'robot'/);
+  for (const kind of CS.CREATURE_KINDS) { const got = new Set(); for (let seed = 1; seed <= 40; seed++) { const p = CS.planOf({ kind, seed }); assert.equal(p.kind, kind); got.add(p.like); } assert.ok(got.size >= 4, kind + ': the seed picks among ' + got.size + ' animals'); }
+  const winged = CS.planOf({ like: 'dog', build: { wings: 1, horns: 'curved', nonsense: 4 } });
+  assert.ok(winged.p.wings === 1 && winged.p.horns === 'curved' && !('nonsense' in winged.p) && winged.key !== CS.planOf({ like: 'dog' }).key, 'build sets its measures by name (and only real ones)');
+  // every animal: a skeleton that hangs together, and cycles that only turn its own bones, in step with its size
+  for (const like of likes) for (const seed of [undefined, 3]) {
+    const plan = CS.planOf({ like, seed }), B = CS.build(plan), names = B.bones.map(q => q.name), set = new Set(names), m = B.meta, scale = plan.size / m.span;
+    assert.ok(names[0] === 'hips' && B.bones[0].parent === null && set.size === names.length, like + ': one root, no bone twice');
+    for (const q of B.bones.slice(1)) assert.ok(set.has(q.parent) && names.indexOf(q.parent) < names.indexOf(q.name), like + ': ' + q.name + ' hangs from a bone made before it');
+    assert.ok(m.span > .3 && m.H > 0 && set.has(m.head) && m.legs.every(l => set.has(l.up) && set.has(l.lo)) && m.tail.every(n => set.has(n)) && (m.wings || []).flat().every(n => set.has(n)), like + ': what moving it needs');
+    const mv = MV.movesFor(m, scale), twice = MV.movesFor(m, scale * 2);
+    for (const need of ['idle', 'attack', 'hurt', 'dead']) assert.ok(mv.poses[need], like + ' can ' + need);
+    for (const [name, def] of Object.entries(mv.poses)) for (const ph of [0, .13, .37, .5, .61, .9]) {
+      const s = def.cycle(ph); assert.ok(Number.isFinite(s.drop), like + ' ' + name + ': drop');
+      for (const [j, t] of Object.entries(s.j)) assert.ok(set.has(j) && t.length === 3 && t.every(Number.isFinite), like + ' ' + name + ' turns ' + j);
+    }
+    const space = mv.ground || mv.water; assert.ok(space && space.idle === 0, like + ': somewhere to stand');
+    for (const [g, v] of Object.entries(mv.speeds)) { assert.ok(v > 0 && v < 40 && mv.poses[g], like + ': ' + g + ' at ' + v); assert.ok(twice.speeds[g] > v, like + ': twice the size is faster'); }
+    const gait = mv.poses.walk ? 'walk' : 'swim'; if (mv.poses[gait]?.rate) assert.ok(Math.abs(mv.poses[gait].rate / twice.poses[gait].rate - 2) < 1e-6, like + ': twice the size, twice the stride');
+    if (m.wings) assert.ok(mv.air && mv.poses.fly && mv.speeds.fly > (mv.speeds.walk || 0), like + ' flies'); else assert.equal(mv.air, null);
+  }
+  // a walk covers what its feet sweep: a dog's stride from its own legs
+  { const plan = CS.planOf({ like: 'dog' }), B = CS.build(plan), sc = plan.size / B.meta.span, mv = MV.movesFor(B.meta, sc), L = B.meta.legs.reduce((s, l) => s + l.L, 0) / 4;
+    assert.ok(Math.abs(1 / mv.poses.walk.rate - 4 * L * Math.sin(.36) * sc) < 1e-9, 'a stride is twice the sweep of a standing foot'); assert.deepEqual(Object.keys(mv.ground), ['idle', 'walk', 'trot', 'run']);
+    assert.ok(!MV.movesFor(CS.build(CS.planOf({ like: 'rabbit' })).meta, .4).poses.trot, 'a rabbit hops: no trot'); }
+  // sculpts: three levels, every point on real bones with whole weights, both sides alike, feet on the ground, the same every time
+  for (const like of ['dog', 'owl', 'shark', 'bee', 'ogre', 'blob']) {
+    const plan = CS.planOf({ like }), B = CS.build(plan), set = new Set(B.bones.map(q => q.name)), p = CS.sculpt(plan), t = p.I.map(i => i.length / 3);
+    assert.ok(p.n > 1500 && t[0] > t[1] && t[1] > t[2] && t[2] > 150 && t[0] < 36000, like + ': ' + t.join(' / ') + ' triangles');
+    assert.ok(p.names.every(n => set.has(n)), like + ': weights name real bones'); assert.ok(['eye0', 'eye1', 'eye2', 'eye3', 'hide'].every(sl => p.slots.includes(sl)), like + ': a coat and eyes');
+    let lo = [9, 9, 9], hi = [-9, -9, -9];
+    for (let i = 0; i < p.n; i++) { const w = p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3]; assert.ok(w >= 254 && w <= 256, like + ': whole weights'); for (let k = 0; k < 3; k++) { const v = p.P[i * 3 + k]; assert.ok(Number.isFinite(v)); if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; } }
+    assert.ok(like === 'blob' || Math.abs(lo[0] + hi[0]) < .02, like + ': the same on both sides'); if (plan.kind !== 'fish') assert.ok(lo[1] > -.05 && lo[1] < .03, like + ': feet at ' + lo[1].toFixed(3));
+    if (like === 'dog') { const q = CS.sculpt(CS.planOf({ like, colour: '#123456' })); assert.ok(q.n === p.n && q.P.every((v, i) => v === p.P[i]), 'the same sculpt every time'); assert.ok(p.slots.includes('nose')); }
+  }
+  // on gs.poses' Rig: its own joints and cycles; a cycle that says how fast it runs keeps its own time
+  { const plan = CS.planOf({ like: 'crow' }), B = CS.build(plan), sc = plan.size / B.meta.span, mv = MV.movesFor(B.meta, sc), parts = Object.fromEntries(B.bones.map(q => [q.name, new THREE.Object3D()]));
+    parts.hips.position.y = B.meta.H; const rig = new Rig(parts, { height: B.meta.H, joints: Object.keys(parts), poses: mv.poses, fade: 0 });
+    rig.play('fly', { fade: 0 }).update(.05); const z1 = parts.wingL.rotation.z; rig.update(.05);
+    assert.ok(Math.abs(parts.wingL.rotation.z + parts.wingR.rotation.z) < 1e-9 && parts.wingL.rotation.z !== z1, 'wings beat together, by the clock'); assert.ok(Math.abs(rig.phase - mv.poses.fly.per * .1) < 1e-9, 'at its own beats a second');
+    rig.play('walk', { fade: 0 }).update(.1, { speed: mv.speeds.walk }); assert.ok(parts.legL.rotation.x !== parts.legR.rotation.x && Math.abs(parts.wingL.rotation.y) > 1, 'it walks with its wings folded');
+    rig.blend(mv.ground, mv.speeds.run).update(.1, { speed: mv.speeds.run }); assert.ok(rig.bw.run === 1, 'the blend space reaches its run'); }
+  assert.ok(typeof CS.VERSION === 'number' || typeof CS.VERSION === 'string');
+  console.log('gs.models: creatures ok');
+}
+
 // fixed game tick: the same updates at 30, 60, 90 and 120 fps; alpha between ticks; physics draws smoothly
 {
   const T = await import('../src/kit/tick.js'), { ownedBy } = await import('../src/kit/cleanup.js');

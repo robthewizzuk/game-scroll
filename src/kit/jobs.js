@@ -51,6 +51,9 @@ const maps = pool(() => new Worker(new URL('./nav-worker.js', import.meta.url), 
 // and so does the barcode reader (gs.vision's Scanner): it carries ZXing
 const codes = pool(() => new Worker(new URL('./code-worker.js', import.meta.url), { type: 'module' }), () => 1);
 
+// and so do creatures (gs.models.creature): they carry the sculptor people are made with
+const beasts = pool(() => new Worker(new URL('./models/creature-worker.js', import.meta.url), { type: 'module' }), MOST);
+
 // tests and the loading measurements read this (nothing else does)
 export const stats = work.stats, navStats = maps.stats;
 /** Can work be handed to a worker here? (No: do it on the spot.) */
@@ -64,5 +67,7 @@ export const canRun = work.canRun, canRunNav = maps.canRun;
 export const run = work.run;
 /** The same for a path map (nav-worker.js): data { pos, idx, cfg }, the answer the map's bytes. */
 export const runNav = (data, transfer) => maps.run('nav', data, transfer);
+/** The same for a creature (creature-worker.js): data its plan, the answer its sculpted piece. canRunCreature(): is there a worker for it? */
+export const runCreature = plan => beasts.run('creature', plan), canRunCreature = beasts.canRun;
 /** The same for a look for barcodes (code-worker.js): data { pixels, w, h, opts }, the answer what it found. canRunCode(): is there a worker for it? */
 export const runCode = (data, transfer) => codes.run('code', data, transfer), canRunCode = codes.canRun;

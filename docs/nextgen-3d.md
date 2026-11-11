@@ -773,3 +773,43 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   several kinds, make them together and first: `const [a, b] = human.all([optsA, optsB])` (or
   `human.need([...])` before anything costly is built, then `human(opts)` wherever you like).
   Faces don't blink or speak yet (`person.face` is there, with nothing to move).
+- **`creature(o)`**: an animal or a monster made in code from a seed, built the way people are (soft shapes
+  melted into one skin, creases in soft shadow, eyes that catch the light, no model or texture file). 35 to
+  start from, in five kinds: four legs (`dog`, `cat`, `horse`, `deer`, `cow`, `pig`, `bear`, `rabbit`, `mouse`,
+  `lizard`), birds (`songbird`, `crow`, `duck`, `hawk`, `owl`, `chicken`, `heron`), fish (`fish`, `shark`, `eel`,
+  `puffer`, `angler`), insects (`beetle`, `ladybird`, `ant`, `bee`, `butterfly`, `dragonfly`, `spider`) and
+  monsters (`dragon`, `beast`, `ogre`, `imp`, `blob`, `serpent`).
+  ```js
+  const [stag, crow] = gs.models.creature.all([{ like: 'deer', seed: 7 }, { like: 'crow' }]);   // first thing in make()
+  view.add(stag); view.add(crow);
+  // each frame: the easy way picks and blends the gaits for a speed (metres a second)
+  stag.move(dt, speed, { turn });          // walk, trot, gallop in step with the ground
+  crow.move(dt, speed, { fly: flying });   // hop about, or beat its wings
+  stag.see(view.cam, H);                   // three levels of detail by its size on screen
+  ```
+  `like` picks the animal; with no `seed` it is the animal as the book shows it, and a `seed` gives it its
+  own build (longer legs, a shorter neck, antlers or none), coat, pattern and size, the same on every phone.
+  `kind` alone (`'quad'`, `'bird'`, `'fish'`, `'insect'`, `'monster'`) lets the seed pick which animal too. Over
+  that you can set `size` (metres from nose to rump; a bird beak to tail; an ogre or imp its height),
+  `colour`, `belly`, `accent`, `pattern` (`plain`, `spots`, `stripes`, `patches`, `bands`, `socks`, `back`, `tips`,
+  `hood`), `eyes` and the colour of any part (`horn`, `hoof`, `claw`, `beak`, `legs`, `comb`, `mane`, `wing`, `fin`,
+  `nose`, `shell`, `lure`), and any measure by name: `build: { neck: .5, horns: 'antlers', wings: 1 }` (a dog
+  with wings is a fair monster; `creature.look.build` lists a creature's measures).
+  The gaits are worked out from the creature itself: which legs it has and how long they are, its wings, its
+  tail, its size. So a seed that changes the animal changes its stride to match, feet don't slide, a mouse
+  scurries where a horse strides, and a small bird beats its wings ten times a second where a dragon beats
+  them once. `creature.speeds` says where each gait sits (`{ walk, trot, run, fly, swim }`, metres a second).
+  For a pose by name use the rig yourself: `creature.rig.play('eat'); creature.rig.update(dt, { speed })`.
+  Every kind has `idle`, `walk`, `run`, `attack`, `hurt` and `dead`; four legs add `trot`, `eat`, `sit`, `jump`
+  (a rabbit hops); birds `fly`, `glide`, `hover`, `eat`, `sit`, `jump`; fish `swim`; flying insects `fly` and
+  `hover`; a dragon and an imp `fly`, `glide`, `hover`; an ogre and an imp stand on a person's joints, so they
+  have every `gs.poses` pose; a serpent `rear` and `swim`. `creature.bones` holds the joints (`bones.head`,
+  `bones.jaw`, `bones.tail1`, `bones.wingL`...) for a rider, a hat or a hit box.
+  `creature.twin()` is another of the very same creature for almost nothing (a herd, a flock, a swarm), and
+  creatures of one shape share it whatever their colours and size. An insect is tiny at its real size: give
+  it a `size` your camera can see.
+  **A shape this phone hasn't made yet takes a few tenths of a second to sculpt, in the background**, as
+  people do: the app shows "Loading…" and makes the game again, and the shape is saved on the phone. So make
+  creatures in `make()` or `reset()`, and several kinds together and first (`creature.all([...])`, or
+  `creature.need([...])` before anything costly is built). `node scripts/creatures.cjs sheet.png` draws every
+  animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.

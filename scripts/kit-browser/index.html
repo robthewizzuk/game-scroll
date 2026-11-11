@@ -536,5 +536,39 @@ try {
     ok(h5?.kitLoading && n5.path({ x: -3, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }).length >= 2, 'loading: a level that changes every pass is built here on the second pass, not waited for again');
   }
 }
+{
+  // gs.models.creature: sculpted in a worker while the card waits, saved on the phone, drawn in a Next Gen view, moved, twinned
+  // (kit-test.mjs has the plans, bones and gaits; scripts/creatures.cjs draws every animal to look over)
+  const { creature } = gs.models, frame = () => new Promise(r => requestAnimationFrame(r));
+  await creature.clear();
+  ok(creature.kinds.join() === 'quad,bird,fish,insect,monster' && Object.keys(creature.likes).length === 35 && creature.likes.owl === 'bird', 'creature: five kinds, 35 animals');
+  let wait = null; try { creature({ like: 'cat' }); } catch (x) { wait = x; }
+  ok(wait?.kitLoading && wait.what === 'gs.models.creature', 'creature: a shape this phone has not made yet makes the card wait'); const t0 = performance.now(); await wait?.kitLoading;
+  const cat = creature({ like: 'cat' }), ms = Math.round(performance.now() - t0);
+  ok(cat.isGroup && cat.kind === 'quad' && cat.like === 'cat' && cat.mesh.isSkinnedMesh && cat.lods.length === 3 && cat.tris[0] > cat.tris[1] && cat.tris[1] > cat.tris[2] && cat.size.height > .2 && cat.size.height < .5, `creature: a cat sculpted in the background in ${ms} ms (${cat.tris.join(' / ')} triangles, ${cat.size.height.toFixed(2)} m tall)`);
+  // other colours and sizes of the same shape need no more sculpting; a twin shares everything but its skeleton
+  let again = null; try { again = creature.all([{ like: 'cat', colour: '#202020', pattern: 'plain' }, { like: 'cat', size: 2 }]); } catch (x) { again = x; }
+  const twin = cat.twin();
+  ok(Array.isArray(again) && again[1].size.height > cat.size.height * 3 && twin.mesh.geometry === cat.mesh.geometry && twin.bones.head !== cat.bones.head && again[0].mesh.geometry !== cat.mesh.geometry, 'creature: a black cat and a giant one come straight back; a twin shares its mesh');
+  // drawn in a Next Gen view, walking; far away it is the far level
+  const hv = new gs.hd.HDView({ bg: '#404040', amb: .5 }), hc = document.createElement('canvas'); hc.width = 160; hc.height = 160; const hx = hc.getContext('2d');
+  hv.cam.position.set(.45, .32, .62); hv.cam.lookAt(0, .16, .05); hv.cam.updateMatrixWorld();
+  const sl = gs.hd.sun('#fff', 2.5, 4, [-.4, 1, .4]); hv.scene.add(sl, sl.target); hv.sun = sl;
+  for (let i = 0; i < 3; i++) { hv.render(hx, 160, 160); await frame(); } const before = hx.getImageData(0, 0, 160, 160).data;
+  hv.scene.add(cat); const rest = cat.bones.legFL.rotation.x; for (let i = 0; i < 6; i++) { cat.move(1 / 30, cat.speeds.walk, { turn: .3 }); hv.render(hx, 160, 160); await frame(); }
+  const after = hx.getImageData(0, 0, 160, 160).data; let px = 0; for (let i = 0; i < after.length; i += 4) if (Math.abs(after[i] - before[i]) + Math.abs(after[i + 1] - before[i + 1]) + Math.abs(after[i + 2] - before[i + 2]) > 40) px++;
+  ok(px / (160 * 160) > .03 && cat.bones.legFL.rotation.x !== rest && cat.bones.legFL.rotation.x !== cat.bones.legFR.rotation.x, `creature: drawn walking in a Next Gen view (${(px / 256).toFixed(1)}% of the picture)`);
+  const near = cat.see(hv.cam, 800); hv.cam.position.set(30, 20, 40); hv.cam.updateMatrixWorld(); const far = cat.see(hv.cam, 800);
+  ok(near === 0 && far === 2 && cat.lods[2].visible && !cat.lods[0].visible, 'creature: close it is the fine level, far off the coarse one');
+  // a bird beats its wings in the air and folds them on the ground; an unknown animal says so
+  await creature.ready([{ like: 'crow' }]); const crow = creature({ like: 'crow' });
+  crow.move(.05, 0); crow.move(.3, 0); const folded = crow.bones.wingL.rotation.y; for (let i = 0; i < 8; i++) crow.move(.05, crow.speeds.fly, { fly: true });
+  ok(folded > 1 && Math.abs(crow.bones.wingL.rotation.y) < .05 && crow.bones.wingL.rotation.z !== 0 && crow.speeds.fly > crow.speeds.run, 'creature: a crow folds its wings on the ground and beats them in the air');
+  let bad = null; try { creature({ like: 'unicorn' }); } catch (x) { bad = x; } ok(/nothing called 'unicorn'/.test(bad?.message) && !bad.kitLoading, 'creature: an animal it does not know is an error that names the ones it does');
+  // the sculpt was saved on the phone
+  await new Promise(r => setTimeout(r, 300));
+  const kept = await new Promise(res => { const rq = indexedDB.open('gs-creatures'); rq.onsuccess = () => { try { const c = rq.result.transaction('pieces').objectStore('pieces').count(); c.onsuccess = () => res(c.result); c.onerror = () => res(-1); } catch (x) { res(-1); } }; rq.onerror = () => res(-1); });
+  ok(kept >= 2, 'creature: ' + kept + ' sculpts saved for next time');
+}
 window.result = out;
 </script>
