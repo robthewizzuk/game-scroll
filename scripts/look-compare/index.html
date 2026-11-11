@@ -243,14 +243,17 @@ async function recipesScene(near = false) {
   window.__hd.force = 3;
   const v = new HV({ bg: '#9ab4d0', fog: 0, env: .4, amb: .35 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
   const names = gs.models.materials, t0 = performance.now();
-  names.forEach((n, i) => { const m = new T.Mesh(new T.BoxGeometry(.9, .9, .2), gs.models.material(n)); m.position.set((i % 4) * 1 - 1.5, 3.6 - Math.floor(i / 4) * 1, 0); v.scene.add(m); });
+  const made = names.map((n, i) => { const m = new T.Mesh(new T.BoxGeometry(.9, .9, .2), gs.models.material(n)); m.position.set((i % 4) * 1 - 1.5, 3.6 - Math.floor(i / 4) * 1, 0); v.scene.add(m); return m; });
   const bake = performance.now() - t0;
   if (near) { v.cam.position.set(-1.2, 3.5, .6); v.cam.lookAt(-1.4, 3.5, 0); } else { v.cam.position.set(0, 1.6, 6); v.cam.lookAt(0, 1.6, 0); }
   v.cam.updateMatrixWorld();
   const sun = gs.hd.sun('#fff2d8', 3, 8, [-.4, .6, .8]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
-  const t1 = performance.now(); while (performance.now() - t1 < 2000) { v.t = 0; v.render(x, 240, 320); await frame(); }
+  // (near, on WebGPU: until the close-up look of the block at the camera is in. Its shader is built in the
+  // background, which took longer than the two seconds here, so this scene was showing the baked look)
+  const closeIn = () => /:near$/.test(made[0].material.name), wait = near && GPU && window.__hd.closeUp !== false;
+  const t1 = performance.now(); while (performance.now() - t1 < 2000 || (wait && !closeIn() && performance.now() - t1 < 60000)) { v.t = 0; v.render(x, 240, 320); await frame(); }
   v.t = 0; v.render(x, 240, 320);
-  return [c.toDataURL(), window.__hd.info.backend + ', baked ' + names.length + ' in ' + Math.round(bake) + ' ms'];
+  return [c.toDataURL(), window.__hd.info.backend + ', baked ' + names.length + ' in ' + Math.round(bake) + ' ms' + (wait ? closeIn() ? ', close-up look in' : ', CLOSE-UP LOOK NOT IN' : '')];
 }
 // gs.models.wear: the same things new (left) and aged from their own shape (right): rubbed edges,
 // grime in the creases and near the ground, moss on the steps, snow on the pillar's top

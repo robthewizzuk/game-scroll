@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// scripts/close-up.cjs: the close-up look of gs.models.material() on WebGPU (hd3d-gpu.js recipeTwin, hd3d.js
+// swapTwins). A wide plank floor with the camera standing on it, as in a board game's room, a post made of
+// the floor's material, and a brick panel held up to the camera:
+// 1. everything goes on being drawn while its close-up shader is built and when it comes in (it used to wait,
+//    hidden, for a few frames, and the upscaler then took half a second to bring it back);
+// 2. the far end of the floor is as steady as the painted textures when the picture moves by part of a pixel
+//    (the close-up look has no filtering, so far-off thin lines used to crawl) and looks the same as them;
+// 3. the panel at the camera is sharper than the painted textures, with every brick where they have it.
+// ?recipe=cobbles&scatter&solid=.75: the floor's recipe, and both materials scattered or laid on by position (metres a tile).
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+setGpuPick('webgpu');
+await loadParts();
+if (!await prepareGPU()) { window.result = { error: 'WebGPU did not start' }; throw new Error('no WebGPU'); }
+const Q = new URLSearchParams(location.search), T = gs.THREE, HD = window.__hd, frame = () => new Promise(r => requestAnimationFrame(r));
+const W = 240, H = 320;
+HD.force = 1; HD.upscale = false; HD.grain = 0;
+const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .5 }), c = document.createElement('canvas'); c.width = W; c.height = H; document.body.append(c); const x = c.getContext('2d', { willReadFrequently: true });
+v.cam.position.set(0, 1.3, 3.4); v.cam.lookAt(0, .2, 0); v.cam.updateMatrixWorld();
+const sun = gs.hd.sun('#fff2d8', 3, 8, [-.4, .8, .5]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+const how = { ...(Q.has('scatter') ? { scatter: true } : {}), ...(Q.has('solid') ? { solid: +Q.get('solid') || true } : {}) };
+const floor = new T.Mesh(new T.PlaneGeometry(9, 9).rotateX(-Math.PI / 2), gs.models.material(Q.get('recipe') || 'planks', { repeat: [9, 18], ...how })); floor.receiveShadow = true; v.scene.add(floor);
+// the same material on another layout (no index): its close-up shader is its own
+const post = new T.Mesh(new T.BoxGeometry(.3, 1, .3).toNonIndexed(), floor.material); post.position.set(-.75, .5, 1); post.castShadow = post.receiveShadow = true; v.scene.add(post);
+// a quarter of a metre from the camera, across the bottom of the picture: each texel of its bricks nearly three pixels wide
+const panel = new T.Mesh(new T.PlaneGeometry(.3, .15), gs.models.material('brick', { repeat: [.4, .2], ...how }));
+panel.quaternion.copy(v.cam.quaternion); panel.position.copy(v.cam.position).add(new T.Vector3(0, -.0745, -.25).applyQuaternion(v.cam.quaternion)); v.scene.add(panel);
+const FAR = [0, .41, 1, .48], PANEL = [.05, .56, .95, .86], TOP = [0, .25, 1, .48];   // parts of the picture (x0, y0, x1, y1): the far end of the floor, the panel, the floor and the sky above it
+const draw = () => { v.t = 0; v.render(x, W, H); return x.getImageData(0, 0, W, H).data; };
+const each = (b, fn) => { for (let y = Math.floor(b[1] * H); y < Math.floor(b[3] * H); y++) for (let xx = Math.floor(b[0] * W); xx < Math.floor(b[2] * W); xx++) fn((y * W + xx) * 4, xx, y); };
+const grey = (d, j) => (d[j] + d[j + 1] + d[j + 2]) / 3;
+const lum = (d, b) => { let s = 0, n = 0; each(b, j => { s += grey(d, j); n++; }); return s / n; };
+const diff = (a, bb, b) => { let s = 0, n = 0; each(b, j => { s += (Math.abs(a[j] - bb[j]) + Math.abs(a[j + 1] - bb[j + 1]) + Math.abs(a[j + 2] - bb[j + 2])) / 3; n++; }); return s / n; };
+// how alike two pictures are once both are blurred (4 x 4 pixel blocks; 1: the same pattern in the same place,
+// whatever its fine detail and however much lighter or darker one is)
+const alike = (a, bb, b) => {
+  const A = new Map(), B = new Map(); each(b, (j, xx, y) => { const k = (y >> 2) * 1000 + (xx >> 2); A.set(k, (A.get(k) || 0) + grey(a, j)); B.set(k, (B.get(k) || 0) + grey(bb, j)); });
+  let ma = 0, mb = 0; for (const [k, t] of A) { ma += t; mb += B.get(k); } ma /= A.size; mb /= A.size;
+  let ab = 0, aa = 0, b2 = 0; for (const [k, t] of A) { const u = t - ma, w = B.get(k) - mb; ab += u * w; aa += u * u; b2 += w * w; }
+  return ab / Math.sqrt(aa * b2 || 1);
+};
+// fine detail: how far each pixel is from the mean of its four neighbours
+const detail = (d, b) => { let s = 0, n = 0; each(b, j => { s += Math.abs(grey(d, j) - (grey(d, j - 4) + grey(d, j + 4) + grey(d, j - W * 4) + grey(d, j + W * 4)) / 4); n++; }); return s / n; };
+const near = o => /:near$/.test(o.material.name), things = [floor, post, panel];
+// 1. from the first frame until the close-up look has been in for a while: nothing waits hidden, the picture holds
+let held = 0, first = 0, off = 0, frames = 0, slow = 0; const at = things.map(() => -1), series = [], ms = [];
+for (let i = 0; i < 900 && (at.some(a => a < 0) || i < Math.max(...at) + 8); i++) {
+  const t0 = performance.now(), d = draw(), l = lum(d, TOP), dt = performance.now() - t0; frames++;
+  if (i === 2) first = l; if (i > 2) off = Math.max(off, Math.abs(l - first));
+  held = Math.max(held, HD.info.held || 0, things.filter(o => !(o.layers.mask & 1)).length);
+  things.forEach((o, k) => { if (at[k] < 0 && near(o)) { at[k] = i; slow = Math.max(slow, dt); } });
+  series.push(l.toFixed(1) + '/' + (HD.info.held || 0) + things.map(o => (near(o) ? 'n' : 'f')).join('') + '/' + dt.toFixed(0)); ms.push(dt);
+  await frame();
+}
+// 2. and 3. the picture moved by parts of a pixel, with the close-up look and with the painted textures alone
+// (one picture a frame: a second render in the same frame shows the first again)
+const JIT = [[0, 0], [.5, 0], [0, .5], [.5, .5], [.25, .75]];
+const shots = async () => { const out = []; for (const [dx, dy] of JIT) { v.cam.setViewOffset(W, H, dx, dy, W, H); v.cam.updateProjectionMatrix(); await frame(); out.push(draw().slice()); } v.cam.clearViewOffset(); v.cam.updateProjectionMatrix(); await frame(); return out; };
+const flick = (s, b) => { let t = 0; for (let i = 1; i < s.length; i++) t += diff(s[i], s[i - 1], b); return t / (s.length - 1); };
+const A = await shots(), isNear = things.every(near);
+HD.closeUp = false; for (let i = 0; i < 4; i++) { draw(); await frame(); }
+const B = await shots(), isFar = things.every(o => /:far$/.test(o.material.name));
+const url = d => { x.putImageData(new ImageData(d, W, H), 0, 0); return c.toDataURL(); };
+window.result = {
+  series: series.join(' '), backend: HD.info.backend, frames, at, held, first, off, isNear, isFar, slow, usual: ms.slice().sort((a, b) => a - b)[ms.length >> 1],
+  farFlickNear: flick(A, FAR), farFlickBaked: flick(B, FAR), farApart: diff(A[0], B[0], FAR),
+  panelApart: diff(A[0], B[0], PANEL), panelAlike: alike(A[0], B[0], PANEL), panelDetailNear: detail(A[0], PANEL), panelDetailBaked: detail(B[0], PANEL),
+  near: url(A[0]), baked: url(B[0]),
+};
+</script>
