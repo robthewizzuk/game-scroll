@@ -304,7 +304,7 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power)\.js|scripts/(framegen-test|upscale-compare)|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|scripts/(framegen-test|upscale-compare|close-up)|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
 
       - uses: actions/setup-node@v7
         if: steps.changed.outputs.run
@@ -349,6 +349,11 @@ jobs:
       - name: The same on WebGL
         if: steps.changed.outputs.run
         run: node scripts/upscale-compare.cjs --warm 80 --modes plain,sgsr2,sgsr2-plain
+
+      # (gs.models.material's close-up look on WebGPU: never hidden while its shader comes in, steady far off, sharp up close)
+      - name: Recipe materials up close
+        if: steps.changed.outputs.run
+        run: node scripts/close-up.cjs
 
   # The app around a game (screen kept on in a round, finer touch, even pixels and the LCD look, the
   # one-line soundtrack, the phone-only save) and the sound itself (every ready-made sound is heard and

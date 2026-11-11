@@ -732,10 +732,15 @@ wear(wall, { moss: .7 });                                                    // 
   `under`, `vein`, `grout`...), `seed` for another pattern, `repeat: [u, v]`, `size` (texture pixels, 256).
   Each is painted once into tiling colour, bump, roughness and metal textures, and kept across launches
   (the next launch reads them back instead of painting again). On WebGPU: `closeUp` (on by default)
-  works the recipe out per pixel near the camera so it stays sharp however close you get (its
-  shaders build in the background, one at a time, and it shows once they're ready); `solid: true`
-  (or metres per tile) lays it on by world position, with no UVs or seams; `scatter: true` turns and moves
-  each tile so a big floor shows no repeat. Other options go to `gs.hd.pbr` (`glow`, `clear`, `wet`...).
+  works the recipe out per pixel near the camera so it stays sharp however close you get. It is for
+  the pixels the painted textures are stretched over: each pixel fades to the painted textures as
+  they get fine enough for it, so a floor the camera stands on is close-up at its feet and painted
+  further off, where the recipe would only shimmer. Its shaders build in the background, one at a
+  time, for things within 4 units of the camera, and the painted look is drawn until they're ready.
+  `solid: true` (or metres per tile) lays it on by world position, with no UVs or seams; `scatter: true`
+  turns and moves each tile so a big floor shows no repeat (close up it works the recipe out four
+  times a pixel, once for each tile it blends: pass `closeUp: false` where the camera never comes
+  close). Other options go to `gs.hd.pbr` (`glow`, `clear`, `wet`...).
 - **`wear(mesh, o)`**: ages a thing from its own shape, the way texture artists use curvature and cavity
   maps: outer edges rubbed lighter (`edges` 0..1, `edgeColour` for what shows through), creases and the
   bottom `ground` metres grimy (`dirt`, `dirtColour`), moss or snow on what faces up (`moss`, `mossColour`,

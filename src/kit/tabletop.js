@@ -75,12 +75,14 @@ export const ROOMS = {
 };
 const roomLook = r => { const o = typeof r === 'string' ? { like: r } : r || {}; return { ...(ROOMS[o.like] || ROOMS.study), ...o }; };
 // The room's floor, rug and felt keep their painted textures: no close-up shader (gs.models.material's
-// closeUp, WebGPU). Close is judged by a mesh's bounding sphere, and the camera always sits inside the
-// big floor's: the whole floor went over to the recipe worked out per pixel, which has no filtering, so
-// far off every thin gap between the boards broke into dashes that crawled from frame to frame, and
-// the floor vanished for a moment about a second into each game while the new shader was built. The
-// camera stays most of a metre above the floor and rug; it comes within a hand of the felt's near
-// edge only at the lowest, closest view, where the painted weave is drawn at about twice its size.
+// closeUp, WebGPU). The camera stays most of a metre above the floor and rug; it comes within a hand of
+// the felt's near edge only at the lowest, closest view, where the painted weave is drawn at about twice
+// its size. So the room has no use for the close-up look, and without it there are no shaders to build
+// a second into each game. (It was turned off for a fault in the engine, since fixed: "close" was judged
+// by a mesh's bounding sphere, and the camera always sits inside the big floor's, so the whole floor went
+// over to the recipe worked out per pixel, which has no filtering: far off every thin gap between the
+// boards broke into dashes that crawled from frame to frame, and the floor vanished for a moment while
+// the new shader was built. Now each pixel fades to the painted textures, and nothing is hidden.)
 const BAKED = { closeUp: false };
 
 const woods = new Map();

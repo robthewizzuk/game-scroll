@@ -533,41 +533,65 @@ const bumpN = (h, k, n) => {
   return normalize(abs(det).mul(n).sub(g));
 };
 const hash21 = q => fract(sin(dot(q, vec2(127.1, 311.7))).mul(43758.5453));
+// the close-up look's share of a pixel by the baked texels it covers: all of it up to half a texel, none from one texel
+const NEAR_FADE = [.5, 1];
 function recipeTwin(gm) {
   const R = gm.userData.recipe, REC = RECIPES[R.name], Cls = gm.isMeshPhysicalMaterial ? MeshPhysicalNodeMaterial : MeshStandardNodeMaterial;
   const copy = () => { const m = new Cls(); for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k]; return m; };
-  const rp = gm.map.repeat, solidK = R.solid ? (typeof R.solid === 'number' ? R.solid : 2) : 0;
-  // where on the tile (in tiles): the mesh's UVs, or (solid) its world position on the plane it faces most
+  const rp = gm.map.repeat, solidK = R.solid ? (typeof R.solid === 'number' ? R.solid : 2) : 0, plain = !solidK && !R.scatter;
   const ax = abs(NW), useX = ax.x.greaterThan(ax.y).and(ax.x.greaterThan(ax.z)), useY = ax.y.greaterThan(ax.z);
-  const tileAt = solidK ? select(useX, PW.zy, select(useY, PW.xz, PW.xy)).div(solidK) : uv().mul(vec2(rp.x, rp.y));
+  const q = solidK ? select(useX, PW.zy, select(useY, PW.xz, PW.xy)).div(solidK) : uv().mul(vec2(rp.x, rp.y));   // where in the tiles
   // far: the baked textures; scatter: four neighbouring tiles each moved by a random amount, blended
-  const far = copy(), q = tileAt;
-  // (read with the tile place's own gradients, times MIP_K: sharper under SGSR 2 like the plain maps, see sharpMips)
+  const far = copy();
   const gx = dFdx(q).mul(MIP_K), gy = dFdy(q).mul(MIP_K), read = (t, qq) => texture(t, qq).grad(gx, gy);
-  const look = t => {
-    if (!R.scatter) return read(t, q);
-    const c = floor(q.sub(.5)), f = q.sub(.5).sub(c), w = f.mul(f).mul(f.mul(-2).add(3));
-    const at = (dx, dy) => read(t, q.add(vec2(hash21(c.add(vec2(dx, dy))), hash21(c.add(vec2(dx, dy)).add(17.3)))));
-    return mix(mix(at(0, 0), at(1, 0), w.x), mix(at(0, 1), at(1, 1), w.x), w.y);
-  };
-  if (solidK || R.scatter) {
-    far.colorNode = look(gm.map).mul(materialColor);
-    far.roughnessNode = look(gm.roughnessMap).g.mul(materialRoughness);
-    if (gm.metalnessMap) far.metalnessNode = look(gm.metalnessMap).b.mul(TSL.materialMetalness);
-    // (normals from the height layer: a normal map read by world position would point the wrong way)
-    far.normalNode = bumpN(look(gm.userData.recipeHeight || gm.map).r, gm.normalScale.x * .06 * (solidK || 1), TSL.normalView);
+  const c = floor(q.sub(.5)), f = q.sub(.5).sub(c), sw = f.mul(f).mul(f.mul(-2).add(3));
+  const moved = (dx, dy) => q.add(vec2(hash21(c.add(vec2(dx, dy))), hash21(c.add(vec2(dx, dy)).add(17.3))));
+  const four = at => mix(mix(at(0, 0), at(1, 0), sw.x), mix(at(0, 1), at(1, 1), sw.x), sw.y);
+  const look = t => (R.scatter ? four((dx, dy) => read(t, moved(dx, dy))) : read(t, q));
+  // (laid on by position or scattered: the kit reads the textures; by the mesh's UVs three reads them itself)
+  const B = plain ? null : { col: look(gm.map), rough: look(gm.roughnessMap).g, metal: gm.metalnessMap ? look(gm.metalnessMap).b : float(1),
+    n: bumpN(look(gm.userData.recipeHeight || gm.map).r, gm.normalScale.x * .06 * (solidK || 1), TSL.normalView) };
+  if (B) {
+    far.colorNode = B.col.mul(materialColor);
+    far.roughnessNode = B.rough.mul(materialRoughness);
+    if (gm.metalnessMap) far.metalnessNode = B.metal.mul(TSL.materialMetalness);
+    far.normalNode = B.n;
     far.map = far.roughnessMap = far.metalnessMap = far.normalMap = null;
   }
   far.name = (gm.name || 'recipe') + ':far';
   if (!R.closeUp) return far;
-  // near: the recipe itself at this pixel (sharp however close), its height bending the normal
+  // near: the recipe itself at this pixel (sharp however close), its height bending the normal. Worked out
+  // at one point of the pixel, it has no filtering: where the baked textures already have a texel or more
+  // for every pixel of the screen it would only alias (thin lines far off crawl as the picture moves), so
+  // each pixel fades to the baked look by how many texels it covers, and the recipe is left with the
+  // pixels the textures are stretched over. A floor the camera stands on is close-up at its feet and
+  // baked further off. The recipe is read where the textures were painted from (the same tile, and with
+  // scatter the same four moved tiles), so the two looks lie on top of each other where they fade.
   const near = copy(), O = seeded(tslOps(TSL), R.seed), K = {}; for (const k in R.look) K[k] = O.rgb(R.look[k]);
-  const pTile = fract(tileAt).mul(REC.P), r = REC.f(O, pTile, K), num = v => (typeof v === 'number' ? float(v) : v);
-  near.colorNode = vec4(sRGBTransferEOTF(r.col), 1).mul(materialColor);
-  near.roughnessNode = num(r.rough).clamp(0, 1).mul(materialRoughness);
-  near.metalnessNode = num(r.metal).clamp(0, 1).mul(TSL.materialMetalness);
-  near.normalNode = bumpN(num(r.h), gm.normalScale.x * .05 * (solidK || 1 / Math.max(rp.x, rp.y)) * REC.P / 4, TSL.normalView);
-  near.map = near.roughnessMap = near.metalnessMap = near.normalMap = null;
+  const num = v => (typeof v === 'number' ? float(v) : v), ref = TSL.materialReference;
+  // (painted from the top row down, and a texture's v runs up: the recipe's y is turned over)
+  const rec = qq => { const t = fract(qq); return REC.f(O, vec2(t.x, t.y.oneMinus()).mul(REC.P), K); };
+  const recs = R.scatter ? [rec(moved(0, 0)), rec(moved(1, 0)), rec(moved(0, 1)), rec(moved(1, 1))] : [rec(q)];
+  const part = k => (R.scatter ? four((dx, dy) => num(recs[dx + dy * 2][k])) : num(recs[0][k]));
+  // baked texels to a pixel of the screen, along the way the tiles are squeezed most (under SGSR 2: of the picture it builds)
+  const per = max(length(dFdx(q)), length(dFdy(q))).mul(MIP_K).mul(gm.map.image?.width || 256), w = smoothstep(NEAR_FADE[0], NEAR_FADE[1], per).oneMinus();
+  const col = sRGBTransferEOTF(part('col')), rough = part('rough').clamp(0, 1), metal = part('metal').clamp(0, 1);
+  const bent = bumpN(part('h'), gm.normalScale.x * .05 * (solidK || 1 / Math.max(rp.x, rp.y)) * REC.P / 4, TSL.normalView);
+  // (the colour's alpha is a plain 1, as it was: three reads it for the shadow pass, which then drops the rest)
+  if (B) {
+    near.colorNode = vec4(mix(B.col.rgb, col, w), 1).mul(materialColor);
+    near.roughnessNode = mix(B.rough, rough, w).mul(materialRoughness);
+    near.metalnessNode = mix(B.metal, metal, w).mul(TSL.materialMetalness);
+    near.normalNode = normalize(mix(B.n, bent, w));
+    near.map = near.roughnessMap = near.metalnessMap = near.normalMap = null;
+  } else {
+    // the maps stay on: three's own reads of them are the baked look, and the recipe takes the material's
+    // plain numbers (from this material by name: three also builds the colour for the shadow pass's material)
+    near.colorNode = vec4(mix(materialColor.rgb, col.mul(ref('color', 'color', near)), w), 1);
+    near.roughnessNode = mix(materialRoughness, rough.mul(ref('roughness', 'float', near)), w);
+    near.metalnessNode = mix(TSL.materialMetalness, metal.mul(ref('metalness', 'float', near)), w);
+    near.normalNode = normalize(mix(TSL.materialNormal, bent, w));
+  }
   near.name = (gm.name || 'recipe') + ':near';
   far.userData.gsNear = near; far.userData.gsNearDist = 4;
   return far;

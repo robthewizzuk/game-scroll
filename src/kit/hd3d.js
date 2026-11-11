@@ -2298,11 +2298,14 @@ function gpuFor(v) {
 // swap each view's parts between their WebGL and WebGPU versions (particles: points or sprites)
 const gpuLooked = new WeakSet(), gpuTwins = new WeakMap(), sunRoles = new WeakMap();
 // kit ShaderMaterials (GPU_TWINS) swapped for their node material twin on WebGPU, and back
-// A twin can have a close-up version (gs.models materials: the recipe worked out per pixel): drawn
-// while the thing is within its distance of the camera, once its shaders have built in the background
-// (so walking up to a wall never hides it while a shader builds)
+// A twin can have a close-up version (gs.models materials: the recipe worked out per pixel, fading to the
+// baked look pixel by pixel as the textures get fine enough): drawn while the thing is within its distance
+// of the camera, once its shader for that kind of mesh has built in the background. Until then the far
+// look goes on being drawn, and the close-up one is marked as built for the view when it comes in (seen:
+// the view's holdNew set), so walking up to a wall, or standing on a floor, never hides it while a shader
+// builds. (holdNew took the swap for a new thing appearing and hid it for a few frames; the upscaler then
+// took half a second to bring it back.)
 const GPU_CULL_MIN = 2000;   // copies in one gs.props set before the chip picks them (HD.gpuCull 'auto'): below it the CPU's list is quick
-const NEAR_S = new Sphere(), nearBusy = new WeakSet();
 // Shaders built ahead on WebGPU, one build at a time for each renderer. three.js keeps its place in a
 // build in one field of the renderer, so two builds running at once trip over each other: one of them
 // throws, the renderer's count of nested renders is left one too high, every render after that starts on
@@ -2314,28 +2317,35 @@ function compileGPU(r, o, cam, scene, around = null) {
   r.gsCompiling = p.catch(() => {});
   return p;
 }
-function swapTwins(scene, G, cam = null) {
+const NEAR_S = new Sphere(), NEAR_B = new Box3(), nearBusy = new WeakSet();
+// within d of the camera: the mesh's sphere first (cheap), then its box (a wide floor's sphere reaches far above it)
+function closeTo(o, at, d) {
+  const g = o.geometry;
+  if (!g.boundingSphere) g.computeBoundingSphere();
+  if (NEAR_S.copy(g.boundingSphere).applyMatrix4(o.matrixWorld).distanceToPoint(at) >= d) return false;
+  if (!g.boundingBox) g.computeBoundingBox();
+  return NEAR_B.copy(g.boundingBox).applyMatrix4(o.matrixWorld).distanceToPoint(at) < d;
+}
+function swapTwins(scene, G, cam = null, seen = null) {
   scene.traverse(o => {
     if (!o.isMesh) return;
     const gl = o.userData.gsGlMat || o.material;
     if (!gl?.userData?.gsGpu) return;
     if (G) {
-      let tw = gpuTwins.get(gl); if (tw?.r !== G.r) gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), nearOk: false, building: false });
+      let tw = gpuTwins.get(gl); if (tw?.r !== G.r) gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), built: new Set(), building: new Set() });
       o.userData.gsGlMat = gl;
       const near = tw.m.userData.gsNear;
       let use = tw.m;
-      if (near && cam && !o.isInstancedMesh && HD.closeUp !== false) {
-        if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
-        NEAR_S.copy(o.geometry.boundingSphere).applyMatrix4(o.matrixWorld);
-        const close = NEAR_S.distanceToPoint(cam.position) < tw.m.userData.gsNearDist;
-        if (close && tw.nearOk) use = near;
-        else if (close && !tw.building && !nearBusy.has(G.r)) {
+      if (near && cam && !o.isInstancedMesh && HD.closeUp !== false && closeTo(o, cam.position, tw.m.userData.gsNearDist)) {
+        const k = shaderKeyAs(o, near);   // (a shader for each kind of mesh the material is on)
+        if (tw.built.has(k)) { use = near; seen?.add(k); }
+        else if (!tw.building.has(k) && !nearBusy.has(G.r)) {
           // one close-up build at a time per renderer: many at once can stall the graphics chip (and a
           // phone's frame) while they all compile; a build that never settles frees the queue after 4 s
-          tw.building = true; nearBusy.add(G.r);
+          tw.building.add(k); nearBusy.add(G.r);
           const done = () => { nearBusy.delete(G.r); clearTimeout(cap); }, cap = setTimeout(done, 4000);
           const withNear = go => { const keep = o.material; o.material = near; try { return go(); } finally { o.material = keep; } };
-          compileGPU(G.r, o, cam, scene, withNear).then(() => { tw.nearOk = true; done(); }, done);   // (a build that fails: it stays far)
+          compileGPU(G.r, o, cam, scene, withNear).then(() => { tw.built.add(k); done(); }, done);   // (a build that fails: it stays far)
         }
       }
       o.material = use;
@@ -2343,7 +2353,7 @@ function swapTwins(scene, G, cam = null) {
   });
 }
 function gpuSwap(v, G) {
-  swapTwins(v.scene, G, v.cam);
+  swapTwins(v.scene, G, v.cam, G ? v.shSeen ||= new Set() : null);
   if (AREA_LTC && G && !AREA_GPU) { G.fx.areaLTC(AREA_LTC); AREA_GPU = true; }   // area lights' tables for WebGPU (panel)
   // shadow maps: each renderer keeps its own. WebGL drew into WebGPU's map when it found one on the light
   // (and the other way round), which made WebGPU remake it in the middle of a frame that still used it:
@@ -2784,6 +2794,18 @@ function shaderKey(o) {
   const key = sig.replace(/\|.*$/, '') + '|' + (o.isSkinnedMesh ? 's' : '') + (o.isInstancedMesh ? 'i' : '') + (o.isBatchedMesh ? 'b' : '') + (o.isPoints ? 'p' : o.isLine ? 'l' : o.isSprite ? 'S' : '') +
     (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '');
   remember(o, sig, key, mat, g);
+  return key;
+}
+// the key a thing would have with material m on it (its close-up twin, before that is swapped in), kept for each thing
+const KEYS_AS = new WeakMap();
+function shaderKeyAs(o, m) {
+  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '';
+  if (c && c.m === m && c.v === m.version && c.g === g) return c.key;
+  const keep = o.material, was = KEYS.get(o);
+  o.material = m; KEYS.delete(o);
+  const key = shaderKey(o);
+  o.material = keep; if (was) KEYS.set(o, was); else KEYS.delete(o);
+  KEYS_AS.set(o, { m, v: m.version, g, key });
   return key;
 }
 function remember(o, sig, key, mat, g) {
