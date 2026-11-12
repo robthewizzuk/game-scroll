@@ -946,6 +946,13 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   creatures in `make()` or `reset()`, and several kinds together and first (`creature.all([...])`, or
   `creature.need([...])` before anything costly is built). `node scripts/creatures.cjs sheet.png` draws every
   animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.
+- **`fur(mesh, o)`**: fur or hair in layers, with no texture files: copies of the surface pushed out along
+  its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
+  themselves (`creature.fur`; `fur: false` to leave it off), and people's hair, moustaches and beards are
+  strands (`human({ beard: 1 })`, `person.hair`; `strands: false` for the sculpted hair alone). Close up
+  only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
+  fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
+  [Fur and hair](maker-kit.md#fur-and-hair).
 - **`vehicle(kind, o)`**: a car, a lorry, a tank, a train, a boat or a plane made in code: a shell skinned
   over cross-sections from a few measures, in paint, glass, chrome and rubber, aged with `wear()`, with
   the parts that turn on pivots of their own. 30 to start from (`vehicle.kinds`): cars `saloon`, `hatch`,

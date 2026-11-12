@@ -2164,6 +2164,65 @@ export type TrainT = Loose & {
   lights(on?: boolean): TrainT;
   twin(): TrainT;
 };
+/** What gs.models.fur takes (a creature's `fur` and a person's `strands` take the same, less what they work out themselves). Lengths are in the mesh's own units. */
+export interface FurOptions {
+  /** How long the strands are (.03). A creature and a person take theirs in metres. */
+  length?: number;
+  /** How many layers: by the phone's quality unless given (none on the slowest phones, then 5, 7 and 10). */
+  layers?: number;
+  /** 'fur': strands on end; 'hair': long strands lying side by side. */
+  kind?: 'fur' | 'hair';
+  /** How much of `length` grows at each point: a Float32Array of 0..1 a point, or (i, x, y, z) => 0..1. 0: none there. */
+  where?: Float32Array | ((i: number, x: number, y: number, z: number) => number);
+  /** The triangles to cover, as indices into the mesh's points (the mesh's own index otherwise). */
+  index?: ArrayLike<number>;
+  /** How wide the picture of strands is on the surface (.1; fur has 32 strands across it, hair 36). */
+  tile?: number;
+  /** 'box' (strands on end from every side), or for hair the crown they stream from on a head whose middle is `centre`: around (whole pictures round the head), droop (how much they hang: .35). */
+  uv?: 'box' | { centre?: number[]; crown?: number[]; around?: number; droop?: number };
+  /** 0..1.5 how far the strands lie over (.5). */
+  lean?: number;
+  /** The way they lie: [x, y, z] or a function of each point and its normal. Down and back (-z) otherwise. */
+  flow?: number[] | ((x: number, y: number, z: number, nx: number, ny: number, nz: number) => number[]);
+  /** No strand longer than this much of how thick the mesh is where it grows, so ears, thin tails and legs keep their shape (.45; 0: any length). */
+  thin?: number;
+  /** How quickly strands lengthen away from where none grow, as a part of `length` an edge (.5). */
+  ease?: number;
+  rough?: number;
+  /** How dark the roots are and how light the tips (.65, 1.5). */
+  root?: number; tip?: number;
+  /** A tint over the mesh's vertex colours. */
+  colour?: string; color?: string;
+  /** The strands' colours where they differ from the mesh's: three numbers a point. */
+  colors?: Float32Array;
+  /** Which picture of strands (1). */
+  seed?: number;
+  /** false: don't thin out with distance. */
+  auto?: boolean;
+  /** How big the furry thing is (mesh units), for thinning with distance. */
+  size?: number;
+  /** Another coat's `shell`, to share its geometry (twins). */
+  shell?: Loose;
+}
+/** A coat of fur or hair: layers of strands over a mesh. */
+export interface FurCoat {
+  /** Its meshes, the outermost first, children of the mesh it grows on. */
+  shells: Loose[];
+  layers: number;
+  /** The geometry every layer shares (null on a phone that draws no layers). */
+  shell: Loose | null;
+  /** Triangles drawn when every layer shows. */
+  tris: number;
+  /** Set any time: 1 as made, 1.5 fur standing on end, .5 flattened by water. */
+  length: number;
+  /** Set any time: how far the strands lie over (wind, speed). */
+  lean: number;
+  /** How much of it shows: 1 every layer, .5 every other, 0 none. Set by itself from how big the mesh is on screen (unless auto: false). */
+  level: number;
+  /** Sets level for a camera; returns it. */
+  see(camera: Loose, screenHeightPx?: number): number;
+  dispose(): void;
+}
 /** What gs.models.creature takes. Colours are '#rrggbb'. */
 export interface CreatureOptions {
   kind?: 'quad' | 'bird' | 'fish' | 'insect' | 'monster';
@@ -2180,6 +2239,11 @@ export interface CreatureOptions {
   build?: Record<string, number | string>;
   /** .5 coarser .. 2 finer (1). */
   detail?: number; shadows?: boolean;
+  /**
+   * Fur in layers (gs.models.fur) over a coat of fur, and over a mane and a tail of hair on any coat: on by itself, close up, on all but the slowest phones. false: none.
+   * Or { length (metres), layers, lean, tile (metres), rough, root, tip, auto, from (0: grown on the finest level's triangles everywhere) }.
+   */
+  fur?: boolean | (Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'flow' | 'ease' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'> & { from?: number });
   /** Sculpt on the spot (tools and tests: the page stops while it does). */
   now?: boolean;
 }
@@ -2198,6 +2262,8 @@ export type CreatureT = Loose & {
   /** What the seed chose: kind, like, seed, size, colour, belly, accent, pattern, eyes, build (its measures). */
   look: Record<string, Loose>;
   kind: string; like: string;
+  /** Its coat of fur (null: it has none, or this phone draws none): fur.length = 1.5 stands it on end, fur.lean lays it flat. move() lays it back a little as it runs. */
+  fur: FurCoat | null;
   /** Another of the very same creature, sharing everything but its skeleton. */
   twin(): CreatureT;
 };
@@ -2512,10 +2578,11 @@ export interface ModelsPart {
    * A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail.
    * Returns a Group with rig, bones, mesh, lods, lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), face.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
-   * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
+   * Hair in strands: close up, layers of strands (gs.models.fur) lie over the sculpted hair, streaming from the crown (from the bun, for hair tied back), over a moustache, and over a beard (beard: 0..1.5 how long, true = .6; painted stubble stays as it is). person.hair is that coat (null: bald with no beard, under a hat (the hair there stays as sculpted), strands: false, or the slowest phones); strands: { length (metres), layers, lean, tile } tunes it.
+   * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {
-    (o?: { sex?: 'm' | 'f'; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
+    (o?: { sex?: 'm' | 'f'; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
     /** Several people at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
     all(list: Loose[]): Loose[];
     /** Starts sculpting whatever these people still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
@@ -2524,6 +2591,20 @@ export interface ModelsPart {
     ready(list: Loose | Loose[]): Promise<boolean>;
     /** Forgets every saved sculpt. */
     clear(): Promise<void>;
+  };
+  /**
+   * Fur or hair on any mesh, in layers: copies of the surface pushed out along its normals, each cut by one picture of strands made in code, so strands seem to stand in the coat. three.js's own materials (a map with an alpha cut, vertex colours, two morph targets the layers share), so WebGL and WebGPU draw it alike, skinned or not.
+   * The mesh's vertex colours colour the coat. It thins out with distance by itself (every layer, every other one, none). Creatures and people use it by themselves: creature({ fur }) and human({ strands, beard }).
+   * Each layer is one more draw of the furry triangles, lit like everything else: keep a coat to what is seen close, and `layers` low (5 to 10).
+   */
+  fur: {
+    (mesh: Loose, o?: FurOptions): FurCoat;
+    /** The geometry a coat's layers share, by itself (hand it to several coats as `shell`). */
+    shell(geometry: Loose, o?: FurOptions): Loose;
+    /** The picture of strands for a kind and seed: a texture whose alpha is each strand's height and whose colour is its shade. */
+    strands(kind?: 'fur' | 'hair', seed?: number): Loose;
+    /** How many layers a coat gets on this phone unless it is told (0 on the slowest). */
+    layers(): number;
   };
   /**
    * An animal or a monster made in code from a seed, sculpted the way gs.models.human is (no model or texture files): one skinned mesh in three levels of detail on a skeleton of its own, with gaits made for its own legs, wings, fins or coils.

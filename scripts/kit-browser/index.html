@@ -666,6 +666,35 @@ try {
     ok(paint / 24576 > .04 && dark / 24576 > .01 && paint / 24576 < .5, `vehicles: a red sports car drawn in a Next Gen view (${(paint / 245.76).toFixed(1)}% of the picture its paint, ${(dark / 245.76).toFixed(1)}% tyres, glass and shadow)`);
     window.__hd.hold = hold;
   }
+  // gs.models.fur: fur in layers on a creature, hair in strands and a beard on a person, drawn in a Next Gen view
+  // (kit-test.mjs has the strand pictures, the shell and the layers; scripts/creatures.cjs draws them to look over)
+  {
+    const T = gs.THREE, { creature, human } = gs.models, frame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
+    const hold = window.__hd.hold; window.__hd.hold = false;
+    const v = new gs.hd.HDView({ bg: '#8a9299', amb: .7, env: .4 }), c = document.createElement('canvas'); c.width = 192; c.height = 192; const x = c.getContext('2d');
+    const sl = gs.hd.sun('#fff', 2.2, 4, [.5, .9, .6]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0);
+    const shot = async n => { for (let i = 0; i < n; i++) { v.render(x, 192, 192); await frame(); } return x.getImageData(0, 0, 192, 192).data; };
+    const differ = (a, b) => { let k = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 24) k++; return k / (a.length / 4); };
+    await creature.ready([{ like: 'cat' }]);
+    const cat = creature({ like: 'cat', colour: '#d0d0d0', belly: '#d0d0d0', pattern: 'plain', fur: { layers: 6, auto: false } }); v.scene.add(cat);
+    v.cam.fov = 30; v.cam.aspect = 1; v.cam.updateProjectionMatrix(); v.cam.position.set(.5, .3, .25); v.cam.lookAt(0, .17, .05); v.cam.updateMatrixWorld();
+    const furry = (await shot(4)).slice(); cat.fur.level = 0; const bare = (await shot(4)).slice(); cat.fur.level = 1; const d1 = differ(furry, bare);
+    ok(cat.fur.layers === 6 && cat.fur.shells.every(m => m.isSkinnedMesh && m.parent === cat.mesh) && d1 > .08 && d1 < .9, `fur: a cat drawn with six layers of fur in a Next Gen view (${(d1 * 100).toFixed(0)}% of the picture is not what it is without)`);
+    // thinning by itself: seen small the coat is put away, seen big again it comes back (the closest level kept on for this)
+    v.scene.remove(cat); const wild = creature({ like: 'cat', fur: { layers: 6 } }); v.scene.add(wild);
+    await shot(2); const close = wild.fur.level; v.cam.position.set(12, 6, 6); v.cam.lookAt(0, .17, .05); v.cam.updateMatrixWorld(); await shot(2); await wait(140); await shot(2); const off = wild.fur.level, shown = wild.fur.shells.filter(m => m.visible).length;
+    v.cam.position.set(.5, .3, .25); v.cam.lookAt(0, .17, .05); v.cam.updateMatrixWorld(); await shot(2); await wait(140); await shot(2);
+    ok(close === 1 && off === 0 && shown === 0 && wild.fur.level === 1 && wild.lod === 0, 'fur: far off a coat puts its layers away by itself, and brings them back close up');
+    v.scene.remove(wild);
+    // a person: strands over the sculpted hair and a beard on the jaw; strands: false leaves the sculpted hair alone
+    const opts = { seed: 3, build: 'medium' }; await human.ready([opts]);
+    const man = human({ ...opts, hair: '#b08a50', beard: 1, strands: { layers: 5, auto: false } }), plain = human({ ...opts, strands: false }); v.scene.add(man);
+    man.updateMatrixWorld(true); const hp = man.bones.head.getWorldPosition(new T.Vector3()); v.cam.position.set(hp.x + .3, hp.y + .15, hp.z + .5); v.cam.lookAt(hp.x, hp.y + .08, hp.z); v.cam.updateMatrixWorld(); sl.follow(hp.x, hp.y, hp.z);
+    const hairy = (await shot(4)).slice(); man.hair.level = 0; const cap = (await shot(4)).slice(); const d2 = differ(hairy, cap), info = man.hair.shell.userData.fur;
+    ok(man.hair.layers === 5 && /hair/.test(man.hair.shells[0].material.map.name) && info.tris > 2000 && plain.hair === null && human({ ...opts }).hair?.shell.userData.fur.tris < info.tris && d2 > .04,
+      `hair: a person's hair in strands and a beard, five layers over ${info.tris} triangles (${(d2 * 100).toFixed(0)}% of the picture is not what it is without); strands: false leaves the sculpted hair`);
+    window.__hd.hold = hold;
+  }
 }
 window.result = out;
 </script>

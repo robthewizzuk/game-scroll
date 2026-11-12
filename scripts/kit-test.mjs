@@ -3533,5 +3533,95 @@ console.log('physics ok');
   }
 }
 
+// gs.models.fur: fur and hair in layers (the strand pictures, the shell every layer shares, the layers, thinning with
+// distance), on creatures (where it grows and how long) — scripts/creatures.cjs draws it to look over; people's hair
+// is checked in kit-browser (a person's clothes need a canvas)
+{
+  const { fur, strands } = await import('../src/kit/models/fur.js'), THREE = await import('three'), { creature } = await import('../src/kit/models/creature.js');
+  const near = (a, b, e = 1e-4) => Math.abs(a - b) <= e;
+  // ---- the pictures of strands: less of each strand shows the higher it is cut; fur is dots, hair runs along v
+  const cover = (tex, t) => { const d = tex.image.data; let k = 0; for (let i = 3; i < d.length; i += 4) if (d[i] >= t * 255) k++; return k / (d.length / 4); };
+  const pf = strands('fur'), ph = strands('hair');
+  assert.ok(pf.isDataTexture && pf.image.width === 256 && pf.image.data.length === 256 * 256 * 4 && pf.wrapS === THREE.RepeatWrapping && pf.generateMipmaps, 'a strand picture is a tiling texture with mipmaps');
+  for (const tex of [pf, ph]) assert.ok(cover(tex, .1) > .9 && cover(tex, .5) < cover(tex, .25) - .15 && cover(tex, .5) > .1 && cover(tex, .9) < .1 && cover(tex, .9) > 0, `${tex.name}: thick at the roots (${cover(tex, .1).toFixed(2)}), thin at the tips (${cover(tex, .9).toFixed(3)})`);
+  const rough = (tex, dx, dy) => { const d = tex.image.data; let s = 0; for (let y = 0; y < 255; y++) for (let x = 0; x < 255; x++) s += Math.abs(d[(y * 256 + x) * 4 + 3] - d[((y + dy) * 256 + x + dx) * 4 + 3]); return s; };
+  assert.ok(rough(ph, 1, 0) > rough(ph, 0, 1) * 4, 'hair runs down the picture: it changes far more across than along');
+  assert.ok(rough(pf, 1, 0) < rough(pf, 0, 1) * 1.3 && rough(pf, 0, 1) < rough(pf, 1, 0) * 1.3, 'fur stands on end: the same across as along');
+  assert.ok(strands('fur') === pf && strands('fur', 2) !== pf && strands('fur', 2).image.data.some((v, i) => v !== pf.image.data[i]), 'one picture a kind and seed; another seed, other strands');
+  { const d = pf.image.data; let lo = 255, hi = 0; for (let i = 0; i < d.length; i += 4) { if (d[i + 3] > 40) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); } } assert.ok(hi - lo > 60 && lo > 120, 'each strand has a shade of its own'); }
+
+  // ---- the shell: out along the normal by each point's length, over along the surface, a place in the picture
+  const ball = new THREE.SphereGeometry(1, 24, 16), sh = fur.shell(ball, { length: .1, tile: .5 });
+  const A = sh.morphAttributes.position[0], B = sh.morphAttributes.position[1], P = sh.attributes.position, Nn = sh.attributes.normal;
+  assert.ok(sh.morphAttributes.position.length === 2 && sh.morphTargetsRelative && sh.attributes.uv.count === P.count && sh.index.count === ball.index.count, 'the shell: the same triangles, two ways to move');
+  let worstLen = 0, worstDot = 0, flat = 0;
+  for (let i = 0; i < P.count; i++) {
+    const l = Math.hypot(A.getX(i), A.getY(i), A.getZ(i)), d = (A.getX(i) * Nn.getX(i) + A.getY(i) * Nn.getY(i) + A.getZ(i) * Nn.getZ(i)) / l;
+    worstLen = Math.max(worstLen, Math.abs(l - .1)); worstDot = Math.max(worstDot, Math.abs(d - 1), Math.abs(B.getX(i) * Nn.getX(i) + B.getY(i) * Nn.getY(i) + B.getZ(i) * Nn.getZ(i)));
+    if (Math.hypot(B.getX(i), B.getY(i), B.getZ(i)) > .05) flat++;
+  }
+  assert.ok(worstLen < 1e-5 && worstDot < 1e-4 && flat > P.count * .6, 'strands grow straight out of the skin and lie over along it');
+  assert.ok(P.count > ball.attributes.position.count && P.count < ball.attributes.position.count * 2.2 && [...sh.attributes.uv.array].every(Number.isFinite), 'points are doubled only where the picture is laid on from another side');
+  assert.ok(near(sh.boundingSphere.radius, 1.16, .01) && near(sh.userData.fur.longest, .1, 1e-6) && sh.userData.fur.tris === ball.index.count / 3);
+  // where: none below the middle, and no cliff where it stops
+  const half = fur.shell(ball, { length: .1, where: (i, x, y) => y > 0 ? 1 : 0 }), hA = half.morphAttributes.position[0]; let steps = 0, some = 0;
+  for (let t = 0; t < half.index.count; t += 3) { const l = [0, 1, 2].map(k => { const i = half.index.getX(t + k); return Math.hypot(hA.getX(i), hA.getY(i), hA.getZ(i)); }); if (Math.max(...l) - Math.min(...l) > .05 + 1e-6) steps++; if (Math.max(...l) > 0 && Math.max(...l) < .1) some++; }
+  assert.ok(half.index.count < ball.index.count * .7 && half.index.count > ball.index.count * .4 && steps === 0 && some > 20, 'strands grow only where they are told, and shorten toward where none grow');
+  assert.equal(fur.shell(ball, { length: .1, where: new Float32Array(ball.attributes.position.count) }).index.count, 0, 'nothing grows where every point says none');
+  // the coat thins out toward where none grow (the alpha of each point's colour: how thick it is there), and takes the mesh's colours or its own
+  { const hc = half.attributes.color; let bare = 0, thick = 0, wrong = 0; for (let i = 0; i < hc.count; i++) { const l = Math.hypot(hA.getX(i), hA.getY(i), hA.getZ(i)); if (l === 0) { bare++; if (hc.getW(i) !== 0) wrong++; } else if (l > .05) { thick++; if (hc.getW(i) !== 1) wrong++; } }
+    assert.ok(hc.itemSize === 4 && bare > 10 && thick > 100 && wrong === 0 && hc.getX(0) === 1, 'thin to nothing where no strand grows, full where they are long; white where the mesh has no colours'); }
+  { const cg = ball.clone(), n = cg.attributes.position.count; cg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3).fill(.5), 3)); const own = new Float32Array(n * 3).fill(.25);
+    assert.ok(fur.shell(cg, { length: .1 }).attributes.color.getY(7) === .5 && fur.shell(cg, { length: .1, colors: own }).attributes.color.getZ(7) === .25, 'the mesh\'s colours, or the ones it is given'); }
+  // thin things keep their shape: no strand longer than part of what it grows on is thick
+  const slab = new THREE.BoxGeometry(1, .04, 1, 12, 1, 12), ss = fur.shell(slab, { length: .1 }), sA = ss.morphAttributes.position[0]; let top = 0, topN = 0;
+  for (let i = 0; i < sA.count; i++) if (Math.abs(ss.attributes.normal.getY(i)) > .9) { top = Math.max(top, Math.hypot(sA.getX(i), sA.getY(i), sA.getZ(i))); topN++; }
+  assert.ok(topN > 100 && top <= .04 * .45 + 1e-6 && near(fur.shell(slab, { length: .1, thin: 0 }).userData.fur.longest, .1), `a slab 4 cm thick grows strands no longer than ${(top * 100).toFixed(1)} cm (10 cm asked for)`);
+  // hair from a crown: round the head in whole pictures, further down the further from the crown
+  const head = fur.shell(ball, { length: .05, tile: .25, uv: { centre: [0, 0, 0], crown: [0, 1, 0] } }), hu = head.attributes.uv; let torn = 0, down = 0;
+  for (let t = 0; t < head.index.count; t += 3) { const u = [0, 1, 2].map(k => hu.getX(head.index.getX(t + k))); if (Math.max(...u) - Math.min(...u) > 20 / 24 + 1e-3) torn++; }
+  for (let i = 0; i < hu.count; i++) if (Math.abs(hu.getY(i) - Math.acos(Math.max(-1, Math.min(1, head.attributes.position.getY(i)))) * 4) > 1e-3) down++;
+  assert.ok(torn === 0 && down === 0, 'a crown: no triangle is torn across the join, and v is how far round from the crown');
+  assert.throws(() => fur.shell(new THREE.BufferGeometry(), {}), /positions and normals/);
+
+  // ---- the layers
+  const mesh = new THREE.Mesh(ball, new THREE.MeshStandardMaterial()), coat = fur(mesh, { length: .1, layers: 6, lean: .5 });
+  assert.ok(coat.layers === 6 && coat.shells.length === 6 && coat.shells.every(m => m.parent === mesh && m.geometry === coat.shell && !m.castShadow && m.material.map === pf) && coat.tris === ball.index.count / 3 * 6, 'six layers, children of the mesh, one geometry between them');
+  const inf = coat.shells.map(m => m.morphTargetInfluences.slice()), cut = coat.shells.map(m => m.material.alphaTest), order = coat.shells.map(m => m.renderOrder);
+  assert.ok(inf.every((v, i) => !i || (v[0] < inf[i - 1][0] && v[1] < inf[i - 1][1])) && cut.every((v, i) => !i || v < cut[i - 1]) && order.every((v, i) => !i || v > order[i - 1]) && near(cut[0], 5.5 / 6) && near(cut[5], .5 / 6), 'the outermost first: furthest out, cut highest, drawn first');
+  assert.ok(inf[0][0] < 1 && inf[0][0] > .9 && inf[0][1] > .25, 'a strand is an arc: its tip a little short of straight, and over to one side');
+  coat.lean = 0; assert.ok(coat.shells[0].morphTargetInfluences[0] === 1 && coat.shells[0].morphTargetInfluences[1] === 0, 'no lean: straight out');
+  coat.length = 2; assert.ok(coat.shells[0].morphTargetInfluences[0] === 2 && coat.shells[5].morphTargetInfluences[0] === 2 / 6, 'length can be set any time (fur standing on end)'); coat.length = 1;
+  assert.ok(coat.shells[0].material.color.r > coat.shells[5].material.color.r * 1.5, 'dark at the roots, light at the tips');
+  assert.ok(fur(new THREE.Mesh(ball, mesh.material), { shell: coat.shell, layers: 6 }).shells[0].material === coat.shells[0].material, 'coats of one kind share their materials');
+  // thinning with distance: all, half, none
+  const cam = new THREE.PerspectiveCamera(50, 1, .1, 1000); mesh.updateMatrixWorld(true);
+  const at = d => { cam.position.set(0, 0, d); cam.updateMatrixWorld(true); return coat.see(cam, 800); };
+  assert.equal(at(4), 1); assert.equal(coat.shells.filter(m => m.visible).length, 6);
+  assert.equal(at(10), .5); assert.deepEqual(coat.shells.map(m => m.visible), [true, false, true, false, true, false], 'half its layers further off, the outermost kept');
+  assert.equal(at(40), 0); assert.equal(coat.shells.filter(m => m.visible).length, 0, 'none far away');
+  assert.equal(at(4), 1); coat.level = 0; assert.equal(coat.level, 0); coat.level = 1;
+  // a skinned mesh: the layers ride the same skeleton
+  const bone = new THREE.Bone(), sg = ball.clone(); sg.setAttribute('skinIndex', new THREE.BufferAttribute(new Uint16Array(sg.attributes.position.count * 4), 4)); sg.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(sg.attributes.position.count * 4).map((v, i) => i % 4 ? 0 : 1), 4));
+  const sm = new THREE.SkinnedMesh(sg, mesh.material), sk = new THREE.Skeleton([bone]); sm.add(bone); sm.bind(sk); const sc = fur(sm, { layers: 4, length: .05 });
+  assert.ok(sc.shells.every(m => m.isSkinnedMesh && m.skeleton === sk && m.geometry.attributes.skinWeight) && sc.shells.length === 4, 'on a skinned mesh the layers are skinned to the same skeleton');
+  coat.dispose(); assert.ok(!mesh.children.length && coat.shells.length === 0, 'dispose takes the layers away');
+  assert.equal(fur(mesh, { layers: 0 }).shells.length, 0, 'no layers: the mesh as it was'); assert.throws(() => fur({}), /give it a mesh/);
+
+  // ---- on creatures: fur where the coat is fur, a mane on a horse, none on a pig; short on the face, none on the nose or the eyes
+  const cat = creature({ like: 'cat', now: true, fur: { layers: 6 } }), cf = cat.fur, cs = cf.shell, scale = cat.scale.x;
+  assert.ok(cf && cf.layers === 6 && cf.shells.every(m => m.isSkinnedMesh && m.parent === cat.lods[0] && m.skeleton === cat.mesh.skeleton), 'a cat has fur, on its closest level');
+  assert.ok(cs.userData.fur.tris > cat.tris[1] * .7 && cs.userData.fur.tris < cat.tris[0] * .6, 'the fur covers most of it, on the middle level\'s triangles (the head on the finest)');
+  const inMetres = cs.userData.fur.longest * scale; assert.ok(inMetres > .008 && inMetres < .03, `a cat's fur is ${(inMetres * 1000).toFixed(0)} mm long`);
+  cat.lod = 1; cat.updateMatrixWorld(true); let seen = 0; cat.traverseVisible(o => { if (o.name.startsWith('fur')) seen++; }); assert.equal(seen, 0, 'further off (the middle level) there is no fur to draw'); cat.lod = 0;
+  { const l0 = cf.lean; for (let i = 0; i < 60; i++) cat.move(1 / 60, cat.speeds.run); const fast = cf.lean; for (let i = 0; i < 120; i++) cat.move(1 / 60, 0); assert.ok(fast > l0 + .3 && Math.abs(cf.lean - l0) < .03, 'running lays its fur back; standing lets it up again'); }
+  const tw = cat.twin(); assert.ok(tw.fur && tw.fur !== cf && tw.fur.shell === cs && tw.fur.shells[0].skeleton === tw.mesh.skeleton, 'a twin has a coat of its own on the same shell');
+  const horse = creature({ like: 'horse', now: true, fur: { layers: 6 } }), pig = creature({ like: 'pig', now: true, fur: { layers: 6 } });
+  assert.ok(horse.fur && horse.fur.shell.userData.fur.tris < horse.tris[1] * .5 && horse.fur.shell.userData.fur.longest > cs.userData.fur.longest && pig.fur === null, 'a horse grows a mane and a tail (long), a pig nothing');
+  assert.equal(creature({ like: 'cat', now: true, fur: false }).fur, null, 'fur: false'); assert.ok(creature({ like: 'cat', now: true, fur: { layers: 6, length: .05 } }).fur.shell.userData.fur.longest * scale > .03, 'a length in metres');
+  assert.ok(creature({ like: 'ogre', now: true, fur: { layers: 5 }, build: { coat: 'fur' } }).fur?.layers === 5, 'any creature given a coat of fur grows it');
+  console.log(`fur and hair in layers: the strand pictures, the shell (lengths, thin things, a crown), six layers, thinning with distance, skinned meshes, a cat (${cs.userData.fur.tris} triangles a layer), a horse's mane, a pig without ok`);
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

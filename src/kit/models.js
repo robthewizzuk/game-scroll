@@ -16,3 +16,4 @@ export { human } from './models/human.js';
 export { creature } from './models/creature.js';
 export { vehicle } from './models/vehicles.js';
 export { relief } from './relief.js';
+export { fur } from './models/fur.js';

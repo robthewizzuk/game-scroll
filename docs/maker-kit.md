@@ -78,6 +78,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
 | Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
+| Fur on animals, hair in strands and beards on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
 | Ball games with boosting, flipping cars | `gs.arena` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -2730,3 +2731,59 @@ update(dt) {
   inside behind it (the jeep, the lorry's bed, the boats and the cockpits are open and have seats),
   there are no simpler shapes for far away made by themselves, and a train has no physics of its
   own.
+
+## Fur and hair
+
+(Next Gen.) Animals with a coat of fur have fur, and people's hair is strands, by themselves:
+
+```js
+make():   fox = gs.models.creature({ like: 'dog', seed: 9 }); view.add(fox);          // furry close up, nothing to ask for
+          man = gs.models.human({ hair: '#8a8a88', beard: 1 }); view.add(man);        // hair in strands, and a beard
+          rug = gs.models.fur(mesh, { length: .04, lean: .8 });                        // or fur on any mesh of your own
+update(dt) { fox.move(dt, speed); if (scared) fox.fur.length = 1.5; }                  // its fur stands on end
+```
+
+**How it is drawn.** A coat is "shells": copies of the furry surface, each a little further out along its
+normals, each cut by one picture of strands seen from their tips (made in code: a strand's height is the
+picture's alpha), so less of every strand shows the further out a layer is and the eye joins the dots into
+strands. It is all three.js's own (a map with an alpha cut, vertex colours, and two morph targets every
+layer shares: out, and over the way the strands lie), so WebGL and WebGPU draw it alike, on skinned
+meshes too, and it takes the light and shadows as everything else does. A coat casts no shadow of its own
+(what it grows on does).
+
+- **Creatures.** One with a coat of fur (`dog`, `cat`, `deer`, `bear`, `rabbit`, `mouse`, `beast`, or any
+  given `build: { coat: 'fur' }`) grows fur; a mane and a tail of hair grow on any coat (a `horse`). Short
+  on the face and feet, long in a mane and a bushy tail, none on noses, claws and the rims of eyes, and no
+  strand longer than about half of how thick what it grows on is, so ears, thin tails and legs keep their
+  shape. A seed makes one a little shaggier or sleeker. `fur: false` leaves it off; `fur: { length: .04,
+  layers: 8, lean: .7, tile: .08 }` tunes it (metres). `creature.fur` is the coat, or `null`.
+- **People.** `human()` lays strands over the sculpted hair, streaming from the crown (from the bun, for
+  `hairStyle: 'bun'`), over a moustache, and over a beard: `beard: 0..1.5` is how long (`true` is .6; the
+  painted `stubble` is still there for a shave two days old). `person.hair` is the coat, or `null`: bald
+  with no beard, under a hat (the hair there stays as sculpted, cropped close), or `strands: false`.
+  `strands: { length: .02, layers: 8 }` tunes it.
+- **Any mesh.** `gs.models.fur(mesh, o)`: `length` (in the mesh's own units), `kind` (`'fur'` on end, `'hair'`
+  lying side by side), `where` (how much of the length grows at each point: a `Float32Array` of 0..1, or
+  `(i, x, y, z) => 0..1`; strands shorten toward where none grow and the coat thins out there, so it has
+  no cliff at its edge), `tile` (how wide the strand picture is on the surface: fur has 32 strands across
+  it), `lean` and `flow` (how far the strands lie over, and which way: down and back along -z unless told),
+  `uv: { centre, crown }` (hair streaming from the crown of a head), `thin`, `rough`, `root` and `tip` (how
+  dark the roots, how light the tips), `colour`, `seed`. The mesh's vertex colours colour the coat.
+- **The coat** (`creature.fur`, `person.hair`, what `fur()` returns): `length` (1 as made; set it any time:
+  1.5 stands fur on end, .5 is a wet coat) and `lean` (a creature's `move()` lays its fur back as it runs),
+  `level` (how much of it is showing), `layers`, `tris`, `shells` (its meshes), `dispose()`.
+- **Cost, and what keeps it down.** Each layer is one more draw of the furry triangles: a dog is about
+  4,500 triangles a layer (the body on the middle level's triangles, the head on the finest), a head of
+  hair about 2,000, a beard 4,500 more (it grows on the face's finest triangles). So: the layers are few
+  and set by the phone's quality (none on the slowest phones, then 5, 7 and 10; `layers` overrides); a
+  coat shows only on the closest level of detail; and it thins out by itself with distance, whether or
+  not you call `see()`: an animal has every layer while it is over about 260 pixels on screen, every
+  other one down to 120 and none below; a person's hair has every layer once they stand about 800 pixels
+  tall (a head big enough to see strands on), every other one from about 360. The outermost layer is
+  drawn first, so what it covers of the ones below is not drawn. Not yet measured on a phone: in a
+  crowd, give fur to the few the camera is close to (`fur: false` on the rest).
+- Not there: strands are not simulated (fur does not sway or part, long hair does not swing: it is the
+  sculpted shape with strands on it), a coat does not get wet or snowy with the weather by itself, and
+  feathers and scales are still painted.
+- To look it over: `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey
+  cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [--webgpu]`.
