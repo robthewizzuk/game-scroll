@@ -2657,7 +2657,7 @@ a little, and handed back as a three.js Group with the parts that turn on pivots
 ```js
 make():   jeep = vehicle('car', { style: 'jeep', seed: 4 }); view.add(jeep);
           tank = vehicle('tank', { style: 'heavy', finish: 'worn' }); view.add(tank);
-          train = vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] }); view.add(train);
+          train = vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }); view.add(train);
 update(dt) {
   kart.update(dt, input); kart.place(jeep);                 // gs.vehicles says where it is...
   jeep.move(dt, kart.speed, { steer: input.steer });        // ...this rolls and steers its wheels and rocks its body
@@ -2671,7 +2671,7 @@ update(dt) {
 | `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
 | `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
 | `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
-| `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a wagon's `load`, a coach's `door`, a van's and a coach's `roof` |
+| `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `guard` (a guard's van), `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a tender's `coal`; a wagon's `load`, a coach's `door`, the `roof` of a van, a guard's van and a coach; a guard's van's `veranda` and `tail`; a tank wagon's `filler` |
 | `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
 | `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
 
@@ -2687,7 +2687,8 @@ update(dt) {
   `'satin'`, `'matt'`, `'worn'` (paint rubbed through to the metal) or `'rusty'`, each kind starting with its
   own; `wear` (0..1 how aged, `false` for straight from the factory); `lit: true` (lamps that glow;
   `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles). A
-  train also takes `cars` (what the engine pulls, in order) and `gauge` (metres between the rails, 1.435).
+  train also takes `cars` (what the engine pulls, in order), `gauge` (metres between the rails, 1.435) and
+  `deflectors: true` (a steam engine's smoke deflectors: a plate each side of its smokebox).
 - **`move(dt, speed, o)`** is the easy way to keep one alive each frame, whatever moves it: wheels and
   tracks roll for the speed (metres a second), the front wheels ease to `steer` (-1..1, + right; `lock`
   is how far they turn at 1, .55 radians), the body rolls outwards in a turn, squats as it pulls away and dips as it brakes, as a car on
@@ -2722,8 +2723,24 @@ update(dt) {
   a train bends round curves and tips on slopes. `roll(d)` turns the wheels and a steam engine's rods;
   `train.radius` is its driving wheels' radius (a chuff is a quarter of a turn: `2 * Math.PI * train.radius / 4`
   metres).
+- **A goods train.** A wagon in `cars` can be a name or `{ style, load, colour, canvas }`. `colour` paints
+  that wagon's boards (or a tank wagon's tank) in a colour of its own; with none its boards are bare wood.
+  `load` is what it carries: an `open` wagon's `'tarp'` (a load under canvas, `canvas` its colour) or
+  `'coal'`, a `flat` wagon's `'crates'` (crates, oil drums and something under canvas). A wagon made by
+  itself takes them from the top: `vehicle('train', { style: 'open', load: 'coal', colour: '#565c50' })`.
+  The `guard` goes last: a cabin with a look-out each side and a stove pipe, an open end
+  (`points.veranda` is where the guard stands) and two red tail lamps that glow with `lit: true`
+  (`points.tail`). `points.roof` on a van or a guard's van is the top of its roof, for someone riding
+  it. The steam engine has lamps over its buffers, pipes, a pump and a fire in its cab (`points.fire`),
+  its cab and tender are riveted plate, and every wagon stands on leaf springs with its brake lever:
+  ```js
+  train = vehicle('train', { style: 'steam', colour: '#1d1e20', deflectors: true, lit: true, cars: [
+    { style: 'van', colour: '#6b3024' }, { style: 'open', load: 'tarp', colour: '#565c50' },
+    { style: 'tanker', colour: '#2e3235' }, { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] });
+  ```
+  That train is 64 m long, about 50,000 triangles in 58 draws.
 - **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
-  21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 4,500 to
+  21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 5,000 to
   15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.

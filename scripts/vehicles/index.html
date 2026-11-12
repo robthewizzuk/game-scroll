@@ -4,8 +4,9 @@
 // camera. The last column catches it moving (move() run for a second or two: wheels turned and steered, the
 // body leaning, a turret turned, propellers spinning).
 //   ?show=car:saloon,car:jeep,tank (kind or kind:style; default: every style of every kind)
-//   &views=front,side,back,top,move   &cell=360x230   &finish=worn   &wear=1   &lit   &seed=3   &time=15   &gpu (WebGPU)
+//   &views=front,side,back,top,move   &cell=360x230   &finish=worn   &wear=1   &lit   &seed=3   &time=15   &zoom=3 &at=-5 (a closer look, 5 m toward its nose)   &gpu (WebGPU)
 //   &axles=3 &offroad (lorries)   &colour=%23802020 &trim=...   &detail=.5
+//   a train: train:steam-van-open_tarp-flat_crates-guard_565b5e (a wagon, then _ its load and/or _ its colour), &deflectors
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -25,10 +26,13 @@ try {
   const sky = new gs.sky.Sky(v, { time: +(Q.get('time') || 15), env: true, clouds: .5 }); sky.update(0);
   const ground = new T.Mesh(new T.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), gs.hd.pbr('#8a8884', { rough: .92 })); ground.receiveShadow = true; v.scene.add(ground);
   const sea = new T.Mesh(new T.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), gs.hd.pbr('#2c4d5e', { rough: .12, metal: .1 })); sea.receiveShadow = true; sea.visible = false; v.scene.add(sea);
-  const info = [], look = {}; for (const k of ['finish', 'colour', 'trim']) if (Q.get(k)) look[k] = Q.get(k); if (Q.get('wear')) look.wear = +Q.get('wear'); if (Q.has('lit')) look.lit = true; if (Q.get('detail')) look.detail = +Q.get('detail'); if (Q.get('axles')) look.axles = +Q.get('axles'); if (Q.has('offroad')) look.offroad = true;
+  const info = [], look = {}; for (const k of ['finish', 'colour', 'trim']) if (Q.get(k)) look[k] = Q.get(k); if (Q.get('wear')) look.wear = +Q.get('wear'); if (Q.has('lit')) look.lit = true; if (Q.get('detail')) look.detail = +Q.get('detail'); if (Q.get('axles')) look.axles = +Q.get('axles'); if (Q.has('offroad')) look.offroad = true; if (Q.has('deflectors')) look.deflectors = true; if (Q.get('load')) look.load = Q.get('load');
+  const wagon = t => { const [st, ...more] = t.split('_'); if (!more.length) return st; const w = { style: st }; for (const m of more) { if (/^[0-9a-f]{6}$/i.test(m)) w.colour = '#' + m; else w.load = m; } return w; };
+  const zoom = +(Q.get('zoom') || 1), at = +(Q.get('at') || 0);   // (a closer look: zoom=3, at a point along it: at=-5 is 5 m toward its nose)
   for (let r = 0; r < show.length; r++) {
     const [kind, what] = show[r].split(':'), [style, ...cars] = what.split('-'), t0 = performance.now();   // (train:steam-van-coach: an engine and what it pulls)
-    const car = vehicle(kind, { style, seed: +(Q.get('seed') || r), ...(cars.length ? { cars } : {}), ...look }), ms = performance.now() - t0, t1 = performance.now(), again = car.twin(), ms2 = performance.now() - t1;
+    const first = wagon(style), own = typeof first === 'string' ? { style } : first;
+    const car = vehicle(kind, { seed: +(Q.get('seed') || r), ...(cars.length ? { cars: cars.map(wagon) } : {}), ...look, ...own }), ms = performance.now() - t0, t1 = performance.now(), again = car.twin(), ms2 = performance.now() - t1;
     v.scene.add(car); const boat = kind === 'boat', plane = kind === 'plane'; ground.visible = !boat; sea.visible = boat; if (plane) car.position.y = car.gear || 0;
     let draws = 0; car.traverse(o => { if (o.isMesh) draws++; });
     const S = car.size, big = Math.max(S.length, S.width * 1.3, S.height * 1.6), d = big * 1.25 + 1.2, cy = (plane ? car.position.y : 0) + S.height * (boat ? .25 : .45);
@@ -37,8 +41,8 @@ try {
       const V = VIEWS[views[c]]; if (!V) throw new Error('no view ' + views[c]);
       if (V[1]) for (let i = 0; i < 90; i++) car.move(1 / 60, kind === 'plane' ? 60 : 9, { steer: .8, turn: .6, power: 1, aim: [.7, .15] });
       if (V[1] && car.along) { const R = 45; car.along(s => { const a = s / R; return { x: R * (1 - Math.cos(a)) - 3, y: 0, z: -R * Math.sin(a) }; }, S.length / 2); }   // (a train: round a curve of 45 m)
-      v.cam.fov = 34; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 600; v.cam.updateProjectionMatrix(); v.cam.position.set(...V[0]); v.cam.lookAt(0, cy, 0); v.cam.updateMatrixWorld();
-      v.cut?.(); sun.follow(0, 0, 0);
+      v.cam.fov = 34; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 600; v.cam.updateProjectionMatrix(); v.cam.position.set(V[0][0] / zoom, cy + (V[0][1] - cy) / zoom, V[0][2] / zoom + at); v.cam.lookAt(0, cy, at); v.cam.updateMatrixWorld();
+      v.cut?.(); sun.follow(0, 0, at);
       for (let n = 0; n < (c || r ? 3 : 10); n++) { v.t = n / 60; v.render(cx, cw, ch); await frame(); }
       sx.drawImage(cell, c * cw, r * ch);
       if (!c) { sx.font = '12px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${show[r]}  ${car.tris} triangles, ${draws} draws`, 5, r * ch + 14); }

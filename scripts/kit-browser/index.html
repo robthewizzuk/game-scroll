@@ -640,11 +640,20 @@ try {
       if (!(v.size.length > 2 && v.size.width > 1 && v.size.height > .5 && v.tris > 1500)) empty.push(kind + ' ' + style + ' size');
     }
     const ms = performance.now() - t0;
-    ok(n === 30 && !empty.length && ms < 20000, `vehicles: all ${n} made in ${ms.toFixed(0)} ms (the slowest ${slow.toFixed(0)} ms), ${tris} triangles ${empty.join(', ')}`);
+    ok(n === 31 && !empty.length && ms < 20000, `vehicles: all ${n} made in ${ms.toFixed(0)} ms (the slowest ${slow.toFixed(0)} ms), ${tris} triangles ${empty.join(', ')}`);
     const slot = (v, name) => { let f = null; v.shell.traverse(m => { if (m.isMesh && m.name === name && !f) f = m; }); return f; };
     const lorry = vehicle('truck', { style: 'flat', finish: 'worn', axles: 3 }), again = vehicle('truck', { style: 'flat', finish: 'worn', axles: 3 }), rusty = vehicle('car', { style: 'pickup', finish: 'rusty' });
     ok(lorry.wheels.length === 6 && slot(lorry, 'wood').material.name === 'models:planks' && slot(lorry, 'paint').material.name === 'models:paint' && slot(rusty, 'paint').material.name === 'models:rust' && slot(lorry, 'paint').geometry.attributes.color && slot(again, 'wood').geometry === slot(lorry, 'wood').geometry && slot(again, 'paint').material === slot(lorry, 'paint').material,
       'vehicles: a lorry on three axles with planks from the wood recipe and worn paint (aged in its corners), a rusty pickup; the same lorry again shares its shapes and materials');
+    // a goods train: a steam engine with smoke deflectors, wagons in colours of their own with their loads, a guard's van; boards and riveted plate are pictures made in code
+    const goods = vehicle('train', { style: 'steam', colour: '#1d1e20', deflectors: true, lit: true, cars: [{ style: 'van', colour: '#6b3024' }, { style: 'open', load: 'tarp', colour: '#565c50' }, 'tanker', { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] });
+    const [eng, tend, gvan, gopen, gtank, gflat, gguard] = goods.cars;
+    const hex = (c, n) => slot(c, n).material.color.getHexString(), count = (c, n) => slot(c, n).geometry.attributes.position.count;
+    const goodsOk = { cars: goods.cars.length === 7 && Math.abs(goods.length - (11.2 + 7 + 5 * 9.1)) < 1e-6, boards: !!(slot(gvan, 'boards').material.map && slot(gvan, 'boards').material.normalMap), colours: hex(gvan, 'boards') === '6b3024' && hex(gguard, 'boards') === '565b5e',
+      plates: !!(slot(eng, 'plates').material.map && slot(tend, 'plates').material.map === slot(eng, 'plates').material.map && slot(eng, 'plates').geometry.attributes.color), fittings: !!(slot(eng, 'copper') && slot(tend, 'coal') && slot(gopen, 'canvas') && slot(gflat, 'drum')),
+      lit: slot(eng, 'fire').material.emissiveIntensity > 2 && slot(gguard, 'tail').material.emissiveIntensity > 1, points: !!(gguard.points.veranda.isObject3D && gguard.points.tail.isObject3D && gguard.points.roof.isObject3D && gtank.points.filler.isObject3D),
+      deflectors: count(vehicle('train', { style: 'steam', colour: '#1d1e20' }).cars[0], 'plates') < count(eng, 'plates') };
+    ok(Object.values(goodsOk).every(Boolean), `vehicles: a goods train of ${goods.cars.length} (${goods.tris} triangles, ${goods.length.toFixed(1)} m): riveted plate and boards painted in code, each wagon's own colour, loads, a guard's van with lit tail lamps ${Object.keys(goodsOk).filter(k => !goodsOk[k]).join(', ')}`);
     // on springs: World3D.vehicle drives the car's own wheels; after a run it is upright, its wheels on the road and turned, its body above them
     const phys = new gs.physics3d.World3D({ gravity: -9.81 }); phys.floor(0);
     const car = vehicle('car', { style: 'saloon' }), scene = new T.Scene(); scene.add(car);

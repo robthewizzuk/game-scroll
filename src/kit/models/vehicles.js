@@ -12,7 +12,8 @@ import { pause, built, loading } from '../slices.js';
 import { material } from './materials.js';
 import { wear } from './wear.js';
 import { boxUV } from './props.js';
-import { pbr } from '../hd3d.js';
+import { pbr, surface } from '../hd3d.js';
+import { rng } from '../math.js';
 import { MAKERS as ROAD, KINDS as ROADS } from './vehicle-shapes.js';
 import { railcar, RAIL } from './vehicle-rail.js';
 import { boat, plane, CRAFT } from './vehicle-craft.js';
@@ -36,10 +37,43 @@ const SLOTS = {
   lamp: k => k.lit ? pbr('#fff6e0', { rough: .2, glow: 3 }) : pbr('#f2eee2', { rough: .3 }), tail: k => pbr('#9c1010', { rough: .25, glow: k.lit ? 1.6 : 0 }),
   plate: () => pbr('#e6e3d6', { rough: .5 }), seat: () => pbr('#4a3c2a', { rough: .9 }), coal: () => pbr('#0e0e10', { rough: .55 }), bottom: () => pbr('#5c211c', { rough: .8 }), prop: () => pbr('#26272a', { rough: .5, metal: .4 }), blur: () => pbr('#34342f', { rough: .9, transparent: true, opacity: .22, depthWrite: false }), brass: () => pbr('#b08a3c', { rough: .32, metal: 1 }), beam: () => pbr('#96201a', { rough: .6 }),
   wood: () => material('planks', { colour: '#8a6a44' }), canvas: k => pbr(k.canvas || '#5c6040', { rough: .95 }), rust: () => material('rust', {}),
+  // a railway's own: planks in a wagon's colour (bare wood with none), a tarred roof, copper pipes, oil drums, a fire, riveted plate
+  boards: k => { const t = boarding(); return pbr(k.boards || '#8a6a44', { rough: .92, ...(t ? { tex: t } : {}) }); }, tar: () => pbr('#454544', { rough: .96 }), copper: () => pbr('#96603c', { rough: .38, metal: .9 }),
+  drum: () => pbr('#4c5a32', { rough: .62, metal: .25 }), fire: k => pbr('#ff8a30', { rough: .6, glow: k.lit ? 2.6 : .5 }),
+  plates: k => { const m = finish(k.colour, k.finish), t = k.finish === 'worn' || k.finish === 'rusty' ? null : rivets(); return t ? pbr(k.colour, { rough: m.roughness, metal: m.metalness, tex: t }) : m; },
 };
-const AGES = { paint: 1, paint2: 1, wood: .8, canvas: .7, steel: .6, iron: .5, under: 0 };   // (which slots wear() ages, and how much)
+// plate with rows of rivets along its seams, a metre a sheet (null where there is no canvas to paint on)
+let plateTex;
+function rivets() {
+  if (plateTex !== undefined) return plateTex;
+  if (typeof document === 'undefined') return (plateTex = null);
+  const R = rng(77);
+  return (plateTex = surface(128, ({ col, h, r, size: Z }) => {
+    col.fillStyle = '#e4e4e4'; col.fillRect(0, 0, Z, Z); h.fillStyle = '#7c7c7c'; h.fillRect(0, 0, Z, Z); r.fillStyle = '#a8a8a8'; r.fillRect(0, 0, Z, Z);
+    for (let i = 0; i < 70; i++) { const x = R() * Z, y = R() * Z, w = 1 + R() * 3, l = 10 + R() * 60; col.fillStyle = `rgba(${R() < .55 ? '34,28,24' : '255,250,240'},${.03 + R() * .06})`; for (const oy of [0, -Z]) col.fillRect(x, y + oy, w, l); }   // streaks down it
+    for (let i = 0; i < 10; i++) for (const [x, y] of [[5, 6.4 + i * 12.8], [6.4 + i * 12.8, 5]]) {   // (the rivets are in the plate's shape, not painted: far off they melt into it)
+      h.fillStyle = '#d8d8d8'; h.beginPath(); h.arc(x, y, 1.7, 0, PI * 2); h.fill(); col.fillStyle = 'rgba(0,0,0,.12)'; col.beginPath(); col.arc(x + .6, y + .8, 1.4, 0, PI * 2); col.fill(); }
+    h.fillStyle = '#585858'; h.fillRect(0, 0, Z, 1.5); h.fillRect(0, 0, 1.5, Z); col.fillStyle = 'rgba(0,0,0,.2)'; col.fillRect(0, 0, Z, 1); col.fillRect(0, 0, 1, Z);   // the seam
+  }, { strength: 2 }));
+}
+// a wagon's boards, to take its colour: eight to a tile, each a shade of its own, grain along it, a dark gap between two
+let boardTex;
+function boarding() {
+  if (boardTex !== undefined) return boardTex;
+  if (typeof document === 'undefined') return (boardTex = null);
+  const R = rng(78);
+  return (boardTex = surface(128, ({ col, h, r, size: Z }) => {
+    h.fillStyle = '#a4a4a4'; h.fillRect(0, 0, Z, Z); r.fillStyle = '#e8e8e8'; r.fillRect(0, 0, Z, Z);
+    for (let p = 0; p < 8; p++) {
+      const y = p * 16, l = 212 + R() * 43 | 0, hh = 150 + R() * 40 | 0; col.fillStyle = `rgb(${l},${l},${l})`; col.fillRect(0, y, Z, 16); h.fillStyle = `rgb(${hh},${hh},${hh})`; h.fillRect(0, y, Z, 16);
+      for (let i = 0; i < 24; i++) { col.fillStyle = `rgba(28,18,10,${.05 + R() * .1})`; const gx = R() * Z, gy = y + 2 + R() * 12, gl = 10 + R() * 50, gw = .7 + R(); for (const ox of [0, -Z]) col.fillRect(gx + ox, gy, gl, gw); }
+      col.fillStyle = 'rgba(10,7,5,.8)'; col.fillRect(0, y, Z, 1.6); h.fillStyle = '#202020'; h.fillRect(0, y, Z, 2.2);
+    }
+  }, { strength: 2.6 }));
+}
+const AGES = { paint: 1, paint2: 1, plates: 1, wood: .8, boards: .8, canvas: .7, tar: .6, steel: .6, iron: .5, drum: .7, under: 0 };   // (which slots wear() ages, and how much)
 const shared = new Map();
-const matOf = (slot, k) => { const key = slot + '|' + (slot === 'paint' || slot === 'paint2' ? [k.colour, k.trim, k.finish] : slot === 'lamp' || slot === 'tail' ? k.lit : slot === 'canvas' ? k.canvas : ''); let m = shared.get(key); if (!m) shared.set(key, m = (SLOTS[slot] || SLOTS.paint)(k)); return m; };
+const matOf = (slot, k) => { const key = slot + '|' + (slot === 'paint' || slot === 'paint2' || slot === 'plates' ? [k.colour, k.trim, k.finish] : slot === 'lamp' || slot === 'tail' || slot === 'fire' ? k.lit : slot === 'canvas' ? k.canvas : slot === 'boards' ? k.boards : ''); let m = shared.get(key); if (!m) shared.set(key, m = (SLOTS[slot] || SLOTS.paint)(k)); return m; };
 let wheelMat = null; const wheelGeos = new Map();
 const wheelOf = g => { const key = JSON.stringify(g); let w = wheelGeos.get(key); if (!w) wheelGeos.set(key, w = g.gauge ? wheelsetGeo(g) : wheelGeo(g)); return w; };
 
@@ -62,6 +96,7 @@ function dress(shape, k, seed, age) {
   for (const [slot, g0] of shape.merged()) {
     const m = new Mesh(boxUV(g0, 1), matOf(slot, k)), a = (AGES[slot] ?? 0) * age;
     if (slot === 'wood') { const uv = g0.attributes.uv.array; for (let i = 0; i < uv.length; i += 2) uv[i] *= .3; }   // (long planks, not bricks of wood)
+    if (slot === 'boards') { const uv = g0.attributes.uv.array; for (let i = 0; i < uv.length; i += 2) { uv[i] *= .5; uv[i + 1] *= .735; } }   // (a wagon's: boards 17 cm wide)
     if (a > 0) wear(m, { seed, split: false, edges: (k.finish === 'gloss' && slot === 'paint' ? .15 : .6) * a, dirt: .75 * a, ground: .45 });
     out.push({ slot, geo: m.geometry, mat: m.material, tris: m.geometry.attributes.position.count / 3 });
   }
@@ -74,16 +109,22 @@ const made = new Map();   // finished vehicles by everything that shapes them: c
  * colour, small differences), colour (its paint), trim (its second colour), finish ('gloss' | 'satin' | 'matt' |
  * 'worn' | 'rusty'), wear (0..1 how aged, or false: new), lit (true: its lamps glow), detail (1; .5 a car's or
  * a lorry's shell and wheels a little coarser). A train: style is its engine ('steam' brings its tender) or one wagon, cars: what
- * it pulls (['van', 'open', 'tanker', 'flat', 'coach'...]), gauge (between the rails, 1.435).
+ * it pulls (['van', 'open', 'tanker', 'flat', 'guard', 'coach'...]; one can be { style, load, colour, canvas }: an 'open' wagon's
+ * load 'tarp' or 'coal', a 'flat' one's 'crates', and its own colour), gauge (between the rails, 1.435), deflectors (true: a
+ * steam engine's smoke deflectors), load (a single wagon's).
  */
 export function vehicle(kind = 'car', o = {}) {
   if (!MAKERS[kind]) throw new Error(`gs.models.vehicle: no vehicle '${kind}' (try ${Object.keys(MAKERS).join(', ')})`);
-  const bad = [o.style, ...(kind === 'train' ? o.cars || [] : [])].find(x => x && !KINDS[kind].includes(x));
+  const carOf = c => typeof c === 'string' ? { style: c } : c || {};
+  const bad = [o.style, ...(kind === 'train' ? (o.cars || []).map(c => carOf(c).style || '?') : [])].find(x => x && !KINDS[kind].includes(x));
   if (bad) throw new Error(`gs.models.vehicle: no ${kind} called '${bad}' (try ${KINDS[kind].join(', ')})`);
-  const seed = o.seed | 0, style = o.style || KINDS[kind][0], age0 = o.wear === false ? 0 : typeof o.wear === 'number' ? o.wear : null, { cars, ...rest } = o, opts = { ...rest, style, seed };
-  const lookOf = st => { const L = { ...LOOKS[kind], ...LOOKS[kind].by?.[st] }; return [{ colour: o.colour ?? o.color ?? L.colours[(hash(seed + 1) * L.colours.length) | 0], trim: o.trim ?? L.trim ?? '#d9d6cc', finish: o.finish ?? L.finish, lit: !!o.lit, canvas: o.canvas }, age0 ?? L.wear]; };
+  const seed = o.seed | 0, style = o.style || KINDS[kind][0], age0 = o.wear === false ? 0 : typeof o.wear === 'number' ? o.wear : null, { cars, load, ...rest } = o, opts = { ...rest, style, seed, ...(load && kind !== 'train' ? { load } : {}) };
+  const lookOf = (st, own = {}) => { const L = { ...LOOKS[kind], ...LOOKS[kind].by?.[st] }, mine = own.colour ?? own.color; return [{ colour: o.colour ?? o.color ?? L.colours[(hash(seed + 1) * L.colours.length) | 0], trim: mine ?? o.trim ?? L.trim ?? '#d9d6cc', finish: o.finish ?? L.finish, lit: !!o.lit, canvas: own.canvas ?? o.canvas, boards: mine }, age0 ?? L.wear]; };
   if (kind !== 'train') return one(kind, opts, ...lookOf(style));
-  return coupled([style, ...(style === 'steam' ? ['tender'] : []), ...(cars || [])].map(t => one(kind, { ...opts, style: t }, ...lookOf(t === 'tender' ? 'steam' : t))), () => vehicle(kind, o), { kind, ...o, style });
+  // (a wagon can be a name, or { style, load, colour, canvas }: its own planks and tank in its own colour; a wagon by itself takes the train's)
+  const wagon = !['steam', 'diesel', 'tender', 'coach'].includes(style);
+  const row = [wagon ? { style, load, colour: o.colour ?? o.color } : { style }, ...(style === 'steam' ? [{ style: 'tender' }] : []), ...(cars || []).map(carOf)];
+  return coupled(row.map(({ style: t, load, colour, color, canvas }) => one(kind, { ...opts, style: t, ...(load ? { load } : {}) }, ...lookOf(t === 'tender' ? 'steam' : t, { colour, color, canvas }))), () => vehicle(kind, o), { kind, ...o, style });
 }
 vehicle.kinds = KINDS;
 function one(kind, opts, k, age) {
