@@ -2337,8 +2337,8 @@ export interface RigT {
   play(name: string, o?: { fade?: number; at?: number | null; from?: number | null; again?: boolean }): RigT; upper(name: string | null): RigT;
   /** How a pose moves on: rate: cycles a metre (walks and runs; 0 for the rest), per: cycles a second (0: it stands still), once: it plays through and holds. null: no such pose. */
   pace(name: string): { rate: number; per: number; once: boolean } | null;
-  /** Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. rate: cycles a metre moved; or { time: seconds a cycle, once: play through and hold the end }. keys() makes fn from key poses. */
-  add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number }): RigT;
+  /** Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. rate: cycles a metre moved; or { time: seconds a cycle, once: play through and hold the end }. keys() makes fn from key poses. ground: true says the feet stand on the ground in it, so a gs.models.human keeps them where they are put down (see steps); a walk of your own also gives stance, the share of a stride a foot is down (.6). */
+  add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number; ground?: boolean; stance?: number }): RigT;
   /** 1D blend space: { pose: value }, mixed at v with every cycle in step. */
   blend(space: Record<string, number>, v: number): RigT;
   /** 2D blend space: { pose: [x, y] }, mixed at (x, y). */
@@ -2351,6 +2351,16 @@ export interface RigT {
   fill(pose?: Record<string, number[]> | null): RigT;
   /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
   fine?: boolean;
+  /**
+   * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
+   * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really
+   * goes (a bend, a body faster or slower than its walk), and a person turned or shifted while standing steps round, a foot at a time. Move the person,
+   * then call update(dt, { speed }). false leaves every pose as drawn (a person riding on something slow). It stands down by itself for a walk on the
+   * spot, a person carried along, a far-off person and one that gs.characters.Reactions has off its balance.
+   */
+  steps?: boolean;
+  /** The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands. */
+  readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[] } | null;
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;

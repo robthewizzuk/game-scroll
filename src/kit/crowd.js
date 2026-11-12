@@ -78,7 +78,7 @@ function bake(src, moves) {
   const rig = src.rig, meshes = (src.lods || [src.mesh]).filter(Boolean), sk = meshes[0]?.skeleton;
   if (!rig?.pace || !sk) throw new Error('gs.props.Crowd: each of `of` is a figure with a rig and a skinned mesh (gs.models.human, gs.poses.person, gs.models.creature)');
   const B = sk.bones.length, was = { par: src.parent, p: src.position.clone(), q: src.quaternion.clone(), s: src.scale.clone(), layers: rig.layers, weight: rig.weight, on: rig.blendOn, k: rig.blendK, bw: rig.bw, top: rig.top, topOn: rig.topOn, topW: rig.topW, fadeT: rig.fadeT };
-  const size = src.scale.y || 1, lod = src.lod;
+  const size = src.scale.y || 1, lod = src.lod, steps = rig.steps;
   if (lod) src.lod = 0;   // (a person seen from further off leaves its small bones, fingers and toes, out of the scene: every bone is wanted here)
   src.removeFromParent(); src.position.set(0, 0, 0); src.quaternion.identity(); src.scale.setScalar(1);
   const plan = {}; let rows = 0;
@@ -99,7 +99,7 @@ function bake(src, moves) {
       data[o + 8] = e[2]; data[o + 9] = e[6]; data[o + 10] = e[10]; data[o + 11] = e[14];
     }
   };
-  rig.weight = 0; rig.blendOn = false; rig.blendK = 0; rig.bw = null; rig.top = null; rig.topOn = false; rig.topW = 0; rig.fadeT = 0;
+  rig.weight = 0; rig.blendOn = false; rig.blendK = 0; rig.bw = null; rig.top = null; rig.topOn = false; rig.topW = 0; rig.fadeT = 0; rig.steps = false;   // (the moves as they are drawn: no feet kept where they stood)
   for (const name in plan) {
     const m = plan[name], total = m.n + (m.loop ? 1 : 0);
     for (let f = 0; f < total; f++) {
@@ -108,7 +108,7 @@ function bake(src, moves) {
     }
   }
   // the figure back as it was given
-  Object.assign(rig, { layers: was.layers, weight: was.weight, blendOn: was.on, blendK: was.k, bw: was.bw, top: was.top, topOn: was.topOn, topW: was.topW, fadeT: was.fadeT }); rig.update(0);
+  Object.assign(rig, { layers: was.layers, weight: was.weight, blendOn: was.on, blendK: was.k, bw: was.bw, top: was.top, topOn: was.topOn, topW: was.topW, fadeT: was.fadeT, steps }); rig.update(0);
   src.position.copy(was.p); src.quaternion.copy(was.q); src.scale.copy(was.s); was.par?.add(src); if (lod) src.lod = lod; src.updateMatrixWorld(true);
   return { data, W, plan, bones: B, rows, size, meshes };
 }

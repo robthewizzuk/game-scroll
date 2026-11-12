@@ -983,7 +983,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   beret, wool cap, hood), webbing, pouches, a pack. Creases, collars and hat brims sit in soft shadow worked
   out from the shapes themselves, so there is still no texture file. It stands on `gs.poses`' skeleton (`rig`,
   `bones`: the same poses, blends and foot planting; it moves with `gs.poses.LIFELIKE`, strides that land on
-  the heel and push off the toes, and has weight: `rig.update(dt, { speed, turn })`) in three levels of detail: call
+  the heel and push off the toes, and has weight: `rig.update(dt, { speed, turn })`; its feet stay where they
+  are put down however the game moves it, and it steps round when turned on the spot: "Steps that are really
+  taken" in the maker kit guide) in three levels of detail: call
   `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after

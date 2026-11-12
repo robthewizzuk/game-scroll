@@ -142,11 +142,11 @@ function frameOf(sp) {
   return { bones, parent, own, HAND, inset, atOf, tree };
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
-const rigOf = (B, scale) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true }); rig.feet = [B.footL, B.footR]; return rig; };
+const rigOf = (B, scale, body) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body }); rig.feet = [B.footL, B.footR]; return rig; };
 /** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
 export function skeleton(o = {}) {
   const sp = specOf(o), B = frameOf(sp).tree(), root = new Group(), scale = (o.scale ?? 1) * (sp.fem ? .945 : 1);
-  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale); root.updateMatrixWorld(true);
+  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale, root); root.updateMatrixWorld(true);
   return root;
 }
 const DETAIL = [.5, .75, 1, 1];   // see(): how tall a person counts as, by quality tier
@@ -366,14 +366,14 @@ export function human(o = {}) {
     const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(L ? far : skel, new Matrix4()); m.visible = L === 0; return m; });
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B;
-    root.rig = rigOf(B, scale);
+    root.rig = rigOf(B, scale, root);
     root.face = new Face(lods[0]);
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
       lods[cur].visible = false; lods[v].visible = true;
       if (!v !== !cur) for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
-      cur = v; root.rig.fine = !v;   // (and the rig leaves the forearm's turn and the toes alone meanwhile)
+      cur = v; root.rig.fine = !v; root.rig.near = v < 2;   // (and the rig leaves the forearm's turn and the toes alone meanwhile; at the far level it leaves the feet as posed too)
     } });
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */
     const wp = new Vector3();

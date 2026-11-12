@@ -1865,6 +1865,20 @@ changes; `drop` lowers the hips, `shift: [x, y, z]` moves them, in metres). `rig
 the game hold the phase itself, in step with a ladder or a cutscene. `gs.models.human` people use all of this, and
 `person.touch({ handL, footR, ... })` then puts hands and feet on points in the world (a rung, a bar, a ledge).
 
+**Steps that are really taken** (`gs.models.human` people, by themselves): a walk is drawn for a body going
+straight ahead at the walk's own speed, and a game turns its people, starts and stops them and moves them a
+little faster or slower than that. So the rig keeps each foot where it was put down: the leg is bent again as
+the body goes on over it, the foot rolls from its heel onto its ball without either moving on the ground, the
+next footfall lands where the body is really going (round a bend, off its pace, sidestepping, backwards), and a
+person turned or shifted while standing steps round to stand under himself, a foot at a time, where he used to
+turn like a statue on a turntable. Nothing to call: move the person, then `rig.update(dt, { speed })` as before.
+It works in the poses that stand on the ground (the lifelike walks and runs and standing easy); say so for a
+pose of your own with `rig.add('guard', fn, { ground: true })` (a walk of your own also gives `stance: .6`, the
+share of a stride a foot is down). `rig.stride.feet[0].landed` (left; `[1]` right) is true on the update a foot
+touches the ground, for a footstep sound. It stands down by itself for a walk on the spot (a figure in a menu),
+a person carried along faster than a slow walk, a far-off person and one that `Reactions` has off its balance;
+`rig.steps = false` leaves every pose as drawn (a person riding on something slow).
+
 **Missions** (`gs.missions`): write a mission as a script that reads like the plan:
 `Mission(function* (m) { m.objective('Reach the roof'); yield m.until(() => roof.has(me)); m.checkpoint();
 m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` makes areas, `all()` and

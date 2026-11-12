@@ -2201,6 +2201,75 @@ console.log('physics ok');
   }
   console.log('gs.models: the fuller skeleton (waist, neck, collar bones, forearm twist, toes, fingers; old joints turned as they were) ok');
 }
+// steps that are really taken (stride.js): a person the game moves keeps each foot where it was put down. Two people are driven
+// alike, one with its steps off, and what is measured is the point each foot stands on (its heel or its ball) while the foot is down.
+{
+  const { skeleton } = await import('../src/kit/models/human.js'), { Vector3, Quaternion } = await import('three');
+  const STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, dt = 1 / 60, w = new Vector3(), q = new Quaternion(), LEGS = ['legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
+  const go = (st, sp) => { st.x += Math.sin(st.yaw) * sp * dt; st.z += Math.cos(st.yaw) * sp * dt; };
+  const drive = (secs, fn, set) => {
+    const P = [false, true].map(on => { const p = skeleton({}); p.rig.steps = on; set?.(p, on); return p; }), st = { x: 0, z: 0, yaw: 0, speed: 0 };
+    const was = [0, 1].map(() => [new Vector3(), new Vector3()]), down = [false, false], piv = [0, 0], lastQ = LEGS.map(() => null), R = { off: 0, on: 0, dist: 0, lands: 0, jerk: 0, differ: 0, P };
+    for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const px = st.x, pz = st.z; fn(st, i * dt); R.dist += Math.hypot(st.x - px, st.z - pz);
+      for (const p of P) { if (st.speed > .15 || st.speed < -.15) p.rig.blend(STR, Math.abs(st.speed)); else p.rig.play('idle', { fade: .22 }); p.position.set(st.x, 0, st.z); p.rotation.y = st.yaw; p.rig.update(dt, { speed: st.speed }); p.updateMatrixWorld(true); }
+      const F = P[1].rig.stride.feet;
+      for (let k = 0; k < 2; k++) {
+        if (F[k].landed) R.lands++;
+        for (let m = 0; m < 2; m++) {
+          P[m].bones[k ? 'footR' : 'footL'].localToWorld(w.set(0, -.085, F[k].on ? .13 : -.06));
+          if (F[k].down && down[k] && F[k].on === piv[k]) R[m ? 'on' : 'off'] += Math.hypot(w.x - was[m][k].x, w.z - was[m][k].z);
+          was[m][k].copy(w);
+        }
+        down[k] = F[k].down; piv[k] = F[k].on;
+      }
+      LEGS.forEach((name, j) => {   // the biggest turn of a leg joint from one update to the next, and how far the two people's legs differ
+        const a = P[0].bones[name], b = P[1].bones[name]; R.differ = Math.max(R.differ, a.quaternion.angleTo(b.quaternion));
+        b.getWorldQuaternion(q); if (lastQ[j] && i > 3) R.jerk = Math.max(R.jerk, lastQ[j].angleTo(q)); (lastQ[j] ||= new Quaternion()).copy(q);
+      });
+    }
+    return R;
+  };
+  const per = (r, k) => (r[k] / r.dist * 100).toFixed(1) + ' cm a metre';
+  // a walk straight ahead: the walk as drawn let the foot it stood on creep (it rolled on its ankle, not on its heel and its ball)
+  let r = drive(6, st => { st.speed = 1.3; go(st, 1.3); });
+  assert.ok(r.off / r.dist > .08 && r.on / r.dist < .01, `a walk: the feet slid ${per(r, 'off')}, and now ${per(r, 'on')}`);
+  assert.ok(r.lands >= 10 && r.lands <= 13, 'a footfall for every step: ' + r.lands); assert.ok(r.jerk < .2, 'no joint of the legs jumps: ' + r.jerk.toFixed(3));
+  // round a tight bend, with the body 20% faster than its walk, sidestepping as it goes, backwards, at a run, and from standing to a walk and back
+  r = drive(6, st => { st.speed = 1.3; st.yaw += 1.3 / .8 * dt; go(st, 1.3); }); assert.ok(r.off / r.dist > .2 && r.on / r.dist < .012, `a bend: ${per(r, 'off')}, now ${per(r, 'on')}`); assert.ok(r.jerk < .24, 'a bend, no jump: ' + r.jerk.toFixed(3));
+  r = drive(6, st => { st.speed = 1.3; go(st, 1.56); }); assert.ok(r.on / r.dist < .02, `a body faster than its walk: ${per(r, 'off')}, now ${per(r, 'on')}`); assert.ok(r.jerk < .26, 'off its pace, no jump: ' + r.jerk.toFixed(3));
+  r = drive(6, st => { st.speed = 1.3; go(st, 1.3); st.x += .5 * dt; }); assert.ok(r.on / r.dist < .012, `sidestepping: ${per(r, 'off')}, now ${per(r, 'on')}`);
+  r = drive(6, st => { st.speed = -1; go(st, -1); }); assert.ok(r.off / r.dist > .08 && r.on / r.dist < .01, `backwards: ${per(r, 'off')}, now ${per(r, 'on')}`);
+  r = drive(4, st => { st.speed = 5.6; go(st, 5.6); }); assert.ok(r.on / r.dist < .005, `a run: ${per(r, 'off')}, now ${per(r, 'on')}`);
+  r = drive(8, (st, t) => { const want = t > 1 && t < 6 ? 1.3 : 0; st.speed += Math.max(-3 * dt, Math.min(3 * dt, want - st.speed)); go(st, st.speed); });
+  assert.ok(r.off / r.dist > .1 && r.on / r.dist < .012, `a start and a stop: ${per(r, 'off')}, now ${per(r, 'on')}`); assert.ok(r.jerk < .2, 'a start and a stop, no jump: ' + r.jerk.toFixed(3));
+  // standing: nothing moves by itself (standing easy let the feet creep as the weight went from one to the other), and no step is taken
+  r = drive(8, st => { st.speed = 0; }); assert.ok(r.lands === 0 && r.on < .004 && r.off > .1, `standing still: ${r.lands} steps, the feet crept ${(r.off * 100).toFixed(0)} cm, now ${(r.on * 100).toFixed(1)}`);
+  // turned on the spot the feet swept round like a statue's on a turntable; now the person steps round, a foot at a time, and stands as posed again after
+  r = drive(6, (st, t) => { st.speed = 0; if (t > 1 && t < 4) st.yaw += 2 * dt; });
+  assert.ok(r.off > 1 && r.on < .02, `turned on the spot: the feet swept ${(r.off * 100).toFixed(0)} cm over the ground, now ${(r.on * 100).toFixed(1)}`); assert.ok(r.lands >= 6 && r.lands <= 16, 'it steps round: ' + r.lands + ' steps');
+  assert.ok(r.jerk < .26, 'stepping round, no jump: ' + r.jerk.toFixed(3));
+  { const S = r.P[1].rig.stride.feet; assert.ok(S.every(f => f.down && Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) < .08 && Math.abs(f.dyaw) < .25), 'and ends standing under itself'); }
+  // shoved a pace to the side: it steps after its body
+  r = drive(5, (st, t) => { st.speed = 0; if (t > 1 && t < 2) st.x += .4 * dt; }); assert.ok(r.on < .02 && r.lands >= 2 && r.lands <= 6, `shoved: ${r.lands} steps, slid ${(r.on * 100).toFixed(1)} cm`);
+  // what is left exactly as drawn: a walk on the spot (a figure in a menu), a person carried along (on a lorry), a far-off person, a pose the game
+  // drives by its own phase, a person off its balance (gs.characters.Reactions has the feet), and rig.steps = false
+  r = drive(3, st => { st.speed = 1.3; }); assert.ok(r.differ < 1e-6, 'a walk on the spot is as drawn ' + r.differ);
+  r = drive(3, st => { st.speed = 0; st.z += 6 * dt; }); assert.ok(r.differ < 1e-6, 'a person carried along is left alone ' + r.differ);
+  r = drive(3, st => { st.speed = 1.3; go(st, 1.3); }, (p, on) => { if (on) p.rig.near = false; }); assert.ok(r.differ < 1e-6, 'a far-off person is left alone ' + r.differ);
+  r = drive(3, st => { st.speed = 1.3; go(st, 1.3); }, (p, on) => { if (on) p.rig.stride.hold = true; }); assert.ok(r.differ < 1e-6, 'a person off its balance is left alone ' + r.differ);
+  { const [a, b] = [false, true].map(on => { const p = skeleton({}); p.rig.steps = on; return p; }); let d = 0;
+    for (let i = 0; i < 120; i++) for (const p of [a, b]) { p.rig.play('walk', { at: i / 120, fade: 0 }); p.position.z = i * .02; p.rig.update(dt, { speed: 1.3 }); }
+    for (const n of LEGS) d = Math.max(d, a.bones[n].quaternion.angleTo(b.bones[n].quaternion)); assert.ok(d < 1e-6, 'a pose the game drives is as drawn ' + d); }
+  // a pose of the game's own takes part when it says it stands on the ground
+  { const p = skeleton({}); p.rig.add('guard', () => ({ j: { spine: [.1, 0, 0] }, drop: 0 }), { ground: true }); p.rig.play('guard', { fade: 0 });
+    for (let i = 0; i < 90; i++) { p.rotation.y += 2 * dt; p.rig.update(dt); } assert.ok(p.rig.stride.a > .99 && p.rig.stride.feet.some(f => Math.abs(f.dyaw) > .05 || !f.down), 'a pose that says it stands on the ground keeps its feet');
+    p.rig.add('float', () => ({ j: {}, drop: 0 })); p.rig.play('float', { fade: 0 }); for (let i = 0; i < 60; i++) p.rig.update(dt); assert.equal(p.rig.stride.a, 0, 'a pose that does not is left alone'); }
+  // mixed with standing, a walk keeps its own beat and takes shorter steps (it took longer ones more slowly, and slid)
+  { const p = skeleton({}); p.rig.steps = false; p.rig.blend(STR, .5); for (let i = 0; i < 30; i++) p.rig.update(dt, { speed: .5 }); const a = p.rig.blendPhase; for (let i = 0; i < 30; i++) p.rig.update(dt, { speed: .5 });
+    const beat = ((p.rig.blendPhase - a + 1) % 1) / .5, own = 1.3 / 1.36 / p.rig.size; assert.ok(Math.abs(beat - own) < .03, `a slow walk steps at the walk's own beat: ${beat.toFixed(3)} strides a second against ${own.toFixed(3)}`); }
+  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance) ok');
+}
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
 {

@@ -199,7 +199,7 @@ export class Reactions {
   reset() {
     if (this.doll) { this.doll.remove(); this.doll = null; }
     if (this.state !== 'steady') { this.body.updateMatrixWorld(true); this.rig.parts.hips.position.set(this.rig.hipX, this.rig.hip0, this.rig.hipZ); }
-    this.setMover(true);
+    this.setMover(true); if (this.rig.stride) this.rig.stride.hold = false;
     this.state = 'steady'; this.limp = false; this.clip = this.held = null; this.own = 0; this.ik = 0; this.sink = 0; this.c.x = this.c.z = this.cv.x = this.cv.z = this.u.x = this.u.z = 0; this.last = null;
     for (const n in this.spr) { this.spr[n].o.fill(0); this.spr[n].v.fill(0); }
     return this;
@@ -222,6 +222,7 @@ export class Reactions {
     else if (this.state === 'rising') this.play(dt);
     if (this.own > 0 && this.held && this.state === 'steady') { this.mix(this.held, this.own); this.own = Math.max(0, this.own - dt / .3); if (!this.own) this.held = null; }
     this.rig.fill?.();   // (a full skeleton: the joints in between follow what was turned above, a ragdoll's bodies included)
+    if (this.rig.stride) this.rig.stride.hold = this.state !== 'steady';   // (off its balance, the feet are placed here: the rig lets go of them)
     return this;
   }
   // standing its ground: the weight sways over the feet and comes back; past the edge of the feet it has to step
