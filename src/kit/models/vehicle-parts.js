@@ -188,15 +188,16 @@ export function wheelGeo({ r = .32, w = .2, rim = .62, lugs = 0, dual = false, n
 
 /**
  * A railway wheelset: two flanged steel wheels on an axle, along x, its middle at 0 (the rail tops are r below).
- * gauge: between the rails' inner faces (1.435); spokes: a spoked wheel (a steam engine's) with that many.
+ * gauge: between the rails' inner faces (1.435); spokes: a spoked wheel (a steam engine's) with that many;
+ * dull: only the flange and the tread beside it, which the rail keeps bright, show steel; the tyre's face is as dark as the wheel (a working engine's).
  */
-export function wheelsetGeo({ r = .46, gauge = 1.435, spokes = 0, axle = true, colour = '#2a2b2d', rimColour = '#8f9498', weight = 0, crank: weightAt = .5, seg = 28 } = {}) {
+export function wheelsetGeo({ r = .46, gauge = 1.435, spokes = 0, axle = true, colour = '#2a2b2d', rimColour = '#8f9498', weight = 0, crank: weightAt = .5, seg = 28, dull = false } = {}) {
   const parts = [], c = hex(colour), rc = hex(rimColour), wt = .13;
   for (const sx of [-1, 1]) {
     const sub = [], lathe = pts => plain(new LatheGeometry(pts.map(([x, y]) => new Vector2(x, y)), seg));
     // (in the lathe y runs outwards from the flange at 0 to the wheel's outer face at wt)
     const tyre = lathe([[r * .86, .012], [r + .028, 0], [r + .03, .03], [r + .004, .036], [r - .002, wt], [r * .86, wt - .008]]);
-    sub.push(paint(tyre, rc, (x, y, z) => hypot(x, z) > r - .01 ? 1 : .45));
+    sub.push(paint(tyre, rc, dull ? (x, y, z) => hypot(x, z) > r - .01 && y < wt - .005 ? .8 : .1 : (x, y, z) => hypot(x, z) > r - .01 ? 1 : .45));
     if (spokes) {
       sub.push(paint(lathe([[0, -.01], [r * .2, -.01], [r * .2, wt + .03], [r * .09, wt + .045], [0, wt + .045]]), c));
       for (let i = 0; i < spokes; i++) { const a = (i + .5) / spokes * PI * 2, g = plain(new BoxGeometry(r * .7, wt * .5, r * .075)); g.translate(r * .53, wt * .5, 0).rotateY(a); sub.push(paint(g, c)); }
@@ -204,7 +205,7 @@ export function wheelsetGeo({ r = .46, gauge = 1.435, spokes = 0, axle = true, c
         const g = plain(new CylinderGeometry(r * .86, r * .86, wt * .7, 12, 1, false, PI - weight / 2, weight)), P = g.attributes.position;
         for (let i = 0; i < P.count; i++) if (hypot(P.getX(i), P.getZ(i)) < 1e-6) P.setZ(i, -r * .5);
         g.translate(0, wt * .5, 0); sub.push(paint(g, c));
-        sub.push(paint(plain(new CylinderGeometry(r * .07, r * .07, .1, 10)).translate(0, wt + .07, r * weightAt), rc, () => .6));   // the crank pin
+        sub.push(paint(plain(new CylinderGeometry(r * .07, r * .07, .1, 10)).translate(0, wt + .07, r * weightAt), rc, () => dull ? .3 : .6));   // the crank pin
       }
     } else sub.push(paint(lathe([[0, -.01], [r * .86, .012], [r * .86, wt - .008], [r * .3, wt * .55], [r * .16, wt + .02], [0, wt + .02]]), c, (x, y, z) => .7 + .3 * hypot(x, z) / r));
     const one = mergeGeometries(sub, false); for (const s of sub) s.dispose();

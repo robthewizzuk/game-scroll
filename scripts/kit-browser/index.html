@@ -646,7 +646,7 @@ try {
     ok(lorry.wheels.length === 6 && slot(lorry, 'wood').material.name === 'models:planks' && slot(lorry, 'paint').material.name === 'models:paint' && slot(rusty, 'paint').material.name === 'models:rust' && slot(lorry, 'paint').geometry.attributes.color && slot(again, 'wood').geometry === slot(lorry, 'wood').geometry && slot(again, 'paint').material === slot(lorry, 'paint').material,
       'vehicles: a lorry on three axles with planks from the wood recipe and worn paint (aged in its corners), a rusty pickup; the same lorry again shares its shapes and materials');
     // a goods train: a steam engine with smoke deflectors, wagons in colours of their own with their loads, a guard's van; boards and riveted plate are pictures made in code
-    const goods = vehicle('train', { style: 'steam', colour: '#1d1e20', deflectors: true, lit: true, cars: [{ style: 'van', colour: '#6b3024' }, { style: 'open', load: 'tarp', colour: '#565c50' }, 'tanker', { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] });
+    const GOODS = { style: 'steam', colour: '#1d1e20', deflectors: true, lit: true, cars: [{ style: 'van', colour: '#6b3024' }, { style: 'open', load: 'tarp', colour: '#565c50' }, 'tanker', { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] }, goods = vehicle('train', GOODS);
     const [eng, tend, gvan, gopen, gtank, gflat, gguard] = goods.cars;
     const hex = (c, n) => slot(c, n).material.color.getHexString(), count = (c, n) => slot(c, n).geometry.attributes.position.count;
     const goodsOk = { cars: goods.cars.length === 7 && Math.abs(goods.length - (11.2 + 7 + 5 * 9.1)) < 1e-6, boards: !!(slot(gvan, 'boards').material.map && slot(gvan, 'boards').material.normalMap), colours: hex(gvan, 'boards') === '6b3024' && hex(gguard, 'boards') === '565b5e',
@@ -673,6 +673,18 @@ try {
     for (let i = 0; i < 8; i++) { red.move(1 / 60, 10, { steer: .5 }); v.render(x, 192, 128); await new Promise(r => requestAnimationFrame(r)); }
     const d = x.getImageData(0, 0, 192, 128).data; let paint = 0, dark = 0; for (let i = 0; i < d.length; i += 4) { if (d[i] > 90 && d[i] > d[i + 1] * 2.2 && d[i] > d[i + 2] * 2.2) paint++; else if (d[i] + d[i + 1] + d[i + 2] < 90) dark++; }
     ok(paint / 24576 > .04 && dark / 24576 > .01 && paint / 24576 < .5, `vehicles: a red sports car drawn in a Next Gen view (${(paint / 245.76).toFixed(1)}% of the picture its paint, ${(dark / 245.76).toFixed(1)}% tyres, glass and shadow)`);
+    // a train that keeps to a straight line (fuse: true): the goods train again as one mesh a kind of surface, its pictures and lamps kept, and the same picture drawn
+    v.scene.remove(red);
+    const fz = vehicle('train', { ...GOODS, fuse: true }), meshes = t => { let k = 0; t.traverse(m => { if (m.isMesh) k++; }); return k; };
+    const shot = async t => { t.position.z = 20; v.scene.add(t); for (let i = 0; i < 8; i++) { v.render(x, 192, 128); await new Promise(r => requestAnimationFrame(r)); } v.scene.remove(t); return x.getImageData(0, 0, 192, 128).data.slice(); };
+    v.cam.position.set(-13, 5, -17); v.cam.lookAt(0, 1.6, 1); v.cam.updateMatrixWorld(); if (v.cut) v.cut();
+    // (two pictures of one train differ pixel by pixel as the view steadies them, so they are compared in blocks of 16 by 16)
+    const blocks = d => { const o = new Float32Array(96 * 3); for (let i = 0, p = 0; i < d.length; i += 4, p++) { const b = ((p / 192 | 0) >> 4) * 12 + ((p % 192) >> 4); o[b * 3] += d[i] / 256; o[b * 3 + 1] += d[i + 1] / 256; o[b * 3 + 2] += d[i + 2] / 256; } return o; }, apart = (a, b) => { let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i])); return m; };
+    const pa0 = blocks(await shot(goods)), pa = blocks(await shot(goods)), raw = await shot(fz), pb = blocks(raw), same = apart(pa0, pa), off = apart(pa, pb); let train = 0; for (let i = 0; i < raw.length; i += 4) if (raw[i] + raw[i + 1] + raw[i + 2] < 150) train++;
+    const fzOk = { meshes: meshes(goods) >= 50 && meshes(fz) <= 18, tris: fz.tris === goods.tris, boards: fz.shell.children.some(m => m.material.map === slot(gvan, 'boards').material.map && m.material.vertexColors), plates: fz.shell.children.some(m => m.material.map === slot(eng, 'plates').material.map),
+      lit: fz.shell.children.find(m => m.name === 'lamp').material.emissiveIntensity > 2 && fz.shell.children.find(m => m.name === 'tail').material.emissiveIntensity > 1, points: fz.cars.length === 7 && fz.cars[6].points.tail.isObject3D && fz.points.smoke.isObject3D,
+      picture: train / 24576 > .05 && off < Math.max(6, same * 2) };
+    ok(Object.values(fzOk).every(Boolean), `vehicles: the goods train fused (fuse: true) is ${meshes(fz)} meshes where it was ${meshes(goods)}, the same ${fz.tris} triangles and the same picture (no block of it more than ${off.toFixed(1)} of 255 apart, where two pictures of the loose train are ${same.toFixed(1)} apart; the train is ${(train / 245.76).toFixed(1)}% of it) ${Object.keys(fzOk).filter(k => !fzOk[k]).join(', ')}`);
     window.__hd.hold = hold;
   }
   // gs.models.fur: fur in layers on a creature, hair in strands and a beard on a person, drawn in a Next Gen view

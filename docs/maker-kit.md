@@ -2688,7 +2688,10 @@ update(dt) {
   own; `wear` (0..1 how aged, `false` for straight from the factory); `lit: true` (lamps that glow;
   `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles). A
   train also takes `cars` (what the engine pulls, in order), `gauge` (metres between the rails, 1.435) and
-  `deflectors: true` (a steam engine's smoke deflectors: a plate each side of its smokebox).
+  `deflectors: true` (a steam engine's smoke deflectors: a plate each side of its smokebox),
+  `polished: false` (a working engine: its dome and boiler bands painted over and no bright wheel rims
+  anywhere on the train) and `fuse: true` (a train that keeps to a straight line, in a third of the draws:
+  below).
 - **`move(dt, speed, o)`** is the easy way to keep one alive each frame, whatever moves it: wheels and
   tracks roll for the speed (metres a second), the front wheels ease to `steer` (-1..1, + right; `lock`
   is how far they turn at 1, .55 radians), the body rolls outwards in a turn, squats as it pulls away and dips as it brakes, as a car on
@@ -2739,6 +2742,17 @@ update(dt) {
     { style: 'tanker', colour: '#2e3235' }, { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] });
   ```
   That train is 64 m long, about 50,000 triangles in 58 draws.
+- **A train that keeps to a straight line: `fuse: true`.** A train's cars are vehicles of their own so
+  that `along()` can bend it round a curve, and that is what its draws pay for. A train that only runs
+  straight (past a platform, across a bridge, through a level on rails) can be made with `fuse: true`:
+  every car's shell is joined into one mesh for each kind of surface (surfaces that differ only in colour
+  share a material and carry their colours in their corners), and every wheelset of one shape is drawn as
+  copies in one draw. The goods train above is then **16 draws where it was 58**, with the same triangles
+  and the same picture. Everything else is as before: `roll(d)` and `move(dt, speed)` turn the wheels and
+  the rods, `lights(on)`, `twin()` (which shares the joined shapes), `train.points` and each
+  `train.cars[i].points`. The cars are still there, without meshes, so something of your own added to
+  `train.cars[2]` rides on that wagon. `along()` throws, saying why; `train.fused` is `true`. Move the
+  whole train by its own position.
 - **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
   21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 5,000 to
   15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less

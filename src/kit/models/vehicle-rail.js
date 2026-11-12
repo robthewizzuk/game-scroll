@@ -61,7 +61,7 @@ function heap(b, slot, z0, z1, hw, y, rise = .34) {
   b.skin(rings, { slot, open: true, crease: .2 });
 }
 // a crate with its battens, an oil drum with its ribs
-function crate(b, x, y, z, w, h, d, turn = 0) { b.box('wood', w, h, d, [x, y + h / 2, z], [0, turn, 0]); for (const e of [-1, 1]) b.box('wood', w + .04, .09, d + .04, [x, y + h / 2 + e * (h / 2 - .09), z], [0, turn, 0]); }
+function crate(b, x, y, z, w, h, d, turn = 0) { b.box('timber', w, h, d, [x, y + h / 2, z], [0, turn, 0]); for (const e of [-1, 1]) b.box('timber', w + .04, .09, d + .04, [x, y + h / 2 + e * (h / 2 - .09), z], [0, turn, 0]); }
 function drum(b, x, y, z, slot = 'drum') { b.cyl(slot, .29, .29, .9, [x, y + .45, z], 0, 14); for (const q of [.3, .6]) b.cyl(slot, .302, .302, .03, [x, y + q, z], 0, 14, true); }
 
 const WAGONS = {
@@ -84,7 +84,7 @@ const WAGONS = {
   // a guard's van: a cabin with a look-out each side and a stove, an open end behind with its rail, two red lamps
   guard(b, l, o, points) {
     const w = 2.7, h = 2.25, y = FLOOR, ver = 1.75, zc = l / 2 - ver, lc = l - ver;
-    b.box('boards', w, h, lc, [0, y + h / 2, -ver / 2]).box('wood', w - .1, .08, ver, [0, y + .04, zc + ver / 2]);
+    b.box('boards', w, h, lc, [0, y + h / 2, -ver / 2]).box('timber', w - .1, .08, ver, [0, y + .04, zc + ver / 2]);
     for (const s of [-1, 1]) {
       for (let i = 0; i <= 5; i++) b.box('iron', .03, h, .07, [s * (w / 2 + .012), y + h / 2, lerp(-l / 2 + .04, zc - .04, i / 5)]);
       b.box('boards', .3, 1, .9, [s * (w / 2 + .14), y + 1.5, zc - 1.5], 0, .04);                                                  // the look-out
@@ -103,7 +103,7 @@ const WAGONS = {
   // an open wagon: plank sides, a door each side, empty
   open(b, l, o) {
     const w = 2.7, h = 1.25, y = FLOOR, t = .07;
-    b.box('wood', w, .08, l, [0, y + .04, 0]);
+    b.box('timber', w, .08, l, [0, y + .04, 0]);
     for (const s of [-1, 1]) {
       b.box('boards', t, h, l, [s * (w / 2 - t / 2), y + h / 2, 0]).box('boards', w - t * 2, h, t, [0, y + h / 2, s * (l / 2 - t / 2)]);
       for (let i = 0; i <= 6; i++) b.box('iron', .03, h + .04, .07, [s * (w / 2 + .012), y + h / 2, lerp(-l / 2 + .04, l / 2 - .04, i / 6)]);
@@ -117,7 +117,7 @@ const WAGONS = {
   // a flat wagon with stakes
   flat(b, l, o) {
     const w = 2.7, y = FLOOR, top = y + .1;
-    b.box('wood', w, .1, l, [0, y + .05, 0]);
+    b.box('timber', w, .1, l, [0, y + .05, 0]);
     for (const s of [-1, 1]) { for (let i = 0; i < 6; i++) b.box('iron', .07, .95, .07, [s * (w / 2 - .035), y + .5, lerp(-l / 2 + .5, l / 2 - .5, i / 5)]); if (!o.load) b.box('iron', w, .12, .1, [0, y + .16, s * l * .3]); }
     if (o.load !== 'crates') return y + 1;
     // crates strapped down at the front, drums in the middle, something under canvas behind
@@ -138,7 +138,7 @@ const WAGONS = {
     b.skin(rings, { slot: 'paint2', capA: 'paint2', capB: 'paint2', crease: 1 });
     for (const q of [-.37, -.125, .125, .37]) b.cyl('iron', r + .015, r + .015, .07, [0, cy, q * (z1 - z0)], [PI / 2, 0, 0], n, true);
     for (const q of [-.37, .37]) b.box('under', 2.05, .5, .34, [0, FLOOR + .22, q * (z1 - z0)]);
-    b.cyl('paint2', .42, .42, .3, [0, cy + r + .1, 0], 0, 16).ball('iron', .42, [0, cy + r + .25, 0], [1, .3, 1]).box('wood', .5, .04, 3.2, [0, cy + r + .045, 0]);
+    b.cyl('paint2', .42, .42, .3, [0, cy + r + .1, 0], 0, 16).ball('iron', .42, [0, cy + r + .25, 0], [1, .3, 1]).box('timber', .5, .04, 3.2, [0, cy + r + .045, 0]);
     const up = [[1.09, FLOOR + .1], [1.09, cy + .1], [.82, cy + .72], [.3, cy + r + .04]]; let run = .15;   // the ladder: up the side, then over the shoulder
     for (let i = 0; i < 3; i++) {
       const [xa, ya] = up[i], [xb, yb] = up[i + 1], d = hypot(xb - xa, yb - ya);
@@ -168,9 +168,9 @@ function carBody(b, { w, y0, y1, rise, z0, z1, belt = [.42, .78], win = null, ba
   return { yb, yc, hw };
 }
 
-/** One railway car as a plan: steam, tender, diesel, van, open, flat, tanker, guard, coach. o: gauge, load, deflectors, seed. */
+/** One railway car as a plan: steam, tender, diesel, van, open, flat, tanker, guard, coach. o: gauge, load, deflectors, polished (false: no brightwork), seed. */
 export function railcar(type, o = {}) {
-  const b = new Shape(), gauge = o.gauge || 1.435, sets = [], points = {}, parts = {}; let length = 9.1, rods = null;
+  const b = new Shape(), gauge = o.gauge || 1.435, sets = [], points = {}, parts = {}, dull = o.polished === false; let length = 9.1, rods = null;
   if (WAGONS[type]) {
     const l = length - 1.1, r = .46, ax = [-2.5, 2.5];
     frame(b, l, ax, r); const top = WAGONS[type](b, l, o, points);
@@ -202,7 +202,7 @@ export function railcar(type, o = {}) {
     for (const s of [-1, 1]) for (const z of bogie(b, s * (l / 2 - 2.6), r, 2.7)) (sets[0] ||= { geo: { r, gauge }, at: [] }).at.push([r, z]);
     Object.assign(points, { driver: [-.6, FLOOR + .5, -l / 2 + 1], lampL: [-.95, FLOOR + .55, -l / 2 - .05], lampR: [.95, FLOOR + .55, -l / 2 - .05], exhaust: [0, 3.9, 0] });
   } else if (type === 'tender') {
-    length = 7; const l = length - .9, r = .5, w = 2.7, y = 1.3, h = 1.5, ax = [-1.8, 0, 1.8];
+    length = 7; const l = length - .9, r = .46, w = 2.7, y = 1.3, h = 1.5, ax = [-1.8, 0, 1.8];   // (wheels the size of a wagon's: one shape for both)
     b.box('under', 2.3, .3, l, [0, y - .15, 0]).box('plates', w, h, l - .1, [0, y + h / 2, 0], 0, .05);
     for (const s of [-1, 1]) {
       b.box('plates', .06, .32, l - .5, [s * (w / 2 - .01), y + h + .1, .1], [0, 0, -s * .35]);                // the coping, flared out
@@ -228,12 +228,13 @@ export function railcar(type, o = {}) {
     b.box('steel', .04, .04, 1.1, [0, by, zf + .2], [0, 0, 0]).cyl('steel', .03, .03, .5, [0, by, zf + .19], [0, 0, PI / 2], 6).box('iron', 1.3, .5, 1.2, [0, by - br - .2, zf + 1.05]);
     for (const q of [-.27, .27]) b.box('iron', 1.3, .05, .03, [.08, by + q, zf + .3]);                                // the door's hinge straps
     b.cyl('paint', br, br, cab0 - zf - 1.7, [0, by, (zf + 1.7 + cab0) / 2], [PI / 2, 0, 0], 28);
-    for (let i = 0; i < 5; i++) b.cyl('steel', br + .012, br + .012, .05, [0, by, lerp(zf + 1.78, cab0 - 1.35, i / 4)], [PI / 2, 0, 0], 28, true);
+    for (let i = 0; i < 5; i++) b.cyl(dull ? 'iron' : 'steel', br + .012, br + .012, .05, [0, by, lerp(zf + 1.78, cab0 - 1.35, i / 4)], [PI / 2, 0, 0], 28, true);   // (bands: polished, or painted over)
     b.box('paint', 1.72, 1.7, 1.5, [0, by - .1, cab0 - .7], 0, .12).box('iron', 1.5, .5, 1.4, [0, 1.25, cab0 - .7]);
     // chimney, domes, valves, a whistle, a lamp
     b.lathe('iron', [[br * .42, -.12], [.26, .05], [.2, .35], [.21, .62], [.27, .68], [.27, .72], [.17, .72], [.17, .4]], [0, by + br, zf + .9], 0, 18);
     b.cyl('copper', .278, .278, .05, [0, by + br + .695, zf + .9], 0, 18, true);                                      // the chimney's copper cap
-    b.lathe('brass', [[.4, -.1], [.36, .1], [.34, .3], [.26, .44], [.1, .5], [0, .51]], [0, by + br - .04, -1.2], 0, 18).lathe('paint', [[.34, -.1], [.3, .12], [.24, .3], [.1, .37], [0, .38]], [0, by + br - .04, -2.9], 0, 16);
+    b.lathe(dull ? 'paint' : 'brass', [[.4, -.1], [.36, .1], [.34, .3], [.26, .44], [.1, .5], [0, .51]], [0, by + br - .04, -1.2], 0, 18); if (dull) b.cyl('brass', .385, .385, .04, [0, by + br - .02, -1.2], 0, 18, true);   // (painted over: a ring of brass at its foot is all that shows)
+    b.lathe('paint', [[.34, -.1], [.3, .12], [.24, .3], [.1, .37], [0, .38]], [0, by + br - .04, -2.9], 0, 16);
     for (const x of [-.12, .12]) b.cyl('brass', .045, .06, .3, [x, by + br + .75, cab0 - .8], 0, 8); b.cyl('brass', .03, .03, .25, [.3, by + br + .78, cab0 - .25], 0, 8);
     b.box('iron', .22, .26, .2, [0, by + br + .2, zf + .32], 0, .03).cyl('lamp', .08, .08, .03, [0, by + br + .2, zf + .21], [PI / 2, 0, 0], 12);
     for (const s of [-1, 1]) {   // handrails on their knobs, steam pipes, cylinders, slide bars, steps
@@ -262,7 +263,7 @@ export function railcar(type, o = {}) {
     }
     roof(b, 'iron', cw, ch, .3, cab0 - .1, cab1 + .15, .1);
     b.box('iron', .9, .05, .7, [0, ch + .32, (cab0 + cab1) / 2]).box('iron', 2.2, .04, .7, [0, cy + .05, cab1 + .3]);   // the roof's vent; the plate across to the tender
-    b.box('dark', cw - .12, ch - cy - .1, .04, [0, (cy + ch) / 2, cab0 + .5]).box('wood', cw - .1, .06, cab1 - cab0, [0, cy + .03, (cab0 + cab1) / 2]);
+    b.box('dark', cw - .12, ch - cy - .1, .04, [0, (cy + ch) / 2, cab0 + .5]).box('timber', cw - .1, .06, cab1 - cab0, [0, cy + .03, (cab0 + cab1) / 2]);
     b.cyl('fire', .2, .2, .03, [0, cy + .55, cab0 + .53], [PI / 2, 0, 0], 14);                                       // the fire, through its door
     // wheels: a carrying pair in front, four coupled pairs; the rods that join them
     sets.push({ geo: { r, gauge, spokes: 14, weight: 1.1, crank: cr / r }, at: drv.map(z => [r, z]) }, { geo: { r: .42, gauge, spokes: 10 }, at: [[.42, drv[0] - 1.75]] });
@@ -274,6 +275,7 @@ export function railcar(type, o = {}) {
     Object.assign(points, { smoke: [0, by + br + .75, zf + .9], steam: [1.1, r + .1, drv[0] - 2.4], whistle: [.3, by + br + .95, cab0 - .25], driver: [.7, plate + .1, cab0 + 1.2], fire: [0, plate + .3, cab0 + .6], lampL: [0, by + br + .2, zf + .15] });
   } else throw new Error(`gs.models.vehicle: no railway car '${type}'`);
   points.front = [0, BUF, -length / 2]; points.back = [0, BUF, length / 2];
+  if (dull) for (const st of sets) st.geo.dull = true;   // (a working train: no bright rims)
   const zs = sets.flatMap(s => s.at.map(a => a[1]));
   const bx = b.bounds();
   return { kind: 'train', style: type, body: b, parts, wheels: [], sets, rods, points, size: { length, width: bx.w, height: bx.hi[1] }, length, reach: (max(...zs) - min(...zs)) / 2, radius: sets[0].geo.r };
