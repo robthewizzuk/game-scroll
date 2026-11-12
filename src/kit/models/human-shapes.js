@@ -6,9 +6,9 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, ss, bump, HC, Hd, EYE, CORNER, HEAD_STAMP } from './human-head.js';
+import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { row, easeOf, torsoOf, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, CORNER, mouthAt, eyeRim, browOf };
+export { ss, bump, HC, EYE, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 
@@ -198,9 +198,11 @@ function trunk(a) {
     }
   }
   const ex = a.extras, sk = skirtL || seat;
-  if (ex.bag) { const th = -(PI - .8), p = sk.at(th, .93, .036); S.push({ box: [.2, .2, .075], round: .028, at: p, rot: [0, th, 0], slot: 'kit', part: 'gear', bone: 'hips', lumpy: [.04, .004], blend: .006 }, { box: [.205, .085, .08], round: .025, at: [p[0], p[1] + .062, p[2]], rot: [0, th, 0], slot: 'kit', part: 'gear', bone: 'hips', blend: .003 }); }
-  if (ex.canteen) { const th = PI - .75, p = sk.at(th, .95, .032); S.push({ ball: [.056, .078, .037], at: p, rot: [0, th, 0], slot: 'flask', part: 'gear', bone: 'hips', blend: .004 }, { rod: [[p[0], p[1] + .07, p[2]], [p[0], p[1] + .098, p[2]]], r: .017, round: .004, slot: 'steel', part: 'gear', bone: 'hips', blend: .002 }); }
-  if (ex.holster) { const th = ex.holster === 'left' ? .95 : -.95, p = sk.at(th, .985, .022); S.push({ box: [.075, .14, .04], round: .014, at: p, rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: 'hips', blend: .004 }, { box: [.078, .05, .044], round: .012, at: [p[0], p[1] + .05, p[2]], rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: 'hips', blend: .002 }); }
+  // what hangs from the belt goes with a bone of its own, so it can swing (S.hang: where each hangs from, which way is out from the body there, and how loosely: see follow.js)
+  const hang = S.hang = {}, hung = (name, th, at, o) => { hang[name] = { at, away: [sin(th), 0, cos(th)], ...o }; return name; };
+  if (ex.bag) { const th = -(PI - .8), p = sk.at(th, .93, .036), b = hung('bag', th, [p[0] * .9, p[1] + .1, p[2] * .9], { swing: .03, bounce: .0008, stiff: 110, damp: 9, most: .14 }); S.push({ box: [.2, .2, .075], round: .028, at: p, rot: [0, th, 0], slot: 'kit', part: 'gear', bone: b, lumpy: [.04, .004], blend: .006 }, { box: [.205, .085, .08], round: .025, at: [p[0], p[1] + .062, p[2]], rot: [0, th, 0], slot: 'kit', part: 'gear', bone: b, blend: .003 }); }
+  if (ex.canteen) { const th = PI - .75, p = sk.at(th, .95, .032), b = hung('flask', th, [p[0] * .92, p[1] + .1, p[2] * .92], { swing: .036, bounce: .0006, stiff: 120, damp: 9, most: .16 }); S.push({ ball: [.056, .078, .037], at: p, rot: [0, th, 0], slot: 'flask', part: 'gear', bone: b, blend: .004 }, { rod: [[p[0], p[1] + .07, p[2]], [p[0], p[1] + .098, p[2]]], r: .017, round: .004, slot: 'steel', part: 'gear', bone: b, blend: .002 }); }
+  if (ex.holster) { const th = ex.holster === 'left' ? .95 : -.95, p = sk.at(th, .985, .022), b = hung('holster', th, [p[0] * .94, p[1] + .07, p[2] * .94], { swing: .012, stiff: 160, damp: 12, most: .06 }); S.push({ box: [.075, .14, .04], round: .014, at: p, rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: b, blend: .004 }, { box: [.078, .05, .044], round: .012, at: [p[0], p[1] + .05, p[2]], rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: b, blend: .002 }); }
   // what stands over the trunk and shades it: the neck and head, and the arms
   S.push({ loft: [[1.5, .0605 * nk, .0595, -.018], [1.555, .0565 * nk, .056, -.02], [1.6, .0535 * nk, .052, -.022], [1.64, .051 * nk, .051, -.03]], ghost: true }, { ball: [.0755, .09, .1], at: Hd(0, .026, -.006), ghost: true }, { loft: sleeveRows(LM, ease), mirror: true, space: ARMSP, ghost: true });
   S.extra = X.I.length ? X : null;
@@ -318,13 +320,22 @@ function handBones(a) {
 // the head's bones: the foot of the neck stays in the collar, the neck bends, and the head (the jaw and all above a line
 // from under the chin up to the nape) sits on top of it. The skin round the foot of the neck (under a round-necked top) goes
 // with the trunk, as the cloth beside it does (trunkBones): less with the neck the further out from it, and a little with each collar bone.
-function headBones(x, y, z) {
+// Of what is the head's, the face gives shares to its own bones (human-head.js, faceShare: the lids, the brows, the jaw, the corners of the mouth).
+// s: what a point rides ({ bone }: all of it with that one, as an eyeball with its eye; { like: [x, y, z, side] }: as that point of the skin does,
+// as the inside of the mouth goes with the lips' edges); side: which lip's edge a point on the line between the lips is; lids(): how far each lid
+// has to turn to close, measured on the mesh (lidPlan).
+const headBonesOf = (f, lids) => function headBones(x, y, z, s, side = 0) {
+  if (s.bone) return [[s.bone, 1]];
+  if (s.like) [x, y, z, side] = s.like;
   const low = ss(1.56, 1.53, y), n = ss(1.5, 1.565, y) * (1 - low * ss(.066, .088, Math.hypot(x, z + .018))), top = 1.625 - .7 * Math.max(0, z + .01), h = ss(top - .055, top, y), c = low * ss(.05, .17, abs(x));
-  return [['spine', (1 - n) * (1 - c)], [x >= 0 ? 'collarL' : 'collarR', (1 - n) * c], ['neck', n * (1 - h)], ['head', n * h]];
-}
+  const out = [['spine', (1 - n) * (1 - c)], [x >= 0 ? 'collarL' : 'collarR', (1 - n) * c], ['neck', n * (1 - h)]], hd = n * h; let rest = 1;
+  if (hd > .002) for (const [b, w] of faceShare(x, y, z, f, side, lids())) { out.push([b, hd * w]); rest -= w; }
+  out.push(['head', hd * Math.max(0, rest)]);
+  return out;
+};
 // an eye: white, iris, pupil in clean rings (looking along +z)
 function eyeball(c, r, n = 14) {
-  const rings = [[0, 0], [9.5, 0], [9.5, 1], [28.5, 1], [28.5, 2], [31.5, 2], [31.5, 3], [62, 3], [98, 3]], P = [], N = [], K = [], I = [];
+  const rings = [[0, 0], [9.5, 0], [9.5, 1], [28.5, 1], [28.5, 2], [31.5, 2], [31.5, 3], [62, 3], [98, 3], [128, 3]], P = [], N = [], K = [], I = [];   // (the white goes well round the back: the eye turns)
   for (const [deg, k] of rings) for (let i = 0; i < n; i++) { const a = deg * PI / 180, t = i / n * PI * 2, x = sin(a) * cos(t), y = sin(a) * sin(t), z = cos(a); P.push(c[0] + x * r, c[1] + y * r, c[2] + z * r); N.push(x, y, z); K.push(k); }
   for (let q = 0; q < rings.length - 1; q++) { if (rings[q][0] === rings[q + 1][0]) continue; for (let i = 0; i < n; i++) { const a = q * n + i, b = q * n + (i + 1) % n, d = a + n, e = b + n; I.push(a, e, b, a, d, e); } }
   return { P, N, K, I };
@@ -395,29 +406,42 @@ const fake = i => [((i * 53) % 7) / 6, ((i * 29) % 5) / 4, ((i * 17) % 3) / 2];
 /**
  * Shapes into a finished piece: points (P) with normals (N, 16-bit), crease shading (ao, 8-bit), the slot
  * and bones of each (SI, SW 8-bit), and three sets of triangles (I: close, middle, far), all plain arrays.
- * bones(x, y, z, shape) => [[bone, weight]...].
+ * bones(x, y, z, shape, side) => [[bone, weight]...].
+ * after(mesh): work on the mesh before its bones are given out (a head's lips are parted: partLips()); it returns the mesh, with `side` (a
+ * number for each point, handed to bones()) and `extra` (one more extra part) if it likes.
+ * extra: hard-edged parts joined on as they are (eyes, buttons, teeth), one or a list: { P, N, K (slot for each point, by name), I, ao (one
+ * shade, or one for each point), src (what each point rides, for its bones), close (true: its triangles are in the close set only) }. A number
+ * under 0 in I names a point of the mesh itself (-1 - its number), for a part that hangs on the mesh's own points.
  */
-export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null }) {
-  const m = meshOf(shapes, { cell, blend, reach, keep: keep[0], error: err[0] });
-  let { P, N, I } = m; const n0 = m.n, slots = [], names = [];
+export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null, after = null }) {
+  let m = meshOf(shapes, { cell, blend, reach, keep: keep[0], error: err[0] }); const X = [].concat(extra || []);
+  if (after) { m = after(m); if (m.extra) X.push(m.extra); }
+  let { P, N, I } = m; const n0 = m.n, slots = [], names = [], side = m.side;
   let slot = new Uint8Array(n0), ao = m.ao, SI = new Uint8Array(n0 * 4), SW = new Float32Array(n0 * 4);
   const idOf = (list, v) => { let i = list.indexOf(v); if (i < 0) { i = list.length; list.push(v); } return i; };
   for (let i = 0; i < n0; i++) {
     const s = m.shapes[m.own[i]] || m.shapes[0], r = m.shapes[m.ride[i]] || s, x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
     slot[i] = idOf(slots, s.slot || 'skin');   // (its colour is its own shape's; its bones are those of the shape it goes with: the other side of a seam, for a point split along one)
-    const w = bones(x, y, z, r.src).filter(q => q[1] > .002).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = w.reduce((a, q) => a + q[1], 0) || 1;
+    const w = bones(x, y, z, r.src, side ? side[i] : 0).filter(q => q[1] > .002).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = w.reduce((a, q) => a + q[1], 0) || 1;
     w.forEach(([b, v], k) => { SI[i * 4 + k] = idOf(names, r.mirror && x < 0 && r.src.bone ? other(b) : b); SW[i * 4 + k] = v / sum; });
   }
-  // extra hard-edged parts (eyes, buttons) joined on: { P, N, K (slot per point, by name), I, src (what each rides, for its bones) }
-  if (extra) {
-    const add = extra.P.length / 3, nn = n0 + add, grow = (A, per) => { const B = new A.constructor(nn * per); B.set(A.subarray(0, n0 * per)); return B; };
+  // extra hard-edged parts joined on
+  let Ifar = I;   // (the triangles the further sets are thinned from: without what only shows close up)
+  if (X.length) {
+    const add = X.reduce((a, e) => a + e.P.length / 3, 0), nn = n0 + add, grow = (A, per) => { const B = new A.constructor(nn * per); B.set(A.subarray(0, n0 * per)); return B; };
     P = grow(P, 3); N = grow(N, 3); slot = grow(slot, 1); ao = grow(ao, 1); SI = grow(SI, 4); SW = grow(SW, 4);
-    for (let i = 0; i < add; i++) { const j = n0 + i; for (let c = 0; c < 3; c++) { P[j * 3 + c] = extra.P[i * 3 + c]; N[j * 3 + c] = extra.N[i * 3 + c]; } slot[j] = idOf(slots, extra.K[i]); ao[j] = extra.ao ?? 1; const x = P[j * 3], y = P[j * 3 + 1], z = P[j * 3 + 2], w = bones(x, y, z, extra.src ? extra.src[i] : {}).filter(q => q[1] > .002).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = w.reduce((a, q) => a + q[1], 0) || 1; w.forEach(([b, v], k) => { SI[j * 4 + k] = idOf(names, b); SW[j * 4 + k] = v / sum; }); }
-    const J = new Uint32Array(I.length + extra.I.length); J.set(I); for (let i = 0; i < extra.I.length; i++) J[I.length + i] = extra.I[i] + n0; I = J;
+    const J = new Uint32Array(I.length + X.reduce((a, e) => a + e.I.length, 0)); J.set(I); let base = n0, at = I.length, far = I.length;
+    for (const e of X.slice().sort((a, b) => (a.close ? 1 : 0) - (b.close ? 1 : 0))) {
+      const cnt = e.P.length / 3;
+      for (let i = 0; i < cnt; i++) { const j = base + i; for (let c = 0; c < 3; c++) { P[j * 3 + c] = e.P[i * 3 + c]; N[j * 3 + c] = e.N[i * 3 + c]; } slot[j] = idOf(slots, e.K[i]); ao[j] = typeof e.ao === 'number' ? e.ao : e.ao ? e.ao[i] : 1; const x = P[j * 3], y = P[j * 3 + 1], z = P[j * 3 + 2], w = bones(x, y, z, e.src ? e.src[i] : {}, 0).filter(q => q[1] > .002).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = w.reduce((a, q) => a + q[1], 0) || 1; w.forEach(([b, v], k) => { SI[j * 4 + k] = idOf(names, b); SW[j * 4 + k] = v / sum; }); }
+      for (let i = 0; i < e.I.length; i++) J[at + i] = e.I[i] < 0 ? -1 - e.I[i] : e.I[i] + base;
+      base += cnt; at += e.I.length; if (!e.close) far = at;
+    }
+    I = J; Ifar = far < J.length ? J.subarray(0, far) : J;
   }
   // the middle and far sets of triangles, thinned from the close one (the points are shared)
   const n = P.length / 3, C = new Float32Array(n * 3); for (let i = 0; i < n; i++) { const c = fake(slot[i]); C[i * 3] = c[0] * .6 + ao[i] * .4; C[i * 3 + 1] = c[1] * .6 + ao[i] * .4; C[i * 3 + 2] = c[2]; }
-  const I1 = thin(I, P, N, C, keep[1] / keep[0], err[1]), I2 = thin(I1, P, N, C, keep[2] / keep[1], err[2]);
+  const I1 = thin(Ifar, P, N, C, keep[1] / keep[0], err[1]), I2 = thin(I1, P, N, C, keep[2] / keep[1], err[2]);
   // packed small: it is kept in memory, sent between threads and saved
   const Nq = new Int16Array(n * 3), aq = new Uint8Array(n), Wq = new Uint8Array(n * 4), tri = J => n <= 65535 ? Uint16Array.from(J) : Uint32Array.from(J);
   for (let i = 0; i < n * 3; i++) Nq[i] = Math.round(N[i] * 32767);
@@ -470,15 +494,20 @@ const whole = () => [['$', 1]];
 function listed(list, kind) { const f = list.get(kind); if (typeof f === 'function') return f; return null; }
 /** Sculpts one piece (a job from jobsFor). The slow part: a tenth of a second for a hand, a second or two for a trunk on a phone. */
 export function sculpt({ kind, a }) {
-  if (kind === 'trunk') { const S = trunk(a); return finish(S, { cell: .006, bones: trunkBones(a), extra: S.extra }); }
+  if (kind === 'trunk') { const S = trunk(a), p = finish(S, { cell: .006, bones: trunkBones(a), extra: S.extra }); p.hang = S.hang; return p; }
   if (kind === 'arm') return finish(arm(a), { cell: .006, bones: armBones });
   if (kind === 'collar') return finish(collar(a), { cell: .003, bones: trunkBones(a), keep: [.15, .04, .01], err: [.001, .004, .02], blend: .004 });
   if (kind === 'hand') return finish(hand(a), { cell: .0032, bones: handBones(a), keep: [.2, .035, .006], err: [.0006, .004, .02], blend: .004 });
   if (kind === 'head') {
-    const eye = { P: [], N: [], K: [], I: [], ao: .78 };
-    for (const s of [1, -1]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122), base = eye.P.length / 3; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); }
+    // the eyes: each a ball of its own that turns on its own bone; the lips parted along the line between them, with teeth and the inside of the mouth behind
+    const eye = { P: [], N: [], K: [], I: [], src: [], ao: .78 }, f = a.face;
+    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
-    return finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBones, keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye });
+    let lids = null;
+    const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye,
+      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); if (inside) r.extra = inside; lids = lidPlan(r, f); return r; } });
+    p.lid = lids.turn;   // (how far the upper lids turn to close, for human-face.js)
+    return p;
   }
   if (kind === 'hat' || kind === 'pack') {
     const make = listed(kind === 'hat' ? HATS : PACKS, a.kind); if (!make) throw new Error(`gs.models.human: no ${kind} called '${a.kind}'`);
@@ -489,4 +518,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, collar, collarRows, turnOf, RIM, BODY_STAMP, arm, armBones, handPlan, hand, handBones, HEAD_STAMP, headBones, eyeball, stud, finish, sculpt, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, collar, collarRows, turnOf, RIM, BODY_STAMP, arm, armBones, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, eyeball, stud, finish, sculpt, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));

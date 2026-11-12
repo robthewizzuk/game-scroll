@@ -983,7 +983,10 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   beret, wool cap, hood), webbing, pouches, a pack. Creases, collars and hat brims sit in soft shadow worked
   out from the shapes themselves, so there is still no texture file. It stands on `gs.poses`' skeleton (`rig`,
   `bones`: the same poses, blends and foot planting; it moves with `gs.poses.LIFELIKE`, strides that land on
-  the heel and push off the toes, and has weight: `rig.update(dt, { speed, turn })`) in three levels of detail: call
+  the heel and push off the toes, and has weight: `rig.update(dt, { speed, turn })`; its feet stay where they
+  are put down however the game moves it, and it steps round when turned on the spot: "Steps that are really
+  taken" in the maker kit guide; a new move takes up the speed the body had, and arms, head and kit swing on
+  and settle when it starts, stops or turns: "Momentum and follow-through" there) in three levels of detail: call
   `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after
@@ -1013,7 +1016,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   each piece is saved on the phone for next time. So make people in `make()` or `reset()`; when there are
   several kinds, make them together and first: `const [a, b] = human.all([optsA, optsB])` (or
   `human.need([...])` before anything costly is built, then `human(opts)` wherever you like).
-  Faces don't blink or speak yet (`person.face` is there, with nothing to move).
+  The face is live: it blinks, the eyes move by themselves and go where you send them
+  (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
+  `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide.
 - **`creature(o)`**: an animal or a monster made in code from a seed, built the way people are (soft shapes
   melted into one skin, creases in soft shadow, eyes that catch the light, no model or texture file). 35 to
   start from, in five kinds: four legs (`dog`, `cat`, `horse`, `deer`, `cow`, `pig`, `bear`, `rabbit`, `mouse`,

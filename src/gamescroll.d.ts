@@ -1427,6 +1427,24 @@ export interface FaceT {
   say(text: string, o?: { pitch?: number; rate?: number; volume?: number; lang?: string }): Promise<boolean>;
   hush(): FaceT; mouth(level: number | null): FaceT; blink(): FaceT; update(dt: number): FaceT;
 }
+/** What a gs.models.human() person's face can be set to. */
+export type LiveShape = 'open' | 'wide' | 'round' | 'smile' | 'frown' | 'surprise' | 'blink' | 'squint' | 'sad' | 'angry' | 'wince' | 'winkL' | 'winkR';
+/**
+ * The face of a gs.models.human() person (person.face): what gs.characters.Face takes (set, say, mouth, blink, blinkEvery), on a sculpted head with bones for
+ * the eyes, the upper lids, the brows, the jaw and the corners of the mouth. It blinks by itself, and its eyes keep to a spot in the world while the head
+ * moves and jump to a new one now and then. The rig steps it with the body, close up only, so there is no update() to call.
+ */
+export interface LiveFaceT extends FaceT {
+  set(name: LiveShape, amount?: number): LiveFaceT;
+  /** The eyes onto a point in the world, or an Object3D (followed as it moves); null lets them wander again. Each eye turns by itself, as far as eyes do (about 30 degrees to either side): turn the head yourself for more. */
+  look(target: [number, number, number] | { x: number; y: number; z: number } | Loose | null): LiveFaceT;
+  /** Eyes screwed shut and the mouth pulled back for a moment, as at a blow (gs.characters.Reactions does it by itself). amount 0..1 (1), seconds (.3). */
+  wince(amount?: number, seconds?: number): LiveFaceT;
+  /** true: awake whatever; false: eyes closed and still; null (as made): awake unless the head lies over, low down (a body on the ground). */
+  awake: boolean | null;
+  /** Where the eyes are turned, in the head's own terms (radians): yaw to the person's left, pitch down. */
+  readonly yaw: number; readonly pitch: number;
+}
 /** Thousands of flockers: on the graphics chip (WebGPU compute) where the phone can, else the CPU. */
 export declare class Swarm {
   constructor(o?: { count?: number; w?: number; h?: number; speed?: number; sight?: number; separate?: number; align?: number; cohere?: number; wander?: number; edges?: 'wrap' | 'bounce'; seed?: number; gpu?: boolean | 'auto' });
@@ -2337,8 +2355,8 @@ export interface RigT {
   play(name: string, o?: { fade?: number; at?: number | null; from?: number | null; again?: boolean }): RigT; upper(name: string | null): RigT;
   /** How a pose moves on: rate: cycles a metre (walks and runs; 0 for the rest), per: cycles a second (0: it stands still), once: it plays through and holds. null: no such pose. */
   pace(name: string): { rate: number; per: number; once: boolean } | null;
-  /** Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. rate: cycles a metre moved; or { time: seconds a cycle, once: play through and hold the end }. keys() makes fn from key poses. */
-  add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number }): RigT;
+  /** Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. rate: cycles a metre moved; or { time: seconds a cycle, once: play through and hold the end }. keys() makes fn from key poses. ground: true says the feet stand on the ground in it, so a gs.models.human keeps them where they are put down (see steps); a walk of your own also gives stance, the share of a stride a foot is down (.6). */
+  add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number; ground?: boolean; stance?: number }): RigT;
   /** 1D blend space: { pose: value }, mixed at v with every cycle in step. */
   blend(space: Record<string, number>, v: number): RigT;
   /** 2D blend space: { pose: [x, y] }, mixed at (x, y). */
@@ -2351,6 +2369,39 @@ export interface RigT {
   fill(pose?: Record<string, number[]> | null): RigT;
   /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
   fine?: boolean;
+  /**
+   * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
+   * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really
+   * goes (a bend, a body faster or slower than its walk), and a person turned or shifted while standing steps round, a foot at a time. Move the person,
+   * then call update(dt, { speed }). false leaves every pose as drawn (a person riding on something slow). It stands down by itself for a walk on the
+   * spot, a person carried along, a far-off person and one that gs.characters.Reactions has off its balance.
+   */
+  steps?: boolean;
+  /** The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands. */
+  readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[] } | null;
+  /**
+   * Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. How far each joint was
+   * from where the new move has it, and how fast it was turning, die away smoothly in about the fade asked for, so a limb in mid swing swings on a
+   * little, the hips come down with weight, and nobody is half in one pose and half in another. play(name, { fade: 0 }) is still a cut. false: moves
+   * cross-fade, as on other rigs.
+   */
+  momentum?: boolean;
+  /**
+   * Follow-through (gs.models.human people; on by itself): what the body carries goes on a moment and settles when the game starts it, stops it, turns
+   * it or drops it. The arms swing on, the head nods, the rib cage and the head come round after the hips, the shoulders give on a landing, and a pack
+   * or what hangs from the belt swings and bounces. Nothing is added to a steady walk or to a body moved at a stroke. amount: 0 turns it off, 2 doubles
+   * it; reset() stills everything (a new round).
+   */
+  readonly follow?: { amount: number; reset(): void } | null;
+  /**
+   * Something that hangs from the body and swings as it moves (a slung rifle, a lantern, a satchel): thing is an Object3D on one of the joints, as it
+   * hangs at rest. pivot: the point it hangs from, in its parent's space (default: its own place); swing: radians for each metre a second a second its
+   * pivot is pushed (.03 a bag on a strap, .008 a pack); bounce: metres up and down (.0016 a pack); stiff, damp: its spring (120, 10); most: the
+   * furthest it swings (radians); away: the way out from the body where it hangs, in its parent's space (on the back: [0, 0, -1]), so it never swings
+   * into the body. apply: false leaves the thing alone, for one you place yourself each frame: add the returned x and z (radians about the pivot,
+   * forward-and-back and side to side) and y (metres) to it. Close up only. A person's own pack, bag, canteen and holster are hung already.
+   */
+  hang(thing: Loose, o?: { pivot?: [number, number, number]; swing?: number; bounce?: number; stiff?: number; damp?: number; most?: number; away?: [number, number, number]; apply?: boolean }): { readonly x: number; readonly z: number; readonly y: number };
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
@@ -2358,8 +2409,8 @@ export interface PosesPart {
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
   keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] };
-  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. */
-  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[] }) => RigT;
+  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. body: the object the game moves (steps that are really taken, follow-through); momentum, follow: see RigT (gs.models.human asks for all three). */
+  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: Loose; momentum?: boolean; follow?: boolean }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
   person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: number; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose & { rig: RigT; face: FaceT; mesh: Loose; bones: Record<string, Loose> };
   Face: CharactersPart['Face']; shapes: CharactersPart['shapes']; visemes: CharactersPart['visemes']; FACE_SHAPES: string[];
@@ -2702,6 +2753,7 @@ export interface ModelsPart {
    * The skeleton: the joints poses turn (hips, spine (the rib cage), head, armL/R, foreL/R, handL/R, legL/R, shinL/R, footL/R) and, between them, a waist, a neck, a collar bone to each arm, the turn along each forearm, toes and three joints a finger, which the rig sets by itself (rig.fill() after turning joints yourself). Further off the small ones stand still and cost nothing.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
    * Hair in strands: close up, layers of strands (gs.models.fur) lie over the sculpted hair, streaming from the crown (from the bun, for hair tied back), over a moustache, and over a beard (beard: 0..1.5 how long, true = .6; painted stubble stays as it is). person.hair is that coat (null: bald with no beard, under a hat (the hair there stays as sculpted), strands: false, or the slowest phones); strands: { length (metres), layers, lean, tile } tunes it.
+   * A live face: person.face (a LiveFaceT) blinks and moves its eyes by itself close up, with nothing to call; face.look(point) puts the eyes on something, face.say(text) speaks a line and moves the mouth to it, face.set('smile' | 'frown' | 'surprise' | 'sad' | 'angry' | 'squint' | ..., 0..1) eases an expression in, face.wince() is a flinch, and the eyes of someone lying on the ground close (face.awake = true keeps them open).
    * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {

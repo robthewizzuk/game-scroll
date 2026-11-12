@@ -52,10 +52,13 @@ try {
     const phys = new gs.physics3d.World3D({ gravity: -9.81 }); phys.ground(world);
     const body = who === 'human' ? gs.models.human(opts) : who === 'person' ? gs.poses.person({ mat: c => gs.hd.pbr(c) }) : gs.poses.figure({ mat: c => gs.hd.pbr(c) }); world.add(body);
     if (Q.has('dbg') && !r) console.warn('bones ' + Object.entries(body.rig.parts).map(([n, p]) => `${n} ${p.position.toArray().map(x => x.toFixed(3)).join(' ')} of ${Object.keys(body.rig.parts).find(k => body.rig.parts[k] === p.parent) || 'root'}`).join(' | ') + ' scale ' + body.scale.y + ' base ' + [...body.rig.base].filter(([, b]) => b.some(Boolean)).map(([n, b]) => n + ' ' + b.map(x => x.toFixed(2)).join(' ')).join(' | '));
+    if (Q.has('nosteps')) body.rig.steps = false;   // (the poses as drawn, without the feet that keep their place: to tell the two apart)
+    if (Q.has('nomomentum')) body.rig.momentum = false;   // (moves cross-faded, as before momentum between moves)
+    if (Q.has('nofollow') && body.rig.follow) body.rig.follow.amount = 0;   // (no follow-through)
     const ground = A.edge != null ? (x, z) => z > A.edge ? 0 : -1.4 : null;
     const react = new gs.characters.Reactions(body, { world: PHYS ? phys : null, level: phys, ground });
     const life = who === 'human', dt = 1 / 60, N = Math.round(A.secs / dt), log = []; let state = react.state, steps = 0, speed = 0;
-    const events = Object.entries(A.at || {}).map(([t, fn]) => [Math.round(t / dt), fn]);
+    const events = Object.entries(A.at || {}).map(([t, fn]) => [Math.round((+t + +(Q.get('late') || 0)) / dt), fn]);   // (late=.1: every blow a tenth of a second later, to see how much an outcome hangs on the stance it meets)
     const shots = Array.from({ length: cols }, (_, i) => Math.round((from + (to - from) * (i + .5) / cols) * N));
     let far = 0, low = 9, t0 = performance.now(), cost = 0;
     for (let i = 0; i <= N; i++) {

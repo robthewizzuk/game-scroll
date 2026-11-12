@@ -14,11 +14,11 @@
 // Kit use only: games reach it as gs.models.human.
 import { Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix4, Mesh, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, PIVOT, HC, ARM, EYE, CORNER, mouthAt, eyeRim, browOf, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, PIVOT, HC, ARM, EYE, CORNER, mouthAt, eyeRim, browOf, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE } from '../poses.js';
 import { reach } from '../characters.js';
-import { Face } from '../skin.js';
+import { LiveFace } from './human-face.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { fur } from './fur.js';
@@ -26,9 +26,9 @@ import { fur } from './fur.js';
 const PI = Math.PI, abs = Math.abs;
 
 // ---- which material each kind of surface is drawn with (a maker's own slots say theirs: { colour, as })
-const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', mouth: 'skin', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
+const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', mouth: 'skin', teeth: 'skin', tongue: 'skin', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
   belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
-const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair'];
+const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair'], INSIDE = new Set(['mouth', 'teeth', 'tongue']);   // (INSIDE: what is in the mouth: never painted as a face is)
 
 
 // ================================================================= pieces: in memory, saved, or sculpted in a worker
@@ -119,7 +119,7 @@ function mats() {
 
 // ================================================================= putting a person together
 const ARMB = /^(arm|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
-const FINE = /^(twist|toe|(thumb|index|middle|ring|little)\d)[LR]$/, _m4 = new Matrix4();   // the small bones, which only show close up
+const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|(thumb|index|middle|ring|little)\d)[LR]|jaw)$/, _m4 = new Matrix4();   // the small bones, which only show close up (fingers, toes, the face's own)
 /**
  * The skeleton a person of this build stands on: the bones' names, their parents and where each is (atOf), with
  * tree() to make them. Narrow or broad shoulders bring the arms (their bones, and all that rides them) in or out;
@@ -129,6 +129,7 @@ const FINE = /^(twist|toe|(thumb|index|middle|ring|little)\d)[LR]$/, _m4 = new M
 function frameOf(sp) {
   const bones = BONES.slice(), parent = { ...PARENT }, rest = { ...AT }, own = {}, ha = { limbs: sp.build.limbs, grip: sp.hands === 'grip' }, HAND = handPlan(ha);
   for (const [name, par, p] of fingerBones(ha)) { bones.push(name, other(name)); parent[name] = par; parent[other(name)] = other(par); rest[name] = p; rest[other(name)] = [-p[0], p[1], p[2]]; }
+  for (const [name, par, p] of faceBones(sp.face)) { bones.push(name); parent[name] = par; rest[name] = p; }   // the face's: eyes, lids, brows, jaw, the corners of the mouth
   const inset = .176 * (1 - sp.build.shoulders);
   const atOf = b => { const k = rest[b] ? b : own[b], a = rest[k]; return inset && ARMB.test(k) ? [a[0] - Math.sign(a[0]) * inset, a[1], a[2]] : a; };
   const tree = () => {
@@ -139,14 +140,16 @@ function frameOf(sp) {
     B.spine.userData.pivot = PIVOT.spine; B.head.userData.pivot = PIVOT.head;   // (where the rib cage and the head turn about: see Rig.fill)
     return B;
   };
-  return { bones, parent, own, HAND, inset, atOf, tree };
+  // a bone of its own for a thing that hangs (a bag, a canteen): where it hangs from
+  const kit = (name, par, at) => { if (!rest[name]) { bones.push(name); parent[name] = par; rest[name] = at; } return name; };
+  return { bones, parent, own, HAND, inset, atOf, tree, kit };
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
-const rigOf = (B, scale) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true }); rig.feet = [B.footL, B.footR]; return rig; };
+const rigOf = (B, scale, body) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR]; return rig; };
 /** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
 export function skeleton(o = {}) {
   const sp = specOf(o), B = frameOf(sp).tree(), root = new Group(), scale = (o.scale ?? 1) * (sp.fem ? .945 : 1);
-  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale); root.updateMatrixWorld(true);
+  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale, root); root.face = root.rig.face = new LiveFace(root, B); root.updateMatrixWorld(true);
   return root;
 }
 const DETAIL = [.5, .75, 1, 1];   // see(): how tall a person counts as, by quality tier
@@ -166,7 +169,7 @@ function specOf(o) {
 function palette(sp) {
   const { top, legs, feet, hat, belt, web, o } = sp, c = v => v, ex = sp.extras;
   return {
-    skin: o.skin ?? DEF.skin, lid: o.skin ?? DEF.skin, lash: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#1c120c'), sp.fem ? .82 : .6).getHexString(), lips: sp.fem ? o.lips ?? DEF.lips : '#' + new Color(o.skin ?? DEF.skin).lerp(new Color(o.lips ?? DEF.lips), .5).getHexString(), mouth: '#2e1512', hair: sp.hair || '#3b2a1a', brow: sp.hair || o.eyes || '#2a1c12', glove: sp.gloves?.colour ?? '#4a3d2c',
+    teeth: '#d6cdbb', tongue: '#7d3f3c', skin: o.skin ?? DEF.skin, lid: o.skin ?? DEF.skin, lash: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#1c120c'), sp.fem ? .82 : .6).getHexString(), lips: sp.fem ? o.lips ?? DEF.lips : '#' + new Color(o.skin ?? DEF.skin).lerp(new Color(o.lips ?? DEF.lips), .5).getHexString(), mouth: '#2e1512', hair: sp.hair || '#3b2a1a', brow: sp.hair || o.eyes || '#2a1c12', glove: sp.gloves?.colour ?? '#4a3d2c',
     top: top.colour, trim: top.collar || top.cuffs || top.strapColour || top.colour, tab: top.tabs || top.colour, band: top.band || '#d9c25a', hatband: hat?.band ?? hat?.colour ?? '#4b5249', button: top.buttons || '#8a8270',
     legs: legs.colour, boots: feet.colour, sole: '#16120e', kit: feet.gaiter || ex.bag || ex.kit || '#6e6a4c', strap: web?.colour ?? belt?.colour ?? '#2b2723', pouch: web?.pouchColour ?? web?.colour ?? belt?.colour ?? '#2b2723',
     belt: belt?.colour ?? '#2b2723', buckle: belt?.buckle ?? '#8a8270', holster: ex.holsterColour ?? belt?.colour ?? '#2b2723', flask: ex.canteen === true ? '#4a4034' : ex.canteen || '#4a4034', scarf: ex.scarf === true ? top.colour : ex.scarf || top.colour,
@@ -193,7 +196,8 @@ function palette(sp) {
  * slots: { name: colour | { colour, as: 'cloth' | 'leather' | 'hard' | 'steel' | 'skin' } } for your own slot names.
  * The old options (body, legs, shoes: colours) still dress a plain person.
  * Returns a Group: rig, bones, mesh (the closest level), lods, lod (0 close .. 2 far; set it, or call
- * see(camera, screenHeightInPixels) each frame to pick by size on screen), gear, face, hair (the coat of strands
+ * see(camera, screenHeightInPixels) each frame to pick by size on screen), gear, face (a live face, human-face.js:
+ * it blinks and its eyes move by themselves; look(point), say(text), set('smile', 1), wince(), awake), hair (the coat of strands
  * over the hair and beard, or null: hair.length, hair.lean, hair.level), twin() (another of the
  * same person, sharing everything but the skeleton: a squad from two or three faces costs little memory),
  * hold(thing, rightPoint, leftPoint) (both hands onto a thing he carries: after rig.update()).
@@ -210,7 +214,7 @@ export function human(o = {}) {
   }
   const M = mats(), pal = palette(sp), pieces = [];
   // gear bones: a hat that can come off, a pack or a maker's own kit that can be hidden
-  const { bones, parent, own: gearBones, HAND, inset, atOf, tree } = frameOf(sp), gearPiece = {};
+  const { bones, parent, own: gearBones, HAND, inset, atOf, tree, kit } = frameOf(sp), gearPiece = {}, hung = [];   // (hung: what swings as he moves: [bone, how])
   const ownBone = (name, par) => { bones.push(name); parent[name] = par; gearBones[name] = par; gearPiece[name] = pieces.length; return name; };
   const onBone = (p, b) => ({ ...p, names: p.names.map(() => b) });
   const moved = (p, dx) => { if (!dx) return p; const Q = p.P.slice(); for (let i = 0; i < p.n; i++) Q[i * 3] += dx; return { ...p, P: Q }; };
@@ -221,9 +225,9 @@ export function human(o = {}) {
     else if (j.kind === 'arm') { if (j.side !== 'R') pieces.push(moved(p, -inset)); if (j.side !== 'L') pieces.push(moved(mirrored(p), inset)); }   // sculpted as a left arm
     else if (j.kind === 'head') pieces.push(headP = p);
     else if (j.kind === 'hat') pieces.push(onBone(p, sp.hat.hide === false ? 'head' : ownBone('hat', 'head')));
-    else if (j.kind === 'pack') pieces.push(onBone(p, sp.pack.hide ? ownBone('pack', 'spine') : 'spine'));
+    else if (j.kind === 'pack') { const sa = atOf('spine'); pieces.push(onBone(p, ownBone('pack', 'spine'))); hung.push(['pack', { pivot: [0, 1.45 - sa[1], -.1 - sa[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1] }]); }   // (it hangs from the shoulders)
     else if (j.kind === 'gear') { const b = j.g.bone || 'spine'; pieces.push(onBone(ARMB.test(b) ? moved(p, b.endsWith('L') ? -inset : inset) : p, j.g.hide ? ownBone(j.g.name, b) : b)); }
-    else pieces.push(p);
+    else { if (p.hang) for (const name in p.hang) { const { at, ...how } = p.hang[name]; hung.push([kit(name, 'hips', at), how]); } pieces.push(p); }   // (the trunk, and what hangs from its belt)
   }
   tidy();
 
@@ -247,7 +251,7 @@ export function human(o = {}) {
       }
       if (s.a === 'cloth') { col.multiplyScalar(.94 + .09 * lumps(x * 9, y * 9, z * 9)); const mud = (1 - ss(0, .55, y)) * (.35 + .3 * lumps(x * 6, y * 4, z * 6)); if (mud > 0) col.lerp(dirt, Math.min(.5, mud)); }
       else if (s.a === 'leather') { col.multiplyScalar(.95 + .1 * lumps(x * 14, y * 14, z * 14)); const mud = (1 - ss(0, .12, y)) * .25; if (mud > 0) col.lerp(dirt, mud); }
-      else if (s.a === 'skin' && p === headP) {
+      else if (s.a === 'skin' && p === headP && !INSIDE.has(p.slots[p.slot[i]])) {
         const hy = y - HC[1], hz = z - HC[2], name = p.slots[p.slot[i]], face = name === 'lips' || name === 'brow' && hy > 0;
         if (face) col.copy(skinC);   // lips and brows are painted on below, softly, whatever the points were sculpted as
         const red = bump(hy, -.024, .024) * bump(abs(x), .044, .024) * ss(.0, .05, hz) * .07 + bump(hy, -.034, .012) * bump(x, 0, .012) * .07 + ss(.07, .078, abs(x)) * .1;   // cheeks, nose, ears
@@ -366,14 +370,15 @@ export function human(o = {}) {
     const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(L ? far : skel, new Matrix4()); m.visible = L === 0; return m; });
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B;
-    root.rig = rigOf(B, scale);
-    root.face = new Face(lods[0]);
+    root.rig = rigOf(B, scale, root);
+    for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
+    root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
       lods[cur].visible = false; lods[v].visible = true;
       if (!v !== !cur) for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
-      cur = v; root.rig.fine = !v;   // (and the rig leaves the forearm's turn and the toes alone meanwhile)
+      cur = v; root.rig.fine = !v; root.rig.near = v < 2;   // (and the rig leaves the forearm's turn and the toes alone meanwhile; at the far level it leaves the feet as posed too)
     } });
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */
     const wp = new Vector3();

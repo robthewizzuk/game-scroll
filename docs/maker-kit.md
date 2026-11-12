@@ -1865,6 +1865,52 @@ changes; `drop` lowers the hips, `shift: [x, y, z]` moves them, in metres). `rig
 the game hold the phase itself, in step with a ladder or a cutscene. `gs.models.human` people use all of this, and
 `person.touch({ handL, footR, ... })` then puts hands and feet on points in the world (a rung, a bar, a ledge).
 
+**Steps that are really taken** (`gs.models.human` people, by themselves): a walk is drawn for a body going
+straight ahead at the walk's own speed, and a game turns its people, starts and stops them and moves them a
+little faster or slower than that. So the rig keeps each foot where it was put down: the leg is bent again as
+the body goes on over it, the foot rolls from its heel onto its ball without either moving on the ground, the
+next footfall lands where the body is really going (round a bend, off its pace, sidestepping, backwards), and a
+person turned or shifted while standing steps round to stand under himself, a foot at a time, where he used to
+turn like a statue on a turntable. Nothing to call: move the person, then `rig.update(dt, { speed })` as before.
+It works in the poses that stand on the ground (the lifelike walks and runs and standing easy); say so for a
+pose of your own with `rig.add('guard', fn, { ground: true })` (a walk of your own also gives `stance: .6`, the
+share of a stride a foot is down). `rig.stride.feet[0].landed` (left; `[1]` right) is true on the update a foot
+touches the ground, for a footstep sound. It stands down by itself for a walk on the spot (a figure in a menu),
+a person carried along faster than a slow walk, a far-off person and one that `Reactions` has off its balance;
+`rig.steps = false` leaves every pose as drawn (a person riding on something slow).
+
+**Momentum and follow-through** (`gs.models.human` people, by themselves): a body has weight. A new move begins
+at once and takes up what the body was doing: how far each joint was from where the new move has it, and how
+fast it was turning, die away smoothly in about the fade you ask for (`rig.play(name, { fade })`), so a limb in
+mid swing swings on a little, a person comes down into a kneel with weight, and nobody is half in one pose and
+half in another, as a cross-fade has them (`fade: 0` is still a cut; `rig.momentum = false` cross-fades). And
+what the body carries goes on a moment and settles when you start it, stop it, turn it or drop it: the arms are
+left behind as a runner sets off and swing on as he pulls up, the head nods, the rib cage and the head come
+round after the hips, the shoulders give on a landing, and his pack, bag, canteen and holster swing and bounce
+(close up). It is measured from how you really move the person, so there is nothing to call; a steady walk gets
+nothing added, nor does a person put somewhere else at a stroke. `rig.follow.amount = 0` turns it off (2 doubles
+it), `rig.follow.reset()` stills it for a new round. Your own thing that hangs (a slung rifle, a lantern):
+`rig.hang(thing, { pivot, swing: .03, bounce: .001, away: [0, 0, -1] })` swings it about the point it hangs
+from, never into the body; for a thing you place yourself each frame pass `apply: false` and add the `x`, `z`
+(radians) and `y` (metres) it returns.
+
+**A live face** (`gs.models.human` people, by themselves): close up, a person blinks, and the eyes keep to a
+spot in the world while the head moves, as eyes do, and jump to a new one now and then or when the head has
+turned away from the old one. Nothing to call: the rig steps the face with the body. `person.face` takes what
+`gs.characters.Face` takes: `face.say('Over here!')` speaks the line and moves the jaw and the lips to it,
+`face.mouth(level)` opens the mouth from your own source, `face.set('smile', 1)` eases an expression in (`open`,
+`wide`, `round`, `smile`, `frown`, `surprise`, `blink`, and on these people `squint`, `sad`, `angry`, `wince`,
+`winkL`, `winkR` too), `face.blink()` blinks now and `face.blinkEvery = 0` stops the blinks. And it looks:
+`face.look(point)` puts the eyes on a point in the world (`[x, y, z]` or `{ x, y, z }`) or on an `Object3D`,
+followed as it moves, each eye by itself, so they cross a little onto something close; `face.look(null)` lets
+them wander again. Eyes turn about 30 degrees to either side and less up and down, so turn the head yourself
+for more (`gs.characters.lookAt`); `face.yaw` and `face.pitch` say where they are turned. `face.wince()` screws
+the eyes shut for a moment (`Reactions` does it at a blow). The eyes of someone lying on the ground close by
+themselves (the head lying over, low down): `face.awake = true` keeps them open (the wounded), `false` closes
+them wherever he is, `null` is as made. The head has bones for all of it (`bones.eyeL`, `lidL`, `browL`,
+`browInL`, `cornerL` and their `R` twins, and `bones.jaw`), lips that part, and teeth and a tongue behind them.
+At the middle and far levels, and in a crowd, the face is still and costs nothing.
+
 **Missions** (`gs.missions`): write a mission as a script that reads like the plan:
 `Mission(function* (m) { m.objective('Reach the roof'); yield m.until(() => roof.has(me)); m.checkpoint();
 m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` makes areas, `all()` and

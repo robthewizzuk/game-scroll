@@ -140,6 +140,7 @@ export class Reactions {
     const p = vec(push), s = this.scale, b = this.body.position, power = Math.hypot(p.x, p.y, p.z); if (!(power > 0)) return this;
     if (this.doll) { const a = at ? vec(at) : null, part = a ? this.nearest(a) : 'spine'; this.doll.hit(part, p.x, p.y, p.z, a); return this; }
     if (this.state === 'falling' || this.state === 'down' || this.state === 'rising') return this;
+    this.body.face?.wince?.(clamp(power / 2.5, .35, 1));   // (a person with a live face screws up their eyes at it)
     const a = at ? vec(at) : { x: b.x, y: b.y + 1.25 * s, z: b.z }, h = (a.y - b.y) / s, [lx, lz] = this.local(p.x, p.z), [ax] = this.local(a.x - b.x, a.z - b.z);
     const S = this.spr, kick = (n, x, y, z) => { const q = S[n]; if (q) { q.v[0] += x; q.v[1] += y; q.v[2] += z; } };
     const k = 2.6 / Math.sqrt(this.steady), off = clamp(ax / s, -.3, .3);
@@ -199,7 +200,7 @@ export class Reactions {
   reset() {
     if (this.doll) { this.doll.remove(); this.doll = null; }
     if (this.state !== 'steady') { this.body.updateMatrixWorld(true); this.rig.parts.hips.position.set(this.rig.hipX, this.rig.hip0, this.rig.hipZ); }
-    this.setMover(true);
+    this.setMover(true); if (this.rig.stride) this.rig.stride.hold = false;
     this.state = 'steady'; this.limp = false; this.clip = this.held = null; this.own = 0; this.ik = 0; this.sink = 0; this.c.x = this.c.z = this.cv.x = this.cv.z = this.u.x = this.u.z = 0; this.last = null;
     for (const n in this.spr) { this.spr[n].o.fill(0); this.spr[n].v.fill(0); }
     return this;
@@ -222,6 +223,7 @@ export class Reactions {
     else if (this.state === 'rising') this.play(dt);
     if (this.own > 0 && this.held && this.state === 'steady') { this.mix(this.held, this.own); this.own = Math.max(0, this.own - dt / .3); if (!this.own) this.held = null; }
     this.rig.fill?.();   // (a full skeleton: the joints in between follow what was turned above, a ragdoll's bodies included)
+    if (this.rig.stride) this.rig.stride.hold = this.state !== 'steady';   // (off its balance, the feet are placed here: the rig lets go of them)
     return this;
   }
   // standing its ground: the weight sways over the feet and comes back; past the edge of the feet it has to step

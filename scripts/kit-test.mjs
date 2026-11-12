@@ -2136,7 +2136,7 @@ console.log('physics ok');
     };
     const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
     const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
-    assert.equal(Object.keys(b.bones).length, 51, 'fifty-one bones: twenty-three and fourteen to a hand');
+    assert.equal(Object.keys(b.bones).length, 62, 'sixty-two bones: twenty-three, fourteen to a hand and eleven in the face');
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
     const worst = {}, note = (k, v) => { worst[k] = Math.max(worst[k] || 0, v); };
@@ -2200,6 +2200,290 @@ console.log('physics ok');
       assert.ok(head.neck > .02 && head.head > .7 && head.spine > .03, 'a neck between the collar and the head: ' + JSON.stringify(head)); }
   }
   console.log('gs.models: the fuller skeleton (waist, neck, collar bones, forearm twist, toes, fingers; old joints turned as they were) ok');
+}
+// steps that are really taken (stride.js): a person the game moves keeps each foot where it was put down. Two people are driven
+// alike, one with its steps off, and what is measured is the point each foot stands on (its heel or its ball) while the foot is down.
+{
+  const { skeleton } = await import('../src/kit/models/human.js'), { Vector3, Quaternion } = await import('three');
+  const STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, dt = 1 / 60, w = new Vector3(), q = new Quaternion(), LEGS = ['legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
+  const go = (st, sp) => { st.x += Math.sin(st.yaw) * sp * dt; st.z += Math.cos(st.yaw) * sp * dt; };
+  const drive = (secs, fn, set) => {
+    const P = [false, true].map(on => { const p = skeleton({}); p.rig.steps = on; set?.(p, on); return p; }), st = { x: 0, z: 0, yaw: 0, speed: 0 };
+    const was = [0, 1].map(() => [new Vector3(), new Vector3()]), down = [false, false], piv = [0, 0], lastQ = LEGS.map(() => null), R = { off: 0, on: 0, dist: 0, lands: 0, jerk: 0, differ: 0, P };
+    for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const px = st.x, pz = st.z; fn(st, i * dt); R.dist += Math.hypot(st.x - px, st.z - pz);
+      for (const p of P) { if (st.speed > .15 || st.speed < -.15) p.rig.blend(STR, Math.abs(st.speed)); else p.rig.play('idle', { fade: .22 }); p.position.set(st.x, 0, st.z); p.rotation.y = st.yaw; p.rig.update(dt, { speed: st.speed }); p.updateMatrixWorld(true); }
+      const F = P[1].rig.stride.feet;
+      for (let k = 0; k < 2; k++) {
+        if (F[k].landed) R.lands++;
+        for (let m = 0; m < 2; m++) {
+          P[m].bones[k ? 'footR' : 'footL'].localToWorld(w.set(0, -.085, F[k].on ? .13 : -.06));
+          if (F[k].down && down[k] && F[k].on === piv[k]) R[m ? 'on' : 'off'] += Math.hypot(w.x - was[m][k].x, w.z - was[m][k].z);
+          was[m][k].copy(w);
+        }
+        down[k] = F[k].down; piv[k] = F[k].on;
+      }
+      LEGS.forEach((name, j) => {   // the biggest turn of a leg joint from one update to the next, and how far the two people's legs differ
+        const a = P[0].bones[name], b = P[1].bones[name]; R.differ = Math.max(R.differ, a.quaternion.angleTo(b.quaternion));
+        b.getWorldQuaternion(q); if (lastQ[j] && i > 3) R.jerk = Math.max(R.jerk, lastQ[j].angleTo(q)); (lastQ[j] ||= new Quaternion()).copy(q);
+      });
+    }
+    return R;
+  };
+  const per = (r, k) => (r[k] / r.dist * 100).toFixed(1) + ' cm a metre';
+  // a walk straight ahead: the walk as drawn let the foot it stood on creep (it rolled on its ankle, not on its heel and its ball)
+  let r = drive(6, st => { st.speed = 1.3; go(st, 1.3); });
+  assert.ok(r.off / r.dist > .08 && r.on / r.dist < .01, `a walk: the feet slid ${per(r, 'off')}, and now ${per(r, 'on')}`);
+  assert.ok(r.lands >= 10 && r.lands <= 13, 'a footfall for every step: ' + r.lands); assert.ok(r.jerk < .2, 'no joint of the legs jumps: ' + r.jerk.toFixed(3));
+  // round a tight bend, with the body 20% faster than its walk, sidestepping as it goes, backwards, at a run, and from standing to a walk and back
+  r = drive(6, st => { st.speed = 1.3; st.yaw += 1.3 / .8 * dt; go(st, 1.3); }); assert.ok(r.off / r.dist > .2 && r.on / r.dist < .012, `a bend: ${per(r, 'off')}, now ${per(r, 'on')}`); assert.ok(r.jerk < .24, 'a bend, no jump: ' + r.jerk.toFixed(3));
+  r = drive(6, st => { st.speed = 1.3; go(st, 1.56); }); assert.ok(r.on / r.dist < .02, `a body faster than its walk: ${per(r, 'off')}, now ${per(r, 'on')}`); assert.ok(r.jerk < .26, 'off its pace, no jump: ' + r.jerk.toFixed(3));
+  r = drive(6, st => { st.speed = 1.3; go(st, 1.3); st.x += .5 * dt; }); assert.ok(r.on / r.dist < .012, `sidestepping: ${per(r, 'off')}, now ${per(r, 'on')}`);
+  r = drive(6, st => { st.speed = -1; go(st, -1); }); assert.ok(r.off / r.dist > .08 && r.on / r.dist < .01, `backwards: ${per(r, 'off')}, now ${per(r, 'on')}`);
+  r = drive(4, st => { st.speed = 5.6; go(st, 5.6); }); assert.ok(r.on / r.dist < .005, `a run: ${per(r, 'off')}, now ${per(r, 'on')}`);
+  r = drive(8, (st, t) => { const want = t > 1 && t < 6 ? 1.3 : 0; st.speed += Math.max(-3 * dt, Math.min(3 * dt, want - st.speed)); go(st, st.speed); });
+  assert.ok(r.off / r.dist > .1 && r.on / r.dist < .012, `a start and a stop: ${per(r, 'off')}, now ${per(r, 'on')}`); assert.ok(r.jerk < .2, 'a start and a stop, no jump: ' + r.jerk.toFixed(3));
+  // standing: nothing moves by itself (standing easy let the feet creep as the weight went from one to the other), and no step is taken
+  r = drive(8, st => { st.speed = 0; }); assert.ok(r.lands === 0 && r.on < .004 && r.off > .1, `standing still: ${r.lands} steps, the feet crept ${(r.off * 100).toFixed(0)} cm, now ${(r.on * 100).toFixed(1)}`);
+  // turned on the spot the feet swept round like a statue's on a turntable; now the person steps round, a foot at a time, and stands as posed again after
+  r = drive(6, (st, t) => { st.speed = 0; if (t > 1 && t < 4) st.yaw += 2 * dt; });
+  assert.ok(r.off > 1 && r.on < .02, `turned on the spot: the feet swept ${(r.off * 100).toFixed(0)} cm over the ground, now ${(r.on * 100).toFixed(1)}`); assert.ok(r.lands >= 6 && r.lands <= 16, 'it steps round: ' + r.lands + ' steps');
+  assert.ok(r.jerk < .26, 'stepping round, no jump: ' + r.jerk.toFixed(3));
+  { const S = r.P[1].rig.stride.feet; assert.ok(S.every(f => f.down && Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) < .08 && Math.abs(f.dyaw) < .25), 'and ends standing under itself'); }
+  // shoved a pace to the side: it steps after its body
+  r = drive(5, (st, t) => { st.speed = 0; if (t > 1 && t < 2) st.x += .4 * dt; }); assert.ok(r.on < .02 && r.lands >= 2 && r.lands <= 6, `shoved: ${r.lands} steps, slid ${(r.on * 100).toFixed(1)} cm`);
+  // what is left exactly as drawn: a walk on the spot (a figure in a menu), a person carried along (on a lorry), a far-off person, a pose the game
+  // drives by its own phase, a person off its balance (gs.characters.Reactions has the feet), and rig.steps = false
+  r = drive(3, st => { st.speed = 1.3; }); assert.ok(r.differ < 1e-6, 'a walk on the spot is as drawn ' + r.differ);
+  r = drive(3, st => { st.speed = 0; st.z += 6 * dt; }); assert.ok(r.differ < 1e-6, 'a person carried along is left alone ' + r.differ);
+  r = drive(3, st => { st.speed = 1.3; go(st, 1.3); }, (p, on) => { if (on) p.rig.near = false; }); assert.ok(r.differ < 1e-6, 'a far-off person is left alone ' + r.differ);
+  r = drive(3, st => { st.speed = 1.3; go(st, 1.3); }, (p, on) => { if (on) p.rig.stride.hold = true; }); assert.ok(r.differ < 1e-6, 'a person off its balance is left alone ' + r.differ);
+  { const [a, b] = [false, true].map(on => { const p = skeleton({}); p.rig.steps = on; return p; }); let d = 0;
+    for (let i = 0; i < 120; i++) for (const p of [a, b]) { p.rig.play('walk', { at: i / 120, fade: 0 }); p.position.z = i * .02; p.rig.update(dt, { speed: 1.3 }); }
+    for (const n of LEGS) d = Math.max(d, a.bones[n].quaternion.angleTo(b.bones[n].quaternion)); assert.ok(d < 1e-6, 'a pose the game drives is as drawn ' + d); }
+  // a pose of the game's own takes part when it says it stands on the ground
+  { const p = skeleton({}); p.rig.add('guard', () => ({ j: { spine: [.1, 0, 0] }, drop: 0 }), { ground: true }); p.rig.play('guard', { fade: 0 });
+    for (let i = 0; i < 90; i++) { p.rotation.y += 2 * dt; p.rig.update(dt); } assert.ok(p.rig.stride.a > .99 && p.rig.stride.feet.some(f => Math.abs(f.dyaw) > .05 || !f.down), 'a pose that says it stands on the ground keeps its feet');
+    p.rig.add('float', () => ({ j: {}, drop: 0 })); p.rig.play('float', { fade: 0 }); for (let i = 0; i < 60; i++) p.rig.update(dt); assert.equal(p.rig.stride.a, 0, 'a pose that does not is left alone'); }
+  // mixed with standing, a walk keeps its own beat and takes shorter steps (it took longer ones more slowly, and slid)
+  { const p = skeleton({}); p.rig.steps = false; p.rig.blend(STR, .5); for (let i = 0; i < 30; i++) p.rig.update(dt, { speed: .5 }); const a = p.rig.blendPhase; for (let i = 0; i < 30; i++) p.rig.update(dt, { speed: .5 });
+    const beat = ((p.rig.blendPhase - a + 1) % 1) / .5, own = 1.3 / 1.36 / p.rig.size; assert.ok(Math.abs(beat - own) < .03, `a slow walk steps at the walk's own beat: ${beat.toFixed(3)} strides a second against ${own.toFixed(3)}`); }
+  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance) ok');
+}
+
+// momentum between moves (Rig.carried) and follow-through (follow.js): a person's rig takes a new move up with the speed the body had, and
+// what the body carries goes on a moment and settles when the game starts, stops, turns or drops it. Skeletons are driven alike, one as drawn.
+{
+  const { skeleton } = await import('../src/kit/models/human.js'), HS = await import('../src/kit/models/human-shapes.js'), { Object3D } = await import('three');
+  const STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, dt = 1 / 60, J = ['hips', 'spine', 'head', 'armL', 'foreL', 'armR', 'foreR', 'legL', 'shinL', 'legR', 'shinR', 'footL', 'footR'];
+  const read = p => { const a = []; for (const j of J) { const r = p.bones[j].rotation; a.push(r.x, r.y, r.z); } a.push(p.bones.hips.position.y); return a; };
+  // ---- momentum: the sharpest change of any joint's speed from one update to the next, over a change of move (and of the hips' height)
+  const change = (secs, at, drive, set) => {
+    const P = [false, true].map(on => { const p = skeleton({}); p.rig.momentum = on; p.rig.steps = false; p.rig.follow.amount = 0; set?.(p); return p; });
+    const R = P.map(() => ({ jerk: 0, hips: 0, knee: 9, elbow: -9, low: 9, tr: [] }));
+    P.forEach((p, k) => { let was = null, wv = null; for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const t = i * dt, sp = drive(p, t); p.rig.update(dt, { speed: sp }); const a = read(p), v = was && a.map((x, c) => (x - was[c]) / dt), r = R[k], e = a.length - 1;
+      if (wv && t >= at - .001 && t <= at + .6) for (let c = 0; c <= e; c++) { const d = Math.abs(v[c] - wv[c]); if (c === e) r.hips = Math.max(r.hips, d); else r.jerk = Math.max(r.jerk, d); }
+      r.knee = Math.min(r.knee, p.bones.shinL.rotation.x, p.bones.shinR.rotation.x); r.elbow = Math.max(r.elbow, p.bones.foreL.rotation.x, p.bones.foreR.rotation.x); r.low = Math.min(r.low, a[e]);
+      was = a; wv = v; r.tr.push(a);
+    } });
+    return { fade: R[0], kept: R[1], P, end: Math.max(...R[0].tr.at(-1).map((x, c) => Math.abs(x - R[1].tr.at(-1)[c]))), after: s => { const i = Math.round((at + s) / dt); return Math.max(...R[1].tr[i].map((x, c) => Math.abs(x - R[0].tr.at(-1)[c]))); } };
+  };
+  const stop = change(4, 2.13, (p, t) => { if (t < 2.13) { p.rig.blend(STR, 1.3); return 1.3; } p.rig.play('idle', { fade: .22 }); return 0; });
+  assert.ok(stop.kept.jerk < stop.fade.jerk * .5 && stop.kept.hips < stop.fade.hips * .5, `a walk that stops: a joint's speed changes less than half as sharply (${stop.kept.jerk.toFixed(2)} against ${stop.fade.jerk.toFixed(2)} rad/s in an update; the hips ${stop.kept.hips.toFixed(3)} against ${stop.fade.hips.toFixed(3)} m/s)`);
+  assert.ok(stop.end < 1e-9, 'and it ends standing just as it did: ' + stop.end);
+  const down = change(3, 1, (p, t) => { p.rig.play(t < 1 ? 'idle' : 'crouch', { fade: .2 }); return 0; });
+  assert.ok(down.kept.jerk < down.fade.jerk * .6 && down.kept.hips < down.fade.hips * .6, `standing to a crouch: ${down.kept.jerk.toFixed(2)} against ${down.fade.jerk.toFixed(2)} rad/s, the hips ${down.kept.hips.toFixed(2)} against ${down.fade.hips.toFixed(2)} m/s`);
+  assert.ok(down.end < 1e-9 && down.kept.low > down.fade.low - 1e-6, `the hips come down to the crouch and no lower: ${down.kept.low} against ${down.fade.low}`);
+  assert.ok(down.kept.knee > -1e-9 && down.kept.elbow < 1e-9, `no knee or elbow bends back on the way: ${down.kept.knee}, ${down.kept.elbow}`);
+  // (how long it takes: half way in about six tenths of the fade, all but there by twice the fade)
+  { const still = r => r.tr.at(-1), i0 = Math.round(1 / dt), c = J.indexOf('shinL') * 3, at = s => (down.kept.tr[i0 + Math.round(s / dt)][c] - down.kept.tr[i0 - 1][c]) / (still(down.kept)[c] - down.kept.tr[i0 - 1][c]);
+    assert.ok(at(.02) < .06 && at(.12) > .35 && at(.12) < .65 && at(.4) > .97, `it starts gently and is there by twice the fade: ${at(.02).toFixed(3)}, ${at(.12).toFixed(2)}, ${at(.4).toFixed(3)}`); }
+  const run = change(4, 2.13, (p, t) => { if (t < 2.13) { p.rig.blend(STR, 5.6); return 5.6; } p.rig.play('idle', { fade: .22 }); return 0; });
+  assert.ok(run.kept.jerk < run.fade.jerk * .6 && run.kept.knee > -1e-9, `a run that stops: ${run.kept.jerk.toFixed(2)} against ${run.fade.jerk.toFixed(2)} rad/s, and no knee bends back (${run.kept.knee})`);
+  // a move begun with no fade is a cut, whatever is asked for after it before the next update; and the pose is the new one at once
+  { const p = skeleton({}); p.rig.steps = false; p.rig.follow.amount = 0;
+    for (let i = 0; i < 90; i++) { p.rig.blend(STR, 3.3); p.rig.update(dt, { speed: 3.3 }); }
+    p.rig.play('idle', { fade: 0 }); p.rig.play('crouch', { fade: .2 }); p.rig.play('idle', { fade: .2 }); p.rig.update(dt);
+    const l = p.rig.layers, want = p.rig.sample('idle', l[0].phase).j;
+    assert.ok(l.length === 1 && l[0].name === 'idle' && !p.rig.mom.live && ['shinL', 'shinR', 'armL', 'foreR'].every(j => Math.abs(p.rig.cur[j][0] - want[j][0]) < 1e-9), 'a cut is a cut: ' + p.rig.cur.shinL[0] + ' against ' + want.shinL[0]); }
+  // other rigs are as they were: a figure cross-fades (momentum is asked for; a sculpted person's rig asks)
+  { const { figure } = await import('../src/kit/poses.js'), f = figure(); assert.ok(!f.rig.momentum && !f.rig.follow && skeleton({}).rig.momentum, 'only where it is asked for');
+    f.rig.play('crouch', { fade: .2 }); f.rig.update(.1); assert.ok(Math.abs(f.rig.cur.shinL[0] - .95) < .02, 'a figure is half way through its fade at half time: ' + f.rig.cur.shinL[0]); }
+
+  // ---- follow-through: the body's own parts
+  const SP = ['arms', 'counter', 'side', 'nod', 'turn', 'chest', 'tilt', 'shrug'];
+  const follow = (secs, drive, from = 0, set) => {
+    const p = skeleton({}), s = { x: 0, y: 0, z: 0, yaw: 0, av: 0, want: 0, vy: 0 }, F = p.rig.follow, R = { p, most: {}, least: {}, last: 0, tr: [] }; set?.(p);
+    for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const t = i * dt; drive(s, t); s.av += (s.want - s.av) * (1 - Math.exp(-dt * 5)); s.x += Math.sin(s.yaw) * s.av * dt; s.z += Math.cos(s.yaw) * s.av * dt;
+      if (s.av > .15) p.rig.blend(STR, s.av); else p.rig.play('idle', { fade: .22 });
+      p.position.set(s.x, s.y, s.z); p.rotation.y = s.yaw; p.rig.update(dt, { speed: s.av }); p.updateMatrixWorld(true);
+      if (t >= from) SP.forEach((n, k) => { R.most[n] = Math.max(R.most[n] ?? 0, F.th[k]); R.least[n] = Math.min(R.least[n] ?? 0, F.th[k]); if (Math.abs(F.th[k]) > .003) R.last = t; });
+      R.tr.push(read(p));
+    }
+    R.all = Math.max(...SP.map(n => Math.max(R.most[n], -R.least[n]))); return R;
+  };
+  const go = follow(7, (s, t) => { s.want = t > 1 && t < 4 ? 5.6 : 0; });
+  assert.ok(go.most.arms > .12 && go.least.arms < -.12, `a runner's arms are left behind as he sets off and swing on as he pulls up: ${go.most.arms.toFixed(3)}, ${go.least.arms.toFixed(3)}`);
+  assert.ok(go.least.nod < -.03 && go.most.nod > .03 && go.last < 6, `his head tips back and then nods, and all of it is still again (by ${go.last.toFixed(1)} s)`);
+  const walk = follow(6, s => { s.want = 1.3; }, 2); assert.ok(walk.all < .002, 'a steady walk: nothing is added to it: ' + walk.all);
+  const stand = follow(4, s => { s.want = 0; }); assert.ok(stand.all === 0, 'nor to a person standing: ' + stand.all);
+  const turn = follow(5, (s, t) => { s.want = 0; if (t > 1 && t < 2) s.yaw += 2.5 * dt; });
+  assert.ok(turn.least.turn < -.02 && turn.least.chest < -.02 && turn.most.counter > .04 && turn.last < 3.5, `spun to its left, the head and the rib cage come round after the hips, one arm goes forward and one back: ${turn.least.turn.toFixed(3)}, ${turn.least.chest.toFixed(3)}, ${turn.most.counter.toFixed(3)}`);
+  const push = follow(4, (s, t) => { s.want = 0; if (t > 1 && t < 1.25) s.x += 2 * dt; }); assert.ok(push.most.side > .05 && push.most.tilt > .02, `pushed to its left, the arms and the head are left to its right: ${push.most.side.toFixed(3)}, ${push.most.tilt.toFixed(3)}`);
+  const drop = follow(4, (s, t) => { if (t > 1 && s.y > -.5) { s.vy -= 9.8 * dt; s.y = Math.max(-.5, s.y + s.vy * dt); } }); assert.ok(drop.most.shrug > .03 && drop.last < 2.5, 'dropped half a metre, the shoulders give as it lands: ' + drop.most.shrug.toFixed(3));
+  const moved = follow(4, (s, t) => { if (Math.abs(t - 1) < dt / 2) { s.x += 5; s.yaw += 2; } }); assert.ok(moved.all === 0, 'put somewhere else at a stroke: no push: ' + moved.all);
+  // turned off, far off, or in a crowd's bake it is the pose as drawn
+  { const asDrawn = set => { const a = follow(5, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; }, 0, p => { p.rig.steps = false; set(p); }), b = follow(5, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; }, 0, p => { p.rig.steps = false; p.rig.follow = null; }); return Math.max(...a.tr.map((r, i) => Math.max(...r.map((x, c) => Math.abs(x - b.tr[i][c]))))); };
+    assert.ok(asDrawn(p => { p.rig.follow.amount = 0; }) < 1e-9 && asDrawn(p => { p.rig.near = false; }) < 1e-9, 'amount 0, or seen from far off: as drawn');
+    assert.ok(asDrawn(() => {}) > .1, '(and with it on the pose does differ)'); }
+  // an elbow is never bent back by it, and an arm goes only a little in against the body
+  { const r = follow(6, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; if (t > 3.5 && t < 3.7) s.x -= 3 * dt; }), c = J.indexOf('foreL') * 3; assert.ok(Math.max(...r.tr.map(a => Math.max(a[c], a[c + 6]))) < 1e-9, 'elbows'); }
+  // a push never makes a reach of a swing: pulled up from a run, with one arm already swung forward, that arm goes hardly further forward than it is drawn (it comes down late instead)
+  { const pull = set => follow(5, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; }, 0, p => { p.rig.steps = false; set?.(p); }), a = pull(), b = pull(p => { p.rig.follow = null; }), c = J.indexOf('armL') * 3, i0 = Math.round(3 / dt);
+    const fwd = r => Math.min(...r.tr.slice(i0).map(x => Math.min(x[c], x[c + 6]))), late = Math.max(...a.tr.slice(i0).map((x, i) => Math.max(b.tr[i0 + i][c] - x[c], b.tr[i0 + i][c + 6] - x[c + 6])));
+    assert.ok(fwd(a) > fwd(b) - .06 && fwd(b) < -.2 && late > .07, `the arm of a runner pulled up short: ${fwd(a).toFixed(3)} forward at the most against ${fwd(b).toFixed(3)} as drawn, and ${late.toFixed(3)} behind it in coming down`); }
+
+  // ---- things that hang: the trunk is sculpted with a bone for each thing on its belt, and says where each hangs from
+  const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', pockets: 4, collar: null }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, belt: {}, web: { y: true, pouches: 2 }, extras: { bag: true, canteen: true, holster: true }, hat: null, pack: null, gear: [], face: {}, hands: 'grip' };
+  const tr = HS.sculpt(HS.jobsFor(sp)[0]), share = {}; for (let i = 0; i < tr.n; i++) for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) { const n = tr.names[tr.SI[i * 4 + q]]; share[n] = (share[n] || 0) + 1; }
+  assert.deepEqual(Object.keys(tr.hang).sort(), ['bag', 'flask', 'holster']); for (const n in tr.hang) { const h = tr.hang[n]; assert.ok(share[n] > 40 && h.at[1] > .95 && h.at[1] < 1.12 && Math.abs(Math.hypot(h.away[0], h.away[2]) - 1) < 1e-9 && h.at[0] * h.away[0] + h.at[2] * h.away[2] > .1, `${n}: ${share[n]} points on a bone of its own, hung from the belt, and it knows which way is out`); }
+  assert.ok(!HS.sculpt(HS.jobsFor({ ...sp, extras: {} })[0]).names.some(n => tr.hang[n]), 'and a trunk with nothing on its belt has no such bones');
+  { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) u[tr.names[tr.SI[i * 4 + q]]] = tr.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0;
+    for (let i = 0; i < tr.n; i++) { const k = [0, 1, 2].map(c => Math.round(tr.P[i * 3 + c] * 1e5)).join(), j = seen.get(k); if (j === undefined) { seen.set(k, i); continue; } const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) torn++; }
+    assert.ok(pairs > 100 && torn === 0, `points in the same place still go with the same bones: ${torn} of ${pairs}`); }
+  const kit = (secs, drive, from = 0, more) => {
+    const p = skeleton({}), s = { x: 0, z: 0, yaw: 0, av: 0, want: 0 }, hips = HS.AT.hips, spine = HS.AT.spine, T = {};
+    for (const n in tr.hang) { const { at, ...how } = tr.hang[n], b = new Object3D(); b.position.set(at[0] - hips[0], at[1] - hips[1], at[2] - hips[2]); p.bones.hips.add(b); T[n] = p.rig.hang(b, { ...how, ...more }); }
+    { const b = new Object3D(); p.bones.spine.add(b); T.pack = p.rig.hang(b, { pivot: [0, 1.45 - spine[1], -.1 - spine[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1], ...more }); }
+    const R = { p, T, swing: {}, bounce: {}, into: 0, last: 0 };
+    for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const t = i * dt; drive(s, t, p); s.av += (s.want - s.av) * (1 - Math.exp(-dt * 5)); s.x += Math.sin(s.yaw) * s.av * dt; s.z += Math.cos(s.yaw) * s.av * dt;
+      if (s.av > .15) p.rig.blend(STR, s.av); else p.rig.play('idle', { fade: .22 });
+      p.position.set(s.x, 0, s.z); p.rotation.y = s.yaw; p.rig.update(dt, { speed: s.av }); p.updateMatrixWorld(true);
+      for (const n in T) { const h = T[n]; if (t >= from) { R.swing[n] = Math.max(R.swing[n] ?? 0, Math.abs(h.x), Math.abs(h.z)); R.bounce[n] = Math.max(R.bounce[n] ?? 0, Math.abs(h.y)); } R.into = Math.min(R.into, h.z * h.nx - h.x * h.nz); if (Math.abs(h.x) + Math.abs(h.z) + Math.abs(h.y) * 10 > .006) R.last = t; }
+    }
+    return R;
+  };
+  const jog = kit(6, s => { s.want = 3.3; }, 2);
+  assert.ok(jog.swing.bag > .02 && jog.swing.flask > .02 && jog.swing.holster < jog.swing.bag * .6 && jog.bounce.pack > .005 && jog.bounce.pack < .03, `jogging, a bag and a canteen swing at the hip, a holster less, and a pack bounces: ${JSON.stringify(jog.swing, (k, v) => typeof v === 'number' ? +v.toFixed(3) : v)}, ${jog.bounce.pack.toFixed(4)} m`);
+  assert.ok(jog.into > -.0121, 'none of them swings into the body: ' + jog.into);
+  const halt = kit(7, (s, t) => { s.want = t > 1 && t < 4 ? 5.6 : 0; }); assert.ok(halt.swing.bag > .1 && halt.swing.pack > .04 && halt.into > -.0121 && halt.last > 4.2 && halt.last < 6.5, `a runner who pulls up: they swing on and are still again (bag ${halt.swing.bag.toFixed(3)}, pack ${halt.swing.pack.toFixed(3)}, still by ${halt.last.toFixed(1)} s)`);
+  const idle = kit(4, s => { s.want = 0; }, 1); assert.ok(Math.max(...Object.values(idle.swing)) < .004 && Math.max(...Object.values(idle.bounce)) < .0003, 'standing, they hang still: ' + JSON.stringify(idle.swing));
+  // a thing goes back exactly as it was; seen from further off nothing swings; apply: false only works the swing out
+  { const b = halt.T.bag.thing, rest = halt.T.bag.rest; halt.p.rig.follow.still(); assert.ok(b.position.distanceTo(rest) < 1e-12 && Math.abs(b.quaternion.w - 1) < 1e-12, 'put back as it was');
+    const far = kit(4, (s, t, p) => { p.rig.fine = false; s.want = t > 1 ? 5.6 : 0; }); assert.ok(Math.max(...Object.values(far.swing)) === 0, 'not close up: nothing swings');
+    const own = kit(4, (s, t) => { s.want = t > 1 ? 5.6 : 0; }, 0, { apply: false }); assert.ok(own.swing.bag > .05 && own.T.bag.thing.quaternion.w === 1 && own.T.bag.thing.position.distanceTo(own.T.bag.rest) === 0, 'apply: false: worked out, and the thing left alone'); }
+  // and what it costs: a person's update with all of it against one as drawn
+  { const mk = on => { const p = skeleton({}); p.rig.steps = false; if (!on) { p.rig.momentum = false; p.rig.follow = null; } return p; }, time = p => { let s = 0; const t0 = performance.now(); for (let i = 0; i < 20000; i++) { s += .0003; p.position.z = s * 3; if (i % 240 < 120) p.rig.blend(STR, 3.3); else p.rig.play('idle', { fade: .22 }); p.rig.update(dt, { speed: 3.3 }); } return (performance.now() - t0) / 20000 * 1000; };
+    time(mk(true)); time(mk(false)); const a = time(mk(true)), b = time(mk(false)); assert.ok(a - b < 12, `momentum and follow-through cost ${(a - b).toFixed(1)} microseconds a person an update`); }
+  console.log('gs.models: momentum between moves (a joint keeps its speed into the new move, no knee bends back, a cut is a cut) and follow-through (arms, head, rib cage, shoulders; a bag, a canteen, a holster and a pack that swing and bounce; still in a steady walk, at a stroke, far off) ok');
+}
+// a live face (human-head.js, human-face.js): the head is sculpted with bones for the eyes, the upper lids, the brows, the jaw and the
+// corners of the mouth, lips cut apart along their line, teeth and the inside of a mouth; LiveFace puts those bones where blinks,
+// a look, an expression or a line of speech have them, and the rig steps it with the body
+{
+  const F = await import('../src/kit/models/field.js'); await F.thinReady;
+  const HS = await import('../src/kit/models/human-shapes.js'), HH = await import('../src/kit/models/human-head.js'), { skeleton } = await import('../src/kit/models/human.js'), { LiveFace, LIVE_SHAPES } = await import('../src/kit/models/human-face.js'), { Vector3, Object3D } = await import('three');
+  const FACE = ['jaw', 'eyeL', 'eyeR', 'lidL', 'lidR', 'browL', 'browR', 'browInL', 'browInR', 'cornerL', 'cornerR'], dt = 1 / 60;
+  // ---- the sculpted head
+  {
+    const face = { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, { HC, EYE, MOUTH } = HH;
+    const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'shirt', sleeves: 'long', pockets: 0 }, legs: { kind: 'trousers' }, feet: { kind: 'shoes' }, face, hat: null, belt: null, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
+    const p = HS.sculpt(HS.jobsFor(sp).find(j => j.kind === 'head')), P = p.P, n = p.n, I = p.I[0], slotOf = i => p.slots[p.slot[i]], inside = i => ['mouth', 'teeth', 'tongue'].includes(slotOf(i));
+    const W = (i, name) => { const b = p.names.indexOf(name); let w = 0; for (let k = 0; k < 4; k++) if (p.SI[i * 4 + k] === b) w += p.SW[i * 4 + k] / 255; return w; };
+    assert.ok(FACE.every(b => p.names.includes(b)), 'the head has the bones of a face: ' + p.names);
+    for (let i = 0; i < n; i++) assert.ok(Math.abs(p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3] - 255) <= 2, 'weights are whole, to their rounding (the mesh makes them whole)');
+    for (const b of FACE) { let most = 0; for (let i = 0; i < n; i++) most = Math.max(most, W(i, b)); assert.ok(most > .5, `${b} has skin of its own to move (${most.toFixed(2)} at the most)`); }
+    // each eyeball turns wholly with its own bone; what is inside the mouth is drawn close up only
+    let eyes = 0, loose = 0; for (let i = 0; i < n; i++) if (slotOf(i).startsWith('eye')) { eyes++; if (W(i, P[i * 3] > 0 ? 'eyeL' : 'eyeR') < .99) loose++; } assert.ok(eyes > 150 && loose === 0, `eyeballs on their own bones: ${loose} of ${eyes} points are not`);
+    const count = L => { let c = 0; for (let t = 0; t < p.I[L].length; t += 3) if (inside(p.I[L][t])) c++; return c; };
+    assert.ok(['mouth', 'teeth', 'tongue'].every(s => p.slots.includes(s)) && count(0) > 200 && count(1) === 0 && count(2) === 0, `teeth, a tongue and the inside of a mouth, at the close level only: ${[count(0), count(1), count(2)]}`);
+    // the lips are cut apart along their line: every point on it has a twin in the same place, one for each lip
+    const used = new Uint8Array(n); for (const i of I) used[i] = 1;
+    const by = new Map(); for (let i = 0; i < n; i++) { if (!used[i] || inside(i)) continue; const x = P[i * 3], hy = P[i * 3 + 1] - HC[1], hz = P[i * 3 + 2] - HC[2]; if (hz > .05 && Math.abs(hy - HH.lipLine(x, face)) < 2e-5 && Math.abs(x) < MOUTH.half * 1.09) { const k = Math.round(x * 1e6) + ',' + Math.round(P[i * 3 + 2] * 1e6); (by.get(k) || by.set(k, []).get(k)).push(i); } }
+    const pairs = [...by.values()].filter(l => l.length === 2), odd = [...by.values()].filter(l => l.length !== 2).length; assert.ok(pairs.length > 40 && odd === 0, `the lips' line: ${pairs.length} pairs of points, ${odd} without a twin`);
+    // posed by hand, as the skin blends it: a bone turned about its own place
+    const at = Object.fromEntries(HH.faceBones(face).map(([nm, , q]) => [nm, q]));
+    const rotX = (c, an) => ([x, y, z]) => { const dy = y - c[1], dz = z - c[2], C = Math.cos(an), S = Math.sin(an); return [x, c[1] + dy * C - dz * S, c[2] + dy * S + dz * C]; };
+    const posed = (i, T) => { const q = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], o = [0, 0, 0]; let ws = 0; for (let k = 0; k < 4; k++) { const w = p.SW[i * 4 + k]; if (!w) continue; const f = T[p.names[p.SI[i * 4 + k]]], r = f ? f(q) : q; o[0] += r[0] * w; o[1] += r[1] * w; o[2] += r[2] * w; ws += w; } return [o[0] / ws, o[1] / ws, o[2] / ws]; };
+    // the jaw dropped: the lips part in the middle and stay closed at the corners, the upper lip stays where it is, and no skin is torn
+    { const T = { jaw: rotX(at.jaw, .1) }, gap = fr => { let best = null; for (const pr of pairs) { const e = Math.abs(P[pr[0] * 3]) / MOUTH.half; if (!best || Math.abs(e - fr) < Math.abs(Math.abs(P[best[0] * 3]) / MOUTH.half - fr)) best = pr; } const A = posed(best[0], T), B = posed(best[1], T), up = A[1] > B[1] ? best[0] : best[1], U = posed(up, T); return [Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]), Math.hypot(U[0] - P[up * 3], U[1] - P[up * 3 + 1], U[2] - P[up * 3 + 2])]; };
+      const mid = gap(0), end = gap(.95); assert.ok(mid[0] > .008 && mid[0] < .013 && mid[1] < 1e-4 && end[0] < 2e-4, `a jaw turned a tenth of a radian parts the lips ${(mid[0] * 1000).toFixed(1)} mm in the middle (the upper lip moves ${(mid[1] * 1000).toFixed(2)}) and ${(end[0] * 1000).toFixed(2)} at the corners`);
+      let worst = 0; for (let t = 0; t < I.length; t += 3) { if (inside(I[t]) || inside(I[t + 1]) || inside(I[t + 2])) continue; const q = [0, 1, 2].map(k => posed(I[t + k], T)); for (let k = 0; k < 3; k++) { const a = I[t + k] * 3, b = I[t + (k + 1) % 3] * 3, l0 = Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]), A = q[k], B = q[(k + 1) % 3]; if (l0 > 1e-5) worst = Math.max(worst, Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) / l0); } }
+      assert.ok(worst < 2.5, `no edge of the skin is stretched far by it: ${worst.toFixed(2)} times at the most`); }
+    // a blink: how much of the left eyeball shows from straight in front, open and with the lid turned as far as the head says it closes
+    { const tris = []; for (let t = 0; t < I.length; t += 3) { if (slotOf(I[t]).startsWith('eye')) continue; const x = P[I[t] * 3], hy = P[I[t] * 3 + 1] - HC[1]; if (Math.abs(x - EYE[0]) < .03 && Math.abs(hy) < .03 && P[I[t] * 3 + 2] - HC[2] > .05) tris.push(I[t], I[t + 1], I[t + 2]); }
+      const st = .00025, GX = 140, GY = 80, x0 = EYE[0] - .0175, y0 = HC[1] - .01, R2 = .0122 * .0122;
+      const shows = T => { const Q = new Map(), q = i => Q.get(i) || Q.set(i, T ? posed(i, T) : [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]).get(i), cover = new Uint8Array(GX * GY); let open = 0;
+        for (let t = 0; t < tris.length; t += 3) { const A = q(tris[t]), B = q(tris[t + 1]), C = q(tris[t + 2]), det = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1]); if (Math.abs(det) < 1e-14) continue;
+          const g0 = Math.max(0, Math.ceil((Math.min(A[0], B[0], C[0]) - x0) / st)), g1 = Math.min(GX - 1, Math.floor((Math.max(A[0], B[0], C[0]) - x0) / st)), h0 = Math.max(0, Math.ceil((Math.min(A[1], B[1], C[1]) - y0) / st)), h1 = Math.min(GY - 1, Math.floor((Math.max(A[1], B[1], C[1]) - y0) / st));
+          for (let gx = g0; gx <= g1; gx++) for (let gy = h0; gy <= h1; gy++) { const x = x0 + gx * st, y = y0 + gy * st, l1 = ((B[1] - C[1]) * (x - C[0]) + (C[0] - B[0]) * (y - C[1])) / det, l2 = ((C[1] - A[1]) * (x - C[0]) + (A[0] - C[0]) * (y - C[1])) / det, l3 = 1 - l1 - l2; if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+            const r2 = R2 - (x - EYE[0]) ** 2 - (y - HC[1]) ** 2; if (r2 > 0 && l1 * A[2] + l2 * B[2] + l3 * C[2] > HC[2] + EYE[2] + Math.sqrt(r2)) cover[gx + gy * GX] = 1; } }
+        for (let gx = 0; gx < GX; gx++) for (let gy = 0; gy < GY; gy++) if (R2 - (-.0175 + gx * st) ** 2 - (-.01 + gy * st) ** 2 > 0 && !cover[gx + gy * GX]) open++; return open * st * st * 1e6; };
+      const open = shows(null), half = shows({ lidL: rotX(at.lidL, p.lid * .5) }), shut = shows({ lidL: rotX(at.lidL, p.lid) });
+      assert.ok(p.lid > .6 && p.lid < 1 && open > 100 && half > open * .3 && half < open * .65 && shut < open * .02, `the upper lid closes the eye in ${p.lid.toFixed(2)} rad: ${open.toFixed(0)} mm2 of the eyeball shows open, ${half.toFixed(0)} half way, ${shut.toFixed(1)} shut`); }
+  }
+  // ---- the face at work, on a bare skeleton
+  const mk = () => { const p = skeleton({}); p.face.blinkEvery = 0; return p; }, run = (p, secs, each) => { for (let i = 0; i < Math.round(secs / dt); i++) { p.rig.update(dt); p.updateMatrixWorld(true); each?.(i); } };
+  const v = new Vector3(), gaze = b => { b.getWorldDirection(v); return [Math.atan2(v.x, v.z), Math.asin(-v.y)]; }, headAt = p => p.bones.head.getWorldPosition(new Vector3());
+  { const p = skeleton({}), f = p.face, B = p.bones;
+    assert.ok(f instanceof LiveFace && p.rig.face === f && FACE.every(b => B[b]?.isBone) && LIVE_SHAPES.includes('blink') && LIVE_SHAPES.includes('winkL'), 'a person has a live face, and bones for it');
+    // blinks by themselves, a few seconds apart; one asked for shuts in a twentieth of a second and is over in a fifth
+    let blinks = 0, was = 0; run(p, 40, () => { const c = B.lidL.rotation.x > f.lid * .8; if (c && !was) blinks++; was = c; }); assert.ok(blinks >= 5 && blinks <= 26, `blinks by itself: ${blinks} in 40 seconds`);
+    f.blinkEvery = 0; run(p, 1); const lid0 = B.lidL.rotation.x; f.blink(); const seen = []; run(p, .3, () => seen.push(B.lidL.rotation.x));
+    assert.ok(Math.abs(lid0) < .2 * f.lid && Math.max(...seen.slice(0, 5)) > f.lid * .9 && Math.abs(B.lidR.rotation.x - B.lidL.rotation.x) < 1e-9 && seen.at(-1) < f.lid * .2, `a blink: open ${lid0.toFixed(2)}, shut ${Math.max(...seen).toFixed(2)} of ${f.lid} within five updates, open again ${seen.at(-1).toFixed(2)}`); }
+  // set(): every shape moves what it names
+  { const p = mk(), f = p.face, B = p.bones, R = f.rest, put = (s, a = 1) => { for (const k of LIVE_SHAPES) f.set(k, 0); if (s) f.set(s, a); run(p, .7); };
+    put('blink'); assert.ok(Math.abs(B.lidL.rotation.x - f.lid) < .01 && Math.abs(B.lidR.rotation.x - f.lid) < .01, 'blink: both lids down');
+    put('winkL'); assert.ok(B.lidL.rotation.x > f.lid * .97 && B.lidR.rotation.x < f.lid * .2, 'a wink: one lid'); put('winkR'); assert.ok(B.lidR.rotation.x > f.lid * .97 && B.lidL.rotation.x < f.lid * .2);
+    put('open'); const jaw = B.jaw.rotation.x; assert.ok(jaw > .06 && jaw < .09 && B.cornerL.position.y < R.cornerL.y - .001, `open: the jaw drops (${jaw.toFixed(3)} rad) and the corners come some of the way`);
+    put('smile'); assert.ok(B.cornerL.position.y > R.cornerL.y + .003 && B.cornerL.position.x > R.cornerL.x + .003 && B.cornerR.position.x < R.cornerR.x - .003 && B.lidL.rotation.x > .02, 'a smile: corners up and out, eyes a little narrowed');
+    put('frown'); assert.ok(B.cornerL.position.y < R.cornerL.y - .003 && B.cornerR.position.y < R.cornerR.y - .003, 'a frown: corners down');
+    put('round'); assert.ok(B.cornerL.position.x < R.cornerL.x - .003 && B.cornerR.position.x > R.cornerR.x + .003 && B.cornerL.position.z > R.cornerL.z + .002, 'a round mouth: corners in and forward'); put('wide'); assert.ok(B.cornerL.position.x > R.cornerL.x + .003);
+    put('surprise'); assert.ok(B.browL.position.y > R.browL.y + .004 && B.browInR.position.y > R.browInR.y + .003 && B.lidL.rotation.x < -.05 && B.jaw.rotation.x > .01, 'surprise: brows up, eyes wide, the mouth a little open');
+    put('angry'); assert.ok(B.browInL.position.y < R.browInL.y - .003 && B.browInL.position.x < R.browInL.x - .002 && B.browInR.position.x > R.browInR.x + .002, 'anger: the inner ends of the brows down and together');
+    put('sad'); assert.ok(B.browInL.position.y > R.browInL.y + .003 && B.cornerL.position.y < R.cornerL.y - .002, 'sorrow: inner ends up, corners down');
+    put('squint'); assert.ok(B.lidL.rotation.x > .3 * f.lid && B.lidL.rotation.x < .6 * f.lid, 'a squint: lids part of the way');
+    put('blink', .5); assert.ok(Math.abs(B.lidL.rotation.x - .5 * f.lid) < .08, 'amounts between: half a blink');
+    put(null); assert.ok(Math.abs(B.jaw.rotation.x) < 1e-3 && B.cornerL.position.distanceTo(R.cornerL) < 1e-4 && B.browL.position.distanceTo(R.browL) < 1e-4, 'and back to rest');
+    // eased, never snapped
+    f.set('open', 1); p.rig.update(dt); assert.ok(B.jaw.rotation.x > 0 && B.jaw.rotation.x < .03, 'a shape is eased in'); }
+  // look(): the eyes onto a point, each eye by itself (they cross onto something close), as far as eyes turn, an Object3D followed
+  { const p = mk(), f = p.face, B = p.bones; run(p, .2); const h = headAt(p);
+    f.look([h.x + 1, h.y + .06, h.z + 3]); run(p, .3); const a = gaze(B.eyeL); const e = B.eyeL.getWorldPosition(new Vector3()); assert.ok(Math.abs(a[0] - Math.atan2(h.x + 1 - e.x, h.z + 3 - e.z)) < .03 && f.yaw > .1, `the eyes go to a point on the left: ${a[0].toFixed(2)}`);
+    f.look({ x: h.x - 9, y: h.y, z: h.z + 1 }); run(p, .3); assert.ok(f.yaw < -.5 && f.yaw > -.6, `no further than eyes turn: ${f.yaw.toFixed(2)}`);
+    f.look([h.x, h.y + 3, h.z + 1]); run(p, .3); const up = f.pitch; f.look([h.x, h.y - 3, h.z + 1]); run(p, .3); assert.ok(up < -.3 && up > -.4 && f.pitch > .4 && f.pitch < .5 && B.lidL.rotation.x > .2 * f.lid, `up ${up.toFixed(2)} and down ${f.pitch.toFixed(2)}, and the lid comes down with the eye`);
+    const near = new Object3D(), before = (x, y, z) => B.head.localToWorld(near.position.set(x, y, z)); before(0, .165, .3); f.look(near); run(p, .3); assert.ok(B.eyeL.rotation.y < -.05 && B.eyeR.rotation.y > .05, `both eyes turn in onto something close: ${B.eyeL.rotation.y.toFixed(2)}, ${B.eyeR.rotation.y.toFixed(2)}`);
+    before(.08, .165, .3); run(p, .3); assert.ok(B.eyeL.rotation.y > .1 && B.eyeR.rotation.y > B.eyeL.rotation.y + .1, 'and follow it as it moves');
+    f.look(null); run(p, 1); assert.ok(Math.abs(f.yaw) < .36 && f.target === null, 'look(null): they wander again'); }
+  // by themselves the eyes keep to a spot in the world while the head turns, and jump on when it has turned too far
+  { const p = mk(), f = p.face, B = p.bones; let tries = 0; do { f.dartT = 0; run(p, .3); } while ((Math.abs(f.yaw) > .06 || f.glance) && ++tries < 200);
+    f.dartT = 9; const g0 = gaze(B.eyeL)[0], h0 = gaze(B.head)[0], y0 = f.yaw; run(p, .3, () => { p.rotation.y += .4 * dt; }); const g1 = gaze(B.eyeL)[0], turned = gaze(B.head)[0] - h0;
+    assert.ok(turned > .07 && Math.abs(g1 - g0) < .03 && Math.abs(y0 - f.yaw - turned) < .03, `the head turned ${turned.toFixed(2)} rad with the body: the eyes still look the same way (${(g1 - g0).toFixed(3)} off), turned ${(y0 - f.yaw).toFixed(2)} back in the head`);
+    p.rotation.y += 1.2; run(p, .3); assert.ok(Math.abs(f.yaw) < .2, `turned far at a stroke, they jump to look ahead again: ${f.yaw.toFixed(2)}`);
+    let jumps = 0, last = f.yaw; f.dartT = 0; run(p, 20, () => { if (Math.abs(f.yaw - last) > .02) jumps++; last = f.yaw; }); assert.ok(jumps >= 4, `standing, they dart to a new spot now and then: ${jumps} moves in 20 seconds`); }
+  // the mouth: a level from the game, and a line of speech
+  { const p = mk(), f = p.face, B = p.bones; f.mouth(1); run(p, .3); const open = B.jaw.rotation.x; f.mouth(null); run(p, .3); assert.ok(open > .05 && Math.abs(B.jaw.rotation.x) < .003, `mouth(level) opens the jaw: ${open.toFixed(3)}`);
+    f.say('Hello there, over here'); let most = 0, moves = 0, last = 0, t = 0; assert.equal(f.talking, true); while (f.talking && t < 6) { run(p, dt); t += dt; const j = B.jaw.rotation.x; most = Math.max(most, j); if (Math.abs(j - last) > .002) moves++; last = j; } run(p, .3);
+    assert.ok(t > .8 && t < 3 && most > .025 && most < .075 && moves > 15 && Math.abs(B.jaw.rotation.x) < .003, `a line of speech moves the jaw for ${t.toFixed(1)} s, ${most.toFixed(3)} rad at the most, and shuts it`); }
+  // asleep when told so, and by itself when the head lies over and low (a body on the ground); bent over is not lying down
+  { const p = mk(), f = p.face, B = p.bones, shut = () => B.lidL.rotation.x > f.lid * .95 && B.lidR.rotation.x > f.lid * .95;
+    run(p, .5); assert.ok(!shut()); f.awake = false; run(p, .6); assert.ok(shut() && Math.abs(f.yaw) < .01, 'awake = false: eyes closed and still'); f.awake = null; run(p, .5); assert.ok(!shut(), 'and open again');
+    p.rotation.x = -Math.PI / 2; run(p, .8); assert.ok(shut(), 'laid on the ground: the eyes close by themselves'); f.awake = true; run(p, .5); assert.ok(!shut(), 'awake = true: open even so');
+    f.awake = null; p.rotation.x = 0; run(p, .6); assert.ok(!shut(), 'on its feet again: open');
+    const q = mk(); run(q, .2); q.bones.waist.rotation.x = 1.35; q.updateMatrixWorld(true); for (let i = 0; i < 60; i++) q.face.step(dt); assert.ok(q.face.lie === 0 && q.bones.lidL.rotation.x < q.face.lid * .3, 'bent double is not lying down'); }
+  // a wince; the rig steps the face close up only; a face whose rig is not run is stepped by update(); still() for a crowd's bake
+  { const p = mk(), f = p.face, B = p.bones, R = f.rest; run(p, .3); f.wince(); run(p, .1); const lid = B.lidL.rotation.x, brow = B.browInL.position.y - R.browInL.y; run(p, 1.2);
+    assert.ok(lid > f.lid * .8 && brow < -.0015 && B.lidL.rotation.x < f.lid * .2 && Math.abs(B.browInL.position.y - R.browInL.y) < 3e-4, `a wince: eyes screwed shut at once (${lid.toFixed(2)}), brows down, and gone in a second`);
+    f.set('blink', 1); p.rig.fine = false; run(p, .5); assert.ok(B.lidL.rotation.x < f.lid * .2, 'seen from further off the face is left alone'); f.update(.5); assert.ok(B.lidL.rotation.x < f.lid * .2, 'and update() leaves it to the rig');
+    p.rig.fine = true; run(p, .5); assert.ok(B.lidL.rotation.x > f.lid * .95); f.still(); assert.ok(B.lidL.rotation.x === 0 && B.jaw.rotation.x === 0 && B.eyeL.rotation.y === 0 && B.cornerL.position.equals(R.cornerL), 'still(): every bone back at rest');
+    const q = skeleton({}), own = new LiveFace(q, q.bones); own.blinkEvery = 0; own.set('open', 1); for (let i = 0; i < 40; i++) own.update(dt); assert.ok(q.bones.jaw.rotation.x > .06, 'a face with no rig running is stepped by update()'); }
+  // and what it costs
+  { const time = on => { const p = skeleton({}); p.rig.steps = false; if (!on) p.rig.face = null; const t0 = performance.now(); for (let i = 0; i < 20000; i++) { p.rig.update(dt); if (i % 4 === 0) p.updateMatrixWorld(true); } return (performance.now() - t0) / 20000 * 1000; };
+    time(true); time(false); const a = time(true), b = time(false); assert.ok(a - b < 8, `a live face costs ${(a - b).toFixed(1)} microseconds a person an update`); }
+  console.log('gs.models: a live face (bones for eyes, lids, brows, jaw and mouth corners; lips that part; a blink that closes the eye; eyes onto a point and holding a spot as the head turns; expressions, speech, sleep, a wince) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
@@ -3483,8 +3767,9 @@ console.log('physics ok');
 
   // a nudge: it gives and comes back, and never leaves its feet
   {
-    const S = stage(), spine = S.f.rig.parts.spine; let lean = 0;
+    const S = stage(), spine = S.f.rig.parts.spine; let lean = 0, winced = 0; S.f.face = { wince: a => { winced = a; } };
     const out = run(S, 1.6, { .3: r => r.hit([0, 0, -.35]), .4: () => { lean = spine.rotation.x; } });
+    assert.ok(winced >= .35 && winced <= 1, 'a face that can wince does so at a blow: ' + winced);
     assert.ok(out.log === '' && !S.r.busy && out.steps === 0 && Math.hypot(S.f.position.x, S.f.position.z) < .02, 'a nudge is only swayed off: ' + out.log);
     assert.ok(Math.abs(lean - .03) > .02, 'the trunk gives under it (' + lean.toFixed(2) + ')');
   }
@@ -3771,7 +4056,7 @@ console.log('physics ok');
   const P = (x, y, z) => ({ x, y, z });
   // the map of what the sky can see
   {
-    const c = new Cover({ level, ground }); assert.ok(c.N === 128 && c.cell === .5 && !c.ready && c.at(0, 0) === -Infinity && c.open(0, 1, 0), 'nothing known yet: all open');
+    const c = new Cover({ level, ground, ms: 1e9 }); assert.ok(c.N === 128 && c.cell === .5 && !c.ready && c.at(0, 0) === -Infinity && c.open(0, 1, 0), 'nothing known yet: all open');
     c.place(0, 1.6, 0).update(); assert.ok(!c.ready && c.asked <= 400 && c.at(0, 0) === 3 && c.at(30, 30) === -Infinity, 'a few hundred spots a frame, from the middle outwards');
     let n = 1; while (!c.ready && n < 200) { c.update(); n++; } assert.ok(c.ready && n < 60 && c.asked >= 128 * 128, 'all known after ' + n + ' updates');
     assert.deepEqual([c.at(0, 0), c.at(3.9, -3.9), c.at(4.6, 0), c.at(-20, 12), c.at(40, 0)], [3, 3, 0, 0, -Infinity], 'the roof, the ground, and outside its square');
