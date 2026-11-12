@@ -1894,6 +1894,23 @@ it), `rig.follow.reset()` stills it for a new round. Your own thing that hangs (
 from, never into the body; for a thing you place yourself each frame pass `apply: false` and add the `x`, `z`
 (radians) and `y` (metres) it returns.
 
+**A live face** (`gs.models.human` people, by themselves): close up, a person blinks, and the eyes keep to a
+spot in the world while the head moves, as eyes do, and jump to a new one now and then or when the head has
+turned away from the old one. Nothing to call: the rig steps the face with the body. `person.face` takes what
+`gs.characters.Face` takes: `face.say('Over here!')` speaks the line and moves the jaw and the lips to it,
+`face.mouth(level)` opens the mouth from your own source, `face.set('smile', 1)` eases an expression in (`open`,
+`wide`, `round`, `smile`, `frown`, `surprise`, `blink`, and on these people `squint`, `sad`, `angry`, `wince`,
+`winkL`, `winkR` too), `face.blink()` blinks now and `face.blinkEvery = 0` stops the blinks. And it looks:
+`face.look(point)` puts the eyes on a point in the world (`[x, y, z]` or `{ x, y, z }`) or on an `Object3D`,
+followed as it moves, each eye by itself, so they cross a little onto something close; `face.look(null)` lets
+them wander again. Eyes turn about 30 degrees to either side and less up and down, so turn the head yourself
+for more (`gs.characters.lookAt`); `face.yaw` and `face.pitch` say where they are turned. `face.wince()` screws
+the eyes shut for a moment (`Reactions` does it at a blow). The eyes of someone lying on the ground close by
+themselves (the head lying over, low down): `face.awake = true` keeps them open (the wounded), `false` closes
+them wherever he is, `null` is as made. The head has bones for all of it (`bones.eyeL`, `lidL`, `browL`,
+`browInL`, `cornerL` and their `R` twins, and `bones.jaw`), lips that part, and teeth and a tongue behind them.
+At the middle and far levels, and in a crowd, the face is still and costs nothing.
+
 **Missions** (`gs.missions`): write a mission as a script that reads like the plan:
 `Mission(function* (m) { m.objective('Reach the roof'); yield m.until(() => roof.has(me)); m.checkpoint();
 m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` makes areas, `all()` and

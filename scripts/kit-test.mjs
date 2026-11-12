@@ -2136,7 +2136,7 @@ console.log('physics ok');
     };
     const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
     const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
-    assert.equal(Object.keys(b.bones).length, 51, 'fifty-one bones: twenty-three and fourteen to a hand');
+    assert.equal(Object.keys(b.bones).length, 62, 'sixty-two bones: twenty-three, fourteen to a hand and eleven in the face');
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
     const worst = {}, note = (k, v) => { worst[k] = Math.max(worst[k] || 0, v); };
@@ -2379,6 +2379,111 @@ console.log('physics ok');
   { const mk = on => { const p = skeleton({}); p.rig.steps = false; if (!on) { p.rig.momentum = false; p.rig.follow = null; } return p; }, time = p => { let s = 0; const t0 = performance.now(); for (let i = 0; i < 20000; i++) { s += .0003; p.position.z = s * 3; if (i % 240 < 120) p.rig.blend(STR, 3.3); else p.rig.play('idle', { fade: .22 }); p.rig.update(dt, { speed: 3.3 }); } return (performance.now() - t0) / 20000 * 1000; };
     time(mk(true)); time(mk(false)); const a = time(mk(true)), b = time(mk(false)); assert.ok(a - b < 12, `momentum and follow-through cost ${(a - b).toFixed(1)} microseconds a person an update`); }
   console.log('gs.models: momentum between moves (a joint keeps its speed into the new move, no knee bends back, a cut is a cut) and follow-through (arms, head, rib cage, shoulders; a bag, a canteen, a holster and a pack that swing and bounce; still in a steady walk, at a stroke, far off) ok');
+}
+// a live face (human-head.js, human-face.js): the head is sculpted with bones for the eyes, the upper lids, the brows, the jaw and the
+// corners of the mouth, lips cut apart along their line, teeth and the inside of a mouth; LiveFace puts those bones where blinks,
+// a look, an expression or a line of speech have them, and the rig steps it with the body
+{
+  const F = await import('../src/kit/models/field.js'); await F.thinReady;
+  const HS = await import('../src/kit/models/human-shapes.js'), HH = await import('../src/kit/models/human-head.js'), { skeleton } = await import('../src/kit/models/human.js'), { LiveFace, LIVE_SHAPES } = await import('../src/kit/models/human-face.js'), { Vector3, Object3D } = await import('three');
+  const FACE = ['jaw', 'eyeL', 'eyeR', 'lidL', 'lidR', 'browL', 'browR', 'browInL', 'browInR', 'cornerL', 'cornerR'], dt = 1 / 60;
+  // ---- the sculpted head
+  {
+    const face = { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, { HC, EYE, MOUTH } = HH;
+    const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'shirt', sleeves: 'long', pockets: 0 }, legs: { kind: 'trousers' }, feet: { kind: 'shoes' }, face, hat: null, belt: null, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
+    const p = HS.sculpt(HS.jobsFor(sp).find(j => j.kind === 'head')), P = p.P, n = p.n, I = p.I[0], slotOf = i => p.slots[p.slot[i]], inside = i => ['mouth', 'teeth', 'tongue'].includes(slotOf(i));
+    const W = (i, name) => { const b = p.names.indexOf(name); let w = 0; for (let k = 0; k < 4; k++) if (p.SI[i * 4 + k] === b) w += p.SW[i * 4 + k] / 255; return w; };
+    assert.ok(FACE.every(b => p.names.includes(b)), 'the head has the bones of a face: ' + p.names);
+    for (let i = 0; i < n; i++) assert.ok(Math.abs(p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3] - 255) <= 2, 'weights are whole, to their rounding (the mesh makes them whole)');
+    for (const b of FACE) { let most = 0; for (let i = 0; i < n; i++) most = Math.max(most, W(i, b)); assert.ok(most > .5, `${b} has skin of its own to move (${most.toFixed(2)} at the most)`); }
+    // each eyeball turns wholly with its own bone; what is inside the mouth is drawn close up only
+    let eyes = 0, loose = 0; for (let i = 0; i < n; i++) if (slotOf(i).startsWith('eye')) { eyes++; if (W(i, P[i * 3] > 0 ? 'eyeL' : 'eyeR') < .99) loose++; } assert.ok(eyes > 150 && loose === 0, `eyeballs on their own bones: ${loose} of ${eyes} points are not`);
+    const count = L => { let c = 0; for (let t = 0; t < p.I[L].length; t += 3) if (inside(p.I[L][t])) c++; return c; };
+    assert.ok(['mouth', 'teeth', 'tongue'].every(s => p.slots.includes(s)) && count(0) > 200 && count(1) === 0 && count(2) === 0, `teeth, a tongue and the inside of a mouth, at the close level only: ${[count(0), count(1), count(2)]}`);
+    // the lips are cut apart along their line: every point on it has a twin in the same place, one for each lip
+    const used = new Uint8Array(n); for (const i of I) used[i] = 1;
+    const by = new Map(); for (let i = 0; i < n; i++) { if (!used[i] || inside(i)) continue; const x = P[i * 3], hy = P[i * 3 + 1] - HC[1], hz = P[i * 3 + 2] - HC[2]; if (hz > .05 && Math.abs(hy - HH.lipLine(x, face)) < 2e-5 && Math.abs(x) < MOUTH.half * 1.09) { const k = Math.round(x * 1e6) + ',' + Math.round(P[i * 3 + 2] * 1e6); (by.get(k) || by.set(k, []).get(k)).push(i); } }
+    const pairs = [...by.values()].filter(l => l.length === 2), odd = [...by.values()].filter(l => l.length !== 2).length; assert.ok(pairs.length > 40 && odd === 0, `the lips' line: ${pairs.length} pairs of points, ${odd} without a twin`);
+    // posed by hand, as the skin blends it: a bone turned about its own place
+    const at = Object.fromEntries(HH.faceBones(face).map(([nm, , q]) => [nm, q]));
+    const rotX = (c, an) => ([x, y, z]) => { const dy = y - c[1], dz = z - c[2], C = Math.cos(an), S = Math.sin(an); return [x, c[1] + dy * C - dz * S, c[2] + dy * S + dz * C]; };
+    const posed = (i, T) => { const q = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], o = [0, 0, 0]; let ws = 0; for (let k = 0; k < 4; k++) { const w = p.SW[i * 4 + k]; if (!w) continue; const f = T[p.names[p.SI[i * 4 + k]]], r = f ? f(q) : q; o[0] += r[0] * w; o[1] += r[1] * w; o[2] += r[2] * w; ws += w; } return [o[0] / ws, o[1] / ws, o[2] / ws]; };
+    // the jaw dropped: the lips part in the middle and stay closed at the corners, the upper lip stays where it is, and no skin is torn
+    { const T = { jaw: rotX(at.jaw, .1) }, gap = fr => { let best = null; for (const pr of pairs) { const e = Math.abs(P[pr[0] * 3]) / MOUTH.half; if (!best || Math.abs(e - fr) < Math.abs(Math.abs(P[best[0] * 3]) / MOUTH.half - fr)) best = pr; } const A = posed(best[0], T), B = posed(best[1], T), up = A[1] > B[1] ? best[0] : best[1], U = posed(up, T); return [Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]), Math.hypot(U[0] - P[up * 3], U[1] - P[up * 3 + 1], U[2] - P[up * 3 + 2])]; };
+      const mid = gap(0), end = gap(.95); assert.ok(mid[0] > .008 && mid[0] < .013 && mid[1] < 1e-4 && end[0] < 2e-4, `a jaw turned a tenth of a radian parts the lips ${(mid[0] * 1000).toFixed(1)} mm in the middle (the upper lip moves ${(mid[1] * 1000).toFixed(2)}) and ${(end[0] * 1000).toFixed(2)} at the corners`);
+      let worst = 0; for (let t = 0; t < I.length; t += 3) { if (inside(I[t]) || inside(I[t + 1]) || inside(I[t + 2])) continue; const q = [0, 1, 2].map(k => posed(I[t + k], T)); for (let k = 0; k < 3; k++) { const a = I[t + k] * 3, b = I[t + (k + 1) % 3] * 3, l0 = Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]), A = q[k], B = q[(k + 1) % 3]; if (l0 > 1e-5) worst = Math.max(worst, Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) / l0); } }
+      assert.ok(worst < 2.5, `no edge of the skin is stretched far by it: ${worst.toFixed(2)} times at the most`); }
+    // a blink: how much of the left eyeball shows from straight in front, open and with the lid turned as far as the head says it closes
+    { const tris = []; for (let t = 0; t < I.length; t += 3) { if (slotOf(I[t]).startsWith('eye')) continue; const x = P[I[t] * 3], hy = P[I[t] * 3 + 1] - HC[1]; if (Math.abs(x - EYE[0]) < .03 && Math.abs(hy) < .03 && P[I[t] * 3 + 2] - HC[2] > .05) tris.push(I[t], I[t + 1], I[t + 2]); }
+      const st = .00025, GX = 140, GY = 80, x0 = EYE[0] - .0175, y0 = HC[1] - .01, R2 = .0122 * .0122;
+      const shows = T => { const Q = new Map(), q = i => Q.get(i) || Q.set(i, T ? posed(i, T) : [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]).get(i), cover = new Uint8Array(GX * GY); let open = 0;
+        for (let t = 0; t < tris.length; t += 3) { const A = q(tris[t]), B = q(tris[t + 1]), C = q(tris[t + 2]), det = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1]); if (Math.abs(det) < 1e-14) continue;
+          const g0 = Math.max(0, Math.ceil((Math.min(A[0], B[0], C[0]) - x0) / st)), g1 = Math.min(GX - 1, Math.floor((Math.max(A[0], B[0], C[0]) - x0) / st)), h0 = Math.max(0, Math.ceil((Math.min(A[1], B[1], C[1]) - y0) / st)), h1 = Math.min(GY - 1, Math.floor((Math.max(A[1], B[1], C[1]) - y0) / st));
+          for (let gx = g0; gx <= g1; gx++) for (let gy = h0; gy <= h1; gy++) { const x = x0 + gx * st, y = y0 + gy * st, l1 = ((B[1] - C[1]) * (x - C[0]) + (C[0] - B[0]) * (y - C[1])) / det, l2 = ((C[1] - A[1]) * (x - C[0]) + (A[0] - C[0]) * (y - C[1])) / det, l3 = 1 - l1 - l2; if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+            const r2 = R2 - (x - EYE[0]) ** 2 - (y - HC[1]) ** 2; if (r2 > 0 && l1 * A[2] + l2 * B[2] + l3 * C[2] > HC[2] + EYE[2] + Math.sqrt(r2)) cover[gx + gy * GX] = 1; } }
+        for (let gx = 0; gx < GX; gx++) for (let gy = 0; gy < GY; gy++) if (R2 - (-.0175 + gx * st) ** 2 - (-.01 + gy * st) ** 2 > 0 && !cover[gx + gy * GX]) open++; return open * st * st * 1e6; };
+      const open = shows(null), half = shows({ lidL: rotX(at.lidL, p.lid * .5) }), shut = shows({ lidL: rotX(at.lidL, p.lid) });
+      assert.ok(p.lid > .6 && p.lid < 1 && open > 100 && half > open * .3 && half < open * .65 && shut < open * .02, `the upper lid closes the eye in ${p.lid.toFixed(2)} rad: ${open.toFixed(0)} mm2 of the eyeball shows open, ${half.toFixed(0)} half way, ${shut.toFixed(1)} shut`); }
+  }
+  // ---- the face at work, on a bare skeleton
+  const mk = () => { const p = skeleton({}); p.face.blinkEvery = 0; return p; }, run = (p, secs, each) => { for (let i = 0; i < Math.round(secs / dt); i++) { p.rig.update(dt); p.updateMatrixWorld(true); each?.(i); } };
+  const v = new Vector3(), gaze = b => { b.getWorldDirection(v); return [Math.atan2(v.x, v.z), Math.asin(-v.y)]; }, headAt = p => p.bones.head.getWorldPosition(new Vector3());
+  { const p = skeleton({}), f = p.face, B = p.bones;
+    assert.ok(f instanceof LiveFace && p.rig.face === f && FACE.every(b => B[b]?.isBone) && LIVE_SHAPES.includes('blink') && LIVE_SHAPES.includes('winkL'), 'a person has a live face, and bones for it');
+    // blinks by themselves, a few seconds apart; one asked for shuts in a twentieth of a second and is over in a fifth
+    let blinks = 0, was = 0; run(p, 40, () => { const c = B.lidL.rotation.x > f.lid * .8; if (c && !was) blinks++; was = c; }); assert.ok(blinks >= 5 && blinks <= 26, `blinks by itself: ${blinks} in 40 seconds`);
+    f.blinkEvery = 0; run(p, 1); const lid0 = B.lidL.rotation.x; f.blink(); const seen = []; run(p, .3, () => seen.push(B.lidL.rotation.x));
+    assert.ok(Math.abs(lid0) < .2 * f.lid && Math.max(...seen.slice(0, 5)) > f.lid * .9 && Math.abs(B.lidR.rotation.x - B.lidL.rotation.x) < 1e-9 && seen.at(-1) < f.lid * .2, `a blink: open ${lid0.toFixed(2)}, shut ${Math.max(...seen).toFixed(2)} of ${f.lid} within five updates, open again ${seen.at(-1).toFixed(2)}`); }
+  // set(): every shape moves what it names
+  { const p = mk(), f = p.face, B = p.bones, R = f.rest, put = (s, a = 1) => { for (const k of LIVE_SHAPES) f.set(k, 0); if (s) f.set(s, a); run(p, .7); };
+    put('blink'); assert.ok(Math.abs(B.lidL.rotation.x - f.lid) < .01 && Math.abs(B.lidR.rotation.x - f.lid) < .01, 'blink: both lids down');
+    put('winkL'); assert.ok(B.lidL.rotation.x > f.lid * .97 && B.lidR.rotation.x < f.lid * .2, 'a wink: one lid'); put('winkR'); assert.ok(B.lidR.rotation.x > f.lid * .97 && B.lidL.rotation.x < f.lid * .2);
+    put('open'); const jaw = B.jaw.rotation.x; assert.ok(jaw > .06 && jaw < .09 && B.cornerL.position.y < R.cornerL.y - .001, `open: the jaw drops (${jaw.toFixed(3)} rad) and the corners come some of the way`);
+    put('smile'); assert.ok(B.cornerL.position.y > R.cornerL.y + .003 && B.cornerL.position.x > R.cornerL.x + .003 && B.cornerR.position.x < R.cornerR.x - .003 && B.lidL.rotation.x > .02, 'a smile: corners up and out, eyes a little narrowed');
+    put('frown'); assert.ok(B.cornerL.position.y < R.cornerL.y - .003 && B.cornerR.position.y < R.cornerR.y - .003, 'a frown: corners down');
+    put('round'); assert.ok(B.cornerL.position.x < R.cornerL.x - .003 && B.cornerR.position.x > R.cornerR.x + .003 && B.cornerL.position.z > R.cornerL.z + .002, 'a round mouth: corners in and forward'); put('wide'); assert.ok(B.cornerL.position.x > R.cornerL.x + .003);
+    put('surprise'); assert.ok(B.browL.position.y > R.browL.y + .004 && B.browInR.position.y > R.browInR.y + .003 && B.lidL.rotation.x < -.05 && B.jaw.rotation.x > .01, 'surprise: brows up, eyes wide, the mouth a little open');
+    put('angry'); assert.ok(B.browInL.position.y < R.browInL.y - .003 && B.browInL.position.x < R.browInL.x - .002 && B.browInR.position.x > R.browInR.x + .002, 'anger: the inner ends of the brows down and together');
+    put('sad'); assert.ok(B.browInL.position.y > R.browInL.y + .003 && B.cornerL.position.y < R.cornerL.y - .002, 'sorrow: inner ends up, corners down');
+    put('squint'); assert.ok(B.lidL.rotation.x > .3 * f.lid && B.lidL.rotation.x < .6 * f.lid, 'a squint: lids part of the way');
+    put('blink', .5); assert.ok(Math.abs(B.lidL.rotation.x - .5 * f.lid) < .08, 'amounts between: half a blink');
+    put(null); assert.ok(Math.abs(B.jaw.rotation.x) < 1e-3 && B.cornerL.position.distanceTo(R.cornerL) < 1e-4 && B.browL.position.distanceTo(R.browL) < 1e-4, 'and back to rest');
+    // eased, never snapped
+    f.set('open', 1); p.rig.update(dt); assert.ok(B.jaw.rotation.x > 0 && B.jaw.rotation.x < .03, 'a shape is eased in'); }
+  // look(): the eyes onto a point, each eye by itself (they cross onto something close), as far as eyes turn, an Object3D followed
+  { const p = mk(), f = p.face, B = p.bones; run(p, .2); const h = headAt(p);
+    f.look([h.x + 1, h.y + .06, h.z + 3]); run(p, .3); const a = gaze(B.eyeL); const e = B.eyeL.getWorldPosition(new Vector3()); assert.ok(Math.abs(a[0] - Math.atan2(h.x + 1 - e.x, h.z + 3 - e.z)) < .03 && f.yaw > .1, `the eyes go to a point on the left: ${a[0].toFixed(2)}`);
+    f.look({ x: h.x - 9, y: h.y, z: h.z + 1 }); run(p, .3); assert.ok(f.yaw < -.5 && f.yaw > -.6, `no further than eyes turn: ${f.yaw.toFixed(2)}`);
+    f.look([h.x, h.y + 3, h.z + 1]); run(p, .3); const up = f.pitch; f.look([h.x, h.y - 3, h.z + 1]); run(p, .3); assert.ok(up < -.3 && up > -.4 && f.pitch > .4 && f.pitch < .5 && B.lidL.rotation.x > .2 * f.lid, `up ${up.toFixed(2)} and down ${f.pitch.toFixed(2)}, and the lid comes down with the eye`);
+    const near = new Object3D(), before = (x, y, z) => B.head.localToWorld(near.position.set(x, y, z)); before(0, .165, .3); f.look(near); run(p, .3); assert.ok(B.eyeL.rotation.y < -.05 && B.eyeR.rotation.y > .05, `both eyes turn in onto something close: ${B.eyeL.rotation.y.toFixed(2)}, ${B.eyeR.rotation.y.toFixed(2)}`);
+    before(.08, .165, .3); run(p, .3); assert.ok(B.eyeL.rotation.y > .1 && B.eyeR.rotation.y > B.eyeL.rotation.y + .1, 'and follow it as it moves');
+    f.look(null); run(p, 1); assert.ok(Math.abs(f.yaw) < .36 && f.target === null, 'look(null): they wander again'); }
+  // by themselves the eyes keep to a spot in the world while the head turns, and jump on when it has turned too far
+  { const p = mk(), f = p.face, B = p.bones; let tries = 0; do { f.dartT = 0; run(p, .3); } while ((Math.abs(f.yaw) > .06 || f.glance) && ++tries < 200);
+    f.dartT = 9; const g0 = gaze(B.eyeL)[0], h0 = gaze(B.head)[0], y0 = f.yaw; run(p, .3, () => { p.rotation.y += .4 * dt; }); const g1 = gaze(B.eyeL)[0], turned = gaze(B.head)[0] - h0;
+    assert.ok(turned > .07 && Math.abs(g1 - g0) < .03 && Math.abs(y0 - f.yaw - turned) < .03, `the head turned ${turned.toFixed(2)} rad with the body: the eyes still look the same way (${(g1 - g0).toFixed(3)} off), turned ${(y0 - f.yaw).toFixed(2)} back in the head`);
+    p.rotation.y += 1.2; run(p, .3); assert.ok(Math.abs(f.yaw) < .2, `turned far at a stroke, they jump to look ahead again: ${f.yaw.toFixed(2)}`);
+    let jumps = 0, last = f.yaw; f.dartT = 0; run(p, 20, () => { if (Math.abs(f.yaw - last) > .02) jumps++; last = f.yaw; }); assert.ok(jumps >= 4, `standing, they dart to a new spot now and then: ${jumps} moves in 20 seconds`); }
+  // the mouth: a level from the game, and a line of speech
+  { const p = mk(), f = p.face, B = p.bones; f.mouth(1); run(p, .3); const open = B.jaw.rotation.x; f.mouth(null); run(p, .3); assert.ok(open > .05 && Math.abs(B.jaw.rotation.x) < .003, `mouth(level) opens the jaw: ${open.toFixed(3)}`);
+    f.say('Hello there, over here'); let most = 0, moves = 0, last = 0, t = 0; assert.equal(f.talking, true); while (f.talking && t < 6) { run(p, dt); t += dt; const j = B.jaw.rotation.x; most = Math.max(most, j); if (Math.abs(j - last) > .002) moves++; last = j; } run(p, .3);
+    assert.ok(t > .8 && t < 3 && most > .025 && most < .075 && moves > 15 && Math.abs(B.jaw.rotation.x) < .003, `a line of speech moves the jaw for ${t.toFixed(1)} s, ${most.toFixed(3)} rad at the most, and shuts it`); }
+  // asleep when told so, and by itself when the head lies over and low (a body on the ground); bent over is not lying down
+  { const p = mk(), f = p.face, B = p.bones, shut = () => B.lidL.rotation.x > f.lid * .95 && B.lidR.rotation.x > f.lid * .95;
+    run(p, .5); assert.ok(!shut()); f.awake = false; run(p, .6); assert.ok(shut() && Math.abs(f.yaw) < .01, 'awake = false: eyes closed and still'); f.awake = null; run(p, .5); assert.ok(!shut(), 'and open again');
+    p.rotation.x = -Math.PI / 2; run(p, .8); assert.ok(shut(), 'laid on the ground: the eyes close by themselves'); f.awake = true; run(p, .5); assert.ok(!shut(), 'awake = true: open even so');
+    f.awake = null; p.rotation.x = 0; run(p, .6); assert.ok(!shut(), 'on its feet again: open');
+    const q = mk(); run(q, .2); q.bones.waist.rotation.x = 1.35; q.updateMatrixWorld(true); for (let i = 0; i < 60; i++) q.face.step(dt); assert.ok(q.face.lie === 0 && q.bones.lidL.rotation.x < q.face.lid * .3, 'bent double is not lying down'); }
+  // a wince; the rig steps the face close up only; a face whose rig is not run is stepped by update(); still() for a crowd's bake
+  { const p = mk(), f = p.face, B = p.bones, R = f.rest; run(p, .3); f.wince(); run(p, .1); const lid = B.lidL.rotation.x, brow = B.browInL.position.y - R.browInL.y; run(p, 1.2);
+    assert.ok(lid > f.lid * .8 && brow < -.0015 && B.lidL.rotation.x < f.lid * .2 && Math.abs(B.browInL.position.y - R.browInL.y) < 3e-4, `a wince: eyes screwed shut at once (${lid.toFixed(2)}), brows down, and gone in a second`);
+    f.set('blink', 1); p.rig.fine = false; run(p, .5); assert.ok(B.lidL.rotation.x < f.lid * .2, 'seen from further off the face is left alone'); f.update(.5); assert.ok(B.lidL.rotation.x < f.lid * .2, 'and update() leaves it to the rig');
+    p.rig.fine = true; run(p, .5); assert.ok(B.lidL.rotation.x > f.lid * .95); f.still(); assert.ok(B.lidL.rotation.x === 0 && B.jaw.rotation.x === 0 && B.eyeL.rotation.y === 0 && B.cornerL.position.equals(R.cornerL), 'still(): every bone back at rest');
+    const q = skeleton({}), own = new LiveFace(q, q.bones); own.blinkEvery = 0; own.set('open', 1); for (let i = 0; i < 40; i++) own.update(dt); assert.ok(q.bones.jaw.rotation.x > .06, 'a face with no rig running is stepped by update()'); }
+  // and what it costs
+  { const time = on => { const p = skeleton({}); p.rig.steps = false; if (!on) p.rig.face = null; const t0 = performance.now(); for (let i = 0; i < 20000; i++) { p.rig.update(dt); if (i % 4 === 0) p.updateMatrixWorld(true); } return (performance.now() - t0) / 20000 * 1000; };
+    time(true); time(false); const a = time(true), b = time(false); assert.ok(a - b < 8, `a live face costs ${(a - b).toFixed(1)} microseconds a person an update`); }
+  console.log('gs.models: a live face (bones for eyes, lids, brows, jaw and mouth corners; lips that part; a blink that closes the eye; eyes onto a point and holding a spot as the head turns; expressions, speech, sleep, a wince) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
@@ -3662,8 +3767,9 @@ console.log('physics ok');
 
   // a nudge: it gives and comes back, and never leaves its feet
   {
-    const S = stage(), spine = S.f.rig.parts.spine; let lean = 0;
+    const S = stage(), spine = S.f.rig.parts.spine; let lean = 0, winced = 0; S.f.face = { wince: a => { winced = a; } };
     const out = run(S, 1.6, { .3: r => r.hit([0, 0, -.35]), .4: () => { lean = spine.rotation.x; } });
+    assert.ok(winced >= .35 && winced <= 1, 'a face that can wince does so at a blow: ' + winced);
     assert.ok(out.log === '' && !S.r.busy && out.steps === 0 && Math.hypot(S.f.position.x, S.f.position.z) < .02, 'a nudge is only swayed off: ' + out.log);
     assert.ok(Math.abs(lean - .03) > .02, 'the trunk gives under it (' + lean.toFixed(2) + ')');
   }
@@ -3950,7 +4056,7 @@ console.log('physics ok');
   const P = (x, y, z) => ({ x, y, z });
   // the map of what the sky can see
   {
-    const c = new Cover({ level, ground }); assert.ok(c.N === 128 && c.cell === .5 && !c.ready && c.at(0, 0) === -Infinity && c.open(0, 1, 0), 'nothing known yet: all open');
+    const c = new Cover({ level, ground, ms: 1e9 }); assert.ok(c.N === 128 && c.cell === .5 && !c.ready && c.at(0, 0) === -Infinity && c.open(0, 1, 0), 'nothing known yet: all open');
     c.place(0, 1.6, 0).update(); assert.ok(!c.ready && c.asked <= 400 && c.at(0, 0) === 3 && c.at(30, 30) === -Infinity, 'a few hundred spots a frame, from the middle outwards');
     let n = 1; while (!c.ready && n < 200) { c.update(); n++; } assert.ok(c.ready && n < 60 && c.asked >= 128 * 128, 'all known after ' + n + ' updates');
     assert.deepEqual([c.at(0, 0), c.at(3.9, -3.9), c.at(4.6, 0), c.at(-20, 12), c.at(40, 0)], [3, 3, 0, 0, -Infinity], 'the roof, the ground, and outside its square');

@@ -1427,6 +1427,24 @@ export interface FaceT {
   say(text: string, o?: { pitch?: number; rate?: number; volume?: number; lang?: string }): Promise<boolean>;
   hush(): FaceT; mouth(level: number | null): FaceT; blink(): FaceT; update(dt: number): FaceT;
 }
+/** What a gs.models.human() person's face can be set to. */
+export type LiveShape = 'open' | 'wide' | 'round' | 'smile' | 'frown' | 'surprise' | 'blink' | 'squint' | 'sad' | 'angry' | 'wince' | 'winkL' | 'winkR';
+/**
+ * The face of a gs.models.human() person (person.face): what gs.characters.Face takes (set, say, mouth, blink, blinkEvery), on a sculpted head with bones for
+ * the eyes, the upper lids, the brows, the jaw and the corners of the mouth. It blinks by itself, and its eyes keep to a spot in the world while the head
+ * moves and jump to a new one now and then. The rig steps it with the body, close up only, so there is no update() to call.
+ */
+export interface LiveFaceT extends FaceT {
+  set(name: LiveShape, amount?: number): LiveFaceT;
+  /** The eyes onto a point in the world, or an Object3D (followed as it moves); null lets them wander again. Each eye turns by itself, as far as eyes do (about 30 degrees to either side): turn the head yourself for more. */
+  look(target: [number, number, number] | { x: number; y: number; z: number } | Loose | null): LiveFaceT;
+  /** Eyes screwed shut and the mouth pulled back for a moment, as at a blow (gs.characters.Reactions does it by itself). amount 0..1 (1), seconds (.3). */
+  wince(amount?: number, seconds?: number): LiveFaceT;
+  /** true: awake whatever; false: eyes closed and still; null (as made): awake unless the head lies over, low down (a body on the ground). */
+  awake: boolean | null;
+  /** Where the eyes are turned, in the head's own terms (radians): yaw to the person's left, pitch down. */
+  readonly yaw: number; readonly pitch: number;
+}
 /** Thousands of flockers: on the graphics chip (WebGPU compute) where the phone can, else the CPU. */
 export declare class Swarm {
   constructor(o?: { count?: number; w?: number; h?: number; speed?: number; sight?: number; separate?: number; align?: number; cohere?: number; wander?: number; edges?: 'wrap' | 'bounce'; seed?: number; gpu?: boolean | 'auto' });
@@ -2735,6 +2753,7 @@ export interface ModelsPart {
    * The skeleton: the joints poses turn (hips, spine (the rib cage), head, armL/R, foreL/R, handL/R, legL/R, shinL/R, footL/R) and, between them, a waist, a neck, a collar bone to each arm, the turn along each forearm, toes and three joints a finger, which the rig sets by itself (rig.fill() after turning joints yourself). Further off the small ones stand still and cost nothing.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
    * Hair in strands: close up, layers of strands (gs.models.fur) lie over the sculpted hair, streaming from the crown (from the bun, for hair tied back), over a moustache, and over a beard (beard: 0..1.5 how long, true = .6; painted stubble stays as it is). person.hair is that coat (null: bald with no beard, under a hat (the hair there stays as sculpted), strands: false, or the slowest phones); strands: { length (metres), layers, lean, tile } tunes it.
+   * A live face: person.face (a LiveFaceT) blinks and moves its eyes by itself close up, with nothing to call; face.look(point) puts the eyes on something, face.say(text) speaks a line and moves the mouth to it, face.set('smile' | 'frown' | 'surprise' | 'sad' | 'angry' | 'squint' | ..., 0..1) eases an expression in, face.wince() is a flinch, and the eyes of someone lying on the ground close (face.awake = true keeps them open).
    * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {

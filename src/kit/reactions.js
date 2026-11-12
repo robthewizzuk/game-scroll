@@ -140,6 +140,7 @@ export class Reactions {
     const p = vec(push), s = this.scale, b = this.body.position, power = Math.hypot(p.x, p.y, p.z); if (!(power > 0)) return this;
     if (this.doll) { const a = at ? vec(at) : null, part = a ? this.nearest(a) : 'spine'; this.doll.hit(part, p.x, p.y, p.z, a); return this; }
     if (this.state === 'falling' || this.state === 'down' || this.state === 'rising') return this;
+    this.body.face?.wince?.(clamp(power / 2.5, .35, 1));   // (a person with a live face screws up their eyes at it)
     const a = at ? vec(at) : { x: b.x, y: b.y + 1.25 * s, z: b.z }, h = (a.y - b.y) / s, [lx, lz] = this.local(p.x, p.z), [ax] = this.local(a.x - b.x, a.z - b.z);
     const S = this.spr, kick = (n, x, y, z) => { const q = S[n]; if (q) { q.v[0] += x; q.v[1] += y; q.v[2] += z; } };
     const k = 2.6 / Math.sqrt(this.steady), off = clamp(ax / s, -.3, .3);

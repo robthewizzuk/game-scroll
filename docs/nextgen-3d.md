@@ -1016,7 +1016,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   each piece is saved on the phone for next time. So make people in `make()` or `reset()`; when there are
   several kinds, make them together and first: `const [a, b] = human.all([optsA, optsB])` (or
   `human.need([...])` before anything costly is built, then `human(opts)` wherever you like).
-  Faces don't blink or speak yet (`person.face` is there, with nothing to move).
+  The face is live: it blinks, the eyes move by themselves and go where you send them
+  (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
+  `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide.
 - **`creature(o)`**: an animal or a monster made in code from a seed, built the way people are (soft shapes
   melted into one skin, creases in soft shadow, eyes that catch the light, no model or texture file). 35 to
   start from, in five kinds: four legs (`dog`, `cat`, `horse`, `deer`, `cow`, `pig`, `bear`, `rabbit`, `mouse`,
