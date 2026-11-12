@@ -221,6 +221,7 @@ export class Reactions {
     if (this.state === 'falling' || this.state === 'down') this.lie(dt);
     else if (this.state === 'rising') this.play(dt);
     if (this.own > 0 && this.held && this.state === 'steady') { this.mix(this.held, this.own); this.own = Math.max(0, this.own - dt / .3); if (!this.own) this.held = null; }
+    this.rig.fill?.();   // (a full skeleton: the joints in between follow what was turned above, a ragdoll's bodies included)
     return this;
   }
   // standing its ground: the weight sways over the feet and comes back; past the edge of the feet it has to step
@@ -434,6 +435,7 @@ export class Reactions {
   put(pose) {
     const rig = this.rig, P = rig.parts, k = rig.height / 1.8;
     for (const [n, base] of rig.base) { const a = pose.j[n] || [0, 0, 0]; P[n].rotation.set(base[0] + a[0], base[1] + a[1], base[2] + a[2]); }
+    rig.fill?.(pose.j);   // (a full skeleton: its waist, neck and collar bones, from the joints the pose names)
     const sh = pose.shift || [0, 0, 0]; P.hips.position.set(rig.hipX + sh[0] * k, rig.hip0 - (pose.drop || 0) * rig.height + sh[1] * k, rig.hipZ + sh[2] * k);
   }
   start(name, fade = .4, rate = 1) { this.held = this.grab(); this.clip = { ...clipOf(name), name, t: 0, fade, in: 1, rate }; }

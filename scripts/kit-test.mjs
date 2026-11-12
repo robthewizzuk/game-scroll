@@ -2093,18 +2093,18 @@ console.log('physics ok');
     const hand = HS.sculpt({ kind: 'hand', a: { limbs: 1, grip: 0, gloves: 0 } });
     assert.ok(hand.n > 400 && hand.P.length === hand.n * 3 && hand.N instanceof Int16Array && hand.ao instanceof Uint8Array, 'a hand: packed arrays');
     assert.ok(hand.I[0].length > hand.I[1].length && hand.I[1].length > hand.I[2].length && hand.I[2].length >= 3, 'three levels of detail: ' + hand.I.map(i => i.length / 3));
-    assert.deepEqual(hand.names, ['handL']); assert.ok(hand.slots.includes('skin'));
+    assert.ok(hand.names.length === 15 && hand.names.includes('handL') && ['thumb1L', 'thumb2L', 'index1L', 'index2L', 'index3L', 'little3L'].every(b => hand.names.includes(b)), 'a hand rides its own bone and fourteen finger bones: ' + hand.names); assert.ok(hand.slots.includes('skin'));
     for (let i = 0; i < hand.n; i += 7) assert.equal(hand.SW[i * 4] + hand.SW[i * 4 + 1] + hand.SW[i * 4 + 2] + hand.SW[i * 4 + 3], 255, 'weights are whole');
-    const right = HS.mirrored(hand); assert.deepEqual(right.names, ['handR']); assert.ok(right.P[0] === -hand.P[0] && right.I[0][1] === hand.I[0][2], 'the other hand: turned over');
+    const right = HS.mirrored(hand); assert.ok(right.names.includes('handR') && right.names.every(b => b.endsWith('R'))); assert.ok(right.P[0] === -hand.P[0] && right.I[0][1] === hand.I[0][2], 'the other hand: turned over');
     const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', sleeves: 'long', pockets: 4, buttons: '#888', collar: '#333' }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, face: { jaw: 1 }, hat: { kind: 'helmet', colour: '#444' }, belt: { colour: '#222' }, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
     const jobs = HS.jobsFor(sp), again = HS.jobsFor({ ...sp, top: { ...sp.top, buttons: '#abc', collar: '#def' }, hat: { kind: 'helmet', colour: '#f00' } });
     assert.deepEqual(jobs.map(j => j.kind), ['trunk', 'arm', 'hand', 'head', 'hat']); assert.deepEqual(jobs.map(j => j.key), again.map(j => j.key), 'colours do not change what is sculpted');
     const hat = HS.sculpt(jobs[4]); assert.ok(hat.n > 300 && hat.slots.includes('helm') && hat.names[0] === '$', 'a helmet on a bone of its own');
     // each arm is a piece of its own (it turns in the shoulder; nothing is stretched across the armpit): one sculpt serves both, unless the left wears an armband
     assert.equal(jobs[1].side, 'LR'); const banded = HS.jobsFor({ ...sp, top: { ...sp.top, band: '#dd0' } }).filter(j => j.kind === 'arm'); assert.deepEqual(banded.map(j => j.side), ['L', 'R']); assert.equal(banded[1].key, jobs[1].key, 'the bare arm is shared');
-    const arm = HS.sculpt(jobs[1]); assert.deepEqual([...arm.names].sort(), ['armL', 'foreL']); assert.ok(arm.n > 500 && arm.slots.includes('top'));
+    const arm = HS.sculpt(jobs[1]); assert.deepEqual([...arm.names].sort(), ['armL', 'foreL', 'twistL']); assert.ok(arm.n > 500 && arm.slots.includes('top'));
     let minX = 9; for (let i = 0; i < arm.n; i++) minX = Math.min(minX, arm.P[i * 3]); assert.ok(minX > .1, 'a left arm, on its own side: ' + minX);
-    assert.deepEqual([...HS.mirrored(arm).names].sort(), ['armR', 'foreR']);
+    assert.deepEqual([...HS.mirrored(arm).names].sort(), ['armR', 'foreR', 'twistR']);
     // a kind that is not on the list is no hat and no pack, even a name every object answers to (a kind reaches the sculptor as text, over a worker message)
     for (const kind of ['constructor', 'toString', 'nonsuch']) {
       assert.deepEqual(HS.jobsFor({ ...sp, hat: { kind }, pack: { kind } }).map(j => j.kind), ['trunk', 'arm', 'hand', 'head'], 'no hat or pack of kind ' + kind);
@@ -2113,6 +2113,84 @@ console.log('physics ok');
     assert.ok(typeof HS.VERSION === 'string' && HS.VERSION.length > 4, 'the sculptor has a stamp for saved copies');
   }
   console.log('gs.models: sculpted people ok');
+  // the fuller skeleton (human-shapes.js BONES, Rig's full option and fill()): a waist under the rib cage, a neck under the head, a
+  // collar bone to each shoulder, a turn along each forearm, toes and fingers. The fifteen joints poses name end up turned exactly
+  // as fifteen bones alone turn them, and the legs and feet stand exactly where they stood.
+  {
+    const HS = await import('../src/kit/models/human-shapes.js'), { skeleton } = await import('../src/kit/models/human.js'), { Rig, LIFELIKE } = await import('../src/kit/poses.js'), T = await import('three');
+    const OLD = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
+    const OP = { spine: 'hips', head: 'spine', armL: 'spine', foreL: 'armL', handL: 'foreL', armR: 'spine', foreR: 'armR', handR: 'foreR', legL: 'hips', shinL: 'legL', footL: 'shinL', legR: 'hips', shinR: 'legR', footR: 'shinR' };
+    const fifteen = () => {
+      const B = {}; for (const b of OLD) { B[b] = new T.Bone(); B[b].name = b; }
+      for (const b of OLD) { const a = HS.AT[b], p = OP[b]; if (p) { const pa = HS.AT[p]; B[b].position.set(a[0] - pa[0], a[1] - pa[1], a[2] - pa[2]); B[p].add(B[b]); } else B[b].position.set(...a); }
+      const root = new T.Group(); root.add(B.hips); root.bones = B; root.rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1 }); return root;
+    };
+    const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
+    const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
+    assert.equal(Object.keys(b.bones).length, 51, 'fifty-one bones: twenty-three and fourteen to a hand');
+    for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
+    assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
+    const worst = {}, note = (k, v) => { worst[k] = Math.max(worst[k] || 0, v); };
+    for (const pose of ['idle', 'walk', 'jog', 'run', 'sprint', 'sneak', 'crouch', 'aim', 'jump', 'fall', 'land', 'hang', 'climb', 'cover', 'punch', 'takedown', 'downed', 'wave', 'sit']) for (let k = 0; k < 8; k++) {
+      put(pose, k / 8);
+      for (const n of OLD) { note('turn', wq(a.bones[n]).angleTo(wq(b.bones[n]))); note(/^(hips|leg|shin|foot)/.test(n) ? 'legs' : /^(spine|head)/.test(n) ? 'trunk' : 'arms', wp(a.bones[n]).distanceTo(wp(b.bones[n]))); }
+    }
+    assert.ok(worst.turn < 1e-6, 'every joint a pose names is turned as it was: off by ' + worst.turn);
+    assert.ok(worst.legs < 1e-9, 'the hips, legs and feet are where they were: off by ' + worst.legs);
+    assert.ok(worst.trunk < .07 && worst.arms < .08, `the rib cage, head and arms within a few centimetres (a back bent along its length leans a little less far): ${worst.trunk.toFixed(3)}, ${worst.arms.toFixed(3)}`);
+    // the waist and the neck take a share: half of a bend, less of a twist; the rib cage turns about a point above its own bone
+    const B = b.bones, one = j => { b.rig.add('t', () => ({ j })); b.rig.layers = [{ name: 't', w: 1, phase: 0, pin: true }]; b.rig.state = 't'; b.rig.weight = 0; b.rig.update(0); b.updateMatrixWorld(true); };
+    one({ spine: [.6, 0, 0], head: [.4, 0, 0] }); assert.ok(Math.abs(B.waist.rotation.x - .3) < 1e-6 && Math.abs(B.spine.rotation.x - .3) < 1e-6 && Math.abs(B.neck.rotation.x - .2) < 1e-6, 'a bend is shared half and half');
+    { const c = new T.Vector3(...HS.PIVOT.spine); assert.ok(B.spine.localToWorld(c.clone()).distanceTo(B.waist.localToWorld(c.clone())) < 1e-9, 'the rib cage turns about a point a hand above the waist'); assert.ok(Math.abs(B.spine.position.z + Math.sin(.3) * .17) < 1e-6, 'its own bone swings back under that point'); }
+    one({ spine: [0, .6, 0], head: [0, .6, 0] }); assert.ok(Math.abs(B.waist.rotation.y - .15) < 1e-6 && Math.abs(B.neck.rotation.y - .27) < 1e-6, 'a twist is taken higher up the back: a quarter at the waist');
+    one({ spine: [.3, -.5, .2] }); { const q = new T.Quaternion().setFromEuler(new T.Euler(.3, -.5, .2)); assert.ok(B.hips.getWorldQuaternion(new T.Quaternion()).multiply(q).angleTo(wq(B.spine)) < 1e-6, 'whatever the turn, the two shares make the whole of it'); }
+    // fill() again changes nothing; a rig that is not `full` leaves the joints in between alone
+    { put('run', .3); const was = Object.values(B).map(o => o.matrixWorld.clone()); b.rig.fill().fill(); b.updateMatrixWorld(true); let w = 0; Object.values(B).forEach((o, i) => { for (let k = 0; k < 16; k++) w = Math.max(w, Math.abs(o.matrixWorld.elements[k] - was[i].elements[k])); }); assert.ok(w < 1e-9, 'fill() twice more: nothing moves (' + w + ')'); }
+    { const c = skeleton(), plain = new Rig(c.bones, { poses: LIFELIKE }); plain.play('run'); plain.update(.1, { speed: 5 }); assert.ok(plain.fill() === plain && !plain.base.has('waist') && c.bones.waist.quaternion.w === 1 && c.bones.collarL.quaternion.w === 1 && c.bones.spine.position.z === 0, 'fifteen joints on the same bones: as ever'); }
+    // a collar bone goes with its arm: nothing while it hangs, up as it is raised, forward as it reaches; the arm itself points as the pose said
+    for (const [arm, lift, fwd, up] of [[[0, 0, 0], 0, 0, 0], [[-1.57, 0, 0], .2, .25, .03], [[-3, 0, 0], .42, .04, .065], [[0, 0, 1.57], .2, 0, .03]]) {
+      for (const r of [a, b]) { r.rig.add('t', () => ({ j: { armL: arm, armR: [arm[0], -arm[1], -arm[2]] } })); r.rig.weight = 0; } put('t');
+      assert.ok(Math.abs(B.collarL.rotation.z - lift) < .02 && Math.abs(B.collarL.rotation.y + fwd) < .02 && Math.abs(B.collarR.rotation.z + lift) < .02 && Math.abs(B.collarR.rotation.y - fwd) < .02, `collar bones for an arm at ${arm}: ${B.collarL.rotation.z.toFixed(2)}, ${B.collarL.rotation.y.toFixed(2)}`);
+      assert.ok(wp(B.armL).y - wp(a.bones.armL).y >= up - .005 && wq(B.armL).angleTo(wq(a.bones.armL)) < 1e-6 && wq(B.armR).angleTo(wq(a.bones.armR)) < 1e-6, 'the shoulder rises, the arm points where it did');
+    }
+    // the forearm's skin turns with the hand: seven tenths of the way at the wrist
+    one({ handL: [0, .8, 0], handR: [.2, -.5, 0] }); assert.ok(Math.abs(B.twistL.rotation.y - .56) < 1e-6 && Math.abs(B.twistR.rotation.y + .35) < .01 && B.foreL.rotation.y === 0, 'the turn along the forearm: ' + B.twistL.rotation.y);
+    // toes: flat on the ground while the heel comes up off them (with fifteen bones the tip of the shoe went centimetres into it)
+    for (const pose of ['walk', 'jog', 'run', 'sprint']) {
+      let lowA = 9, lowB = 9; for (const r of [a, b]) r.rig.weight = 1;
+      for (let k = 0; k < 48; k++) { put(pose, k / 48); for (const sd of ['L', 'R']) { lowA = Math.min(lowA, a.bones['foot' + sd].localToWorld(new T.Vector3(.005, -.085, .185)).y); lowB = Math.min(lowB, B['toe' + sd].localToWorld(new T.Vector3(0, -.028, .065)).y); } }
+      assert.ok(lowB > -.008 && lowA < -.03, `${pose}: the tip of the shoe stays on the ground (${lowB.toFixed(3)}; it went to ${lowA.toFixed(3)})`);
+    }
+    // seen from further off (rig.fine = false: a person at its middle and far levels) the forearm's turn and the toes are left
+    // alone, since nothing shows them there; the back, the neck and the collar bones go on as before; and they pick up again
+    { const c = skeleton(), C = c.bones, at = (pose, ph) => { c.rig.layers = [{ name: pose, w: 1, phase: ph, pin: true }]; c.rig.state = pose; c.rig.update(0); };
+      c.rig.add('t', () => ({ j: { spine: [.6, 0, 0], armL: [-3, 0, 0], handL: [0, .8, 0] } })); c.rig.weight = 0;
+      c.rig.fine = false; at('t', 0); assert.ok(C.twistL.rotation.y === 0 && Math.abs(C.waist.rotation.x - .3) < 1e-6 && C.collarL.rotation.z > .3, 'further off: no turn along the forearm, the back and the shoulder as ever');
+      let toe = 0; for (let k = 0; k < 16; k++) { at('run', k / 16); toe = Math.max(toe, Math.abs(C.toeL.rotation.x), Math.abs(C.toeR.rotation.x)); } assert.equal(toe, 0, 'further off: the toes are left alone');
+      c.rig.fine = true; at('t', 0); assert.ok(Math.abs(C.twistL.rotation.y - .56) < 1e-6, 'close again: the forearm turns'); toe = 0; for (let k = 0; k < 16; k++) { at('run', k / 16); toe = Math.max(toe, Math.abs(C.toeL.rotation.x)); } assert.ok(toe > .2, 'close again: the toes bend'); }
+    // the fingers: three bones each from the knuckle, two to the thumb, a bigger hand's further apart; the other hand's in a mirror
+    { const fb = HS.fingerBones({ limbs: 1, grip: false }), big = HS.fingerBones({ limbs: 1.2, grip: false }), shut = HS.handPlan({ limbs: 1, grip: true }), open = HS.handPlan({ limbs: 1, grip: false });
+      assert.deepEqual(fb.map(q => q[0] + '<' + q[1]).slice(0, 4), ['index1L<handL', 'index2L<index1L', 'index3L<index2L', 'middle1L<handL']); assert.equal(fb.length, 14);
+      assert.ok(Math.hypot(...big[1][2].map((v, i) => v - big[0][2][i])) > Math.hypot(...fb[1][2].map((v, i) => v - fb[0][2][i])) * 1.1 && shut.bend[0] > open.bend[0] + .5, 'joints by the hand\'s size; a gripping hand is sculpted bent');
+      assert.ok(B.index1R.parent === B.handR && B.thumb2L.parent === B.thumb1L && Math.abs(B.index1R.position.x + B.index1L.position.x) < 1e-12 && B.index1R.position.y === B.index1L.position.y, 'both hands, in a mirror'); }
+    // narrow shoulders bring the arms and all that rides them in; the collar bones stay at the breastbone
+    { const f = skeleton({ sex: 'f' }), m = skeleton(); f.scale.setScalar(1); f.updateMatrixWorld(true); assert.ok(wp(f.bones.armL).x < wp(m.bones.armL).x - .01 && wp(f.bones.index1L).x < wp(m.bones.index1L).x - .01 && Math.abs(wp(f.bones.collarL).x - wp(m.bones.collarL).x) < 1e-9, 'narrow shoulders'); }
+    // the skin: each new joint has skin of its own to move
+    { const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'shirt', sleeves: 'long', pockets: 0 }, legs: { kind: 'trousers' }, feet: { kind: 'shoes' }, face: { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, hat: null, belt: null, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
+      const share = p => { const u = {}; for (let i = 0; i < p.n; i++) for (let q = 0; q < 4; q++) if (p.SW[i * 4 + q]) { const n = p.names[p.SI[i * 4 + q]]; u[n] = (u[n] || 0) + p.SW[i * 4 + q] / 255 / p.n; } return u; };
+      const jobs = HS.jobsFor(sp), body = HS.sculpt(jobs[0]), trunk = share(body), head = share(HS.sculpt(jobs[3]));
+      // a seam holds: the two sides of a hem or of a strap's edge have points of their own in the same place (so the colour stops
+      // dead at the line), and those go with the same bones, or the seam would open when a joint bends (a trouser hem over a shoe did)
+      { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (body.SW[i * 4 + q]) u[body.names[body.SI[i * 4 + q]]] = body.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0, eg = '';
+        for (let i = 0; i < body.n; i++) {
+          const k = [0, 1, 2].map(c => Math.round(body.P[i * 3 + c] * 1e5)).join(), j = seen.get(k); if (j === undefined) { seen.set(k, i); continue; }
+          const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) { torn++; eg ||= `at ${body.P[i * 3 + 1].toFixed(3)} up: ${JSON.stringify(a)} against ${JSON.stringify(b)}`; }
+        }
+        assert.ok(pairs > 100 && torn === 0, `points in the same place go with the same bones: ${torn} of ${pairs} pairs do not (${eg})`); }
+      for (const n of ['waist', 'spine', 'collarL', 'collarR', 'toeL', 'toeR']) assert.ok(trunk[n] > .01, `the trunk's skin on ${n}: ${trunk[n]}`); assert.ok(Math.abs(trunk.collarL - trunk.collarR) < .004 && Math.abs(trunk.toeL - trunk.toeR) < .004, 'the same on both sides');
+      assert.ok(head.neck > .02 && head.head > .7 && head.spine > .03, 'a neck between the collar and the head: ' + JSON.stringify(head)); }
+  }
+  console.log('gs.models: the fuller skeleton (waist, neck, collar bones, forearm twist, toes, fingers; old joints turned as they were) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
@@ -4075,6 +4153,13 @@ console.log('physics ok');
     one.x = 1; crowd.update(0); one.x = 2; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [2, 0], 'two updates between two frames: the move is from where the last frame drew it');
     crowd.frame(); assert.deepEqual([a()[0], a()[12]], [2, 0], 'the frame that shows the move'); crowd.frame(); assert.deepEqual([a()[0], a()[12]], [2, 2], 'a frame drawn again with no update shows nobody moving');
     one.x = 3; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [3, 2]); crowd.frame(); one.x = 4; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [4, 3], 'an update a frame: from the last one'); crowd.clear(); }
+  // a figure handed over at a far level (there a sculpted person leaves its small bones out of the scene) is read with every bone in place, and handed back as it was
+  { const mk = () => { const f = person({ hair: null }), b = f.bones.foreL, kids = b.parent.children; let lod = 0; Object.defineProperty(f, 'lod', { get: () => lod, set(v) { if (!v !== !lod) { if (v) kids.splice(kids.indexOf(b), 1); else kids.push(b); } lod = v; } }); return f; };
+    const f0 = mk(), f2 = mk(); f2.lod = 2;
+    const c0 = new Crowd({ scene, cam }, { of: [f0], moves: ['walk'] }), c2 = new Crowd({ scene, cam }, { of: [f2], moves: ['walk'] }), d0 = c0.tex.image.data, d2 = c2.tex.image.data;
+    let w = 0; for (let i = 0; i < d0.length; i++) w = Math.max(w, Math.abs(d0[i] - d2[i]));
+    assert.ok(d0.length === d2.length && w < 1e-6, 'a figure given at a far level: its moves are read with every bone in place (off by ' + w + ')');
+    assert.ok(f2.lod === 2 && !f2.bones.foreL.parent.children.includes(f2.bones.foreL) && f0.lod === 0, 'and it is handed back at the level it was given'); c0.dispose(); c2.dispose(); }
   crowd.dispose(); assert.ok(scene.children.length === 0 && scene.userData.gsPosed.size === 0, 'dispose takes it out of the scene');
   console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
 }

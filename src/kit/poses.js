@@ -24,13 +24,26 @@
 //
 // The figure faces +z (the way Object3D.lookAt turns things). Angles are radians.
 
-import { BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, SphereGeometry, Vector3 } from 'three';
+import { BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { reach } from './characters.js';
 export { person, Face, shapes, visemes, FACE_SHAPES } from './skin.js';
 
 const JOINTS = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
-const UPPER = new Set(['spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR']);
+// a full skeleton (gs.models.human's) has joints between those: the rig works most of them out by itself (fill())
+const FULL = [...JOINTS, 'waist', 'neck', 'collarL', 'collarR', 'twistL', 'twistR', 'toeL', 'toeR'];
+const FILLED = new Set(['waist', 'neck', 'collarL', 'collarR', 'twistL', 'twistR']), TOES = new Set(['toeL', 'toeR']);   // (set by fill(); and the two that are mostly at rest)
+const UPPER = new Set(['spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'collarL', 'collarR']);
 const S = Math.sin, TAU = Math.PI * 2, SPACES = new WeakMap();
+const _q = new Quaternion(), _q2 = new Quaternion(), _v = new Vector3(), Z3 = [0, 0, 0];
+const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+// A share of a turn q, into out: `sw` of its bend and `tw` of its twist about the bone's own length (y).
+function shareOf(q, sw, tw, out) {
+  let x = q.x, y = q.y, z = q.z, w = q.w; if (w < 0) { x = -x; y = -y; z = -z; w = -w; }
+  const tl = Math.hypot(y, w), ty = tl > 1e-9 ? y / tl : 0, t0 = tl > 1e-9 ? w / tl : 1;   // the twist (0, ty, 0, t0); what is left is the bend
+  const bx = x * t0 + z * ty, bz = z * t0 - x * ty, bl = Math.hypot(bx, bz), hb = Math.atan2(bl, tl) * sw, k = bl > 1e-9 ? Math.sin(hb) / bl : 0, ax = bx * k, az = bz * k, aw = Math.cos(hb);
+  const ht = Math.atan2(ty, t0) * tw, by = Math.sin(ht), bw = Math.cos(ht);
+  return out.set(ax * bw - az * by, aw * by, az * bw + ax * by, aw * bw);
+}
 
 // A pose: { joint: [rx, ry, rz] } plus drop (hips lower, in body heights) and shift ([x, y, z]: the hips
 // moved, in metres on a 1.8 m figure). Forward swing of an arm or leg is negative x; knees bend positive
@@ -144,6 +157,8 @@ function gait(g) {
     return k ? kn : -(Math.atan2(dz, dy) + al);
   });
   const thigh = leg(0), knee = leg(1), foot = table(footW);
+  // the toes lie flat while the heel comes up off them, and straighten once the foot is in the air
+  const toe = table(p => Math.min(1.1, Math.max(0, footW(p))) * (p < stance ? 1 : 1 - sstep(0, .3, (p - stance) / (1 - stance))));
   return p => {
     const a = p * TAU, c = Math.cos(a), hy = -yaw * c, hz = list * S(a + .6), pr = p + .5;
     const tl = thigh(p), tr = thigh(pr), kl = knee(p), kr = knee(pr), sw = Math.cos(a + .25);   // the arms trail the legs a touch
@@ -151,8 +166,8 @@ function gait(g) {
       hips: [crouch, hy, hz],
       spine: [lean, -hy * (1 + twist), -hz * .8],
       head: [-(lean + crouch) * head + nod * S(a * 2), hy * twist * .8, -hz * .2],
-      legL: [tl - crouch, -hy, -hz], shinL: [kl, 0, 0], footL: [Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0],
-      legR: [tr - crouch, -hy, -hz], shinR: [kr, 0, 0], footR: [Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0],
+      legL: [tl - crouch, -hy, -hz], shinL: [kl, 0, 0], footL: [Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0], toeL: [-toe(p), 0, 0],
+      legR: [tr - crouch, -hy, -hz], shinR: [kr, 0, 0], footR: [Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0], toeR: [-toe(pr), 0, 0],
       armL: [armMid + arm * sw, -armIn, armOut], foreL: [-(elbow - elbowSwing * sw), -wrist * .5, 0], handL: [-.12, -wrist * .5, 0],
       armR: [armMid - arm * sw, armIn, -armOut], foreR: [-(elbow + elbowSwing * sw), wrist * .5, 0], handR: [-.12, wrist * .5, 0],
     }, drop: drop + bob * Math.cos(2 * a - bobAt), shift: side ? [side * S(a + .6), 0, 0] : undefined };
@@ -163,9 +178,10 @@ const idleLife = p => {
   const a = p * TAU, br = S(a * 3), w = S(a), look = S(a + 1.1) * .5 + S(a * 2 + .4) * .5;
   return { j: {
     hips: [0, .04 * w, .035 * w], spine: [.03 + .012 * br, -.03 * w, -.03 * w], head: [-.02 - .008 * br, .16 * look, -.01 * w],
-    legL: [-.03 - .04 * Math.max(0, -w), -.06, -.035 * w + .03], shinL: [.06 + .16 * Math.max(0, -w), 0, 0], footL: [-.03 - .12 * Math.max(0, -w), 0, 0],
-    legR: [-.03 - .04 * Math.max(0, w), .06, -.035 * w - .03], shinR: [.06 + .16 * Math.max(0, w), 0, 0], footR: [-.03 - .12 * Math.max(0, w), 0, 0],
-    armL: [.03 + .01 * br, 0, -.04], armR: [.03 + .01 * br, 0, .04], foreL: [-.22, -.35, 0], foreR: [-.22, .35, 0], handL: [-.15, -.35, 0], handR: [-.15, .35, 0],
+    // (the toes a little out; the arms hang a little out from the shoulders, so the hands lie beside the thighs and not in them)
+    legL: [-.03 - .04 * Math.max(0, -w), .1, -.035 * w + .03], shinL: [.06 + .16 * Math.max(0, -w), 0, 0], footL: [-.03 - .12 * Math.max(0, -w), 0, 0],
+    legR: [-.03 - .04 * Math.max(0, w), -.1, -.035 * w - .03], shinR: [.06 + .16 * Math.max(0, w), 0, 0], footR: [-.03 - .12 * Math.max(0, w), 0, 0],
+    armL: [.03 + .01 * br, 0, .065], armR: [.03 + .01 * br, 0, -.065], foreL: [-.24, -.35, 0], foreR: [-.24, .35, 0], handL: [-.15, -.35, 0], handR: [-.15, .35, 0],
   }, drop: .004 + .003 * Math.abs(w), shift: [.022 * w, 0, 0] };
 };
 /**
@@ -180,7 +196,7 @@ export const LIFELIKE = {
   idle: { cycle: idleLife, rate: 0, time: 9 },
   walk: gaitOf({ stride: 1.36, stance: .62, reach: .3, lift: .075, liftAt: .4,
     foot: [[0, -.3], [.1, 0], [.42, 0], [.52, .3], [.62, .8], [.72, .5], [.84, -.05], [.94, -.3]],
-    yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: -.03, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
+    yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: .045, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
   jog: gaitOf({ stride: 2.35, stance: .36, reach: .2, lift: .15, liftAt: .35, carry: .03, pull: .6, trail: .6,
     foot: [[0, -.1], [.07, .03], [.23, .05], [.36, .95], [.48, 1], [.7, .4], [.9, -.08]],
     yaw: .1, list: .05, lean: .17, twist: 1.15, arm: .42, armMid: .16, elbow: 1.5, elbowSwing: .25, armIn: .1, armOut: .1, drop: .04, bob: .018, bobAt: 2.3, nod: .012 }),
@@ -204,9 +220,18 @@ export const LIFELIKE = {
  * how fast it runs when it doesn't follow the ground: { cycle, rate: 0, per: cycles a second }.
  */
 export class Rig {
-  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, joints = JOINTS } = {}) {
+  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS } = {}) {
     this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses }; this.weight = weight; this.size = size; this.done = false;
     this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
+    // a full skeleton: the joints in between, which fill() works out (the waist under the rib cage, the neck under the head, each a
+    // share of the bend and of the twist; a collar bone to each arm; the turn along each forearm)
+    if (full) {
+      const chain = (lo, up, sw, tw) => parts[lo] && parts[up]?.parent === parts[lo] ? { lo: parts[lo], up: parts[up], sw, tw, c: new Vector3(...(parts[up].userData.pivot || Z3)), at: parts[up].position.clone() } : null;
+      this.chains = [chain('waist', 'spine', .5, .25), chain('neck', 'head', .5, .45)].filter(Boolean);
+      this.girdle = [['L', 1], ['R', -1]].map(([sd, s]) => parts['collar' + sd] && parts['arm' + sd]?.parent === parts['collar' + sd] ? { c: parts['collar' + sd], a: parts['arm' + sd], s, name: 'collar' + sd } : null).filter(Boolean);
+      this.rolls = ['L', 'R'].map(sd => parts['twist' + sd] && parts['hand' + sd] ? { t: parts['twist' + sd], h: parts['hand' + sd] } : null).filter(Boolean);
+      this.still = new Set(); this.fine = true;   // (fine = false: seen from further off, where the turn of a forearm and the toes show nothing and are left alone)
+    }
     this.hip0 = parts.hips ? parts.hips.position.y : 0; this.hipX = parts.hips ? parts.hips.position.x : 0; this.hipZ = parts.hips ? parts.hips.position.z : 0;
     this.layers = [{ name: 'idle', w: 1, phase: 0 }]; this.top = null; this.topW = 0; this.phase = 0; this.state = 'idle'; this.cur = {};
   }
@@ -337,9 +362,45 @@ export class Rig {
     if (this.weight) this.sway(dt, speed, turn, out);
     else if (turn) (out.spine ||= [0, 0, 0])[2] -= turn * .1;
     this.phase = last.phase;
-    for (const [j, b] of this.base) { const a = out[j] || [0, 0, 0], p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
+    if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
+    else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
+      if (FILLED.has(j) || !this.fine && TOES.has(j)) continue; const a = out[j];
+      if (!a && TOES.has(j)) { if (this.still.has(j)) continue; this.still.add(j); } else if (a) this.still.delete(j);
+      const p = this.parts[j]; if (a) p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); else p.rotation.set(b[0], b[1], b[2]);
+    }
     if (this.parts.hips) { const k = this.height / 1.8; this.parts.hips.position.set(this.hipX + shift[0] * k, this.hip0 - drop * this.height + shift[1] * k, this.hipZ + shift[2] * k); }
-    this.cur = out; return this;
+    this.cur = out; if (this.chains) this.fill(out);
+    return this;
+  }
+  /**
+   * A full skeleton's joints in between, brought into line with the ones poses turn: the waist takes its share
+   * of the rib cage's turn (the back bends as a curve), the neck its share of the head's, each collar bone goes
+   * up and forward with its arm, and the forearm's skin turns with the hand. update() does this itself; call it
+   * after turning joints yourself (an arm bent to reach something), as human.hold() and touch() do. Nothing
+   * that rides the old joints moves: the rib cage, the head and the arms end up turned exactly as they were.
+   * pose: only when every joint has just been set straight from a pose's values ({ joint: [x, y, z] }: those), which
+   * are then read as the pose meant them (the rib cage's turn on the hips, an arm's on the rib cage, a shrug for a collar bone).
+   */
+  fill(pose = null) {
+    if (!this.chains) return this;
+    const fresh = !!pose;
+    for (const k of this.chains) {
+      const up = k.up.quaternion, lo = k.lo.quaternion;
+      if (fresh) _q.copy(up); else _q.copy(lo).multiply(up);   // the whole turn, as the pose gave it
+      shareOf(_q, k.sw, k.tw, lo); up.copy(_q2.copy(lo).invert().multiply(_q));
+      _v.copy(k.c).applyQuaternion(up); k.up.position.set(k.at.x + k.c.x - _v.x, k.at.y + k.c.y - _v.y, k.at.z + k.c.z - _v.z);   // (it turns about a point above its own place)
+    }
+    for (const g of this.girdle) {
+      const a = g.a.quaternion, r = g.c.rotation, b = this.base.get(g.name) || Z3;
+      if (fresh) { _q.copy(a); g.x = pose[g.name] || Z3; } else _q.copy(g.c.quaternion).multiply(a);   // the arm's turn in the rib cage's own terms (x: a shrug the pose asked for itself)
+      const x = g.x || Z3;
+      _v.set(0, -1, 0).applyQuaternion(_q);              // the way the upper arm points: the shoulder rises as it goes up past the level, and goes forward and back with it
+      const e = Math.acos(Math.max(-1, Math.min(1, -_v.y))), lift = .42 * sstep(.5, 2.7, e), fwd = (_v.z > 0 ? .25 : .2) * _v.z;
+      r.set(b[0] + x[0], b[1] + x[1] - g.s * fwd, b[2] + x[2] + g.s * lift);
+      a.copy(_q2.copy(g.c.quaternion).invert().multiply(_q));
+    }
+    if (this.fine) for (const r of this.rolls) { const q = r.h.quaternion, s = q.w < 0 ? -1 : 1; r.t.rotation.set(0, 1.4 * Math.atan2(q.y * s, q.w * s), 0); }   // (seven tenths of the hand's turn about the forearm's length)
+    return this;
   }
   // A body with weight (the weight option): it leans into a change of speed and rocks back as it stops,
   // banks into a turn, and the head stays level through it. Two springs, so it settles rather than snaps.

@@ -78,7 +78,8 @@ function bake(src, moves) {
   const rig = src.rig, meshes = (src.lods || [src.mesh]).filter(Boolean), sk = meshes[0]?.skeleton;
   if (!rig?.pace || !sk) throw new Error('gs.props.Crowd: each of `of` is a figure with a rig and a skinned mesh (gs.models.human, gs.poses.person, gs.models.creature)');
   const B = sk.bones.length, was = { par: src.parent, p: src.position.clone(), q: src.quaternion.clone(), s: src.scale.clone(), layers: rig.layers, weight: rig.weight, on: rig.blendOn, k: rig.blendK, bw: rig.bw, top: rig.top, topOn: rig.topOn, topW: rig.topW, fadeT: rig.fadeT };
-  const size = src.scale.y || 1;
+  const size = src.scale.y || 1, lod = src.lod;
+  if (lod) src.lod = 0;   // (a person seen from further off leaves its small bones, fingers and toes, out of the scene: every bone is wanted here)
   src.removeFromParent(); src.position.set(0, 0, 0); src.quaternion.identity(); src.scale.setScalar(1);
   const plan = {}; let rows = 0;
   for (const name of moves) {
@@ -108,7 +109,7 @@ function bake(src, moves) {
   }
   // the figure back as it was given
   Object.assign(rig, { layers: was.layers, weight: was.weight, blendOn: was.on, blendK: was.k, bw: was.bw, top: was.top, topOn: was.topOn, topW: was.topW, fadeT: was.fadeT }); rig.update(0);
-  src.position.copy(was.p); src.quaternion.copy(was.q); src.scale.copy(was.s); was.par?.add(src); src.updateMatrixWorld(true);
+  src.position.copy(was.p); src.quaternion.copy(was.q); src.scale.copy(was.s); was.par?.add(src); if (lod) src.lod = lod; src.updateMatrixWorld(true);
   return { data, W, plan, bones: B, rows, size, meshes };
 }
 // A shape for the crowd: the figure's own points, with its bones and weights as plain numbers a vertex
