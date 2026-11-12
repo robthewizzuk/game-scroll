@@ -14,11 +14,12 @@ import { InstancedMesh, BufferGeometry, Frustum, Matrix4, Vector3, Vector4, Stor
 import { Fn, If, storage, uniform, uniformArray, instanceIndex, vec3, vec4, float, uint, int, dot, max, length, Loop, atomicAdd, atomicStore } from 'three/tsl';
 
 const MAX_SHADOW = 4;   // shadow views tested (sun cascades and lamps); more lights: their copies off screen don't cast
+const MAX_LEVELS = 8;   // detail levels a set may have (a kind's own, or the ones hd3d.js autoCopies makes: at most six)
 const F = new Frustum(), PM = new Matrix4(), PV = new Vector3();
 
 /** Can these props draw with GPU culling? (one material per level; WebGPU compute) */
 export function gpuCullFits(levels) {
-  return levels.every(({ obj }) => !Array.isArray(obj.material));   // (groups only split a draw for a list of materials)
+  return levels.length <= MAX_LEVELS && levels.every(({ obj }) => !Array.isArray(obj.material));   // (groups only split a draw for a list of materials)
 }
 
 /**
@@ -37,7 +38,7 @@ export function gpuCull(im, levels, group) {
     undo.push(() => { if (own) im[k] = was; else delete im[k]; });
   }
   const U = { n: uniform(0, 'uint'), ns: uniform(0, 'int'), cam: uniform(new Vector3()), wm: uniform(new Matrix4()), r0: uniform(1),
-    dist: uniformArray(Array.from({ length: 4 }, () => 1e30)), planes: uniformArray(Array.from({ length: 6 * (1 + MAX_SHADOW) }, () => new Vector4())) };
+    dist: uniformArray(Array.from({ length: MAX_LEVELS }, () => 1e30)), planes: uniformArray(Array.from({ length: 6 * (1 + MAX_SHADOW) }, () => new Vector4())) };
   const build = () => {
     for (const m of meshes) { m.removeFromParent(); m.dispose(); }
     cap = Math.max(64, im._capacity || im._instancesArrayCount || 64);
@@ -126,7 +127,7 @@ export function gpuCull(im, levels, group) {
       }
       U.ns.value = ns; U.cam.value.copy(cam.getWorldPosition(PV)); U.wm.value.copy(im.matrixWorld);
       U.r0.value = levels[0].obj.geometry.boundingSphere?.radius ?? 1;
-      for (let k = 0; k < 4; k++) U.dist.array[k] = k < L ? (k ? levels[k].dist : 0) : 1e30;
+      for (let k = 0; k < MAX_LEVELS; k++) U.dist.array[k] = k < L ? (k ? levels[k].dist : 0) : 1e30;
       r.compute(nodes.reset); r.compute(nodes.cull);
       return n;
     },

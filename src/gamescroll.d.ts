@@ -2029,7 +2029,8 @@ export interface PropsPart {
   /** Frees the perCopy() / Props meshes under root once it's thrown away (a rebuilt level). */
   freeCopies(root: Loose): void;
   Props: new (scene: Loose, o?: { renderer?: Loose; shadows?: boolean }) => {
-    kind(name: string, geometry: Loose, material: Loose, o?: { lod?: (number | [number, Loose])[]; keep?: number[]; shadows?: boolean; shadowFar?: number; capacity?: number }): Loose;
+    /** A kind of prop. lod: distances where simpler shapes made for you take over, [[distance, geometry, material?], ...] for your own, 'auto' (levels made in the background, each copy drawn at the simplest one whose change can't be seen: the Next Gen, AR and Board views do this by themselves for a big enough kind with no lod) or false (every copy whole). */
+    kind(name: string, geometry: Loose, material: Loose, o?: { lod?: (number | [number, Loose] | [number, Loose, Loose])[] | 'auto' | false; keep?: number[]; shadows?: boolean; shadowFar?: number; capacity?: number }): Loose;
     mesh(name: string): Loose; add(name: string, x: number, y: number, z: number, o?: { rot?: number | P3; scale?: number | P3; color?: string }): number;
     move(name: string, id: number, x: number, y: number, z: number): Loose; remove(name: string, id: number): Loose; hide(name: string, id: number, hidden?: boolean): Loose;
     scatter(name: string, count: number, area: { x0: number; z0: number; x1: number; z1: number } | ((rnd: () => number) => { x: number; z: number }), o?: { gap?: number; seed?: number; y?: (x: number, z: number) => number; keepOut?: (x: number, z: number) => boolean; scale?: [number, number]; spin?: boolean }): number[];

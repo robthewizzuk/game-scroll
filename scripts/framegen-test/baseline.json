@@ -80,5 +80,11 @@
     "strafe": {"error":0.4,"broken":0.12},
     "pan": {"error":2.1,"broken":0.12},
     "curve": {"error":0.37,"broken":0.11}
+  },
+  "copies": {
+    "copies": {"error":0.47,"broken":0.13}
+  },
+  "copies-ahead": {
+    "copies": {"error":0.69,"broken":0.26}
   }
 }

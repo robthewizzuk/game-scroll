@@ -1867,6 +1867,12 @@ around the player a piece at a time and drops what's far away. Already built an 
 track pieces)? `perCopy(mesh)` swaps it in place for one that skips the copies off screen, same look (`freeCopies(group)` when you throw
 the level away).
 
+A kind with no `lod` of its own gets its simpler shapes by itself in the Next Gen, AR and Board views once
+there is enough of it to matter (200 triangles a copy and 60,000 in all): they are made in the background,
+and each copy is drawn at the simplest one whose change can't be seen from where the camera is, so a
+forest costs a fraction of its triangles and looks the same. `lod: 'auto'` asks for that for a smaller kind
+too, and `lod: false` keeps every copy whole. See [Next Gen 3D](nextgen-3d.md) (detail levels for copies).
+
 ## Worlds, craft, soft things, cards and menus
 
 As everywhere in the kit, these work things out and your game decides how it all looks.

@@ -7,6 +7,7 @@
 // --hard runs the hard cases instead: a see-through ball, glowing sparks (plain, and ones that say how
 // they move), smoke and SGSR 2's camera jitter. --steps 3 makes two frames between each pair (40 fps on 120 Hz).
 // --kinds shadow,scroll,cut: what the game's motion doesn't describe (the optical flow's cases) and a cut.
+// --kinds copies: things drawn as gs.props copies, changing detail level at the newest real frame.
 //   node scripts/framegen-test.cjs --check [--save]
 // The quality check the PR check runs when frame generation's code changes: every suite below, each
 // scene no worse than scripts/framegen-test/baseline.json (and better than repeating a frame). --save
@@ -24,6 +25,9 @@ const SUITES = {
   handed: '&kinds=strafe,pan,curve&handed',
   // and with the made frame kept in 8 bits (what the app does when the screen is not HDR): within a hundredth of handed's
   eight: '&kinds=strafe,pan,curve&handed&eight',
+  // gs.props copies on WebGPU (hd3d-gpu.js gpuProps), every one in the middle distance changing detail
+  // level at the newest real frame: a copy's motion must be its own, whatever place in the list it takes
+  copies: '&kinds=copies', 'copies-ahead': '&kinds=copies&mode=ahead',
 };
 const BASELINE = path.join(__dirname, 'framegen-test', 'baseline.json');
 // how much worse than the baseline a scene may score before the check fails (SwiftShader gives the same

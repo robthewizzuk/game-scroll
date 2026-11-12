@@ -57,7 +57,7 @@ import { packing } from './pack.js';
 import { makeRenderer } from './renderer.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
-import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
+import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
@@ -204,6 +204,8 @@ export const HD = {
   detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
   /** Real surface detail (gs.models.relief): false draws those meshes flat, as they were. */
   relief: true,
+  /** Detail levels for copies (gs.props kinds and perCopy sets with none of their own; autoCopies below): false draws every copy whole. */
+  copies: true,
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -1816,6 +1818,7 @@ export class HDView {
    * Returns true if any light needs its map drawn.
    */
   shadowLights(force, gpu = false) {
+    if (this.shAll) { force = true; this.shAll = false; }   // (shadowsDirty(): the kept copies of still things too)
     const L = this.shL ||= [], keys = this.shK ||= new Map(); L.length = 0;
     this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow) L.push(o); });
     const n = L.length; if (!n) return false;
@@ -1834,7 +1837,9 @@ export class HDView {
       let h = ((o.geometry?.id ?? 0) % 97 * .37 + e[0] * 1.3 + e[1] * 1.7 + e[2] * 2.3 + e[4] * 2.9 + e[5] * 3.1 + e[6] * 3.7 + e[8] * 4.1 + e[9] * 4.3 + e[10] * 4.7 + e[12] * 5.3 + e[13] * 5.9 + e[14] * 6.1 + (held ? .5 : 0)) * w;
       let wide = false, copies = 1;   // instanced and skinned things: counted for every light (their bounds move without the object)
       const tw = o.userData.gsTwin;
-      if (tw?.matrixWorld) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
+      // (a set of copies counts up when one of them is moved, hidden or shown: props.js watched(); nothing else about it changes)
+      if (o.isInstancedMesh2) h += ((o._parentLOD || o).userData.gsChanged || 0) * 13 * w;
+      if (tw?.matrixWorld) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + (tw.userData.gsChanged || 0) * 13 + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
       else if (o.userData.gsMoved !== undefined) { h += (o.userData.gsMoved + 1) * 7 * w; wide = true; copies = o.count ?? 1; }   // (moved on the graphics chip: a count that goes up when it does, gs.fluid's drops)
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
       else if (o.isInstancedMesh2 || (o.isBatchedMesh && !o.isDetailMesh)) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
@@ -1872,7 +1877,7 @@ export class HDView {
   /** Redraw the shadow maps next frame even if nothing seems to have moved (e.g. after changing a geometry in place). */
   /** The level's big still pieces changed: voxel bounce light (v.liveBounce = 'voxel') builds its picture of them again. */
   levelChanged() { this._giRebuild = true; return this; }
-  shadowsDirty() { this.shK?.clear(); return this; }
+  shadowsDirty() { this.shK?.clear(); this.shAll = true; return this; }
   // The WebGPU frame (render() decided this view fits): the same numbers as the WebGL chain, drawn by hd3d-gpu.js.
   // up: { pw, fw, fh, s1 } when the scene is drawn pw wide and upscaled to the canvas (fw x fh) by SGSR 2, or SGSR 1 if s1
   drawGPU(G, r, T, baking, off, now, up, direct) {
@@ -2156,6 +2161,7 @@ export class HDView {
     const cv = r.domElement; if (cv.width !== ow || cv.height !== oh) r.setSize(ow, oh, false);
     if (!baking && !off) speed.gpu = !!G;   // (frame generation needs the game on screen drawn with WebGPU)
     autoDetail(this, now, !!(baking || off));
+    autoCopies(this, ph, now, !!(baking || off));
     if (this.occlusion && HD.occlude !== false) { this.cullHidden(); HD.info.occluded = this.occlusion.stats.hidden; } else if (this.occHid?.size) this.showHidden();
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
     else {
@@ -2313,9 +2319,22 @@ const GPU_CULL_MIN = 2000;   // copies in one gs.props set before the chip picks
 // gone ("Async render pipeline creation failed"). A build waits its turn, so `around` (optional) sets
 // up what it needs when it starts (which picture, which material) and puts it back: around(go) => go().
 function compileGPU(r, o, cam, scene, around = null) {
-  const go = () => r.compileAsync(o, cam, scene), p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
+  const go = () => { hideSets(o); return r.compileAsync(o, cam, scene); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
   r.gsCompiling = p.catch(() => {});
   return p;
+}
+// A set of copies (gs.props) is WebGL's to draw, through its library's own hooks: on WebGPU its plain twins
+// draw (gpuSwap). One made since the view's last frame (a game building its level between two frames, a card
+// still loading) is still showing when a build that waited its turn starts. three then ran the library's
+// hook on it, which threw with the set's material left patched: the view took that for a shader of the
+// game's own and went back to WebGL, where the patched material called itself until the stack ran out. So a
+// build hides them first, as the next frame's gpuSwap() would (it makes their twins, or shows them again on WebGL).
+function hideSets(root) {
+  root.traverseVisible(o => {
+    if (!o.isInstancedMesh2 || o._parentLOD) return;
+    const ud = o.userData; if (!ud.gpuHid) { ud.gpuHid = true; ud.gpuWasVisible = true; }
+    o.visible = false;
+  });
 }
 const NEAR_S = new Sphere(), NEAR_B = new Box3(), nearBusy = new WeakSet();
 // within d of the camera: the mesh's sphere first (cheap), then its box (a wide floor's sphere reaches far above it)
@@ -2484,7 +2503,8 @@ function shadowSize(sh, n) {
 // nobody can see the swap: far away a mesh needs a fraction of its triangles. The copies share the
 // original's points (only the triangle list changes), so normals, colours and UVs stay exact.
 // Skinned and morphing meshes too (their bone weights and shapes are shared points). Off for instanced and
-// multi-material meshes, see-through ones and userData.noLod.
+// multi-material meshes, see-through ones and userData.noLod. (Sets of copies, gs.props, get levels of
+// their own: autoCopies below.)
 const LOD_MIN_TRIS = 3000, LOD_PX = .6, LOD_KEEP = [.5, .25, .1], LODS = new WeakMap(), LOD_Q = [];
 let lodReady = false; MeshoptSimplifier.ready.then(() => { lodReady = true; }, () => {});
 function lodLevels(g) {
@@ -2672,7 +2692,7 @@ function detailable(o) {
   if (!detailFits(o)) return false;
   const ud = o.userData, g = ud.gsLod?.base || o.geometry;
   if (!g || NO_DETAIL.has(g)) return false;
-  if (g.groups.length > 1 || g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;
+  if (g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;   // (a geometry's groups only matter with a list of materials, turned away above)
   const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
   return tris >= (ud.detail ? DETAIL_OWN_TRIS : HD.detailMin) && canCluster(g);
 }
@@ -2751,6 +2771,96 @@ function autoDetail(v, now, quiet) {
     detailAsking++;
     clustersFor(g).then(c => { e.cl = c; }, () => { e.failed = true; }).finally(() => { detailAsking--; });
   });
+}
+// Detail for copies (HD.copies, on by default): the same idea for things placed many times. A set of copies
+// (a gs.props kind, a perCopy() set: the copies library's InstancedMesh2) with no detail levels of its own
+// gets them by itself: the mesh simplified a few times over in the detail worker (detail-build.js
+// buildLevels: about a half, a fifth, a fifteenth... of its triangles, each with its measured error), kept
+// by the mesh's content like clusters. Each copy is then drawn at the simplest level whose error is under
+// LOD_PX pixels where it stands, so the swap can't be seen: the copies library picks a level by a copy's
+// distance, and the distances are worked out here from the errors, the size the 3D is drawn at and the
+// camera's field of view, and follow them (a scope's zoom, another graphics tier). Shadows come from the
+// level drawn. A copy is near or far as a whole, so it gets a whole level, not a cut through clusters: a
+// thing that is near and far at once (a cliff, a town wall) is better as a mesh of its own, which cluster
+// detail then takes.
+// Taken: sets of COPY_MIN_TRIS triangles a copy and COPY_MIN_ALL in all (userData.detail = true, which
+// props.kind(..., { lod: 'auto' }) sets: from COPY_OWN_TRIS, however few copies). Every level in use is a
+// draw of its own in the picture and in each shadow map, so a small set loses more in draws than it saves
+// in triangles (two dozen rings of 768 triangles: 70 more draws on WebGL for 2% fewer triangles). Not for: sets with levels
+// of their own, see-through, alpha-tested (leaves, grass), multi-material, skinned and morphing ones, and
+// userData.detail = false or userData.noLod.
+const COPY_MIN_TRIS = 200, COPY_MIN_ALL = 60000, COPY_OWN_TRIS = 60, COPY_ASK = 2;
+const NO_LEVELS = new WeakSet();   // geometries that won't simplify, or can't be read
+let copiesAsking = 0;
+const copyMaterial = m => !!m && !Array.isArray(m) && !m.transparent && !(m.alphaTest > 0) && !m.alphaHash && !m.wireframe && !m.displacementMap && !m.positionNode;
+function copyable(o) {
+  if (!o.isInstancedMesh2 || o._parentLOD) return false;
+  const ud = o.userData; if (ud.detail === false || ud.noLod || ud.gsLevels) return false;
+  if (o.LODinfo?.render || o.LODinfo?.shadowRender || o.boneTexture || o.morphTexture || o.skeleton) return false;
+  const g = o.geometry; if (!g || NO_LEVELS.has(g) || !copyMaterial(ud.gsGlMat || o.material)) return false;
+  if (g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;   // (a geometry's groups only matter with a list of materials, turned away above)
+  const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3, n = o._instancesArrayCount || 0;
+  return (ud.detail === true ? tris >= COPY_OWN_TRIS : tris >= COPY_MIN_TRIS && tris * n >= COPY_MIN_ALL) && canCluster(g);
+}
+// the biggest any copy is scaled (with the set's own scale), and how far a copy reaches from its own middle
+function copyReach(o, e) {
+  const n = o._instancesArrayCount || 0, D = o.matricesTexture?._data; let s2 = 0;
+  if (D) for (let i = 0; i < n; i++) { const m = i * 16; s2 = Math.max(s2, D[m] * D[m] + D[m + 1] * D[m + 1] + D[m + 2] * D[m + 2], D[m + 4] * D[m + 4] + D[m + 5] * D[m + 5] + D[m + 6] * D[m + 6], D[m + 8] * D[m + 8] + D[m + 9] * D[m + 9] + D[m + 10] * D[m + 10]); }
+  const w = o.matrixWorld.elements, ws = Math.sqrt(Math.max(w[0] * w[0] + w[1] * w[1] + w[2] * w[2], w[4] * w[4] + w[5] * w[5] + w[6] * w[6], w[8] * w[8] + w[9] * w[9] + w[10] * w[10]));
+  const g = e.g; if (!g.boundingSphere) g.computeBoundingSphere();
+  e.scale = (Math.sqrt(s2) || 1) * (ws || 1); e.reach = (g.boundingSphere.center.length() + g.boundingSphere.radius) * e.scale; e.count = n;
+}
+function copiesDrop(v, e) {
+  const o = e.o, info = o.LODinfo; v.copies.map.delete(o);
+  if (e.objs.length && info?.render) {
+    for (const obj of e.objs) {
+      const i = info.render.levels.findIndex(l => l.object === obj); if (i > 0) { info.render.levels.splice(i, 1); info.render.count.splice(i, 1); }
+      const j = info.objects.indexOf(obj); if (j >= 0) info.objects.splice(j, 1);
+      o.remove(obj);
+      for (const k of Object.keys(obj.geometry.attributes)) obj.geometry.deleteAttribute(k);   // (the points are the set's own: only the level's triangle list goes)
+      obj.geometry.dispose();
+    }
+    if (info.render.levels.length <= 1) info.render = null;
+    copiesNewTwin(o);
+  }
+  delete o.userData.gsLevels;
+}
+// (WebGPU draws a set through twins of its levels, hd3d-gpu.js gpuProps: made again for a new list of levels)
+function copiesNewTwin(o) { const ud = o.userData; if (ud.gpuTwin) { ud.gpuTwin.dispose?.(); ud.gpuTwin.group.removeFromParent(); ud.gpuTwin = null; } }
+function autoCopies(v, ph, now, quiet) {
+  const C = v.copies ||= { map: new Map(), t: 0 };
+  if (HD.copies === false) { for (const e of [...C.map.values()]) copiesDrop(v, e); return; }
+  const scan = !quiet && now - C.t >= DETAIL_SCAN;
+  const pe = v.cam.projectionMatrix.elements, K = pe[15] === 0 ? ph * Math.abs(pe[5]) * .5 : 0;   // pixels a metre covers at 1 m (0: a camera with no distance in it draws every copy whole)
+  const far = (e, i) => K ? e.reach + e.lv.error[i] * e.scale * K / LOD_PX : 1e9;
+  for (const e of C.map.values()) {
+    const o = e.o, ud = o.userData, m = ud.gsGlMat || o.material;
+    if (e.failed || o.geometry !== e.g || ud.detail === false || ud.noLod || !copyMaterial(m) || !inScene(o, v.scene) || (e.objs.length && o.LODinfo?.render?.levels.length !== e.objs.length + 1)) { copiesDrop(v, e); continue; }
+    if (!e.lv) continue;   // still being built
+    if (!e.objs.length) {
+      if (!e.lv.levels) { NO_LEVELS.add(e.g); copiesDrop(v, e); continue; }
+      copyReach(o, e);
+      for (let i = 0; i < e.lv.levels; i++) { o.addLOD(levelGeometry(e.g, e.lv, i), m, far(e, i)); e.objs.push(o.LODinfo.objects.at(-1)); }
+      e.k = K; ud.gsLevels = { levels: e.lv.levels, tris: Array.from(e.lv.count, c => c / 3), error: Array.from(e.lv.error) };
+      copiesNewTwin(o);
+    }
+    // copies added or scaled since (looked at with the scan below); another zoom, field of view or picture size: the distances again
+    if ((o._instancesArrayCount || 0) !== e.count || scan) { const s = e.scale, r = e.reach; copyReach(o, e); if (e.scale !== s || e.reach !== r) e.k = 0; }
+    if (!(Math.abs(K - e.k) <= e.k * .03)) { e.k = K; for (let i = 0; i < e.objs.length; i++) o.updateLOD(i + 1, far(e, i)); }
+    for (const obj of e.objs) { obj.castShadow = o.castShadow; obj.receiveShadow = o.receiveShadow; if ((obj.userData.gsGlMat || obj.material) !== m) { obj.material = m; delete obj.userData.gsGlMat; } }
+  }
+  if (!scan) return; C.t = now;
+  v.scene.traverseVisible(o => {
+    const set = o.isInstancedMesh2 ? o : o.userData.gsTwin;   // (on WebGPU a set is itself hidden and its twins draw)
+    if (set?.isInstancedMesh2 && !C.map.has(set) && copyable(set)) copiesAsk(C, set);
+  });
+}
+function copiesAsk(C, o) {
+  if (copiesAsking >= COPY_ASK) return;
+  const e = { o, g: o.geometry, lv: null, objs: [], failed: false, k: 0, scale: 1, reach: 0, count: 0 };
+  C.map.set(o, e); copiesAsking++;
+  let p; try { p = levelsFor(e.g); } catch (err) { p = Promise.reject(err); }
+  p.then(lv => { e.lv = lv; }, () => { e.failed = true; NO_LEVELS.add(e.g); }).finally(() => { copiesAsking--; });
 }
 // after the shader hold: a mesh hides once its twin is drawing (a twin whose shader is still building waits, and the mesh draws on)
 function detailShow(v) {

@@ -107,7 +107,11 @@ so its next round starts there instead of stuttering down again.
 - Shadow maps are only redrawn when a shadow caster or a shadow light has moved, turned, appeared or
   hidden, and each light only for the casters its own shadow can see, on WebGL and WebGPU
   (`__hd.info.shadows` says whether the last frame redrew them, `__hd.info.shDraws` counts frames
-  that did). If you change a mesh's geometry in place without moving it, call `v.shadowsDirty()`.
+  that did). If you change a mesh's geometry in place without moving it, call `v.shadowsDirty()`, which
+  draws every map again, the kept copies of still things below included (it used to leave those as they
+  were). A `gs.props` copy that is moved, hidden or shown takes its shadow with it (it used to keep its old
+  shadow once the kind had stood still for a moment: nothing about the set of copies changed that the
+  shadow maps could see).
 - Still and moving shadows are kept apart (Unity's cached shadows, Unreal's static/dynamic split): a
   light that stays put keeps a copy of its map with only the things that haven't moved for about
   45 frames, and when only moving things changed, that copy goes back and just the moving things are
@@ -164,6 +168,30 @@ so its next round starts there instead of stuttering down again.
     meshes.
   - Real surface detail (`gs.models.relief`, below) is drawn through it: a roof's tiles as real
     triangles close up, the flat roof again far away.
+- Detail levels for copies (by itself): things drawn as many copies (a `gs.props` kind, a `perCopy()`
+  set: trees, rocks, posts, houses) get whole simpler versions made the same way, in the worker and kept
+  by the mesh's content, and each copy is drawn at the simplest one whose error is under 0.6 of a pixel
+  where it stands. Where a level takes over is worked out from its measured error, the copies' size, the
+  lens and the picture's size, so zooming in (a scope) pushes the levels out and nothing pops. In the
+  test field (300 rocks and 300 posts among other kinds) its three views drew 78,000 to 273,000 triangles
+  a frame on WebGL in place of 439,000 to 1.75 million, shadows included, and matched every copy drawn
+  whole to within 0.2 of 255 a pixel.
+  - By itself for a set with 200 triangles a copy or more and 60,000 in all, and no levels of its own.
+    `props.kind(name, geometry, material, { lod: 'auto' })` (or `mesh.userData.detail = true`) asks for
+    it from 60 triangles a copy; `lod: false` (or `mesh.userData.detail = false`, `userData.noLod`)
+    keeps a kind whole, and `__hd.copies = false` turns it all off. A kind with its own `lod` keeps it.
+  - Up to five levels (a half, a fifth, 7%, 2% and 0.5% of the triangles, for as long as the shape will
+    simplify), all on the mesh's own points, so they add an index list each and no points. Seams and
+    creases are kept while that costs no shape; a far level may cross them (a ball's seam and poles
+    alone hold more triangles than its far levels have).
+  - Not for see-through or alpha-tested materials (leaf cards: give those a `gs.outdoors` `impostor()`
+    level), a list of materials, or skinned and morphing meshes.
+  - `mesh.userData.gsLevels` says what a set was given (`levels`, `tris`, `error`).
+    `node scripts/detail-test.cjs --page copies [--webgpu]` checks the pictures and counts, and with
+    `--bench --q "forest=20000"` flies over a forest with it off and on.
+  - Tried and left out: merging far groups of copies into one baked stand-in mesh a cell. On a forest of
+    22,000 it drew no fewer triangles than the levels do and cost more CPU a frame than it saved on
+    every path measured (the copies' own culling is already cheap), for up to 8 MB a kind.
 - Static batching (WebGL, by itself): small still things that share a material (crates, posts, rocks,
   walls) are merged into one mesh per material and area after about 1.5 s still, one draw call where
   there were dozens (Unity's static batching). A piece that moves, hides or changes material goes back
@@ -619,6 +647,17 @@ works on instanced meshes and on WebGL and WebGPU alike.
   frame generation runs, because frame generation needs each copy to keep its place in the list. It
   skips occlusion culling, and a kind with a list of materials stays on the CPU. Copies that move every
   frame should be plain meshes anyway; on the GPU path a moved copy gets no motion blur for that frame.
+  On the CPU path (smaller kinds, and every kind while frame generation runs) each copy keeps its place
+  in the list while it stays in view, and only the copies that came in, left, changed level or were
+  changed by the game are sent to the graphics chip again: a still camera sends nothing. (Every list
+  used to go up whole each frame, and three.js's copy of it for motion with it: for a forest of 22,000
+  that was 430 KB a frame, now about 5 KB while flying over it, and filling the lists took 2.1 ms a
+  frame, now 1.5.) A copy that takes a new place in a list (it came into view, or changed detail level in
+  the middle of the picture) is put into last frame's list where it stands as well, so frame generation
+  and SGSR 2 see it move with the camera like everything round it. Before, its motion came from
+  whatever had held that place, and a made frame smeared it across the screen: in the frame generation
+  check's `copies` scene, where a zoom changes the level of every copy in the middle distance at once,
+  3.2% of the made picture was broken, now 0.13% (a plain strafe: 0.12%).
 - `v.shafts = 1` (0..2) adds sun shafts: the bright sky round the sun is smeared towards it at quarter
   size, so whatever blocks it (trees, window frames, a hill) leaves streaks of light. Set `v.sun` so
   it knows where the sun is. It's off on the lowest tier. A physical sky is far brighter round the sun;
