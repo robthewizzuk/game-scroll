@@ -377,7 +377,8 @@ export function head(a, ghosts = []) {
   A({ ...mouthShape(f), blend: .013 });
   A({ ball: [.0175 * CH, .0125 * CH, .012], at: Hd(0, -.1025, .0745 - .0015 * so), blend: .01 });
   // ---- ears: a shell held out a little from the head behind the jaw, wide at the top and narrow at the lobe, its rim rolled, a bowl in the middle
-  { const at = Hd(.07, -.012, -.006), sp = { at, rot: [0, -.3, -.1] }, E = (s, more) => A({ ...s, space: sp, mirror: true, ...more }), P = (x, y, z) => [at[0] + x, at[1] + y, at[2] + z];
+  // (flesh: thin enough for light to come through, where it stands clear of the skull: human-shapes.js finish())
+  { const at = Hd(.07, -.012, -.006), sp = { at, rot: [0, -.3, -.1] }, E = (s, more) => A({ ...s, space: sp, mirror: true, flesh: true, ...more }), P = (x, y, z) => [at[0] + x, at[1] + y, at[2] + z];
     E({ ball: [.0038, .027, .0155], at: P(.004, .003, -.012), blend: .006 }); E({ ball: [.004, .007, .0075], at: P(.003, -.0225, -.008), blend: .006 });
     E({ torus: [.0165, .0026], at: P(.0052, .008, -.012), rot: [0, 0, PI / 2], blend: .0035 });
     E({ taper: [P(.0066, .018, -.0145), P(.0066, -.006, -.017)], r: .0026, blend: .003 }); E({ ball: [.0028, .004, .003], at: P(.0035, -.004, .002), blend: .003 });

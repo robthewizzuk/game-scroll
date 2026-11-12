@@ -9,12 +9,12 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
-  attribute, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
+  attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
   modelViewProjection, acos, getParallaxCorrectNormal, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
 } from 'three/tsl';
@@ -83,6 +83,23 @@ export function envFrom(r, scene, { size = 256, blur = .03 } = {}) {
   return pm.fromScene(scene, blur, .1, ENV_FAR, { size });
 }
 
+// Light through thin flesh (pbr's sss with `thin`: a person's skin). Two things on top of the usual light, both only where the
+// mesh says it is thin (F.thin 0..1, measured when it was sculpted): the far side lit, glowing through wherever you look from
+// (an ear with the sun behind it), and three's own term, brighter still seen straight against the light.
+// Light square on to the far side has to have come from straight behind: it only counts as far as that way is open (F.open:
+// the skull is behind an ear, and a shadow map is too coarse to tell an ear from the head a centimetre behind it).
+class FleshModel extends PhysicalLightingModel {
+  constructor(m, F) { super(m.useClearcoat, m.useSheen, m.useIridescence, m.useAnisotropy, m.useTransmission, m.useDispersion); this.F = F; }
+  direct(input, builder) {
+    const { lightDirection, lightColor, reflectedLight } = input, F = this.F;
+    const on = normalView.dot(lightDirection).negate().toVar(), back = on.add(.3).div(1.3).saturate().mul(F.back);
+    const through = positionViewDirection.dot(lightDirection.add(normalView.mul(F.distortion)).normalize().negate()).saturate().pow(F.power).mul(F.scale);
+    const way = mix(float(1), F.open, smoothstep(.35, .85, on));
+    reflectedLight.directDiffuse.addAssign(F.colour.mul(lightColor).mul(back.add(through).mul(way).add(F.ambient).mul(F.attenuation).mul(F.thin)));
+    super.direct(input, builder);
+  }
+}
+
 /* ---------- kit materials with a shader of their own, as node materials ---------- */
 // hd3d.js swaps a mesh's material for its twin here while the view draws on WebGPU (material.userData.gsGpu
 // names it). The twin reads the WebGL material's own uniform objects, so changes show on both.
@@ -132,13 +149,23 @@ export const gpuMaterials = {
   // and a second, close-up version that works the recipe out exactly per pixel (ops.js in TSL), used
   // while the thing is within a few metres (hd3d.js swapTwins picks, once it has built in the background)
   recipe(gm) { return recipeTwin(gm); },
-  // pbr(col, { sss }): three's subsurface scattering material, with everything else copied as three does
+  // pbr(col, { sss }): three's subsurface scattering material, with everything else copied as three does.
+  // sss.thin (a person's skin): the mesh says how thin it is at each point and how open behind (a `gsThin` attribute, two numbers 0..1),
+  // and light comes through only there (FleshModel). Three's own has no idea how thick a thing is: lit from behind, a whole head glowed like its ears.
   sss(gm) {
-    const m = new MeshSSSNodeMaterial(), S = gm.userData.sss;
+    const S = gm.userData.sss, m = S.thin ? new MeshPhysicalNodeMaterial() : new MeshSSSNodeMaterial();
     for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];   // (as three's own NodeLibrary.fromMaterial)
-    if (gm.sheenColor?.equals(S.colour) && gm.sheenRoughness === .7) m.sheen = 0;   // (the WebGL stand-in)
-    m.thicknessColorNode = uniform(S.colour); m.thicknessPowerNode = float(S.power); m.thicknessScaleNode = float(S.scale);
-    m.thicknessDistortionNode = float(S.distortion); m.thicknessAmbientNode = float(S.ambient); m.thicknessAttenuationNode = float(S.attenuation);
+    if (S.thin) {   // (the soft tinted rim stays, as on WebGL: it stands for the light that scatters about under the skin, which this does not do)
+      const at = attribute('gsThin', 'vec2'), F = { ...S, colour: uniform(S.colour), thin: at.x, open: at.y };
+      m.setupLightingModel = function () { return new FleshModel(this, F); };
+      // what light comes through throws no shadow: an ear would shade its own far side, where the light comes out
+      // (a face turned from the light is tested against itself in the shadow map, and the map's own grain shows)
+      m.maskShadowNode = F.thin.lessThan(.3);
+    } else {
+      if (gm.sheenColor?.equals(S.colour) && gm.sheenRoughness === .7) m.sheen = 0;   // (the WebGL stand-in)
+      m.thicknessColorNode = uniform(S.colour); m.thicknessPowerNode = float(S.power); m.thicknessScaleNode = float(S.scale);
+      m.thicknessDistortionNode = float(S.distortion); m.thicknessAmbientNode = float(S.ambient); m.thicknessAttenuationNode = float(S.attenuation);
+    }
     m.name = gm.name || 'sss';
     return m;
   },

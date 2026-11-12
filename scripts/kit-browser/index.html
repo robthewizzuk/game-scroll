@@ -731,6 +731,15 @@ try {
     const hairy = (await shot(4)).slice(); man.hair.level = 0; const cap = (await shot(4)).slice(); const d2 = differ(hairy, cap), info = man.hair.shell.userData.fur;
     ok(man.hair.layers === 5 && /hair/.test(man.hair.shells[0].material.map.name) && info.tris > 2000 && plain.hair === null && human({ ...opts }).hair?.shell.userData.fur.tris < info.tris && d2 > .04,
       `hair: a person's hair in strands and a beard, five layers over ${info.tris} triangles (${(d2 * 100).toFixed(0)}% of the picture is not what it is without); strands: false leaves the sculpted hair`);
+    // a person's skin and eyes (human.js): the grain of skin, cloth and leather is laid on every close-up triangle one way and at one
+    // size (a corner laid on otherwise has a twin), so it is nowhere drawn out further than it lies; thin flesh at the ears and nowhere else
+    { const g = plain.mesh.geometry, P = g.attributes.position.array, U = g.attributes.uv.array, TH = g.attributes.gsThin.array, I = g.index.array, M = plain.mesh.material, n = P.length / 3;
+      const grain = new Uint8Array(I.length); for (const q of g.groups) if (M[q.materialIndex].normalMap) grain.fill(1, q.start, q.start + q.count);   // (skin, cloth and leather: what has a grain)
+      let smeared = 0, grained = 0; for (let t = 0; t < I.length; t += 3) if (grain[t]) { grained++; for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3], d = Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]), du = Math.hypot(U[a * 2] - U[b * 2], U[a * 2 + 1] - U[b * 2 + 1]); if (du > d * 64 + 1e-3) { smeared++; break; } } }
+      plain.updateMatrixWorld(true); const hy = plain.bones.head.getWorldPosition(new T.Vector3()).y / plain.scale.y; let thin = 0, off = 0;
+      for (let i = 0; i < n; i++) if (TH[i * 2] > .02) { thin++; const ax = Math.abs(P[i * 3]), y = P[i * 3 + 1] - hy; if (ax < .06 || ax > .1 || y < .09 || y > .21) off++; }
+      ok(smeared === 0 && grained > 50000 && TH.length === n * 2 && thin > 600 && thin < n * .06 && off === 0 && M[0].userData.sss?.thin === true && M[0].normalMap && M[0].userData.gsGpu === 'sss' && M[1].clearcoat === 1 && M[1].clearcoatRoughness < .1 && !M[4].normalMap,
+        `skin: pores on a person's skin and a wet eye; of ${grained} close-up triangles of skin, cloth and leather ${smeared} have their grain smeared; ${thin} of ${n} points are thin flesh, ${off} of them anywhere but the ears`); }
     window.__hd.hold = hold;
   }
 }
