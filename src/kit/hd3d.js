@@ -31,7 +31,7 @@ import {
   WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry, LinearFilter, AdditiveBlending as ADD,
   OrthographicCamera, PlaneGeometry, MeshBasicMaterial, MeshDepthMaterial, Group, Vector4, DataTexture, RGBAFormat, ShaderChunk,
   LightProbe, CubeCamera, WebGLCubeRenderTarget, Euler, Matrix4, Quaternion, DepthTexture, WebGLCoordinateSystem, Box3, Sphere, UnsignedIntType,
-  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D,
+  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
@@ -57,6 +57,7 @@ import { packing } from './pack.js';
 import { makeRenderer } from './renderer.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
+import { ShadowTiles, TILES } from './shadow-tiles.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
 import { own } from './cleanup.js';
@@ -217,6 +218,14 @@ export const HD = {
    * tests, true works out what is hidden and draws it all the same (the picture to compare a frame with).
    */
   occlude: true, occludeDepth: true, occludeSleep: true, occludeTexels: 2400, occludeShow: false,
+  /**
+   * Shadows kept from frame to frame. shadowCache: false draws every shadow map whole whenever anything it sees changed.
+   * shadowTiles: a sun's map is kept in tiles that slide with the camera, each drawn again only when what is in it changed
+   * (shadow-tiles.js); false: the sun moves a shadow texel at a time, as it used to, and its map is drawn again whenever it does.
+   * shadowCheck (tests): true makes a tiled map again from its kept copy and the moving things on frames with nothing to draw,
+   * which is what it should hold already, so a kept copy that has gone wrong shows in the picture.
+   */
+  shadowCache: true, shadowTiles: true, shadowCheck: false,
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -264,36 +273,100 @@ function renderer() {
 // The still/moving shadow split on WebGL (HDView.shadowLights): three draws the shadow maps inside
 // render(), so its shadow drawing is wrapped. A light planned 'rebuild' has its still things drawn
 // alone and copied aside; 'overlay' puts that copy back; then both draw just the moving things over it
-// (the map is kept, not cleared: a map marked gsKeep skips three's clear).
+// (the map is kept, not cleared: a map marked gsKeep skips three's clear). A sun planned 'tiles' does
+// the same a part of its map at a time (shadowTiles below).
 function splitShadowsGL(r) {
-  const sm = r.shadowMap, draw = sm.render, clear = r.clear;
+  const sm = r.shadowMap, draw = sm.render, clear = r.clear, box = new Box2(), at = new Vector2();
+  let scene = null, camera = null, used = 0;
   r.clear = function (...a) { if (this.getRenderTarget()?.gsKeep) return; return clear.apply(this, a); };
-  sm.render = function (lights, scene, camera) {
+  // (A part of the map is drawn through a camera of its own that looks at that part alone, and no camera
+  // draws two parts in one frame. The light's own camera with its view narrowed would not do: three.js
+  // sends a camera's projection to a shader only when the camera or the shader is another one than the
+  // last thing drawn had, so a second part would be drawn through the first part's; and gs.props' sets
+  // pick which of their copies to draw once a frame for each camera (@three.ez/instanced-mesh), so it
+  // would draw the first part's copies.)
+  const parts = [];
+  const ops = {
+    draw(l, mask, keep, q, px) {
+      const sh = l.shadow, c0 = sh.camera, map = sh.map, N = map.width, vp = sh._viewports[0];
+      let c = c0;
+      if (q) {
+        const x = q[0] * px, y = q[1] * px, w = q[2] * px, h = q[3] * px;
+        c = parts[used++] ||= new OrthographicCamera(); c.left = c0.left; c.right = c0.right; c.top = c0.top; c.bottom = c0.bottom; c.near = c0.near; c.far = c0.far; c.up.copy(c0.up); c._reversedDepth = c0._reversedDepth; c.coordinateSystem = c0.coordinateSystem;
+        c.setViewOffset(N, N, x, N - y - h, w, h); sh.camera = c;   // (only what is in the part is drawn, into that part of the map; three's clear, kept to it, empties it first)
+        vp.set(x / N, y / N, w / N, h / N); map.scissor.set(x, y, w, h); map.scissorTest = true;
+      }
+      const m0 = c.layers.mask; c.layers.mask = mask; sh.needsUpdate = true; sm.needsUpdate = true; map.gsKeep = keep;
+      try { draw.call(sm, [l], scene, camera); }
+      finally { c.layers.mask = m0; map.gsKeep = false; if (q) { sh.camera = c0; vp.set(0, 0, 1, 1); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
+    },
+    copy(l, from, to, qs, px) {
+      r.state.setScissorTest(false);
+      if (!qs) { r.copyTextureToTexture(from.depthTexture, to.depthTexture); return; }
+      for (const q of qs) { box.min.set(q[0] * px, q[1] * px); box.max.set((q[0] + q[2]) * px, (q[1] + q[3]) * px); r.copyTextureToTexture(from.depthTexture, to.depthTexture, box, at.copy(box.min)); }
+    },
+    // (sideways only: a blit can't make depths deeper, so shadowLights starts the tiles again when the light's depth moves)
+    shift(l, from, to, dx, dy) {
+      const N = to.width; box.min.set(Math.max(0, dx), Math.max(0, dy)); box.max.set(box.min.x + N - Math.abs(dx), box.min.y + N - Math.abs(dy));
+      r.state.setScissorTest(false); r.copyTextureToTexture(from.depthTexture, to.depthTexture, box, at.set(Math.max(0, -dx), Math.max(0, -dy)));
+    },
+    make(l) { const t = new WebGLRenderTarget(sh0(l).x, sh0(l).y, { depthBuffer: true }); t.depthTexture = new DepthTexture(t.width, t.height, UnsignedIntType); r.initRenderTarget(t); return t; },
+  };
+  sm.render = function (lights, sc, cam) {
     if (sm.enabled === false || (!sm.autoUpdate && !sm.needsUpdate)) return;
+    const t0 = r.info.render.triangles, c0 = r.info.render.calls; used = 0;
     let split = null;
     for (const l of lights) { const sh = l.shadow; if (sh.needsUpdate && sh.map && sh.gsPlan && sh.gsPlan.mode !== 'full') { (split ||= []).push(l); sh.needsUpdate = false; } }
-    draw.call(sm, lights, scene, camera);
-    if (split) for (const l of split) shadowSplit(l, (mask, keep) => {
-      const sh = l.shadow, c = sh.camera, m0 = c.layers.mask;
-      c.layers.mask = mask; sh.needsUpdate = true; sm.needsUpdate = true; sh.map.gsKeep = keep;
-      try { draw.call(sm, [l], scene, camera); } finally { c.layers.mask = m0; sh.map.gsKeep = false; }
-    }, (from, to) => r.copyTextureToTexture(from, to), () => { const t = new WebGLRenderTarget(sh0(l).x, sh0(l).y, { depthBuffer: true }); t.depthTexture = new DepthTexture(t.width, t.height, UnsignedIntType); r.initRenderTarget(t); return t; });
+    draw.call(sm, lights, sc, cam);
+    if (split) {
+      scene = sc; camera = cam;
+      try { for (const l of split) shadowSplit(l, ops); }
+      finally { scene = camera = null; r.setRenderTarget(r.getRenderTarget(), r.getActiveCubeFace(), r.getActiveMipmapLevel()); }   // (the copies leave no target bound)
+    }
     sm.needsUpdate = false;
+    HD.info.shTris = (HD.info.shTris || 0) + r.info.render.triangles - t0; HD.info.shCalls = (HD.info.shCalls || 0) + r.info.render.calls - c0;
   };
 }
 const sh0 = l => l.shadow.mapSize;
-// one light's still/moving shadow drawing, the same on WebGL and WebGPU: draw(layers, keep) draws the
-// map from the things on those layers (keep: over what's there), copy(from, to) copies a depth
-// picture, make() makes the copy's target
-function shadowSplit(l, draw, copy, make) {
+// One light's still/moving shadow drawing, the same on WebGL and WebGPU. ops (each backend's own):
+// draw(l, layers, keep, part, px) draws the map from the things on those layers (keep: over what is
+// there; part: only that rectangle of it, [x, y, w, h] in tiles of px texels, emptied first unless
+// kept); copy(l, from, to, parts, px) copies a depth picture, or those parts of it; shift(l, from, to,
+// dx, dy, dz) copies it moved by whole texels (and deeper by dz); make(l) makes the copy's target.
+function shadowSplit(l, ops) {
   const sh = l.shadow, plan = sh.gsPlan;
   if (sh.gsCache && (sh.gsCache.width !== sh.mapSize.x || sh.gsCache.height !== sh.mapSize.y)) { sh.gsCache.dispose(); sh.gsCache = null; }
+  if (plan.mode === 'tiles') { shadowTiles(l, ops); return; }
   if (plan.mode === 'rebuild' || !sh.gsCache) {
-    draw(SH_STILL_BIT, false);
-    copy(sh.map.depthTexture, (sh.gsCache ||= make()).depthTexture);
-  } else copy(sh.gsCache.depthTexture, sh.map.depthTexture);
-  draw(SH_MOVE_BIT, true);
+    ops.draw(l, SH_STILL_BIT, false);
+    ops.copy(l, sh.map, sh.gsCache ||= ops.make(l));
+  } else ops.copy(l, sh.gsCache, sh.map);
+  ops.draw(l, SH_MOVE_BIT, true);
   HD.info.shSplit = (HD.info.shSplit || 0) + 1;
+}
+// A sun's map in tiles (shadow-tiles.js has the book-keeping and says why). The plan made in
+// shadowLights is carried out here: the kept copy slides with the map when the sun has stepped a tile,
+// the parts whose still things changed are drawn again and copied aside, the parts where only moving
+// things changed get the kept copy back, and the moving things are drawn over what was put back.
+function shadowTiles(l, ops) {
+  const sh = l.shadow, st = sh.gsTiles, p = st.plan, px = sh.mapSize.x / st.T, I = HD.info;
+  let cache = sh.gsCache;
+  if (p.reset || !cache) {
+    cache = sh.gsCache ||= ops.make(l);
+    ops.draw(l, SH_STILL_BIT, false);
+    ops.copy(l, sh.map, cache);
+    ops.draw(l, SH_MOVE_BIT, true);
+    I.shTiles = (I.shTiles || 0) + st.T * st.T; I.shWhole = (I.shWhole || 0) + 1;
+  } else {
+    if (p.shift) { ops.shift(l, cache, sh.map, p.shift[0], p.shift[1], p.shift[2]); ops.copy(l, sh.map, cache); I.shSlid = (I.shSlid || 0) + 1; }
+    for (const q of p.redo) ops.draw(l, SH_STILL_BIT, false, q, px);
+    if (p.redo.length) ops.copy(l, sh.map, cache, p.redo, px);
+    if (p.back.length) ops.copy(l, cache, sh.map, p.back, px);
+    if (p.movers) ops.draw(l, SH_MOVE_BIT, true, p.movers[2] === st.T && p.movers[3] === st.T ? null : p.movers, px);
+    I.shTiles = (I.shTiles || 0) + p.tiles; I.shPut = (I.shPut || 0) + p.put;
+  }
+  st.commit();
+  I.shSplit = (I.shSplit || 0) + 1;
 }
 /** True if this device can draw Next Gen games. */
 export const hasHD = () => !!renderer();
@@ -1869,58 +1942,91 @@ export class HDView {
    */
   shadowLights(force, gpu = false) {
     if (this.shAll) { force = true; this.shAll = false; }   // (shadowsDirty(): the kept copies of still things too)
-    const L = this.shL ||= [], keys = this.shK ||= new Map(); L.length = 0;
+    const L = this.shL ||= [], keys = this.shK ||= new Map(), TL = this.shT ||= []; L.length = 0;
     this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow) L.push(o); });
     const n = L.length; if (!n) return false;
     if (SH_H.length < n * 5) SH_H = new Float64Array(n * 10);
     const H = SH_H; H.fill(0, 0, n * 5);   // per light: [own, still sum, moving sum, still triangles, moving triangles]
+    TL.length = n;
     for (let i = 0; i < n; i++) {
       const l = L[i], sh = l.shadow, c = sh.camera, e = l.matrixWorld.elements, t = l.target?.matrixWorld.elements;
       if (!l.isPointLight) sh.updateMatrices(l);   // (three does the same as it draws; here it also gives the frustum)
       H[i * 5] = sh.mapSize.x + e[12] * 3.1 + e[13] * 3.7 + e[14] * 4.3 + (t ? t[12] * 5.3 + t[13] * 5.9 + t[14] * 6.1 : 0) + (l.angle || 0) * 11 + (l.distance || 0) * 13
         + (c.left ?? 0) * 17 + (c.right ?? 0) * 19 + (c.top ?? 0) * 23 + (c.bottom ?? 0) * 29 + c.near * 31 + c.far * 37 + (c.fov ?? 0) * 41 + sh.bias * 43 + (sh.map ? 0 : Math.random());
+      // a sun's map in tiles (shadow-tiles.js): where its tiles are this frame
+      const N = sh.mapSize.x, tiled = HD.shadowTiles !== false && HD.shadowCache !== false && l.isDirectionalLight && c.isOrthographicCamera && c.zoom === 1 && !c.view?.enabled
+        && N === sh.mapSize.y && N % TILES === 0 && N >= TILES * 16 && sh.getViewportCount() === 1 && (!gpu || sh.shadowNode?.gsSplit);
+      let st = null;
+      if (tiled) { st = sh.gsTiles ||= new ShadowTiles(); st.begin(c.matrixWorld.elements, c.left, c.right, c.bottom, c.top, c.near, c.far, N, gpu); } else sh.gsTiles?.drop();
+      TL[i] = st;
     }
     this.scene.traverseVisible(o => {
       if (o.isLight || o.layers.mask === BATCH_BIT) return;   // (a merged piece: its group's mesh casts for it)
       if (!o.castShadow) { if (o.layers.mask & SH_BITS) o.layers.mask &= ~SH_BITS; return; }
       const e = o.matrixWorld.elements, w = (o.id % 89) + 1, held = (o.layers.mask & HOLD_BIT) !== 0;
       let h = ((o.geometry?.id ?? 0) % 97 * .37 + e[0] * 1.3 + e[1] * 1.7 + e[2] * 2.3 + e[4] * 2.9 + e[5] * 3.1 + e[6] * 3.7 + e[8] * 4.1 + e[9] * 4.3 + e[10] * 4.7 + e[12] * 5.3 + e[13] * 5.9 + e[14] * 6.1 + (held ? .5 : 0)) * w;
-      let wide = false, copies = 1;   // instanced and skinned things: counted for every light (their bounds move without the object)
-      const tw = o.userData.gsTwin;
+      let wide = false, copies = 1, ball = false;   // instanced things and things placed on the chip: counted for every light (their bounds move without the object)
+      const tw = o.userData.gsTwin, g = o.geometry;
       // (a set of copies counts up when one of them is moved, hidden or shown: props.js watched(); nothing else about it changes)
       if (o.isInstancedMesh2) h += ((o._parentLOD || o).userData.gsChanged || 0) * 13 * w;
       if (tw?.matrixWorld) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + (tw.userData.gsChanged || 0) * 13 + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
       else if (o.userData.gsMoved !== undefined) { h += (o.userData.gsMoved + 1) * 7 * w; wide = true; copies = o.count ?? 1; }   // (moved on the graphics chip: a count that goes up when it does, gs.fluid's drops)
+      // (a gs.props set by how many copies it has, not by how many of them the last camera to draw it could see: that changes as the camera turns, and nothing about the shadows does)
+      else if (o.isInstancedMesh2) { h += (((o._parentLOD || o).instancesCount ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = (o._parentLOD || o).instancesCount ?? 1; }
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
-      else if (o.isInstancedMesh2 || (o.isBatchedMesh && !o.isDetailMesh)) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
-      if (o.isSkinnedMesh && o.skeleton) { const b = o.skeleton.bones; for (let j = 0; j < b.length; j += 3) { const m = b[j].matrixWorld.elements; h += (m[12] * 1.1 + m[13] * 1.9 + m[14] * 2.7 + m[0] + m[5] * 1.3) * (j + 1); } wide = true; }
+      else if (o.isBatchedMesh && !o.isDetailMesh) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
+      if (o.isSkinnedMesh && o.skeleton) {
+        // a posed body: where its bones are says where it is (a ball round them, and as much again as a third of the body's own size for the flesh on them)
+        const b = o.skeleton.bones; let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+        for (let j = 0; j < b.length; j++) {
+          const m = b[j].matrixWorld.elements, x = m[12], y = m[13], z = m[14];
+          if (j % 3 === 0) h += (x * 1.1 + y * 1.9 + z * 2.7 + m[0] + m[5] * 1.3) * (j + 1);
+          if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+        }
+        if (!wide && b.length && g) {
+          const gs = g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere), sc = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
+          SH_S.center.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); SH_S.radius = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + .1 + .3 * (gs?.radius || 1) * sc; ball = true;
+        } else wide = true;
+      }
       // still or moving: frames since it last changed
       let rec = SH_LAST.get(o); if (!rec) SH_LAST.set(o, rec = { h, still: 0 }); else if (rec.h !== h) { rec.h = h; rec.still = 0; } else if (rec.still < 1e4) rec.still++;
       const still = rec.still >= (HD.shadowStill ?? SH_STILL) && !held, bit = held ? 0 : still ? SH_STILL_BIT : SH_MOVE_BIT;
       if ((o.layers.mask & SH_BITS) !== bit) o.layers.mask = (o.layers.mask & ~SH_BITS) | bit;
-      const g = o.geometry, bs = !wide && g && (g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere));
+      const bs = !wide && !ball && g && (g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere));
       const tris = o.isDetailMesh ? o.fullTris : g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
-      if (bs) SH_S.copy(bs).applyMatrix4(o.matrixWorld);
+      if (bs) { SH_S.copy(bs).applyMatrix4(o.matrixWorld); ball = true; }
       for (let i = 0; i < n; i++) {
         const l = L[i];
-        if (bs) {
+        if (ball) {
           const sees = l.isPointLight ? SH_P.setFromMatrixPosition(l.matrixWorld).distanceTo(SH_S.center) < SH_S.radius + (l.distance || l.shadow.camera.far) : l.shadow._frustum.intersectsSphere(SH_S);
           if (!sees) continue;
         }
         const b = i * 5; if (still) { H[b + 1] += h; H[b + 3] += tris; } else { H[b + 2] += h; H[b + 4] += tris; }
+        const st = TL[i]; if (st) { if (ball) st.add(still, h, SH_S.center.x, SH_S.center.y, SH_S.center.z, SH_S.radius); else st.addAll(still, h); }
       }
     });
     let any = false;
     for (let i = 0; i < n; i++) {
-      const l = L[i], sh = l.shadow, b = i * 5, all = H[b] + H[b + 1] + H[b + 2];
+      const l = L[i], sh = l.shadow, b = i * 5, all = H[b] + H[b + 1] + H[b + 2], st = TL[i];
       sh.autoUpdate = false;
-      if (!(force || !sh.map || keys.get(l) !== all)) continue;
-      keys.set(l, all); sh.needsUpdate = true; any = true;
+      const changed = force || !sh.map || keys.get(l) !== all; keys.set(l, all);
       // the still/moving split: a light that isn't a point light, one map, still things well outweighing moving ones
       const plan = sh.gsPlan ||= { mode: 'full', key: 0 }, sKey = H[b] + H[b + 1];
-      const fits = HD.shadowCache !== false && !l.isPointLight && sh.getViewportCount() === 1 && H[b + 3] >= SH_MIN_TRIS && H[b + 3] >= 2 * H[b + 4] && (!gpu || sh.shadowNode?.gsSplit);
-      plan.mode = !fits ? 'full' : force || !sh.gsCache || plan.key !== sKey || sh.gsCache.width !== sh.mapSize.x || sh.gsCache.height !== sh.mapSize.y ? 'rebuild' : 'overlay';
-      plan.key = fits ? sKey : 0;
+      // (in tiles the moving things cost what they cover, not a copy of the whole map: the still things need only be enough to be worth keeping)
+      const fits = HD.shadowCache !== false && !l.isPointLight && sh.getViewportCount() === 1 && H[b + 3] >= SH_MIN_TRIS && (st || H[b + 3] >= 2 * H[b + 4]) && (!gpu || sh.shadowNode?.gsSplit);
+      const kept = !!sh.gsCache && sh.gsCache.width === sh.mapSize.x && sh.gsCache.height === sh.mapSize.y;
+      if (st && fits && sh.map) {
+        // a sun in tiles: the tiles say what there is to draw (until they have been drawn once, the map as a whole does)
+        if (!st.valid && !changed) continue;
+        if (!st.finish(force || !kept).any && !(HD.shadowCheck && st.valid && st.putBack())) continue;   // (shadowCheck, for tests: with nothing to draw, the map is made again from its kept copy, so a kept copy that has gone wrong shows)
+        plan.mode = 'tiles'; plan.key = NaN;
+      } else {
+        st?.drop();
+        if (!changed) continue;
+        plan.mode = !fits ? 'full' : force || !kept || plan.key !== sKey ? 'rebuild' : 'overlay';
+        plan.key = fits ? sKey : 0;
+      }
+      sh.needsUpdate = true; any = true;
     }
     return any;
   }
@@ -2031,7 +2137,8 @@ export class HDView {
       for (const l of this.shL) {
         const sh = l.shadow;
         if (!sh.needsUpdate || !sh.map || sh.gsPlan?.mode === 'full' || !sh.gsPlan || !sh.shadowNode?.gsSplit || sh.shadowNode.shadowMap !== sh.map) continue;
-        shadowSplit(l, (mask, keep) => G.fx.splitDraw(r, this.scene, this.cam, l, mask, keep), (from, to) => r.copyTextureToTexture(from, to), () => G.fx.splitTarget(r, sh.mapSize.x, sh.mapSize.y));
+        const ops = G.shOps ||= G.fx.shadowOps(r); ops.scene = this.scene; ops.camera = this.cam;
+        shadowSplit(l, ops);
         sh.needsUpdate = false;
       }
     }
@@ -2085,6 +2192,7 @@ export class HDView {
     }
     if (!baking && !off) {
       gpuTime(r);
+      { const C = G.fx.SHADOW_COST; HD.info.shTris = (HD.info.shTris || 0) + C[0]; HD.info.shCalls = (HD.info.shCalls || 0) + C[1]; C[0] = C[1] = 0; }
       HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
       HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0;
     }
@@ -3004,8 +3112,24 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
   s.aim = (x, y, z) => { if (x?.isVector3) d.copy(x); else d.set(x, y, z); d.normalize(); return s; };
   s.follow = (x, y, z) => {
     if (s.fitted) { s.fitted = false; c.left = c.bottom = -size; c.right = c.top = size; c.near = 1; c.far = 120; c.updateProjectionMatrix(); s.shadow.bias = -.0004; s.shadow.normalBias = .04; }
-    const tx = 2 * size / s.shadow.mapSize.x; x = Math.round(x / tx) * tx; z = Math.round(z / tx) * tx;
-    s.target.position.set(x, y, z); s.position.set(x + d.x * 50, y + d.y * 50, z + d.z * 50); s.target.updateMatrixWorld();
+    if (HD.shadowTiles === false) {
+      const tx = 2 * size / s.shadow.mapSize.x; x = Math.round(x / tx) * tx; z = Math.round(z / tx) * tx;
+      s.target.position.set(x, y, z); s.position.set(x + d.x * 50, y + d.y * 50, z + d.z * 50); s.target.updateMatrixWorld();
+      return;
+    }
+    // The middle of the shadow moves a tile of its map at a time (a sixteenth of its width), along the
+    // light's own sideways directions, and in depth only once it is well out: between steps the light
+    // stays where it is, so nothing is drawn again for it, and at a step the map slides by a whole tile
+    // and only the tiles that come in are drawn (shadow-tiles.js). A tile is a whole number of texels,
+    // so shadow edges don't crawl. (A step is taken a little late, so standing on a tile's edge doesn't
+    // step back and forth.)
+    FZ.copy(d); FX.crossVectors(UPV, FZ); if (FX.lengthSq() < 1e-8) FX.set(1, 0, 0); FX.normalize(); FY.crossVectors(FZ, FX);
+    const tw = 2 * size / TILES, a = x * FX.x + y * FX.y + z * FX.z, b = x * FY.x + y * FY.y + z * FY.z, e = x * FZ.x + y * FZ.y + z * FZ.z, at = s.gsAt ||= [NaN, NaN, NaN];
+    if (!(Math.abs(a - at[0]) <= .6 * tw)) at[0] = Math.round(a / tw) * tw;
+    if (!(Math.abs(b - at[1]) <= .6 * tw)) at[1] = Math.round(b / tw) * tw;
+    if (!(Math.abs(e - at[2]) <= 10)) at[2] = Math.round(e / 2) * 2;
+    s.target.position.copy(FX).multiplyScalar(at[0]).addScaledVector(FY, at[1]).addScaledVector(FZ, at[2]);
+    s.position.copy(s.target.position).addScaledVector(FZ, 50); s.target.updateMatrixWorld();
   };
   s.fit = (view, o = {}) => {
     const r = fitShadow(s, view, o), nf = o.near || 0;
@@ -3063,20 +3187,31 @@ function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tal
     }
   }
   if (!n) { const g = ground ? ground(o.x, o.z) ?? o.y : o.y; both(FP.set(o.x, g, o.z)); }
-  const msz = s.shadow.mapSize.x || 1024;
-  let hx = Math.min(max, step4((x1 - x0) / 2 + margin)), hy = Math.min(max, step4((y1 - y0) / 2 + margin));
+  const msz = s.shadow.mapSize.x || 1024, tiles = HD.shadowTiles !== false, was = tiles ? s.gsFit ||= { hx: 0, hy: 0, cx: NaN, cy: NaN, top: NaN, depth: NaN } : null;
+  // (in tiles, shadow-tiles.js: the box is a little bigger, so that its middle can go a tile at a time and
+  // still cover what is seen, and it is kept while it is no more than a step too big, so a camera on
+  // the edge of a step doesn't have every shadow drawn again each frame)
+  const grow = tiles ? TILES / (TILES - 1.2) : 1, keep = (need, had) => (had >= need && had <= need * 1.2 ? had : need);
+  let hx = Math.min(max, step4(((x1 - x0) / 2 + margin) * grow)), hy = Math.min(max, step4(((y1 - y0) / 2 + margin) * grow));
+  if (tiles) { hx = keep(hx, was.hx); hy = keep(hy, was.hy); }
   // too big to cover it all: keep the camera's end of it
   let cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; const ox = o.dot(FX), oy = o.dot(FY);
   if ((x1 - x0) / 2 + margin > hx) cx = Math.min(Math.max(cx, ox - hx + margin), ox + hx - margin);
   if ((y1 - y0) / 2 + margin > hy) cy = Math.min(Math.max(cy, oy - hy + margin), oy + hy - margin);
-  const tx = 2 * hx / msz, ty = 2 * hy / msz; cx = Math.round(cx / tx) * tx; cy = Math.round(cy / ty) * ty;
+  const tx = 2 * hx / (tiles ? TILES : msz), ty = 2 * hy / (tiles ? TILES : msz);
+  if (tiles) {
+    if (was.hx === hx && Math.abs(cx - was.cx) <= .6 * tx) cx = was.cx; else cx = Math.round(cx / tx) * tx;
+    if (was.hy === hy && Math.abs(cy - was.cy) <= .6 * ty) cy = was.cy; else cy = Math.round(cy / ty) * ty;
+  } else { cx = Math.round(cx / tx) * tx; cy = Math.round(cy / ty) * ty; }
   // the light sits above the tallest thing that could shade what's seen, low suns further off
-  const top = Math.ceil((z1 + tall / Math.max(d.y, .05) + 10) / 10) * 10, depth = Math.ceil((top - z0 + 20) / 10) * 10;
+  let top = Math.ceil((z1 + tall / Math.max(d.y, .05) + 10) / 10) * 10; if (tiles && was.top >= top && was.top <= top + 20) top = was.top;
+  let depth = Math.ceil((top - z0 + 20) / 10) * 10; if (tiles && was.depth >= depth && was.depth <= depth + 20) depth = was.depth;
+  if (tiles) { was.hx = hx; was.hy = hy; was.cx = cx; was.cy = cy; was.top = top; was.depth = depth; }
   FP.copy(FX).multiplyScalar(cx).addScaledVector(FY, cy).addScaledVector(FZ, top);
   s.position.copy(FP); s.target.position.copy(FP).sub(FZ); s.target.updateMatrixWorld();
   if (c.right !== hx || c.top !== hy || c.far !== depth || !s.fitted) { c.left = -hx; c.right = hx; c.bottom = -hy; c.top = hy; c.near = .5; c.far = depth; c.updateProjectionMatrix(); view.shadowsDirty?.(); }
   s.fitted = true;
-  const tex = Math.max(tx, ty); s.shadow.normalBias = tex * 1.2 * soft; s.shadow.bias = -(.03 + tex * .2) / depth;
+  const tex = Math.max(2 * hx / msz, 2 * hy / msz); s.shadow.normalBias = tex * 1.2 * soft; s.shadow.bias = -(.03 + tex * .2) / depth;
   return { width: hx * 2, height: hy * 2, texel: tex };
 }
 /** A shadow-casting spotlight (torch, searchlight) whose shadow follows the quality tier. */

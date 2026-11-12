@@ -1,0 +1,175 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Shadows in tiles (src/kit/shadow-tiles.js; hd3d.js shadowLights, shadowTiles), for
+// scripts/detail-test.cjs --page shadows. A village is walked through under a sun that follows the
+// camera: houses with yards full of things, a truck that drives up the street, a gate that slides open
+// and stops, a walking person, a balloon that appears, a crate that goes, a barrel that is carried off
+// (gs.props). The walk is done twice, on two villages made the same: once with the sun's shadow map
+// kept in tiles, once with every shadow map drawn whole every frame. Every frame must be the same
+// picture, and the first walk must draw a small share of the shadow triangles. Then: nothing moving
+// draws no shadows at all; one walker puts back only the tiles they cross; and the same again under
+// sun.fit() with its near cascade.
+//   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?frames=90    ?trace (what each frame's tiles did)
+//   For finding a frame that went wrong (they change what is checked, so the checks' verdicts mean nothing with them):
+//   ?verify       each frame of the tiles walk is drawn again with its shadows whole, and the pixels that differ are listed
+//   ?verify=top   the same from straight above, with the tiles that are wrong and what casts there
+//   ?verify=kept  the map is made again from its kept copy (HD.shadowCheck)    ?verify=end  once, after the warm-up
+//   ?control      both walks with their shadows whole: what two runs of the same thing differ by (nothing)
+//   ?at=N  verify frame N only    ?shot=N  keep frame N's pictures    ?warm  trace the warm-up frames
+//   ?big=plain|none  the big mesh not in clusters, or not there    ?nobatch  no static batching    ?hd=pack:false,detail:false  any engine test switch
+//   (a frame's number decides what happens in it: frames=40 or 90 keep the walk as it is, a short walk is another walk)
+//   ?bench: the walk as it was (the sun a texel at a time, every map whole each time) and in tiles: shadow triangles and draws, and the frame's time
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480), FRAMES = +(Q.get('frames') || 90), { Props } = gs.props;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false; HD.still = false; HD.occlude = false; HD.shadowStill = 3; if (Q.has('nobatch')) HD.batch = false; for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }   // (?hd=pack:false,detail:false: any of the engine's test switches)
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+
+function village(fit) {
+  const rng = gs.math.rng(23), R = (a, b) => a + (b - a) * rng();
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .0008, amb: .45 }), c = document.createElement('canvas'); v.cam.far = 500; v.cam.fov = 70; v.cam.updateProjectionMatrix();
+  c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 3, 40, [-.5, 1, .3]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  if (fit) v.air({});
+  const S = { v, c, x, sun, fit, yard: [] };
+  const add = (g, m, px, py, pz, o = {}) => { const mesh = new T.Mesh(g, m); mesh.position.set(px, py, pz); mesh.castShadow = o.cast !== false; mesh.receiveShadow = true; if (o.ry) mesh.rotation.y = o.ry; v.scene.add(mesh); return mesh; };
+  add(new T.PlaneGeometry(600, 600).rotateX(-Math.PI / 2), gs.hd.pbr('#7a8468', { rough: .95 }), 0, 0, -70, { cast: false });
+  const brick = gs.hd.pbr('#a0705a', { rough: .85 }), plaster = gs.hd.pbr('#d6cdb8', { rough: .9 }), wood = gs.hd.pbr('#8a6a48', { rough: .8 }), metal = gs.hd.pbr('#5a6a78', { rough: .4, metal: .8 }), red = gs.hd.pbr('#c0392b', { rough: .5 });
+  const house = new T.BoxGeometry(8, 7, 9), crate = new T.BoxGeometry(1.2, 1.2, 1.2), post = new T.CylinderGeometry(.2, .25, 4, 12), knot = new T.TorusKnotGeometry(.7, .22, 90, 12), ball = new T.SphereGeometry(.7, 24, 16);
+  for (let i = 0; i < 12; i++) for (const side of [-1, 1]) add(house, (i + (side > 0)) & 1 ? brick : plaster, side * 10, 3.5, -4 - i * 12);
+  for (let i = 0; i < 220; i++) { const k = i % 3; S.yard.push(add(k === 0 ? crate : k === 1 ? post : knot, k === 0 ? wood : k === 1 ? metal : red, (i & 1 ? 1 : -1) * R(3.5, 60), k === 1 ? 2 : k === 2 ? 1.2 : .6, R(-150, 10), { ry: R(0, 3) })); }
+  // a big still thing that is drawn in clusters (cluster detail), which a part of the map must pick as the whole map would
+  S.big = add(new T.TorusKnotGeometry(2, .65, 400, 48), plaster, 4.2, 3, -30); if (Q.get('big') === 'plain') S.big.userData.detail = false; if (Q.get('big') === 'none') S.big.visible = false;
+  // what moves, comes and goes
+  S.truck = add(new T.BoxGeometry(2.6, 3, 6), metal, 2.5, 1.5, -50);
+  S.gate = add(new T.BoxGeometry(.4, 4, 2.4), wood, -5.8, 2, -10);
+  S.balloon = add(ball, red, 1.5, 5, -24); S.balloon.visible = false;
+  S.goes = add(crate, wood, -2, .6, -18);
+  S.man = gs.poses.person({ body: '#2f6f9f', mat: q => gs.hd.pbr(q) }); S.man.position.set(-3, 0, -14); S.man.rotation.y = Math.PI; v.scene.add(S.man); S.man.rig.play('walk');
+  const props = S.props = new Props(v.scene); props.kind('barrel', new T.CylinderGeometry(.45, .45, 1.1, 16, 2).translate(0, .55, 0), metal);
+  props.scatter('barrel', 300, { x0: -60, z0: -150, x1: -15, z1: 10 }, { seed: 3, gap: 2 }); props.scatter('barrel', 300, { x0: 15, z0: -150, x1: 60, z1: 10 }, { seed: 5, gap: 2 });
+  props.done();
+  return S;
+}
+// Where everything is at frame i (the same for both villages). A walk down the street, a fast drive, a
+// stand while things still move, a jump to another part of the street, and a stand with nothing moving.
+const FA = Math.round(FRAMES * .4), FB = Math.round(FRAMES * .55), FC = Math.round(FRAMES * .75), FD = Math.round(FRAMES * .85);
+function pose(S, i, warm) {
+  const cam = S.v.cam, live = Math.min(i, FD);   // (from FD on, nothing moves)
+  if (i < FA) { cam.position.set(Math.sin(i * .3) * .8, 1.7, 8 - i * .4); cam.lookAt(Math.sin(i * .2) * 5, 2.5, cam.position.z - 25); }
+  else if (i < FB) { cam.position.set(1, 1.7, 8 - FA * .4 - (i - FA) * 1.6); cam.lookAt(0, 3, cam.position.z - 30); }
+  else if (i < FC) { cam.position.set(0, 1.7, -60); cam.lookAt(Math.sin(i * .2) * 4, 3, -90); }
+  else if (i < FD) { cam.position.set(-1, 1.7, -118); cam.lookAt(0, 2, -90); }
+  else { cam.position.set(-1, 1.7, -118); cam.lookAt(Math.sin((i - FD) * .5) * 8, 2, -90 - (i - FD)); }
+  cam.updateMatrixWorld();
+  S.truck.position.z = -50 + live * .45;
+  S.gate.position.z = -10 + Math.min(3, Math.max(0, (live - 4) * .5));   // (slides open over six frames, then stands still)
+  S.balloon.visible = live >= 12; S.goes.visible = live < 20;
+  S.man.position.z = -14 - live * .12; if (i <= FD && !warm) S.man.rig.update(1 / 20, { speed: 1.4 });   // (not while waiting: both villages' walkers keep in step)
+  if (i === FA) S.props.move?.('barrel', 3, 0, 0, -40);   // (a copy carried into the street)
+  if (S.fit) S.sun.fit(S.v, { far: 90, near: 22, low: 0, high: 10, tall: 8 }); else S.sun.follow(cam.position.x, 0, cam.position.z);
+  S.v.scene.updateMatrixWorld();
+}
+const draw = S => { S.v.t = 0; S.v.render(S.x, W, H); return S.x.getImageData(0, 0, W, H).data; };
+const diff = (a, b) => { let off = 0, worst = 0; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); if (d > worst) worst = d; if (d > 12) off++; } return { off, worst }; };
+const mean = a => a.reduce((s, q) => s + q, 0) / Math.max(1, a.length), sum = a => a.reduce((s, q) => s + q, 0);
+const KEYS = ['shTris', 'shCalls', 'shTiles', 'shPut', 'shSlid', 'shWhole', 'shDraws', 'shSplit'];
+const snap = () => Object.fromEntries(KEYS.map(k => [k, HD.info[k] || 0]));
+// one walk: the pictures and what each frame's shadows took
+async function walk(S, whole, keep) {
+  const pics = [], rows = [];
+  HD.shadowCache = !whole;
+  // (let the copies' detail levels be made and still things be merged first, so neither changes mid-walk)
+  // (?verify: each frame drawn again with its shadows whole straight after, to find the one step that went wrong)
+  const planOf = () => { const st = S.sun.shadow.gsTiles; return st ? JSON.stringify({ reset: st.plan.reset, shift: st.plan.shift, redo: st.plan.redo, back: st.plan.back, movers: st.plan.movers, mode: S.sun.shadow.gsPlan?.mode }) : ''; };
+  const verify = async (tag, px) => { if (!Q.has('verify') || Q.get('verify') === 'end' || whole) return;
+    if (Q.get('verify') === 'kept') { const plan = planOf(); if (GPU) await nextFrame(); HD.shadowCheck = true; const b = draw(S); HD.shadowCheck = false; const d = diff(px, b); if (d.off) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': the kept copy is wrong, ' + d.off + ' px ' + plan); return; } const plan = planOf(), n0 = HD.info.batches || 0, cam = S.v.cam, top = Q.get('verify') === 'top', p0 = cam.position.clone(), q0 = cam.quaternion.clone(); if (top) { cam.position.set(p0.x, 70, p0.z - 20); cam.lookAt(p0.x, 0, p0.z - 20.01); cam.updateMatrixWorld(); } if (GPU) await nextFrame(); const a = top ? draw(S).slice() : px.slice(), plan2 = top ? ' TOP ' + planOf() + ' truck ' + (S.truck.layers.mask >>> 26) + ' any ' + S.sun.shadow.gsTiles?.plan.any + ' pend ' + S.sun.shadow.gsTiles?.pending : ''; S.v.shadowsDirty(); if (GPU) await nextFrame(); const b = draw(S), d = diff(a, b);
+    // (from above: which tiles of the map the wrong pixels of the ground are in)
+    let where = ''; if (top && d.off) { const st = S.sun.shadow.gsTiles, hit = new Map(), ray = new T.Raycaster(), ndc = new T.Vector2(), P = new T.Vector3(), gp = new T.Plane(new T.Vector3(0, 1, 0), 0);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])) <= 12) continue; ndc.set((x + .5) / W * 2 - 1, 1 - (y + .5) / H * 2); ray.setFromCamera(ndc, cam); if (!ray.ray.intersectPlane(gp, P)) continue; const k = Math.floor(P.x * st.ux + P.y * st.uy + P.z * st.uz - st.u0) + ',' + Math.floor(P.x * st.vx + P.y * st.vy + P.z * st.vz - st.v0); hit.set(k, (hit.get(k) || 0) + 1); }
+      where = ' WRONG TILES ' + [...hit].map(([k, n]) => k + ':' + n).join(' ');
+      // (and what casts on them: from a wrong point of the ground towards the sun, the first thing in the way)
+      const who = new Map(), toSun = S.sun.position.clone().sub(S.sun.target.position).normalize(), r2 = new T.Raycaster(); let tried = 0;
+      for (let y = 0; y < H && tried < 400; y += 2) for (let x = 0; x < W && tried < 400; x += 2) { const i = (y * W + x) * 4; if (Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])) <= 12) continue; ndc.set((x + .5) / W * 2 - 1, 1 - (y + .5) / H * 2); ray.setFromCamera(ndc, cam); if (!ray.ray.intersectPlane(gp, P)) continue; tried++;
+        r2.set(P.clone().addScaledVector(toSun, .05), toSun); const h = r2.intersectObjects(S.v.scene.children, true).find(q => q.object.castShadow); if (!h) { who.set('nothing', (who.get('nothing') || 0) + 1); continue; }
+        const o = h.object, bt = S.v.batches?.list.find(q => q.items.has(o)), k = (o.geometry?.type || o.type) + (o.isInstancedMesh2 ? ' copies' : '') + ' layers ' + (o.layers.mask >>> 26).toString(2) + (bt ? ' in a batch of ' + bt.items.size + ' layers ' + (bt.mesh.layers.mask >>> 26).toString(2) + ' r ' + bt.mesh.geometry.boundingSphere.radius.toFixed(1) : ''); who.set(k, (who.get(k) || 0) + 1); }
+      where += ' CASTERS ' + [...who].map(([k, n]) => k + ' x' + n).join('; '); }
+    if (top) { cam.position.copy(p0); cam.quaternion.copy(q0); cam.updateMatrixWorld(); } if (d.off && !out['v-' + (S.fit ? 'fit-' : '') + tag.replace(' ', '') + '-tiles']) { const c2 = document.createElement('canvas'); c2.width = W; c2.height = H; const x2 = c2.getContext('2d'); for (const [k, p] of [['tiles', a], ['whole', b]]) { x2.putImageData(new ImageData(new Uint8ClampedArray(p), W, H), 0, 0); out['v-' + (S.fit ? 'fit-' : '') + tag.replace(' ', '') + '-' + k] = c2.toDataURL(); } } if (d.off) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': ' + d.off + ' px, batches ' + n0 + ' then ' + (HD.info.batches || 0) + ' ' + plan + plan2 + where); };
+  const lightOf = l => { const sh = l?.shadow, st = sh?.gsTiles; return l ? (l.name || 'sun') + ' ' + sh.gsPlan?.mode + (st ? ' valid ' + st.valid + ' any ' + st.plan.any + ' reset ' + st.plan.reset + ' redo ' + JSON.stringify(st.plan.redo) + ' back ' + st.plan.back.length + ' movers ' + JSON.stringify(st.plan.movers) + ' shift ' + JSON.stringify(st.plan.shift) : ' no tiles') : ''; };
+  pose(S, 0, true); for (let i = 0; i < 300 && (i < 30 || S.v.detailPending?.()); i++) { const a = snap(), px = draw(S), b = snap(); if (Q.has('warm') && !whole) { if (S.last) { const d = diff(S.last, px); if (d.off) (info[(S.fit ? 'fit-' : '') + 'warm'] ||= []).push('warm ' + i + ' THE PICTURE CHANGED: ' + d.off + ' px'); } S.last = px.slice(); } if (Q.has('warm') && !whole && (b.shCalls - a.shCalls || b.shDraws - a.shDraws)) (info[(S.fit ? 'fit-' : '') + 'warm'] ||= []).push(['warm', i, 'tris', b.shTris - a.shTris, 'draws', b.shCalls - a.shCalls, 'whole', b.shWhole - a.shWhole, 'split', b.shSplit - a.shSplit, 'batches', HD.info.batches || 0, '|', lightOf(S.sun), '|', lightOf(S.sun.nearLight)].join(' ')); if (!Q.has('at')) await verify('warm ' + i, px); await wait(20); }
+  if (Q.get('verify') === 'end' && !whole) {
+    const cam = S.v.cam, p0 = cam.position.clone(), q0 = cam.quaternion.clone(); cam.position.set(p0.x, 70, p0.z - 20); cam.lookAt(p0.x, 0, p0.z - 20.01); cam.updateMatrixWorld();
+    if (GPU) await nextFrame(); const a = draw(S).slice(); S.v.shadowsDirty(); if (GPU) await nextFrame(); const b = draw(S), d = diff(a, b); let where = '';
+    for (const l of [S.sun, S.sun.nearLight]) { const st = l?.shadow.gsTiles; if (!st) continue; const hit = new Map(), ray = new T.Raycaster(), ndc = new T.Vector2(), P = new T.Vector3(), gp = new T.Plane(new T.Vector3(0, 1, 0), 0);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])) <= 12) continue; ndc.set((x + .5) / W * 2 - 1, 1 - (y + .5) / H * 2); ray.setFromCamera(ndc, cam); if (!ray.ray.intersectPlane(gp, P)) continue; const k = Math.floor(P.x * st.ux + P.y * st.uy + P.z * st.uz - st.u0) + ',' + Math.floor(P.x * st.vx + P.y * st.vy + P.z * st.vz - st.v0); hit.set(k, (hit.get(k) || 0) + 1); }
+      where += ' | ' + (l.name || 'sun') + ' wrong tiles ' + [...hit].map(([k, n]) => k + ':' + n).join(' '); }
+    cam.position.copy(p0); cam.quaternion.copy(q0); cam.updateMatrixWorld();
+    (info.verify ||= []).push((S.fit ? 'fit ' : '') + 'after the warm-up: ' + d.off + ' px' + where);
+  }
+  for (let i = 0; i < FRAMES; i++) {
+    pose(S, i); if (whole) S.v.shadowsDirty();
+    const a = snap(), px = draw(S), b = snap(), row = { tris: HD.info.tris, calls: HD.info.calls, cpu: HD.info.cpu }; for (const k of KEYS) row[k] = b[k] - a[k];
+    if (Q.has('trace') && !whole) { const mv = []; S.v.scene.traverse(o => { if (o.castShadow && (o.layers.mask & (1 << 28))) mv.push((o.isSkinnedMesh ? 'skinned' : o.isInstancedMesh2 ? 'copies' : o.isBatchedMesh ? 'batch' : o.isInstancedMesh ? 'instanced' : o.geometry?.type || o.type) + (o.name ? ':' + o.name : '')); }); row.movers = mv.join(','); const st = S.sun.shadow.gsTiles; row.plan = st ? JSON.stringify({ reset: st.plan.reset, shift: st.plan.shift, redo: st.plan.redo, back: st.plan.back.length, movers: st.plan.movers, valid: st.valid, mode: S.sun.shadow.gsPlan?.mode }) : ''; }
+    rows.push(row); if (keep) pics.push(px.slice()); if (!Q.has('at') || i === +Q.get('at')) await verify('frame ' + i, px);
+    if (keep && (i === 3 || i === FRAMES - 1 || (Q.has('shot') && i === +Q.get('shot')))) out[(S.fit ? 'fit-' : '') + (whole ? 'whole-' : 'tiles-') + i] = S.c.toDataURL();
+    await nextFrame();
+  }
+  HD.shadowCache = true;
+  return { pics, rows, S };
+}
+
+try {
+  if (Q.has('bench')) {
+    const res = {}, med = a => [...a].sort((x, y) => x - y)[a.length >> 1];
+    // (one village, the two ways in turn and then in the other order: the second thing a page draws runs a little slower whatever it is)
+    const S = village(false), rows = { 'as it was': [], tiles: [] };
+    for (const mode of ['as it was', 'tiles', 'tiles', 'as it was']) { HD.shadowTiles = mode === 'tiles'; await walk(S, false, false); rows[mode].push(...(await walk(S, false, false)).rows); }
+    for (const [mode, r] of Object.entries(rows))
+      res[mode] = { backend: HD.info.backend, shadowTris: Math.round(mean(r.map(q => q.shTris))), shadowDraws: Math.round(mean(r.map(q => q.shCalls))), tris: Math.round(mean(r.map(q => q.tris))), draws: Math.round(mean(r.map(q => q.calls))), cpuMs: +med(r.map(q => q.cpu)).toFixed(2), cpuMean: +mean(r.map(q => q.cpu)).toFixed(2), worstMs: +Math.max(...r.map(q => q.cpu)).toFixed(1) };
+    HD.shadowTiles = true; Object.assign(info, res); window.result = { out, info, checks }; throw 'bench done';
+  }
+  for (const fit of [false, true]) {
+    const name = fit ? 'fitted to the view, with a near cascade' : 'following the camera';
+    const A = await walk(village(fit), Q.has('control'), true), B = await walk(village(fit), true, true);   // (?control: both walks with their shadows whole, to see what two runs of the same thing differ by)
+    const bad = []; let worst = 0, at = -1;
+    for (let i = 0; i < FRAMES; i++) { const d = diff(A.pics[i], B.pics[i]); if (d.off > 0) { bad.push(i + ':' + d.off); if (d.off > worst) { worst = d.off; at = i; } } }
+    if (Q.has('control')) { const L = info[(fit ? 'fit-' : '') + 'control'] = []; for (let i = 0; i < FRAMES; i++) { const a = A.pics[i], b = B.pics[i], at = []; for (let j = 0; j < a.length; j += 4) if (Math.max(Math.abs(a[j] - b[j]), Math.abs(a[j + 1] - b[j + 1]), Math.abs(a[j + 2] - b[j + 2])) > 12) at.push((j / 4) % W + ',' + ((j / 4 / W) | 0) + ' ' + [a[j], a[j + 1], a[j + 2]] + ' / ' + [b[j], b[j + 1], b[j + 2]]); if (at.length || A.rows[i].tris !== B.rows[i].tris || A.rows[i].calls !== B.rows[i].calls) L.push(`${i}: tris ${A.rows[i].tris} / ${B.rows[i].tris} draws ${A.rows[i].calls} / ${B.rows[i].calls} shTris ${A.rows[i].shTris} / ${B.rows[i].shTris}  px ${at.slice(0, 4).join(' | ')}`); } }
+    if (at >= 0) { const S = { c: document.createElement('canvas') }; S.c.width = W; S.c.height = H; const x = S.c.getContext('2d'); for (const [k, p] of [['tiles', A.pics[at]], ['whole', B.pics[at]]]) { x.putImageData(new ImageData(new Uint8ClampedArray(p), W, H), 0, 0); out[(fit ? 'fit-' : '') + 'bad-' + k] = S.c.toDataURL(); } }
+    const col = (r, k) => r.map(q => q[k]), tA = sum(col(A.rows, 'shTris')), tB = sum(col(B.rows, 'shTris')), cA = sum(col(A.rows, 'shCalls')), cB = sum(col(B.rows, 'shCalls'));
+    info[fit ? 'fitted' : 'following'] = { backend: HD.info.backend, frames: FRAMES, shadowTrisAFrame: Math.round(tA / FRAMES), whole: Math.round(tB / FRAMES), shadowDrawsAFrame: Math.round(cA / FRAMES), wholeDraws: Math.round(cB / FRAMES),
+      slides: sum(col(A.rows, 'shSlid')), wholeRedraws: sum(col(A.rows, 'shWhole')), tilesDrawnAFrame: +(sum(col(A.rows, 'shTiles')) / FRAMES).toFixed(1), tilesPutBackAFrame: +(sum(col(A.rows, 'shPut')) / FRAMES).toFixed(1), framesWithNoShadowWork: A.rows.filter(q => !q.shCalls && !q.shSplit).length };
+    if (Q.has('trace')) info[(fit ? 'fit-' : '') + 'trace'] = A.rows.map((q, i) => [i, 'tris', q.shTris, 'draws', q.shCalls, 'tiles', q.shTiles, 'put', q.shPut, q.shSlid ? 'slid' : '', q.shWhole ? 'WHOLE' : '', q.movers, q.plan].join(' '));
+    // (WebGPU: a pixel or two on the soft edge of a shadow in a few frames. A part of the map drawn through a part of the light's view places a
+    // triangle's edge a last bit away from where the whole map drawn at once does, and now and then that is one texel of the map. WebGL: none.)
+    const badPx = bad.map(q => +q.split(':')[1]);
+    check(`${name}: every frame is the same picture from tiles as with every shadow drawn whole`, GPU ? badPx.every(q => q <= 4) && sum(badPx) <= FRAMES * .2 : !bad.length, bad.length ? 'frames:pixels ' + bad.slice(0, 14).join(' ') : 'all ' + FRAMES);
+    if (!fit) { let dm = 0; A.S.v.scene.traverse(o => { if (o.isDetailMesh) dm++; }); check('the big mesh in the street is drawn in clusters, in the map as well', dm >= 1, dm + ' cluster-detail mesh'); }
+    check(`${name}: tiles were in use`, sum(col(A.rows, 'shSplit')) > FRAMES * .3 && sum(col(B.rows, 'shSplit')) === 0, sum(col(A.rows, 'shSplit')) + ' frames');
+    if (!fit) {
+      check('a small share of the shadow triangles is drawn', tA < tB * .2, Math.round(tA / FRAMES) + ' a frame against ' + Math.round(tB / FRAMES));
+      check('and of the shadow draws', cA < cB * .35, Math.round(cA / FRAMES) + ' a frame against ' + Math.round(cB / FRAMES));
+      const sl = sum(col(A.rows, 'shSlid')), wh = sum(col(A.rows, 'shWhole'));
+      check('the map slides with the camera, a tile at a time', sl >= 6, sl + ' slides');
+      // (a set of copies has no place of its own in the map: the barrel carried off draws it whole as the set starts to count as moving, and again as it stops)
+      check('and is drawn whole only at the start, after the jump and for the barrel carried off', wh <= 5, wh + ' times');
+      // the walk (frames 21 to FA): the gate has stopped, the crate has gone: only the truck and the walker move, and now and then a slide
+      const quiet = A.rows.slice(22, FA), noSlide = quiet.filter(q => !q.shSlid && !q.shWhole);
+      check('between slides only the moving things are drawn', noSlide.length > 5 && Math.max(...noSlide.map(q => q.shCalls)) <= 12 && Math.max(...noSlide.map(q => q.shTiles)) === 0, 'at most ' + Math.max(...noSlide.map(q => q.shCalls)) + ' draws, ' + Math.max(...noSlide.map(q => q.shTiles)) + ' tiles drawn again');
+      check('and the kept copy goes back only where they are', Math.max(...noSlide.map(q => q.shPut)) <= 40 && Math.min(...noSlide.map(q => q.shPut)) > 0, 'between ' + Math.min(...noSlide.map(q => q.shPut)) + ' and ' + Math.max(...noSlide.map(q => q.shPut)) + ' of 256 tiles');
+      const stopped = A.rows.slice(11, 22);
+      check('a gate that stops, a balloon that comes and a crate that goes redraw a few tiles, not the map', sum(stopped.map(q => q.shTiles)) > 0 && Math.max(...stopped.filter(q => !q.shSlid).map(q => q.shTiles)) <= 64, 'most in a frame: ' + Math.max(...stopped.filter(q => !q.shSlid).map(q => q.shTiles)));
+      const still = A.rows.slice(FD + 5);
+      check('with nothing moving, a camera that turns draws no shadows', still.length > 3 && still.every(q => !q.shCalls && !q.shSplit), sum(still.map(q => q.shCalls)) + ' draws in ' + still.length + ' frames');
+    } else {
+      check('fitted: fewer shadow triangles than drawing whole', tA < tB * .75, Math.round(tA / FRAMES) + ' a frame against ' + Math.round(tB / FRAMES));
+    }
+  }
+  window.result = { out, info, checks };
+} catch (e) { if (e !== 'bench done') window.result = { error: String(e?.stack || e), out, info, checks }; throw e; }
+</script>

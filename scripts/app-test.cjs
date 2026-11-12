@@ -676,7 +676,11 @@ async function tour(b) {
     'the valley draws fewer triangles through cluster detail, once its clusters are built', JSON.stringify(sby.valley));
   check(M('forest', 'on').tris < M('forest', 'off').tris * .8 && /simpler levels of a fir/.test(M('forest', 'on').note), 'the forest draws fewer triangles with detail levels for its copies', JSON.stringify(sby.forest));
   const left = /^(\d+) things of ([\d,]+) triangles left out a frame, found in [\d.]+ ms/.exec(M('town', 'on').tell);
-  check(left && +left[1] >= 3 && M('town', 'on').tris < M('town', 'off').tris * .97 && !M('town', 'off').tell, 'the town draws fewer triangles with what is behind its houses left out', JSON.stringify(sby.town));
+  check(left && +left[1] >= 3 && M('town', 'on').tris < M('town', 'off').tris * .97 && /^shadow maps /.test(M('town', 'off').tell), 'the town draws fewer triangles with what is behind its houses left out', JSON.stringify(sby.town));
+  // its third run: the same walk with the sun's shadow map drawn whole, as it used to be, against kept in tiles (the second run)
+  const shOf = m => { const x = /shadow maps ([\d,]+) triangles in ([\d,]+) draws a frame$/.exec(M('town', m).tell || ''); return x ? [+x[1].replace(/,/g, ''), +x[2].replace(/,/g, '')] : [NaN, NaN]; };
+  check(M('town', 'whole').frames > 3 && shOf('on')[0] < shOf('whole')[0] * .5 && shOf('on')[1] < shOf('whole')[1] && /\n  = shadows in tiles against shadows drawn whole: /.test(sc.text),
+    'the town\'s shadow maps take a fraction of the triangles kept in tiles that they take drawn whole', JSON.stringify({ tiles: shOf('on'), whole: shOf('whole'), town: sby.town }));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
   check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),
