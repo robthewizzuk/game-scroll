@@ -14,7 +14,7 @@
 // Kit use only: games reach it as gs.models.human.
 import { Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix4, Mesh, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, HC, ARM, ss, bump, jobsFor, sculpt, mirrored, turned, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, HC, ARM, BROW, MOUTH_DIP, ss, bump, jobsFor, sculpt, mirrored, turned, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE } from '../poses.js';
 import { reach } from '../characters.js';
@@ -223,13 +223,13 @@ export function human(o = {}) {
         if (stub && name !== 'brow') { const sh = ss(-.04, -.062, hy) * ss(-.03, .01, hz) * ss(-.165, -.12, hy) * stub; col.r *= 1 - sh * .2; col.g *= 1 - sh * .15; col.b *= 1 - sh * .08; }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
         const so = bump(hy, .004, .014) * bump(abs(x), .032, .017) * (hz > .05 ? .16 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
-        if (hz > .05 && hy > .012 && hy < .04) {   // brows: a soft stroke along the ridge (the painted core is the 'brow' slot)
-          const ax = abs(x), q = ax < .031 ? [.0125, .0245, .031, .0285] : [.031, .0285, .051, .0245], t = Math.max(0, Math.min(1, (ax - q[0]) / (q[2] - q[0]))), dy = hy - (q[1] + (q[3] - q[1]) * t), dx = ax < .0125 ? .0125 - ax : ax > .051 ? ax - .051 : 0;
-          const k = Math.max(name === 'brow' ? .5 : 0, ss((sp.fem ? .005 : .0062) - .002 * ss(.03, .051, ax), sp.fem ? .002 : .0028, Math.hypot(dx, dy))) * (sp.fem ? .92 : .85); if (k > 0) col.lerp(browC, k);
+        if (hz > .05 && hy > .008 && hy < .036) {   // brows: a soft stroke along the ridge (the painted core is the 'brow' slot)
+          const ax = abs(x), [b0, b1, b2] = BROW, q = ax < b1[0] ? [b0, b1] : [b1, b2], t = Math.max(0, Math.min(1, (ax - q[0][0]) / (q[1][0] - q[0][0]))), dy = hy - (q[0][1] + (q[1][1] - q[0][1]) * t), dx = ax < b0[0] ? b0[0] - ax : ax > b2[0] ? ax - b2[0] : 0;
+          const k = Math.max(name === 'brow' ? .5 : 0, ss((sp.fem ? .005 : .0062) - .002 * ss(b1[0], b2[0], ax), sp.fem ? .002 : .0031, Math.hypot(dx, dy))) * (sp.fem ? .92 : .94); if (k > 0) col.lerp(browC, k);
         }
         if (hz > .06 && hy < -.05 && hy > -.086) {   // lips, and the line between them
           const fl = sp.face.lips, so = sp.face.soft, e = Math.min(Math.hypot(x / (.0245 - .0035 * so), (hy + .0622) / (.0048 * fl)), Math.hypot(x / (.021 - .002 * so), (hy + .073) / (.0062 * fl))), k = ss(1.12, .78, e) * (sp.fem ? .8 : .6); if (k > 0) col.lerp(lipC, k);   // (a man's lips are nearer his skin's colour)
-          const line = bump(hy, -.0671, .0015) * ss(.0245 - .0035 * so, .018 - .003 * so, abs(x)); if (line > .02) col.lerp(mouthC, line * (sp.fem ? .75 : .6));
+          const line = bump(hy + MOUTH_DIP * abs(x), -.0668, .0015) * ss(.0245 - .0035 * so, .018 - .003 * so, abs(x)); if (line > .02) col.lerp(mouthC, line * (sp.fem ? .75 : .6));
         }
       }
       // creases in soft shadow (warmer on skin: light soaks through it)
