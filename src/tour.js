@@ -416,7 +416,7 @@ export function openTour(driver) {
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
     // (eight runs where the forest flies four, on WebGPU; each has a few seconds of getting ready before it)
-    est.textContent = scenes() ? `Four scenes, each flown through for ${secs.value} seconds with one of the engine's detail systems off, then on: about ${Math.max(1, Math.round((10 * (+secs.value + 8) + 70) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
+    est.textContent = scenes() ? `Four scenes, each flown through for ${secs.value} seconds with one of the engine's detail systems off, then on: about ${Math.max(1, Math.round((11 * (+secs.value + 8) + 70) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };
   set.onchange = secs.onchange = paint; paint();

@@ -1728,6 +1728,92 @@ console.log('physics ok');
   console.log(`occlusion from depth, 60 random places: nothing seen is hidden; hides ${hid} where a fresh picture hides ${fresh} (` + Object.entries(kinds).map(([k, v]) => `${k} ${v[0]}/${v[1]}`).join(', ') + ') ok');
 }
 
+// shadows in tiles: whatever moves, stops, comes, goes or slides, the map and the kept copy end up holding
+// exactly what a whole redraw would, for a small share of the drawing
+{
+  const { ShadowTiles, TILES: T, tileRects } = await import('../src/kit/shadow-tiles.js');
+  const { Matrix4, Vector3 } = await import('three');
+  // rectangles cover the set, and joined up they still cover it
+  {
+    const set = new Uint8Array(T * T), mark = new Uint8Array(T * T), out = [];
+    for (const k of [0, 1, 2, 16, 17, 18, 40, 255]) set[k] = 1;
+    const n = tileRects(set, T, out, 8, mark); assert.equal(n, 8); assert.equal(out.length, 3);
+    assert.deepEqual(out[0], [0, 0, 3, 2]);
+    assert.equal(tileRects(set, T, out, 2, mark), 256); assert.deepEqual(out, [[0, 0, 16, 16]]);
+  }
+  let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const dir = new Vector3(-.45, 1, .35).normalize(), up = new Vector3(0, 1, 0), FX = new Vector3().crossVectors(up, dir).normalize(), FY = new Vector3().crossVectors(dir, FX);
+  const SIZE = 40, N = 2048, tw = 2 * SIZE / T, STILL = 4;
+  for (const deep of [true, false]) {
+    const st = new ShadowTiles(), things = [];
+    for (let i = 0; i < 260; i++) things.push({ id: i + 1, x: (rnd() - .5) * 220, y: rnd() * 6, z: (rnd() - .5) * 220, r: .3 + rnd() * rnd() * 7, v: 1, still: 99, here: true, wide: rnd() < .02 });
+    const cam = new Matrix4(), eye = new Vector3(), tgt = new Vector3();
+    // the model: what each tile of the kept copy and of the map holds (still things; and in the map, pictures of moving things)
+    const cache = Array.from({ length: T * T }, () => 'junk'), mapS = Array.from({ length: T * T }, () => 'junk'), mapM = Array.from({ length: T * T }, () => new Set(['junk']));
+    let ax = 0, ay = 0, az = 0, redone = 0, frames = 0, resets = 0, slides = 0, put = 0, must = 1;
+    const tilesOf = (o, gx, gy) => {   // the tiles a thing can really draw in (its ball, no pad)
+      if (o.wide) return null;
+      const u = (o.x * FX.x + o.y * FX.y + o.z * FX.z) / tw - gx, v = (o.x * FY.x + o.y * FY.y + o.z * FY.z) / tw - gy, r = o.r / tw;
+      return [Math.max(0, Math.floor(u - r)), Math.max(0, Math.floor(v - r)), Math.min(T - 1, Math.floor(u + r)), Math.min(T - 1, Math.floor(v + r))];
+    };
+    const inTile = (q, i, j) => !q || (i >= q[0] && i <= q[2] && j >= q[1] && j <= q[3]);
+    for (let f = 0; f < 700; f++) {
+      // the world moves on
+      for (const o of things) {
+        const roll = rnd();
+        if (o.moving) { o.x += o.dx; o.z += o.dz; o.v++; o.still = 0; if (roll < .05) o.moving = false; }
+        else { if (o.still < 99) o.still++; if (roll < .004) { o.moving = true; o.dx = (rnd() - .5) * 2; o.dz = (rnd() - .5) * 2; } else if (roll < .006) { o.here = !o.here; } else if (roll < .007) { o.y += 1; o.v++; o.still = 0; } }
+      }
+      // the light: a tile step now and then, a step in depth, a jump, a turn
+      const roll = rnd(); let jump = false;
+      if (roll < .12) ax += tw * (rnd() < .5 ? 1 : -1); else if (roll < .2) ay += tw * Math.round((rnd() - .5) * 6); else if (roll < .23) { az += 4; if (!deep) must++; } else if (roll < .24) { ax += tw * .37; jump = true; } else if (roll < .25) { ax += tw * 40; jump = true; }
+      if (jump) must++;
+      tgt.copy(FX).multiplyScalar(ax).addScaledVector(FY, ay).addScaledVector(dir, az); eye.copy(tgt).addScaledVector(dir, 50);
+      cam.lookAt(eye, tgt, up).setPosition(eye);
+      const e = cam.elements, was = st.valid, same = st.begin(e, -SIZE, SIZE, -SIZE, SIZE, 1, 120, N, deep);
+      if (jump) assert.ok(!same, 'a light that moved by a part of a tile, or right away, starts its tiles again');
+      const gx = (eye.dot(FX) - SIZE) / tw, gy = (eye.dot(FY) - SIZE) / tw;
+      for (const o of things) { if (!o.here) continue; const h = o.id * 1000.5 + o.v * 3.25 + o.x * 5.3 + o.z * 6.1 + o.y, still = o.still >= STILL; if (o.wide) st.addAll(still, h); else st.add(still, h, o.x, o.y, o.z, o.r); }
+      // (a thing that could be anywhere and has started, stopped, come or gone: every tile's still things changed)
+      let wide = false; for (const o of things) if (o.wide) { const k = (o.here ? 1 : 0) + (o.still >= STILL ? 2 : 0) + o.v * 4; if (o.still >= STILL ? k !== o.k : (o.k & 2) !== 0) wide = true; o.k = k; }
+      const force = rnd() < .01, p = st.finish(force); if (force || (wide && !jump)) must++;
+      // what a whole redraw would hold
+      const wantS = [], wantM = [];
+      for (let j = 0; j < T; j++) for (let i = 0; i < T; i++) {
+        let sS = '', sM = new Set();
+        for (const o of things) { if (!o.here || !inTile(tilesOf(o, gx, gy), i, j)) continue; if (o.still >= STILL) sS += o.id + ':' + o.v + ','; else sM.add(o.id + ':' + o.v + ':' + o.x.toFixed(4) + ':' + o.z.toFixed(4)); }
+        wantS.push(sS); wantM.push(sM);
+      }
+      // carry the plan out on the model, as shadowTiles() does on the maps
+      const drawM = q => { for (let j = q[1]; j < q[1] + q[3]; j++) for (let i = q[0]; i < q[0] + q[2]; i++) { const k = j * T + i; for (const m of wantM[k]) mapM[k].add(m); } };
+      if (p.any) {
+        frames++;
+        if (p.reset) { resets++; redone += T * T; for (let k = 0; k < T * T; k++) { cache[k] = mapS[k] = wantS[k]; mapM[k] = new Set(wantM[k]); } }
+        else {
+          if (p.shift) {
+            slides++; const dx = p.shift[0] / (N / T), dy = p.shift[1] / (N / T), old = cache.slice();
+            assert.ok(Number.isInteger(dx) && Number.isInteger(dy), 'a slide is by whole tiles'); assert.ok(deep || !p.shift[2], 'no slide in depth where the copy can\'t be moved in depth');
+            for (let j = 0; j < T; j++) for (let i = 0; i < T; i++) { const a = i + dx, b = j + dy, k = j * T + i; cache[k] = a >= 0 && a < T && b >= 0 && b < T ? old[b * T + a] : 'junk'; mapS[k] = cache[k]; mapM[k] = new Set(); }
+          }
+          for (const q of p.redo) for (let j = q[1]; j < q[1] + q[3]; j++) for (let i = q[0]; i < q[0] + q[2]; i++) { const k = j * T + i; cache[k] = mapS[k] = wantS[k]; mapM[k] = new Set(); redone++; }
+          for (const q of p.back) for (let j = q[1]; j < q[1] + q[3]; j++) for (let i = q[0]; i < q[0] + q[2]; i++) { const k = j * T + i; mapS[k] = cache[k]; mapM[k] = new Set(); put++; }
+          if (p.movers) drawM(p.movers);
+        }
+        st.commit();
+      }
+      if (!was && !p.any) continue;   // (never drawn yet: hd3d draws it whole the first time)
+      for (let k = 0; k < T * T; k++) {
+        assert.equal(cache[k], wantS[k], `frame ${f}, tile ${k}: the kept copy holds the still things of now`);
+        assert.equal(mapS[k], wantS[k], `frame ${f}, tile ${k}: the map holds the still things of now`);
+        assert.deepEqual([...mapM[k]].sort(), [...wantM[k]].sort(), `frame ${f}, tile ${k}: the map holds the moving things where they are now, and no old picture of one`);
+      }
+    }
+    assert.ok(resets <= must + 12 && slides > 90, `the map is drawn whole only when it has to be: ${resets} times where ${must} had to be, and ${slides} slides`);
+    assert.ok(redone < frames * T * T * (deep ? .3 : .45), `far fewer tiles drawn again than whole redraws would: ${redone} of ${frames * T * T}`);
+    console.log(`shadows in tiles (${deep ? 'the copy can move in depth' : 'sideways only'}): 700 frames of things moving, stopping, coming and going under a light that steps, ${frames} with something to draw, ${resets} whole, ${slides} slides, ${(100 * redone / (frames * T * T)).toFixed(1)}% of the tiles drawn again, ${put} put back ok`);
+  }
+}
+
 // frame generation: a camera's turn as a picture warp (exact for any turn and zoom), and the battery and heat reading
 {
   const { poseOf, homography, lerpPose, newPose } = await import('../src/kit/framegen.js');

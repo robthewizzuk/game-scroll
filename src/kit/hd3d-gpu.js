@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -31,6 +31,22 @@ import { lensflare } from 'three/examples/jsm/tsl/display/LensflareNode.js';
 import { ssgi } from 'three/examples/jsm/tsl/display/SSGINode.js';
 import { vxgi } from 'three/examples/jsm/lighting/vxgi/VXGINode.js';
 import { LightProbeGrid } from 'three/examples/jsm/lighting/LightProbeGrid.js';
+// three's denoise makes its noise picture from Math.random(), a new one for every node. Two views of the same scene, or
+// the same view on two runs, then smooth their ambient occlusion a little differently: a few pixels a frame, so no two
+// pictures with ambient occlusion in them could be compared exactly on WebGPU. This is the same picture, from a fixed
+// seed, made once and given to every denoise node.
+let DN_NOISE = null;
+function denoiseNoise() {
+  if (DN_NOISE) return DN_NOISE;
+  let s = 0x9e3779b9; const random = () => { s = s + 0x6d2b79f5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const simplex = new SimplexNoise({ random }), size = 64, data = new Uint8Array(size * size * 4);
+  for (let i = 0; i < size; i++) for (let j = 0; j < size; j++) {
+    const o = (i * size + j) * 4;
+    data[o] = (simplex.noise(i, j) * .5 + .5) * 255; data[o + 1] = (simplex.noise(i + size, j) * .5 + .5) * 255; data[o + 2] = (simplex.noise(i, j + size) * .5 + .5) * 255; data[o + 3] = (simplex.noise(i + size, j + size) * .5 + .5) * 255;
+  }
+  const t = DN_NOISE = new DataTexture(data, size, size); t.wrapS = t.wrapT = RepeatWrapping; t.needsUpdate = true;
+  return t;
+}
 // v.tone (hd3d.js): three.js's own tone mappers
 const TONE = { aces: ACESFilmicToneMapping, neutral: NeutralToneMapping, agx: AgXToneMapping };
 export { LightProbeGrid };
@@ -41,6 +57,7 @@ import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
+import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
@@ -603,22 +620,101 @@ export function depthMeter(r) {
   };
 }
 // The still/moving shadow split on WebGPU (hd3d.js shadowLights): the light gets three's own shadow
-// node, made here so the kit can draw its map when it wants to (splitDraw), and over what is already
+// node, made here so the kit can draw its map when it wants to (shadowOps draw), and over what is already
 // there when told to keep it (three clears a shadow map each time it draws one).
 export function splitShadowNode(l) {
-  const node = shadowOf(l, l.shadow), base = node.renderShadow;
+  const node = shadowOf(l, l.shadow), base = node.renderShadow, update = node.updateShadow;
   node.gsSplit = true;
-  node.renderShadow = function (frame) { if (this.gsKeep) frame.renderer.autoClear = false; return base.call(this, frame); };
+  node.renderShadow = function (frame) {
+    const r = frame.renderer;
+    if (this.gsKeep) r.autoClear = false;
+    if (!this.gsPart) return base.call(this, frame);
+    // (a part of the map: three's own step would set the map's viewport back to the whole of it)
+    const { shadow, light } = this, scene = frame.scene, name = scene.name;
+    shadow.updateMatrices(light);
+    scene.name = 'Shadow Map [ part ]'; try { r.render(scene, shadow.camera); } finally { scene.name = name; }
+  };
+  // (HD.info: what the shadow maps cost this frame, as on WebGL)
+  node.updateShadow = function (frame) {
+    const I = frame.renderer.info.render, t0 = I.triangles, c0 = I.drawCalls;
+    try { return update.call(this, frame); } finally { SHADOW_COST[0] += I.triangles - t0; SHADOW_COST[1] += I.drawCalls - c0; }
+  };
   return node;
 }
-/** Draws light l's shadow map from the things on the layers in mask (keep: over what's there). */
-export function splitDraw(r, scene, cam, l, mask, keep) {
-  const sh = l.shadow, node = sh.shadowNode, c = sh.camera, m0 = c.layers.mask;
-  c.layers.mask = mask; node.gsKeep = keep;
-  try { node.updateShadow({ renderer: r, scene, camera: cam }); } finally { c.layers.mask = m0; node.gsKeep = false; }
+/** Triangles and draws the shadow maps have taken since it was last emptied (hd3d.js empties it each frame). */
+export const SHADOW_COST = [0, 0];
+// What hd3d.js shadowSplit and shadowTiles ask of a backend (the WebGL ones are in splitShadowsGL). A part
+// of a map is [x, y, w, h] in tiles of px texels, x to the light's right and y up: the light's camera looks
+// at that part alone (a view offset), so only what is in it is drawn, into that part of the map.
+export function shadowOps(r) {
+  let blit = null;
+  const ops = {
+    scene: null, camera: null,
+    draw(l, mask, keep, q, px) {
+      const sh = l.shadow, node = sh.shadowNode, c = sh.camera, m0 = c.layers.mask, map = node.shadowMap, N = map.width;
+      if (q) {
+        if (!keep) (blit ||= shadowBlit(r)).wipe(map, q, px);   // (WebGPU clears a whole picture or none of it: the part is emptied by drawing "far" over it)
+        const x = q[0] * px, w = q[2] * px, h = q[3] * px, y = N - q[1] * px - h;
+        c.setViewOffset(N, N, x, y, w, h); map.viewport.set(x, y, w, h); map.scissor.set(x, y, w, h); map.scissorTest = true;
+      }
+      c.layers.mask = mask; node.gsKeep = keep || !!q; node.gsPart = !!q;
+      try { node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera }); }
+      finally { c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
+    },
+    copy(l, from, to, qs, px) { if (qs) (blit ||= shadowBlit(r)).copy(from.depthTexture, to, qs, px); else r.copyTextureToTexture(from.depthTexture, to.depthTexture); },
+    shift(l, from, to, dx, dy, dz) { (blit ||= shadowBlit(r)).shift(from.depthTexture, to, dx, dy, dz); },
+    make(l) {
+      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
+      // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
+      r.setRenderTarget(t); r.clearDepth(); r.setRenderTarget(was);
+      return t;
+    },
+  };
+  return ops;
 }
-/** A target holding a copy of a shadow map's depth. */
-export function splitTarget(r, w, h) { const t = new RenderTarget(w, h, { depthBuffer: true }); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t); return t; }
+// Parts of one depth picture written into another (WebGPU copies a depth picture whole or not at all): the
+// parts are drawn as rectangles whose every texel takes its depth from the other picture, from off texels
+// away and dz deeper (what comes from outside it, or ends up outside the depth range, is "far": nothing there).
+function shadowBlit(r) {
+  const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64;
+  const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
+  const mesh = new Mesh(geo, null), cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); mesh.frustumCulled = false;
+  const finish = m => { m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
+  let far = null;
+  const matFor = tex => {
+    let m = mats.get(tex); if (m) return m;
+    m = new NodeMaterial(); const dT = texture(tex);
+    m.depthNode = Fn(() => {
+      const p = ivec2(floor(screenCoordinate.xy)).add(ivec2(U.off)).toVar(), top = int(U.top);
+      const inside = p.x.greaterThanEqual(0).and(p.x.lessThanEqual(top)).and(p.y.greaterThanEqual(0)).and(p.y.lessThanEqual(top));
+      const d = dT.load(clamp(p, ivec2(0), ivec2(top))).r.toVar(), moved = d.add(U.dz);
+      return select(inside.and(d.lessThan(1)).and(moved.greaterThanEqual(0)).and(moved.lessThan(1)), moved, float(1));
+    })();
+    mats.set(tex, finish(m)); return m;
+  };
+  // the rectangles (texels, y up) as triangles in clip space
+  const quads = (qs, px, N) => {
+    const n = Math.min(MAX, qs.length);
+    for (let i = 0; i < n; i++) {
+      const q = qs[i], x0 = q[0] * px / N * 2 - 1, y0 = q[1] * px / N * 2 - 1, x1 = (q[0] + q[2]) * px / N * 2 - 1, y1 = (q[1] + q[3]) * px / N * 2 - 1, o = i * 18;
+      pos[o] = x0; pos[o + 1] = y0; pos[o + 3] = x1; pos[o + 4] = y0; pos[o + 6] = x1; pos[o + 7] = y1;
+      pos[o + 9] = x0; pos[o + 10] = y0; pos[o + 12] = x1; pos[o + 13] = y1; pos[o + 15] = x0; pos[o + 16] = y1;
+    }
+    at.needsUpdate = true; geo.setDrawRange(0, n * 6);
+  };
+  const ALL = [[0, 0, 1, 1]];
+  const run = (m, to) => {
+    const was = r.getRenderTarget(), ac = r.autoClear, st = to.scissorTest; mesh.material = m;
+    r.autoClear = false; to.scissorTest = false; r.setRenderTarget(to);
+    try { r.render(mesh, cam); } finally { r.setRenderTarget(was); r.autoClear = ac; to.scissorTest = st; }
+  };
+  return {
+    copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; quads(qs, px, to.width); run(matFor(tex), to); },
+    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to); },
+    wipe(to, q, px) { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } ALL2[0] = q; quads(ALL2, px, to.width); run(far, to); },
+  };
+}
+const ALL2 = [null];
 
 
 /* ---------- gs.models material recipes on WebGPU (materials.js) ---------- */
@@ -1391,6 +1487,7 @@ export class GpuChain {
       this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = 12;
       // (WebGL's GTAOPass smooths its own noise; here three's denoise does it)
       this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), sp.getTextureNode('normal'), this.cam);
+      this.dnN.noiseNode = texture(denoiseNoise());   // (the same noise for every view and every run: denoiseNoise above)
       aoF = mix(float(1), this.dnN.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
     }
     let src = colT, srcAo = aoF;

@@ -43,6 +43,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Cluster detail (`src/kit/detail*.js`, `autoDetail` in hd3d.js) | `node scripts/detail-test.cjs` and again with `--webgpu` (`--shots dir` saves the pictures) | about 40 s each |
 | Real surface detail (`src/kit/relief*.js`, `gs.models.relief`) | `npm run kit-test` (the builder), then `node scripts/detail-test.cjs --page relief` and again with `--webgpu`: a roof, a brick house and a trunk flat against relief, near and far | about a minute each |
 | Hiding what is behind other things (`src/kit/occlusion.js`, `src/kit/occlude.js`, `occludeStep` in hd3d.js, the depth meters) | `npm run kit-test` (the depth picture carried over camera moves, 60 random places: nothing seen is ever hidden), then `node scripts/detail-test.cjs --page occlude` and again with `--webgpu`: a street walked, driven and flown over, every frame drawn twice (hidden things left out, then all of it) and compared, with a gate that opens, a balloon rising from behind a bridge, glass, a fence, a swaying tree, cluster detail and copies. `--q tier=1` draws with one sample a pixel, where the two pictures must match to the pixel (with several, the software renderer lets a far triangle's sample through a wall in the whole picture now and then: up to 2 pixels a frame are let by). `--bench` gives triangles, draws and code time with it off and on; `--q trace` a line a frame, `--q "trace&dump=5,20"` those frames' depth pictures as text | about 1.5 min each |
+| Shadows (`shadowLights`, `splitShadowsGL`, `sun()` in hd3d.js, `shadowOps` in hd3d-gpu.js, `src/kit/shadow-tiles.js`) | `npm run kit-test` (the tiles' bookkeeping against a model), then `node scripts/detail-test.cjs --page shadows` and again with `--webgpu`: a village walked with the sun's map in tiles and with every shadow whole, every frame the same picture to a pixel or two, on WebGL the shadow maps themselves read back and compared texel by texel (only stray texels on edges may differ, never four together: that would be a tile not drawn again), and what was drawn. `--bench` for the numbers. Its header lists `?verify`, `?verify=map`, `?verify=top` and `?control` for finding a frame that went wrong. Then `node scripts/shadow-check.cjs <id> [--gpu]` on a few games, and `node scripts/app-test.cjs tour` (the town's third run) |
 | Detail levels for copies (`autoCopies` in hd3d.js, `buildLevels`, `gpuProps` in hd3d-gpu.js, `src/kit/props.js`) | `npm run kit-test` (the levels, `props.move`, which copies are sent), then `node scripts/detail-test.cjs --page copies` and again with `--webgpu`: a field of rocks and posts whole against levels from three cameras, a zoom, a hidden and a moved copy, and on WebGPU that only changed copies go to the chip. `--bench --q "forest=20000"` (add `&cpucull` on WebGPU for the path frame generation uses) gives triangles, draws, list time and KB sent a frame | about 40 s each |
 | Shaders built mid-round (hd3d `holdNew`) | `node scripts/shader-hold.cjs [--webgpu]` | about a minute |
 | The close-up look of `gs.models.material()` on WebGPU (`hd3d-gpu.js` `recipeTwin`, `hd3d.js` `swapTwins`) | `node scripts/close-up.cjs [--shots dir] [--only uvs\|scatter\|solid]`: a floor the camera stands on is never hidden while its close-up shader comes in, its far end is as steady as the painted textures when the picture moves by part of a pixel, and a panel at the camera is sharper than them with its pattern in the same place | about 40 s |
@@ -187,8 +188,8 @@ plugin check (against a stand-in app) and the sheet.
 
 ### The engine test scenes: what the detail systems are worth on a phone
 
-The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail) are
-checked by `scripts/detail-test.cjs` on a build machine's software renderer. That can count triangles
+The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail, hiding
+what is behind other things, shadows in tiles) are checked by `scripts/detail-test.cjs` on a build machine's software renderer. That can count triangles
 and compare pictures; it can't say what a phone's graphics chip gains. The tour can:
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
@@ -200,7 +201,10 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    (their bricks, slates and planks as real triangles) and a **town** of 25 houses with 400 statues, urns, rocks and
    crates round them, walked through by lanes that end at houses (hiding what is behind other things; the report says
    how many things it left out a frame and how long finding them took. It is kept at work all through that run, where
-   in a game it would rest wherever it saves next to nothing). About 6 minutes at 20 seconds a run, longer the
+   in a game it would rest wherever it saves next to nothing). The town is then walked a third time with the sun's
+   shadow map drawn whole, as it used to be, and the report sets that against the run before it, whose map is kept
+   in tiles ("shadows in tiles against shadows drawn whole"); every run of the town says how many triangles and
+   draws its shadow maps took a frame. About 6 minutes at 20 seconds a run, longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,

@@ -145,6 +145,8 @@ function releaseGeometry(src) {
 const M = new Matrix4(), INV = new Matrix4(), FR = new Frustum(), CP = new Vector3(), SZ = new Vector2(), RAY = new Mesh(), HITS = [];
 // the height in pixels of what the renderer is drawing into now
 const heightOf = r => { const t = r.getRenderTarget?.(); return t ? t.height : r.getDrawingBufferSize(SZ).y; };
+// (a shadow map drawn a part at a time, hd3d.js shadowTiles: the light's camera looks at the part alone, and the part is picked as finely as the whole map would be, so the parts fit together)
+const partOf = cam => (cam.view?.enabled ? cam.view.height / cam.view.fullHeight : 1);
 let FRAME = 0;
 
 /**
@@ -250,11 +252,11 @@ export class DetailMesh extends BatchedMesh {
   }
   // (WebGPU draws a shadow map through onBeforeShadow and then onBeforeRender, with the light's camera in both; WebGL through onBeforeShadow alone)
   onBeforeRender(renderer, scene, camera, geometry, material) {
-    this._updateDrawParameters(camera, geometry, material, renderer.backend?.isWebGPUBackend === true ? 'merged' : 'multiDraw', heightOf(renderer), this._shadow);
+    this._updateDrawParameters(camera, geometry, material, renderer.backend?.isWebGPUBackend === true ? 'merged' : 'multiDraw', heightOf(renderer) * (this._shadow ? partOf(camera) : 1), this._shadow);
   }
   onBeforeShadow(renderer, object, camera, shadowCamera, geometry, depthMaterial) {
     this._shadow = true;
-    if (renderer.isWebGPURenderer !== true) this._updateDrawParameters(shadowCamera, geometry, depthMaterial, 'multiDraw', heightOf(renderer), true);
+    if (renderer.isWebGPURenderer !== true) this._updateDrawParameters(shadowCamera, geometry, depthMaterial, 'multiDraw', heightOf(renderer) * partOf(shadowCamera), true);
   }
   onAfterShadow() { this._shadow = false; }
   /** Rays are tested against the full mesh. */

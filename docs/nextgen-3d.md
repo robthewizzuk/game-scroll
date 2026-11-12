@@ -30,8 +30,9 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
 - **Real-time shadows** (`spot(...)`): a shadow-casting spotlight whose shadow map size follows
   the quality tier. Mark meshes `castShadow` / `receiveShadow`.
 - **Sun** (`sun(colour, intensity, size)`): a shadowed directional light for outdoor scenes. Call
-  `s.follow(x, y, z)` each frame so the shadow box tracks the player (it snaps to shadow texels, so
-  shadows do not shimmer) and `v.onTier(T => s.setTier(T))`. Big outdoor levels use `s.fit(v, ...)`
+  `s.follow(x, y, z)` each frame so the shadow box tracks the player (it moves a whole tile of its map
+  at a time, so shadows do not shimmer and most of the map is kept: see "kept in tiles" below) and
+  `v.onTier(T => s.setTier(T))`. Big outdoor levels use `s.fit(v, ...)`
   instead (see [Outdoor worlds](#outdoor-worlds-sun-air-sky-and-grade)).
   `gs.hd.sun(...).softShadows(2)` makes its shadows soft the way real ones are: sharp where a thing
   touches the ground, spreading the higher it stands (PCSS, as three.js's own shadow filter hook, on
@@ -123,6 +124,40 @@ up a tier first.
   outweigh the moving ones (20,000 triangles or more, at least twice the moving ones), for sun and
   spot lights with one map. `__hd.shadowCache = false` turns it off; `node scripts/shadow-check.cjs <id> [--gpu]`
   checks the pictures match a full redraw.
+- A sun's shadow map is kept in tiles (`src/kit/shadow-tiles.js`). The map of a sun that follows the
+  camera (`s.follow(...)` or `s.fit(...)`) is 16 by 16 tiles that stay put in the world. The sun steps a
+  whole tile at a time and the kept map slides with it, so a step draws only the strip of tiles that
+  came into the map. Each tile knows the still things and the moving things in it: a tile is drawn
+  again only when its still things changed (one came, went, moved or stopped), and the moving things
+  are drawn over the kept copy each frame only where they are. A frame in which nothing under the sun
+  changed draws no shadows at all. It needs nothing from the game, and turns itself on where the kept
+  copy above does (20,000 still triangles or more under the light).
+  - On a walk through a village with a truck, a gate, a walker and 600 barrels (software renderer): 4,200
+    shadow triangles a frame in place of 35,100 on WebGL and 16,900 in place of 60,200 on WebGPU, 6
+    shadow draws in place of 41 to 48, for the same or a little less of the engine's own time. Not yet
+    measured on a phone: the town in the engine test scenes is walked a third time with its shadows
+    drawn whole for that.
+  - `__hd.info.shTris` and `shCalls` count the shadow maps' triangles and draws, `shTiles` the tiles
+    drawn again, `shPut` the tiles put back from the kept copy, `shSlid` the slides and `shWhole` the
+    times a map was drawn whole (all running totals: take the difference over a frame).
+  - Limits: a set of `gs.props` copies has no place of its own in the map, so moving, hiding or showing
+    a copy draws the map whole (twice: as the set starts to count as moving, and as it stops). On WebGPU
+    a set of copies is drawn whole for each part of the map that is drawn. On WebGL a step of the light
+    in depth (taken only once the camera is well out of the middle of the light's box) draws the map
+    whole; on WebGPU the kept depths are moved instead. A part of the map that was kept, or drawn by
+    itself, can differ from the whole map drawn at once by a texel on a shadow's edge: an edge that
+    falls the other way by the last bit of a sum. On the walk that is at most 35 texels of a map's
+    262,144, never four together, and a pixel or two of the picture in a few frames (on WebGL none
+    at all once the village's still things have been merged).
+  - Switches: `__hd.shadowTiles = false` (the sun moves a shadow texel at a time and its map is drawn
+    whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all).
+    `node scripts/detail-test.cjs --page shadows` (and `--webgpu`) walks the village both ways and
+    checks every frame is the same picture to a pixel or two, and on WebGL that the maps themselves
+    differ only by those stray texels; `--bench` gives the numbers above.
+- On WebGPU the ambient occlusion now draws the same picture twice running. three.js's denoise made its
+  noise picture from random numbers, a new one for every view, so two pictures of the same scene
+  differed by a few pixels a frame and picture tests there had to allow for it. Every view now reads
+  one noise picture made from a fixed seed.
 - On WebGPU, SGSR 2 is the anti-aliasing of every Next Gen view that isn't AR (it runs at full size too),
   so the scene under it is drawn without MSAA: the picture measured the same with it and without, and
   the multisampled colour, depth and motion pictures are saved. A view kept off SGSR 2
@@ -666,7 +701,8 @@ works on instanced meshes and on WebGL and WebGPU alike.
     is at work.
   - Limits: on WebGL, the still things that static batching has merged are left out a merged mesh at
     a time. On WebGPU, a `gs.props` kind picked on the chip (2,000 copies or more) or one that casts
-    shadows is not left out copy by copy. The shadow maps are still drawn for everything. It is off
+    shadows is not left out copy by copy. The shadow maps do not use it (they keep to what changed
+    instead: "kept in tiles" above). It is off
     for see-through views (AR), a card's picture, and cameras with no perspective.
   - Switches: `mesh.userData.noOcclude = true` always draws a mesh, `v.autoOcclude = false` stops it
     for a view, `__hd.occlude = false` everywhere (to compare), `__hd.occludeTexels` sizes the depth

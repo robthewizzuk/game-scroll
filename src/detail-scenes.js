@@ -7,9 +7,10 @@
 //   forest   detail for copies (hd3d.js autoCopies): thousands of firs and rocks placed with gs.props
 //   village  real surface detail (gs.models.relief): a street of houses whose bricks and tiles are real triangles
 //   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
+//            and shadows in tiles (src/kit/shadow-tiles.js): the same walk once more with the sun's shadow map drawn whole, as it used to be
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
-// side by side, pairs: [[off key, on key]]. enter() sets the mode up and, where something has to be built
+// side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
 // first, draws frames with draw() until it is: it gives { build (ms), note } or nothing. uncounted() says
 // the engine can't count the last run's triangles (the chip picked what to draw).
 // size: 1 is the full scene; the app's own check (scripts/app-test.cjs tour) runs small ones.
@@ -162,9 +163,9 @@ function village({ gs, size }) {
   };
 }
 
-/* ---------- town: hiding what is behind other things ---------- */
+/* ---------- town: hiding what is behind other things, and shadows in tiles ---------- */
 function town({ gs, HD, size }) {
-  const T = gs.THREE, G = Math.max(3, Math.round(5 * Math.sqrt(size))), P = 26, B = 18, span = G * P, { v, sun } = view(gs, 260, .002), was = { on: HD.occlude, sleep: HD.occludeSleep };
+  const T = gs.THREE, G = Math.max(3, Math.round(5 * Math.sqrt(size))), P = 26, B = 18, span = G * P, { v, sun } = view(gs, 260, .002), was = { on: HD.occlude, sleep: HD.occludeSleep, tiles: HD.shadowTiles };
   const add = (g, m, x, y, z, cast = true) => { const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = cast; o.receiveShadow = true; v.scene.add(o); return o; };
   add(new T.PlaneGeometry(span + 120, span + 120).rotateX(-Math.PI / 2), gs.hd.pbr('#77726a', { rough: .95 }), 0, 0, 0, false);
   // An old town: rows of houses with a street between the rows, and every other row half a house along, so
@@ -198,28 +199,37 @@ function town({ gs, HD, size }) {
   for (let j = G - 1; j >= 0; j--) way.push([X(c0 + 1, j), sz(j + 1)], [X(c0 + 1, j), sz(j)]);
   const legs = way.map((p, i) => { const q = way[(i + 1) % way.length]; return Math.hypot(q[0] - p[0], q[1] - p[1]); }), per = legs.reduce((a, b) => a + b, 0), look = new T.Vector3();
   const at = (u, p) => { u = ((u % per) + per) % per; let i = 0; while (u > legs[i]) u -= legs[i++]; const a = way[i], b = way[(i + 1) % way.length], k = legs[i] ? u / legs[i] : 0; return p.set(a[0] + (b[0] - a[0]) * k, 1.7, a[1] + (b[1] - a[1]) * k); };
-  const sum = { n: 0, hid: 0, tris: 0, ms: 0, t: 0 };
+  const sum = { n: 0, hid: 0, tris: 0, ms: 0, t: 0, sh: 0, shd: 0, shn: 0, sh0: 0, shd0: 0, first: true };
   return {
     v, holds: `${G * G} houses with ${num(things)} statues, urns, rocks and crates of ${num(tris)} triangles round them`,
     modes: [
-      { key: 'off', name: 'all that is in view', enter() { HD.occlude = false; } },
+      { key: 'off', name: 'all that is in view', enter() { HD.occlude = false; HD.shadowTiles = true; } },
       // (kept at work all through: in a game it rests for a while wherever it saves next to nothing, which would hide what it costs here)
-      { key: 'on', name: 'hidden things left out', async enter(draw) { HD.occlude = true; HD.occludeSleep = false; for (let i = 0; i < 12; i++) await draw(); } },
+      { key: 'on', name: 'hidden things left out', async enter(draw) { HD.occlude = true; HD.occludeSleep = false; HD.shadowTiles = true; for (let i = 0; i < 12; i++) await draw(); } },
+      // the run above once more with the sun's shadow map as it used to be: the sun a texel at a time, and the map drawn whole whenever it or anything under it moves
+      { key: 'whole', name: 'shadows drawn whole', async enter(draw) { HD.occlude = true; HD.occludeSleep = false; HD.shadowTiles = false; for (let i = 0; i < 12; i++) await draw(); } },
     ],
+    pairs: [['off', 'on'], ['whole', 'on', 'shadows in tiles against shadows drawn whole']],
     path(t, cam) {
-      // (what the last frame left out, for tell(): counted from the start of the timed run)
-      if (t < sum.t) sum.n = sum.hid = sum.tris = sum.ms = 0;
-      else if (HD.occlude !== false) { const I = HD.info; sum.n++; sum.hid += I.occluded || 0; sum.tris += I.occTris || 0; sum.ms += I.occMs || 0; }
-      sum.t = t;
+      // (what the last frame left out and what its shadow maps took, for tell(): counted from the start of the timed run)
+      const I = HD.info, sh = I.shTris || 0, shd = I.shCalls || 0;
+      if (t < sum.t) { sum.n = sum.hid = sum.tris = sum.ms = sum.sh = sum.shd = sum.shn = 0; sum.first = true; }
+      else {
+        sum.n++; if (HD.occlude !== false) { sum.hid += I.occluded || 0; sum.tris += I.occTris || 0; sum.ms += I.occMs || 0; }
+        // (the shadow counts run on from frame to frame: a frame's share is what they rose by since the frame before, and the run's first frame has none before it)
+        if (!sum.first) { sum.shn++; sum.sh += sh - sum.sh0; sum.shd += shd - sum.shd0; } sum.first = false;
+      }
+      sum.t = t; sum.sh0 = sh; sum.shd0 = shd;
       at(t * 5, cam.position); at(t * 5 + 7, look); cam.lookAt(look.x, 2.4 + .6 * Math.sin(t * .6), look.z);
       for (let c = 0; c < carts.length; c++) carts[c].position.x = ((t * 3 + c * 17) % span) - span / 2;
       sun.follow(cam.position.x, 0, cam.position.z);
     },
     tell() {
-      if (HD.occlude === false || !sum.n) return null;
-      return `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms`;
+      if (!sum.n) return null;
+      const shadows = `shadow maps ${num(sum.sh / Math.max(1, sum.shn))} triangles in ${num(sum.shd / Math.max(1, sum.shn))} draws a frame`;
+      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms · ${shadows}`;
     },
-    dispose() { HD.occlude = was.on; HD.occludeSleep = was.sleep; clear(v); },
+    dispose() { HD.occlude = was.on; HD.occludeSleep = was.sleep; HD.shadowTiles = was.tiles; clear(v); },
   };
 }
 
@@ -228,5 +238,5 @@ export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
   ['village', 'Village', 'real surface detail', village],
-  ['town', 'Town', 'hiding what is behind other things', town],
+  ['town', 'Town', 'hiding what is behind other things, and shadows in tiles', town],
 ];

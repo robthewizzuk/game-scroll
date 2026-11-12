@@ -1,6 +1,6 @@
 // Engine test scenes, for the phone test tour (src/tour.js; QA panel › Phone test tour › Engine test
 // scenes). The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail,
-// hiding what is behind other things) are checked on a build machine's software renderer, which can count triangles and compare pictures but
+// hiding what is behind other things, shadows in tiles) are checked on a build machine's software renderer, which can count triangles and compare pictures but
 // says nothing about a phone's graphics chip. This flies through a heavy scene for each (src/detail-scenes.js)
 // with the system off and then on, on the phone in your hand, and gives one report to copy.
 //
@@ -77,7 +77,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     HD.force = phoneClass() === 'low' ? 1 : 2; out.tier = HD.force;
     document.body.classList.add('touring'); addEventListener('resize', resized);
     driver.begin(guestApi); driver.clear();
-    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
+    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
     let done = 0;
     for (const [key, name, what, make] of list) {
       if (stopped()) break;
@@ -129,14 +129,15 @@ function sceneLines(s, hz) {
   if (s.error) lines.push(`  ERROR     ${s.error}`);
   for (const m of s.modes) lines.push(m.frames ? modeLine(m) : `  ${m.name.padEnd(26)} no frames timed`);
   const of = k => s.modes.find(m => m.key === k);
-  for (const [a, b] of (s.pairs || [[s.modes[0]?.key, s.modes[1]?.key]]).map(p => p.map(of))) {
+  for (const [ka, kb, words] of s.pairs || [[s.modes[0]?.key, s.modes[1]?.key]]) {
+    const a = of(ka), b = of(kb);
     if (!(a?.frames && b?.frames)) continue;
     const capped = Math.min(a.fps, b.fps) > hz * .95;
     const say = [capped ? `both keep the screen's ${hz} Hz` : times(b.fps, a.fps, 'the frame rate', 'slower', 'the same frame rate')];
     if (a.chip != null && b.chip != null) say.push(times(a.chip, b.chip, 'less chip time', 'more chip time', 'the same chip time'));
     else if (capped) say.push('this phone does not tell the chip\'s time, so the triangles are what is left to go by');
     if (!a.uncounted && !b.uncounted) say.push(times(a.tris, b.tris, 'fewer triangles', 'more triangles', 'the same triangles'));
-    lines.push(`  = ${b.name} against ${a.name}: ${say.filter(Boolean).join(' · ')}`);
+    lines.push(`  = ${words || `${b.name} against ${a.name}`}: ${say.filter(Boolean).join(' · ')}`);
   }
   return lines;
 }
