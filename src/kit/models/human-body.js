@@ -6,7 +6,7 @@
 // to the waist and widens again to the hips, and every limb tapers to its joints. Cloth hangs from the widest
 // places and bridges the hollows. Like the rest of the sculpting it needs no three.js and runs in background
 // workers. Kit use only.
-import { Loft, ss, bump } from './field.js';
+import { Loft, smax, ss, bump } from './field.js';
 
 const abs = Math.abs;
 // a slice: height, half width, its front and its back (z), where it is widest (z), how square in front and behind (2 round .. 4 boxy), its middle (x)
@@ -51,9 +51,17 @@ export function shoulderRows(SH, nk, out = 0) {
     row(1.44, .188 + s + out, .083 + out, -.105 - out, -.012, 2.2, 2.4), row(1.452, .1925 + s + out, .076 + out, -.102 - out, -.013, 2.15, 2.3), row(1.4605, .193 + s + out, .071 + out, -.0995 - out, -.0135, 2.1, 2.2),
     row(1.4665, .189 + s + out, .067 + out, -.097 - out, -.014, 2.1, 2.2), row(1.4707, .18 + s * .95 + out, .064 + out, -.095 - out, -.0145, 2.1, 2.2), row(1.4752, .17 + s * .9 + out, .061 + out, -.093 - out, -.015, 2.1, 2.2),
     row(1.4832, .152 + s * .75 + out, .056 + out, -.089 - out, -.016, 2.1, 2.2), row(1.4959, .124 + s * .5 + out, .05 + out, -.084 - out, -.017, 2.1, 2.1), row(1.508, .097 + s * .25 + out, .046 + out, -.08 - out, -.017, 2, 2),
-    row(1.525, .076 + out, .044 + out, -.076 - out, -.017, 2, 2), row(1.56, .046 * nk + out, .026 + out, -.066 - out, -.02, 2, 2),   // (its top ends inside the neck)
+    row(1.525, .016 + .06 * nk + out, .044 + out, -.076 - out, -.017, 2, 2), row(1.56, .046 * nk + out, .026 + out, -.066 - out, -.02, 2, 2),   // (a thinner neck stands as far clear of the slope; its top ends inside the neck)
   ];
 }
+/** The neck in slices, from inside the shoulders to inside the skull (the head sculpts it; a trunk's collar is cut round it). nk: how thick (1 a man's). */
+export const neckRows = nk => [[1.44, .067 * nk, .063, -.018], [1.5, .0605 * nk, .0595, -.018], [1.555, .0565 * nk, .056, -.02], [1.6, .0535 * nk, .052, -.022], [1.64, .051 * nk, .051, -.03], [1.69, .043, .046, -.03]];
+// the opening of a round neck: an egg-shaped space round the foot of the neck (not a straight-sided hole: at the back of the neck a straight wall ran
+// nearly along the cloth, and the line where the two met wandered), with a floor that slopes up to the nape (there the egg's own wall runs nearly
+// along the back too: the floor crosses it squarely, so the edge lies straight across the nape; in front and at the sides the floor is below the body)
+const EGG = [.0885, .09, .09];
+/** How far outside the opening of a round-necked top a point is (metres; negative inside it). The top's edge is where this is 0 on the body. */
+export const neckOpening = (x, y, z) => { const u = x / EGG[0], v = (y - 1.545) / EGG[1], w = (z - .004) / EGG[2], k = Math.hypot(u, v, w) || 1e-9; return smax((k - 1) * k / Math.hypot(u / EGG[0], v / EGG[1], w / EGG[2]), (1.513 - .4 * (z + .08) - y) * .93, .008); };
 /**
  * The round of the shoulder that stays on the trunk: the arm's cap lies a few millimetres outside it while the arm
  * hangs (so chest and back run up to the sleeve with only a seam between, no deep groove), and when the arm is
@@ -143,4 +151,4 @@ export const FOOT = [
   { ball: [.039, .028, .045], at: [.103, .033, .152], rot: [0, .06, 0] },
 ];
 // everything above as it stands, for the number that names saved pieces
-export const BODY_STAMP = [row, over, easeOf, hangOf, torsoOf, shoulderRows, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows].map(String).join('') + JSON.stringify(FOOT);
+export const BODY_STAMP = [row, over, easeOf, hangOf, torsoOf, shoulderRows, neckRows, neckOpening, EGG, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows].map(String).join('') + JSON.stringify(FOOT);

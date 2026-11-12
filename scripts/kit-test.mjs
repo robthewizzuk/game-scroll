@@ -2098,7 +2098,7 @@ console.log('physics ok');
     const right = HS.mirrored(hand); assert.ok(right.names.includes('handR') && right.names.every(b => b.endsWith('R'))); assert.ok(right.P[0] === -hand.P[0] && right.I[0][1] === hand.I[0][2], 'the other hand: turned over');
     const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', sleeves: 'long', pockets: 4, buttons: '#888', collar: '#333' }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, face: { jaw: 1 }, hat: { kind: 'helmet', colour: '#444' }, belt: { colour: '#222' }, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
     const jobs = HS.jobsFor(sp), again = HS.jobsFor({ ...sp, top: { ...sp.top, buttons: '#abc', collar: '#def' }, hat: { kind: 'helmet', colour: '#f00' } });
-    assert.deepEqual(jobs.map(j => j.kind), ['trunk', 'arm', 'hand', 'head', 'hat']); assert.deepEqual(jobs.map(j => j.key), again.map(j => j.key), 'colours do not change what is sculpted');
+    assert.deepEqual(jobs.map(j => j.kind), ['trunk', 'arm', 'hand', 'head', 'hat', 'collar']); assert.deepEqual(jobs.map(j => j.key), again.map(j => j.key), 'colours do not change what is sculpted');
     const hat = HS.sculpt(jobs[4]); assert.ok(hat.n > 300 && hat.slots.includes('helm') && hat.names[0] === '$', 'a helmet on a bone of its own');
     // each arm is a piece of its own (it turns in the shoulder; nothing is stretched across the armpit): one sculpt serves both, unless the left wears an armband
     assert.equal(jobs[1].side, 'LR'); const banded = HS.jobsFor({ ...sp, top: { ...sp.top, band: '#dd0' } }).filter(j => j.kind === 'arm'); assert.deepEqual(banded.map(j => j.side), ['L', 'R']); assert.equal(banded[1].key, jobs[1].key, 'the bare arm is shared');
@@ -2107,9 +2107,18 @@ console.log('physics ok');
     assert.deepEqual([...HS.mirrored(arm).names].sort(), ['armR', 'foreR', 'twistR']);
     // a kind that is not on the list is no hat and no pack, even a name every object answers to (a kind reaches the sculptor as text, over a worker message)
     for (const kind of ['constructor', 'toString', 'nonsuch']) {
-      assert.deepEqual(HS.jobsFor({ ...sp, hat: { kind }, pack: { kind } }).map(j => j.kind), ['trunk', 'arm', 'hand', 'head'], 'no hat or pack of kind ' + kind);
+      assert.deepEqual(HS.jobsFor({ ...sp, hat: { kind }, pack: { kind } }).map(j => j.kind), ['trunk', 'arm', 'hand', 'head', 'collar'], 'no hat or pack of kind ' + kind);
       for (const what of ['hat', 'pack']) assert.throws(() => HS.sculpt({ kind: what, a: { kind } }), new RegExp(`no ${what} called '${kind}'`));
     }
+    // what is worn round the neck is a piece of its own, finer than the trunk it stands on and moving with it (the trunk's bones): a collar
+    // for every top but a round-necked one, with a scarf wound inside it or a scarf alone
+    const round = { ...sp, top: { ...sp.top, kind: 'shirt', collar: false } }, kinds = q => HS.jobsFor(q).map(j => j.kind);
+    assert.ok(!kinds(round).includes('collar') && kinds({ ...round, extras: { scarf: '#553' } }).includes('collar'), 'a round neck has no collar piece, unless a scarf is worn');
+    const col = HS.sculpt(jobs[5]), wound = HS.sculpt(HS.jobsFor({ ...sp, extras: { scarf: '#553' } })[5]);
+    assert.ok(col.n > 600 && col.slots.includes('trim') && !col.slots.includes('scarf') && wound.slots.includes('scarf') && wound.n > col.n, 'a collar, and one with a scarf in it: ' + [col.n, wound.n, col.slots, wound.slots]);
+    assert.ok(col.names.includes('spine') && col.names.every(b => b === 'spine' || b.startsWith('collar')), 'a collar goes with the rib cage and the collar bones: ' + col.names);
+    let top = 0, low = 9; for (let i = 0; i < col.n; i++) { top = Math.max(top, col.P[i * 3 + 1]); low = Math.min(low, col.P[i * 3 + 1]); } assert.ok(top > 1.57 && top < 1.6 && low > 1.47 && low < 1.52, 'it stands from inside the shoulders to under the jaw: ' + [low, top]);
+    const tr = HS.sculpt(jobs[0]); assert.ok(!tr.slots.includes('trim'), 'and the trunk has none of it: ' + tr.slots);
     assert.ok(typeof HS.VERSION === 'string' && HS.VERSION.length > 4, 'the sculptor has a stamp for saved copies');
   }
   console.log('gs.models: sculpted people ok');
