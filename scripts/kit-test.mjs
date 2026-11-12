@@ -2839,5 +2839,61 @@ console.log('physics ok');
   console.log('gs.models relief ok');
 }
 
+// sound that knows the level (src/kit/acoustics.js, gs.sound.Ears with a level): walls muffle, places ring
+{
+  const { caster, blocked, muffleOf, Room } = await import('../src/kit/acoustics.js');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { TileMap } = await import('../src/kit/tiles.js');
+  const snd = await import('../src/kit/sound.js');
+  // a house: a room 6 x 3 x 8 with a doorway in its east wall, a thin wall to the north, a thick one to the south
+  const w = new World3D();
+  const wall = (x, y, z, sx, sy, sz) => w.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  wall(0, -.1, 0, 60, .2, 60); wall(0, 3.1, 0, 6.4, .2, 8.4);   // ground, ceiling
+  wall(0, 1.5, -4.1, 6.4, 3, .2); wall(0, 1.5, 5, 6.4, 3, 2);   // north (thin), south (2 m thick)
+  wall(-3.1, 1.5, 0, .2, 3, 8.4); wall(3.1, 1.5, -2.5, .2, 3, 3.4); wall(3.1, 1.5, 2.9, .2, 3, 2.6); wall(3.1, 2.6, .4, .2, .8, 2.4);   // west; east with a doorway from z = -.8 to 1.6
+  w.step(1 / 60);
+  const cast = caster(w), ear = { x: 0, y: 1.6, z: 0 };
+  assert.ok(Math.abs(cast(ear, { x: 0, y: 0, z: -1 }, 20) - 4) < .02 && cast(ear, { x: 1, y: 0, z: .1 }, 2) === Infinity, 'a World3D answers how far the first wall is');
+  const inRoom = blocked(cast, ear, { x: -2, y: 1, z: 2 }), thin = blocked(cast, ear, { x: 0, y: 1.6, z: -7 }), thick = blocked(cast, ear, { x: 0, y: 1.6, z: 9 });
+  const door = blocked(cast, ear, { x: 6, y: 1.5, z: .4 }), corner = blocked(cast, ear, { x: 4.2, y: 1.5, z: 3.4 }), west = blocked(cast, ear, { x: -7, y: 1.5, z: 0 });
+  assert.ok(inRoom === 0 && door === 0, 'nothing in the way: in the room ' + inRoom + ', through the doorway ' + door);
+  assert.ok(thin > .35 && thin < .8 && thick > .9 && thick > thin + .15, 'a thin wall muffles (' + thin.toFixed(2) + '), a thick one more (' + thick.toFixed(2) + ')');
+  assert.ok(corner > .1 && corner < thin - .1 && west >= thin - .01, 'outside, round the doorway\'s edge, it is only partly muffled: ' + corner.toFixed(2) + ' (no way round the west wall: ' + west.toFixed(2) + ')');
+  const m0 = muffleOf(0), m1 = muffleOf(1), mh = muffleOf(.5);
+  assert.ok(m0.gain === 1 && m0.hz === 20000 && m1.hz < 500 && m1.gain < .45 && mh.hz < m0.hz && mh.hz > m1.hz, 'muffled sound is quieter and duller by degrees');
+  // the place: the room, a hall, open ground, a yard between far walls
+  const feel = (c, at, o) => { const r = new Room(o); for (let i = 0; i < 6; i++) r.probe(c, at, 4); assert.ok(r.known, 'felt all round'); return { ...r.read() }; };
+  const room = feel(cast, ear);
+  const hall = new World3D(); const hw = (x, y, z, sx, sy, sz) => hall.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  hw(0, -.1, 0, 80, .2, 80); hw(0, 12.1, 0, 30, .2, 44); hw(-15.1, 6, 0, .2, 12, 44); hw(15.1, 6, 0, .2, 12, 44); hw(0, 6, -22.1, 30, 12, .2); hw(0, 6, 22.1, 30, 12, .2); hall.step(1 / 60);
+  const big = feel(caster(hall), { x: 1, y: 1.6, z: 2 });
+  const field = new World3D(); field.floor(0); field.step(1 / 60);
+  const open = feel(caster(field), { x: 0, y: 1.6, z: 0 });
+  const yard = new World3D(); yard.floor(0); yard.box(null, 60, 20, 1, { fixed: true, at: { x: 0, y: 10, z: -25 } }); yard.box(null, 60, 20, 1, { fixed: true, at: { x: 0, y: 10, z: 25 } }); yard.step(1 / 60);
+  const street = feel(caster(yard), { x: 0, y: 1.6, z: 0 });
+  assert.ok(room.enclosed > .9 && room.size > 1.5 && room.size < 5 && room.tail > .25 && room.tail < 1 && room.wet > .1, 'a small room: ' + JSON.stringify({ size: +room.size.toFixed(1), tail: +room.tail.toFixed(2), wet: +room.wet.toFixed(2) }));
+  assert.ok(big.enclosed > .9 && big.tail > room.tail * 2 && big.tail < 4.5 && big.wet > room.wet, 'a hall rings longer: ' + big.tail.toFixed(2) + ' s against ' + room.tail.toFixed(2));
+  assert.ok(open.enclosed === 0 && open.wet === 0 && open.echo === 0, 'open country has no echo');
+  assert.ok(street.roof < .35 && street.wet < room.wet * .5 && street.echo > .03 && Math.abs(street.delay - 2 * 28 / 343) < .09, 'far walls and little roof: a slap back after ' + street.delay.toFixed(2) + ' s ' + JSON.stringify({ roof: +street.roof.toFixed(2), wet: +street.wet.toFixed(3), echo: +street.echo.toFixed(3) }));
+  // a flat map in pixels (16 to the metre): the same answers through a TileMap
+  const map = TileMap.fromText(['##########', '#...#....#', '#...#....#', '#........#', '#...#....#', '##########'], { size: 16 });
+  const c2 = caster(map, { flat: true }), e2 = { x: 40, y: 24 };
+  assert.ok(blocked(c2, e2, { x: 100, y: 24 }, { flat: true, spread: 9.6, thick: 19.2 }) > .3 && blocked(c2, e2, { x: 40, y: 60 }, { flat: true, spread: 9.6, thick: 19.2 }) === 0, 'a tile wall muffles; the open floor does not');
+  const r2 = feel(c2, e2, { flat: true, unit: 16 });
+  assert.ok(r2.walls === 1 && r2.size > .8 && r2.size < 4 && r2.tail > .15, 'a tile room, in metres: ' + r2.size.toFixed(1));
+  // Ears: the same through gs.sound, with no audio here (the sums still run; sounds are silent)
+  const ears = new snd.Ears({ level: w });
+  for (let i = 0; i < 8; i++) ears.place(ear, { x: 0, y: 0, z: -1 });
+  assert.ok(ears.room.enclosed > .9 && Math.abs(ears.blocked({ x: 0, y: 1.6, z: 9 }) - thick) < 1e-9 && ears.blocked({ x: 1, y: 1, z: 1 }) === 0, 'Ears with a level knows the room and the walls');
+  assert.ok(ears.heard({ x: 0, y: 1.6, z: 9 }) < new snd.Ears().place(ear).heard({ x: 0, y: 1.6, z: 9 }), 'heard() is quieter behind a wall');
+  assert.ok(new snd.Ears().room === null && new snd.Ears().blocked({ x: 9, y: 9, z: 9 }) === 0, 'without a level nothing is muffled');
+  ears.tone(440, { x: 0, y: 1.6, z: 9 }).noise(.2, { x: 6, y: 1, z: 0 }).play('boom', { x: 0, y: 1, z: -7 }); ears.loop({ x: 0, y: 1, z: 9 }).move({ x: 1, y: 1, z: 9 }).stop();
+  snd.mixer.place({ tail: 2, wet: .3, echo: .1, delay: .2 }).place(null).reset();
+  const flat = new snd.Ears({ level: map, flat: true, unit: 16 }); for (let i = 0; i < 6; i++) flat.place2d(40, 24);
+  assert.ok(flat.blocked({ x: 100, y: 24 }) > .3 && flat.room.walls === 1, 'flat Ears on a tile map');
+  for (const x of [w, hall, field, yard]) x.free();
+  console.log('sound that knows the level: walls (thin, thick, a doorway, a corner), places (room, hall, open, a yard), tile maps and Ears ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

@@ -1,5 +1,5 @@
 // Checks the sound kit in a real browser: every ready-made sound and the limiter, the instrument sets,
-// and the music clock. Usage: node scripts/sound-test.cjs [sounds|band|clock] [--list]   (--list prints each measurement)
+// the music clock, and sound that knows the level. Usage: node scripts/sound-test.cjs [sounds|band|clock|level] [--list]   (--list prints each measurement)
 const { chromium } = require('playwright');
 (async () => {
   const argv = process.argv.slice(2), list = argv.includes('--list'), only = argv.filter(a => !a.startsWith('--'));
@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
   const server = await vite.createServer({ server: { port: 4186 }, mode: 'bundled', logLevel: 'error' }); await server.listen();
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   let failed = 0;
-  for (const part of ['sounds', 'band', 'clock']) {
+  for (const part of ['sounds', 'band', 'clock', 'level']) {
     if (only.length && !only.includes(part)) continue;
     const p = await b.newPage(), errs = [];
     p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });

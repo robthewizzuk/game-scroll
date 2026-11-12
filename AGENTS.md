@@ -187,7 +187,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   (`CoverMap`, `Squad`, `Route`), `gs.climb` (`Ledges`, `Climber`, `Rope`), `gs.poses` (`figure`, `person` skinned with a face, `Rig` with `blend`/`blend2` blend spaces and `plant` foot IK, `LIFELIKE` strides whose feet don't slide, `keys([...])` key-pose actions), `gs.missions`
   (`Mission` scripts, `zone`), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`),
   `gs.stealth` (`lightAt`, `Takedown`, `Bodies`, `Floors`, `Disguise`), `gs.gadgets` (`Grapple`, `Zipline`, `Wires`, `Lock`,
-  `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound) and
+  `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound; `new Ears({ level: world })` muffles sounds behind walls and gives each place its own echo by itself) and
   `music({ layers }).intensity()` + `follow(song)` (living music), `gs.props` (`Props` instancing + LOD, `perCopy(instancedMesh)` skips off-screen copies, `Areas`, `Chunks`, `simplify`).
 - Cities: `gs.city.City(view, { seed, blocks, style: 'downtown'|'oldtown'|'harbour'|'suburb', traffic, people, sky })` (made-up streets, lit buildings,
   traffic at the lights, people; `update(dt, player)`, `avoid`, `collide`, `ray`, `route`, `spot('door'|'rooftop'...)`, `cars.hit`, `people.scare`, `plan`, `drawMap`); guide `docs/city.md`.

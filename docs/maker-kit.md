@@ -79,6 +79,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Ball games with boosting, flipping cars | `gs.arena` | [Action and adventure kits](#action-and-adventure-kits) |
 | Chapters, stars, collectibles, unlocks | `gs.campaign` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds placed in 3D, music that builds up | `gs.sound.Ears`, `music({ layers })` | [Action and adventure kits](#action-and-adventure-kits) |
+| Sounds muffled by walls, each place with its own echo, by themselves | `new Ears({ level })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
 | Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -1849,6 +1850,37 @@ scores, collectibles and extras that unlock at a star count, saved compactly wit
 audio (left/right and in front/behind in headphones, quieter with distance, `muffled` for behind a
 wall). `ears.place(camera.position, forward)` each frame, then `ears.play('boom', pos)`,
 `ears.tone()`, `ears.zzfx(pos, ...)`, and `ears.loop(pos)` for engines that follow something.
+
+**Sound that knows the level**: give the ears the level and they work the rest out.
+`new Ears({ level: world })` takes a `gs.physics3d` `World3D`, a `TileMap`, a `City`, `Voxels`, 2D
+`Physics`, a `NavGrid`, a function `(from, dir, max) => metres to the first solid thing`, or a list
+of those. Then:
+
+- Every sound is **muffled by what stands between it and the ears**: quieter and duller behind a
+  wall, more so behind a thick one, less through a doorway or round a corner (sound finds the way
+  round). A `loop()` is checked again as it and the ears move, so an engine dulls as it passes behind
+  a barn and clears as it comes out. `muffled: true` or a number 0..1 still says so yourself, and
+  `muffled: false` leaves one sound clear (a voice in the player's own head).
+- **The place gets its own echo**: a few rays a frame feel out the walls and the roof round the ears,
+  and effects and voices (never the music) ring like the place they are in: a cupboard, a hall, a
+  cave, a street with a slap back off the far houses, open country with none. It changes smoothly as
+  the player walks from one to the next.
+
+`ears.room` is what it has worked out (`{ size, walls, roof, enclosed, tail, wet, echo, delay }`),
+`ears.blocked(pos)` is how muffled a point is (0 clear to 1 behind a thick wall) and `ears.heard(pos)`
+is quieter behind walls too, so subtitles and "you heard that" hints agree with the sound. Options:
+`hard` (0 carpet, snow and forest to 1 bare stone, default .6), `unit` (level units to a metre: 16 for
+a map of 16-pixel tiles a metre across), `rays` (4 a frame) and `auto: false` to read `ears.room` and
+set the echo yourself with `mixer.place({ tail, wet, echo, delay })`. Set `ears.level` again when the
+level is another one. The sums alone, with no audio, are `gs.sound.acoustics` (`caster`, `blocked`,
+`muffleOf`, `Room`). It costs a few rays a frame and one small search per sound behind a wall.
+
+```js
+const ears = new Ears({ level: world, hard: .8 });          // a stone keep
+update(dt) { ears.place(cam.position, forward); }
+ears.play('door', door.pos);                                 // dull if it is two rooms away
+if (ears.room.roof < .3) rain.set({ vol: .5 }, 1);           // the rain is louder out of doors
+```
 `music({ ..., drums2, lead2, layers: { drums2: .3, lead2: .7 } })` builds up with `tune.intensity(x)`:
 quiet while sneaking, full when the fight starts.
 
@@ -2052,7 +2084,9 @@ finger lands the one-finger gesture is dropped, so a pinch never ends in a stray
 and Tone.js, `'voice'`, or your own with `tone(f, { bus: 'alarm' })`), then a shared room and muffle.
 `mixer.volume('music', .4)`, `mixer.duck('music', .3, .8)` (dip it for a big moment), `mixer.room('cave')`
 (`'room'`, `'hall'`, `'cave'`, `'pipe'` or `{ reverb, size, echo, delay }`) and `mixer.muffle(.8)` (underwater,
-stunned, inside a box). It all goes back to normal when the round ends.
+stunned, inside a box). `mixer.place({ tail, wet, echo, delay })` is the echo of the place the listener
+stands in, for effects and voices only: `new Ears({ level })` sets it from the level by itself, or set
+it for a place you know (`{ tail: 3.5, wet: .4 }` is a cathedral). It all goes back to normal when the round ends.
 
 **Speech** (`gs.sound.say('Watch out!', { pitch, rate, lang })`): characters talk with the phone's own
 voices (no sound files; iPhone and Android speech, the browser's on the web). It returns a promise

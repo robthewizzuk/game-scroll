@@ -191,13 +191,41 @@ export interface SoundPart {
    * uses Tone.js, which loads by itself: the tune plays in the chip sound until it's in.
    */
   music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; [part: string]: Loose }): { start(): Loose; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
-  /** 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones). */
-  Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number }) => {
+  /**
+   * 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones).
+   * Sound that knows the level: with `level` (a gs.physics3d World3D, a TileMap, a City, Voxels, a function
+   * (from, dir, max) => metres to the first solid thing, or a list of them) every sound is muffled by the walls
+   * between it and the ears by itself (less through a doorway or round a corner, more behind something thick),
+   * and the place the ears stand in gets its own echo (a small room, a hall, a cave, a street, open country),
+   * felt out with `rays` rays a frame. hard: 0 soft (carpet, snow, a forest) .. 1 bare stone; unit: level units
+   * to a metre (16 for a map of 16-pixel tiles a metre across); auto: false to read `room` and set the echo yourself.
+   */
+  Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number; level?: SoundLevel | null; hard?: number; unit?: number; auto?: boolean; rays?: number }) => {
     place(pos: { x: number; y: number; z?: number }, forward?: { x: number; y: number; z: number }, up?: { x: number; y: number; z: number }): Loose; place2d(x: number, y: number, facing?: number): Loose;
+    /** What stands in the way of sound (null: nothing). Set it again when the level is another one. */
+    level: SoundLevel | null;
+    /** The place round the ears as the level says it is so far (null without a level). */
+    readonly room: SoundPlace | null;
+    /** How much the level keeps a sound at p from the ears: 0 nothing in the way .. 1 behind a thick wall (0 without a level). */
+    blocked(p: { x: number; y: number; z?: number }): number;
+    /** muffled: true (behind a wall, as you say), or 0..1, says so yourself; false leaves it clear; left out, the level decides. */
     tone(f: number | string, p: { x: number; y: number; z?: number }, o?: Loose): Loose; noise(len: number, p: { x: number; y: number; z?: number }, o?: Loose): Loose; zzfx(p: { x: number; y: number; z?: number }, ...params: (number | undefined)[]): Loose;
-    play(name: string, p: { x: number; y: number; z?: number }, pitch?: number, o?: { muffled?: boolean }): Loose;
-    loop(p: { x: number; y: number; z?: number }, wave?: OscillatorType, hz?: number, o?: { vol?: number; muffled?: boolean }): { move(p: { x: number; y: number; z?: number }): Loose; pitch(hz: number): Loose; volume(v: number): Loose; stop(): void };
+    play(name: string, p: { x: number; y: number; z?: number }, pitch?: number, o?: { muffled?: boolean | number }): Loose;
+    /** A steady sound that follows something; with a level it is checked again for walls as it and the ears move (h.muffled: 0..1 now). */
+    loop(p: { x: number; y: number; z?: number }, wave?: OscillatorType, hz?: number, o?: { vol?: number; muffled?: boolean | number }): { move(p: { x: number; y: number; z?: number }): Loose; pitch(hz: number): Loose; volume(v: number): Loose; stop(): void; readonly muffled?: number };
+    /** How loud a sound at p would be here, 0..1: quieter with distance, and behind walls where there is a level. */
     heard(p: { x: number; y: number; z?: number }): number;
+  };
+  /**
+   * The sums behind sound that knows the level, for your own sounds and subtitles (no audio): caster(level) makes
+   * one question of any level (cast(from, dir, max) => metres to the first solid thing, or Infinity), blocked(cast, ear, source)
+   * is 0 clear .. 1 behind a thick wall, muffleOf(amount) what such a sound keeps, Room feels out a place a few rays at a time.
+   */
+  acoustics: {
+    caster(level: SoundLevel | null, o?: { flat?: boolean }): SoundCast | null;
+    blocked(cast: SoundCast | null, ear: { x: number; y: number; z?: number }, source: { x: number; y: number; z?: number }, o?: { spread?: number; thick?: number; flat?: boolean }): number;
+    muffleOf(amount: number): { gain: number; hz: number };
+    Room: new (o?: { far?: number; hard?: number; flat?: boolean; roof?: number; unit?: number }) => { probe(cast: SoundCast | null, ear: { x: number; y: number; z?: number }, n?: number): Loose; read(): SoundPlace; clear(): Loose; readonly known: boolean };
   };
   /** ZzFX sound from its numbers (zzfx.micro). */
   zzfx(...params: number[]): void;
@@ -218,6 +246,8 @@ export interface SoundPart {
     duck(name?: string, to?: number, hold?: number, back?: number): Loose;
     room(r?: 'none' | 'room' | 'hall' | 'cave' | 'pipe' | { reverb?: number; size?: number; echo?: number; delay?: number }): Loose;
     muffle(x?: number, fade?: number): Loose;
+    /** The echo of the place the listener is in, for effects and voices (not the music); null for none. new Ears({ level }) sets it by itself. */
+    place(o?: { tail?: number; wet?: number; echo?: number; delay?: number } | null, fade?: number): Loose;
     channel(name: string): { volume(v: number, fade?: number): Loose; duck(to?: number, hold?: number, back?: number): Loose };
     reset(): Loose;
   };
@@ -234,6 +264,12 @@ export interface SoundPart {
   talking(): boolean;
 }
 
+/** What stands in the way of sound for gs.sound.Ears: anything with ray() or sees() (World3D, TileMap, City, Voxels, 2D Physics, NavGrid), a function, or a list. */
+export type SoundLevel = { ray(...a: Loose[]): Loose } | { sees(...a: Loose[]): Loose } | ((from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, max: number) => number | boolean | null | undefined | { distance?: number; dist?: number }) | SoundLevel[];
+/** One question for any level: metres to the first solid thing from `from` along the unit direction `dir`, or Infinity when clear for `max`. */
+export type SoundCast = (from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, max: number) => number;
+/** A place as it sounds: size (metres to the walls on average), walls and roof (0..1 closed), enclosed (0 open country .. 1 shut in), tail (seconds the echo rings), wet (0..1 how much), echo and delay (a slap back off far walls outdoors). */
+export interface SoundPlace { size: number; walls: number; roof: number; enclosed: number; tail: number; wet: number; echo: number; delay: number }
 /** A character's voice for gs.sound.say: a kind, or which accents to try, which take of that kind, and voices to prefer by name. */
 export type SayVoice = 'woman' | 'man' | 'any' | { kind?: 'woman' | 'man' | 'any'; lang?: string | string[]; take?: number; like?: string | string[] };
 /** One part of a spoken line: words, a pause in seconds, or words with their own delivery. */
