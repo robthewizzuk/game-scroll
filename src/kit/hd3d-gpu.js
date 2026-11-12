@@ -745,17 +745,55 @@ export function noAO(m) { m.mrtNode = new SoftMRT({ output, normal: vec4(normalV
 // a tree another tree's motion whenever one came into or left the view (trees and lamps broke up in made
 // frames). A copy that leaves keeps its slot for a few frames (it is off screen or behind a wall, so
 // drawing it costs a little and shows nothing), so one coming straight back still has its true motion;
-// a new one takes a free slot while it is still in the margin round the view, so its first, wrong motion is off screen.
+// a new one takes a free slot while it is still in the margin round the view, and three's list of last
+// frame is told where it stands too, so in its first frame it moves with the camera like everything round it
+// (a copy changing detail level takes a new slot in the middle of the picture: its motion came from whatever
+// held that slot before, and a made frame smeared it across the screen).
+// Only what changes goes up to the chip: a copy that stays in its slot is not written again (unless the
+// game moved or recoloured a copy: the library's textures say so), and the slots that did change go up as
+// a few short ranges. three keeps "last frame's" list in a copy of each list for motion, sent whole
+// whenever the list changes: it is handed the same ranges a frame later. (Every copy in view written and
+// sent every frame, twice over, was most of what a forest cost while frame generation ran.)
 const PF = new Frustum(), PS = new Sphere(), PM = new Matrix4(), PV = new Vector3(), SF = [];
 const PROP_LINGER = 20;   // frames a copy that left the view keeps its slot
+const PROP_RANGES = 48, PROP_GAP = 6;   // most ranges of changed slots sent for a list in a frame (more: one range over them all); slots apart that still share a range
+// the slots of a list that changed this frame, as ranges [start, end) in R (n of them), slots given in any order
+function touchSlot(R, s) {
+  const n = R.n;
+  if (n) { const a = R.a[n * 2 - 2], b = R.a[n * 2 - 1]; if (s >= a - PROP_GAP && s <= b + PROP_GAP) { if (s < a) R.a[n * 2 - 2] = s; if (s >= b) R.a[n * 2 - 1] = s + 1; return; } }
+  if (n < PROP_RANGES) { R.a[n * 2] = s; R.a[n * 2 + 1] = s + 1; R.n = n + 1; return; }
+  let lo = s, hi = s + 1; for (let i = 0; i < n; i++) { lo = Math.min(lo, R.a[i * 2]); hi = Math.max(hi, R.a[i * 2 + 1]); }
+  R.a[0] = lo; R.a[1] = hi; R.n = 1;
+}
+// marks those ranges of an attribute to go up (ranges from a frame it wasn't drawn in are still waiting: kept, up to a point)
+function sendRanges(a, R, n = R.n) {
+  if (!a || !n) return;
+  if (a.updateRanges.length > PROP_RANGES * 2) { let hi = 0; for (const r of a.updateRanges) hi = Math.max(hi, r.start + r.count); for (let i = 0; i < n; i++) hi = Math.max(hi, R.a[i * 2 + 1] * a.itemSize); a.clearUpdateRanges(); a.addUpdateRange(0, Math.min(a.array.length, hi)); }
+  else for (let i = 0; i < n; i++) a.addUpdateRange(R.a[i * 2] * a.itemSize, (R.a[i * 2 + 1] - R.a[i * 2]) * a.itemSize);
+  a.needsUpdate = true;
+}
+// ...and of three's copy of a list for motion (S.prev). three sets that copy's version back to the list's own
+// after every draw, and only sends what has a higher version than the one last sent, so a plain "needs
+// update" can land on the version already sent and wait a frame: this one is always higher.
+function sendPrev(S, R) {
+  if (!S.prev || !R.n) return;
+  sendRanges(S.prev, R); S.prev.version = S.pv = Math.max(S.prev.version, S.pv + 1);
+}
 export function gpuProps(im) {
-  const levels = im.LODinfo ? im.LODinfo.render.levels.map(l => ({ obj: l.object, dist: l.distance * (1 - (l.hysteresis || 0)) })) : [{ obj: im, dist: 0 }];   // (the library keeps distances squared)
+  const levels = im.LODinfo?.render ? im.LODinfo.render.levels.map(l => ({ obj: l.object, lod: l, dist: 0 })) : [{ obj: im, lod: null, dist: 0 }];
+  // (the library keeps distances squared; read each frame: a game moves them for a scope's zoom, and hd3d.js autoCopies for the picture's size)
+  const dists = () => { for (const l of levels) if (l.lod) l.dist = l.lod.distance * (1 - (l.lod.hysteresis || 0)); };
+  dists();
   const group = new Group(); group.name = im.name + ':webgpu';
-  let cap = 0, tw = [], want = null;
+  let cap = 0, tw = [], want = null, sph = null;
+  // stale: the game has moved or recoloured a copy since the lists were filled (every such write goes through the library's textures)
+  let stale = true, mt = null, ct = null; const wmWas = new Float64Array(16);
+  const hook = t => { if (!t) return; if (!t.gsHooked) { t.gsHooked = true; const own = t.enqueueUpdate; t.enqueueUpdate = function (i) { this.gsStale?.(); return own.call(this, i); }; } t.gsStale = () => { stale = true; }; };
+  const watch = () => { if (im.matricesTexture !== mt) { mt = im.matricesTexture; hook(mt); stale = true; } if (im.colorsTexture !== ct) { ct = im.colorsTexture; hook(ct); stale = true; } };
   const make = () => {
     for (const t of tw) { t.removeFromParent(); t.dispose(); }
     cap = Math.max(16, im._capacity || im._instancesArrayCount || 16);
-    want = new Int8Array(cap);
+    want = new Int8Array(cap); sph = new Float32Array(cap * 4); stale = true;
     tw = levels.map(({ obj }) => {
       const src = obj.geometry, g = new BufferGeometry();   // the same buffers, without the library's index attribute
       for (const k in src.attributes) if (k !== 'instanceIndex') g.setAttribute(k, src.attributes[k]);
@@ -765,8 +803,12 @@ export function gpuProps(im) {
       m.castShadow = im.castShadow; m.receiveShadow = im.receiveShadow;
       m.userData.gsTwin = im;   // (hd3d.js shadowLights: its shadow changes when the props do, not when this view's culling does)
       if (im.colorsTexture) m.instanceColor = new IBA(new Float32Array(cap * 3), 3);
-      // slotOf: copy -> slot + 1 (0: none); owner: slot -> copy + 1; idle: frames since its copy left the view
-      m.userData.slots = { slotOf: new Int32Array(cap), owner: new Int32Array(cap), idle: new Uint16Array(cap), top: 0 };
+      // slotOf: copy -> slot + 1 (0: none); owner: slot -> copy + 1; idle: frames since its copy left the view;
+      // now, last: the slots changed this frame and last, as ranges; fresh: the slots taken this frame;
+      // prev: three's copy of the list for motion, once it makes one
+      m.userData.slots = { slotOf: new Int32Array(cap), owner: new Int32Array(cap), idle: new Uint16Array(cap), top: 0,
+        now: { a: new Int32Array(PROP_RANGES * 2), n: 0 }, last: { a: new Int32Array(PROP_RANGES * 2), n: 0 }, fresh: { a: new Int32Array(PROP_RANGES * 2), n: 0 }, prev: null, pv: 0 };
+      const list = m.instanceMatrix, clone = list.clone; list.clone = function () { const c = clone.call(this); m.userData.slots.prev = c; return c; };
       group.add(m); return m;
     });
   };
@@ -783,21 +825,33 @@ export function gpuProps(im) {
     isGpu: () => onGpu,   // (a function: the twin is copied with ...spread in hd3d.js)
     sends: () => gc?.sends() ?? 0,
     sync(cam, occ = null, shadowCams = null, gpuR = null) {   // occ: hd3d.js occlusion culling (only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead
+      dists();
       useGpu(!!gpuR && this.gpuFits);
       if (onGpu) { gc.sync(gpuR, cam, shadowCams); for (const m of gc.meshes) m.visible = true; return; }
       if ((im._capacity || 0) > cap) make();
       const n = Math.min(cap, im._instancesArrayCount || 0), D = im.matricesTexture?._data, C = im.colorsTexture?._data, wm = im.matrixWorld;
-      if (!D) { for (const t of tw) { t.count = 0; t.userData.slots.top = 0; t.userData.slots.slotOf.fill(0); t.userData.slots.owner.fill(0); } return; }
+      if (!D) { for (const t of tw) { t.count = 0; t.userData.slots.top = 0; t.userData.slots.slotOf.fill(0); t.userData.slots.owner.fill(0); } stale = true; return; }
       cam.updateMatrixWorld(); PM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); PF.setFromProjectionMatrix(PM, cam.coordinateSystem);
       const nsf = im.castShadow && shadowCams ? shadowCams.length : 0;
       for (let j = 0; j < nsf; j++) { const c = shadowCams[j]; (SF[j] ||= new Frustum()).setFromProjectionMatrix(PM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse), c.coordinateSystem); }
       const cp = cam.getWorldPosition(PV), cx = cp.x, cy = cp.y, cz = cp.z, R0 = levels[0].obj.geometry.boundingSphere?.radius ?? 1;
+      // where each copy is and how far it reaches, worked out again only when a copy or the whole set has moved
+      watch();
+      const we = wm.elements; let moved = sph.r0 !== R0 || sph.n !== n; for (let j = 0; j < 16; j++) if (wmWas[j] !== we[j]) { wmWas[j] = we[j]; moved = true; }
+      const all = stale; stale = false;
+      if (all || moved) {
+        for (let i = 0; i < n; i++) {
+          const o = i * 16, sx = Math.sqrt(D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2]), sy = Math.sqrt(D[o + 4] * D[o + 4] + D[o + 5] * D[o + 5] + D[o + 6] * D[o + 6]), sz = Math.sqrt(D[o + 8] * D[o + 8] + D[o + 9] * D[o + 9] + D[o + 10] * D[o + 10]);   // (Math.hypot made garbage for each copy)
+          PS.center.set(D[o + 12], D[o + 13], D[o + 14]).applyMatrix4(wm);
+          const q = i * 4; sph[q] = PS.center.x; sph[q + 1] = PS.center.y; sph[q + 2] = PS.center.z; sph[q + 3] = R0 * Math.max(sx, sy, sz) + 8;   // (+8 m: things just out of view still cast their shadows in)
+        }
+        sph.r0 = R0; sph.n = n;
+      }
       // which level each copy is drawn at this frame (-1: not drawn)
       want.fill(-1, 0, n);
       for (let i = 0; i < n; i++) {
         if (!im.getActiveAndVisibilityAt(i)) continue;
-        const o = i * 16, sx = Math.sqrt(D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2]), sy = Math.sqrt(D[o + 4] * D[o + 4] + D[o + 5] * D[o + 5] + D[o + 6] * D[o + 6]), sz = Math.sqrt(D[o + 8] * D[o + 8] + D[o + 9] * D[o + 9] + D[o + 10] * D[o + 10]);   // (Math.hypot made garbage for each copy)
-        PS.center.set(D[o + 12], D[o + 13], D[o + 14]).applyMatrix4(wm); PS.radius = R0 * Math.max(sx, sy, sz) + 8;   // (+8 m: things just out of view still cast their shadows in)
+        const q = i * 4; PS.center.set(sph[q], sph[q + 1], sph[q + 2]); PS.radius = sph[q + 3];
         if (!PF.intersectsSphere(PS)) { let j = 0; while (j < nsf && !SF[j].intersectsSphere(PS)) j++; if (j === nsf) continue; }
         if (occ && !im.castShadow && occ.hidden(PS.center, PS.radius - 8)) continue;
         const d = (PS.center.x - cx) ** 2 + (PS.center.y - cy) ** 2 + (PS.center.z - cz) ** 2;   // squared, like the levels
@@ -807,13 +861,16 @@ export function gpuProps(im) {
       for (let L = 0; L < tw.length; L++) {
         const t = tw[L], S = t.userData.slots, M = t.instanceMatrix.array, A = t.instanceColor?.array;
         // (copied number by number: a subarray view per copy per frame was garbage for the collector)
-        const put = (s, i) => { const m0 = s * 16, o = i * 16; for (let j = 0; j < 16; j++) M[m0 + j] = D[o + j]; if (C && A) { const a0 = s * 3, c0 = i * 4; A[a0] = C[c0]; A[a0 + 1] = C[c0 + 1]; A[a0 + 2] = C[c0 + 2]; } };
-        // the copies already here: stay put; gone: linger a while (unless now drawn at another level), then free the slot
+        const R = S.now, was = S.last; S.now = was; S.last = R;   // (last frame's ranges, for three's copy of the list; this frame's start empty)
+        sendPrev(S, R);
+        const N = S.now, F = S.fresh, P = S.prev?.array; N.n = 0; F.n = 0;
+        const put = (s, i) => { const m0 = s * 16, o = i * 16; for (let j = 0; j < 16; j++) M[m0 + j] = D[o + j]; if (C && A) { const a0 = s * 3, c0 = i * 4; A[a0] = C[c0]; A[a0 + 1] = C[c0 + 1]; A[a0 + 2] = C[c0 + 2]; } touchSlot(N, s); };
+        // the copies already here: stay put (written again only if the game has changed a copy); gone: linger a while (unless now drawn at another level), then free the slot
         for (let s = 0; s < S.top; s++) {
           const i = S.owner[s] - 1; if (i < 0) continue;
-          if (i < n && want[i] === L) { put(s, i); S.idle[s] = 0; continue; }
+          if (i < n && want[i] === L) { if (all) put(s, i); S.idle[s] = 0; continue; }
           if (i < n && want[i] < 0 && im.getActiveAndVisibilityAt(i) && ++S.idle[s] <= PROP_LINGER) continue;
-          hide(M, s * 16); S.owner[s] = 0; S.slotOf[i] = 0;
+          hide(M, s * 16); S.owner[s] = 0; S.slotOf[i] = 0; touchSlot(N, s);
         }
         // the copies new to this level: the lowest free slots
         let free = 0;
@@ -822,11 +879,13 @@ export function gpuProps(im) {
           while (free < S.top && S.owner[free]) free++;
           const s = free < S.top ? free : S.top++;
           S.owner[s] = i + 1; S.slotOf[i] = s + 1; S.idle[s] = 0; put(s, i);
+          // (last frame it stood where it stands now, as far as anyone knows: not where the slot's last copy did)
+          if (P) { const m0 = s * 16; for (let j = 0; j < 16; j++) P[m0 + j] = M[m0 + j]; touchSlot(F, s); }
         }
         while (S.top && !S.owner[S.top - 1]) S.top--;
         t.count = S.top;
-        // (only the slots in use go up to the chip, not the whole list)
-        sendUsed(t.instanceMatrix, t.count); sendUsed(t.instanceColor, t.count);
+        // (only the slots that changed go up to the chip)
+        sendRanges(t.instanceMatrix, N); sendRanges(t.instanceColor, N); sendPrev(S, F);
         t.visible = t.count > 0;
       }
     },

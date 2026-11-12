@@ -370,4 +370,50 @@ export function clustersFor(g, o = {}) {
   return p;
 }
 /** Forgets the builds kept in memory and the saved ones (tests, Settings › clear cache). */
-export async function clearBuilds() { mem.clear(); if (!workerOff) await ask({ op: 'clear' }).catch(() => {}); }
+export async function clearBuilds() { mem.clear(); lmem.clear(); if (!workerOff) await ask({ op: 'clear' }).catch(() => {}); }
+
+/* ---------- whole levels, for meshes drawn as many copies ---------- */
+// A thing drawn as many copies (a gs.props kind) is small on screen for most of them, and each copy is
+// near or far as a whole, so a copy gets a whole level, not a cut through clusters: the mesh simplified
+// a few times over (detail-build.js buildLevels), each time with its measured error, and hd3d.js
+// autoCopies draws each copy at the simplest level whose error doesn't show at its distance. Built and
+// kept the same way as clusters: by the mesh's content, in the worker, saved for the next launch.
+const lmem = new Map(), lasked = new Map();
+/**
+ * A geometry's whole detail levels: { levels (how many, 0: it won't simplify), index, start, count, error },
+ * level i being index[start[i] .. start[i] + count[i]) with error[i] in the mesh's units. Rejects if they
+ * can't be built (no worker in a browser).
+ */
+export function levelsFor(g) {
+  const key = 'L-' + keyOf(g), have = lmem.get(key);
+  if (have) return Promise.resolve(have);
+  let p = lasked.get(key);
+  if (!p) {
+    p = (async () => {
+      let d = null;
+      if (!workerOff) d = await ask({ op: 'get', key }).catch(() => null);
+      if (!d) {
+        const input = inputOf(g), transfer = [input.positions.buffer, ...(input.index ? [input.index.buffer] : []), ...input.parts.map(a => a.array.buffer)];
+        if (!workerOff) d = await ask({ op: 'levels', key, input, opts: {} }, transfer);
+        else if (typeof document === 'undefined') { const B = await import('./detail-build.js'); await B.buildReady; d = B.levelsFrom(input, {}); }
+        else throw new Error('no worker to build in');
+      }
+      d.key = key;
+      if (lmem.size >= 256) lmem.delete(lmem.keys().next().value);
+      lmem.set(key, d);
+      return d;
+    })().finally(() => lasked.delete(key));
+    lasked.set(key, p);
+  }
+  return p;
+}
+/** Level i of a geometry's levels as a geometry of its own: the source's points, that level's triangles. */
+export function levelGeometry(src, lv, i) {
+  const g = new BufferGeometry();
+  for (const k in src.attributes) g.setAttribute(k, src.attributes[k]);
+  g.setIndex(new BufferAttribute(lv.index.subarray(lv.start[i], lv.start[i] + lv.count[i]), 1));
+  if (!src.boundingSphere) src.computeBoundingSphere(); if (!src.boundingBox) src.computeBoundingBox();
+  g.boundingSphere = src.boundingSphere.clone(); g.boundingBox = src.boundingBox.clone();
+  g.name = (src.name || 'mesh') + ':level' + (i + 1);
+  return g;
+}

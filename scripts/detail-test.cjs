@@ -4,6 +4,8 @@
 //   node scripts/detail-test.cjs [--webgpu] [--shots dir] [--q "n=600&tier=3"]
 //   node scripts/detail-test.cjs --bench [--webgpu] [--q "size=1&frames=40"]   a dense valley flown through with it off and on: triangles, draws and picking time a frame
 //   node scripts/detail-test.cjs --page relief [--webgpu] [--shots dir]      real surface detail (gs.models.relief): a roof, a brick house and a trunk, flat against relief
+//   node scripts/detail-test.cjs --page copies [--webgpu] [--shots dir]      detail levels for copies (gs.props): rocks and posts whole against levels, a hidden and a moved copy, what is sent to the chip
+//   node scripts/detail-test.cjs --page copies --bench [--webgpu] --q "forest=20000"   a forest flown over with levels off and on (&cpucull: WebGPU without GPU culling, as under frame generation)
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
