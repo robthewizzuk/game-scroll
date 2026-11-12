@@ -30,6 +30,37 @@ const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', mouth: 'hard
   belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
 const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
 
+// ---- the grain's seams, worked out once for a piece and kept with it (and with its mirrored and turned copies, made once too)
+// The grain of skin, cloth and leather is laid on by the way each point faces (0 from above, 1 from the side, 2 from the front).
+// A close-level triangle whose corners have it laid on from different ways, or at different sizes (leather against cloth), would
+// have it smeared right across it (a whole tile and more in a few millimetres: a line of blank triangles along every seam). Such
+// a triangle takes the way it faces itself and the size of what it is made of, and a corner laid on otherwise gets a twin laid on
+// that way: the same point in everything else, numbered after the piece's own points. Only what has a grain.
+const LEATHER = CLASSES.indexOf('leather'), GRAIN = CLASSES.map(c => c === 'skin' || c === 'cloth' || c === 'leather'), TILES = k => k === LEATHER ? 60 : 64;   // (tiles a metre)
+const seamsOf = new WeakMap(), copies = new WeakMap();
+const copyOf = (p, tag, make) => { let c = copies.get(p); if (!c) copies.set(p, c = {}); return c[tag] ||= make(); };
+/** ks: the class (CLASSES) of each of the piece's slots. Returns { lay (a point), I (the close level's triangles, twins in), n, src, way, size (a twin) }. */
+function seams(p, ks) {
+  const sig = ks.join(); let s = seamsOf.get(p); if (s?.sig === sig) return s;
+  const n = p.n, N = p.N, P = p.P, I = p.I[0], slot = p.slot, lay = new Uint8Array(n), twin = new Int32Array(n * 6).fill(-1), src = [], way = [], size = []; let J = null;
+  for (let i = 0; i < n; i++) { const ax = abs(N[i * 3]), ay = abs(N[i * 3 + 1]), az = abs(N[i * 3 + 2]); lay[i] = ay >= ax && ay >= az ? 0 : ax >= az ? 1 : 2; }
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t], b = I[t + 1], c = I[t + 2], ka = ks[slot[a]], kb = ks[slot[b]], kc = ks[slot[c]], of = kb === kc ? kb : ka; if (!GRAIN[of]) continue;
+    const sc = TILES(of); let k = lay[a];
+    if (k !== lay[b] || k !== lay[c]) {
+      const ux = P[b * 3] - P[a * 3], uy = P[b * 3 + 1] - P[a * 3 + 1], uz = P[b * 3 + 2] - P[a * 3 + 2], vx = P[c * 3] - P[a * 3], vy = P[c * 3 + 1] - P[a * 3 + 1], vz = P[c * 3 + 2] - P[a * 3 + 2];
+      const fx = abs(uy * vz - uz * vy), fy = abs(uz * vx - ux * vz), fz = abs(ux * vy - uy * vx); k = fy >= fx && fy >= fz ? 0 : fx >= fz ? 1 : 2;
+    } else if (TILES(ka) === sc && TILES(kb) === sc && TILES(kc) === sc) continue;
+    for (let e = 0; e < 3; e++) {
+      const v = I[t + e]; if (lay[v] === k && TILES(ks[slot[v]]) === sc) continue;
+      const key = v * 6 + k * 2 + (sc === 60 ? 1 : 0); let w = twin[key]; if (w < 0) { w = twin[key] = n + src.length; src.push(v); way.push(k); size.push(sc); }
+      (J ||= Uint32Array.from(I))[t + e] = w;
+    }
+  }
+  seamsOf.set(p, s = { sig, lay, I: J || I, n: src.length, src, way, size });
+  return s;
+}
+
 
 // ================================================================= pieces: in memory, saved, or sculpted in a worker
 const made = new Map(), loading = new Map();   // key -> { p, t } (t: when it was last used); key -> a promise for it
@@ -225,13 +256,14 @@ export function human(o = {}) {
   // gear bones: a hat that can come off, a pack or a maker's own kit that can be hidden
   const { bones, parent, own: gearBones, HAND, inset, atOf, tree, kit } = frameOf(sp), gearPiece = {}, hung = [];   // (hung: what swings as he moves: [bone, how])
   const ownBone = (name, par) => { bones.push(name); parent[name] = par; gearBones[name] = par; gearPiece[name] = pieces.length; return name; };
-  const onBone = (p, b) => ({ ...p, names: p.names.map(() => b) });
-  const moved = (p, dx) => { if (!dx) return p; const Q = p.P.slice(); for (let i = 0; i < p.n; i++) Q[i * 3] += dx; return { ...p, P: Q }; };
+  // (from: the piece this is a copy of, moved or put on another bone: the same shape, so its seams are that one's)
+  const onBone = (p, b) => ({ ...p, names: p.names.map(() => b), from: p.from || p });
+  const moved = (p, dx) => { if (!dx) return p; const Q = p.P.slice(); for (let i = 0; i < p.n; i++) Q[i * 3] += dx; return { ...p, P: Q, from: p.from || p }; };
   let headP = null;
   for (const j of jobs) {
     const e = made.get(j.key), p = e.p; e.t = clock();
-    if (j.kind === 'hand') pieces.push(moved(turned(p, 1), -inset), moved(turned(mirrored(p), -1), inset));   // sculpted hanging straight down, then turned out with the arms
-    else if (j.kind === 'arm') { if (j.side !== 'R') pieces.push(moved(p, -inset)); if (j.side !== 'L') pieces.push(moved(mirrored(p), inset)); }   // sculpted as a left arm
+    if (j.kind === 'hand') pieces.push(moved(copyOf(p, 'L', () => turned(p, 1)), -inset), moved(copyOf(p, 'R', () => turned(mirrored(p), -1)), inset));   // sculpted hanging straight down, then turned out with the arms
+    else if (j.kind === 'arm') { if (j.side !== 'R') pieces.push(moved(p, -inset)); if (j.side !== 'L') pieces.push(moved(copyOf(p, 'M', () => mirrored(p)), inset)); }   // sculpted as a left arm
     else if (j.kind === 'head') pieces.push(headP = p);
     else if (j.kind === 'hat') pieces.push(onBone(p, sp.hat.hide === false ? 'head' : ownBone('hat', 'head')));
     else if (j.kind === 'pack') { const sa = atOf('spine'); pieces.push(onBone(p, ownBone('pack', 'spine'))); hung.push(['pack', { pivot: [0, 1.45 - sa[1], -.1 - sa[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1] }]); }   // (it hangs from the shoulders)
@@ -240,18 +272,18 @@ export function human(o = {}) {
   }
   tidy();
 
-  // ---- one set of points for all three levels, coloured for this person
-  const n0 = pieces.reduce((a, p) => a + p.n, 0); let P = new Float32Array(n0 * 3), N = new Float32Array(n0 * 3), C = new Float32Array(n0 * 3), U = new Float32Array(n0 * 2), SI = new Uint16Array(n0 * 4), SW = new Float32Array(n0 * 4), cls = new Uint8Array(n0), TH = new Float32Array(n0 * 2);
-  const LAY = new Uint8Array(n0), UK = new Float32Array(n0);   // which way each point's grain is laid on (0 from above, 1 from the side, 2 from the front), and how many tiles a metre
-  const lay = (j, k) => { const x = P[j * 3], y = P[j * 3 + 1], z = P[j * 3 + 2]; U[j * 2] = (k === 1 ? z : x) * UK[j]; U[j * 2 + 1] = (k ? y : z) * UK[j]; };
+  // ---- one set of points for all three levels, coloured for this person (after each piece's own points, the twins its seams need)
   const col = new Color(), dirt = new Color('#6a5c48'), browC = new Color(pal.brow), skinC = new Color(pal.skin), lipC = new Color(pal.lips), mouthC = new Color(pal.mouth), lashC = new Color(pal.lash), rim = eyeRim(sp.face.eyes), eyeC = eyeColours(o.eyes ?? DEF.eyes, o.iris ?? DEF.iris);
   const asOf = name => (typeof o.slots?.[name] === 'object' && o.slots[name].as) || AS[name] || (name.startsWith('eye') ? 'eyes' : 'hard');
   const stub = sp.fem ? 0 : o.stubble ?? .35, BROW = browOf(sp.face.soft);
   const camoOf = {}; for (const [slot, part] of [['top', sp.top], ['legs', sp.legs], ['hat', sp.hat]]) if (part?.camo) camoOf[slot] = [].concat(part.camo).map(c => new Color(c));
+  const slotsOf = pieces.map(p => p.slots.map(s => { const a = asOf(s); return { a, camo: camoOf[s], k: CLASSES.indexOf(a), c: s.startsWith('eye') ? eyeC[+s[3]] : new Color(pal[s] ?? '#888888') }; }));
+  const seam = pieces.map((p, pi) => seams(p.from || p, slotsOf[pi].map(s => s.k)));
+  const n = pieces.reduce((a, p, pi) => a + p.n + seam[pi].n, 0), P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), U = new Float32Array(n * 2), SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4), cls = new Uint8Array(n), TH = new Float32Array(n * 2);
   let at = 0; const offs = [];
-  for (const p of pieces) {
+  for (let pi = 0; pi < pieces.length; pi++) {
+    const p = pieces[pi], cs = slotsOf[pi], sm = seam[pi], LAY = sm.lay, bi = p.names.map(b => Math.max(0, bones.indexOf(b)));
     offs.push(at); P.set(p.P, at * 3); if (p.thin) for (let i = 0; i < p.n * 2; i++) TH[at * 2 + i] = p.thin[i] / 255;   // (how thin the flesh is, and how open behind: light comes through an ear)
-    const cs = p.slots.map(s => { const a = asOf(s); return { a, camo: camoOf[s], k: CLASSES.indexOf(a), c: s.startsWith('eye') ? eyeC[+s[3]] : new Color(pal[s] ?? '#888888') }; }), bi = p.names.map(b => Math.max(0, bones.indexOf(b)));
     for (let i = 0; i < p.n; i++) {
       const j = at + i, x = p.P[i * 3], y = p.P[i * 3 + 1], z = p.P[i * 3 + 2], s = cs[p.slot[i]], ao = p.ao[i] / 255;
       const nx = p.N[i * 3] / 32767, ny = p.N[i * 3 + 1] / 32767, nz = p.N[i * 3 + 2] / 32767; N[j * 3] = nx; N[j * 3 + 1] = ny; N[j * 3 + 2] = nz;
@@ -291,46 +323,25 @@ export function human(o = {}) {
       const k = s.a === 'eyes' ? ao : .28 + .72 * ao;
       if (s.a === 'skin') { C[j * 3] = col.r * Math.pow(k, .75); C[j * 3 + 1] = col.g * k; C[j * 3 + 2] = col.b * Math.pow(k, 1.15); } else { C[j * 3] = col.r * k; C[j * 3 + 1] = col.g * k; C[j * 3 + 2] = col.b * k; }
       // the grain of cloth, leather and skin laid on by the way each point faces (metres)
-      const ax = abs(nx), ay = abs(ny), az = abs(nz);
-      UK[j] = s.a === 'leather' ? 60 : 64; lay(j, LAY[j] = ay >= ax && ay >= az ? 0 : ax >= az ? 1 : 2);
+      const lk = LAY[i], sc = TILES(s.k); U[j * 2] = (lk === 1 ? z : x) * sc; U[j * 2 + 1] = (lk ? y : z) * sc;
       const ws = p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3] || 1;
       for (let q = 0; q < 4; q++) { SI[j * 4 + q] = bi[p.SI[i * 4 + q]]; SW[j * 4 + q] = p.SW[i * 4 + q] / ws; }
     }
-    at += p.n;
-  }
-  // ---- the grain's seams (close level): a triangle whose corners have the grain laid on from different ways, or at different sizes
-  // (leather against cloth), would have it smeared right across it (a whole tile and more in a few millimetres: it shows as a line
-  // of blank triangles along every seam). Such a triangle takes the way it faces itself and the size of what it is made of, and a
-  // corner laid on otherwise gets a twin laid on that way (the same point in everything else). Only what has a grain: skin, cloth, leather.
-  const LEATHER = CLASSES.indexOf('leather'), GRAIN = CLASSES.map(c => c === 'skin' || c === 'cloth' || c === 'leather'), twins = new Int32Array(n0 * 6).fill(-1), more = [], close = pieces.map((p, pi) => {
-    const I = p.I[0], off = offs[pi]; let J = null;
-    for (let t = 0; t < I.length; t += 3) {
-      const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, kc = cls[b] === cls[c] ? cls[b] : cls[a], sc = kc === LEATHER ? 60 : 64; let k = LAY[a]; if (!GRAIN[kc]) continue;
-      if (k !== LAY[b] || k !== LAY[c]) {
-        const ux = P[b * 3] - P[a * 3], uy = P[b * 3 + 1] - P[a * 3 + 1], uz = P[b * 3 + 2] - P[a * 3 + 2], vx = P[c * 3] - P[a * 3], vy = P[c * 3 + 1] - P[a * 3 + 1], vz = P[c * 3 + 2] - P[a * 3 + 2];
-        const fx = abs(uy * vz - uz * vy), fy = abs(uz * vx - ux * vz), fz = abs(ux * vy - uy * vx); k = fy >= fx && fy >= fz ? 0 : fx >= fz ? 1 : 2;
-      } else if (UK[a] === sc && UK[b] === sc && UK[c] === sc) continue;
-      for (let e = 0; e < 3; e++) {
-        const v = I[t + e] + off; if (LAY[v] === k && UK[v] === sc) continue;
-        const key = v * 6 + k * 2 + (sc === 60 ? 1 : 0); let w = twins[key]; if (w < 0) { w = twins[key] = n0 + more.length / 3; more.push(v, k, sc); }
-        if (!J) { J = new Uint32Array(I.length); for (let q = 0; q < I.length; q++) J[q] = I[q] + off; }
-        J[t + e] = w;
-      }
+    // the twins: the same points again, their grain laid on another way or at another size (seams(), above)
+    for (let t = 0, j = at + p.n; t < sm.n; t++, j++) {
+      const v = at + sm.src[t], lk = sm.way[t], sc = sm.size[t], x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
+      P[j * 3] = x; P[j * 3 + 1] = y; P[j * 3 + 2] = z; N[j * 3] = N[v * 3]; N[j * 3 + 1] = N[v * 3 + 1]; N[j * 3 + 2] = N[v * 3 + 2]; C[j * 3] = C[v * 3]; C[j * 3 + 1] = C[v * 3 + 1]; C[j * 3 + 2] = C[v * 3 + 2];
+      U[j * 2] = (lk === 1 ? z : x) * sc; U[j * 2 + 1] = (lk ? y : z) * sc; cls[j] = cls[v]; TH[j * 2] = TH[v * 2]; TH[j * 2 + 1] = TH[v * 2 + 1];
+      for (let q = 0; q < 4; q++) { SI[j * 4 + q] = SI[v * 4 + q]; SW[j * 4 + q] = SW[v * 4 + q]; }
     }
-    return J;
-  });
-  const n = n0 + more.length / 3;
-  if (more.length) {
-    const grown = (A, per) => { const B = new A.constructor(n * per); B.set(A); for (let i = 0; i < more.length; i += 3) { const j = n0 + i / 3, v = more[i]; for (let c = 0; c < per; c++) B[j * per + c] = A[v * per + c]; } return B; };
-    P = grown(P, 3); N = grown(N, 3); C = grown(C, 3); U = grown(U, 2); SI = grown(SI, 4); SW = grown(SW, 4); cls = grown(cls, 1); TH = grown(TH, 2);
-    for (let i = 0; i < more.length; i += 3) { const j = n0 + i / 3, k = more[i + 1], sc = more[i + 2], x = P[j * 3], y = P[j * 3 + 1], z = P[j * 3 + 2]; U[j * 2] = (k === 1 ? z : x) * sc; U[j * 2 + 1] = (k ? y : z) * sc; }
+    at += p.n + sm.n;
   }
   const attrs = { position: new BufferAttribute(P, 3), normal: new BufferAttribute(N, 3), color: new BufferAttribute(C, 3), uv: new BufferAttribute(U, 2), skinIndex: new BufferAttribute(SI, 4), skinWeight: new BufferAttribute(SW, 4), gsThin: new BufferAttribute(TH, 2) };
   // each level: its triangles in groups by material (close: all six; middle: skin and the rest; far: one)
   const matsFor = [[M.skin, M.eyes, M.cloth, M.leather, M.hard, M.steel, M.hair], [M.skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
   const geos = [0, 1, 2].map(L => {
     const by = matsFor[L].map(() => []);
-    pieces.forEach((p, pi) => { const J = !L && close[pi], I = J || p.I[L], off = J ? 0 : offs[pi]; for (let t = 0; t < I.length; t += 3) { const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, k = cls[b] === cls[c] ? cls[b] : cls[a]; by[groupOf[L](k)].push(a, b, c); } });
+    pieces.forEach((p, pi) => { const I = L ? p.I[L] : seam[pi].I, off = offs[pi]; for (let t = 0; t < I.length; t += 3) { const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, k = cls[b] === cls[c] ? cls[b] : cls[a]; by[groupOf[L](k)].push(a, b, c); } });
     const g = new BufferGeometry(); for (const k in attrs) g.setAttribute(k, attrs[k]);
     const all = new Uint32Array(by.reduce((a, l) => a + l.length, 0)); let s = 0; by.forEach((l, i) => { all.set(l, s); if (l.length) g.addGroup(s, l.length, i); s += l.length; });
     g.setIndex(new BufferAttribute(n > 65535 ? all : new Uint16Array(all), 1));
