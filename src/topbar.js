@@ -4,8 +4,10 @@
 // of the screen for it, which left an empty band above the bar. Instead the bar goes up into that strip
 // and only steps around the camera itself:
 //   1. bar at the very top, if no button is under the camera
-//   2. else the camera between two buttons (the buttons split into a left and a right group)
-//   3. else the bar just below the camera (not below the whole safe-area strip)
+//   2. else the buttons slide left of the camera, or split so the camera sits between two groups
+//   3. else the same again with the feed picker's name cut shorter ("Next Gen · Con…"), so picking a
+//      feed with a long name doesn't make the bar jump down
+//   4. else the bar just below the camera (not below the whole safe-area strip)
 // The game card starts just under the bar (--bar-b), so the room saved goes to the game.
 //
 // Where the camera is: Android tells us exactly (MainActivity sends DisplayCutout's rectangles as
@@ -15,6 +17,7 @@ import { Capacitor } from '@capacitor/core';
 
 const TOP = 6;        // gap above the bar when nothing is in the way
 const CLEAR = 6;      // space kept around the camera
+const MINLABEL = 44;  // the feed picker's name is never cut shorter than this: the shortest name's width, so every name can end up the same size and the bar in the same place
 const BELOW = 4;      // gap under the camera when the bar has to go below it
 
 let changed = () => {};
@@ -60,27 +63,37 @@ export function placeBar() {
   root.setProperty('--bar-t', TOP + 'px');
   items.forEach(e => { e.style.marginLeft = ''; });
   bar.style.paddingRight = '';
+  const label = document.getElementById('feed-label');
+  if (label) label.style.maxWidth = '';
+  const full = label ? label.getBoundingClientRect().width : 0;
   const cuts = cutouts();
   let top = TOP;
   const clashes = () => { const r = items.map(e => e.getBoundingClientRect()); return cuts.some(c => r.some(a => hits(a, c))); };
   if (cuts.length && items.length && clashes()) {
-    // try each place the bar can split, so the camera sits in the gap between two groups of buttons
-    // first keep the buttons together and slide them left of a camera that's over them
     let ok = false;
     const W = bar.getBoundingClientRect().right;
-    for (const c of [...cuts].sort((a, b) => b.l - a.l)) {
-      if (ok || c.l <= 0) continue;
-      bar.style.paddingRight = Math.ceil(W - c.l + CLEAR) + 'px';
-      ok = !clashes() && items.every(e => e.getBoundingClientRect().left >= 0) && !overlaps(items);
-      if (!ok) bar.style.paddingRight = '';
-    }
-    // then split them, so the camera sits in the gap between two groups
-    for (let k = 1; k < items.length && !ok; k++) {
-      items.forEach((e, i) => { e.style.marginLeft = i === k ? 'auto' : '0px'; });
-      ok = !clashes();
+    const fits = () => !clashes() && items.every(e => e.getBoundingClientRect().left >= 0) && !overlaps(items);
+    // the feed picker's name at full length first, then cut shorter and shorter
+    const widths = [0, ...new Set([.8, .65, .5, .4, 0].map(f => Math.max(MINLABEL, Math.round(full * f))).filter(w => w < full))];
+    for (const w of widths) {
+      if (ok) break;
+      if (label) label.style.maxWidth = w ? w + 'px' : '';
+      // keep the buttons together and slide them left of a camera that's over them
+      for (const c of [...cuts].sort((a, b) => b.l - a.l)) {
+        if (ok || c.l <= 0) continue;
+        bar.style.paddingRight = Math.ceil(W - c.l + CLEAR) + 'px';
+        ok = fits();
+        if (!ok) bar.style.paddingRight = '';
+      }
+      // or split them, so the camera sits in the gap between two groups
+      for (let k = 1; k < items.length && !ok; k++) {
+        items.forEach((e, i) => { e.style.marginLeft = i === k ? 'auto' : '0px'; });
+        ok = fits();
+      }
+      if (!ok) items.forEach(e => { e.style.marginLeft = ''; });
     }
     if (!ok) {
-      items.forEach(e => { e.style.marginLeft = ''; });
+      if (label) label.style.maxWidth = '';
       const h = Math.max(...items.map(e => e.getBoundingClientRect().bottom)) - bar.getBoundingClientRect().top - TOP;
       // only the camera shapes that reach down into the bar push it down
       top = Math.max(TOP, ...cuts.filter(c => c.t < TOP + h).map(c => Math.ceil(c.b) + BELOW));
@@ -89,7 +102,7 @@ export function placeBar() {
   }
   const bottom = Math.ceil(Math.max(...items.map(e => e.getBoundingClientRect().bottom), top + 34));
   root.setProperty('--bar-b', bottom + 'px');
-  const key = top + ',' + bottom + ',' + bar.style.paddingRight + ',' + items.map(e => e.style.marginLeft).join();
+  const key = top + ',' + bottom + ',' + bar.style.paddingRight + ',' + (label ? label.style.maxWidth : '') + ',' + items.map(e => e.style.marginLeft).join();
   if (key !== last) { last = key; changed(); }
 }
 
