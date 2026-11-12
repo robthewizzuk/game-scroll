@@ -6,14 +6,18 @@
 // and stops, a walking person, a balloon that appears, a crate that goes, a barrel that is carried off
 // (gs.props). The walk is done twice, on two villages made the same: once with the sun's shadow map
 // kept in tiles, once with every shadow map drawn whole every frame. Every frame must be the same
-// picture, and the first walk must draw a small share of the shadow triangles. Then: nothing moving
-// draws no shadows at all; one walker puts back only the tiles they cross; and the same again under
-// sun.fit() with its near cascade.
+// picture to a pixel or two, and the first walk must draw a small share of the shadow triangles. On
+// WebGL the shadow maps themselves are read back every frame and compared texel by texel: the map from
+// tiles may differ from the map drawn whole only by stray texels on the edges of shadows (an edge that
+// fell the other way by the last bit of a sum: some tens of 262,144), never by four together, which
+// is what a tile that was not drawn again looks like. Then: nothing moving draws no shadows at all;
+// one walker puts back only the tiles they cross; and the same again under sun.fit() with its near cascade.
 //   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?frames=90    ?trace (what each frame's tiles did)
 //   For finding a frame that went wrong (they change what is checked, so the checks' verdicts mean nothing with them):
 //   ?verify       each frame of the tiles walk is drawn again with its shadows whole, and the pixels that differ are listed
 //   ?verify=top   the same from straight above, with the tiles that are wrong and what casts there
 //   ?verify=kept  the map is made again from its kept copy (HD.shadowCheck)    ?verify=end  once, after the warm-up
+//   ?verify=map  (WebGL) the sun's map itself read back and compared texel by texel: says which texels differ, in which tile
 //   ?control      both walks with their shadows whole: what two runs of the same thing differ by (nothing)
 //   ?at=N  verify frame N only    ?shot=N  keep frame N's pictures    ?warm  trace the warm-up frames
 //   ?big=plain|none  the big mesh not in clusters, or not there    ?nobatch  no static batching    ?hd=pack:false,detail:false  any engine test switch
@@ -81,14 +85,42 @@ const diff = (a, b) => { let off = 0, worst = 0; for (let i = 0; i < a.length; i
 const mean = a => a.reduce((s, q) => s + q, 0) / Math.max(1, a.length), sum = a => a.reduce((s, q) => s + q, 0);
 const KEYS = ['shTris', 'shCalls', 'shTiles', 'shPut', 'shSlid', 'shWhole', 'shDraws', 'shSplit'];
 const snap = () => Object.fromEntries(KEYS.map(k => [k, HD.info[k] || 0]));
+// (WebGL: a light's shadow map read back as depths, a number a texel)
+const mapTools = new Map();
+async function mapOf(l) {
+  const { bakeRenderer } = await import('../../src/kit/hd3d.js'), r = bakeRenderer(), N = l.shadow.map.width;
+  let M = mapTools.get(N); if (!M) mapTools.set(N, M = (() => {
+    const dt = new T.DepthTexture(N, N, T.UnsignedIntType), copy = new T.WebGLRenderTarget(N, N, { depthBuffer: true }); copy.depthTexture = dt; r.initRenderTarget(copy);
+    const out = new T.WebGLRenderTarget(N, N, { type: T.FloatType, minFilter: T.NearestFilter, magFilter: T.NearestFilter, depthBuffer: false });
+    const quad = new T.Mesh(new T.PlaneGeometry(2, 2), new T.ShaderMaterial({ uniforms: { d: { value: dt } }, vertexShader: 'void main() { gl_Position = vec4(position.xy, 0., 1.); }', fragmentShader: 'uniform highp sampler2D d; void main() { gl_FragColor = vec4(texelFetch(d, ivec2(gl_FragCoord.xy), 0).r, 0., 0., 1.); }', depthTest: false, depthWrite: false }));
+    quad.frustumCulled = false; const sc = new T.Scene(); sc.add(quad); return { dt, out, sc, cam: new T.Camera(), buf: new Float32Array(N * N * 4) };
+  })());
+  const t0 = r.getRenderTarget(); r.state.setScissorTest(false); r.copyTextureToTexture(l.shadow.map.depthTexture, M.dt);
+  r.setRenderTarget(M.out); r.render(M.sc, M.cam); r.readRenderTargetPixels(M.out, 0, 0, N, N, M.buf); r.setRenderTarget(t0);
+  const o = new Float32Array(N * N); for (let i = 0; i < N * N; i++) o[i] = M.buf[i * 4]; return o;
+}
+const lightsOf = S => [S.sun, S.sun.nearLight].filter(l => l?.shadow?.map);
+// two maps: how many texels differ, and how many of those sit in a block of four that all differ (a
+// texel alone is an edge that fell the other way by the last bit of a sum; a block is a shadow that is
+// missing or left over). Depths closer than MAP_EPS count as the same: a fortieth of the sun's bias (a
+// surface drawn from merged pieces, or through another camera, lands a last bit deeper or shallower all over).
+const MAP_EPS = 1e-5;
+function mapDiff(a, b) {
+  const N = Math.round(Math.sqrt(a.length)), off = i => Math.abs(a[i] - b[i]) > MAP_EPS; let n = 0, block = 0;
+  for (let i = 0; i < a.length; i++) if (off(i)) { n++; const x = i % N, y = (i / N) | 0; if (x + 1 < N && y + 1 < N && off(i + 1) && off(i + N) && off(i + N + 1)) block++; }
+  return { n, block };
+}
 // one walk: the pictures and what each frame's shadows took
 async function walk(S, whole, keep) {
-  const pics = [], rows = [];
+  const pics = [], rows = [], maps = [];
   HD.shadowCache = !whole;
   // (let the copies' detail levels be made and still things be merged first, so neither changes mid-walk)
   // (?verify: each frame drawn again with its shadows whole straight after, to find the one step that went wrong)
   const planOf = () => { const st = S.sun.shadow.gsTiles; return st ? JSON.stringify({ reset: st.plan.reset, shift: st.plan.shift, redo: st.plan.redo, back: st.plan.back, movers: st.plan.movers, mode: S.sun.shadow.gsPlan?.mode }) : ''; };
   const verify = async (tag, px) => { if (!Q.has('verify') || Q.get('verify') === 'end' || whole) return;
+    if (Q.get('verify') === 'map') {   // (the map itself, texel by texel: one texel on an edge is the last bit of a sum, a patch of them is a tile that was not drawn again)
+      const plan = planOf(), l = S.sun, N = l.shadow.map.width, tp = N / 16, m1 = await mapOf(l); S.v.shadowsDirty(); draw(S); const m2 = await mapOf(l), bad = []; for (let i = 0; i < m1.length; i++) if (Math.abs(m1[i] - m2[i]) > MAP_EPS) bad.push(i);
+      if (bad.length) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': ' + bad.length + ' texels of the map differ: ' + bad.slice(0, 16).map(i => { const x = i % N, y = (i / N) | 0; return `(${x},${y}) tile ${x / tp | 0},${y / tp | 0} ${m1[i].toFixed(6)}/${m2[i].toFixed(6)}`; }).join(' ') + ' ' + plan); return; }
     if (Q.get('verify') === 'kept') { const plan = planOf(); if (GPU) await nextFrame(); HD.shadowCheck = true; const b = draw(S); HD.shadowCheck = false; const d = diff(px, b); if (d.off) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': the kept copy is wrong, ' + d.off + ' px ' + plan); return; } const plan = planOf(), n0 = HD.info.batches || 0, cam = S.v.cam, top = Q.get('verify') === 'top', p0 = cam.position.clone(), q0 = cam.quaternion.clone(); if (top) { cam.position.set(p0.x, 70, p0.z - 20); cam.lookAt(p0.x, 0, p0.z - 20.01); cam.updateMatrixWorld(); } if (GPU) await nextFrame(); const a = top ? draw(S).slice() : px.slice(), plan2 = top ? ' TOP ' + planOf() + ' truck ' + (S.truck.layers.mask >>> 26) + ' any ' + S.sun.shadow.gsTiles?.plan.any + ' pend ' + S.sun.shadow.gsTiles?.pending : ''; S.v.shadowsDirty(); if (GPU) await nextFrame(); const b = draw(S), d = diff(a, b);
     // (from above: which tiles of the map the wrong pixels of the ground are in)
     let where = ''; if (top && d.off) { const st = S.sun.shadow.gsTiles, hit = new Map(), ray = new T.Raycaster(), ndc = new T.Vector2(), P = new T.Vector3(), gp = new T.Plane(new T.Vector3(0, 1, 0), 0);
@@ -114,14 +146,14 @@ async function walk(S, whole, keep) {
   }
   for (let i = 0; i < FRAMES; i++) {
     pose(S, i); if (whole) S.v.shadowsDirty();
-    const a = snap(), px = draw(S), b = snap(), row = { tris: HD.info.tris, calls: HD.info.calls, cpu: HD.info.cpu }; for (const k of KEYS) row[k] = b[k] - a[k];
+    const a = snap(), px = draw(S), b = snap(), row = { tris: HD.info.tris, calls: HD.info.calls, cpu: HD.info.cpu, merged: S.v.batches?.list.length || 0 }; for (const k of KEYS) row[k] = b[k] - a[k];
     if (Q.has('trace') && !whole) { const mv = []; S.v.scene.traverse(o => { if (o.castShadow && (o.layers.mask & (1 << 28))) mv.push((o.isSkinnedMesh ? 'skinned' : o.isInstancedMesh2 ? 'copies' : o.isBatchedMesh ? 'batch' : o.isInstancedMesh ? 'instanced' : o.geometry?.type || o.type) + (o.name ? ':' + o.name : '')); }); row.movers = mv.join(','); const st = S.sun.shadow.gsTiles; row.plan = st ? JSON.stringify({ reset: st.plan.reset, shift: st.plan.shift, redo: st.plan.redo, back: st.plan.back.length, movers: st.plan.movers, valid: st.valid, mode: S.sun.shadow.gsPlan?.mode }) : ''; }
-    rows.push(row); if (keep) pics.push(px.slice()); if (!Q.has('at') || i === +Q.get('at')) await verify('frame ' + i, px);
+    rows.push(row); if (keep) pics.push(px.slice()); if (keep && !GPU && !Q.has('verify')) { const m = []; for (const l of lightsOf(S)) m.push(await mapOf(l)); maps.push(m); } if (!Q.has('at') || i === +Q.get('at')) await verify('frame ' + i, px);
     if (keep && (i === 3 || i === FRAMES - 1 || (Q.has('shot') && i === +Q.get('shot')))) out[(S.fit ? 'fit-' : '') + (whole ? 'whole-' : 'tiles-') + i] = S.c.toDataURL();
     await nextFrame();
   }
   HD.shadowCache = true;
-  return { pics, rows, S };
+  return { pics, rows, maps, S };
 }
 
 try {
@@ -139,16 +171,23 @@ try {
     const A = await walk(village(fit), Q.has('control'), true), B = await walk(village(fit), true, true);   // (?control: both walks with their shadows whole, to see what two runs of the same thing differ by)
     const bad = []; let worst = 0, at = -1;
     for (let i = 0; i < FRAMES; i++) { const d = diff(A.pics[i], B.pics[i]); if (d.off > 0) { bad.push(i + ':' + d.off); if (d.off > worst) { worst = d.off; at = i; } } }
+    // (WebGL: the maps themselves, frame by frame)
+    let mapMost = 0, mapAt = -1, mapBlocks = 0, mapAll = 0, mapN = 0;
+    for (let i = 0; i < Math.min(A.maps.length, B.maps.length); i++) for (let k = 0; k < A.maps[i].length; k++) { const d = mapDiff(A.maps[i][k], B.maps[i][k]); mapN++; mapAll += d.n; mapBlocks += d.block; if (Q.has('trace') && d.n) (info[(fit ? 'fit-' : '') + 'map-trace'] ||= []).push(`${i} light ${k}: ${d.n} texels differ, ${d.block} in blocks, merged groups ${A.rows[i].merged} / ${B.rows[i].merged}`); if (d.n > mapMost) { mapMost = d.n; mapAt = i; } }
+    if (mapN) info[(fit ? 'fit-' : '') + 'maps'] = { maps: mapN, texelsOfEach: A.maps[0][0].length, differMostInAMap: mapMost, atFrame: mapAt, differAMap: +(mapAll / mapN).toFixed(1), inBlocksOfFour: mapBlocks };
     if (Q.has('control')) { const L = info[(fit ? 'fit-' : '') + 'control'] = []; for (let i = 0; i < FRAMES; i++) { const a = A.pics[i], b = B.pics[i], at = []; for (let j = 0; j < a.length; j += 4) if (Math.max(Math.abs(a[j] - b[j]), Math.abs(a[j + 1] - b[j + 1]), Math.abs(a[j + 2] - b[j + 2])) > 12) at.push((j / 4) % W + ',' + ((j / 4 / W) | 0) + ' ' + [a[j], a[j + 1], a[j + 2]] + ' / ' + [b[j], b[j + 1], b[j + 2]]); if (at.length || A.rows[i].tris !== B.rows[i].tris || A.rows[i].calls !== B.rows[i].calls) L.push(`${i}: tris ${A.rows[i].tris} / ${B.rows[i].tris} draws ${A.rows[i].calls} / ${B.rows[i].calls} shTris ${A.rows[i].shTris} / ${B.rows[i].shTris}  px ${at.slice(0, 4).join(' | ')}`); } }
     if (at >= 0) { const S = { c: document.createElement('canvas') }; S.c.width = W; S.c.height = H; const x = S.c.getContext('2d'); for (const [k, p] of [['tiles', A.pics[at]], ['whole', B.pics[at]]]) { x.putImageData(new ImageData(new Uint8ClampedArray(p), W, H), 0, 0); out[(fit ? 'fit-' : '') + 'bad-' + k] = S.c.toDataURL(); } }
     const col = (r, k) => r.map(q => q[k]), tA = sum(col(A.rows, 'shTris')), tB = sum(col(B.rows, 'shTris')), cA = sum(col(A.rows, 'shCalls')), cB = sum(col(B.rows, 'shCalls'));
     info[fit ? 'fitted' : 'following'] = { backend: HD.info.backend, frames: FRAMES, shadowTrisAFrame: Math.round(tA / FRAMES), whole: Math.round(tB / FRAMES), shadowDrawsAFrame: Math.round(cA / FRAMES), wholeDraws: Math.round(cB / FRAMES),
       slides: sum(col(A.rows, 'shSlid')), wholeRedraws: sum(col(A.rows, 'shWhole')), tilesDrawnAFrame: +(sum(col(A.rows, 'shTiles')) / FRAMES).toFixed(1), tilesPutBackAFrame: +(sum(col(A.rows, 'shPut')) / FRAMES).toFixed(1), framesWithNoShadowWork: A.rows.filter(q => !q.shCalls && !q.shSplit).length };
     if (Q.has('trace')) info[(fit ? 'fit-' : '') + 'trace'] = A.rows.map((q, i) => [i, 'tris', q.shTris, 'draws', q.shCalls, 'tiles', q.shTiles, 'put', q.shPut, q.shSlid ? 'slid' : '', q.shWhole ? 'WHOLE' : '', q.movers, q.plan].join(' '));
-    // (WebGPU: a pixel or two on the soft edge of a shadow in a few frames. A part of the map drawn through a part of the light's view places a
-    // triangle's edge a last bit away from where the whole map drawn at once does, and now and then that is one texel of the map. WebGL: none.)
+    // (A pixel or two on the soft edge of a shadow in a few frames. A part of the map drawn through a part of the light's view, or kept from
+    // before the sun last stepped, places a triangle's edge a last bit away from where the whole map drawn now does, and now and then that
+    // is one texel of the map. WebGL shows it less than WebGPU, and not at all once the village's still things have been merged.)
     const badPx = bad.map(q => +q.split(':')[1]);
-    check(`${name}: every frame is the same picture from tiles as with every shadow drawn whole`, GPU ? badPx.every(q => q <= 4) && sum(badPx) <= FRAMES * .2 : !bad.length, bad.length ? 'frames:pixels ' + bad.slice(0, 14).join(' ') : 'all ' + FRAMES);
+    check(`${name}: every frame is the same picture from tiles as with every shadow drawn whole, to a pixel or two`, badPx.every(q => q <= 4) && sum(badPx) <= FRAMES * .2, bad.length ? 'frames:pixels ' + bad.slice(0, 14).join(' ') : 'all ' + FRAMES + ' the same');
+    // (WebGL, where a map can be read back: the maps themselves, every frame. Stray texels on edges are that last bit; four together would be a shadow missing or left over.)
+    if (mapN) check(`${name}: the shadow maps themselves differ from maps drawn whole only by stray texels on edges`, mapMost <= 150 && mapBlocks <= 2, `at most ${mapMost} of ${A.maps[0][0].length} texels in a map, ${(mapAll / mapN).toFixed(1)} on average, ${mapBlocks} in blocks of four, in ${mapN} maps`);
     if (!fit) { let dm = 0; A.S.v.scene.traverse(o => { if (o.isDetailMesh) dm++; }); check('the big mesh in the street is drawn in clusters, in the map as well', dm >= 1, dm + ' cluster-detail mesh'); }
     check(`${name}: tiles were in use`, sum(col(A.rows, 'shSplit')) > FRAMES * .3 && sum(col(B.rows, 'shSplit')) === 0, sum(col(A.rows, 'shSplit')) + ' frames');
     if (!fit) {

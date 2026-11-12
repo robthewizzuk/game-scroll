@@ -144,13 +144,16 @@ up a tier first.
     a copy draws the map whole (twice: as the set starts to count as moving, and as it stops). On WebGPU
     a set of copies is drawn whole for each part of the map that is drawn. On WebGL a step of the light
     in depth (taken only once the camera is well out of the middle of the light's box) draws the map
-    whole; on WebGPU the kept depths are moved instead. On WebGPU a part of the map can differ from the
-    whole map drawn at once by a texel on a shadow's edge (a pixel or two in a few frames of the walk);
-    on WebGL the pictures are the same.
+    whole; on WebGPU the kept depths are moved instead. A part of the map that was kept, or drawn by
+    itself, can differ from the whole map drawn at once by a texel on a shadow's edge: an edge that
+    falls the other way by the last bit of a sum. On the walk that is at most 35 texels of a map's
+    262,144, never four together, and a pixel or two of the picture in a few frames (on WebGL none
+    at all once the village's still things have been merged).
   - Switches: `__hd.shadowTiles = false` (the sun moves a shadow texel at a time and its map is drawn
     whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all).
     `node scripts/detail-test.cjs --page shadows` (and `--webgpu`) walks the village both ways and
-    checks every frame is the same picture; `--bench` gives the numbers above.
+    checks every frame is the same picture to a pixel or two, and on WebGL that the maps themselves
+    differ only by those stray texels; `--bench` gives the numbers above.
 - On WebGPU the ambient occlusion now draws the same picture twice running. three.js's denoise made its
   noise picture from random numbers, a new one for every view, so two pictures of the same scene
   differed by a few pixels a frame and picture tests there had to allow for it. Every view now reads
