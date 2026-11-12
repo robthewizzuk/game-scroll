@@ -1060,8 +1060,15 @@ const HOLDS = (() => {
 const GRIP = [0, -.03, .05], FORE = [0, -.028, -.21], IN_HANDS = { rifle: 1, cs: 1 };
 // a rifleman's aim: bladed to the target, the cheek down on the stock (the arms are then brought onto the rifle)
 const SHOULDER = () => ({ j: { spine: [.14, -.6, 0], head: [.3, .52, .25], armR: [-1.1, 0, .9], foreR: [-1.9, 0, 0], armL: [-1.3, .2, -.2], foreL: [-.5, 0, 0] }, drop: 0 });
-// on the radio: the handset up at his ear
-const CALL = () => ({ j: { spine: [.04, .1, 0], head: [.05, -.15, .12], armR: [-.75, 0, .5], foreR: [-2.25, 0, 0], armL: [0, 0, -.08], foreL: [-.3, 0, 0] }, drop: 0 });
+// on the radio: the handset at his ear and mouth, his elbow down by his side, the other arm hanging as the kit's people stand
+// (the arm's turns were found by reaching for his ear with human.touch, then written down)
+const CALL = () => ({ j: { spine: [.04, .1, 0], head: [.05, -.15, .12], collarR: [0, .08, -.01], armR: [-.62, .08, .63], foreR: [-2.74, -.12, .33], handR: [.01, .53, -.03], armL: [.03, 0, .065], foreL: [-.24, -.35, 0], handL: [-.15, -.35, 0] }, drop: 0 });
+// his handset: black, an ear cup and a mouthpiece on a bar. It lies in his right fist, turned to run from his ear to his mouth.
+function handset() {
+  const geo = WD.handsetGeo ||= (() => { const k = baker(), D = '#131416', Z = Math.PI / 2; return k.add(new BoxGeometry(.02, .022, .12), D, [0, 0, 0]).add(new CylinderGeometry(.027, .027, .024, 12), D, [.014, 0, .066], { r: [0, 0, Z] }).add(new CylinderGeometry(.02, .024, .03, 12), D, [.016, 0, -.064], { r: [0, 0, Z] }).geo(); })();
+  const m = new Mesh(geo, WD.rifleMats[1]); m.position.set(.03, -.104, .004); m.quaternion.set(.227, -.061, .029, .972).normalize();
+  return m;
+}
 // ---- moves
 // Wren's and the soldiers' own moves. A pose is a few key frames (gs.poses keys) that the rig fills in
 // between; on the ladder and the zip line his hands and feet are then put on the rungs and the bar
@@ -1102,15 +1109,18 @@ const MOVES = (() => {
     out.grip = 1 - sm(.85, 1.15, t); out.at = Math.min(1, t / OVER); out.done = t >= OVER;
     return out;
   }
+  // standing at ease as the kit's people do: the toes a little out, the arms hanging a little out from the shoulders, so the
+  // hands lie beside the thighs (a +z turn takes a left arm or leg out from the body, a -z turn a right one)
+  const EASE = { legL: [-.03, .1, .03], shinL: [.06, 0, 0], footL: [-.03, 0, 0], legR: [-.03, -.1, -.03], shinR: [.06, 0, 0], footR: [-.03, 0, 0], armL: [.03, 0, .065], foreL: [-.24, -.35, 0], handL: [-.15, -.35, 0], armR: [.03, 0, -.065], foreR: [-.24, .35, 0], handR: [-.15, .35, 0] };
   const STAND = { hips: [0, 0, 0], spine: [.03, 0, 0], head: [0, 0, 0], armL: [0, 0, .06], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [0, 0, -.06], foreR: [-.2, 0, 0], handR: [0, 0, 0], legL: [0, 0, 0], shinL: [.05, 0, 0], footL: [0, 0, 0], legR: [0, 0, 0], shinR: [.05, 0, 0], footR: [0, 0, 0] };
   const poses = {
     topout: [keys([
       [0, { hips: [.06, 0, 0], spine: [.1, 0, 0], head: [-.42, 0, 0], armL: [-2.3, 0, -.1], foreL: [-.5, 0, 0], handL: [0, 0, 0], armR: [-2.3, 0, .1], foreR: [-.5, 0, 0], handR: [0, 0, 0], legL: [-.8, 0, 0], shinL: [1.1, 0, 0], footL: [.1, 0, 0], legR: [-.8, 0, 0], shinR: [1.1, 0, 0], footR: [.1, 0, 0] }],
       [.17, { hips: [.1, .12, 0], spine: [.3, -.12, 0], head: [-.2, 0, 0] }],
       [.33, { hips: [.2, .05, 0], spine: [.55, 0, 0], head: [-.05, 0, 0] }],
-      [.48, { hips: [.25, 0, 0], spine: [.62, 0, 0], head: [-.25, 0, 0], armL: [-1.2, 0, -.2], foreL: [-.9, 0, 0], armR: [-1.2, 0, .2], foreR: [-.9, 0, 0] }],
-      [.7, { hips: [.25, 0, 0], spine: [.5, 0, 0], head: [-.3, 0, 0], armL: [-.25, 0, -.14], foreL: [-.9, 0, 0], armR: [-.25, 0, .14], foreR: [-.9, 0, 0] }],
-      [1, { hips: [.2, 0, 0], spine: [.42, 0, 0], head: [-.28, .25, 0], armL: [-.1, 0, -.1], foreL: [-1.1, 0, 0], armR: [-.1, 0, .1], foreR: [-1.1, 0, 0] }],
+      [.48, { hips: [.25, 0, 0], spine: [.62, 0, 0], head: [-.25, 0, 0], armL: [-1.2, 0, .05], foreL: [-.9, 0, 0], armR: [-1.2, 0, -.05], foreR: [-.9, 0, 0] }],
+      [.7, { hips: [.25, 0, 0], spine: [.5, 0, 0], head: [-.3, 0, 0], armL: [-.25, 0, .1], foreL: [-.9, 0, 0], armR: [-.25, 0, -.1], foreR: [-.9, 0, 0] }],
+      [1, { hips: [.2, 0, 0], spine: [.42, 0, 0], head: [-.28, .25, 0], armL: [-.1, 0, .12], foreL: [-1.1, 0, 0], armR: [-.1, 0, -.12], foreR: [-1.1, 0, 0] }],
     ]), { time: OVER, once: true }],
     // A soldier knocked out, by where the round came from: thrown back off his feet; down on his knees and onto
     // his face; or spun and dropped on his side. He goes limp, hits the ground, settles. (His left is +x: an arm
@@ -1152,23 +1162,23 @@ const MOVES = (() => {
     ]), { time: .6, once: true }],
     // The zip line. Under the bar with both hands on it: a look down the line, he sinks, then springs and his knees come up
     zipReady: [keys([
-      [0, { hips: [0, 0, 0], spine: [-.04, 0, 0], head: [.02, 0, 0], legL: [-.06, 0, -.04], shinL: [.12, 0, 0], footL: [0, 0, 0], legR: [.05, 0, .04], shinR: [.1, 0, 0], footR: [0, 0, 0], armL: [-2.9, 0, -.2], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [-2.9, 0, .2], foreR: [-.2, 0, 0], handR: [0, 0, 0], drop: 0 }],
+      [0, { hips: [0, 0, 0], spine: [-.04, 0, 0], head: [.02, 0, 0], legL: [-.06, .08, .03], shinL: [.12, 0, 0], footL: [0, 0, 0], legR: [.05, -.08, -.03], shinR: [.1, 0, 0], footR: [0, 0, 0], armL: [-2.9, 0, -.2], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [-2.9, 0, .2], foreR: [-.2, 0, 0], handR: [0, 0, 0], drop: 0 }],
       [.4, { head: [.16, .12, 0], spine: [0, .05, 0] }],
-      [.72, { hips: [.14, 0, 0], spine: [.12, 0, 0], head: [-.05, 0, 0], legL: [-.55, 0, -.04], shinL: [1.05, 0, 0], legR: [-.45, 0, .04], shinR: [.95, 0, 0], drop: .085 }],
-      [1, { hips: [-.12, 0, 0], spine: [.04, 0, 0], head: [-.2, 0, 0], legL: [-1.0, 0, -.06], shinL: [1.6, 0, 0], footL: [.45, 0, 0], legR: [-.6, 0, .06], shinR: [1.25, 0, 0], footR: [.45, 0, 0], drop: 0 }],
+      [.72, { hips: [.14, 0, 0], spine: [.12, 0, 0], head: [-.05, 0, 0], legL: [-.55, .06, .05], shinL: [1.05, 0, 0], legR: [-.45, -.06, -.05], shinR: [.95, 0, 0], drop: .085 }],
+      [1, { hips: [-.12, 0, 0], spine: [.04, 0, 0], head: [-.2, 0, 0], legL: [-1.0, 0, .02], shinL: [1.6, 0, 0], footL: [.45, 0, 0], legR: [-.6, 0, -.02], shinR: [1.25, 0, 0], footR: [.45, 0, 0], drop: 0 }],
     ]), { time: 1, once: true }],
     // riding it: tucked up under the bar, the legs working a little against the swing
-    zipRide: [p => { const s = S(p * TAU), c = S(p * TAU * 2 + .7); return { j: { hips: [-.16 + .03 * s, .05 * s, 0], spine: [.08, -.05 * s, 0], head: [-.22, .14 * s, 0], legL: [-1.05 + .07 * s, 0, -.06], shinL: [1.62 + .08 * c, 0, 0], footL: [.45, 0, 0], legR: [-.8 - .07 * s, 0, .06], shinR: [1.38 - .08 * c, 0, 0], footR: [.45, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0] }, drop: 0 }; }, { time: 2.6 }],
+    zipRide: [p => { const s = S(p * TAU), c = S(p * TAU * 2 + .7); return { j: { hips: [-.16 + .03 * s, .05 * s, 0], spine: [.08, -.05 * s, 0], head: [-.22, .14 * s, 0], legL: [-1.05 + .07 * s, 0, .02], shinL: [1.62 + .08 * c, 0, 0], footL: [.45, 0, 0], legR: [-.8 - .07 * s, 0, -.02], shinR: [1.38 - .08 * c, 0, 0], footR: [.45, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0] }, drop: 0 }; }, { time: 2.6 }],
     // coming in: the feet out in front to take the roof
-    zipBrace: [() => ({ j: { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, -.07], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, .07], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0] }, drop: 0 }), 0],
+    zipBrace: [() => ({ j: { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, .03], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, -.03], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0] }, drop: 0 }), 0],
     // the feet strike, he folds right down over them, a hand out for balance, then up and a look across the valley
     zipLand: [keys([
-      [0, { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, -.07], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, .07], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0], drop: 0 }],
-      [.1, { hips: [0, 0, 0], spine: [.2, 0, 0], legL: [-.7, 0, -.08], shinL: [.6, 0, 0], footL: [0, 0, 0], legR: [-.5, 0, .08], shinR: [.7, 0, 0], footR: [0, 0, 0], armL: [-2.3, 0, -.4], foreL: [-.5, 0, 0], armR: [-2.3, 0, .4], foreR: [-.5, 0, 0], drop: .04 }],
-      [.3, { hips: [.3, 0, 0], spine: [.6, 0, 0], head: [-.45, 0, 0], legL: [-1.8, 0, -.14], shinL: [2.25, 0, 0], footL: [.25, 0, 0], legR: [-1.45, 0, .14], shinR: [2.15, 0, 0], footR: [.5, 0, 0], armL: [-.95, 0, -.3], foreL: [-.5, 0, 0], armR: [-.5, 0, .45], foreR: [-.9, 0, 0], drop: .43 }],
+      [0, { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, .03], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, -.03], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0], drop: 0 }],
+      [.1, { hips: [0, 0, 0], spine: [.2, 0, 0], legL: [-.7, .06, .05], shinL: [.6, 0, 0], footL: [0, 0, 0], legR: [-.5, -.06, -.05], shinR: [.7, 0, 0], footR: [0, 0, 0], armL: [-2.3, 0, .05], foreL: [-.5, 0, 0], armR: [-2.3, 0, -.05], foreR: [-.5, 0, 0], drop: .04 }],
+      [.3, { hips: [.3, 0, 0], spine: [.6, 0, 0], head: [-.45, 0, 0], legL: [-1.8, .06, .16], shinL: [2.25, 0, 0], footL: [.25, 0, 0], legR: [-1.45, -.06, -.14], shinR: [2.15, 0, 0], footR: [.5, 0, 0], armL: [-.95, 0, .25], foreL: [-.5, 0, 0], armR: [-.5, 0, -.5], foreR: [-.9, 0, 0], drop: .43 }],
       [.52, { hips: [.26, 0, 0], spine: [.52, 0, 0], head: [-.4, .1, 0], drop: .4 }],
-      [.82, { hips: [.06, 0, 0], spine: [.14, 0, 0], head: [-.05, .3, 0], legL: [-.16, 0, -.05], shinL: [.3, 0, 0], footL: [0, 0, 0], legR: [.02, 0, .05], shinR: [.22, 0, 0], footR: [0, 0, 0], armL: [-.08, 0, -.1], foreL: [-.35, 0, 0], armR: [.05, 0, .1], foreR: [-.3, 0, 0], drop: .03 }],
-      [1, { hips: [.02, 0, 0], spine: [.05, .1, 0], head: [0, .42, 0], legL: [-.06, 0, -.04], shinL: [.12, 0, 0], legR: [.05, 0, .04], shinR: [.1, 0, 0], armL: [0, 0, -.08], foreL: [-.25, 0, 0], armR: [0, 0, .08], foreR: [-.25, 0, 0], drop: 0 }],
+      [.82, { hips: [.06, 0, 0], spine: [.14, 0, 0], head: [-.05, .3, 0], legL: [-.16, .08, .04], shinL: [.3, 0, 0], footL: [0, 0, 0], legR: [.02, -.08, -.04], shinR: [.22, 0, 0], footR: [0, 0, 0], armL: [-.08, 0, .09], foreL: [-.35, -.2, 0], armR: [.05, 0, -.09], foreR: [-.3, .2, 0], drop: .03 }],
+      [1, { hips: [.02, 0, 0], spine: [.05, .1, 0], head: [0, .42, 0], ...EASE, drop: 0 }],
     ]), { time: 1.35, once: true }],
     // his body on the ladder (the arms and legs are placed on the rungs): leaning in, looking up, the hips
     // swinging over the foot that pushes
@@ -1181,15 +1191,20 @@ const MOVES = (() => {
 })();
 // ---- end moves
 const POOL = {};
+// Hands: open and easy when they hold nothing, closed round what they do hold (0 flat .. 1 a fist; null as sculpted, round a
+// rifle's stock). Fingers stay as they were last set, so this sets them only when they change.
+const EASY = .3, HELD = .9;
+function hands(m, L, R = L) { const u = m.userData; if (u.fL !== L || u.fR !== R) { u.fL = L; u.fR = R; m.fingers({ L, R }); } }
 function man(look) {
   const list = POOL[look] ||= [];
   const free = list.find(f => !f.userData.used);
-  if (free) { free.userData.used = true; free.visible = true; free.userData.k = 0; free.lod = 2; return free; }
+  if (free) { free.userData.used = true; free.visible = true; free.userData.k = 0; free.lod = 2; hands(free, EASY); return free; }
   const firsts = people()[look], root = list.length < firsts.length ? firsts[list.length] : firsts[list.length % firsts.length].twin();
   const none = { visible: true }, gun = look === 'officer' ? null : soldierRifle(look === 'rook' || look === 'wren');
   if (gun) { root.bones.spine.add(gun); gun.position.copy(HOLDS.slung.p); gun.quaternion.copy(HOLDS.slung.q); }
   root.rig.add('shoulder', SHOULDER).add('call', CALL); for (const k in MOVES.poses) root.rig.add(k, ...MOVES.poses[k]);
   root.userData = { used: true, look, rifle: gun || none, gun, pack: root.gear.pack || none, aerial: none, helmet: root.gear.hat || none, k: 0 };
+  hands(root, EASY);
   root.lod = 2;   // far off until see() says otherwise (behind the field file nobody is looked at, and a squad at full detail is a lot to draw)
   list.push(root); WD.v.scene.add(root);
   return root;
@@ -1210,6 +1225,7 @@ function carry(m, h, dt, close, pitch = 0) {
     _hp.fromArray(BUTT).applyQuaternion(_hq).negate().add(_hb);
   }
   g.position.copy(HOLDS.slung.p).lerp(_hp, k); g.quaternion.copy(HOLDS.slung.q).slerp(_hq, k);
+  hands(m, k > .5 ? null : EASY);   // closed round the stock once the rifle is in his hands
   if (k > .5 && close) m.hold(g, GRIP, FORE);
 }
 // Wren up close (the ladder, the zip line, the train): the same kind of person, in his knitted cap and
@@ -1370,7 +1386,7 @@ function make(api) {
     const look_ = o.look || 'grey', m = man(look_);
     const s = { get down() { return this.ko; }, get alive() { return !this.ko; }, kind: 'rifle', x: 0, y: 0, yaw: 0, hp: 1, maxHp: 1, ko: false, alert: false, route: null, ri: 0, wt: 0, speed: 0, path: null, pathTo: null, fireT: rnd(1, 3), order: { do: 'hold' }, tagged: false, look: look_, sus: 0, crouch: false, aimAt: null, vx: 0, vy: 0, ...o, m };
     m.userData.pack.visible = s.kind === 'radio' || s.look === 'ally';
-    m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer';
+    m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer'; if (m.userData.handset) m.userData.handset.visible = false;
     m.rig.play('idle', { fade: 0 }); m.rig.upper(null); m.rig.layers[m.rig.layers.length - 1].phase = Math.random(); m.rig.sw = null;   // (each breathes and shifts his weight in his own time)
     s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0); m.position.set(s.x, s.gy, s.y); m.rotation.set(0, s.yaw, 0);
     return s;
@@ -1394,6 +1410,7 @@ function make(api) {
     const pick = order.find(n => { const [x, z] = at(...FALLS[n], 1.2); return !solidAt(x, z, WD.solids); }) || order[0];
     // (a man on a knee or ducked is already half way down: his fall starts there, not from standing)
     m.rig.play(pick, { fade: s.crouch ? .16 : .1, again: true, from: s.low ? .36 : s.crouch ? .3 : 0 }); m.rig.upper(null);
+    hands(m, EASY); if (m.userData.handset) m.userData.handset.visible = false;   // his hands go slack
     const g = (lx, lz) => { const [x, z] = at(lx, lz, .7); return groundAt(x, z); };
     s.tilt = s.deck == null ? [Math.atan2(g(0, -1) - g(0, 1), 1.4), Math.atan2(g(1, 0) - g(-1, 0), 1.4)] : null; s.fallT = 0; s.still = false; s.act = null; s.thud = false;
   }
@@ -1855,7 +1872,9 @@ function make(api) {
     WD.trolley.visible = kind === 'zip'; if (kind === 'zip') { const h = zip.hands; WD.trolley.position.set(h.x, h.y + .05, h.z); WD.trolley.rotation.y = f.yaw; }
     if (f.pose) w.rig.play(f.pose, { fade: f.fade ?? .15, at: f.at }); else w.rig.blend(GAITS, f.speed);   // a named move, or his stride by how fast he goes
     w.rig.update(dt, { speed: f.speed, turn: f.turn || 0 }); w.see(WD.v.cam, 1000);
-    if (f.touch) w.touch(f.touch, f.how);
+    // his hands close round the rung or the bar they hold, and open as they reach for the next
+    if (f.touch) { w.touch(f.touch, f.how); const b = f.how.blend, o = f.open, shut = (hold = 1, open = 0) => EASY + (HELD - EASY) * clamp(hold * (1 - open), 0, 1); hands(w, shut(b.handL, o?.L), shut(b.handR, o?.R)); }
+    else hands(w, EASY);
     return w;
   }
   // the last `run` metres of a walkable way from a to b (round houses and walls), as points
@@ -1920,11 +1939,12 @@ function make(api) {
       // (he faces the wall, -x: the ladder's own x, y, z are the world's z, y, x here; a palm faces the rung, or across to the other rail)
       const put = (g, y0) => { for (const k in T) T[k].set(L.lx + g[k].z, y0 + g[k].y, L.z + g[k].x); }, palm = (p, sd, r) => { p[0] = -(1 - .7 * r); p[1] = -.35 * (1 - r); p[2] = -sd * r; };
       fig.x = L.x; fig.z = L.z; fig.yaw = -Math.PI / 2; fig.speed = 0; fig.touch = T; fig.how = how;
+      const open = fig.open ||= { L: 0, R: 0 }; open.L = open.R = 0;
       if (a < m.climbA + m.climbB) {
         const on = clamp(tc / m.mountT, 0, 1), y = a < m.climbA ? (L.y0 - L.r0) + Math.max(0, a) * CLIMB_V : MOVES.Y_END - (m.climbA + m.climbB - a) * CLIMB_V;
         MOVES.ladder(y, MOVES.TOP, MOVES.RAIL, G); put(G, L.r0);
         fig.y = L.r0 + y + G.rise * on; fig.pose = 'ladder'; fig.at = G.at; fig.fade = .3;
-        palm(how.palms.L, 1, G.handL.rail); palm(how.palms.R, -1, G.handR.rail);
+        palm(how.palms.L, 1, G.handL.rail); palm(how.palms.R, -1, G.handR.rail); open.L = Math.min(1, G.handL.lift * 2.5); open.R = Math.min(1, G.handR.lift * 2.5);
         how.level.L = .7 * (1 - G.footL.lift * .6); how.level.R = .7 * (1 - G.footR.lift * .6);
         b.handR = sm(0, .5, on); b.handL = sm(.15, .7, on); b.footL = sm(.3, .85, on); b.footR = sm(.55, 1, on);   // he takes hold, then steps on
         if (a < m.climbA) {
@@ -2394,6 +2414,7 @@ function make(api) {
         if (s.route) { const r = s.route[s.ri]; if (Math.hypot(r[0] - s.x, r[1] - s.y) > .2) { const d = Math.hypot(r[0] - s.x, r[1] - s.y), k = Math.min(1, 1.1 * dt / d); s.vx = (r[0] - s.x) / d * 1.1; s.vy = (r[1] - s.y) / d * 1.1; s.x += (r[0] - s.x) * k; s.y += (r[1] - s.y) * k; speed = 1.1; s.yaw = turnTo(s.yaw, Math.atan2(r[0] - s.x, r[1] - s.y), dt * 4); } else if ((s.wt += dt) > r[2]) { s.wt = 0; s.ri = (s.ri + 1) % s.route.length; } }
         if (s.sending) { s.send += dt; if (s.send > 60) mission.fail('The call went through. The column is coming.'); }
         m.rig.upper(s.sending ? 'call' : null);
+        { const u = m.userData; if (s.sending && !u.handset) m.bones.handR.add(u.handset = handset()); if (u.handset) u.handset.visible = !!s.sending; }   // the handset is in his hand while he sends
       } else if (s.kind === 'cs') {
         // the marksman: scans, then settles on you when he sees you looking at him (scope glint both ways)
         // Sgt. Rook hunts you: he settles on your lens, his own glint flares as he takes aim (drop the
@@ -2501,6 +2522,8 @@ function make(api) {
       const far = (ed > 160 && !scoped) || (ed > 5 && ex * cfx + ey * cfy + ez * cfz < ed * coneCos);
       // a rifleman shoulders his rifle to aim (the gunners and the officer keep the plain pose: hands out to what they hold)
       const armed = IN_HANDS[s.kind] && m.userData.gun; if (armed && m.rig.topOn && m.rig.top === 'aim') m.rig.top = 'shoulder';
+      // (a rifleman's hands are set as he carries his rifle; the others': closed on a gun's grips or the handset, else open)
+      if (!armed) { const hold = m.rig.topOn && m.rig.top === 'aim' ? null : EASY; hands(m, hold, s.sending ? HELD : hold); }
       if (!far || (frame + (s.x | 0)) % 3 === 0) {
         const step = far ? dt * 3 : dt, turn = clamp(angDiff(s.yaw, s.yawWas ?? s.yaw) / step, -6, 6); s.yawWas = s.yaw;   // (he leans into his turns)
         m.rig.update(step, { speed: s.av, aim: s.alert ? -.05 : 0, turn });
@@ -3126,7 +3149,7 @@ function make(api) {
   function rideTrain(dt) {
     const w = WD.wren; w.visible = true; w.rotation.order = 'YXZ'; w.rotation.x = 0; w.rotation.z = Math.sin(t * 7) * .02;
     w.position.set(train.x + TRAIN.W1 + 1.4, RAILH + TRAIN.ROOF - .02, RAILZ + .25); w.rotation.y = Math.PI / 2;
-    w.rig.play('crouch', { fade: .2 }); w.rig.update(dt, { speed: 0 }); w.see(WD.v.cam, 1000);
+    w.rig.play('crouch', { fade: .2 }); w.rig.update(dt, { speed: 0 }); w.see(WD.v.cam, 1000); hands(w, EASY);
   }
   function trainUpdate(dt) {
     if (!train.on) { train.next -= dt; if (train.next <= 0 && mid === 'm1') { train.on = true; train.x = -420; train.speed = 30; tone(520, { len: .9, wave: 'triangle', vol: .05 }); tone(620, { len: .9, wave: 'triangle', vol: .04, at: .1 }); } WD.train.visible = false; return; }
