@@ -1,0 +1,76 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A film of gs.destruction.Structure for scripts/structure.cjs: a row for each thing done to a building,
+// a picture every so often along it, so how it breaks and what is left can be judged (and tuned) by eye.
+// It also notes how many pieces broke, fell and landed, what still stands, and the cost of a frame.
+//   ?style=brick|plaster|concrete|stone|timber   &acts=shell,corner (default: all)   &cols=8   &cell=260x220
+//   &size=8x6x2 (w x d x floors)   &phys=0 (no physics world)   &view=three|front|side|back|top|in   &gpu (WebGPU)
+//   &from=0&to=1 (the share of each act filmed)   &dust=0 (no dust)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { loadPhysics3D } from '../../src/kit/physics3d.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await loadPhysics3D();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), style = Q.get('style') || 'brick', PHYS = Q.get('phys') !== '0';
+  const [bw, bd, bf] = (Q.get('size') || '8x6x2').split('x').map(Number);
+  // each act: how long it runs and what is done to the building when (h: the structure; the building is at the origin, its door facing +z)
+  const ACTS = {
+    shell: { secs: 5, at: { .4: h => h.blast({ x: .4, y: 1.2, z: bd / 2 + .3 }, 2.6) } },                          // a shell at the foot of the front wall
+    corner: { secs: 5, at: { .4: h => h.blast({ x: bw / 2, y: .8, z: bd / 2 }, 2.4) } },                            // the front right corner knocked out
+    upstairs: { secs: 5, at: { .4: h => h.blast({ x: -1.5, y: h.src.size[1] - 1.2, z: bd / 2 + .2 }, 2.2) } },      // a shell through an upstairs window
+    roof: { secs: 5, at: { .4: h => h.blast({ x: 1, y: h.src.size[1] + .8, z: .5 }, 2.6) } },                       // a bomb on the roof
+    shots: { secs: 4, at: Object.fromEntries(Array.from({ length: 14 }, (_, i) => [.3 + i * .2, h => { const r = h.ray({ x: -1.8 + (i % 4) * .5, y: 1.3 + (i % 3) * .5, z: 14 }, { x: (i % 5 - 2) * .02, y: (i % 3 - 1) * .02, z: -1 }); if (r) h.hit(r.point, { power: .45, dir: { x: 0, y: 0, z: -1 } }); }])) },   // rifle fire at the front
+    ball: { secs: 6, at: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [.4 + i * .9, h => h.hit({ x: bw / 2 + .1, y: 1.4 + i * .5, z: -1 + i * .7 }, { radius: 1.3, power: 2.4, dir: { x: -1, y: 0, z: 0 }, push: 5 })])) },   // a wrecking ball along the side
+    big: { secs: 7, at: { .4: h => h.blast({ x: 0, y: 1.5, z: 0 }, 6.5, { power: 7, push: 12 }) } },                 // a big bomb inside
+    level: { secs: 9, at: { .4: h => h.blast({ x: -bw / 2, y: 1, z: bd / 2 }, 3), 1.2: h => h.blast({ x: bw / 2, y: 1, z: bd / 2 }, 3), 2: h => h.blast({ x: bw / 2, y: 1, z: -bd / 2 }, 3), 2.8: h => h.blast({ x: -bw / 2, y: 1, z: -bd / 2 }, 3) } },   // each corner in turn
+  };
+  const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(','), cols = +(Q.get('cols') || 8), [cw, ch] = (Q.get('cell') || '260x220').split('x').map(Number);
+  const from = +(Q.get('from') || 0), to = +(Q.get('to') || 1);
+  window.__hd.force = 2; window.__hd.upscale = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .45, amb: .3 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sun = gs.hd.sun('#fff2d8', 2, 14, [.6, .9, .7]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * acts.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [], H = bf * 3.2, far = Math.max(bw, bd) * 1.5 + H * .9 + 5;
+  const VIEW = { three: [.75, .42, 1], front: [.1, .25, 1], side: [1, .3, .15], back: [-.7, .45, -1], top: [.05, 1, .3], in: [.2, .15, .6] }, view = VIEW[Q.get('view')] || VIEW.three;
+  const dust = Q.get('dust') === '0' ? null : new gs.hd.Particles(v, { max: 500, additive: false });
+  for (let r = 0; r < acts.length; r++) {
+    const A = ACTS[acts[r]]; if (!A) throw new Error('no act ' + acts[r] + ': ' + Object.keys(ACTS).join(', '));
+    const world = new T.Group(); v.scene.add(world);
+    const floor = new T.Mesh(new T.BoxGeometry(120, .4, 120), gs.hd.pbr('#6f7466', { rough: .95 })); floor.position.y = -.2; floor.receiveShadow = true; world.add(floor);
+    const phys = PHYS ? new gs.physics3d.World3D({ gravity: -9.81 }) : null; phys?.ground(floor);
+    const t0 = performance.now();
+    const h = new gs.destruction.Structure(world, { building: { style, w: bw, d: bd, floors: bf, seed: 3 }, world: phys });
+    const made = performance.now() - t0;
+    const dt = 1 / 60, N = Math.round(A.secs / dt), ev = { broke: 0, fell: 0, landed: 0 }, events = Object.entries(A.at || {}).map(([t, fn]) => [Math.round(t / dt), fn]);
+    const shots = Array.from({ length: cols }, (_, i) => Math.round((from + (to - from) * (i + .5) / cols) * N));
+    let cost = 0, worst = 0, bodies = 0, quiet = -1;
+    for (let i = 0; i <= N; i++) {
+      for (const [at, fn] of events) if (at === i) fn(h);
+      const c0 = performance.now(); phys?.step(dt); h.update(dt); const c = performance.now() - c0; cost += c; worst = Math.max(worst, c); bodies = Math.max(bodies, h.loose.length);
+      for (const b of h.broke) {
+        ev[b.how]++;
+        if (dust && (b.how !== 'fell')) { const n = b.how === 'landed' ? (b.crumbled ? 5 : 2) : 4, s = Math.min(1.6, .5 + b.size * .4); for (let k = 0; k < n; k++) dust.emit({ x: b.x + (Math.random() - .5) * b.size * .6, y: b.y + Math.random() * .3, z: b.z + (Math.random() - .5) * b.size * .6, vx: (Math.random() - .5) * 1.6, vy: .3 + Math.random() * .9, vz: (Math.random() - .5) * 1.6, life: 1.6 + Math.random() * 1.6, size: s, grow: 2.2, col: [.62, .58, .52], a: .32, drag: 1.4, grav: -.05, fadeIn: true }); }
+      }
+      dust?.update(dt);
+      if (quiet < 0 && i > events.at(-1)?.[0] && !h.busy) quiet = i * dt;
+      const k = shots.indexOf(i);
+      if (k >= 0) {
+        const aim = new T.Vector3(0, H * .42, 0), len = Math.hypot(...view), dist = Q.get('view') === 'in' ? far * .45 : far;
+        v.cam.fov = 32; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 300; v.cam.updateProjectionMatrix();
+        v.cam.position.set(aim.x + view[0] / len * dist, aim.y + view[1] / len * dist, aim.z + view[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
+        sun.follow(0, 0, 0);
+        for (let n = 0; n < (k ? 2 : 6); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+        sx.drawImage(cell, k * cw, r * ch);
+        sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${acts[r]} ${(i * dt).toFixed(2)}s  ${(h.standing * 100).toFixed(0)}% stands`, k * cw + 4, r * ch + 12);
+      }
+    }
+    const tris = h.meshes.reduce((a, m) => a + m.geometry.index.count / 3, 0);
+    info.push(`${acts[r]} (${style} ${bw}x${bd}x${bf}): ${h.pieces} pieces, ${tris} triangles, made in ${made.toFixed(0)} ms; broke ${ev.broke}, fell ${ev.fell}, landed ${ev.landed}; ${(h.standing * 100).toFixed(0)}% stands, ${h.left} pieces left, ${h.loose.length} fallen pieces lie as bodies (most at once ${bodies}); quiet ${quiet < 0 ? 'never' : 'at ' + quiet.toFixed(1) + ' s'}; ${(cost / N).toFixed(3)} ms a frame, worst ${worst.toFixed(1)}`);
+    h.remove(); phys?.free(); dust?.clear(); v.scene.remove(world);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

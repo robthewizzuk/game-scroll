@@ -582,6 +582,22 @@ try {
     react.fall(null, { limp: true }); const limp = play(6.5);
     ok(limp.log === 'down' && react.down && !react.doll, 'reactions: limp, it stays down: ' + limp.log); react.reset(); phys.free();
   }
+  // gs.destruction.Structure on a real gs.models building, in its recipe materials (kit-test.mjs has the rules; scripts/structure.cjs films it)
+  {
+    const T = gs.THREE, { Structure } = gs.destruction, scene = new T.Scene(), phys = new gs.physics3d.World3D({ gravity: -9.81 }); phys.floor(0);
+    const opts = { style: 'brick', w: 8, d: 6, floors: 2, seed: 3 }, whole = gs.models.building(opts), house = new Structure(scene, { building: opts, world: phys, at: [0, 0, -12] });
+    const tris = g => { let n = 0; g.traverse(m => { if (m.isMesh && !m.isInstancedMesh) n += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3; }); return n; };
+    const names = g => { const n = new Set(); g.traverse(m => m.isMesh && n.add(m.material.name + (m.material.vertexColors ? ' worn' : ''))); return [...n].sort(); }, mine = names(house.group);
+    ok(house.pieces > 150 && names(whole).length >= 5 && names(whole).every(n => mine.includes(n)) && tris(house.group) > tris(whole), 'structure: a brick house in ' + house.pieces + ' pieces, in the materials of the whole one (' + mine.join(', ') + '; ' + tris(whole) + ' triangles whole, ' + tris(house.group) + ' cut)');
+    const ev = { broke: 0, fell: 0, landed: 0 }, play = secs => { for (let i = 0; i < secs * 60; i++) { phys.step(1 / 60); house.update(1 / 60); for (const b of house.broke) ev[b.how]++; } };
+    const n = house.blast({ x: .4, y: 1.2, z: -12 + 3.3 }, 2.6); play(6);
+    const rubble = house.debris.children.filter(m => m.isInstancedMesh), lying = rubble.reduce((a, m) => { for (let i = 0; i < m.count; i++) if (m.instanceMatrix.array[i * 16 + 15] === 1 && Math.abs(m.instanceMatrix.array[i * 16]) + Math.abs(m.instanceMatrix.array[i * 16 + 1]) + Math.abs(m.instanceMatrix.array[i * 16 + 2]) > 0) a++; return a; }, 0);
+    ok(n >= 5 && ev.fell >= 6 && ev.landed >= 6 && house.standing > .8 && house.standing < .93 && !house.busy && lying > 20, 'structure: a shell at its door: ' + JSON.stringify(ev) + ', ' + (house.standing * 100).toFixed(0) + '% stands, ' + lying + ' bits of rubble lie');
+    house.reset(); ok(house.standing === 1 && tris(house.group) > tris(whole) && phys.bodies.length === 2, 'structure: reset, it is whole'); house.remove(); ok(!house.group.parent && phys.bodies.length === 1, 'structure: removed');
+    const wall = new Structure(scene, { pieces: [{ size: [2, 1, .3], at: [0, .5, 0] }, { size: [2, 1, .3], at: [0, 1.5, 0], material: 'stone' }, { size: [1, .2, 1], at: [0, 2.1, 0], material: 'planks' }] });
+    wall.hit([0, .5, 0], { power: 9 }); for (let i = 0; i < 240; i++) wall.update(1 / 60);
+    ok(wall.pieces === 3 && wall.left === 0 && !wall.busy && wall.group.children.length === 3, 'structure: your own boxes in recipe materials; the bottom one out and the rest come down'); wall.remove(); phys.free();
+  }
 }
 window.result = out;
 </script>

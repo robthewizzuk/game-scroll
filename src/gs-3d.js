@@ -14,6 +14,7 @@ export * as level3d from './kit/level3d.js';
 export * as sky from './kit/sky.js';
 export * as poses from './kit/poses.js';
 export * as destruction from './kit/destruction.js';
+export * as structure from './kit/structure.js';
 export * as props from './kit/props.js';
 export * as outdoors from './kit/outdoors.js';
 export * as city from './kit/city.js';

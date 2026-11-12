@@ -75,6 +75,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Mission scripts, objectives, checkpoints | `gs.missions` | [Action and adventure kits](#action-and-adventure-kits) |
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
+| Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
 | Ball games with boosting, flipping cars | `gs.arena` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -1871,7 +1872,8 @@ time; `timeScale` slows the world while one shows; `ease` gives the player more 
 
 **Breaking things** (`gs.destruction`, 3D, three-pinata): `shatter(mesh, { pieces, at, world })` breaks
 any mesh into real pieces (more near where it was hit) that fly with `gs.physics3d`; `slice(mesh, point,
-normal)` cuts one in two; `Rubble` fades old pieces so phones stay fast.
+normal)` cuts one in two; `Rubble` fades old pieces so phones stay fast. A whole building that knows what
+holds it up is `Structure`: [Buildings that come apart](#buildings-that-come-apart).
 
 **Stealth extras** (`gs.stealth`, on top of `gs.senses`): `lightAt(p, lamps)` is a light meter (walls
 cast shadows) to feed the guards' eyes, `Takedown.check()` finds a guard you're behind, `Bodies` get
@@ -2472,3 +2474,56 @@ update(dt) { tap.on = pressed; ball.set(px, py, pz); fluid.update(dt);
   (`fluid.dropSize` is a drop's width). `new Fluid(view, { gpu: false, drops: 600 })` runs what the
   slowest phones run, on any machine: play your game with it once. It pours and fills the same way
   every time (`seed` changes its dice), so a level that works once keeps working.
+
+## Buildings that come apart
+
+`const { Structure } = gs.destruction;` (Next Gen.) A `gs.models.building()` made of pieces: each half of
+a pier, the wall under and over each window, each window and door, each floor tile and roof panel. Every
+piece knows what holds it up, so you only say where it was hit:
+
+```js
+make():   house = new Structure(view.scene, { building: { style: 'brick', w: 8, d: 6, floors: 2 }, at: [0, 0, -12], turn: .4 });
+reset() { phys = new World3D(); house.reset({ world: phys }); }      // whole again, and solid in this round's world
+update(dt) {
+  phys.step(dt); house.update(dt);                                   // after the physics step
+  for (const b of house.broke) if (b.how !== 'fell') dust(b.x, b.y, b.z, b.size);   // what happened this frame
+}
+house.hit(bullet.point, { power: .4, dir: bullet.dir });             // a shot: small hits add up
+house.hit(ball.position, { radius: 1.3, power: 2.4, dir, push: 5 }); // a wrecking ball
+house.blast(shell.position, 3);                                      // an explosion, 3 m across
+```
+
+- **What holds what.** A piece stands on the one under it, and is held by the ones at its sides. When
+  pieces go, whatever no longer reaches the ground through the ones left comes down a moment later, the
+  collapse spreading out from the hole. Masonry (brick, stone, plaster) can hang one piece out sideways, so a
+  wall closes over a hole one window wide and comes down over a wider one; timber and concrete hang two.
+  Knock out a corner and the wall above it goes, with the floor it carried; the roof hangs on while
+  a wall or its ridge still holds it. The same shell leaves a different ruin in each style.
+- `hit(point, { radius, power, dir, push })`: pieces within `radius` (.4 m) are hurt by `power` (a piece
+  breaks at about 1 for timber, 1.5 brick, 2 stone, 2.5 concrete, .1 a window; hurt adds up) and a broken
+  one goes to rubble along `dir`. `blast(point, radius, { power, push })`: `power` (4) at the centre
+  falling to none at `radius`; the nearest pieces go to rubble and the rest of the broken ones are thrown
+  out whole. Both return how many pieces broke. Points are world points.
+- `house.broke` after `update()`: `{ how: 'broke' | 'fell' | 'landed', kind: 'wall' | 'window' | 'door' |
+  'roof' | 'floor', x, y, z, size, mass, speed, crumbled }` for each thing that happened. The kit draws
+  the pieces and the rubble and nothing else: dust, sound and shake are yours, from this list.
+- `house.standing` (1 whole .. 0 flat, by weight), `house.left` / `house.pieces`, `house.falling`,
+  `house.busy` (true until everything has come to rest: wait for it before you score a demolition).
+- **With a physics world** (`world: phys`, or `reset({ world })`) the walls are solid for movers, rays and
+  `gs.sound.Ears`, a hole lets them through, and what falls is real tumbling bodies that pile up and can
+  break what they land on (`crush: 0` turns that off). `phys.ray()` gives `hit.thing.structure` for the
+  building it struck. **Without one** pieces fall and break up where they land, the same way every time,
+  and `house.ray(from, dir)` finds the piece a shot strikes (`{ point, normal, distance, kind }`).
+- Small rubble is cheap: boxes drawn as copies, in the building's own materials, that land on the ground
+  (`ground: (x, z) => height`) or on what still stands. `bits` (240) is how many a material keeps and `keep`
+  (40) how many fallen pieces stay as bodies; the oldest go first.
+- **Your own boxes** in place of a building: `pieces: [{ size: [w, h, d], at: [x, y, z], material: 'planks',
+  strength, fixed }]` (`at` is each box's centre; `fixed: true` never moves and holds the rest up, as the
+  ground does: a cliff a bridge is built into), with `materials: { planks: aThreeMaterial }` if you want
+  your own and `span` (1: masonry, 2: timber and steel). Boxes hold each other where they touch.
+- Make it once with the level (`make()`), and `reset()` it each round. A house is about 170 pieces and
+  4,400 triangles and takes a quarter of a second to cut the first time, then a few milliseconds a copy;
+  a five-storey block about 1,500 pieces. On a desktop a house falling with physics measured half a
+  millisecond a frame, and under a tenth without (not yet measured on a phone).
+- Not there: rooms inside (it is a shell with floors), break edges that are not straight, and rubble
+  that piles against walls (it lies on the ground and on floors).

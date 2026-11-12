@@ -3147,5 +3147,100 @@ console.log('physics ok');
   console.log('people who react physically: the jointed ragdoll (limits, muscles), nudge, shove, knocked down three ways, limp, trip, blast, bracing, a wall, a ledge, acted falls and a mover ok');
 }
 
+// buildings that come apart (src/kit/structure.js: gs.destruction.Structure; src/kit/models/buildings.js: buildingPieces)
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Structure } = await import('../src/kit/structure.js'), { building, buildingPieces, BUILDING_STYLES } = await import('../src/kit/models/buildings.js');
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  const house = (o = {}, b = {}) => new Structure(new THREE.Group(), { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials, ...b }, ...o });
+  const play = (h, secs, w = h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
+  const up = (h, test) => { let n = 0; for (let i = 0; i < h.S.n; i++) if (h.state[i] <= 1 && test(h.S.C[i])) n++; return n; };
+  // the building cut into pieces: every point is in exactly one piece, it fills the same space as the whole one, and whole it holds itself up
+  for (const style of Object.keys(BUILDING_STYLES)) for (const [w, d, floors] of [[8, 6, 2], [13, 9, 3], [5, 5, 1]]) {
+    const cut = buildingPieces({ style, w, d, floors, materials }), seen = cut.parts.map(p => new Uint8Array(p.geo.attributes.position.count));
+    for (const c of cut.chunks) for (const [pi, s, n] of c.ranges) for (let i = s; i < s + n; i++) { assert.equal(seen[pi][i], 0, 'a point in two pieces'); seen[pi][i] = 1; }
+    assert.ok(seen.every(s => s.every(Boolean)), `${style}: every point belongs to a piece`);
+    const box = g => new THREE.Box3().setFromObject(g), a = box(building({ style, w, d, floors, materials })), g = new THREE.Group(); for (const p of cut.parts) g.add(new THREE.Mesh(p.geo));
+    const b = box(g); assert.ok(a.min.distanceTo(b.min) < .01 && a.max.distanceTo(b.max) < .01, `${style} ${w}x${d}x${floors}: cut, it is the same size`);
+    const h = new Structure(null, { building: { style, w, d, floors, materials } });
+    assert.equal(h.S.loose, 0, `${style} ${w}x${d}x${floors}: every piece reaches the ground`); assert.equal(h.standing, 1);
+    h.update(1 / 60); assert.equal(h.due, 0, 'whole, nothing falls'); assert.ok(!h.busy);
+  }
+  // hits: a window goes at once and the wall round it does not; a wall piece takes several, and they add up
+  {
+    const h = house(), glass = h.ray({ x: -2.67, y: 1.6, z: 12 }, { x: 0, y: 0, z: -1 });
+    assert.ok(glass && glass.kind === 'window' && Math.abs(glass.point.z - 3) < .25 && glass.normal.z > .9, 'a ray finds the window: ' + JSON.stringify(glass));
+    assert.equal(h.hit(glass.point, { power: .15 }), 1, 'a window breaks to a small hit'); assert.equal(up(h, c => c.kind === 'window'), 18);
+    const wall = h.ray({ x: 1.3, y: 1, z: 12 }, { x: 0, y: 0, z: -1 }); assert.equal(wall.kind, 'wall');
+    let shots = 0; while (!h.hit(wall.point, { power: .4, dir: [0, 0, -1] }) && shots < 20) shots++;
+    assert.ok(shots >= 2 && shots <= 5, 'a wall piece takes a few hits: ' + shots);
+    const ev = play(h, 3); assert.ok(ev.broke === 2 && h.standing > .95 && !h.busy, 'and the house stands: ' + JSON.stringify(ev) + ' ' + h.standing.toFixed(3));
+    const through = h.ray({ x: 1.3, y: 1, z: 12 }, { x: 0, y: 0, z: -1 }); assert.ok(through.distance > wall.distance + 1, 'the shot now goes through the hole');
+  }
+  // what holds what: one pier out of a tall masonry wall and the wall closes over the hole; a wide hole and the wall above comes down, but the corners stand
+  {
+    const tall = house({}, { style: 'stone', w: 20, d: 12, floors: 5 }), n0 = tall.left;
+    tall.hit({ x: 1.6, y: 1, z: 6 }, { radius: .5, power: 9 }); play(tall, 4);
+    assert.ok(n0 - tall.left <= 8 && up(tall, c => c.kind === 'wall' && c.min[2] > 5.6 && c.min[1] > 3 && c.max[0] > 0 && c.min[0] < 3) >= 8, 'a small hole: the wall above bridges it (' + (n0 - tall.left) + ' pieces gone)');
+    const h = house(); h.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6); const ev = play(h, 5);
+    const above = up(h, c => c.kind === 'wall' && c.min[2] > 2.6 && c.min[1] > 3.1 && c.max[1] < 6.5 && c.min[0] > -2.2 && c.max[0] < 2.2), corners = up(h, c => c.kind === 'wall' && c.min[2] > 2.6 && Math.abs(c.min[0] + c.max[0]) > 7);
+    assert.ok(ev.fell >= 6 && above === 0 && corners >= 8 && h.standing > .8 && h.standing < .93, `a shell at the door: the wall above falls (${above} left of it), the corners stand (${corners}), ${h.standing.toFixed(2)} of it is left: ` + JSON.stringify(ev));
+    assert.ok(up(h, c => c.kind === 'roof') === 6 && !h.busy, 'the roof stays up, and it all comes to rest');
+    // the same shell at a concrete building and a timber one: concrete is harder to break, and both hang further
+    const con = house({}, { style: 'concrete' }), tim = house({}, { style: 'timber' });
+    const nc = con.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6), nt = tim.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6); play(con, 4); play(tim, 4);
+    assert.ok(nc < nt && con.standing > h.standing && tim.S.span === 2 && h.S.span === 1, `concrete loses less (${nc} pieces against ${nt}), ${con.standing.toFixed(2)} stands`);
+  }
+  // a big bomb flattens it: nothing left but rubble, within what is kept
+  {
+    const h = house({ bits: 120 }); h.blast({ x: 0, y: 1.5, z: 0 }, 6.5, { power: 7, push: 12 }); const ev = play(h, 7);
+    assert.ok(h.standing === 0 && h.left === 1 && ev.broke > 100 && !h.busy && h.loose.length === 0, 'flat: ' + h.standing + ' ' + JSON.stringify(ev));
+    let lying = 0, low = 9; for (const s of h.bits.sets.values()) for (let i = 0; i < s.n; i++) if (s.st[i]) { assert.equal(s.st[i], 2, 'every bit has stopped'); lying++; low = Math.min(low, s.P[i * 3 + 1]); }
+    assert.ok(lying > 150 && low > 0 && low < .2, 'its rubble lies on the ground: ' + lying + ' bits, the lowest at ' + low.toFixed(3));
+    h.reset(); assert.ok(h.standing === 1 && h.left === h.pieces && h.meshes.every(m => m.geometry.index.array.every((v, i) => v === i)), 'reset: whole again');
+  }
+  // with a physics world: the walls are solid, what falls is bodies that end on the ground, and a hole lets a ray through
+  {
+    const w = new World3D({ gravity: -9.81 }); w.floor(0);
+    const h = house({ world: w, at: [20, 0, -5], turn: Math.PI / 2 });   // its door faces +x now
+    const from = { x: 40, y: 1.3, z: -5 + 2.67 }, see = () => (w.step(1 / 60), w.ray(from, { x: -1, y: 0, z: 0 }, 60));   // (a step first: the engine's rays see what was there at the last one)
+    const a = see(); assert.ok(a && a.thing.structure === h && Math.abs(a.point.x - 23) < .2, 'the physics ray stops at its front wall, turned and moved: ' + a?.point.x.toFixed(2));
+    const mine = h.ray(from, { x: -1, y: 0, z: 0 }); assert.ok(Math.abs(mine.point.x - a.point.x) < .2 && mine.normal.x > .9, 'and its own ray agrees');
+    h.blast({ x: 23.3, y: 1.2, z: -5.4 }, 2.6); const ev = play(h, 6);
+    assert.ok(ev.fell >= 6 && ev.landed >= 6 && !h.busy, 'pieces fall and land: ' + JSON.stringify(ev));
+    for (const L of h.loose) assert.ok(L.rest && L.g.position.y < 3.6 && L.g.position.y > 0, 'a fallen piece lies at rest, not in the air: y ' + L.g.position.y.toFixed(2));
+    const b = see(); assert.ok(!b || b.point.x < a.point.x - 1, 'a ray goes in through the hole');
+    assert.ok(h.loose.length <= 40 && w.bodies.length === 2 + h.loose.length, 'one body for the building, one for each fallen piece');
+    h.reset(); const c = see(); assert.ok(c && Math.abs(c.point.x - a.point.x) < .01 && w.bodies.length === 2, 'reset: solid again, the fallen pieces gone');
+    h.blast({ x: 23.3, y: 1.2, z: -5.4 }, 2.6); w.clear(); h.reset(); w.floor(0); assert.ok(see()?.thing.structure === h, 'and after the game clears the world');
+    // a new world for a new round (the old one freed, its bodies with it): whole and solid in the new one
+    h.blast({ x: 23.3, y: 1.2, z: -5.4 }, 2.6); play(h, .5); assert.ok(h.loose.length > 0); w.free();
+    const w2 = new World3D({ gravity: -9.81 }); w2.floor(0); h.reset({ world: w2 }); w2.step(1 / 60);
+    const d = w2.ray(from, { x: -1, y: 0, z: 0 }, 60); assert.ok(d?.thing.structure === h && h.standing === 1 && h.loose.length === 0 && w2.bodies.length === 2, 'a new world for a new round');
+    h.remove(); assert.equal(w2.bodies.length, 1); w2.free();
+  }
+  // with no world it is the same every time
+  {
+    const run = () => { const h = house(); h.blast({ x: 4, y: .8, z: 3 }, 2.4); const ev = play(h, 5); return JSON.stringify([ev, h.left, h.standing.toFixed(4)]); };
+    assert.equal(run(), run(), 'the same shell, the same ruin');
+  }
+  // the game's own boxes: two posts and a beam in three lengths, and a block the game holds up with two more hung under it.
+  // The middle of the beam out, the ends stay; a post out, its end of the beam falls and the rest hangs from the other post
+  {
+    const mk = () => new Structure(null, { pieces: [
+      { size: [.5, 3, .5], at: [-2, 1.5, 0] }, { size: [.5, 3, .5], at: [2, 1.5, 0] },
+      { size: [1.5, .4, .5], at: [-1.5, 3.2, 0], material: 'planks' }, { size: [1.5, .4, .5], at: [0, 3.2, 0], material: 'planks' }, { size: [1.5, .4, .5], at: [1.5, 3.2, 0], material: 'planks' },
+      { size: [1, 1, 1], at: [0, 9, 0], fixed: true }, { size: [.4, 1, .4], at: [0, 8, 0] }, { size: [.4, 1, .4], at: [0, 7, 0] },
+    ], materials: { brick: M(), planks: M() } }), out = { radius: .1, power: 99 };
+    const a = mk(); assert.ok(a.pieces === 8 && a.S.loose === 0 && a.S.C[5].anchor && !a.S.C[6].anchor && a.S.C[2].strength < a.S.C[0].strength, 'posts, a beam, and a block the game holds up');
+    assert.equal(a.hit([0, 3.2, 0], out), 1); play(a, 2); assert.deepEqual([...a.state], [0, 0, 0, 3, 0, 0, 0, 0], 'the middle of the beam out: its ends stay on their posts');
+    assert.equal(a.hit([0, 9, 0], out), 0, 'a fixed block does not break');
+    const b = mk(); b.hit([-2, 1.5, 0], out); play(b, 3); assert.deepEqual([...b.state], [3, 0, 3, 0, 0, 0, 0, 0], 'a post out: its end of the beam falls, the rest hangs on');
+    b.hit([0, 8, 0], out); play(b, 3); assert.deepEqual([...b.state].slice(5), [0, 3, 3], 'and what hung from a piece falls when that goes');
+  }
+  console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics, reset and your own boxes ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

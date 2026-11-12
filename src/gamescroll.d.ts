@@ -2108,6 +2108,81 @@ export interface DestructionPart {
   shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; world?: Loose; push?: number; seed?: number; density?: number; radius?: number }): Loose[];
   slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose }): Loose[];
   Rubble: new (scene?: Loose, o?: { max?: number; life?: number; shrink?: number }) => { add(pieces: Loose | Loose[]): Loose; update(dt: number): Loose; clear(): Loose; readonly count: number };
+  /**
+   * A building that comes apart (Next Gen). It is made of pieces, and each knows what holds it up: shoot one away or set off a
+   * blast and whatever no longer reaches the ground through the pieces left comes down a moment later. Make it once in make()
+   * (scene: a view's scene or any group; null: not drawn), `reset()` it each round, `update(dt)` after the physics step, and
+   * read `broke` for your dust, sound and shake.
+   */
+  Structure: new (scene?: Loose | null, o?: StructureOptions) => StructureT;
+}
+export interface BuildingOptions {
+  style?: 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' | Record<string, Loose>; w?: number; d?: number; floors?: number; roof?: 'flat' | 'gable'; floor?: number; bay?: number; win?: [number, number]; lit?: number; colour?: string; color?: string; door?: boolean; seed?: number; wear?: false | Record<string, Loose>;
+  /** three.js materials of your own in place of the style's recipes: any of wall, trim, frame, roof, door, glass, lit, floor. */
+  materials?: { wall?: Loose; trim?: Loose; frame?: Loose; roof?: Loose; door?: Loose; glass?: Loose; lit?: Loose; floor?: Loose };
+}
+export interface StructureOptions {
+  /** What gs.models.building() takes (style, w, d, floors, roof, seed, materials...): the building, cut into pieces. */
+  building?: BuildingOptions;
+  /** Or your own boxes (a bridge, a tower, a wall): size [w, h, d] and at [x, y, z] (the box's centre, from the structure's foot). */
+  pieces?: StructurePiece[];
+  /** With pieces: a three.js material, or a gs.models.material recipe as [name, options], for each material name used. */
+  materials?: Record<string, Loose>;
+  /** With pieces: how many pieces can hang out sideways from what holds them (1: masonry; 2: timber, steel, concrete). */
+  span?: number;
+  /** Where its foot is ([x, y, z] or { x, y, z }) and its turn about y (radians). A building's door faces +z before the turn. */
+  at?: number[] | XYZ; turn?: number;
+  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Without one, pieces fall and break up where they land. */
+  world?: Loose | null;
+  /** The height rubble lands at, (x, z) => y. Default: flat at its foot. */
+  ground?: ((x: number, z: number) => number) | null;
+  /** How much small rubble is kept for each material (240; the oldest goes first). */
+  bits?: number;
+  /** How many fallen pieces stay as bodies (40); the oldest break up. */
+  keep?: number;
+  /** How hard falling pieces hit what they land on (1; 0: they break nothing). */
+  crush?: number;
+  gravity?: number; seed?: number;
+  /** With pieces: wear options for gs.models.wear, or false for none. */
+  wear?: false | Record<string, Loose>;
+}
+export interface StructurePiece {
+  size: [number, number, number]; at: [number, number, number];
+  /** A material name ('brick' by default: a gs.models.material recipe, or a name in `materials`) or a three.js material. */
+  material?: string | Loose;
+  /** What it is made of, for its weight, strength and rubble, when the material's name does not say: 'brick', 'stone', 'concrete', 'planks', 'wood', 'metal', 'glass'... */
+  stuff?: string;
+  /** How hard it is to break (1.5 brick, 2 stone, 2.5 concrete, .8 wood, .1 glass). */
+  strength?: number;
+  /** true: it never moves or breaks, and holds the rest up as the ground does (a cliff the bridge is built into). */
+  fixed?: boolean;
+  kind?: string;
+}
+/** Something that happened to a piece this frame, in world units: it broke up where it stood, it began to fall, or a fallen one landed (crumbled: it broke up there). size: metres across; mass: tonnes; speed: metres a second. */
+export interface StructureEvent { how: 'broke' | 'fell' | 'landed'; kind: 'wall' | 'window' | 'door' | 'roof' | 'floor' | string; x: number; y: number; z: number; size: number; mass: number; speed: number; crumbled?: boolean }
+export interface StructureT {
+  /** What happened this frame (after update): feed your dust, sound and shake from it. */
+  broke: StructureEvent[];
+  /** How much of it still stands, by weight: 1 whole, 0 flat. */
+  readonly standing: number;
+  /** Pieces about to fall or in the air; busy: true while anything is still coming down (pieces or rubble). */
+  readonly falling: number; readonly busy: boolean;
+  /** How many pieces it is made of, and how many still stand. */
+  readonly pieces: number; readonly left: number;
+  /** The standing building (a Group in the scene) and what has come off it. */
+  group: Loose; debris: Loose;
+  /** A hit at a world point (a bullet, a wrecking ball): pieces within radius (.4) are hurt by power (1 breaks a timber wall, 1.5 brick, 2 stone, 2.5 concrete; .1 a window; hurt adds up), and one that breaks goes to rubble along dir at push metres a second. Returns how many broke. */
+  hit(point: number[] | XYZ, o?: { radius?: number; power?: number; dir?: number[] | XYZ | null; push?: number }): number;
+  /** An explosion at a world point: every piece within radius (3) is hurt (power at the centre, 4, none at the edge), the nearest go to rubble, the rest of the broken ones are thrown whole at up to push metres a second (8); what they held up follows. Returns how many broke. */
+  blast(point: number[] | XYZ, radius?: number, o?: { power?: number; push?: number }): number;
+  /** The first standing piece along a ray (for shots without a physics world), or null. */
+  ray(from: number[] | XYZ, dir: number[] | XYZ, max?: number): { point: Loose; normal: Loose; distance: number; kind: string; piece: number } | null;
+  /** Each frame, after the physics step. */
+  update(dt: number): StructureT;
+  /** Whole again, for a new round. { world }: the round's new physics world (or call it after `world.clear()`). */
+  reset(o?: { world?: Loose | null }): StructureT;
+  /** Out of the scene and the physics world. */
+  remove(): void;
 }
 export interface PropsPart {
   simplify(geometry: Loose, keep?: number): Loose;
@@ -2233,8 +2308,8 @@ export interface ModelsPart {
   tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush', o?: { size?: 'small' | 'medium' | 'large'; height?: number; seed?: number; leaves?: string; bark?: string; wind?: number | Loose }): Loose;
   /** The tree kinds. */
   readonly trees: readonly string[];
-  /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear. A Group centred on x/z, foot at y = 0, door facing +z. */
-  building(o?: { style?: 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' | Record<string, Loose>; w?: number; d?: number; floors?: number; roof?: 'flat' | 'gable'; floor?: number; bay?: number; win?: [number, number]; lit?: number; colour?: string; color?: string; door?: boolean; seed?: number; wear?: false | Record<string, Loose> }): Loose;
+  /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear, materials (your own three.js materials in place of the style's). A Group centred on x/z, foot at y = 0, door facing +z. One that comes apart: gs.destruction.Structure. */
+  building(o?: BuildingOptions): Loose;
   /** The building styles (copy one and change it: { ...gs.models.buildings.brick, bay: 3 }). */
   readonly buildings: Record<string, Record<string, Loose>>;
   /**

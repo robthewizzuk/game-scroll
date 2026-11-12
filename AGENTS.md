@@ -185,7 +185,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   (`Sky` time of day, `Weather` rain/snow/storm).
 - Action and adventure: `gs.combat` (`Gun`, `Shots`, `arc`/`lob`, `Health`, `Markers`, `Explosives`), `gs.tactics`
   (`CoverMap`, `Squad`, `Route`), `gs.climb` (`Ledges`, `Climber`, `Rope`), `gs.poses` (`figure`, `person` skinned with a face, `Rig` with `blend`/`blend2` blend spaces and `plant` foot IK, `LIFELIKE` strides whose feet don't slide, `keys([...])` key-pose actions), `gs.missions`
-  (`Mission` scripts, `zone`), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`),
+  (`Mission` scripts, `zone`), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`; `Structure(scene, { building: { style, floors }, world })`: a building that comes apart: `hit(point, { power })`, `blast(point, radius)`, and what the broken pieces held up comes down; `broke` lists what happened for your dust and sound, `standing` 1..0; make it in make(), `reset()` each round),
   `gs.stealth` (`lightAt`, `Takedown`, `Bodies`, `Floors`, `Disguise`), `gs.gadgets` (`Grapple`, `Zipline`, `Wires`, `Lock`,
   `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound; `new Ears({ level: world })` muffles sounds behind walls and gives each place its own echo by itself) and
   `music({ layers }).intensity()` + `follow(song)` (living music), `gs.props` (`Props` instancing + LOD (a kind with no `lod` gets simpler far shapes by itself), `perCopy(instancedMesh)` skips off-screen copies, `Areas`, `Chunks`, `simplify`).

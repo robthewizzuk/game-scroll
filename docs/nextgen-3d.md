@@ -827,8 +827,11 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   door, with a string course, cornice, and a flat roof with a parapet or a gable roof. `style` (`brick`,
   `plaster`, `concrete`, `stone`, `timber`, or your own: `{ ...gs.models.buildings.brick, bay: 3 }`), `w`, `d`
   (metres, 8 x 6), `floors`, `roof`, `floor` (storey height), `bay` (metres per window), `win` ([w, h]), `lit` (0..1
-  of windows glowing), `colour` (walls), `door: false`, `seed`, `wear`. Its door faces +z. About 0.1 to 0.25 s
-  each, so make them while loading; for a whole town in the distance `gs.city` is far cheaper.
+  of windows glowing), `colour` (walls), `door: false`, `seed`, `wear`, `materials` (your own three.js materials
+  in place of the style's: `{ wall, trim, frame, roof, door, glass, lit }`). Its door faces +z. About 0.1 to 0.25 s
+  each, so make them while loading; for a whole town in the distance `gs.city` is far cheaper. One that
+  comes apart when it is shot or shelled is `new gs.destruction.Structure(view.scene, { building: { ... } })`
+  ([maker-kit.md](maker-kit.md#buildings-that-come-apart)).
 - **`relief(target, o)`**: real surface detail. The bumps a material only paints (the height layer its
   texture was made with: the barrels of roof tiles, the mortar between bricks, the ridges of bark) are
   made into real triangles, so they stand out against the sky and hide what is behind them from every
