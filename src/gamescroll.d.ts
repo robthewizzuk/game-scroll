@@ -2109,7 +2109,7 @@ export type VehicleT = Loose & {
   wheels: Loose[];
   /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a steam engine's `rods`, `mainRods`. */
   parts: Record<string, Loose>;
-  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
+  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, a van's `roof`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
   points: Record<string, Loose>;
   /** Metres over everything that does not turn. */
   size: { length: number; width: number; height: number };
@@ -2150,7 +2150,7 @@ export type TrainT = Loose & {
   /** The engine's. */
   parts: Record<string, Loose>; points: Record<string, Loose>;
   size: { length: number; width: number; height: number };
-  /** Metres over its buffers, end to end. */
+  /** Metres over its buffers, end to end; and the radius of its engine's driving wheels. */
   length: number; radius: number; tris: number; look: Record<string, Loose>;
   /** Turns every wheel (and a steam engine's rods) for a distance travelled so far, in metres. */
   roll(d: number): TrainT;

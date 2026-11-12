@@ -2669,7 +2669,7 @@ update(dt) {
 | `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
 | `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
 | `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
-| `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a wagon's `load`, a coach's `door` |
+| `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a wagon's `load`, a coach's `door`, a van's and a coach's `roof` |
 | `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
 | `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
 
@@ -2717,7 +2717,9 @@ update(dt) {
   with its `length` over the buffers), its middle at the origin. `train.along(track, d)` lays it on your
   rails with its front `d` metres along them: `track` is `(metres) => ({ x, y, z })` on top of the rails
   or a `gs.paths.Path`, measured in the train's own space, and each car goes between its own wheels, so
-  a train bends round curves and tips on slopes. `roll(d)` turns the wheels and a steam engine's rods.
+  a train bends round curves and tips on slopes. `roll(d)` turns the wheels and a steam engine's rods;
+  `train.radius` is its driving wheels' radius (a chuff is a quarter of a turn: `2 * Math.PI * train.radius / 4`
+  metres).
 - **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
   21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 4,500 to
   15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less

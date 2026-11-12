@@ -89,8 +89,9 @@ export function railcar(type, o = {}) {
   const b = new Shape(), gauge = o.gauge || 1.435, sets = [], points = {}, parts = {}; let length = 9.1, rods = null;
   if (WAGONS[type]) {
     const l = length - 1.1, r = .46, ax = [-2.5, 2.5];
-    frame(b, l, ax, r); WAGONS[type](b, l);
+    frame(b, l, ax, r); const top = WAGONS[type](b, l);
     sets.push({ geo: { r, gauge }, at: ax.map(z => [r, z]) }); points.load = [0, FLOOR + .1, 0];
+    if (type === 'van') points.roof = [0, top, 0];   // (the top of its roof, in the middle: someone riding it)
   } else if (type === 'coach') {
     length = 18.2; const l = length - 1.1, r = .46, z0 = -l / 2, z1 = l / 2, bays = 9, door = 1.15, bay = (l - door * 2 - .5) / bays, wz = i => z0 + door + .25 + bay * (i + .5);
     const must = []; for (let i = 0; i < bays; i++) must.push(wz(i) - bay * .36, wz(i) + bay * .36); for (const s of [-1, 1]) must.push(s * (l / 2 - .4), s * (l / 2 - .85));
@@ -100,7 +101,7 @@ export function railcar(type, o = {}) {
       for (const q of [-1, 1]) { b.strip('dark', [q * (body.hw + .002), FLOOR + .15, s * (l / 2 - .28)], [q * (body.hw + .002), body.yc, s * (l / 2 - .28)], .01, .004).strip('dark', [q * (body.hw + .002), FLOOR + .15, s * (l / 2 - .97)], [q * (body.hw + .002), body.yc, s * (l / 2 - .97)], .01, .004).box('chrome', .02, .2, .03, [q * (body.hw + .012), body.yb - .1, s * (l / 2 - .9)]); } }
     for (let i = 0; i < 5; i++) b.cyl('paint2', .12, .16, .1, [0, 3.45 + .44, lerp(z0 + 2, z1 - 2, i / 4)], 0, 10);
     for (const s of [-1, 1]) for (const z of bogie(b, s * (l / 2 - 2.9), r)) (sets[0] ||= { geo: { r, gauge }, at: [] }).at.push([r, z]);
-    points.door = [1.5, FLOOR, l / 2 - .62];
+    points.door = [1.5, FLOOR, l / 2 - .62]; points.roof = [0, 3.45 + .42, 0];
   } else if (type === 'diesel') {
     length = 14.2; const l = length - 1.1, r = .5, z0 = -l / 2, z1 = l / 2, cab = 1.9;
     const must = [z0 + .25, z0 + cab - .3, z1 - .25, z1 - cab + .3, z0 + cab + .5, z1 - cab - .5];
