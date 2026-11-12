@@ -569,6 +569,132 @@ try {
   await new Promise(r => setTimeout(r, 300));
   const kept = await new Promise(res => { const rq = indexedDB.open('gs-creatures'); rq.onsuccess = () => { try { const c = rq.result.transaction('pieces').objectStore('pieces').count(); c.onsuccess = () => res(c.result); c.onerror = () => res(-1); } catch (x) { res(-1); } }; rq.onerror = () => res(-1); });
   ok(kept >= 2, 'creature: ' + kept + ' sculpts saved for next time');
+  // gs.characters.Reactions on the sculpted person (kit-test.mjs has it on figure() and person(); scripts/reactions.cjs films it)
+  {
+    const T = gs.THREE, { Reactions } = gs.characters, opts = { seed: 3, build: 'medium' }; await gs.models.human.ready([opts]);
+    const scene = new T.Scene(), phys = new gs.physics3d.World3D({ gravity: -9.81 }), floor = new T.Mesh(new T.BoxGeometry(100, .4, 100)); floor.position.y = -.2; scene.add(floor); phys.ground(scene);
+    const man = gs.models.human(opts); scene.add(man); const react = new Reactions(man, { world: phys }), hips = () => man.rig.parts.hips.getWorldPosition(new T.Vector3()).y;
+    const play = (secs, at = {}) => { const log = []; let st = react.state, low = 9; for (let i = 0; i <= secs * 60; i++) { at[i]?.(); man.rig.blend({ idle: 0, walk: 1.4 }, 0); man.rig.update(1 / 60, { speed: 0 }); react.update(1 / 60); phys.step(1 / 60); if (react.state !== st) log.push(st = react.state); low = Math.min(low, hips()); } return { log: log.join(' '), low }; };
+    const stood = hips(), shove = play(3, { 18: () => react.hit([0, 0, 1.6]) });
+    ok(shove.log === 'stagger steady' && man.position.z > .25 && Math.abs(hips() - stood) < .05, 'reactions: a sculpted person shoved takes steps and stands: ' + shove.log + ', ' + man.position.z.toFixed(2) + ' m');
+    const fell = play(7, { 18: () => react.hit([0, 0, -3.6]) });
+    ok(fell.log === 'falling down rising steady' && fell.low < .3 && Math.abs(hips() - stood) < .05 && !phys.dolls.length, 'reactions: knocked down it lies on the floor (hips ' + fell.low.toFixed(2) + ') and gets up: ' + fell.log);
+    react.fall(null, { limp: true }); const limp = play(6.5);
+    ok(limp.log === 'down' && react.down && !react.doll, 'reactions: limp, it stays down: ' + limp.log); react.reset(); phys.free();
+  }
+  // gs.destruction.Structure on a real gs.models building, in its recipe materials (kit-test.mjs has the rules; scripts/structure.cjs films it)
+  {
+    const T = gs.THREE, { Structure } = gs.destruction, scene = new T.Scene(), phys = new gs.physics3d.World3D({ gravity: -9.81 }); phys.floor(0);
+    const opts = { style: 'brick', w: 8, d: 6, floors: 2, seed: 3 }, whole = gs.models.building(opts), house = new Structure(scene, { building: opts, world: phys, at: [0, 0, -12] });
+    const tris = g => { let n = 0; g.traverse(m => { if (m.isMesh && !m.isInstancedMesh) n += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3; }); return n; };
+    const names = g => { const n = new Set(); g.traverse(m => m.isMesh && n.add(m.material.name + (m.material.vertexColors ? ' worn' : ''))); return [...n].sort(); }, mine = names(house.group);
+    ok(house.pieces > 150 && names(whole).length >= 5 && names(whole).every(n => mine.includes(n)) && tris(house.group) > tris(whole), 'structure: a brick house in ' + house.pieces + ' pieces, in the materials of the whole one (' + mine.join(', ') + '; ' + tris(whole) + ' triangles whole, ' + tris(house.group) + ' cut)');
+    const ev = { broke: 0, fell: 0, landed: 0 }, play = secs => { for (let i = 0; i < secs * 60; i++) { phys.step(1 / 60); house.update(1 / 60); for (const b of house.broke) ev[b.how]++; } };
+    const n = house.blast({ x: .4, y: 1.2, z: -12 + 3.3 }, 2.6); play(6);
+    const rubble = house.debris.children.filter(m => m.isInstancedMesh), lying = rubble.reduce((a, m) => { for (let i = 0; i < m.count; i++) if (m.instanceMatrix.array[i * 16 + 15] === 1 && Math.abs(m.instanceMatrix.array[i * 16]) + Math.abs(m.instanceMatrix.array[i * 16 + 1]) + Math.abs(m.instanceMatrix.array[i * 16 + 2]) > 0) a++; return a; }, 0);
+    ok(n >= 5 && ev.fell >= 6 && ev.landed >= 6 && house.standing > .8 && house.standing < .93 && !house.busy && lying > 20, 'structure: a shell at its door: ' + JSON.stringify(ev) + ', ' + (house.standing * 100).toFixed(0) + '% stands, ' + lying + ' bits of rubble lie');
+    house.reset(); ok(house.standing === 1 && tris(house.group) > tris(whole) && phys.bodies.length === 2, 'structure: reset, it is whole'); house.remove(); ok(!house.group.parent && phys.bodies.length === 1, 'structure: removed');
+    const wall = new Structure(scene, { pieces: [{ size: [2, 1, .3], at: [0, .5, 0] }, { size: [2, 1, .3], at: [0, 1.5, 0], material: 'stone' }, { size: [1, .2, 1], at: [0, 2.1, 0], material: 'planks' }] });
+    wall.hit([0, .5, 0], { power: 9 }); for (let i = 0; i < 240; i++) wall.update(1 / 60);
+    ok(wall.pieces === 3 && wall.left === 0 && !wall.busy && wall.group.children.length === 3, 'structure: your own boxes in recipe materials; the bottom one out and the rest come down'); wall.remove(); phys.free();
+  }
+  // gs.outdoors.Water disturbed, drawn by three's own renderer from above: a splash leaves foam and spray in the picture and rain leaves rings,
+  // with no shader of its own (kit-test.mjs has the rules; scripts/water.cjs films it)
+  {
+    const T = gs.THREE, { Water } = gs.outdoors, scene = new T.Scene(), cam = new T.PerspectiveCamera(50, 1, .1, 200); cam.position.set(0, 9, .01); cam.lookAt(0, 0, 0); scene.add(new T.HemisphereLight('#fff', '#888', 4));
+    const sea = new Water({ waves: .2, ripples: true, colour: '#1a4f7a', opacity: 1 }); scene.add(sea.mesh);
+    const r = new T.WebGLRenderer({ canvas: document.createElement('canvas'), preserveDrawingBuffer: true }); r.setSize(128, 128); let bad = 0; r.debug.onShaderError = () => { bad++; };
+    const look = () => { r.render(scene, cam); const gl = r.getContext(), px = new Uint8Array(128 * 128 * 4); gl.readPixels(0, 0, 128, 128, gl.RGBA, gl.UNSIGNED_BYTE, px); let white = 0, sum = 0; for (let i = 0; i < px.length; i += 4) { sum += px[i] + px[i + 1] + px[i + 2]; if (px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) white++; } return { white: white / 16384, light: sum / 16384 / 3 }; };
+    const run = n => { for (let i = 0; i < n; i++) sea.update(1 / 60, { x: 0, y: 0, z: 0 }); return look(); };
+    const calm = run(10); sea.splash(0, 0, { size: 1.5, speed: 6 }); const hit = run(20), events = sea.splashes.length; sea.splash(1, 1); sea.update(1 / 60, { x: 0, y: 0, z: 0 });
+    ok(calm.white < .002 && hit.white > .01 && sea.splashes.length === 1 && events === 0 && sea.busy && !bad, 'water: a splash leaves foam and spray in the picture (' + (hit.white * 100).toFixed(1) + '% of it white, ' + (calm.white * 100).toFixed(1) + '% calm)');
+    sea.calm(); const still = run(5); sea.rain = 1; const wet = run(60);
+    ok(still.white < .002 && sea.dapple.alive > 300 && wet.light > still.light + .5 && !bad, 'water: calm() clears it, and rain leaves rings (the picture ' + (wet.light - still.light).toFixed(1) + ' lighter of 255)');
+    sea.dispose(); r.dispose();
+  }
+  // gs.sky.Weather given the level, drawn in a Next Gen view from above: a floor with a roof over its left half (the roof is only
+  // told to the weather, not drawn, so the floor under it shows). Rain darkens the open half, snow whitens it, and the half
+  // under the roof stays as it was (kit-test.mjs has the rules; scripts/weather.cjs films it)
+  {
+    const T = gs.THREE, hold = window.__hd.hold; window.__hd.hold = false;
+    const v = new gs.hd.HDView({ bg: '#404040', amb: .6, env: 0 }), c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    v.cam.fov = 50; v.cam.aspect = 1; v.cam.updateProjectionMatrix(); v.cam.position.set(0, 14, .01); v.cam.lookAt(0, 0, 0); v.cam.updateMatrixWorld();
+    const sl = gs.hd.sun('#fff', 2, 12, [1, .5, 0]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0); v.air({ haze: 0 });   // (a low sun: its glint is off the floor)
+    const floor = new T.Mesh(new T.BoxGeometry(16, .2, 16), gs.hd.pbr('#7a6a5a', { rough: .9 })); floor.position.y = -.1; v.scene.add(floor);
+    const w = new gs.sky.Weather(v, { kind: 'clear', level: f => (f.x < 0 && f.y >= 3 ? f.y - 3 : Infinity), ground: () => 0 }); w.update(1 / 60); w.cover.update(true);
+    const look = async () => { for (let i = 0; i < 8; i++) { w.update(0); v.render(x, 128, 128); await frame(); } const d = x.getImageData(0, 0, 128, 128).data, half = x0 => { let s = 0, n = 0; for (let j = 16; j < 112; j++) for (let i = x0; i < x0 + 40; i++) { const k = (j * 128 + i) * 4; s += d[k] + d[k + 1] + d[k + 2]; n += 3; } return s / n; }; return { roofed: half(8), open: half(80) }; };
+    const dry = await look(); w.wet = 1; const wet = await look(); w.wet = 0; w.snow = 1; const snow = await look();
+    ok(w.cover.ready && !w.open({ x: -4, y: 0, z: 0 }) && w.open({ x: 4, y: 0, z: 0 }) && Math.abs(dry.roofed - dry.open) < 4 && dry.open > 30, `weather: the same floor on both sides while it is dry (${dry.roofed.toFixed(0)} and ${dry.open.toFixed(0)} of 255)`);
+    ok(wet.open < wet.roofed * .85 && Math.abs(wet.roofed - dry.roofed) < 5, `weather: rain darkens the open half (${wet.open.toFixed(0)} of 255), the half under the roof stays dry (${wet.roofed.toFixed(0)})`);
+    ok(snow.open > snow.roofed * 2 && Math.abs(snow.roofed - dry.roofed) < 5, `weather: snow whitens the open half (${snow.open.toFixed(0)} of 255), not the half under the roof (${snow.roofed.toFixed(0)})`);
+    w.dispose(); window.__hd.hold = hold;
+  }
+  // gs.models.vehicle where its recipe materials can be made (they need a canvas): every kind and style, a lorry on its planks in worn paint,
+  // a car on gs.physics3d springs with its wheels on the road, and one drawn in a Next Gen view (kit-test.mjs has the rules; scripts/vehicles.cjs shows them all)
+  {
+    const T = gs.THREE, { vehicle } = gs.models, hold = window.__hd.hold; window.__hd.hold = false;
+    let n = 0, tris = 0, slow = 0; const empty = [], t0 = performance.now();
+    for (const [kind, styles] of Object.entries(vehicle.kinds)) for (const style of styles) {
+      const a = performance.now(), v = vehicle(kind, { style, seed: 2 }); slow = Math.max(slow, performance.now() - a); n++; tris += v.tris;
+      v.traverse(m => { if (m.isMesh && !(m.material && m.geometry.attributes.position.count > 0)) empty.push(kind + ' ' + style + ' ' + m.name); });
+      if (!(v.size.length > 2 && v.size.width > 1 && v.size.height > .5 && v.tris > 1500)) empty.push(kind + ' ' + style + ' size');
+    }
+    const ms = performance.now() - t0;
+    ok(n === 30 && !empty.length && ms < 20000, `vehicles: all ${n} made in ${ms.toFixed(0)} ms (the slowest ${slow.toFixed(0)} ms), ${tris} triangles ${empty.join(', ')}`);
+    const slot = (v, name) => { let f = null; v.shell.traverse(m => { if (m.isMesh && m.name === name && !f) f = m; }); return f; };
+    const lorry = vehicle('truck', { style: 'flat', finish: 'worn', axles: 3 }), again = vehicle('truck', { style: 'flat', finish: 'worn', axles: 3 }), rusty = vehicle('car', { style: 'pickup', finish: 'rusty' });
+    ok(lorry.wheels.length === 6 && slot(lorry, 'wood').material.name === 'models:planks' && slot(lorry, 'paint').material.name === 'models:paint' && slot(rusty, 'paint').material.name === 'models:rust' && slot(lorry, 'paint').geometry.attributes.color && slot(again, 'wood').geometry === slot(lorry, 'wood').geometry && slot(again, 'paint').material === slot(lorry, 'paint').material,
+      'vehicles: a lorry on three axles with planks from the wood recipe and worn paint (aged in its corners), a rusty pickup; the same lorry again shares its shapes and materials');
+    // on springs: World3D.vehicle drives the car's own wheels; after a run it is upright, its wheels on the road and turned, its body above them
+    const phys = new gs.physics3d.World3D({ gravity: -9.81 }); phys.floor(0);
+    const car = vehicle('car', { style: 'saloon' }), scene = new T.Scene(); scene.add(car);
+    const drive = phys.vehicle(car, car.chassis({ power: 12, at: { x: 0, y: 1.2, z: 0 } }));
+    for (let i = 0; i < 60; i++) phys.step(1 / 60); const rest = car.position.y;
+    for (let i = 0; i < 180; i++) { drive.drive(1, .4); phys.step(1 / 60); } car.updateMatrixWorld(true);
+    const wy = car.wheels.map(w => w.getWorldPosition(new T.Vector3()).y), body = new T.Box3().setFromObject(car.shell);
+    ok(drive.grounded && !drive.upsideDown && drive.speed > 3 && car.position.z < -2 && Math.abs(car.position.x) > .3 && wy.every(y => Math.abs(y - car.radius) < .06) && body.min.y > .08 && body.min.y < .3 && Math.abs(car.wheels[0].rotation.x) > 1 && Math.abs(car.wheels[0].rotation.y) > .05 && car.wheels[2].rotation.y === 0,
+      `vehicles: a saloon on gs.physics3d springs settles ${rest.toFixed(2)} m up, drives (${drive.speed.toFixed(1)} m/s) and steers; wheels on the road (${wy.map(y => y.toFixed(2)).join(' ')}), its floor ${body.min.y.toFixed(2)} m above it`);
+    phys.free();
+    // drawn: a red sports car side on in a Next Gen view; its paint, its dark tyres and glass, and the floor all show
+    const v = new gs.hd.HDView({ bg: '#8a9299', amb: .7, env: .4 }), c = document.createElement('canvas'); c.width = 192; c.height = 128; const x = c.getContext('2d');
+    v.cam.fov = 30; v.cam.aspect = 1.5; v.cam.updateProjectionMatrix(); v.cam.position.set(-9, 1.6, 0); v.cam.lookAt(0, .6, 0); v.cam.updateMatrixWorld();
+    const sl = gs.hd.sun('#fff', 2.4, 12, [-.6, .7, .3]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0);
+    const floor = new T.Mesh(new T.BoxGeometry(40, .2, 40), gs.hd.pbr('#8a8a84', { rough: .9 })); floor.position.y = -.1; floor.receiveShadow = true; v.scene.add(floor);
+    const red = vehicle('car', { style: 'sports', colour: '#c0181c', wear: false }); v.scene.add(red);
+    for (let i = 0; i < 8; i++) { red.move(1 / 60, 10, { steer: .5 }); v.render(x, 192, 128); await new Promise(r => requestAnimationFrame(r)); }
+    const d = x.getImageData(0, 0, 192, 128).data; let paint = 0, dark = 0; for (let i = 0; i < d.length; i += 4) { if (d[i] > 90 && d[i] > d[i + 1] * 2.2 && d[i] > d[i + 2] * 2.2) paint++; else if (d[i] + d[i + 1] + d[i + 2] < 90) dark++; }
+    ok(paint / 24576 > .04 && dark / 24576 > .01 && paint / 24576 < .5, `vehicles: a red sports car drawn in a Next Gen view (${(paint / 245.76).toFixed(1)}% of the picture its paint, ${(dark / 245.76).toFixed(1)}% tyres, glass and shadow)`);
+    window.__hd.hold = hold;
+  }
+  // gs.models.fur: fur in layers on a creature, hair in strands and a beard on a person, drawn in a Next Gen view
+  // (kit-test.mjs has the strand pictures, the shell and the layers; scripts/creatures.cjs draws them to look over)
+  {
+    const T = gs.THREE, { creature, human } = gs.models, frame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
+    const hold = window.__hd.hold; window.__hd.hold = false;
+    const v = new gs.hd.HDView({ bg: '#8a9299', amb: .7, env: .4 }), c = document.createElement('canvas'); c.width = 192; c.height = 192; const x = c.getContext('2d');
+    const sl = gs.hd.sun('#fff', 2.2, 4, [.5, .9, .6]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0);
+    const shot = async n => { for (let i = 0; i < n; i++) { v.render(x, 192, 192); await frame(); } return x.getImageData(0, 0, 192, 192).data; };
+    const differ = (a, b) => { let k = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 24) k++; return k / (a.length / 4); };
+    await creature.ready([{ like: 'cat' }]);
+    const cat = creature({ like: 'cat', colour: '#d0d0d0', belly: '#d0d0d0', pattern: 'plain', fur: { layers: 6, auto: false } }); v.scene.add(cat);
+    v.cam.fov = 30; v.cam.aspect = 1; v.cam.updateProjectionMatrix(); v.cam.position.set(.5, .3, .25); v.cam.lookAt(0, .17, .05); v.cam.updateMatrixWorld();
+    const furry = (await shot(4)).slice(); cat.fur.level = 0; const bare = (await shot(4)).slice(); cat.fur.level = 1; const d1 = differ(furry, bare);
+    ok(cat.fur.layers === 6 && cat.fur.shells.every(m => m.isSkinnedMesh && m.parent === cat.mesh) && d1 > .08 && d1 < .9, `fur: a cat drawn with six layers of fur in a Next Gen view (${(d1 * 100).toFixed(0)}% of the picture is not what it is without)`);
+    // thinning by itself: seen small the coat is put away, seen big again it comes back (the closest level kept on for this)
+    v.scene.remove(cat); const wild = creature({ like: 'cat', fur: { layers: 6 } }); v.scene.add(wild);
+    await shot(2); const close = wild.fur.level; v.cam.position.set(12, 6, 6); v.cam.lookAt(0, .17, .05); v.cam.updateMatrixWorld(); await shot(2); await wait(140); await shot(2); const off = wild.fur.level, shown = wild.fur.shells.filter(m => m.visible).length;
+    v.cam.position.set(.5, .3, .25); v.cam.lookAt(0, .17, .05); v.cam.updateMatrixWorld(); await shot(2); await wait(140); await shot(2);
+    ok(close === 1 && off === 0 && shown === 0 && wild.fur.level === 1 && wild.lod === 0, 'fur: far off a coat puts its layers away by itself, and brings them back close up');
+    v.scene.remove(wild);
+    // a person: strands over the sculpted hair and a beard on the jaw; strands: false leaves the sculpted hair alone
+    const opts = { seed: 3, build: 'medium' }; await human.ready([opts]);
+    const man = human({ ...opts, hair: '#b08a50', beard: 1, strands: { layers: 5, auto: false } }), plain = human({ ...opts, strands: false }); v.scene.add(man);
+    man.updateMatrixWorld(true); const hp = man.bones.head.getWorldPosition(new T.Vector3()); v.cam.position.set(hp.x + .3, hp.y + .15, hp.z + .5); v.cam.lookAt(hp.x, hp.y + .08, hp.z); v.cam.updateMatrixWorld(); sl.follow(hp.x, hp.y, hp.z);
+    const hairy = (await shot(4)).slice(); man.hair.level = 0; const cap = (await shot(4)).slice(); const d2 = differ(hairy, cap), info = man.hair.shell.userData.fur;
+    ok(man.hair.layers === 5 && /hair/.test(man.hair.shells[0].material.map.name) && info.tris > 2000 && plain.hair === null && human({ ...opts }).hair?.shell.userData.fur.tris < info.tris && d2 > .04,
+      `hair: a person's hair in strands and a beard, five layers over ${info.tris} triangles (${(d2 * 100).toFixed(0)}% of the picture is not what it is without); strands: false leaves the sculpted hair`);
+    window.__hd.hold = hold;
+  }
 }
 window.result = out;
 </script>

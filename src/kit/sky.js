@@ -30,6 +30,8 @@
 import { AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, LineBasicMaterial, LineSegments, Mesh, Points, PointsMaterial, Scene, ShaderMaterial, SphereGeometry, Vector3, Vector4 } from 'three';
 import { prefs } from './prefs.js';
 import { noiseTex } from './hd3d.js';
+import { Cover } from './cover.js';
+import { Spray } from './water.js';
 
 const C = c => new Color(c);
 // Preetham daylight (the same sums as three.js's Sky shader), worked out on the CPU for the colours the
@@ -242,18 +244,39 @@ export class Sky {
  * gs.outdoors Wind (followed as it changes).
  * Storms flash lightning every few seconds: set onFlash(far) (far 0..1) for thunder. Reduce motion
  * turns flashes down.
+ *
+ * Weather that changes the world: give it the level and it works out what the sky can see (weather.cover).
+ * level: a gs.physics3d World3D, a City, Voxels, a function, meshes, or a list of those (as for
+ * gs.sound.Ears); ground: (x, z) => the land's height (land.height); level: true says all of it lies under
+ * the open sky. Then rain and snow stop at roofs, what is open to the sky gets wet as it rains (soak:
+ * seconds of full rain to wet it through, 20) and dries after (dry: seconds, 90), puddles gather on flat
+ * ground and dry last, and snow settles (settle: seconds of full snow to cover the ground, 40) and melts
+ * (melt: 150; rain melts it faster). The floor of a house stays dry and bare. weather.wet, .pools and
+ * .snow (0..1) are yours to read, or to set for a level that starts wet or white; wetAt(p) and snowAt(p)
+ * answer for one spot. water: a gs.outdoors.Water (or a list) the rain should fall on too. In a Next Gen
+ * view the look is part of its air (view.air()), so make the weather with the level, before the first frame.
  */
 export class Weather {
-  constructor(view, { kind = 'rain', amount = 1, area, wind = [0, 0], max = 900, color } = {}) {
+  constructor(view, { kind = 'rain', amount = 1, area, wind = [0, 0], max = 900, color, flake, level = null, ground = null, cover = null, water = null, soak = 20, dry = 90, settle = 40, melt = 150, deep = .25, hops = 96 } = {}) {
     this.view = view; this.wind = wind; this.max = max; this.area = area ?? Math.min(radiusOf(view.cam) * .35, (view.cam?.far ?? 100) > 1000 ? 400 : 30);
     this.flashLeft = 0; this.nextFlash = 3 + Math.random() * 5; this.flashI = 0; this.onFlash = null; this.t = 0;
     this.off = new Float32Array(max * 3); for (let i = 0; i < this.off.length; i++) this.off[i] = Math.random();
     const g = new BufferGeometry(); g.setAttribute('position', new BufferAttribute(new Float32Array(max * 6), 3));
     this.rainMesh = new LineSegments(g, new LineBasicMaterial({ color: color ?? '#a8c0e0', transparent: true, opacity: .55, depthWrite: false }));
     const pg = new BufferGeometry(); pg.setAttribute('position', new BufferAttribute(new Float32Array(max * 3), 3));
-    this.snowMesh = new Points(pg, new PointsMaterial({ color: color ?? '#ffffff', size: this.area * .012, transparent: true, opacity: .9, depthWrite: false }));
+    this.snowMesh = new Points(pg, new PointsMaterial({ color: color ?? '#ffffff', size: flake ?? (level || ground || cover ? Math.min(.07, this.area * .012) : this.area * .012), transparent: true, opacity: .9, depthWrite: false }));
     for (const m of [this.rainMesh, this.snowMesh]) { m.frustumCulled = false; m.renderOrder = 5; if (isToon(view)) m.layers.set(1); view.scene.add(m); }
     this.hemiBase = view.hemi?.intensity ?? 1;
+    // the world it changes: what the sky can see, and how wet and how white that is
+    this.world = !!(level || ground || cover);
+    this.ownCover = !cover?.at; this.cover = cover?.at ? cover : (level && level !== true) || ground || cover ? new Cover({ level, ground, ...(cover || {}) }) : null;   // (cover: one of your own to share, or its settings)
+    Object.assign(this, { soak, dry, settle, melt, deep }); this.wet = 0; this.pools = 0; this.snow = 0; this.rain = 0; this.snowing = 0;
+    this.waters = water ? [].concat(water) : [];
+    this.air = this.world && typeof view.air === 'function' && !isToon(view) ? view.air() : null;
+    this.shown = { wet: 0, snow: 0, pools: 0, cover: this.cover };   // (what the view's air draws: hd3d.js airUniforms)
+    if (this.air) this.air.world = this.shown;
+    this.hops = this.air && hops > 0 ? new Spray(hops, color ?? '#dfe9f2') : null; this.seed = 9151;
+    if (this.hops) { view.scene.add(this.hops.mesh); this.floor = (x, z) => this.landAt(x, z); }
     this.set(kind, amount);
   }
   set(kind, amount = this.amount ?? 1) {
@@ -269,11 +292,15 @@ export class Weather {
   update(dt) {
     this.t += dt; const cam = this.view.cam, A = this.area, n = Math.floor(this.max * this.amount);
     const cx = cam?.position.x ?? 0, cy = cam?.position.y ?? 0, cz = cam?.position.z ?? 0, W = this.wind, wx = W.x ?? W[0] ?? 0, wz = W.z ?? W[1] ?? 0, o = this.off;
+    this.rain = this.rainMesh.visible ? this.amount : 0; this.snowing = this.snowMesh.visible ? this.amount : 0;
+    if (this.world) this.soakIn(dt, cx, cy, cz);
+    const cv = this.cover;
     if (this.rainMesh.visible) {
       const p = this.rainMesh.geometry.attributes.position, a = p.array, fall = A * 1.6, len = A * .03;
       for (let i = 0; i < n; i++) {
         const k = i * 3, y = (((o[k + 1] - this.t * fall / A * (.8 + o[k] * .4)) % 1) + 1) % 1;
         const x = cx + (((o[k] + wx * this.t / A) % 1 + 1) % 1 - .5) * A, z = cz + (((o[k + 2] + wz * this.t / A) % 1 + 1) % 1 - .5) * A, yy = cy + (y - .5) * A;
+        if (cv && yy < cv.at(x, z)) { a[i * 6] = a[i * 6 + 3] = x; a[i * 6 + 1] = a[i * 6 + 4] = yy; a[i * 6 + 2] = a[i * 6 + 5] = z; continue; }   // (under a roof: no drop)
         a[i * 6] = x; a[i * 6 + 1] = yy; a[i * 6 + 2] = z; a[i * 6 + 3] = x - wx * .02; a[i * 6 + 4] = yy + len; a[i * 6 + 5] = z - wz * .02;
       }
       p.needsUpdate = true; this.rainMesh.geometry.setDrawRange(0, n * 2);
@@ -283,6 +310,7 @@ export class Weather {
       for (let i = 0; i < n; i++) {
         const k = i * 3, y = (((o[k + 1] - this.t * fall / A * (.7 + o[k] * .6)) % 1) + 1) % 1, sway = Math.sin(this.t * 1.3 + i) * .02;
         a[k] = cx + (((o[k] + sway + wx * this.t / A) % 1 + 1) % 1 - .5) * A; a[k + 1] = cy + (y - .5) * A; a[k + 2] = cz + (((o[k + 2] + wz * this.t / A) % 1 + 1) % 1 - .5) * A;
+        if (cv && a[k + 1] < cv.at(a[k], a[k + 2])) a[k + 1] = cy - A * 4;   // (under a roof: no flake; out of sight below)
       }
       p.needsUpdate = true; this.snowMesh.geometry.setDrawRange(0, n);
     }
@@ -294,7 +322,44 @@ export class Weather {
     } else if (this.lit && h) { h.intensity = this.hemiBase; this.lit = false; }
     return this;
   }
+  // The world under the weather: how wet it is, how much lies in puddles, how much snow has settled; the map of
+  // what the sky can see follows the camera; rain hops off the ground near it.
+  soakIn(dt, cx, cy, cz) {
+    const rain = this.rain, snowing = this.snowing, up = (v, by) => Math.min(1, v + by), down = (v, by) => Math.max(0, v - by);
+    if (snowing > 0) this.snow = up(this.snow, dt / this.settle * snowing);
+    else if (this.snow > 0) { const by = dt / this.melt * (1 + rain * 5); this.snow = down(this.snow, by); this.wet = up(this.wet, by * 6); }   // (melting snow is wet ground)
+    if (rain > 0) { this.wet = up(this.wet, dt / this.soak * rain); if (this.wet > .5) this.pools = up(this.pools, dt / (this.soak * 2) * rain); }
+    else { if (!(this.snow > 0)) this.wet = down(this.wet, dt / this.dry); this.pools = down(this.pools, dt / (this.dry * 1.6)); }
+    const cv = this.cover; if (cv) cv.place(cx, cy, cz).update();
+    const S = this.shown; S.wet = this.wet; S.snow = this.snow; S.pools = this.pools; S.cover = cv;
+    for (const w of this.waters) w.rain = rain;
+    const h = this.hops;
+    if (h) {
+      if (rain > 0 && dt > 0) {
+        const R = () => (this.seed = (this.seed * 16807) % 2147483647) / 2147483647, q = rain * dt * 150, k = Math.floor(q) + (R() < q % 1 ? 1 : 0);
+        for (let i = 0; i < k; i++) {
+          const a = R() * 6.2832, d = Math.pow(R(), .7) * 9, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d, y = this.landAt(x, z);
+          if (y > -Infinity) h.add(x, y + .01, z, (R() - .5) * .5, .8 + R() * 1.1, (R() - .5) * .5, .012 + R() * .012);
+        }
+      }
+      h.update(dt, this.floor);
+    }
+  }
+  // where a drop lands at x, z: the highest thing there, or the water over it (-Infinity: not known)
+  landAt(x, z) { let y = this.cover ? this.cover.at(x, z) : -Infinity; for (const w of this.waters) { const wy = w.height(x, z); if (wy > y) y = wy; } return y; }
+  /** Can the sky see this point (is nothing over it)? Always true with no level. */
+  open(p) { return this.cover ? this.cover.open(p.x, p.y, p.z) : true; }
+  /** How wet a spot is now, 0..1: nothing under a roof. */
+  wetAt(p) { return this.open(p) ? this.wet : 0; }
+  /** How deep the snow lies at a spot, in metres (`deep`, .25, when it has all settled): nothing under a roof. */
+  snowAt(p) { return this.open(p) ? this.snow * this.deep : 0; }
   /** True for a moment during a lightning flash (to brighten your own sky or flash the screen). */
   get flashing() { return this.flashLeft > 0; }
-  dispose() { for (const m of [this.rainMesh, this.snowMesh]) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); } }
+  dispose() {
+    for (const m of [this.rainMesh, this.snowMesh]) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); }
+    if (this.hops) { this.hops.mesh.removeFromParent(); this.hops.mesh.geometry.dispose(); this.hops.mesh.material.dispose(); }
+    if (this.air?.world === this.shown) this.air.world = null;
+    if (this.cover && this.ownCover) this.cover.dispose();
+    for (const w of this.waters) w.rain = 0;
+  }
 }

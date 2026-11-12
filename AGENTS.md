@@ -150,7 +150,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
 - `gs.physics.Physics` (Rapier 2D; lazy): `circle`, `box`, `poly`, `line`, `walls`, `hinge`, `spring`,
   `rope`, `ragdoll(x, y, { size })`, `weld`, `slider`, `wheel`, `grab`, `ray`, `at`, `blast`, `onHit`, `step(dt)`, `path(c, t)`.
 - `gs.physics3d.World3D` (Rapier 3D; lazy): `ball`, `box`, `capsule`, `hull`, `ground(mesh)`,
-  `floor`, `mover()` (walking character), `ragdoll()`, `ray`, joints, `step(dt)` syncs meshes.
+  `floor`, `mover()` (walking character), `ragdoll(character)` (a jointed ragdoll on a `gs.poses` rig: joints that only turn as real ones do, `drive(pose, strength)` muscles), `ray`, joints, `step(dt)` syncs meshes.
 - `gs.ai`: `Crowd` (`add(x, y).chase(t) / flee / wander / follow(route) / flock / hunt(t, nav)`),
   `NavGrid` (`path`, `sees`), `Brain` (state machine), `Tree` (behaviour trees: mistreevous text, actions by name), `Choose`
   (utility AI: the highest-scoring want), `YUKA`, `Swarm({ count, w, h, speed })` (thousands of flockers on the
@@ -163,7 +163,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
 - `gs.senses`: `Senses` (sight cones, hearing, memory; moods calm/suspicious/alert/searching), `Noises`.
 - `gs.camera.CameraRig` (3D): `chase`, `shoulder`, `first`, `top`, `side`, `orbit`, `rail`, `fixed`; walls, blends, `shake`, `kick`.
 - `gs.nav3d.NavMesh3D` (lazy): 3D paths made from your level meshes, `crowd()` agents.
-- `gs.characters`: `lookAt`, `reach` (two-bone IK), `Steps` (feet that plant), `Wobble`, `Face` (blend shapes, blinking, lip sync with `say(text)`), `shapes(geo, {...})`; ragdolls are `World3D.ragdoll()`.
+- `gs.characters`: `lookAt`, `reach` (two-bone IK), `Steps` (feet that plant), `Wobble`, `Face` (blend shapes, blinking, lip sync with `say(text)`), `shapes(geo, {...})`, `Reactions(character, { world, mover })` (people who react physically: `hit(push, at)`, `blast`, `trip`, `fall`, `brace`; they flinch, take steps to keep their balance, fall as a ragdoll and get up; steer only while `!react.busy`); ragdolls are `World3D.ragdoll()`.
 - `gs.camera2d.Camera2D`: follow with a dead zone, look-ahead, zoom, level bounds, `layer()` parallax, `toWorld()`.
 - `gs.tiles.TileMap.fromText(level)`: `#` walls, `-` one-way, `/` `\` slopes, letters as marks (`find('P')`);
   `move(box, dx, dy)`, `ray`, `sees`, `walkable()`, `draw(c, fn, cam)`, `edges(tx, ty)` (auto-tiling: `mask`, `blob`).
@@ -182,20 +182,22 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   (`cost`, `afford`, `short`, `Earner`; `api.away()` for time away), `gs.party` (`Turns` with hand-over, `Split`
   screens), `gs.rhythm` (`Beat`, `Chart`, `Calibrate`), `gs.strokes` (`Stroke`, `Shapes` recogniser, `toPhysics`),
   `gs.vehicles` (`Car`, `Kart`, `Laps`; `World3D.vehicle()` for suspension), `gs.level3d.Level3D(text)`, `gs.sky`
-  (`Sky` time of day, `Weather` rain/snow/storm).
+  (`Sky` time of day, `Weather` rain/snow/storm; `new Weather(view, { level: world, ground: land.height })` changes the world too: rain and snow stop at roofs, the open ground gets wet and puddled and dries, snow settles and melts, floors indoors stay dry; `wetAt(p)`, `snowAt(p)`, `open(p)`).
 - Action and adventure: `gs.combat` (`Gun`, `Shots`, `arc`/`lob`, `Health`, `Markers`, `Explosives`), `gs.tactics`
   (`CoverMap`, `Squad`, `Route`), `gs.climb` (`Ledges`, `Climber`, `Rope`), `gs.poses` (`figure`, `person` skinned with a face, `Rig` with `blend`/`blend2` blend spaces and `plant` foot IK, `LIFELIKE` strides whose feet don't slide, `keys([...])` key-pose actions), `gs.missions`
-  (`Mission` scripts, `zone`), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`),
+  (`Mission` scripts, `zone`), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`; `Structure(scene, { building: { style, floors }, world })`: a building that comes apart: `hit(point, { power })`, `blast(point, radius)`, and what the broken pieces held up comes down; `broke` lists what happened for your dust and sound, `standing` 1..0; make it in make(), `reset()` each round),
   `gs.stealth` (`lightAt`, `Takedown`, `Bodies`, `Floors`, `Disguise`), `gs.gadgets` (`Grapple`, `Zipline`, `Wires`, `Lock`,
-  `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound) and
+  `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound; `new Ears({ level: world })` muffles sounds behind walls and gives each place its own echo by itself) and
   `music({ layers }).intensity()` + `follow(song)` (living music), `gs.props` (`Props` instancing + LOD (a kind with no `lod` gets simpler far shapes by itself), `perCopy(instancedMesh)` skips off-screen copies, `Areas`, `Chunks`, `simplify`).
 - Cities: `gs.city.City(view, { seed, blocks, style: 'downtown'|'oldtown'|'harbour'|'suburb', traffic, people, sky })` (made-up streets, lit buildings,
   traffic at the lights, people; `update(dt, player)`, `avoid`, `collide`, `ray`, `route`, `spot('door'|'rooftop'...)`, `cars.hit`, `people.scare`, `plan`, `drawMap`); guide `docs/city.md`.
 - Things made in code (Next Gen; no image or model files): `gs.models` (`material(name)` 17 recipes like wood, brick, rust, fabric;
   `wear(mesh)` worn edges, grime, moss, snow; `prop('crate'|'barrel'|...)` 18 props; `sculpt([{ ball }, { box, cut }...])`;
   `tree('oak'|'pine'|...)`; `building({ style, floors })`; `relief(mesh)` a material's bumps (roof tiles, bark, stone) as real triangles, built in the background and drawn only as finely as shows; `human(opts)` a sculpted close-up person: face, hands, clothes, hats, kit, three detail levels, `twin()`, `hold()`, `touch()` (hands and feet onto a rung, a bar, a ledge); several kinds: `human.all([...])` first thing in make();
-  `creature({ like: 'deer', seed })` an animal or monster from a seed with gaits made for its own legs and wings: 35 to start from (`dog`, `horse`, `owl`, `shark`, `bee`, `spider`, `dragon`, `ogre`, `blob`...; kinds `quad`, `bird`, `fish`, `insect`, `monster`), `move(dt, speed, { fly })` each frame, `speeds`, `rig.play('eat')`, `twin()` for a herd, `creature.all([...])` first thing in make()); guide in `docs/nextgen-3d.md`.
-- Worlds, craft, soft things, cards and menus: `gs.outdoors` (`Land` terrain + `grass`/`scatter`/`meadow` (thick grass that keeps round the camera), `Water`, `River` (water/lava look for gs.flow), `FloodWater` (GPU on WebGPU), `tree`, `rock`, `Wind`, `impostor`),
+  `creature({ like: 'deer', seed })` an animal or monster from a seed with gaits made for its own legs and wings: 35 to start from (`dog`, `horse`, `owl`, `shark`, `bee`, `spider`, `dragon`, `ogre`, `blob`...; kinds `quad`, `bird`, `fish`, `insect`, `monster`), `move(dt, speed, { fly })` each frame, `speeds`, `rig.play('eat')`, `twin()` for a herd, `creature.all([...])` first thing in make();
+  `fur(mesh, { length, kind: 'fur'|'hair', where, lean })` fur or hair in layers on any mesh, no texture files; creatures with a coat of fur wear it by themselves close up (`creature.fur.length = 1.5` stands it on end; `fur: false` leaves it off) and people's hair is strands, with `beard: 0..1.5` (`person.hair`; `strands: false`);
+  `vehicle('car'|'truck'|'tank'|'train'|'boat'|'plane', { style, seed, colour, finish })` a vehicle with no model files, its nose along -z: 30 styles (`vehicle.kinds`: `jeep`, `pickup`, `tanker`, `heavy`, `steam`, `coach`, `rowboat`, `patrol`, `biplane`, `jet`...), `move(dt, speed, { steer })` each frame rolls and steers its wheels, runs its tracks and spins its propellers, `aim(turn, lift)` a turret, `points.driver` / `muzzle` / `exhaust`, `car.chassis()` for `World3D.vehicle`, a train's `cars: [...]` and `along(track, d)`, `twin()`); guide in `docs/nextgen-3d.md`.
+- Worlds, craft, soft things, cards and menus: `gs.outdoors` (`Land` terrain + `grass`/`scatter`/`meadow` (thick grass that keeps round the camera), `Water` (waves to float on; with `ripples: true` it can be disturbed: `ring`, `splash`, `watch(boat)` for its wake and foam, `rain`, a `bed` for shallows and shore foam, `underwater(view)`), `River` (water/lava look for gs.flow), `FloodWater` (GPU on WebGPU), `tree`, `rock`, `Wind`, `impostor`),
   `gs.craft` (`Plane`, `Boat`, `Hover`, `Floater`), `gs.soft` (`Soft` cloth/rope/jelly with `grab`/`cut`, `Liquid`),
   `gs.cards` (`Deck`, `total`, `groups`, `poker`, `winners`, `stacks`), `gs.dice` (`roll('4d6kh3')`, `odds`, `Dice`, `Dice3D`),
   `gs.words` (lazy: `Words` dictionary, `compare`, `Bag`, `score`), `gs.ui` (lazy: `UI` flexbox layout and input with no look; you draw it).

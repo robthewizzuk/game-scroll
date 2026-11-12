@@ -2,7 +2,8 @@
 <script type="module">
 // Measures the sound kit in a browser. ?part=sounds (every ready-made sound and the limiter, rendered
 // faster than real time), ?part=band (the instrument sets, same way), ?part=clock (the music clock on
-// the real sound clock, with the page made busy on purpose). scripts/sound-test.cjs runs all three.
+// the real sound clock, with the page made busy on purpose), ?part=level (sound that knows the level:
+// walls and places, rendered the same way). scripts/sound-test.cjs runs all four.
 const part = new URLSearchParams(location.search).get('part') || 'sounds';
 const out = [], ok = (c, m) => out.push((c ? 'ok   ' : 'FAIL ') + m), note = m => out.push('     ' + m);
 const db = v => (v > 0 ? 20 * Math.log10(v) : -120).toFixed(1);
@@ -162,6 +163,59 @@ try {
     const beat = new Beat({ bpm: 120 }), plain = new Beat({ bpm: 120, heard: false }); beat.start(); plain.start();
     for (let i = 0; i < 30; i++) { await wait(16); beat.update(.016); plain.update(.016); }
     ok(delay() >= .006 && Math.abs((plain.time - beat.time) - delay()) < .012, `Beat runs ${(1000 * (plain.time - beat.time)).toFixed(0)} ms behind the sound clock: the delay to the player's ears (${(delay() * 1000).toFixed(0)} ms here)`);
+  }
+  if (part === 'level') {
+    // sound that knows the level (new Ears({ level })): a sound behind a wall comes out quieter and duller,
+    // a place rings with its own echo, and a sound that goes on is heard again as it moves
+    const SLOT = 4; offline(SLOT * 9);
+    const snd = await import('/src/kit/sound.js'), { audio } = await import('/src/sfx.js');
+    const a = audio(), { Ears, mixer } = snd;
+    // a wall a third of a metre thick across x = 5 (as wide and tall as the world), then a stone room 8 x 4 x 8 m
+    const slab = (f, d) => { if (Math.abs(d.x) < 1e-6) return f.x >= 5 && f.x <= 5.3 ? 0 : null; const t0 = (5 - f.x) / d.x, t1 = (5.3 - f.x) / d.x, lo = Math.min(t0, t1), hi = Math.max(t0, t1); return hi < 0 ? null : Math.max(0, lo); };
+    const box = (f, d) => { let t = Infinity; for (const [k, lo, hi] of [['x', -4, 4], ['y', 0, 4], ['z', -4, 4]]) { if (d[k] > 1e-6) t = Math.min(t, (hi - f[k]) / d[k]); else if (d[k] < -1e-6) t = Math.min(t, (lo - f[k]) / d[k]); } return t; };
+    const ear = { x: 0, y: 1.5, z: 0 }, near = { x: 3, y: 1.5, z: 0 }, behind = { x: 8, y: 1.5, z: 0 }, hiss = { vol: .3, from: 9000, to: 9000, at: .05, hold: .28 }, tap1 = { len: .12, wave: 'sawtooth', vol: .2, hold: .1, at: .25, slide: 2700 };   // (a swoop from 300 Hz to 3 kHz: the same every time, so one slot can be taken from another, and wide enough to hear the whole echo)
+    const ears = new Ears({ level: slab, hrtf: false, auto: false }), room = new Ears({ level: null, hrtf: false, hard: .9 });
+    let loopA = -1, loopB = -1, loopC = -1, placeRead = null;
+    const jobs = [
+      () => { ears.place(ear); ears.noise(.3, behind, { ...hiss, muffled: false }); },             // 0 as if nothing were in the way
+      () => { ears.place(ear); ears.noise(.3, behind, hiss); },                                    // 1 the level decides: behind the wall
+      () => { ears.place(ear); ears.noise(.3, near, hiss); },                                      // 2 this side of it: clear
+      () => { ears.place(ear); ears.noise(.3, behind, { ...hiss, muffled: true }); },              // 3 muffled: true, as it has always been
+      () => { mixer.place({ tail: 2.2, wet: .4 }, .03); ears.tone(300, near, tap1); },   // 4 a place set by hand
+      () => { mixer.place(null, .03); ears.tone(300, near, tap1); },              // 5 and none
+      () => { room.level = box; for (let i = 0; i < 12; i++) room.place(ear); placeRead = { ...room.room }; },   // 6 the ears feel a stone room out (the echo is set a fifth of a second apart)
+      () => { room.place(ear); room.tone(300, near, { ...tap1, at: .5 }); },                       // 7 and a sound rings in it
+      () => {                                                                                      // 8 a sound that goes on, carried round the wall
+        room.level = null; mixer.place(null, .03); ears.place(ear);
+        const h = ears.loop(behind, 'sawtooth', 110, { vol: .05 }); loopA = h.muffled;
+        h.move(near); for (let i = 0; i < 3; i++) ears.place(ear); loopB = h.muffled;
+        h.move(behind); ears.memo?.clear(); for (let i = 0; i < 3; i++) ears.place(ear); loopC = h.muffled; h.stop();
+      },
+    ];
+    const { ctx } = a, tap = ctx.createChannelMerger(4); a.out.connect(tap, 0, 2); tap.connect(ctx.destination);
+    jobs.forEach((job, i) => { if (i === 0) job(); else ctx.suspend(i * SLOT).then(() => { try { job(); } catch (e) { out.push('FAIL threw: ' + e.message); } ctx.go(); }); });
+    const raw = (await ctx.startRendering()).getChannelData(2);
+    const rms = (i, t0, t1) => { let s = 0; const from = Math.round((i * SLOT + t0) * RATE), to = Math.round((i * SLOT + t1) * RATE); for (let k = from; k < to; k++) s += raw[k] * raw[k]; return Math.sqrt(s / (to - from)); };
+    const bright = (i, t0, t1) => { let d = 0, m = 0; const from = Math.round((i * SLOT + t0) * RATE), to = Math.round((i * SLOT + t1) * RATE); for (let k = from + 1; k < to; k++) { d += Math.abs(raw[k] - raw[k - 1]); m += Math.abs(raw[k]); } return m ? d / m : 0; };
+    const L = i => rms(i, .05, .35), B = i => bright(i, .05, .35);
+    note(`behind a wall: clear ${db(L(0))} dB bright ${B(0).toFixed(3)}; by the level ${db(L(1))} dB bright ${B(1).toFixed(3)}; muffled: true ${db(L(3))} dB bright ${B(3).toFixed(3)}; this side ${db(L(2))} dB bright ${B(2).toFixed(3)}`);
+    ok(ears.blocked(behind) > .5 && ears.blocked(near) === 0, `the level says what is behind the wall (${ears.blocked(behind).toFixed(2)}) and what is not`);
+    ok(L(1) < L(0) * .72 && L(1) > L(0) * .2, `a sound behind a wall is quieter, not gone (${(20 * Math.log10(L(1) / L(0))).toFixed(1)} dB)`);
+    ok(B(1) < B(0) * .6, `and duller (${(B(1) / B(0)).toFixed(2)} of the top end)`);
+    ok(B(2) > B(0) * .9 && L(2) > L(0) * 1.5, 'a sound this side of the wall is left clear, and louder for being nearer');
+    ok(B(3) < B(0) * .5 && L(3) < L(0), 'muffled: true still dulls a sound by hand');
+    // (energy: all of a slot's sound added up, so the echo can be weighed against the sound that made it)
+    const E = (i, t0 = 0, t1 = SLOT) => rms(i, t0, t1) ** 2 * (t1 - t0), dB = x => (x > 0 ? 10 * Math.log10(x) : -120).toFixed(1);
+    const dryE = E(5), echoE = E(4) - dryE, lateOn = E(4, 1.4, 2.4), lateOff = E(5, 1.4, 2.4);
+    note(`a place by hand (2.2 s, wet .4): its echo carries ${dB(echoE / dryE)} dB of the sound's energy; a second on ${dB(lateOn / dryE)} dB, with none ${dB(lateOff / dryE)} dB`);
+    ok(echoE > dryE * .06 && echoE < dryE * .4 && lateOn > dryE * 1e-5 && lateOff < dryE * 1e-8, `mixer.place rings after the sound (${dB(echoE / dryE)} dB of its energy) and null takes it away`);
+    const r = placeRead || {};
+    note(`a stone room 8 x 4 x 8 m: size ${r.size?.toFixed(1)} m, walls ${r.walls?.toFixed(2)}, roof ${r.roof?.toFixed(2)}, tail ${r.tail?.toFixed(2)} s, wet ${r.wet?.toFixed(2)}`);
+    ok(r.walls > .95 && r.roof > .95 && r.size > 2 && r.size < 6 && r.tail > .4 && r.tail < 1.6 && r.wet > .15, 'the ears feel out a stone room: closed in, a few metres across, a short bright ring');
+    const ringE = E(7) - dryE, ringLate = E(7, .9, 1.4);
+    note(`a sound in that room: its echo carries ${dB(ringE / dryE)} dB of the sound's energy; from a quarter second after it ${dB(ringLate / dryE)} dB`);
+    ok(ringE > dryE * .04 && ringE < dryE * .4 && ringLate > dryE * 1e-5, `and sounds ring in it by themselves (${dB(ringE / dryE)} dB of the sound's energy)`);
+    ok(loopA > .5 && loopB < .05 && loopC > .5, `a sound that goes on is heard again as it moves: behind ${loopA.toFixed(2)}, in the open ${loopB.toFixed(2)}, behind again ${loopC.toFixed(2)}`);
   }
 } catch (e) { out.push('FAIL threw: ' + (e && e.stack || e)); }
 window.result = out;

@@ -21,6 +21,7 @@ import { reach } from '../characters.js';
 import { Face } from '../skin.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
+import { fur } from './fur.js';
 
 const PI = Math.PI, abs = Math.abs;
 
@@ -128,7 +129,7 @@ function specOf(o) {
   const face = { jaw: o.jaw ?? (fem ? .86 : 1), chin: fem ? .82 : 1, brow: fem ? .72 : 1, nose: o.nose ?? (fem ? .84 : 1), lips: fem ? 1.12 : 1, cheeks: 1, eyes: fem ? 1.08 : 1, soft: fem ? 1 : 0, ...(o.face || {}) };
   const hat = of.hat ? { kind: 'helmet', ...of.hat } : null;
   return { build, top, legs, feet, face, hat, belt: of.belt || null, web: of.webbing || null, extras: of.extras || {}, pack: of.pack || null, gear: o.gear || [], hands: o.hands || 'open', gloves: of.gloves || null,
-    hair: o.hair === null ? null : o.hair ?? DEF.hair, hairStyle: o.hairStyle || 'short', moustache: !!o.moustache, fem, o };
+    hair: o.hair === null ? null : o.hair ?? DEF.hair, hairStyle: o.hairStyle || 'short', moustache: !!o.moustache, beard: o.beard === true ? .6 : Math.max(0, Math.min(1.5, +o.beard || 0)), fem, o };
 }
 // the colour of each slot for this person
 function palette(sp) {
@@ -146,8 +147,10 @@ function palette(sp) {
 /**
  * A person sculpted in code, on gs.poses' skeleton (rig, bones), in three levels of detail.
  * Looks: sex ('m' | 'f'), build ({ shoulders, chest, waist, hips, limbs }: 1 = average), girth, scale, skin,
- * hair (null: none), hairStyle ('short' | 'bun' | 'long' | 'bald'), iris, lips, moustache, face ({ jaw, chin,
- * brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip').
+ * hair (null: none), hairStyle ('short' | 'bun' | 'long' | 'bald'), iris, lips, moustache, beard (0..1.5 how long;
+ * true: .6), strands (false: the sculpted hair alone; or { length (metres), layers, lean, tile }: the layers of
+ * strands that lie over hair, moustache and beard close up, see fur.js), face ({ jaw, chin, brow, nose, lips,
+ * cheeks, eyes }), hands ('open' | 'grip').
  * outfit: top { kind: 'shirt' | 'tunic' | 'blouse' | 'smock', colour, camo ([colour, colour]: blotches over it; legs and hat take it too), sleeves, collar (a colour, or false), pockets (0, 2, 4),
  * buttons (a colour), straps (shoulder straps), tabs (collar patches' colour), cuffs, band (an armband's colour, left arm) },
  * legs { kind: 'trousers' | 'breeches', colour }, feet { kind: 'shoes' | 'boots' | 'tall' | 'gaiters', colour, gaiter },
@@ -159,7 +162,8 @@ function palette(sp) {
  * slots: { name: colour | { colour, as: 'cloth' | 'leather' | 'hard' | 'steel' | 'skin' } } for your own slot names.
  * The old options (body, legs, shoes: colours) still dress a plain person.
  * Returns a Group: rig, bones, mesh (the closest level), lods, lod (0 close .. 2 far; set it, or call
- * see(camera, screenHeightInPixels) each frame to pick by size on screen), gear, face, twin() (another of the
+ * see(camera, screenHeightInPixels) each frame to pick by size on screen), gear, face, hair (the coat of strands
+ * over the hair and beard, or null: hair.length, hair.lean, hair.level), twin() (another of the
  * same person, sharing everything but the skeleton: a squad from two or three faces costs little memory),
  * hold(thing, rightPoint, leftPoint) (both hands onto a thing he carries: after rig.update()).
  * Make people in make() or reset(): a cut of clothes this phone hasn't sculpted yet takes a second or two in
@@ -254,6 +258,38 @@ export function human(o = {}) {
     g.setIndex(new BufferAttribute(n > 65535 ? all : new Uint16Array(all), 1));
     g.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3); return g;
   });
+
+  // ---- hair in strands (fur.js): layers of them over the sculpted hair, streaming from the crown of the head (from the
+  // bun, for hair tied back), a moustache of them and a beard on the jaw; close up only. The layers are made in stand()
+  const so = o.strands === false ? null : typeof o.strands === 'object' && o.strands ? o.strands : {}; let hairGeo = null;
+  if (so && headP && (so.layers ?? fur.layers()) > 0 && (sp.hair && sp.hairStyle !== 'bald' || sp.beard || sp.moustache)) {
+    const off = offs[pieces.indexOf(headP)], grow = new Float32Array(n), HAIR = CLASSES.indexOf('hair'), hc = new Color(pal.hair), fl = sp.face.lips, sf = sp.face.soft;
+    // (under a hat the hair stays as it is sculpted, cropped close: there is little of it to see)
+    const long = sp.hat ? 0 : sp.hairStyle === 'long' ? 1.5 : sp.hairStyle === 'bun' ? .75 : 1; let cols = null;
+    for (let i = 0; i < headP.n; i++) {
+      const j = off + i, name = headP.slots[headP.slot[i]];
+      if (cls[j] === HAIR) { if (sp.hair) grow[j] = long; continue; }
+      const x = headP.P[i * 3], hy = headP.P[i * 3 + 1] - HC[1], hz = headP.P[i * 3 + 2] - HC[2];
+      if (name === 'brow') { if (hy < 0) grow[j] = .45; continue; }   // (a moustache; the brows stay painted)
+      if (!sp.beard || (name !== 'skin' && name !== 'lips')) continue;
+      // a beard: where stubble is painted (the jaw, the chin, the upper lip, under the chin), but not on the lips
+      const lip = Math.min(Math.hypot(x / (.0245 - .0035 * sf), (hy + .0622) / (.0048 * fl)), Math.hypot(x / (.021 - .002 * sf), (hy + .073) / (.0062 * fl)));
+      const k = ss(-.04, -.062, hy) * ss(-.03, .01, hz) * ss(-.165, -.12, hy) * ss(1.25, 2, lip);
+      if (k > .02) { grow[j] = k * sp.beard * 1.7; cols ||= C.slice(); const a = (.28 + .72 * headP.ao[i] / 255) * (.75 + .25 * k); cols[j * 3] = hc.r * a; cols[j * 3 + 1] = hc.g * a; cols[j * 3 + 2] = hc.b * a; }
+    }
+    // the hair on the middle level's triangles (strands hide what a finer surface under them would add); a beard and a
+    // moustache on the finest (the face under them is the finest, and would show through a coarser coat)
+    const idx = [], hairy = j => cls[j] === HAIR;
+    for (const [I, face] of [[headP.I[so.from ?? 1], false], [headP.I[0], true]]) for (let t = 0; t < I.length; t += 3) {
+      const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, onHair = hairy(a) || hairy(b) || hairy(c);
+      if (face ? !onHair && grow[a] + grow[b] + grow[c] > 0 : onHair) idx.push(a, b, c);
+    }
+    hairGeo = fur.shell(geos[0], {
+      index: idx, where: grow, colors: cols, length: so.length ?? .012, tile: so.tile ?? .06, thin: 0, ease: .25,
+      uv: { centre: HC, crown: sp.hairStyle === 'bun' ? [HC[0], HC[1] + .03, HC[2] - .112] : [HC[0], HC[1] + .1, HC[2] - .045], droop: sp.hairStyle === 'long' ? .8 : .35 },
+    });
+    if (!hairGeo.userData.fur.tris) hairGeo = null;
+  }
 
   // a loose copy of a hat or a pack (the helmet that flies off, the pack left behind): the middle level's
   // triangles in a plain mesh, its middle at the mesh's origin; userData.at is where that sits on its bone
@@ -363,6 +399,8 @@ export function human(o = {}) {
       return root;
     };
     root.gear = gear; root.tris = tris; root.twin = stand;
+    // (strands show once a head is big on screen: every layer when he stands about 800 pixels tall, every other one from about 360)
+    root.hair = hairGeo ? fur(lods[0], { kind: 'hair', lean: .9, rough: .5, root: .55, tip: 1.3, ...so, shell: hairGeo, size: .6 }) : null;
     return root;
   };
   return stand();

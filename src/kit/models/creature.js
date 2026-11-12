@@ -18,6 +18,7 @@ import { runCreature, canRunCreature } from '../jobs.js';
 import { Rig } from '../poses.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
+import { fur } from './fur.js';
 
 const PI = Math.PI, abs = Math.abs;
 
@@ -105,6 +106,16 @@ function painter(look, meta) {
   };
 }
 
+// ================================================================= fur: strands in layers over a coat of fur (fur.js)
+// how long each animal's fur is, as a part of its length (a seed makes one a little shaggier or sleeker), and how
+// much of that grows where: short on the face and feet, long in a mane and a bushy tail, none on noses and claws
+const FUR = { dog: .022, cat: .028, bear: .03, rabbit: .05, mouse: .03, deer: .012, beast: .035 }, MANE = 2.6, TAILS = { bushy: 1.8, thin: .5, stub: 1.1, curl: .4, thick: .8 };
+function furOf(sl, bone, furry, tail, tailK) {
+  if (sl === 'mane') return MANE;
+  if (sl !== 'hide' || !furry) return 0;
+  return bone === 'head' ? .55 : bone === 'jaw' ? .45 : /^(foot|hand)/.test(bone) ? .35 : /^(shin|fore)/.test(bone) ? .6 : tail.has(bone) ? tailK : 1;
+}
+
 /**
  * A creature made in code from a seed, on a skeleton of its own with walking, flying or swimming made for it.
  * kind: 'quad' (four legs) | 'bird' | 'fish' | 'insect' | 'monster'; like: the animal it is like (creature.likes
@@ -113,14 +124,15 @@ function painter(look, meta) {
  * size (metres long; tall, for one that stands up), colour, belly, accent, pattern ('plain' | 'spots' | 'stripes' |
  * 'patches' | 'bands' | 'socks' | 'back' | 'tips'), eyes (colour), horn, beak, mane, wing, nose, shell (colours),
  * build ({ measure: value }: any of the kind's own measures, as creature.look.build lists them), detail (.5 coarser
- * .. 2 finer), shadows.
+ * .. 2 finer), shadows, fur (false: no layers of fur over a coat of fur, a mane or a tail of hair; or { length
+ * (metres), layers, lean, tile (metres), from }: see fur.js).
  * Returns a Group, feet at y = 0 (a fish: its middle), facing +z: rig (a gs.poses Rig with this creature's own
  * cycles: 'idle', 'walk', 'run', and by kind 'trot', 'fly', 'glide', 'hover', 'swim', 'eat', 'sit', 'jump', 'attack',
  * 'hurt', 'dead'), move(dt, speed, { fly, turn }) (picks and blends the cycles for a speed in metres a second: the
  * easy way), speeds ({ walk, trot, run, fly, swim }: where each gait sits), bones (bones.head, bones.jaw...), mesh,
  * lods, lod (0 close .. 2 far; set it, or call see(camera, screenHeightInPixels) each frame), look (what the seed
- * chose), size ({ length, height, width } in metres), twin() (another of the very same creature, sharing all but
- * its skeleton: a herd costs little).
+ * chose), size ({ length, height, width } in metres), fur (its coat of fur in layers, or null: fur.length, fur.lean,
+ * fur.level), twin() (another of the very same creature, sharing all but its skeleton: a herd costs little).
  * Make creatures in make() or reset(): a shape this phone hasn't sculpted yet takes a moment in the background
  * (the app shows "Loading…" and makes the game again), then it is saved. Several kinds? creature.all([...]) first.
  * now: true sculpts on the spot (tools and tests; the page stops while it does).
@@ -142,6 +154,7 @@ export function creature(o = {}) {
   const slotC = p.slots.map(s => s === 'hide' ? null : new Color(flat[s] ?? '#888888')), slotK = p.slots.map(classOf), bi = p.names.map(nm => Math.max(0, names.indexOf(nm))), grain = plan.p.coat ?? meta.coat ?? 'fur';
   let lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9], wide = 1e-6; for (let i = 0; i < n; i++) wide = Math.max(wide, abs(P[i * 3]));
   const dark = new Color(look.colour), mo = (look.ps || 0) * .21 + 3.3;
+  const fo = o.fur === false ? null : typeof o.fur === 'object' && o.fur ? o.fur : {}, furry = grain === 'fur', grow = fo && (fo.layers ?? fur.layers()) > 0 ? new Float32Array(n) : null, tailSet = new Set(meta.tail || []), tailK = TAILS[plan.p.tail] ?? 1; let anyFur = false;
   for (let i = 0; i < n; i++) {
     const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], s = p.slot[i], k = slotK[s], ao = p.ao[i] / 255, nx = p.N[i * 3] / 32767, ny = p.N[i * 3 + 1] / 32767, nz = p.N[i * 3 + 2] / 32767;
     N[i * 3] = nx; N[i * 3 + 1] = ny; N[i * 3 + 2] = nz; cls[i] = k;
@@ -152,6 +165,7 @@ export function creature(o = {}) {
       // marks on a shell or a broad wing: spots, or dark edges with a few spots (a ladybird, a butterfly)
       if (look.marks && (p.slots[s] === 'shell' || p.slots[s] === 'wing')) { const k2 = (look.marks === 'edge' ? ss(.6, .9, abs(x) / wide) : 0) + ss(.3, .4, lumps(abs(x) * 7 + mo, y * 7 + mo * .6, z * 7 + mo * .3)) * (look.marks === 'edge' ? .8 : 1); if (k2 > 0) col.lerp(dark, Math.min(1, k2)); }
     } else paint(col, x, y, z, ny, p.names[p.SI[i * 4 + top]]);
+    if (grow && (grow[i] = furOf(p.slots[s], p.names[p.SI[i * 4 + top]], furry, tailSet, tailK))) anyFur = true;
     if (k === 0) col.multiplyScalar(grain === 'scales' ? .88 + .2 * abs(lumps(x * 60, y * 60, z * 60)) : grain === 'fur' || grain === 'feathers' ? .93 + .1 * lumps(x * 44, y * 44, z * 44) + .04 * lumps(x * 150, y * 150, z * 150) : .97 + .05 * lumps(x * 30, y * 30, z * 30));
     // creases in soft shadow; and no coat brighter than white fur is (a pure white would glow in sunlight)
     let sh = k === 1 ? .55 + .45 * ao : .3 + .7 * ao; const top2 = Math.max(col.r, col.g, col.b); if (k !== 1 && top2 > .6) sh *= (.6 + (top2 - .6) * .35) / top2;
@@ -173,6 +187,31 @@ export function creature(o = {}) {
   });
 
   const sh = o.shadows !== false, scale = plan.size / (meta.span || 1), tris = geos.map(g => g.index.count / 3), mv = movesFor(meta, scale);
+
+  // ---- its fur: layers of strands over the coat (fur.js), kept clear of the eyes; the layers are made in stand()
+  let shellGeo = null;
+  if (anyFur) {
+    const sides = [[], [], []]; for (let i = 0; i < n; i++) if (cls[i] === 1) sides[P[i * 3] < -1e-4 ? 0 : P[i * 3] > 1e-4 ? 2 : 1].push(i);
+    for (const l of sides) {
+      if (!l.length) continue;
+      let cx = 0, cy = 0, cz = 0, r = 0; for (const i of l) { cx += P[i * 3]; cy += P[i * 3 + 1]; cz += P[i * 3 + 2]; } cx /= l.length; cy /= l.length; cz /= l.length;
+      for (const i of l) r = Math.max(r, Math.hypot(P[i * 3] - cx, P[i * 3 + 1] - cy, P[i * 3 + 2] - cz));
+      for (let i = 0; i < n; i++) if (grow[i]) grow[i] *= ss(r * 1.0, r * 1.6, Math.hypot(P[i * 3] - cx, P[i * 3 + 1] - cy, P[i * 3 + 2] - cz));
+    }
+    const shag = plan.seed == null ? 1 : .8 + .45 * ((Math.imul(plan.seed | 0, 2246822519) >>> 8) / 16777216), span = meta.span || 1;
+    // on the middle level's triangles (strands hide what a finer surface under them would add), but the head on the
+    // finest: its fur is short and its shapes small, and a coarser coat would lie under the skin round the eyes
+    const headB = new Set(['head', 'jaw'].map(b => p.names.indexOf(b)).filter(b => b >= 0)), onHead = new Uint8Array(n), idx = [];
+    for (let i = 0; i < n; i++) { let top = 0; for (let q = 1; q < 4; q++) if (p.SW[i * 4 + q] > p.SW[i * 4 + top]) top = q; onHead[i] = headB.has(p.SI[i * 4 + top]) ? 1 : 0; }
+    if (fo.from != null) idx.push(...p.I[fo.from]);
+    else for (const [I, face] of [[p.I[1], 0], [p.I[0], 1]]) for (let t = 0; t < I.length; t += 3) if ((onHead[I[t]] & onHead[I[t + 1]] & onHead[I[t + 2]]) === face) idx.push(I[t], I[t + 1], I[t + 2]);
+    shellGeo = fur.shell(geos[0], {
+      index: idx, where: grow, flow: fo.flow, ease: fo.ease,
+      length: fo.length > 0 ? fo.length / scale : (FUR[plan.like] ?? .03) * shag * span,
+      tile: (fo.tile > 0 ? fo.tile : Math.max(.015, Math.min(.12, plan.size * .07))) / scale,
+    });
+    if (!shellGeo.userData.fur.tris) shellGeo = null;
+  }
   const stand = () => {
     const B = {};
     for (const q of b.bones) { const bone = new Bone(); bone.name = q.name; if (meta.order?.[q.name]) bone.rotation.order = meta.order[q.name]; B[q.name] = bone; }
@@ -204,9 +243,11 @@ export function creature(o = {}) {
     root.move = (dt, speed = 0, { fly = false, swim = false, turn = 0 } = {}) => {
       const v = abs(speed), space = fly && mv.air ? mv.air : swim && mv.water ? mv.water : mv.ground || mv.water;
       root.rig.blend(space, v).update(dt, { speed: v, turn });
+      if (root.fur && root.fur.level > 0) { const want = lean0 + .45 * Math.min(1, v / (mv.speeds.run || mv.speeds.fly || 3)), d = want - root.fur.lean; if (abs(d) > .01) root.fur.lean += d * Math.min(1, dt * 6); }   // (the faster it goes, the flatter its fur lies)
       return root;
     };
     root.tris = tris; root.twin = stand;
+    root.fur = shellGeo ? fur(lods[0], { ...fo, shell: shellGeo, size: big / scale }) : null; const lean0 = root.fur ? root.fur.lean : 0;
     return root;
   };
   return stand();

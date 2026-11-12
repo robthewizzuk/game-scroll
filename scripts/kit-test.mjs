@@ -2987,5 +2987,670 @@ console.log('physics ok');
   console.log('gs.props detail option and move ok');
 }
 
+// sound that knows the level (src/kit/acoustics.js, gs.sound.Ears with a level): walls muffle, places ring
+{
+  const { caster, blocked, muffleOf, Room } = await import('../src/kit/acoustics.js');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { TileMap } = await import('../src/kit/tiles.js');
+  const snd = await import('../src/kit/sound.js');
+  // a house: a room 6 x 3 x 8 with a doorway in its east wall, a thin wall to the north, a thick one to the south
+  const w = new World3D();
+  const wall = (x, y, z, sx, sy, sz) => w.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  wall(0, -.1, 0, 60, .2, 60); wall(0, 3.1, 0, 6.4, .2, 8.4);   // ground, ceiling
+  wall(0, 1.5, -4.1, 6.4, 3, .2); wall(0, 1.5, 5, 6.4, 3, 2);   // north (thin), south (2 m thick)
+  wall(-3.1, 1.5, 0, .2, 3, 8.4); wall(3.1, 1.5, -2.5, .2, 3, 3.4); wall(3.1, 1.5, 2.9, .2, 3, 2.6); wall(3.1, 2.6, .4, .2, .8, 2.4);   // west; east with a doorway from z = -.8 to 1.6
+  w.step(1 / 60);
+  const cast = caster(w), ear = { x: 0, y: 1.6, z: 0 };
+  assert.ok(Math.abs(cast(ear, { x: 0, y: 0, z: -1 }, 20) - 4) < .02 && cast(ear, { x: 1, y: 0, z: .1 }, 2) === Infinity, 'a World3D answers how far the first wall is');
+  const inRoom = blocked(cast, ear, { x: -2, y: 1, z: 2 }), thin = blocked(cast, ear, { x: 0, y: 1.6, z: -7 }), thick = blocked(cast, ear, { x: 0, y: 1.6, z: 9 });
+  const door = blocked(cast, ear, { x: 6, y: 1.5, z: .4 }), corner = blocked(cast, ear, { x: 4.2, y: 1.5, z: 3.4 }), west = blocked(cast, ear, { x: -7, y: 1.5, z: 0 });
+  assert.ok(inRoom === 0 && door === 0, 'nothing in the way: in the room ' + inRoom + ', through the doorway ' + door);
+  assert.ok(thin > .35 && thin < .8 && thick > .9 && thick > thin + .15, 'a thin wall muffles (' + thin.toFixed(2) + '), a thick one more (' + thick.toFixed(2) + ')');
+  assert.ok(corner > .1 && corner < thin - .1 && west >= thin - .01, 'outside, round the doorway\'s edge, it is only partly muffled: ' + corner.toFixed(2) + ' (no way round the west wall: ' + west.toFixed(2) + ')');
+  const m0 = muffleOf(0), m1 = muffleOf(1), mh = muffleOf(.5);
+  assert.ok(m0.gain === 1 && m0.hz === 20000 && m1.hz < 500 && m1.gain < .45 && mh.hz < m0.hz && mh.hz > m1.hz, 'muffled sound is quieter and duller by degrees');
+  // the place: the room, a hall, open ground, a yard between far walls
+  const feel = (c, at, o) => { const r = new Room(o); for (let i = 0; i < 6; i++) r.probe(c, at, 4); assert.ok(r.known, 'felt all round'); return { ...r.read() }; };
+  const room = feel(cast, ear);
+  const hall = new World3D(); const hw = (x, y, z, sx, sy, sz) => hall.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  hw(0, -.1, 0, 80, .2, 80); hw(0, 12.1, 0, 30, .2, 44); hw(-15.1, 6, 0, .2, 12, 44); hw(15.1, 6, 0, .2, 12, 44); hw(0, 6, -22.1, 30, 12, .2); hw(0, 6, 22.1, 30, 12, .2); hall.step(1 / 60);
+  const big = feel(caster(hall), { x: 1, y: 1.6, z: 2 });
+  const field = new World3D(); field.floor(0); field.step(1 / 60);
+  const open = feel(caster(field), { x: 0, y: 1.6, z: 0 });
+  const yard = new World3D(); yard.floor(0); yard.box(null, 60, 20, 1, { fixed: true, at: { x: 0, y: 10, z: -25 } }); yard.box(null, 60, 20, 1, { fixed: true, at: { x: 0, y: 10, z: 25 } }); yard.step(1 / 60);
+  const street = feel(caster(yard), { x: 0, y: 1.6, z: 0 });
+  assert.ok(room.enclosed > .9 && room.size > 1.5 && room.size < 5 && room.tail > .25 && room.tail < 1 && room.wet > .1, 'a small room: ' + JSON.stringify({ size: +room.size.toFixed(1), tail: +room.tail.toFixed(2), wet: +room.wet.toFixed(2) }));
+  assert.ok(big.enclosed > .9 && big.tail > room.tail * 2 && big.tail < 4.5 && big.wet > room.wet, 'a hall rings longer: ' + big.tail.toFixed(2) + ' s against ' + room.tail.toFixed(2));
+  assert.ok(open.enclosed === 0 && open.wet === 0 && open.echo === 0, 'open country has no echo');
+  assert.ok(street.roof < .35 && street.wet < room.wet * .5 && street.echo > .03 && Math.abs(street.delay - 2 * 28 / 343) < .09, 'far walls and little roof: a slap back after ' + street.delay.toFixed(2) + ' s ' + JSON.stringify({ roof: +street.roof.toFixed(2), wet: +street.wet.toFixed(3), echo: +street.echo.toFixed(3) }));
+  // a flat map in pixels (16 to the metre): the same answers through a TileMap
+  const map = TileMap.fromText(['##########', '#...#....#', '#...#....#', '#........#', '#...#....#', '##########'], { size: 16 });
+  const c2 = caster(map, { flat: true }), e2 = { x: 40, y: 24 };
+  assert.ok(blocked(c2, e2, { x: 100, y: 24 }, { flat: true, spread: 9.6, thick: 19.2 }) > .3 && blocked(c2, e2, { x: 40, y: 60 }, { flat: true, spread: 9.6, thick: 19.2 }) === 0, 'a tile wall muffles; the open floor does not');
+  const r2 = feel(c2, e2, { flat: true, unit: 16 });
+  assert.ok(r2.walls === 1 && r2.size > .8 && r2.size < 4 && r2.tail > .15, 'a tile room, in metres: ' + r2.size.toFixed(1));
+  // Ears: the same through gs.sound, with no audio here (the sums still run; sounds are silent)
+  const ears = new snd.Ears({ level: w });
+  for (let i = 0; i < 8; i++) ears.place(ear, { x: 0, y: 0, z: -1 });
+  assert.ok(ears.room.enclosed > .9 && Math.abs(ears.blocked({ x: 0, y: 1.6, z: 9 }) - thick) < 1e-9 && ears.blocked({ x: 1, y: 1, z: 1 }) === 0, 'Ears with a level knows the room and the walls');
+  assert.ok(ears.heard({ x: 0, y: 1.6, z: 9 }) < new snd.Ears().place(ear).heard({ x: 0, y: 1.6, z: 9 }), 'heard() is quieter behind a wall');
+  assert.ok(new snd.Ears().room === null && new snd.Ears().blocked({ x: 9, y: 9, z: 9 }) === 0, 'without a level nothing is muffled');
+  ears.tone(440, { x: 0, y: 1.6, z: 9 }).noise(.2, { x: 6, y: 1, z: 0 }).play('boom', { x: 0, y: 1, z: -7 }); ears.loop({ x: 0, y: 1, z: 9 }).move({ x: 1, y: 1, z: 9 }).stop();
+  snd.mixer.place({ tail: 2, wet: .3, echo: .1, delay: .2 }).place(null).reset();
+  const flat = new snd.Ears({ level: map, flat: true, unit: 16 }); for (let i = 0; i < 6; i++) flat.place2d(40, 24);
+  assert.ok(flat.blocked({ x: 100, y: 24 }) > .3 && flat.room.walls === 1, 'flat Ears on a tile map');
+  for (const x of [w, hall, field, yard]) x.free();
+  console.log('sound that knows the level: walls (thin, thick, a doorway, a corner), places (room, hall, open, a yard), tile maps and Ears ok');
+}
+
+// people who react physically (src/kit/ragdoll.js: a jointed ragdoll on a gs.poses rig; src/kit/reactions.js: gs.characters.Reactions)
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { person, figure } = await import('../src/kit/poses.js');
+  const { Reactions } = await import('../src/kit/reactions.js');
+  const { JOINT_LIMITS } = await import('../src/kit/ragdoll.js');
+  const dt = 1 / 60, hipsY = f => f.rig.parts.hips.getWorldPosition(new THREE.Vector3()).y;
+  const stage = (make = person, o = {}) => { const scene = new THREE.Scene(), w = new World3D({ gravity: -9.81 }); const floor = new THREE.Mesh(new THREE.BoxGeometry(200, .4, 200)); floor.position.y = -.2; scene.add(floor); w.ground(scene); const f = make(); scene.add(f); return { scene, w, f, r: o.react === false ? null : new Reactions(f, { world: o.world === false ? null : w, ...o }) }; };
+  // runs a character for `secs`, doing things at the times given; notes each state as it comes, the steps, landings, getting up
+  const run = (S, secs, at = {}, { walk = 0 } = {}) => {
+    const { f, r, w } = S, log = [], seen = { steps: 0, landed: 0, rose: 0, impact: 0 }; let state = r.state;
+    for (let i = 0; i <= Math.round(secs / dt); i++) {
+      for (const t in at) if (Math.round(t / dt) === i) at[t](r, f);
+      if (!r.busy && walk) f.position.z += walk * dt;
+      f.rig.play(walk > 3 && !r.busy ? 'run' : 'idle'); f.rig.update(dt, { speed: r.busy ? 0 : walk }); r.update(dt); w.step(dt);
+      if (r.state !== state) log.push(state = r.state);
+      if (r.stepped) seen.steps++; if (r.landed) { seen.landed++; seen.impact = r.impact; } if (r.rose) seen.rose++;
+    }
+    return { log: log.join(' '), ...seen };
+  };
+
+  // the ragdoll itself: eleven bodies on the skeleton, the character still one skinned mesh that follows them
+  {
+    const { w, f } = stage(person, { react: false });
+    f.rig.play('run'); f.rig.update(.2, { speed: 4 });
+    const doll = w.ragdoll(f, { push: [1.5, 1, -4] });
+    assert.ok(doll.parts.length === 11 && doll.joints.length === 10 && doll.part('head') && w.dolls.includes(doll), 'a rig gets eleven bodies and ten joints');
+    let worst = 0; const P = f.rig.parts;
+    for (let i = 0; i < 240; i++) { w.step(dt); for (const [n, lo, hi] of [['shinL', 0, 2.3], ['shinR', 0, 2.3], ['foreL', -2.2, 0], ['foreR', -2.2, 0]]) worst = Math.max(worst, lo - P[n].rotation.x, P[n].rotation.x - hi, Math.abs(P[n].rotation.y), Math.abs(P[n].rotation.z)); }
+    assert.ok(worst < .3, 'knees and elbows only bend the way they do, through the landing: ' + worst.toFixed(2));
+    assert.ok(doll.still() && hipsY(f) < .3 && hipsY(f) > .03 && Math.abs(f.position.z) > .5 && Math.hypot(f.position.x - P.hips.getWorldPosition(new THREE.Vector3()).x, 0) < .05, 'thrown, it comes to rest on the floor and the character has gone with it: hips ' + hipsY(f).toFixed(2));
+    doll.remove(); assert.ok(!w.dolls.length && doll.gone, 'removed');
+    // muscles: held by the hips in the air, it takes up a pose and keeps it against its own weight
+    const g = stage(person, { react: false }); g.f.position.y = 2; g.f.rig.update(dt);
+    const d2 = g.w.ragdoll(g.f); d2.root.body.setBodyType(g.w.R.RigidBodyType.Fixed, true);
+    const pose = { armL: [.75, 0, .5], armR: [-1.2, 0, -.3], foreL: [-.35, 0, 0], foreR: [-.9, 0, 0], legL: [-.7, 0, 0], shinL: [.9, 0, 0], spine: [.3, 0, 0] };
+    d2.drive(pose, .7); for (let i = 0; i < 90; i++) g.w.step(dt);
+    const Q = g.f.rig.parts, miss = Math.max(...Object.keys(pose).map(n => Math.hypot(Q[n].rotation.x - pose[n][0], Q[n].rotation.y - pose[n][1], Q[n].rotation.z - pose[n][2])));
+    assert.ok(miss < .25, 'driven joints reach their pose and hold it: furthest off ' + miss.toFixed(2));
+    const armUp = Q.armR.rotation.x; d2.relax(); for (let i = 0; i < 40; i++) g.w.step(dt);
+    assert.ok(d2.limp && Q.armR.rotation.x > armUp + .5, 'let go, the arm drops: ' + armUp.toFixed(2) + ' to ' + Q.armR.rotation.x.toFixed(2));
+    d2.drive({ armL: [-3, 0, 0] }, .8); for (let i = 0; i < 90; i++) g.w.step(dt);
+    assert.ok(Math.abs(Q.armL.rotation.x) > 2.6 && JOINT_LIMITS.armL[0][0] <= -3, 'an arm goes right up over the head');
+    w.free(); g.w.free();
+  }
+
+  // a nudge: it gives and comes back, and never leaves its feet
+  {
+    const S = stage(), spine = S.f.rig.parts.spine; let lean = 0;
+    const out = run(S, 1.6, { .3: r => r.hit([0, 0, -.35]), .4: () => { lean = spine.rotation.x; } });
+    assert.ok(out.log === '' && !S.r.busy && out.steps === 0 && Math.hypot(S.f.position.x, S.f.position.z) < .02, 'a nudge is only swayed off: ' + out.log);
+    assert.ok(Math.abs(lean - .03) > .02, 'the trunk gives under it (' + lean.toFixed(2) + ')');
+  }
+  // a shove: steps to stay up, and the game has it back
+  {
+    const S = stage(), out = run(S, 3, { .3: r => r.hit([0, 0, 1.6]) });
+    assert.ok(out.log === 'stagger steady' && out.steps >= 1 && out.steps <= 7 && S.f.position.z > .25 && S.f.position.z < 2.2, 'a shove: ' + out.log + ', ' + out.steps + ' steps, ' + S.f.position.z.toFixed(2) + ' m');
+    assert.ok(Math.abs(hipsY(S.f) - .97) < .06 && !S.w.dolls.length, 'and stands as before');
+    const B = stage(person, { steady: 2.2 }), brute = run(B, 3, { .3: r => r.hit([0, 0, 1.6]) });
+    assert.ok(B.f.position.z < S.f.position.z * .7, 'someone steadier is moved less: ' + B.f.position.z.toFixed(2) + ' against ' + S.f.position.z.toFixed(2) + ' (' + (brute.log || 'steady') + ')');
+  }
+  // a hard blow: down as a ragdoll, a thud, a rest, and up again where it fell
+  for (const [name, push, make] of [['from the front', [0, 0, -3.6], person], ['from behind', [0, 0, 3.6], person], ['from the side', [3.4, 0, .3], figure]]) {
+    const S = stage(make), out = run(S, 7, { .3: r => r.hit(push) });
+    assert.ok(out.log === 'falling down rising steady' && out.landed === 1 && out.impact > 1.5 && out.rose === 1, 'knocked down ' + name + ': ' + out.log + ', landed ' + out.landed + ' (' + out.impact.toFixed(1) + ' m/s)');
+    const far = Math.hypot(S.f.position.x, S.f.position.z), way = (S.f.position.x * push[0] + S.f.position.z * push[2]) / Math.hypot(push[0], push[2]);
+    assert.ok(far > .8 && far < 4.5 && way > .6 && Math.abs(hipsY(S.f) - .97) < .06 && Math.abs(S.f.position.y) < .02 && !S.w.dolls.length && !S.r.busy, 'it gets up ' + far.toFixed(2) + ' m off, the way it was hit, on its feet');
+  }
+  // a blow to a body already down pushes the ragdoll; reset() stands it up at once
+  {
+    const S = stage(); run(S, 1.2, { .3: r => r.hit([0, 0, -3.6]) });
+    const z = S.r.doll.root.pos.z; S.r.hit([0, 2, -4]); run(S, .3);
+    assert.ok(S.r.doll && S.r.doll.root.pos.z < z - .15, 'kicked while down');
+    S.r.reset(); assert.ok(!S.r.busy && !S.r.doll && !S.w.dolls.length && Math.abs(S.f.rig.parts.hips.position.y - S.f.rig.hip0) < 1e-6, 'reset() stands it up');
+  }
+  // limp: it stays where it fell until it is brought round
+  {
+    const S = stage(person, { rest: .5 }), out = run(S, 5, { .3: r => r.fall([0, 0, -1.5], { limp: true }) });
+    assert.ok(out.log === 'falling down' && S.r.down && !S.r.doll && hipsY(S.f) < .3, 'shot: ' + out.log + ', and its bodies are let go once it lies still');
+    S.r.getUp(); assert.ok(S.r.down, 'it does not get up by itself');
+    S.r.getUp({ revive: true }); const up = run(S, 3.5);
+    assert.ok(up.log === 'steady' && up.rose === 1 && Math.abs(hipsY(S.f) - .97) < .06, 'brought round, it gets up: ' + up.log + ', rose ' + up.rose + ', hips ' + hipsY(S.f).toFixed(2));
+  }
+  // a trip: at a run it goes down and slides to a stop; from a stand it only stumbles
+  {
+    const S = stage(), out = run(S, 6.5, { .8: r => r.trip() }, { walk: 5 }), tripped = 5 * .8;
+    assert.ok(out.log.startsWith('falling down rising') && out.landed === 1, 'tripped at a run: ' + out.log);
+    const T = stage(); let at = 0; run(T, 3, { .8: (r, f) => { at = f.position.z; r.trip(); }, 2.2: (r, f) => { at = f.position.z - at; } }, { walk: 5 });
+    assert.ok(at > 1 && at < 4, 'it comes to rest ' + at.toFixed(2) + ' m on, not thrown across the map');
+    const U = stage(), stand = run(U, 3, { .3: r => r.trip([0, 0, 1]) });
+    assert.ok(!stand.log.includes('falling') && stand.steps >= 1, 'tripped from a stand it stumbles: ' + stand.log);
+    assert.ok(tripped > 3);
+  }
+  // an explosion: thrown if near, untouched if far
+  {
+    const S = stage(), out = run(S, 2.5, { .3: (r, f) => r.blast({ x: f.position.x - 1.2, y: .2, z: f.position.z - 1.5 }, 11, 5) });
+    assert.ok(out.log.startsWith('falling') && Math.hypot(S.r.doll ? S.r.doll.root.pos.x : S.f.position.x, S.r.doll ? S.r.doll.root.pos.z : S.f.position.z) > 2.5, 'blown off its feet: ' + out.log);
+    const F = stage(), far = run(F, 1, { .3: r => r.blast({ x: 9, y: 0, z: 0 }, 11, 5) });
+    assert.ok(far.log === '' && far.steps === 0, 'out of reach of it, nothing');
+  }
+  // bracing: arms up when told, and against a wall it runs into
+  {
+    const S = stage(), arm = S.f.rig.parts.armR; let up = 0;
+    run(S, 2, { .3: (r, f) => r.brace({ x: 2, y: 1, z: 3 }, .9), .9: () => { up = arm.rotation.x; } });
+    assert.ok(up < -1.2 && Math.abs(arm.rotation.x) < .3, 'guards its head (' + up.toFixed(2) + ') and lowers its arms after');
+    const W = stage(); W.w.box(null, 4, 3, .3, { fixed: true, at: { x: 0, y: 1.5, z: 4.35 } }); W.w.step(dt);
+    let reach = 0; const out = run(W, 2.4, { .9: (r, f) => { reach = f.rig.parts.armL.rotation.x; } }, { walk: 4.2 });
+    assert.ok(reach < -.8 && out.log.startsWith('stagger') && W.f.position.z < 4.1, 'running at a wall: hands out (' + reach.toFixed(2) + '), then knocked back off it: ' + out.log);
+  }
+  // off a ledge: no ground under the step it needs
+  {
+    const scene = new THREE.Scene(), w = new World3D({ gravity: -9.81 });
+    const top = new THREE.Mesh(new THREE.BoxGeometry(60, .4, 60)); top.position.set(0, -.2, 29); const low = new THREE.Mesh(new THREE.BoxGeometry(200, .4, 200)); low.position.y = -1.6; scene.add(top, low); w.ground(scene);
+    const f = person(); scene.add(f); const r = new Reactions(f, { world: w, ground: (x, z) => z > -1 ? 0 : -1.4 });
+    const out = run({ f, r, w }, 6.5, { .3: r => r.hit([0, 0, -2.2]) });
+    assert.ok(out.log.startsWith('stagger falling down rising') && out.impact > 4 && Math.abs(f.position.y + 1.4) < .05 && f.position.z < -1, 'backed off a ledge, it falls to the ground below (' + out.impact.toFixed(1) + ' m/s) and gets up there: ' + out.log);
+    w.free();
+  }
+  // with no physics world the fall is acted; with a mover, the mover is out of the way while it is down and put back after
+  {
+    const S = stage(person, { world: false }), out = run(S, 6.5, { .3: r => r.hit([0, 0, -3.6]) });
+    assert.ok(out.log === 'falling down rising steady' && out.landed === 1 && out.rose === 1 && !S.r.doll && S.f.position.z < -.3 && Math.abs(hipsY(S.f) - .97) < .06, 'acted: ' + out.log + ', ' + S.f.position.z.toFixed(2) + ' m back');
+    const M = stage(person, { react: false }), mover = M.w.mover(M.f, { radius: .3, height: 1.8 }), r = new Reactions(M.f, { world: M.w, mover });
+    let off = null; const got = run({ ...M, r }, 7, { .3: r => r.hit([0, 0, -3.6]), 1.5: () => { off = mover.collider.isEnabled(); } });
+    assert.ok(got.log === 'falling down rising steady' && off === false && mover.collider.isEnabled() && Math.hypot(mover.feet.x - M.f.position.x, mover.feet.z - M.f.position.z) < .05 && M.f.position.z < -.8, 'a mover stands aside for the fall and takes the body back where it got up: ' + got.log + ', off ' + off + ', feet ' + mover.feet.z.toFixed(2) + ' body ' + M.f.position.z.toFixed(2));
+    const N = stage(person, { react: false }), walker = N.w.mover(N.f, { radius: .3, height: 1.8 }), rn = new Reactions(N.f, { world: N.w, mover: walker }); N.w.box(null, 4, 3, .3, { fixed: true, at: { x: 0, y: 1.5, z: 1.35 } });
+    const pushed = run({ ...N, r: rn }, 3, { .3: r => r.hit([0, 0, 1.7]) });
+    assert.ok(pushed.log === 'stagger steady' && pushed.steps >= 1 && N.f.position.z > .2 && N.f.position.z < .95 && Math.abs(walker.feet.z - N.f.position.z) < .02, 'shoved with a mover, it staggers as far as the wall lets it: ' + pushed.log + ', ' + N.f.position.z.toFixed(2) + ' m');
+  }
+  console.log('people who react physically: the jointed ragdoll (limits, muscles), nudge, shove, knocked down three ways, limp, trip, blast, bracing, a wall, a ledge, acted falls and a mover ok');
+}
+
+// buildings that come apart (src/kit/structure.js: gs.destruction.Structure; src/kit/models/buildings.js: buildingPieces)
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Structure } = await import('../src/kit/structure.js'), { building, buildingPieces, BUILDING_STYLES } = await import('../src/kit/models/buildings.js');
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  const house = (o = {}, b = {}) => new Structure(new THREE.Group(), { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials, ...b }, ...o });
+  const play = (h, secs, w = h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
+  const up = (h, test) => { let n = 0; for (let i = 0; i < h.S.n; i++) if (h.state[i] <= 1 && test(h.S.C[i])) n++; return n; };
+  // the building cut into pieces: every point is in exactly one piece, it fills the same space as the whole one, and whole it holds itself up
+  for (const style of Object.keys(BUILDING_STYLES)) for (const [w, d, floors] of [[8, 6, 2], [13, 9, 3], [5, 5, 1]]) {
+    const cut = buildingPieces({ style, w, d, floors, materials }), seen = cut.parts.map(p => new Uint8Array(p.geo.attributes.position.count));
+    for (const c of cut.chunks) for (const [pi, s, n] of c.ranges) for (let i = s; i < s + n; i++) { assert.equal(seen[pi][i], 0, 'a point in two pieces'); seen[pi][i] = 1; }
+    assert.ok(seen.every(s => s.every(Boolean)), `${style}: every point belongs to a piece`);
+    const box = g => new THREE.Box3().setFromObject(g), a = box(building({ style, w, d, floors, materials })), g = new THREE.Group(); for (const p of cut.parts) g.add(new THREE.Mesh(p.geo));
+    const b = box(g); assert.ok(a.min.distanceTo(b.min) < .01 && a.max.distanceTo(b.max) < .01, `${style} ${w}x${d}x${floors}: cut, it is the same size`);
+    const h = new Structure(null, { building: { style, w, d, floors, materials } });
+    assert.equal(h.S.loose, 0, `${style} ${w}x${d}x${floors}: every piece reaches the ground`); assert.equal(h.standing, 1);
+    h.update(1 / 60); assert.equal(h.due, 0, 'whole, nothing falls'); assert.ok(!h.busy);
+  }
+  // hits: a window goes at once and the wall round it does not; a wall piece takes several, and they add up
+  {
+    const h = house(), glass = h.ray({ x: -2.67, y: 1.6, z: 12 }, { x: 0, y: 0, z: -1 });
+    assert.ok(glass && glass.kind === 'window' && Math.abs(glass.point.z - 3) < .25 && glass.normal.z > .9, 'a ray finds the window: ' + JSON.stringify(glass));
+    assert.equal(h.hit(glass.point, { power: .15 }), 1, 'a window breaks to a small hit'); assert.equal(up(h, c => c.kind === 'window'), 18);
+    const wall = h.ray({ x: 1.3, y: 1, z: 12 }, { x: 0, y: 0, z: -1 }); assert.equal(wall.kind, 'wall');
+    let shots = 0; while (!h.hit(wall.point, { power: .4, dir: [0, 0, -1] }) && shots < 20) shots++;
+    assert.ok(shots >= 2 && shots <= 5, 'a wall piece takes a few hits: ' + shots);
+    const ev = play(h, 3); assert.ok(ev.broke === 2 && h.standing > .95 && !h.busy, 'and the house stands: ' + JSON.stringify(ev) + ' ' + h.standing.toFixed(3));
+    const through = h.ray({ x: 1.3, y: 1, z: 12 }, { x: 0, y: 0, z: -1 }); assert.ok(through.distance > wall.distance + 1, 'the shot now goes through the hole');
+  }
+  // what holds what: one pier out of a tall masonry wall and the wall closes over the hole; a wide hole and the wall above comes down, but the corners stand
+  {
+    const tall = house({}, { style: 'stone', w: 20, d: 12, floors: 5 }), n0 = tall.left;
+    tall.hit({ x: 1.6, y: 1, z: 6 }, { radius: .5, power: 9 }); play(tall, 4);
+    assert.ok(n0 - tall.left <= 8 && up(tall, c => c.kind === 'wall' && c.min[2] > 5.6 && c.min[1] > 3 && c.max[0] > 0 && c.min[0] < 3) >= 8, 'a small hole: the wall above bridges it (' + (n0 - tall.left) + ' pieces gone)');
+    const h = house(); h.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6); const ev = play(h, 5);
+    const above = up(h, c => c.kind === 'wall' && c.min[2] > 2.6 && c.min[1] > 3.1 && c.max[1] < 6.5 && c.min[0] > -2.2 && c.max[0] < 2.2), corners = up(h, c => c.kind === 'wall' && c.min[2] > 2.6 && Math.abs(c.min[0] + c.max[0]) > 7);
+    assert.ok(ev.fell >= 6 && above === 0 && corners >= 8 && h.standing > .8 && h.standing < .93, `a shell at the door: the wall above falls (${above} left of it), the corners stand (${corners}), ${h.standing.toFixed(2)} of it is left: ` + JSON.stringify(ev));
+    assert.ok(up(h, c => c.kind === 'roof') === 6 && !h.busy, 'the roof stays up, and it all comes to rest');
+    // the same shell at a concrete building and a timber one: concrete is harder to break, and both hang further
+    const con = house({}, { style: 'concrete' }), tim = house({}, { style: 'timber' });
+    const nc = con.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6), nt = tim.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6); play(con, 4); play(tim, 4);
+    assert.ok(nc < nt && con.standing > h.standing && tim.S.span === 2 && h.S.span === 1, `concrete loses less (${nc} pieces against ${nt}), ${con.standing.toFixed(2)} stands`);
+  }
+  // a big bomb flattens it: nothing left but rubble, within what is kept
+  {
+    const h = house({ bits: 120 }); h.blast({ x: 0, y: 1.5, z: 0 }, 6.5, { power: 7, push: 12 }); const ev = play(h, 7);
+    assert.ok(h.standing === 0 && h.left === 1 && ev.broke > 100 && !h.busy && h.loose.length === 0, 'flat: ' + h.standing + ' ' + JSON.stringify(ev));
+    let lying = 0, low = 9; for (const s of h.bits.sets.values()) for (let i = 0; i < s.n; i++) if (s.st[i]) { assert.equal(s.st[i], 2, 'every bit has stopped'); lying++; low = Math.min(low, s.P[i * 3 + 1]); }
+    assert.ok(lying > 150 && low > 0 && low < .2, 'its rubble lies on the ground: ' + lying + ' bits, the lowest at ' + low.toFixed(3));
+    h.reset(); assert.ok(h.standing === 1 && h.left === h.pieces && h.meshes.every(m => m.geometry.index.array.every((v, i) => v === i)), 'reset: whole again');
+  }
+  // with a physics world: the walls are solid, what falls is bodies that end on the ground, and a hole lets a ray through
+  {
+    const w = new World3D({ gravity: -9.81 }); w.floor(0);
+    const h = house({ world: w, at: [20, 0, -5], turn: Math.PI / 2 });   // its door faces +x now
+    const from = { x: 40, y: 1.3, z: -5 + 2.67 }, see = () => (w.step(1 / 60), w.ray(from, { x: -1, y: 0, z: 0 }, 60));   // (a step first: the engine's rays see what was there at the last one)
+    const a = see(); assert.ok(a && a.thing.structure === h && Math.abs(a.point.x - 23) < .2, 'the physics ray stops at its front wall, turned and moved: ' + a?.point.x.toFixed(2));
+    const mine = h.ray(from, { x: -1, y: 0, z: 0 }); assert.ok(Math.abs(mine.point.x - a.point.x) < .2 && mine.normal.x > .9, 'and its own ray agrees');
+    h.blast({ x: 23.3, y: 1.2, z: -5.4 }, 2.6); const ev = play(h, 6);
+    assert.ok(ev.fell >= 6 && ev.landed >= 6 && !h.busy, 'pieces fall and land: ' + JSON.stringify(ev));
+    for (const L of h.loose) assert.ok(L.rest && L.g.position.y < 3.6 && L.g.position.y > 0, 'a fallen piece lies at rest, not in the air: y ' + L.g.position.y.toFixed(2));
+    const b = see(); assert.ok(!b || b.point.x < a.point.x - 1, 'a ray goes in through the hole');
+    assert.ok(h.loose.length <= 40 && w.bodies.length === 2 + h.loose.length, 'one body for the building, one for each fallen piece');
+    h.reset(); const c = see(); assert.ok(c && Math.abs(c.point.x - a.point.x) < .01 && w.bodies.length === 2, 'reset: solid again, the fallen pieces gone');
+    h.blast({ x: 23.3, y: 1.2, z: -5.4 }, 2.6); w.clear(); h.reset(); w.floor(0); assert.ok(see()?.thing.structure === h, 'and after the game clears the world');
+    // a new world for a new round (the old one freed, its bodies with it): whole and solid in the new one
+    h.blast({ x: 23.3, y: 1.2, z: -5.4 }, 2.6); play(h, .5); assert.ok(h.loose.length > 0); w.free();
+    const w2 = new World3D({ gravity: -9.81 }); w2.floor(0); h.reset({ world: w2 }); w2.step(1 / 60);
+    const d = w2.ray(from, { x: -1, y: 0, z: 0 }, 60); assert.ok(d?.thing.structure === h && h.standing === 1 && h.loose.length === 0 && w2.bodies.length === 2, 'a new world for a new round');
+    h.remove(); assert.equal(w2.bodies.length, 1); w2.free();
+  }
+  // with no world it is the same every time
+  {
+    const run = () => { const h = house(); h.blast({ x: 4, y: .8, z: 3 }, 2.4); const ev = play(h, 5); return JSON.stringify([ev, h.left, h.standing.toFixed(4)]); };
+    assert.equal(run(), run(), 'the same shell, the same ruin');
+  }
+  // the game's own boxes: two posts and a beam in three lengths, and a block the game holds up with two more hung under it.
+  // The middle of the beam out, the ends stay; a post out, its end of the beam falls and the rest hangs from the other post
+  {
+    const mk = () => new Structure(null, { pieces: [
+      { size: [.5, 3, .5], at: [-2, 1.5, 0] }, { size: [.5, 3, .5], at: [2, 1.5, 0] },
+      { size: [1.5, .4, .5], at: [-1.5, 3.2, 0], material: 'planks' }, { size: [1.5, .4, .5], at: [0, 3.2, 0], material: 'planks' }, { size: [1.5, .4, .5], at: [1.5, 3.2, 0], material: 'planks' },
+      { size: [1, 1, 1], at: [0, 9, 0], fixed: true }, { size: [.4, 1, .4], at: [0, 8, 0] }, { size: [.4, 1, .4], at: [0, 7, 0] },
+    ], materials: { brick: M(), planks: M() } }), out = { radius: .1, power: 99 };
+    const a = mk(); assert.ok(a.pieces === 8 && a.S.loose === 0 && a.S.C[5].anchor && !a.S.C[6].anchor && a.S.C[2].strength < a.S.C[0].strength, 'posts, a beam, and a block the game holds up');
+    assert.equal(a.hit([0, 3.2, 0], out), 1); play(a, 2); assert.deepEqual([...a.state], [0, 0, 0, 3, 0, 0, 0, 0], 'the middle of the beam out: its ends stay on their posts');
+    assert.equal(a.hit([0, 9, 0], out), 0, 'a fixed block does not break');
+    const b = mk(); b.hit([-2, 1.5, 0], out); play(b, 3); assert.deepEqual([...b.state], [3, 0, 3, 0, 0, 0, 0, 0], 'a post out: its end of the beam falls, the rest hangs on');
+    b.hit([0, 8, 0], out); play(b, 3); assert.deepEqual([...b.state].slice(5), [0, 3, 3], 'and what hung from a piece falls when that goes');
+  }
+  console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics, reset and your own boxes ok');
+}
+
+// water you can disturb (src/kit/water.js: gs.outdoors.Water)
+{
+  const THREE = await import('three'), { Water } = await import('../src/kit/water.js');
+  const O = { x: 0, y: 0, z: 0 }, run = (w, secs, c = O, each) => { for (let i = 0; i < Math.round(secs * 60); i++) { each?.(i); w.update(1 / 60, c); } };
+  const cellAt = (r, x, z) => Math.floor((z - r.z0) / r.cell) * r.N + Math.floor((x - r.x0) / r.cell);
+  // the patch's points and normals are the same sums height() and normal() answer with, wherever the patch has got to
+  {
+    const w = new Water({ waves: 1.3, size: 40, segments: 16 }); run(w, 1.7, { x: 7.3, y: 0, z: -3.1 });
+    const P = w.mesh.geometry.attributes.position.array, Nn = w.mesh.geometry.attributes.normal.array, p = w.mesh.position; let e = 0;
+    for (let i = 0; i < P.length; i += 3) { const x = P[i] + p.x, z = P[i + 2] + p.z, n = w.normal(x, z); e = Math.max(e, Math.abs(P[i + 1] - w.height(x, z)), Math.abs(Nn[i] - n.x), Math.abs(Nn[i + 1] - n.y), Math.abs(Nn[i + 2] - n.z)); }
+    assert.ok(e < 1e-5, 'the mesh is where height() says: ' + e); assert.deepEqual([p.x, p.z], [7.5, -2.5], 'the patch follows the centre in whole cells');
+    assert.ok(w.rip === null && w.mesh.material.normalMap === null && w.mesh.children.length === 0, 'plain water has no ripple field');
+    w.ring(1, 1); assert.ok(w.rip && w.mesh.material.normalMap === w.rip.normalTex && w.foamMesh && w.spray, 'the first thing to disturb it makes one');
+  }
+  // calm water does no work: nothing moves on and no picture is sent to the graphics chip again
+  {
+    const w = new Water({ ripples: true }), r = w.rip; run(w, .5); const v0 = [r.normalTex.version, r.foamTex.version]; run(w, 2);
+    assert.ok(!w.busy && r.energy === 0 && r.N === 128 && Math.abs(r.cell - .375) < 1e-9); assert.deepEqual([r.normalTex.version, r.foamTex.version], v0, 'calm: no uploads');
+  }
+  // a ring spreads at the waves' speed, lifts the water it passes (height() knows), and dies away to nothing
+  {
+    const w = new Water({ ripples: true, waves: 0 }), r = w.rip; w.ring(0, 0, { size: .4 });
+    const far = () => { let m = 0; for (let j = 0; j < r.N; j++) for (let i = 0; i < r.N; i++) if (Math.abs(r.H[j * r.N + i]) > .002) m = Math.max(m, Math.hypot(r.x0 + (i + .5) * r.cell, r.z0 + (j + .5) * r.cell)); return m; };
+    run(w, 1); const a = far(); run(w, 2); const b = far(), v = (b - a) / 2;
+    assert.ok(v > 1.8 && v < 3.2, 'the ring goes out at about 2.6 m/s: ' + v); assert.ok(w.busy && r.energy > .005 && w.height(2, 0) !== 0 && w.swellAt(2, 0) === 0, 'the water it passes is lifted');
+    let t = 3; while (w.busy && t < 40) { run(w, 1); t++; } assert.ok(t < 20 && !r.H.some(h => h !== 0) && r.energy === 0, 'and it is still again: ' + t + ' s');
+  }
+  // the square of ripples follows the centre in whole cells: a ripple stays where it is in the world; a jump away starts clean
+  {
+    const w = new Water({ ripples: true, waves: 0 }), r = w.rip; w.ring(3, 2, { size: .6 }); run(w, 1.5);
+    const pts = [[3, 2], [4.1, 2.7], [1.2, 3.3], [5, 0]], a = pts.map(([x, z]) => r.at(x, z)), x0 = r.x0; assert.ok(a.every(h => h !== 0));
+    w.update(0, { x: 5.3, y: 0, z: -2.9 }); assert.ok(pts.every(([x, z], i) => Math.abs(r.at(x, z) - a[i]) < 1e-9), 'the same water after the square moved'); assert.equal((r.x0 - x0) / r.cell, 14);
+    w.update(0, { x: 500, y: 0, z: 0 }); assert.ok(!r.H.some(h => h !== 0) && r.sources.length === 0, 'a jump: calm water there');
+  }
+  // a splash: listed for one frame (for the game's sound), spray up, foam left that fades; one outside the square is still listed
+  {
+    const w = new Water({ ripples: true, waves: .5 }), r = w.rip; run(w, .2); w.splash(1, 1, { size: 1, speed: 6 }); assert.equal(w.splashes.length, 0);
+    w.update(1 / 60, O); assert.equal(w.splashes.length, 1); const s = w.splashes[0];
+    assert.ok(s.x === 1 && s.z === 1 && s.size === 1 && s.speed === 6 && Math.abs(s.y - w.swellAt(1, 1)) < .3 && w.spray.alive > 10 && w.spray.mesh.visible && r.F[cellAt(r, 1, 1)] > 1 && r.white, 'spray and foam');
+    const fv = r.foamTex.version; w.update(1 / 60, O); assert.ok(w.splashes.length === 0 && r.foamTex.version > fv, 'listed once; the foam picture follows');
+    let t = 0; while ((r.white || w.busy || w.spray.alive) && t < 90) { run(w, 1); t++; } assert.ok(t < 60 && !r.F.some(f => f !== 0) && !w.spray.mesh.visible, 'the foam fades and the spray lands: ' + t + ' s');
+    w.splash(300, 0, { size: 1, speed: 6 }); w.update(1 / 60, O); assert.ok(w.splashes.length === 1 && w.spray.alive > 0 && r.energy === 0, 'far away: spray and the event, no ripples');
+  }
+  // a watched thing: a splash as it lands and one as it leaps out (none for going right under), none when it is lowered in
+  {
+    const w = new Water({ ripples: true, waves: 0 }), ball = { x: 2, y: 3, z: 0 }, ev = []; w.watch(ball, { radius: .4 });
+    const go = (vy, tag) => { for (let i = 0; i < 90; i++) { ball.y += vy / 60; w.update(1 / 60, O); for (const s of w.splashes) ev.push([tag, s.x, s.z, +s.speed.toFixed(1), +s.size.toFixed(2)]); } };
+    go(-6, 'in'); go(6, 'out'); assert.deepEqual(ev, [['in', 2, 0, 6, .68], ['out', 2, 0, 3, .68]]);
+    const w2 = new Water({ ripples: true, waves: 0 }), b = { position: new THREE.Vector3(0, .5, 0) }; w2.watch(b, { radius: .3 }); let n = 0;
+    for (let i = 0; i < 120; i++) { b.position.y -= .5 / 60; w2.update(1 / 60, O); n += w2.splashes.length; } assert.ok(n === 0 && w2.rip.energy > 0, 'lowered in: no splash, but the water moves');
+  }
+  // a boat: foam behind it and none ahead or to the side, rings left behind that make its wake, spray off the bow; remove() stops it
+  {
+    const w = new Water({ ripples: true, waves: 0 }), r = w.rip, boat = { x: -10, y: 0, z: 0 }, h = w.watch(boat, { radius: 1 }); run(w, 2.5, O, () => { boat.x += 8 / 60; });
+    const F = (x, z) => r.F[cellAt(r, x, z)];
+    assert.ok([1, 3, 6, 9].every(d => F(boat.x - d, 0) > .4) && F(boat.x + 3, 0) === 0 && F(boat.x - 4, 4) === 0, 'a trail of foam'); assert.ok(F(boat.x - 9, 0) > 0 && h.wet);
+    assert.ok(r.sources.length > 3 && [2, 4, 6].some(d => Math.abs(w.height(boat.x - d, 1)) > .01) && w.splashes.length === 0 && w.spray.alive > 0, 'a wake and bow spray');
+    h.remove(); assert.equal(w.watched.length, 0); w.watch(boat); w.unwatch(boat); assert.equal(w.watched.length, 0);
+  }
+  // a bed under the water: paler, clearer shallows that fade to nothing at the waterline, foam along the shore and nowhere else, no ripples on dry land
+  {
+    const bed = (x, z) => -1 - x * .15, w = new Water({ ripples: true, waves: .3, bed, size: 80, segments: 40 }), r = w.rip; run(w, 3);   // (dry beyond x = -6.7)
+    const C = w.mesh.geometry.attributes.color.array, P = w.mesh.geometry.attributes.position.array, at = x => { for (let i = 0; i < P.length / 3; i++) if (P[i * 3] + w.mesh.position.x === x) return [...C.slice(i * 4, i * 4 + 4)]; };
+    const dry = at(-12), mid = at(-4), deep = at(20); assert.ok(dry[3] === 0 && mid[3] > .3 && mid[3] < .9 && mid[0] > 2 && deep.every(v => v === 1) && w.mesh.material.vertexColors && w.mesh.material.transparent, 'shallows');
+    const most = x => { let m = 0; for (let z = -20; z <= 20; z += r.cell) m = Math.max(m, r.F[cellAt(r, x, z)]); return m; };
+    assert.ok(most(-6.4) > .5 && most(-6.4) < .8 && most(-9) === 0 && most(-3) === 0 && most(5) === 0, 'foam laps the shore: ' + [-9, -6.4, -3, 5].map(most));
+    w.ring(-5.5, 0, { size: 1, strength: 2 }); run(w, 2); let d = 0, wet = 0; for (let c = 0; c < r.N * r.N; c++) if (r.B[c] <= 0) d = Math.max(d, Math.abs(r.H[c])); else wet = Math.max(wet, Math.abs(r.H[c]));
+    assert.ok(d === 0 && wet > .005, 'ripples stop at the beach'); assert.ok(Math.abs(w.depth({ x: 0, y: -.5, z: 0 }) - .5) < .35);
+  }
+  // under the surface: the view's air becomes water and goes back to what the game had (or has set since) on the way up
+  {
+    const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(50, 1, .1, 300), air = { haze: .001, mist: .2, colour: new THREE.Color('#aabbcc'), sunColour: new THREE.Color('#ffeedd') };
+    const w = new Water({ waves: .2 }); scene.add(w.mesh); assert.equal(w.underwater({ scene, cam, _air: air }), w);
+    assert.ok(w.mesh.material.side === THREE.DoubleSide && w.deepMesh.parent === scene && !w.deepMesh.visible);
+    cam.position.set(0, 2, 0); run(w, .1); assert.ok(w.under === 0 && air.haze === .001 && air.mist === .2 && air.colour.getHexString() === 'aabbcc', 'above: the air is the game\'s');
+    cam.position.set(0, -2, 0); run(w, .1); const c1 = air.colour.getHexString(); assert.ok(w.under === 1 && air.haze === .14 && air.mist === 0 && c1 !== 'aabbcc' && air.sunColour.getHexString() === c1 && w.deepMesh.visible, 'under: murky and tinted');
+    air.colour.set('#102030'); air.haze = .002; w.update(1 / 60); assert.ok(air.haze === .14 && air.colour.getHexString() === c1, 'the game\'s sky writes its air each frame: still water');
+    cam.position.set(0, -8, 0); w.update(1 / 60); assert.ok(air.colour.r + air.colour.g + air.colour.b < new THREE.Color('#' + c1).r + new THREE.Color('#' + c1).g + new THREE.Color('#' + c1).b, 'darker deeper');
+    cam.position.set(0, 2, 0); w.update(1 / 60); assert.ok(w.under === 0 && air.haze === .002 && air.mist === .2 && air.colour.getHexString() === '102030' && air.sunColour.getHexString() === 'ffeedd' && !w.deepMesh.visible, 'up: what the game set last');
+    cam.position.set(0, -2, 0); w.update(1 / 60); w.dispose(); assert.ok(air.haze === .002 && air.colour.getHexString() === '102030' && w.deepMesh.parent === null && w.mesh.parent === null, 'thrown away while under: the air goes back');
+    // a view with plain three.js fog
+    const s2 = new THREE.Scene(); s2.fog = new THREE.FogExp2(0x8899aa, .004); const w2 = new Water(); w2.underwater({ scene: s2, camera: cam }, { colour: '#003344', murk: .3 });
+    cam.position.set(0, -1, 0); w2.update(1 / 60); assert.ok(s2.fog.density === .3 && s2.fog.color.getHexString() !== '8899aa'); cam.position.set(0, 3, 0); w2.update(1 / 60); assert.ok(s2.fog.density === .004 && s2.fog.color.getHexString() === '8899aa');
+  }
+  // rain (on any water, ripples or not): duller, rings and hopping drops round the centre, and all of it gone soon after; calm() for a new round
+  {
+    const w = new Water({ waves: .4 }), r0 = w.mesh.material.roughness; w.rain = 1; run(w, 2, { x: 30, y: 0, z: 5 });
+    assert.ok(w.rip === null && w.dapple.alive > 300 && w.dapple.mesh.visible && w.spray.alive > 10 && Math.abs(w.mesh.material.roughness - r0 - .22) < 1e-9, 'rain shows');
+    const P = w.dapple.P; let out = 0; for (let i = 0; i < w.dapple.n; i++) if (Math.hypot(P[i * 2] - 30, P[i * 2 + 1] - 5) > 9.01) out++; assert.equal(out, 0, 'round the centre');
+    w.rain = 0; run(w, 2); assert.ok(w.dapple.alive === 0 && !w.dapple.mesh.visible && w.spray.alive === 0 && w.mesh.material.roughness === r0 && !w.rained, 'and stops');
+    const w2 = new Water({ ripples: 64, reach: 12 }); w2.rain = 1; w2.splash(0, 0); run(w2, .3); w2.calm(); w2.rain = 0; w2.update(1 / 60, O);
+    assert.ok(w2.rip.N === 64 && !w2.rip.H.some(h => h) && !w2.rip.F.some(f => f) && w2.spray.alive === 0 && w2.dapple.alive === 0 && w2.splashes.length === 0, 'calm()'); w2.dispose();
+  }
+  // the game's own material is left as it is (its normal map, its roughness), and foam and spray can be turned off
+  {
+    const nm = new THREE.DataTexture(new Uint8Array(4), 1, 1), m = new THREE.MeshStandardMaterial({ normalMap: nm, roughness: .3 }), w = new Water({ material: m, ripples: true, foam: false, spray: 0 });
+    w.rain = 1; w.splash(0, 0); run(w, 1); assert.ok(m.normalMap === nm && m.roughness === .3 && w.foamMesh === null && w.spray === null && w.dapple === null && w.rip.energy > 0);
+  }
+  console.log('water you can disturb: the same waves, calm water free, rings, a square that follows, splashes, watched things and wakes, shallows and shore foam, under the surface, rain, your own material ok');
+}
+
+// weather that changes the world (src/kit/cover.js, src/kit/sky.js: gs.sky.Weather with a level)
+{
+  const THREE = await import('three'), { Weather } = await import('../src/kit/sky.js'), { Cover } = await import('../src/kit/cover.js'), { Water } = await import('../src/kit/water.js');
+  // a place: flat ground, and a roof 8 m square, 3 m up, round the middle (it can be taken away)
+  const place = { roof: true }, level = (f, d, max) => (place.roof && Math.abs(f.x) <= 4 && Math.abs(f.z) <= 4 && f.y >= 3 ? f.y - 3 : Infinity), ground = () => 0;
+  const P = (x, y, z) => ({ x, y, z });
+  // the map of what the sky can see
+  {
+    const c = new Cover({ level, ground }); assert.ok(c.N === 128 && c.cell === .5 && !c.ready && c.at(0, 0) === -Infinity && c.open(0, 1, 0), 'nothing known yet: all open');
+    c.place(0, 1.6, 0).update(); assert.ok(!c.ready && c.asked <= 400 && c.at(0, 0) === 3 && c.at(30, 30) === -Infinity, 'a few hundred spots a frame, from the middle outwards');
+    let n = 1; while (!c.ready && n < 200) { c.update(); n++; } assert.ok(c.ready && n < 60 && c.asked >= 128 * 128, 'all known after ' + n + ' updates');
+    assert.deepEqual([c.at(0, 0), c.at(3.9, -3.9), c.at(4.6, 0), c.at(-20, 12), c.at(40, 0)], [3, 3, 0, 0, -Infinity], 'the roof, the ground, and outside its square');
+    assert.ok(!c.open(0, 1, 0) && c.open(0, 3, 0) && c.open(0, 2.8, 0) && c.open(6, 0, 0) && c.open(6, -.2, 0) && !c.open(6, -1, 0) && c.open(99, 0, 0), 'open(): on the roof and in the yard, not under the roof or the ground');
+    assert.ok(Math.abs(THREE.DataUtils.fromHalfFloat(c.pix[0]) - 3) < .01 && THREE.DataUtils.fromHalfFloat(c.pix[127 * 128 + 100]) === 0 && c.texture.image.width === 128, 'and the same numbers as a picture for the graphics chip');
+    // it follows a whole cell at a time: what it knew stays, only the strip that came in is asked
+    const v = c.texture.version, a0 = c.asked; c.again = 0; c.place(.2, 1.6, 0).update(); assert.ok(c.asked === a0 && c.texture.version === v && c.cx === 0, 'a move inside the cell: nothing asked, nothing sent');
+    c.place(3, 1.6, 0); assert.ok(c.cx === 3 && c.at(0, 0) === 3 && c.at(34.7, 0) === -Infinity && c.left === 6 * 128); c.update(); c.update();
+    assert.ok(c.ready && c.asked === a0 + 6 * 128 && c.at(34.7, 0) === 0 && c.at(-29.2, 0) === -Infinity, 'the strip that came in');
+    // a roof that goes: touch() asks again there first; without it the slow look round finds it
+    place.roof = false; c.touch(0, 0, 2); c.update(); assert.ok(c.at(0, 0) === 0 && c.at(3.6, 3.6) === 3, 'touch() asks again round a point'); c.again = 48;
+    let k = 0; while (c.at(3.6, 3.6) !== 0 && k < 500) { c.update(); k++; } assert.ok(k > 1 && k <= 128 * 128 / 48 + 1, 'the rest is found again in ' + k + ' updates');
+    place.roof = true; c.place(500, 1.6, 0).update(); assert.ok(c.at(0, 0) === -Infinity && c.at(500, 0) === 0 && c.at(520, 0) === -Infinity, 'a jump: it starts again from the middle'); c.update(true); assert.ok(c.ready && c.at(530, 20) === 0);
+    c.dispose();
+    // three.js meshes are asked through their triangles
+    const m = new THREE.Mesh(new THREE.BoxGeometry(4, .2, 4), new THREE.MeshBasicMaterial()); m.position.set(10, 2, 0); m.updateMatrixWorld(true);
+    const c2 = new Cover({ level: [m, level], ground, cells: 64 }); c2.place(8, 1, 0).update(true);
+    assert.ok(Math.abs(c2.at(10, 0) - 2.1) < 1e-6 && c2.at(0, 0) === 3 && c2.at(6, 0) === 0 && c2.N === 64, 'a mesh and a function together');
+  }
+  // the weather: how wet and how white the world is, and what it hides under a roof
+  const view = () => ({ cam: { position: new THREE.Vector3(0, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, _air: null, air() { return this._air ||= { wet: 0, world: null }; } });
+  const run = (w, secs) => { for (let i = 0; i < Math.round(secs * 60); i++) w.update(1 / 60); };
+  {
+    const v = view(), pond = new Water({ size: 10 }), w = new Weather(v, { kind: 'rain', level, ground, water: pond, soak: 4, dry: 6, settle: 5, melt: 8 });
+    assert.ok(w.world && w.cover && v._air.world === w.shown && w.wet === 0 && w.hops && v.scene.children.includes(w.hops.mesh), 'given the level it tells the air what to draw');
+    run(w, 1); assert.ok(w.cover.ready && Math.abs(w.wet - .25) < .01 && w.pools === 0 && w.rain === 1 && pond.rain === 1, 'rain soaks in, and falls on the water it was given');
+    assert.ok(w.open(P(8, 0, 0)) && !w.open(P(0, 0, 0)) && w.wetAt(P(8, 0, 0)) === w.wet && w.wetAt(P(0, 0, 0)) === 0 && w.wetAt(P(0, 3, 0)) === w.wet, 'wet in the yard and on the roof, dry under it');
+    // no drop is drawn under the roof (its two ends are one point), and the drops that hop come up off what the sky can see
+    const a = w.rainMesh.geometry.attributes.position.array; let under = 0, shown = 0;
+    for (let i = 0; i < 900; i++) { const x = a[i * 6], y = a[i * 6 + 1], z = a[i * 6 + 2], drawn = a[i * 6 + 4] !== y; if (Math.abs(x) < 3.5 && Math.abs(z) < 3.5 && y < 3) { under++; assert.ok(!drawn, 'a drop under the roof'); } else if (drawn) shown++; }
+    assert.ok(under > 5 && shown > 300, under + ' drops hidden under the roof, ' + shown + ' drawn');
+    assert.ok(w.hops.alive > 20, 'drops hop off the ground: ' + w.hops.alive); for (let i = 0; i < w.hops.n; i++) if (w.hops.L[i] > 0) { const x = w.hops.P[i * 3], z = w.hops.P[i * 3 + 2]; assert.ok(w.hops.P[i * 3 + 1] >= w.cover.at(x, z) - .05, 'a hop under what it landed on'); }
+    run(w, 4); assert.ok(w.wet === 1 && w.pools > .2 && w.pools < .5 && v._air.world.pools === w.pools, 'puddles start once it is wet through: ' + w.pools); run(w, 8); assert.ok(w.pools === 1);
+    // it dries; the puddles go last
+    w.set('clear'); run(w, 3); assert.ok(w.rain === 0 && pond.rain === 0 && Math.abs(w.wet - .5) < .01 && w.pools > .6); run(w, 3.1); assert.ok(w.wet === 0 && w.pools > .3, 'dry ground, puddles left'); run(w, 4); assert.ok(w.pools === 0 && !w.hops.alive);
+    // snow settles where the sky sees, and no flake is drawn under the roof
+    w.set('snow'); run(w, 2.5); assert.ok(Math.abs(w.snow - .5) < .01 && w.wet === 0 && w.snowing === 1 && Math.abs(w.snowAt(P(8, 0, 0)) - .125) < .003 && w.snowAt(P(0, 0, 0)) === 0, 'snow lies ' + w.snowAt(P(8, 0, 0)) + ' m deep in the yard');
+    const s = w.snowMesh.geometry.attributes.position.array; for (let i = 0; i < 900; i++) assert.ok(!(Math.abs(s[i * 3]) < 3.5 && Math.abs(s[i * 3 + 2]) < 3.5 && s[i * 3 + 1] < 3 && s[i * 3 + 1] > -20), 'a flake under the roof');
+    run(w, 3); assert.ok(w.snow === 1 && v._air.world.snow === 1);
+    // it melts slowly when the snow stops (the ground under it gets wet, bit by bit), and fast in rain
+    w.set('clear'); run(w, .5); assert.ok(w.snow > .93 && w.wet > .3 && w.wet < .45, 'melting: wet comes in gradually: ' + w.wet); run(w, 3.5); const left = w.snow; assert.ok(Math.abs(left - .5) < .01 && w.wet === 1);
+    w.set('rain'); run(w, .5); assert.ok(left - w.snow > .3, 'rain washes it away: ' + (left - w.snow)); run(w, 1); assert.ok(w.snow === 0);
+    // the game can say how things start, and take it all away
+    w.set('clear'); w.snow = .8; w.wet = .2; w.update(1 / 60); assert.ok(v._air.world.snow > .79 && v._air.world.cover === w.cover);
+    w.dispose(); assert.ok(v._air.world === null && v.scene.children.length === 0 && pond.rain === 0, 'dispose()');
+  }
+  // with no level it is the weather it always was; level: true is wet and white everywhere, no map
+  {
+    const v = view(), w = new Weather(v, { kind: 'rain' }); run(w, 1);
+    assert.ok(!w.world && w.cover === null && v._air === null && w.wet === 0 && w.hops === null && w.open(P(0, 0, 0)) && w.rain === 1 && v.scene.children.length === 2, 'no level: only what falls'); w.dispose();
+    const v2 = view(), w2 = new Weather(v2, { kind: 'snow', level: true, settle: 2 }); run(w2, 1);
+    assert.ok(w2.world && w2.cover === null && Math.abs(w2.snow - .5) < .01 && v2._air.world.cover === null && w2.open(P(0, 0, 0)) && w2.snowAt(P(0, 0, 0)) > .1, 'level: true'); w2.dispose();
+    // one map can be made by the game and shared, and is then the game's to throw away
+    const c = new Cover({ level, ground, cells: 32 }), v3 = view(), w3 = new Weather(v3, { cover: c }); run(w3, .2);
+    assert.ok(w3.cover === c && c.ready && !w3.open(P(0, 0, 0))); w3.dispose(); assert.ok(c.at(0, 0) === 3, 'a shared map outlives the weather'); c.dispose();
+  }
+  // a frame of it is cheap (rain on, the map all known and looked over again a little each frame)
+  {
+    const v = view(), w = new Weather(v, { kind: 'rain', level, ground }); run(w, 2); const t0 = performance.now(); run(w, 5); const ms = (performance.now() - t0) / 300;
+    assert.ok(ms < 1.5, 'weather.update() ' + ms.toFixed(3) + ' ms a frame'); w.dispose();
+    console.log('weather that changes the world: the map of what the sky can see (fills, follows, finds changes, meshes), rain soaks in and pools and dries, snow settles and melts, roofs keep it off, no level as before ok (' + ms.toFixed(3) + ' ms a frame)');
+  }
+}
+
+// vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
+{
+  const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
+  const { vehicle } = await import('../src/kit/models/vehicles.js');
+  // what a shape's triangles say: its volume (triangles facing out make it positive), its box, edges that are not shared by two triangles, corners that are not numbers
+  const facts = geos => {
+    let vol = 0, tris = 0, bad = 0; const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9], edges = new Map(), key = (a, i) => `${Math.round(a[i] * 1e4)},${Math.round(a[i + 1] * 1e4)},${Math.round(a[i + 2] * 1e4)}`; let outward = 0, n = 0;
+    for (const g of geos) {
+      const a = g.attributes.position.array, nn = g.attributes.normal.array;
+      for (let i = 0; i < a.length; i += 9) {
+        const [x0, y0, z0, x1, y1, z1, x2, y2, z2] = a.subarray(i, i + 9); tris++;
+        vol += (x0 * (y1 * z2 - z1 * y2) - y0 * (x1 * z2 - z1 * x2) + z0 * (x1 * y2 - y1 * x2)) / 6;
+        const fx = (y1 - y0) * (z2 - z0) - (z1 - z0) * (y2 - y0), fy = (z1 - z0) * (x2 - x0) - (x1 - x0) * (z2 - z0), fz = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+        for (let c = 0; c < 9; c += 3) { if (!Number.isFinite(a[i + c] + a[i + c + 1] + a[i + c + 2] + nn[i + c] + nn[i + c + 1] + nn[i + c + 2])) bad++; n++; if (fx * nn[i + c] + fy * nn[i + c + 1] + fz * nn[i + c + 2] > 0) outward++; lo[0] = Math.min(lo[0], a[i + c]); lo[1] = Math.min(lo[1], a[i + c + 1]); lo[2] = Math.min(lo[2], a[i + c + 2]); hi[0] = Math.max(hi[0], a[i + c]); hi[1] = Math.max(hi[1], a[i + c + 1]); hi[2] = Math.max(hi[2], a[i + c + 2]); }
+        for (const [p, q] of [[0, 3], [3, 6], [6, 0]]) { const A = key(a, i + p), B = key(a, i + q); edges.set(A + '>' + B, (edges.get(A + '>' + B) || 0) + 1); }
+      }
+    }
+    let open = 0; for (const [e, c] of edges) { const [A, B] = e.split('>'); if ((edges.get(B + '>' + A) || 0) !== c) open++; }
+    return { vol, tris, bad, lo, hi, open, facing: outward / n };
+  };
+  const all = shape => [...shape.slots.values()].flat(), near = (a, b, tol) => Math.abs(a - b) <= tol;
+  // the tools: lines through knots, places to cut, a skin over cross-sections, a belt round wheels, wheels
+  {
+    const f = P.line([[0, 1], [2, 3], [4, 3]]), g = P.line([[0, 1], [2, 3], [4, 3]], .5);
+    assert.ok(f(-1) === 1 && f(1) === 2 && f(3) === 3 && f(9) === 3 && g(2) < 3 && g(2) > 2.7 && near(g(1), 2, 1e-9), 'a line through knots, and with its corner rounded');
+    const st = P.stations(0, 1, .25, [.5, .52, .9]); assert.deepEqual(st, [0, .25, .5, .52, .75, .9, 1], 'places to cut: every step, and exactly where asked');
+    // a box 2 x 1 x 3 as a skin: closed, facing out, the volume it should have; with rounded corners a little less, still closed
+    const ring = z => [[-1, 0, z], [1, 0, z], [1, 1, z], [-1, 1, z]], box = new P.Shape().skin([0, 1, 2, 3].map(ring), { capA: 'paint', capB: 'paint' }), bf = facts(all(box));
+    assert.ok(near(bf.vol, 6, 1e-6) && bf.open === 0 && bf.facing === 1 && bf.tris === 3 * 4 * 2 + 8 && box.tris === bf.tris, 'a skinned box is closed and faces out');
+    const soft = new P.Shape().skin([0, 1, 2, 3].map(ring), { capA: 'paint', capB: 'paint', round: .2 }), sf = facts(all(soft));
+    assert.ok(sf.vol < 6 && sf.vol > 5.8 && sf.open === 0 && sf.tris > bf.tris && sf.facing === 1, 'rounded corners: ' + sf.vol.toFixed(3));
+    // the same box with its rings given the other way round still faces out; sides sharper than the crease keep their own normals, a gentle bend shades smooth
+    const back = facts(all(new P.Shape().skin([0, 1, 2, 3].map(z => ring(z).reverse()), { capA: 'paint', capB: 'paint' }))); assert.ok(near(back.vol, 6, 1e-6) && back.facing === 1, 'a skin faces out whichever way its rings run');
+    const nrm = box.slots.get('paint')[0].attributes.normal.array; let axis = 0; for (let i = 0; i < nrm.length; i += 3) if (Math.max(Math.abs(nrm[i]), Math.abs(nrm[i + 1]), Math.abs(nrm[i + 2])) > .999) axis++; assert.equal(axis, nrm.length / 3, 'a box keeps its edges sharp');
+    const tube = new P.Shape().skin([0, 1].map(z => Array.from({ length: 24 }, (_, i) => [Math.cos(i / 24 * 6.2832), Math.sin(i / 24 * 6.2832), z]))), tn = tube.slots.get('paint')[0].attributes, off = []; for (let i = 0; i < tn.position.count; i++) off.push(Math.hypot(tn.normal.getX(i) - tn.position.getX(i), tn.normal.getY(i) - tn.position.getY(i)));
+    assert.ok(Math.max(...off) < .01, 'a round tube shades smooth: its normals point straight out');
+    // slots: a function picks each piece's, null leaves a hole
+    const two = new P.Shape().skin([0, 1, 2].map(ring), { slot: (i, j) => j === 2 ? (i ? null : 'glass') : 'paint' });
+    assert.ok(two.slots.get('glass')[0].attributes.position.count === 6 && two.slots.get('paint')[0].attributes.position.count === 6 * 6, 'a slot for each piece, and a hole');
+    // a mirrored part keeps facing out
+    const pair = new P.Shape().box('a', 1, 1, 1, [2, 0, 0]).add('a', new THREE.BoxGeometry(1, 1, 1), [-2, 0, 0], [0, 0, 0], [-1, 1, 1]), pf = facts(all(pair)); assert.ok(near(pf.vol, 2, 1e-6) && pf.lo[0] === -2.5 && pf.facing === 1, 'a mirrored copy still faces out: ' + pf.vol + ' ' + pf.lo[0] + ' ' + pf.facing);
+    const bar = facts(all(new P.Shape().bar('a', [0, 0, 0], [3, 4, 0], .1, 16))); assert.ok(near(bar.vol, Math.PI * .01 * 5, .01) && near(bar.hi[0], 3.08, .01), 'a bar between two points');
+    // a belt round two wheels: twice the gap and one turn; round four, its points keep the wheels' distance
+    const b2 = P.belt([[2, 1, .5], [-2, 1, .5]]); assert.ok(near(b2.length, 8 + Math.PI, .01), 'a belt round two wheels: ' + b2.length.toFixed(3));
+    const top = b2.at(1), bot = b2.at(b2.length / 2 + 1); assert.ok(near(top.y, 1.5, 1e-3) && near(top.dz, -1, 1e-3) && near(bot.y, .5, 1e-3) && near(bot.dz, 1, 1e-3) && near(b2.at(1 + b2.length * 3).z, top.z, 1e-6), 'forward along the top, back along the ground, and round again');
+    const b4 = P.belt([[3, 1, .3], [-3, 1.1, .35], [-2.4, .4, .4], [2.4, .4, .4]]); let far = 0; for (let s = 0; s < b4.length; s += .05) { const p = b4.at(s); far = Math.max(far, Math.abs(Math.hypot(p.dz, p.dy) - 1)); assert.ok(p.y >= -1e-6 && Math.abs(p.z) <= 3.36); } assert.ok(far < 1e-6 && b4.length > 13 && b4.length < 15);
+    // wheels: round, as wide as asked, their axle along x, coloured; a railway pair spans the gauge
+    const wf = facts([P.wheelGeo({ r: .4, w: .25, lugs: 0 })]), lug = facts([P.wheelGeo({ r: .4, w: .25, lugs: 18 })]), wg = P.wheelGeo({ r: .4, w: .25, dual: true });
+    assert.ok(near(wf.hi[1], .4, .002) && near(wf.hi[2], .4, .002) && near(wf.hi[0] - wf.lo[0], .25, .03) && lug.hi[1] > .4 && lug.tris > wf.tris && wg.attributes.color && wf.bad === 0, 'a road wheel');
+    const ws = facts([P.wheelsetGeo({ r: .46, gauge: 1.435 })]), sp = P.wheelsetGeo({ r: .66, spokes: 14, weight: 1.1 });
+    assert.ok(near(ws.hi[0], 1.435 / 2 + .13, .03) && near(ws.lo[0], -ws.hi[0], 1e-6) && near(ws.hi[1], .49, .01) && sp.attributes.position.count > P.wheelsetGeo({ r: .66 }).attributes.position.count && ws.bad === 0, 'a railway wheelset');
+  }
+  // every vehicle's plan: real numbers, the size it says, its nose along -z, its wheels on the ground
+  {
+    const plans = [], t0 = performance.now();
+    for (const st of S.KINDS.car) plans.push(S.car({ style: st })); for (const st of S.KINDS.truck) plans.push(S.truck({ style: st })); plans.push(S.truck({ style: 'flat', axles: 3 }));
+    for (const st of S.KINDS.tank) plans.push(S.tank({ style: st })); for (const st of R.RAIL) plans.push(R.railcar(st)); for (const st of C.CRAFT.boat) plans.push(C.boat({ style: st })); for (const st of C.CRAFT.plane) plans.push(C.plane({ style: st }));
+    const ms = performance.now() - t0; let tris = 0;
+    for (const p of plans) {
+      const name = p.kind + ' ' + p.style, f = facts(all(p.body)); tris += f.tris;
+      assert.ok(f.bad === 0 && f.tris > 800, name + ': ' + f.tris + ' triangles, all real numbers'); assert.ok(f.facing > .97, name + ': faces out (' + f.facing.toFixed(3) + ')');
+      assert.ok(near(f.hi[2] - f.lo[2], p.size.length, p.size.length * .12 + .4) && f.hi[0] - f.lo[0] <= p.size.width + .05 && near(f.lo[0], -f.hi[0], .25), name + ': the size it says, the same both sides');
+      for (const q of Object.values(p.parts || {})) assert.equal(facts(all(q.shape)).bad, 0);
+      for (const w of p.wheels) { assert.ok(w.geo.r > .1 && (p.kind === 'plane' ? near(w.at[1] - w.geo.r, -p.gear, .01) || w.at[2] > 3 : near(w.at[1], w.geo.r, 1e-9)), name + ': wheels on the ground'); }
+      for (const pt of Object.values(p.points)) assert.ok((Array.isArray(pt) ? pt : pt.at).every(Number.isFinite));
+    }
+    const car = plans[0], jeep = plans.find(p => p.style === 'jeep'), lorry = plans.find(p => p.kind === 'truck'), six = plans.find(p => p.kind === 'truck' && p.wheels.length === 6);
+    assert.ok(car.wheels.length === 4 && car.wheels[0].steer && !car.wheels[2].steer && car.wheels[0].at[0] < 0 && car.wheels[1].at[0] > 0 && car.wheels[0].at[2] < car.wheels[2].at[2] && near(car.wheels[2].at[2] - car.wheels[0].at[2], car.wheelbase, 1e-9) && near(car.wheels[1].at[0] * 2, car.track, 1e-9), 'a car: front left, front right, back left, back right; the front pair steers');
+    assert.ok(car.points.lampL[2] < -2 && car.points.exhaust[2] > 2 && car.body.slots.has('glass') && car.body.slots.has('lamp') && car.body.slots.has('tail') && jeep.body.slots.has('screen') && !jeep.body.slots.has('glass') && jeep.spares.length === 1, 'lamps at the nose, an exhaust at the tail, glass; a jeep is open');
+    assert.ok(lorry.wheels.length === 4 && lorry.wheels[2].geo.dual && six && six.size.length > lorry.size.length && lorry.body.slots.has('wood') && plans.find(p => p.style === 'canvas').body.slots.has('canvas'), 'a lorry: twin tyres at the back, a third axle when asked');
+    for (const t of plans.filter(p => p.kind === 'tank')) { const k = t.tracks; assert.ok(k.run.length > t.size.length * 1.9 && k.wheels.length >= 6 && t.parts.gun.on === 'turret' && t.points.muzzle.on === 'gun' && near(-t.points.muzzle.at[2], t.gun, .2) && k.wheels.every(w => w.y >= w.r), 'a tank: tracks, a gun on a turret'); let low = 9; for (let s = 0; s < k.run.length; s += .1) low = Math.min(low, k.run.at(s).y); assert.ok(near(low, .025, .01), 'its tracks lie on the ground'); }
+    for (const c of plans.filter(p => p.kind === 'train')) assert.ok(c.length >= 7 && c.sets.every(s => s.at.every(a => a[0] === s.geo.r)) && c.reach >= 1.7 && near(c.points.front[2], -c.length / 2, 1e-9), 'a railway car stands on the rails: ' + c.style);
+    const steam = plans.find(p => p.style === 'steam'); assert.ok(steam.rods && steam.parts.rods && steam.parts.mainRods && steam.sets[0].geo.spokes && steam.points.smoke[1] > 3 && steam.radius === steam.rods.r, 'a steam engine: spoked wheels, rods, a chimney to smoke from; its radius is its driving wheels\'');
+    const van = plans.find(p => p.kind === 'train' && p.style === 'van'); assert.ok(near(van.points.roof[1], van.size.height, .01) && van.points.roof[0] === 0 && van.points.roof[2] === 0, 'a van\'s roof point is the top of its roof');
+    for (const bt of plans.filter(p => p.kind === 'boat')) { const f = facts(all(bt.body)); assert.ok(near(f.lo[1], -bt.draft, .02) && f.hi[1] > .3, bt.style + ' floats: ' + f.lo[1].toFixed(2) + ' m below the water'); const bow = facts(all(bt.body).map(g => { const a = g.attributes.position.array, keep = []; for (let i = 0; i < a.length; i += 9) if (Math.max(a[i + 2], a[i + 5], a[i + 8]) < f.lo[2] + .25) keep.push(...a.subarray(i, i + 9)); const o = new THREE.BufferGeometry(); o.setAttribute('position', new THREE.BufferAttribute(new Float32Array(keep), 3)); o.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(keep.length), 3)); return o; }).filter(g => g.attributes.position.count)); assert.ok(bow.hi[0] - bow.lo[0] < bt.size.width * .45, bt.style + ': a bow at -z'); }
+    for (const pl of plans.filter(p => p.kind === 'plane')) { const f = facts(all(pl.body)); assert.ok(near(f.hi[0] - f.lo[0], pl.size.width, pl.size.width * .1) && pl.props.every(n => pl.parts[n].shape.slots.has('blur')) && pl.gear > 1 && pl.points.pilot, pl.style + ': wings as wide as it says'); }
+    assert.ok(ms < 4000, 'every plan in ' + ms.toFixed(0) + ' ms');
+    // the made vehicle: its parts move as asked; a copy shares its shapes
+    const v = vehicle('car', { style: 'saloon', seed: 3 }), w = v.twin();
+    assert.ok(v.isGroup && v.kind === 'car' && v.style === 'saloon' && v.wheels.length === 4 && v.tris > 5000 && v.points.driver.isObject3D && v.size.length > 4 && w !== v && w.shell.children[0].geometry === v.shell.children[0].geometry && w.wheels[0] !== v.wheels[0] && vehicle('car', { style: 'saloon', seed: 3 }).shell.children[0].material === v.shell.children[0].material, 'a car, and its twin sharing its shapes');
+    v.roll(1); assert.ok(near(v.wheels[0].rotation.x, -1 / v.radius, 1e-9) && w.wheels[0].rotation.x === 0, 'a metre forward turns its wheels (not its twin\'s)');
+    v.steer(.3); assert.ok(v.wheels[0].rotation.y === -.3 && v.wheels[1].rotation.y === -.3 && v.wheels[2].rotation.y === 0, 'the front wheels steer');
+    for (let i = 0; i < 60; i++) v.move(1 / 60, 12, { steer: 1 }); assert.ok(near(v.wheels[2].rotation.x, -(1 + 12) / v.radius, 1e-6) && near(v.wheels[0].rotation.y, -.55, .01) && v.shell.rotation.z > .02, 'move(): rolls, steers, and the body rolls outwards in the turn');
+    const ch = v.chassis({ power: 9 }); assert.ok(ch.wheels.length === 4 && ch.wheels[0] === v.wheels[0] && near(ch.l, v.wheelbase + v.radius * 1.8, 1e-9) && near(ch.w, v.track + .1, 1e-9) && ch.radius === v.radius && ch.power === 9 && v.shell.position.y < -.5, 'chassis(): what World3D.vehicle wants');
+    // on gs.physics3d springs: its own wheels stand on the road and turn; a sensor in the way (a pickup, a goal) does not lift it; the world can be freed after
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); pw.box(null, 8, 1, 8, { at: { x: 0, y: .6, z: 0 }, fixed: true, sensor: true });
+      const pc = vehicle('car', { style: 'hatch' }), hold = new THREE.Scene(); hold.add(pc); const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1.2, z: 0 } })), wy = () => { pc.updateMatrixWorld(true); return pc.wheels.map(q => q.getWorldPosition(new THREE.Vector3()).y); };
+      for (let i = 0; i < 90; i++) pw.step(1 / 60); const stood = wy(), low = new THREE.Box3().setFromObject(pc.shell).min.y;
+      assert.ok(drv.grounded && stood.every(y => near(y, pc.radius, .05)) && low > .08 && low < .3, 'a car on springs stands on the road, through a sensor: wheels at ' + stood.map(y => y.toFixed(2)) + ', its floor ' + low.toFixed(2) + ' m up');
+      for (let i = 0; i < 150; i++) { drv.drive(1, .4); pw.step(1 / 60); } const ran = wy();
+      assert.ok(drv.speed > 3 && !drv.upsideDown && pc.position.z < -2 && Math.abs(pc.position.x) > .2 && ran.every(y => near(y, pc.radius, .08)) && Math.abs(pc.wheels[0].rotation.x) > 1 && Math.abs(pc.wheels[0].rotation.y) > .05 && pc.wheels[2].rotation.y === 0, 'and drives and steers on them: ' + drv.speed.toFixed(1) + ' m/s');
+      assert.doesNotThrow(() => pw.free(), 'a world with a car in it can be freed');
+    }
+    let bad = null; try { vehicle('car', { style: 'hovercraft' }); } catch (e) { bad = e; } assert.ok(/no car called 'hovercraft'/.test(bad?.message)); bad = null; try { vehicle('sled'); } catch (e) { bad = e; } assert.ok(/no vehicle 'sled'/.test(bad?.message), 'what it does not know is an error that names what it does');
+    assert.deepEqual(Object.keys(vehicle.kinds), ['car', 'truck', 'tank', 'train', 'boat', 'plane']);
+    // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
+    const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
+    tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
+    assert.ok(links.isInstancedMesh && near(moved, .07, .002) && m0.equals(m1) && !tk.chassis, 'a tank\'s left track runs 7 cm; its right stays');
+    tk.aim(.5, 2); assert.ok(tk.parts.turret.rotation.y === .5 && tk.parts.gun.rotation.x === .45 && tk.parts.gun.parent === tk.parts.turret && tk.points.muzzle.parent === tk.parts.gun);
+    tk.updateMatrixWorld(true); const mz = tk.points.muzzle.getWorldPosition(new THREE.Vector3()); assert.ok(mz.x < -.5 && mz.y > 2.4 && mz.z < -1, 'the muzzle is where the gun points: ' + mz.toArray().map(q => q.toFixed(2)));
+    // a train: cars coupled nose to tail, laid along a track so each sits between its own wheels
+    const tr = vehicle('train', { style: 'diesel', cars: ['coach', 'coach'] }), len = tr.cars.reduce((t, c) => t + c.length, 0);
+    assert.ok(tr.cars.length === 3 && near(tr.length, len, 1e-9) && near(tr.cars[0].position.z, -len / 2 + tr.cars[0].length / 2, 1e-9) && near(tr.cars[1].position.z - tr.cars[0].position.z, (tr.cars[0].length + tr.cars[1].length) / 2, 1e-9) && tr.cars[1].shell.children[0].geometry === tr.cars[2].shell.children[0].geometry, 'a train: three cars coupled');
+    const Rr = 60, track = s => ({ x: Rr * (1 - Math.cos(s / Rr)), y: s * .02, z: -Rr * Math.sin(s / Rr) }); tr.along(track, 100);
+    for (const c of tr.cars) { const mid = track(100 - c.back); assert.ok(Math.hypot(c.position.x - mid.x, c.position.z - mid.z) < c.reach * c.reach / (2 * Rr) + .02 && near(c.rotation.x, .02, .003) && near(c.rotation.y, -(100 - c.back) / Rr, .01), 'each car on the curve, turned along it, tipped with the slope'); }
+    tr.roll(2); const wm = new THREE.Matrix4(); tr.cars[0].children.find(m => m.name === 'wheels').getMatrixAt(0, wm); assert.ok(near(Math.atan2(wm.elements[6], wm.elements[5]), -2 / .5 + 2 * Math.PI, 1e-4) || near(Math.atan2(wm.elements[6], wm.elements[5]), -2 / .5, 1e-4), 'its wheels turn with the distance');
+    // a plane: its propeller turns, then blurs; a patrol boat's radar goes round
+    const pl = vehicle('plane'), blades = pl.parts.prop.children.find(m => m.name !== 'blur'), blur = pl.parts.prop.children.find(m => m.name === 'blur');
+    assert.ok(blades.visible && !blur.visible && pl.gear > 1.5 && pl.sit > 0); for (let i = 0; i < 120; i++) pl.move(1 / 60, 50); assert.ok(!blades.visible && blur.visible && pl.parts.prop.rotation.z > 20 && pl.wheels[0].rotation.x === 0, 'a propeller spins up into a blur; wheels in the air keep still');
+    const pb = vehicle('boat', { style: 'patrol' }); pb.move(.5, 6, { steer: 1 }); assert.ok(pb.parts.radar.rotation.y > 1 && pb.draft > 1 && pb.parts.gun && pb.aim(.2, .1).parts.turret.rotation.y === .2);
+    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, propellers and radar ok`);
+  }
+}
+
+// gs.models.fur: fur and hair in layers (the strand pictures, the shell every layer shares, the layers, thinning with
+// distance), on creatures (where it grows and how long) — scripts/creatures.cjs draws it to look over; people's hair
+// is checked in kit-browser (a person's clothes need a canvas)
+{
+  const { fur, strands } = await import('../src/kit/models/fur.js'), THREE = await import('three'), { creature } = await import('../src/kit/models/creature.js');
+  const near = (a, b, e = 1e-4) => Math.abs(a - b) <= e;
+  // ---- the pictures of strands: less of each strand shows the higher it is cut; fur is dots, hair runs along v
+  const cover = (tex, t) => { const d = tex.image.data; let k = 0; for (let i = 3; i < d.length; i += 4) if (d[i] >= t * 255) k++; return k / (d.length / 4); };
+  const pf = strands('fur'), ph = strands('hair');
+  assert.ok(pf.isDataTexture && pf.image.width === 256 && pf.image.data.length === 256 * 256 * 4 && pf.wrapS === THREE.RepeatWrapping && pf.generateMipmaps, 'a strand picture is a tiling texture with mipmaps');
+  for (const tex of [pf, ph]) assert.ok(cover(tex, .1) > .9 && cover(tex, .5) < cover(tex, .25) - .15 && cover(tex, .5) > .1 && cover(tex, .9) < .1 && cover(tex, .9) > 0, `${tex.name}: thick at the roots (${cover(tex, .1).toFixed(2)}), thin at the tips (${cover(tex, .9).toFixed(3)})`);
+  const rough = (tex, dx, dy) => { const d = tex.image.data; let s = 0; for (let y = 0; y < 255; y++) for (let x = 0; x < 255; x++) s += Math.abs(d[(y * 256 + x) * 4 + 3] - d[((y + dy) * 256 + x + dx) * 4 + 3]); return s; };
+  assert.ok(rough(ph, 1, 0) > rough(ph, 0, 1) * 4, 'hair runs down the picture: it changes far more across than along');
+  assert.ok(rough(pf, 1, 0) < rough(pf, 0, 1) * 1.3 && rough(pf, 0, 1) < rough(pf, 1, 0) * 1.3, 'fur stands on end: the same across as along');
+  assert.ok(strands('fur') === pf && strands('fur', 2) !== pf && strands('fur', 2).image.data.some((v, i) => v !== pf.image.data[i]), 'one picture a kind and seed; another seed, other strands');
+  { const d = pf.image.data; let lo = 255, hi = 0; for (let i = 0; i < d.length; i += 4) { if (d[i + 3] > 40) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); } } assert.ok(hi - lo > 60 && lo > 120, 'each strand has a shade of its own'); }
+
+  // ---- the shell: out along the normal by each point's length, over along the surface, a place in the picture
+  const ball = new THREE.SphereGeometry(1, 24, 16), sh = fur.shell(ball, { length: .1, tile: .5 });
+  const A = sh.morphAttributes.position[0], B = sh.morphAttributes.position[1], P = sh.attributes.position, Nn = sh.attributes.normal;
+  assert.ok(sh.morphAttributes.position.length === 2 && sh.morphTargetsRelative && sh.attributes.uv.count === P.count && sh.index.count === ball.index.count, 'the shell: the same triangles, two ways to move');
+  let worstLen = 0, worstDot = 0, flat = 0;
+  for (let i = 0; i < P.count; i++) {
+    const l = Math.hypot(A.getX(i), A.getY(i), A.getZ(i)), d = (A.getX(i) * Nn.getX(i) + A.getY(i) * Nn.getY(i) + A.getZ(i) * Nn.getZ(i)) / l;
+    worstLen = Math.max(worstLen, Math.abs(l - .1)); worstDot = Math.max(worstDot, Math.abs(d - 1), Math.abs(B.getX(i) * Nn.getX(i) + B.getY(i) * Nn.getY(i) + B.getZ(i) * Nn.getZ(i)));
+    if (Math.hypot(B.getX(i), B.getY(i), B.getZ(i)) > .05) flat++;
+  }
+  assert.ok(worstLen < 1e-5 && worstDot < 1e-4 && flat > P.count * .6, 'strands grow straight out of the skin and lie over along it');
+  assert.ok(P.count > ball.attributes.position.count && P.count < ball.attributes.position.count * 2.2 && [...sh.attributes.uv.array].every(Number.isFinite), 'points are doubled only where the picture is laid on from another side');
+  assert.ok(near(sh.boundingSphere.radius, 1.16, .01) && near(sh.userData.fur.longest, .1, 1e-6) && sh.userData.fur.tris === ball.index.count / 3);
+  // where: none below the middle, and no cliff where it stops
+  const half = fur.shell(ball, { length: .1, where: (i, x, y) => y > 0 ? 1 : 0 }), hA = half.morphAttributes.position[0]; let steps = 0, some = 0;
+  for (let t = 0; t < half.index.count; t += 3) { const l = [0, 1, 2].map(k => { const i = half.index.getX(t + k); return Math.hypot(hA.getX(i), hA.getY(i), hA.getZ(i)); }); if (Math.max(...l) - Math.min(...l) > .05 + 1e-6) steps++; if (Math.max(...l) > 0 && Math.max(...l) < .1) some++; }
+  assert.ok(half.index.count < ball.index.count * .7 && half.index.count > ball.index.count * .4 && steps === 0 && some > 20, 'strands grow only where they are told, and shorten toward where none grow');
+  assert.equal(fur.shell(ball, { length: .1, where: new Float32Array(ball.attributes.position.count) }).index.count, 0, 'nothing grows where every point says none');
+  // the coat thins out toward where none grow (the alpha of each point's colour: how thick it is there), and takes the mesh's colours or its own
+  { const hc = half.attributes.color; let bare = 0, thick = 0, wrong = 0; for (let i = 0; i < hc.count; i++) { const l = Math.hypot(hA.getX(i), hA.getY(i), hA.getZ(i)); if (l === 0) { bare++; if (hc.getW(i) !== 0) wrong++; } else if (l > .05) { thick++; if (hc.getW(i) !== 1) wrong++; } }
+    assert.ok(hc.itemSize === 4 && bare > 10 && thick > 100 && wrong === 0 && hc.getX(0) === 1, 'thin to nothing where no strand grows, full where they are long; white where the mesh has no colours'); }
+  { const cg = ball.clone(), n = cg.attributes.position.count; cg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3).fill(.5), 3)); const own = new Float32Array(n * 3).fill(.25);
+    assert.ok(fur.shell(cg, { length: .1 }).attributes.color.getY(7) === .5 && fur.shell(cg, { length: .1, colors: own }).attributes.color.getZ(7) === .25, 'the mesh\'s colours, or the ones it is given'); }
+  // thin things keep their shape: no strand longer than part of what it grows on is thick
+  const slab = new THREE.BoxGeometry(1, .04, 1, 12, 1, 12), ss = fur.shell(slab, { length: .1 }), sA = ss.morphAttributes.position[0]; let top = 0, topN = 0;
+  for (let i = 0; i < sA.count; i++) if (Math.abs(ss.attributes.normal.getY(i)) > .9) { top = Math.max(top, Math.hypot(sA.getX(i), sA.getY(i), sA.getZ(i))); topN++; }
+  assert.ok(topN > 100 && top <= .04 * .45 + 1e-6 && near(fur.shell(slab, { length: .1, thin: 0 }).userData.fur.longest, .1), `a slab 4 cm thick grows strands no longer than ${(top * 100).toFixed(1)} cm (10 cm asked for)`);
+  // hair from a crown: round the head in whole pictures, further down the further from the crown
+  const head = fur.shell(ball, { length: .05, tile: .25, uv: { centre: [0, 0, 0], crown: [0, 1, 0] } }), hu = head.attributes.uv; let torn = 0, down = 0;
+  for (let t = 0; t < head.index.count; t += 3) { const u = [0, 1, 2].map(k => hu.getX(head.index.getX(t + k))); if (Math.max(...u) - Math.min(...u) > 20 / 24 + 1e-3) torn++; }
+  for (let i = 0; i < hu.count; i++) if (Math.abs(hu.getY(i) - Math.acos(Math.max(-1, Math.min(1, head.attributes.position.getY(i)))) * 4) > 1e-3) down++;
+  assert.ok(torn === 0 && down === 0, 'a crown: no triangle is torn across the join, and v is how far round from the crown');
+  assert.throws(() => fur.shell(new THREE.BufferGeometry(), {}), /positions and normals/);
+
+  // ---- the layers
+  const mesh = new THREE.Mesh(ball, new THREE.MeshStandardMaterial()), coat = fur(mesh, { length: .1, layers: 6, lean: .5 });
+  assert.ok(coat.layers === 6 && coat.shells.length === 6 && coat.shells.every(m => m.parent === mesh && m.geometry === coat.shell && !m.castShadow && m.material.map === pf) && coat.tris === ball.index.count / 3 * 6, 'six layers, children of the mesh, one geometry between them');
+  const inf = coat.shells.map(m => m.morphTargetInfluences.slice()), cut = coat.shells.map(m => m.material.alphaTest), order = coat.shells.map(m => m.renderOrder);
+  assert.ok(inf.every((v, i) => !i || (v[0] < inf[i - 1][0] && v[1] < inf[i - 1][1])) && cut.every((v, i) => !i || v < cut[i - 1]) && order.every((v, i) => !i || v > order[i - 1]) && near(cut[0], 5.5 / 6) && near(cut[5], .5 / 6), 'the outermost first: furthest out, cut highest, drawn first');
+  assert.ok(inf[0][0] < 1 && inf[0][0] > .9 && inf[0][1] > .25, 'a strand is an arc: its tip a little short of straight, and over to one side');
+  coat.lean = 0; assert.ok(coat.shells[0].morphTargetInfluences[0] === 1 && coat.shells[0].morphTargetInfluences[1] === 0, 'no lean: straight out');
+  coat.length = 2; assert.ok(coat.shells[0].morphTargetInfluences[0] === 2 && coat.shells[5].morphTargetInfluences[0] === 2 / 6, 'length can be set any time (fur standing on end)'); coat.length = 1;
+  assert.ok(coat.shells[0].material.color.r > coat.shells[5].material.color.r * 1.5, 'dark at the roots, light at the tips');
+  assert.ok(fur(new THREE.Mesh(ball, mesh.material), { shell: coat.shell, layers: 6 }).shells[0].material === coat.shells[0].material, 'coats of one kind share their materials');
+  // thinning with distance: all, half, none
+  const cam = new THREE.PerspectiveCamera(50, 1, .1, 1000); mesh.updateMatrixWorld(true);
+  const at = d => { cam.position.set(0, 0, d); cam.updateMatrixWorld(true); return coat.see(cam, 800); };
+  assert.equal(at(4), 1); assert.equal(coat.shells.filter(m => m.visible).length, 6);
+  assert.equal(at(10), .5); assert.deepEqual(coat.shells.map(m => m.visible), [true, false, true, false, true, false], 'half its layers further off, the outermost kept');
+  assert.equal(at(40), 0); assert.equal(coat.shells.filter(m => m.visible).length, 0, 'none far away');
+  assert.equal(at(4), 1); coat.level = 0; assert.equal(coat.level, 0); coat.level = 1;
+  // a skinned mesh: the layers ride the same skeleton
+  const bone = new THREE.Bone(), sg = ball.clone(); sg.setAttribute('skinIndex', new THREE.BufferAttribute(new Uint16Array(sg.attributes.position.count * 4), 4)); sg.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array(sg.attributes.position.count * 4).map((v, i) => i % 4 ? 0 : 1), 4));
+  const sm = new THREE.SkinnedMesh(sg, mesh.material), sk = new THREE.Skeleton([bone]); sm.add(bone); sm.bind(sk); const sc = fur(sm, { layers: 4, length: .05 });
+  assert.ok(sc.shells.every(m => m.isSkinnedMesh && m.skeleton === sk && m.geometry.attributes.skinWeight) && sc.shells.length === 4, 'on a skinned mesh the layers are skinned to the same skeleton');
+  coat.dispose(); assert.ok(!mesh.children.length && coat.shells.length === 0, 'dispose takes the layers away');
+  assert.equal(fur(mesh, { layers: 0 }).shells.length, 0, 'no layers: the mesh as it was'); assert.throws(() => fur({}), /give it a mesh/);
+
+  // ---- on creatures: fur where the coat is fur, a mane on a horse, none on a pig; short on the face, none on the nose or the eyes
+  const cat = creature({ like: 'cat', now: true, fur: { layers: 6 } }), cf = cat.fur, cs = cf.shell, scale = cat.scale.x;
+  assert.ok(cf && cf.layers === 6 && cf.shells.every(m => m.isSkinnedMesh && m.parent === cat.lods[0] && m.skeleton === cat.mesh.skeleton), 'a cat has fur, on its closest level');
+  assert.ok(cs.userData.fur.tris > cat.tris[1] * .7 && cs.userData.fur.tris < cat.tris[0] * .6, 'the fur covers most of it, on the middle level\'s triangles (the head on the finest)');
+  const inMetres = cs.userData.fur.longest * scale; assert.ok(inMetres > .008 && inMetres < .03, `a cat's fur is ${(inMetres * 1000).toFixed(0)} mm long`);
+  cat.lod = 1; cat.updateMatrixWorld(true); let seen = 0; cat.traverseVisible(o => { if (o.name.startsWith('fur')) seen++; }); assert.equal(seen, 0, 'further off (the middle level) there is no fur to draw'); cat.lod = 0;
+  { const l0 = cf.lean; for (let i = 0; i < 60; i++) cat.move(1 / 60, cat.speeds.run); const fast = cf.lean; for (let i = 0; i < 120; i++) cat.move(1 / 60, 0); assert.ok(fast > l0 + .3 && Math.abs(cf.lean - l0) < .03, 'running lays its fur back; standing lets it up again'); }
+  const tw = cat.twin(); assert.ok(tw.fur && tw.fur !== cf && tw.fur.shell === cs && tw.fur.shells[0].skeleton === tw.mesh.skeleton, 'a twin has a coat of its own on the same shell');
+  const horse = creature({ like: 'horse', now: true, fur: { layers: 6 } }), pig = creature({ like: 'pig', now: true, fur: { layers: 6 } });
+  assert.ok(horse.fur && horse.fur.shell.userData.fur.tris < horse.tris[1] * .5 && horse.fur.shell.userData.fur.longest > cs.userData.fur.longest && pig.fur === null, 'a horse grows a mane and a tail (long), a pig nothing');
+  assert.equal(creature({ like: 'cat', now: true, fur: false }).fur, null, 'fur: false'); assert.ok(creature({ like: 'cat', now: true, fur: { layers: 6, length: .05 } }).fur.shell.userData.fur.longest * scale > .03, 'a length in metres');
+  assert.ok(creature({ like: 'ogre', now: true, fur: { layers: 5 }, build: { coat: 'fur' } }).fur?.layers === 5, 'any creature given a coat of fur grows it');
+  console.log(`fur and hair in layers: the strand pictures, the shell (lengths, thin things, a crown), six layers, thinning with distance, skinned meshes, a cat (${cs.userData.fur.tris} triangles a layer), a horse's mane, a pig without ok`);
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

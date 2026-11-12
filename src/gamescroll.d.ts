@@ -191,13 +191,41 @@ export interface SoundPart {
    * uses Tone.js, which loads by itself: the tune plays in the chip sound until it's in.
    */
   music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; [part: string]: Loose }): { start(): Loose; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
-  /** 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones). */
-  Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number }) => {
+  /**
+   * 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones).
+   * Sound that knows the level: with `level` (a gs.physics3d World3D, a TileMap, a City, Voxels, a function
+   * (from, dir, max) => metres to the first solid thing, or a list of them) every sound is muffled by the walls
+   * between it and the ears by itself (less through a doorway or round a corner, more behind something thick),
+   * and the place the ears stand in gets its own echo (a small room, a hall, a cave, a street, open country),
+   * felt out with `rays` rays a frame. hard: 0 soft (carpet, snow, a forest) .. 1 bare stone; unit: level units
+   * to a metre (16 for a map of 16-pixel tiles a metre across); auto: false to read `room` and set the echo yourself.
+   */
+  Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number; level?: SoundLevel | null; hard?: number; unit?: number; auto?: boolean; rays?: number }) => {
     place(pos: { x: number; y: number; z?: number }, forward?: { x: number; y: number; z: number }, up?: { x: number; y: number; z: number }): Loose; place2d(x: number, y: number, facing?: number): Loose;
+    /** What stands in the way of sound (null: nothing). Set it again when the level is another one. */
+    level: SoundLevel | null;
+    /** The place round the ears as the level says it is so far (null without a level). */
+    readonly room: SoundPlace | null;
+    /** How much the level keeps a sound at p from the ears: 0 nothing in the way .. 1 behind a thick wall (0 without a level). */
+    blocked(p: { x: number; y: number; z?: number }): number;
+    /** muffled: true (behind a wall, as you say), or 0..1, says so yourself; false leaves it clear; left out, the level decides. */
     tone(f: number | string, p: { x: number; y: number; z?: number }, o?: Loose): Loose; noise(len: number, p: { x: number; y: number; z?: number }, o?: Loose): Loose; zzfx(p: { x: number; y: number; z?: number }, ...params: (number | undefined)[]): Loose;
-    play(name: string, p: { x: number; y: number; z?: number }, pitch?: number, o?: { muffled?: boolean }): Loose;
-    loop(p: { x: number; y: number; z?: number }, wave?: OscillatorType, hz?: number, o?: { vol?: number; muffled?: boolean }): { move(p: { x: number; y: number; z?: number }): Loose; pitch(hz: number): Loose; volume(v: number): Loose; stop(): void };
+    play(name: string, p: { x: number; y: number; z?: number }, pitch?: number, o?: { muffled?: boolean | number }): Loose;
+    /** A steady sound that follows something; with a level it is checked again for walls as it and the ears move (h.muffled: 0..1 now). */
+    loop(p: { x: number; y: number; z?: number }, wave?: OscillatorType, hz?: number, o?: { vol?: number; muffled?: boolean | number }): { move(p: { x: number; y: number; z?: number }): Loose; pitch(hz: number): Loose; volume(v: number): Loose; stop(): void; readonly muffled?: number };
+    /** How loud a sound at p would be here, 0..1: quieter with distance, and behind walls where there is a level. */
     heard(p: { x: number; y: number; z?: number }): number;
+  };
+  /**
+   * The sums behind sound that knows the level, for your own sounds and subtitles (no audio): caster(level) makes
+   * one question of any level (cast(from, dir, max) => metres to the first solid thing, or Infinity), blocked(cast, ear, source)
+   * is 0 clear .. 1 behind a thick wall, muffleOf(amount) what such a sound keeps, Room feels out a place a few rays at a time.
+   */
+  acoustics: {
+    caster(level: SoundLevel | null, o?: { flat?: boolean }): SoundCast | null;
+    blocked(cast: SoundCast | null, ear: { x: number; y: number; z?: number }, source: { x: number; y: number; z?: number }, o?: { spread?: number; thick?: number; flat?: boolean }): number;
+    muffleOf(amount: number): { gain: number; hz: number };
+    Room: new (o?: { far?: number; hard?: number; flat?: boolean; roof?: number; unit?: number }) => { probe(cast: SoundCast | null, ear: { x: number; y: number; z?: number }, n?: number): Loose; read(): SoundPlace; clear(): Loose; readonly known: boolean };
   };
   /** ZzFX sound from its numbers (zzfx.micro). */
   zzfx(...params: number[]): void;
@@ -218,6 +246,8 @@ export interface SoundPart {
     duck(name?: string, to?: number, hold?: number, back?: number): Loose;
     room(r?: 'none' | 'room' | 'hall' | 'cave' | 'pipe' | { reverb?: number; size?: number; echo?: number; delay?: number }): Loose;
     muffle(x?: number, fade?: number): Loose;
+    /** The echo of the place the listener is in, for effects and voices (not the music); null for none. new Ears({ level }) sets it by itself. */
+    place(o?: { tail?: number; wet?: number; echo?: number; delay?: number } | null, fade?: number): Loose;
     channel(name: string): { volume(v: number, fade?: number): Loose; duck(to?: number, hold?: number, back?: number): Loose };
     reset(): Loose;
   };
@@ -234,6 +264,12 @@ export interface SoundPart {
   talking(): boolean;
 }
 
+/** What stands in the way of sound for gs.sound.Ears: anything with ray() or sees() (World3D, TileMap, City, Voxels, 2D Physics, NavGrid), a function, or a list. */
+export type SoundLevel = { ray(...a: Loose[]): Loose } | { sees(...a: Loose[]): Loose } | ((from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, max: number) => number | boolean | null | undefined | { distance?: number; dist?: number }) | SoundLevel[];
+/** One question for any level: metres to the first solid thing from `from` along the unit direction `dir`, or Infinity when clear for `max`. */
+export type SoundCast = (from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, max: number) => number;
+/** A place as it sounds: size (metres to the walls on average), walls and roof (0..1 closed), enclosed (0 open country .. 1 shut in), tail (seconds the echo rings), wet (0..1 how much), echo and delay (a slap back off far walls outdoors). */
+export interface SoundPlace { size: number; walls: number; roof: number; enclosed: number; tail: number; wet: number; echo: number; delay: number }
 /** A character's voice for gs.sound.say: a kind, or which accents to try, which take of that kind, and voices to prefer by name. */
 export type SayVoice = 'woman' | 'man' | 'any' | { kind?: 'woman' | 'man' | 'any'; lang?: string | string[]; take?: number; like?: string | string[] };
 /** One part of a spoken line: words, a pause in seconds, or words with their own delivery. */
@@ -1204,6 +1240,8 @@ export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; 
 export interface HdAir {
   haze: number; colour: Loose; sunColour: Loose | null; mist: number; mistFall: number; mistY: number; patchy: number;
   clouds: number; cloudShade: number; cloudHeight: number; cloudSize: number; wind: [number, number]; wet: number; sun: Loose | null;
+  /** Set by a gs.sky.Weather that was given the level: what it has made wet and white, drawn only where the sky can see. */
+  world: { wet: number; snow: number; pools: number; cover: SkyCover | null } | null;
 }
 /** v.grade: saturation and contrast (1 = no change), tints for the shadows and the highlights ('#rrggbb', a Color or [r, g, b]). */
 export interface HdGrade { saturation?: number; contrast?: number; shadows?: Loose; highlights?: Loose }
@@ -1299,6 +1337,57 @@ export interface CharactersPart {
   /** Mouth shapes over time for a line of speech. */
   visemes(text: string, o?: { rate?: number }): { t: number; ch: string; open: number; wide: number; round: number }[] & { end: number };
   FACE_SHAPES: string[];
+  /**
+   * People who react physically: one for each character on a gs.poses rig (figure(), person(), gs.models.human()).
+   * It flinches where it is hit, steps to keep its balance when shoved, puts its hands out against a wall it
+   * runs into, goes down as a jointed ragdoll (with `world`, a gs.physics3d World3D; acted without) and gets up.
+   * Call update(dt) each frame after rig.update(dt), and steer the character only while `busy` is false.
+   */
+  Reactions: new (body: Loose, o?: ReactionsOptions) => ReactionsT;
+}
+export interface ReactionsOptions {
+  /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Without one they are acted. */
+  world?: Loose | null;
+  /** The World3D mover that walks the character: staggering respects walls, and it is put back where the body gets up. */
+  mover?: Loose | null;
+  /** Floor height at (x, z), for uneven ground and edges to fall off (-Infinity: a pit). */
+  ground?: ((x: number, z: number) => number) | null;
+  /** What it can run into (as gs.sound.Ears takes: a World3D, a City, a function...). Default: the world. */
+  level?: SoundLevel | null;
+  /** How hard it is to knock over: 1 a person, 2 a brute, .5 someone already hurt. */
+  steady?: number;
+  /** Seconds it lies before getting up by itself (Infinity: only when told). Default 1.4. */
+  rest?: number;
+  /** false: no bracing against walls. */
+  walls?: boolean;
+  rig?: Loose;
+}
+export interface ReactionsT {
+  /** true while the character is not the game's to steer (staggering, falling, down or getting up). */
+  readonly busy: boolean;
+  /** true while it lies on the ground. */
+  readonly down: boolean;
+  state: 'steady' | 'stagger' | 'falling' | 'down' | 'rising';
+  /** true for one frame: a recovery step landed; it hit the ground (impact: metres a second); it is back on its feet. */
+  stepped: boolean; landed: boolean; rose: boolean; impact: number;
+  limp: boolean; steady: number; rest: number;
+  /** The ragdoll while there is one (parts, part(name), push, hit, drive, relax). */
+  doll: Loose | null;
+  /** A blow: push is the change of speed it would give the body (metres a second, world), at a world point (default the chest). Light: a flinch; harder: a stagger; harder still, or at the legs: a fall. */
+  hit(push: number[] | XYZ, at?: number[] | XYZ | null): ReactionsT;
+  /** Thrown by an explosion at point: strength is metres a second at the centre, nothing at radius. */
+  blast(point: number[] | XYZ, strength?: number, radius?: number): ReactionsT;
+  /** The legs caught on something: a stumble, or a fall at a run. dir: a world direction (default: the way it is going). */
+  trip(dir?: number[] | XYZ | null): ReactionsT;
+  /** Goes down now. limp: nobody in it (knocked out, shot): it stays down until getUp({ revive: true }). */
+  fall(push?: number[] | XYZ | null, o?: { limp?: boolean }): ReactionsT;
+  /** Arms up against something coming from a world point, for some seconds. */
+  brace(from?: number[] | XYZ | null, seconds?: number): ReactionsT;
+  getUp(o?: { revive?: boolean }): ReactionsT;
+  /** Stands it up at once, steady (a new round). */
+  reset(): ReactionsT;
+  /** Each frame, after rig.update(dt). */
+  update(dt: number): ReactionsT;
 }
 export interface FaceT {
   blinkEvery: number; readonly talking: boolean;
@@ -1827,10 +1916,51 @@ export interface SkyPart {
     time: number; speed: number; night: number; clouds: number; gap: number; /** 0..1 lights up the sky and clouds (lightning): set it while a flash shows. */ flash: number;
     readonly dayPart: number; update(dt: number): Loose; apply(): Loose; dispose(): void;
   };
-  Weather: new (view: Loose, o?: { kind?: 'rain' | 'snow' | 'storm' | 'clear'; amount?: number; area?: number; /** [x, z] push, or a gs.outdoors.Wind to follow. */ wind?: number[] | { x?: number; z?: number; [k: string]: Loose }; max?: number; color?: string }) => {
-    kind: string; amount: number; wind: [number, number]; onFlash: ((far: number) => void) | null; readonly flashing: boolean;
-    set(kind: 'rain' | 'snow' | 'storm' | 'clear', amount?: number): Loose; flash(): Loose; update(dt: number): Loose; dispose(): void;
-  };
+  /**
+   * Rain, snow or a storm round the camera. Given the level (Next Gen views with air()), it also changes the world: rain and
+   * snow stop at roofs, what the sky can see gets wet, puddles spread on flat ground and dry up again, snow settles and
+   * melts, and floors indoors, porches and the ground under a bridge stay dry. docs/nextgen-3d.md "Weather that changes the world".
+   */
+  Weather: new (view: Loose, o?: WeatherOptions) => WeatherPart;
+}
+export interface WeatherOptions {
+  kind?: 'rain' | 'snow' | 'storm' | 'clear'; amount?: number; area?: number; /** [x, z] push, or a gs.outdoors.Wind to follow. */ wind?: number[] | { x?: number; z?: number; [k: string]: Loose }; max?: number; color?: string;
+  /** How big a snowflake is drawn, in metres (with a level: .07 at most). */ flake?: number;
+  /**
+   * What stands in the weather, so it can change the world: a gs.physics3d World3D, a City, Voxels, a function
+   * (from, dir, max) => metres to the first solid thing, three.js meshes or groups (keep those to a few simple shapes),
+   * or a list of these. true: no roofs anywhere, everything is out in it.
+   */
+  level?: Loose;
+  /** (x, z) => the height of the land, for land that is not in the level (land.height). */ ground?: (x: number, z: number) => number;
+  /** The map of what the sky can see: cells (128) of cell metres (.5) round the camera, rise and drop (80 m: how far above and below the camera it looks), rays (400 spots asked a frame at most), ms (1.5 at most). */
+  cover?: { cells?: number; cell?: number; rise?: number; drop?: number; rays?: number; ms?: number; again?: number };
+  /** gs.outdoors.Water (one or a list): the rain falls on it too (it sets water.rain). */ water?: WaterPart | WaterPart[];
+  /** Seconds of full rain until everything is wet (20), and of no rain until it is dry again (90). Puddles take twice as long to fill and go last. */ soak?: number; dry?: number;
+  /** Seconds of full snow until it has all settled (40), and until it has melted once the snow stops (150; rain washes it away six times as fast). */ settle?: number; melt?: number;
+  /** How deep settled snow lies, in metres (.25): what snowAt() answers with. */ deep?: number;
+  /** How many drops hop off the ground near the camera at once in the rain (96; 0: none). */ hops?: number;
+}
+export interface WeatherPart {
+  kind: string; amount: number; wind: [number, number]; onFlash: ((far: number) => void) | null; readonly flashing: boolean;
+  /** How wet the open world is, how far the puddles have spread and how much snow has settled, each 0..1 (with a level). Set them to start a round after rain or in deep snow. */
+  wet: number; pools: number; snow: number;
+  /** How hard it is raining and snowing now, 0..1. */ readonly rain: number; readonly snowing: number;
+  /** The map of what the sky can see (with a level): cover.at(x, z) is the height of the highest solid thing over a spot. */ readonly cover: SkyCover | null;
+  set(kind: 'rain' | 'snow' | 'storm' | 'clear', amount?: number): WeatherPart; flash(): WeatherPart; update(dt: number): WeatherPart; dispose(): void;
+  /** Can the sky see this point (is nothing over it)? Always true with no level. */ open(p: Fx3dPos): boolean;
+  /** How wet a spot is now, 0..1: 0 under a roof (slippery floors, footsteps that splash, a dog that shakes itself indoors). */ wetAt(p: Fx3dPos): number;
+  /** How deep the snow lies at a spot, in metres: 0 under a roof (footprints, slower walking). */ snowAt(p: Fx3dPos): number;
+}
+/** What the sky can see, as numbers on a grid round the camera (weather.cover). */
+export interface SkyCover {
+  /** Cells a side and metres a cell; the middle of the square it knows, and how far from it the answers reach. */
+  readonly N: number; readonly cell: number; readonly cx: number; readonly cz: number; readonly reach: number;
+  /** True once every spot in its square has been asked about (a few frames after a jump). */ readonly ready: boolean;
+  /** The height of the highest solid thing over x, z (a roof, a bridge, the ground): -Infinity where it does not know. */ at(x: number, z: number): number;
+  /** Is nothing over this point? slack: how far under the highest thing still counts (.3 m). */ open(x: number, y: number, z: number, slack?: number): boolean;
+  /** You changed the level here (a roof came off, a door opened): it asks again within r metres (4) first. It looks everything over again every few seconds anyway. */ touch(x: number, z: number, r?: number): SkyCover;
+  /** Every spot now, not a few a frame (while loading). */ update(all?: boolean): SkyCover;
 }
 
 // ---------- round 7: action, stealth, traversal, missions, sport, big levels ----------
@@ -1946,6 +2076,153 @@ export interface ArenaPart {
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
   chaseBall(car: BallCar, arena: Loose, o?: { skill?: number }): { throttle: number; steer: number; boost: boolean; jump: boolean };
 }
+/** What gs.models.vehicle takes. Colours are '#rrggbb'. */
+export interface VehicleOptions {
+  /**
+   * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep'; a truck 'flat' | 'canvas' | 'box' | 'tanker';
+   * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol'; a plane 'prop' | 'biplane' | 'twin' | 'jet'.
+   */
+  style?: string;
+  /** Which of its kind's colours it gets, and where its wear falls: the same on every phone. */
+  seed?: number;
+  /** Its paint, and its second colour (a coach's band, a boat's deck house, a plane's stripe). */
+  colour?: string; color?: string; trim?: string;
+  /** 'gloss' a new car, 'satin', 'matt' army paint, 'worn' paint rubbed through to the metal, 'rusty'. Each kind has its own to start with. */
+  finish?: 'gloss' | 'satin' | 'matt' | 'worn' | 'rusty';
+  /** How aged, 0..1 (worn edges, dirt low down), or false: straight from the factory. */
+  wear?: number | false;
+  /** Its lamps glow (lights(on) changes it later). */
+  lit?: boolean;
+  /** A car's or a truck's shell and wheels: 1, or .5 a little coarser (about a fifth fewer triangles). */
+  detail?: number;
+  /** A truck: the colour of a 'canvas' tilt; 3 axles (2); tyres with lugs for mud. */
+  canvas?: string; axles?: 2 | 3; offroad?: boolean;
+  /** A train: what its engine pulls, in order (['van', 'open', 'tanker', 'flat', 'coach'...]), and the gauge between its rails in metres (1.435). */
+  cars?: string[]; gauge?: number;
+}
+/** What gs.models.vehicle gives back: a Group, its nose along -z and +x its right side, in metres. A road vehicle and a train stand on y = 0, a boat floats with its waterline there, a plane's origin is on its centre line. */
+export type VehicleT = Loose & {
+  kind: 'car' | 'truck' | 'tank' | 'train' | 'boat' | 'plane'; style: string;
+  /** Its body (a Group): everything but the wheels. */
+  shell: Loose;
+  /** Its wheels' pivots: front left, front right, back left, back right (then a third axle's); each has `radius` and `steers`. A tank's and a train's are drawn as copies and are not here. */
+  wheels: Loose[];
+  /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a steam engine's `rods`, `mainRods`. */
+  parts: Record<string, Loose>;
+  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, a van's `roof`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
+  points: Record<string, Loose>;
+  /** Metres over everything that does not turn. */
+  size: { length: number; width: number; height: number };
+  /** Between its axles, between its wheels across, and a wheel's radius, in metres (0 where it has none). */
+  wheelbase: number; track: number; radius: number;
+  /** A plane: how high its origin stands above the ground on its wheels, and how far its nose points up there (radians). A boat: how deep it floats. */
+  gear?: number; sit?: number; draft?: number;
+  /** How many triangles it draws. */
+  tris: number;
+  /** What it was made with: kind, style, seed, colour, trim, finish. */
+  look: Record<string, Loose>;
+  /** Turns its wheels for a distance travelled so far, in metres (a tank: its left and right tracks). */
+  roll(d: number, right?: number): VehicleT;
+  /** Turns its front wheels: radians, + to the right. */
+  steer(a: number): VehicleT;
+  /**
+   * The easy way to keep it alive each frame: rolls its wheels (or tracks) for its speed in metres a second, eases its front wheels to `steer` (-1..1, + right; lock: radians at 1), rolls its body outwards in a turn and rocks it with its speeding up and
+   * slowing down (sway: how much, 1), spins its propellers up to a blur (power 0..1), turns a boat's motor and radar. A tank: `turn` -1..1 runs one track ahead of the other, `aim` [turn, lift] eases its turret and gun there. ground: false keeps a plane's wheels still in the air.
+   */
+  move(dt: number, speed?: number, o?: { steer?: number; lock?: number; sway?: number; turn?: number; aim?: [number, number] | null; power?: number; ground?: boolean }): VehicleT;
+  /**
+   * Cars and trucks, for gs.physics3d: `world.vehicle(car, car.chassis({ power: 14 }))` gives it springs and grip. It returns what World3D.vehicle wants (w, h, l, radius, rest, travel and its four wheels, plus anything you pass) and moves the body so its
+   * origin is the middle of the chassis and not on the road. Call it once; a third axle's wheels follow the second's.
+   */
+  chassis?(o?: Record<string, Loose>): Record<string, Loose>;
+  /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops). */
+  aim(turn?: number, lift?: number): VehicleT;
+  /** Its lamps on or off. */
+  lights(on?: boolean): VehicleT;
+  /** Another just like it, sharing its shapes and materials. */
+  twin(): VehicleT;
+};
+/** A train from gs.models.vehicle('train', ...): its cars coupled nose to tail, the engine first, the middle of the train at its origin. */
+export type TrainT = Loose & {
+  kind: 'train'; style: string;
+  /** Each car, a vehicle of its own (its `length` over its buffers; `parts`, `points`, `lights`...), the engine first. */
+  cars: (VehicleT & { length: number; reach: number; back: number })[];
+  /** The engine's. */
+  parts: Record<string, Loose>; points: Record<string, Loose>;
+  size: { length: number; width: number; height: number };
+  /** Metres over its buffers, end to end; and the radius of its engine's driving wheels. */
+  length: number; radius: number; tris: number; look: Record<string, Loose>;
+  /** Turns every wheel (and a steam engine's rods) for a distance travelled so far, in metres. */
+  roll(d: number): TrainT;
+  /** Each frame: rolls its wheels for its speed in metres a second. */
+  move(dt: number, speed?: number): TrainT;
+  /**
+   * Lays it along a track with its front `d` metres along it, each car between its own wheels, so it bends round curves and tips on slopes. track: (metres along) => { x, y, z } on top of the rails, or a gs.paths.Path;
+   * the points are in the train's own space, so leave the train itself where the track's points are measured from.
+   */
+  along(track: ((d: number) => { x: number; y?: number; z?: number }) | Loose, d: number): TrainT;
+  lights(on?: boolean): TrainT;
+  twin(): TrainT;
+};
+/** What gs.models.fur takes (a creature's `fur` and a person's `strands` take the same, less what they work out themselves). Lengths are in the mesh's own units. */
+export interface FurOptions {
+  /** How long the strands are (.03). A creature and a person take theirs in metres. */
+  length?: number;
+  /** How many layers: by the phone's quality unless given (none on the slowest phones, then 5, 7 and 10). */
+  layers?: number;
+  /** 'fur': strands on end; 'hair': long strands lying side by side. */
+  kind?: 'fur' | 'hair';
+  /** How much of `length` grows at each point: a Float32Array of 0..1 a point, or (i, x, y, z) => 0..1. 0: none there. */
+  where?: Float32Array | ((i: number, x: number, y: number, z: number) => number);
+  /** The triangles to cover, as indices into the mesh's points (the mesh's own index otherwise). */
+  index?: ArrayLike<number>;
+  /** How wide the picture of strands is on the surface (.1; fur has 32 strands across it, hair 36). */
+  tile?: number;
+  /** 'box' (strands on end from every side), or for hair the crown they stream from on a head whose middle is `centre`: around (whole pictures round the head), droop (how much they hang: .35). */
+  uv?: 'box' | { centre?: number[]; crown?: number[]; around?: number; droop?: number };
+  /** 0..1.5 how far the strands lie over (.5). */
+  lean?: number;
+  /** The way they lie: [x, y, z] or a function of each point and its normal. Down and back (-z) otherwise. */
+  flow?: number[] | ((x: number, y: number, z: number, nx: number, ny: number, nz: number) => number[]);
+  /** No strand longer than this much of how thick the mesh is where it grows, so ears, thin tails and legs keep their shape (.45; 0: any length). */
+  thin?: number;
+  /** How quickly strands lengthen away from where none grow, as a part of `length` an edge (.5). */
+  ease?: number;
+  rough?: number;
+  /** How dark the roots are and how light the tips (.65, 1.5). */
+  root?: number; tip?: number;
+  /** A tint over the mesh's vertex colours. */
+  colour?: string; color?: string;
+  /** The strands' colours where they differ from the mesh's: three numbers a point. */
+  colors?: Float32Array;
+  /** Which picture of strands (1). */
+  seed?: number;
+  /** false: don't thin out with distance. */
+  auto?: boolean;
+  /** How big the furry thing is (mesh units), for thinning with distance. */
+  size?: number;
+  /** Another coat's `shell`, to share its geometry (twins). */
+  shell?: Loose;
+}
+/** A coat of fur or hair: layers of strands over a mesh. */
+export interface FurCoat {
+  /** Its meshes, the outermost first, children of the mesh it grows on. */
+  shells: Loose[];
+  layers: number;
+  /** The geometry every layer shares (null on a phone that draws no layers). */
+  shell: Loose | null;
+  /** Triangles drawn when every layer shows. */
+  tris: number;
+  /** Set any time: 1 as made, 1.5 fur standing on end, .5 flattened by water. */
+  length: number;
+  /** Set any time: how far the strands lie over (wind, speed). */
+  lean: number;
+  /** How much of it shows: 1 every layer, .5 every other, 0 none. Set by itself from how big the mesh is on screen (unless auto: false). */
+  level: number;
+  /** Sets level for a camera; returns it. */
+  see(camera: Loose, screenHeightPx?: number): number;
+  dispose(): void;
+}
 /** What gs.models.creature takes. Colours are '#rrggbb'. */
 export interface CreatureOptions {
   kind?: 'quad' | 'bird' | 'fish' | 'insect' | 'monster';
@@ -1962,6 +2239,11 @@ export interface CreatureOptions {
   build?: Record<string, number | string>;
   /** .5 coarser .. 2 finer (1). */
   detail?: number; shadows?: boolean;
+  /**
+   * Fur in layers (gs.models.fur) over a coat of fur, and over a mane and a tail of hair on any coat: on by itself, close up, on all but the slowest phones. false: none.
+   * Or { length (metres), layers, lean, tile (metres), rough, root, tip, auto, from (0: grown on the finest level's triangles everywhere) }.
+   */
+  fur?: boolean | (Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'flow' | 'ease' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'> & { from?: number });
   /** Sculpt on the spot (tools and tests: the page stops while it does). */
   now?: boolean;
 }
@@ -1980,6 +2262,8 @@ export type CreatureT = Loose & {
   /** What the seed chose: kind, like, seed, size, colour, belly, accent, pattern, eyes, build (its measures). */
   look: Record<string, Loose>;
   kind: string; like: string;
+  /** Its coat of fur (null: it has none, or this phone draws none): fur.length = 1.5 stands it on end, fur.lean lays it flat. move() lays it back a little as it runs. */
+  fur: FurCoat | null;
   /** Another of the very same creature, sharing everything but its skeleton. */
   twin(): CreatureT;
 };
@@ -2021,6 +2305,81 @@ export interface DestructionPart {
   shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; world?: Loose; push?: number; seed?: number; density?: number; radius?: number }): Loose[];
   slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose }): Loose[];
   Rubble: new (scene?: Loose, o?: { max?: number; life?: number; shrink?: number }) => { add(pieces: Loose | Loose[]): Loose; update(dt: number): Loose; clear(): Loose; readonly count: number };
+  /**
+   * A building that comes apart (Next Gen). It is made of pieces, and each knows what holds it up: shoot one away or set off a
+   * blast and whatever no longer reaches the ground through the pieces left comes down a moment later. Make it once in make()
+   * (scene: a view's scene or any group; null: not drawn), `reset()` it each round, `update(dt)` after the physics step, and
+   * read `broke` for your dust, sound and shake.
+   */
+  Structure: new (scene?: Loose | null, o?: StructureOptions) => StructureT;
+}
+export interface BuildingOptions {
+  style?: 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' | Record<string, Loose>; w?: number; d?: number; floors?: number; roof?: 'flat' | 'gable'; floor?: number; bay?: number; win?: [number, number]; lit?: number; colour?: string; color?: string; door?: boolean; seed?: number; wear?: false | Record<string, Loose>;
+  /** three.js materials of your own in place of the style's recipes: any of wall, trim, frame, roof, door, glass, lit, floor. */
+  materials?: { wall?: Loose; trim?: Loose; frame?: Loose; roof?: Loose; door?: Loose; glass?: Loose; lit?: Loose; floor?: Loose };
+}
+export interface StructureOptions {
+  /** What gs.models.building() takes (style, w, d, floors, roof, seed, materials...): the building, cut into pieces. */
+  building?: BuildingOptions;
+  /** Or your own boxes (a bridge, a tower, a wall): size [w, h, d] and at [x, y, z] (the box's centre, from the structure's foot). */
+  pieces?: StructurePiece[];
+  /** With pieces: a three.js material, or a gs.models.material recipe as [name, options], for each material name used. */
+  materials?: Record<string, Loose>;
+  /** With pieces: how many pieces can hang out sideways from what holds them (1: masonry; 2: timber, steel, concrete). */
+  span?: number;
+  /** Where its foot is ([x, y, z] or { x, y, z }) and its turn about y (radians). A building's door faces +z before the turn. */
+  at?: number[] | XYZ; turn?: number;
+  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Without one, pieces fall and break up where they land. */
+  world?: Loose | null;
+  /** The height rubble lands at, (x, z) => y. Default: flat at its foot. */
+  ground?: ((x: number, z: number) => number) | null;
+  /** How much small rubble is kept for each material (240; the oldest goes first). */
+  bits?: number;
+  /** How many fallen pieces stay as bodies (40); the oldest break up. */
+  keep?: number;
+  /** How hard falling pieces hit what they land on (1; 0: they break nothing). */
+  crush?: number;
+  gravity?: number; seed?: number;
+  /** With pieces: wear options for gs.models.wear, or false for none. */
+  wear?: false | Record<string, Loose>;
+}
+export interface StructurePiece {
+  size: [number, number, number]; at: [number, number, number];
+  /** A material name ('brick' by default: a gs.models.material recipe, or a name in `materials`) or a three.js material. */
+  material?: string | Loose;
+  /** What it is made of, for its weight, strength and rubble, when the material's name does not say: 'brick', 'stone', 'concrete', 'planks', 'wood', 'metal', 'glass'... */
+  stuff?: string;
+  /** How hard it is to break (1.5 brick, 2 stone, 2.5 concrete, .8 wood, .1 glass). */
+  strength?: number;
+  /** true: it never moves or breaks, and holds the rest up as the ground does (a cliff the bridge is built into). */
+  fixed?: boolean;
+  kind?: string;
+}
+/** Something that happened to a piece this frame, in world units: it broke up where it stood, it began to fall, or a fallen one landed (crumbled: it broke up there). size: metres across; mass: tonnes; speed: metres a second. */
+export interface StructureEvent { how: 'broke' | 'fell' | 'landed'; kind: 'wall' | 'window' | 'door' | 'roof' | 'floor' | string; x: number; y: number; z: number; size: number; mass: number; speed: number; crumbled?: boolean }
+export interface StructureT {
+  /** What happened this frame (after update): feed your dust, sound and shake from it. */
+  broke: StructureEvent[];
+  /** How much of it still stands, by weight: 1 whole, 0 flat. */
+  readonly standing: number;
+  /** Pieces about to fall or in the air; busy: true while anything is still coming down (pieces or rubble). */
+  readonly falling: number; readonly busy: boolean;
+  /** How many pieces it is made of, and how many still stand. */
+  readonly pieces: number; readonly left: number;
+  /** The standing building (a Group in the scene) and what has come off it. */
+  group: Loose; debris: Loose;
+  /** A hit at a world point (a bullet, a wrecking ball): pieces within radius (.4) are hurt by power (1 breaks a timber wall, 1.5 brick, 2 stone, 2.5 concrete; .1 a window; hurt adds up), and one that breaks goes to rubble along dir at push metres a second. Returns how many broke. */
+  hit(point: number[] | XYZ, o?: { radius?: number; power?: number; dir?: number[] | XYZ | null; push?: number }): number;
+  /** An explosion at a world point: every piece within radius (3) is hurt (power at the centre, 4, none at the edge), the nearest go to rubble, the rest of the broken ones are thrown whole at up to push metres a second (8); what they held up follows. Returns how many broke. */
+  blast(point: number[] | XYZ, radius?: number, o?: { power?: number; push?: number }): number;
+  /** The first standing piece along a ray (for shots without a physics world), or null. */
+  ray(from: number[] | XYZ, dir: number[] | XYZ, max?: number): { point: Loose; normal: Loose; distance: number; kind: string; piece: number } | null;
+  /** Each frame, after the physics step. */
+  update(dt: number): StructureT;
+  /** Whole again, for a new round. { world }: the round's new physics world (or call it after `world.clear()`). */
+  reset(o?: { world?: Loose | null }): StructureT;
+  /** Out of the scene and the physics world. */
+  remove(): void;
 }
 export interface PropsPart {
   simplify(geometry: Loose, keep?: number): Loose;
@@ -2057,9 +2416,64 @@ export interface LandPart {
   scatter(props: Loose, name: string, count: number, o?: { above?: number; below?: number; steep?: number; keepOut?: (x: number, z: number) => boolean; inset?: number; [k: string]: Loose }): number[];
   update(dt: number, camera?: Loose): LandPart; dispose(): void;
 }
+/** Something that landed in gs.outdoors.Water since the last update (water.splashes): where, how big across (metres) and how fast it hit (metres a second). */
+export interface WaterSplash { x: number; y: number; z: number; size: number; speed: number }
+/** What water.watch() returns: remove() stops the watching. wet: it is in the surface now. */
+export interface WaterWatch { thing: Loose; radius: number; readonly wet: boolean; remove(): void }
+export interface WaterOptions {
+  level?: number; waves?: number | { height: number; length: number; dir?: number; speed?: number }[]; size?: number; segments?: number; colour?: string; opacity?: number; material?: Loose; seed?: number;
+  /** Water you can disturb: true (or how many cells across: 128) makes the water within `reach` metres of the centre a ripple field for ring(), splash() and watch(). It is made by itself the first time something disturbs the water; ask for it here so nothing new is built in the middle of a round. */
+  ripples?: boolean | number;
+  /** Metres from the centre to the edge of the ripple field (24). */
+  reach?: number;
+  /** The ground under the water, (x, z) => its height (land.height): the shallows are paler and clearer, and foam laps the shore. */
+  bed?: ((x: number, z: number) => number) | null;
+  /** The shallows' colour (default: a paler, greener `colour`). */
+  shallow?: string | null;
+  /** Metres of water that hide the bed (2.5). */
+  clear?: number;
+  /** The foam's colour ('#f2f8fa'); false: no foam. */
+  foam?: string | false;
+  /** How many drops splashes and rain can throw at once (80). 0: no spray, and no rings from rain. */
+  spray?: number;
+}
 export interface WaterPart {
   mesh: Loose; level: number; t: number;
-  height(x: number, z: number, t?: number): number; normal(x: number, z: number, t?: number): P3; depth(p: P3): number; update(dt: number, centre?: P3 | null): WaterPart; dispose(): void;
+  /** Rain falling on it, 0..1 (set it each frame from your weather): the water is duller, rings open where the drops land round the centre, and little drops hop back up. Works on any water, ripples or not. */
+  rain: number;
+  /** 1 while the camera of the view given to underwater() is below the surface (for your sound: gs.sound.mixer.muffle). */
+  readonly under: number;
+  /** What landed in the water since the last update: your splash() calls and watched things going in or leaping out. For your sound and score. */
+  readonly splashes: WaterSplash[];
+  /** True while ripples are moving. Calm water costs nothing more than its waves. */
+  readonly busy: boolean;
+  /** Water height at x, z now: the waves, and the ripples where there are any. */
+  height(x: number, z: number, t?: number): number;
+  /** The waves' height over the calm level at x, z (no ripples). */
+  swellAt(x: number, z: number, t?: number): number;
+  normal(x: number, z: number, t?: number): P3; depth(p: P3): number;
+  /** Makes the ripple field now (see the `ripples` option). cells: how fine (128 a side); reach: metres from the centre to its edge; speed: how fast ripples travel (2.6 m/s). */
+  ripples(o?: { cells?: number; reach?: number; speed?: number }): WaterPart;
+  /** Something small dropped in at x, z: rings spread out. size: metres across it (.4); strength: 1. */
+  ring(x: number, z: number, o?: { size?: number; strength?: number }): WaterPart;
+  /** Something landed in the water at x, z: spray goes up, rings go out, a patch of foam is left, and it is listed in `splashes` for a frame. size: metres across it (1); speed: how fast it hit, metres a second (4). */
+  splash(x: number, z: number, o?: { size?: number; speed?: number }): WaterPart;
+  /**
+   * Watches something that can be in the water (a mesh, a body, a boat: anything with a position, or x, y, z) and does the rest by itself: a splash when it lands or leaps out,
+   * the water it pushes aside, rings and a wake behind it, a trail of foam when it is fast, spray off its bow. radius: half its width in the water (.5); bottom, top: how far
+   * below and above its position it reaches (default: the radius each way; a person standing: bottom 0, top 1.8); foam, splash: 0 turns that off, or scales it.
+   */
+  watch(thing: Loose, o?: { radius?: number; bottom?: number; top?: number; foam?: number; splash?: number }): WaterWatch;
+  unwatch(thing: Loose): WaterPart;
+  /**
+   * The look for a camera that goes under the surface: the view's air becomes murky, tinted water (darker the deeper it is), the surface can be seen from below, and it all
+   * goes back to the game's own air on the way up. view: your HDView. colour: the water's colour down there; murk: how thick (.14: about 15 metres of view); dark: how fast it
+   * darkens with depth (.06 a metre). Call water.update() after sky.update() and your own view.air().
+   */
+  underwater(view: Loose, o?: { colour?: string | null; murk?: number; dark?: number }): WaterPart;
+  /** Calm again, for a new round: no ripples, foam, spray or rain rings. */
+  calm(): WaterPart;
+  update(dt: number, centre?: P3 | null): WaterPart; dispose(): void;
 }
 export interface WindPart {
   x: number; z: number; gust: number; gustSize: number; sway: number; grass: number; readonly speed: number; readonly angle: number;
@@ -2069,8 +2483,8 @@ export interface WindPart {
 export interface OutdoorsPart {
   /** Terrain (THREE.Terrain): kind 'hills' | 'mountains' | 'rolling' | 'islands' | 'bumps' | 'dunes' | 'cracked' | 'ridges' | 'smooth', or (x, z) => height. */
   Land: new (o?: { kind?: string | ((x: number, z: number) => number); size?: number; segments?: number; low?: number; high?: number; seed?: number; smooth?: number; steps?: number; colours?: [number, string][]; material?: Loose; edge?: number }) => LandPart;
-  /** Waves (a sum of sines) you can read anywhere: height, normal, depth. */
-  Water: new (o?: { level?: number; waves?: number | { height: number; length: number; dir?: number; speed?: number }[]; size?: number; segments?: number; colour?: string; opacity?: number; material?: Loose; seed?: number }) => WaterPart;
+  /** Waves (a sum of sines) you can read anywhere: height, normal, depth. And water you can disturb: rings, splashes with spray and foam, wakes behind watched things, rain, shallows and shore foam over a `bed`, and the look from under the surface. */
+  Water: new (o?: WaterOptions) => WaterPart;
   tree(o?: { kind?: 'pine' | 'round' | 'palm' | 'bush'; trunk?: string; leaves?: string; height?: number; seed?: number }): Loose;
   rock(o?: { size?: number; colour?: string; seed?: number }): Loose;
   /** Outdoor looks for Next Gen worlds, as patches on standard materials. Colours: '#hex' or [r, g, b] linear. Numbers can be shared uniforms ({ value }). */
@@ -2146,8 +2560,8 @@ export interface ModelsPart {
   tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush', o?: { size?: 'small' | 'medium' | 'large'; height?: number; seed?: number; leaves?: string; bark?: string; wind?: number | Loose }): Loose;
   /** The tree kinds. */
   readonly trees: readonly string[];
-  /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear. A Group centred on x/z, foot at y = 0, door facing +z. */
-  building(o?: { style?: 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' | Record<string, Loose>; w?: number; d?: number; floors?: number; roof?: 'flat' | 'gable'; floor?: number; bay?: number; win?: [number, number]; lit?: number; colour?: string; color?: string; door?: boolean; seed?: number; wear?: false | Record<string, Loose> }): Loose;
+  /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear, materials (your own three.js materials in place of the style's). A Group centred on x/z, foot at y = 0, door facing +z. One that comes apart: gs.destruction.Structure. */
+  building(o?: BuildingOptions): Loose;
   /** The building styles (copy one and change it: { ...gs.models.buildings.brick, bay: 3 }). */
   readonly buildings: Record<string, Record<string, Loose>>;
   /**
@@ -2164,10 +2578,11 @@ export interface ModelsPart {
    * A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail.
    * Returns a Group with rig, bones, mesh, lods, lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), face.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
-   * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
+   * Hair in strands: close up, layers of strands (gs.models.fur) lie over the sculpted hair, streaming from the crown (from the bun, for hair tied back), over a moustache, and over a beard (beard: 0..1.5 how long, true = .6; painted stubble stays as it is). person.hair is that coat (null: bald with no beard, under a hat (the hair there stays as sculpted), strands: false, or the slowest phones); strands: { length (metres), layers, lean, tile } tunes it.
+   * Options: sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {
-    (o?: { sex?: 'm' | 'f'; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
+    (o?: { sex?: 'm' | 'f'; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
     /** Several people at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
     all(list: Loose[]): Loose[];
     /** Starts sculpting whatever these people still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
@@ -2176,6 +2591,20 @@ export interface ModelsPart {
     ready(list: Loose | Loose[]): Promise<boolean>;
     /** Forgets every saved sculpt. */
     clear(): Promise<void>;
+  };
+  /**
+   * Fur or hair on any mesh, in layers: copies of the surface pushed out along its normals, each cut by one picture of strands made in code, so strands seem to stand in the coat. three.js's own materials (a map with an alpha cut, vertex colours, two morph targets the layers share), so WebGL and WebGPU draw it alike, skinned or not.
+   * The mesh's vertex colours colour the coat. It thins out with distance by itself (every layer, every other one, none). Creatures and people use it by themselves: creature({ fur }) and human({ strands, beard }).
+   * Each layer is one more draw of the furry triangles, lit like everything else: keep a coat to what is seen close, and `layers` low (5 to 10).
+   */
+  fur: {
+    (mesh: Loose, o?: FurOptions): FurCoat;
+    /** The geometry a coat's layers share, by itself (hand it to several coats as `shell`). */
+    shell(geometry: Loose, o?: FurOptions): Loose;
+    /** The picture of strands for a kind and seed: a texture whose alpha is each strand's height and whose colour is its shade. */
+    strands(kind?: 'fur' | 'hair', seed?: number): Loose;
+    /** How many layers a coat gets on this phone unless it is told (0 on the slowest). */
+    layers(): number;
   };
   /**
    * An animal or a monster made in code from a seed, sculpted the way gs.models.human is (no model or texture files): one skinned mesh in three levels of detail on a skeleton of its own, with gaits made for its own legs, wings, fins or coils.
@@ -2199,6 +2628,20 @@ export interface ModelsPart {
     ready(list: CreatureOptions | CreatureOptions[]): Promise<boolean>;
     /** Forgets every saved sculpt. */
     clear(): Promise<void>;
+  };
+  /**
+   * A vehicle made in code (no model or texture files): a shell skinned over cross-sections from a few measures, in paint, glass, chrome and rubber, aged, with the parts that turn on their own pivots.
+   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep), 'truck' (flat, canvas, box, tanker), 'tank' (medium, light, heavy), 'train' (steam, diesel; wagons van, open, flat, tanker, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet).
+   * Its nose points along -z, as gs.vehicles, gs.craft and World3D.vehicle push things. Each frame: move(dt, speed, { steer }) (wheels roll and steer, the body rocks on its springs, tracks run, propellers spin); or roll(d), steer(a), aim(turn, lift) yourself.
+   * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car or a truck; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
+   * A train: vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] }) is the whole train; along(track, d) lays it on your rails.
+   * 3,000 to 21,000 triangles and 4 to 19 draws each; made in about a tenth of a second or less on a desktop, and the same vehicle asked for again is a copy that shares its shapes and materials. Make them in make().
+   */
+  vehicle: {
+    (kind: 'train', o?: VehicleOptions): TrainT;
+    (kind?: 'car' | 'truck' | 'tank' | 'boat' | 'plane', o?: VehicleOptions): VehicleT;
+    /** Every kind and its styles: { car: ['saloon', ...], truck: [...], tank, train, boat, plane }. */
+    readonly kinds: Readonly<Record<string, readonly string[]>>;
   };
   /** Per-vertex curvature of a geometry (convex > 0, concave < 0) and how much each vertex faces up. */
   curvature(geometry: Loose): { curve: Float32Array; up: Float32Array };
