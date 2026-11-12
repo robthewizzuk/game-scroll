@@ -1797,7 +1797,8 @@ slide; `upper('aim')` aims over the legs. Works on your own models too (pass the
 
 **Lifelike motion** (`gs.poses`): `LIFELIKE` is a set of idle, walk, jog, run, sprint and sneak drawn from where
 the feet go (the heel lands, the foot lies flat, the toes push off; the legs are bent to put it there, so a
-planted foot doesn't slide), with a turning pelvis, countering shoulders and swinging arms:
+planted foot doesn't slide; a runner lands on a bent knee under the body and the other knee drives through),
+with a turning pelvis, countering shoulders and swinging arms:
 `new Rig(parts, { poses: LIFELIKE, weight: 1 })`, then `rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, speed)`.
 `weight` gives the body weight: it leans into a spurt, rocks back as it stops and banks into a turn
 (`rig.update(dt, { speed, turn })`). Your own actions are key poses: `keys([[0, { spine: [.2, 0, 0] }], [.4, { armL:

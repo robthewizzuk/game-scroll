@@ -119,10 +119,11 @@ const table = (f, n = 72) => { const T = new Float32Array(n + 1); for (let i = 0
 // The other leg is half a cycle behind. foot: the way the foot points through the cycle (0 flat, positive
 // toes down): it lands on the heel, lies flat, rolls onto the ball. The pelvis turns with the leading leg
 // (yaw) and dips on the swinging side (list), the shoulders turn the other way (twist), the arms swing
-// against the legs, and the body rises and falls twice a stride (drop, bob, bobAt).
+// against the legs, and the body rises and falls twice a stride (drop, bob, bobAt). In a run the knee
+// drives the foot through high (carry, carryAt) and the legs fling less far out behind and in front (trail, pull).
 const LEG = [.435, .435, .955, .085, .06, .13, .094];   // thigh, shin, the hip joint's height, the ankle's, heel and ball from the ankle, the hip joint out from the middle
 function gait(g) {
-  const { stride, stance, reach, lift = .1, liftAt = .5, yaw = 0, list = 0, lean = 0, twist = 1, arm = 0, armMid = 0, elbow = .3, elbowSwing = 0, armIn = 0, armOut = 0, drop = 0, bob = 0, bobAt = 0, side = 0, nod = 0, crouch = 0, head = .7, wrist = .7 } = g;
+  const { stride, stance, reach, lift = .1, liftAt = .5, carry = 0, carryAt = .72, pull = 1, trail = 1, yaw = 0, list = 0, lean = 0, twist = 1, arm = 0, armMid = 0, elbow = .3, elbowSwing = 0, armIn = 0, armOut = 0, drop = 0, bob = 0, bobAt = 0, side = 0, nod = 0, crouch = 0, head = .7, wrist = .7 } = g;
   const [L1, L2, HJ, AH, HEEL, BALL, HX] = LEG, footW = spline(g.foot, true);
   // the ankle of a foot whose heel would lie at heelZ, pointing th: it stands on its heel (toes up) or on the ball of the foot (heel up)
   const plant = (heelZ, th) => th <= 0 ? [heelZ + HEEL * Math.cos(th) + AH * Math.sin(th), AH * Math.cos(th) - HEEL * Math.sin(th)] : [heelZ + HEEL + BALL - BALL * Math.cos(th) + AH * Math.sin(th), AH * Math.cos(th) + BALL * Math.sin(th)];
@@ -130,8 +131,11 @@ function gait(g) {
   const ankle = ph => {
     ph -= Math.floor(ph);
     if (ph < stance) return plant(reach - stride * ph, footW(ph));
-    const u = (ph - stance) / (1 - stance), u2 = u * u, u3 = u2 * u, e = u2 * (3 - 2 * u);
-    return [(2 * u3 - 3 * u2 + 1) * off[0] + (u3 - 2 * u2 + u) * m + (3 * u2 - 2 * u3) * on[0] + (u3 - u2) * m, off[1] + (on[1] - off[1]) * e + lift * S(Math.PI * Math.pow(u, Math.log(.5) / Math.log(liftAt)))];   // (the lift peaks liftAt of the way through the swing)
+    const u = (ph - stance) / (1 - stance), u2 = u * u, u3 = u2 * u, e = u2 * (3 - 2 * u), c0 = 2 * carryAt - 1, kd = carry && u > c0 ? S(Math.PI * (u - c0) / (1 - c0)) : 0;
+    // (the lift peaks liftAt of the way through the swing; a runner's foot then comes through high under a driven knee,
+    // carry; it leaves the ground and reaches it again moving back with it, or a share of that, trail and pull: less
+    // of a leg flung out behind and of a reach out in front)
+    return [(2 * u3 - 3 * u2 + 1) * off[0] + (u3 - 2 * u2 + u) * m * trail + (3 * u2 - 2 * u3) * on[0] + (u3 - u2) * m * pull, off[1] + (on[1] - off[1]) * e + lift * S(Math.PI * Math.pow(u, Math.log(.5) / Math.log(liftAt))) + carry * kd * kd];
   };
   // the leg bent to reach it: the thigh's and the knee's angles through the cycle, worked out once
   const leg = k => table(p => {
@@ -177,15 +181,16 @@ export const LIFELIKE = {
   walk: gaitOf({ stride: 1.36, stance: .62, reach: .3, lift: .075, liftAt: .4,
     foot: [[0, -.3], [.1, 0], [.42, 0], [.52, .3], [.62, .8], [.72, .5], [.84, -.05], [.94, -.3]],
     yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: -.03, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
-  jog: gaitOf({ stride: 2.35, stance: .4, reach: .3, lift: .2, liftAt: .35,
-    foot: [[0, -.1], [.07, .03], [.25, .05], [.4, .95], [.52, 1], [.72, .4], [.9, -.08]],
-    yaw: .1, list: .05, lean: .17, twist: 1.15, arm: .5, armMid: .06, elbow: 1.4, elbowSwing: .2, armIn: .1, armOut: .1, drop: .045, bob: .018, bobAt: 2.3, nod: .012 }),
-  run: gaitOf({ stride: 3.5, stance: .31, reach: .34, lift: .36, liftAt: .3,
-    foot: [[0, 0], [.06, .05], [.2, .1], [.31, 1], [.45, 1.15], [.7, .45], [.9, 0]],
-    yaw: .13, list: .055, lean: .24, twist: 1.2, arm: .68, armMid: .1, elbow: 1.5, elbowSwing: .25, armIn: .12, armOut: .12, drop: .05, bob: .022, bobAt: 1.9, nod: .015 }),
-  sprint: gaitOf({ stride: 4.3, stance: .26, reach: .36, lift: .46, liftAt: .28,
-    foot: [[0, .15], [.06, .15], [.18, .2], [.26, 1.05], [.45, 1.2], [.7, .5], [.9, .15]],
-    yaw: .15, list: .06, lean: .36, twist: 1.25, arm: .9, armMid: .08, elbow: 1.6, elbowSwing: .3, armIn: .12, armOut: .13, drop: .055, bob: .024, bobAt: 1.8, nod: .016 }),
+  jog: gaitOf({ stride: 2.35, stance: .36, reach: .2, lift: .15, liftAt: .35, carry: .03, pull: .6, trail: .6,
+    foot: [[0, -.1], [.07, .03], [.23, .05], [.36, .95], [.48, 1], [.7, .4], [.9, -.08]],
+    yaw: .1, list: .05, lean: .17, twist: 1.15, arm: .42, armMid: .16, elbow: 1.5, elbowSwing: .25, armIn: .1, armOut: .1, drop: .04, bob: .018, bobAt: 2.3, nod: .012 }),
+  // (a runner's foot is on the ground for under a metre: a longer reach than the leg has is a leg flung out straight)
+  run: gaitOf({ stride: 3.4, stance: .25, reach: .19, lift: .28, liftAt: .3, carry: .06, pull: .5, trail: .45,
+    foot: [[0, 0], [.05, .05], [.16, .1], [.25, 1], [.36, 1.2], [.65, .45], [.9, 0]],
+    yaw: .13, list: .055, lean: .24, twist: 1.2, arm: .55, armMid: .25, elbow: 1.65, elbowSwing: .3, armIn: .12, armOut: .12, drop: .03, bob: .02, bobAt: 1.9, nod: .015 }),
+  sprint: gaitOf({ stride: 4.3, stance: .21, reach: .2, lift: .34, liftAt: .28, carry: .1, pull: .45, trail: .45,
+    foot: [[0, .15], [.05, .15], [.14, .2], [.21, 1.05], [.36, 1.2], [.65, .5], [.9, .15]],
+    yaw: .15, list: .06, lean: .36, twist: 1.25, arm: .8, armMid: .2, elbow: 1.7, elbowSwing: .35, armIn: .12, armOut: .13, drop: .034, bob: .022, bobAt: 1.8, nod: .016 }),
   sneak: gaitOf({ stride: 1.0, stance: .66, reach: .26, lift: .09, liftAt: .45,
     foot: [[0, .05], [.1, 0], [.5, 0], [.58, .35], [.66, .7], [.78, .4], [.9, .12]],
     yaw: .06, list: .04, lean: .34, crouch: .1, twist: .8, arm: .16, armMid: -.25, elbow: 1.0, elbowSwing: .08, armOut: .08, drop: .17, bob: .006, bobAt: 0, side: .02, head: .8 }),

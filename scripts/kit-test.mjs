@@ -1492,10 +1492,16 @@ console.log('physics ok');
   for (const [sd, s] of [['L', 1], ['R', -1]]) { mk('leg' + sd, B.hips, s * .094, -.045, 0); mk('shin' + sd, B['leg' + sd], 0, -.435, 0); mk('foot' + sd, B['shin' + sd], 0, -.435, 0); mk('arm' + sd, B.spine, s * .2, .4, 0); mk('fore' + sd, B['arm' + sd], 0, -.3, 0); mk('hand' + sd, B['fore' + sd], 0, -.27, 0); }
   const rig = new Rig(B, { poses: LIFELIKE });
   // a planted foot stays where it landed while the body passes over it (the flat part of each stance)
-  for (const [name, v, lo, hi] of [['walk', 1.36, .12, .4], ['jog', 3.4, .07, .24], ['run', 5.6, .07, .19], ['sneak', 1, .12, .48]]) {
+  for (const [name, v, lo, hi] of [['walk', 1.36, .12, .4], ['jog', 3.4, .07, .22], ['run', 5.6, .06, .15], ['sneak', 1, .12, .48]]) {
     rig.play(name, { fade: 0 }); let x = 0, n = 0, last = 0, a = Infinity, b = -Infinity, low = Infinity; const at = new Vector3();
     for (let i = 0; i < 960; i++) { rig.update(1 / 240, { speed: v }); x += v / 240; root.position.z = x; root.updateMatrixWorld(true); B.footL.getWorldPosition(at); const ph = rig.phase; if (ph < last) n++; last = ph; low = Math.min(low, at.y); if (n === 1 && ph > lo && ph < hi) { a = Math.min(a, at.z); b = Math.max(b, at.z); } }
     assert.ok(b - a < .012, name + ': the planted foot slides ' + (b - a).toFixed(4) + ' m'); assert.ok(low > .08, name + ': no foot goes through the floor ' + low.toFixed(3));
+  }
+  // a runner lands on a bent knee under the body and brings the other leg through bent (not both legs flung out straight)
+  for (const name of ['jog', 'run', 'sprint']) {
+    const c = LIFELIKE[name].cycle, strike = c(0).j, late = c(.9).j;
+    assert.ok(strike.shinL[0] > .2, name + ': lands on a bent knee ' + strike.shinL[0].toFixed(2)); assert.ok(late.shinL[0] > .6, name + ': the leg comes through bent ' + late.shinL[0].toFixed(2));
+    assert.ok(-strike.legL[0] < .6, name + ': the foot lands near under the body ' + (-strike.legL[0]).toFixed(2));
   }
   // a pose by the clock: once plays through and holds (rig.done); at: the game holds the phase
   rig.add('vault', keys([[0, { spine: [0, 0, 0] }], [1, { spine: [1, 0, 0] }]]), { time: .5, once: true }); rig.play('vault', { fade: 0 });
