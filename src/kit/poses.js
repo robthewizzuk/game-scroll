@@ -230,7 +230,7 @@ export class Rig {
       this.chains = [chain('waist', 'spine', .5, .25), chain('neck', 'head', .5, .45)].filter(Boolean);
       this.girdle = [['L', 1], ['R', -1]].map(([sd, s]) => parts['collar' + sd] && parts['arm' + sd]?.parent === parts['collar' + sd] ? { c: parts['collar' + sd], a: parts['arm' + sd], s, name: 'collar' + sd } : null).filter(Boolean);
       this.rolls = ['L', 'R'].map(sd => parts['twist' + sd] && parts['hand' + sd] ? { t: parts['twist' + sd], h: parts['hand' + sd] } : null).filter(Boolean);
-      this.still = new Set();
+      this.still = new Set(); this.fine = true;   // (fine = false: seen from further off, where the turn of a forearm and the toes show nothing and are left alone)
     }
     this.hip0 = parts.hips ? parts.hips.position.y : 0; this.hipX = parts.hips ? parts.hips.position.x : 0; this.hipZ = parts.hips ? parts.hips.position.z : 0;
     this.layers = [{ name: 'idle', w: 1, phase: 0 }]; this.top = null; this.topW = 0; this.phase = 0; this.state = 'idle'; this.cur = {};
@@ -364,7 +364,7 @@ export class Rig {
     this.phase = last.phase;
     if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
     else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
-      if (FILLED.has(j)) continue; const a = out[j];
+      if (FILLED.has(j) || !this.fine && TOES.has(j)) continue; const a = out[j];
       if (!a && TOES.has(j)) { if (this.still.has(j)) continue; this.still.add(j); } else if (a) this.still.delete(j);
       const p = this.parts[j]; if (a) p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); else p.rotation.set(b[0], b[1], b[2]);
     }
@@ -399,7 +399,7 @@ export class Rig {
       r.set(b[0] + x[0], b[1] + x[1] - g.s * fwd, b[2] + x[2] + g.s * lift);
       a.copy(_q2.copy(g.c.quaternion).invert().multiply(_q));
     }
-    for (const r of this.rolls) { const q = r.h.quaternion, s = q.w < 0 ? -1 : 1; r.t.rotation.set(0, 1.4 * Math.atan2(q.y * s, q.w * s), 0); }   // (seven tenths of the hand's turn about the forearm's length)
+    if (this.fine) for (const r of this.rolls) { const q = r.h.quaternion, s = q.w < 0 ? -1 : 1; r.t.rotation.set(0, 1.4 * Math.atan2(q.y * s, q.w * s), 0); }   // (seven tenths of the hand's turn about the forearm's length)
     return this;
   }
   // A body with weight (the weight option): it leans into a change of speed and rocks back as it stops,

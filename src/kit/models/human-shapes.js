@@ -353,10 +353,10 @@ export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.00
   let slot = new Uint8Array(n0), ao = m.ao, SI = new Uint8Array(n0 * 4), SW = new Float32Array(n0 * 4);
   const idOf = (list, v) => { let i = list.indexOf(v); if (i < 0) { i = list.length; list.push(v); } return i; };
   for (let i = 0; i < n0; i++) {
-    const s = m.shapes[m.own[i]] || m.shapes[0], x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
-    slot[i] = idOf(slots, s.slot || 'skin');
-    const w = bones(x, y, z, s.src).filter(q => q[1] > .002).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = w.reduce((a, q) => a + q[1], 0) || 1;
-    w.forEach(([b, v], k) => { SI[i * 4 + k] = idOf(names, s.mirror && x < 0 && s.src.bone ? other(b) : b); SW[i * 4 + k] = v / sum; });
+    const s = m.shapes[m.own[i]] || m.shapes[0], r = m.shapes[m.ride[i]] || s, x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+    slot[i] = idOf(slots, s.slot || 'skin');   // (its colour is its own shape's; its bones are those of the shape it goes with: the other side of a seam, for a point split along one)
+    const w = bones(x, y, z, r.src).filter(q => q[1] > .002).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = w.reduce((a, q) => a + q[1], 0) || 1;
+    w.forEach(([b, v], k) => { SI[i * 4 + k] = idOf(names, r.mirror && x < 0 && r.src.bone ? other(b) : b); SW[i * 4 + k] = v / sum; });
   }
   // extra hard-edged parts (eyes, buttons) joined on: { P, N, K (slot per point, by name), I, src (what each rides, for its bones) }
   if (extra) {

@@ -394,6 +394,7 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
     for (let j = 0; j < paints.length; j++) { const s = paints[j]; if (boxGap(s, x, y, z) === 0 && s.d(x, y, z) < 0 && (!s.src.over || (o && o.slot === s.src.over))) own[i] = s.i; }
     if (press && o && o.wob) press[i] = (E[bj] - o.d(x, y, z)) / o.wob;   // how far its lumps and folds will move it (-1..1)
   }
+  let ride = null;   // whose bones each point goes with, where that is not its own shape's (see below)
   // ---- the outlines of pockets, straps, belts and cuffs made straight: a point beside one is slid along the surface onto it
   // (points sit a cell apart, so an outline drawn by "which side is each point on" would be a saw's edge)
   if (S.some(s => s.m && !s.ghost)) {
@@ -425,6 +426,8 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
     if (add.length) {
       const m = n + add.length / 2, P2 = new Float32Array(m * 3), Q2 = new Float32Array(m * 3), o2 = new Int16Array(m); P2.set(P.subarray(0, n * 3)); Q2.set(Q.subarray(0, n * 3)); o2.set(own);
       for (let i = 0; i < add.length; i += 2) { const j = n + i / 2, v = add[i]; for (let c = 0; c < 3; c++) { P2[j * 3 + c] = P[v * 3 + c]; Q2[j * 3 + c] = Q[v * 3 + c]; } o2[j] = add[i + 1]; }
+      // (each goes with the bones of the point it was split from: the two sides of a seam move as one, or a hem would open when a joint bends)
+      ride = new Int16Array(m); ride.set(own); for (let i = 0; i < add.length; i += 2) ride[n + i / 2] = own[add[i]];
       if (press) { const p2 = new Float32Array(m); p2.set(press); for (let i = 0; i < add.length; i += 2) p2[n + i / 2] = press[add[i]]; press = p2; }
       P = P2; Q = Q2; own = o2; n = m;
     }
@@ -439,10 +442,10 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
     }
     const J = thinBy(I, P, A, 7, [.5, .5, .5, .8, .8, .8, .35], keep, error), map = new Int32Array(n).fill(-1); let k = 0;
     for (let i = 0; i < J.length; i++) if (map[J[i]] < 0) map[J[i]] = k++;
-    const P2 = new Float32Array(k * 3), Q2 = new Float32Array(k * 3), o2 = new Int16Array(k), I2 = new Uint32Array(J.length);
-    for (let i = 0; i < n; i++) { const j = map[i]; if (j >= 0) { for (let c = 0; c < 3; c++) { P2[j * 3 + c] = P[i * 3 + c]; Q2[j * 3 + c] = Q[i * 3 + c]; } o2[j] = own[i]; } }
+    const P2 = new Float32Array(k * 3), Q2 = new Float32Array(k * 3), o2 = new Int16Array(k), r2 = ride && new Int16Array(k), I2 = new Uint32Array(J.length);
+    for (let i = 0; i < n; i++) { const j = map[i]; if (j >= 0) { for (let c = 0; c < 3; c++) { P2[j * 3 + c] = P[i * 3 + c]; Q2[j * 3 + c] = Q[i * 3 + c]; } o2[j] = own[i]; if (ride) r2[j] = ride[i]; } }
     for (let i = 0; i < J.length; i++) I2[i] = map[J[i]];
-    P = P2; Q = Q2; own = o2; I = I2; n = k;
+    P = P2; Q = Q2; own = o2; ride = r2; I = I2; n = k;
   } else if (P.buffer.byteLength > n * 12) P = P.slice();
   const t3 = now();
   // ---- true normals (the field's own slope, at four corners of a tetrahedron) and crease shading for the points that stay
@@ -471,7 +474,7 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
       AO[i] = 1 - cl(occ / tot);
     }
   }
-  return { P, N, I, own, ao: AO, n, shapes: S, ms: [t1 - t0, t2 - t1, t2b - t2, t3 - t2b, now() - t3] };
+  return { P, N, I, own, ride: ride || own, ao: AO, n, shapes: S, ms: [t1 - t0, t2 - t1, t2b - t2, t3 - t2b, now() - t3] };
 }
 
 /** Resolves once thin() can work (the simplifier's wasm; the app waits for it while the 3D parts load). */

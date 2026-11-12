@@ -354,7 +354,8 @@ export function human(o = {}) {
     // Further off (the middle and far levels) nobody can see a finger bend, a toe or the turn of a forearm: there each of
     // those small bones stands in as the one it hangs from (the same skin, no other set of weights), is not worked
     // out at all, and is left out of the scene while the person is at those levels. A squad far off then costs about
-    // what it did on fifteen bones.
+    // what it did on fifteen bones (thirty people, posing and bones in JavaScript each frame, on a desktop core: .17 ms
+    // on fifteen bones, .47 ms on these close up, .2 ms further off; hundreds are a crowd's work: gs.props.Crowd).
     const whole = bones.map((b, i) => { let k = b; while (FINE.test(k)) k = parent[k]; return k === b ? -1 : bones.indexOf(k); }), small = bones.filter((b, i) => whole[i] >= 0).map(b => B[b]);
     const far = new Skeleton(bones.map((b, i) => B[whole[i] < 0 ? b : bones[whole[i]]]), bones.map((b, i) => skel.boneInverses[whole[i] < 0 ? i : whole[i]]));
     far.update = function () {
@@ -372,7 +373,7 @@ export function human(o = {}) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
       lods[cur].visible = false; lods[v].visible = true;
       if (!v !== !cur) for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
-      cur = v;
+      cur = v; root.rig.fine = !v;   // (and the rig leaves the forearm's turn and the toes alone meanwhile)
     } });
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */
     const wp = new Vector3();

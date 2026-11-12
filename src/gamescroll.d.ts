@@ -2349,6 +2349,8 @@ export interface RigT {
   update(dt: number, o?: { speed?: number; aim?: number; turn?: number }): RigT;
   /** A full skeleton (gs.models.human's): brings the joints in between into line (the waist with the rib cage, the neck with the head, a collar bone with each arm, the forearm's skin with the hand). update() does it; call it after turning joints yourself. Nothing on a plain figure. */
   fill(pose?: Record<string, number[]> | null): RigT;
+  /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
+  fine?: boolean;
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;

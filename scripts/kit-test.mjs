@@ -2161,6 +2161,13 @@ console.log('physics ok');
       for (let k = 0; k < 48; k++) { put(pose, k / 48); for (const sd of ['L', 'R']) { lowA = Math.min(lowA, a.bones['foot' + sd].localToWorld(new T.Vector3(.005, -.085, .185)).y); lowB = Math.min(lowB, B['toe' + sd].localToWorld(new T.Vector3(0, -.028, .065)).y); } }
       assert.ok(lowB > -.008 && lowA < -.03, `${pose}: the tip of the shoe stays on the ground (${lowB.toFixed(3)}; it went to ${lowA.toFixed(3)})`);
     }
+    // seen from further off (rig.fine = false: a person at its middle and far levels) the forearm's turn and the toes are left
+    // alone, since nothing shows them there; the back, the neck and the collar bones go on as before; and they pick up again
+    { const c = skeleton(), C = c.bones, at = (pose, ph) => { c.rig.layers = [{ name: pose, w: 1, phase: ph, pin: true }]; c.rig.state = pose; c.rig.update(0); };
+      c.rig.add('t', () => ({ j: { spine: [.6, 0, 0], armL: [-3, 0, 0], handL: [0, .8, 0] } })); c.rig.weight = 0;
+      c.rig.fine = false; at('t', 0); assert.ok(C.twistL.rotation.y === 0 && Math.abs(C.waist.rotation.x - .3) < 1e-6 && C.collarL.rotation.z > .3, 'further off: no turn along the forearm, the back and the shoulder as ever');
+      let toe = 0; for (let k = 0; k < 16; k++) { at('run', k / 16); toe = Math.max(toe, Math.abs(C.toeL.rotation.x), Math.abs(C.toeR.rotation.x)); } assert.equal(toe, 0, 'further off: the toes are left alone');
+      c.rig.fine = true; at('t', 0); assert.ok(Math.abs(C.twistL.rotation.y - .56) < 1e-6, 'close again: the forearm turns'); toe = 0; for (let k = 0; k < 16; k++) { at('run', k / 16); toe = Math.max(toe, Math.abs(C.toeL.rotation.x)); } assert.ok(toe > .2, 'close again: the toes bend'); }
     // the fingers: three bones each from the knuckle, two to the thumb, a bigger hand's further apart; the other hand's in a mirror
     { const fb = HS.fingerBones({ limbs: 1, grip: false }), big = HS.fingerBones({ limbs: 1.2, grip: false }), shut = HS.handPlan({ limbs: 1, grip: true }), open = HS.handPlan({ limbs: 1, grip: false });
       assert.deepEqual(fb.map(q => q[0] + '<' + q[1]).slice(0, 4), ['index1L<handL', 'index2L<index1L', 'index3L<index2L', 'middle1L<handL']); assert.equal(fb.length, 14);
@@ -2171,7 +2178,15 @@ console.log('physics ok');
     // the skin: each new joint has skin of its own to move
     { const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'shirt', sleeves: 'long', pockets: 0 }, legs: { kind: 'trousers' }, feet: { kind: 'shoes' }, face: { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, hat: null, belt: null, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
       const share = p => { const u = {}; for (let i = 0; i < p.n; i++) for (let q = 0; q < 4; q++) if (p.SW[i * 4 + q]) { const n = p.names[p.SI[i * 4 + q]]; u[n] = (u[n] || 0) + p.SW[i * 4 + q] / 255 / p.n; } return u; };
-      const jobs = HS.jobsFor(sp), trunk = share(HS.sculpt(jobs[0])), head = share(HS.sculpt(jobs[3]));
+      const jobs = HS.jobsFor(sp), body = HS.sculpt(jobs[0]), trunk = share(body), head = share(HS.sculpt(jobs[3]));
+      // a seam holds: the two sides of a hem or of a strap's edge have points of their own in the same place (so the colour stops
+      // dead at the line), and those go with the same bones, or the seam would open when a joint bends (a trouser hem over a shoe did)
+      { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (body.SW[i * 4 + q]) u[body.names[body.SI[i * 4 + q]]] = body.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0, eg = '';
+        for (let i = 0; i < body.n; i++) {
+          const k = [0, 1, 2].map(c => Math.round(body.P[i * 3 + c] * 1e5)).join(), j = seen.get(k); if (j === undefined) { seen.set(k, i); continue; }
+          const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) { torn++; eg ||= `at ${body.P[i * 3 + 1].toFixed(3)} up: ${JSON.stringify(a)} against ${JSON.stringify(b)}`; }
+        }
+        assert.ok(pairs > 100 && torn === 0, `points in the same place go with the same bones: ${torn} of ${pairs} pairs do not (${eg})`); }
       for (const n of ['waist', 'spine', 'collarL', 'collarR', 'toeL', 'toeR']) assert.ok(trunk[n] > .01, `the trunk's skin on ${n}: ${trunk[n]}`); assert.ok(Math.abs(trunk.collarL - trunk.collarR) < .004 && Math.abs(trunk.toeL - trunk.toeR) < .004, 'the same on both sides');
       assert.ok(head.neck > .02 && head.head > .7 && head.spine > .03, 'a neck between the collar and the head: ' + JSON.stringify(head)); }
   }
