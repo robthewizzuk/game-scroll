@@ -1466,6 +1466,15 @@ export class HDView {
     for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh) x.userData.detail = set; });
     return this;
   }
+  /** Is cluster detail still getting ready: a big mesh not looked at yet or waiting for its clusters, or a twin waiting for its shader? (tests, the engine test scenes) */
+  detailPending() {
+    if (HD.detail === false) return false;
+    const D = this.details;
+    if (D) for (const e of D.map.values()) if (!e.twin || (e.twin.layers.mask & HOLD_BIT)) return true;
+    let more = false;
+    this.scene.traverseVisible(o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (HD.relief !== false && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
+    return more;
+  }
   /**
    * Occlusion culling: skip what's fully hidden behind big solid boxes before the frame is drawn (city
    * blocks behind a row of buildings, rooms behind walls). list: boxes { x0, x1, y0, y1, z0, z1 } in

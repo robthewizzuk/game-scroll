@@ -13,6 +13,8 @@
 //     the real thing.
 //  3. Shows one report: the phone, the plugins, then each game (load time, frames a second against the
 //     rate it aims for, the worst 1% of frames, the longest frame, freezes, errors), problems first.
+// Instead of games it can fly through the engine test scenes (src/detail-tour.js): heavy scenes drawn
+// with each of the Next Gen engine's detail systems off and on, to say what each is worth on this phone.
 //
 // The bot plays as a guest (src/main.js): nothing it does is kept. No saves, bests, credits, trophies,
 // leaderboard scores, play stats or Tiny Brains learning. Frame timings and errors do count, in the
@@ -30,7 +32,7 @@ import { prefs } from './kit/prefs.js';
 
 const SLOW_MS = 25, FREEZE_MS = 70;   // the same lines src/perf.js draws
 const EARLY_MS = 2000;                // a freeze this soon after Play is the round starting up, not play
-const LOAD_LIMIT = 40, PLUGIN_LIMIT = 4000, LAST_KEY = 'gs_tour_last';
+const LOAD_LIMIT = 40, PLUGIN_LIMIT = 4000, LAST_KEY = 'gs_tour_last', SCENES = 'scenes';
 const ERAS = { console: 'Console', nextgen: 'Next Gen', ar: 'AR', board: 'Board' };
 const is3D = g => !!ERAS[g.era];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -213,8 +215,9 @@ export async function checkPlugins(cap = Capacitor, limit = PLUGIN_LIMIT) {
 
 /* ---------- the phone ---------- */
 const heatWord = h => ['cool', 'warm', 'hot'][h] || 'cool';
-const powerNow = () => ({ level: power.known ? power.level : null, charging: power.charging, heat: power.heat, saver: power.saver });
-async function phone() {
+export const powerNow = () => ({ level: power.known ? power.level : null, charging: power.charging, heat: power.heat, saver: power.saver });
+/** What this phone is, for a report's first lines. */
+export async function phone() {
   const i = perf.info();
   return {
     model: i.model, os: i.os || i.platform, platform: i.platform, form: i.form, build: BUILD,
@@ -295,10 +298,12 @@ let running = null;
  * game), seconds (of play each, 20), full (Next Gen games in full screen; true), sound (leave sound and
  * vibration on; off by default), plugins (ask the native plugins; true), onStep({ i, n, game }) and onPlay({ id, played }) for a progress
  * display, signal ({ stop: true } ends it after the current frame). Gives the result; reportText()
- * turns it into the report.
+ * turns it into the report. scenes: true flies through the engine test scenes instead of playing games
+ * (src/detail-tour.js; size and only are its options).
  */
-export async function runTour(driver, { ids = null, seconds = 20, full = true, sound: loud = false, plugins = true, onStep = null, onPlay = null, signal = {} } = {}) {
+export async function runTour(driver, { ids = null, seconds = 20, full = true, sound: loud = false, plugins = true, onStep = null, onPlay = null, signal = {}, scenes = false, size = 1, only = null } = {}) {
   if (running) return running;
+  if (scenes) return running = import('./detail-tour.js').then(m => m.runScenes(driver, { seconds: clamp(+seconds || 20, 1, 120), size, only, onStep, onPlay, signal })).finally(() => { running = null; });
   const all = driver.games(), list = (ids ? ids.map(id => all.find(g => g.id === id)).filter(Boolean) : all.filter(is3D));
   const o = { seconds: clamp(+seconds || 20, 1, 120), full: !!full, stopped: () => !!signal.stop };
   return running = (async () => {
@@ -343,15 +348,21 @@ function gameLine(r) {
   if (r.note) parts.push(r.note);
   return [head + ' · ' + parts.join(' · '), ...r.errors.map(e => `          ! ${e}`)].join('\n');
 }
-/** The tour's result as the text to copy. */
-export function reportText(t) {
-  const p = t.phone, n = t.games.length, by = v => t.games.filter(r => r.verdict === v).length;
-  const lines = [
-    `Game Scroll phone test tour · ${t.at.slice(0, 16).replace('T', ' ')} UTC · build ${p.build} · took ${Math.floor(t.took / 60)} min ${t.took % 60} s${t.stopped ? ` · STOPPED after ${n} of ${t.asked} games` : ''}`,
+/** A report's first lines: what was run (`what`, and `extra` after how long it took), the phone, its power and its settings. */
+export function head(t, what, extra = '') {
+  const p = t.phone;
+  return [
+    `Game Scroll ${what} · ${t.at.slice(0, 16).replace('T', ' ')} UTC · build ${p.build} · took ${Math.floor(t.took / 60)} min ${t.took % 60} s${extra}`,
     `\nPHONE: ${p.model} · ${p.os} · ${p.form} screen ${p.screen} · ${p.hz} Hz · ${p.chip} · WebGPU ${p.webgpu ? 'yes' : 'no'} (set to ${p.gpuPick}) · ${p.klass} class${p.cores ? ` · ${p.cores} cores` : ''}${p.memory ? ` · ${p.memory} GB` : ''}`,
     `POWER: ${battery(t.powerBefore)} then ${battery(t.powerAfter)} · ${heatWord(t.powerBefore.heat)} then ${heatWord(t.powerAfter.heat)}${t.powerAfter.saver ? ' · battery saver on' : ''}`,
     `SETTINGS: frame rate ${p.fpsPick} · frame generation ${p.frameGenPick} · reduce motion ${p.reduceMotion ? 'on' : 'off'}`,
   ];
+}
+/** The tour's result as the text to copy. */
+export function reportText(t) {
+  if (t.kind === 'scenes') return t.text;   // (the engine test scenes write their own: src/detail-tour.js)
+  const n = t.games.length, by = v => t.games.filter(r => r.verdict === v).length;
+  const lines = head(t, 'phone test tour', t.stopped ? ` · STOPPED after ${n} of ${t.asked} games` : '');
   if (t.plugins === null) lines.push('\nPLUGINS: this is the web version, which has none. Run the tour in the Android or iPhone app to check them.');
   else if (t.plugins) {
     const bad = t.plugins.filter(x => x.state !== 'ok');
@@ -387,6 +398,7 @@ function showReport(text, driver) {
 export function openTour(driver) {
   if (running) return;
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3]]);   // (not games: the Next Gen engine's detail systems, off and on; src/detail-tour.js)
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>
@@ -400,14 +412,19 @@ export function openTour(driver) {
     <div class="qa-actions"><button class="tour-go">Start</button>${last ? '<button class="qa-lab tour-last">Last report</button>' : ''}</div>`;
   document.body.appendChild(el);
   const set = el.querySelector('.tour-set'), secs = el.querySelector('.tour-secs'), est = el.querySelector('.tour-est');
-  const picked = () => choice.find(([k]) => k === set.value)[2];
-  const paint = () => { est.textContent = `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`; };
+  const picked = () => choice.find(([k]) => k === set.value)[2], scenes = () => set.value === SCENES;
+  const paint = () => {
+    for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
+    // (eight runs where the forest flies four, on WebGPU; each has a few seconds of getting ready before it)
+    est.textContent = scenes() ? `Three scenes, each flown through for ${secs.value} seconds with one of the engine's detail systems off, then on: about ${Math.max(1, Math.round((8 * (+secs.value + 8) + 60) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
+      : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
+  };
   set.onchange = secs.onchange = paint; paint();
   el.querySelector('.qa-x').onclick = () => el.close();
   el.addEventListener('close', () => el.remove());
   if (last) el.querySelector('.tour-last').onclick = () => { el.close(); showReport(last, driver); };
   el.querySelector('.tour-go').onclick = async () => {
-    const ids = picked().map(g => g.id), seconds = +secs.value, loud = el.querySelector('.tour-loud').checked, full = el.querySelector('.tour-full').checked;
+    const what = scenes(), ids = what ? [] : picked().map(g => g.id), seconds = +secs.value, loud = el.querySelector('.tour-loud').checked, full = el.querySelector('.tour-full').checked;
     el.close();
     // while it runs: a small bar over the top of the app, out of the game's way
     const bar = document.createElement('div'); bar.className = 'tour-bar'; bar.setAttribute('role', 'status');
@@ -415,11 +432,11 @@ export function openTour(driver) {
     document.body.appendChild(bar);
     const now = bar.querySelector('.tour-now'), meter = bar.querySelector('.tour-meter b'), signal = { stop: false };
     bar.querySelector('button').onclick = () => { signal.stop = true; now.textContent = 'Stopping…'; };
-    let step = { i: 0, n: ids.length, game: null }, shown = -1;
+    let step = { i: 0, n: ids.length || 1, game: null }, shown = -1;
     try {
       const result = await runTour(driver, {
-        ids, seconds, full, sound: loud, signal,
-        onStep(s) { step = s; shown = -1; now.textContent = `${s.i + 1} of ${s.n} · ${s.game.title} · loading`; meter.style.width = `${100 * s.i / s.n}%`; },
+        ids, seconds, full, sound: loud, signal, scenes: what,
+        onStep(s) { step = s; shown = -1; now.textContent = `${s.i + 1} of ${s.n} · ${s.game.title} · ${s.what || 'loading'}`; meter.style.width = `${100 * s.i / s.n}%`; },
         onPlay({ played }) { const sec = Math.floor(played); if (sec === shown || signal.stop) return; shown = sec; now.textContent = `${step.i + 1} of ${step.n} · ${step.game.title} · ${sec} s`; meter.style.width = `${100 * (step.i + played / seconds) / step.n}%`; },
       });
       const text = reportText(result);

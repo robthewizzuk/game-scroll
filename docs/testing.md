@@ -46,7 +46,8 @@ How to check a change without waiting longer than you need to. Written for peopl
 | The frame lab (`src/framelab.js`) | `node scripts/framelab-test.cjs [2d-id] [3d-id] [--shots dir] [--report file.html]` | about 3 min |
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
-| The tour itself (`src/tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 40 s |
+| What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 5 min |
+| The tour itself (`src/tour.js`, `src/detail-tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 2 min |
 | Everything (before a big engine PR) | `node scripts/smoke.cjs` (all 162 games) | about 3.5 min |
 
 The PR check (`.github/workflows/game-pr-check.yml`) runs the node checks (`npm run games`,
@@ -176,6 +177,51 @@ second tour in the other order (or of only the slow games) tells heat from a slo
 In a test browser, `__gs.tour({ ids, seconds })` runs it and `(await __gs.tourKit()).reportText(result)`
 makes the report; `node scripts/app-test.cjs tour` checks the guest, the bot, the frame sums, the
 plugin check (against a stand-in app) and the sheet.
+
+### The engine test scenes: what the detail systems are worth on a phone
+
+The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail) are
+checked by `scripts/detail-test.cjs` on a build machine's software renderer. That can count triangles
+and compare pictures; it can't say what a phone's graphics chip gains. The tour can:
+
+1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
+   for each run and press **Start**.
+2. Three heavy scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+   and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
+   **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
+   with the chip picking the copies and then the CPU, as happens while frame generation runs) and a **village** of twelve houses
+   (their bricks, slates and planks as real triangles). About 5 minutes at 20 seconds a run, longer the
+   first time: the systems build what they need in the background, which the report times, and keep it
+   on the phone.
+3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
+   the size the 3D was drawn and shown at) and for each scene:
+
+   ```
+   VALLEY · cluster detail · 1,915,460 triangles in 55 meshes · made in 1.4 s
+     every triangle             58 fps · worst 1% 44 fps · longest 31 ms · chip 15.2 ms · code 1.1 ms · 1,583,930 triangles in 212 draws
+     cluster detail             120 fps · worst 1% 97 fps · longest 12 ms · chip 4.0 ms · code 1.3 ms · 47,604 triangles in 140 draws · ready in 21.4 s · 37 meshes drawn in clusters · cluster tables 15.3 MB
+     = cluster detail against every triangle: 2.1 times the frame rate · 3.8 times less chip time · 33 times fewer triangles
+   ```
+
+   (Those numbers are made up to show the shape: nobody has run it on a phone yet.) `chip` is the
+   graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps); `code` is
+   the time the engine's code took to draw a frame; `ready in` is how long the system took to build
+   what it needs.
+
+How the runs are kept comparable: the feed is emptied and the scenes draw on a canvas of their own
+over the app, with the 3D canvas under it as on a game's card; quality is pinned to the tier the
+phone's class starts on, at full resolution, so neither run can trade sharpness for speed; frame
+generation is off, so every frame timed is a real one; before a run is timed its builds are waited
+for and the whole flight is flown once quickly, so its shaders are built; and each run flies the same
+path by the clock. A frame rate can't go above the screen's rate, so where both runs keep it, the chip
+time is what tells them apart. The valley's "every triangle" run also turns the older whole-mesh
+levels off (`HD.autoLod`), which would otherwise arrive part-way through it.
+
+In a test browser, `__gs.tour({ scenes: true, seconds, size, only })` runs them (`size: .1` for small
+scenes, `only: ['valley']` for one); `node scripts/app-test.cjs tour` flies small ones and checks the
+counts, the stage, and that the feed comes back as it was. A new detail system gets a scene in
+`src/detail-scenes.js`: `[key, name, what it tries, make]`, where `make({ gs, HD, size, gpu })` gives
+`{ v, holds, modes: [{ key, name, enter(draw) }], path(t, cam), tell(), dispose() }`.
 
 ## Measuring engine speed: perf-bench
 

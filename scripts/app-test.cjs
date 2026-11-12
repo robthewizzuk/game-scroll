@@ -1,7 +1,7 @@
 // Checks what the app itself does around a game (not what a game does): keeping the screen on during a
 // round, finer touch, even pixels and the LCD look for pocket games, the one-line soundtrack, the bigger
 // save that stays on the phone, the font library, the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons),
-// the phone test tour (a bot that plays as a guest, the frame report, the plugin check), and loading a big
+// the phone test tour (a bot that plays as a guest, the frame report, the plugin check, the engine test scenes), and loading a big
 // 3D game a little each frame (each pass on a fresh copy of the game's file).
 // Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading]   (SHOTS=<dir> saves a picture of every font and look)
 const { chromium } = require('playwright');
@@ -629,7 +629,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 3 && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 4 && sheet.opts[3] === 'Engine test scenes (3)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -643,7 +643,57 @@ async function tour(b) {
   check(/STOPPED after 1 of \d+ games/.test(rep.text) && !rep.bar && rep.last === rep.text.length, 'Stop on the bar shows the report, which is kept for "Last report"', rep.text.slice(0, 200));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-report.png' });
   await p.click('dialog.tour[open] .qa-x');
+  // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
+  await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
+  const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
+  check(/^Three scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  await p.click('dialog.tour[open] .qa-x');
   await p.done();
+
+  // the engine test scenes (src/detail-tour.js): each detail system off and on, on a stage over the app.
+  // Small scenes on a small screen here: the software renderer draws the full ones at seconds a frame.
+  const q = await open(b, { width: 240, height: 320, dpr: 1, before: () => {
+    window.__wl = { asked: 0, freed: 0 };
+    Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: { request: async () => { __wl.asked++; return { release: async () => { __wl.freed++; }, addEventListener() {} }; } } });
+  } });
+  await q.game('bunker-breakout');
+  const sc = await q.evaluate(async () => {
+    const kit = await __gs.tourKit(), steps = [], seen = { stage: false, cards: -1, awake: false, force: null };
+    __hd.direct = true;   // (as on a phone: the 3D canvas itself is shown under the stage's canvas; test browsers get a copy otherwise)
+    const res = await __gs.tour({ scenes: true, seconds: 1.5, size: .1, onStep(s) { steps.push(`${s.i + 1}/${s.n} ${s.game.title}: ${s.what}`); },
+      onPlay() { seen.stage = seen.stage || !!document.querySelector('.tour-stage canvas.hd-host'); seen.cards = document.querySelectorAll('.slide').length; seen.awake = seen.awake || __gs.awake.on; seen.force = window.__hd.force; } });
+    __hd.direct = false; await new Promise(r => setTimeout(r, 400));
+    return { text: kit.reportText(res), scenes: res.scenes.map(s => ({ key: s.key, error: s.error, holds: s.holds, modes: s.modes.map(m => ({ key: m.key, frames: m.frames, fps: Math.round(m.fps), tris: Math.round(m.tris), calls: Math.round(m.calls), build: m.build == null ? null : Math.round(m.build), note: m.note, tell: m.tell, backend: m.backend })) })),
+      took: res.took, stopped: res.stopped, steps, seen,
+      after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
+  });
+  const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
+  check(sc.scenes.length === 3 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest and a village, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(M('valley', 'on').tris < M('valley', 'off').tris * .8 && /^\d+ mesh(es)? drawn in clusters$/.test(M('valley', 'on').note) && +M('valley', 'on').note.split(' ')[0] >= 1 && /tables [\d.]+ MB/.test(M('valley', 'on').tell),
+    'the valley draws fewer triangles through cluster detail, once its clusters are built', JSON.stringify(sby.valley));
+  check(M('forest', 'on').tris < M('forest', 'off').tris * .8 && /simpler levels of a fir/.test(M('forest', 'on').note), 'the forest draws fewer triangles with detail levels for its copies', JSON.stringify(sby.forest));
+  const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
+  check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
+  check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),
+    'while they run the feed is empty, the scenes draw on a stage of their own with the 3D canvas under it, quality is pinned and the screen is kept on', JSON.stringify({ seen: sc.seen, steps: sc.steps }));
+  check(!sc.after.stage && !sc.after.touring && sc.after.force == null && sc.after.active === 'bunker-breakout' && !sc.after.awake && !sc.after.msg,
+    'afterwards the stage is gone, quality is the phone\'s own again and the feed is back on the game it was on', JSON.stringify(sc.after));
+  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · frame generation off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
+    && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
+    && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
+    'the report names the phone, the picture and every run with its numbers', sc.text);
+  // one scene alone, on a bigger screen: in a picture that small a brick's depth is under a pixel, and a surface is then drawn as flat as before
+  await q.setViewportSize({ width: 720, height: 960 }); await q.waitForTimeout(400);
+  const one = await q.evaluate(async () => {
+    const res = await __gs.tour({ scenes: true, seconds: 1.5, size: .1, only: ['village'] });
+    await new Promise(r => setTimeout(r, 400));
+    return { n: res.scenes.length, error: res.scenes[0].error, modes: res.scenes[0].modes.map(m => ({ key: m.key, tris: Math.round(m.tris), build: m.build == null ? null : Math.round(m.build), shown: m.ow + ' x ' + m.oh })), active: __gs.active?.def.id };
+  });
+  check(one.n === 1 && !one.error && one.modes[1]?.tris > one.modes[0]?.tris * 1.5 && one.modes[1].build < 8000 && one.active === 'bunker-breakout',
+    'one scene can be run alone; close to, the village draws more triangles for its surfaces, which were kept from the first run', JSON.stringify(one));
+  if (process.env.SHOTS) require('fs').writeFileSync(process.env.SHOTS + '/scenes-report.txt', sc.text);
+  await q.done();
 }
 
 /* ---------- a big 3D game is made a little each frame, each pass on a fresh copy of its file ---------- */
