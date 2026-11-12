@@ -1537,6 +1537,191 @@ console.log('physics ok');
   console.log('occlusion culling: behind, front, beside, over the top, camera in a box ok');
 }
 
+// occlusion culling from the last frame's depth: never hides what can be seen, through camera moves, things moving and things going
+{
+  const { Occlusion } = await import('../src/kit/occlusion.js');
+  const { PerspectiveCamera, Vector3, Box3, WebGPUCoordinateSystem } = await import('three');
+  let seed = 7; const R = () => { seed = seed * 1664525 + 1013904223 >>> 0; return seed / 4294967296; };
+  const box = (x, y, z, w, h, d) => ({ x0: x - w / 2, x1: x + w / 2, y0: y, y1: y + h, z0: z - d / 2, z1: z + d / 2 });
+  // a street: a long wall with a gap, two houses, a tower, a low fence, a post close to the camera
+  const walls = [box(-14, 0, 0, 20, 6, 1), box(12, 0, 0, 16, 6, 1), box(-6, 0, -14, 8, 7, 8), box(9, 0, -18, 10, 5, 9), box(0, 0, -34, 5, 16, 5), box(3, 0, 6, 12, 1, .3), box(1.2, 0, 11.5, .3, 3, .3)];
+  const truck = box(2, 0, 3, 5, 3, 2.2);
+  const camAt = (p, to, gpu, fov = 60) => { const c = new PerspectiveCamera(fov, 1, .1, 400); if (gpu) { c.coordinateSystem = WebGPUCoordinateSystem; c.updateProjectionMatrix(); } c.position.set(...p); c.lookAt(...to); c.updateMatrixWorld(); return c; };
+  // what the chip does: the frame's depth (here: the boxes drawn finely, with the old rasteriser), then the farthest of each block, in bytes
+  const shoot = (oc, cam, list, w = 64, F = 4) => {
+    const fine = new Occlusion({ w: w * F, max: 999 }).set(list).frame(cam, 1), L = fine.levels[0], px = new Uint8Array(w * w * 4), pe = cam.projectionMatrix.elements, gl = cam.coordinateSystem !== WebGPUCoordinateSystem;
+    for (let j = 0; j < w; j++) for (let i = 0; i < w; i++) {
+      let far = Infinity, nearest = 0; for (let y = 0; y < F; y++) for (let x = 0; x < F; x++) { const v = L.d[(j * F + y) * L.w + i * F + x]; far = Math.min(far, v); nearest = Math.max(nearest, v); }
+      let q = 1;
+      if (far > 0) { const vz = -1 / far, ndc = (pe[10] * vz + pe[14]) / -vz; q = gl ? ndc * .5 + .5 : ndc; }
+      const n = Math.min(16777215, Math.ceil(q * 16777215)), k = (j * w + i) * 4;
+      px[k] = n >> 16; px[k + 1] = n >> 8 & 255; px[k + 2] = n & 255; px[k + 3] = far > 0 ? Math.min(255, Math.ceil(Math.sqrt(Math.max(0, 1 - far / nearest)) * 255)) : 0;
+    }
+    return { px, w, h: w };
+  };
+  // the truth at a camera: can any pixel of the box be seen past these things? (both drawn finely)
+  const seen = (cam, list, b) => {
+    const A = new Occlusion({ w: 256, max: 999 }).set(list).frame(cam, 1).levels[0].d, B = new Occlusion({ w: 256, max: 999 }).set([b]).frame(cam, 1).levels[0].d;
+    for (let k = 0; k < A.length; k++) if (B[k] > 0 && B[k] > A[k] * 1.0005) return true;
+    return false;
+  };
+  const things = []; for (let i = 0; i < 260; i++) { const s = .4 + R() * 2.2; things.push(box((R() - .5) * 50, R() * 6, 8 - R() * 60, s, s * (.5 + R()), s)); }
+  const b3 = b => new Box3(new Vector3(b.x0, b.y0, b.z0), new Vector3(b.x1, b.y1, b.z1));
+  const run = (name, oc, cam, list, least) => {
+    oc.frame(cam, 1);
+    let hid = 0, wrong = 0, could = 0;
+    for (const t of things) { const h = oc.hiddenBox(b3(t)), s = seen(cam, list, t); if (!s) could++; if (h) { hid++; if (s) wrong++; } }
+    assert.equal(wrong, 0, `${name}: ${wrong} things hidden that can be seen`);
+    if (process.env.OCC_SHOW) console.log(`  ${name}: hides ${hid} of ${could} (floor ${least})`); else assert.ok(hid >= least, `${name}: hides ${hid} of the ${could} that are out of sight (at least ${least})`);
+    return [hid, could];
+  };
+  for (const gpu of [false, true]) {
+    const at = [0, 1.7, 16], to = [0, 1.7, 0], cam = camAt(at, to, gpu), oc = new Occlusion();
+    assert.equal(oc.frame(cam, 1).hiddenBox(b3(things[0])), false, 'no depth yet: nothing is hidden');
+    const tag = oc.shot(cam, 256, 256); assert.ok(tag && tag.f === oc.f, 'a frame is tagged for the depth it draws');
+    const pic = shoot(oc, cam, walls); oc.depth(pic.px, pic.w, pic.h, tag);
+    const still = run('camera still', oc, cam, walls, 110);
+    // the camera moves on while the picture is still the old one
+    const moves = { 'a step sideways': [[.4, 1.7, 16], [.4, 1.7, 0]], 'a stride sideways': [[2, 1.7, 16], [2, 1.7, 0]], 'a step forward': [[0, 1.7, 15.5], [0, 1.7, 0]], 'a step back and up': [[0, 2.3, 17], [0, 1.7, 0]], 'a turn': [[0, 1.7, 16], [6, 2.5, 0]], 'round the post': [[1.9, 1.7, 13], [0, 1.7, 0]] };
+    const got = {};
+    const floors = { 'a step sideways': 60, 'a stride sideways': 55, 'a step forward': 70, 'a step back and up': 55, 'a turn': 45, 'round the post': 45 };
+    for (const [name, [p, t]] of Object.entries(moves)) got[name] = run(name, oc, camAt(p, t, gpu), walls, floors[name]);
+    run('zoomed in four times', oc, camAt(at, [3, 2.5, 0], gpu, 15), walls, 15);
+    // back where it was drawn from, with a fresh picture each time
+    const fresh = () => { const o = new Occlusion(); o.frame(cam, 1); return o; };
+    // a truck in front of the gap: it hides things, then drives off, and what was behind it is back the same frame
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, [...walls, truck]); o.depth(p.px, p.w, p.h, tg);
+      const [withTruck] = run('a truck parked', o, cam, [...walls, truck], 120);
+      o.moved(truck.x0, truck.y0, truck.z0, truck.x1, truck.y1, truck.z1);
+      const [after] = run('the truck drove off', o, cam, walls, 75);
+      assert.ok(after < withTruck, `the truck's own share goes with it: ${withTruck} hidden, then ${after}`); }
+    // a thing that moved while its picture was on the way back from the chip
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, [...walls, truck]);
+      o.frame(cam, 1); o.moved(truck.x0, truck.y0, truck.z0, truck.x1, truck.y1, truck.z1); o.frame(cam, 1);
+      o.depth(p.px, p.w, p.h, tg);
+      run('moved before its picture came back', o, cam, walls, 75); }
+    // a wall taken away at once
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, walls); o.depth(p.px, p.w, p.h, tg);
+      const w0 = walls[0]; o.moved(w0.x0, w0.y0, w0.z0, w0.x1, w0.y1, w0.z1);
+      run('a wall taken away', o, cam, walls.slice(1), 60); }
+    // the truck drives off in front of a still camera: its place is taken out at once, and the first picture drawn
+    // after it went is news (so what the gap shows now can hide things again); the next one from there is not
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, [...walls, truck]); o.depth(p.px, p.w, p.h, tg); o.frame(cam, 1);
+      o.moved(truck.x0, truck.y0, truck.z0, truck.x1, truck.y1, truck.z1); o.frame(cam, 1); const s0 = o.stamp;
+      const t2 = o.shot(cam, 256, 256), p2 = shoot(o, cam, walls); o.depth(p2.px, p2.w, p2.h, t2);
+      const [healed] = run('a new picture after the truck went', o, cam, walls, 110); assert.ok(o.stamp > s0, 'the picture after a move is taken as news');
+      assert.equal(healed, still[0], `it says what a picture of the street alone says: ${healed} hidden, ${still[0]} with no truck ever there`);
+      const s1 = o.stamp, t3 = o.shot(cam, 256, 256); o.depth(p2.px, p2.w, p2.h, t3); o.frame(cam, 1); assert.equal(o.stamp, s1, 'and the one after that, from the same place, is not'); }
+    // leaves in the wind (soft): every picture is news, and what hides things has drawn back by a texel all round
+    { const o = fresh(); o.soft = true; const tg = o.shot(cam, 256, 256), p = shoot(o, cam, walls); o.depth(p.px, p.w, p.h, tg);
+      const [soft] = run('with leaves in the wind', o, cam, walls, 100); assert.ok(soft <= still[0], `it hides no more than without: ${soft} against ${still[0]}`);
+      const s0 = o.stamp, t2 = o.shot(cam, 256, 256); o.depth(p.px, p.w, p.h, t2); o.frame(cam, 1); assert.ok(o.stamp > s0, 'soft: a picture from the same place is still news');
+      // a wall that has swayed in by most of a texel (4 units of the 256 a picture is drawn at here: a texel is 4) hides nothing it should not
+      const thin = walls.map((b, i) => i < 2 ? { ...b, x0: b.x0 + .25, x1: b.x1 - .25, y1: b.y1 - .25 } : b);
+      run('the walls a little smaller than their picture', o, cam, thin, 100);
+      // leaves by the left wall alone (softBoxes): the picture is less sure only where it looks into their box, so the wall on the
+      // right hides all it hid with no wind at all, and the whole no less than with leaves everywhere
+      const o2 = fresh(); o2.soft = true; o2.softBoxes = Float64Array.from([-24.5, -.5, -1, -3.5, 6.5, 1]); o2.softN = 1; o2.depth(p.px, p.w, p.h, o2.shot(cam, 256, 256));
+      const [part] = run('leaves by one wall', o2, cam, walls, soft); assert.ok(part <= still[0], `no more than without: ${part} against ${still[0]}`);
+      const calm = fresh(); calm.depth(p.px, p.w, p.h, calm.shot(cam, 256, 256)); calm.frame(cam, 1);
+      let right = 0; for (const t of things) if (t.x0 > 5 && calm.hiddenBox(b3(t))) { right++; assert.ok(o2.hiddenBox(b3(t)), 'a thing behind the wall with no leaves by it is hidden as before'); }
+      assert.ok(right > 20, `things behind the right wall: ${right}`);
+      // both walls a little smaller than their picture, and said to sway: nothing seen is hidden
+      const o3 = fresh(); o3.soft = true; o3.softBoxes = Float64Array.from([-24.5, -.5, -1, -3.5, 6.5, 1, 3.5, -.5, -1, 20.5, 6.5, 1]); o3.softN = 2; o3.depth(p.px, p.w, p.h, o3.shot(cam, 256, 256));
+      run('two swaying walls a little smaller than their picture', o3, cam, thin, 60);
+      run('and after a step', o3, camAt([.3, 1.7, 15.8], to, gpu), thin, 30); }
+    // a picture that took too long to come back counts for nothing
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, walls); for (let i = 0; i < 40; i++) o.frame(cam, 1); o.depth(p.px, p.w, p.h, tg);
+      o.frame(cam, 1); assert.equal(things.some(t => o.hiddenBox(b3(t))), false, 'an old picture is thrown away'); }
+    // a picture nothing follows is dropped after a while
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, walls); o.depth(p.px, p.w, p.h, tg); for (let i = 0; i < 80; i++) o.frame(cam, 1);
+      assert.equal(things.some(t => o.hiddenBox(b3(t))), false, 'a picture with none after it stops counting'); }
+    // spheres: the quick test agrees with the box one (never hides more than the sphere's own box would)
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, walls); o.depth(p.px, p.w, p.h, tg); o.frame(cam, 1);
+      let n = 0; for (let i = 0; i < 400; i++) { const c = new Vector3((R() - .5) * 50, R() * 6, 8 - R() * 60), r = .3 + R() * 2; if (o.hiddenSphere(c.x, c.y, c.z, r)) { n++; assert.ok(!seen(cam, walls, { x0: c.x - r * .57, x1: c.x + r * .57, y0: c.y - r * .57, y1: c.y + r * .57, z0: c.z - r * .57, z1: c.z + r * .57 }), 'a hidden sphere has nothing to see in it'); } }
+      assert.ok(n > 80, `spheres hidden: ${n} of 400`); }
+    // the picture's stamp: the same while nothing changes, new when the camera or a thing moves
+    { const o = fresh(), tg = o.shot(cam, 256, 256), p = shoot(o, cam, walls); o.depth(p.px, p.w, p.h, tg); o.frame(cam, 1); const s0 = o.stamp;
+      o.frame(cam, 1); const t2 = o.shot(cam, 256, 256); o.depth(p.px, p.w, p.h, t2); o.frame(cam, 1); assert.equal(o.stamp, s0, 'still camera, same picture: the same stamp');
+      o.moved(-1, 0, 2, 1, 2, 4); o.frame(cam, 1); assert.equal(o.stamp, s0, 'a move where the picture has nothing: the same stamp');
+      o.moved(1.05, 0, 11.35, 1.35, 3, 11.65); o.frame(cam, 1); assert.ok(o.stamp > s0, 'the post moved: a new stamp');
+      const s1 = o.stamp; o.frame(camAt([.1, 1.7, 16], to, gpu), 1); assert.ok(o.stamp > s1, 'the camera moved: a new stamp'); }
+    console.log(`occlusion from depth (${gpu ? 'WebGPU' : 'WebGL'} depth): still ${still[0]} of ${still[1]} hidden; ` + Object.entries(got).map(([k, v]) => `${k} ${v[0]}/${v[1]}`).join(', '));
+  }
+  console.log('occlusion culling from the last frame\'s depth: camera moves, a zoom, things moving and going, old pictures ok');
+}
+
+// the same over random places: walls, houses and posts on the ground; a picture is taken, then the camera turns, zooms, steps or
+// strides, a thing goes, or leaves sway (soft), and nothing that can be seen from where it is now may be hidden
+{
+  const { Occlusion } = await import('../src/kit/occlusion.js');
+  const { PerspectiveCamera, Vector3, Box3, WebGPUCoordinateSystem } = await import('three');
+  let seed = 1; const R = () => { seed = seed * 1664525 + 1013904223 >>> 0; return seed / 4294967296; };
+  const box = (x, y, z, w, h, d) => ({ x0: x - w / 2, x1: x + w / 2, y0: y, y1: y + h, z0: z - d / 2, z1: z + d / 2 });
+  const b3 = b => new Box3(new Vector3(b.x0, b.y0, b.z0), new Vector3(b.x1, b.y1, b.z1));
+  const camAt = (p, to, gpu, fov) => { const c = new PerspectiveCamera(fov, 1, .1, 400); if (gpu) { c.coordinateSystem = WebGPUCoordinateSystem; c.updateProjectionMatrix(); } c.position.set(...p); c.lookAt(...to); c.updateMatrixWorld(); return c; };
+  const raster = (cam, list) => new Occlusion({ w: 256, max: 9999 }).set(list).frame(cam, 1).levels[0].d;
+  const shoot = (cam, list, w) => {
+    const F = 256 / w, L = raster(cam, list), px = new Uint8Array(w * w * 4), pe = cam.projectionMatrix.elements, gl = cam.coordinateSystem !== WebGPUCoordinateSystem;
+    for (let j = 0; j < w; j++) for (let i = 0; i < w; i++) {
+      let far = Infinity, nearest = 0; for (let y = 0; y < F; y++) for (let x = 0; x < F; x++) { const v = L[(j * F + y) * 256 + i * F + x]; far = Math.min(far, v); nearest = Math.max(nearest, v); }
+      let q = 1; if (far > 0) { const vz = -1 / far, ndc = (pe[10] * vz + pe[14]) / -vz; q = gl ? ndc * .5 + .5 : ndc; }
+      const n = Math.min(16777215, Math.ceil(q * 16777215)), k = (j * w + i) * 4; px[k] = n >> 16; px[k + 1] = n >> 8 & 255; px[k + 2] = n & 255; px[k + 3] = far > 0 ? Math.min(255, Math.ceil(Math.sqrt(Math.max(0, 1 - far / nearest)) * 255)) : 0;
+    }
+    return px;
+  };
+  const one = new Occlusion({ w: 256, max: 1 });
+  const seenIn = (A, cam, b) => { const B = one.set([b]).frame(cam, 1).levels[0].d; for (let k = 0; k < A.length; k++) if (B[k] > 0 && B[k] > A[k] * 1.0005) return true; return false; };
+  let hid = 0, fresh = 0; const kinds = {};
+  for (let t = 0; t < 60; t++) {
+    const list = [box(0, -1, 0, 300, 1, 300)], nb = 6 + Math.floor(R() * 10);
+    for (let i = 0; i < nb; i++) {
+      const k = R();
+      if (k < .35) list.push(box((R() - .5) * 60, 0, (R() - .5) * 60, 4 + R() * 24, 2 + R() * 8, .4 + R() * 1.5));
+      else if (k < .6) list.push(box((R() - .5) * 60, 0, (R() - .5) * 60, .4 + R() * 1.5, 2 + R() * 8, 4 + R() * 24));
+      else if (k < .85) list.push(box((R() - .5) * 60, 0, (R() - .5) * 60, 3 + R() * 9, 3 + R() * 12, 3 + R() * 9));
+      else list.push(box((R() - .5) * 30, 0, (R() - .5) * 30, .15 + R() * .5, 1 + R() * 4, .15 + R() * .5));
+    }
+    const gpu = R() < .5, w = R() < .5 ? 64 : 128, fov = 35 + R() * 50;
+    let p, to, tries = 0;
+    do { p = [(R() - .5) * 50, .6 + R() * 5, (R() - .5) * 50]; to = [(R() - .5) * 40, R() * 5, (R() - .5) * 40]; } while (list.some((b, i) => i && p[0] > b.x0 - .5 && p[0] < b.x1 + .5 && p[1] < b.y1 + .5 && p[2] > b.z0 - .5 && p[2] < b.z1 + .5) && ++tries < 50);
+    const cam = camAt(p, to, gpu, fov), things = [];
+    for (let i = 0; i < 120; i++) { const s = .3 + R() * 3; things.push(box((R() - .5) * 70, R() * 5, (R() - .5) * 70, s, s * (.4 + R()), s)); }
+    const oc = new Occlusion(); oc.frame(cam, 1);
+    const k = R(), side = () => (R() - .5) * 2; let name, p2 = p.slice(), to2 = to.slice(), fov2 = fov, now = list;
+    if (k >= .88) {   // (every other time the picture is told where they sway: everything but the ground, each thing's box and a little round it)
+      oc.soft = true;
+      if (t % 2) { const sb = []; for (const b of list.slice(1)) sb.push(b.x0 - .1, b.y0 - .1, b.z0 - .1, b.x1 + .1, b.y1 + .1, b.z1 + .1); oc.softBoxes = Float64Array.from(sb); oc.softN = list.length - 1; }
+    }
+    oc.depth(shoot(cam, list, w), w, w, oc.shot(cam, 256, 256));
+    if (k < .1) name = 'still';
+    else if (k < .2) { name = 'a turn'; to2 = [to[0] + side() * 8, to[1] + side() * 3, to[2] + side() * 8]; }
+    else if (k < .28) { name = 'a zoom'; fov2 = fov * (.25 + R() * 1.5); to2 = [to[0] + side() * 2, to[1] + side(), to[2] + side() * 2]; }
+    else if (k < .46) { name = 'a step'; const s = .02 + R() * .5; p2 = [p[0] + side() * s, p[1] + side() * s * .3, p[2] + side() * s]; to2 = [to[0] + side(), to[1] + side() * .3, to[2] + side()]; }
+    else if (k < .62) { name = 'a stride'; const s = .5 + R() * 3; p2 = [p[0] + side() * s, Math.max(.3, p[1] + side() * s * .4), p[2] + side() * s]; to2 = [to[0] + side() * 3, to[1] + side(), to[2] + side() * 3]; }
+    else if (k < .7) { name = 'a step and a zoom'; const s = .05 + R() * 1; p2 = [p[0] + side() * s, p[1], p[2] + side() * s]; fov2 = fov * (.4 + R() * 1.2); }
+    else if (k < .8) { name = 'a thing gone'; const g = list[1 + Math.floor(R() * (list.length - 1))]; now = list.filter(b => b !== g); oc.moved(g.x0, g.y0, g.z0, g.x1, g.y1, g.z1); }
+    else if (k < .88) { name = 'a thing gone and a step'; const g = list[1 + Math.floor(R() * (list.length - 1))]; now = list.filter(b => b !== g); oc.moved(g.x0, g.y0, g.z0, g.x1, g.y1, g.z1); const s = .05 + R() * 1; p2 = [p[0] + side() * s, p[1], p[2] + side() * s]; }
+    else {   // every wall and house smaller all round than its picture, by most of a texel of it where it stands, from the same place or a step on
+      name = 'leaves in the wind'; const P = new Vector3(...p), tex = 2 * Math.tan(fov * Math.PI / 360) / w;
+      now = list.map((b, i) => { if (!i) return b; const d = Math.min(.4, .8 * tex * b3(b).distanceToPoint(P)); return { x0: b.x0 + d, x1: b.x1 - d, y0: b.y0, y1: b.y1 - d, z0: b.z0 + d, z1: b.z1 - d }; });
+      if (R() < .5) { const s = .02 + R() * .3; p2 = [p[0] + side() * s, p[1], p[2] + side() * s]; }
+    }
+    const cam2 = camAt(p2, to2, gpu, Math.max(8, Math.min(100, fov2)));
+    oc.frame(cam2, 1);
+    const fo = new Occlusion(); fo.frame(cam2, 1); fo.depth(shoot(cam2, now, w), w, w, fo.shot(cam2, 256, 256)); fo.frame(cam2, 1);
+    const A = raster(cam2, now), K = kinds[name] ||= [0, 0];
+    for (const th of things) {
+      const h = oc.hiddenBox(b3(th)), fh = fo.hiddenBox(b3(th)); if (fh) { fresh++; K[1]++; }
+      if (!h) continue;
+      hid++; K[0]++;
+      assert.ok(!seenIn(A, cam2, th), `place ${t} (${name}, ${w} wide, ${gpu ? 'WebGPU' : 'WebGL'} depth): a thing that can be seen is hidden`);
+    }
+  }
+  assert.ok(hid > fresh * .5, `the old picture still hides a good share of what a fresh one would: ${hid} of ${fresh}`);
+  console.log(`occlusion from depth, 60 random places: nothing seen is hidden; hides ${hid} where a fresh picture hides ${fresh} (` + Object.entries(kinds).map(([k, v]) => `${k} ${v[0]}/${v[1]}`).join(', ') + ') ok');
+}
+
 // frame generation: a camera's turn as a picture warp (exact for any turn and zoom), and the battery and heat reading
 {
   const { poseOf, homography, lerpPose, newPose } = await import('../src/kit/framegen.js');

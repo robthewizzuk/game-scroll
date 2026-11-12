@@ -22,6 +22,7 @@ import * as TSL from 'three/tsl';
 import { lut3D } from 'three/examples/jsm/tsl/display/Lut3DNode.js';
 import { tslOps } from './models/ops.js';
 import { gpuCull, gpuCullFits } from './props-gpu.js';
+import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
@@ -519,6 +520,61 @@ export function eyeMeter(r) {
     },
   };
 }
+// Occlusion culling's depth meter (occlude.js; the WebGL one is its DepthMeter): the frame's depth boiled
+// down to a small picture and read back without waiting for it. Each texel is the FARTHEST depth of its
+// block of the frame as three bytes (rounded up) and how much nearer the block's nearest is as a fourth
+// (occlusion.js depth() says how). job: what occludeFrame() gave, with pad (pixels a block is widened by
+// all round: 1 when the frame is drawn a fraction of a pixel off or with several samples a pixel);
+// done(job, px): called when the picture is back, top row first.
+export function depthMeter(r) {
+  const U = { blk: uniform(new Vector2(1, 1)), pk: uniform(new Vector2()), size: uniform(new Vector2(1, 1)), pad: uniform(0) };
+  let mat = null, quad = null, rt = null, of = null, flying = 0; const pool = [], pix = [];
+  const build = tex => {
+    mat?.dispose(); mat = new NodeMaterial(); of = tex;
+    const dT = texture(tex);
+    mat.fragmentNode = Fn(() => {
+      const t = floor(screenCoordinate.xy), pad = int(U.pad), top = ivec2(U.size).sub(1);
+      const lo = max(ivec2(floor(t.mul(U.blk))).sub(pad), ivec2(0)).toVar(), hi = min(ivec2(TSL.ceil(t.add(1).mul(U.blk))).sub(1).add(pad), top).toVar();
+      const far = float(0).toVar(), near = float(1).toVar();
+      Loop({ start: lo.y, end: hi.y, condition: '<=' }, { start: lo.x, end: hi.x, condition: '<=' }, ({ i, j }) => {
+        const d = dT.load(ivec2(j, i)).r; far.assign(max(far, d)); near.assign(min(near, d));
+      });
+      const none = far.greaterThanEqual(1);
+      const q = select(none, float(16777215), min(float(16777214), TSL.ceil(far.mul(16777215)).add(1))).toVar();
+      const D = U.pk.y.div(far.add(U.pk.x)), N = U.pk.y.div(near.add(U.pk.x));   // (how far each is: WebGPU's depth runs 0..1)
+      const a = select(none, float(0), min(float(255), TSL.ceil(sqrt(max(float(0), float(1).sub(N.div(D)))).mul(255))));
+      const b0 = floor(q.div(65536)).toVar(), rem = q.sub(b0.mul(65536)).toVar(), b1 = floor(rem.div(256)).toVar();
+      return vec4(b0, b1, rem.sub(b1.mul(256)), a).div(255);
+    })();
+    quad = new QuadMesh(mat);
+  };
+  return {
+    /** Takes the picture of the depth just drawn (tex: the scene pass's depth texture). False when it could not. */
+    read(tex, job, done) {
+      const device = r.backend?.device; if (!tex || !device || flying >= 2 || r.reversedDepthBuffer) return false;
+      if (tex !== of) build(tex);
+      const { w, h } = job;
+      if (!rt || rt.width !== w || rt.height !== h) { rt?.dispose(); rt = new RenderTarget(w, h, { depthBuffer: false }); }
+      U.blk.value.set(job.tag.W / w, job.tag.H / h); U.size.value.set(job.tag.W, job.tag.H); U.pk.value.set(job.tag.p10, job.tag.p14); U.pad.value = job.pad | 0;
+      const was = r.getRenderTarget(); r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
+      const gpuTex = r.backend.get(rt.texture)?.texture; if (!gpuTex) return false;
+      // (three's own read makes a buffer on the chip for every read: these are kept and used again)
+      const row = w * 4, bpr = Math.ceil(row / 256) * 256, size = bpr * h;
+      let buf = null; while (pool.length && !buf) { const b = pool.pop(); if (b.size === size) buf = b; else b.destroy(); }
+      buf ||= device.createBuffer({ size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const enc = device.createCommandEncoder(); enc.copyTextureToBuffer({ texture: gpuTex }, { buffer: buf, bytesPerRow: bpr }, { width: w, height: h });
+      device.queue.submit([enc.finish()]); flying++;
+      buf.mapAsync(GPUMapMode.READ).then(() => {
+        const src = new Uint8Array(buf.getMappedRange()); let px = pix.pop(); if (!px || px.length !== row * h) px = new Uint8Array(row * h);
+        if (bpr === row) px.set(src.subarray(0, row * h)); else for (let y = 0; y < h; y++) px.set(src.subarray(y * bpr, y * bpr + row), y * row);
+        buf.unmap(); pool.push(buf);
+        try { done(job, px); } finally { pix.push(px); }
+      }, () => { try { buf.destroy(); } catch (e) { /* gone with its device */ } }).finally(() => { flying--; });
+      return true;
+    },
+    dispose() { mat?.dispose(); rt?.dispose(); for (const b of pool) b.destroy(); pool.length = 0; },
+  };
+}
 // The still/moving shadow split on WebGPU (hd3d.js shadowLights): the light gets three's own shadow
 // node, made here so the kit can draw its map when it wants to (splitDraw), and over what is already
 // there when told to keep it (three clears a shadow map each time it draws one).
@@ -824,7 +880,7 @@ export function gpuProps(im) {
     gpuFits: gpuCullFits(levels),
     isGpu: () => onGpu,   // (a function: the twin is copied with ...spread in hd3d.js)
     sends: () => gc?.sends() ?? 0,
-    sync(cam, occ = null, shadowCams = null, gpuR = null) {   // occ: hd3d.js occlusion culling (only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead
+    sync(cam, occ = null, shadowCams = null, gpuR = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead
       dists();
       useGpu(!!gpuR && this.gpuFits);
       if (onGpu) { gc.sync(gpuR, cam, shadowCams); for (const m of gc.meshes) m.visible = true; return; }
@@ -853,7 +909,7 @@ export function gpuProps(im) {
         if (!im.getActiveAndVisibilityAt(i)) continue;
         const q = i * 4; PS.center.set(sph[q], sph[q + 1], sph[q + 2]); PS.radius = sph[q + 3];
         if (!PF.intersectsSphere(PS)) { let j = 0; while (j < nsf && !SF[j].intersectsSphere(PS)) j++; if (j === nsf) continue; }
-        if (occ && !im.castShadow && occ.hidden(PS.center, PS.radius - 8)) continue;
+        if (occ && !im.castShadow && occ(i)) continue;
         const d = (PS.center.x - cx) ** 2 + (PS.center.y - cy) ** 2 + (PS.center.z - cz) ** 2;   // squared, like the levels
         let L = 0; while (L + 1 < levels.length && d >= levels[L + 1].dist) L++;
         want[i] = L;
@@ -1263,6 +1319,7 @@ export class GpuChain {
       if (giOn === 'voxel') {
         const n = this.giN = vxgi(dN, nN, this.scene, this.cam, this.giRes || 64); n.useTemporalFiltering = false; n.bounces = 1;
         if (this.giBox) n.volume.bounds.copy(this.giBox);
+        n.volume.layers.enable(OCC_LAYER);   // (what the camera's occlusion culling hides this frame is still part of the level)
         const gi = n.getGINode(), vao = n.getAONode();
         g = Fn(() => vec4(C.sample(uv()).rgb.mul(mix(float(1), vao.sample(uv()).r, .5)).add(dif.sample(uv()).rgb.mul(gi.sample(uv()).rgb).mul(U.giK)), 1))();
       } else {

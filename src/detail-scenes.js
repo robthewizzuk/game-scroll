@@ -6,6 +6,7 @@
 //   valley   cluster detail (src/kit/detail.js): a hillside, rocks and brick houses of dense triangles
 //   forest   detail for copies (hd3d.js autoCopies): thousands of firs and rocks placed with gs.props
 //   village  real surface detail (gs.models.relief): a street of houses whose bricks and tiles are real triangles
+//   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key]]. enter() sets the mode up and, where something has to be built
@@ -161,9 +162,71 @@ function village({ gs, size }) {
   };
 }
 
+/* ---------- town: hiding what is behind other things ---------- */
+function town({ gs, HD, size }) {
+  const T = gs.THREE, G = Math.max(3, Math.round(5 * Math.sqrt(size))), P = 26, B = 18, span = G * P, { v, sun } = view(gs, 260, .002), was = { on: HD.occlude, sleep: HD.occludeSleep };
+  const add = (g, m, x, y, z, cast = true) => { const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = cast; o.receiveShadow = true; v.scene.add(o); return o; };
+  add(new T.PlaneGeometry(span + 120, span + 120).rotateX(-Math.PI / 2), gs.hd.pbr('#77726a', { rough: .95 }), 0, 0, 0, false);
+  // An old town: rows of houses with a street between the rows, and every other row half a house along, so
+  // that the lanes between the houses of a row end at a house of the next. sz(j): where street j runs between
+  // the rows (0..G); X(i, j): where lane i of row j runs (0..G).
+  const sz = j => (j - G / 2) * P, X = (i, j) => (i - G / 2) * P + (j % 2) * P / 2;
+  const box = new T.BoxGeometry(1, 1, 1), walls = ['#b9a78c', '#a8846c', '#c9c2b4'].map(c => gs.hd.pbr(c, { rough: .85 }));
+  // round every house, things of a few thousand triangles each: from anywhere, most of the town is behind a house
+  const pts = []; for (let k = 0; k <= 40; k++) { const u = k / 40; pts.push(new T.Vector2(.18 + .34 * Math.sin(u * 2.6) ** 2 * (1 - u * .35), u * 1.3)); }
+  const kinds = [
+    [new T.TorusKnotGeometry(.5, .18, 160, 16), gs.hd.pbr('#8a6a3a', { rough: .4, metal: .8 }), 1.2],
+    [new T.LatheGeometry(pts, 48), gs.hd.pbr('#b0623f', { rough: .8 }), 0],
+    [boulder(T, 24, .7, 2), gs.hd.pbr('#9a948a', { rough: .7 }), .55],
+    [new T.BoxGeometry(1.1, 1.1, 1.1, 12, 12, 12), gs.hd.pbr('#8a7150', { rough: .9 }), .55],
+  ];
+  let things = 0, tris = 0;
+  for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+    const bx = X(i, j) + P / 2, bz = sz(j) + P / 2, h = 9 + ((i * 7 + j * 3) % 4) * 2.5;
+    add(box, walls[(i + j * 2) % 3], bx, h / 2, bz).scale.set(B, h, B);
+    for (let side = 0; side < 4; side++) for (let k = 0; k < 4; k++) {
+      const [g, m, y] = kinds[(i + j * 3 + k + side) % 4], a = -6.75 + k * 4.5, b = (side & 1 ? 1 : -1) * (B / 2 + 1.2), o = add(g, m, bx + (side < 2 ? a : b), y, bz + (side < 2 ? b : a));
+      o.rotation.y = (i * 5 + j * 3 + k + side) * .7; things++; tris += trisOf(g);
+    }
+  }
+  // a few carts drive up and down the streets, so that things move in front of and behind the houses
+  const carts = []; for (let c = 0; c < Math.max(2, G - 1); c++) carts.push(add(new T.BoxGeometry(3.4, 1.6, 2), gs.hd.pbr('#5d6f8a', { rough: .6 }), 0, .9, sz(1 + c % (G - 1)) + 1.6));
+  // the walk: up through the town by the lanes (each ends at a house: round it by the street), along the top,
+  // back down by the next lanes and along the bottom; 5 metres a second, looking where it is going
+  const way = [], c0 = (G >> 1) - 1;
+  for (let j = 0; j < G; j++) way.push([X(c0, j), sz(j)], [X(c0, j), sz(j + 1)]);
+  for (let j = G - 1; j >= 0; j--) way.push([X(c0 + 1, j), sz(j + 1)], [X(c0 + 1, j), sz(j)]);
+  const legs = way.map((p, i) => { const q = way[(i + 1) % way.length]; return Math.hypot(q[0] - p[0], q[1] - p[1]); }), per = legs.reduce((a, b) => a + b, 0), look = new T.Vector3();
+  const at = (u, p) => { u = ((u % per) + per) % per; let i = 0; while (u > legs[i]) u -= legs[i++]; const a = way[i], b = way[(i + 1) % way.length], k = legs[i] ? u / legs[i] : 0; return p.set(a[0] + (b[0] - a[0]) * k, 1.7, a[1] + (b[1] - a[1]) * k); };
+  const sum = { n: 0, hid: 0, tris: 0, ms: 0, t: 0 };
+  return {
+    v, holds: `${G * G} houses with ${num(things)} statues, urns, rocks and crates of ${num(tris)} triangles round them`,
+    modes: [
+      { key: 'off', name: 'all that is in view', enter() { HD.occlude = false; } },
+      // (kept at work all through: in a game it rests for a while wherever it saves next to nothing, which would hide what it costs here)
+      { key: 'on', name: 'hidden things left out', async enter(draw) { HD.occlude = true; HD.occludeSleep = false; for (let i = 0; i < 12; i++) await draw(); } },
+    ],
+    path(t, cam) {
+      // (what the last frame left out, for tell(): counted from the start of the timed run)
+      if (t < sum.t) sum.n = sum.hid = sum.tris = sum.ms = 0;
+      else if (HD.occlude !== false) { const I = HD.info; sum.n++; sum.hid += I.occluded || 0; sum.tris += I.occTris || 0; sum.ms += I.occMs || 0; }
+      sum.t = t;
+      at(t * 5, cam.position); at(t * 5 + 7, look); cam.lookAt(look.x, 2.4 + .6 * Math.sin(t * .6), look.z);
+      for (let c = 0; c < carts.length; c++) carts[c].position.x = ((t * 3 + c * 17) % span) - span / 2;
+      sun.follow(cam.position.x, 0, cam.position.z);
+    },
+    tell() {
+      if (HD.occlude === false || !sum.n) return null;
+      return `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms`;
+    },
+    dispose() { HD.occlude = was.on; HD.occludeSleep = was.sleep; clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu })]. */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
   ['village', 'Village', 'real surface detail', village],
+  ['town', 'Town', 'hiding what is behind other things', town],
 ];

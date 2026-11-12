@@ -83,7 +83,7 @@ by name: `stone`, `brick`, `plaster`, `concrete`, `glass`, `dark`, `silver`, `ho
 | `city.avoid(p, r)` | Cars brake for this point this frame: the player, a fallen sign, a parade. |
 | `city.walls()` | The building meshes, for `gs.camera`'s `walls` so the camera never goes inside one. |
 | `city.solid(world)` | Makes the buildings and kerbs solid in a `gs.physics3d` World3D. |
-| `city.occluders()` | The buildings as boxes, for skipping what's hidden behind them. The city already hands them to `v.occluders` (`occlude: false` in the options to stop that). |
+| `city.occluders()` | The buildings as boxes, for skipping what's hidden behind them. The city already hands them to `v.occluders` (`occlude: false` in the options to stop that); the view also finds what is hidden from each frame's own depth, by itself. |
 | `city.plan` | The whole layout as plain numbers (blocks, buildings, junctions, roads, spots). `gs.city.layout({ seed })` gives it without any 3D. |
 | `city.drawMap(c, x, y, w, h, { at, range, turn })` + `city.mapPoint(p)` | A quick top-down map for your HUD, and where a point lands on it. Or draw your own from `city.plan`. |
 

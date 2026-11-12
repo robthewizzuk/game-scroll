@@ -247,6 +247,7 @@ export function gpuFluid(F) {
   mat.colorNode = vec4(col, 1);
   if (L.glow) mat.emissiveNode = col.mul(L.glow);
   const mesh = new Mesh(new PlaneGeometry(2, 2), mat); mesh.count = N; mesh.frustumCulled = false; mesh.castShadow = mesh.receiveShadow = F.shadows; mesh.userData.gsTwin = true; mesh.userData.gsMoved = 0;
+  mesh.userData.gsBounds = F.bounds;   // (where its drops can be: the view's occlusion culling takes them out of its depth picture, occlude.js)
 
   // the drops copied back: one copy at a time (three keeps one read buffer for each attribute)
   let frame = 0, flying = 0, queue = Promise.resolve(), groundAt = null;

@@ -1,0 +1,218 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Occlusion culling from the last frame's depth (src/kit/occlude.js, occlusion.js; hd3d.js occludeStep), for
+// scripts/detail-test.cjs --page occlude. A street of houses is walked down: yards full of things behind
+// the houses, a bridge across the street with balloons behind it, a wall at the end with a hill behind,
+// a pane of glass and a cut-out fence with things behind them, a tree swaying in the wind, a truck that
+// drives up the street, a gate that slides open, a balloon that rises from behind the bridge, a walking
+// person, a set of barrels (gs.props). Every frame is drawn twice: with what is hidden left out, and
+// with it worked out but drawn all the same (HD.occludeShow). The two pictures must be the same, the
+// first must draw far less, and nothing may stay hidden from a raycast. Then: a view too small to be
+// worth it and one where nothing is hidden go to sleep; boxes the game lists still work without depth.
+//   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?frames=70
+//   ?bench: the walk with hiding off and on: triangles, draws and the time it takes a frame
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { looks } from '../../src/kit/looks.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480), FRAMES = +(Q.get('frames') || 70), { Props } = gs.props;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false; HD.still = false; HD.detailMin = 8000; if (Q.has('nobatch')) HD.batch = false; if (Q.get('texels')) HD.occludeTexels = +Q.get('texels');
+const rng = gs.math.rng(11), R = (a, b) => a + (b - a) * rng();
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+
+function street() {
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .0008, amb: .45 }), c = document.createElement('canvas'); v.cam.far = 600; v.cam.fov = 70; v.cam.updateProjectionMatrix();
+  c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 3, 90, [-.5, 1, .3]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, -70);
+  const S = { v, c, x, things: [], balloons: [], under: [], yard: [] };
+  const add = (g, m, px, py, pz, o = {}) => { const mesh = new T.Mesh(g, m); mesh.position.set(px, py, pz); mesh.castShadow = o.cast !== false; mesh.receiveShadow = true; if (o.ry) mesh.rotation.y = o.ry; v.scene.add(mesh); return mesh; };
+  const ground = add(new T.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), gs.hd.pbr('#6f7a62', { rough: .95 }), 0, 0, -70, { cast: false });
+  const brick = gs.hd.pbr('#a0705a', { rough: .85 }), plaster = gs.hd.pbr('#d6cdb8', { rough: .9 }), wood = gs.hd.pbr('#8a6a48', { rough: .8 }), metal = gs.hd.pbr('#5a6a78', { rough: .4, metal: .8 }), red = gs.hd.pbr('#c0392b', { rough: .5 });
+  // two rows of houses, a gap of two metres between each and the next
+  const house = new T.BoxGeometry(10, 9, 12);
+  S.houses = [];
+  for (let i = 0; i < 9; i++) for (const side of [-1, 1]) S.houses.push(add(house, (i + (side > 0)) & 1 ? brick : plaster, side * 12, 4.5, -8 - i * 14));
+  // the yards behind them: crates, posts and knots of many triangles
+  const crate = new T.BoxGeometry(1.2, 1.2, 1.2), post = new T.CylinderGeometry(.2, .25, 3, 12), knot = new T.TorusKnotGeometry(.7, .22, 90, 12);
+  for (let i = 0; i < 170; i++) {
+    const side = i & 1 ? 1 : -1, k = i % 3, g = k === 0 ? crate : k === 1 ? post : knot;
+    S.yard.push(add(g, k === 0 ? wood : k === 1 ? metal : red, side * R(20, 70), k === 1 ? 1.5 : k === 2 ? 1.2 : .6, R(-135, 5), { ry: R(0, 3) }));
+  }
+  // a bridge across the street (6 m to 12 m up), with balloons close behind it and tall poles on the ground beyond it, seen under it
+  S.bridge = add(new T.BoxGeometry(34, 6, 5), brick, 0, 9, -62);
+  const ball = new T.SphereGeometry(.6, 24, 16);
+  for (let i = 0; i < 14; i++) S.balloons.push(add(ball, red, R(-4, 4), R(9.2, 10.6), R(-66.5, -70)));
+  for (let i = 0; i < 6; i++) S.under.push(add(new T.CylinderGeometry(.2, .2, 5, 10), wood, R(-4, -1), 2.5, R(-66, -80)));
+  S.riser = add(ball, metal, 2, 9.4, -67);   // rises from behind the bridge until it shows over it
+  // the wall at the end, a tower that shows over it, and things behind it that do not
+  S.wall = add(new T.BoxGeometry(70, 16, 3), plaster, 0, 8, -140);
+  S.tower = add(new T.BoxGeometry(6, 40, 6), brick, 10, 20, -165);
+  S.behind = []; for (let i = 0; i < 40; i++) S.behind.push(add(i & 1 ? knot : crate, i & 1 ? metal : wood, R(-28, 28), R(.6, 9), R(-150, -200)));
+  // a hill behind the wall: a dense mesh, drawn in clusters (cluster detail)
+  { const g = new T.PlaneGeometry(160, 110, 240, 170).rotateX(-Math.PI / 2), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) { const px = p.getX(i), pz = p.getZ(i); p.setY(i, 5 * Math.sin(px * .06) * Math.cos(pz * .05) + 1.2 * Math.sin(px * .31 + 1) * Math.sin(pz * .27) + .3 * Math.sin(px * 1.3) * Math.sin(pz * 1.1)); }
+    g.computeVertexNormals(); S.hill = add(g, gs.hd.pbr('#5f7f4a', { rough: .95 }), 0, 4, -215); }
+  // glass with crates behind it (must be drawn), a cut-out fence with crates behind it
+  S.glass = add(new T.BoxGeometry(8, 6, .2), new T.MeshStandardMaterial({ color: '#9fd0e8', transparent: true, opacity: .35, roughness: .1 }), -3, 3, -30, { cast: false });
+  S.seen = []; for (let i = 0; i < 5; i++) S.seen.push(add(crate, wood, -6 + i * 1.5, .6, -33));
+  { const cv = document.createElement('canvas'); cv.width = cv.height = 64; const q = cv.getContext('2d'); q.clearRect(0, 0, 64, 64); q.fillStyle = '#fff'; for (let i = 0; i < 4; i++) { q.fillRect(i * 16, 0, 6, 64); q.fillRect(0, i * 16, 64, 6); }
+    const tex = new T.CanvasTexture(cv); tex.wrapS = tex.wrapT = T.RepeatWrapping; tex.repeat.set(8, 3);
+    S.fence = add(new T.PlaneGeometry(8, 3), new T.MeshStandardMaterial({ color: '#555', map: tex, alphaTest: .5, side: T.DoubleSide }), 3.5, 1.5, -44, { cast: false });
+    for (let i = 0; i < 5; i++) S.seen.push(add(crate, red, 1 + i * 1.3, .6, -47)); }
+  // a tree whose leaves sway in the wind (their shader moves them), and things behind it
+  { const lc = document.createElement('canvas'); lc.width = lc.height = 32; const lq = lc.getContext('2d'); lq.fillStyle = '#fff'; lq.beginPath(); lq.ellipse(16, 16, 15, 11, .5, 0, 7); lq.fill();
+    const leaf = new T.MeshStandardMaterial({ color: '#3f7d3a', map: new T.CanvasTexture(lc), alphaTest: .5, side: T.DoubleSide, roughness: .8 }); S.leafLook = looks.leaves(leaf, { wind: 1, sway: .02, above: 1, atlas: [32, 32] });
+    add(new T.CylinderGeometry(.25, .35, 4, 10), wood, -4.5, 2, -100);
+    const parts = []; for (let i = 0; i < 60; i++) { const q = new T.PlaneGeometry(R(1, 2.2), R(1, 2.2)); q.rotateY(R(0, 3)); q.rotateX(R(-.6, .6)); q.translate(R(-2, 2), R(3, 7), R(-2, 2)); parts.push(q); }
+    const P = [], N = [], U = [], I = []; for (const g of parts) { const b = P.length / 3; P.push(...g.attributes.position.array); N.push(...g.attributes.normal.array); U.push(...g.attributes.uv.array); for (const i of g.index.array) I.push(b + i); }
+    const g = new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new T.Float32BufferAttribute(N, 3)); g.setAttribute('uv', new T.Float32BufferAttribute(U, 2)); g.setIndex(I);
+    S.tree = add(g, leaf, -4.5, 0, -100);
+    for (let i = 0; i < 8; i++) S.seen.push(add(i & 1 ? crate : ball, red, R(-7, -2), R(2.5, 7), R(-104, -110))); }
+  // things that move: a truck up the street, a gate across a gap between two houses, a walking person
+  S.truck = add(new T.BoxGeometry(3, 3.4, 7), metal, 5, 1.7, -55);
+  S.gate = add(new T.BoxGeometry(.4, 5, 2.4), wood, -8, 2.5, -15);   // (the gap between the first two houses on the left)
+  S.man = gs.poses.person({ body: '#2f6f9f', mat: c => gs.hd.pbr(c) }); S.man.position.set(-11.5, 0, -29); S.man.rotation.y = Math.PI / 2; v.scene.add(S.man); S.man.rig.play('walk');
+  // barrels: a set of copies, most of them in the yards
+  const props = S.props = new Props(v.scene); S.barrel = props.kind('barrel', new T.CylinderGeometry(.45, .45, 1.1, 16, 2).translate(0, .55, 0), metal);
+  props.scatter('barrel', 500, { x0: -75, z0: -135, x1: -19, z1: 5 }, { seed: 3, gap: 2 }); props.scatter('barrel', 500, { x0: 19, z0: -135, x1: 75, z1: 5 }, { seed: 5, gap: 2 });
+  props.scatter('barrel', 30, { x0: -5, z0: -130, x1: 5, z1: -5 }, { seed: 9, gap: 4 });
+  props.done();
+  return S;
+}
+// where everything is at frame i of the walk (the same for both of a frame's pictures). The camera goes at
+// the pace of a game: a run down the street (STEP metres a frame, looking about), a jump further down it and
+// on, a fast drive at the end wall, a stand looking about, quite still, then a jump to the roofs and a flight
+const STEP = +(Q.get('step') || .25), FA = Math.round(FRAMES * .2), FB = Math.round(FRAMES * .4), FC = Math.round(FRAMES * .52), FD = Math.round(FRAMES * .7), FE = Math.round(FRAMES * .85);
+function pose(S, i) {
+  const v = S.v, cam = v.cam;
+  if (i < FB) { const far = i >= FA, j = far ? i - FA : i; cam.position.set(Math.sin(i * .35) * .6, 1.7 + .05 * Math.sin(i * .9), (far ? -22 : 12) - j * STEP); cam.lookAt(Math.sin(i * .23) * 6, 3 + 1.5 * Math.sin(i * .17), cam.position.z - 30); }
+  else if (i < FC) { cam.position.set(1, 1.7, -72 - (i - FB) * 1.2); cam.lookAt(0, 6, -140); }
+  else if (i < FD) { cam.position.set(-1, 1.7, -40); cam.lookAt(-1 + Math.sin(i * .2) * 3, 5, -70); }
+  else if (i < FE) { cam.position.set(0, 1.7, -41); cam.lookAt(0, 6, -70); }
+  else { cam.position.set(-30 + (i - FE) * .6, 14, -20 - (i - FE) * 1.2); cam.lookAt(0, 2, -90); }
+  cam.updateMatrixWorld();
+  S.truck.position.z = -55 + i * .5;   // (up the right of the street, past the camera)
+  S.gate.position.z = -15 + Math.min(3, Math.max(0, (i - 4) * .5));   // (it slides open while the camera comes up the street towards it)
+  S.riser.position.y = 9.4 + Math.min(9, Math.max(0, (i - FC) * .45));
+  S.man.position.x = -11.5 + i * .22; S.man.rig.update(1 / 20, { speed: 1.4 });
+  S.leafLook.uniforms.lkTime.value = i * .04;
+  if (i === FB) S.props.move?.('barrel', 3, 0, 0, -75);   // (a copy carried into the street)
+  S.v.scene.updateMatrixWorld();
+}
+// (the shadows are drawn again for every picture, so that the two pictures of a frame cost the same but for what is hidden)
+const draw = (S, show) => { HD.occludeShow = !!show; S.v.t = 0; S.v.shadowsDirty(); S.v.render(S.x, W, H); HD.occludeShow = false; return S.x.getImageData(0, 0, W, H).data; };
+const diff = (a, b) => { let off = 0, worst = 0, at = '', px = null; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); if (d > worst) worst = d; if (d > 12) { off++; if (off === 1) px = [(i / 4) % W, Math.floor(i / 4 / W)]; if (off < 4) at += ' ' + (i / 4) % W + ',' + Math.floor(i / 4 / W) + '=' + [a[i], a[i + 1], a[i + 2]] + '/' + [b[i], b[i + 1], b[i + 2]]; } } return { off, worst, at, px }; };
+const mean = a => a.reduce((s, q) => s + q, 0) / Math.max(1, a.length);
+
+try {
+  HD.occludeSleep = false;
+  const S = street(); window.S = S;
+  // let cluster detail build the hill and the barrels' levels first, so neither changes mid-walk
+  pose(S, 0); for (let i = 0; i < 400 && (i < 20 || S.v.detailPending()); i++) { draw(S, true); await wait(30); }
+  for (let i = 0; i < 6; i++) { draw(S, false); await nextFrame(); }
+  // (the leaves sway by the walk's own clock, a twenty-fifth of a second a frame, not by this slow machine's: how far they can have gone since a picture, in metres)
+  S.v.occlusion.softReach = .06;
+  if (Q.has('bench')) {
+    const res = {}, LAPS = +(Q.get('laps') || 3);
+    if (Q.has('gate')) await new Promise(go => { window.__benchGo = go; });   // (a profiler starts here)
+    for (const mode of Q.get('only') ? [Q.get('only')] : ['off', 'on']) {
+      HD.occlude = mode === 'on'; const tris = [], calls = [], cpu = [], ms = [], occ = [], hid = [];
+      // (WebGPU: a pixel of each frame is read, so that this machine's software chip finishes a frame before the next is sent, as a phone's screen makes it)
+      for (let lap = 0; lap < LAPS; lap++) for (let i = 0; i < FRAMES; i++) { pose(S, i); S.v.t = 0; S.v.render(S.x, W, H); if (GPU) S.x.getImageData(0, 0, 1, 1); if (lap) { tris.push(HD.info.tris); calls.push(HD.info.calls); cpu.push(HD.info.cpu); ms.push(mode === 'on' ? S.v.occlusion?.stats.ms || 0 : 0); occ.push(HD.info.occMs || 0); hid.push(HD.info.occluded || 0); } await nextFrame(); }
+      const med = a => [...a].sort((x, y) => x - y)[a.length >> 1];
+      res[mode] = { backend: HD.info.backend, tris: Math.round(mean(tris)), draws: Math.round(mean(calls)), hidden: Math.round(mean(hid)), cpuMs: +med(cpu).toFixed(2), cpuMean: +mean(cpu).toFixed(2), occlusionMs: +mean(occ).toFixed(3), pictureMs: +mean(ms).toFixed(3) };
+    }
+    HD.occlude = true; Object.assign(info, res); window.result = { out, info, checks }; throw 'bench done';
+  }
+  const tOn = [], tShow = [], cOn = [], cShow = [], hid = [], msA = [], bad = [], by = { run: [], glass: [], drive: [], stand: [], roofs: [] }, tris = { run: [0, 0], glass: [0, 0], drive: [0, 0], stand: [0, 0], roofs: [0, 0] }; let worst = 0, worstAt = -1, withDepth = 0, risen = true, rose = false, under = true, glass = true, layers = true, ray = true, clusters = 0, copies = 0, soft = 0;
+  const cast = new T.Raycaster(), wasHidden = new Set(), less = {};
+  for (let i = +(Q.get('from') || 0); i < +(Q.get('to') || FRAMES); i++) {
+    pose(S, i);
+    const a = draw(S, false), on = { ...HD.info }, list = new Set(S.v.occAuto.hide), st = S.v.occlusion.stats;
+    if (Q.has('trace')) { const oc = S.v.occlusion, src = oc.src, L0 = oc.levels[0]; let fill = 0, s1 = 0, s2 = 0, o = 0, evs = 0, all = 0, big = 0;
+      if (src) { if (src.prep) for (let k = 0; k < src.w * src.h; k++) { if (src.d[k] > 0) fill++; if (src.solid[k] === 1) s1++; else if (src.solid[k] === 2) s2++; } else for (let k = 0; k < src.w * src.h; k++) if (src.d[k] > 0) fill++; }
+      if (L0) for (let k = 0; k < L0.d.length; k++) if (L0.d[k] > 0) o++;
+      for (let q = 0; q < oc.ev.length; q += 7) if (oc.ev[q] === oc.f) { evs++; if (oc.ev[q + 1] < -1e8) all++; else if ((oc.ev[q + 4] - oc.ev[q + 1]) * (oc.ev[q + 6] - oc.ev[q + 3]) > 2000) big++; }
+      if (Q.get('dump') && Q.get('dump').split(',').includes(String(i)) && src) { const rows = []; for (let j = 0; j < src.h; j++) { let a = '', b = ''; for (let q = 0; q < src.w; q++) { const k = j * src.w + q; a += src.d[k] > 0 ? (src.solid[k] === 2 ? '2' : src.solid[k] === 1 ? '1' : '.') : ' '; b += L0.d[k] > 0 ? (oc.who && oc.who[k] >= 0 ? '#' : '+') : ' '; } rows.push(a + ' | ' + b); } (info.dump ||= {})[i] = rows; }
+      (info.trace ||= []).push([i, 'hid', list.size, 'cand', S.v.occAuto.list.length / 2, 'age', st.age, st.still ? 'still' : 'moved', 'src', src ? src.w + 'x' + src.h : 0, 'fill', fill, 's1', s1, 's2', s2, 'out', o, 'ev', evs, 'all', all, 'big', big, 'tested', st.tested, 'h', st.hidden].join(' ')); }
+    tOn.push(on.tris); cOn.push(on.calls); hid.push(list.size); msA.push(st.ms); if (st.depth) withDepth++; if (S.v.occAuto.soft) soft++;
+    const phase = i < FA ? 'run' : i < FB ? 'glass' : i < FC ? 'drive' : i < FE ? 'stand' : 'roofs';
+    by[phase].push(S.v.occAuto.tris);
+    // (on WebGL the view merges still things that share a material into one mesh for each 24 m of ground: a piece is hidden when its merged mesh is)
+    const batchOf = new Map(); for (const bt of S.v.batches?.list || []) for (const o of bt.items.keys()) batchOf.set(o, bt.mesh);
+    const gone = o => list.has(o) || list.has(batchOf.get(o));
+    clusters += on.detail?.hid || 0;
+    for (const o of [...S.balloons, ...S.behind, S.tower]) if (gone(o)) wasHidden.add(o);
+    if (i === 3) out.on = S.c.toDataURL();
+    // (WebGPU: three draws a scene's pass once a screen refresh, so the whole picture waits for the next one)
+    if (GPU) await nextFrame();
+    const b = draw(S, true), show = { ...HD.info };
+    tShow.push(show.tris); cShow.push(show.calls); tris[phase][0] += on.tris; tris[phase][1] += show.tris; (less[phase] ||= []).push(show.tris - on.tris);
+    if (Q.has('trace')) info.trace.push(['  drew', i, phase, 'tris', on.tris, 'of', show.tris, 'draws', on.calls, 'of', show.calls, 'hidden by count', S.v.occAuto.tris, 'copies', Math.round(S.v.occAuto.copies)].join(' '));
+    const d = diff(a, b); if (d.off > 0) { bad.push(i + ':' + d.off + (Q.has('trace') ? d.at : '')); if (d.off > worst) { worst = d.off; worstAt = i; out.badOn = (S.x.putImageData(new ImageData(new Uint8ClampedArray(a), W, H), 0, 0), S.c.toDataURL()); out.badShow = (S.x.putImageData(new ImageData(new Uint8ClampedArray(b), W, H), 0, 0), S.c.toDataURL()); } }
+    // nothing the camera can see may be on the list: the things behind the glass, the fence and the tree, the crates under the bridge
+    for (const o of S.under) if (gone(o) && S.v.cam.position.y < 3 && S.v.cam.position.z > -60) under = false;
+    for (const o of S.seen) if (gone(o) && Math.abs(S.v.cam.position.x) < 6 && S.v.cam.position.z > o.position.z + 4 && S.v.cam.position.z < o.position.z + 25) glass = false;
+    if (i >= FC && i < FE) { if (gone(S.riser)) { if (S.riser.position.y > 16.3) risen = false; else rose = true; } }
+    // between frames everything is back on the camera's layer, and a ray finds a hidden thing through the house in front of it
+    S.v.scene.traverse(o => { if (o.isMesh && !(o.layers.mask & 1) && !o.isInstancedMesh2 && !o.userData.gsTwin && o.layers.mask !== (1 << 26)) layers = false; });
+    if (list.size) { const o = S.yard.find(q => q.geometry.type === 'BoxGeometry' && gone(q)); if (o) { const from = S.v.cam.position.clone(), to = o.getWorldPosition(new T.Vector3()); cast.set(from, to.sub(from).normalize()); if (!cast.intersectObject(o, false).length) ray = false; } }
+    await nextFrame();
+  }
+  out.end = S.c.toDataURL();
+  info.frames = { frames: FRAMES, backend: HD.info.backend, withDepth, swaying: soft, hiddenMeshes: Math.round(mean(hid)), trisOn: Math.round(mean(tOn)), trisWhole: Math.round(mean(tShow)), drawsOn: Math.round(mean(cOn)), drawsWhole: Math.round(mean(cShow)), pictureMs: +mean(msA).toFixed(3), clusterTrisHidden: Math.round(clusters / FRAMES) };
+  check('a depth picture came back from the chip on nearly every frame', withDepth >= FRAMES - 4, withDepth + ' of ' + FRAMES);
+  // (with several samples a pixel the software renderer lets one sample of a far, tiny triangle through a wall now and then: that
+  // pixel is in the whole picture and not in the other, which is the one that is right. A thing wrongly hidden shows as more than that.)
+  const leak = HD.tier >= 2 ? 2 : 0, over = bad.filter(q => +q.split(':')[1] > leak);
+  check('every frame is the same picture with the hidden things left out as with them drawn', over.length === 0 && bad.length <= 6, bad.length ? 'frames:pixels ' + bad.slice(0, 12).join(' ') + (leak ? ' (up to ' + leak + ' pixels of 172,800 are the whole picture\'s own)' : '') : 'all ' + FRAMES);
+  const ratio = k => tris[k][1] ? tris[k][0] / tris[k][1] : 1, pc = k => Math.round(ratio(k) * 100) + '%';
+  info.hidden = { trianglesHiddenAFrame: Object.fromEntries(Object.entries(by).map(([k, a]) => [k, Math.round(mean(a))])), drawnOfWhole: Object.fromEntries(Object.keys(tris).map(k => [k, pc(k)])), couldBeHidden: S.v.occAuto.list.length / 2, batches: S.v.batches?.list.length || 0 };
+  check('things are hidden on the run, at speed and standing', mean(by.run) > 8000 && mean(by.drive) > 1000 && mean(by.stand) > 8000, Math.round(mean(by.run)) + ', ' + Math.round(mean(by.drive)) + ' and ' + Math.round(mean(by.stand)) + ' triangles a frame');
+  // (the middle frame of each: the shadow maps go from drawn whole to drawn in two parts once things have kept still, between a frame's two pictures)
+  const mid = a => [...(a || [0])].sort((x, y) => x - y)[(a || [0]).length >> 1];
+  check('fewer triangles are drawn on the run and standing', mid(less.run) > 15000 && mid(less.stand) > 30000 && ratio('stand') < .93, mid(less.run) + ' and ' + mid(less.stand) + ' fewer a frame: ' + pc('run') + ' and ' + pc('stand') + ' of the whole frame, shadows and all');
+  check('fewer draws', mean(cOn) < mean(cShow) * .95, Math.round(mean(cOn)) + ' against ' + Math.round(mean(cShow)));
+  check('parts of the hill behind the wall are left out (cluster detail)', clusters > 0, Math.round(clusters / FRAMES) + ' triangles a frame');
+  check('the crates under the bridge are never hidden', under);
+  check('nothing behind the glass, the fence or the swaying tree is hidden', glass);
+  check('the tree is known to sway', soft > FRAMES * .5, soft + ' frames');
+  check('the balloon that rises behind the bridge is hidden while behind it, and drawn the frame it shows over it', risen && rose);
+  check('balloons behind the bridge were hidden', S.balloons.some(o => wasHidden.has(o)));
+  check('things behind the end wall were hidden, and the tower never', S.behind.some(o => wasHidden.has(o)) && !wasHidden.has(S.tower));
+  check('between frames everything is on the camera\'s layer', layers);
+  check('a ray still hits a hidden thing', ray);
+  check('finding what is hidden takes under 3 ms a frame here', mean(msA) < 3, mean(msA).toFixed(2) + ' ms');
+  // off: nothing hidden
+  HD.occlude = false; pose(S, 5); draw(S, false); check('switched off, nothing is hidden', HD.info.occluded === 0 && !S.v.occHid?.size, HD.info.occluded); HD.occlude = true; await nextFrame();
+  // boxes the game lists, with no depth to go by
+  { HD.occludeDepth = false; S.v.occluders(S.houses.concat([S.wall]));
+    let n = 0, same = true, note = '';
+    for (let i = 0; i < 6; i++) { pose(S, i * 3); const a = draw(S, false); n += HD.info.occluded; if (GPU) await nextFrame(); const b = draw(S, true), d = diff(a, b);
+      if (d.off > leak) { note += ' ' + i * 3 + ':' + d.off + d.at; if (same) { out.boxOn = (S.x.putImageData(new ImageData(new Uint8ClampedArray(a), W, H), 0, 0), S.c.toDataURL()); out.boxShow = (S.x.putImageData(new ImageData(new Uint8ClampedArray(b), W, H), 0, 0), S.c.toDataURL()); } same = false; }
+      await nextFrame(); }
+    check('boxes the game lists hide things with no depth picture', n > 60 && !S.v.occlusion.stats.depth, n + ' over six frames');
+    check('and the picture is the same', same, note);
+    S.v.occluders(null); HD.occludeDepth = true; }
+  // sleep: a view with next to nothing in it is never tried; one where nothing is hidden is tried, then left
+  HD.occludeSleep = true;
+  { const v = new gs.hd.HDView({ bg: '#9ab4d0' }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+    for (let i = 0; i < 3; i++) { const m = new T.Mesh(new T.BoxGeometry(1, 1, 1), gs.hd.pbr('#888')); m.position.set(i * 2 - 2, 0, -6); v.scene.add(m); }
+    let woke = false; for (let i = 0; i < 50; i++) { v.t = 0; v.render(x, W, H); if (v.occAuto?.awake) woke = true; await nextFrame(); }
+    check('a view with next to nothing in it is never tried', !woke && !v.occlusion); }
+  { const v = new gs.hd.HDView({ bg: '#9ab4d0' }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+    const g = new T.TorusKnotGeometry(.5, .16, 100, 12), m = gs.hd.pbr('#a55');
+    for (let i = 0; i < 40; i++) { const o = new T.Mesh(g, m); o.position.set((i % 8) * 2 - 7, Math.floor(i / 8) * 2 - 3, -14); v.scene.add(o); }   // side by side: none behind another
+    let tried = 0, slept = -1, again = -1;
+    // (WebGPU: a pixel of each frame is read, so that this machine's software chip finishes one frame before the next is sent, as a phone's screen makes it)
+    for (let i = 0; i < 260; i++) { v.t = 0; v.render(x, W, H); if (GPU) x.getImageData(0, 0, 1, 1); const aw = !!v.occAuto?.awake; if (aw && slept < 0) tried++; else if (!aw && tried && slept < 0) slept = i; else if (aw && slept >= 0 && again < 0) again = i; if (Q.has('trace') && i % 8 === 0) (info.trace ||= []).push(['sleep', i, 'tris', HD.info.tris, 'calls', HD.info.calls, aw ? 'awake' : 'asleep', 'nap', v.occAuto?.nap, 'len', v.occAuto?.napLen, 'depth', v.occlusion?.stats.depth, 'src', v.occlusion?.src?.w, 'age', v.occlusion?.stats.age, 'blind', v.occAuto?.blind, 'gen', v.occAuto?.gen].join(' ')); if (GPU || i % 3 === 0) await nextFrame(); }
+    check('a view where nothing is hidden is tried, then left alone', tried > 20 && slept > 0, 'tried for ' + tried + ' frames, asleep from ' + slept);
+    check('and looked at again later', again > slept, 'at frame ' + again); }
+  window.result = { out, info, checks };
+} catch (e) { if (e !== 'bench done') window.result = { error: String(e?.stack || e), out, info, checks }; throw e; }
+</script>
