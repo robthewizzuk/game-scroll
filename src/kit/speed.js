@@ -10,7 +10,8 @@
 //
 // The 3D kit can step a game down from there (120 -> 60 -> 30) when the phone can't keep up even
 // after lowering its resolution, and it remembers per game where it settled, so the next round
-// starts there. Players can pin a rate in Settings (Auto / 120 / 60 / 30 battery saver).
+// starts there (for a day: then the game gets a fresh start from the phone's class). Players can pin a
+// rate in Settings (Auto / 120 / 60 / 30 battery saver).
 //
 // Frame generation (src/kit/framegen.js, Next Gen and AR on WebGPU): where a 3D game runs below the
 // screen's rate (60 fps on a 120 or 90 Hz screen, 30 on 120...), the 3D kit makes a frame for each
@@ -19,7 +20,8 @@
 // or for a moment while frames come late), Always (3D games draw half the frames and make the rest:
 // cooler, more detail) or Off; and how: blend (between the last two frames, the fewest flaws, shown a
 // refresh later) or ahead (past the newest, no delay). A game can say frameGen: false or 'ahead'; on a
-// phone where blend's refreshes are too full for a game, that game switches itself to ahead.
+// phone where blend's refreshes are too full for a game, that game switches itself to ahead, for as long
+// as there is one frame to make per real frame (two or three guesses in a row smear what moves).
 //
 // The screen's rate (src/kit/screenrate.js, Android): while a round is played the app asks the screen
 // for the rate that suits the game (screenWant): the fastest that's a whole number of refreshes per real
@@ -80,7 +82,20 @@ export const screenHz = () => hz;
 
 /* ---------- frame rate per game ---------- */
 const is3D = def => def && (def.era === 'nextgen' || def.era === 'ar' || def.era === 'board');
-let settled = store.get(SETTLE_KEY, {}) || {};
+// Where a game settled (tier, resolution step, frame rate) is kept for a day. What pushed it down has
+// passed by then (a warm phone, a low battery, a busy spell while it loaded), and falling is quick where
+// climbing back is slow: a game left at its lowest picture and 30 frames a second stayed there for good
+// (Long Shadow on Rob's Fold, 2026-11-12). After a day it starts from the phone's class again and steps
+// down within seconds if it still has to. How its frames are made (fgHow) is about the phone's screen
+// pacing, not its heat: that is kept. (An entry with no date is from before dates were kept: old.)
+const SETTLE_MS = 24 * 3600 * 1000;
+const lasting = s => (s?.fgHow ? { fgHow: s.fgHow } : null);
+function fresh(all, now = Date.now()) {
+  const out = {};
+  for (const [id, s] of Object.entries(all || {})) { const keep = s && Math.abs(now - s.at) < SETTLE_MS ? s : lasting(s); if (keep) out[id] = keep; }
+  return out;
+}
+let settled = fresh(store.get(SETTLE_KEY, {}));
 // 'auto' or a pinned rate; anything else saved (a bad write) counts as Auto
 const okPick = v => [120, 60, 30].includes(+v) ? +v : 'auto';
 let pick = okPick(store.get(PICK_KEY, 'auto'));
@@ -118,6 +133,9 @@ export const frameGenHow = () => fgHow;
 export function setFrameGenHow(v) { fgHow = ['game', 'blend', 'ahead'].includes(v) ? v : 'game'; store.set(FG_HOW_KEY, fgHow); }
 // screens frame generation fills: 90 Hz and up (60 fps on 90 Hz is one or two refreshes a frame)
 const FG_HZ = 90;
+// the most refreshes per real frame a game that switched itself to ahead still guesses (60 fps on a 144 Hz
+// screen is 2.4); past it the frames between are blended (frameGenFor)
+const AHEAD_MAX = 2.5;
 /* Battery and heat (src/kit/power.js): in Auto, while the phone is warm, in its power saving mode or low on
    battery and not charging, every 3D game draws half the frames and makes the rest. */
 export const fgSaving = () => fgPick === 'auto' && power.saving;
@@ -155,7 +173,13 @@ export function frameGenFor(def) {
   const how = fgHow !== 'game' ? fgHow : def.frameGen === 'ahead' || settled[def.id]?.fgHow === 'ahead' ? 'ahead' : 'blend';
   if (speed.forceFrameGen) return speed.forceFrameGen === true ? how : speed.forceFrameGen;
   if (fgPick === 'off' || !speed.gpu || hz < FG_HZ || fgFailed.has(def.id) || pick !== 'auto') return false;   // a pinned rate is what the screen shows
-  return fgRate(def) ? how : false;
+  const real = fgRate(def);
+  if (!real) return false;
+  // A guess ahead holds for one frame. With two or three to make between real frames (a game at 30 on
+  // a 120 Hz screen: the last of them three quarters of a real frame past the newest) a running figure
+  // comes apart, so those are blended between real frames instead; unless ahead is the player's pick or
+  // the game's own (a game that must not lag says so).
+  return how === 'ahead' && hz / real > AHEAD_MAX && fgHow === 'game' && def.frameGen !== 'ahead' ? 'blend' : how;
 }
 /**
  * Whether frame generation is on for this game for a lasting reason (Always, or in Auto a game that runs
@@ -237,9 +261,14 @@ export function settle(id, o) {
   if (!id) return;
   const was = settled[id] || {}, now = { ...was, ...o };
   if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgHow === now.fgHow) return;
-  settled[id] = now; store.set(SETTLE_KEY, settled);
+  now.at = Date.now(); settled[id] = now; store.set(SETTLE_KEY, settled);
 }
-export const settledFor = id => settled[id] || null;
+/** Where this game settled, if that was within the last day (older: forgotten here, so the game starts from the phone's class again). */
+export function settledFor(id) {
+  const s = settled[id];
+  if (s && (s.tier != null || s.lvl != null || s.fps != null) && !(Math.abs(Date.now() - s.at) < SETTLE_MS)) { const keep = lasting(s); if (keep) settled[id] = keep; else delete settled[id]; store.set(SETTLE_KEY, settled); }
+  return settled[id] || null;
+}
 /** The 3D kit can't keep up: step this game's frame rate down one notch (120 -> 60 -> 30). False if it can't. */
 export function stepDown(def) {
   if (pick !== 'auto' || !def) return false;
@@ -252,7 +281,7 @@ export function stepUp(def) {
   if (pick !== 'auto' || !def) return false;
   const s = settled[def.id]; if (!s?.fps) return false;
   const next = s.fps < 60 ? 60 : 120;
-  if (next >= autoFps(def)) { const { fps, ...rest } = s; settled[def.id] = rest; store.set(SETTLE_KEY, settled); } else settle(def.id, { fps: next });
+  if (next >= autoFps(def)) { const { fps, ...rest } = s; settled[def.id] = { ...rest, at: Date.now() }; store.set(SETTLE_KEY, settled); } else settle(def.id, { fps: next });
   return true;
 }
 

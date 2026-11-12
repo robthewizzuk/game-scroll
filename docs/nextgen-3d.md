@@ -92,7 +92,11 @@ resolution step, then drops to 60 fps at full resolution, keeping the picture; a
 resolution a 60 fps game can drop to 30. It only climbs back after eight fast windows in a row (on the beat, with no late frames), and
 never above a level that was too slow in the last 30 seconds, so it does not bounce up and down (each
 step reallocates render targets). Where a game settles (tier and frame rate) is remembered per game,
-so its next round starts there instead of stuttering down again.
+so its next round starts there instead of stuttering down again. It is remembered for a day: what pushed
+a game down (a warm phone, a low battery, a busy spell while it loaded) has passed by then, and falling
+is quick where climbing back is slow, so after a day the game starts from the phone's class again. A
+game held up by the CPU above 60 fps (the graphics chip has room) goes straight to 60 instead of giving
+up a tier first.
 
 **Speed tricks that keep the picture the same:**
 
@@ -522,7 +526,10 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
 - **Pacing per phone:** blend puts a made frame on the same refresh as the real frame's work. If the
   refreshes in between keep coming late in blend, that game switches to ahead on that phone (the work
   is spread over both refreshes; it's remembered with the game's settled frame rate); if they still
-  don't come, frame generation turns off for that game until the app restarts.
+  don't come, frame generation turns off for that game until the app restarts. A game that switched
+  itself to ahead only guesses one frame per real frame: with two or three to make (a game at 30 on a
+  120 Hz screen) they are blended again, because guesses that far past the newest frame smear a
+  running figure. Ahead picked in Settings, or by the game's own `frameGen: 'ahead'`, is kept.
 - **How:** blend (the default) makes the frames between the last two real frames and shows them
   before the newest, so each real frame shows a little later (half a frame at 60 on 120 Hz, about
   8 ms), with the fewest flaws. Ahead guesses past the newest, so nothing is delayed; edges round fast

@@ -1599,6 +1599,29 @@ console.log('physics ok');
   sp.setFrameGenPick('auto'); sp.speed.gpu = false;
   assert.equal(sp.screenWant(ng), 60, 'on WebGL (no frame generation): its own rate');
   screen.rates = []; screen.top = 0;
+  // guessing ahead: one frame per real frame at most, unless the player or the game asked for ahead (Long
+  // Shadow on Rob's Fold, 2026-11-12: at 30 on 120 Hz it made three guesses in a row and Wren smeared)
+  for (let i = 0, t = 1000; i < 40; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'the screen measures as 120 Hz');
+  sp.speed.gpu = true;
+  const g60 = { id: 'kt-fg60', era: 'nextgen', fps: 60 }, g30 = { id: 'kt-fg30', era: 'nextgen', fps: 30 };
+  assert.equal(sp.frameGenFor(g60), 'blend', 'a 60 fps game on 120 Hz: blend by default');
+  assert.equal(sp.frameGenPace(g60.id), true, 'blend too full for it: it switches itself to ahead');
+  // (a machine with four cores or fewer counts as a slow phone, where every 3D game runs at 30: four refreshes a frame there too)
+  assert.equal(sp.frameGenFor(g60), sp.frameGenSteps(g60) > 2.5 ? 'blend' : 'ahead', 'and makes its one frame per real frame ahead');
+  assert.equal(sp.frameGenPace(g30.id), true);
+  assert.equal(sp.frameGenSteps(g30), 4, 'a 30 fps game on 120 Hz has three frames to make');
+  assert.equal(sp.frameGenFor(g30), 'blend', 'three guesses in a row are not made: blended instead');
+  assert.equal(sp.frameGenFor({ ...g30, frameGen: 'ahead' }), 'ahead', 'a game that asks for ahead keeps it');
+  sp.setFrameGenHow('ahead'); assert.equal(sp.frameGenFor(g30), 'ahead', 'and so does the player\'s pick in Settings');
+  sp.setFrameGenHow('game'); sp.speed.gpu = false;
+  // where a game settled is kept for a day, then it starts from the phone's class again (how its frames are made stays)
+  sp.settle('kt-old', { tier: 0, lvl: 3, fps: 30 }); sp.settle('kt-old', { fgHow: 'ahead' });
+  assert.equal(sp.settledFor('kt-old').fps, 30, 'a game\'s settled quality is remembered');
+  sp.settledFor('kt-old').at -= 25 * 3600 * 1000;
+  assert.deepEqual(sp.settledFor('kt-old'), { fgHow: 'ahead' }, 'a day later only how its frames are made is left');
+  sp.settle('kt-old2', { tier: 1 }); sp.settledFor('kt-old2').at -= 25 * 3600 * 1000;
+  assert.equal(sp.settledFor('kt-old2'), null, 'and a game with nothing lasting is forgotten');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
   const B = 1000 / 60;
   assert.equal(sp.qualityVerdict(B * 1.3, 0, B), 'slow', 'a slow average steps down');
@@ -1606,7 +1629,7 @@ console.log('physics ok');
   assert.equal(sp.qualityVerdict(B, 1, B), 'ok', 'one late frame in a window (a hitch) is not enough');
   assert.equal(sp.qualityVerdict(B, 1, B) === 'fast', false, 'and is never room to climb');
   assert.equal(sp.qualityVerdict(B, 0, B), 'fast', 'on the beat with none late: room to climb');
-  console.log('frame generation: exact camera turns, battery and heat, pacing by the clock, screen rate, stutter-aware quality ok');
+  console.log('frame generation: exact camera turns, battery and heat, pacing by the clock, screen rate, one guess ahead at most, stutter-aware quality that starts afresh after a day ok');
 }
 
 // gs.props on WebGPU: each copy keeps its slot in the drawn list while it stays in view (three's motion,

@@ -165,7 +165,8 @@ function adapt(gap) {
   if (v === 'slow') {
     Q.fast = 0; Q.easy = 0; if (++Q.slow < 2) return; Q.slow = 0; Q.ceilT = now;
     if (now - Q.upT < 20000) Q.hold = Math.min(HOLD_MAX, Q.hold * 2);   // the last climb didn't hold
-    if (fps > 60 && Q.lvl >= 1 && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
+    // (held up by the CPU above 60: fewer pixels wouldn't help and a lower tier costs the picture, so it's the frame rate that gives first)
+    if (fps > 60 && (Q.lvl >= 1 || cpuBound) && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
     else if (Q.lvl < LEVELS.length - 1 && !cpuBound) { Q.lvl++; Q.ceil = Q.lvl; }
     else if (Q.tier > 0) { if (Q.want == null) { Q.tierCeil = Q.tier - 1; Q.want = Q.tier - 1; } }
     else if (stepDown(Q.game)) { Q.lvl = 1; Q.fpsT = now; }
