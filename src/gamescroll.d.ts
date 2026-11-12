@@ -2080,7 +2080,7 @@ export interface ArenaPart {
 export interface VehicleOptions {
   /**
    * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep'; a truck 'flat' | 'canvas' | 'box' | 'tanker';
-   * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol'; a plane 'prop' | 'biplane' | 'twin' | 'jet'.
+   * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'guard' (a guard's van) | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol'; a plane 'prop' | 'biplane' | 'twin' | 'jet'.
    */
   style?: string;
   /** Which of its kind's colours it gets, and where its wear falls: the same on every phone. */
@@ -2095,10 +2095,26 @@ export interface VehicleOptions {
   lit?: boolean;
   /** A car's or a truck's shell and wheels: 1, or .5 a little coarser (about a fifth fewer triangles). */
   detail?: number;
-  /** A truck: the colour of a 'canvas' tilt; 3 axles (2); tyres with lugs for mud. */
+  /** A truck: the colour of a 'canvas' tilt (a train: of the canvas over a wagon's load); 3 axles (2); tyres with lugs for mud. */
   canvas?: string; axles?: 2 | 3; offroad?: boolean;
-  /** A train: what its engine pulls, in order (['van', 'open', 'tanker', 'flat', 'coach'...]), and the gauge between its rails in metres (1.435). */
-  cars?: string[]; gauge?: number;
+  /**
+   * A train: what its engine pulls, in order (['van', 'open', 'tanker', 'flat', 'guard', 'coach'...]), and the gauge between its rails in metres (1.435).
+   * A wagon can also be { style, load, colour, canvas }: its boards (or its tank) in a colour of its own, and what it carries.
+   */
+  cars?: (string | WagonOptions)[]; gauge?: number;
+  /** A train: smoke deflectors on a steam engine (a plate each side of its smokebox); and what a wagon made by itself carries (see WagonOptions). */
+  deflectors?: boolean; load?: 'tarp' | 'coal' | 'crates';
+}
+/** One wagon of a train, when a name is not enough: `cars: ['van', { style: 'open', load: 'coal', colour: '#565c50' }, 'guard']`. */
+export interface WagonOptions {
+  /** 'van' | 'open' | 'flat' | 'tanker' | 'guard' | 'coach' | 'tender'. */
+  style: string;
+  /** What it carries: an 'open' wagon's 'tarp' (a load under canvas) or 'coal'; a 'flat' wagon's 'crates' (crates, oil drums and something under canvas). */
+  load?: 'tarp' | 'coal' | 'crates';
+  /** Its own colour: a wagon's boards, a tank wagon's tank (with none, bare wood and the train's second colour). */
+  colour?: string; color?: string;
+  /** The colour of the canvas over its load. */
+  canvas?: string;
 }
 /** What gs.models.vehicle gives back: a Group, its nose along -z and +x its right side, in metres. A road vehicle and a train stand on y = 0, a boat floats with its waterline there, a plane's origin is on its centre line. */
 export type VehicleT = Loose & {
@@ -2109,7 +2125,7 @@ export type VehicleT = Loose & {
   wheels: Loose[];
   /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a steam engine's `rods`, `mainRods`. */
   parts: Record<string, Loose>;
-  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, a van's `roof`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
+  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, `fire`, a tender's `coal`, a van's and a guard's van's `roof`, a guard's van's `veranda` and `tail`, a tank wagon's `filler`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
   points: Record<string, Loose>;
   /** Metres over everything that does not turn. */
   size: { length: number; width: number; height: number };
@@ -2631,11 +2647,11 @@ export interface ModelsPart {
   };
   /**
    * A vehicle made in code (no model or texture files): a shell skinned over cross-sections from a few measures, in paint, glass, chrome and rubber, aged, with the parts that turn on their own pivots.
-   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep), 'truck' (flat, canvas, box, tanker), 'tank' (medium, light, heavy), 'train' (steam, diesel; wagons van, open, flat, tanker, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet).
+   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep), 'truck' (flat, canvas, box, tanker), 'tank' (medium, light, heavy), 'train' (steam, diesel; wagons van, open, flat, tanker, guard, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet).
    * Its nose points along -z, as gs.vehicles, gs.craft and World3D.vehicle push things. Each frame: move(dt, speed, { steer }) (wheels roll and steer, the body rocks on its springs, tracks run, propellers spin); or roll(d), steer(a), aim(turn, lift) yourself.
    * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car or a truck; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
-   * A train: vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] }) is the whole train; along(track, d) lays it on your rails.
-   * 3,000 to 21,000 triangles and 4 to 19 draws each; made in about a tenth of a second or less on a desktop, and the same vehicle asked for again is a copy that shares its shapes and materials. Make them in make().
+   * A train: vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }) is the whole train; along(track, d) lays it on your rails.
+   * 3,000 to 21,000 triangles and 4 to 24 draws each; made in about a tenth of a second or less on a desktop, and the same vehicle asked for again is a copy that shares its shapes and materials. Make them in make().
    */
   vehicle: {
     (kind: 'train', o?: VehicleOptions): TrainT;
