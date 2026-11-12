@@ -125,6 +125,7 @@
     "roughjs": "4.6.6",
     "screen-rate": "file:plugins/screen-rate",
     "simplex-noise": "4.0.3",
+    "speech-audio": "file:plugins/speech-audio",
     "suncalc": "2.1.1",
     "three": "^0.187.0",
     "three-subdivide": "^1.1.5",

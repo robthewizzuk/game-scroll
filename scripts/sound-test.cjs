@@ -1,5 +1,7 @@
 // Checks the sound kit in a real browser: every ready-made sound and the limiter, the instrument sets,
-// the music clock, and sound that knows the level. Usage: node scripts/sound-test.cjs [sounds|band|clock|level] [--list]   (--list prints each measurement)
+// the music clock, sound that knows the level, and shaped speech (against a pretend phone: lib/fake-speech-audio.js).
+// Usage: node scripts/sound-test.cjs [sounds|band|clock|level|speech] [--list]   (--list prints each measurement)
+const path = require('path');
 const { chromium } = require('playwright');
 (async () => {
   const argv = process.argv.slice(2), list = argv.includes('--list'), only = argv.filter(a => !a.startsWith('--'));
@@ -7,10 +9,11 @@ const { chromium } = require('playwright');
   const server = await vite.createServer({ server: { port: 4186 }, mode: 'bundled', logLevel: 'error' }); await server.listen();
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   let failed = 0;
-  for (const part of ['sounds', 'band', 'clock', 'level']) {
+  for (const part of ['sounds', 'band', 'clock', 'level', 'speech']) {
     if (only.length && !only.includes(part)) continue;
     const p = await b.newPage(), errs = [];
     p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+    if (part === 'speech') await p.addInitScript({ path: path.join(__dirname, 'lib/fake-speech-audio.js') });
     await p.goto('http://localhost:4186/scripts/sound-test/?part=' + part);
     await p.waitForFunction(() => window.result, null, { timeout: 240000 }).catch(() => {});
     const r = await p.evaluate(() => window.result || ['FAIL no result']);

@@ -49,3 +49,6 @@ project(':rich-haptics').projectDir = new File('../plugins/rich-haptics/android'
 
 include ':screen-rate'
 project(':screen-rate').projectDir = new File('../plugins/screen-rate/android')
+
+include ':speech-audio'
+project(':speech-audio').projectDir = new File('../plugins/speech-audio/android')

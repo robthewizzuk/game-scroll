@@ -16,6 +16,7 @@ import { lazy } from './lazy.js';
 import { register, own } from './cleanup.js';
 import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.js';
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
+import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks } from './voice-fx.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
 
 /* ---------- notes ---------- */
@@ -838,8 +839,26 @@ register('mixer', { stop: () => mixer.reset() });
 // 300 characters (600 for all the parts of an array). A new line stops the one before. Music dips
 // while it talks. Speech follows the player's mute; it stops when the round ends. Always show the
 // words on screen too (some players play muted, and not every phone has every language).
+// A shaped voice: the same phone voice made into a character.
+//   say('Door three is opening.', { voice: 'woman', fx: 'tannoy' })     // through a loudspeaker in a hall
+//   say('Copy that.', { voice: 'man', size: 1.15, fx: 'radio' })        // a bigger man, over a radio
+//       size: 1.15 a bigger person (deeper in every way, at the same pace), .85 a smaller one (.6 to 1.6).
+//       fx: 'radio' | 'tannoy' | 'phone' | 'megaphone' | 'box' | 'bright' | 'warm' | 'robot' | 'tiny' | 'clean',
+//       or a recipe of your own: { like: 'radio', drive: .2, mix: .6 } (the parts are listed in voice-fx.js).
+// With either, the phone writes the line to sound instead of speaking it and the kit plays it through
+// the 'voice' channel of the mixer: so it is as loud on every phone, and mixer.room(), muffle() and the
+// level's own echo (Ears) reach it like any other sound, and onWord gets every word. That needs the
+// Android or iPhone app; in a browser, or on a phone that can't, the line is spoken as before, with
+// size as a small change of pitch and no fx. shaped() says which: true once a line has played shaped,
+// false where it can't be, null before the first try. A shaped line starts a moment later than a plain
+// one (the phone writes all of it first), so open with a short pause: say([.2, 'Ah. A door.'], ...).
 const TTS = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TextToSpeech') ? registerPlugin('TextToSpeech') : null;
+const RENDER = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SpeechAudio') ? registerPlugin('SpeechAudio') : null;   // plugins/speech-audio
 let talkingNow = 0, talkGen = 0, cancelTalk = null, voiceList = null;
+// shaped lines: whether this phone can (null: not tried yet), voices that could not be written to sound, lines already
+// made (the last few, so a line said twice starts at once), and the ones playing
+let shapedOk = RENDER && canShape() ? null : false, shapeFails = 0, rendering = 0, clipSecs = 0;
+const noShape = new Set(), clips = new Map(), live = new Set();
 const badVoices = new Set();   // voices that failed here (not downloaded, say): not cast again this session
 const clampN = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(+v) ? +v : d));
 const langOk = l => /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l);
@@ -861,14 +880,83 @@ function listVoices() {
 }
 /** What voices this phone has to cast from: [{ name, lang, kind: 'woman' | 'man' | null }] (joke voices left out). */
 export const voices = () => listVoices().then(l => l.map(v => ({ v, d: describeVoice(v) })).filter(x => !x.d.joke).map(({ v, d }) => ({ name: String(v.name || v.voiceURI || ''), lang: String(v.lang || ''), kind: d.sex === 'f' ? 'woman' : d.sex === 'm' ? 'man' : null })));
+/** A voice or the phone that could not write a line to sound: three in a row with none working, and no more are tried. */
+function shapeFailed(who) { noShape.add(who); if (++shapeFails >= 3 && shapedOk !== true) shapedOk = false; }
+/**
+ * One part of a line written to sound by the phone and shaped (size, fx): { buffer, gain, seconds, total,
+ * marks } to play, or null where it can't be (then the phone says it itself).
+ */
+async function clipFor(p, gen, stopped) {
+  if (!RENDER || shapedOk === false) return null;
+  const a = audio(); if (!a) return null;
+  let list = null, pick = null;
+  if (p.voice) {
+    list = await Promise.race([listVoices(), stopped]); if (gen !== talkGen || !list) return null;
+    pick = castVoice(list, wantOf(p.voice, p.lang), { native: true, bad: badVoices });
+  }
+  const cast = pick && pick.at >= 0 ? list[pick.at] : null, uri = cast ? String(cast.voiceURI || '') : '';
+  const lang = cast && langOk(cast.lang) ? cast.lang : [].concat(p.lang).find(langOk) || 'en-GB', who = uri || lang;
+  if (noShape.has(who)) return null;
+  const pitch = clampN(p.pitch * (pick ? pick.pitch : 1), .5, 2, 1), key = JSON.stringify([p.text, who, p.rate, pitch, p.size, p.fx, p.joined, p.join]);
+  const have = clips.get(key);
+  if (have) { clips.delete(key); clips.set(key, have); return have; }
+  let timer = null;
+  rendering++;
+  try {
+    // a phone that never answers must not hold the line up: after this long it says the line itself
+    const late = new Promise(res => { timer = setTimeout(res, Math.min(6000, 2500 + p.text.length * 30), 'late'); });
+    const made = Promise.resolve(RENDER.render({ text: p.text, lang, voiceURI: uri, rate: clampN(p.rate * p.size, .3, 3, 1), pitch })).catch(() => null);
+    const r = await Promise.race([made, stopped, late]);
+    if (gen !== talkGen) return null;   // (stopped: stopTalking() has told the phone already)
+    if (r === 'late') { try { Promise.resolve(RENDER.cancel()).catch(() => {}); } catch { /* gone */ } }
+    if (!r || r === 'late' || !r.ok || !r.pcm || !(r.rate >= 4000)) { shapeFailed(who); return null; }
+    const made2 = await shape(pcm16(r.pcm), r.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: !p.joined, close: p.join == null, hold: p.join == null ? 0 : p.join + .06 });
+    // the engine's word marks are in seconds of what it wrote: less the silence cut off the front, slowed (or sped) by size
+    const said = made2.seconds - made2.lead, own = Array.isArray(r.marks) ? r.marks.map((v, i) => i % 2 ? Math.max(0, (v - made2.cut) * p.size) : v) : null;
+    const marks = goodMarks(own, p.text, said) || wordTimes(p.text, said);
+    for (let i = 1; i < marks.length; i += 2) marks[i] += made2.lead;
+    const clip = { buffer: made2.buffer, gain: made2.gain, seconds: made2.seconds, total: made2.total, marks };
+    clips.set(key, clip); clipSecs += clip.total; shapeFails = 0;
+    while (clips.size > 1 && (clips.size > 32 || clipSecs > 45)) { const [k0, c0] = clips.entries().next().value; clips.delete(k0); clipSecs -= c0.total; }
+    return clip;
+  } catch { shapeFailed(who); return null; } finally { clearTimeout(timer); rendering--; }
+}
+/** Fades a playing line out in a few thousandths of a second (a cut dead would click). */
+function hush(v) { try { const t = v.g.context.currentTime; v.g.gain.cancelScheduledValues(t); v.g.gain.setTargetAtTime(0, t, .008); v.src.stop(t + .06); } catch { /* ended already */ } }
+/** Plays a shaped part through the mixer's voice channel. Resolves true when its last word ends (its echoes ring on). */
+function playClip(clip, p, gen, from, onWord, stopped) {
+  const a = audio(); if (!a) return Promise.resolve(false);
+  return new Promise(res => {
+    const { ctx } = a, src = ctx.createBufferSource(), g = ctx.createGain(), t0 = ctx.currentTime + .02, mine = { src, g };
+    let i = 0, done = false, tick = null, guard = null;
+    const end = ok => { if (done) return; done = true; clearInterval(tick); clearTimeout(guard); res(ok); };
+    src.buffer = clip.buffer; g.gain.value = clip.gain * p.vol; src.connect(g); g.connect(busIn('voice'));
+    src.onended = () => { live.delete(mine); try { g.disconnect(); } catch { /* gone */ } end(true); };
+    live.add(mine); shapedOk = true;
+    const words = typeof onWord === 'function';
+    tick = setInterval(() => {
+      const now = ctx.currentTime - t0;
+      if (words) for (const heard = now - delay(); i < clip.marks.length && clip.marks[i + 1] <= heard; i += 2) if (gen === talkGen) try { onWord(from + clip.marks[i]); } catch { /* the game's */ }
+      if (now >= clip.seconds) end(true);
+    }, 25);
+    guard = setTimeout(() => end(true), (clip.total + 1.5) * 1000);   // (sound that isn't running, say before the first touch, must not hold the line up)
+    stopped.then(() => end(false));
+    src.start(t0);
+  });
+}
 /** One part of a line, said in the phone's voice or a cast one. Resolves true when it was said. */
 async function sayPart(p, gen, from, onWord, stopped) {
+  if (p.clip) {   // a shaped part: the phone wrote it to sound (begun when the line was), and the kit plays it
+    const clip = await Promise.race([p.clip, stopped]); if (gen !== talkGen) return false;
+    if (clip) return playClip(clip, p, gen, from, onWord, stopped);
+  }
   let list = null, pick = null;
   if (p.voice) {
     list = await Promise.race([listVoices(), stopped]); if (gen !== talkGen || !list) return false;
     pick = castVoice(list, wantOf(p.voice, p.lang), { native: !!TTS, bad: badVoices });
   }
-  const lang = [].concat(p.lang).find(langOk) || 'en-GB', pitch = clampN(p.pitch * (pick ? pick.pitch : 1), .5, 2, 1);
+  // (the phone speaking for itself can't be a bigger or smaller person: size leans its pitch that way instead)
+  const lang = [].concat(p.lang).find(langOk) || 'en-GB', pitch = clampN(p.pitch * (pick ? pick.pitch : 1) / p.size, .5, 2, 1);
   const cast = pick && pick.at >= 0 ? list[pick.at] : null;
   // a part that never reports its end (a lost callback) must not hold up the rest of the line
   let timer = null;
@@ -898,8 +986,8 @@ async function sayPart(p, gen, from, onWord, stopped) {
     return ok === true || ok === 'late';
   } finally { clearTimeout(timer); }
 }
-export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, onWord = null } = {}) {
-  // the parts of the line: strings (or { text, pitch, rate, volume, voice, lang }) and pauses in seconds
+export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, onWord = null, size = null, fx = null } = {}) {
+  // the parts of the line: strings (or { text, pitch, rate, volume, voice, lang, size, fx }) and pauses in seconds
   const parts = []; let room = Array.isArray(text) ? 600 : 300, any = false;
   for (const raw of Array.isArray(text) ? text : [text]) {
     if (typeof raw === 'number') { if (raw > 0) parts.push(Math.min(5, raw)); continue; }
@@ -907,7 +995,9 @@ export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voi
     const t = String(o.text ?? '').replace(/\s+/g, ' ').trim().slice(0, Math.min(300, room));
     if (!t) continue;
     room -= t.length; any = true;
-    parts.push({ text: t, pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: clampN(o.volume ?? volume, 0, 1, 1) * sound.volume, voice: o.voice ?? voice, lang: o.lang ?? lang });
+    const vol = clampN(o.volume ?? volume, 0, 1, 1), sz = o.size ?? size, f = o.fx ?? fx;
+    parts.push({ text: t, pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
+      size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: sz != null || (f != null && f !== false) });
   }
   stopTalking();
   if (!any || sound.muted || !sound.volume) return Promise.resolve(false);
@@ -917,6 +1007,15 @@ export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voi
   if (g) { const t = g.context.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(g.level * .35, t, .05); }
   const done = ok => { if (gen === talkGen) { talkingNow = Math.max(0, talkingNow - 1); cancelTalk = null; if (g) setLevel(g, g.level, .4); } return ok; };
   const stopped = new Promise(res => { cancelTalk = () => res(null); });
+  // a line said in parts through one radio stays keyed up between them: its static comes before the first part and after the last only
+  for (let i = 0, last = null, gap = 0; i < parts.length && shapedOk !== false; i++) {
+    const p = parts[i];
+    if (typeof p === 'number') { gap += p; continue; }
+    if (last && p.fx && gap <= 1.2 && p.voice === last.voice && p.size === last.size && JSON.stringify(p.fx) === JSON.stringify(last.fx)) { last.join = gap; p.joined = true; }
+    last = p; gap = 0;
+  }
+  // shaped parts are written to sound one after another from now, so each is ready (or nearly) when its turn comes
+  if (shapedOk !== false) { let line = Promise.resolve(); for (const p of parts) if (p.shape) p.clip = line = line.then(() => gen === talkGen ? clipFor(p, gen, stopped) : null).catch(() => null); }
   return (async () => {
     let ok = false, from = 0;
     for (const p of parts) {
@@ -933,8 +1032,13 @@ export function stopTalking() {
   talkGen++;
   if (cancelTalk) { cancelTalk(); cancelTalk = null; }
   if (talkingNow) { talkingNow = 0; const g = mix?.buses.get('music'); if (g) setLevel(g, g.level, .3); }
+  for (const v of live) hush(v);
+  live.clear();
+  try { if (rendering) Promise.resolve(RENDER.cancel()).catch(() => {}); } catch { /* none */ }
   try { if (TTS) TTS.stop(); else globalThis.speechSynthesis?.cancel(); } catch { /* none */ }
 }
 /** True while a line is being spoken. */
 export const talking = () => talkingNow > 0;
+/** Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. */
+export const shaped = () => shapedOk;
 register('speech', { stop: stopTalking, pause: stopTalking });
