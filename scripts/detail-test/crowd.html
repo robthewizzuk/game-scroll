@@ -91,9 +91,13 @@ try {
   look(S, [0, 1.5, 6.4], [0, .85, 0]);
   const empty = await shot(S);
   const worst = [];
+  // A sculpted person at its middle and far levels stands its small bones still (fingers, toes, the turn of a forearm), to save
+  // working them out. A crowd has every bone at every level for nothing. So the people it is held against here are those
+  // levels' shapes on the whole skeleton.
+  const level = (f, L) => { const m = f.lods?.[L], whole = f.lods?.[0]?.skeleton; if (!L || !m || !whole || m.skeleton === whole) { f.lod = L; return; } f.lod = 0; f.lods[0].visible = false; m.bind(whole, m.bindMatrix); m.visible = true; };
   for (const L of [0, 1, 2]) {
     crowd.clear(); crowd.update(0);
-    const real = LINE.map(o => { const f = src[o.kind].twin(); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; f.scale.multiplyScalar(o.size); f.lod = L; pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
+    const real = LINE.map(o => { const f = src[o.kind].twin(); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; f.scale.multiplyScalar(o.size); level(f, L); pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
     const a = await shot(S); out['skeletons-' + L] = S.c.toDataURL();
     for (const f of real) S.v.scene.remove(f);
     crowd.clear(); crowd.lod = L; for (const o of LINE) crowd.add(o); crowd.update(0);
