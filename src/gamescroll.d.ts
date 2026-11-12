@@ -255,13 +255,20 @@ export interface SoundPart {
    * Speaks a line with the phone's own voices (text to speech). Resolves when it's said (false if it couldn't). Show the words too.
    * voice casts a character from the voices this phone has: 'woman' | 'man' | 'any', or { kind, lang (accents to try, in order),
    * take (the second, third... such voice, so a cast differs), like (voice names to prefer) }. An array of parts is said in
-   * order with pauses (numbers, in seconds) between; a part can be { text, pitch, rate, volume, voice, lang } for its own delivery.
+   * order with pauses (numbers, in seconds) between; a part can be { text, pitch, rate, volume, voice, lang, size, fx } for its own delivery.
+   * A shaped voice: size (1.15 a bigger person, deeper in every way at the same pace; .85 a smaller one; .6 to 1.6) and fx ('radio',
+   * 'tannoy', 'phone', 'megaphone', 'box', 'bright', 'warm', 'robot', 'tiny', 'clean', or a recipe: { like: 'radio', drive: .2, mix: .6 }).
+   * With either, the phone writes the line to sound and the kit plays it through the mixer's 'voice' channel, as loud on every phone,
+   * with the room's echo, and onWord for every word (the Android and iPhone apps; elsewhere the line is spoken as before, size as a
+   * lean of its pitch). It starts a moment later than a plain line: open with a short pause, say([.2, 'Ah. A door.'], { fx: 'tannoy' }).
    */
-  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void }): Promise<boolean>;
+  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null }): Promise<boolean>;
   /** The voices this phone has to cast from (joke voices left out). kind is null when the phone doesn't say. */
   voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>;
   stopTalking(): void;
   talking(): boolean;
+  /** Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. */
+  shaped(): boolean | null;
 }
 
 /** What stands in the way of sound for gs.sound.Ears: anything with ray() or sees() (World3D, TileMap, City, Voxels, 2D Physics, NavGrid), a function, or a list. */
@@ -273,7 +280,32 @@ export interface SoundPlace { size: number; walls: number; roof: number; enclose
 /** A character's voice for gs.sound.say: a kind, or which accents to try, which take of that kind, and voices to prefer by name. */
 export type SayVoice = 'woman' | 'man' | 'any' | { kind?: 'woman' | 'man' | 'any'; lang?: string | string[]; take?: number; like?: string | string[] };
 /** One part of a spoken line: words, a pause in seconds, or words with their own delivery. */
-export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[] };
+export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null };
+/** A treatment for a shaped voice (gs.sound.say's fx), by name or as a recipe that can start from a named one. */
+export type SayFxName = 'clean' | 'radio' | 'tannoy' | 'phone' | 'megaphone' | 'box' | 'bright' | 'warm' | 'robot' | 'tiny';
+export type SayFx = SayFxName | {
+  like?: SayFxName;
+  /** Hz: nothing below / above passes (a small speaker has no bass and no top). */
+  low?: number; high?: number;
+  /** [[Hz, dB, sharpness]...]: the ring of a horn, a box, a handset. */
+  peaks?: [number, number, number?][];
+  /** dB: more or less of the low and the top end. */
+  bass?: number; treble?: number;
+  /** 0..1: overdriven, like a cheap amplifier turned up. */
+  drive?: number;
+  /** [Hz, 0..1]: a robot's buzz. */
+  ring?: [number, number];
+  /** [seconds, 0..0.9 how long it rings, 0..1 how much]: a metal tube, a hollow thing. */
+  comb?: [number, number, number?];
+  /** 0..1: evened out hard, the way radios and adverts are. */
+  squeeze?: number;
+  /** [[seconds, 0..1]...]: single slaps off far walls. */
+  echo?: [number, number][];
+  /** 0..1: a burst of static as the line starts and ends (a radio keying up); hiss: static under the words. */
+  squelch?: number; hiss?: number;
+  /** 0..1: how much of the treatment (the rest is the plain voice). */
+  mix?: number;
+};
 
 export interface HapticEvent { at?: number; len?: number; strength?: number; sharpness?: number; to?: number }
 declare const HAPTIC_NAMES: { tap: 1; thud: 1; heartbeat: 1; explosion: 1; charge: 1; engine: 1; rain: 1; rumble: 1; success: 1; fail: 1 };

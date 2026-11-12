@@ -25,6 +25,7 @@ dependencies {
     implementation project(':power-state')
     implementation project(':rich-haptics')
     implementation project(':screen-rate')
+    implementation project(':speech-audio')
 
 }
 

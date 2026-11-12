@@ -181,15 +181,18 @@ export function verdict(r) {
 }
 
 /* ---------- native plugins ---------- */
-// One harmless question each: [plugin, method, arguments]. Nothing here shows a prompt, turns a sensor
-// on or changes a setting (GameServices.signIn without `interactive` only asks whether the player is
-// signed in already).
+// One harmless question each: [plugin, method, arguments, what to say of the answer (when the answer
+// itself is too long to read)]. Nothing here shows a prompt, turns a sensor on or changes a setting
+// (GameServices.signIn without `interactive` only asks whether the player is signed in already;
+// SpeechAudio.render has the phone write three words of speech to sound, which nobody hears).
 const PLUGINS = [
   ['Device', 'getInfo'], ['App', 'getState'], ['Haptics', 'selectionStart'], ['KeepAwake', 'isSupported'], ['Geolocation', 'checkPermissions'],
   ['Motion', null], ['Filesystem', 'checkPermissions'], ['Share', 'canShare'], ['TextToSpeech', 'getSupportedLanguages'],
   ['PowerState', 'get'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
   ['NativeAR', 'available'], ['NPU', 'available'], ['PhoneAI', 'modelAvailable'], ['PhoneAI', 'speechAvailable', { language: 'en-US' }],
   ['GameServices', 'signIn', {}],
+  ['SpeechAudio', 'render', { text: 'Testing, one two.', lang: 'en-GB', rate: 1, pitch: 1 },
+    r => r?.ok ? { ok: true, rate: r.rate, seconds: +(String(r.pcm || '').length * .375 / (r.rate || 1)).toFixed(2), wordMarks: (r.marks?.length || 0) / 2 } : r],
 ];
 const brief = v => { let t; try { t = JSON.stringify(v); } catch { t = String(v); } t = t === undefined ? 'no value' : t; return t.length > 140 ? t.slice(0, 137) + '...' : t; };
 /**
@@ -199,7 +202,7 @@ const brief = v => { let t; try { t = JSON.stringify(v); } catch { t = String(v)
 export async function checkPlugins(cap = Capacitor, limit = PLUGIN_LIMIT) {
   if (!cap.isNativePlatform()) return null;
   const out = [];
-  for (const [name, method, args] of PLUGINS) {
+  for (const [name, method, args, tell] of PLUGINS) {
     const label = method ? `${name}.${method}` : name;
     if (!cap.isPluginAvailable(name)) { out.push({ name: label, state: 'MISSING', ms: 0, note: 'not in this build of the app' }); continue; }
     if (!method) { out.push({ name: label, state: 'ok', ms: 0, note: 'in the app (not asked: it only sends readings)' }); continue; }
@@ -207,7 +210,7 @@ export async function checkPlugins(cap = Capacitor, limit = PLUGIN_LIMIT) {
     try {
       const p = cap.Plugins?.[name] || registerPlugin(name);
       const r = await Promise.race([p[method](args), wait(limit).then(() => { throw new Error(`no answer in ${limit / 1000} s`); })]);
-      out.push({ name: label, state: 'ok', ms: Math.round(performance.now() - t0), note: brief(r) });
+      out.push({ name: label, state: 'ok', ms: Math.round(performance.now() - t0), note: brief(tell ? tell(r) : r) });
     } catch (e) { out.push({ name: label, state: 'FAIL', ms: Math.round(performance.now() - t0), note: String(e?.message || e).slice(0, 140) }); }
   }
   return out;

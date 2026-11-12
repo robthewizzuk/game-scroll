@@ -145,8 +145,10 @@ What it does (`src/tour.js`):
 - **Plugins.** Each native plugin is asked one harmless question with a 4 second limit: Device, App,
   Haptics, KeepAwake, Geolocation (only its permission state), Filesystem, Share, TextToSpeech,
   PowerState, ScreenRate, PhoneSensors (which sensors, and where sound is going), RichHaptics,
-  NativeAR, NPU, PhoneAI (the model, and speech) and GameServices (whether the player is signed in
-  already). None of them shows a prompt, turns a sensor on or changes a setting. The report lists
+  NativeAR, NPU, PhoneAI (the model, and speech), GameServices (whether the player is signed in
+  already) and SpeechAudio (the phone writes three words of speech to sound, unheard: the answer says
+  how many samples a second, how long it is and how many word marks came with it, which is what shaped
+  voices in `gs.sound.say` need). None of them shows a prompt, turns a sensor on or changes a setting. The report lists
   `ok` with the answer, `FAIL` (an error, or no answer in time) and `MISSING` (not in this build of
   the app), problems first. The web version has no plugins and says so.
 - **Games.** Each game is shown through the real feed, loaded, started and played by a bot: two

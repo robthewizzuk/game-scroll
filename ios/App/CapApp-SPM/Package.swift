@@ -27,7 +27,8 @@ let package = Package(
         .package(name: "PhoneSensors", path: "../../../plugins/phone-sensors"),
         .package(name: "PowerState", path: "../../../plugins/power-state"),
         .package(name: "RichHaptics", path: "../../../plugins/rich-haptics"),
-        .package(name: "ScreenRate", path: "../../../plugins/screen-rate")
+        .package(name: "ScreenRate", path: "../../../plugins/screen-rate"),
+        .package(name: "SpeechAudio", path: "../../../plugins/speech-audio")
     ],
     targets: [
         .target(
@@ -50,7 +51,8 @@ let package = Package(
                 .product(name: "PhoneSensors", package: "PhoneSensors"),
                 .product(name: "PowerState", package: "PowerState"),
                 .product(name: "RichHaptics", package: "RichHaptics"),
-                .product(name: "ScreenRate", package: "ScreenRate")
+                .product(name: "ScreenRate", package: "ScreenRate"),
+                .product(name: "SpeechAudio", package: "SpeechAudio")
             ]
         )
     ]
