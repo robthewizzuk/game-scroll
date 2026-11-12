@@ -398,6 +398,13 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   (`[x, z]` m/s they drift) and `wet` (0..1: rain darkens things and makes up-facing surfaces shiny).
   It returns the settings, which you can change any time (`v.air().wet = rain.amount`); `v.air(false)`
   turns it off. Your own `ShaderMaterial`s and materials with `fog: false` are left alone.
+- **Weather that changes the world** (`new gs.sky.Weather(v, { kind: 'rain', level: world, ground: land.height })`):
+  given the level, the weather wets only what the sky can see, so the floor of a house and a porch stay
+  dry; puddles spread on flat ground and dry up; snow settles on ground and roofs and melts. It keeps a
+  map of the highest solid thing over each half metre round the camera (rays into the level a few
+  hundred a frame) and the air reads it, so it costs no extra pass and is the same on WebGL and WebGPU.
+  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. The full list is in
+  [maker-kit.md](maker-kit.md#weather-that-changes-the-world); `node scripts/weather.cjs film.png` films it.
 - **Sky** (`gs.sky`'s `Sky`) with `clouds: 0..1` draws drifting clouds lit from the sun's side (your
   own colours with `cloudLight` and `cloudDark`; `gap` keeps the low sky round the sun clear). It aims
   the sun, and on a view with air it colours the haze from the sky and lays the clouds' shadows on the
@@ -725,6 +732,12 @@ const leafLook = looks.leaves(leafMaterial, { wind: .6 });      // sway, sun glo
   plates of crust that cool downstream; the glow feeds bloom). `new FloodWater(flood, { view: v })`
   draws a `gs.flow` Flood; on WebGPU the flood itself runs as compute on the graphics chip and its
   depths are copied back every few frames for `flood.depth()`. Both look the same on WebGL and WebGPU.
+- **Water you can disturb**: `new Water({ ripples: true, bed })` answers to what happens to it: `ring()`
+  and `splash()` (rings, spray, foam), `watch(boat)` (its wake, its foam trail, a splash when it lands),
+  `rain`, paler shallows and foam at the shore over a `bed`, and `underwater(view)` for a camera that
+  goes under (the view's air turns to murky water and comes back). Stock materials only, so WebGL and
+  WebGPU match, and your own water material is left as it is. See
+  [Water you can disturb](maker-kit.md#water-you-can-disturb); film it with `node scripts/water.cjs`.
 - Every look is a named effect (`material.userData.gsLooks` lists them), so the WebGPU version can
   swap each one for a node later (see `docs/webgpu-move.md`). Road segments: up to 32.
 
@@ -827,8 +840,11 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   door, with a string course, cornice, and a flat roof with a parapet or a gable roof. `style` (`brick`,
   `plaster`, `concrete`, `stone`, `timber`, or your own: `{ ...gs.models.buildings.brick, bay: 3 }`), `w`, `d`
   (metres, 8 x 6), `floors`, `roof`, `floor` (storey height), `bay` (metres per window), `win` ([w, h]), `lit` (0..1
-  of windows glowing), `colour` (walls), `door: false`, `seed`, `wear`. Its door faces +z. About 0.1 to 0.25 s
-  each, so make them while loading; for a whole town in the distance `gs.city` is far cheaper.
+  of windows glowing), `colour` (walls), `door: false`, `seed`, `wear`, `materials` (your own three.js materials
+  in place of the style's: `{ wall, trim, frame, roof, door, glass, lit }`). Its door faces +z. About 0.1 to 0.25 s
+  each, so make them while loading; for a whole town in the distance `gs.city` is far cheaper. One that
+  comes apart when it is shot or shelled is `new gs.destruction.Structure(view.scene, { building: { ... } })`
+  ([maker-kit.md](maker-kit.md#buildings-that-come-apart)).
 - **`relief(target, o)`**: real surface detail. The bumps a material only paints (the height layer its
   texture was made with: the barrels of roof tiles, the mortar between bricks, the ridges of bark) are
   made into real triangles, so they stand out against the sky and hide what is behind them from every
@@ -930,3 +946,25 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   creatures in `make()` or `reset()`, and several kinds together and first (`creature.all([...])`, or
   `creature.need([...])` before anything costly is built). `node scripts/creatures.cjs sheet.png` draws every
   animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.
+- **`fur(mesh, o)`**: fur or hair in layers, with no texture files: copies of the surface pushed out along
+  its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
+  themselves (`creature.fur`; `fur: false` to leave it off), and people's hair, moustaches and beards are
+  strands (`human({ beard: 1 })`, `person.hair`; `strands: false` for the sculpted hair alone). Close up
+  only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
+  fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
+  [Fur and hair](maker-kit.md#fur-and-hair).
+- **`vehicle(kind, o)`**: a car, a lorry, a tank, a train, a boat or a plane made in code: a shell skinned
+  over cross-sections from a few measures, in paint, glass, chrome and rubber, aged with `wear()`, with
+  the parts that turn on pivots of their own. 30 to start from (`vehicle.kinds`): cars `saloon`, `hatch`,
+  `estate`, `sports`, `van`, `pickup`, `jeep`; trucks `flat`, `canvas`, `box`, `tanker`; tanks `medium`,
+  `light`, `heavy`; trains `steam`, `diesel` and the wagons `van`, `open`, `flat`, `tanker`, `coach`; boats
+  `rowboat`, `motor`, `fishing`, `patrol`; planes `prop`, `biplane`, `twin`, `jet`.
+  ```js
+  const jeep = gs.models.vehicle('car', { style: 'jeep', seed: 4 }); view.add(jeep);   // in make(); its nose points along -z
+  jeep.move(dt, speed, { steer });   // each frame: wheels roll and steer, the body rocks on its springs
+  const train = gs.models.vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] });
+  train.along(rails, metres).roll(metres);   // each car between its own wheels, round the curve
+  ```
+  Options, the parts and points of each kind, real springs (`car.chassis()` with `World3D.vehicle`), boats
+  and planes on `gs.craft`, and what each costs: [Vehicles made in code](maker-kit.md#vehicles-made-in-code).
+  `node scripts/vehicles.cjs sheet.png` draws them all from five sides, to look them over.

@@ -9,12 +9,12 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
-  attribute, vertexColor, normalWorld, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
+  attribute, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
   modelViewProjection, acos, getParallaxCorrectNormal, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
 } from 'three/tsl';
@@ -392,11 +392,38 @@ export const gpuLooks = {
     m.normalNode = normalViewGeometry;
   },
 };
-// hd3d.js AIR_WET: wet, darker, shinier surfaces in the rain (lit standard materials with the air)
-export function gpuWet(m, o, AIR) {
-  const w = live(AIR.gsWet).mul(live(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
-  m.roughnessNode = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
-  afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))));
+// hd3d.js AIR_WET: wet, darker, shinier surfaces in the rain (lit standard materials with the air). gsWet is the
+// game's own, everywhere; gsWx is the weather's (gs.sky.Weather with a level), only on what the sky can see by the
+// cover picture: wet, puddles on flat ground, snow. dry: nothing settles on this one (water, people and animals).
+// The puddle and snow amounts come from the surface's own normal, not the bumps on it, so they can flatten the bumps.
+// world: is there such a weather on the view now (air.world)? Without one the material gets the game's own wet
+// only, which reads no picture at all: nodes have no branch to skip the weather's three reads a pixel with.
+let BLANK_COVER = null;
+const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { needsUpdate: true });   // (one spot at -1000 m: all open)
+export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world = true) {
+  if (!world) {
+    const w = live(AIR.gsWet).mul(live(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
+    m.roughnessNode = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
+    afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))));
+    return;
+  }
+  const facing = TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at)
+  const on = live(AIR.gsAirOn), wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld, gg = facing(normalWorldGeometry), flat = facing(normalViewGeometry);
+  const gp = wp.xz.add(gg.xz.mul(wx.w)), gd = abs(gp.sub(at.xy));
+  const top = texture(AIR.gsCover.value || blankCover(), gp.mul(at.z)).onRenderUpdate(() => AIR.gsCover.value || blankCover()).r;
+  const open = mix(float(1), smoothstep(-.7, -.25, wp.y.sub(top)), step(max(gd.x, gd.y), at.w).mul(step(1e-6, at.w)));
+  const w = max(live(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
+  let rough = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
+  if (dry) { m.roughnessNode = rough; afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3)))); return; }
+  const n1 = texture(noise, wp.xz.mul(.05)), n2 = texture(noise, wp.xz.mul(.021)).r.mul(.4), pl = mix(float(.86), float(.55), wx.z);
+  const p = smoothstep(pl, pl.add(.035), n1.b.mul(.6).add(n2)).mul(smoothstep(.97, .995, gg.y)).mul(open).mul(on).mul(step(1e-6, wx.z));
+  const sn = n1.g.mul(.6).add(n2), lim = mix(float(.97), float(.55), wx.y);
+  const s = smoothstep(lim, lim.add(.14), gg.y.add(sn.sub(.5).mul(.22))).mul(smoothstep(0, .3, wx.y.mul(1.2).sub(sn.mul(.6)))).mul(open).mul(on).mul(step(1e-6, wx.y));
+  rough = mix(mix(rough, .03, p), .85, s);
+  m.roughnessNode = rough;
+  m.metalnessNode = (m.metalnessNode ? float(m.metalnessNode) : TSL.materialMetalness).mul(s.oneMinus());
+  afterColor(m, o, c => mix(c.mul(float(1).sub(w.mul(.3))).mul(float(1).sub(p.mul(.3))), vec3(.86, .9, .96), s));
+  m.normalNode = mix(m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, flat, max(p.mul(.92), s.mul(.6))).normalize();
 }
 // The sun's light on WebGPU: cloud shadows drifting over everything (hd3d.js gsShadeAt) and the near
 // shadow cascade's share (CASC_NEAR / CASC_W: the near light inside its box, fading at the edges, the far

@@ -2,7 +2,8 @@
 // (two-bone IK), feet that plant on the ground and step as the body moves, and springy hit
 // reactions. They work on the characters you build yourself from parts (groups with their origins at
 // the joints). Your game still decides how a character looks and moves; these fill in the motion.
-// Ragdolls (going floppy when knocked out) are in gs.physics3d: phys.ragdoll(character, { limbs }).
+// Ragdolls (going floppy when knocked out) are in gs.physics3d: phys.ragdoll(character). People who react
+// physically (flinch, stumble, brace, fall, get up) are gs.characters.Reactions, in reactions.js.
 //
 //   const { lookAt, reach, Steps, Wobble } = gs.characters;
 //   update(dt) {

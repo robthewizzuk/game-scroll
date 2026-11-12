@@ -3,8 +3,11 @@
 // A sheet of gs.models.creature pictures for scripts/creatures.cjs: one row for each animal, one column
 // for each pose and view, so shapes, coats and gaits can be judged (and tuned) by eye.
 //   ?like=dog,cat (default: every animal)   &seed=3 (default: the animal as the book shows it)
+//   a row can be a person: like=person:short,person:long:f,person:bun:f:hat,person:bald:beard  (hair style, then f, hat, beard, moustache, grey, fair, red)
 //   &cols=idle:three,walk@.1:side,walk@.6:side,run@.3:three   pose@phase:view (views: side, three, front, back, top)
 //   &cell=240x200   &gpu (WebGPU)   &lod=1   &bones (the skeleton drawn over it)   &size=.4 (every one this long, metres)
+//   &fur=0 (no fur)   &fur=auto (thinning with distance as in a game; otherwise every layer always)   &layers=12   &furlen=.04 (metres)
+//   &lean=.8   &from=0 (fur on the finest level's triangles)   &tier=3 (the phone's quality, 0..3: 2)   &time (how long a frame takes)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -16,29 +19,37 @@ try {
   const likes = (Q.get('like') || Object.keys(creature.likes).join(',')).split(','), seed = Q.has('seed') ? +Q.get('seed') : undefined, size = Q.has('size') ? +Q.get('size') : undefined;
   const cols = (Q.get('cols') || 'idle:three,walk@.1:side,walk@.6:side,run@.3:three').split(',').map(c => { const [a, view = 'side'] = c.split(':'), [pose, at = 0] = a.split('@'); return { pose, at: +at, view }; });
   const [cw, ch] = (Q.get('cell') || '240x200').split('x').map(Number);
-  window.__hd.force = 2; window.__hd.upscale = false;
+  window.__hd.force = Q.has('tier') ? +Q.get('tier') : 2; window.__hd.upscale = false; window.__hd.hold = false;   // (a sheet wants every cell drawn, not a frame's wait for a new shader)
+  const num = k => Q.has(k) ? +Q.get(k) : undefined, fur = Q.get('fur') === '0' ? false : { auto: Q.get('fur') === 'auto', layers: num('layers'), length: num('furlen'), lean: num('lean'), from: num('from'), tile: num('tile') };
   const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .3 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
   const sun = gs.hd.sun('#fff2d8', 1.9, 4, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
   const floor = new T.Mesh(new T.PlaneGeometry(200, 200).rotateX(-Math.PI / 2), gs.hd.pbr('#6f7466', { rough: .9 })); floor.receiveShadow = true; v.scene.add(floor);
   const sheet = document.createElement('canvas'); sheet.width = cw * cols.length; sheet.height = ch * likes.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
   const info = [], t0 = performance.now();
-  await creature.ready(likes.map(like => ({ like, seed, size })));
+  const HAIRS = { grey: '#8a8a88', fair: '#c9a86a', red: '#8a3a1c', black: '#141210' };
+  const personOf = like => { const w = like.split(':').slice(1), o = { sex: w.includes('f') ? 'f' : 'm', hairStyle: ['short', 'long', 'bun', 'bald'].find(k => w.includes(k)) || 'short', strands: fur };
+    for (const k in HAIRS) if (w.includes(k)) o.hair = HAIRS[k]; if (w.includes('beard')) o.beard = 1; if (w.includes('stubbly')) o.beard = .25; if (w.includes('moustache')) o.moustache = true; if (w.includes('hat')) o.outfit = { hat: { kind: 'cap' } }; return o; };
+  const isPerson = like => like.startsWith('person');
+  await Promise.all([creature.ready(likes.filter(l => !isPerson(l)).map(like => ({ like, seed, size }))), gs.models.human.ready(likes.filter(isPerson).map(personOf))]);
   info.push('sculpted ' + likes.length + ' in ' + Math.round(performance.now() - t0) + ' ms');
-  const VIEW = { side: [1, .18, .12], three: [.75, .45, .8], front: [.1, .2, 1], back: [-.2, .3, -1], top: [.02, 1, .1], low: [.8, .05, .6], face: [.55, .2, 1] };
+  const VIEW = { side: [1, .18, .12], three: [.75, .45, .8], front: [.1, .2, 1], back: [-.2, .3, -1], top: [.02, 1, .1], low: [.8, .05, .6], face: [.55, .2, 1], head: [1, .25, .15], nape: [-.45, .5, -1] };
   for (let r = 0; r < likes.length; r++) {
-    const c = creature({ like: likes[r], seed, size }), s = c.size, big = Math.max(s.length, s.height * 1.7, s.width * (c.kind === "bird" || c.kind === "insect" ? .9 : 1.25)), swim = c.kind === 'fish';
+    const who = isPerson(likes[r]), c = who ? gs.models.human(personOf(likes[r])) : creature({ like: likes[r], seed, size, fur });
+    if (who) { c.size = { length: .5, height: 1.8, width: .55 }; c.kind = 'person'; c.speeds = {}; c.fur = c.hair; }
+    const s = c.size, big = Math.max(s.length, s.height * 1.7, s.width * (c.kind === "bird" || c.kind === "insect" ? .9 : 1.25)), swim = c.kind === 'fish';
     c.position.y = swim ? big : 0; v.scene.add(c); if (Q.has('lod')) c.lod = +Q.get('lod');
     floor.visible = !swim; sun.follow(0, 0, 0); sun.shadow.camera.left = sun.shadow.camera.bottom = -big; sun.shadow.camera.right = sun.shadow.camera.top = big; sun.shadow.camera.updateProjectionMatrix();
-    info.push(`${likes[r]}: ${c.tris.join('/')} triangles, ${Object.keys(c.bones).length} bones, ${s.length.toFixed(2)} x ${s.height.toFixed(2)} x ${s.width.toFixed(2)} m, speeds ${JSON.stringify(c.speeds)}`);
+    info.push(`${likes[r]}: ${c.tris.join('/')} triangles${c.fur ? ' + fur ' + c.fur.layers + ' layers, ' + c.fur.tris + ' triangles' : ''}, ${Object.keys(c.bones).length} bones, ${s.length.toFixed(2)} x ${s.height.toFixed(2)} x ${s.width.toFixed(2)} m, speeds ${JSON.stringify(c.speeds)}`);
     let sk = null; if (Q.has('bones')) { sk = new T.SkeletonHelper(c); sk.material.depthTest = false; v.scene.add(sk); }
     for (let k = 0; k < cols.length; k++) {
-      const { pose, at, view } = cols[k], face = view === 'face', d = VIEW[view] || VIEW.side, len = Math.hypot(...d), dist = face ? Math.max(big * .62, s.width * 1.1) : big * 1.5, mid = c.position.y + (swim ? 0 : s.height * .45);
-      c.rig.blendOn = false; c.rig.bw = null; c.rig.blendK = 0; c.rig.layers = [{ name: pose, w: 1, phase: at }]; c.rig.state = pose; c.rig.update(0);
+      const { pose, at, view } = cols[k], face = view === 'face' || view === 'head' || view === 'nape', d = VIEW[view] || VIEW.side, len = Math.hypot(...d), dist = face ? who ? .62 : Math.max(big * .62, s.width * 1.1) : big * 1.5, mid = c.position.y + (swim ? 0 : s.height * .45);
+      if (who) { c.rig.play?.(pose); c.rig.update(.016); } else { c.rig.blendOn = false; c.rig.bw = null; c.rig.blendK = 0; c.rig.layers = [{ name: pose, w: 1, phase: at }]; c.rig.state = pose; c.rig.update(0); }
       v.cam.fov = 30; v.cam.aspect = cw / ch; v.cam.near = dist * .05; v.cam.far = dist * 60; v.cam.updateProjectionMatrix();
-      const aim = new T.Vector3(0, mid, s.length * .05); if (face) { c.updateMatrixWorld(true); c.bones.head.getWorldPosition(aim); }
+      const aim = new T.Vector3(0, mid, s.length * .05); if (face) { c.updateMatrixWorld(true); c.bones.head.getWorldPosition(aim); if (who) aim.y += .09; }
       v.cam.position.set(aim.x + d[0] / len * dist, aim.y + d[1] / len * dist, aim.z + d[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
       for (let i = 0; i < 3; i++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
       sx.drawImage(cell, k * cw, r * ch);
+      if (Q.has('time')) { const t1 = performance.now(); for (let i = 0; i < 20; i++) { v.t = 0; v.render(cx, cw, ch); } info.push(`  ${pose}:${view} ${((performance.now() - t1) / 20).toFixed(1)} ms a frame${c.fur ? ', fur level ' + c.fur.level : ''}`); }
       sx.font = '12px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${likes[r]} ${pose}${at ? ' @' + at : ''}`, k * cw + 5, r * ch + 14);
     }
     if (sk) v.scene.remove(sk);

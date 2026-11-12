@@ -24,6 +24,7 @@ import { wasmSimd } from './simd.js';
 import { Box3, Matrix4, Vector3 as V3, Quaternion } from 'three';
 import { own } from './cleanup.js';
 import { onBlend } from './tick.js';
+import { rigDoll } from './ragdoll.js';
 // The SIMD build where the phone has WebAssembly SIMD (faster: Neon on ARM phones), else the plain one.
 // Same engine and API; only one of the two is ever downloaded.
 const engine = lazy('The 3D physics engine', () => (wasmSimd() ? import('@dimforge/rapier3d-simd-compat') : import('@dimforge/rapier3d-compat')).then(async m => {
@@ -164,7 +165,9 @@ class Vehicle3 {
       this.ctl.setWheelEngineForce(i, -this.throttle * this.power * this.chassis.body.mass() / 4);   // power: metres per second² of push, all four wheels
       this.ctl.setWheelBrake(i, this.braking ? this.brakes * this.chassis.body.mass() : 0);
     }
-    this.ctl.updateVehicle(h, undefined, undefined, c => c !== this.chassis.collider && !c.isSensor());
+    // sensors are left out by flag: asking each collider from inside this call (c.isSensor()) goes back into the engine while it
+    // holds the colliders, which left sensors in and the world unable to be freed. The controller skips its own chassis by itself.
+    this.ctl.updateVehicle(h, R.QueryFilterFlags.EXCLUDE_SENSORS);
   }
   sync() {
     this.wheelMeshes.forEach((m, i) => {
@@ -190,7 +193,7 @@ export class World3D {
     this.world = new R.World(this.gravity);
     this.events = new R.EventQueue(true);
     own(this);   // freed when the card leaves the feed (src/kit/cleanup.js)
-    this.bodies = []; this.movers = []; this.hits = []; this.joints = []; this.vehicles = [];
+    this.bodies = []; this.movers = []; this.hits = []; this.joints = []; this.vehicles = []; this.dolls = [];
     this.smooth = !!smooth && onBlend(this);
   }
   /** (Fixed tick, smooth) puts each mesh between where its body was before the last step and now. */
@@ -309,7 +312,7 @@ export class World3D {
     this.world.removeRigidBody(t.body);
     this.bodies = this.bodies.filter(x => x !== t); this.movers = this.movers.filter(x => x !== t);
   }
-  clear() { for (const t of [...this.bodies, ...this.movers]) this.remove(t); }
+  clear() { for (const d of [...this.dolls]) d.remove(); for (const t of [...this.bodies, ...this.movers]) this.remove(t); }
 
 
   /**
@@ -321,8 +324,16 @@ export class World3D {
    * child Group. Limbs can sit inside limbs (a forearm in an arm). The parts move into the scene.
    * rag.push(x, y, z) throws it (metres per second), rag.hit(part, x, y, z) hits one part,
    * rag.parts are the bodies, rag.remove() takes the physics away and leaves the parts where they lie.
+   *
+   * A character on gs.poses' skeleton (figure(), person(), gs.models.human(): anything with a .rig) needs no
+   * limbs: phys.ragdoll(hero) joins its hips, chest, head, arms and legs with joints that turn only as far
+   * as real ones (knees bend one way), and its bones follow, so a skinned person falls in one piece. Also
+   * rag.part('head'), rag.hit('armL', x, y, z, at), rag.drive(pose, strength) (muscles: the joints pull
+   * towards a pose), rag.relax() (limp again) and rag.still().
    */
-  ragdoll(root, { limbs, push, drag = .3, spinDrag = 1.5, group = 14, bounce = .05, friction = .8 } = {}) {
+  ragdoll(root, o = {}) {
+    if (!o.limbs && root.rig?.parts?.hips) return rigDoll(this, root, o);
+    const { limbs: limbs0, push, drag = .3, spinDrag = 1.5, group = 14, bounce = .05, friction = .8 } = o; let limbs = limbs0;
     let scene = root; while (scene.parent) scene = scene.parent;
     if (scene === root) throw new Error('ragdoll: add the character to the scene first');
     limbs = limbs || root.children.filter(c => !c.isMesh && c.children.length);
@@ -396,10 +407,12 @@ export class World3D {
     for (let i = 0; i < n; i++) {
       for (const m of this.movers) m.move(h);
       for (const v of this.vehicles) v.step(h);
+      for (const d of this.dolls) d.muscles?.();
       this.world.step(this.events);
       this.events.drainCollisionEvents((h1, h2, on) => { if (on) started.push([h1, h2]); });
     }
     for (const t of this.bodies) t.sync();
+    for (const d of this.dolls) d.sync();
     for (const m of this.movers) m.sync();
     for (const v of this.vehicles) v.sync();
     if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._now = pose(t.body, t._now);

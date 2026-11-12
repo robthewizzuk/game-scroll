@@ -1017,9 +1017,13 @@ const AIR = {
   gsAirOn: { value: 0 }, gsSun: { value: new Vector3(0, 1, 0) }, gsAirC: { value: new Color() }, gsAirSun: { value: new Color() },
   gsHaze: { value: 0 }, gsMist: { value: new Vector4() }, gsCloud: { value: new Vector4() }, gsDrift: { value: new Vector2() }, gsWet: { value: 0 }, gsNoise: { value: null },
   gsCasc: { value: new Vector4(-1, -1, .06, 0) },   // shadow cascades: near light's index, far light's index, edge fade
+  // the weather's world (gs.sky.Weather with a level: air.world): how wet, how much snow, how much in puddles, and how far along a
+  // surface's normal the cover is read; the cover picture (cover.js: the height of the highest thing over each spot) and where it lies
+  // (its middle x, z, 1 / its width, how far from the middle it reaches: 0 with no cover)
+  gsWx: { value: new Vector4() }, gsCover: { value: null }, gsCoverAt: { value: new Vector4() },
 };
 const AIR_GLSL = `
-uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc; uniform vec2 gsDrift; uniform sampler2D gsNoise; varying vec3 gsW;
+uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
 float gsInside(vec4 c){ vec3 p = c.xyz / c.w; vec2 e = min(p.xy, 1. - p.xy); return p.z > 0. && p.z < 1. ? smoothstep(0., gsCasc.z, min(e.x, e.y)) : 0.; }
 float gsShadeAt(vec3 wp){
   vec2 c = wp.xz + gsSun.xz / max(gsSun.y, .15) * (gsCloud.z - wp.y);
@@ -1037,9 +1041,28 @@ vec3 gsAir(vec3 col, vec3 wp){
 }
 `;
 // The air is one named look effect (src/kit/looks.js) so the WebGPU port can swap it for a node.
+// (gsWet: the game's own, everywhere. gsWx: the weather's, only on what the sky can see: wet, then puddles on
+// flat ground that spread as it goes on raining, then snow, on the flattest tops first and in patches, then on
+// everything that is not too steep. Not on what is marked GS_NO_SETTLE: water, and things that move about.
+// hd3d-gpu.js gpuWet is the same sums as nodes.)
 const AIR_WET = `#ifdef USE_FOG
-  if (gsAirOn > .5 && gsWet > 0.) { vec3 gn = transpose(mat3(viewMatrix)) * normal; float w = gsWet * (.3 + .7 * smoothstep(.15, .85, gn.y));
-    roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb *= 1. - w * .3; }
+  if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z > 0.) {
+    mat3 gsVi = transpose(mat3(viewMatrix)); vec3 gn = gsVi * normal, gg = gsVi * nonPerturbedNormal; float gsOpen = 1.;
+    if (gsCoverAt.w > 0.) { vec2 gp = gsW.xz + gg.xz * gsWx.w, gd = abs(gp - gsCoverAt.xy);
+      if (max(gd.x, gd.y) < gsCoverAt.w) gsOpen = smoothstep(-.7, -.25, gsW.y - texture2D(gsCover, gp * gsCoverAt.z).r); }
+    float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y));
+    roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb *= 1. - w * .3;
+#ifndef GS_NO_SETTLE
+    if (gsWx.y + gsWx.z > 0.) {
+      vec4 gsN1 = texture2D(gsNoise, gsW.xz * .05); float gsN2 = texture2D(gsNoise, gsW.xz * .021).r * .4;
+      float pl = mix(.86, .55, gsWx.z), p = step(1e-6, gsWx.z) * smoothstep(pl, pl + .035, gsN1.b * .6 + gsN2) * smoothstep(.97, .995, gg.y) * gsOpen;
+      float sn = gsN1.g * .6 + gsN2, lim = mix(.97, .55, gsWx.y);
+      float s = step(1e-6, gsWx.y) * smoothstep(lim, lim + .14, gg.y + (sn - .5) * .22) * smoothstep(0., .3, gsWx.y * 1.2 - sn * .6) * gsOpen;
+      roughnessFactor = mix(mix(roughnessFactor, .03, p), .85, s); metalnessFactor *= 1. - s;
+      diffuseColor.rgb = mix(diffuseColor.rgb * (1. - p * .3), vec3(.86, .9, .96), s); normal = normalize(mix(normal, nonPerturbedNormal, max(p * .92, s * .6)));
+    }
+#endif
+  }
 #endif
 `;
 // Shadow cascades (sun().fit(view, { near })): a second sun light with a small sharp shadow close to
@@ -1080,14 +1103,17 @@ const airSpec = (lit, wets) => ({
 });
 const airSpecs = [[false, false], [true, false], [true, true]].map(([l, w]) => airSpec(l, w));
 const airDone = new WeakSet();
-function airPatch(m) {
+function airPatch(m, o) {
   if (!m || airDone.has(m)) return;
   airDone.add(m);
   if (m.isShaderMaterial || m.isRawShaderMaterial || m.fog === false || m.isMeshDepthMaterial || m.isMeshDistanceMaterial || m.isShadowMaterial) return;
   const lit = m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshToonMaterial, wets = m.isMeshStandardMaterial;
+  if (wets && noSettle(m, o)) (m.defines ||= {}).GS_NO_SETTLE = '';
   lookPatch(m, 'air', airSpecs[wets ? 2 : lit ? 1 : 0]);
 }
-const airOf = o => { if (o.material) { if (Array.isArray(o.material)) for (const m of o.material) airPatch(m); else airPatch(o.material); } };
+// what puddles and snow do not form on: water, and people and animals (userData.noSettle on a mesh or a material says so for anything else)
+const noSettle = (m, o) => !!(o?.isSkinnedMesh || o?.userData?.noSettle || m?.userData?.noSettle);
+const airOf = o => { if (o.material) { if (Array.isArray(o.material)) for (const m of o.material) airPatch(m, o); else airPatch(o.material, o); } };
 
 /* ---------- particles ---------- */
 const PV = `attribute float size; attribute vec4 tint; varying vec4 vT; uniform float scale;
@@ -1303,15 +1329,16 @@ export class HDView {
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
    * thinning by mistFall a metre upwards; patchy 0..1), clouds (cover 0..1) with cloudShade (how
    * dark their shadows are), cloudHeight, cloudSize (metres), wind ([x, z] m/s they drift, or a gs.outdoors Wind), and wet
-   * (0..1: rain darkens things and makes up-facing surfaces shiny). sun: direction towards the sun
-   * (default: v.sun, the light from sun()). Returns the settings, which you can change any time;
-   * v.air(false) turns it off.
+   * (0..1: rain darkens things and makes up-facing surfaces shiny, everywhere; a gs.sky.Weather that is
+   * given the level does it only where the sky can see, with puddles and snow: it sets `world` here itself).
+   * sun: direction towards the sun (default: v.sun, the light from sun()). Returns the settings, which you
+   * can change any time; v.air(false) turns it off.
    */
   air(o = {}) {
     if (o === false) { this._air = null; return null; }
     if (!this._air) {
       const fc = this.scene.fog?.color || this.scene.background || new Color('#c8d0d8');
-      this._air = { haze: .0008, colour: new Color(fc.isColor ? fc : '#c8d0d8'), sunColour: null, mist: 0, mistFall: .08, mistY: 0, patchy: .7, clouds: 0, cloudShade: .45, cloudHeight: 400, cloudSize: 620, wind: [6, 2.5], wet: 0, sun: null };
+      this._air = { haze: .0008, colour: new Color(fc.isColor ? fc : '#c8d0d8'), sunColour: null, mist: 0, mistFall: .08, mistY: 0, patchy: .7, clouds: 0, cloudShade: .45, cloudHeight: 400, cloudSize: 620, wind: [6, 2.5], wet: 0, sun: null, world: null };
       if (!this.scene.fog) this.scene.fog = new FogExp2(this._air.colour, 0);
     }
     const a = this._air;
@@ -1628,7 +1655,7 @@ export class HDView {
   }
   gpuEnvBake(G) {
     const S = this.envSrc;
-    swapTwins(S.scene, G);
+    swapTwins(S.scene, G, null, null, this._air);
     const bake = () => G.fx.envFrom(G.r, S.scene, S.o), rt = S.o.wrap ? S.o.wrap(bake) : bake();
     if (this._gpuEnvRT && this._gpuEnvRT !== rt) this._gpuEnvRT.dispose();
     this._gpuEnvRT = rt; this.env = S.tex = rt.texture; this._gpuEnvN = S.n; return rt.texture;
@@ -1655,6 +1682,9 @@ export class HDView {
     U.gsCloud.value.set(a.clouds, a.clouds > 0 ? a.cloudShade : 0, a.cloudHeight, a.cloudSize);
     const w = a.wind; U.gsDrift.value.set((w.x ?? w[0]) * this.t / a.cloudSize, (w.z ?? w[1]) * this.t / a.cloudSize);
     U.gsWet.value = a.wet; U.gsNoise.value = noiseTex();
+    const wx = a.world, cv = wx?.cover?.ready !== undefined && wx.cover.ix === wx.cover.ix ? wx.cover : null;   // (a cover that has been placed)
+    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0);
+    if (cv) { U.gsCover.value = cv.texture; U.gsCoverAt.value.set(cv.cx, cv.cz, 1 / cv.span, cv.reach); } else U.gsCoverAt.value.w = 0;
     U.gsCasc.value.x = U.gsCasc.value.y = -1;
     const cs = this.cascade;
     if (cs?.near.visible && cs.near.castShadow && cs.near.parent) {
@@ -2345,13 +2375,18 @@ function closeTo(o, at, d) {
   if (!g.boundingBox) g.computeBoundingBox();
   return NEAR_B.copy(g.boundingBox).applyMatrix4(o.matrixWorld).distanceToPoint(at) < d;
 }
-function swapTwins(scene, G, cam = null, seen = null) {
+function swapTwins(scene, G, cam = null, seen = null, air = null) {   // (air: the view's air settings, if it has the air on)
   scene.traverse(o => {
     if (!o.isMesh) return;
     const gl = o.userData.gsGlMat || o.material;
     if (!gl?.userData?.gsGpu) return;
     if (G) {
-      let tw = gpuTwins.get(gl); if (tw?.r !== G.r) gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), built: new Set(), building: new Set() });
+      let tw = gpuTwins.get(gl);
+      if (tw?.r !== G.r) {
+        gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), built: new Set(), building: new Set() });
+        // (with the air on they get wet in the rain as plain materials do: AIR_WET, before their shaders are built)
+        if (air && gl.isMeshStandardMaterial && gl.fog !== false) for (const t of [tw.m, tw.m.userData.gsNear]) if (t?.isMeshStandardNodeMaterial) G.fx.gpuWet(t, o, AIR, noSettle(gl, o), noiseTex(), !!air.world);
+      }
       o.userData.gsGlMat = gl;
       const near = tw.m.userData.gsNear;
       let use = tw.m;
@@ -2372,7 +2407,7 @@ function swapTwins(scene, G, cam = null, seen = null) {
   });
 }
 function gpuSwap(v, G) {
-  swapTwins(v.scene, G, v.cam, G ? v.shSeen ||= new Set() : null);
+  swapTwins(v.scene, G, v.cam, G ? v.shSeen ||= new Set() : null, v._air);
   if (AREA_LTC && G && !AREA_GPU) { G.fx.areaLTC(AREA_LTC); AREA_GPU = true; }   // area lights' tables for WebGPU (panel)
   // shadow maps: each renderer keeps its own. WebGL drew into WebGPU's map when it found one on the light
   // (and the other way round), which made WebGPU remake it in the middle of a frame that still used it:
@@ -2400,7 +2435,7 @@ function gpuSwap(v, G) {
     gpuLooked.add(m);
     for (const n of looksOf(m)) G.fx.gpuLooks[n]?.(m, lookSpec(m, n), o);
     if (seeThrough3d(o)) G.fx.noAO(m);
-    if (v._air && m.isMeshStandardMaterial && m.fog !== false) G.fx.gpuWet(m, o, AIR);
+    if (v._air && m.isMeshStandardMaterial && m.fog !== false) G.fx.gpuWet(m, o, AIR, noSettle(m, o), noiseTex(), !!v._air.world);
   };
   if (G) v.scene.traverse(o => {   // (every frame: no array is made per thing)
     if (!o.isMesh) return;

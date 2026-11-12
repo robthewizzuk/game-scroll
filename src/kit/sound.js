@@ -16,6 +16,7 @@ import { lazy } from './lazy.js';
 import { register, own } from './cleanup.js';
 import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.js';
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
+import { caster, blocked, muffleOf, Room } from './acoustics.js';
 
 /* ---------- notes ---------- */
 const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -546,37 +547,92 @@ if (typeof document !== 'undefined') document.addEventListener?.('visibilitychan
 //   update() { ears.place(camera.position, camera.getWorldDirection(v)); }
 //   ears.tone(440, enemy.pos, { len: .2 });  ears.noise(.4, barrel.pos);  ears.zzfx(gun.pos, ...numbers);
 //   engine = ears.loop(car.pos, 'sawtooth', 80);  engine.move(car.pos).pitch(80 + speed * 6);  engine.stop();
+//
+// Sound that knows the level: new Ears({ level: world }) (a gs.physics3d World3D, a TileMap, a City,
+// Voxels, a function, or a list of them: see acoustics.js). Every sound is then muffled by the walls
+// between it and the ears by itself (less through a doorway or round a corner, more behind something
+// thick; a loop is checked again as it and the ears move), and the place the ears stand in is felt out
+// with a few rays a frame: a small room, a hall, a cave, a street or open country each gets its own
+// echo, changing as the player walks from one to the next. ears.room is what it has worked out
+// ({ size, walls, roof, enclosed, tail, wet, echo, delay }), ears.blocked(p) how muffled a point is.
 const P3 = p => ({ x: p?.x || 0, y: p?.z == null ? 0 : (p.y || 0), z: p?.z == null ? (p?.y || 0) : p.z });
+const OLD_MUFFLE = { gain: 1, hz: 700 };   // muffled: true, as it has always sounded
 export class Ears {
-  /** ref: distance at full volume; max: past this it doesn't get quieter; rolloff: how fast it falls; hrtf: false for plain stereo (cheaper). */
-  constructor({ ref = 2, max = 60, rolloff = 1, hrtf = true, flat = false, space = null, send = .5 } = {}) { Object.assign(this, { ref, max, rolloff, hrtf, flat, space, send }); this.pos = { x: 0, y: 0, z: 0 }; }
+  /**
+   * ref: distance at full volume; max: past this it doesn't get quieter; rolloff: how fast it falls; hrtf: false for plain stereo (cheaper).
+   * level: what stands in the way of sound (see above); hard: 0 soft .. 1 bare stone (how the place rings); unit: level units to a
+   * metre (16 for a map of 16-pixel tiles a metre across); auto: false to work the place out (ears.room) but leave the echo to you;
+   * rays: how many the place is felt with each frame (4).
+   */
+  constructor({ ref = 2, max = 60, rolloff = 1, hrtf = true, flat = false, space = null, send = .5, level = null, hard = .6, unit = 1, auto = true, rays = 4 } = {}) {
+    Object.assign(this, { ref, max, rolloff, hrtf, flat, space, send, hard, unit, auto, rays }); this.pos = { x: 0, y: 0, z: 0 }; this.at = { x: 0, y: 0, z: 0 };
+    this.live = []; this.turn = 0; this.heardAt = -1; this.level = level;
+  }
+  /** What stands in the way of sound (null: nothing does). Set it again when the level is another one. */
+  set level(l) { this._level = l || null; this.cast = caster(l, { flat: this.flat }); this.place0 = new Room({ hard: this.hard, flat: this.flat, unit: this.unit }); if (!l && this.auto) mixer.place(null); }
+  get level() { return this._level; }
   /** Where the listener is and which way it faces (forward and up are directions; up defaults to +y). */
   place(pos, forward = { x: 0, y: 0, z: -1 }, up = { x: 0, y: 1, z: 0 }) {
-    const a = audio(); if (!a) return this;
-    const L = a.ctx.listener, p = this.flat ? P3(pos) : { x: pos.x, y: pos.y, z: pos.z || 0 }, f = forward; this.pos = p;
-    try {
-      if (L.positionX) { const t = a.ctx.currentTime; L.positionX.setTargetAtTime(p.x, t, .02); L.positionY.setTargetAtTime(p.y, t, .02); L.positionZ.setTargetAtTime(p.z, t, .02);
-        L.forwardX.setValueAtTime(f.x, t); L.forwardY.setValueAtTime(f.y || 0, t); L.forwardZ.setValueAtTime(f.z ?? -1, t); L.upX.setValueAtTime(up.x, t); L.upY.setValueAtTime(up.y, t); L.upZ.setValueAtTime(up.z, t); }
-      else { L.setPosition(p.x, p.y, p.z); L.setOrientation(f.x, f.y || 0, f.z ?? -1, up.x, up.y, up.z); }
-    } catch { /* old audio */ }
+    this.at = this.flat ? { x: pos.x || 0, y: pos.y || 0, z: 0 } : { x: pos.x || 0, y: pos.y || 0, z: pos.z || 0 };
+    const a = audio();
+    if (a) {
+      const L = a.ctx.listener, p = this.flat ? P3(pos) : { x: pos.x, y: pos.y, z: pos.z || 0 }, f = forward; this.pos = p;
+      try {
+        if (L.positionX) { const t = a.ctx.currentTime; L.positionX.setTargetAtTime(p.x, t, .02); L.positionY.setTargetAtTime(p.y, t, .02); L.positionZ.setTargetAtTime(p.z, t, .02);
+          L.forwardX.setValueAtTime(f.x, t); L.forwardY.setValueAtTime(f.y || 0, t); L.forwardZ.setValueAtTime(f.z ?? -1, t); L.upX.setValueAtTime(up.x, t); L.upY.setValueAtTime(up.y, t); L.upZ.setValueAtTime(up.z, t); }
+        else { L.setPosition(p.x, p.y, p.z); L.setOrientation(f.x, f.y || 0, f.z ?? -1, up.x, up.y, up.z); }
+      } catch { /* old audio */ }
+    } else this.pos = this.flat ? P3(pos) : { x: pos.x, y: pos.y, z: pos.z || 0 };
+    if (this.cast) this.listen(a);
     return this;
   }
   /** For top-down 2D games: the listener at (x, y) on the ground, facing up the screen. */
-  place2d(x, y, facing = -Math.PI / 2) { this.flat = true; return this.place({ x, y }, { x: Math.cos(facing), y: 0, z: Math.sin(facing) }); }
-  /** A panner at p (and an optional muffle filter for "behind a wall"). Kit use; play sounds into it. */
-  node(p, { muffled = false } = {}) {
+  place2d(x, y, facing = -Math.PI / 2) { if (!this.flat) { this.flat = true; this.level = this._level; } return this.place({ x, y }, { x: Math.cos(facing), y: 0, z: Math.sin(facing) }); }
+  // each frame with a level: a few more rays round the ears, the place's echo brought up to date five
+  // times a second, and two of the sounds that go on checked again for walls
+  listen(a) {
+    this.place0.probe(this.cast, this.at, this.rays);
+    const now = a ? a.ctx.currentTime : 0;
+    if (this.auto && a && now - this.heardAt > .2 && this.place0.seen >= 8) { this.heardAt = now; mixer.place(this.place0.read(), this.place0.known ? .6 : .3); }
+    for (let k = 0, n = Math.min(2, this.live.length); k < n; k++) this.live[this.turn++ % this.live.length].hear();
+  }
+  /** The place round the ears, as the level says it is so far: { size, walls, roof, enclosed, tail, wet, echo, delay } (null without a level). */
+  get room() { return this.cast ? this.place0.read() : null; }
+  /** How much the level keeps a sound at p from the ears: 0 nothing in the way .. 1 behind a thick wall (0 without a level). */
+  blocked(p) {
+    if (!this.cast) return 0;
+    // (a volley of sounds from one spot asks once: answers are kept a quarter of a second, by half-metre cells)
+    const e = this.at, now = typeof performance !== 'undefined' ? performance.now() : Date.now(), M = this.memo ||= new Map();
+    const ek = Math.round(e.x * 2 / this.unit) + ',' + Math.round(e.y * 2 / this.unit) + ',' + Math.round(e.z * 2 / this.unit);
+    if (ek !== this.memoAt || now - this.memoT > 250 || M.size > 64) { M.clear(); this.memoAt = ek; this.memoT = now; }
+    const key = Math.round((p.x || 0) / this.unit * 2) + ',' + Math.round((p.y || 0) / this.unit * 2) + ',' + Math.round((p.z || 0) / this.unit * 2);
+    let k = M.get(key);
+    if (k == null) { k = blocked(this.cast, e, this.flat ? { x: p.x || 0, y: p.y || 0 } : p, { flat: this.flat, spread: .6 * this.unit, thick: 1.2 * this.unit }); M.set(key, k); }
+    return k;
+  }
+  /**
+   * A panner at p. With a level the sound is muffled by what stands between it and the ears; muffled: true
+   * (behind a wall, as you say) or 0..1 says so yourself, false leaves it clear. Kit use; play sounds into it.
+   */
+  node(p, { muffled, track = false } = {}) {
     const a = audio(); if (!a) return null;
     try {
       const q = this.flat ? P3(p) : { x: p.x, y: p.y, z: p.z || 0 }, pn = a.ctx.createPanner();
       pn.panningModel = this.hrtf ? 'HRTF' : 'equalpower'; pn.distanceModel = 'inverse'; pn.refDistance = this.ref; pn.maxDistance = this.max; pn.rolloffFactor = this.rolloff;
       if (pn.positionX) { pn.positionX.value = q.x; pn.positionY.value = q.y; pn.positionZ.value = q.z; } else pn.setPosition(q.x, q.y, q.z);
+      const own = muffled === true || muffled === false || typeof muffled === 'number', k = muffled === true ? 1 : own ? +muffled : this.blocked(p);
+      let end = pn;
+      if (k > .02 || (track && this.cast && !own)) {
+        const f = a.ctx.createBiquadFilter(), g = a.ctx.createGain(), m = muffled === true ? OLD_MUFFLE : muffleOf(k);
+        f.type = 'lowpass'; f.frequency.value = m.hz; f.Q.value = .5; g.gain.value = m.gain; pn.connect(f); f.connect(g); end = g;
+        if (!own) pn.gsMuffle = { f, g, k };
+      }
       // with a space, some of each sound also goes into the place's echo (far sounds keep more of it)
-      if (this.space?.tail) { const s = a.ctx.createGain(); s.gain.value = this.send; pn.connect(s); s.connect(this.space.tail); }
-      if (!muffled) { pn.connect(busIn('sfx')); return pn; }
-      const f = a.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700; pn.connect(f); f.connect(busIn('sfx')); return pn;
+      if (this.space?.tail) { const s = a.ctx.createGain(); s.gain.value = this.send; end.connect(s); s.connect(this.space.tail); }
+      end.connect(busIn('sfx')); return pn;
     } catch { return null; }
   }
-  /** One note at a point (options as tone(), plus muffled: true for behind a wall). */
+  /** One note at a point (options as tone(), plus muffled: true for behind a wall where there is no level to say so). */
   tone(f, p, o = {}) { const n = this.node(p, o); if (n) tone(f, { ...o, out: n }); return this; }
   /** A noise burst at a point (options as noise()). */
   noise(len, p, o = {}) { const n = this.node(p, o); if (n) noise(len, { ...o, out: n }); return this; }
@@ -589,24 +645,31 @@ export class Ears {
     return this;
   }
   /** A steady sound that follows something (engines, fires, a humming generator): returns { move(p), pitch(hz), volume(v), stop() }. */
-  loop(p, wave = 'sawtooth', hz = 90, { vol = .03, muffled = false } = {}) {
+  loop(p, wave = 'sawtooth', hz = 90, { vol = .03, muffled } = {}) {
     const a = audio(), dead = { move() { return this; }, pitch() { return this; }, volume() { return this; }, stop() {} };
     if (!a || sound.muted || !sound.volume) return dead;
-    const n = this.node(p, { muffled }); if (!n) return dead;
+    const n = this.node(p, { muffled, track: true }); if (!n) return dead;
     try {
       const o = a.ctx.createOscillator(), g = a.ctx.createGain(); o.type = wave; o.frequency.value = hz; g.gain.value = vol; o.connect(g); g.connect(n); o.start();
-      const self = this, h = {
-        move(q) { const r = self.flat ? P3(q) : { x: q.x, y: q.y, z: q.z || 0 }, t = a.ctx.currentTime; if (n.positionX) { n.positionX.setTargetAtTime(r.x, t, .03); n.positionY.setTargetAtTime(r.y, t, .03); n.positionZ.setTargetAtTime(r.z, t, .03); } else n.setPosition(r.x, r.y, r.z); return h; },
+      const self = this; let at = p;
+      const h = {
+        move(q) { at = q; const r = self.flat ? P3(q) : { x: q.x, y: q.y, z: q.z || 0 }, t = a.ctx.currentTime; if (n.positionX) { n.positionX.setTargetAtTime(r.x, t, .03); n.positionY.setTargetAtTime(r.y, t, .03); n.positionZ.setTargetAtTime(r.z, t, .03); } else n.setPosition(r.x, r.y, r.z); return h; },
         pitch(f) { o.frequency.setTargetAtTime(f, a.ctx.currentTime, .05); return h; },
         volume(v) { g.gain.setTargetAtTime(v, a.ctx.currentTime, .05); return h; },
-        stop() { try { g.gain.setTargetAtTime(0, a.ctx.currentTime, .05); o.stop(a.ctx.currentTime + .2); } catch { /* stopped */ } loops.delete(h); },
+        // (kit: the walls between it and the ears, looked at again; it glides to the new sound over a fifth of a second)
+        hear() { const mf = n.gsMuffle; if (!mf) return; const k = self.blocked(at); if (Math.abs(k - mf.k) < .02) return; mf.k = k; const m = muffleOf(k), t = a.ctx.currentTime; mf.f.frequency.setTargetAtTime(m.hz, t, .07); mf.g.gain.setTargetAtTime(m.gain, t, .07); },
+        /** 0..1: how muffled the level makes it now. */
+        get muffled() { return n.gsMuffle?.k ?? 0; },
+        stop() { try { g.gain.setTargetAtTime(0, a.ctx.currentTime, .05); o.stop(a.ctx.currentTime + .2); } catch { /* stopped */ } loops.delete(h); const i = self.live.indexOf(h); if (i >= 0) self.live.splice(i, 1); },
       };
-      loops.add(h); return h;
+      loops.add(h); if (n.gsMuffle) this.live.push(h); return h;
     } catch { return dead; }
   }
-  /** How loud a sound at p would be here, 0..1 (for subtitles or "you heard that" hints). */
-  heard(p) { const q = this.flat ? P3(p) : { x: p.x, y: p.y, z: p.z || 0 }, d = Math.hypot(q.x - this.pos.x, q.y - this.pos.y, q.z - this.pos.z); return this.ref / (this.ref + this.rolloff * Math.max(0, Math.min(this.max, d) - this.ref)); }
+  /** How loud a sound at p would be here, 0..1 (for subtitles or "you heard that" hints): quieter with distance, and behind walls where there is a level. */
+  heard(p) { const q = this.flat ? P3(p) : { x: p.x, y: p.y, z: p.z || 0 }, d = Math.hypot(q.x - this.pos.x, q.y - this.pos.y, q.z - this.pos.z); return this.ref / (this.ref + this.rolloff * Math.max(0, Math.min(this.max, d) - this.ref)) * (this.cast ? muffleOf(this.blocked(p)).gain : 1); }
 }
+/** The sums behind sound that knows the level, for your own sounds: caster(level), blocked(cast, ear, source), muffleOf(amount), Room (see Ears). */
+export const acoustics = { caster, blocked, muffleOf, Room };
 let route = null;   // while set, tone() and noise() play into this node (for Ears.play)
 const loops = new Set();
 register('ears', { stop: () => { for (const h of [...loops]) h.stop(); const a = audio(); try { a?.ctx.listener.positionX?.setValueAtTime(0, a.ctx.currentTime); } catch { /* ok */ } } });
@@ -652,6 +715,36 @@ function channelNode(name) {
 function busIn(name) { return channelNode(name || 'sfx') || audio()?.out; }
 setSfxOut(() => busIn('sfx'));
 function setLevel(g, v, fade) { const t = g.context.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(v, t, Math.max(.005, fade / 3)); }
+// The place's own echo, set from the level by Ears (mixer.place): effects and voices only, never the music.
+// Two reverbs: the idle one is given the new tail and the two cross over, so walking from a cupboard
+// into a hall never clicks; and one delay for the slap back off far walls outdoors.
+function placeGraph() {
+  const m = mixGraph(); if (!m) return null;
+  if (m.place) return m.place;
+  const ctx = m.ctx, send = ctx.createGain(), out = ctx.createGain(), dl = ctx.createDelay(1.5), dlp = ctx.createBiquadFilter(), dg = ctx.createGain();
+  const slot = () => { const cv = ctx.createConvolver(), g = ctx.createGain(); cv.normalize = false; g.gain.value = 0; send.connect(cv); cv.connect(g); g.connect(out); return { cv, g, tail: 0 }; };
+  dlp.type = 'lowpass'; dlp.frequency.value = 2600; dg.gain.value = 0; send.connect(dl); dl.connect(dlp); dlp.connect(dg); dg.connect(out);
+  out.connect(m.muffle);   // (so the echo is dulled with everything else: under water, inside a box)
+  for (const b of ['sfx', 'voice']) channelNode(b).connect(send);
+  return m.place = { ctx, send, out, dl, dg, slots: [slot(), slot()], on: 0, busy: 0, irs: new Map() };
+}
+// an echo tail made in code: it dies away evenly (60 dB down at `secs`), the top end first, after a few
+// first bounces off the nearest walls
+function placeImpulse(p, secs) {
+  const key = Math.round(Math.log(secs) / Math.log(1.2)), have = p.irs.get(key); if (have) return have;
+  const ctx = p.ctx, T = Math.pow(1.2, key), n = Math.max(64, Math.floor(ctx.sampleRate * T)), b = ctx.createBuffer(2, n, ctx.sampleRate), k = Math.log(1000) / n;
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch); let lp = 0;
+    for (let i = 0; i < n; i++) { const x = i / n, a = .12 + .5 * (1 - x) * (1 - x); lp += ((Math.random() * 2 - 1) - lp) * a; d[i] = lp * Math.exp(-k * i) * (i < 96 ? i / 96 : 1); }
+    for (let e = 0; e < 5; e++) { const at = Math.floor(ctx.sampleRate * Math.min(T * .5, .006 + .011 * (e + 1) * (.6 + .8 * Math.random()) * Math.min(3, T))); if (at < n) d[at] += (Math.random() < .5 ? -1 : 1) * .6 / (e + 1.5); }
+    // the whole tail carries about as much as the sound that set it off, whatever its length (so wet is how
+    // much echo there is next to the sound, the same in every browser: the reverbs' own levelling is off).
+    // .35: the tail is duller than most sounds, and gives the low and middle of a sound more than its share
+    let sum = 0; for (let i = 0; i < n; i++) sum += d[i] * d[i]; const s = sum > 0 ? Math.sqrt(.35 / sum) : 0; for (let i = 0; i < n; i++) d[i] *= s;
+  }
+  if (p.irs.size >= 6) p.irs.delete(p.irs.keys().next().value);
+  p.irs.set(key, b); return b;
+}
 const ROOMS = {
   none: { reverb: 0, echo: 0 },
   room: { reverb: .18, size: .5, echo: 0 },
@@ -681,6 +774,30 @@ export const mixer = {
     m.echoGain.gain.setTargetAtTime(Math.max(0, Math.min(1, o.echo || 0)), t, .05);
     return mixer;
   },
+  /**
+   * The echo of the place the listener is in, for effects and voices (not the music): { tail: seconds it
+   * rings, wet: 0..1 how much (1: the echo carries about as much as the sound itself; a room is about .3, a
+   * great hall .5), echo: 0..1 a single slap back, delay: seconds until it returns }, gliding
+   * there over `fade` seconds; null for none. new Ears({ level }) sets it from the level by itself; set it
+   * yourself for a place you know (a cutscene in a cathedral: { tail: 3.5, wet: .4 }).
+   */
+  place(o = null, fade = .6) {
+    if (!o && !mix?.place) return mixer;
+    const p = placeGraph(); if (!p) return mixer;
+    const t = p.ctx.currentTime, k = Math.max(.01, fade / 3), wet = o ? Math.max(0, Math.min(1, +o.wet || 0)) : 0, tail = wet > .004 ? Math.max(.15, Math.min(4.5, +o.tail || 1)) : 0;
+    let cur = p.slots[p.on];
+    // a tail within a fifth of the one ringing now keeps it (only its level moves); else the idle reverb takes the new one
+    if (tail && (!cur.tail || Math.abs(Math.log(tail / cur.tail)) > .19) && t >= p.busy) {
+      const next = p.slots[1 - p.on];
+      try { next.cv.buffer = placeImpulse(p, tail); next.tail = tail; cur.g.gain.setTargetAtTime(0, t, k); p.on = 1 - p.on; p.busy = t + fade * 1.6; cur = next; } catch { /* no reverb here */ }
+    }
+    cur.g.gain.setTargetAtTime(cur.tail ? wet : 0, t, k);
+    if (!tail) p.slots[1 - p.on].g.gain.setTargetAtTime(0, t, k);
+    const e = o ? Math.max(0, Math.min(.6, +o.echo || 0)) : 0;
+    if (e > 0) p.dl.delayTime.setTargetAtTime(Math.max(.05, Math.min(1.4, +o.delay || .2)), t, .12);
+    p.dg.gain.setTargetAtTime(e, t, k);
+    return mixer;
+  },
   /** 0..1: how muffled everything sounds (0 clear, 1 deep underwater), fading over `fade` seconds. */
   muffle(x = 0, fade = .15) {
     const m = mixGraph(); if (!m) return mixer;
@@ -694,7 +811,7 @@ export const mixer = {
   reset() {
     if (!mix) return mixer;
     for (const g of mix.buses.values()) { g.level = 1; setLevel(g, 1, .05); }
-    mixer.room('none'); mixer.muffle(0, .05);
+    mixer.room('none'); mixer.muffle(0, .05); mixer.place(null, .05);
     return mixer;
   },
 };

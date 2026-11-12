@@ -36,6 +36,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Seeded random, daily seed, smooth noise, timers | `gs.math` | [Maths](#maths) |
 | 3D text, 3D particles, outlines, glitch, trails | `gs.fx3d` | [3D extras](#3d-extras) |
 | Enemies that plan: behaviour trees, "what do I want most" | `gs.ai.Tree` (mistreevous), `gs.ai.Choose` | [Behaviour trees and wants](#behaviour-trees-and-wants) |
+| People who stumble, brace, fall and get up when hit, shoved, tripped or blown up | `gs.characters.Reactions`, `phys.ragdoll(character)` | [People who react](#people-who-react) |
 | 3D people that bend smoothly, walk-to-run blends, feet on slopes, faces that talk | `gs.poses.person`, `rig.blend`, `rig.plant`, `gs.characters.Face` | [Skinned people, faces and lip sync](#skinned-people-faces-and-lip-sync) |
 | Thousands of fish, bats or zombies that flock | `gs.ai.Swarm` (WebGPU compute, CPU fallback) | [Swarms](#swarms-thousands-of-flockers) |
 | Play with your face or your hands | `gs.vision` (MediaPipe) | [Face and hands](#face-and-hands) |
@@ -67,6 +68,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Cars and karts that drift and boost, laps | `gs.vehicles`, `World3D.vehicle()` | [Game kits](#game-kits) |
 | A 3D level from a text map | `gs.level3d` | [Game kits](#game-kits) |
 | Time of day, rain, snow, lightning | `gs.sky` | [Game kits](#game-kits) |
+| Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -74,14 +76,19 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Mission scripts, objectives, checkpoints | `gs.missions` | [Action and adventure kits](#action-and-adventure-kits) |
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
+| Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
+| Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
+| Fur on animals, hair in strands and beards on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
 | Ball games with boosting, flipping cars | `gs.arena` | [Action and adventure kits](#action-and-adventure-kits) |
 | Chapters, stars, collectibles, unlocks | `gs.campaign` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds placed in 3D, music that builds up | `gs.sound.Ears`, `music({ layers })` | [Action and adventure kits](#action-and-adventure-kits) |
+| Sounds muffled by walls, each place with its own echo, by themselves | `new Ears({ level })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
 | Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
+| Water you can disturb: rings, splashes and spray, wakes and foam behind boats and swimmers, rain on it, foam at the shore, the view from under it | `gs.outdoors.Water` | [Water you can disturb](#water-you-can-disturb) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
 | Planes, boats, hover craft, floating crates | `gs.craft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Cloth, ropes, jelly to cut and squish; a simple liquid | `gs.soft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -1112,8 +1119,54 @@ steps.update(dt, hero);                                       // feet[i].pos, .l
 wobble.hit(1); wobble.update(dt); body.rotation.x = wobble.value * .4;   // springy hit reaction
 ```
 
-In 3D, ragdolls are part of 3D physics (2D games use `gs.physics` `phys.ragdoll(x, y)`, above): `rag = phys.ragdoll(guard, { limbs: [head, armL, armR, legL, legR], push: [0, 2, -5] })`
-turns the character floppy (each limb swings at its origin). `rag.push()`, `rag.hit(part, ...)`, `rag.remove()`.
+In 3D, ragdolls are part of 3D physics (2D games use `gs.physics` `phys.ragdoll(x, y)`, above). On a
+character with a `gs.poses` rig (`figure()`, `person()`, `gs.models.human()`), `rag = phys.ragdoll(guard, { push: [0, 2, -5] })`
+is a jointed ragdoll: eleven bodies (hips, chest, head, upper and lower arms and legs) joined where the
+joints are, each turning only as far as a real one does (a knee bends one way; a head can't spin round),
+and the character stays one skinned mesh whose bones follow them. `rag.push(x, y, z)`, `rag.hit('head', x, y, z, point)`,
+`rag.part('armL')`, `rag.still()`, `rag.remove()` (it stays as it lies). It has muscles: `rag.drive({ armL: [-1.2, 0, .3], foreL: [-.6, 0, 0] }, .6)`
+turns its joints towards a pose (the rig's angles from rest; strength 0 limp to 1 firm), so a falling body can
+throw its arms out; `rag.relax()` lets go. A character you built from loose parts with no rig:
+`phys.ragdoll(guard, { limbs: [head, armL, armR, legL, legR], push })` (each limb swings at its origin).
+
+### People who react
+
+`const { Reactions } = gs.characters;` One for each character with a rig. It decides nothing about your
+game: you tell it what happened to the body, and it moves the body the way a body moves.
+
+```js
+react = new Reactions(hero, { world: phys, mover });   // world: falls are a real ragdoll; without one they are acted
+update(dt) {
+  if (!react.busy) { /* steer hero as usual */ }
+  hero.rig.update(dt, { speed }); react.update(dt);    // every frame, after the rig
+  if (react.stepped) sounds.step(); if (react.landed) feel.land(x, y);   // true for one frame each
+}
+react.hit([0, 0, -2.5], bullet.point);    // a change of speed (metres a second, world) at a world point
+react.blast(bomb.position, 9, 6);         // strength at the centre, radius
+react.trip();                             // legs caught: a stumble, or a fall at a run
+react.fall(null, { limp: true });         // knocked out or shot: stays down until react.getUp({ revive: true })
+react.brace(grenade.position, .8);        // arms up against something coming
+```
+
+- **How hard decides what happens.** A light blow only makes the part it landed on give (a head snaps back, a
+  shoulder turns, a knee buckles). A harder one sets the body **staggering**: it takes real steps to get its
+  feet back under its weight, as many as it needs, and you have it back when it is steady. Harder still, a
+  blow to the legs, too many steps, or no ground where the next step must go (a ledge), and it **falls**:
+  a ragdoll that throws its arms towards the ground, lands (`react.landed`, `react.impact` in metres a
+  second), lies a moment (`rest`, default 1.4 s), and **gets up** from its front or its back, facing the way
+  a person getting up from there would.
+- `react.state` is `'steady'`, `'stagger'`, `'falling'`, `'down'` or `'rising'`; `react.busy` is true for all
+  but the first; `react.down` while it lies. `react.reset()` in `reset()` stands it up at once.
+- `steady: 2` is a brute who shrugs off what fells a person; `.5` someone already hurt. Change `react.steady`
+  as health drops.
+- With `world` it also puts its hands out against a wall it is about to run into, and is knocked back off it
+  at a run (`walls: false` turns that off; `level` is what counts as a wall, as for `gs.sound.Ears`).
+  `ground: (x, z) => height` for uneven floors and edges (the height of whatever is down there; `-Infinity` for a pit).
+- With `mover` (the `phys.mover()` that walks the character) a stagger stops at walls, the mover stands aside
+  while the body is down so nothing bumps into an empty capsule, and it is put back where the body gets up.
+- Without `world`, falls are acted (forwards onto the hands or back onto the seat) and the body gets up the
+  same way. On a desktop a falling body measured about a tenth of a millisecond a frame, physics and all, and
+  one standing a few hundredths (not yet measured on a phone).
 
 ### Skinned people, faces and lip sync
 
@@ -1747,6 +1800,8 @@ following. `Laps(checkpoints)` counts laps, places racers and gives computer dri
 For real suspension and cars that can roll over, `World3D.vehicle(mesh, { wheels })` in
 `gs.physics3d` uses Rapier's ray-cast vehicle: `car.drive(throttle, steer, brake)`, `car.speed`,
 `car.upsideDown`, `car.rightUp()`.
+These are how a car handles; what it looks like is yours, or `gs.models.vehicle('car')`:
+[Vehicles made in code](#vehicles-made-in-code).
 
 **3D levels from text** (`gs.level3d.Level3D(text, { size, wall, look })`): the same text maps in 3D.
 `#` walls, `.` floor, `1`-`9` raised floors, `~` water, `=` low walls, spaces as holes, letters as
@@ -1759,7 +1814,9 @@ sky for Next Gen). `clouds: 0..1` adds drifting clouds lit by the sun, and on Ne
 lights the scene's reflections from the sky; with `v.air()` their shadows cross the ground (see
 [nextgen-3d.md](nextgen-3d.md#outdoor-worlds-sun-air-sky-and-grade)). `Weather(view, { kind: 'rain' | 'snow' | 'storm' })` falls around the camera;
 storms flash lightning, and `onFlash(far)` is your cue for thunder. In AR the camera feed is the sky,
-so use `Weather` alone.
+so use `Weather` alone. Given the level (`Weather(view, { level: world })`) it changes the world too: rain and
+snow stop at roofs, the open ground gets wet and puddled and dries again, and snow settles and melts: see
+[Weather that changes the world](#weather-that-changes-the-world).
 
 ## Action and adventure kits
 
@@ -1823,7 +1880,8 @@ time; `timeScale` slows the world while one shows; `ease` gives the player more 
 
 **Breaking things** (`gs.destruction`, 3D, three-pinata): `shatter(mesh, { pieces, at, world })` breaks
 any mesh into real pieces (more near where it was hit) that fly with `gs.physics3d`; `slice(mesh, point,
-normal)` cuts one in two; `Rubble` fades old pieces so phones stay fast.
+normal)` cuts one in two; `Rubble` fades old pieces so phones stay fast. A whole building that knows what
+holds it up is `Structure`: [Buildings that come apart](#buildings-that-come-apart).
 
 **Stealth extras** (`gs.stealth`, on top of `gs.senses`): `lightAt(p, lamps)` is a light meter (walls
 cast shadows) to feed the guards' eyes, `Takedown.check()` finds a guard you're behind, `Bodies` get
@@ -1849,6 +1907,37 @@ scores, collectibles and extras that unlock at a star count, saved compactly wit
 audio (left/right and in front/behind in headphones, quieter with distance, `muffled` for behind a
 wall). `ears.place(camera.position, forward)` each frame, then `ears.play('boom', pos)`,
 `ears.tone()`, `ears.zzfx(pos, ...)`, and `ears.loop(pos)` for engines that follow something.
+
+**Sound that knows the level**: give the ears the level and they work the rest out.
+`new Ears({ level: world })` takes a `gs.physics3d` `World3D`, a `TileMap`, a `City`, `Voxels`, 2D
+`Physics`, a `NavGrid`, a function `(from, dir, max) => metres to the first solid thing`, or a list
+of those. Then:
+
+- Every sound is **muffled by what stands between it and the ears**: quieter and duller behind a
+  wall, more so behind a thick one, less through a doorway or round a corner (sound finds the way
+  round). A `loop()` is checked again as it and the ears move, so an engine dulls as it passes behind
+  a barn and clears as it comes out. `muffled: true` or a number 0..1 still says so yourself, and
+  `muffled: false` leaves one sound clear (a voice in the player's own head).
+- **The place gets its own echo**: a few rays a frame feel out the walls and the roof round the ears,
+  and effects and voices (never the music) ring like the place they are in: a cupboard, a hall, a
+  cave, a street with a slap back off the far houses, open country with none. It changes smoothly as
+  the player walks from one to the next.
+
+`ears.room` is what it has worked out (`{ size, walls, roof, enclosed, tail, wet, echo, delay }`),
+`ears.blocked(pos)` is how muffled a point is (0 clear to 1 behind a thick wall) and `ears.heard(pos)`
+is quieter behind walls too, so subtitles and "you heard that" hints agree with the sound. Options:
+`hard` (0 carpet, snow and forest to 1 bare stone, default .6), `unit` (level units to a metre: 16 for
+a map of 16-pixel tiles a metre across), `rays` (4 a frame) and `auto: false` to read `ears.room` and
+set the echo yourself with `mixer.place({ tail, wet, echo, delay })`. Set `ears.level` again when the
+level is another one. The sums alone, with no audio, are `gs.sound.acoustics` (`caster`, `blocked`,
+`muffleOf`, `Room`). It costs a few rays a frame and one small search per sound behind a wall.
+
+```js
+const ears = new Ears({ level: world, hard: .8 });          // a stone keep
+update(dt) { ears.place(cam.position, forward); }
+ears.play('door', door.pos);                                 // dull if it is two rooms away
+if (ears.room.roof < .3) rain.set({ vol: .5 }, 1);           // the rain is louder out of doors
+```
 `music({ ..., drums2, lead2, layers: { drums2: .3, lead2: .7 } })` builds up with `tune.intensity(x)`:
 quiet while sneaking, full when the fight starts.
 
@@ -1886,7 +1975,8 @@ blades that sway (only near the camera), and `scatter(props, 'tree', 300, { abov
 `gs.props` things on suitable ground. For a camera down in the grass (a sniper's nest, a crawl, a close-up), `land.meadow({ reach: 22, gap: .55 })`
 keeps a square of thick tufts round the camera wherever it goes: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `tree({ kind: 'pine' | 'round' | 'palm' | 'bush' })` and `rock()`
 make simple shapes to scatter. Next Gen worlds can paint it instead with `looks.ground` (fields, hedges, lanes, mud, puddles), ring it with far hills (`horizon(land)`) and give rocks and leaves their looks: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `River(stream)` and `FloodWater(flood)` draw `gs.flow` rivers, waterfalls, lava and floods (see Flowing liquids). `Water({ level, waves })` is a sea of rolling waves you can ask about
-anywhere (`height(x, z)`, `normal`, `depth(p)`); call `update(dt, camera.position)` each frame.
+anywhere (`height(x, z)`, `normal`, `depth(p)`); call `update(dt, camera.position)` each frame. It can be disturbed too (rings, splashes, wakes,
+rain, a shore, the view from under it): see [Water you can disturb](#water-you-can-disturb).
 
 `new Wind({ x: 3, z: 0, gust: .4 })` is one wind for the whole world: `land.wind = wind` sways the
 grass with it, `looks.leaves(m, { wind })` makes the trees lean and stream downwind, `Weather({ wind })`
@@ -2058,7 +2148,9 @@ finger lands the one-finger gesture is dropped, so a pinch never ends in a stray
 and Tone.js, `'voice'`, or your own with `tone(f, { bus: 'alarm' })`), then a shared room and muffle.
 `mixer.volume('music', .4)`, `mixer.duck('music', .3, .8)` (dip it for a big moment), `mixer.room('cave')`
 (`'room'`, `'hall'`, `'cave'`, `'pipe'` or `{ reverb, size, echo, delay }`) and `mixer.muffle(.8)` (underwater,
-stunned, inside a box). It all goes back to normal when the round ends.
+stunned, inside a box). `mixer.place({ tail, wet, echo, delay })` is the echo of the place the listener
+stands in, for effects and voices only: `new Ears({ level })` sets it from the level by itself, or set
+it for a place you know (`{ tail: 3.5, wet: .4 }` is a cathedral). It all goes back to normal when the round ends.
 
 **Speech** (`gs.sound.say('Watch out!', { pitch, rate, lang })`): characters talk with the phone's own
 voices (no sound files; iPhone and Android speech, the browser's on the web). It returns a promise
@@ -2391,3 +2483,307 @@ update(dt) { tap.on = pressed; ball.set(px, py, pz); fluid.update(dt);
   (`fluid.dropSize` is a drop's width). `new Fluid(view, { gpu: false, drops: 600 })` runs what the
   slowest phones run, on any machine: play your game with it once. It pours and fills the same way
   every time (`seed` changes its dice), so a level that works once keeps working.
+
+## Buildings that come apart
+
+`const { Structure } = gs.destruction;` (Next Gen.) A `gs.models.building()` made of pieces: each half of
+a pier, the wall under and over each window, each window and door, each floor tile and roof panel. Every
+piece knows what holds it up, so you only say where it was hit:
+
+```js
+make():   house = new Structure(view.scene, { building: { style: 'brick', w: 8, d: 6, floors: 2 }, at: [0, 0, -12], turn: .4 });
+reset() { phys = new World3D(); house.reset({ world: phys }); }      // whole again, and solid in this round's world
+update(dt) {
+  phys.step(dt); house.update(dt);                                   // after the physics step
+  for (const b of house.broke) if (b.how !== 'fell') dust(b.x, b.y, b.z, b.size);   // what happened this frame
+}
+house.hit(bullet.point, { power: .4, dir: bullet.dir });             // a shot: small hits add up
+house.hit(ball.position, { radius: 1.3, power: 2.4, dir, push: 5 }); // a wrecking ball
+house.blast(shell.position, 3);                                      // an explosion, 3 m across
+```
+
+- **What holds what.** A piece stands on the one under it, and is held by the ones at its sides. When
+  pieces go, whatever no longer reaches the ground through the ones left comes down a moment later, the
+  collapse spreading out from the hole. Masonry (brick, stone, plaster) can hang one piece out sideways, so a
+  wall closes over a hole one window wide and comes down over a wider one; timber and concrete hang two.
+  Knock out a corner and the wall above it goes, with the floor it carried; the roof hangs on while
+  a wall or its ridge still holds it. The same shell leaves a different ruin in each style.
+- `hit(point, { radius, power, dir, push })`: pieces within `radius` (.4 m) are hurt by `power` (a piece
+  breaks at about 1 for timber, 1.5 brick, 2 stone, 2.5 concrete, .1 a window; hurt adds up) and a broken
+  one goes to rubble along `dir`. `blast(point, radius, { power, push })`: `power` (4) at the centre
+  falling to none at `radius`; the nearest pieces go to rubble and the rest of the broken ones are thrown
+  out whole. Both return how many pieces broke. Points are world points.
+- `house.broke` after `update()`: `{ how: 'broke' | 'fell' | 'landed', kind: 'wall' | 'window' | 'door' |
+  'roof' | 'floor', x, y, z, size, mass, speed, crumbled }` for each thing that happened. The kit draws
+  the pieces and the rubble and nothing else: dust, sound and shake are yours, from this list.
+- `house.standing` (1 whole .. 0 flat, by weight), `house.left` / `house.pieces`, `house.falling`,
+  `house.busy` (true until everything has come to rest: wait for it before you score a demolition).
+- **With a physics world** (`world: phys`, or `reset({ world })`) the walls are solid for movers, rays and
+  `gs.sound.Ears`, a hole lets them through, and what falls is real tumbling bodies that pile up and can
+  break what they land on (`crush: 0` turns that off). `phys.ray()` gives `hit.thing.structure` for the
+  building it struck. **Without one** pieces fall and break up where they land, the same way every time,
+  and `house.ray(from, dir)` finds the piece a shot strikes (`{ point, normal, distance, kind }`).
+- Small rubble is cheap: boxes drawn as copies, in the building's own materials, that land on the ground
+  (`ground: (x, z) => height`) or on what still stands. `bits` (240) is how many a material keeps and `keep`
+  (40) how many fallen pieces stay as bodies; the oldest go first.
+- **Your own boxes** in place of a building: `pieces: [{ size: [w, h, d], at: [x, y, z], material: 'planks',
+  strength, fixed }]` (`at` is each box's centre; `fixed: true` never moves and holds the rest up, as the
+  ground does: a cliff a bridge is built into), with `materials: { planks: aThreeMaterial }` if you want
+  your own and `span` (1: masonry, 2: timber and steel). Boxes hold each other where they touch.
+- Make it once with the level (`make()`), and `reset()` it each round. A house is about 170 pieces and
+  4,400 triangles and takes a quarter of a second to cut the first time, then a few milliseconds a copy;
+  a five-storey block about 1,500 pieces. On a desktop a house falling with physics measured half a
+  millisecond a frame, and under a tenth without (not yet measured on a phone).
+- Not there: rooms inside (it is a shell with floors), break edges that are not straight, and rubble
+  that piles against walls (it lies on the ground and on floors).
+
+## Water you can disturb
+
+`const { Water } = gs.outdoors;` (3D.) The sea, lake or pond a game already has, answering to what
+happens to it. The water within 24 metres of the centre you give `update()` is a field of ripples:
+
+```js
+make():   sea = new Water({ level: 0, waves: .6, ripples: true, bed: (x, z) => land.height(x, z) });
+          view.scene.add(sea.mesh); sea.underwater(view);            // the look for a camera that goes under
+          sea.watch(boat, { radius: 1.2 });                          // by itself from now on: its wake, its foam, a splash if it lands
+reset() { sea.calm(); }
+update(dt) {
+  sky.update(dt); sea.rain = weather.rain;                            // 0..1 (a Weather given `water: sea` sets it itself)
+  sea.update(dt, camera.position);                                   // after the sky and your own view.air()
+  for (const s of sea.splashes) ears.play('splash', s);              // what landed in it this frame
+  mixer.muffle(sea.under ? .8 : 0);
+}
+sea.splash(rock.x, rock.z, { size: .8, speed: 7 });                  // something fell in
+sea.ring(x, z, { size: .3 });                                        // something small did
+```
+
+- `ring(x, z, { size, strength })`: rings spread out at walking pace and die away. `splash(x, z, { size,
+  speed })`: spray goes up (higher for a faster hit), rings go out and a patch of foam is left that breaks
+  up and fades. Each splash is in `sea.splashes` for one frame (`{ x, y, z, size, speed }`): sound, score
+  and shake are yours.
+- `watch(thing, { radius, bottom, top })` takes a mesh, a physics body, a `gs.craft.Boat`, a character:
+  anything with a position. From then on the water does the rest: a splash when it lands in the water or
+  leaps out of it, the water it pushes aside as it moves, rings left behind it (slow, they spread round a
+  swimmer; fast, they are a boat's wake), a trail of foam above a jog, spray off the bow above 5 m/s.
+  `bottom` and `top` are how far below and above its position it reaches (a person standing: `bottom: 0,
+  top: 1.8`). It returns the watch: `remove()` stops it. `foam: 0` or `splash: 0` turn those off.
+- `sea.height(x, z)` includes the ripples, so a floating thing bobs as a ring passes under it.
+- `bed: (x, z) => height` is the ground under the water (`land.height`): the shallows are paler and
+  clearer (`shallow`: their colour; `clear`: metres of water that hide the bed, 2.5), the water fades out
+  at the waterline, a broken line of foam laps the shore, and ripples die on the beach.
+- `sea.rain = 0..1`: the water goes duller, rings open where the drops land round the centre and little
+  drops hop back up. This works on any `Water`, with ripples or not.
+- `underwater(view, { colour, murk, dark })`: while the view's camera is below the surface, the view's
+  air is murky, tinted water (`murk`: how thick, .14 is about 15 metres of view; `dark`: how fast it
+  darkens with depth), the surface is seen from below, and `sea.under` is 1. On the way up the air goes
+  back to what your game had, or has set since.
+- **What it costs.** Calm water does no more work than its waves. While ripples move, a 128 by 128 grid
+  is stepped on the processor and two small pictures go to the graphics chip: measured on a desktop,
+  `update()` is .13 ms calm, .3 to .6 ms with ripples moving, .1 ms more in rain (not yet measured on a
+  phone). `ripples: 64` is a quarter of that with coarser rings. It is the same on WebGL and WebGPU, and
+  needs no change to your water's material: your own `material` keeps its normal map and gets foam, spray
+  and wakes (its own map hides the small rings).
+- Ask for `ripples: true` with the level: the first `ring()`, `splash()` or `watch()` makes the field
+  otherwise, in the middle of a round. `foam: false` and `spray: 0` leave those out.
+- Not there: waves that break, water that flows or changes level (`gs.flow`, `gs.fluid`), and a split
+  picture while the camera is half under.
+
+## Weather that changes the world
+
+`const { Weather } = gs.sky;` (3D; the look is Next Gen.) Tell the weather what stands in it and the rain
+and snow no longer fall through roofs, and the world answers to them:
+
+```js
+make():   weather = new Weather(view, { kind: 'rain', level: world, ground: (x, z) => land.height(x, z), water: sea });
+reset() { weather.set('clear'); weather.wet = weather.pools = weather.snow = 0; }
+update(dt) {
+  weather.update(dt);                                   // after the camera has moved
+  if (weather.wetAt(player.pos) > .5) grip = .7;         // wet underfoot (0 indoors and under a roof)
+  speed *= 1 - weather.snowAt(player.pos) * 1.5;         // metres of snow lying here (0 under a roof)
+}
+weather.set('snow');                                    // it starts to settle; 'rain' washes it away again
+```
+
+- `level` is what keeps the weather off: a `gs.physics3d` `World3D`, a `City`, `Voxels`, a function
+  `(from, dir, max) => metres to the first solid thing`, three.js meshes or groups (their triangles are
+  asked one by one, so keep those to a few simple shapes: a physics world is much quicker), or a list of
+  these. `ground: (x, z) => height` is for land that is not in the level. `level: true` says there are no
+  roofs: everything is out in it.
+- From these the weather keeps a **map of what the sky can see**: for every half metre within 32 m of the
+  camera, the height of the highest solid thing. It fills from the camera outwards a few hundred spots a
+  frame (a second or so after a jump), follows the camera, and looks everything over again every six
+  seconds, so a roof that is blown off lets the rain in. `weather.cover.touch(x, z, r)` asks again round
+  a spot at once. Beyond the map everything counts as open.
+- **What you see** (a Next Gen view; the weather turns the view's `air()` on if it is off). In rain the
+  drops stop at the first thing they meet, little drops hop off the ground round the camera, and
+  everything the sky can see gets darker and shinier over `soak` seconds (20). Then puddles open on flat
+  ground and spread (they take twice as long), and when the rain stops it all dries over `dry` seconds
+  (90), the puddles last. In snow the flakes stop at roofs too, and snow settles over `settle` seconds
+  (40): first in patches on flat tops, then over everything that is not too steep (ground, roofs, crates,
+  the tops of walls, the leaves that face up). When the snow stops it melts over `melt` seconds (150),
+  leaving the ground wet; rain washes it away six times as fast. `melt: Infinity` keeps it lying. Floors
+  indoors, porches, the ground under a bridge or a lean-to and the foot of a wall under its eaves stay
+  dry, with a soft edge.
+- **What you can ask**: `weather.wet`, `weather.pools` and `weather.snow` (each 0..1; set them to start a
+  round after rain or in deep snow), `weather.rain` and `weather.snowing` (how hard, now), `open(p)` (can
+  the sky see this point), `wetAt(p)` (how wet a spot is, 0 under a roof), `snowAt(p)` (metres of snow
+  lying there; `deep`, .25, when it has all settled) and `weather.cover.at(x, z)` (the height of the
+  highest thing over a spot). Slipping, slower steps, footprints, splashing footsteps, the sound of rain
+  on a roof overhead and who comes in out of the rain are yours, from these.
+- `water` (one `gs.outdoors.Water`, or a list): the rain falls on it too (it sets `water.rain`), and its
+  drops hop off the water's surface.
+- Nothing settles on water, on people and animals (skinned meshes), or on anything whose mesh or material
+  has `userData.noSettle = true` (a car that drives about); they still get wet. Your own `ShaderMaterial`s
+  and materials with `fog: false` are left alone, as with the air.
+- Make it with the level, in `make()`, before the first frame is drawn: the look is added to each
+  material as it is first drawn, on WebGL and WebGPU alike, and costs no extra pass (three small texture
+  reads a pixel). On WebGPU a material that was drawn before there was such a weather keeps its plain wet
+  look, with no puddles or snow; and a game with no such weather pays nothing for it. Measured on a
+  desktop, `weather.update()` is .15 ms a frame in rain with the map kept up (not yet measured on a
+  phone). `cover: { cells: 64 }` is a smaller map (16 m round the camera), `hops: 0` leaves the hopping
+  drops out.
+- With no `level` the weather is what it always was: it only falls, and `open()` is always true.
+- Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth for your footprints),
+  puddles do not seek out the hollows of the land (they lie on flat ground where the map of them says),
+  water does not run down walls or drip off eaves, and nothing piles up on things that move.
+
+## Vehicles made in code
+
+`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, tanks, trains, boats and planes with no model
+files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
+a little, and handed back as a three.js Group with the parts that turn on pivots of their own:
+
+```js
+make():   jeep = vehicle('car', { style: 'jeep', seed: 4 }); view.add(jeep);
+          tank = vehicle('tank', { style: 'heavy', finish: 'worn' }); view.add(tank);
+          train = vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] }); view.add(train);
+update(dt) {
+  kart.update(dt, input); kart.place(jeep);                 // gs.vehicles says where it is...
+  jeep.move(dt, kart.speed, { steer: input.steer });        // ...this rolls and steers its wheels and rocks its body
+  tank.move(dt, speed, { turn, aim: [bearing, lift] });     // tracks run, one ahead of the other in a turn; the turret comes round
+  along += 12 * dt; train.along(rails, along).roll(along);  // each car between its own wheels, round the curve
+}
+```
+
+| `kind` | `style` (the first is what you get with none) | What turns | `points` |
+| --- | --- | --- | --- |
+| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
+| `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
+| `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
+| `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a wagon's `load`, a coach's `door`, a van's and a coach's `roof` |
+| `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
+| `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
+
+`vehicle.kinds` is the same list, for a menu or a test.
+
+- **Which way round.** Its nose points along -z and +x is its right side, in metres, as `gs.vehicles`,
+  `gs.craft` and `World3D.vehicle` push things. A road vehicle and a train stand on y = 0. A boat floats
+  with its waterline at y = 0 (`boat.draft` is how deep). A plane's origin is on its centre line:
+  `plane.gear` is how high that stands above the ground on its wheels and `plane.sit` how far its nose
+  points up there.
+- **Options**: `style`; `seed` (which of its kind's colours, where its wear falls: the same on every phone);
+  `colour` and `trim` (its second colour: a coach's band, a wheelhouse, a stripe); `finish`: `'gloss'`,
+  `'satin'`, `'matt'`, `'worn'` (paint rubbed through to the metal) or `'rusty'`, each kind starting with its
+  own; `wear` (0..1 how aged, `false` for straight from the factory); `lit: true` (lamps that glow;
+  `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles). A
+  train also takes `cars` (what the engine pulls, in order) and `gauge` (metres between the rails, 1.435).
+- **`move(dt, speed, o)`** is the easy way to keep one alive each frame, whatever moves it: wheels and
+  tracks roll for the speed (metres a second), the front wheels ease to `steer` (-1..1, + right; `lock`
+  is how far they turn at 1, .55 radians), the body rolls outwards in a turn, squats as it pulls away and dips as it brakes, as a car on
+  springs does (`sway: 0` for none), propellers spin up to a blur with `power` (0..1), a boat's outboard turns with the steering
+  and a patrol boat's radar goes round. A tank takes `turn` (-1..1: one track runs ahead of the other, on
+  the spot when it stands) and `aim: [bearing, lift]`, which eases its turret and gun there. `ground:
+  false` keeps a plane's wheels still in the air (it is the default for a plane).
+- **By hand** instead: `roll(metres so far)` (a tank: `roll(left, right)`), `steer(radians)`,
+  `aim(bearing, lift)` (the gun stops at its own limits), or turn any of `parts` yourself (they are
+  Groups: `boat.parts.oarL.rotation.y = stroke`).
+- **`points`** are places on it that move with it (three.js objects, turned as the vehicle is):
+  `car.points.driver` is the driver's seat (`points.driver.add(person)` with a sitting pose and
+  `person.rotation.y = Math.PI`, since the kit's people face +z; in a wheelhouse, on a footplate or in
+  a turret hatch it is where they stand), `tank.points.muzzle.getWorldPosition(v)` for the flash and the
+  shell, `points.exhaust` and a steam engine's `points.smoke` for `gs.fx3d` smoke, `points.wake` for
+  `water.watch()`.
+- **`size`** (`length`, `width`, `height` in metres), `wheelbase`, `track` (between the wheels across),
+  `radius` (of a wheel), `tris` (triangles), and `look` (what it was made with) are there to read.
+- **On real springs** (cars and lorries): `drive = world.vehicle(car, car.chassis({ power: 14 }))` gives
+  `gs.physics3d` the chassis and the car's own four wheels, so they ride the bumps and it can roll over;
+  then `drive.drive(throttle, steer, brake)` each frame as ever (don't call `move()` as well). `chassis()`
+  moves the body so its origin is the middle of the chassis and not the road, so call it once, when you
+  make the car. A third axle's wheels follow the second's.
+- **Boats and planes** are the look for `gs.craft`: `boat = new Boat(sea, { length: hull.size.length,
+  width: hull.size.width, draft: 0 })`, then `hull.position.copy(boat.pos); hull.quaternion.copy(boat.quat);
+  hull.move(dt, boat.speed, { steer })` each frame; a plane the same from a `Plane({ ground, gear:
+  plane.gear })`, with `move(dt, speed, { power: throttle, ground: flying.onGround })`.
+- **A train** is its cars coupled nose to tail (`train.cars`, the engine first, each a vehicle of its own
+  with its `length` over the buffers), its middle at the origin. `train.along(track, d)` lays it on your
+  rails with its front `d` metres along them: `track` is `(metres) => ({ x, y, z })` on top of the rails
+  or a `gs.paths.Path`, measured in the train's own space, and each car goes between its own wheels, so
+  a train bends round curves and tips on slopes. `roll(d)` turns the wheels and a steam engine's rods;
+  `train.radius` is its driving wheels' radius (a chuff is a quarter of a turn: `2 * Math.PI * train.radius / 4`
+  metres).
+- **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
+  21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 4,500 to
+  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less
+  on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
+  shares its shapes and materials and costs almost nothing: a car park is one car made once.
+  Wagons of one kind share theirs too. Make vehicles in `make()`.
+- Not there: nothing dents or comes off, doors and bonnets do not open, cars have dark glass with no
+  inside behind it (the jeep, the lorry's bed, the boats and the cockpits are open and have seats),
+  there are no simpler shapes for far away made by themselves, and a train has no physics of its
+  own.
+
+## Fur and hair
+
+(Next Gen.) Animals with a coat of fur have fur, and people's hair is strands, by themselves:
+
+```js
+make():   fox = gs.models.creature({ like: 'dog', seed: 9 }); view.add(fox);          // furry close up, nothing to ask for
+          man = gs.models.human({ hair: '#8a8a88', beard: 1 }); view.add(man);        // hair in strands, and a beard
+          rug = gs.models.fur(mesh, { length: .04, lean: .8 });                        // or fur on any mesh of your own
+update(dt) { fox.move(dt, speed); if (scared) fox.fur.length = 1.5; }                  // its fur stands on end
+```
+
+**How it is drawn.** A coat is "shells": copies of the furry surface, each a little further out along its
+normals, each cut by one picture of strands seen from their tips (made in code: a strand's height is the
+picture's alpha), so less of every strand shows the further out a layer is and the eye joins the dots into
+strands. It is all three.js's own (a map with an alpha cut, vertex colours, and two morph targets every
+layer shares: out, and over the way the strands lie), so WebGL and WebGPU draw it alike, on skinned
+meshes too, and it takes the light and shadows as everything else does. A coat casts no shadow of its own
+(what it grows on does).
+
+- **Creatures.** One with a coat of fur (`dog`, `cat`, `deer`, `bear`, `rabbit`, `mouse`, `beast`, or any
+  given `build: { coat: 'fur' }`) grows fur; a mane and a tail of hair grow on any coat (a `horse`). Short
+  on the face and feet, long in a mane and a bushy tail, none on noses, claws and the rims of eyes, and no
+  strand longer than about half of how thick what it grows on is, so ears, thin tails and legs keep their
+  shape. A seed makes one a little shaggier or sleeker. `fur: false` leaves it off; `fur: { length: .04,
+  layers: 8, lean: .7, tile: .08 }` tunes it (metres). `creature.fur` is the coat, or `null`.
+- **People.** `human()` lays strands over the sculpted hair, streaming from the crown (from the bun, for
+  `hairStyle: 'bun'`), over a moustache, and over a beard: `beard: 0..1.5` is how long (`true` is .6; the
+  painted `stubble` is still there for a shave two days old). `person.hair` is the coat, or `null`: bald
+  with no beard, under a hat (the hair there stays as sculpted, cropped close), or `strands: false`.
+  `strands: { length: .02, layers: 8 }` tunes it.
+- **Any mesh.** `gs.models.fur(mesh, o)`: `length` (in the mesh's own units), `kind` (`'fur'` on end, `'hair'`
+  lying side by side), `where` (how much of the length grows at each point: a `Float32Array` of 0..1, or
+  `(i, x, y, z) => 0..1`; strands shorten toward where none grow and the coat thins out there, so it has
+  no cliff at its edge), `tile` (how wide the strand picture is on the surface: fur has 32 strands across
+  it), `lean` and `flow` (how far the strands lie over, and which way: down and back along -z unless told),
+  `uv: { centre, crown }` (hair streaming from the crown of a head), `thin`, `rough`, `root` and `tip` (how
+  dark the roots, how light the tips), `colour`, `seed`. The mesh's vertex colours colour the coat.
+- **The coat** (`creature.fur`, `person.hair`, what `fur()` returns): `length` (1 as made; set it any time:
+  1.5 stands fur on end, .5 is a wet coat) and `lean` (a creature's `move()` lays its fur back as it runs),
+  `level` (how much of it is showing), `layers`, `tris`, `shells` (its meshes), `dispose()`.
+- **Cost, and what keeps it down.** Each layer is one more draw of the furry triangles: a dog is about
+  4,500 triangles a layer (the body on the middle level's triangles, the head on the finest), a head of
+  hair about 2,000, a beard 4,500 more (it grows on the face's finest triangles). So: the layers are few
+  and set by the phone's quality (none on the slowest phones, then 5, 7 and 10; `layers` overrides); a
+  coat shows only on the closest level of detail; and it thins out by itself with distance, whether or
+  not you call `see()`: an animal has every layer while it is over about 260 pixels on screen, every
+  other one down to 120 and none below; a person's hair has every layer once they stand about 800 pixels
+  tall (a head big enough to see strands on), every other one from about 360. The outermost layer is
+  drawn first, so what it covers of the ones below is not drawn. Not yet measured on a phone: in a
+  crowd, give fur to the few the camera is close to (`fur: false` on the rest).
+- Not there: strands are not simulated (fur does not sway or part, long hair does not swing: it is the
+  sculpted shape with strands on it), a coat does not get wet or snowy with the weather by itself, and
+  feathers and scales are still painted.
+- To look it over: `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey
+  cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [--webgpu]`.
