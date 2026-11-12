@@ -2169,6 +2169,37 @@ so cast first and keep `pitch` near 1. `voices()` resolves to what this phone ha
 **Timing** is most of a line's character. An array is said part by part, with pauses in seconds
 between, and a part can have its own delivery: `say(['Bold.', .3, 'Visionary.', .5, { text: 'Rectangular.', rate: .85 }], { voice: 'woman' })`.
 
+**A shaped voice** makes the same phone voice into a character: `say('Door three is opening.', { voice: 'woman', fx: 'tannoy' })`,
+`say('Copy that.', { voice: 'man', size: 1.15, fx: 'radio' })`. `size` is the build of the speaker: 1.15 is a
+bigger person (deeper in every way, at the same pace), .85 a smaller one (.6 to 1.6). `fx` is what the voice
+comes through:
+
+| fx | sounds like |
+| --- | --- |
+| `'radio'` | a handheld radio: narrow, overdriven, a burst of static as it keys up and lets go |
+| `'tannoy'` | a loudspeaker in a hall: honky, with slap echoes |
+| `'phone'` | a telephone line |
+| `'megaphone'` | louder and harsher than a tannoy, one echo |
+| `'box'` | from inside something: a cupboard, a crate, a door |
+| `'bright'` | an advert: crisp and evened out |
+| `'warm'` | close and low, a narrator |
+| `'robot'` | a metal ring and a buzz |
+| `'tiny'` | a toy's speaker, a very small creature |
+| `'clean'` | no treatment (the voice still goes through the mixer) |
+
+or a recipe of your own, which can start from a named one: `{ like: 'radio', drive: .2, mix: .6 }` (the parts:
+`low`, `high`, `peaks`, `bass`, `treble`, `drive`, `ring`, `comb`, `squeeze`, `echo`, `squelch`, `hiss`, `mix`;
+the types say what each is). With a `size` or an `fx` the phone writes the line to sound instead of speaking
+it, and the kit plays that through the mixer's `'voice'` channel. So a shaped line is as loud on every phone
+and with every treatment, `mixer.room()`, `mixer.muffle()` and the level's own echo (`Ears`) reach it like
+any other sound, and `onWord` is called for every word (lip sync that keeps time). A line said in parts
+through one radio stays keyed up between them. This needs the Android or iPhone app: in a browser, or on a
+phone whose speech engine can't write to sound, the line is spoken as before, with `size` as a lean of its
+pitch and no `fx`; `shaped()` says which (true once a line has played shaped, false where it can't be, null
+before the first try). A shaped line starts a moment later than a plain one, because the phone writes all of
+it first: open with a short pause (`say([.2, 'Ah. A door.'], { fx: 'tannoy' })`), which is when the kit
+gets the line ready. A line said again starts at once.
+
 **Timelines** (`gs.juice.Timeline`, anime.js; loads on first use, so make it in `make()` or `reset()`):
 steps one after another, together or staggered, in seconds and driven by your `dt` so they pause
 with the game. `new Timeline({ ease: 'outBack' }).to(title, { y: 120, duration: .5 }).to(stars, { s: 1, duration: .3, delay: stagger(.1) }, '+=.1').call(fn, .6)`,

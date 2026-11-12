@@ -1290,7 +1290,40 @@ console.log('physics ok');
     assert.equal(await cut, false, 'stopped mid-line'); assert.equal(spoken.length, 3, 'and the rest is never said');
     assert.equal(await snd.say('Plain.'), true, 'a plain line still works'); assert.equal(spoken.at(-1)[1], 'f', "in the language's first voice, as before");
     assert.deepEqual((await snd.voices()).map(v => v.kind), ['woman', 'man'], 'voices() says what the phone has');
+    // a shaped voice where nothing can shape it (a browser): the line is still said, size as a lean of its pitch
+    assert.equal(snd.shaped(), false, 'a browser cannot shape a voice, and says so');
+    assert.equal(await snd.say(['Deep.', .01, { text: 'Small.', size: .8 }], { voice: 'man', size: 1.25, fx: 'radio', pitch: 1.1 }), true);
+    assert.deepEqual(spoken.slice(-2).map(x => x.slice(0, 4)), [['Deep.', 'm', .88, 1], ['Small.', 'm', 1.38, 1]], 'size leans the pitch: ' + JSON.stringify(spoken.slice(-2)));
     delete globalThis.speechSynthesis; delete globalThis.SpeechSynthesisUtterance;
+  }
+  // shaping a voice (src/kit/voice-fx.js): the parts that are plain sums (the sound itself is measured in scripts/sound-test.cjs speech)
+  {
+    const fx = await import('../src/kit/voice-fx.js');
+    assert.deepEqual(fx.fxOf('phone'), { low: 320, high: 3300, peaks: [[2200, 3, 1]], drive: .12 }, 'a treatment by name');
+    assert.deepEqual(fx.fxOf({ like: 'phone', drive: 0, high: 99999, mix: .4, echo: [.1, .5], nonsense: 3 }), { low: 320, high: 16000, peaks: [[2200, 3, 1]], echo: [[.1, .5]], mix: .4 }, 'a recipe starts from a named one, and is kept inside what can be played');
+    assert.equal(fx.fxOf('kazoo'), null); assert.equal(fx.fxOf(null), null); assert.equal(fx.fxOf(false), null); assert.deepEqual(fx.fxOf('clean'), {}, 'clean is a treatment with nothing in it');
+    assert.deepEqual(Object.keys(fx.FX).sort(), ['box', 'bright', 'clean', 'megaphone', 'phone', 'radio', 'robot', 'tannoy', 'tiny', 'warm'], 'the treatments by name');
+    for (const n of Object.keys(fx.FX)) assert.deepEqual(fx.fxOf(n), fx.FX[n], n + ' is inside what can be played as it stands');
+    // sound from the phone: 16-bit numbers, low byte first
+    const b64 = Buffer.from(new Uint8Array([0, 0, 255, 127, 0, 128, 0, 64])).toString('base64');
+    assert.deepEqual([...fx.pcm16(b64)].map(v => +v.toFixed(4)), [0, 1, -1, .5], 'samples from the phone, as numbers from -1 to 1'); assert.equal(fx.pcm16('').length, 0);
+    // a line with silence round it: half a second of a tone in the middle of two seconds
+    const R = 8000, x = new Float32Array(R * 2); for (let i = R * .5; i < R; i++) x[i] = .4 * Math.sin(i * .5);
+    const [a, b] = fx.trim(x, R); assert.ok(Math.abs(a / R - .49) < .005 && Math.abs(b / R - 1.03) < .005, `the silence before and after a line is cut off (kept ${a / R} to ${b / R} s)`);
+    assert.deepEqual(fx.trim(new Float32Array(100), R), [0, 0], 'a line of silence has nothing in it');
+    const l = fx.loudness(x, R); assert.ok(Math.abs(l.rms - .4 / Math.SQRT2) < .01 && Math.abs(l.peak - .4) < .001, `loudness is of the speech, not the silence round it (${l.rms.toFixed(3)})`);
+    // where the words start
+    const w = fx.wordTimes('Ah. A door, at last.', 2);
+    assert.deepEqual(w.filter((_, i) => i % 2 === 0), [0, 4, 6, 12, 15], 'every word has its place in the text');
+    assert.ok(w[1] === 0 && w.every((v, i) => i % 2 === 0 || i < 2 || v > w[i - 2]) && w.at(-1) < 2, 'and a time, in order, inside the line');
+    assert.ok(w[3] - w[1] > (w[9] - w[7]) * 1.5, 'a full stop is a longer wait than a space');
+    assert.deepEqual(fx.goodMarks([0, 0, 4, .5, 6, .7], 'Ah. A door.', 1.2), [0, 0, 4, .5, 6, .7], "an engine's own word marks are used when they make sense");
+    assert.equal(fx.goodMarks([0, 0, 4, .5, 6, 3], 'Ah. A door.', 1.2), null, 'not when one is after the end');
+    assert.equal(fx.goodMarks([0, 0, 6, .7, 4, .5], 'Ah. A door.', 1.2), null, 'nor out of order');
+    assert.equal(fx.goodMarks([0, 0], 'Ah. A door.', 1.2), null, 'nor when most words are missing');
+    assert.equal(fx.goodMarks([0, 0, 4, 0, 6, 0], 'Ah. A door.', 1.2), null, 'nor when every word is at nought');
+    assert.equal(fx.goodMarks([], 'Ah.', 1), null); assert.equal(fx.goodMarks(null, 'Ah.', 1), null);
+    console.log('shaped voices: treatments by name and by recipe, samples from the phone, silence cut off, loudness, word times ok');
   }
   // living music: tension builds with close calls and settles, the tempo leans to the player's pace
   const mcalls = { i: [], s: [] }, fake = { intensity: x => mcalls.i.push(x), speed: x => mcalls.s.push(x) };

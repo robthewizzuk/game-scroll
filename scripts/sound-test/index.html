@@ -3,7 +3,8 @@
 // Measures the sound kit in a browser. ?part=sounds (every ready-made sound and the limiter, rendered
 // faster than real time), ?part=band (the instrument sets, same way), ?part=clock (the music clock on
 // the real sound clock, with the page made busy on purpose), ?part=level (sound that knows the level:
-// walls and places, rendered the same way). scripts/sound-test.cjs runs all four.
+// walls and places, rendered the same way), ?part=speech (shaped speech: the treatments measured, then
+// say() end to end against a pretend phone). scripts/sound-test.cjs runs all five.
 const part = new URLSearchParams(location.search).get('part') || 'sounds';
 const out = [], ok = (c, m) => out.push((c ? 'ok   ' : 'FAIL ') + m), note = m => out.push('     ' + m);
 const db = v => (v > 0 ? 20 * Math.log10(v) : -120).toFixed(1);
@@ -216,6 +217,103 @@ try {
     note(`a sound in that room: its echo carries ${dB(ringE / dryE)} dB of the sound's energy; from a quarter second after it ${dB(ringLate / dryE)} dB`);
     ok(ringE > dryE * .04 && ringE < dryE * .4 && ringLate > dryE * 1e-5, `and sounds ring in it by themselves (${dB(ringE / dryE)} dB of the sound's energy)`);
     ok(loopA > .5 && loopB < .05 && loopC > .5, `a sound that goes on is heard again as it moves: behind ${loopA.toFixed(2)}, in the open ${loopB.toFixed(2)}, behind again ${loopC.toFixed(2)}`);
+  }
+  if (part === 'speech') {
+    // Shaped speech (say() with a size or fx). The phone is pretend (scripts/lib/fake-speech-audio.js): it
+    // "writes" a made-up voice the way the SpeechAudio plugin hands a line over. First the shaping by
+    // itself, measured; then say() from start to finish on the real sound clock.
+    const fxm = await import('/src/kit/voice-fx.js'), S = window.__speech, wait = ms => new Promise(r => setTimeout(r, ms));
+    const LINE = 'Ah. A door, at last. Minuted.';
+    const write = async (o = {}) => { const r = await window.Capacitor.nativePromise('SpeechAudio', 'render', { text: LINE, lang: 'en-GB', voiceURI: 'en-gb-x-gbd-local', rate: 1, pitch: 1, ...o }); return { x: fxm.pcm16(r.pcm), rate: r.rate }; };
+    const hear = async (fx, size = 1, o) => {
+      const w = await write(o), c = await fxm.shape(w.x, w.rate, { size, fx: fxm.fxOf(fx), outRate: RATE }), d = c.buffer.getChannelData(0), l = fxm.loudness(d, RATE);
+      return { c, d, rms: l.rms * c.gain, peak: l.peak * c.gain };
+    };
+    // what a sound is made of: how much of it lies between two pitches, and its strongest pitch in a range
+    const parts = x => {
+      let n = 1; while (n < x.length) n <<= 1; const re = new Float64Array(n), im = new Float64Array(n); re.set(x);
+      for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; } }
+      for (let len = 2; len <= n; len <<= 1) { const ang = -2 * Math.PI / len; for (let k = 0; k < len / 2; k++) { const c = Math.cos(ang * k), s = Math.sin(ang * k); for (let i = k; i < n; i += len) { const b = i + len / 2, xr = re[b] * c - im[b] * s, xi = re[b] * s + im[b] * c; re[b] = re[i] - xr; im[b] = im[i] - xi; re[i] += xr; im[i] += xi; } } }
+      const pw = k => re[k] * re[k] + im[k] * im[k], bin = hz => Math.round(hz * n / RATE);
+      const band = (lo, hi) => { let s = 0; for (let k = Math.max(1, bin(lo)); k < Math.min(n / 2, bin(hi)); k++) s += pw(k); return s; };
+      return { band, share: (lo, hi) => band(lo, hi) / band(20, 20000), top: (lo, hi) => { let best = 0, at = 0; for (let k = bin(lo); k < bin(hi); k++) if (pw(k) > best) { best = pw(k); at = k; } return at * RATE / n; } };
+    };
+    ok(fxm.canShape(), 'this browser can work sound out ahead of time');
+    const names = Object.keys(fxm.FX), lv = {};
+    for (const n of names) { lv[n] = await hear(n); note(`${n.padEnd(10)} rms ${db(lv[n].rms)} dB  peak ${db(lv[n].peak)} dB  ${lv[n].c.seconds.toFixed(2)} s said, ${lv[n].c.total.toFixed(2)} s with its echoes`); }
+    const off = n => Math.abs(20 * Math.log10(lv[n].rms / fxm.LEVEL)), wrong = names.filter(n => !(off(n) < 1 || (lv[n].peak > fxm.PEAK - .002 && off(n) < 5)) || lv[n].peak > fxm.PEAK + .002);
+    ok(names.length >= 10 && !wrong.length, `${names.length} treatments, every one at the kit's speech level (${db(fxm.LEVEL)} dB) with no peak over ${db(fxm.PEAK)} dB` + (wrong.length ? ': not ' + wrong.join(', ') : ''));
+    // a quiet engine and a loud one: the same line comes out the same
+    S.level = .02; const soft = await hear('radio'); S.level = .95; const hot = await hear('radio'); S.level = .3;
+    const ps = parts(soft.d), ph = parts(hot.d), bite = p => p.share(2000, 2900);
+    note(`an engine that writes at ${db(.02)} dB and one at ${db(.95)} dB, through the radio: ${db(soft.rms)} and ${db(hot.rms)} dB; the share of the sound from 2 to 2.9 kHz ${bite(ps).toFixed(3)} and ${bite(ph).toFixed(3)}`);
+    ok(Math.abs(20 * Math.log10(soft.rms / hot.rms)) < .3 && Math.abs(bite(ps) / bite(ph) - 1) < .05, 'a quiet speech engine and a loud one come out equally loud, and equally overdriven');
+    // each treatment does what it says
+    // (the radio's speaker alone: its overdrive puts a little of the voice's lowest note back, as a real one does)
+    const clean = parts(lv.clean.d), radio = parts((await hear({ like: 'radio', drive: 0, squelch: 0, hiss: 0 })).d), box = parts(lv.box.d), tiny = parts(lv.tiny.d), bright = parts(lv.bright.d);
+    note(`the share of the sound under 250 Hz: clean ${clean.share(20, 250).toFixed(3)}, radio ${radio.share(20, 250).toFixed(4)}, tiny ${tiny.share(20, 250).toFixed(4)}; over 3 kHz: clean ${clean.share(3000, 20000).toFixed(4)}, box ${box.share(3000, 20000).toFixed(5)}, bright ${bright.share(3000, 20000).toFixed(4)}`);
+    ok(clean.share(20, 250) > .02 && radio.share(20, 250) < clean.share(20, 250) * .1 && tiny.share(20, 250) < clean.share(20, 250) * .1, 'a radio and a tiny speaker have no bass');
+    ok(box.share(3000, 20000) < clean.share(3000, 20000) * .1 && bright.share(3000, 20000) > clean.share(3000, 20000) * 1.5, 'from inside a box the top end is gone; bright has more of it');
+    ok(lv.radio.c.lead > .05 && fxm.loudness(lv.radio.d.subarray(0, RATE * .05), RATE).rms > .001 && lv.clean.c.lead === 0, 'a radio keys up with a burst of static before the first word; a clean voice starts at once');
+    const after = h => { const from = Math.round((h.c.seconds + .06) * RATE); let s = 0; for (let i = from; i < h.d.length; i++) s += h.d[i] * h.d[i]; return Math.sqrt(s / Math.max(1, h.d.length - from)); };
+    ok(lv.tannoy.c.total - lv.tannoy.c.seconds > .25 && after(lv.tannoy) > .0005 && after(lv.clean) < 1e-5, `a tannoy's slap echoes ring on after the last word (${(lv.tannoy.c.total - lv.tannoy.c.seconds).toFixed(2)} s)`);
+    // a line said in parts through one radio: it stays keyed up between them
+    const w0 = await write(), seg = (c, t0, t1) => fxm.loudness(c.buffer.getChannelData(0).subarray(Math.round(t0 * RATE), Math.round(t1 * RATE)), RATE).rms;
+    const whole = await fxm.shape(w0.x, w0.rate, { fx: fxm.fxOf('radio'), outRate: RATE }), one = await fxm.shape(w0.x, w0.rate, { fx: fxm.fxOf('radio'), outRate: RATE, close: false, hold: .3 }), two = await fxm.shape(w0.x, w0.rate, { fx: fxm.fxOf('radio'), outRate: RATE, open: false });
+    const voiceLv = fxm.LEVEL / whole.gain, under = v => (20 * Math.log10(v / voiceLv)).toFixed(1);
+    const keyUp = seg(whole, 0, .04), letGo = seg(whole, whole.seconds + .03, whole.seconds + .08), held = seg(one, one.seconds + .05, one.seconds + .3);
+    note(`a radio's static beside its voice: keying up ${under(keyUp)} dB, letting go ${under(letGo)} dB, holding for the next part of a line ${under(held)} dB (for ${(one.total - one.seconds).toFixed(2)} s)`);
+    ok(keyUp > voiceLv * .15 && keyUp < voiceLv * 1.2 && letGo > voiceLv * .15 && letGo < voiceLv * 1.2, 'the bursts of static as a radio keys up and lets go are heard beside the voice, and no louder than it');
+    ok(two.lead === 0 && one.lead > .05 && one.total - one.seconds >= .3 && held > voiceLv * .01 && held < voiceLv * .25 && held < letGo * .5, 'a radio stays keyed up between the parts of a line: only a hiss in the pause, the bursts before the first part and after the last');
+    const first = lv.clean.d.findIndex(v => Math.abs(v) > .01);
+    ok(first >= 0 && first < RATE * .04 && Math.abs(lv.clean.c.cut - .09) < .02, `the silence engines leave before a line is cut off (${(lv.clean.c.cut * 1000).toFixed(0)} ms of it here)`);
+    // size: a bigger or smaller person
+    const big = await hear('clean', 1.25), small = await hear('clean', .8), hz = h => parts(h.d).top(70, 170);
+    note(`size: plain ${hz(lv.clean).toFixed(1)} Hz in ${lv.clean.c.seconds.toFixed(2)} s; 1.25 gives ${hz(big).toFixed(1)} Hz in ${big.c.seconds.toFixed(2)} s; .8 gives ${hz(small).toFixed(1)} Hz in ${small.c.seconds.toFixed(2)} s`);
+    ok(Math.abs(hz(lv.clean) - 115) < 3 && Math.abs(hz(big) - 92) < 3 && Math.abs(hz(small) - 143.75) < 4, 'size 1.25 speaks a quarter deeper, .8 a quarter higher');
+    ok(Math.abs(big.c.seconds / lv.clean.c.seconds - 1.25) < .02 && Math.abs(small.c.seconds / lv.clean.c.seconds - .8) < .02, 'by playing what the phone wrote slower or faster (which is why the phone is asked to speak that much faster or slower)');
+    const own = fxm.fxOf({ like: 'radio', squelch: 0, hiss: 0, mix: .5 });
+    ok(fxm.fxOf('kazoo') === null && fxm.fxOf(null) === null && own.low === 420 && own.mix === .5 && !own.squelch && (await hear({ like: 'radio', squelch: 0, hiss: 0, mix: .5 })).c.lead === 0, "a recipe of a game's own starts from a named one; a name nobody knows is no treatment");
+
+    // say(), start to finish
+    S.renders.length = 0;
+    const snd = await import('/src/kit/sound.js'), { audio, setSound } = await import('/src/sfx.js');
+    const a = audio(); await a.ctx.resume();
+    const an = a.ctx.createAnalyser(); an.fftSize = 2048; a.out.connect(an); const td = new Float32Array(2048);
+    const loud = () => { an.getFloatTimeDomainData(td); let s = 0; for (const v of td) s += v * v; return Math.sqrt(s / td.length); };
+    const during = async p => { let m = 0, done = false; p.then(() => { done = true; }); while (!done) { m = Math.max(m, loud()); await wait(15); } return m; };
+    ok(snd.shaped() === null, 'shaped() is null before the first line');
+    await snd.say('Plain.', { voice: 'woman' });
+    ok(S.renders.length === 0 && S.spoken.length === 1 && snd.shaped() === null, 'a line with no size or fx is spoken by the phone itself, as it always was');
+    const words = [], p1 = snd.say([.05, 'Ah. A door.', .1, { text: 'At last.', fx: 'radio' }], { voice: 'man', size: 1.1, fx: 'tannoy', rate: .9, onWord: at => words.push(at) });
+    const lvl = await during(p1), said = await p1;
+    ok(said === true && snd.shaped() === true && S.spoken.length === 1, 'a line with a size and an fx is written to sound by the phone and played by the kit');
+    ok(lvl > .03 && lvl < .5, `through the mixer, where it can be heard (level ${lvl.toFixed(3)})`);
+    const r0 = S.renders[0] || {}, r1 = S.renders[1] || {};
+    ok(S.renders.length === 2 && r0.text === 'Ah. A door.' && r1.text === 'At last.' && r0.voiceURI === 'en-gb-x-gbd-local' && r0.lang === 'en-GB' && r0.rate === .99 && r0.pitch === 1, `in the cast voice, asked to speak size times faster (${JSON.stringify(r0)})`);
+    ok(JSON.stringify(words) === '[0,4,6,12,15]', 'onWord gets every word of every part as it is heard: ' + JSON.stringify(words));
+    await snd.say('Ah. A door.', { voice: 'man', size: 1.1, fx: 'tannoy', rate: .9 });
+    ok(S.renders.length === 2, 'the same line again is not written twice');
+    S.marks = false; const guessed = []; await snd.say('One two three.', { voice: 'man', fx: 'clean', onWord: at => guessed.push(at) }); S.marks = true;
+    ok(JSON.stringify(guessed) === '[0,4,8]', 'an engine that gives no word marks: the words are timed from the text: ' + JSON.stringify(guessed));
+    // stopping
+    const cut = snd.say('This is a rather long line, and it goes on for quite a while yet, minute after minute.', { voice: 'woman', fx: 'phone' });
+    let up = 0; for (let i = 0; i < 200 && up < .02; i++) { await wait(15); up = loud(); }
+    snd.stopTalking(); const gone = await cut; await wait(160);
+    ok(up >= .02 && gone === false && loud() < .002 && !snd.talking(), `stopTalking() stops a shaped line at once (level ${up.toFixed(3)} before, ${loud().toFixed(4)} after)`);
+    // the player's mute
+    setSound({ muted: true }); const n0 = S.renders.length, hushed = await snd.say('Quiet.', { fx: 'radio' }); setSound({ muted: false });
+    ok(hushed === false && S.renders.length === n0, 'muted: nothing is written or said');
+    // a phone that can't: the line is spoken as before, and that voice is not tried again
+    S.fail = 'no'; const s0 = S.spoken.length, f1 = await snd.say('Not this one.', { voice: 'woman', size: 1.2, fx: 'robot' });
+    const sp = S.spoken.at(-1) || {};
+    ok(f1 === true && S.spoken.length === s0 + 1 && sp.text === 'Not this one.' && sp.voice === 0 && Math.abs(sp.pitch - 1 / 1.2) < .002, `a voice the phone can't write to sound is spoken by the phone, with size as a lean of its pitch (${JSON.stringify(sp)})`);
+    const n1 = S.renders.length; await snd.say('Nor this.', { voice: 'woman', fx: 'robot' });
+    ok(S.renders.length === n1 && S.spoken.length === s0 + 2, 'and is not asked again');
+    S.fail = 'hang'; const c0 = S.cancels, t0 = performance.now(), f2 = await snd.say('Hm.', { voice: { kind: 'man', take: 1 }, fx: 'box' }), took = performance.now() - t0;
+    ok(f2 === true && S.spoken.at(-1)?.text === 'Hm.' && S.cancels > c0 && took > 2000 && took < 5000, `a phone that never answers is given up on (after ${(took / 1000).toFixed(1)} s) and the line is spoken`);
+    S.fail = null; const n2 = S.renders.length, f3 = await snd.say('Still here.', { voice: 'man', fx: 'box' });
+    ok(f3 === true && S.renders.length === n2 + 1 && snd.shaped() === true, 'other voices carry on being shaped');
   }
 } catch (e) { out.push('FAIL threw: ' + (e && e.stack || e)); }
 window.result = out;

@@ -1,0 +1,13 @@
+{
+  "name": "speech-audio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Game Scroll's speech as audio: the phone's own text-to-speech engine writes a line to sound instead of speaking it (Android TextToSpeech.synthesizeToFile, iPhone AVSpeechSynthesizer.write), so src/kit/sound.js can play it through the game's mixer with a treatment for each character.",
+  "main": "index.js",
+  "files": ["index.js", "Package.swift", "ios/Sources", "android/src/main", "android/build.gradle"],
+  "capacitor": {
+    "ios": { "src": "ios" },
+    "android": { "src": "android" }
+  },
+  "peerDependencies": { "@capacitor/core": "^8.0.0" }
+}
