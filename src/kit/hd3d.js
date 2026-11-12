@@ -2657,7 +2657,8 @@ function mount(cv, c, view) {
 
 /**
  * Sunlight: a shadow-casting directional light covering a size x size metre box that follows the
- * action (s.follow(x, y, z) each frame; it snaps to shadow texels so edges don't shimmer). For big
+ * action (s.follow(x, y, z) each frame; it moves a tile of its shadow map at a time, so edges don't shimmer and
+ * most of the map is kept from frame to frame: shadow-tiles.js). For big
  * outdoor levels use s.fit(view, { far, ground }) each frame instead: the shadow then covers just what
  * the camera can see, out to `far` metres, and gets sharper the narrower the view (a zoomed scope gets
  * crisp shadows where it looks). s.aim(x, y, z) points it (the direction towards the sun).
@@ -3151,7 +3152,8 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
 // the ground (o.ground(x, z) gives its height) or, without a ground function, the part of each ray
 // between the heights o.low and o.high. Those points, and points o.tall metres above them (houses,
 // trees, people), are boxed in the light's own frame. The box grows and shrinks in steps and its
-// centre snaps to whole shadow texels, so turning the camera doesn't make shadow edges crawl.
+// centre snaps to whole tiles of the shadow map (whole texels with HD.shadowTiles off), so turning the
+// camera doesn't make shadow edges crawl and the map's tiles can be kept (shadow-tiles.js).
 // around: k keeps the box to k times the distance to what's in the middle of the view (a scope looking
 // across a valley: sharp shadows round the target instead of thin ones over the hills behind it).
 const FX = new Vector3(), FY = new Vector3(), FZ = new Vector3(), FP = new Vector3(), FR = new Vector3(), UPV = new Vector3(0, 1, 0);
