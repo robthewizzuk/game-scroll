@@ -85,6 +85,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
 | Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
+| Water you can disturb: rings, splashes and spray, wakes and foam behind boats and swimmers, rain on it, foam at the shore, the view from under it | `gs.outdoors.Water` | [Water you can disturb](#water-you-can-disturb) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
 | Planes, boats, hover craft, floating crates | `gs.craft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Cloth, ropes, jelly to cut and squish; a simple liquid | `gs.soft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -1967,7 +1968,8 @@ blades that sway (only near the camera), and `scatter(props, 'tree', 300, { abov
 `gs.props` things on suitable ground. For a camera down in the grass (a sniper's nest, a crawl, a close-up), `land.meadow({ reach: 22, gap: .55 })`
 keeps a square of thick tufts round the camera wherever it goes: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `tree({ kind: 'pine' | 'round' | 'palm' | 'bush' })` and `rock()`
 make simple shapes to scatter. Next Gen worlds can paint it instead with `looks.ground` (fields, hedges, lanes, mud, puddles), ring it with far hills (`horizon(land)`) and give rocks and leaves their looks: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `River(stream)` and `FloodWater(flood)` draw `gs.flow` rivers, waterfalls, lava and floods (see Flowing liquids). `Water({ level, waves })` is a sea of rolling waves you can ask about
-anywhere (`height(x, z)`, `normal`, `depth(p)`); call `update(dt, camera.position)` each frame.
+anywhere (`height(x, z)`, `normal`, `depth(p)`); call `update(dt, camera.position)` each frame. It can be disturbed too (rings, splashes, wakes,
+rain, a shore, the view from under it): see [Water you can disturb](#water-you-can-disturb).
 
 `new Wind({ x: 3, z: 0, gust: .4 })` is one wind for the whole world: `land.wind = wind` sways the
 grass with it, `looks.leaves(m, { wind })` makes the trees lean and stream downwind, `Weather({ wind })`
@@ -2527,3 +2529,54 @@ house.blast(shell.position, 3);                                      // an explo
   millisecond a frame, and under a tenth without (not yet measured on a phone).
 - Not there: rooms inside (it is a shell with floors), break edges that are not straight, and rubble
   that piles against walls (it lies on the ground and on floors).
+
+## Water you can disturb
+
+`const { Water } = gs.outdoors;` (3D.) The sea, lake or pond a game already has, answering to what
+happens to it. The water within 24 metres of the centre you give `update()` is a field of ripples:
+
+```js
+make():   sea = new Water({ level: 0, waves: .6, ripples: true, bed: (x, z) => land.height(x, z) });
+          view.scene.add(sea.mesh); sea.underwater(view);            // the look for a camera that goes under
+          sea.watch(boat, { radius: 1.2 });                          // by itself from now on: its wake, its foam, a splash if it lands
+reset() { sea.calm(); }
+update(dt) {
+  sky.update(dt); sea.rain = weather.kind === 'rain' ? weather.amount : 0;   // 0..1
+  sea.update(dt, camera.position);                                   // after the sky and your own view.air()
+  for (const s of sea.splashes) ears.play('splash', s);              // what landed in it this frame
+  mixer.muffle(sea.under ? .8 : 0);
+}
+sea.splash(rock.x, rock.z, { size: .8, speed: 7 });                  // something fell in
+sea.ring(x, z, { size: .3 });                                        // something small did
+```
+
+- `ring(x, z, { size, strength })`: rings spread out at walking pace and die away. `splash(x, z, { size,
+  speed })`: spray goes up (higher for a faster hit), rings go out and a patch of foam is left that breaks
+  up and fades. Each splash is in `sea.splashes` for one frame (`{ x, y, z, size, speed }`): sound, score
+  and shake are yours.
+- `watch(thing, { radius, bottom, top })` takes a mesh, a physics body, a `gs.craft.Boat`, a character:
+  anything with a position. From then on the water does the rest: a splash when it lands in the water or
+  leaps out of it, the water it pushes aside as it moves, rings left behind it (slow, they spread round a
+  swimmer; fast, they are a boat's wake), a trail of foam above a jog, spray off the bow above 5 m/s.
+  `bottom` and `top` are how far below and above its position it reaches (a person standing: `bottom: 0,
+  top: 1.8`). It returns the watch: `remove()` stops it. `foam: 0` or `splash: 0` turn those off.
+- `sea.height(x, z)` includes the ripples, so a floating thing bobs as a ring passes under it.
+- `bed: (x, z) => height` is the ground under the water (`land.height`): the shallows are paler and
+  clearer (`shallow`: their colour; `clear`: metres of water that hide the bed, 2.5), the water fades out
+  at the waterline, a broken line of foam laps the shore, and ripples die on the beach.
+- `sea.rain = 0..1`: the water goes duller, rings open where the drops land round the centre and little
+  drops hop back up. This works on any `Water`, with ripples or not.
+- `underwater(view, { colour, murk, dark })`: while the view's camera is below the surface, the view's
+  air is murky, tinted water (`murk`: how thick, .14 is about 15 metres of view; `dark`: how fast it
+  darkens with depth), the surface is seen from below, and `sea.under` is 1. On the way up the air goes
+  back to what your game had, or has set since.
+- **What it costs.** Calm water does no more work than its waves. While ripples move, a 128 by 128 grid
+  is stepped on the processor and two small pictures go to the graphics chip: measured on a desktop,
+  `update()` is .13 ms calm, .3 to .6 ms with ripples moving, .1 ms more in rain (not yet measured on a
+  phone). `ripples: 64` is a quarter of that with coarser rings. It is the same on WebGL and WebGPU, and
+  needs no change to your water's material: your own `material` keeps its normal map and gets foam, spray
+  and wakes (its own map hides the small rings).
+- Ask for `ripples: true` with the level: the first `ring()`, `splash()` or `watch()` makes the field
+  otherwise, in the middle of a round. `foam: false` and `spray: 0` leave those out.
+- Not there: waves that break, water that flows or changes level (`gs.flow`, `gs.fluid`), and a split
+  picture while the camera is half under.

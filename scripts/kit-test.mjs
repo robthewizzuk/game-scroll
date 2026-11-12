@@ -3242,5 +3242,106 @@ console.log('physics ok');
   console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics, reset and your own boxes ok');
 }
 
+// water you can disturb (src/kit/water.js: gs.outdoors.Water)
+{
+  const THREE = await import('three'), { Water } = await import('../src/kit/water.js');
+  const O = { x: 0, y: 0, z: 0 }, run = (w, secs, c = O, each) => { for (let i = 0; i < Math.round(secs * 60); i++) { each?.(i); w.update(1 / 60, c); } };
+  const cellAt = (r, x, z) => Math.floor((z - r.z0) / r.cell) * r.N + Math.floor((x - r.x0) / r.cell);
+  // the patch's points and normals are the same sums height() and normal() answer with, wherever the patch has got to
+  {
+    const w = new Water({ waves: 1.3, size: 40, segments: 16 }); run(w, 1.7, { x: 7.3, y: 0, z: -3.1 });
+    const P = w.mesh.geometry.attributes.position.array, Nn = w.mesh.geometry.attributes.normal.array, p = w.mesh.position; let e = 0;
+    for (let i = 0; i < P.length; i += 3) { const x = P[i] + p.x, z = P[i + 2] + p.z, n = w.normal(x, z); e = Math.max(e, Math.abs(P[i + 1] - w.height(x, z)), Math.abs(Nn[i] - n.x), Math.abs(Nn[i + 1] - n.y), Math.abs(Nn[i + 2] - n.z)); }
+    assert.ok(e < 1e-5, 'the mesh is where height() says: ' + e); assert.deepEqual([p.x, p.z], [7.5, -2.5], 'the patch follows the centre in whole cells');
+    assert.ok(w.rip === null && w.mesh.material.normalMap === null && w.mesh.children.length === 0, 'plain water has no ripple field');
+    w.ring(1, 1); assert.ok(w.rip && w.mesh.material.normalMap === w.rip.normalTex && w.foamMesh && w.spray, 'the first thing to disturb it makes one');
+  }
+  // calm water does no work: nothing moves on and no picture is sent to the graphics chip again
+  {
+    const w = new Water({ ripples: true }), r = w.rip; run(w, .5); const v0 = [r.normalTex.version, r.foamTex.version]; run(w, 2);
+    assert.ok(!w.busy && r.energy === 0 && r.N === 128 && Math.abs(r.cell - .375) < 1e-9); assert.deepEqual([r.normalTex.version, r.foamTex.version], v0, 'calm: no uploads');
+  }
+  // a ring spreads at the waves' speed, lifts the water it passes (height() knows), and dies away to nothing
+  {
+    const w = new Water({ ripples: true, waves: 0 }), r = w.rip; w.ring(0, 0, { size: .4 });
+    const far = () => { let m = 0; for (let j = 0; j < r.N; j++) for (let i = 0; i < r.N; i++) if (Math.abs(r.H[j * r.N + i]) > .002) m = Math.max(m, Math.hypot(r.x0 + (i + .5) * r.cell, r.z0 + (j + .5) * r.cell)); return m; };
+    run(w, 1); const a = far(); run(w, 2); const b = far(), v = (b - a) / 2;
+    assert.ok(v > 1.8 && v < 3.2, 'the ring goes out at about 2.6 m/s: ' + v); assert.ok(w.busy && r.energy > .005 && w.height(2, 0) !== 0 && w.swellAt(2, 0) === 0, 'the water it passes is lifted');
+    let t = 3; while (w.busy && t < 40) { run(w, 1); t++; } assert.ok(t < 20 && !r.H.some(h => h !== 0) && r.energy === 0, 'and it is still again: ' + t + ' s');
+  }
+  // the square of ripples follows the centre in whole cells: a ripple stays where it is in the world; a jump away starts clean
+  {
+    const w = new Water({ ripples: true, waves: 0 }), r = w.rip; w.ring(3, 2, { size: .6 }); run(w, 1.5);
+    const pts = [[3, 2], [4.1, 2.7], [1.2, 3.3], [5, 0]], a = pts.map(([x, z]) => r.at(x, z)), x0 = r.x0; assert.ok(a.every(h => h !== 0));
+    w.update(0, { x: 5.3, y: 0, z: -2.9 }); assert.ok(pts.every(([x, z], i) => Math.abs(r.at(x, z) - a[i]) < 1e-9), 'the same water after the square moved'); assert.equal((r.x0 - x0) / r.cell, 14);
+    w.update(0, { x: 500, y: 0, z: 0 }); assert.ok(!r.H.some(h => h !== 0) && r.sources.length === 0, 'a jump: calm water there');
+  }
+  // a splash: listed for one frame (for the game's sound), spray up, foam left that fades; one outside the square is still listed
+  {
+    const w = new Water({ ripples: true, waves: .5 }), r = w.rip; run(w, .2); w.splash(1, 1, { size: 1, speed: 6 }); assert.equal(w.splashes.length, 0);
+    w.update(1 / 60, O); assert.equal(w.splashes.length, 1); const s = w.splashes[0];
+    assert.ok(s.x === 1 && s.z === 1 && s.size === 1 && s.speed === 6 && Math.abs(s.y - w.swellAt(1, 1)) < .3 && w.spray.alive > 10 && w.spray.mesh.visible && r.F[cellAt(r, 1, 1)] > 1 && r.white, 'spray and foam');
+    const fv = r.foamTex.version; w.update(1 / 60, O); assert.ok(w.splashes.length === 0 && r.foamTex.version > fv, 'listed once; the foam picture follows');
+    let t = 0; while ((r.white || w.busy || w.spray.alive) && t < 90) { run(w, 1); t++; } assert.ok(t < 60 && !r.F.some(f => f !== 0) && !w.spray.mesh.visible, 'the foam fades and the spray lands: ' + t + ' s');
+    w.splash(300, 0, { size: 1, speed: 6 }); w.update(1 / 60, O); assert.ok(w.splashes.length === 1 && w.spray.alive > 0 && r.energy === 0, 'far away: spray and the event, no ripples');
+  }
+  // a watched thing: a splash as it lands and one as it leaps out (none for going right under), none when it is lowered in
+  {
+    const w = new Water({ ripples: true, waves: 0 }), ball = { x: 2, y: 3, z: 0 }, ev = []; w.watch(ball, { radius: .4 });
+    const go = (vy, tag) => { for (let i = 0; i < 90; i++) { ball.y += vy / 60; w.update(1 / 60, O); for (const s of w.splashes) ev.push([tag, s.x, s.z, +s.speed.toFixed(1), +s.size.toFixed(2)]); } };
+    go(-6, 'in'); go(6, 'out'); assert.deepEqual(ev, [['in', 2, 0, 6, .68], ['out', 2, 0, 3, .68]]);
+    const w2 = new Water({ ripples: true, waves: 0 }), b = { position: new THREE.Vector3(0, .5, 0) }; w2.watch(b, { radius: .3 }); let n = 0;
+    for (let i = 0; i < 120; i++) { b.position.y -= .5 / 60; w2.update(1 / 60, O); n += w2.splashes.length; } assert.ok(n === 0 && w2.rip.energy > 0, 'lowered in: no splash, but the water moves');
+  }
+  // a boat: foam behind it and none ahead or to the side, rings left behind that make its wake, spray off the bow; remove() stops it
+  {
+    const w = new Water({ ripples: true, waves: 0 }), r = w.rip, boat = { x: -10, y: 0, z: 0 }, h = w.watch(boat, { radius: 1 }); run(w, 2.5, O, () => { boat.x += 8 / 60; });
+    const F = (x, z) => r.F[cellAt(r, x, z)];
+    assert.ok([1, 3, 6, 9].every(d => F(boat.x - d, 0) > .4) && F(boat.x + 3, 0) === 0 && F(boat.x - 4, 4) === 0, 'a trail of foam'); assert.ok(F(boat.x - 9, 0) > 0 && h.wet);
+    assert.ok(r.sources.length > 3 && [2, 4, 6].some(d => Math.abs(w.height(boat.x - d, 1)) > .01) && w.splashes.length === 0 && w.spray.alive > 0, 'a wake and bow spray');
+    h.remove(); assert.equal(w.watched.length, 0); w.watch(boat); w.unwatch(boat); assert.equal(w.watched.length, 0);
+  }
+  // a bed under the water: paler, clearer shallows that fade to nothing at the waterline, foam along the shore and nowhere else, no ripples on dry land
+  {
+    const bed = (x, z) => -1 - x * .15, w = new Water({ ripples: true, waves: .3, bed, size: 80, segments: 40 }), r = w.rip; run(w, 3);   // (dry beyond x = -6.7)
+    const C = w.mesh.geometry.attributes.color.array, P = w.mesh.geometry.attributes.position.array, at = x => { for (let i = 0; i < P.length / 3; i++) if (P[i * 3] + w.mesh.position.x === x) return [...C.slice(i * 4, i * 4 + 4)]; };
+    const dry = at(-12), mid = at(-4), deep = at(20); assert.ok(dry[3] === 0 && mid[3] > .3 && mid[3] < .9 && mid[0] > 2 && deep.every(v => v === 1) && w.mesh.material.vertexColors && w.mesh.material.transparent, 'shallows');
+    const most = x => { let m = 0; for (let z = -20; z <= 20; z += r.cell) m = Math.max(m, r.F[cellAt(r, x, z)]); return m; };
+    assert.ok(most(-6.4) > .5 && most(-6.4) < .8 && most(-9) === 0 && most(-3) === 0 && most(5) === 0, 'foam laps the shore: ' + [-9, -6.4, -3, 5].map(most));
+    w.ring(-5.5, 0, { size: 1, strength: 2 }); run(w, 2); let d = 0, wet = 0; for (let c = 0; c < r.N * r.N; c++) if (r.B[c] <= 0) d = Math.max(d, Math.abs(r.H[c])); else wet = Math.max(wet, Math.abs(r.H[c]));
+    assert.ok(d === 0 && wet > .005, 'ripples stop at the beach'); assert.ok(Math.abs(w.depth({ x: 0, y: -.5, z: 0 }) - .5) < .35);
+  }
+  // under the surface: the view's air becomes water and goes back to what the game had (or has set since) on the way up
+  {
+    const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(50, 1, .1, 300), air = { haze: .001, mist: .2, colour: new THREE.Color('#aabbcc'), sunColour: new THREE.Color('#ffeedd') };
+    const w = new Water({ waves: .2 }); scene.add(w.mesh); assert.equal(w.underwater({ scene, cam, _air: air }), w);
+    assert.ok(w.mesh.material.side === THREE.DoubleSide && w.deepMesh.parent === scene && !w.deepMesh.visible);
+    cam.position.set(0, 2, 0); run(w, .1); assert.ok(w.under === 0 && air.haze === .001 && air.mist === .2 && air.colour.getHexString() === 'aabbcc', 'above: the air is the game\'s');
+    cam.position.set(0, -2, 0); run(w, .1); const c1 = air.colour.getHexString(); assert.ok(w.under === 1 && air.haze === .14 && air.mist === 0 && c1 !== 'aabbcc' && air.sunColour.getHexString() === c1 && w.deepMesh.visible, 'under: murky and tinted');
+    air.colour.set('#102030'); air.haze = .002; w.update(1 / 60); assert.ok(air.haze === .14 && air.colour.getHexString() === c1, 'the game\'s sky writes its air each frame: still water');
+    cam.position.set(0, -8, 0); w.update(1 / 60); assert.ok(air.colour.r + air.colour.g + air.colour.b < new THREE.Color('#' + c1).r + new THREE.Color('#' + c1).g + new THREE.Color('#' + c1).b, 'darker deeper');
+    cam.position.set(0, 2, 0); w.update(1 / 60); assert.ok(w.under === 0 && air.haze === .002 && air.mist === .2 && air.colour.getHexString() === '102030' && air.sunColour.getHexString() === 'ffeedd' && !w.deepMesh.visible, 'up: what the game set last');
+    cam.position.set(0, -2, 0); w.update(1 / 60); w.dispose(); assert.ok(air.haze === .002 && air.colour.getHexString() === '102030' && w.deepMesh.parent === null && w.mesh.parent === null, 'thrown away while under: the air goes back');
+    // a view with plain three.js fog
+    const s2 = new THREE.Scene(); s2.fog = new THREE.FogExp2(0x8899aa, .004); const w2 = new Water(); w2.underwater({ scene: s2, camera: cam }, { colour: '#003344', murk: .3 });
+    cam.position.set(0, -1, 0); w2.update(1 / 60); assert.ok(s2.fog.density === .3 && s2.fog.color.getHexString() !== '8899aa'); cam.position.set(0, 3, 0); w2.update(1 / 60); assert.ok(s2.fog.density === .004 && s2.fog.color.getHexString() === '8899aa');
+  }
+  // rain (on any water, ripples or not): duller, rings and hopping drops round the centre, and all of it gone soon after; calm() for a new round
+  {
+    const w = new Water({ waves: .4 }), r0 = w.mesh.material.roughness; w.rain = 1; run(w, 2, { x: 30, y: 0, z: 5 });
+    assert.ok(w.rip === null && w.dapple.alive > 300 && w.dapple.mesh.visible && w.spray.alive > 10 && Math.abs(w.mesh.material.roughness - r0 - .22) < 1e-9, 'rain shows');
+    const P = w.dapple.P; let out = 0; for (let i = 0; i < w.dapple.n; i++) if (Math.hypot(P[i * 2] - 30, P[i * 2 + 1] - 5) > 9.01) out++; assert.equal(out, 0, 'round the centre');
+    w.rain = 0; run(w, 2); assert.ok(w.dapple.alive === 0 && !w.dapple.mesh.visible && w.spray.alive === 0 && w.mesh.material.roughness === r0 && !w.rained, 'and stops');
+    const w2 = new Water({ ripples: 64, reach: 12 }); w2.rain = 1; w2.splash(0, 0); run(w2, .3); w2.calm(); w2.rain = 0; w2.update(1 / 60, O);
+    assert.ok(w2.rip.N === 64 && !w2.rip.H.some(h => h) && !w2.rip.F.some(f => f) && w2.spray.alive === 0 && w2.dapple.alive === 0 && w2.splashes.length === 0, 'calm()'); w2.dispose();
+  }
+  // the game's own material is left as it is (its normal map, its roughness), and foam and spray can be turned off
+  {
+    const nm = new THREE.DataTexture(new Uint8Array(4), 1, 1), m = new THREE.MeshStandardMaterial({ normalMap: nm, roughness: .3 }), w = new Water({ material: m, ripples: true, foam: false, spray: 0 });
+    w.rain = 1; w.splash(0, 0); run(w, 1); assert.ok(m.normalMap === nm && m.roughness === .3 && w.foamMesh === null && w.spray === null && w.dapple === null && w.rip.energy > 0);
+  }
+  console.log('water you can disturb: the same waves, calm water free, rings, a square that follows, splashes, watched things and wakes, shallows and shore foam, under the surface, rain, your own material ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

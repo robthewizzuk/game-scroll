@@ -22,11 +22,12 @@
 //
 // Sizes are metres; y is up. Keep segments modest on phones (64-128 a side).
 
-import { BufferAttribute, BufferGeometry, Color, DataTexture, InstancedBufferAttribute, InstancedMesh, LinearFilter, RGBAFormat, ConeGeometry, CylinderGeometry, DodecahedronGeometry, DoubleSide, Float32BufferAttribute, IcosahedronGeometry, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, OrthographicCamera, PlaneGeometry, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, Vector4, WebGLRenderTarget } from 'three';
+import { BufferAttribute, BufferGeometry, Color, DataTexture, InstancedBufferAttribute, InstancedMesh, LinearFilter, RGBAFormat, ConeGeometry, CylinderGeometry, DodecahedronGeometry, DoubleSide, Float32BufferAttribute, IcosahedronGeometry, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, OrthographicCamera, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, Vector4, WebGLRenderTarget } from 'three';
 import { fbm } from './math.js';
 import { bakeRenderer as renderer } from './hd3d.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 export { looks, groundDetail, horizon } from './looks.js';
+export { Water } from './water.js';
 import { looks as LOOKS } from './looks.js';
 import Terrain, { TerrainNS, createSeededRandom, scatterGrass, updateGrass, updateGrassLOD } from 'three.terrain.js';
 
@@ -260,47 +261,6 @@ function tuft({ blades = 8, bends = 3, stalks = 0, height = .45, width = .05, sp
   g.setAttribute('position', new Float32BufferAttribute(P, 3)); g.setAttribute('normal', new Float32BufferAttribute(Nn, 3)); g.setAttribute('uv', new Float32BufferAttribute(U, 2)); g.setAttribute('color', new Float32BufferAttribute(C, 3));
   g.setIndex(I); return g;
 }
-
-/**
- * Water with waves. level: the calm height; waves: how rough (0 calm .. 2 stormy) or your own list
- * [{ dir: radians, length: metres, height: metres, speed }]; size and segments: the patch that
- * follows the camera. colour, opacity, material: the look. height(x, z) and normal(x, z) use the
- * same waves as the mesh, so floating things match what you see.
- */
-export class Water {
-  constructor({ level = 0, waves = 1, size = 160, segments = 64, colour = '#2f7fb8', opacity = .85, material = null, seed = 3 } = {}) {
-    Object.assign(this, { level, size, segments }); this.t = 0;
-    let s = seed; const R = () => (s = (s * 16807) % 2147483647) / 2147483647;
-    this.list = Array.isArray(waves) ? waves : Array.from({ length: 4 }, (_, i) => ({ dir: R() * Math.PI * 2, length: [24, 13, 7, 4][i], height: waves * [.35, .18, .08, .04][i], speed: 0 }));
-    for (const w of this.list) { w.k = Math.PI * 2 / w.length; w.c = w.speed || Math.sqrt(9.8 / w.k); w.dx = Math.cos(w.dir); w.dz = Math.sin(w.dir); w.ph = R() * 6.28; }
-    const g = new PlaneGeometry(size, size, segments, segments); g.rotateX(-Math.PI / 2);
-    this.mesh = new Mesh(g, material || new MeshStandardMaterial({ color: colour, roughness: .15, metalness: .1, transparent: opacity < 1, opacity }));
-    this.mesh.receiveShadow = true; this.base = Float32Array.from(g.attributes.position.array);
-    this.update(0, { x: 0, y: 0, z: 0 });
-  }
-  /** Water height at x, z right now. */
-  height(x, z, t = this.t) { let y = this.level; for (const w of this.list) y += w.height * Math.sin(w.k * (x * w.dx + z * w.dz) - w.k * w.c * t + w.ph); return y; }
-  /** Surface up direction at x, z. */
-  normal(x, z, t = this.t) {
-    let gx = 0, gz = 0;
-    for (const w of this.list) { const d = w.height * w.k * Math.cos(w.k * (x * w.dx + z * w.dz) - w.k * w.c * t + w.ph); gx += d * w.dx; gz += d * w.dz; }
-    const l = Math.hypot(gx, 1, gz); return { x: -gx / l, y: 1 / l, z: -gz / l };
-  }
-  /** How deep a point is under the surface (negative above it). */
-  depth(p) { return this.height(p.x, p.z) - p.y; }
-  /** Each frame: moves the waves on and keeps the patch under `centre` (the camera or the boat). */
-  update(dt, centre = null) {
-    this.t += dt;
-    const cell = this.size / this.segments, p = this.mesh.position;
-    if (centre) { p.x = Math.round(centre.x / cell) * cell; p.z = Math.round(centre.z / cell) * cell; }
-    const a = this.mesh.geometry.attributes.position, arr = a.array, b = this.base;
-    for (let i = 0; i < arr.length; i += 3) arr[i + 1] = this.height(b[i] + p.x, b[i + 2] + p.z);
-    a.needsUpdate = true; this.mesh.geometry.computeVertexNormals();
-    return this;
-  }
-  dispose() { this.mesh.geometry.dispose(); this.mesh.removeFromParent(); }
-}
-
 
 /**
  * The look of a gs.flow stream or pool in 3D: a river, stream or waterfall of moving water (foam at

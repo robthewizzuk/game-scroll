@@ -2219,9 +2219,64 @@ export interface LandPart {
   scatter(props: Loose, name: string, count: number, o?: { above?: number; below?: number; steep?: number; keepOut?: (x: number, z: number) => boolean; inset?: number; [k: string]: Loose }): number[];
   update(dt: number, camera?: Loose): LandPart; dispose(): void;
 }
+/** Something that landed in gs.outdoors.Water since the last update (water.splashes): where, how big across (metres) and how fast it hit (metres a second). */
+export interface WaterSplash { x: number; y: number; z: number; size: number; speed: number }
+/** What water.watch() returns: remove() stops the watching. wet: it is in the surface now. */
+export interface WaterWatch { thing: Loose; radius: number; readonly wet: boolean; remove(): void }
+export interface WaterOptions {
+  level?: number; waves?: number | { height: number; length: number; dir?: number; speed?: number }[]; size?: number; segments?: number; colour?: string; opacity?: number; material?: Loose; seed?: number;
+  /** Water you can disturb: true (or how many cells across: 128) makes the water within `reach` metres of the centre a ripple field for ring(), splash() and watch(). It is made by itself the first time something disturbs the water; ask for it here so nothing new is built in the middle of a round. */
+  ripples?: boolean | number;
+  /** Metres from the centre to the edge of the ripple field (24). */
+  reach?: number;
+  /** The ground under the water, (x, z) => its height (land.height): the shallows are paler and clearer, and foam laps the shore. */
+  bed?: ((x: number, z: number) => number) | null;
+  /** The shallows' colour (default: a paler, greener `colour`). */
+  shallow?: string | null;
+  /** Metres of water that hide the bed (2.5). */
+  clear?: number;
+  /** The foam's colour ('#f2f8fa'); false: no foam. */
+  foam?: string | false;
+  /** How many drops splashes and rain can throw at once (80). 0: no spray, and no rings from rain. */
+  spray?: number;
+}
 export interface WaterPart {
   mesh: Loose; level: number; t: number;
-  height(x: number, z: number, t?: number): number; normal(x: number, z: number, t?: number): P3; depth(p: P3): number; update(dt: number, centre?: P3 | null): WaterPart; dispose(): void;
+  /** Rain falling on it, 0..1 (set it each frame from your weather): the water is duller, rings open where the drops land round the centre, and little drops hop back up. Works on any water, ripples or not. */
+  rain: number;
+  /** 1 while the camera of the view given to underwater() is below the surface (for your sound: gs.sound.mixer.muffle). */
+  readonly under: number;
+  /** What landed in the water since the last update: your splash() calls and watched things going in or leaping out. For your sound and score. */
+  readonly splashes: WaterSplash[];
+  /** True while ripples are moving. Calm water costs nothing more than its waves. */
+  readonly busy: boolean;
+  /** Water height at x, z now: the waves, and the ripples where there are any. */
+  height(x: number, z: number, t?: number): number;
+  /** The waves' height over the calm level at x, z (no ripples). */
+  swellAt(x: number, z: number, t?: number): number;
+  normal(x: number, z: number, t?: number): P3; depth(p: P3): number;
+  /** Makes the ripple field now (see the `ripples` option). cells: how fine (128 a side); reach: metres from the centre to its edge; speed: how fast ripples travel (2.6 m/s). */
+  ripples(o?: { cells?: number; reach?: number; speed?: number }): WaterPart;
+  /** Something small dropped in at x, z: rings spread out. size: metres across it (.4); strength: 1. */
+  ring(x: number, z: number, o?: { size?: number; strength?: number }): WaterPart;
+  /** Something landed in the water at x, z: spray goes up, rings go out, a patch of foam is left, and it is listed in `splashes` for a frame. size: metres across it (1); speed: how fast it hit, metres a second (4). */
+  splash(x: number, z: number, o?: { size?: number; speed?: number }): WaterPart;
+  /**
+   * Watches something that can be in the water (a mesh, a body, a boat: anything with a position, or x, y, z) and does the rest by itself: a splash when it lands or leaps out,
+   * the water it pushes aside, rings and a wake behind it, a trail of foam when it is fast, spray off its bow. radius: half its width in the water (.5); bottom, top: how far
+   * below and above its position it reaches (default: the radius each way; a person standing: bottom 0, top 1.8); foam, splash: 0 turns that off, or scales it.
+   */
+  watch(thing: Loose, o?: { radius?: number; bottom?: number; top?: number; foam?: number; splash?: number }): WaterWatch;
+  unwatch(thing: Loose): WaterPart;
+  /**
+   * The look for a camera that goes under the surface: the view's air becomes murky, tinted water (darker the deeper it is), the surface can be seen from below, and it all
+   * goes back to the game's own air on the way up. view: your HDView. colour: the water's colour down there; murk: how thick (.14: about 15 metres of view); dark: how fast it
+   * darkens with depth (.06 a metre). Call water.update() after sky.update() and your own view.air().
+   */
+  underwater(view: Loose, o?: { colour?: string | null; murk?: number; dark?: number }): WaterPart;
+  /** Calm again, for a new round: no ripples, foam, spray or rain rings. */
+  calm(): WaterPart;
+  update(dt: number, centre?: P3 | null): WaterPart; dispose(): void;
 }
 export interface WindPart {
   x: number; z: number; gust: number; gustSize: number; sway: number; grass: number; readonly speed: number; readonly angle: number;
@@ -2231,8 +2286,8 @@ export interface WindPart {
 export interface OutdoorsPart {
   /** Terrain (THREE.Terrain): kind 'hills' | 'mountains' | 'rolling' | 'islands' | 'bumps' | 'dunes' | 'cracked' | 'ridges' | 'smooth', or (x, z) => height. */
   Land: new (o?: { kind?: string | ((x: number, z: number) => number); size?: number; segments?: number; low?: number; high?: number; seed?: number; smooth?: number; steps?: number; colours?: [number, string][]; material?: Loose; edge?: number }) => LandPart;
-  /** Waves (a sum of sines) you can read anywhere: height, normal, depth. */
-  Water: new (o?: { level?: number; waves?: number | { height: number; length: number; dir?: number; speed?: number }[]; size?: number; segments?: number; colour?: string; opacity?: number; material?: Loose; seed?: number }) => WaterPart;
+  /** Waves (a sum of sines) you can read anywhere: height, normal, depth. And water you can disturb: rings, splashes with spray and foam, wakes behind watched things, rain, shallows and shore foam over a `bed`, and the look from under the surface. */
+  Water: new (o?: WaterOptions) => WaterPart;
   tree(o?: { kind?: 'pine' | 'round' | 'palm' | 'bush'; trunk?: string; leaves?: string; height?: number; seed?: number }): Loose;
   rock(o?: { size?: number; colour?: string; seed?: number }): Loose;
   /** Outdoor looks for Next Gen worlds, as patches on standard materials. Colours: '#hex' or [r, g, b] linear. Numbers can be shared uniforms ({ value }). */

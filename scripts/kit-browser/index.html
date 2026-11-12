@@ -598,6 +598,20 @@ try {
     wall.hit([0, .5, 0], { power: 9 }); for (let i = 0; i < 240; i++) wall.update(1 / 60);
     ok(wall.pieces === 3 && wall.left === 0 && !wall.busy && wall.group.children.length === 3, 'structure: your own boxes in recipe materials; the bottom one out and the rest come down'); wall.remove(); phys.free();
   }
+  // gs.outdoors.Water disturbed, drawn by three's own renderer from above: a splash leaves foam and spray in the picture and rain leaves rings,
+  // with no shader of its own (kit-test.mjs has the rules; scripts/water.cjs films it)
+  {
+    const T = gs.THREE, { Water } = gs.outdoors, scene = new T.Scene(), cam = new T.PerspectiveCamera(50, 1, .1, 200); cam.position.set(0, 9, .01); cam.lookAt(0, 0, 0); scene.add(new T.HemisphereLight('#fff', '#888', 4));
+    const sea = new Water({ waves: .2, ripples: true, colour: '#1a4f7a', opacity: 1 }); scene.add(sea.mesh);
+    const r = new T.WebGLRenderer({ canvas: document.createElement('canvas'), preserveDrawingBuffer: true }); r.setSize(128, 128); let bad = 0; r.debug.onShaderError = () => { bad++; };
+    const look = () => { r.render(scene, cam); const gl = r.getContext(), px = new Uint8Array(128 * 128 * 4); gl.readPixels(0, 0, 128, 128, gl.RGBA, gl.UNSIGNED_BYTE, px); let white = 0, sum = 0; for (let i = 0; i < px.length; i += 4) { sum += px[i] + px[i + 1] + px[i + 2]; if (px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) white++; } return { white: white / 16384, light: sum / 16384 / 3 }; };
+    const run = n => { for (let i = 0; i < n; i++) sea.update(1 / 60, { x: 0, y: 0, z: 0 }); return look(); };
+    const calm = run(10); sea.splash(0, 0, { size: 1.5, speed: 6 }); const hit = run(20), events = sea.splashes.length; sea.splash(1, 1); sea.update(1 / 60, { x: 0, y: 0, z: 0 });
+    ok(calm.white < .002 && hit.white > .01 && sea.splashes.length === 1 && events === 0 && sea.busy && !bad, 'water: a splash leaves foam and spray in the picture (' + (hit.white * 100).toFixed(1) + '% of it white, ' + (calm.white * 100).toFixed(1) + '% calm)');
+    sea.calm(); const still = run(5); sea.rain = 1; const wet = run(60);
+    ok(still.white < .002 && sea.dapple.alive > 300 && wet.light > still.light + .5 && !bad, 'water: calm() clears it, and rain leaves rings (the picture ' + (wet.light - still.light).toFixed(1) + ' lighter of 255)');
+    sea.dispose(); r.dispose();
+  }
 }
 window.result = out;
 </script>

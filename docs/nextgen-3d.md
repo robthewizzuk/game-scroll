@@ -725,6 +725,12 @@ const leafLook = looks.leaves(leafMaterial, { wind: .6 });      // sway, sun glo
   plates of crust that cool downstream; the glow feeds bloom). `new FloodWater(flood, { view: v })`
   draws a `gs.flow` Flood; on WebGPU the flood itself runs as compute on the graphics chip and its
   depths are copied back every few frames for `flood.depth()`. Both look the same on WebGL and WebGPU.
+- **Water you can disturb**: `new Water({ ripples: true, bed })` answers to what happens to it: `ring()`
+  and `splash()` (rings, spray, foam), `watch(boat)` (its wake, its foam trail, a splash when it lands),
+  `rain`, paler shallows and foam at the shore over a `bed`, and `underwater(view)` for a camera that
+  goes under (the view's air turns to murky water and comes back). Stock materials only, so WebGL and
+  WebGPU match, and your own water material is left as it is. See
+  [Water you can disturb](maker-kit.md#water-you-can-disturb); film it with `node scripts/water.cjs`.
 - Every look is a named effect (`material.userData.gsLooks` lists them), so the WebGPU version can
   swap each one for a node later (see `docs/webgpu-move.md`). Road segments: up to 32.
 
