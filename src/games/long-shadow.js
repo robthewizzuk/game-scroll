@@ -1129,42 +1129,44 @@ const MOVES = (() => {
       [0, { ...STAND, drop: 0, shift: [0, 0, 0] }],
       [.1, { hips: [-.12, 0, 0], spine: [-.28, .1, 0], head: [-.35, 0, 0], armL: [-.5, 0, .6], foreL: [-.5, 0, 0], armR: [-.3, 0, -.8], foreR: [-.7, 0, 0], legL: [-.1, 0, 0], shinL: [.3, 0, 0], legR: [.1, 0, 0], shinR: [.25, 0, 0], drop: .02, shift: [0, 0, -.03] }],
       [.38, { hips: [-.55, 0, .05], spine: [-.2, 0, 0], head: [-.1, 0, 0], armL: [-.9, 0, 1], foreL: [-.6, 0, 0], armR: [-.7, 0, -1.1], foreR: [-.5, 0, 0], legL: [-.75, 0, .08], shinL: [1.5, 0, 0], legR: [-.5, 0, -.1], shinR: [1.3, 0, 0], drop: .2, shift: [0, 0, -.22] }],
-      [.62, { hips: [-1.42, 0, .06], spine: [.12, 0, 0], head: [.3, 0, 0], armL: [-.5, 0, 1.2], foreL: [-.5, 0, 0], armR: [-.3, 0, -1], foreR: [-.8, 0, 0], legL: [-.9, 0, .12], shinL: [1.5, 0, 0], legR: [-.5, 0, -.2], shinR: [1, 0, 0], drop: .5, shift: [0, 0, -.5] }],
-      [.74, { hips: [-1.5, 0, .06], spine: [.02, 0, 0], head: [-.05, .1, 0], drop: .475 }],
-      [1, { hips: [-1.5, 0, .06], spine: [.08, 0, 0], head: [.15, .45, 0], armL: [-.25, 0, 1.15], foreL: [-.35, 0, 0], armR: [-.1, 0, -.55], foreR: [-1, 0, 0], legL: [-.55, 0, .14], shinL: [1.1, 0, 0], legR: [-.12, 0, -.24], shinR: [.3, 0, 0], drop: .49, shift: [0, 0, -.52] }],
+      [.62, { hips: [-1.42, 0, .06], spine: [.12, 0, 0], head: [.3, 0, 0], armL: [-.5, 0, 1.2], foreL: [-.5, 0, 0], armR: [-.3, 0, -1], foreR: [-.8, 0, 0], legL: [-.9, 0, .12], shinL: [1.5, 0, 0], legR: [-.54, 0, -.2], shinR: [.91, 0, 0], footR: [-.87, 0, 0], drop: .476, shift: [0, 0, -.5] }],
+      [.74, { hips: [-1.6, 0, .06], spine: [.02, 0, 0], head: [.1, .1, 0], drop: .468 }],
+      [1, { hips: [-1.62, 0, .06], spine: [0, 0, 0], head: [.42, .45, 0], armL: [.23, 0, 1.15], foreL: [0, 0, 0], armR: [.16, 0, -.55], foreR: [-1, 0, 0], legL: [-.6, 0, .14], shinL: [1.45, 0, 0], footL: [.72, 0, 0], legR: [-.07, 0, -.24], shinR: [.35, 0, 0], footR: [0, 0, 0], drop: .481, shift: [0, 0, -.52] }],
     ]), { time: 1.05, once: true }],
     fallFront: [keys([
       [0, { ...STAND, drop: 0, shift: [0, 0, 0] }],
       [.1, { hips: [.1, 0, 0], spine: [.3, -.1, 0], head: [.3, 0, 0], armL: [-.3, 0, .5], foreL: [-.6, 0, 0], armR: [-.2, 0, -.6], foreR: [-.8, 0, 0], legL: [-.25, 0, 0], shinL: [.5, 0, 0], legR: [.05, 0, 0], shinR: [.4, 0, 0], drop: .03, shift: [0, 0, .03] }],
       [.36, { hips: [.35, 0, 0], spine: [.45, 0, 0], head: [.1, 0, 0], armL: [-1.2, 0, .4], foreL: [-.9, 0, 0], armR: [-.9, 0, -.5], foreR: [-1.1, 0, 0], legL: [-.35, 0, 0], shinL: [1.7, 0, 0], legR: [-.2, 0, 0], shinR: [1.6, 0, 0], drop: .26, shift: [0, 0, .12] }],
-      [.62, { hips: [1.4, 0, .05], spine: [-.1, 0, 0], head: [-.35, .5, 0], armL: [-3, 0, .8], foreL: [-.4, 0, 0], armR: [.05, 0, -.9], foreR: [-.3, 0, 0], legL: [.02, 0, .1], shinL: [.5, 0, 0], legR: [.05, 0, -.15], shinR: [.9, 0, 0], drop: .5, shift: [0, 0, .48] }],
-      [.75, { hips: [1.47, 0, .05], drop: .478 }],
-      [1, { hips: [1.47, 0, .05], spine: [-.08, 0, 0], head: [-.3, .7, 0], armL: [-3, 0, .9], foreL: [-.3, 0, 0], armR: [.1, 0, -1], foreR: [-.2, 0, 0], legL: [0, 0, .12], shinL: [.15, 0, 0], legR: [.04, 0, -.2], shinR: [.7, 0, 0], drop: .49, shift: [0, 0, .5] }],
+      [.5, { hips: [.94, 0, .03], spine: [.14, 0, 0], head: [-.18, .28, 0], armL: [-2.34, 0, .62], foreL: [-.62, 0, 0], armR: [-.37, 0, -.72], foreR: [-.65, 0, 0], legL: [-.16, 0, .06], shinL: [1.04, 0, 0], footL: [0, 0, 0], legR: [-.15, 0, -.08], shinR: [1.04, 0, 0], footR: [-.04, 0, 0], drop: .332, shift: [0, 0, .337] }],   // (on his knees, going over)
+      [.62, { hips: [1.4, 0, .05], spine: [-.1, 0, 0], head: [-.35, .5, 0], armL: [-3, 0, .8], foreL: [-.4, 0, 0], armR: [.05, 0, -.9], foreR: [-.3, 0, 0], legL: [.02, 0, .1], shinL: [.5, 0, 0], legR: [.05, 0, -.15], shinR: [.9, 0, 0], drop: .474, shift: [0, 0, .48] }],
+      [.75, { hips: [1.5, 0, .05], drop: .474 }],
+      [1, { hips: [1.52, 0, .05], spine: [.18, 0, 0], head: [-.72, .7, 0], armL: [-3.08, 0, .9], foreL: [0, 0, 0], armR: [-.25, 0, -1], foreR: [0, 0, 0], legL: [-.06, 0, .12], shinL: [.12, 0, 0], footL: [.84, 0, 0], legR: [-.1, 0, -.2], shinR: [.43, 0, 0], footR: [-.05, 0, 0], drop: .486, shift: [0, 0, .5] }],
     ]), { time: 1.05, once: true }],
     fallRight: [keys([
       [0, { ...STAND, drop: 0, shift: [0, 0, 0] }],
       [.1, { hips: [0, .15, .1], spine: [.05, .25, .22], head: [0, .2, .3], armL: [-.4, 0, .9], foreL: [-.5, 0, 0], armR: [-.2, 0, -.3], foreR: [-.6, 0, 0], legL: [-.1, 0, 0], shinL: [.3, 0, 0], legR: [0, 0, 0], shinR: [.3, 0, 0], drop: .02, shift: [-.03, 0, 0] }],
       [.38, { hips: [.1, .3, .55], spine: [.2, .2, .2], head: [.1, 0, .2], armL: [-.8, 0, .9], foreL: [-.8, 0, 0], armR: [-.6, 0, -.4], foreR: [-1, 0, 0], legL: [-.5, 0, 0], shinL: [1.3, 0, 0], legR: [-.7, 0, 0], shinR: [1.5, 0, 0], drop: .22, shift: [-.2, 0, 0] }],
-      [.62, { hips: [.1, .35, 1.4], spine: [.25, .1, .05], head: [.1, 0, -.25], armL: [-1, 0, .2], foreL: [-.9, 0, 0], armR: [-1.2, 0, -.2], foreR: [-.7, 0, 0], legL: [-.7, 0, 0], shinL: [1.2, 0, 0], legR: [-.3, 0, 0], shinR: [.9, 0, 0], drop: .47, shift: [-.46, 0, 0] }],
-      [.75, { hips: [.1, .35, 1.47], drop: .45 }],
-      [1, { hips: [.1, .35, 1.47], spine: [.3, .1, .05], head: [.2, 0, -.3], armL: [-.9, 0, .15], foreL: [-1, 0, 0], armR: [-1.3, 0, -.2], foreR: [-.6, 0, 0], legL: [-.8, 0, 0], shinL: [1.25, 0, 0], legR: [-.25, 0, 0], shinR: [.7, 0, 0], drop: .46, shift: [-.48, 0, 0] }],
+      [.62, { hips: [.1, .35, 1.4], spine: [.25, .1, .1], head: [.1, 0, .3], armL: [-1, 0, .2], foreL: [-.9, 0, 0], armR: [-1.2, 0, .1], foreR: [-.9, 0, 0], legL: [-.7, 0, 0], shinL: [1.2, 0, 0], legR: [0, 0, 0], shinR: [.85, 0, 0], drop: .432, shift: [-.46, 0, 0] }],
+      [.75, { hips: [.1, .35, 1.4], drop: .43 }],
+      [1, { hips: [.1, .35, 1.4], spine: [.3, .1, .15], head: [.2, 0, .81], armL: [-.94, 0, -.67], foreL: [-.71, 0, 0], armR: [-1.22, 0, .11], foreR: [-.96, 0, 0], legL: [-.8, 0, 0], shinL: [1.25, 0, 0], legR: [.19, 0, 0], shinR: [.8, 0, 0], drop: .439, shift: [-.48, 0, 0] }],
     ]), { time: 1.05, once: true }],
-    // down on his right knee to fire, bladed to his target (the arms are then brought onto the rifle)
-    kneel: [p => { const b = S(p * TAU) * .006; return { j: { hips: [.04, -.25, 0], spine: [.14 + b, .2, 0], head: [-.05, .05, 0], legL: [-1.45, 0, .1], shinL: [1.45, 0, 0], footL: [0, 0, 0], legR: [.38, 0, -.06], shinR: [1.22, 0, 0], footR: [1, 0, 0], armL: [-.5, 0, .1], foreL: [-1, 0, 0], armR: [-.3, 0, -.1], foreR: [-1.2, 0, 0] }, drop: .21 }; }, { time: 4 }],
+    // down on his right knee to fire, bladed to his target (the arms are then brought onto the rifle). The knee and the toes
+    // behind it are on the ground, and the front foot flat: the hips' drop and the legs' turns are fitted to the body's own measures.
+    kneel: [p => { const b = S(p * TAU) * .006; return { j: { hips: [.04, -.25, 0], spine: [.14 + b, .2, 0], head: [-.05, .05, 0], legL: [-1.71, 0, .1], shinL: [1.53, 0, 0], footL: [.12, 0, 0], legR: [.38, 0, -.06], shinR: [1.17, 0, 0], footR: [.92, 0, 0], armL: [-.5, 0, .1], foreL: [-1, 0, 0], armR: [-.3, 0, -.1], foreR: [-1.2, 0, 0] }, drop: .27 }; }, { time: 4 }],
     // right down behind cover, on the balls of his feet, his head under the top of a low wall
-    duck: [p => { const b = S(p * TAU) * .005; return { j: { hips: [.25, 0, 0], spine: [.62 + b, 0, 0], head: [.05, 0, 0], legL: [-2.05, 0, .16], shinL: [2.45, 0, 0], footL: [-.25, 0, 0], legR: [-1.9, 0, -.14], shinR: [2.5, 0, 0], footR: [-.3, 0, 0], armL: [-.75, 0, .12], foreL: [-1.3, 0, 0], armR: [-.6, 0, -.1], foreR: [-1.4, 0, 0] }, drop: .33 }; }, { time: 3.5 }],
+    duck: [p => { const b = S(p * TAU) * .005; return { j: { hips: [.25, 0, 0], spine: [.62 + b, 0, 0], head: [.05, 0, 0], legL: [-2.05, 0, .16], shinL: [2.45, 0, 0], footL: [-.17, 0, 0], legR: [-1.9, 0, -.14], shinR: [2.5, 0, 0], footR: [-.38, 0, 0], armL: [-.75, 0, .12], foreL: [-1.3, 0, 0], armR: [-.6, 0, -.1], foreR: [-1.4, 0, 0] }, drop: .311 }; }, { time: 3.5 }],
     // a round cracks past: he ducks his head into his shoulders, half down, and looks for where it came from
     flinch: [keys([
       [0, { ...STAND, drop: 0 }],
-      [.22, { hips: [.12, 0, 0], spine: [.5, .15, 0], head: [.35, .2, 0], armL: [-1.1, 0, .35], foreL: [-2, 0, 0], armR: [-.9, 0, -.3], foreR: [-1.9, 0, 0], legL: [-.55, 0, .05], shinL: [1.1, 0, 0], legR: [-.4, 0, -.05], shinR: [1, 0, 0], drop: .075 }],
+      [.22, { hips: [.12, 0, 0], spine: [.5, .15, 0], head: [.35, .2, 0], armL: [-1.1, 0, .35], foreL: [-2, 0, 0], armR: [-.9, 0, -.3], foreR: [-1.9, 0, 0], legL: [-.55, 0, .05], shinL: [1.1, 0, 0], footL: [-.59, 0, 0], legR: [-.4, 0, -.05], shinR: [1, 0, 0], footR: [-.71, 0, 0], drop: .075 }],
       [.6, { spine: [.45, .1, 0], head: [.2, -.35, 0], drop: .07 }],
-      [1, { hips: [.03, 0, 0], spine: [.15, 0, 0], head: [0, 0, 0], armL: [-.2, 0, .1], foreL: [-.7, 0, 0], armR: [-.2, 0, -.1], foreR: [-.8, 0, 0], legL: [-.15, 0, 0], shinL: [.3, 0, 0], legR: [-.1, 0, 0], shinR: [.25, 0, 0], drop: .015 }],
+      [1, { hips: [.03, 0, 0], spine: [.15, 0, 0], head: [0, 0, 0], armL: [-.2, 0, .1], foreL: [-.7, 0, 0], armR: [-.2, 0, -.1], foreR: [-.8, 0, 0], legL: [-.15, 0, 0], shinL: [.3, 0, 0], footL: [-.12, 0, 0], legR: [-.1, 0, 0], shinR: [.25, 0, 0], footR: [-.13, 0, 0], drop: .005 }],
     ]), { time: .6, once: true }],
     // The zip line. Under the bar with both hands on it: a look down the line, he sinks, then springs and his knees come up
     zipReady: [keys([
       [0, { hips: [0, 0, 0], spine: [-.04, 0, 0], head: [.02, 0, 0], legL: [-.06, .08, .03], shinL: [.12, 0, 0], footL: [0, 0, 0], legR: [.05, -.08, -.03], shinR: [.1, 0, 0], footR: [0, 0, 0], armL: [-2.9, 0, -.2], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [-2.9, 0, .2], foreR: [-.2, 0, 0], handR: [0, 0, 0], drop: 0 }],
       [.4, { head: [.16, .12, 0], spine: [0, .05, 0] }],
-      [.72, { hips: [.14, 0, 0], spine: [.12, 0, 0], head: [-.05, 0, 0], legL: [-.55, .06, .05], shinL: [1.05, 0, 0], legR: [-.45, -.06, -.05], shinR: [.95, 0, 0], drop: .085 }],
+      [.72, { hips: [.14, 0, 0], spine: [.12, 0, 0], head: [-.05, 0, 0], legL: [-.55, .06, .05], shinL: [1.05, 0, 0], footL: [-.62, 0, 0], legR: [-.45, -.06, -.05], shinR: [.95, 0, 0], footR: [-.62, 0, 0], drop: .07 }],
       [1, { hips: [-.12, 0, 0], spine: [.04, 0, 0], head: [-.2, 0, 0], legL: [-1.0, 0, .02], shinL: [1.6, 0, 0], footL: [.45, 0, 0], legR: [-.6, 0, -.02], shinR: [1.25, 0, 0], footR: [.45, 0, 0], drop: 0 }],
     ]), { time: 1, once: true }],
     // riding it: tucked up under the bar, the legs working a little against the swing
@@ -1174,15 +1176,18 @@ const MOVES = (() => {
     // the feet strike, he folds right down over them, a hand out for balance, then up and a look across the valley
     zipLand: [keys([
       [0, { hips: [-.28, 0, 0], spine: [.14, 0, 0], head: [-.1, 0, 0], legL: [-1.25, 0, .03], shinL: [.4, 0, 0], footL: [-.25, 0, 0], legR: [-1.05, 0, -.03], shinR: [.55, 0, 0], footR: [-.2, 0, 0], armL: [-3, 0, -.2], foreL: [-.12, 0, 0], handL: [0, 0, 0], armR: [-3, 0, .2], foreR: [-.12, 0, 0], handR: [0, 0, 0], drop: 0 }],
-      [.1, { hips: [0, 0, 0], spine: [.2, 0, 0], legL: [-.7, .06, .05], shinL: [.6, 0, 0], footL: [0, 0, 0], legR: [-.5, -.06, -.05], shinR: [.7, 0, 0], footR: [0, 0, 0], armL: [-2.3, 0, .05], foreL: [-.5, 0, 0], armR: [-2.3, 0, -.05], foreR: [-.5, 0, 0], drop: .04 }],
-      [.3, { hips: [.3, 0, 0], spine: [.6, 0, 0], head: [-.45, 0, 0], legL: [-1.8, .06, .16], shinL: [2.25, 0, 0], footL: [.25, 0, 0], legR: [-1.45, -.06, -.14], shinR: [2.15, 0, 0], footR: [.5, 0, 0], armL: [-.95, 0, .25], foreL: [-.5, 0, 0], armR: [-.5, 0, -.5], foreR: [-.9, 0, 0], drop: .43 }],
-      [.52, { hips: [.26, 0, 0], spine: [.52, 0, 0], head: [-.4, .1, 0], drop: .4 }],
-      [.82, { hips: [.06, 0, 0], spine: [.14, 0, 0], head: [-.05, .3, 0], legL: [-.16, .08, .04], shinL: [.3, 0, 0], footL: [0, 0, 0], legR: [.02, -.08, -.04], shinR: [.22, 0, 0], footR: [0, 0, 0], armL: [-.08, 0, .09], foreL: [-.35, -.2, 0], armR: [.05, 0, -.09], foreR: [-.3, .2, 0], drop: .03 }],
+      [.1, { hips: [0, 0, 0], spine: [.2, 0, 0], legL: [-.7, .06, .05], shinL: [.72, 0, 0], footL: [.26, 0, 0], legR: [-.5, -.06, -.05], shinR: [.7, 0, 0], footR: [-.2, 0, 0], armL: [-2.3, 0, .05], foreL: [-.5, 0, 0], armR: [-2.3, 0, -.05], foreR: [-.5, 0, 0], drop: .039 }],
+      [.3, { hips: [.3, 0, 0], spine: [.6, 0, 0], head: [-.45, 0, 0], legL: [-2.13, .06, .16], shinL: [2.14, 0, 0], footL: [.07, 0, 0], legR: [-1.14, -.06, -.14], shinR: [2.3, 0, 0], footR: [.87, 0, 0], armL: [-.95, 0, .25], foreL: [-.5, 0, 0], armR: [-.5, 0, -.5], foreR: [-.9, 0, 0], drop: .288 }],
+      [.52, { hips: [.26, 0, 0], spine: [.52, 0, 0], head: [-.4, .1, 0], drop: .288 }],
+      [.82, { hips: [.06, 0, 0], spine: [.14, 0, 0], head: [-.05, .3, 0], legL: [-.16, .08, .04], shinL: [.3, 0, 0], footL: [-.19, 0, 0], legR: [.02, -.08, -.04], shinR: [.12, 0, 0], footR: [-.19, 0, 0], armL: [-.08, 0, .09], foreL: [-.35, -.2, 0], armR: [.05, 0, -.09], foreR: [-.3, .2, 0], drop: .01 }],
       [1, { hips: [.02, 0, 0], spine: [.05, .1, 0], head: [0, .42, 0], ...EASE, drop: 0 }],
     ]), { time: 1.35, once: true }],
     // his body on the ladder (the arms and legs are placed on the rungs): leaning in, looking up, the hips
     // swinging over the foot that pushes
     ladder: [p => { const s = S(p * TAU); return { j: { hips: [.06, .05 * s, .03 * s], spine: [.1, -.09 * s, .07 * s], head: [-.42, 0, -.03 * s], armL: [-2.3, 0, -.1], foreL: [-.5, 0, 0], handL: [0, 0, 0], armR: [-2.3, 0, .1], foreR: [-.5, 0, 0], handR: [0, 0, 0], legL: [-.2, 0, 0], shinL: [.35, 0, 0], footL: [.1, 0, 0], legR: [-.2, 0, 0], shinR: [.35, 0, 0], footR: [.1, 0, 0] }, drop: 0, shift: [.035 * s, 0, 0] }; }, 0],
+    // riding out on a wagon's roof: low on his right knee, sitting back on his heel, his right hand down on the roof beside him
+    // and his left arm across his knee, his head up to look along the train
+    ride: [p => { const s = S(p * TAU) * .012; return { j: { hips: [.1, -.2, 0], spine: [.45 + s, .12, .41], head: [-.45, .1, -.2], legL: [-2.15, 0, .14], shinL: [2.37, 0, 0], footL: [-.32, 0, 0], legR: [-1.1, 0, -.08], shinR: [2.7, 0, 0], footR: [.6, 0, 0], armL: [-.95, 0, .1], foreL: [-.9, -.6, 0], handL: [0, 0, 0], armR: [-.38, 0, -.36], foreR: [-.06, 0, 0], handR: [-.9, 0, 0] }, drop: .369 }; }, { time: 2.2 }],
   };
   // (the same to his left: left and right swapped, turned the other way)
   const flip = f => p => { const s = f(p), j = {}; for (const k in s.j) { const a = s.j[k], c = k[k.length - 1]; j[c === 'L' ? k.slice(0, -1) + 'R' : c === 'R' ? k.slice(0, -1) + 'L' : k] = [a[0], -a[1], -a[2]]; } return { j, drop: s.drop, shift: s.shift && [-s.shift[0], s.shift[1], s.shift[2]] }; };
@@ -1195,6 +1200,29 @@ const POOL = {};
 // rifle's stock). Fingers stay as they were last set, so this sets them only when they change.
 const EASY = .3, HELD = .9;
 function hands(m, L, R = L) { const u = m.userData; if (u.fL !== L || u.fR !== R) { u.fL = L; u.fR = R; m.fingers({ L, R }); } }
+// Feet kept on the floor through a move that takes them off it (a fall, a landing; the key poses are fitted to the ground, the way
+// between them is not). A foot the move would take under his floor is lifted onto it (lift: 0..1 how far), and while he is still on
+// his feet each is held where `pins` has it, its sole flat (pin: 0..1). In his own space: his floor is `floor` under him. After rig.update().
+const _fl = { footL: new Vector3(), footR: new Vector3() }, _fe = new Vector3(), _fh = { blend: { footL: 0, footR: 0 }, level: { L: 0, R: 0 } };
+const BALL = [0, -.07, .1], HEEL = [0, -.07, -.05], TOES = [0, -.07, .19], SOLE = .009;   // (the ball, heel and toes of a foot in its bone, and how high the ball is when he stands)
+function floorFeet(m, lift = 1, pins = null, pin = 0, floor = 0) {
+  m.updateMatrixWorld(true); let any = false;
+  for (const sd of ['L', 'R']) {
+    const n = 'foot' + sd, at = m.bones[n].matrixWorld, p = m.worldToLocal(_fl[n].fromArray(BALL).applyMatrix4(at)), x = p.x, y = p.y, z = p.z;
+    const ends = Math.min(m.worldToLocal(_fe.fromArray(HEEL).applyMatrix4(at)).y, m.worldToLocal(_fe.fromArray(TOES).applyMatrix4(at)).y), dug = lift > 0 && ends < floor - .012;   // (its heel or toes in the floor: laid flat)
+    if (pins && pin > 0) p.lerp(pins[n], pin);
+    if (p.y < floor + SOLE - .004 || dug) p.y += Math.max(0, floor + SOLE - p.y) * lift;
+    const moved = dug || Math.abs(p.x - x) + Math.abs(p.y - y) + Math.abs(p.z - z) > .002;
+    _fh.blend[n] = moved ? 1 : 0; _fh.level[sd] = moved ? Math.max(pin, dug ? lift : lift * .6) : 0; any ||= moved; m.localToWorld(p);
+  }
+  if (any) m.touch(_fl, _fh);
+}
+// where the balls of his feet are now, in his own space and on his floor (for floorFeet's pins)
+function feetNow(m, to) {
+  m.updateMatrixWorld(true);
+  for (const n of ['footL', 'footR']) { m.worldToLocal((to[n] ||= new Vector3()).fromArray(BALL).applyMatrix4(m.bones[n].matrixWorld)); to[n].y = SOLE; }
+  return to;
+}
 function man(look) {
   const list = POOL[look] ||= [];
   const free = list.find(f => !f.userData.used);
@@ -1203,7 +1231,9 @@ function man(look) {
   const none = { visible: true }, gun = look === 'officer' ? null : soldierRifle(look === 'rook' || look === 'wren');
   if (gun) { root.bones.spine.add(gun); gun.position.copy(HOLDS.slung.p); gun.quaternion.copy(HOLDS.slung.q); }
   root.rig.add('shoulder', SHOULDER).add('call', CALL); for (const k in MOVES.poses) root.rig.add(k, ...MOVES.poses[k]);
-  root.userData = { used: true, look, rifle: gun || none, gun, pack: root.gear.pack || none, aerial: none, helmet: root.gear.hat || none, k: 0 };
+  // (slung, the rifle hangs from his shoulder: it bounces to his step and swings as he starts, stops and turns; carry() adds that)
+  const sling = gun && look !== 'wren' ? root.rig.hang(gun, { pivot: SLING, apply: false, swing: .03, bounce: .002, most: .2, away: [0, 0, -1] }) : null;
+  root.userData = { used: true, look, rifle: gun || none, gun, sling, pack: root.gear.pack || none, aerial: none, helmet: root.gear.hat || none, k: 0 };
   hands(root, EASY);
   root.lod = 2;   // far off until see() says otherwise (behind the field file nobody is looked at, and a squad at full detail is a lot to draw)
   list.push(root); WD.v.scene.add(root);
@@ -1214,6 +1244,7 @@ function man(look) {
 // arms are bent to bring the hands onto it. Call after rig.update().
 // pitch: how far above (or below) him his target is, radians: the muzzle rises about the butt in his shoulder.
 const _hp = new Vector3(), _hq = new THREE.Quaternion(), _hx = new Vector3(), _hb = new Vector3(), _hr = new THREE.Quaternion(), BUTT = [0, -.045, .36];
+const SLING = [-.17, .4, -.08], _sv = new Vector3(...SLING), _sp = new Vector3(), _sq = new THREE.Quaternion(), _se = new THREE.Euler();   // where the sling lies over his shoulder, in his chest's space
 function carry(m, h, dt, close, pitch = 0) {
   const u = m.userData, g = u.gun; if (!g || !g.visible) return;
   u.k += (h - u.k) * Math.min(1, dt * 6); u.pitch = (u.pitch || 0) + (pitch - (u.pitch || 0)) * Math.min(1, dt * 4);
@@ -1224,14 +1255,19 @@ function carry(m, h, dt, close, pitch = 0) {
     _hq.premultiply(_hr.setFromAxisAngle(_hx.set(1, 0, 0).applyQuaternion(_hq), u.pitch * a));
     _hp.fromArray(BUTT).applyQuaternion(_hq).negate().add(_hb);
   }
-  g.position.copy(HOLDS.slung.p).lerp(_hp, k); g.quaternion.copy(HOLDS.slung.q).slerp(_hq, k);
+  const sl = u.sling;
+  if (sl && k < 1 && (sl.x || sl.z || sl.y)) {   // swinging on its sling, about the shoulder
+    _sq.setFromEuler(_se.set(sl.x, 0, sl.z)); _sp.copy(HOLDS.slung.p).sub(_sv).applyQuaternion(_sq).add(_sv); _sp.y += sl.y;
+    g.position.copy(_sp).lerp(_hp, k); g.quaternion.copy(_sq.multiply(HOLDS.slung.q)).slerp(_hq, k);
+  } else { g.position.copy(HOLDS.slung.p).lerp(_hp, k); g.quaternion.copy(HOLDS.slung.q).slerp(_hq, k); }
   hands(m, k > .5 ? null : EASY);   // closed round the stock once the rifle is in his hands
   if (k > .5 && close) m.hold(g, GRIP, FORE);
 }
 // Wren up close (the ladder, the zip line, the train): the same kind of person, in his knitted cap and
 // scarf, the scoped rifle slung across his back (at dusk the lamps of a move light him: see STAGE)
 function wrenFigure() {
-  const w = man('wren'); POOL.wren.length = 0; w.userData.gun.position.copy(HOLDS.back.p); w.userData.gun.quaternion.copy(HOLDS.back.q); w.userData.gun = null;
+  const w = man('wren'), g = w.userData.gun; POOL.wren.length = 0; g.position.copy(HOLDS.back.p); g.quaternion.copy(HOLDS.back.q); w.userData.gun = null;
+  w.rig.hang(g, { pivot: [-.12, .42, -.14], swing: .006, bounce: .0012, most: .08, away: [0, 0, -1] });   // (held at shoulder and hip by its sling: it bounces to his stride more than it swings)
   return w;
 }
 function freeMen() { for (const k in POOL) for (const f of POOL[k]) { f.userData.used = false; f.visible = false; } }
@@ -1388,6 +1424,7 @@ function make(api) {
     m.userData.pack.visible = s.kind === 'radio' || s.look === 'ally';
     m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer'; if (m.userData.handset) m.userData.handset.visible = false;
     m.rig.play('idle', { fade: 0 }); m.rig.upper(null); m.rig.layers[m.rig.layers.length - 1].phase = Math.random(); m.rig.sw = null;   // (each breathes and shifts his weight in his own time)
+    m.rig.steps = s.kind !== 'cargun'; m.rig.follow?.reset();   // (the car's gunner rides: his feet go with the car; and nothing swings on from the round before)
     s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0); m.position.set(s.x, s.gy, s.y); m.rotation.set(0, s.yaw, 0);
     return s;
   }
@@ -1407,7 +1444,9 @@ function make(api) {
     const m = s.m, rel = from ? angDiff(Math.atan2(s.x - from.x, s.y - from.z), s.yaw) : rnd(-Math.PI, Math.PI), sy = Math.sin(s.yaw), cy = Math.cos(s.yaw);   // the way the round travels, against the way he faces
     const order = Math.abs(rel) < .8 ? ['fallFront', 'fallLeft', 'fallRight', 'fallBack'] : Math.abs(rel) > 2.3 ? ['fallBack', 'fallRight', 'fallLeft', 'fallFront'] : rel > 0 ? ['fallLeft', 'fallBack', 'fallFront', 'fallRight'] : ['fallRight', 'fallBack', 'fallFront', 'fallLeft'];
     const at = (lx, lz, r) => [s.x + (lx * cy + lz * sy) * r, s.y + (-lx * sy + lz * cy) * r];
+    if (m.gear.pack && m.userData.pack.visible) order.push(...order.splice(order.indexOf('fallBack'), 1));   // (with a pack on his back he goes over on his side or his face rather than lie on it)
     const pick = order.find(n => { const [x, z] = at(...FALLS[n], 1.2); return !solidAt(x, z, WD.solids); }) || order[0];
+    s.pins = s.crouch || s.low ? null : feetNow(m, m.userData.pins ||= {});   // where his feet stand: they stay there while his legs give
     // (a man on a knee or ducked is already half way down: his fall starts there, not from standing)
     m.rig.play(pick, { fade: s.crouch ? .16 : .1, again: true, from: s.low ? .36 : s.crouch ? .3 : 0 }); m.rig.upper(null);
     hands(m, EASY); if (m.userData.handset) m.userData.handset.visible = false;   // his hands go slack
@@ -1418,6 +1457,7 @@ function make(api) {
   function lie(s, dt) {
     const m = s.m; if (s.still) return;
     m.rig.update(dt, { speed: 0 });
+    { const ph = m.rig.phase; if (ph < .7 && m.lod < 2) floorFeet(m, 1 - sm(.6, .7, ph), s.pins, 1 - sm(.3, .5, ph)); }
     if (s.tilt) { const k = sm(.3, .72, m.rig.phase); m.rotation.order = 'YXZ'; m.rotation.x = s.tilt[0] * k; m.rotation.z = s.tilt[1] * k; }
     if (!s.thud && m.rig.phase > .6) {   // he meets the ground: dust (mud in the rain) from under him
       s.thud = true; const [fx_, fz_] = FALLS[m.rig.state] || [0, 0], sy = Math.sin(s.yaw), cy = Math.cos(s.yaw), x = s.x + (fx_ * cy + fz_ * sy) * .5, z = s.y + (-fx_ * sy + fz_ * cy) * .5;
@@ -1875,6 +1915,7 @@ function make(api) {
     // his hands close round the rung or the bar they hold, and open as they reach for the next
     if (f.touch) { w.touch(f.touch, f.how); const b = f.how.blend, o = f.open, shut = (hold = 1, open = 0) => EASY + (HELD - EASY) * clamp(hold * (1 - open), 0, 1); hands(w, shut(b.handL, o?.L), shut(b.handR, o?.R)); }
     else hands(w, EASY);
+    if (f.floor != null) floorFeet(w, 1, null, 0, f.floor - w.position.y);   // (the roof or the ridge he stands on in this move)
     return w;
   }
   // the last `run` metres of a walkable way from a to b (round houses and walls), as points
@@ -1981,18 +2022,18 @@ function make(api) {
     // his hands on the trolley's bar, palms forward
     const T = m.T ||= { handL: new Vector3(), handR: new Vector3() }, how = m.how ||= { palms: { L: [d.x, -.25, d.z], R: [d.x, -.25, d.z] }, elbows: { L: [.6, .2, .4], R: [-.6, .2, .4] }, blend: { handL: 1, handR: 1 } };
     T.handL.set(h.x + sx * .19, h.y - .15, h.z + sz * .19); T.handR.set(h.x - sx * .19, h.y - .15, h.z - sz * .19);
-    fig.x = h.x; fig.z = h.z; fig.yaw = yaw; fig.speed = 0; fig.at = null; fig.sw = 0; fig.roll = 0; fig.touch = T; fig.how = how; fig.fade = .25; how.blend.handL = how.blend.handR = 1;
+    fig.x = h.x; fig.z = h.z; fig.yaw = yaw; fig.speed = 0; fig.at = null; fig.sw = 0; fig.roll = 0; fig.touch = T; fig.how = how; fig.fade = .25; fig.floor = null; how.blend.handL = how.blend.handR = 1;
     const set = (px, py, pz, lx, ly, lz, fov) => { cam.p[0] = px; cam.p[1] = py; cam.p[2] = pz; cam.l[0] = lx; cam.l[1] = ly; cam.l[2] = lz; cam.fov = fov; };
     if (m.land >= 0) {
       // lets go over the tank: his feet take it, he folds down and comes up looking out over the valley
       const q = m.land, go = 1 - (1 - Math.min(1, q / .55)) ** 2, off = 1 - sm(.02, .16, q);
-      fig.x = h.x + d.x * go * 1.1; fig.z = h.z + d.z * go * 1.1; fig.y = Math.max(fy, lerp(h.y - HANG, fy, sm(0, .14, q))); fig.pose = 'zipLand'; fig.at = Math.min(1, q / 1.35); fig.sw = m.sw * off;
+      fig.x = h.x + d.x * go * 1.1; fig.z = h.z + d.z * go * 1.1; fig.y = Math.max(fy, lerp(h.y - HANG, fy, sm(0, .14, q))); fig.pose = 'zipLand'; fig.at = Math.min(1, q / 1.35); fig.sw = m.sw * off; fig.floor = fy;
       how.blend.handL = how.blend.handR = off;
       set(B.x + d.x * 3.4 + sx * 2.5 * lit, fy + 1.15, B.z + d.z * 3.4 + sz * 2.5 * lit, fig.x, fy + .95 - sm(.1, .4, q) * .25 + sm(.7, 1.2, q) * .25, fig.z, 56);
     } else if (t < ZIP_GO) {
       // under the line on the ridge: both hands on the bar, a look down the line, he sinks and springs (seen from down the slope)
       const gy = WD.land.height(A.x, A.z);
-      fig.y = lerp(gy + .02, h.y - HANG, sm(.7, ZIP_GO, t)); fig.pose = 'zipReady'; fig.at = t / (ZIP_GO + .1); fig.fade = 0;
+      fig.y = lerp(gy + .02, h.y - HANG, sm(.7, ZIP_GO, t)); fig.pose = 'zipReady'; fig.at = t / (ZIP_GO + .1); fig.fade = 0; fig.floor = gy + .02;
       set(A.x + d.x * 3.3 - sx * 2.3, gy + 1.05, A.z + d.z * 3.3 - sz * 2.3, h.x, gy + 1.3, h.z, 50);
     } else {
       fig.y = h.y - HANG; fig.pose = k > .9 ? 'zipBrace' : t < ZIP_GO + .1 ? 'zipReady' : 'zipRide'; if (fig.pose === 'zipReady') fig.at = t / (ZIP_GO + .1);
@@ -2057,9 +2098,9 @@ function make(api) {
   }
   // Could a shot from the eye e reach this man? (walls and buildings, then the ground, as the bullets see it.)
   // His whole head must show: the top of a helmet over a parapet is no target, so a man like that counts as
-  // hidden, and comes out. (Kneeling his head is at 1.3 m, right down behind cover under 1 m.)
+  // hidden, and comes out. (Kneeling his head is at 1.2 m, right down behind cover under 1 m.)
   function shootable(e, s) {
-    const p = { x: s.x, y: s.gy + (s.low ? .62 : s.crouch ? 1.02 : 1.44), z: s.y };
+    const p = { x: s.x, y: s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44), z: s.y };
     if (!clearLine(e, p)) return false;
     const L = Math.hypot(p.x - e.x, p.z - e.z), n = Math.ceil(L / 2);
     for (let i = 1; i < n; i++) { const k = i / n; if (e.y + (p.y - e.y) * k < WD.land.height(e.x + (p.x - e.x) * k, e.z + (p.z - e.z) * k)) return false; }
@@ -2669,7 +2710,7 @@ function make(api) {
     for (const s of men || []) endMind(s);
     freeMen(); men = []; allies = null; shots = []; timers = []; bestShot = null;
     // Wren himself, seen when he moves between nests
-    WD.wren ||= wrenFigure(); WD.wren.visible = false;
+    WD.wren ||= wrenFigure(); WD.wren.visible = false; WD.wren.rig.follow?.reset();
     echoFor(missions[id]?.weather === 'rain');   // made here (silent) rather than in the first frame of play
     tower?.g.removeFromParent(); for (const p of tower?.pieces || []) { p.removeFromParent(); p.geometry?.dispose(); }
     tower = null; drums = null; car = null; op = null; cs = null; boom.list.length = 0; if (WD.bags) WD.bags.visible = false;
@@ -2816,7 +2857,7 @@ function make(api) {
     masked(); favourOf(nestId); rangeOf(); nextNest(); clampLook();
     // a round's flight from the nest worked out ahead (as the bullet camera asks at each shot), a man's feet set on his slope (as the scope asks)
     { const d = dirOf(look.yaw, look.pitch + BORE, tmpB); predict({ x: e.x, y: e.y - .05, z: e.z, vx: d.x * V0, vy: d.y * V0, vz: d.z * V0, life: 2.2, dist: 0 }); }
-    { const s = men.find(s => !s.deck && !s.fixed); if (s) s.m.rig.plant(WD.ground, s.m); }
+    { const s = men.find(s => !s.deck && !s.fixed); if (s) { s.m.rig.plant(WD.ground, s.m); floorFeet(s.m, 1, feetNow(s.m, s.m.userData.pins ||= {}), 1); } }   // (and kept on his floor, as a fall asks)
     // the first frame of the trip to the next nest (his way round the houses or down the line, his stride, his hands on the bar or a rung), Wren out of sight
     { const to = nextNest(); if (to) { const m = tripPlan(to); if (m.kind === 'zip') zip = zipLine(); wrenShow(tripAt(m, 0).fig, m.kind, dt).visible = false; WD.trolley.visible = false; zip = null; } }
     gun.update(dt); me.update(dt); updateMortar(dt); updateShots(dt); updateTracers(dt); spotLetters(dt); updateBirds(dt);
@@ -2978,8 +3019,16 @@ function make(api) {
           const f = tripAt(move, dt).fig, w = wrenShow(f, move.kind, dt);
           // footsteps on the run, rungs on the ladder
           if (f.pose === 'ladder') { const up = move.up ||= {}; for (const k in move.T) { const on = move.G[k].lift > 0; if (up[k] && !on) { if (k[0] === 'f') noise(.05, { vol: .03, from: 500, to: 160 }); tone(k[0] === 'f' ? 170 : 240, { len: .04, wave: 'triangle', vol: k[0] === 'f' ? .022 : .012 }); } up[k] = on; } }
-          else if (!f.pose && f.speed > 0) { const st = Math.floor((w.rig.blendPhase ?? 0) * 2); if (st !== move.step) { move.step = st; noise(.07, { vol: .012 + f.speed * .003, from: 700, to: 200 });
-            if (f.speed > 2.4) for (let i = 0; i < 3; i++) WD.dust.emit({ x: f.x + rnd(-.12, .12), y: f.y + .06, z: f.z + rnd(-.12, .12), vx: rnd(-.4, .4), vy: rnd(.25, .8), vz: rnd(-.4, .4), life: rnd(.5, .9), size: .15, grow: 2.4, col: rain.amount > .2 ? [.3, .27, .21] : [.56, .49, .37], a: .3, drag: 2, fadeIn: true }); } }   // (and what his feet kick up)
+          else if (!f.pose && f.speed > 0) {
+            // (a step as a foot really lands; by his stride's own count where his feet aren't being placed) and what that foot kicks up
+            const ft = w.rig.stride?.feet, i = ft ? ft[0].landed ? 0 : ft[1].landed ? 1 : -1 : -1, st = Math.floor((w.rig.blendPhase ?? 0) * 2), hit = i >= 0 || st !== move.step;
+            move.step = st; move.stepT = (move.stepT || 0) - dt;
+            if (hit && move.stepT <= 0) {
+              move.stepT = .12; noise(.07, { vol: .012 + f.speed * .003, from: 700, to: 200 });
+              if (i >= 0) w.bones[i ? 'footR' : 'footL'].getWorldPosition(tmpA); else tmpA.set(f.x, f.y, f.z);
+              if (f.speed > 2.4) for (let n = 0; n < 3; n++) WD.dust.emit({ x: tmpA.x + rnd(-.12, .12), y: f.y + .06, z: tmpA.z + rnd(-.12, .12), vx: rnd(-.4, .4), vy: rnd(.25, .8), vz: rnd(-.4, .4), life: rnd(.5, .9), size: .15, grow: 2.4, col: rain.amount > .2 ? [.3, .27, .21] : [.56, .49, .37], a: .3, drag: 2, fadeIn: true });
+            }
+          }
         }
       }
       arrivedT = Math.max(0, arrivedT - dt);
@@ -3148,8 +3197,8 @@ function make(api) {
   // the end of mission 1: Wren made the jump, and rides out crouched on the first wagon's roof
   function rideTrain(dt) {
     const w = WD.wren; w.visible = true; w.rotation.order = 'YXZ'; w.rotation.x = 0; w.rotation.z = Math.sin(t * 7) * .02;
-    w.position.set(train.x + TRAIN.W1 + 1.4, RAILH + TRAIN.ROOF - .02, RAILZ + .25); w.rotation.y = Math.PI / 2;
-    w.rig.play('crouch', { fade: .2 }); w.rig.update(dt, { speed: 0 }); w.see(WD.v.cam, 1000); hands(w, EASY);
+    w.position.set(train.x + TRAIN.W1 + 1.4, RAILH + TRAIN.ROOF, RAILZ + .25); w.rotation.y = Math.PI / 2;
+    w.rig.play('ride', { fade: .2 }); w.rig.update(dt, { speed: 0 }); w.see(WD.v.cam, 1000); hands(w, EASY);
   }
   function trainUpdate(dt) {
     if (!train.on) { train.next -= dt; if (train.next <= 0 && mid === 'm1') { train.on = true; train.x = -420; train.speed = 30; tone(520, { len: .9, wave: 'triangle', vol: .05 }); tone(620, { len: .9, wave: 'triangle', vol: .04, at: .1 }); } WD.train.visible = false; return; }
