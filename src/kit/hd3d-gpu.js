@@ -60,6 +60,7 @@ import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { crowdLook } from './crowd-gpu.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 import { S2_HOLD } from './sgsr2.js';
 import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
@@ -264,6 +265,8 @@ export function bakeRoom(r, scene, s) {
 export const gpuLooks = {
   // gs.fx3d's 3D text (text3d.js): distance-field letters
   sdf: sdfLook,
+  // gs.props.Crowd (crowd.js): members posed from their kind's texture of moves
+  crowd: (m, s, o) => crowdLook(m, s, o, afterColor),
   // hd3d.js v.room(): box-projected reflections
   room(m, s) {
     const g = s.gpu ||= { rt: new CubeRenderTarget(s.size, { type: HalfFloatType }) };

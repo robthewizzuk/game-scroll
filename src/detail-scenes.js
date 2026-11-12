@@ -8,6 +8,7 @@
 //   village  real surface detail (gs.models.relief): a street of houses whose bricks and tiles are real triangles
 //   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
 //            and shadows in tiles (src/kit/shadow-tiles.js): the same walk once more with the sun's shadow map drawn whole, as it used to be
+//   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -233,10 +234,77 @@ function town({ gs, HD, size }) {
   };
 }
 
+/* ---------- square: crowds ---------- */
+function square({ gs, size }) {
+  const T = gs.THREE, { human, creature } = gs.models, N = Math.max(24, Math.round(300 * size)), span = 26 + 44 * Math.sqrt(N / 300), { v, sun } = view(gs, 220, .002);
+  const ground = new T.Mesh(new T.PlaneGeometry(span + 160, span + 160).rotateX(-Math.PI / 2), gs.hd.pbr('#8a8478', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
+  // houses round it, so the place has edges and the low sun something to throw across it
+  const box = new T.BoxGeometry(1, 1, 1), walls = ['#b9a78c', '#a8846c', '#c9c2b4'].map(c => gs.hd.pbr(c, { rough: .85 })), R0 = span / 2 + 9;
+  for (let i = 0; i < 16; i++) { const a = i / 16 * 6.283, h = 8 + (i * 5 % 4) * 2, o = new T.Mesh(box, walls[i % 3]); o.position.set(Math.sin(a) * R0 * 1.25, h / 2, Math.cos(a) * R0 * 1.25); o.rotation.y = a; o.scale.set(R0 * .42, h, 9); o.castShadow = o.receiveShadow = true; v.scene.add(o); }
+  // (no hair in strands and no fur: a crowd has neither, and the two runs should draw the same people)
+  const SPECS = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], DOG = { like: 'dog', fur: false };
+  // who is where: each walks, runs or stands on a circle of its own, so that a run by the clock sees the same square whatever its frame rate
+  const R = gs.math.rng(5), who = [];
+  for (let i = 0; i < N; i++) {
+    const kind = i % 6 === 5 ? 2 : i % 2, k = R(), move = k < .14 ? 'idle' : k < .28 ? 'run' : 'walk', sp = move === 'idle' ? 0 : move === 'run' ? 3.2 + R() * .6 : 1.2 + R() * .3;
+    who.push({ kind, move, sp, cx: (R() - .5) * span * .8, cz: (R() - .5) * span * .8, r: 3 + R() * 9, a0: R() * 6.283, dir: R() < .5 ? 1 : -1, size: .95 + R() * .1, x: 0, z: 0, turn: 0 });
+  }
+  const place = (w, t) => { const a = w.a0 + w.dir * w.sp * t / w.r; w.x = w.cx + w.r * Math.sin(a); w.z = w.cz + w.r * Math.cos(a); w.turn = Math.atan2(w.dir * Math.cos(a), -w.dir * Math.sin(a)); };
+  const folk = new T.Group(); v.scene.add(folk);
+  let crowd = null, made = null, mode = '', twins = [], members = [];
+  // the people are sculpted the first time a phone meets them (kept on it afterwards), then stood in the square both ways
+  const make = draw => made ||= (async () => {
+    const t0 = performance.now(); let done = false, err = null;
+    Promise.all([human.ready(SPECS), creature.ready([DOG])]).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+    const src = [human(SPECS[0]), human(SPECS[1]), creature(DOG)];
+    crowd = new gs.props.Crowd(v, { of: src, moves: ['idle', 'walk', 'run'] });
+    for (const w of who) {
+      place(w, 0);
+      const f = src[w.kind].twin(); f.scale.multiplyScalar(w.size); f.rig.play(w.move); folk.add(f); twins.push(f);
+      members.push(crowd.add({ x: w.x, z: w.z, turn: w.turn, kind: w.kind, move: w.move, size: w.size }));
+    }
+    return performance.now() - t0;
+  })();
+  // (the first run waits for the sculpting and says how long it took)
+  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  const sum = { n: 0, ms: 0, sent: 0, draws: 0, t: 0 }, ahead = new T.Vector3();
+  return {
+    v, holds: `${num(N)} people and dogs walking, running and standing in a square`,
+    modes: [
+      { key: 'off', name: 'a skeleton each', enter: enter('off') },
+      { key: 'on', name: 'one crowd', enter: enter('on') },
+    ],
+    // a walk in a figure of eight through the middle of them, 1.5 metres a second, looking where it is going
+    path(t, cam) {
+      const P = (u, p) => { const a = u * 1.5 / (span * .22); return p.set(Math.sin(a) * span * .3, 1.7, Math.sin(a * 2) * span * .16); };
+      P(t, cam.position); P(t + 3, ahead); cam.lookAt(ahead.x, 1.4, ahead.z); sun.follow(cam.position.x, 0, cam.position.z);
+      if (!crowd) return;
+      const dt = t > sum.t ? Math.min(1, t - sum.t) : 0, t0 = performance.now();
+      if (t < sum.t) sum.n = sum.ms = sum.sent = sum.draws = 0;
+      sum.t = t; cam.updateMatrixWorld();
+      for (let i = 0; i < who.length; i++) {
+        const w = who[i]; place(w, t);
+        if (mode === 'off') { const f = twins[i]; f.position.set(w.x, 0, w.z); f.rotation.y = w.turn; f.rig.update(dt, { speed: w.sp }); f.see(cam, 800); }
+        else { const m = members[i]; m.x = w.x; m.z = w.z; m.turn = w.turn; }
+      }
+      if (mode === 'on') { crowd.update(dt); sum.sent += crowd.info.drawn; sum.draws += crowd.info.draws; }
+      sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!sum.n) return null;
+      const posed = `posed in ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
+      return mode === 'on' ? `${posed} · ${num(sum.sent / sum.n)} of ${num(N)} sent to be drawn a frame, in ${num(sum.draws / sum.n)} draws` : posed;
+    },
+    dispose() { crowd?.dispose(); folk.removeFromParent(); folk.clear(); twins = []; members = []; clear(v); },   // (the people's shapes are the kit's own: not freed here)
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu })]. */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
   ['village', 'Village', 'real surface detail', village],
   ['town', 'Town', 'hiding what is behind other things, and shadows in tiles', town],
+  ['square', 'Square', 'crowds', square],
 ];

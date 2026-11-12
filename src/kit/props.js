@@ -244,3 +244,5 @@ export class Chunks {
   get count() { return this.live.size; }
 }
 
+// hundreds of animated people or animals in a few draws: crowd.js
+export { Crowd } from './crowd.js';

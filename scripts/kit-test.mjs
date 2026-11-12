@@ -3968,5 +3968,83 @@ console.log('physics ok');
   console.log(`fur and hair in layers: the strand pictures, the shell (lengths, thin things, a crown), six layers, thinning with distance, skinned meshes, a cat (${cs.userData.fur.tris} triangles a layer), a horse's mane, a pig without ok`);
 }
 
+// crowds (crowd.js, gs.props.Crowd): each kind's moves written into a texture a row a frame, and members that are a few
+// numbers each: the rows hold what the figure's own skeleton makes of the pose, and the bookkeeping (who is sent,
+// how finely, a stride by the ground covered, a blend into a new move, a move that plays once, hiding, a ray)
+{
+  const THREE = await import('three'), { Crowd } = await import('../src/kit/props.js'), { posedBox } = await import('../src/kit/crowd.js'), { person, keys } = await import('../src/kit/poses.js'), { creature } = await import('../src/kit/models/creature.js');
+  await (await import('three/examples/jsm/libs/meshopt_simplifier.module.js')).MeshoptSimplifier.ready;
+  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 16 / 9, .1, 400); cam.position.set(0, 1.6, 0); cam.lookAt(0, 1, -10);
+  const man = person({ hair: null }), cat = creature({ like: 'cat', now: true, fur: false });
+  man.rig.add('bow', keys([[0, { spine: [0, 0, 0] }], [.5, { spine: [.7, 0, 0] }], [1, { spine: [0, 0, 0] }]]), { time: 1, once: true });
+  const before = JSON.stringify(man.rig.layers), crowd = new Crowd({ scene, cam }, { of: [man, cat], moves: ['idle', 'walk', 'run', 'bow', 'no such move'] });
+  assert.ok(JSON.stringify(man.rig.layers) === before && !man.parent && scene.children.length === 1 && scene.children[0] === crowd.group, 'the figures are left as they were given, and out of the scene');
+  const K = crowd.kinds, P = K[0].plan, data = crowd.tex.image.data, TW = crowd.tex.image.width;
+  assert.deepEqual([Object.keys(P), Object.keys(K[1].plan)], [['idle', 'walk', 'run', 'bow'], ['idle', 'walk', 'run']], 'each kind has the moves its rig knows');
+  assert.ok(P.walk.n === 32 && P.walk.loop && P.walk.rate > 0 && P.bow.n === 24 && !P.bow.loop && P.bow.once && P.idle.loop && P.idle.per > 0, 'a stride is 32 rows, a move by the clock 24 a second, one that plays once does not come round');
+  assert.equal(crowd.tex.image.height, [...Object.values(P), ...Object.values(K[1].plan)].reduce((n, m) => n + m.n + (m.loop ? 1 : 0), 0), 'the kinds\' rows one under the other, a row more for each move that comes round');
+  // a row is the pose the figure's own skeleton makes: every point of the mesh, bent as the shader bends it, is where three.js puts it
+  const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.weight = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); f.updateMatrixWorld(true); f.mesh.skeleton.update(); };
+  const v = new THREE.Vector3(); let worst = 0;
+  for (const [f, k, move, row] of [[man, 0, 'walk', 7], [man, 0, 'run', 21], [man, 0, 'bow', 12], [cat, 1, 'walk', 13]]) {
+    const m = K[k].plan[move]; pin(f, move, m.loop ? row / m.n : row / (m.n - 1));
+    posedBox(f.mesh.geometry, data, TW, m.base + row, (i, x, y, z) => { f.mesh.getVertexPosition(i, v); worst = Math.max(worst, Math.abs(v.x - x), Math.abs(v.y - y), Math.abs(v.z - z)); });
+  }
+  assert.ok(worst < 2e-4, `the rows are the figures' own poses (a point is ${worst.toExponential(1)} off at most)`);
+  { const a = (P.walk.base) * TW * 4, b = (P.walk.base + P.walk.n) * TW * 4; let d = 0; for (let i = 0; i < TW * 4; i++) d = Math.max(d, Math.abs(data[a + i] - data[b + i])); assert.ok(d < 1e-5, 'the row after a stride\'s last is its first again'); }
+  // shapes: the figure's own, then coarser ones made here on the same points, no two far apart
+  for (const k of K) {
+    const t = k.levels.map(l => l.tris); assert.ok(t.every((n, i) => !i || (n < t[i - 1] && t[i - 1] / n < 6)) && t[t.length - 1] < 1100, 'levels get coarser a step at a time, down to a few hundred triangles: ' + t);
+    let from = null, made = 0; k.levels.forEach((l, i) => { if (k.own.includes(i)) from = l; else { made++; assert.ok(l.geo.attributes.position === from.geo.attributes.position && l.geo.attributes.gsSkinI === from.geo.attributes.gsSkinI && l.geo.attributes.gsAt !== from.geo.attributes.gsAt, 'a level made here draws the same points as the figure\'s level it was made from, with members of its own'); } });
+    assert.ok(made > 0, 'levels are made after a figure\'s own coarsest');
+  }
+  assert.ok(K[0].h * K[0].size > 1.5 && K[0].h * K[0].size < 2 && K[1].h * K[1].size > .15 && K[1].h * K[1].size < .6, 'how tall each stands: ' + K.map(k => (k.h * k.size).toFixed(2)));
+  // who is sent, and how finely
+  const near = crowd.add({ x: 0, z: -4, move: 'walk', phase: 0 }), far = crowd.add({ x: 3, z: -120, move: 'walk' }), behind = crowd.add({ x: 0, z: 30 }), gone = crowd.add({ x: 0, z: -200 }), puss = crowd.add({ x: 1, z: -6, kind: 1, size: 1.5, tint: '#ff0000' });
+  crowd.update(0);
+  const L0 = K[0].levels;
+  assert.deepEqual([crowd.info.members, crowd.info.drawn, near.c.seen, far.c.seen, behind.c.seen, gone.c.seen, puss.c.seen], [5, 3, true, true, false, false, true], 'the ones behind the camera or too far are not sent');
+  assert.ok(near.c.lv === 0 && far.c.lv === L0.length - 1 && L0[0].geo.instanceCount === 1 && L0[0].mesh.visible && !L0[1].mesh.visible, 'the near one at the finest level, the far one at the coarsest');
+  assert.equal(crowd.info.triangles, L0[0].tris + L0[L0.length - 1].tris + K[1].levels[puss.c.lv].tris, 'info counts the triangles it sends');
+  { const a = K[1].levels[puss.c.lv].a; assert.deepEqual([a[0], a[2], a[7], a[8], a[9]].map(n => +n.toFixed(3)), [1, -6, +(1.5 * K[1].size).toFixed(3), 1, 0], 'a member is its place, its size and its colour'); }
+  crowd.lod = 0; crowd.update(0); assert.equal(far.c.lv, K[0].own[0], 'lod = 0: everyone at the figure\'s finest'); crowd.lod = null; crowd.update(0);
+  // nothing moved: the shadow maps are not told to draw them again; a step tells them
+  const said = L0[0].mesh.userData.gsMoved; crowd.update(0); assert.equal(L0[0].mesh.userData.gsMoved, said, 'a frame in which nobody moved says so');
+  // a stride by the ground covered; standing, a walker does not step
+  near.z -= .5; crowd.update(1 / 60);
+  assert.ok(Math.abs(near.phase - .5 * P.walk.rate / K[0].size) < 1e-9 && L0[0].mesh.userData.gsMoved === said + 1, 'half a metre is ' + near.phase.toFixed(3) + ' of a stride');
+  { const ph = near.phase; crowd.update(1); assert.equal(near.phase, ph, 'standing still, a walker does not step'); }
+  // between two rows: the two and how far between them
+  { const a = L0[0].a, f = near.phase * 32; assert.deepEqual([a[4], a[5], +a[6].toFixed(4)], [P.walk.base + Math.floor(f), P.walk.base + Math.floor(f) + 1, +(f % 1).toFixed(4)], 'a member is drawn between the two rows it is at'); }
+  // a new move blends in from the row the old one was at, over a quarter of a second; walk to run keeps step
+  { const ph = near.phase, from = P.walk.base + Math.round(ph * 32); near.move = 'run'; crowd.update(.1); const a = L0[0].a;
+    assert.ok(a[4] === from && a[5] >= P.run.base && a[5] <= P.run.base + 32 && a[6] > .2 && a[6] < .5 && near.phase === ph, 'a new move blends in from where the old one was, in step');
+    crowd.update(.2); assert.ok(a[4] >= P.run.base && a[5] <= P.run.base + 32 && a[5] - a[4] <= 1, 'and then it is the new move alone'); }
+  // a move that plays once ends, and says so
+  near.move = 'bow'; crowd.update(.5); assert.ok(near.phase === .5 && !near.done, 'a move by the clock: half a second of a second-long bow');
+  crowd.update(.6); assert.ok(near.phase === 1 && near.done && L0[0].a[5] === P.bow.base + P.bow.n - 1, 'it ends on its last row and says done');
+  near.move = 'no such move'; crowd.update(0); assert.equal(near.move, 'bow', 'a move the kind does not know is not taken');
+  // a ray: the first member it meets
+  { const hit = crowd.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }), r = Math.max(.12, K[0].w * K[0].size * .5);
+    assert.ok(hit.member === near && Math.abs(hit.distance - (4.5 - r)) < 1e-6 && Math.abs(hit.height - 1 / (K[0].h * K[0].size)) < 1e-6, 'a ray finds the one in front, ' + hit.distance.toFixed(2) + ' m off and ' + hit.height.toFixed(2) + ' of the way up');
+    assert.ok(!crowd.ray({ x: 2, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 50) && !crowd.ray({ x: 0, y: 3, z: 0 }, { x: 0, y: 0, z: -1 }) && !crowd.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 2), 'and none beside it, over it or out of reach');
+    near.hide = true; assert.equal(crowd.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 50), null, 'a hidden member is not hit');
+    assert.equal(crowd.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).member, gone, 'and the ray goes on to the next one, however far (members out of view can be hit)'); }
+  crowd.update(0); assert.ok(crowd.info.drawn === 2 && L0[0].geo.instanceCount === 0 && !L0[0].mesh.visible, 'a hidden member is not sent');
+  assert.deepEqual(crowd.near(0, -5, 3), [near, puss]); crowd.remove(puss); crowd.update(0); assert.deepEqual([crowd.info.members, crowd.info.drawn], [4, 1], 'a member taken out is gone');
+  // many more than the room there was: the lists grow, and nobody is lost
+  for (let i = 0; i < 200; i++) crowd.add({ x: (i % 20 - 10) * .8, z: -8 - (i / 20 | 0) * .8, move: 'idle' });
+  crowd.update(1 / 60); assert.ok(crowd.info.drawn > 150 && K[0].levels.reduce((n, l) => n + l.geo.instanceCount, 0) === crowd.info.drawn && K[0].levels.every(l => l.cap >= l.n), 'the lists grow with the crowd (' + crowd.info.drawn + ' sent)');
+  crowd.clear(); crowd.update(0); assert.ok(crowd.list.length === 0 && crowd.info.drawn === 0 && K.every(k => k.levels.every(l => !l.mesh.visible)), 'clear() leaves nothing to draw');
+  assert.throws(() => new Crowd({ scene, cam }, { of: [] }), /at least one figure/); assert.throws(() => new Crowd({ scene, cam }, { of: [new THREE.Group()] }), /a rig and a skinned mesh/); assert.throws(() => new Crowd({ scene, cam }, { of: [man], moves: ['nope'] }), /none of the moves/);
+  // "as the last frame drew them" (for frame generation): by the frames a view says it drew, however many updates came between
+  { const one = crowd.add({ x: 0, z: -5, move: 'idle' }), a = () => K[0].levels[one.c.lv].a; crowd.update(0); crowd.frame();
+    one.x = 1; crowd.update(0); one.x = 2; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [2, 0], 'two updates between two frames: the move is from where the last frame drew it');
+    crowd.frame(); assert.deepEqual([a()[0], a()[12]], [2, 0], 'the frame that shows the move'); crowd.frame(); assert.deepEqual([a()[0], a()[12]], [2, 2], 'a frame drawn again with no update shows nobody moving');
+    one.x = 3; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [3, 2]); crowd.frame(); one.x = 4; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [4, 3], 'an update a frame: from the last one'); crowd.clear(); }
+  crowd.dispose(); assert.ok(scene.children.length === 0 && scene.userData.gsPosed.size === 0, 'dispose takes it out of the scene');
+  console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

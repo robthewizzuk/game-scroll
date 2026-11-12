@@ -231,6 +231,37 @@ up a tier first.
   - Tried and left out: merging far groups of copies into one baked stand-in mesh a cell. On a forest of
     22,000 it drew no fewer triangles than the levels do and cost more CPU a frame than it saved on
     every path measured (the copies' own culling is already cheap), for up to 8 MB a kind.
+- Crowds (`gs.props.Crowd`): hundreds of animated people or animals in a few draws. Each kind's moves
+  are played through once and written into a float texture, a row a frame and three texels a bone; a
+  member is 20 numbers in an instanced list (where, which way, how big, which two rows and how far
+  between them, a tint, and the same as the last frame drew them), and the vertex shader skins it from
+  the texture. Nothing is posed in JavaScript and no bones are sent each frame.
+  - All of a kind at one level of detail are one draw (one for each material of the figure). Levels: the
+    figure's own, plus simpler ones made on the same points wherever two are more than four times apart
+    in triangles, down to about 500. A member is drawn at the coarsest level that has 0.15 triangles for
+    each pixel of its height squared (about two pixels a triangle), and keeps a level a little past the
+    step so none flickers between two. `crowd.lod = 0..2` forces one of the figure's own.
+  - Members outside the camera's view (by a ball round each, and `reach` metres more for shadows) or
+    past `far` are not sent at all. Their shadows are drawn by the shadow maps as any moving thing's,
+    and only again when a member moved or stepped on in its move.
+  - WebGL: the shader edit is the named look `'crowd'`. Passes that draw the whole scene with one material
+    of their own (ambient occlusion's and reflections' normals) would stand every member unposed at the
+    middle of the world, so a crowd draws nothing in them and then draws itself into the same picture
+    with a material that knows the poses. The contact-shadow pass leaves crowds out.
+  - WebGPU: the same as nodes (`crowd-gpu.js`), with each member's place and pose at the last frame
+    drawn for frame generation, SGSR 2 and motion blur. "Last frame" goes by the frames the view draws,
+    not by `update()` calls, so a game on a fixed tick that updates twice between frames, or not at all,
+    is still right.
+  - 300 people and dogs walking in a field (software renderer): 750 draws, 1.35 million triangles and
+    29 ms of engine time a frame with a skeleton each; 42 draws, 590,000 triangles and 2.3 ms as a crowd
+    on WebGL (500 draws and 35 ms against 28 draws and 1.9 ms on WebGPU). Two people and a dog with three
+    moves each are 370 KB of texture.
+  - Not in a crowd: faces, hair strands and fur, hands onto things, feet planted on slopes, and hiding
+    behind other things (every member in view is drawn). Skin is the plain material.
+  - `node scripts/detail-test.cjs --page crowd [--webgpu]` draws a line of people and a dog posed by
+    their own skeletons against the same line as members of a crowd, at each level (they differ in under
+    0.1% of the pixels they cover), then a field of 300; `--bench` gives the numbers above. The square in
+    the engine test scenes is the same comparison for a phone.
 - Static batching (WebGL, by itself): small still things that share a material (crates, posts, rocks,
   walls) are merged into one mesh per material and area after about 1.5 s still, one draw call where
   there were dozens (Unity's static batching). A piece that moves, hides or changes material goes back

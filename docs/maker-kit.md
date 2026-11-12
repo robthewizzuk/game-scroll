@@ -1963,6 +1963,47 @@ and each copy is drawn at the simplest one whose change can't be seen from where
 forest costs a fraction of its triangles and looks the same. `lod: 'auto'` asks for that for a smaller kind
 too, and `lod: false` keeps every copy whole. See [Next Gen 3D](nextgen-3d.md) (detail levels for copies).
 
+**Crowds** (`gs.props.Crowd`, Next Gen): a street, a stand full of fans or a herd, hundreds of animated people
+or animals for the cost of a few draws. A person drawn the usual way has a skeleton of its own that is
+posed in JavaScript every frame and is several draws by itself, which is fine for a squad and far too much
+for three hundred. A crowd plays each kind's moves through once, writes where every bone is in every frame
+into a texture, and from then on the graphics chip bends each member into its pose: a member is a few
+numbers, and all of a kind at one level of detail are one draw.
+
+```js
+const { Crowd } = gs.props, { human, creature } = gs.models;
+function make(api) {
+  human.all([{ seed: 1, strands: false }, { seed: 2, sex: 'f', strands: false }]);     // sculpted first, as for any human()
+  const crowd = new Crowd(view, { of: [human({ seed: 1, strands: false }), human({ seed: 2, sex: 'f', strands: false }), creature({ like: 'dog', fur: false })],
+    moves: ['idle', 'walk', 'run'] });                                                 // the poses of their rigs the members will use
+  return {
+    reset() { crowd.clear(); for (let i = 0; i < 300; i++) crowd.add({ x: rnd(-40, 40), z: rnd(-40, 40), turn: rnd(0, 6.28), kind: i % 3, move: 'walk', size: rnd(.95, 1.05) }); },
+    update(dt) {
+      for (const p of crowd.list) { p.x += Math.sin(p.turn) * 1.3 * dt; p.z += Math.cos(p.turn) * 1.3 * dt; }   // move them as your game likes
+      crowd.update(dt);                                                                // after the camera has moved
+    },
+  };
+}
+```
+
+A member is `{ x, y, z, turn, move, size, tint, hide, data }`: change them and call `update(dt)`. The crowd
+looks after the rest: a walk or run steps on by the ground the member really covered, so feet don't slide
+(other moves run by the clock, and `member.done` turns true when one that plays once has ended); a new
+`move` blends in over a quarter of a second; members out of view are not sent to the chip at all; each is
+drawn only as finely as its size on screen needs (the figure's own detail levels, with simpler ones made
+between and after them, down to about 500 triangles); they cast and take shadows on WebGL and WebGPU; and
+frame generation is told how each one moved. `crowd.near(x, z, r)` lists the members round a point and
+`crowd.ray(origin, dir, far)` finds the first one a shot or a tap meets (`{ member, distance, height }`,
+height 0 at the feet and 1 at the top of the head). A move of your own: add it to the figure's rig
+(`figure.rig.add('cheer', keys([...]), { time: 1.2 })`) before the crowd is made, and name it in `moves`.
+
+What a crowd leaves out is what needs a skeleton: faces, hair in strands and fur (make the figures with
+`strands: false` and `fur: false` so they look the same near and far), hands onto things, and feet planted
+on slopes (give each member its ground height as `y`). For the one the player walks up to, hide the member
+and stand a real `human()` in its place. Three hundred people and dogs walking in a field, on a build
+machine's software renderer: 750 draws and 29 ms of the engine's time a frame with a skeleton each, 42
+draws and 2.3 ms as a crowd (WebGL; 500 draws and 35 ms against 28 and 1.9 on WebGPU), for 370 KB of texture.
+
 ## Worlds, craft, soft things, cards and menus
 
 As everywhere in the kit, these work things out and your game decides how it all looks.
