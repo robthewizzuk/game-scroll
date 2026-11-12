@@ -14,7 +14,7 @@
 // Kit use only: games reach it as gs.models.human.
 import { Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix4, Mesh, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, HC, ARM, BROW, MOUTH_DIP, ss, bump, jobsFor, sculpt, mirrored, turned, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, PIVOT, HC, ARM, BROW, MOUTH_DIP, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE } from '../poses.js';
 import { reach } from '../characters.js';
@@ -118,6 +118,37 @@ function mats() {
 }
 
 // ================================================================= putting a person together
+const ARMB = /^(arm|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
+const FINE = /^(twist|toe|(thumb|index|middle|ring|little)\d)[LR]$/, _m4 = new Matrix4();   // the small bones, which only show close up
+/**
+ * The skeleton a person of this build stands on: the bones' names, their parents and where each is (atOf), with
+ * tree() to make them. Narrow or broad shoulders bring the arms (their bones, and all that rides them) in or out;
+ * a bigger hand's finger joints are further apart, and a hand sculpted closed round a stock is bent already (HAND).
+ * own: bones added for things that come off or hide (a hat, a pack), each at its parent's place.
+ */
+function frameOf(sp) {
+  const bones = BONES.slice(), parent = { ...PARENT }, rest = { ...AT }, own = {}, ha = { limbs: sp.build.limbs, grip: sp.hands === 'grip' }, HAND = handPlan(ha);
+  for (const [name, par, p] of fingerBones(ha)) { bones.push(name, other(name)); parent[name] = par; parent[other(name)] = other(par); rest[name] = p; rest[other(name)] = [-p[0], p[1], p[2]]; }
+  const inset = .176 * (1 - sp.build.shoulders);
+  const atOf = b => { const k = rest[b] ? b : own[b], a = rest[k]; return inset && ARMB.test(k) ? [a[0] - Math.sign(a[0]) * inset, a[1], a[2]] : a; };
+  const tree = () => {
+    const B = {};
+    for (const b of bones) { const bone = new Bone(); bone.name = b; B[b] = bone; }
+    for (const b of bones) { const par = parent[b], a = atOf(b); if (par) { const pa = atOf(par); B[b].position.set(a[0] - pa[0], a[1] - pa[1], a[2] - pa[2]); B[par].add(B[b]); } else B[b].position.set(...a); }
+    B.shinL.userData.ikLength = B.shinR.userData.ikLength = .435; B.foreL.userData.ikLength = B.foreR.userData.ikLength = .27;
+    B.spine.userData.pivot = PIVOT.spine; B.head.userData.pivot = PIVOT.head;   // (where the rib cage and the head turn about: see Rig.fill)
+    return B;
+  };
+  return { bones, parent, own, HAND, inset, atOf, tree };
+}
+// people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
+const rigOf = (B, scale) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true }); rig.feet = [B.footL, B.footR]; return rig; };
+/** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
+export function skeleton(o = {}) {
+  const sp = specOf(o), B = frameOf(sp).tree(), root = new Group(), scale = (o.scale ?? 1) * (sp.fem ? .945 : 1);
+  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale); root.updateMatrixWorld(true);
+  return root;
+}
 const DETAIL = [.5, .75, 1, 1];   // see(): how tall a person counts as, by quality tier
 const DEF = { skin: '#d9ab86', hair: '#3b2a1a', eyes: '#141416', iris: '#5a7a9a', lips: '#a8665c' };
 function specOf(o) {
@@ -179,13 +210,10 @@ export function human(o = {}) {
   }
   const M = mats(), pal = palette(sp), pieces = [];
   // gear bones: a hat that can come off, a pack or a maker's own kit that can be hidden
-  const bones = BONES.slice(), parent = { ...PARENT }, gearBones = {}, gearPiece = {};
+  const { bones, parent, own: gearBones, HAND, inset, atOf, tree } = frameOf(sp), gearPiece = {};
   const ownBone = (name, par) => { bones.push(name); parent[name] = par; gearBones[name] = par; gearPiece[name] = pieces.length; return name; };
   const onBone = (p, b) => ({ ...p, names: p.names.map(() => b) });
-  // narrow or broad shoulders: the arms (their bones, and all that rides them) sit that much in or out
-  const inset = .176 * (1 - sp.build.shoulders), ARMB = /^(arm|fore|hand)[LR]$/;
   const moved = (p, dx) => { if (!dx) return p; const Q = p.P.slice(); for (let i = 0; i < p.n; i++) Q[i * 3] += dx; return { ...p, P: Q }; };
-  const atOf = b => { const k = AT[b] ? b : gearBones[b], a = AT[k]; return inset && ARMB.test(k) ? [a[0] - Math.sign(a[0]) * inset, a[1], a[2]] : a; };
   let headP = null;
   for (const j of jobs) {
     const e = made.get(j.key), p = e.p; e.t = clock();
@@ -313,21 +341,33 @@ export function human(o = {}) {
 
   const sh = o.shadows !== false, scale = (o.scale ?? 1) * (sp.fem ? .945 : 1), tris = geos.map(g => g.index.count / 3);
   const stand = () => {
-    const B = {};
-    for (const b of bones) { const bone = new Bone(); bone.name = b; B[b] = bone; }
-    for (const b of bones) { const par = parent[b], a = atOf(b); if (par) { const pa = atOf(par); B[b].position.set(a[0] - pa[0], a[1] - pa[1], a[2] - pa[2]); B[par].add(B[b]); } else B[b].position.set(...a); }
-    B.shinL.userData.ikLength = B.shinR.userData.ikLength = .435; B.foreL.userData.ikLength = B.foreR.userData.ikLength = .27;
-    const root = new Group();
+    const B = tree(), root = new Group();
     root.add(B.hips); B.armL.rotation.z = ARM; B.armR.rotation.z = -ARM; root.updateMatrixWorld(true);   // bound with the arms out, as sculpted
     const skel = new Skeleton(bones.map(b => B[b]));
     B.armL.rotation.z = B.armR.rotation.z = 0; root.updateMatrixWorld(true);
-    const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(skel, new Matrix4()); m.visible = L === 0; return m; });
+    // Further off (the middle and far levels) nobody can see a finger bend, a toe or the turn of a forearm: there each of
+    // those small bones stands in as the one it hangs from (the same skin, no other set of weights), is not worked
+    // out at all, and is left out of the scene while the person is at those levels. A squad far off then costs about
+    // what it did on fifteen bones.
+    const whole = bones.map((b, i) => { let k = b; while (FINE.test(k)) k = parent[k]; return k === b ? -1 : bones.indexOf(k); }), small = bones.filter((b, i) => whole[i] >= 0).map(b => B[b]);
+    const far = new Skeleton(bones.map((b, i) => B[whole[i] < 0 ? b : bones[whole[i]]]), bones.map((b, i) => skel.boneInverses[whole[i] < 0 ? i : whole[i]]));
+    far.update = function () {
+      const M = this.boneMatrices, inv = this.boneInverses, bs = this.bones;
+      for (let i = 0; i < bs.length; i++) { const w = whole[i]; if (w < 0) _m4.multiplyMatrices(bs[i].matrixWorld, inv[i]).toArray(M, i * 16); else M.copyWithin(i * 16, w * 16, w * 16 + 16); }
+      if (this.boneTexture !== null) this.boneTexture.needsUpdate = true;
+    };
+    const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(L ? far : skel, new Matrix4()); m.visible = L === 0; return m; });
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B;
-    root.rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale }); root.rig.feet = [B.footL, B.footR];   // people move the lifelike way: feet that roll, hips and shoulders that turn
+    root.rig = rigOf(B, scale);
     root.face = new Face(lods[0]);
     let cur = 0;
-    Object.defineProperty(root, 'lod', { get: () => cur, set(v) { v = Math.max(0, Math.min(2, v | 0)); if (v !== cur) { lods[cur].visible = false; lods[v].visible = true; cur = v; } } });
+    Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
+      v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
+      lods[cur].visible = false; lods[v].visible = true;
+      if (!v !== !cur) for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
+      cur = v;
+    } });
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */
     const wp = new Vector3();
     root.see = (cam, screenH = 800) => {
@@ -346,10 +386,14 @@ export function human(o = {}) {
      */
     root.hold = (thing, right, left, elbows = {}) => {
       root.updateMatrixWorld(true); thing.updateWorldMatrix(true, false);
-      for (const [sd, pt, el] of [['R', right, elbows.right || [-.55, 0, -.02]], ['L', left, elbows.left || [.3, -.25, .22]]]) {
-        if (!pt) continue;
-        tgt.set(pt[0], pt[1], pt[2]).applyMatrix4(thing.matrixWorld); pole.set(el[0], el[1], el[2]).applyMatrix4(B.spine.matrixWorld);
-        reach(B['arm' + sd], B['fore' + sd], tgt, { pole, end: palm[sd] });
+      const arms = [['R', right, elbows.right || [-.55, 0, -.02]], ['L', left, elbows.left || [.3, -.25, .22]]].filter(a => a[1]);
+      // (twice: the shoulder goes with the arm, a little up and forward as it is raised, and the arm is then bent again from where the shoulder has gone)
+      for (let pass = 0; pass < 2 && arms.length; pass++) {
+        for (const [sd, pt, el] of arms) {
+          tgt.set(pt[0], pt[1], pt[2]).applyMatrix4(thing.matrixWorld); pole.set(el[0], el[1], el[2]).applyMatrix4(B.spine.matrixWorld);
+          reach(B['arm' + sd], B['fore' + sd], tgt, { pole, end: palm[sd] });
+        }
+        if (!pass) { root.rig.fill(); root.updateMatrixWorld(true); }
       }
       return root;
     };
@@ -376,14 +420,14 @@ export function human(o = {}) {
         reach(up, low, tgt, { pole, end });
         const face = hand ? palms[sd] : null, flat = hand ? 0 : typeof level === 'number' ? level : level[sd] ?? 0;
         if (face) {
-          // turn the forearm about its own length until the palm faces that way (as far as a wrist goes)
+          // turn the hand about the forearm's length until the palm faces that way (as far as a wrist goes)
           low.updateWorldMatrix(true, true);
           ax.copy(tip.position).normalize(); const local = ax.clone(); ax.transformDirection(low.matrixWorld);
           nn.set(sd === 'L' ? -1 : 1, 0, 0).transformDirection(tip.matrixWorld); nn.addScaledVector(ax, -nn.dot(ax));
           dd.set(face.x ?? face[0], face.y ?? face[1], face.z ?? face[2]); dd.addScaledVector(ax, -dd.dot(ax));
           if (nn.lengthSq() > 1e-6 && dd.lengthSq() > 1e-6) {
             const an = Math.atan2(cr.crossVectors(nn, dd).dot(ax), nn.dot(dd));
-            low.quaternion.multiply(q2.setFromAxisAngle(local, Math.max(-1.9, Math.min(1.9, an)))); q2.copy(tip.quaternion);
+            tip.quaternion.premultiply(q2.setFromAxisAngle(local, Math.max(-1.9, Math.min(1.9, an)))); q2.copy(tip.quaternion);   // (the hand turns at the wrist end of the forearm, whose skin follows it there and stays put at the elbow)
             reach(up, low, tgt, { pole, end });
           }
         }
@@ -394,7 +438,31 @@ export function human(o = {}) {
           tip.quaternion.slerp(q2, flat); q2.copy(tip.quaternion);
           reach(up, low, tgt, { pole, end });
         }
+        if (hand) { root.rig.fill(); root.updateMatrixWorld(true); reach(up, low, tgt, { pole, end }); }   // (the shoulder has gone with the arm: once more from there)
         if (k < 1) { up.quaternion.slerpQuaternions(q0, q2.copy(up.quaternion), k); low.quaternion.slerpQuaternions(q1, q2.copy(low.quaternion), k); tip.quaternion.slerpQuaternions(q3, q2.copy(tip.quaternion), k); }
+      }
+      root.rig.fill();
+      return root;
+    };
+    // the fingers: each joint's bone, the way it bends, and how far it is bent as sculpted
+    const FB = {}; for (const sd of ['L', 'R']) FB[sd] = ['thumb', 'index', 'middle', 'ring', 'little'].map(f => [1, 2, 3].map(j => B[f + j + sd]).filter(Boolean));
+    const CURL = [1.5, 1.75, 1.1], THUMB = [.55, .85], was = HAND.grip ? .8 : .2, fq = new Quaternion();
+    /**
+     * How far each hand's fingers are closed: fingers({ L: .5, R: 1 }): 0 flat, 1 a fist, null as sculpted (a little
+     * curled; with hands: 'grip', closed round a stock). A number for the whole hand, or one a finger:
+     * [thumb, index, middle, ring, little]. They stay as set until set again (poses leave fingers alone).
+     */
+    root.fingers = (o = {}) => {
+      for (const sd of ['L', 'R']) {
+        if (!(sd in o)) continue; const v = o[sd], m = sd === 'L' ? 1 : -1;
+        FB[sd].forEach((list, f) => {
+          const c = v == null ? null : typeof v === 'number' ? v : v[f] ?? null, k = c == null ? null : Math.max(-.2, Math.min(1.2, c));
+          list.forEach((bone, j) => {
+            if (k == null) bone.quaternion.identity();
+            else if (f === 0) bone.quaternion.setFromAxisAngle(ax.set(HAND.turn[0], m * HAND.turn[1], m * HAND.turn[2]), (k - was) * THUMB[j]);   // (the other hand: the same turn in a mirror)
+            else bone.rotation.set(0, 0, -m * (CURL[j] * k - HAND.bend[j]));
+          });
+        });
       }
       return root;
     };

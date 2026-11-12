@@ -993,6 +993,15 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `level` holds a sole flat, `blend` fades it in), and `person.gear.hat.visible = false` takes the hat off (also `gear.pack`, and your own
   `gear: [{ name, bone, shapes, hide: true }]`); `person.gear.hat.loose()` is a loose copy of it (a plain
   mesh, its middle at its origin, `userData.at` where that sits on its bone) for the helmet that flies off.
+  The skeleton has the joints poses turn (`hips`, `spine` (the rib cage), `head`, `armL`, `foreL`, `handL`,
+  `legL`, `shinL`, `footL` and their `R` twins) and, between them, a waist, a neck, a collar bone to each arm,
+  the turn along each forearm, toes and three joints a finger. The rig sets those by itself from the pose: the
+  back and the neck bend along their length, a shoulder rises and comes forward with its arm, the forearm's
+  skin turns with the hand, and the toes lie flat as the heel lifts. So old poses, and whatever you parent to
+  `bones.spine` or `bones.head`, work as before; after turning joints yourself call `person.rig.fill()`.
+  `person.fingers({ L: .5, R: [0, 1, 1, 1, 1] })` closes a hand (0 flat, 1 a fist, `null` as sculpted; a
+  number for the hand or one a finger, thumb first), and they stay as set. At the middle and far levels
+  the small bones (fingers, toes, forearm turn) stand still and cost nothing.
   Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle`, `iris`, `lips`, `moustache`, `stubble`, `face`
   (`{ jaw, chin, brow, nose, lips, cheeks, eyes }`, 1 is average), `hands: 'grip'`, and `outfit: { top, legs,
   feet, hat, belt, webbing, gloves, pack, extras }` (every option is listed above `human` in

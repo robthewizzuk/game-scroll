@@ -12,15 +12,24 @@ export const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b 
 export const bump = (x, c, w) => Math.exp(-(((x - c) / w) ** 2));
 
 // ---- the skeleton: the bones gs.poses' Rig moves, at a grown person's proportions (1.8 m, feet at y = 0,
-// facing +z, the left side at +x), arms and legs hanging straight down
-export const BONES = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
-export const PARENT = { spine: 'hips', head: 'spine', armL: 'spine', foreL: 'armL', handL: 'foreL', armR: 'spine', foreR: 'armR', handR: 'foreR', legL: 'hips', shinL: 'legL', footL: 'shinL', legR: 'hips', shinR: 'legR', footR: 'shinR' };
+// facing +z, the left side at +x), arms and legs hanging straight down.
+// Fifteen of them are the ones poses name (hips, spine, head, arms, forearms, hands, legs, shins, feet): each
+// keeps its place and its meaning (a pose's `spine` is the whole turn of the rib cage on the hips, `head` the
+// head's on the chest), and things ride them as they always did. Between them are joints the rig works out by
+// itself (Rig.fill): the waist under the rib cage (which turns about PIVOT.spine, a hand's width higher, so a
+// back bends as a curve and not at a hinge), the neck under the head (which turns where the skull sits on it),
+// a collar bone to each shoulder, the turn along each forearm. Then the toes, and the fingers (fingerBones()).
+export const BONES = ['hips', 'waist', 'spine', 'neck', 'head', 'collarL', 'armL', 'foreL', 'twistL', 'handL', 'collarR', 'armR', 'foreR', 'twistR', 'handR', 'legL', 'shinL', 'footL', 'toeL', 'legR', 'shinR', 'footR', 'toeR'];
+export const PARENT = { waist: 'hips', spine: 'waist', neck: 'spine', head: 'neck', collarL: 'spine', armL: 'collarL', foreL: 'armL', twistL: 'foreL', handL: 'foreL', collarR: 'spine', armR: 'collarR', foreR: 'armR', twistR: 'foreR', handR: 'foreR',
+  legL: 'hips', shinL: 'legL', footL: 'shinL', toeL: 'footL', legR: 'hips', shinR: 'legR', footR: 'shinR', toeR: 'footR' };
 export const AT = {
-  hips: [0, 1.0, 0], spine: [0, 1.1, 0], head: [0, 1.525, -.012],
-  armL: [.188, 1.44, -.012], foreL: [.2, 1.165, -.01], handL: [.2, .895, .004],
-  legL: [.094, .955, 0], shinL: [.097, .52, 0], footL: [.097, .085, -.006],
+  hips: [0, 1.0, 0], waist: [0, 1.1, 0], spine: [0, 1.1, 0], neck: [0, 1.525, -.012], head: [0, 1.525, -.012],
+  collarL: [.022, 1.462, .03], armL: [.188, 1.44, -.012], foreL: [.2, 1.165, -.01], twistL: [.2, 1.03, -.003], handL: [.2, .895, .004],
+  legL: [.094, .955, 0], shinL: [.097, .52, 0], footL: [.097, .085, -.006], toeL: [.1, .028, .12],
 };
 for (const k of Object.keys(AT)) if (k.endsWith('L')) AT[k.slice(0, -1) + 'R'] = [-AT[k][0], AT[k][1], AT[k][2]];
+// where the rib cage and the head turn about, from their bones' own places (the bones stay where they were: a game's hit areas, a slung rifle and a hat hang on them)
+export const PIVOT = { spine: [0, .17, 0], head: [0, .13, .004] };
 export const HC = [0, 1.69, .008];   // the middle of the head
 const Hd = (x, y, z) => [x, HC[1] + y, HC[2] + z];
 export const other = b => b.endsWith('L') ? b.slice(0, -1) + 'R' : b.endsWith('R') ? b.slice(0, -1) + 'L' : b;
@@ -85,7 +94,8 @@ function arm(a) {
   S.push({ loft: torsoOf(b, top.kind), ghost: true });   // the body beside it, for the shade under the arm
   return S;
 }
-function armBones(x, y, z) { const [, ly] = armLocal(abs(x), y, z), t = ss(1.115, 1.215, ly); return [['foreL', 1 - t], ['armL', t]]; }
+// the arm's bones: the elbow bends between arm and forearm; down the forearm the cloth and skin turn with the hand a little more at every step (twistL), as a forearm does
+function armBones(x, y, z) { const [, ly] = armLocal(abs(x), y, z), t = ss(1.115, 1.215, ly), w = ss(1.09, .93, ly); return [['foreL', (1 - t) * (1 - w)], ['twistL', (1 - t) * w], ['armL', t]]; }
 
 /** The trunk: torso, hips, legs and feet, in what they wear (the arms are pieces of their own). */
 function trunk(a) {
@@ -176,39 +186,67 @@ function trunk(a) {
   S.extra = X.I.length ? X : null;
   return S;
 }
-// the trunk's bones: the waist bends between hips and spine, a tunic's skirt half follows the thighs, knees and ankles bend
+// the trunk's bones: the back bends at the waist and again under the ribs, the top of each shoulder rides its collar bone, a tunic's skirt half follows the thighs, knees, ankles and toes bend
 function trunkBones(x, y, z, s) {
   if (s.bone) return [[s.bone, 1]];
   const sd = x >= 0 ? 'L' : 'R', part = s.part;
-  if (part === 'torso') { const w = ss(1.04, 1.17, y); return [['hips', 1 - w], ['spine', w]]; }
+  if (part === 'torso') { const w = ss(1.04, 1.17, y), u = ss(1.19, 1.35, y), c = ss(.05, .17, abs(x)) * ss(1.33, 1.45, y); return [['hips', 1 - w], ['waist', w * (1 - u)], ['spine', u * (1 - c)], ['collar' + sd, u * c]]; }
   if (part === 'skirt') { const k = ss(1.03, .82, y) * .62, l = ss(-.05, .05, x); return [['hips', 1 - k], ['legL', k * l], ['legR', k * (1 - l)]]; }
   if (part === 'leg') { if (abs(x) < .02 && y > .8) return [['hips', 1]]; const t = ss(.47, .57, y), up = ss(.84, 1.0, y) * .85; return [['shin' + sd, 1 - t], ['leg' + sd, t * (1 - up)], ['hips', t * up]]; }
   if (part === 'boot') { const f = 1 - ss(.07, .15, y); return [['foot' + sd, f], ['shin' + sd, 1 - f]]; }
-  if (part === 'foot') return [['foot' + sd, 1]];
+  if (part === 'foot') { const t = ss(.105, .135, z); return [['foot' + sd, 1 - t], ['toe' + sd, t]]; }
   return [['hips', 1]];
 }
 
+// ---- hands: every finger in three joints, the thumb in two
+export const FINGERS = ['index', 'middle', 'ring', 'little'];
+/**
+ * Where a left hand's joints are, hanging straight down: { index, middle, ring, little: [knuckle, joint, joint, tip],
+ * thumb: [root, joint, tip] } (each [x, y, z]), bend: how far each finger joint is sculpted bent already
+ * (radians: knuckle, then the two joints), and the way the thumb closes (turn: an axis). a: { limbs, grip }.
+ */
+export function handPlan(a) {
+  const [wx, wy, wz] = AT.handL, k = a.limbs * .97 + .03, grip = a.grip ? 1 : 0, P = { k, grip, bend: [.18 + grip * .75, .32 + grip * .75, .42 + grip * .55] };
+  const fz = [.03, .0105, -.009, -.0275], fl = [.95, 1.02, .95, .77], fy = [-.1, -.104, -.101, -.094], L = [.04, .026, .021];
+  FINGERS.forEach((name, i) => {
+    let px = wx - .003, py = wy + fy[i] * k, an = P.bend[0]; const pz = wz + .003 + fz[i] * k, J = [[px, py, pz]];
+    for (let j = 0; j < 3; j++) { const l = L[j] * fl[i] * k; px -= sin(an) * l; py -= cos(an) * l; J.push([px, py, pz]); if (j < 2) an += P.bend[j + 1]; }
+    P[name] = J;
+  });
+  // the thumb: out from the heel of the hand, forward and across the palm
+  const t0 = [wx - .008, wy - .036 * k, wz + .034 * k], dx = -.3 - grip * .5, dy = -.72, dz = .62 - grip * .3, l = Math.hypot(dx, dy, dz), m = [t0[0] + dx / l * .036 * k, t0[1] + dy / l * .036 * k, t0[2] + dz / l * .036 * k], e = [m[0] + (dx - .25) / l * .03 * k, m[1] + (dy - .1) / l * .03 * k, m[2] + (dz - .3) / l * .03 * k];
+  P.thumb = [t0, m, e];
+  // it closes over the fingers: turned from the way it points towards a line across the palm
+  const c = [-.78, -.6, -.18], ax = [dy * c[2] - dz * c[1], dz * c[0] - dx * c[2], dx * c[1] - dy * c[0]], al = Math.hypot(...ax); P.turn = ax.map(v => v / al);
+  return P;
+}
+/** The finger bones of a left hand: [[name, parent, [x, y, z]]...], hanging straight down as AT is (index1L at the knuckle .. index3L, thumb1L, thumb2L). */
+export function fingerBones(a) { const P = handPlan(a), out = []; for (const f of [...FINGERS, 'thumb']) for (let j = 0; j < P[f].length - 1; j++) out.push([f + (j + 1) + 'L', j ? f + j + 'L' : 'handL', P[f][j]]); return out; }
 /** The left hand, fingers a little curled (grip: closed round a rifle's stock). */
 function hand(a) {
-  const S = [], [wx, wy, wz] = AT.handL, k = a.limbs * .97 + .03, grip = a.grip ? 1 : 0, sl = a.gloves ? 'glove' : 'skin';
+  const S = [], [wx, wy, wz] = AT.handL, P = handPlan(a), k = P.k, sl = a.gloves ? 'glove' : 'skin';
   S.push({ taper: [[wx, wy + .03, wz], [wx, wy - .012, wz]], r: [.027 * k, .029 * k], slot: sl, blend: 0 });
   S.push({ box: [.027 * k, .092 * k, .08 * k], round: .0115, at: [wx - .002, wy - .058 * k, wz + .003], rot: [0, 0, -.06], slot: sl, blend: .012 });
   S.push({ ball: [.013, .03, .022], at: [wx - .012, wy - .045 * k, wz + .03], slot: sl, blend: .012 });   // the ball of the thumb
-  const fz = [.03, .0105, -.009, -.0275], fl = [.95, 1.02, .95, .77], fy = [-.1, -.104, -.101, -.094];
-  for (let i = 0; i < 4; i++) {
-    let px = wx - .003, py = wy + fy[i] * k, pz = wz + .003 + fz[i] * k, an = .18 + grip * .75; const L = [.04, .026, .021], R = [.0092, .0082, .0074, .0066], cu = [.32 + grip * .75, .42 + grip * .55];
-    S.push({ ball: .0102 * k, at: [px + .0035, py + .004, pz], slot: sl, blend: .008 });   // knuckle
-    for (let j = 0; j < 3; j++) {
-      const l = L[j] * fl[i] * k, qx = px - sin(an) * l, qy = py - cos(an) * l;
-      S.push({ taper: [[px, py, pz], [qx, qy, pz]], r: [R[j] * k, R[j + 1] * k], slot: sl, blend: .0035 });
-      px = qx; py = qy; if (j < 2) an += cu[j];
-    }
+  const R = [.0092, .0082, .0074, .0066];
+  for (const f of FINGERS) {
+    const J = P[f];
+    S.push({ ball: .0102 * k, at: [J[0][0] + .0035, J[0][1] + .004, J[0][2]], slot: sl, blend: .008 });   // knuckle
+    for (let j = 0; j < 3; j++) S.push({ taper: [J[j], J[j + 1]], r: [R[j] * k, R[j + 1] * k], slot: sl, blend: .0035, fin: f, seg: j });
   }
-  // the thumb: out from the heel of the hand, forward and across the palm
-  { const t0 = [wx - .008, wy - .036 * k, wz + .034 * k], dx = -.3 - grip * .5, dy = -.72, dz = .62 - grip * .3, l = Math.hypot(dx, dy, dz), m = [t0[0] + dx / l * .036 * k, t0[1] + dy / l * .036 * k, t0[2] + dz / l * .036 * k], e = [m[0] + (dx - .25) / l * .03 * k, m[1] + (dy - .1) / l * .03 * k, m[2] + (dz - .3) / l * .03 * k];
-    S.push({ taper: [t0, m], r: [.0118 * k, .0098 * k], slot: sl, blend: .008 }, { taper: [m, e], r: [.0098 * k, .0082 * k], slot: sl, blend: .004 }); }
+  S.push({ taper: [P.thumb[0], P.thumb[1]], r: [.0118 * k, .0098 * k], slot: sl, blend: .008, fin: 'thumb', seg: 0 }, { taper: [P.thumb[1], P.thumb[2]], r: [.0098 * k, .0082 * k], slot: sl, blend: .004, fin: 'thumb', seg: 1 });
   S.push({ taper: [[wx, wy + .2, wz], [wx, wy + .012, wz]], r: [.045, .037], ghost: true });   // the cuff over the wrist
   return S;
+}
+// a hand's bones: each length of a finger on its own bone, shared half and half with the next one at the joint between them
+function handBones(a) {
+  const P = handPlan(a), H = .0065;
+  return (x, y, z, s) => {
+    const J = s && s.fin ? P[s.fin] : null; if (!J) return [['handL', 1]];
+    const j = s.seg, A = J[j], B = J[j + 1], dx = B[0] - A[0], dy = B[1] - A[1], dz = B[2] - A[2], len = Math.hypot(dx, dy, dz), t = ((x - A[0]) * dx + (y - A[1]) * dy + (z - A[2]) * dz) / len;
+    const last = j === J.length - 2, prev = 1 - ss(-H, H, t), next = last ? 0 : ss(len - H, len + H, t), name = q => q < 0 ? 'handL' : s.fin + (q + 1) + 'L';
+    return [[name(j - 1), prev], [name(j), Math.max(0, 1 - prev - next)], [name(j + 1), next]];
+  };
 }
 
 export const EYE = [.032, 0, .07];   // the middle of the left eye, from the middle of the head
@@ -259,6 +297,9 @@ function head(a) {
   for (const g of (hat && hat(a.hat).ghost) || []) S.push({ ...g, ghost: true, slot: null });
   return S;
 }
+// the head's bones: the foot of the neck stays in the collar, the neck bends, and the head (the jaw and all above a line
+// from under the chin up to the nape) sits on top of it
+function headBones(x, y, z) { const n = ss(1.5, 1.565, y), top = 1.625 - .7 * Math.max(0, z + .01), h = ss(top - .055, top, y); return [['spine', 1 - n], ['neck', n * (1 - h)], ['head', n * h]]; }
 // an eye: white, iris, pupil in clean rings (looking along +z)
 function eyeball(c, r, n = 14) {
   const rings = [[0, 0], [9.5, 0], [9.5, 1], [28.5, 1], [28.5, 2], [31.5, 2], [31.5, 3], [62, 3], [98, 3]], P = [], N = [], K = [], I = [];
@@ -402,11 +443,11 @@ function listed(list, kind) { const f = list.get(kind); if (typeof f === 'functi
 export function sculpt({ kind, a }) {
   if (kind === 'trunk') { const S = trunk(a); return finish(S, { cell: .006, bones: trunkBones, extra: S.extra }); }
   if (kind === 'arm') return finish(arm(a), { cell: .006, bones: armBones });
-  if (kind === 'hand') return finish(hand(a), { cell: .0032, bones: () => [['handL', 1]], keep: [.2, .035, .006], err: [.0006, .004, .02], blend: .004 });
+  if (kind === 'hand') return finish(hand(a), { cell: .0032, bones: handBones(a), keep: [.2, .035, .006], err: [.0006, .004, .02], blend: .004 });
   if (kind === 'head') {
     const eye = { P: [], N: [], K: [], I: [], ao: .78 };
     for (const s of [1, -1]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122), base = eye.P.length / 3; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); }
-    return finish(head(a), { cell: .003, bones: (x, y) => { const h = ss(1.5, 1.585, y); return [['spine', 1 - h], ['head', h]]; }, keep: [.34, .05, .008], err: [.0005, .004, .02], reach: .07, blend: .01, extra: eye });
+    return finish(head(a), { cell: .003, bones: headBones, keep: [.34, .05, .008], err: [.0005, .004, .02], reach: .07, blend: .01, extra: eye });
   }
   if (kind === 'hat' || kind === 'pack') {
     const make = listed(kind === 'hat' ? HATS : PACKS, a.kind); if (!make) throw new Error(`gs.models.human: no ${kind} called '${a.kind}'`);
@@ -417,4 +458,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, torsoOf, sleeveRows, arm, armBones, hand, head, eyeball, stud, finish, sculpt, ...HATS.values(), ...PACKS.values(), BROW, MOUTH_DIP].map(String).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, torsoOf, sleeveRows, arm, armBones, handPlan, hand, handBones, head, headBones, eyeball, stud, finish, sculpt, ...HATS.values(), ...PACKS.values(), BROW, MOUTH_DIP].map(String).join(''));
