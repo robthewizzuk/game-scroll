@@ -4121,6 +4121,160 @@ console.log('physics ok');
   }
 }
 
+// ground that takes marks (src/kit/marks.js: gs.outdoors.Marks)
+{
+  globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
+  const THREE = await import('three'), { Marks, Land } = await import('../src/kit/outdoors.js'), { Weather } = await import('../src/kit/sky.js');
+  const view = () => ({ cam: { position: new THREE.Vector3(0, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, _air: null, air() { return this._air ||= { wet: 0, world: null }; } });
+  const run = (m, secs, w = null) => { for (let i = 0; i < Math.round(secs * 60); i++) { w?.update(1 / 60); m.update(1 / 60); } };
+  const near = (a, b, e = 1e-3) => Math.abs(a - b) < e;
+  // a print in sand: a dent the shape of a boot with a rim round it, on one sheet, as a height and two pictures
+  {
+    const v = view(), m = new Marks(v, { sand: () => 1, grass: false }), S = m.size;
+    assert.ok(near(S, 3.1) && m.count === 0 && m.drawn === 0 && m.grass === null && m.kindAt(1, 1).kind === 'sand' && near(m.kindAt(1, 1).depth, .028), 'sand everywhere, nothing marked yet');
+    const s = m.step(1, 1, { turn: 0 }); assert.ok(s && m.made.length === 1 && m.made[0].kind === 'sand' && near(m.made[0].depth, .028) && m.count === 1);
+    m.update(1 / 60); assert.ok(m.made.length === 0 && m.drawn === 1 && v.scene.children.length === 1, 'one tile of prints is drawn');
+    assert.ok(near(m.at(1, 1), .028, .002) && near(m.at(1, 1.12), .028, .004) && m.at(1, .895) > .02 && m.at(1.3, 1) === 0 && m.at(1, 1.25) === 0 && m.at(1, .7) === 0, 'the sole and the heel are pressed in, the ground beside them is not');
+    assert.ok(m.at(1, .945) < .012, 'the waist between sole and heel is shallower: ' + m.at(1, .945));
+    const tile = [...m.tiles.values()][0], H = tile.H; let lo = 0, hi = 0, dents = 0; for (const h of H) { if (h < lo) lo = h; if (h > hi) hi = h; if (h < 0) dents++; }
+    assert.ok(near(lo, -.028, .001) && hi > .004 && hi < .012 && dents > 25 && dents < 80, 'a rim stands round it: ' + hi.toFixed(4) + ' m, ' + dents + ' texels pressed');
+    const at = (x, z) => (Math.floor((z - tile.z0) / m.cell) * 128 + Math.floor((x - tile.x0) / m.cell)) * 4, C = tile.map.image.data, N = tile.normal.image.data;
+    assert.ok(C[at(1, 1) + 3] > 150 && C[at(2, 2) + 3] === 0 && C[at(1, 1)] < C[at(1.085, 1) ] + 60, 'the colour picture: pressed sand shows, untouched ground is clear');
+    assert.ok(N[at(2, 2)] === 128 && N[at(2, 2) + 2] === 255 && Math.abs(N[at(1.055, 1.05)] - 128) > 20, 'the normal picture: flat away from the print, leaning on its wall');
+    assert.ok(tile.mesh.material.isMeshStandardMaterial && tile.mesh.material.transparent && !tile.mesh.material.depthWrite && tile.mesh.material.userData.noSettle && tile.mesh.material.onBeforeCompile === THREE.Material.prototype.onBeforeCompile && !tile.mesh.material.userData.gsLooks, 'a stock material: the same on WebGL and WebGPU');
+    // a second print on top: the deeper dent wins, a dent cuts a rim; the order they are drawn in does not matter
+    m.step(1.05, 1.02, { turn: 1, press: 1.4 }); m.update(1 / 60); const one = Float32Array.from(tile.H);
+    m.spoil(tile.k); m.update(0); assert.ok(one.every((h, i) => near(h, tile.H[i], 1e-6)), 'made again from the list it is the same ground');
+    assert.ok(near(m.at(1.05, 1.02), .028 * 1.4, .002), 'pressed harder: deeper');
+    // on the edge of two tiles: both draw it, and they agree where they meet
+    m.press(S, 1, .2); m.update(1 / 60); m.update(1 / 60); assert.ok(m.drawn === 2 && near(m.at(S - .01, 1), m.at(S + .01, 1), .002) && m.at(S + .01, 1) > .02, 'a print across two tiles');
+    const a = m.tiles.get([...m.tiles.keys()].find(k => m.tiles.get(k).ti === 0)), b = m.tiles.get([...m.tiles.keys()].find(k => m.tiles.get(k).ti === 1)), j = Math.floor((1 - a.z0) / m.cell);
+    for (let i = 0; i < 4; i++) assert.ok(near(a.H[j * 128 + 124 + i], b.H[j * 128 + i], 1e-6), 'the strip two tiles share holds the same heights');
+    // a trail to read: the newest first, who made it, which way it points
+    m.step(2, 2, { turn: Math.PI / 2, by: 'fox' }); const tr = m.trail(2, 2, 1.6); assert.ok(tr.length === 4 && tr[0].by === 'fox' && near(tr[0].turn, Math.PI / 2) && tr[0].kind === 'sand' && tr[0].age === 0 && m.trail(2, 2, 3, { by: 'fox' }).length === 1 && m.trail(2, 2, 3, { max: 2 }).length === 2);
+    m.clear(); assert.ok(m.count === 0 && m.drawn === 0 && m.tiles.size === 0 && v.scene.children.length === 0 && m.trail(2, 2).length === 0, 'clear()');
+    m.step(1, 1); m.update(1 / 60); m.dispose(); assert.ok(v.scene.children.length === 0, 'dispose()');
+  }
+  // tracks join up: one long mark while the wheel runs straight, more round a bend; lifted, they stop
+  {
+    const v = view(), m = new Marks(v, { sand: () => 1, grass: false });
+    for (let i = 0; i <= 60; i++) { m.roll('a', -1.5 + i * .05, 1.5, { width: .2, tread: 'smooth' }); m.update(1 / 60); }
+    assert.ok(m.count === 2 || m.count === 3, 'three metres of straight track: ' + m.count + ' marks');
+    for (const x of [-1.4, -.6, .01, .7, 1.4]) assert.ok(near(m.at(x, 1.5), .028 * 1.2 * .8, .002), 'pressed all along, at ' + x + ': ' + m.at(x, 1.5));
+    assert.ok(m.at(0, 1.5 + .2) === 0 && m.at(-1.8, 1.5) === 0 && m.at(1.8, 1.5) === 0, 'and only there');
+    const n0 = m.count; for (let i = 0; i <= 60; i++) { const a = i / 60 * Math.PI; m.roll('b', 1 + Math.cos(a), -1.5 - Math.sin(a) * 1, { width: .2 }); m.update(1 / 60); }
+    const bend = m.count - n0; assert.ok(bend > 6 && bend < 40, 'half a turn of a 1 m ring: ' + bend + ' marks'); let gaps = 0; for (let i = 2; i < 60; i++) { const a = i / 60 * Math.PI; if (!(m.at(1 + Math.cos(a), -1.5 - Math.sin(a)) > 0)) gaps++; } assert.ok(gaps <= 12, 'the bend is pressed all along (a tyre\'s tread leaves ' + gaps + ' of 58 spots between its blocks)');
+    m.roll('c', -2, 0); m.roll('c', -1.9, 0); m.lift('c'); m.roll('c', 1.9, 0); m.roll('c', 2, 0); m.update(1 / 60); m.update(1 / 60);
+    assert.ok(m.at(-1.95, 0) > 0 && m.at(1.95, 0) > 0 && m.at(0, 0) === 0, 'lifted: the track does not join across the gap');
+    m.roll('d', 0, 2); m.roll('d', 9, 2); m.update(1 / 60); assert.ok(m.at(4, 2) === 0, 'nor across a jump');
+    m.dispose();
+  }
+  // only so many marks are remembered, and tiles are made again a slice a frame
+  {
+    const v = view(), m = new Marks(v, { sand: () => 1, grass: false, keep: 10, budget: 300 });
+    for (let i = 0; i < 15; i++) m.step(.3 + i * .15, 1, { by: i }); m.update(1 / 60);
+    assert.ok(m.count === 10 && m.trail(1, 1, 9).length === 10 && m.trail(1, 1, 9)[0].by === 14 && m.trail(1, 1, 9)[9].by === 5 && m.byTile.get([...m.byTile.keys()][0]).length === 10, 'the oldest are forgotten');
+    m.clear(); for (let i = 0; i < 10; i++) m.step(.3 + i * .25, 1); let frames = 0; while (!(m.at(.3 + 9 * .25, 1) > 0) && frames < 200) { m.update(1 / 60); frames++; }
+    assert.ok(frames > 3 && frames < 40 && m.job === null, 'a small budget: the tile took ' + frames + ' frames to make');
+    m.clear(); for (let i = 0; i < 10; i++) m.step(.3 + i * .25, 1); m.update(0); assert.ok(m.at(.3 + 9 * .25, 1) > 0 && m.at(.3, 1) > 0, 'update(0): all at once');
+    // far from the centre nothing is drawn, but it is remembered: come back and it is there
+    m.step(40, 40, { by: 'far' }); m.update(1 / 60); assert.ok(m.at(40, 40) === 0 && m.drawn === 1 && m.trail(40, 40, 1)[0].by === 'far');
+    v.cam.position.set(38, 1.6, 38); m.update(0); assert.ok(m.at(40, 40) > 0 && m.drawn === 1, 'the tiles follow the camera'); m.dispose();
+  }
+  // the weather decides what the ground is: snow where it has settled (not under the roof), mud where rain has wet bare earth
+  {
+    const level = (f) => (Math.abs(f.x) <= 4 && Math.abs(f.z) <= 4 && f.y >= 3 ? f.y - 3 : Infinity), v = view();
+    const w = new Weather(v, { kind: 'clear', level, ground: () => 0, settle: 10, melt: 10, soak: 2, dry: 4 }), m = new Marks(v, { weather: w, mud: (x, z) => x > 0 ? 1 : 0, grass: false, fill: .3, wash: 3 });
+    run(m, 1.5, w); assert.ok(w.cover.ready && m.kindAt(-6, 0).kind === null && m.kindAt(6, 0).kind === 'mud' && near(m.kindAt(6, 0).soft, .1) && m.step(-6, 0) === null, 'dry: firm ground takes no mark, dry earth hardly any');
+    w.wet = 1; assert.ok(near(m.kindAt(6, 0).depth, .038) && m.kindAt(2, 0).kind === 'mud' && near(m.kindAt(2, 0).soft, .1), 'wet earth is soft; under the roof it stayed dry');
+    m.step(6, 0, { by: 'a' }); run(m, .1, w); assert.ok(m.at(6, 0) > .03);
+    // rain washes it out
+    w.set('rain'); run(m, 1.5, w); const half = m.at(6, 0); assert.ok(half > .012 && half < .024, 'half washed out: ' + half); run(m, 2, w); assert.ok(m.at(6, 0) === 0 && m.trail(6, 0, 1).length === 0, 'washed out');
+    // snow lies: prints in it everywhere the sky sees, the mud's are hidden under it
+    w.set('clear'); w.wet = 1; m.step(6, 1, { by: 'mud' }); w.snow = 1; run(m, .1, w);
+    assert.ok(m.kindAt(6, 0).kind === 'snow' && m.kindAt(-6, 0).kind === 'snow' && near(m.kindAt(6, 0).depth, .05) && m.kindAt(0, 0).kind !== 'snow', 'snow in the yard, none under the roof');
+    assert.ok(m.at(6, 1) === 0 && m.trail(6, 1, .5).length === 0, 'what was in the mud is under the snow');
+    w.snow = 1; m.step(-6, 0, { by: 'b' }); run(m, .1, w); assert.ok(near(m.at(-6, 0), .05, .003) && m.trail(-6, 0, 1)[0].kind === 'snow');
+    // fresh snow fills it in: .3 of a full cover, which is 3 seconds of this snowfall
+    w.set('snow'); w.snow = 1; run(m, 1.5, w); const part = m.at(-6, 0); assert.ok(part > .015 && part < .035, 'half filled: ' + part); run(m, 2, w); assert.ok(m.at(-6, 0) === 0, 'filled in');
+    // the snow goes all at once (a cut): its prints go with it that frame
+    w.set('clear'); w.snow = 1; m.step(-6, 2); run(m, .1, w); assert.ok(m.at(-6, 2) > 0); w.snow = 0; w.update(1 / 60); m.update(1 / 60); assert.ok(m.at(-6, 2) === 0, 'no snow, no prints in it');
+    m.dispose(); w.dispose();
+  }
+  // wind blows prints out of sand; marks can be given a life of their own
+  {
+    const v = view(), wind = { speed: 12.5 }, m = new Marks(v, { sand: () => 1, grass: false, wind, blow: 20 });
+    m.step(1, 1); run(m, 1); const half = m.at(1, 1); assert.ok(half > .01 && half < .02, 'half blown out: ' + half); run(m, 1.2); assert.ok(m.at(1, 1) === 0 && m.count === 1);
+    wind.speed = 1; m.step(1, 1); run(m, 3); assert.ok(near(m.at(1, 1), .028, .002), 'a light breeze leaves them'); m.dispose();
+    const m2 = new Marks(v, { sand: () => 1, grass: false, last: { sand: 2 } }); m2.step(1, 1); run(m2, 1); assert.ok(near(m2.at(1, 1), .028, .002)); run(m2, 1.3); assert.ok(m2.at(1, 1) === 0, 'last: gone after its time'); m2.dispose();
+  }
+  // things that leave marks by themselves
+  {
+    const v = view(), m = new Marks(v, { sand: () => 1, grass: false });
+    // anything that moves: prints paced out along its way, left and right
+    const fox = { position: { x: -2, y: 0, z: 1 } }; m.watch(fox, { size: .2 }); let made = 0;
+    for (let i = 0; i < 240; i++) { fox.position.x += 1.5 / 60; m.update(1 / 60); for (const k of m.made) { made++; assert.ok(k.by === fox && k.kind === 'sand'); } }
+    const tr = m.trail(0, 1, 9, { by: fox }), sides = new Set(tr.map(s => Math.sign(s.z - 1)));
+    assert.ok(made === tr.length && made >= 11 && made <= 13 && sides.size === 2 && tr.every(s => near(s.turn, Math.PI / 2, .01) && Math.abs(Math.abs(s.z - 1) - .062) < .005), made + ' prints, left and right of its way, pointing along it');
+    fox.position.y = 2; const n = m.count; for (let i = 0; i < 60; i++) { fox.position.x += 1.5 / 60; m.update(1 / 60); } assert.ok(m.count === n, 'in the air it leaves none');
+    m.unwatch(fox); m.clear();
+    // four feet
+    const dog = { position: { x: -2, y: 0, z: 1 } }; m.watch(dog, { feet: 4, size: .08, shape: 'paw', by: 'dog' }); for (let i = 0; i < 120; i++) { dog.position.x += 2 / 60; m.update(1 / 60); }
+    assert.ok(m.count >= 28 && m.count % 2 === 0 && m.trail(0, 1, 9)[0].by === 'dog', 'a dog: ' + m.count + ' paw prints'); m.unwatch(dog); m.clear();
+    // a vehicle: a track behind each wheel, as wide as the wheel; a tank: its two belts
+    const car = new THREE.Group(), wheels = [[-.8, 1.2], [.8, 1.2], [-.8, -1.2], [.8, -1.2]].map(([x, z]) => { const p = new THREE.Object3D(); p.position.set(x, .35, z); p.radius = .35; p.width = .24; car.add(p); return p; }); car.wheels = wheels; car.size = { length: 4, width: 1.8 };
+    m.watch(car); for (let i = 0; i <= 120; i++) { car.position.set(0, 0, -3 + i * .05); car.updateMatrixWorld(true); m.update(1 / 60); }
+    assert.ok(m.at(-.8, 0) > .02 && m.at(.8, 0) > .02 && m.at(0, 0) === 0 && m.at(-.8 + .2, 0) === 0, 'two ruts, nothing between them');
+    assert.ok(m.count <= 20, 'driving straight: ' + m.count + ' marks'); car.position.y = 1; car.updateMatrixWorld(true); const c0 = m.count; m.update(1 / 60); car.position.z += .5; car.updateMatrixWorld(true); m.update(1 / 60); assert.ok(m.count === c0, 'wheels off the ground leave none');
+    m.unwatch(car); m.clear();
+    const tank = new THREE.Group(); tank.belts = { x: 1.2, width: .5 }; tank.wheels = []; m.watch(tank); for (let i = 0; i <= 120; i++) { tank.position.set(0, 0, -3 + i * .05); tank.updateMatrixWorld(true); m.update(1 / 60); }
+    assert.ok(m.at(-1.2, 0) > 0 && m.at(1.2 + .2, .01) > 0 && m.at(0, 0) === 0 && m.at(1.2 + .3, 0) === 0, 'a tank\'s two belts, half a metre wide'); m.unwatch(tank); m.clear();
+    // a person whose steps are really taken: a print where each foot comes down, pointing the way the body faced
+    const st = { ok: true, on: true, a: 1, yaw: Math.PI / 2, turned: 0, feet: [{ landed: false, T: { x: 1, z: 1 }, yaw0: 0 }, { landed: false, T: { x: 1.6, z: 1.2 }, yaw0: 0 }] }, who = new THREE.Group(); who.rig = { stride: st, height: 1.8 };
+    m.watch(who); who.position.set(1, 0, 1); who.updateMatrixWorld(true); m.update(1 / 60); who.position.x += .02; who.updateMatrixWorld(true); m.update(1 / 60); assert.ok(m.count === 0, 'no footfall, no print');
+    st.feet[0].landed = true; m.update(1 / 60); m.update(1 / 60); st.feet[0].landed = false; st.feet[1].landed = true; m.update(1 / 60); st.feet[1].landed = false; m.update(1 / 60);
+    const t2 = m.trail(1, 1, 2); assert.ok(m.count === 2 && near(t2[0].turn, Math.PI / 2) && near(t2[1].x, 1.035) && near(t2[1].z, 1) && near(t2[0].x, 1.635), 'two footfalls, two prints, where the feet came down');
+    m.dispose();
+  }
+  // on a gs.outdoors Land the sheets lie on the land's own triangles, and its meadow parts
+  {
+    const land = new Land({ kind: (x, z) => 1 + Math.sin(x * .7) * .6 + z * .2, size: 40, segments: 40 }), v = view(), grass = (x, z) => (x < 0 ? 1 : 0);
+    const before = land.meadow({ reach: 10, gap: .5, where: grass, budget: 1e9 });
+    const m = new Marks(v, { land, sand: (x, z) => (x > 0 ? 1 : 0), grass: true });
+    const after = land.meadow({ reach: 6, gap: .5, budget: 1e9 });
+    for (const md of [before, after]) assert.ok(md.material.defines.LK_PART === '' && md.userData.meadow.look.uniforms.lkPart.value === m.grass.texture && md.userData.meadow.look.uniforms.lkPartAt.value === m.grass.where, 'a meadow made before or after reads the grass field');
+    assert.ok(m.kindAt(2.3, 1.7).kind === 'sand' && m.kindAt(-2, 1).kind === 'grass' && near(m.kindAt(2.3, 1.7).y, land.height(2.3, 1.7), .03), 'sand to the east, the meadow\'s grass to the west');
+    m.step(2.3, 1.7); m.update(1 / 60); const tile = [...m.tiles.values()][0], P = tile.mesh.geometry.attributes.position.array, Nn = tile.mesh.geometry.attributes.normal.array; let off = 0, tilt = 0;
+    // (the land's triangles: a square of the grid is cut from its far left corner to its near right one)
+    const tri = (x, z) => { const s = 1, c = Math.floor(x + 20), r = Math.floor(z + 20), u = x + 20 - c, w = z + 20 - r, h = (cc, rr) => 1 + Math.sin((cc - 20) * .7) * .6 + (rr - 20) * .2; return u + w <= 1 ? h(c, r) * (1 - u - w) + h(c + 1, r) * u + h(c, r + 1) * w : h(c + 1, r + 1) * (u + w - 1) + h(c, r + 1) * (1 - u) + h(c + 1, r) * (1 - w); };
+    for (let i = 0; i < P.length; i += 3) { off = Math.max(off, Math.abs(P[i + 1] - m.above - tri(P[i], P[i + 2]))); tilt = Math.max(tilt, Math.abs(Math.hypot(Nn[i], Nn[i + 1], Nn[i + 2]) - 1)); assert.ok(Nn[i + 1] > .6); }
+    assert.ok(off < 1e-4 && tilt < 1e-3, 'the sheet lies on the land: ' + off.toExponential(1) + ' m off at most');
+    // grass: no print, but it is pushed over away from what passes and springs back; where it was trodden it stays down a while
+    const g = m.grass; assert.ok(m.step(-2, 1) === null && m.made.at(-1).kind === 'grass' && m.count === 1 && g.at(-2, 1).flat > .6, 'a step on grass treads it down, and leaves no print');
+    m.push(-4, 3, .5); const a1 = g.at(-4 - .2, 3 + .2), a2 = g.at(-4 + .25, 3); assert.ok(a1.x < -.2 && a1.z > .2 && a2.x > .5 && Math.abs(a2.z) < .35 && Math.hypot(a1.x, a1.z) <= 1.001 && g.at(-4, 3 + .9).x === 0, 'pushed over, away from the middle');
+    m.push(-8, 3, .5, { vx: 3, vz: 0 }); const a3 = g.at(-8, 3 + .25); assert.ok(a3.x > .3 && a3.z > .3, 'and along the way the thing went');
+    m.update(1 / 60); const px = g.pix, ci = (((Math.floor(3 / g.cell) % g.N) + g.N) % g.N) * g.N + (((Math.floor((-4 + .25) / g.cell) % g.N) + g.N) % g.N); assert.ok(px[ci * 4] > 190 && px[ci * 4 + 3] === 255 && g.busy, 'and the picture the blades read says so');
+    run(m, 2.5); assert.ok(g.at(-4 + .25, 3).x === 0 && g.at(-4 - .2, 3.2).z === 0 && g.at(-8, 3.25).x === 0 && px[ci * 4] === 128, 'let go, it springs back up'); assert.ok(g.at(-2, 1).flat > .5, 'the trodden patch is still down');
+    run(m, 40); assert.ok(g.at(-2, 1).flat === 0 && !g.busy, 'and has mended after a while');
+    // a watched walker wades a lane through it
+    const who = { position: { x: -6, y: land.height(-6, -2), z: -2 } }; m.watch(who);
+    for (let i = 0; i < 120; i++) { who.position.x += 1.4 / 60; who.position.y = land.height(who.position.x, -2); m.update(1 / 60); }
+    assert.ok(g.at(-4.5, -2).flat > .3 && g.at(-5.5, -2).flat > .25 && g.at(-4.5, -1).flat === 0 && Math.hypot(g.at(who.position.x, -2 + .25).x, g.at(who.position.x, -2 + .25).z) > .3, 'a lane lies behind it, and the grass beside it leans away');
+    // the field follows the centre; what leaves it is forgotten
+    v.cam.position.set(60, 1.6, 0); m.update(1 / 60); assert.ok(g.at(-4.5, -2).flat === 0 && near(g.where.x, 60, g.cell) && g.where.w > 10);
+    m.dispose(); for (const md of [before, after]) assert.ok(md.material.defines.LK_PART === undefined && md.userData.meadow.look.uniforms.lkPart.value === null && land.parting === null, 'dispose() gives the meadow back');
+  }
+  // a busy frame is cheap: a walker, a dog and a car going round on soft ground
+  {
+    const v = view(), m = new Marks(v, { sand: () => 1 }), car = new THREE.Group(); car.wheels = [[-.8, 1.2], [.8, 1.2], [-.8, -1.2], [.8, -1.2]].map(([x, z]) => { const p = new THREE.Object3D(); p.position.set(x, .35, z); p.radius = .35; p.width = .24; car.add(p); return p; }); car.size = { length: 4, width: 1.8 };
+    const a = { position: { x: 0, y: 0, z: 0 } }, d = { position: { x: 0, y: 0, z: 0 } }; m.watch(a); m.watch(d, { feet: 4, size: .08, shape: 'paw' }); m.watch(car);
+    const go = n => { for (let i = 0; i < n; i++) { const t = m.t; a.position.x = 4 * Math.cos(t * .35); a.position.z = 4 * Math.sin(t * .35); d.position.x = 3 * Math.cos(-t * .7); d.position.z = 3 * Math.sin(-t * .7); car.position.set(6.5 * Math.cos(t * .5), 0, 6.5 * Math.sin(t * .5)); car.rotation.y = -t * .5; car.updateMatrixWorld(true); m.update(1 / 60); } };
+    go(120); const t0 = performance.now(); go(600); const ms = (performance.now() - t0) / 600;
+    const kept = m.count; assert.ok(ms < 2 && kept > 300 && m.drawn > 8, 'marks.update() ' + ms.toFixed(3) + ' ms a frame'); m.dispose();
+    console.log(`ground that takes marks: prints with rims on sheets that meet, tracks that join up, a trail to read, snow / mud / sand by the weather, filled, washed and blown out, things that leave them by themselves, the land's own triangles, grass that parts ok (${ms.toFixed(3)} ms a frame with ${kept} marks)`);
+  }
+}
+
 // vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
 {
   const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
@@ -4219,6 +4373,7 @@ console.log('physics ok');
     assert.ok(v.isGroup && v.kind === 'car' && v.style === 'saloon' && v.wheels.length === 4 && v.tris > 5000 && v.points.driver.isObject3D && v.size.length > 4 && w !== v && w.shell.children[0].geometry === v.shell.children[0].geometry && w.wheels[0] !== v.wheels[0] && vehicle('car', { style: 'saloon', seed: 3 }).shell.children[0].material === v.shell.children[0].material, 'a car, and its twin sharing its shapes');
     v.roll(1); assert.ok(near(v.wheels[0].rotation.x, -1 / v.radius, 1e-9) && w.wheels[0].rotation.x === 0, 'a metre forward turns its wheels (not its twin\'s)');
     v.steer(.3); assert.ok(v.wheels[0].rotation.y === -.3 && v.wheels[1].rotation.y === -.3 && v.wheels[2].rotation.y === 0, 'the front wheels steer');
+    assert.ok(v.wheels.every(q => q.width > .12 && q.width < .35 && q.radius > .25) && v.belts === undefined && w.wheels[0].width === v.wheels[0].width, 'each wheel says how wide it is (for the track it leaves: gs.outdoors.Marks)');
     for (let i = 0; i < 60; i++) v.move(1 / 60, 12, { steer: 1 }); assert.ok(near(v.wheels[2].rotation.x, -(1 + 12) / v.radius, 1e-6) && near(v.wheels[0].rotation.y, -.55, .01) && v.shell.rotation.z > .02, 'move(): rolls, steers, and the body rolls outwards in the turn');
     const ch = v.chassis({ power: 9 }); assert.ok(ch.wheels.length === 4 && ch.wheels[0] === v.wheels[0] && near(ch.l, v.wheelbase + v.radius * 1.8, 1e-9) && near(ch.w, v.track + .1, 1e-9) && ch.radius === v.radius && ch.power === 9 && v.shell.position.y < -.5, 'chassis(): what World3D.vehicle wants');
     // on gs.physics3d springs: its own wheels stand on the road and turn; a sensor in the way (a pickup, a goal) does not lift it; the world can be freed after
@@ -4238,6 +4393,7 @@ console.log('physics ok');
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
     assert.ok(links.isInstancedMesh && near(moved, .07, .002) && m0.equals(m1) && !tk.chassis, 'a tank\'s left track runs 7 cm; its right stays');
+    assert.ok(tk.wheels.length === 0 && tk.belts.x > .8 && tk.belts.x < tk.size.width / 2 && tk.belts.width > .3 && tk.belts.width < .8, 'and it says where its two belts run, and how wide');
     tk.aim(.5, 2); assert.ok(tk.parts.turret.rotation.y === .5 && tk.parts.gun.rotation.x === .45 && tk.parts.gun.parent === tk.parts.turret && tk.points.muzzle.parent === tk.parts.gun);
     tk.updateMatrixWorld(true); const mz = tk.points.muzzle.getWorldPosition(new THREE.Vector3()); assert.ok(mz.x < -.5 && mz.y > 2.4 && mz.z < -1, 'the muzzle is where the gun points: ' + mz.toArray().map(q => q.toFixed(2)));
     // a train: cars coupled nose to tail, laid along a track so each sits between its own wheels

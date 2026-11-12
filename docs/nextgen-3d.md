@@ -475,6 +475,14 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   hundred a frame) and the air reads it, so it costs no extra pass and is the same on WebGL and WebGPU.
   `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. The full list is in
   [maker-kit.md](maker-kit.md#weather-that-changes-the-world); `node scripts/weather.cjs film.png` films it.
+- **Ground that takes marks** (`new gs.outdoors.Marks(v, { land, weather, mud, sand })`, then
+  `marks.watch(person)` and `marks.update(dt)`): feet leave prints and wheels leave tracks in snow where
+  the weather has let it settle, in mud where the rain has wet bare earth, and in sand; fresh snow, rain
+  and wind take them away again; the land's meadow leans away from whatever passes and stays trodden
+  where it was walked on. The prints are thin sheets with stock materials on the land's own triangles
+  (the same on WebGL and WebGPU, nothing where the ground is unmarked), and every mark is remembered,
+  so `marks.trail()` can be followed. The full list is in
+  [maker-kit.md](maker-kit.md#ground-that-takes-marks); `node scripts/marks.cjs film.png` films it.
 - **Sky** (`gs.sky`'s `Sky`) with `clouds: 0..1` draws drifting clouds lit from the sun's side (your
   own colours with `cloudLight` and `cloudDark`; `gap` keeps the low sky round the sun clear). It aims
   the sun, and on a view with air it colours the haze from the sky and lays the clouds' shadows on the

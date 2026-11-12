@@ -629,6 +629,23 @@ try {
     ok(snow.open > snow.roofed * 2 && Math.abs(snow.roofed - dry.roofed) < 5, `weather: snow whitens the open half (${snow.open.toFixed(0)} of 255), not the half under the roof (${snow.roofed.toFixed(0)})`);
     w.dispose(); window.__hd.hold = hold;
   }
+  // gs.outdoors.Marks drawn in a Next Gen view from above: a floor under snow, pressed in the middle. The print shows in the
+  // picture as a darker dent, the snow beside it stays as it was, and clear() takes it away again (kit-test.mjs has the rules;
+  // scripts/marks.cjs films it)
+  {
+    const T = gs.THREE, hold = window.__hd.hold; window.__hd.hold = false;
+    const v = new gs.hd.HDView({ bg: '#404040', amb: .6, env: 0 }), c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    v.cam.fov = 50; v.cam.aspect = 1; v.cam.updateProjectionMatrix(); v.cam.position.set(0, 3, .01); v.cam.lookAt(0, 0, 0); v.cam.updateMatrixWorld();
+    const sl = gs.hd.sun('#fff', 2, 12, [1, .5, 0]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0); v.air({ haze: 0 });
+    const floor = new T.Mesh(new T.BoxGeometry(16, .2, 16), gs.hd.pbr('#7a6a5a', { rough: .9 })); floor.position.y = -.1; v.scene.add(floor);
+    const w = new gs.sky.Weather(v, { kind: 'clear', level: () => Infinity, ground: () => 0 }); w.update(1 / 60); w.cover.update(true); w.snow = 1;
+    const marks = new gs.outdoors.Marks(v, { ground: () => 0, weather: w });
+    const look = async () => { for (let i = 0; i < 8; i++) { w.update(0); marks.update(0, { x: 0, y: 0, z: 0 }); v.render(x, 128, 128); await frame(); } const d = x.getImageData(0, 0, 128, 128).data, box = (x0, y0, n) => { let s = 0, k = 0; for (let j = y0; j < y0 + n; j++) for (let i = x0; i < x0 + n; i++) { const q = (j * 128 + i) * 4; s += d[q] + d[q + 1] + d[q + 2]; k += 3; } return s / k; }; return { mid: box(54, 54, 20), side: box(6, 54, 20) }; };
+    const clean = await look(); const made = marks.press(0, 0, .4), kind = marks.kindAt(0, 0).kind; const dent = await look(), drawn = marks.drawn; marks.clear(); const after = await look();
+    ok(kind === 'snow' && made && drawn >= 1 && clean.mid > 120 && Math.abs(clean.mid - clean.side) < 6 && dent.mid < clean.mid - 12 && Math.abs(dent.side - clean.side) < 4, `marks: a print pressed in snow shows in the picture (${dent.mid.toFixed(0)} of 255 in it, ${clean.mid.toFixed(0)} before, ${dent.side.toFixed(0)} beside it)`);
+    ok(marks.count === 0 && marks.drawn === 0 && Math.abs(after.mid - clean.mid) < 4, `marks: clear() leaves the snow as it was (${after.mid.toFixed(0)} of 255)`);
+    marks.dispose(); w.dispose(); window.__hd.hold = hold;
+  }
   // gs.models.vehicle where its recipe materials can be made (they need a canvas): every kind and style, a lorry on its planks in worn paint,
   // a car on gs.physics3d springs with its wheels on the road, and one drawn in a Next Gen view (kit-test.mjs has the rules; scripts/vehicles.cjs shows them all)
   {
