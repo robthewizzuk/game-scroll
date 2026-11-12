@@ -2104,6 +2104,13 @@ export interface VehicleOptions {
   cars?: (string | WagonOptions)[]; gauge?: number;
   /** A train: smoke deflectors on a steam engine (a plate each side of its smokebox); and what a wagon made by itself carries (see WagonOptions). */
   deflectors?: boolean; load?: 'tarp' | 'coal' | 'crates';
+  /** A train: false is a working engine with nothing kept bright: a steam engine's dome and boiler bands painted over, and every wheel's rim as dark as the wheel (only its tread shows steel). */
+  polished?: boolean;
+  /**
+   * A train that keeps to a straight line, drawn in as few draws as it can be: every car's shell joined into one mesh for each kind of surface (colours in its corners) and every wheelset of one shape in one draw.
+   * A seven-car goods train is 16 draws where it was 58, the same triangles and the same picture. It rolls, moves, lights and twins as before and its cars keep their `points`; along() throws, as its cars are one shape.
+   */
+  fuse?: boolean;
 }
 /** One wagon of a train, when a name is not enough: `cars: ['van', { style: 'open', load: 'coal', colour: '#565c50' }, 'guard']`. */
 export interface WagonOptions {
@@ -2161,8 +2168,10 @@ export type VehicleT = Loose & {
 /** A train from gs.models.vehicle('train', ...): its cars coupled nose to tail, the engine first, the middle of the train at its origin. */
 export type TrainT = Loose & {
   kind: 'train'; style: string;
-  /** Each car, a vehicle of its own (its `length` over its buffers; `parts`, `points`, `lights`...), the engine first. */
+  /** Each car, a vehicle of its own (its `length` over its buffers; `parts`, `points`, `lights`...), the engine first. Made with fuse: true they have no meshes of their own, but stay where they are for their points and for what you add to them. */
   cars: (VehicleT & { length: number; reach: number; back: number })[];
+  /** true on a train made with fuse: true: its meshes are in `shell`, one a kind of surface, and along() throws. */
+  fused?: boolean; shell?: Loose;
   /** The engine's. */
   parts: Record<string, Loose>; points: Record<string, Loose>;
   size: { length: number; width: number; height: number };
@@ -2175,6 +2184,7 @@ export type TrainT = Loose & {
   /**
    * Lays it along a track with its front `d` metres along it, each car between its own wheels, so it bends round curves and tips on slopes. track: (metres along) => { x, y, z } on top of the rails, or a gs.paths.Path;
    * the points are in the train's own space, so leave the train itself where the track's points are measured from.
+   * A train made with fuse: true keeps to a straight line: this throws.
    */
   along(track: ((d: number) => { x: number; y?: number; z?: number }) | Loose, d: number): TrainT;
   lights(on?: boolean): TrainT;
@@ -2650,7 +2660,7 @@ export interface ModelsPart {
    * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep), 'truck' (flat, canvas, box, tanker), 'tank' (medium, light, heavy), 'train' (steam, diesel; wagons van, open, flat, tanker, guard, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet).
    * Its nose points along -z, as gs.vehicles, gs.craft and World3D.vehicle push things. Each frame: move(dt, speed, { steer }) (wheels roll and steer, the body rocks on its springs, tracks run, propellers spin); or roll(d), steer(a), aim(turn, lift) yourself.
    * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car or a truck; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
-   * A train: vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }) is the whole train; along(track, d) lays it on your rails.
+   * A train: vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }) is the whole train; along(track, d) lays it on your rails, or fuse: true makes one that keeps to a straight line in a third of the draws.
    * 3,000 to 21,000 triangles and 4 to 24 draws each; made in about a tenth of a second or less on a desktop, and the same vehicle asked for again is a copy that shares its shapes and materials. Make them in make().
    */
   vehicle: {

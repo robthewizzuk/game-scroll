@@ -997,6 +997,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   const train = gs.models.vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] });   // a wagon: a name, or { style, load, colour }
   train.along(rails, metres).roll(metres);   // each car between its own wheels, round the curve
   ```
+  A train that only runs straight can be made with `fuse: true`: its cars' shells joined into one mesh a
+  kind of surface and its wheels drawn as copies, a third of the draws for the same picture (`along()`
+  then throws). `polished: false` is a working engine with nothing kept bright.
   Options, the parts and points of each kind, real springs (`car.chassis()` with `World3D.vehicle`), boats
   and planes on `gs.craft`, and what each costs: [Vehicles made in code](maker-kit.md#vehicles-made-in-code).
   `node scripts/vehicles.cjs sheet.png` draws them all from five sides, to look them over.

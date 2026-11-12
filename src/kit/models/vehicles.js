@@ -6,7 +6,7 @@
 // things, and a road vehicle stands on y = 0 (a boat floats with its waterline there, a plane's middle is at 0).
 // The same vehicle asked for again is a copy sharing its shapes and materials.
 // Kit use only: games reach it as gs.models.vehicle.
-import { Group, Mesh, Object3D, InstancedMesh, Matrix4, BoxGeometry, DynamicDrawUsage } from 'three';
+import { Group, Mesh, Object3D, InstancedMesh, Matrix4, BoxGeometry, BufferAttribute, DynamicDrawUsage } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { pause, built, loading } from '../slices.js';
 import { material } from './materials.js';
@@ -37,9 +37,9 @@ const SLOTS = {
   lamp: k => k.lit ? pbr('#fff6e0', { rough: .2, glow: 3 }) : pbr('#f2eee2', { rough: .3 }), tail: k => pbr('#9c1010', { rough: .25, glow: k.lit ? 1.6 : 0 }),
   plate: () => pbr('#e6e3d6', { rough: .5 }), seat: () => pbr('#4a3c2a', { rough: .9 }), coal: () => pbr('#0e0e10', { rough: .55 }), bottom: () => pbr('#5c211c', { rough: .8 }), prop: () => pbr('#26272a', { rough: .5, metal: .4 }), blur: () => pbr('#34342f', { rough: .9, transparent: true, opacity: .22, depthWrite: false }), brass: () => pbr('#b08a3c', { rough: .32, metal: 1 }), beam: () => pbr('#96201a', { rough: .6 }),
   wood: () => material('planks', { colour: '#8a6a44' }), canvas: k => pbr(k.canvas || '#5c6040', { rough: .95 }), rust: () => material('rust', {}),
-  // a railway's own: planks in a wagon's colour (bare wood with none), a tarred roof, copper pipes, oil drums, a fire, riveted plate
+  // a railway's own: boards in a wagon's colour (bare wood with none), bare timber (floors, crates), a tarred roof, copper pipes, oil drums, a fire, riveted plate
   boards: k => { const t = boarding(); return pbr(k.boards || '#8a6a44', { rough: .92, ...(t ? { tex: t } : {}) }); }, tar: () => pbr('#454544', { rough: .96 }), copper: () => pbr('#96603c', { rough: .38, metal: .9 }),
-  drum: () => pbr('#4c5a32', { rough: .62, metal: .25 }), fire: k => pbr('#ff8a30', { rough: .6, glow: k.lit ? 2.6 : .5 }),
+  timber: () => { const t = boarding(); return pbr('#8a6a44', { rough: .92, ...(t ? { tex: t } : {}) }); }, drum: () => pbr('#4c5a32', { rough: .6, metal: .15 }), fire: k => pbr('#ff8a30', { rough: .6, glow: k.lit ? 2.6 : .5 }),
   plates: k => { const m = finish(k.colour, k.finish), t = k.finish === 'worn' || k.finish === 'rusty' ? null : rivets(); return t ? pbr(k.colour, { rough: m.roughness, metal: m.metalness, tex: t }) : m; },
 };
 // plate with rows of rivets along its seams, a metre a sheet (null where there is no canvas to paint on)
@@ -71,7 +71,7 @@ function boarding() {
     }
   }, { strength: 2.6 }));
 }
-const AGES = { paint: 1, paint2: 1, plates: 1, wood: .8, boards: .8, canvas: .7, tar: .6, steel: .6, iron: .5, drum: .7, under: 0 };   // (which slots wear() ages, and how much)
+const AGES = { paint: 1, paint2: 1, plates: 1, wood: .8, boards: .8, timber: .8, canvas: .7, tar: .6, steel: .6, iron: .5, drum: .7, under: 0 };   // (which slots wear() ages, and how much)
 const shared = new Map();
 const matOf = (slot, k) => { const key = slot + '|' + (slot === 'paint' || slot === 'paint2' || slot === 'plates' ? [k.colour, k.trim, k.finish] : slot === 'lamp' || slot === 'tail' || slot === 'fire' ? k.lit : slot === 'canvas' ? k.canvas : slot === 'boards' ? k.boards : ''); let m = shared.get(key); if (!m) shared.set(key, m = (SLOTS[slot] || SLOTS.paint)(k)); return m; };
 let wheelMat = null; const wheelGeos = new Map();
@@ -96,7 +96,7 @@ function dress(shape, k, seed, age) {
   for (const [slot, g0] of shape.merged()) {
     const m = new Mesh(boxUV(g0, 1), matOf(slot, k)), a = (AGES[slot] ?? 0) * age;
     if (slot === 'wood') { const uv = g0.attributes.uv.array; for (let i = 0; i < uv.length; i += 2) uv[i] *= .3; }   // (long planks, not bricks of wood)
-    if (slot === 'boards') { const uv = g0.attributes.uv.array; for (let i = 0; i < uv.length; i += 2) { uv[i] *= .5; uv[i + 1] *= .735; } }   // (a wagon's: boards 17 cm wide)
+    if (slot === 'boards' || slot === 'timber') { const uv = g0.attributes.uv.array; for (let i = 0; i < uv.length; i += 2) { uv[i] *= .5; uv[i + 1] *= .735; } }   // (a wagon's: boards 17 cm wide)
     if (a > 0) wear(m, { seed, split: false, edges: (k.finish === 'gloss' && slot === 'paint' ? .15 : .6) * a, dirt: .75 * a, ground: .45 });
     out.push({ slot, geo: m.geometry, mat: m.material, tris: m.geometry.attributes.position.count / 3 });
   }
@@ -111,20 +111,22 @@ const made = new Map();   // finished vehicles by everything that shapes them: c
  * a lorry's shell and wheels a little coarser). A train: style is its engine ('steam' brings its tender) or one wagon, cars: what
  * it pulls (['van', 'open', 'tanker', 'flat', 'guard', 'coach'...]; one can be { style, load, colour, canvas }: an 'open' wagon's
  * load 'tarp' or 'coal', a 'flat' one's 'crates', and its own colour), gauge (between the rails, 1.435), deflectors (true: a
- * steam engine's smoke deflectors), load (a single wagon's).
+ * steam engine's smoke deflectors), polished (false: a working engine, its dome and bands painted over and no bright rims),
+ * load (a single wagon's), fuse (true: a train that keeps to a straight line, drawn as one mesh a kind of surface).
  */
 export function vehicle(kind = 'car', o = {}) {
   if (!MAKERS[kind]) throw new Error(`gs.models.vehicle: no vehicle '${kind}' (try ${Object.keys(MAKERS).join(', ')})`);
   const carOf = c => typeof c === 'string' ? { style: c } : c || {};
   const bad = [o.style, ...(kind === 'train' ? (o.cars || []).map(c => carOf(c).style || '?') : [])].find(x => x && !KINDS[kind].includes(x));
   if (bad) throw new Error(`gs.models.vehicle: no ${kind} called '${bad}' (try ${KINDS[kind].join(', ')})`);
-  const seed = o.seed | 0, style = o.style || KINDS[kind][0], age0 = o.wear === false ? 0 : typeof o.wear === 'number' ? o.wear : null, { cars, load, ...rest } = o, opts = { ...rest, style, seed, ...(load && kind !== 'train' ? { load } : {}) };
+  const seed = o.seed | 0, style = o.style || KINDS[kind][0], age0 = o.wear === false ? 0 : typeof o.wear === 'number' ? o.wear : null, { cars, load, fuse: fused, ...rest } = o, opts = { ...rest, style, seed, ...(load && kind !== 'train' ? { load } : {}) };
   const lookOf = (st, own = {}) => { const L = { ...LOOKS[kind], ...LOOKS[kind].by?.[st] }, mine = own.colour ?? own.color; return [{ colour: o.colour ?? o.color ?? L.colours[(hash(seed + 1) * L.colours.length) | 0], trim: mine ?? o.trim ?? L.trim ?? '#d9d6cc', finish: o.finish ?? L.finish, lit: !!o.lit, canvas: own.canvas ?? o.canvas, boards: mine }, age0 ?? L.wear]; };
   if (kind !== 'train') return one(kind, opts, ...lookOf(style));
   // (a wagon can be a name, or { style, load, colour, canvas }: its own planks and tank in its own colour; a wagon by itself takes the train's)
   const wagon = !['steam', 'diesel', 'tender', 'coach'].includes(style);
   const row = [wagon ? { style, load, colour: o.colour ?? o.color } : { style }, ...(style === 'steam' ? [{ style: 'tender' }] : []), ...(cars || []).map(carOf)];
-  return coupled(row.map(({ style: t, load, colour, color, canvas }) => one(kind, { ...opts, style: t, ...(load ? { load } : {}) }, ...lookOf(t === 'tender' ? 'steam' : t, { colour, color, canvas }))), () => vehicle(kind, o), { kind, ...o, style });
+  const train = coupled(row.map(({ style: t, load, colour, color, canvas }) => one(kind, { ...opts, style: t, ...(load ? { load } : {}) }, ...lookOf(t === 'tender' ? 'steam' : t, { colour, color, canvas }))), () => vehicle(kind, o), { kind, ...o, style });
+  return fused ? fuse(train, JSON.stringify([o, age0])) : train;
 }
 vehicle.kinds = KINDS;
 function one(kind, opts, k, age) {
@@ -169,6 +171,7 @@ function stand(kind, v, k, opts) {
     const q = plan.rods; if (q) { const a = -d / q.r, y = -q.cr * Math.sin(a), z = q.cr * Math.cos(a); parts.rods.position.set(0, q.y + y, z); parts.mainRods.position.set(0, q.y + y, q.z + z); parts.mainRods.rotation.x = Math.asin(clamp(-y / q.l, -1, 1)); }
   };
   if (sets.length) spin(0);
+  root.userData.sets = sets;   // (kit use: a fused train takes these over, fuse())
   root.tris = Math.round(tris);   // (with its tracks and railway wheels)
   const props = (plan.props || (parts.prop ? ['prop'] : [])).map(n => parts[n]);   // propellers: blades, and the blur that stands in for them at speed
   for (const p of props) for (const m of p.children) if (m.name === 'blur') { m.visible = false; m.castShadow = false; }
@@ -176,7 +179,7 @@ function stand(kind, v, k, opts) {
   for (const key of ['gear', 'sit', 'draft']) if (plan[key] != null) root[key] = plan[key];
   let dist = 0, turn = 0, was = 0, lean = 0, pitch = 0, yaw = 0, lift = 0, rev = 0;
   /** Turns its wheels (and tracks) for a distance travelled so far, in metres (backwards: a smaller number). */
-  root.roll = (d, right = d) => { dist = d; for (const w of wheels) w.rotation.x = -d / w.radius; tracks?.roll(d, right); if (sets.length) spin(d); return root; };
+  root.roll = (d, right = d) => { dist = d; for (const w of wheels) w.rotation.x = -d / w.radius; tracks?.roll(d, right); if (sets.length || plan.rods) spin(d); return root; };
   /** Turns its front wheels: radians, + to the right. */
   root.steer = a => { turn = a; for (const w of wheels) if (w.steers) w.rotation.y = -a; return root; };
   /**
@@ -244,6 +247,62 @@ function coupled(cars, again, look) {
   };
   root.lights = on => { for (const c of cars) c.lights(on); return root; };
   root.twin = again;
+  return root;
+}
+
+// A train that keeps to a straight line, drawn in as few draws as it can be (fuse: true): every car's shell joined
+// into one mesh for each kind of surface, and every wheelset of one shape drawn as copies in one draw. Surfaces
+// that differ only in colour, or by a little in how rough or how much metal they are, share one material and
+// keep their colours in their corners; lamps and the fire keep their own (lights() changes them). The cars are
+// still there, without meshes, for their points and the parts that turn. A seven-car goods train: 58 draws to 16.
+const fusedOf = new Map(), KEEP = ['position', 'normal', 'uv'], OWN = new Set(['lamp', 'tail', 'fire']);
+function fuse(root, key) {
+  let f = fusedOf.get(key);
+  if (!f) {
+    const kinds = [], wheels = new Map(); root.updateMatrixWorld(true);
+    for (const c of root.cars) {
+      for (const m of c.shell.children) {
+        if (!m.isMesh || m.isInstancedMesh) continue;
+        const mt = m.material, own = OWN.has(m.name) || !!(mt.emissiveIntensity && mt.emissive?.getHex()), see = mt.transparent ? mt.opacity : 1;   // (own: what glows keeps its material)
+        let kd = kinds.find(q => own || q.own ? q.mat === mt : q.type === mt.type && q.map === mt.map && q.see === see && q.clear === (mt.clearcoat || 0) && abs(q.rough - mt.roughness) < .101 && abs(q.metal - mt.metalness) < .151);
+        if (!kd) kinds.push(kd = { name: m.name, own, cast: m.castShadow, mat: mt, type: mt.type, map: mt.map, see, clear: mt.clearcoat || 0, rough: mt.roughness, metal: mt.metalness, geos: [] });
+        let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone(); g.applyMatrix4(m.matrixWorld);
+        for (const a of Object.keys(g.attributes)) if (!KEEP.includes(a) && (own || a !== 'color')) g.deleteAttribute(a);
+        if (!own) {   // its colour into its corners (times what wear() put there)
+          const n = g.attributes.position.count, old = g.attributes.color, col = new Float32Array(n * 3), { r, g: gr, b } = mt.color;
+          for (let i = 0; i < n; i++) { col[i * 3] = r * (old ? old.getX(i) : 1); col[i * 3 + 1] = gr * (old ? old.getY(i) : 1); col[i * 3 + 2] = b * (old ? old.getZ(i) : 1); }
+          g.setAttribute('color', new BufferAttribute(col, 3));
+        }
+        kd.geos.push(g);
+      }
+      for (const st of c.userData.sets) { let w = wheels.get(st.im.geometry); if (!w) wheels.set(st.im.geometry, w = { geo: st.im.geometry, r: st.r, at: [] }); for (const [y, z] of st.at) w.at.push([y, z + c.position.z]); }
+    }
+    f = { shell: kinds.map(kd => {
+      const geo = kd.geos.length === 1 ? kd.geos[0] : mergeGeometries(kd.geos, false); if (kd.geos.length > 1) for (const g of kd.geos) g.dispose();
+      let mat = kd.mat; if (!kd.own) { mat = kd.mat.clone(); mat.color.setRGB(1, 1, 1); mat.vertexColors = true; }
+      return { name: kd.name, cast: kd.cast, geo, mat };
+    }), wheels: [...wheels.values()] };
+    if (fusedOf.size >= 8 && !loading()) fusedOf.delete(fusedOf.keys().next().value);
+    fusedOf.set(key, f);
+  }
+  // the cars give up their own meshes and wheels (their points, and an engine's rods, stay with them)
+  for (const c of root.cars) {
+    for (const m of [...c.shell.children]) if (m.isMesh && !m.isInstancedMesh) c.shell.remove(m);
+    for (const st of c.userData.sets) { c.remove(st.im); st.im.dispose(); } c.userData.sets.length = 0;
+  }
+  const shell = new Group(); shell.name = 'shell'; root.add(shell);
+  for (const p of f.shell) { const m = new Mesh(p.geo, p.mat); m.name = p.name; m.castShadow = p.cast; m.receiveShadow = true; shell.add(m); }
+  const sets = f.wheels.map(w => { const im = new InstancedMesh(w.geo, wheelMat, w.at.length); im.castShadow = im.receiveShadow = true; im.instanceMatrix.setUsage(DynamicDrawUsage); im.name = 'wheels'; root.add(im); return { im, at: w.at, r: w.r }; });
+  const each = root.roll, E = MX.elements;
+  root.roll = d => {
+    each(d);   // (an engine's rods)
+    for (const st of sets) { const a = -d / st.r, c = Math.cos(a), sn = Math.sin(a); for (let i = 0; i < st.at.length; i++) { E[0] = 1; E[1] = E[2] = E[3] = E[4] = 0; E[5] = c; E[6] = sn; E[7] = E[8] = 0; E[9] = -sn; E[10] = c; E[11] = E[12] = 0; E[13] = st.at[i][0]; E[14] = st.at[i][1]; E[15] = 1; st.im.setMatrixAt(i, MX); } st.im.instanceMatrix.needsUpdate = true; }
+    return root;
+  };
+  root.roll(0);
+  root.along = () => { throw new Error('gs.models.vehicle: a train made with fuse: true keeps to a straight line (its cars are one shape); leave fuse out to lay it along(track)'); };
+  root.lights = (on = true) => { for (const m of shell.children) if (m.name === 'lamp' || m.name === 'tail') m.material = matOf(m.name, { lit: !!on }); return root; };
+  root.shell = shell; root.fused = true;
   return root;
 }
 
