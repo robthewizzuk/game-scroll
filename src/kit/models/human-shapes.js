@@ -4,11 +4,11 @@
 // Nothing in here needs three.js or the page: it runs in background workers (human-worker.js), so a
 // game never stops while its people are made, and what it makes is plain numbers that can be saved.
 // Kit use only: games reach it as gs.models.human.
-import { Loft, mesh as meshOf, thin, lumps, stamp, thinReady } from './field.js';
+import { Loft, mesh as meshOf, thin, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, ss, bump, HC, Hd, EYE, BROW, CORNER, HEAD_STAMP } from './human-head.js';
-import { row, easeOf, torsoOf, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, BROW, CORNER, mouthAt, eyeRim };
+import { head as headOf, mouthAt, eyeRim, browOf, ss, bump, HC, Hd, EYE, CORNER, HEAD_STAMP } from './human-head.js';
+import { row, easeOf, torsoOf, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
+export { ss, bump, HC, EYE, CORNER, mouthAt, eyeRim, browOf };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 
@@ -90,8 +90,8 @@ function trunk(a) {
   const torso = torsoOf(b, kind), X = studs(), forms = torsoForms(b);
   // gathers where the belt pulls the cloth in, a little slack under the chest
   const gather = (x, y, z) => { const th = Math.atan2(x, z); return .003 * ss(1.22, 1.1, y) * ss(1.0, 1.06, y) * sin(th * 13 + 4 * lumps(x * 11, y * 4, z * 11)) + .0025 * bump(y, 1.21, .03) * lumps(x * 22, y * 30, z * 22); };
-  // (the cloth's own unevenness fades out at the neck, where skin lies close over it)
-  const wear = (x, y, z) => forms(x, y, z) + .002 * lumps(x / .07, y / .07 + 7.3, z / .07) * ss(1.5, 1.45, y) + (belt ? gather(x, y, z) : 0);
+  // (the cloth's own unevenness fades out at the neck, where skin lies close over it: lower down under a round neck, whose edge lies on the skin)
+  const even = top.collar === false ? 1.47 : 1.5, wear = (x, y, z) => forms(x, y, z) + .002 * lumps(x / .07, y / .07 + 7.3, z / .07) * ss(even, even - .05, y) + (belt ? gather(x, y, z) : 0);
   const T = { loft: torso, slot: 'top', part: 'torso', folds: wear, foldMax: .011, blend: 0 }; S.push(T);
   S.push({ ...shoulderOf(b.shoulders, ease * .45), mirror: true, slot: 'top', part: 'torso', blend: .025 });   // the round of each shoulder, under the arm's cap
   let K = T, skirtL = null;   // what hangs at the hips lies on: the tunic's skirt, or the trunk itself
@@ -141,23 +141,24 @@ function trunk(a) {
   S.push({ box: [1.2, .3, 1.2], at: [0, -.15, 0], cut: true, blend: 0 });   // soles flat on the ground
   // ---- the top's details
   if (top.collar !== false) {
-    // a collar stands higher at the back of the neck than at the throat
-    // (round the neck's own slices, human-head.js: nk is how thick the neck is)
-    const col = new Loft([[1.486, .0615 * nk + .018, .078, -.016], [1.52, .0595 * nk + .0135, .0725, -.018], [1.556, .0565 * nk + .0125, .0685, -.02], [1.592, .054 * nk + .0125, .0655, -.0215]]);
-    S.push({ loft: col, clip: [[0, -1, -.2326], -1.5686, .003], slot: top.collar ? 'trim' : 'top', part: 'torso', blend: .006 }, { loft: [[1.532, .0582 * nk + .003, .0605, -.019], [1.6, .0535 * nk + .003, .055, -.022], [1.63, .052 * nk + .003, .0545, -.026]], cut: true, blend: .003 });
-    if (kind !== 'smock') S.push({ box: [.03, .07, .05], at: [0, 1.56, .06], rot: [0, 0, PI / 4], cut: true, blend: .004 });   // open at the throat
-    if (top.tabs) for (const s of [1, -1]) S.push({ patch: col, at: [s * .5, 1.522], size: [.04, .024], round: .004, out: .0022, slot: 'tab', part: 'torso' });
+    // the collar itself is a piece of its own (collar(), below): here, only its shade on the shoulders it stands on
+    S.push({ loft: collarRows(nk), clip: RIM, ghost: true });
   } else {
-    // a round neck, open to the pit of the throat: an edge with an outline of its own, as a belt has (so it comes out as one clean line), and inside
-    // it the surface is skin: the foot of the neck, the collar bones, the pit between them. (Not a hole cut to show a neck's own skin: a sharp rim
-    // that crosses the sculpting's grid at a slant comes out as a saw's edge, and two pieces' surfaces lying close to each other show through one another.)
-    // The opening is an egg-shaped space round the foot of the neck, not a straight-sided hole: at the back of the neck a straight wall ran nearly
-    // along the cloth, and the line where the two met wandered. And the edge barely stands proud: a step there is seen edge-on, and showed as teeth.
-    const E = [.0885, .09, .09], egg = (x, y, z) => { const u = x / E[0], v = (y - 1.545) / E[1], w = (z - .004) / E[2], k = Math.hypot(u, v, w) || 1e-9; return (k - 1) * k / Math.hypot(u / E[0], v / E[1], w / E[2]); };
-    const m = (x, y, z) => abs(egg(x, y, z) - .0065) - .0065;
-    S.push({ taper: [[.017, 1.4795, .0445], [.064, 1.487, .037]], r: [.0075, .006], mirror: true, slot: 'skin', part: 'torso', blend: .014 }, { ball: [.013, .009, .008], at: [0, 1.4865, .054], cut: true, blend: .016 });
-    S.push(on(T, { field: (x, y, z) => soft(torso.d(x, y, z) - .0012, m(x, y, z), .002), m, out: .0012, lo: [-.11, 1.45, -.11], hi: [.11, 1.56, .09], slot: 'top', part: 'torso', blend: .002 }),
-      { field: egg, lo: [-.095, 1.45, -.09], hi: [.095, 1.64, .098], paint: true, slot: 'skin', part: 'torso' });
+    // a round neck, open to the pit of the throat. The skin in the opening is the head's own (human-head.js, `foot`): the foot of the neck, the
+    // collar bones, the pit between them, all one skin with the face. Here the cloth lies on the same forms (the sweep up from each shoulder to the
+    // neck, the collar bones under it) and ends in an edge with an outline of its own, as a belt has, so it comes out as one clean line. Inside
+    // that line the trunk dips away under the head's skin, within a few millimetres. The dip keeps the cloth's colour: what little shows of it
+    // is its side, which reads as the thickness of the hem (painted as skin it was a pale rim along the neckline). The head's skin lies a little
+    // lower just there, or it would cover the points slid onto the line from inside it, which lie in the dip, and the edge had notches.
+    // It dips: it is not cut away. The opening is an egg-shaped space, and a hollow that shape left a sliver of cloth at the nape, where the
+    // egg's wall runs nearly along the back, and a knife's edge everywhere else: both thinner than the sculpting's grid, and they came out as
+    // teeth. (The skin of the opening was the trunk's once, all of it: where the head's neck stood in it the two met in a line that ran in
+    // scallops round the neck's cords, with the light falling differently on either side.)
+    const foot = new Loft(neckRows(nk).slice(0, 3)), bone = { taper: [[.017, 1.4795, .0445], [.064, 1.487, .037]], r: [.0075, .006], mirror: true, slot: 'top', part: 'torso', blend: .014 }, boneD = ready([bone])[0].d;
+    const body = (x, y, z) => smin(smin(torso.d(x, y, z), foot.d(x, y, z), .028), boneD(x, y, z), .014), m = (x, y, z) => abs(neckOpening(x, y, z) - .0065) - .0065;
+    S.push({ loft: foot, slot: 'top', part: 'torso', blend: .028 }, bone);
+    S.push({ field: (x, y, z) => { const e = neckOpening(x, y, z); return e >= 0 ? 1 : -body(x, y, z) - .012 * ss(0, .01, -e); }, lo: [-.1, 1.45, -.105], hi: [.1, 1.64, .1], cut: true, blend: 0 });   // (deeper than the pit of the throat)
+    S.push(on(T, { field: (x, y, z) => soft(body(x, y, z) - .0012, m(x, y, z), .002), m, out: .0012, lo: [-.11, 1.45, -.11], hi: [.11, 1.56, .09], slot: 'top', part: 'torso', blend: .002 }));
   }
   if (top.buttons && kind !== 'smock') {
     S.push(on(T, { patch: torso, at: [0, 1.285], size: [.038, .4], round: .004, out: .003, slot: 'top', part: 'torso' }));
@@ -175,18 +176,20 @@ function trunk(a) {
     S.push({ box: [.054, .046, .012], round: .004, at: torso.at(0, 1.057, .009), slot: 'buckle', part: 'torso', blend: .001 });
   }
   if (web) {
+    // a strap over a shoulder: the cloth grown a little and cut to a strip between two planes, so it lies on the body all the way over (a straight bar stood off it at both ends)
+    // (with an outline of its own, as a belt has, so its edges come out straight and its colour stops dead at them)
+    const strip = (n, off, more, both = true) => {
+      const planes = [[n, off - .015], [n.map(v => -v), -off - .015], ...more], m = (x, y, z) => { let v = -1; for (const [[a, b, c], o] of planes) v = Math.max(v, o - (a * x + b * y + c * z)); return v; };
+      return on(T, { field: (x, y, z) => soft(torso.d(x, y, z) - .0084, m(x, y, z) + .0015, .005), m, out: .0084, lo: [both ? 0 : -.2, 1.04, -.17], hi: [both ? .17 : .2, 1.57, .16], slot: 'strap', part: 'torso', mirror: both, blend: .003 });
+    };
     if (web.y) {
-      // a strap over each shoulder: the cloth grown a little and cut to a strip between two planes, so it lies on the body all the way over (a straight bar stood off it at both ends)
-      // (with an outline of its own, as a belt has, so its edges come out straight and its colour stops dead at them)
-      const strip = (n, off, more) => {
-        const planes = [[n, off - .015], [n.map(v => -v), -off - .015], ...more], m = (x, y, z) => { let v = -1; for (const [[a, b, c], o] of planes) v = Math.max(v, o - (a * x + b * y + c * z)); return v; };
-        return on(T, { field: (x, y, z) => soft(torso.d(x, y, z) - .0084, m(x, y, z) + .0015, .005), m, out: .0084, lo: [0, 1.04, -.17], hi: [.17, 1.57, .16], slot: 'strap', part: 'torso', mirror: true, blend: .003 });
-      };
       S.push(strip([-.9921, .1252, 0], .08885, [[[0, 0, 1], -.012], [[0, 1, 0], 1.06]]));   // up the front from the belt and onto the shoulder
       S.push(strip([-.8962, .4437, 0], .5768, [[[0, 0, -1], .012], [[1, 0, 0], 0]]));       // down the back to the middle
       S.push(on(T, { patch: torso, at: [PI, 1.18], size: [.03, .2], round: .004, out: .0088, slot: 'strap', part: 'torso' }), { torus: [.014, .0045], at: torso.at(PI, 1.275, .006), rot: [PI / 2, 0, 0], slot: 'buckle', part: 'torso', blend: .001 });
     }
-    if (web.cross) S.push(on(T, { patch: torso, at: [.05, 1.27], size: [.032, .52], turn: .62, round: .004, out: .0088, slot: 'strap', part: 'torso' }), on(T, { patch: torso, at: [PI - .05, 1.27], size: [.032, .52], turn: -.62, round: .004, out: .0088, slot: 'strap', part: 'torso' }));
+    // a cross strap: from the belt at the left hip up over the right shoulder and down the back to the belt again, all in one plane
+    // (two patches turned on the slant had edges like a saw's: their outline ran across the grid, and down a wall too steep to slide points along)
+    if (web.cross) S.push(strip([.878, .479, 0], .6307, [[[0, 1, 0], 1.058]], false));
     const big = web.kind === 'big';
     for (let i = 0; i < (web.pouches || 0); i++) for (const s of [1, -1]) {
       const th = s * (big ? .5 : .3 + i * .31), w = big ? .09 : .041, h = big ? .15 : .085, dp = big ? .06 : .03, p = torso.at(th, big ? 1.0 : 1.035, dp / 2 + .004);
@@ -198,7 +201,6 @@ function trunk(a) {
   if (ex.bag) { const th = -(PI - .8), p = sk.at(th, .93, .036); S.push({ box: [.2, .2, .075], round: .028, at: p, rot: [0, th, 0], slot: 'kit', part: 'gear', bone: 'hips', lumpy: [.04, .004], blend: .006 }, { box: [.205, .085, .08], round: .025, at: [p[0], p[1] + .062, p[2]], rot: [0, th, 0], slot: 'kit', part: 'gear', bone: 'hips', blend: .003 }); }
   if (ex.canteen) { const th = PI - .75, p = sk.at(th, .95, .032); S.push({ ball: [.056, .078, .037], at: p, rot: [0, th, 0], slot: 'flask', part: 'gear', bone: 'hips', blend: .004 }, { rod: [[p[0], p[1] + .07, p[2]], [p[0], p[1] + .098, p[2]]], r: .017, round: .004, slot: 'steel', part: 'gear', bone: 'hips', blend: .002 }); }
   if (ex.holster) { const th = ex.holster === 'left' ? .95 : -.95, p = sk.at(th, .985, .022); S.push({ box: [.075, .14, .04], round: .014, at: p, rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: 'hips', blend: .004 }, { box: [.078, .05, .044], round: .012, at: [p[0], p[1] + .05, p[2]], rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: 'hips', blend: .002 }); }
-  if (ex.scarf) S.push({ torus: [.06, .026], at: [0, 1.535, -.016], rot: [-.22, 0, 0], slot: 'scarf', part: 'torso', lumpy: [.025, .006], blend: .012 }, { ball: [.034, .05, .02], at: [.012, 1.49, .068], rot: [.25, 0, .15], slot: 'scarf', part: 'torso', lumpy: [.025, .005], blend: .016 });   // wound round the neck, an end tucked in at the throat
   // what stands over the trunk and shades it: the neck and head, and the arms
   S.push({ loft: [[1.5, .0605 * nk, .0595, -.018], [1.555, .0565 * nk, .056, -.02], [1.6, .0535 * nk, .052, -.022], [1.64, .051 * nk, .051, -.03]], ghost: true }, { ball: [.0755, .09, .1], at: Hd(0, .026, -.006), ghost: true }, { loft: sleeveRows(LM, ease), mirror: true, space: ARMSP, ghost: true });
   S.extra = X.I.length ? X : null;
@@ -217,6 +219,50 @@ const trunkBones = a => { const jx = AT.armL[0] + .176 * (a.build.shoulders - 1)
   if (part === 'foot') { const t = ss(.105, .135, z); return [['foot' + sd, 1 - t], ['toe' + sd, t]]; }
   return [['hips', 1]];
 }; };
+
+// ---- what is worn round the neck
+// a collar's slices, from inside the shoulders to its rim: round the neck's own (human-body.js; nk: how thick the neck is). Its foot turns in to the
+// neck, as a collar does along the seam it hangs from: one that stood straight down into the shoulders came out of the back again a hand lower
+const collarRows = nk => [[1.47, .0637 * nk - .004, .0573, -.018], [1.498, .0607 * nk + .003, .0627, -.018], [1.52, .0595 * nk + .012, .071, -.018], [1.556, .0565 * nk + .0102, .0662, -.02], [1.592, .054 * nk + .01, .063, -.0215]];
+const RIM = [[0, -1, -.2326], -1.5686, .003];   // a collar stands higher at the back of the neck than at the throat
+// a turn of a scarf: a band of cloth in a ring round the neck (n: which way the ring faces; t, h: half as thick and half as tall as it lies; as wide
+// as the neck, which is narrower than it is deep in a slight person), with creases that run along it
+const turnOf = (c, n, R, t, h, nk, seed) => {
+  const l = Math.hypot(...n), nx = n[0] / l, ny = n[1] / l, nz = n[2] / l, sx = (.0565 * nk + .006) / .0635;
+  return (x, y, z) => {
+    const px = x - c[0], py = y - c[1], pz = z - c[2], u = px * nx + py * ny + pz * nz, q = Math.hypot((px - u * nx) / sx, py - u * ny, pz - u * nz) - R;
+    return (Math.hypot(q / t, u / h) - 1 - .11 * sin(3 * Math.atan2(u / h, q / t) + seed + 5 * lumps(x * 14, y * 14 + seed, z * 14))) * t;
+  };
+};
+/**
+ * What is worn round the neck: a collar, the tabs on it, a scarf wound inside it. A piece of its own, sculpted twice as finely as the trunk
+ * it stands on: a collar's rim, the notch at its throat and a scarf's turns are smaller than the trunk's grid, and came out ragged in it.
+ * It goes down into the shoulders and moves with them (the trunk's bones), so the line where the two meet stays closed however the back bends.
+ */
+function collar(a) {
+  const { build: b, top } = a, nk = b.neck ?? 1, S = [], torso = torsoOf(b, top.kind), neck = neckRows(nk), low = top.collar === false;
+  // a scarf: wound twice round the neck, the turns crossing at the throat. Inside a collar it stands a finger over the rim, sloping as the rim
+  // does, and comes out of it within the rim's own thickness (lapped over the collar's outside, the line between the two wandered); without
+  // one it lies on the shoulders
+  const y = low ? 1.54 : 1.5685, R = low ? .066 : .056, t = low ? .0125 : .0075, h = low ? .017 : .018, tip = low ? .1 : .2326;
+  const turns = a.scarf ? [turnOf([0, y, -.018], [.1, 1, tip], R, t, h, nk, 1.3), turnOf([0, y + .005, -.018], [-.09, 1, tip - .05], R - .002, t, h * .9, nk, 4.1)] : [];
+  if (!low) {
+    const col = new Loft(collarRows(nk)), C = { loft: col, clip: RIM, slot: top.collar ? 'trim' : 'top', part: 'torso', blend: 0 }, gap = .0035;
+    // (the line between the collar and a scarf is an outline of the collar's: where the surface stops being the one and becomes the other)
+    if (a.scarf) { const cd = ready([C])[0].d; S.push({ field: cd, m: (x, y, z) => cd(x, y, z) - Math.min(turns[0](x, y, z), turns[1](x, y, z)), out: .001, lo: col.lo, hi: col.hi, slot: C.slot, part: 'torso', blend: 0 }); }
+    else S.push(C);
+    if (top.tabs) for (const s of [1, -1]) S.push({ patch: col, at: [s * .5, 1.532], size: [.038, .02], round: .004, out: .002, slot: 'tab', part: 'torso' });
+    S.push({ loft: neck.map(([y, w, d, c]) => [y, w + gap, d + gap, c]), cut: true, blend: .002 });   // room for the neck
+    // open at the throat: a notch in the rim where its two ends meet, and the line of the join below it (closed up to the rim over a scarf)
+    const vy = a.scarf ? 1.6 : 1.541;
+    S.push({ field: (x, y, z) => Math.max(y < vy ? abs(x) - .0022 - col.d(x, y, z) : abs(x) - .0012 - .42 * (y - vy), .03 - z), lo: [-.02, 1.47, .03], hi: [.02, 1.6, .1], cut: true, blend: .0015 });
+  }
+  for (const f of turns) S.push({ field: f, lo: [-.1, 1.5, -.12], hi: [.1, 1.63, .08], slot: 'scarf', part: 'torso', lumpy: [.011, .001], blend: .003 });
+  S.push({ field: (x, y, z) => torso.d(x, y, z) + .008, lo: [-.13, 1.43, -.14], hi: [.13, 1.57, .12], cut: true, blend: .002 });   // (no deeper into the shoulders than it needs to be)
+  // what stands by it and shades it: the shoulders, the neck, the head
+  S.push({ loft: torso, ghost: true }, { loft: neck, ghost: true }, { ball: [.0755, .09, .1], at: Hd(0, .026, -.006), ghost: true });
+  return S;
+}
 
 // ---- hands: every finger in three joints, the thumb in two
 export const FINGERS = ['index', 'middle', 'ring', 'little'];
@@ -270,8 +316,12 @@ function handBones(a) {
 }
 
 // the head's bones: the foot of the neck stays in the collar, the neck bends, and the head (the jaw and all above a line
-// from under the chin up to the nape) sits on top of it
-function headBones(x, y, z) { const n = ss(1.5, 1.565, y), top = 1.625 - .7 * Math.max(0, z + .01), h = ss(top - .055, top, y); return [['spine', 1 - n], ['neck', n * (1 - h)], ['head', n * h]]; }
+// from under the chin up to the nape) sits on top of it. The skin round the foot of the neck (under a round-necked top) goes
+// with the trunk, as the cloth beside it does (trunkBones): less with the neck the further out from it, and a little with each collar bone.
+function headBones(x, y, z) {
+  const low = ss(1.56, 1.53, y), n = ss(1.5, 1.565, y) * (1 - low * ss(.066, .088, Math.hypot(x, z + .018))), top = 1.625 - .7 * Math.max(0, z + .01), h = ss(top - .055, top, y), c = low * ss(.05, .17, abs(x));
+  return [['spine', (1 - n) * (1 - c)], [x >= 0 ? 'collarL' : 'collarR', (1 - n) * c], ['neck', n * (1 - h)], ['head', n * h]];
+}
 // an eye: white, iris, pupil in clean rings (looking along +z)
 function eyeball(c, r, n = 14) {
   const rings = [[0, 0], [9.5, 0], [9.5, 1], [28.5, 1], [28.5, 2], [31.5, 2], [31.5, 3], [62, 3], [98, 3]], P = [], N = [], K = [], I = [];
@@ -399,18 +449,20 @@ const plain = v => v == null || (typeof v !== 'object' && typeof v !== 'function
 export function jobsFor(sp) {
   const { top, web, extras: ex, hat } = sp, J = [];
   const add = (kind, a, more) => J.push({ kind, a, key: kind + JSON.stringify(a, (k, v) => typeof v === 'function' ? String(v) : v), ...more });
-  add('trunk', { build: sp.build, top: { kind: top.kind, pockets: top.pockets | 0, buttons: bit(top.buttons), collar: top.collar === false ? false : bit(top.collar), tabs: bit(top.tabs), straps: bit(top.straps), strapColour: bit(top.strapColour) },
+  add('trunk', { build: sp.build, top: { kind: top.kind, pockets: top.pockets | 0, buttons: bit(top.buttons), collar: top.collar !== false, straps: bit(top.straps), strapColour: bit(top.strapColour) },
     legs: { kind: sp.legs.kind }, feet: { kind: sp.feet.kind }, belt: bit(sp.belt), web: web ? { y: bit(web.y), cross: bit(web.cross), pouches: web.pouches | 0, kind: web.kind || '' } : 0,
-    extras: { bag: bit(ex.bag), canteen: bit(ex.canteen), holster: ex.holster === 'left' ? 'left' : bit(ex.holster), scarf: bit(ex.scarf) } });
+    extras: { bag: bit(ex.bag), canteen: bit(ex.canteen), holster: ex.holster === 'left' ? 'left' : bit(ex.holster) } });
   // the arms: one sculpted and turned over for the other, unless the left wears an armband (side: which it is for)
   const armA = band => ({ build: sp.build, top: { kind: top.kind, sleeves: top.sleeves, cuffs: bit(top.cuffs), band } });
   add('arm', armA(bit(top.band)), { side: top.band ? 'L' : 'LR' }); if (top.band) add('arm', armA(0), { side: 'R' });
   add('hand', { limbs: sp.build.limbs, grip: bit(sp.hands === 'grip'), gloves: bit(sp.gloves) });
   const hatA = hat && HATS.has(hat.kind) ? { kind: hat.kind, ridge: bit(hat.ridge !== false), strap: bit(hat.strap !== false) } : null;
-  add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', moustache: bit(sp.moustache), hat: hatA });
+  add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', moustache: bit(sp.moustache), hat: hatA, foot: top.collar === false ? sp.build.shoulders : 0 });
   if (hatA) add('hat', hatA);
   if (sp.pack && PACKS.has(sp.pack.kind)) add('pack', { kind: sp.pack.kind });
   for (const g of sp.gear) add('gear', { shapes: g.shapes, cell: g.cell || .004, keep: g.keep || [.3, .06, .012], err: g.err || null, blend: g.blend ?? .004 }, { g, local: !plain(g.shapes) });
+  // what is worn round the neck: a collar (every top but a round-necked one has one), a scarf
+  if (top.collar !== false || ex.scarf) add('collar', { build: sp.build, top: { kind: top.kind, collar: top.collar === false ? false : bit(top.collar), tabs: bit(top.tabs) }, scarf: bit(ex.scarf) });
   return J;
 }
 const whole = () => [['$', 1]];
@@ -420,6 +472,7 @@ function listed(list, kind) { const f = list.get(kind); if (typeof f === 'functi
 export function sculpt({ kind, a }) {
   if (kind === 'trunk') { const S = trunk(a); return finish(S, { cell: .006, bones: trunkBones(a), extra: S.extra }); }
   if (kind === 'arm') return finish(arm(a), { cell: .006, bones: armBones });
+  if (kind === 'collar') return finish(collar(a), { cell: .003, bones: trunkBones(a), keep: [.15, .04, .01], err: [.001, .004, .02], blend: .004 });
   if (kind === 'hand') return finish(hand(a), { cell: .0032, bones: handBones(a), keep: [.2, .035, .006], err: [.0006, .004, .02], blend: .004 });
   if (kind === 'head') {
     const eye = { P: [], N: [], K: [], I: [], ao: .78 };
@@ -436,4 +489,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, BODY_STAMP, arm, armBones, handPlan, hand, handBones, HEAD_STAMP, headBones, eyeball, stud, finish, sculpt, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, collar, collarRows, turnOf, RIM, BODY_STAMP, arm, armBones, handPlan, hand, handBones, HEAD_STAMP, headBones, eyeball, stud, finish, sculpt, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
