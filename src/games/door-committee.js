@@ -14,7 +14,9 @@
 // The voices: four characters, each cast from the voices the phone has (gs.sound.say's `voice`), with
 // the pauses written into the lines ("|" a beat, "||" a longer one). The Chair runs the meeting,
 // Facilities owns the doorstop, the Door has a few lines of its own, and Monetisation and Marketing
-// insist on reading their own memos. Every line is on screen too.
+// insist on reading their own memos. Every line is on screen too. In the apps each voice is also shaped
+// (say's `size` and `fx`): the Chair comes over the building's tannoy, Facilities over his radio, the
+// Door from inside the door, and Marketing as bright as an advert.
 import gs from '../gamescroll.js';
 const { sounds, sfx, noise, notes, say } = gs.sound;
 const { haptic } = gs.device;
@@ -31,12 +33,16 @@ const wx = cx => cx - (COLS - 1) / 2, wz = cy => cy - (ROWS - 1) / 2;
 const cxOf = x => Math.round(x + (COLS - 1) / 2), cyOf = z => Math.round(z + (ROWS - 1) / 2);
 
 // ---------- the cast ----------
+// size makes the same voice a bigger or smaller person, and fx is what it comes through. pitch is the
+// pitch they are heard at: speak() asks the phone for it times their size and size brings it back down,
+// so only the build of the voice changes, and a phone that can't shape a voice says the line as it always did
 const CAST = {
-  chair: { name: 'THE CHAIR', col: MINT, voice: { kind: 'woman', lang: 'en-GB' }, pitch: 1, rate: 1 },
-  norm: { name: 'FACILITIES', col: '#ffc23a', voice: { kind: 'man', lang: 'en-GB' }, pitch: .95, rate: .94 },
-  door: { name: 'THE DOOR', col: SKY, voice: { kind: 'man', lang: 'en-GB', take: 1 }, pitch: 1.1, rate: .84 },
-  brand: { name: 'MARKETING', col: PINK, voice: { kind: 'woman', lang: ['en-US', 'en-GB'], take: 1 }, pitch: 1.07, rate: 1.14 },
+  chair: { name: 'THE CHAIR', col: MINT, voice: { kind: 'woman', lang: 'en-GB' }, pitch: 1, rate: 1, size: 1, fx: 'tannoy' },
+  norm: { name: 'FACILITIES', col: '#ffc23a', voice: { kind: 'man', lang: 'en-GB' }, pitch: .95, rate: .94, size: 1.08, fx: 'radio' },
+  door: { name: 'THE DOOR', col: SKY, voice: { kind: 'man', lang: 'en-GB', take: 1 }, pitch: 1.1, rate: .84, size: 1.15, fx: { like: 'box', high: 2200 } },
+  brand: { name: 'MARKETING', col: PINK, voice: { kind: 'woman', lang: ['en-US', 'en-GB'], take: 1 }, pitch: 1.07, rate: 1.14, size: .94, fx: 'bright' },
 };
+const SHAPES = typeof gs.sound.shaped === 'function';   // (an app from before voices could be shaped knows nothing of size: plain pitches there)
 // each character's own little sound before they speak: the meeting-room chime, a radio click, a servo, a jingle
 const CUES = {
   chair: () => notes('E5 C5', { len: .13, wave: 'sine', vol: .045 }),
@@ -438,7 +444,7 @@ function make(api) {
     voice.now = mine; voice.pri = pri; voice.until = t + 2.5 + line.length * .11 / c.rate;
     if (show) showQuip(line, show, who);
     CUES[who]();
-    say([.2, ...parts(line)], { voice: c.voice, pitch: c.pitch, rate: c.rate, volume: .9 })
+    say([.2, ...parts(line)], { voice: c.voice, pitch: c.pitch * (SHAPES ? c.size : 1), rate: c.rate, volume: .9, size: c.size, fx: c.fx })
       .then(ok => { if (voice.now === mine) voice.until = Math.min(voice.until, ok ? t + .3 : at + read); });   // no voice here: leave time to read it
   }
   /** A remark: on screen now (or when its turn comes, for after), and out loud. */
