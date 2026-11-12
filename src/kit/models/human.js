@@ -139,10 +139,12 @@ function frameOf(sp) {
     B.spine.userData.pivot = PIVOT.spine; B.head.userData.pivot = PIVOT.head;   // (where the rib cage and the head turn about: see Rig.fill)
     return B;
   };
-  return { bones, parent, own, HAND, inset, atOf, tree };
+  // a bone of its own for a thing that hangs (a bag, a canteen): where it hangs from
+  const kit = (name, par, at) => { if (!rest[name]) { bones.push(name); parent[name] = par; rest[name] = at; } return name; };
+  return { bones, parent, own, HAND, inset, atOf, tree, kit };
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
-const rigOf = (B, scale, body) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body }); rig.feet = [B.footL, B.footR]; return rig; };
+const rigOf = (B, scale, body) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR]; return rig; };
 /** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
 export function skeleton(o = {}) {
   const sp = specOf(o), B = frameOf(sp).tree(), root = new Group(), scale = (o.scale ?? 1) * (sp.fem ? .945 : 1);
@@ -210,7 +212,7 @@ export function human(o = {}) {
   }
   const M = mats(), pal = palette(sp), pieces = [];
   // gear bones: a hat that can come off, a pack or a maker's own kit that can be hidden
-  const { bones, parent, own: gearBones, HAND, inset, atOf, tree } = frameOf(sp), gearPiece = {};
+  const { bones, parent, own: gearBones, HAND, inset, atOf, tree, kit } = frameOf(sp), gearPiece = {}, hung = [];   // (hung: what swings as he moves: [bone, how])
   const ownBone = (name, par) => { bones.push(name); parent[name] = par; gearBones[name] = par; gearPiece[name] = pieces.length; return name; };
   const onBone = (p, b) => ({ ...p, names: p.names.map(() => b) });
   const moved = (p, dx) => { if (!dx) return p; const Q = p.P.slice(); for (let i = 0; i < p.n; i++) Q[i * 3] += dx; return { ...p, P: Q }; };
@@ -221,9 +223,9 @@ export function human(o = {}) {
     else if (j.kind === 'arm') { if (j.side !== 'R') pieces.push(moved(p, -inset)); if (j.side !== 'L') pieces.push(moved(mirrored(p), inset)); }   // sculpted as a left arm
     else if (j.kind === 'head') pieces.push(headP = p);
     else if (j.kind === 'hat') pieces.push(onBone(p, sp.hat.hide === false ? 'head' : ownBone('hat', 'head')));
-    else if (j.kind === 'pack') pieces.push(onBone(p, sp.pack.hide ? ownBone('pack', 'spine') : 'spine'));
+    else if (j.kind === 'pack') { const sa = atOf('spine'); pieces.push(onBone(p, ownBone('pack', 'spine'))); hung.push(['pack', { pivot: [0, 1.45 - sa[1], -.1 - sa[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1] }]); }   // (it hangs from the shoulders)
     else if (j.kind === 'gear') { const b = j.g.bone || 'spine'; pieces.push(onBone(ARMB.test(b) ? moved(p, b.endsWith('L') ? -inset : inset) : p, j.g.hide ? ownBone(j.g.name, b) : b)); }
-    else pieces.push(p);
+    else { if (p.hang) for (const name in p.hang) { const { at, ...how } = p.hang[name]; hung.push([kit(name, 'hips', at), how]); } pieces.push(p); }   // (the trunk, and what hangs from its belt)
   }
   tidy();
 
@@ -367,6 +369,7 @@ export function human(o = {}) {
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B;
     root.rig = rigOf(B, scale, root);
+    for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
     root.face = new Face(lods[0]);
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {

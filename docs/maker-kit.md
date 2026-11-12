@@ -1879,6 +1879,21 @@ touches the ground, for a footstep sound. It stands down by itself for a walk on
 a person carried along faster than a slow walk, a far-off person and one that `Reactions` has off its balance;
 `rig.steps = false` leaves every pose as drawn (a person riding on something slow).
 
+**Momentum and follow-through** (`gs.models.human` people, by themselves): a body has weight. A new move begins
+at once and takes up what the body was doing: how far each joint was from where the new move has it, and how
+fast it was turning, die away smoothly in about the fade you ask for (`rig.play(name, { fade })`), so a limb in
+mid swing swings on a little, a person comes down into a kneel with weight, and nobody is half in one pose and
+half in another, as a cross-fade has them (`fade: 0` is still a cut; `rig.momentum = false` cross-fades). And
+what the body carries goes on a moment and settles when you start it, stop it, turn it or drop it: the arms are
+left behind as a runner sets off and swing on as he pulls up, the head nods, the rib cage and the head come
+round after the hips, the shoulders give on a landing, and his pack, bag, canteen and holster swing and bounce
+(close up). It is measured from how you really move the person, so there is nothing to call; a steady walk gets
+nothing added, nor does a person put somewhere else at a stroke. `rig.follow.amount = 0` turns it off (2 doubles
+it), `rig.follow.reset()` stills it for a new round. Your own thing that hangs (a slung rifle, a lantern):
+`rig.hang(thing, { pivot, swing: .03, bounce: .001, away: [0, 0, -1] })` swings it about the point it hangs
+from, never into the body; for a thing you place yourself each frame pass `apply: false` and add the `x`, `z`
+(radians) and `y` (metres) it returns.
+
 **Missions** (`gs.missions`): write a mission as a script that reads like the plan:
 `Mission(function* (m) { m.objective('Reach the roof'); yield m.until(() => roof.has(me)); m.checkpoint();
 m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` makes areas, `all()` and

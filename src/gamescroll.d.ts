@@ -2361,6 +2361,29 @@ export interface RigT {
   steps?: boolean;
   /** The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands. */
   readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[] } | null;
+  /**
+   * Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. How far each joint was
+   * from where the new move has it, and how fast it was turning, die away smoothly in about the fade asked for, so a limb in mid swing swings on a
+   * little, the hips come down with weight, and nobody is half in one pose and half in another. play(name, { fade: 0 }) is still a cut. false: moves
+   * cross-fade, as on other rigs.
+   */
+  momentum?: boolean;
+  /**
+   * Follow-through (gs.models.human people; on by itself): what the body carries goes on a moment and settles when the game starts it, stops it, turns
+   * it or drops it. The arms swing on, the head nods, the rib cage and the head come round after the hips, the shoulders give on a landing, and a pack
+   * or what hangs from the belt swings and bounces. Nothing is added to a steady walk or to a body moved at a stroke. amount: 0 turns it off, 2 doubles
+   * it; reset() stills everything (a new round).
+   */
+  readonly follow?: { amount: number; reset(): void } | null;
+  /**
+   * Something that hangs from the body and swings as it moves (a slung rifle, a lantern, a satchel): thing is an Object3D on one of the joints, as it
+   * hangs at rest. pivot: the point it hangs from, in its parent's space (default: its own place); swing: radians for each metre a second a second its
+   * pivot is pushed (.03 a bag on a strap, .008 a pack); bounce: metres up and down (.0016 a pack); stiff, damp: its spring (120, 10); most: the
+   * furthest it swings (radians); away: the way out from the body where it hangs, in its parent's space (on the back: [0, 0, -1]), so it never swings
+   * into the body. apply: false leaves the thing alone, for one you place yourself each frame: add the returned x and z (radians about the pivot,
+   * forward-and-back and side to side) and y (metres) to it. Close up only. A person's own pack, bag, canteen and holster are hung already.
+   */
+  hang(thing: Loose, o?: { pivot?: [number, number, number]; swing?: number; bounce?: number; stiff?: number; damp?: number; most?: number; away?: [number, number, number]; apply?: boolean }): { readonly x: number; readonly z: number; readonly y: number };
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
@@ -2368,8 +2391,8 @@ export interface PosesPart {
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
   keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] };
-  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. */
-  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[] }) => RigT;
+  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. body: the object the game moves (steps that are really taken, follow-through); momentum, follow: see RigT (gs.models.human asks for all three). */
+  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: Loose; momentum?: boolean; follow?: boolean }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
   person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: number; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose & { rig: RigT; face: FaceT; mesh: Loose; bones: Record<string, Loose> };
   Face: CharactersPart['Face']; shapes: CharactersPart['shapes']; visemes: CharactersPart['visemes']; FACE_SHAPES: string[];

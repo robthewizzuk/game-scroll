@@ -27,6 +27,7 @@
 import { BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { reach } from './characters.js';
 import { Stride } from './stride.js';
+import { Follow } from './follow.js';
 export { person, Face, shapes, visemes, FACE_SHAPES } from './skin.js';
 
 const JOINTS = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
@@ -35,6 +36,7 @@ const FULL = [...JOINTS, 'waist', 'neck', 'collarL', 'collarR', 'twistL', 'twist
 const FILLED = new Set(['waist', 'neck', 'collarL', 'collarR', 'twistL', 'twistR']), TOES = new Set(['toeL', 'toeR']);   // (set by fill(); and the two that are mostly at rest)
 const UPPER = new Set(['spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'collarL', 'collarR']);
 const S = Math.sin, TAU = Math.PI * 2, SPACES = new WeakMap();
+const HINGES = [['shinL', 1], ['shinR', 1], ['foreL', -1], ['foreR', -1]];   // joints that bend one way only: a knee (+x), an elbow (-x)
 const _q = new Quaternion(), _q2 = new Quaternion(), _v = new Vector3(), Z3 = [0, 0, 0];
 const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 // A share of a turn q, into out: `sw` of its bend and `tw` of its twist about the bone's own length (y).
@@ -228,9 +230,12 @@ const grounded = (d, w, phase) => { if (!d?.ground || w <= 0) return; const G = 
  * way the body really goes, and a person turned or shifted while standing steps round to stand under himself
  * again (stride.js). rig.steps = false turns that off; rig.stride.feet[0 | 1].landed is true on the update a
  * foot touches down (left, right).
+ * momentum: true: a new move begins at once and takes up what the body was doing, where other rigs cross-fade
+ * (carried(), below). follow: true (with body): what the body carries goes on a moment and settles when the
+ * game starts, stops, turns or drops it (follow.js); rig.follow.amount = 0 turns that off.
  */
 export class Rig {
-  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null } = {}) {
+  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false } = {}) {
     this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses }; this.weight = weight; this.size = size; this.done = false;
     this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
     // a full skeleton: the joints in between, which fill() works out (the waist under the rib cage, the neck under the head, each a
@@ -245,6 +250,8 @@ export class Rig {
     this.hip0 = parts.hips ? parts.hips.position.y : 0; this.hipX = parts.hips ? parts.hips.position.x : 0; this.hipZ = parts.hips ? parts.hips.position.z : 0;
     this.layers = [{ name: 'idle', w: 1, phase: 0 }]; this.top = null; this.topW = 0; this.phase = 0; this.state = 'idle'; this.cur = {};
     this.stride = body ? new Stride(this, body) : null; this.steps = true;
+    this.momentum = momentum; this.mom = null; this.cutT = null;
+    this.follow = body && follow ? new Follow(this, body) : null;
   }
   /**
    * Blends to a pose by name. at: where in the pose (0..1) it stands, for a pose the game drives itself
@@ -252,10 +259,12 @@ export class Rig {
    * value. from: where it starts (a crowd out of step). again: true starts a pose over that is already playing.
    */
   play(name, { fade = this.fade, at = null, from = null, again = false } = {}) {
-    this.blendOn = false;
+    const blending = this.blendOn; this.blendOn = false;
     const top = this.layers[this.layers.length - 1];
     if (name === this.state && !again) { if (at != null) { top.phase = at; top.pin = true; } return this; }
     this.state = name; this.fadeT = fade; this.done = false;
+    // (a move begun with no fade is a cut: nothing is carried over it, whatever is asked for before the next update; out of a blend of walks it takes the rig's own fade at least, as it always did)
+    if (this.momentum) this.cutT = this.cutT === 0 || !(fade > 0) ? 0 : blending ? Math.max(fade, this.fade) : fade;
     this.layers.push({ name, w: 0, phase: at ?? from ?? (this.poses[name]?.once || again ? 0 : this.phase), pin: at != null });
     return this;
   }
@@ -295,9 +304,17 @@ export class Rig {
     return this.startBlend();
   }
   startBlend() {
-    if (!this.blendOn) { this.blendOn = true; this.blendPhase ??= this.phase; this.blendClock ??= this.phase; }
+    if (!this.blendOn) { this.blendOn = true; this.blendPhase ??= this.phase; this.blendClock ??= this.phase; if (this.momentum) this.cutT = this.cutT === 0 ? 0 : this.fade; }
     this.state = 'blend'; return this;
   }
+  /**
+   * Something that hangs from the body and swings as it moves (a pack, a bag at the hip, a slung rifle): thing is
+   * an Object3D on one of the joints. { pivot: the point it hangs from in its parent's space, swing: radians for
+   * each metre a second a second (.02 a bag on a strap, .004 a pack), bounce: metres up and down, stiff, damp,
+   * most, away: [x, y, z] the way out from the body there, apply: false to only work it out }. Returns
+   * { x, z, y }: the swing about its pivot now (radians forward-and-back and side to side, metres up and down).
+   */
+  hang(thing, o) { return (this.follow ||= new Follow(this, null)).hang(thing, o); }
   /**
    * Feet on the ground (foot IK), after update(): ground(x, z) is the floor height there; body the
    * character (its y is where flat ground is). The hips drop for the lower foot and the other knee bends.
@@ -328,7 +345,8 @@ export class Rig {
     // stands still has none: mixed with standing, a walk takes shorter steps at its own beat (its feet slid when it
     // took longer ones more slowly, as the mix of the rates had it). Poses that go by the clock keep their own time
     // in the mix (blendClock), so standing easy does not hurry a walk along, nor a walk it.
-    this.blendK = Math.max(0, Math.min(1, (this.blendK || 0) + (this.blendOn ? 1 : -1) * dt / Math.max(.01, this.fade)));
+    const inst = this.momentum;   // with momentum a new move begins at once, and what the body was doing is carried over into it (carried(), below)
+    this.blendK = inst ? (this.blendOn ? 1 : 0) : Math.max(0, Math.min(1, (this.blendK || 0) + (this.blendOn ? 1 : -1) * dt / Math.max(.01, this.fade)));
     if (this.blendK > 0 && this.bw) {
       let len = 0, timed = 0, tw = 0;
       for (const n in this.bw) { const def = this.poses[n], w = this.bw[n]; if (!def) continue; if (def.rate) len += w / def.rate; else { timed += (def.time ? 1 / def.time : def.per ?? TIMED[n] ?? .2) * w; tw += w; } }
@@ -342,7 +360,7 @@ export class Rig {
       const step = def.rate ? speed * def.rate / this.size * dt : def.time ? dt / def.time : (def.per ?? TIMED[l.name] ?? .2) * dt;
       l.phase = def.once ? Math.min(1, l.phase + step) : (l.phase + step) % 1;
     }
-    const k = this.fadeT > 0 ? Math.min(1, dt / this.fadeT) : 1;
+    const k = !inst && this.fadeT > 0 ? Math.min(1, dt / this.fadeT) : 1;
     const last = this.layers[this.layers.length - 1]; last.w = Math.min(1, last.w + k);
     this.done = !!this.poses[last.name]?.once && last.phase >= 1;
     let rest = 1 - last.w; for (let i = this.layers.length - 2; i >= 0; i--) { this.layers[i].w = Math.min(this.layers[i].w, rest); rest -= this.layers[i].w; }
@@ -370,14 +388,16 @@ export class Rig {
         const l = this.layers[0], ph = (this.poses[top]?.rate ? this.blendPhase : this.blendClock) ?? 0; if (this.layers.length !== 1 || l.name !== top) this.layers = [{ name: top, w: 1, phase: ph }]; else l.phase = ph;
       }
     }
+    if (inst) drop = this.carried(dt, out, drop, shift); else this.cutT = null;
     if (this.top && this.topW > .001) {
-      const s = this.sample(this.top, this.phase);
-      for (const j of UPPER) { const a = s.j[j] || [0, 0, 0], o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += (a[i] - o[i]) * this.topW; }
-      if (this.top === 'aim') { (out.armR ||= [0, 0, 0])[0] -= aim * this.topW; (out.armL ||= [0, 0, 0])[0] -= aim * this.topW; (out.head ||= [0, 0, 0])[0] -= aim * .5 * this.topW; }
+      const s = this.sample(this.top, this.phase), tw = inst ? this.topW * this.topW * (3 - 2 * this.topW) : this.topW;   // (with momentum it comes in and goes out gently; topW itself still counts evenly, for a game that reads it)
+      for (const j of UPPER) { const a = s.j[j] || [0, 0, 0], o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += (a[i] - o[i]) * tw; }
+      if (this.top === 'aim') { (out.armR ||= [0, 0, 0])[0] -= aim * tw; (out.armL ||= [0, 0, 0])[0] -= aim * tw; (out.head ||= [0, 0, 0])[0] -= aim * .5 * tw; }
       if (!this.topOn && this.topW < .01) this.top = null;
     }
     if (this.weight) this.sway(dt, speed, turn, out);
     else if (turn) (out.spine ||= [0, 0, 0])[2] -= turn * .1;
+    if (this.follow?.body) { if (this.near === false) this.follow.on = false; else this.follow.pose(dt, out); }   // follow-through: what the body carries goes on a moment and settles
     this.phase = last.phase;
     if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
     else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
@@ -396,7 +416,53 @@ export class Rig {
         this.stride.apply(dt, speed, G.g, G.gw, G.gw ? G.st / G.gw : 1, G.ph, G.len > 0 ? Math.min(2.6, Math.abs(speed) / (G.len * this.size)) : 0);
       }
     }
+    if (this.follow?.things.length) { if (this.fine === false) this.follow.still(); else this.follow.swing(dt); }   // (what hangs swings close up only)
     return this;
+  }
+  // Momentum between moves. A new move begins at once, and what the body was doing is carried over into it: how far each
+  // joint was from where the new move has it, and how fast it was turning, die away smoothly (in about the fade asked
+  // for; three springs in a row, so neither the speed nor the push changes at a stroke). So a move starts with the
+  // speed the body had, a limb in mid swing swings on a little and comes back, and a person is never half in one
+  // pose and half in another, as a cross-fade has them.
+  carried(dt, out, drop, shift) {
+    let M = this.mom;
+    if (!M) {
+      const names = [...this.base.keys()], N = names.length * 3 + 4, F = () => new Float32Array(N);
+      M = this.mom = { names, N, raw: F(), was: F(), x: F(), v: F(), a: F(), prev: F(), vel: F(), has: false, live: false, fix: false, y: 30, hinges: HINGES.map(([j, sg]) => [j, sg, names.indexOf(j) * 3]).filter(h => h[2] >= 0) };
+    }
+    const { names, N, raw, was, x, v, a, prev, vel } = M, e = N - 4;
+    for (let i = 0, o = 0; o < e; i++, o += 3) { const r = out[names[i]]; if (r) { raw[o] = r[0]; raw[o + 1] = r[1]; raw[o + 2] = r[2]; } else raw[o] = raw[o + 1] = raw[o + 2] = 0; }
+    raw[e] = drop; raw[e + 1] = shift[0]; raw[e + 2] = shift[1]; raw[e + 3] = shift[2];
+    if (this.cutT != null) {
+      const T = this.cutT; this.cutT = null;
+      if (!M.has || !(T > 0)) { x.fill(0); v.fill(0); a.fill(0); M.live = M.fix = false; if (!(T > 0)) M.has = false; }   // (no fade: a cut, and nothing of before it is remembered)
+      else { for (let i = 0; i < N; i++) { x[i] = prev[i] + vel[i] * dt - raw[i]; v[i] = vel[i]; a[i] = 0; } was.set(raw); M.y = 4.5 / T; M.live = M.fix = true; }
+    } else if (M.live && dt > 0) {
+      if (M.fix) {   // the new move's own speed, known one update on: what is carried is the body's speed less that
+        for (let i = 0; i < N; i++) { const lim = i < e ? 10 : 3; v[i] = Math.max(-lim, Math.min(lim, v[i] - (raw[i] - was[i]) / dt)); }
+        M.fix = false;
+      }
+      const y = M.y, E = Math.exp(-y * dt), y2 = y * y; let most = 0;
+      for (let i = 0; i < N; i++) {
+        const x0 = x[i], c1 = v[i] + y * x0, c2 = (a[i] + 2 * y * v[i] + y2 * x0) / 2, p = x0 + c1 * dt + c2 * dt * dt, dp = c1 + 2 * c2 * dt;
+        x[i] = p * E; v[i] = (dp - y * p) * E; a[i] = (2 * c2 - 2 * y * dp + y2 * p) * E;
+        if (i >= e && x[i] * x0 < 0) x[i] = v[i] = a[i] = 0;   // (the hips come to their new height and stop there: they do not dip through the floor and come back)
+        const m = Math.abs(x[i]) + Math.abs(v[i]) * .05; if (m > most) most = m;
+      }
+      if (most < 2e-4) { x.fill(0); v.fill(0); a.fill(0); M.live = false; }
+    }
+    if (M.live) {
+      for (let i = 0, o = 0; o < e; i++, o += 3) { if (!x[o] && !x[o + 1] && !x[o + 2]) continue; const r = out[names[i]] ||= [0, 0, 0]; r[0] += x[o]; r[1] += x[o + 1]; r[2] += x[o + 2]; }
+      drop += x[e]; shift[0] += x[e + 1]; shift[1] += x[e + 2]; shift[2] += x[e + 3];
+      // (a knee or an elbow carried past straight would bend the wrong way: it stops at straight, or where the move itself has it)
+      for (const [j, sg, o] of M.hinges) { const r = out[j]; if (!r) continue; const lim = sg > 0 ? Math.min(raw[o], 0) : Math.max(raw[o], 0); if (sg > 0 ? r[0] < lim : r[0] > lim) r[0] = lim; }
+    }
+    if (dt > 0) {   // where each joint is now and how fast it is turning, for the next move to take up
+      const live = M.live;
+      if (M.has) for (let i = 0; i < N; i++) { const s = live ? raw[i] + x[i] : raw[i]; vel[i] = (s - prev[i]) / dt; prev[i] = s; }
+      else { for (let i = 0; i < N; i++) prev[i] = live ? raw[i] + x[i] : raw[i]; vel.fill(0); M.has = true; }
+    }
+    return drop;
   }
   /**
    * A full skeleton's joints in between, brought into line with the ones poses turn: the waist takes its share

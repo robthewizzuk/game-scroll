@@ -2271,6 +2271,116 @@ console.log('physics ok');
   console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance) ok');
 }
 
+// momentum between moves (Rig.carried) and follow-through (follow.js): a person's rig takes a new move up with the speed the body had, and
+// what the body carries goes on a moment and settles when the game starts, stops, turns or drops it. Skeletons are driven alike, one as drawn.
+{
+  const { skeleton } = await import('../src/kit/models/human.js'), HS = await import('../src/kit/models/human-shapes.js'), { Object3D } = await import('three');
+  const STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, dt = 1 / 60, J = ['hips', 'spine', 'head', 'armL', 'foreL', 'armR', 'foreR', 'legL', 'shinL', 'legR', 'shinR', 'footL', 'footR'];
+  const read = p => { const a = []; for (const j of J) { const r = p.bones[j].rotation; a.push(r.x, r.y, r.z); } a.push(p.bones.hips.position.y); return a; };
+  // ---- momentum: the sharpest change of any joint's speed from one update to the next, over a change of move (and of the hips' height)
+  const change = (secs, at, drive, set) => {
+    const P = [false, true].map(on => { const p = skeleton({}); p.rig.momentum = on; p.rig.steps = false; p.rig.follow.amount = 0; set?.(p); return p; });
+    const R = P.map(() => ({ jerk: 0, hips: 0, knee: 9, elbow: -9, low: 9, tr: [] }));
+    P.forEach((p, k) => { let was = null, wv = null; for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const t = i * dt, sp = drive(p, t); p.rig.update(dt, { speed: sp }); const a = read(p), v = was && a.map((x, c) => (x - was[c]) / dt), r = R[k], e = a.length - 1;
+      if (wv && t >= at - .001 && t <= at + .6) for (let c = 0; c <= e; c++) { const d = Math.abs(v[c] - wv[c]); if (c === e) r.hips = Math.max(r.hips, d); else r.jerk = Math.max(r.jerk, d); }
+      r.knee = Math.min(r.knee, p.bones.shinL.rotation.x, p.bones.shinR.rotation.x); r.elbow = Math.max(r.elbow, p.bones.foreL.rotation.x, p.bones.foreR.rotation.x); r.low = Math.min(r.low, a[e]);
+      was = a; wv = v; r.tr.push(a);
+    } });
+    return { fade: R[0], kept: R[1], P, end: Math.max(...R[0].tr.at(-1).map((x, c) => Math.abs(x - R[1].tr.at(-1)[c]))), after: s => { const i = Math.round((at + s) / dt); return Math.max(...R[1].tr[i].map((x, c) => Math.abs(x - R[0].tr.at(-1)[c]))); } };
+  };
+  const stop = change(4, 2.13, (p, t) => { if (t < 2.13) { p.rig.blend(STR, 1.3); return 1.3; } p.rig.play('idle', { fade: .22 }); return 0; });
+  assert.ok(stop.kept.jerk < stop.fade.jerk * .5 && stop.kept.hips < stop.fade.hips * .5, `a walk that stops: a joint's speed changes less than half as sharply (${stop.kept.jerk.toFixed(2)} against ${stop.fade.jerk.toFixed(2)} rad/s in an update; the hips ${stop.kept.hips.toFixed(3)} against ${stop.fade.hips.toFixed(3)} m/s)`);
+  assert.ok(stop.end < 1e-9, 'and it ends standing just as it did: ' + stop.end);
+  const down = change(3, 1, (p, t) => { p.rig.play(t < 1 ? 'idle' : 'crouch', { fade: .2 }); return 0; });
+  assert.ok(down.kept.jerk < down.fade.jerk * .6 && down.kept.hips < down.fade.hips * .6, `standing to a crouch: ${down.kept.jerk.toFixed(2)} against ${down.fade.jerk.toFixed(2)} rad/s, the hips ${down.kept.hips.toFixed(2)} against ${down.fade.hips.toFixed(2)} m/s`);
+  assert.ok(down.end < 1e-9 && down.kept.low > down.fade.low - 1e-6, `the hips come down to the crouch and no lower: ${down.kept.low} against ${down.fade.low}`);
+  assert.ok(down.kept.knee > -1e-9 && down.kept.elbow < 1e-9, `no knee or elbow bends back on the way: ${down.kept.knee}, ${down.kept.elbow}`);
+  // (how long it takes: half way in about six tenths of the fade, all but there by twice the fade)
+  { const still = r => r.tr.at(-1), i0 = Math.round(1 / dt), c = J.indexOf('shinL') * 3, at = s => (down.kept.tr[i0 + Math.round(s / dt)][c] - down.kept.tr[i0 - 1][c]) / (still(down.kept)[c] - down.kept.tr[i0 - 1][c]);
+    assert.ok(at(.02) < .06 && at(.12) > .35 && at(.12) < .65 && at(.4) > .97, `it starts gently and is there by twice the fade: ${at(.02).toFixed(3)}, ${at(.12).toFixed(2)}, ${at(.4).toFixed(3)}`); }
+  const run = change(4, 2.13, (p, t) => { if (t < 2.13) { p.rig.blend(STR, 5.6); return 5.6; } p.rig.play('idle', { fade: .22 }); return 0; });
+  assert.ok(run.kept.jerk < run.fade.jerk * .6 && run.kept.knee > -1e-9, `a run that stops: ${run.kept.jerk.toFixed(2)} against ${run.fade.jerk.toFixed(2)} rad/s, and no knee bends back (${run.kept.knee})`);
+  // a move begun with no fade is a cut, whatever is asked for after it before the next update; and the pose is the new one at once
+  { const p = skeleton({}); p.rig.steps = false; p.rig.follow.amount = 0;
+    for (let i = 0; i < 90; i++) { p.rig.blend(STR, 3.3); p.rig.update(dt, { speed: 3.3 }); }
+    p.rig.play('idle', { fade: 0 }); p.rig.play('crouch', { fade: .2 }); p.rig.play('idle', { fade: .2 }); p.rig.update(dt);
+    const l = p.rig.layers, want = p.rig.sample('idle', l[0].phase).j;
+    assert.ok(l.length === 1 && l[0].name === 'idle' && !p.rig.mom.live && ['shinL', 'shinR', 'armL', 'foreR'].every(j => Math.abs(p.rig.cur[j][0] - want[j][0]) < 1e-9), 'a cut is a cut: ' + p.rig.cur.shinL[0] + ' against ' + want.shinL[0]); }
+  // other rigs are as they were: a figure cross-fades (momentum is asked for; a sculpted person's rig asks)
+  { const { figure } = await import('../src/kit/poses.js'), f = figure(); assert.ok(!f.rig.momentum && !f.rig.follow && skeleton({}).rig.momentum, 'only where it is asked for');
+    f.rig.play('crouch', { fade: .2 }); f.rig.update(.1); assert.ok(Math.abs(f.rig.cur.shinL[0] - .95) < .02, 'a figure is half way through its fade at half time: ' + f.rig.cur.shinL[0]); }
+
+  // ---- follow-through: the body's own parts
+  const SP = ['arms', 'counter', 'side', 'nod', 'turn', 'chest', 'tilt', 'shrug'];
+  const follow = (secs, drive, from = 0, set) => {
+    const p = skeleton({}), s = { x: 0, y: 0, z: 0, yaw: 0, av: 0, want: 0, vy: 0 }, F = p.rig.follow, R = { p, most: {}, least: {}, last: 0, tr: [] }; set?.(p);
+    for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const t = i * dt; drive(s, t); s.av += (s.want - s.av) * (1 - Math.exp(-dt * 5)); s.x += Math.sin(s.yaw) * s.av * dt; s.z += Math.cos(s.yaw) * s.av * dt;
+      if (s.av > .15) p.rig.blend(STR, s.av); else p.rig.play('idle', { fade: .22 });
+      p.position.set(s.x, s.y, s.z); p.rotation.y = s.yaw; p.rig.update(dt, { speed: s.av }); p.updateMatrixWorld(true);
+      if (t >= from) SP.forEach((n, k) => { R.most[n] = Math.max(R.most[n] ?? 0, F.th[k]); R.least[n] = Math.min(R.least[n] ?? 0, F.th[k]); if (Math.abs(F.th[k]) > .003) R.last = t; });
+      R.tr.push(read(p));
+    }
+    R.all = Math.max(...SP.map(n => Math.max(R.most[n], -R.least[n]))); return R;
+  };
+  const go = follow(7, (s, t) => { s.want = t > 1 && t < 4 ? 5.6 : 0; });
+  assert.ok(go.most.arms > .12 && go.least.arms < -.12, `a runner's arms are left behind as he sets off and swing on as he pulls up: ${go.most.arms.toFixed(3)}, ${go.least.arms.toFixed(3)}`);
+  assert.ok(go.least.nod < -.03 && go.most.nod > .03 && go.last < 6, `his head tips back and then nods, and all of it is still again (by ${go.last.toFixed(1)} s)`);
+  const walk = follow(6, s => { s.want = 1.3; }, 2); assert.ok(walk.all < .002, 'a steady walk: nothing is added to it: ' + walk.all);
+  const stand = follow(4, s => { s.want = 0; }); assert.ok(stand.all === 0, 'nor to a person standing: ' + stand.all);
+  const turn = follow(5, (s, t) => { s.want = 0; if (t > 1 && t < 2) s.yaw += 2.5 * dt; });
+  assert.ok(turn.least.turn < -.02 && turn.least.chest < -.02 && turn.most.counter > .04 && turn.last < 3.5, `spun to its left, the head and the rib cage come round after the hips, one arm goes forward and one back: ${turn.least.turn.toFixed(3)}, ${turn.least.chest.toFixed(3)}, ${turn.most.counter.toFixed(3)}`);
+  const push = follow(4, (s, t) => { s.want = 0; if (t > 1 && t < 1.25) s.x += 2 * dt; }); assert.ok(push.most.side > .05 && push.most.tilt > .02, `pushed to its left, the arms and the head are left to its right: ${push.most.side.toFixed(3)}, ${push.most.tilt.toFixed(3)}`);
+  const drop = follow(4, (s, t) => { if (t > 1 && s.y > -.5) { s.vy -= 9.8 * dt; s.y = Math.max(-.5, s.y + s.vy * dt); } }); assert.ok(drop.most.shrug > .03 && drop.last < 2.5, 'dropped half a metre, the shoulders give as it lands: ' + drop.most.shrug.toFixed(3));
+  const moved = follow(4, (s, t) => { if (Math.abs(t - 1) < dt / 2) { s.x += 5; s.yaw += 2; } }); assert.ok(moved.all === 0, 'put somewhere else at a stroke: no push: ' + moved.all);
+  // turned off, far off, or in a crowd's bake it is the pose as drawn
+  { const asDrawn = set => { const a = follow(5, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; }, 0, p => { p.rig.steps = false; set(p); }), b = follow(5, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; }, 0, p => { p.rig.steps = false; p.rig.follow = null; }); return Math.max(...a.tr.map((r, i) => Math.max(...r.map((x, c) => Math.abs(x - b.tr[i][c]))))); };
+    assert.ok(asDrawn(p => { p.rig.follow.amount = 0; }) < 1e-9 && asDrawn(p => { p.rig.near = false; }) < 1e-9, 'amount 0, or seen from far off: as drawn');
+    assert.ok(asDrawn(() => {}) > .1, '(and with it on the pose does differ)'); }
+  // an elbow is never bent back by it, and an arm goes only a little in against the body
+  { const r = follow(6, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; if (t > 3.5 && t < 3.7) s.x -= 3 * dt; }), c = J.indexOf('foreL') * 3; assert.ok(Math.max(...r.tr.map(a => Math.max(a[c], a[c + 6]))) < 1e-9, 'elbows'); }
+  // a push never makes a reach of a swing: pulled up from a run, with one arm already swung forward, that arm goes hardly further forward than it is drawn (it comes down late instead)
+  { const pull = set => follow(5, (s, t) => { s.want = t > 1 && t < 3 ? 5.6 : 0; }, 0, p => { p.rig.steps = false; set?.(p); }), a = pull(), b = pull(p => { p.rig.follow = null; }), c = J.indexOf('armL') * 3, i0 = Math.round(3 / dt);
+    const fwd = r => Math.min(...r.tr.slice(i0).map(x => Math.min(x[c], x[c + 6]))), late = Math.max(...a.tr.slice(i0).map((x, i) => Math.max(b.tr[i0 + i][c] - x[c], b.tr[i0 + i][c + 6] - x[c + 6])));
+    assert.ok(fwd(a) > fwd(b) - .06 && fwd(b) < -.2 && late > .07, `the arm of a runner pulled up short: ${fwd(a).toFixed(3)} forward at the most against ${fwd(b).toFixed(3)} as drawn, and ${late.toFixed(3)} behind it in coming down`); }
+
+  // ---- things that hang: the trunk is sculpted with a bone for each thing on its belt, and says where each hangs from
+  const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', pockets: 4, collar: null }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, belt: {}, web: { y: true, pouches: 2 }, extras: { bag: true, canteen: true, holster: true }, hat: null, pack: null, gear: [], face: {}, hands: 'grip' };
+  const tr = HS.sculpt(HS.jobsFor(sp)[0]), share = {}; for (let i = 0; i < tr.n; i++) for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) { const n = tr.names[tr.SI[i * 4 + q]]; share[n] = (share[n] || 0) + 1; }
+  assert.deepEqual(Object.keys(tr.hang).sort(), ['bag', 'flask', 'holster']); for (const n in tr.hang) { const h = tr.hang[n]; assert.ok(share[n] > 40 && h.at[1] > .95 && h.at[1] < 1.12 && Math.abs(Math.hypot(h.away[0], h.away[2]) - 1) < 1e-9 && h.at[0] * h.away[0] + h.at[2] * h.away[2] > .1, `${n}: ${share[n]} points on a bone of its own, hung from the belt, and it knows which way is out`); }
+  assert.ok(!HS.sculpt(HS.jobsFor({ ...sp, extras: {} })[0]).names.some(n => tr.hang[n]), 'and a trunk with nothing on its belt has no such bones');
+  { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) u[tr.names[tr.SI[i * 4 + q]]] = tr.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0;
+    for (let i = 0; i < tr.n; i++) { const k = [0, 1, 2].map(c => Math.round(tr.P[i * 3 + c] * 1e5)).join(), j = seen.get(k); if (j === undefined) { seen.set(k, i); continue; } const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) torn++; }
+    assert.ok(pairs > 100 && torn === 0, `points in the same place still go with the same bones: ${torn} of ${pairs}`); }
+  const kit = (secs, drive, from = 0, more) => {
+    const p = skeleton({}), s = { x: 0, z: 0, yaw: 0, av: 0, want: 0 }, hips = HS.AT.hips, spine = HS.AT.spine, T = {};
+    for (const n in tr.hang) { const { at, ...how } = tr.hang[n], b = new Object3D(); b.position.set(at[0] - hips[0], at[1] - hips[1], at[2] - hips[2]); p.bones.hips.add(b); T[n] = p.rig.hang(b, { ...how, ...more }); }
+    { const b = new Object3D(); p.bones.spine.add(b); T.pack = p.rig.hang(b, { pivot: [0, 1.45 - spine[1], -.1 - spine[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1], ...more }); }
+    const R = { p, T, swing: {}, bounce: {}, into: 0, last: 0 };
+    for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+      const t = i * dt; drive(s, t, p); s.av += (s.want - s.av) * (1 - Math.exp(-dt * 5)); s.x += Math.sin(s.yaw) * s.av * dt; s.z += Math.cos(s.yaw) * s.av * dt;
+      if (s.av > .15) p.rig.blend(STR, s.av); else p.rig.play('idle', { fade: .22 });
+      p.position.set(s.x, 0, s.z); p.rotation.y = s.yaw; p.rig.update(dt, { speed: s.av }); p.updateMatrixWorld(true);
+      for (const n in T) { const h = T[n]; if (t >= from) { R.swing[n] = Math.max(R.swing[n] ?? 0, Math.abs(h.x), Math.abs(h.z)); R.bounce[n] = Math.max(R.bounce[n] ?? 0, Math.abs(h.y)); } R.into = Math.min(R.into, h.z * h.nx - h.x * h.nz); if (Math.abs(h.x) + Math.abs(h.z) + Math.abs(h.y) * 10 > .006) R.last = t; }
+    }
+    return R;
+  };
+  const jog = kit(6, s => { s.want = 3.3; }, 2);
+  assert.ok(jog.swing.bag > .02 && jog.swing.flask > .02 && jog.swing.holster < jog.swing.bag * .6 && jog.bounce.pack > .005 && jog.bounce.pack < .03, `jogging, a bag and a canteen swing at the hip, a holster less, and a pack bounces: ${JSON.stringify(jog.swing, (k, v) => typeof v === 'number' ? +v.toFixed(3) : v)}, ${jog.bounce.pack.toFixed(4)} m`);
+  assert.ok(jog.into > -.0121, 'none of them swings into the body: ' + jog.into);
+  const halt = kit(7, (s, t) => { s.want = t > 1 && t < 4 ? 5.6 : 0; }); assert.ok(halt.swing.bag > .1 && halt.swing.pack > .04 && halt.into > -.0121 && halt.last > 4.2 && halt.last < 6.5, `a runner who pulls up: they swing on and are still again (bag ${halt.swing.bag.toFixed(3)}, pack ${halt.swing.pack.toFixed(3)}, still by ${halt.last.toFixed(1)} s)`);
+  const idle = kit(4, s => { s.want = 0; }, 1); assert.ok(Math.max(...Object.values(idle.swing)) < .004 && Math.max(...Object.values(idle.bounce)) < .0003, 'standing, they hang still: ' + JSON.stringify(idle.swing));
+  // a thing goes back exactly as it was; seen from further off nothing swings; apply: false only works the swing out
+  { const b = halt.T.bag.thing, rest = halt.T.bag.rest; halt.p.rig.follow.still(); assert.ok(b.position.distanceTo(rest) < 1e-12 && Math.abs(b.quaternion.w - 1) < 1e-12, 'put back as it was');
+    const far = kit(4, (s, t, p) => { p.rig.fine = false; s.want = t > 1 ? 5.6 : 0; }); assert.ok(Math.max(...Object.values(far.swing)) === 0, 'not close up: nothing swings');
+    const own = kit(4, (s, t) => { s.want = t > 1 ? 5.6 : 0; }, 0, { apply: false }); assert.ok(own.swing.bag > .05 && own.T.bag.thing.quaternion.w === 1 && own.T.bag.thing.position.distanceTo(own.T.bag.rest) === 0, 'apply: false: worked out, and the thing left alone'); }
+  // and what it costs: a person's update with all of it against one as drawn
+  { const mk = on => { const p = skeleton({}); p.rig.steps = false; if (!on) { p.rig.momentum = false; p.rig.follow = null; } return p; }, time = p => { let s = 0; const t0 = performance.now(); for (let i = 0; i < 20000; i++) { s += .0003; p.position.z = s * 3; if (i % 240 < 120) p.rig.blend(STR, 3.3); else p.rig.play('idle', { fade: .22 }); p.rig.update(dt, { speed: 3.3 }); } return (performance.now() - t0) / 20000 * 1000; };
+    time(mk(true)); time(mk(false)); const a = time(mk(true)), b = time(mk(false)); assert.ok(a - b < 12, `momentum and follow-through cost ${(a - b).toFixed(1)} microseconds a person an update`); }
+  console.log('gs.models: momentum between moves (a joint keeps its speed into the new move, no knee bends back, a cut is a cut) and follow-through (arms, head, rib cage, shoulders; a bag, a canteen, a holster and a pack that swing and bounce; still in a steady walk, at a stroke, far off) ok');
+}
+
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
 {
   const CS = await import('../src/kit/models/creature-shapes.js'), MV = await import('../src/kit/models/creature-moves.js'), { Rig } = await import('../src/kit/poses.js'), THREE = await import('three');
