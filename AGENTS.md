@@ -150,7 +150,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
 - `gs.physics.Physics` (Rapier 2D; lazy): `circle`, `box`, `poly`, `line`, `walls`, `hinge`, `spring`,
   `rope`, `ragdoll(x, y, { size })`, `weld`, `slider`, `wheel`, `grab`, `ray`, `at`, `blast`, `onHit`, `step(dt)`, `path(c, t)`.
 - `gs.physics3d.World3D` (Rapier 3D; lazy): `ball`, `box`, `capsule`, `hull`, `ground(mesh)`,
-  `floor`, `mover()` (walking character), `ragdoll()`, `ray`, joints, `step(dt)` syncs meshes.
+  `floor`, `mover()` (walking character), `ragdoll(character)` (a jointed ragdoll on a `gs.poses` rig: joints that only turn as real ones do, `drive(pose, strength)` muscles), `ray`, joints, `step(dt)` syncs meshes.
 - `gs.ai`: `Crowd` (`add(x, y).chase(t) / flee / wander / follow(route) / flock / hunt(t, nav)`),
   `NavGrid` (`path`, `sees`), `Brain` (state machine), `Tree` (behaviour trees: mistreevous text, actions by name), `Choose`
   (utility AI: the highest-scoring want), `YUKA`, `Swarm({ count, w, h, speed })` (thousands of flockers on the
@@ -163,7 +163,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
 - `gs.senses`: `Senses` (sight cones, hearing, memory; moods calm/suspicious/alert/searching), `Noises`.
 - `gs.camera.CameraRig` (3D): `chase`, `shoulder`, `first`, `top`, `side`, `orbit`, `rail`, `fixed`; walls, blends, `shake`, `kick`.
 - `gs.nav3d.NavMesh3D` (lazy): 3D paths made from your level meshes, `crowd()` agents.
-- `gs.characters`: `lookAt`, `reach` (two-bone IK), `Steps` (feet that plant), `Wobble`, `Face` (blend shapes, blinking, lip sync with `say(text)`), `shapes(geo, {...})`; ragdolls are `World3D.ragdoll()`.
+- `gs.characters`: `lookAt`, `reach` (two-bone IK), `Steps` (feet that plant), `Wobble`, `Face` (blend shapes, blinking, lip sync with `say(text)`), `shapes(geo, {...})`, `Reactions(character, { world, mover })` (people who react physically: `hit(push, at)`, `blast`, `trip`, `fall`, `brace`; they flinch, take steps to keep their balance, fall as a ragdoll and get up; steer only while `!react.busy`); ragdolls are `World3D.ragdoll()`.
 - `gs.camera2d.Camera2D`: follow with a dead zone, look-ahead, zoom, level bounds, `layer()` parallax, `toWorld()`.
 - `gs.tiles.TileMap.fromText(level)`: `#` walls, `-` one-way, `/` `\` slopes, letters as marks (`find('P')`);
   `move(box, dx, dy)`, `ray`, `sees`, `walkable()`, `draw(c, fn, cam)`, `edges(tx, ty)` (auto-tiling: `mask`, `blob`).

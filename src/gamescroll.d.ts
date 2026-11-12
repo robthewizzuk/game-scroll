@@ -1335,6 +1335,57 @@ export interface CharactersPart {
   /** Mouth shapes over time for a line of speech. */
   visemes(text: string, o?: { rate?: number }): { t: number; ch: string; open: number; wide: number; round: number }[] & { end: number };
   FACE_SHAPES: string[];
+  /**
+   * People who react physically: one for each character on a gs.poses rig (figure(), person(), gs.models.human()).
+   * It flinches where it is hit, steps to keep its balance when shoved, puts its hands out against a wall it
+   * runs into, goes down as a jointed ragdoll (with `world`, a gs.physics3d World3D; acted without) and gets up.
+   * Call update(dt) each frame after rig.update(dt), and steer the character only while `busy` is false.
+   */
+  Reactions: new (body: Loose, o?: ReactionsOptions) => ReactionsT;
+}
+export interface ReactionsOptions {
+  /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Without one they are acted. */
+  world?: Loose | null;
+  /** The World3D mover that walks the character: staggering respects walls, and it is put back where the body gets up. */
+  mover?: Loose | null;
+  /** Floor height at (x, z), for uneven ground and edges to fall off (-Infinity: a pit). */
+  ground?: ((x: number, z: number) => number) | null;
+  /** What it can run into (as gs.sound.Ears takes: a World3D, a City, a function...). Default: the world. */
+  level?: SoundLevel | null;
+  /** How hard it is to knock over: 1 a person, 2 a brute, .5 someone already hurt. */
+  steady?: number;
+  /** Seconds it lies before getting up by itself (Infinity: only when told). Default 1.4. */
+  rest?: number;
+  /** false: no bracing against walls. */
+  walls?: boolean;
+  rig?: Loose;
+}
+export interface ReactionsT {
+  /** true while the character is not the game's to steer (staggering, falling, down or getting up). */
+  readonly busy: boolean;
+  /** true while it lies on the ground. */
+  readonly down: boolean;
+  state: 'steady' | 'stagger' | 'falling' | 'down' | 'rising';
+  /** true for one frame: a recovery step landed; it hit the ground (impact: metres a second); it is back on its feet. */
+  stepped: boolean; landed: boolean; rose: boolean; impact: number;
+  limp: boolean; steady: number; rest: number;
+  /** The ragdoll while there is one (parts, part(name), push, hit, drive, relax). */
+  doll: Loose | null;
+  /** A blow: push is the change of speed it would give the body (metres a second, world), at a world point (default the chest). Light: a flinch; harder: a stagger; harder still, or at the legs: a fall. */
+  hit(push: number[] | XYZ, at?: number[] | XYZ | null): ReactionsT;
+  /** Thrown by an explosion at point: strength is metres a second at the centre, nothing at radius. */
+  blast(point: number[] | XYZ, strength?: number, radius?: number): ReactionsT;
+  /** The legs caught on something: a stumble, or a fall at a run. dir: a world direction (default: the way it is going). */
+  trip(dir?: number[] | XYZ | null): ReactionsT;
+  /** Goes down now. limp: nobody in it (knocked out, shot): it stays down until getUp({ revive: true }). */
+  fall(push?: number[] | XYZ | null, o?: { limp?: boolean }): ReactionsT;
+  /** Arms up against something coming from a world point, for some seconds. */
+  brace(from?: number[] | XYZ | null, seconds?: number): ReactionsT;
+  getUp(o?: { revive?: boolean }): ReactionsT;
+  /** Stands it up at once, steady (a new round). */
+  reset(): ReactionsT;
+  /** Each frame, after rig.update(dt). */
+  update(dt: number): ReactionsT;
 }
 export interface FaceT {
   blinkEvery: number; readonly talking: boolean;

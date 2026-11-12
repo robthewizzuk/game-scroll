@@ -36,6 +36,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Seeded random, daily seed, smooth noise, timers | `gs.math` | [Maths](#maths) |
 | 3D text, 3D particles, outlines, glitch, trails | `gs.fx3d` | [3D extras](#3d-extras) |
 | Enemies that plan: behaviour trees, "what do I want most" | `gs.ai.Tree` (mistreevous), `gs.ai.Choose` | [Behaviour trees and wants](#behaviour-trees-and-wants) |
+| People who stumble, brace, fall and get up when hit, shoved, tripped or blown up | `gs.characters.Reactions`, `phys.ragdoll(character)` | [People who react](#people-who-react) |
 | 3D people that bend smoothly, walk-to-run blends, feet on slopes, faces that talk | `gs.poses.person`, `rig.blend`, `rig.plant`, `gs.characters.Face` | [Skinned people, faces and lip sync](#skinned-people-faces-and-lip-sync) |
 | Thousands of fish, bats or zombies that flock | `gs.ai.Swarm` (WebGPU compute, CPU fallback) | [Swarms](#swarms-thousands-of-flockers) |
 | Play with your face or your hands | `gs.vision` (MediaPipe) | [Face and hands](#face-and-hands) |
@@ -1113,8 +1114,54 @@ steps.update(dt, hero);                                       // feet[i].pos, .l
 wobble.hit(1); wobble.update(dt); body.rotation.x = wobble.value * .4;   // springy hit reaction
 ```
 
-In 3D, ragdolls are part of 3D physics (2D games use `gs.physics` `phys.ragdoll(x, y)`, above): `rag = phys.ragdoll(guard, { limbs: [head, armL, armR, legL, legR], push: [0, 2, -5] })`
-turns the character floppy (each limb swings at its origin). `rag.push()`, `rag.hit(part, ...)`, `rag.remove()`.
+In 3D, ragdolls are part of 3D physics (2D games use `gs.physics` `phys.ragdoll(x, y)`, above). On a
+character with a `gs.poses` rig (`figure()`, `person()`, `gs.models.human()`), `rag = phys.ragdoll(guard, { push: [0, 2, -5] })`
+is a jointed ragdoll: eleven bodies (hips, chest, head, upper and lower arms and legs) joined where the
+joints are, each turning only as far as a real one does (a knee bends one way; a head can't spin round),
+and the character stays one skinned mesh whose bones follow them. `rag.push(x, y, z)`, `rag.hit('head', x, y, z, point)`,
+`rag.part('armL')`, `rag.still()`, `rag.remove()` (it stays as it lies). It has muscles: `rag.drive({ armL: [-1.2, 0, .3], foreL: [-.6, 0, 0] }, .6)`
+turns its joints towards a pose (the rig's angles from rest; strength 0 limp to 1 firm), so a falling body can
+throw its arms out; `rag.relax()` lets go. A character you built from loose parts with no rig:
+`phys.ragdoll(guard, { limbs: [head, armL, armR, legL, legR], push })` (each limb swings at its origin).
+
+### People who react
+
+`const { Reactions } = gs.characters;` One for each character with a rig. It decides nothing about your
+game: you tell it what happened to the body, and it moves the body the way a body moves.
+
+```js
+react = new Reactions(hero, { world: phys, mover });   // world: falls are a real ragdoll; without one they are acted
+update(dt) {
+  if (!react.busy) { /* steer hero as usual */ }
+  hero.rig.update(dt, { speed }); react.update(dt);    // every frame, after the rig
+  if (react.stepped) sounds.step(); if (react.landed) feel.land(x, y);   // true for one frame each
+}
+react.hit([0, 0, -2.5], bullet.point);    // a change of speed (metres a second, world) at a world point
+react.blast(bomb.position, 9, 6);         // strength at the centre, radius
+react.trip();                             // legs caught: a stumble, or a fall at a run
+react.fall(null, { limp: true });         // knocked out or shot: stays down until react.getUp({ revive: true })
+react.brace(grenade.position, .8);        // arms up against something coming
+```
+
+- **How hard decides what happens.** A light blow only makes the part it landed on give (a head snaps back, a
+  shoulder turns, a knee buckles). A harder one sets the body **staggering**: it takes real steps to get its
+  feet back under its weight, as many as it needs, and you have it back when it is steady. Harder still, a
+  blow to the legs, too many steps, or no ground where the next step must go (a ledge), and it **falls**:
+  a ragdoll that throws its arms towards the ground, lands (`react.landed`, `react.impact` in metres a
+  second), lies a moment (`rest`, default 1.4 s), and **gets up** from its front or its back, facing the way
+  a person getting up from there would.
+- `react.state` is `'steady'`, `'stagger'`, `'falling'`, `'down'` or `'rising'`; `react.busy` is true for all
+  but the first; `react.down` while it lies. `react.reset()` in `reset()` stands it up at once.
+- `steady: 2` is a brute who shrugs off what fells a person; `.5` someone already hurt. Change `react.steady`
+  as health drops.
+- With `world` it also puts its hands out against a wall it is about to run into, and is knocked back off it
+  at a run (`walls: false` turns that off; `level` is what counts as a wall, as for `gs.sound.Ears`).
+  `ground: (x, z) => height` for uneven floors and edges (the height of whatever is down there; `-Infinity` for a pit).
+- With `mover` (the `phys.mover()` that walks the character) a stagger stops at walls, the mover stands aside
+  while the body is down so nothing bumps into an empty capsule, and it is put back where the body gets up.
+- Without `world`, falls are acted (forwards onto the hands or back onto the seat) and the body gets up the
+  same way. On a desktop a falling body measured about a tenth of a millisecond a frame, physics and all, and
+  one standing a few hundredths (not yet measured on a phone).
 
 ### Skinned people, faces and lip sync
 

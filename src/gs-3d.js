@@ -9,6 +9,7 @@ export * as fx3d from './kit/fx3d.js';
 export * as camera from './kit/camera.js';
 export * as nav3d from './kit/nav3d.js';
 export * as characters from './kit/characters.js';
+export * as reactions from './kit/reactions.js';
 export * as level3d from './kit/level3d.js';
 export * as sky from './kit/sky.js';
 export * as poses from './kit/poses.js';

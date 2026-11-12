@@ -3014,5 +3014,138 @@ console.log('physics ok');
   console.log('sound that knows the level: walls (thin, thick, a doorway, a corner), places (room, hall, open, a yard), tile maps and Ears ok');
 }
 
+// people who react physically (src/kit/ragdoll.js: a jointed ragdoll on a gs.poses rig; src/kit/reactions.js: gs.characters.Reactions)
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { person, figure } = await import('../src/kit/poses.js');
+  const { Reactions } = await import('../src/kit/reactions.js');
+  const { JOINT_LIMITS } = await import('../src/kit/ragdoll.js');
+  const dt = 1 / 60, hipsY = f => f.rig.parts.hips.getWorldPosition(new THREE.Vector3()).y;
+  const stage = (make = person, o = {}) => { const scene = new THREE.Scene(), w = new World3D({ gravity: -9.81 }); const floor = new THREE.Mesh(new THREE.BoxGeometry(200, .4, 200)); floor.position.y = -.2; scene.add(floor); w.ground(scene); const f = make(); scene.add(f); return { scene, w, f, r: o.react === false ? null : new Reactions(f, { world: o.world === false ? null : w, ...o }) }; };
+  // runs a character for `secs`, doing things at the times given; notes each state as it comes, the steps, landings, getting up
+  const run = (S, secs, at = {}, { walk = 0 } = {}) => {
+    const { f, r, w } = S, log = [], seen = { steps: 0, landed: 0, rose: 0, impact: 0 }; let state = r.state;
+    for (let i = 0; i <= Math.round(secs / dt); i++) {
+      for (const t in at) if (Math.round(t / dt) === i) at[t](r, f);
+      if (!r.busy && walk) f.position.z += walk * dt;
+      f.rig.play(walk > 3 && !r.busy ? 'run' : 'idle'); f.rig.update(dt, { speed: r.busy ? 0 : walk }); r.update(dt); w.step(dt);
+      if (r.state !== state) log.push(state = r.state);
+      if (r.stepped) seen.steps++; if (r.landed) { seen.landed++; seen.impact = r.impact; } if (r.rose) seen.rose++;
+    }
+    return { log: log.join(' '), ...seen };
+  };
+
+  // the ragdoll itself: eleven bodies on the skeleton, the character still one skinned mesh that follows them
+  {
+    const { w, f } = stage(person, { react: false });
+    f.rig.play('run'); f.rig.update(.2, { speed: 4 });
+    const doll = w.ragdoll(f, { push: [1.5, 1, -4] });
+    assert.ok(doll.parts.length === 11 && doll.joints.length === 10 && doll.part('head') && w.dolls.includes(doll), 'a rig gets eleven bodies and ten joints');
+    let worst = 0; const P = f.rig.parts;
+    for (let i = 0; i < 240; i++) { w.step(dt); for (const [n, lo, hi] of [['shinL', 0, 2.3], ['shinR', 0, 2.3], ['foreL', -2.2, 0], ['foreR', -2.2, 0]]) worst = Math.max(worst, lo - P[n].rotation.x, P[n].rotation.x - hi, Math.abs(P[n].rotation.y), Math.abs(P[n].rotation.z)); }
+    assert.ok(worst < .3, 'knees and elbows only bend the way they do, through the landing: ' + worst.toFixed(2));
+    assert.ok(doll.still() && hipsY(f) < .3 && hipsY(f) > .03 && Math.abs(f.position.z) > .5 && Math.hypot(f.position.x - P.hips.getWorldPosition(new THREE.Vector3()).x, 0) < .05, 'thrown, it comes to rest on the floor and the character has gone with it: hips ' + hipsY(f).toFixed(2));
+    doll.remove(); assert.ok(!w.dolls.length && doll.gone, 'removed');
+    // muscles: held by the hips in the air, it takes up a pose and keeps it against its own weight
+    const g = stage(person, { react: false }); g.f.position.y = 2; g.f.rig.update(dt);
+    const d2 = g.w.ragdoll(g.f); d2.root.body.setBodyType(g.w.R.RigidBodyType.Fixed, true);
+    const pose = { armL: [.75, 0, .5], armR: [-1.2, 0, -.3], foreL: [-.35, 0, 0], foreR: [-.9, 0, 0], legL: [-.7, 0, 0], shinL: [.9, 0, 0], spine: [.3, 0, 0] };
+    d2.drive(pose, .7); for (let i = 0; i < 90; i++) g.w.step(dt);
+    const Q = g.f.rig.parts, miss = Math.max(...Object.keys(pose).map(n => Math.hypot(Q[n].rotation.x - pose[n][0], Q[n].rotation.y - pose[n][1], Q[n].rotation.z - pose[n][2])));
+    assert.ok(miss < .25, 'driven joints reach their pose and hold it: furthest off ' + miss.toFixed(2));
+    const armUp = Q.armR.rotation.x; d2.relax(); for (let i = 0; i < 40; i++) g.w.step(dt);
+    assert.ok(d2.limp && Q.armR.rotation.x > armUp + .5, 'let go, the arm drops: ' + armUp.toFixed(2) + ' to ' + Q.armR.rotation.x.toFixed(2));
+    d2.drive({ armL: [-3, 0, 0] }, .8); for (let i = 0; i < 90; i++) g.w.step(dt);
+    assert.ok(Math.abs(Q.armL.rotation.x) > 2.6 && JOINT_LIMITS.armL[0][0] <= -3, 'an arm goes right up over the head');
+    w.free(); g.w.free();
+  }
+
+  // a nudge: it gives and comes back, and never leaves its feet
+  {
+    const S = stage(), spine = S.f.rig.parts.spine; let lean = 0;
+    const out = run(S, 1.6, { .3: r => r.hit([0, 0, -.35]), .4: () => { lean = spine.rotation.x; } });
+    assert.ok(out.log === '' && !S.r.busy && out.steps === 0 && Math.hypot(S.f.position.x, S.f.position.z) < .02, 'a nudge is only swayed off: ' + out.log);
+    assert.ok(Math.abs(lean - .03) > .02, 'the trunk gives under it (' + lean.toFixed(2) + ')');
+  }
+  // a shove: steps to stay up, and the game has it back
+  {
+    const S = stage(), out = run(S, 3, { .3: r => r.hit([0, 0, 1.6]) });
+    assert.ok(out.log === 'stagger steady' && out.steps >= 1 && out.steps <= 7 && S.f.position.z > .25 && S.f.position.z < 2.2, 'a shove: ' + out.log + ', ' + out.steps + ' steps, ' + S.f.position.z.toFixed(2) + ' m');
+    assert.ok(Math.abs(hipsY(S.f) - .97) < .06 && !S.w.dolls.length, 'and stands as before');
+    const B = stage(person, { steady: 2.2 }), brute = run(B, 3, { .3: r => r.hit([0, 0, 1.6]) });
+    assert.ok(B.f.position.z < S.f.position.z * .7, 'someone steadier is moved less: ' + B.f.position.z.toFixed(2) + ' against ' + S.f.position.z.toFixed(2) + ' (' + (brute.log || 'steady') + ')');
+  }
+  // a hard blow: down as a ragdoll, a thud, a rest, and up again where it fell
+  for (const [name, push, make] of [['from the front', [0, 0, -3.6], person], ['from behind', [0, 0, 3.6], person], ['from the side', [3.4, 0, .3], figure]]) {
+    const S = stage(make), out = run(S, 7, { .3: r => r.hit(push) });
+    assert.ok(out.log === 'falling down rising steady' && out.landed === 1 && out.impact > 1.5 && out.rose === 1, 'knocked down ' + name + ': ' + out.log + ', landed ' + out.landed + ' (' + out.impact.toFixed(1) + ' m/s)');
+    const far = Math.hypot(S.f.position.x, S.f.position.z), way = (S.f.position.x * push[0] + S.f.position.z * push[2]) / Math.hypot(push[0], push[2]);
+    assert.ok(far > .8 && far < 4.5 && way > .6 && Math.abs(hipsY(S.f) - .97) < .06 && Math.abs(S.f.position.y) < .02 && !S.w.dolls.length && !S.r.busy, 'it gets up ' + far.toFixed(2) + ' m off, the way it was hit, on its feet');
+  }
+  // a blow to a body already down pushes the ragdoll; reset() stands it up at once
+  {
+    const S = stage(); run(S, 1.2, { .3: r => r.hit([0, 0, -3.6]) });
+    const z = S.r.doll.root.pos.z; S.r.hit([0, 2, -4]); run(S, .3);
+    assert.ok(S.r.doll && S.r.doll.root.pos.z < z - .15, 'kicked while down');
+    S.r.reset(); assert.ok(!S.r.busy && !S.r.doll && !S.w.dolls.length && Math.abs(S.f.rig.parts.hips.position.y - S.f.rig.hip0) < 1e-6, 'reset() stands it up');
+  }
+  // limp: it stays where it fell until it is brought round
+  {
+    const S = stage(person, { rest: .5 }), out = run(S, 5, { .3: r => r.fall([0, 0, -1.5], { limp: true }) });
+    assert.ok(out.log === 'falling down' && S.r.down && !S.r.doll && hipsY(S.f) < .3, 'shot: ' + out.log + ', and its bodies are let go once it lies still');
+    S.r.getUp(); assert.ok(S.r.down, 'it does not get up by itself');
+    S.r.getUp({ revive: true }); const up = run(S, 3.5);
+    assert.ok(up.log === 'steady' && up.rose === 1 && Math.abs(hipsY(S.f) - .97) < .06, 'brought round, it gets up: ' + up.log + ', rose ' + up.rose + ', hips ' + hipsY(S.f).toFixed(2));
+  }
+  // a trip: at a run it goes down and slides to a stop; from a stand it only stumbles
+  {
+    const S = stage(), out = run(S, 6.5, { .8: r => r.trip() }, { walk: 5 }), tripped = 5 * .8;
+    assert.ok(out.log.startsWith('falling down rising') && out.landed === 1, 'tripped at a run: ' + out.log);
+    const T = stage(); let at = 0; run(T, 3, { .8: (r, f) => { at = f.position.z; r.trip(); }, 2.2: (r, f) => { at = f.position.z - at; } }, { walk: 5 });
+    assert.ok(at > 1 && at < 4, 'it comes to rest ' + at.toFixed(2) + ' m on, not thrown across the map');
+    const U = stage(), stand = run(U, 3, { .3: r => r.trip([0, 0, 1]) });
+    assert.ok(!stand.log.includes('falling') && stand.steps >= 1, 'tripped from a stand it stumbles: ' + stand.log);
+    assert.ok(tripped > 3);
+  }
+  // an explosion: thrown if near, untouched if far
+  {
+    const S = stage(), out = run(S, 2.5, { .3: (r, f) => r.blast({ x: f.position.x - 1.2, y: .2, z: f.position.z - 1.5 }, 11, 5) });
+    assert.ok(out.log.startsWith('falling') && Math.hypot(S.r.doll ? S.r.doll.root.pos.x : S.f.position.x, S.r.doll ? S.r.doll.root.pos.z : S.f.position.z) > 2.5, 'blown off its feet: ' + out.log);
+    const F = stage(), far = run(F, 1, { .3: r => r.blast({ x: 9, y: 0, z: 0 }, 11, 5) });
+    assert.ok(far.log === '' && far.steps === 0, 'out of reach of it, nothing');
+  }
+  // bracing: arms up when told, and against a wall it runs into
+  {
+    const S = stage(), arm = S.f.rig.parts.armR; let up = 0;
+    run(S, 2, { .3: (r, f) => r.brace({ x: 2, y: 1, z: 3 }, .9), .9: () => { up = arm.rotation.x; } });
+    assert.ok(up < -1.2 && Math.abs(arm.rotation.x) < .3, 'guards its head (' + up.toFixed(2) + ') and lowers its arms after');
+    const W = stage(); W.w.box(null, 4, 3, .3, { fixed: true, at: { x: 0, y: 1.5, z: 4.35 } }); W.w.step(dt);
+    let reach = 0; const out = run(W, 2.4, { .9: (r, f) => { reach = f.rig.parts.armL.rotation.x; } }, { walk: 4.2 });
+    assert.ok(reach < -.8 && out.log.startsWith('stagger') && W.f.position.z < 4.1, 'running at a wall: hands out (' + reach.toFixed(2) + '), then knocked back off it: ' + out.log);
+  }
+  // off a ledge: no ground under the step it needs
+  {
+    const scene = new THREE.Scene(), w = new World3D({ gravity: -9.81 });
+    const top = new THREE.Mesh(new THREE.BoxGeometry(60, .4, 60)); top.position.set(0, -.2, 29); const low = new THREE.Mesh(new THREE.BoxGeometry(200, .4, 200)); low.position.y = -1.6; scene.add(top, low); w.ground(scene);
+    const f = person(); scene.add(f); const r = new Reactions(f, { world: w, ground: (x, z) => z > -1 ? 0 : -1.4 });
+    const out = run({ f, r, w }, 6.5, { .3: r => r.hit([0, 0, -2.2]) });
+    assert.ok(out.log.startsWith('stagger falling down rising') && out.impact > 4 && Math.abs(f.position.y + 1.4) < .05 && f.position.z < -1, 'backed off a ledge, it falls to the ground below (' + out.impact.toFixed(1) + ' m/s) and gets up there: ' + out.log);
+    w.free();
+  }
+  // with no physics world the fall is acted; with a mover, the mover is out of the way while it is down and put back after
+  {
+    const S = stage(person, { world: false }), out = run(S, 6.5, { .3: r => r.hit([0, 0, -3.6]) });
+    assert.ok(out.log === 'falling down rising steady' && out.landed === 1 && out.rose === 1 && !S.r.doll && S.f.position.z < -.3 && Math.abs(hipsY(S.f) - .97) < .06, 'acted: ' + out.log + ', ' + S.f.position.z.toFixed(2) + ' m back');
+    const M = stage(person, { react: false }), mover = M.w.mover(M.f, { radius: .3, height: 1.8 }), r = new Reactions(M.f, { world: M.w, mover });
+    let off = null; const got = run({ ...M, r }, 7, { .3: r => r.hit([0, 0, -3.6]), 1.5: () => { off = mover.collider.isEnabled(); } });
+    assert.ok(got.log === 'falling down rising steady' && off === false && mover.collider.isEnabled() && Math.hypot(mover.feet.x - M.f.position.x, mover.feet.z - M.f.position.z) < .05 && M.f.position.z < -.8, 'a mover stands aside for the fall and takes the body back where it got up: ' + got.log + ', off ' + off + ', feet ' + mover.feet.z.toFixed(2) + ' body ' + M.f.position.z.toFixed(2));
+    const N = stage(person, { react: false }), walker = N.w.mover(N.f, { radius: .3, height: 1.8 }), rn = new Reactions(N.f, { world: N.w, mover: walker }); N.w.box(null, 4, 3, .3, { fixed: true, at: { x: 0, y: 1.5, z: 1.35 } });
+    const pushed = run({ ...N, r: rn }, 3, { .3: r => r.hit([0, 0, 1.7]) });
+    assert.ok(pushed.log === 'stagger steady' && pushed.steps >= 1 && N.f.position.z > .2 && N.f.position.z < .95 && Math.abs(walker.feet.z - N.f.position.z) < .02, 'shoved with a mover, it staggers as far as the wall lets it: ' + pushed.log + ', ' + N.f.position.z.toFixed(2) + ' m');
+  }
+  console.log('people who react physically: the jointed ragdoll (limits, muscles), nudge, shove, knocked down three ways, limp, trip, blast, bracing, a wall, a ledge, acted falls and a mover ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

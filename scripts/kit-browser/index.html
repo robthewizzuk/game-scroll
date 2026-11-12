@@ -569,6 +569,19 @@ try {
   await new Promise(r => setTimeout(r, 300));
   const kept = await new Promise(res => { const rq = indexedDB.open('gs-creatures'); rq.onsuccess = () => { try { const c = rq.result.transaction('pieces').objectStore('pieces').count(); c.onsuccess = () => res(c.result); c.onerror = () => res(-1); } catch (x) { res(-1); } }; rq.onerror = () => res(-1); });
   ok(kept >= 2, 'creature: ' + kept + ' sculpts saved for next time');
+  // gs.characters.Reactions on the sculpted person (kit-test.mjs has it on figure() and person(); scripts/reactions.cjs films it)
+  {
+    const T = gs.THREE, { Reactions } = gs.characters, opts = { seed: 3, build: 'medium' }; await gs.models.human.ready([opts]);
+    const scene = new T.Scene(), phys = new gs.physics3d.World3D({ gravity: -9.81 }), floor = new T.Mesh(new T.BoxGeometry(100, .4, 100)); floor.position.y = -.2; scene.add(floor); phys.ground(scene);
+    const man = gs.models.human(opts); scene.add(man); const react = new Reactions(man, { world: phys }), hips = () => man.rig.parts.hips.getWorldPosition(new T.Vector3()).y;
+    const play = (secs, at = {}) => { const log = []; let st = react.state, low = 9; for (let i = 0; i <= secs * 60; i++) { at[i]?.(); man.rig.blend({ idle: 0, walk: 1.4 }, 0); man.rig.update(1 / 60, { speed: 0 }); react.update(1 / 60); phys.step(1 / 60); if (react.state !== st) log.push(st = react.state); low = Math.min(low, hips()); } return { log: log.join(' '), low }; };
+    const stood = hips(), shove = play(3, { 18: () => react.hit([0, 0, 1.6]) });
+    ok(shove.log === 'stagger steady' && man.position.z > .25 && Math.abs(hips() - stood) < .05, 'reactions: a sculpted person shoved takes steps and stands: ' + shove.log + ', ' + man.position.z.toFixed(2) + ' m');
+    const fell = play(7, { 18: () => react.hit([0, 0, -3.6]) });
+    ok(fell.log === 'falling down rising steady' && fell.low < .3 && Math.abs(hips() - stood) < .05 && !phys.dolls.length, 'reactions: knocked down it lies on the floor (hips ' + fell.low.toFixed(2) + ') and gets up: ' + fell.log);
+    react.fall(null, { limp: true }); const limp = play(6.5);
+    ok(limp.log === 'down' && react.down && !react.doll, 'reactions: limp, it stays down: ' + limp.log); react.reset(); phys.free();
+  }
 }
 window.result = out;
 </script>
