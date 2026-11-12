@@ -4105,6 +4105,13 @@ console.log('physics ok');
     one.x = 1; crowd.update(0); one.x = 2; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [2, 0], 'two updates between two frames: the move is from where the last frame drew it');
     crowd.frame(); assert.deepEqual([a()[0], a()[12]], [2, 0], 'the frame that shows the move'); crowd.frame(); assert.deepEqual([a()[0], a()[12]], [2, 2], 'a frame drawn again with no update shows nobody moving');
     one.x = 3; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [3, 2]); crowd.frame(); one.x = 4; crowd.update(0); assert.deepEqual([a()[0], a()[12]], [4, 3], 'an update a frame: from the last one'); crowd.clear(); }
+  // a figure handed over at a far level (there a sculpted person leaves its small bones out of the scene) is read with every bone in place, and handed back as it was
+  { const mk = () => { const f = person({ hair: null }), b = f.bones.foreL, kids = b.parent.children; let lod = 0; Object.defineProperty(f, 'lod', { get: () => lod, set(v) { if (!v !== !lod) { if (v) kids.splice(kids.indexOf(b), 1); else kids.push(b); } lod = v; } }); return f; };
+    const f0 = mk(), f2 = mk(); f2.lod = 2;
+    const c0 = new Crowd({ scene, cam }, { of: [f0], moves: ['walk'] }), c2 = new Crowd({ scene, cam }, { of: [f2], moves: ['walk'] }), d0 = c0.tex.image.data, d2 = c2.tex.image.data;
+    let w = 0; for (let i = 0; i < d0.length; i++) w = Math.max(w, Math.abs(d0[i] - d2[i]));
+    assert.ok(d0.length === d2.length && w < 1e-6, 'a figure given at a far level: its moves are read with every bone in place (off by ' + w + ')');
+    assert.ok(f2.lod === 2 && !f2.bones.foreL.parent.children.includes(f2.bones.foreL) && f0.lod === 0, 'and it is handed back at the level it was given'); c0.dispose(); c2.dispose(); }
   crowd.dispose(); assert.ok(scene.children.length === 0 && scene.userData.gsPosed.size === 0, 'dispose takes it out of the scene');
   console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
 }
