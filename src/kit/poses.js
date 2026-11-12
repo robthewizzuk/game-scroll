@@ -178,9 +178,10 @@ const idleLife = p => {
   const a = p * TAU, br = S(a * 3), w = S(a), look = S(a + 1.1) * .5 + S(a * 2 + .4) * .5;
   return { j: {
     hips: [0, .04 * w, .035 * w], spine: [.03 + .012 * br, -.03 * w, -.03 * w], head: [-.02 - .008 * br, .16 * look, -.01 * w],
-    legL: [-.03 - .04 * Math.max(0, -w), -.06, -.035 * w + .03], shinL: [.06 + .16 * Math.max(0, -w), 0, 0], footL: [-.03 - .12 * Math.max(0, -w), 0, 0],
-    legR: [-.03 - .04 * Math.max(0, w), .06, -.035 * w - .03], shinR: [.06 + .16 * Math.max(0, w), 0, 0], footR: [-.03 - .12 * Math.max(0, w), 0, 0],
-    armL: [.03 + .01 * br, 0, -.04], armR: [.03 + .01 * br, 0, .04], foreL: [-.22, -.35, 0], foreR: [-.22, .35, 0], handL: [-.15, -.35, 0], handR: [-.15, .35, 0],
+    // (the toes a little out; the arms hang a little out from the shoulders, so the hands lie beside the thighs and not in them)
+    legL: [-.03 - .04 * Math.max(0, -w), .1, -.035 * w + .03], shinL: [.06 + .16 * Math.max(0, -w), 0, 0], footL: [-.03 - .12 * Math.max(0, -w), 0, 0],
+    legR: [-.03 - .04 * Math.max(0, w), -.1, -.035 * w - .03], shinR: [.06 + .16 * Math.max(0, w), 0, 0], footR: [-.03 - .12 * Math.max(0, w), 0, 0],
+    armL: [.03 + .01 * br, 0, .065], armR: [.03 + .01 * br, 0, -.065], foreL: [-.24, -.35, 0], foreR: [-.24, .35, 0], handL: [-.15, -.35, 0], handR: [-.15, .35, 0],
   }, drop: .004 + .003 * Math.abs(w), shift: [.022 * w, 0, 0] };
 };
 /**
@@ -195,7 +196,7 @@ export const LIFELIKE = {
   idle: { cycle: idleLife, rate: 0, time: 9 },
   walk: gaitOf({ stride: 1.36, stance: .62, reach: .3, lift: .075, liftAt: .4,
     foot: [[0, -.3], [.1, 0], [.42, 0], [.52, .3], [.62, .8], [.72, .5], [.84, -.05], [.94, -.3]],
-    yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: -.03, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
+    yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: .045, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
   jog: gaitOf({ stride: 2.35, stance: .36, reach: .2, lift: .15, liftAt: .35, carry: .03, pull: .6, trail: .6,
     foot: [[0, -.1], [.07, .03], [.23, .05], [.36, .95], [.48, 1], [.7, .4], [.9, -.08]],
     yaw: .1, list: .05, lean: .17, twist: 1.15, arm: .42, armMid: .16, elbow: 1.5, elbowSwing: .25, armIn: .1, armOut: .1, drop: .04, bob: .018, bobAt: 2.3, nod: .012 }),

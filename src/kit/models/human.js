@@ -14,7 +14,7 @@
 // Kit use only: games reach it as gs.models.human.
 import { Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix4, Mesh, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, PIVOT, HC, ARM, BROW, MOUTH_DIP, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, PIVOT, HC, ARM, EYE, BROW, CORNER, mouthAt, eyeRim, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE } from '../poses.js';
 import { reach } from '../characters.js';
@@ -153,7 +153,7 @@ const DETAIL = [.5, .75, 1, 1];   // see(): how tall a person counts as, by qual
 const DEF = { skin: '#d9ab86', hair: '#3b2a1a', eyes: '#141416', iris: '#5a7a9a', lips: '#a8665c' };
 function specOf(o) {
   const fem = o.sex === 'f' || o.sex === 'female', g = o.girth ?? 1;
-  const build = { shoulders: fem ? .9 : 1, chest: (fem ? .92 : 1) * g, waist: (fem ? .87 : 1) * g, hips: (fem ? 1 : 1) * g ** .5, limbs: fem ? .88 : 1, bust: fem ? 1 : 0, neck: fem ? .84 : 1, ...(o.build || {}) };
+  const build = { shoulders: fem ? .9 : 1, chest: (fem ? .92 : 1) * g, waist: (fem ? .87 : 1) * g, hips: (fem ? 1.04 : 1) * g ** .5, limbs: fem ? .88 : 1, bust: fem ? 1 : 0, neck: fem ? .84 : 1, ...(o.build || {}) };
   const of = o.outfit || {}, top = { kind: 'shirt', colour: o.body ?? '#3a6ea5', sleeves: o.sleeves ?? 'long', pockets: 0, buttons: null, collar: undefined, ...(of.top || {}) };
   if (top.kind === 'tunic') { top.pockets ??= 4; } if (top.collar === undefined) top.collar = top.kind === 'shirt' ? false : null;
   const legs = { kind: 'trousers', colour: o.legs ?? '#2b2b38', ...(of.legs || {}) }, feet = { kind: 'shoes', colour: o.shoes ?? '#1a1a1a', ...(of.feet || {}) };
@@ -229,7 +229,7 @@ export function human(o = {}) {
 
   // ---- one set of points for all three levels, coloured for this person
   const n = pieces.reduce((a, p) => a + p.n, 0), P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), U = new Float32Array(n * 2), SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4), cls = new Uint8Array(n);
-  const col = new Color(), dirt = new Color('#6a5c48'), browC = new Color(pal.brow), skinC = new Color(pal.skin), lipC = new Color(pal.lips), mouthC = new Color(pal.mouth), eyeC = [new Color(o.eyes ?? DEF.eyes), new Color(o.iris ?? DEF.iris), new Color('#2a221c'), new Color('#d9d3ca')];
+  const col = new Color(), dirt = new Color('#6a5c48'), browC = new Color(pal.brow), skinC = new Color(pal.skin), lipC = new Color(pal.lips), mouthC = new Color(pal.mouth), lashC = new Color(pal.lash), rim = eyeRim(sp.face.eyes), eyeC = [new Color(o.eyes ?? DEF.eyes), new Color(o.iris ?? DEF.iris), new Color('#2a221c'), new Color('#d9d3ca')];
   const asOf = name => (typeof o.slots?.[name] === 'object' && o.slots[name].as) || AS[name] || (name.startsWith('eye') ? 'eyes' : 'hard');
   const stub = sp.fem ? 0 : o.stubble ?? .35;
   const camoOf = {}; for (const [slot, part] of [['top', sp.top], ['legs', sp.legs], ['hat', sp.hat]]) if (part?.camo) camoOf[slot] = [].concat(part.camo).map(c => new Color(c));
@@ -259,9 +259,15 @@ export function human(o = {}) {
           const ax = abs(x), [b0, b1, b2] = BROW, q = ax < b1[0] ? [b0, b1] : [b1, b2], t = Math.max(0, Math.min(1, (ax - q[0][0]) / (q[1][0] - q[0][0]))), dy = hy - (q[0][1] + (q[1][1] - q[0][1]) * t), dx = ax < b0[0] ? b0[0] - ax : ax > b2[0] ? ax - b2[0] : 0;
           const k = Math.max(name === 'brow' ? .5 : 0, ss((sp.fem ? .005 : .0062) - .002 * ss(b1[0], b2[0], ax), sp.fem ? .002 : .0031, Math.hypot(dx, dy))) * (sp.fem ? .92 : .94); if (k > 0) col.lerp(browC, k);
         }
-        if (hz > .06 && hy < -.05 && hy > -.086) {   // lips, and the line between them
-          const fl = sp.face.lips, so = sp.face.soft, e = Math.min(Math.hypot(x / (.0245 - .0035 * so), (hy + .0622) / (.0048 * fl)), Math.hypot(x / (.021 - .002 * so), (hy + .073) / (.0062 * fl))), k = ss(1.12, .78, e) * (sp.fem ? .8 : .6); if (k > 0) col.lerp(lipC, k);   // (a man's lips are nearer his skin's colour)
-          const line = bump(hy + MOUTH_DIP * abs(x), -.0668, .0015) * ss(.0245 - .0035 * so, .018 - .003 * so, abs(x)); if (line > .02) col.lerp(mouthC, line * (sp.fem ? .75 : .6));
+        if (hz > .06 && hy < -.05 && hy > -.09) {   // lips, and the line between them (where the sculpting put them)
+          const m = mouthAt(x, hy, sp.face); if (m[1] > 0) col.lerp(lipC, m[1] * (sp.fem ? .8 : .6));   // (a man's lips are nearer his skin's colour)
+          if (m[2] > .02) col.lerp(mouthC, m[2] * (sp.fem ? .75 : .6));
+        }
+        if (hz > .06 && abs(hy) < .012 && abs(abs(x) - EYE[0]) < .019) {   // the lids' edges: a line of lashes along the upper one, a fainter one under the eye; the floor of the corner by the nose is pink flesh
+          const r = rim(abs(x), hy), pink = name === 'lash' ? ss(.0098, .0118, EYE[0] - abs(x)) * (hz < EYE[2] + .0092 ? 1 : 0) : 0;
+          if (name === 'lash') col.copy(skinC);
+          if (pink > 0) { col.r *= 1 + .06 * pink; col.g *= 1 - .22 * pink; col.b *= 1 - .2 * pink; }
+          const k = (r[1] ? ss(.0042, .0008, r[0]) * (sp.fem ? .8 : .5) : ss(.0014, .0002, r[0]) * (sp.fem ? .35 : .18)) * (1 - pink); if (k > 0) col.lerp(lashC, k);
         }
       }
       // creases in soft shadow (warmer on skin: light soaks through it)

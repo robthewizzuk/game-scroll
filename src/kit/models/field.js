@@ -29,14 +29,21 @@ export function lumps(x, y, z) {
 
 /**
  * A body part drawn as slices up its height: rows [y, half width, half depth, z of the middle (0),
- * x of the middle (0), squareness (2 round .. 4 boxy)], bottom to top, joined in smooth curves. The
- * way a tailor or a potter thinks: torsos, legs, sleeves, boots, helmets.
+ * x of the middle (0), squareness (2 round .. 4 boxy), half depth behind the middle (the same as in
+ * front), squareness behind (the same)], bottom to top, joined in smooth curves. The way a tailor or
+ * a potter thinks: torsos, legs, sleeves, boots, helmets. With a depth of its own behind, a slice is
+ * one shape in front of its widest line and another behind it: a chest and a back, a face and a skull.
  */
+/** A smooth step from a to b (either way round), and a bump of width w about c. */
+export const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+export const bump = (x, c, w) => Math.exp(-(((x - c) / w) ** 2));
+
 export class Loft {
   constructor(rows, n = 192) {
-    const R = rows.map(r => [r[0], r[1], r[2], r[3] ?? 0, r[4] ?? 0, r[5] ?? 2]).sort((a, b) => a[0] - b[0]), m = R.length;
+    const R = rows.map(r => [r[0], r[1], r[2], r[3] ?? 0, r[4] ?? 0, r[5] ?? 2, r[6] ?? r[2], r[7] ?? r[5] ?? 2]).sort((a, b) => a[0] - b[0]), m = R.length;
     this.y0 = R[0][0]; this.y1 = R[m - 1][0]; this.n = n; this.inv = (n - 1) / (this.y1 - this.y0);
-    const T = this.t = new Float32Array(n * 6);
+    // a table of slices: half width, half depth in front, middle z, middle x, squareness in front (0..1), lean, half depth behind, squareness behind (0..1)
+    const T = this.t = new Float32Array(n * 8), COL = [0, 1, 2, 3, 4, 6, 7];   // where a row's values 1..7 go
     // each value's slope at each row (Catmull-Rom, held back so a curve never overshoots its rows)
     const M = R.map((r, i) => r.map((_, c) => {
       if (!c) return 0;
@@ -47,35 +54,53 @@ export class Loft {
     for (let i = 0, s = 0; i < n; i++) {
       const y = this.y0 + (this.y1 - this.y0) * i / (n - 1); while (s < m - 2 && y > R[s + 1][0]) s++;
       const a = R[s], b = R[s + 1], h = b[0] - a[0] || 1e-9, u = cl((y - a[0]) / h), u2 = u * u, u3 = u2 * u;
-      for (let c = 1; c <= 5; c++) {
+      for (let c = 1; c <= 7; c++) {
         let v = (2 * u3 - 3 * u2 + 1) * a[c] + (u3 - 2 * u2 + u) * h * M[s][c] + (-2 * u3 + 3 * u2) * b[c] + (u3 - u2) * h * M[s + 1][c];
-        if (c <= 2) v = mx(v, 1e-4);
-        T[i * 6 + c - 1] = c === 5 ? cl((v - 2) / 2) : v;   // squareness kept as 0 (round) .. 1 (boxy)
+        if (c <= 2 || c === 6) v = mx(v, 1e-4);
+        T[i * 8 + COL[c - 1]] = c === 5 || c === 7 ? cl((v - 2) / 2) : v;   // squareness kept as 0 (round) .. 1 (boxy)
       }
     }
     // where the wall leans (a shoulder, a hat's crown) the measure is scaled so it stays a true distance
     const dy = (this.y1 - this.y0) / (n - 1) || 1e-9;
     for (let i = 0; i < n; i++) {
-      const a = mx(0, i - 1) * 6, b = mn(n - 1, i + 1) * 6, h = (b - a) / 6 * dy;
-      const sl = mx(abs(T[b] - T[a]), abs(T[b + 1] - T[a + 1])) / h + sqrt((T[b + 2] - T[a + 2]) ** 2 + (T[b + 3] - T[a + 3]) ** 2) / h;
-      T[i * 6 + 5] = 1 / sqrt(1 + sl * sl);
+      const a = mx(0, i - 1) * 8, b = mn(n - 1, i + 1) * 8, h = (b - a) / 8 * dy;
+      const sl = mx(abs(T[b] - T[a]), abs(T[b + 1] - T[a + 1]), abs(T[b + 6] - T[a + 6])) / h + sqrt((T[b + 2] - T[a + 2]) ** 2 + (T[b + 3] - T[a + 3]) ** 2) / h;
+      T[i * 8 + 5] = 1 / sqrt(1 + sl * sl);
     }
+    this.even = rows.every(r => r[6] == null);   // every slice the same behind as in front
+    this.ra = 0; this.ru = 0;
     let zl = 1e9, zh = -1e9, xl = 1e9, xh = -1e9;
-    for (let i = 0; i < n; i++) { const a = T[i * 6], b = T[i * 6 + 1], cz = T[i * 6 + 2], cx = T[i * 6 + 3]; xl = mn(xl, cx - a); xh = mx(xh, cx + a); zl = mn(zl, cz - b); zh = mx(zh, cz + b); }
+    for (let i = 0; i < n; i++) { const a = T[i * 8], cz = T[i * 8 + 2], cx = T[i * 8 + 3]; xl = mn(xl, cx - a); xh = mx(xh, cx + a); zl = mn(zl, cz - T[i * 8 + 6]); zh = mx(zh, cz + T[i * 8 + 1]); }
     this.lo = [xl, this.y0, zl]; this.hi = [xh, this.y1, zh];
-    this.s = [0, 0, 0, 0, 0, 1];
+    this.s = [0, 0, 0, 0, 0, 1, 0, 0];
   }
-  /** The slice at height y: [half width, half depth, middle z, middle x, squareness 0..1, lean] (the same array each call). */
+  /** The slice at height y: [half width, half depth in front, middle z, middle x, squareness 0..1, lean, half depth behind, squareness behind] (the same array each call). */
   sec(y) {
-    const T = this.t, f = cl((y - this.y0) * this.inv, 0, this.n - 1.0001), i = f | 0, u = f - i, a = i * 6, s = this.s;
-    for (let c = 0; c < 6; c++) s[c] = T[a + c] + (T[a + 6 + c] - T[a + c]) * u;
+    const T = this.t, f = cl((y - this.y0) * this.inv, 0, this.n - 1.0001), i = f | 0, u = this.ru = f - i, a = this.ra = i * 8, s = this.s;
+    for (let c = 0; c < 8; c++) s[c] = T[a + c] + (T[a + 8 + c] - T[a + c]) * u;
     return s;
   }
-  /** How far outside the side wall of slice s (from sec) the point is (negative inside), ignoring the ends. */
+  /** How far outside the side wall of slice s (the one sec() last gave) the point is (negative inside), ignoring the ends. */
   wall(s, x, z) {
-    const vx = (x - s[3]) / s[0], vz = (z - s[2]) / s[1], x2 = vx * vx, z2 = vz * vz; let q = sqrt(x2 + z2);
-    if (s[4] > 0) q += (sqrt(sqrt(x2 * x2 + z2 * z2)) - q) * s[4];
-    return (q - 1) * mn(s[0], s[1]) * s[5];
+    const dz = z - s[2], back = dz < 0, bz = back ? s[6] : s[1], vx = (x - s[3]) / s[0], vz = dz / bz, sq = back ? s[7] : s[4], x2 = vx * vx, z2 = vz * vz; let q = sqrt(x2 + z2);
+    if (sq > 0) q += (sqrt(sqrt(x2 * x2 + z2 * z2)) - q) * sq;
+    if (this.even) return (q - 1) * mn(s[0], s[1]) * s[5];
+    // a lopsided loft (a face: much deeper in front than behind, its widest line running back along a jaw) is measured
+    // by its own slope at the point, across the slice and up it (from the table's rows either side), as a ball is:
+    // one lean for a whole slice would call the chin's upright front as slanted as the jaw's corner beside it
+    const g = sqrt(x2 / (s[0] * s[0]) + z2 / (bz * bz)); if (g < 1e-9) return -mn(s[0], bz);
+    // (far from the wall that slope says little: there the lean counts for no more than a steep shoulder's would)
+    // (the slope up the slice is taken across a whole step of the table, half from the step on each side: taken from one step alone
+    // it jumps at every row, and anything laid a little off the wall, a rib, a hem, came out with a saw's edge)
+    const T = this.t, a = this.ra, u = this.ru, gq = g / q, q1 = this.q(T, a, x, z), q2 = this.q(T, a + 8, x, z);
+    const qy = (u < .5 ? (.5 - u) * (q1 - this.q(T, mx(a - 8, 0), x, z)) + (.5 + u) * (q2 - q1) : (1.5 - u) * (q2 - q1) + (u - .5) * (this.q(T, mn(a + 16, this.n * 8 - 8), x, z) - q2)) * this.inv;
+    return (q - 1) / sqrt(gq * gq + mn(qy * qy, 6.25 * gq * gq));
+  }
+  // (the same measure across the table's slice at a)
+  q(T, a, x, z) {
+    const dz = z - T[a + 2], back = dz < 0, vx = (x - T[a + 3]) / T[a], vz = dz / (back ? T[a + 6] : T[a + 1]), sq = back ? T[a + 7] : T[a + 4], x2 = vx * vx, z2 = vz * vz; let q = sqrt(x2 + z2);
+    if (sq > 0) q += (sqrt(sqrt(x2 * x2 + z2 * z2)) - q) * sq;
+    return q;
   }
   side(x, y, z) { return this.wall(this.sec(y), x, z); }
   d(x, y, z) {
@@ -84,8 +109,8 @@ export class Loft {
   }
   /** The point on the wall at angle th (0 is the front, +z; turning towards +x) and height y, pushed out by `out` metres. */
   at(th, y, out = 0) {
-    const s = this.sec(y), sx = Math.sin(th), cz = Math.cos(th), vx = sx / s[0], vz = cz / s[1], x2 = vx * vx, z2 = vz * vz; let q = sqrt(x2 + z2);
-    if (s[4] > 0) q += (sqrt(sqrt(x2 * x2 + z2 * z2)) - q) * s[4];
+    const s = this.sec(y), sx = Math.sin(th), cz = Math.cos(th), back = cz < 0, vx = sx / s[0], vz = cz / (back ? s[6] : s[1]), sq = back ? s[7] : s[4], x2 = vx * vx, z2 = vz * vz; let q = sqrt(x2 + z2);
+    if (sq > 0) q += (sqrt(sqrt(x2 * x2 + z2 * z2)) - q) * sq;
     return [s[3] + sx * (1 / q + out), y, s[2] + cz * (1 / q + out)];
   }
 }
@@ -157,6 +182,9 @@ const KINDS = {
       ...box3([ax, ay, az], A + B),
     };
   },
+  // { field: (x, y, z) => metres outside (negative inside), lo, hi }: a shape measured by a function of its own (a face's opening for an eye, hair that thins to nothing at its edge)
+  // (m, out: an outline of its own, as a band's or a patch's: m(x, y, z) is how far outside it a point is; what lies inside is this shape's, and its edge is made straight)
+  field(s) { return s.m ? { d: s.field, m: s.m, out: s.out || 0, lo: s.lo.slice(), hi: s.hi.slice() } : { d: s.field, lo: s.lo.slice(), hi: s.hi.slice() }; },
   // { loft: Loft | rows, out }: a body part in slices (see Loft); out: grown by this much (a coat over a body)
   loft(s) {
     const L = s.loft instanceof Loft ? s.loft : new Loft(s.loft), o = s.out || 0;
@@ -166,7 +194,7 @@ const KINDS = {
   band(s) {
     const L = s.band instanceof Loft ? s.band : new Loft(s.band), o = s.out ?? .005, [ya, yb] = s.y, ym = (ya + yb) / 2, hh = (yb - ya) / 2, e = s.edge ?? mn(o, hh) * .8, th = s.th;
     const tm = th ? (th[0] + th[1]) / 2 : 0, tw = th ? (th[1] - th[0]) / 2 : 0, lo = [1e9, ya - e, 1e9], hi = [-1e9, yb + e, -1e9];
-    for (let i = 0; i <= 8; i++) { const c = L.sec(ya + (yb - ya) * i / 8); lo[0] = mn(lo[0], c[3] - c[0] - o); hi[0] = mx(hi[0], c[3] + c[0] + o); lo[2] = mn(lo[2], c[2] - c[1] - o); hi[2] = mx(hi[2], c[2] + c[1] + o); }
+    for (let i = 0; i <= 8; i++) { const c = L.sec(ya + (yb - ya) * i / 8); lo[0] = mn(lo[0], c[3] - c[0] - o); hi[0] = mx(hi[0], c[3] + c[0] + o); lo[2] = mn(lo[2], c[2] - c[6] - o); hi[2] = mx(hi[2], c[2] + c[1] + o); }
     // m: how far outside the band's outline (along the wall) a point is
     const m = (x, y, z) => {
       let m = abs(y - ym) - hh;
@@ -339,23 +367,26 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
   // ---- whose surface each point is: the nearest shape's (a carved wall belongs to its carver only if it names a slot)
   const listAt = (x, y, z) => lists[cl(((x - lo[0]) / bs) | 0, 0, bx - 1) + bx * (cl(((y - lo[1]) / bs) | 0, 0, by - 1) + by * cl(((z - lo[2]) / bs) | 0, 0, bz - 1))];
   // (the shape the surface would move furthest without: melted shapes float a little off each of their own
-  // surfaces, so "the nearest" would hand a brow or a lip a wide rim of the skin around it)
+  // surfaces, so "the nearest" would hand a brow or a lip a wide rim of the skin around it. Measured with the
+  // bands and patches left out: beside a pocket's edge the surface is the pocket's own, so it would move without
+  // none of the others, and the least nudge decided it: trousers a centimetre under a tunic's skirt took its pockets' edges)
   let own = new Int16Array(n), press = wob ? new Float32Array(n) : null; const E = new Float64Array(64);
   // A band or a patch (a belt, a pocket, a strap) owns what lies inside its outline where the surface is its
   // own; where two lie over each other, the one that stands proudest.
   for (let i = 0; i < n; i++) {
     const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], l = listAt(x, y, z), m = mn(l.length, 64); let d = 1e9, live = 0, last = -1, dec = -1, top = -1;
     for (let j = 0; j < m; j++) {
-      const s = l[j], e = E[j] = boxGap(s, x, y, z) > s.k + .012 ? 1e3 : s.d0(x, y, z); d = s.cut ? smax(d, -e, s.k) : smin(d, e, s.k);
-      if (s.m) { if (abs(e) < s.k + .004 && s.out >= top && s.m(x, y, z) < 0) { top = s.out; dec = j; } }
-      else if (abs(e) < s.k + .012 && !(s.cut && s.slot == null)) { live++; last = j; }
+      const s = l[j], e = E[j] = boxGap(s, x, y, z) > s.k + .012 ? 1e3 : s.d0(x, y, z);
+      if (s.m) { if (abs(e) < s.k + .004 && s.out >= top && s.m(x, y, z) < 0) { top = s.out; dec = j; } continue; }
+      d = s.cut ? smax(d, -e, s.k) : smin(d, e, s.k);
+      if (abs(e) < s.k + .012 && !(s.cut && s.slot == null)) { live++; last = j; }
     }
     let bj = dec >= 0 ? dec : last;
     if (dec < 0 && live > 1) {
       let best = -1;
       for (let c = 0; c < m; c++) {
         const sc = l[c]; if (sc.m || abs(E[c]) >= sc.k + .012 || (sc.cut && sc.slot == null)) continue;
-        let r = 1e9; for (let j = 0; j < m; j++) { if (j === c) continue; const s = l[j], e = E[j]; r = s.cut ? smax(r, -e, s.k) : smin(r, e, s.k); }
+        let r = 1e9; for (let j = 0; j < m; j++) { const s = l[j], e = E[j]; if (j === c || s.m) continue; r = s.cut ? smax(r, -e, s.k) : smin(r, e, s.k); }
         const v = abs(r - d); if (v > best) { best = v; bj = c; }
       }
     }
