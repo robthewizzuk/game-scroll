@@ -8,7 +8,7 @@
 // hurt, smoothing), plus three's own GTAO for ambient occlusion and the outdoor air as a fog node.
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
-import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending,
+import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
   MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
@@ -44,7 +44,7 @@ import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 import { S2_HOLD } from './sgsr2.js';
-import { FrameGen, StillCheck, frameGenMRT, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
+import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
 
 const LUM = vec3(.2126, .7152, .0722);
 
@@ -718,8 +718,29 @@ export function gpuParticles(parts) {
   return { sprite: sp, sync(n) { for (const at of [pos, size, tint]) sendUsed(at, n); sp.count = n; } };
 }
 
+// The scene pass's extra pictures (normals, surface colour, shiny things, motion) say what the solid surface
+// at each pixel is. three writes a pass's extra pictures with no blending unless told otherwise, so a see-through
+// thing replaced them across everything it drew, its soft edges and empty corners too: each puff of dust (a soft
+// disc on a square) put its own camera-facing normal over the ground's, ambient occlusion shaded the ground
+// there as a wall facing the camera, and every puff sat in a dark square. Now those pictures are blended the
+// material's own way (OWN), and what is drawn over the scene without writing depth (dust, smoke, glows, decals,
+// blob shadows) writes nothing to them: zero leaves a picture as it was under every kind of blending three has.
+// The surface behind keeps its normal and its ambient occlusion, as on WebGL, whose AO sees solid things only.
+const OWN = new BlendMode(MaterialBlending);
+class PerMaterial extends Node {   // one of two outputs, by the material being drawn (worked out once per material, when it compiles)
+  constructor(pick) { super('vec4'); this.pick = pick; }
+  setup(builder) { return this.pick(builder.material); }
+}
+const drawnOver = m => seeThrough(m) && m.depthWrite === false;
+/** An extra picture of the scene's pass that things drawn over the scene leave alone (give the pass ownBlend() too). */
+const surface = node => new PerMaterial(m => drawnOver(m) ? vec4(0) : node);
+// (the normals picture's alpha: 1 where the pixel takes no ambient occlusion. See-through things that do write
+// depth, water and glass, are the surface at their pixels: their normal goes in whole, with no AO on them)
+const normalOut = skip => new PerMaterial(m => drawnOver(m) ? vec4(0) : vec4(normalView, skip || seeThrough(m) ? 1 : 0));
+const ownBlend = (m, names) => { for (const n of names) m.setBlendMode(n, OWN); return m; };
+
 /** A material that takes no ambient occlusion (hd3d.js seeThrough3d: see-through, cut-out, noAO). */
-// Its own MRT (output, and a zero normal so the AO pass skips it). three builds a material MRT against the
+// Its own MRT (output, and a normal that says so: the AO pass skips it). three builds a material MRT against the
 // target it is drawn into and keeps only the outputs the target has textures for, so in a target with none
 // of them (a cube camera's, a card's copy) nothing was left: an empty WGSL output, an invalid pipeline and
 // that frame's whole command buffer dropped. There the plain colour is written instead.
@@ -733,7 +754,7 @@ class SoftMRT extends MRTNode {
     return super.setup(builder);
   }
 }
-export function noAO(m) { m.mrtNode = new SoftMRT({ output, normal: vec4(normalView, 0) }); }   // (output too: without an MRT in use, three draws the material's own MRT alone)
+export function noAO(m) { m.mrtNode = new SoftMRT({ output, normal: normalOut(true) }); }   // (output too: without an MRT in use, three draws the material's own MRT alone)
 
 /* ---------- gs.props on WebGPU ---------- */
 // Props draws each kind as an InstancedMesh2 (@three.ez/instanced-mesh), which reads its matrices from a
@@ -1242,12 +1263,15 @@ export class GpuChain {
     const fit = Math.floor((this.r.gsPixelBytes || 32) / 8) - 1 - (mrtOn ? 2 : mbOn ? 1 : 0) - (aoOn ? 1 : 0);
     if (giOn && fit < 1) giOn = false;
     // (the normals picture's alpha says whether a pixel takes ambient occlusion: see-through things,
-    // leaf cards and anything marked noAO write 0, as WebGL's AO leaves them out: noAO() below)
+    // leaf cards and anything marked noAO write 1, as WebGL's AO leaves them out: noAO() above; and what is
+    // drawn over the scene without writing depth leaves these pictures as the surface behind it wrote them)
     // (live bounce light, v.liveBounce: each pixel's own surface colour too, which the bounced light tints)
-    const nrm = aoOn ? { normal: vec4(normalView, 1), ...(giOn ? { diffuse: vec4(diffuseColor.rgb, 1) } : {}) } : {};
+    const nrm = aoOn ? { normal: normalOut(false), ...(giOn ? { diffuse: surface(vec4(diffuseColor.rgb, 1)) } : {}) } : {};
     // reflections (v.reflect()): one more picture, of which pixels are shiny things and how rough
-    const reflOn = aoOn && this.reflOn && fit >= (giOn ? 2 : 1); if (reflOn) nrm.gsRefl = reflMRT();
-    if (mrtOn) sp.setMRT(frameGenMRT(nrm)); else if (mbOn) sp.setMRT(mrt({ output, velocity: vec4(velocity, 0, 1), ...nrm })); else if (aoOn) sp.setMRT(mrt({ output, ...nrm }));   // (motion blur: velocity for each thing's own move)
+    const reflOn = aoOn && this.reflOn && fit >= (giOn ? 2 : 1); if (reflOn) nrm.gsRefl = surface(reflMRT());
+    // (motion blur alone: velocity for each thing's own move; see-through things leave the motion behind them, as frameGenMRT's do)
+    const pics = mrtOn ? frameGenMRT(nrm) : mbOn ? ownBlend(mrt({ output, velocity: new PerMaterial(m => seeThrough(m) ? vec4(0) : vec4(velocity, 0, 1)), ...nrm }), ['velocity']) : aoOn ? mrt({ output, ...nrm }) : null;
+    if (pics) sp.setMRT(ownBlend(pics, Object.keys(nrm)));
     const U = this.U;
     let colT = sp.getTextureNode('output');
     // (OIT: the see-through things are blended over the scene by the pass node itself, so that's what's read on)
@@ -1283,7 +1307,7 @@ export class GpuChain {
       this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = 12;
       // (WebGL's GTAOPass smooths its own noise; here three's denoise does it)
       this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), sp.getTextureNode('normal'), this.cam);
-      aoF = mix(float(1), this.dnN.r, sp.getTextureNode('normal').a.mul(.9)); lit = lit.mul(aoF);
+      aoF = mix(float(1), this.dnN.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
     }
     let src = colT, srcAo = aoF;
     const V = this.V, dT = sp.getTextureNode('depth');
