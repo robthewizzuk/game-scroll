@@ -643,23 +643,48 @@ works on instanced meshes and on WebGL and WebGPU alike.
   shows the walls, windows and red sofa in the right places instead of a far-off sky. Every lit
   standard material on a mesh inside the box gets it (or only `meshes`); call it once the room is
   built, before the first draw. `.bake()` again after the room changes, `.remove()` to drop it.
-- `v.occluders(list)` turns on occlusion culling: whatever is fully hidden behind big solid boxes
-  isn't drawn (the blocks behind a row of buildings, the rooms behind a wall). `list` is boxes
-  `{ x0, x1, y0, y1, z0, z1 }` in world metres, `Box3`s, or solid box-like meshes; `null` turns it off.
-  List only big, solid things that stay put (walls, buildings, cliffs), not glass or fences. Every mesh,
-  and each `gs.props` instance, is tested by its bounds each frame; `userData.noOcclude = true`
-  always draws a mesh. Hidden things still cast their shadows and show in reflections. It runs on the
-  CPU (a small depth picture of the nearest boxes, `{ max: 300 }` of them), so it's the same on WebGL
-  and WebGPU, and it only skips what is surely hidden. `gs.city` turns it on for its buildings by
-  itself (`occlude: false` to stop it). `v.occlusion.stats` says what the last frame skipped.
+- **What is hidden behind other things isn't drawn**, by itself (occlusion culling): the rooms behind a
+  wall, the lanes behind a row of houses, a village behind a hill. Nothing is listed or marked. After
+  each frame the graphics chip boils that frame's depth down to a small picture (about 2,400 texels:
+  how far the farthest thing in each block of the frame is, and how near the nearest) and hands it
+  back a frame or two later. The engine carries it over to where the camera is now and keeps only what
+  it can be sure of: with the camera where it was (it may have turned), everything; once it has moved,
+  only blocks that are one surface all over, and none of the edge where one surface ends. Every mesh
+  (a sculpted person or creature by its bones), each copy of a `gs.props` kind and each cluster of a
+  cluster-detail mesh is then tested by its bounds, and left out of the frame when it is surely hidden.
+  - A frame with the hidden things left out is the same picture as the frame drawn whole
+    (`scripts/detail-test.cjs --page occlude` compares them, frame by frame). A thing that moves,
+    changes shape or goes takes its old place out of the picture that same frame, so what was behind a
+    door is drawn the frame it opens. Glass, fences and anything see-through hide nothing; leaves and
+    grass that sway (`looks.leaves`, `land.meadow`) are trusted a little less round where they are.
+  - Hidden things still cast their shadows, show in reflections and are hit by rays: they only step
+    off the camera's layer for the main draw.
+  - It costs about half a millisecond of code a frame on a build machine (`__hd.info.occMs`), so a
+    view of fewer than 20,000 triangles and 120 draws is never tried, and a view where it saves next
+    to nothing (under 2,000 triangles a frame, or 2% of the frame) rests for a while and tries again
+    later. `__hd.info.occluded` and `occTris` say what the last frame left out; `occAwake` whether it
+    is at work.
+  - Limits: on WebGL, the still things that static batching has merged are left out a merged mesh at
+    a time. On WebGPU, a `gs.props` kind picked on the chip (2,000 copies or more) or one that casts
+    shadows is not left out copy by copy. The shadow maps are still drawn for everything. It is off
+    for see-through views (AR), a card's picture, and cameras with no perspective.
+  - Switches: `mesh.userData.noOcclude = true` always draws a mesh, `v.autoOcclude = false` stops it
+    for a view, `__hd.occlude = false` everywhere (to compare), `__hd.occludeTexels` sizes the depth
+    picture (6000 hides a little more of what is small and far, for about twice the work).
+- `v.occluders(list)` adds boxes of your own to that: big solid things that stay put (walls,
+  buildings, cliffs), as boxes `{ x0, x1, y0, y1, z0, z1 }` in world metres, `Box3`s, or solid
+  box-like meshes; `null` clears them. They hide things from the first frame, before any depth
+  picture is back, and in views where the last frame's depth can't be used (`{ max: 300 }` of the
+  nearest are used). Most games need none. `gs.city` lists its buildings by itself (`occlude: false`
+  to stop it). `v.occlusion.stats` says what the last frame tested and skipped.
 - GPU culling (WebGPU): a `gs.props` kind with 2,000 copies or more is culled on the graphics chip
   instead of the CPU. A compute pass tests every copy against the view and the lights' shadow views,
   picks its detail level by distance, and packs the ones that pass into a list drawn with one indirect
   draw per level. The CPU only sends the copies again when the game moves, hides or recolours one, so a
   forest of 6,000 trees costs about 2 ms of CPU a frame instead of 6. Games don't change anything.
   `__hd.gpuCull` is `'auto'` (the default), `true` (every kind) or `false` (always the CPU). It is off while
-  frame generation runs, because frame generation needs each copy to keep its place in the list. It
-  skips occlusion culling, and a kind with a list of materials stays on the CPU. Copies that move every
+  frame generation runs, because frame generation needs each copy to keep its place in the list. Its
+  copies are not left out when hidden behind things, and a kind with a list of materials stays on the CPU. Copies that move every
   frame should be plain meshes anyway; on the GPU path a moved copy gets no motion blur for that frame.
   On the CPU path (smaller kinds, and every kind while frame generation runs) each copy keeps its place
   in the list while it stays in view, and only the copies that came in, left, changed level or were

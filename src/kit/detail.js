@@ -30,15 +30,18 @@ export const DETAIL = {
   shadowPx: 1.5,
   /** The camera whose picks are counted in stats (the view's own). */
   camera: null,
+  /** That camera's occlusion culling for this frame (occlusion.js; the view sets it): clusters behind something are left out of its picture. */
+  occ: null,
 };
 /**
  * What the last frame drew through cluster detail, for DETAIL.camera: meshes, clusters and runs (draws)
- * picked, triangles drawn, and the triangles those meshes have in full; and for every camera of the frame
- * (shadow maps too): picks made again (a camera or mesh that moved) and the milliseconds they took.
+ * picked, triangles drawn, the triangles left out because they are behind something (hid), and the triangles
+ * those meshes have in full; and for every camera of the frame (shadow maps too): picks made again (a
+ * camera or mesh that moved) and the milliseconds they took.
  */
-export const stats = { meshes: 0, clusters: 0, draws: 0, tris: 0, full: 0, picks: 0, ms: 0 };
+export const stats = { meshes: 0, clusters: 0, draws: 0, tris: 0, hid: 0, full: 0, picks: 0, ms: 0 };
 /** Starts a frame's count (the view calls it before it draws). */
-export function frame(camera) { DETAIL.camera = camera; stats.meshes = stats.clusters = stats.draws = stats.tris = stats.full = stats.picks = stats.ms = 0; }
+export function frame(camera) { DETAIL.camera = camera; stats.meshes = stats.clusters = stats.draws = stats.tris = stats.hid = stats.full = stats.picks = stats.ms = 0; }
 
 const MAX_DRAWS = 16384;   // most runs one mesh can draw (the size of the shared id texture below)
 
@@ -58,12 +61,15 @@ export class Clusters {
    * unit's distance, over the pixels of error allowed); ortho: no distance in it (k is then pixels a unit
    * covers anywhere); near: distances are never taken as less; planes: the view's six planes (x, y, z, w
    * each, pointing in), or null to leave out nothing; slack: how far outside a plane still counts as in
-   * view. Returns how many; their numbers are in this.out, sorted.
+   * view. occ: the view's occlusion culling (occlusion.js), with we, the mesh's world matrix, and ws, its
+   * scale: a group or a cluster hidden behind something is left out (this.hid: the triangles that saved).
+   * Returns how many; their numbers are in this.out, sorted.
    */
-  pick(cx, cy, cz, k, near, ortho, planes, slack = 0) {
-    const { refined, gFirst, gCount, gSphere, gError, sphere, seen, open, stack, out } = this;
+  pick(cx, cy, cz, k, near, ortho, planes, slack = 0, occ = null, we = null, ws = 1) {
+    const { refined, gFirst, gCount, gSphere, gError, sphere, seen, open, stack, out, count } = this;
     let stamp = ++this.stamp; if (stamp > 4e9) { seen.fill(0); stamp = this.stamp = 1; }
-    let sp = 0, n = 0;
+    let sp = 0, n = 0, hid = 0;
+    const e0 = occ ? we[0] : 0, e1 = occ ? we[1] : 0, e2 = occ ? we[2] : 0, e4 = occ ? we[4] : 0, e5 = occ ? we[5] : 0, e6 = occ ? we[6] : 0, e8 = occ ? we[8] : 0, e9 = occ ? we[9] : 0, e10 = occ ? we[10] : 0, e12 = occ ? we[12] : 0, e13 = occ ? we[13] : 0, e14 = occ ? we[14] : 0;
     for (let c = this.roots - 1; c >= 0; c--) stack[sp++] = c;
     while (sp) {
       const c = stack[--sp], g = refined[c];
@@ -73,6 +79,7 @@ export class Clusters {
           const s = g * 4, x = gSphere[s], y = gSphere[s + 1], z = gSphere[s + 2], r = gSphere[s + 3];
           let st = 0;   // 0: its coarser version will do, 1: open it (draw its members, or finer), 2: all of it is out of view
           if (planes) for (let p = 0; p < 24; p += 4) if (planes[p] * x + planes[p + 1] * y + planes[p + 2] * z + planes[p + 3] < -r - slack) { st = 2; break; }
+          if (!st && occ && occ.hiddenSphere(e0 * x + e4 * y + e8 * z + e12, e1 * x + e5 * y + e9 * z + e13, e2 * x + e6 * y + e10 * z + e14, r * ws)) st = 3;   // (3: all of it is behind something)
           if (!st) {
             if (ortho) st = gError[g] * k > 1 ? 1 : 0;
             else { const dx = x - cx, dy = y - cy, dz = z - cz; let d = Math.sqrt(dx * dx + dy * dy + dz * dz) - r; if (d < near) d = near; st = gError[g] * k > d ? 1 : 0; }
@@ -80,15 +87,17 @@ export class Clusters {
           open[g] = st;
           if (st === 1) for (let m = gFirst[g], e = m + gCount[g]; m < e; m++) stack[sp++] = m;
         }
-        if (open[g]) continue;
+        if (open[g]) { if (open[g] === 3) hid += count[c]; continue; }
       }
-      if (planes) {
-        const s = c * 4, x = sphere[s], y = sphere[s + 1], z = sphere[s + 2], r = sphere[s + 3]; let hid = false;
-        for (let p = 0; p < 24; p += 4) if (planes[p] * x + planes[p + 1] * y + planes[p + 2] * z + planes[p + 3] < -r - slack) { hid = true; break; }
-        if (hid) continue;
+      if (planes || occ) {
+        const s = c * 4, x = sphere[s], y = sphere[s + 1], z = sphere[s + 2], r = sphere[s + 3]; let off = false;
+        if (planes) for (let p = 0; p < 24; p += 4) if (planes[p] * x + planes[p + 1] * y + planes[p + 2] * z + planes[p + 3] < -r - slack) { off = true; break; }
+        if (off) continue;
+        if (occ && occ.hiddenSphere(e0 * x + e4 * y + e8 * z + e12, e1 * x + e5 * y + e9 * z + e13, e2 * x + e6 * y + e10 * z + e14, r * ws)) { hid += count[c]; continue; }
       }
       out[n++] = c;
     }
+    this.hid = hid / 3;
     if (n > 1) out.subarray(0, n).sort();
     return n;
   }
@@ -96,7 +105,7 @@ export class Clusters {
 
 // one camera's draw list for one mesh: runs of the index list, as three's batched drawing wants them (starts in bytes)
 class Runs {
-  constructor() { this.starts = new Int32Array(64); this.counts = new Int32Array(64); this.n = 0; this.key = new Float64Array(32).fill(NaN); this.tris = 0; this.clusters = 0; this.px = 1080; this.shadow = false; this.was = [0, 0, 0]; }
+  constructor() { this.starts = new Int32Array(64); this.counts = new Int32Array(64); this.n = 0; this.key = new Float64Array(32).fill(NaN); this.tris = 0; this.hid = 0; this.clusters = 0; this.px = 1080; this.shadow = false; this.was = [0, 0, 0, 0]; }
 }
 
 // Every DetailMesh is one copy, in its own place, so they all share one identity matrix and one list of
@@ -179,19 +188,21 @@ export class DetailMesh extends BatchedMesh {
     // pixel each frame (the kit's anti-aliasing) moves the view's planes by that much, so planes within
     // two pixels of the ones last picked for count as the same, and the pick keeps that much beyond them.
     const K = v.key, bs = this.geometry.boundingSphere, reach = Math.hypot(CP.x - bs.center.x, CP.y - bs.center.y, CP.z - bs.center.z) + bs.radius, eps = 2 / v.px;
-    let same = K[0] === CP.x && K[1] === CP.y && K[2] === CP.z && K[3] === k && K[4] === (ortho ? 1 : 0);
+    // (the view's own picture leaves out what is behind something: picked again when that changes, which a still camera's does not)
+    const occ = camera === DETAIL.camera && !v.shadow && !ortho && DETAIL.occ?.ready ? DETAIL.occ : null, ostamp = occ ? occ.stamp : -1;
+    let same = K[0] === CP.x && K[1] === CP.y && K[2] === CP.z && K[3] === k && K[4] === (ortho ? 1 : 0) && K[29] === ostamp;
     for (let i = 0; i < 6 && same; i++) {
       const p = FR.planes[i], n = p.normal, o = 5 + i * 4, at = n.x * CP.x + n.y * CP.y + n.z * CP.z + p.constant;   // (at: how far the camera is from the plane, so a turn and a slide are told apart)
       if (!(Math.hypot(K[o] - n.x, K[o + 1] - n.y, K[o + 2] - n.z) + Math.abs(K[o] * CP.x + K[o + 1] * CP.y + K[o + 2] * CP.z + K[o + 3] - at) / reach <= eps)) same = false;
     }
     if (!same) {
       const t0 = performance.now();
-      K[0] = CP.x; K[1] = CP.y; K[2] = CP.z; K[3] = k; K[4] = ortho ? 1 : 0;
+      K[0] = CP.x; K[1] = CP.y; K[2] = CP.z; K[3] = k; K[4] = ortho ? 1 : 0; K[29] = ostamp;
       for (let i = 0; i < 6; i++) { const p = FR.planes[i], o = 5 + i * 4; K[o] = p.normal.x; K[o + 1] = p.normal.y; K[o + 2] = p.normal.z; K[o + 3] = p.constant; }
       const st = cl.start, ct = cl.count, ids = cl.out, bytes = cl.index.BYTES_PER_ELEMENT, planes = K.subarray(5, 29), near = (camera.near || .1) / s, slack = eps * reach;
       // (more runs than a mesh may draw, which takes a mesh of millions of triangles seen whole and close: picked again a little coarser)
       for (let kk = k; ; kk /= 1.5) {
-        const n = cl.pick(CP.x, CP.y, CP.z, kk, near, ortho, planes, slack);
+        const n = cl.pick(CP.x, CP.y, CP.z, kk, near, ortho, planes, slack, occ, e, s);
         let runs = 0, tris = 0, end = -1;
         for (let i = 0; i < n && runs <= MAX_DRAWS; i++) {
           const c = ids[i], cnt = ct[c]; if (!cnt) continue;
@@ -202,19 +213,19 @@ export class DetailMesh extends BatchedMesh {
           v.starts[runs] = st[c] * bytes; v.counts[runs] = cnt; runs++; end = st[c] + cnt;
         }
         if (runs > MAX_DRAWS) continue;
-        v.n = runs; v.tris = tris / 3; v.clusters = n; break;
+        v.n = runs; v.tris = tris / 3; v.hid = cl.hid; v.clusters = n; break;
       }
       stats.picks++; stats.ms += performance.now() - t0;
     }
     if (camera === DETAIL.camera && v !== this._counted) {   // (counted once a frame, as its biggest picture drew it)
       const c = this._frame === FRAME ? this._counted : null;
       if (!c || v.px > c.px) {
-        if (c) { stats.clusters -= c.was[0]; stats.draws -= c.was[1]; stats.tris -= c.was[2]; } else { stats.meshes++; stats.full += cl.fullTris; }
-        v.was[0] = v.clusters; v.was[1] = v.n; v.was[2] = v.tris;
-        stats.clusters += v.clusters; stats.draws += v.n; stats.tris += v.tris; this._frame = FRAME; this._counted = v;
+        if (c) { stats.clusters -= c.was[0]; stats.draws -= c.was[1]; stats.tris -= c.was[2]; stats.hid -= c.was[3]; } else { stats.meshes++; stats.full += cl.fullTris; }
+        v.was[0] = v.clusters; v.was[1] = v.n; v.was[2] = v.tris; v.was[3] = v.hid;
+        stats.clusters += v.clusters; stats.draws += v.n; stats.tris += v.tris; stats.hid += v.hid; this._frame = FRAME; this._counted = v;
       }
     } else if (camera === DETAIL.camera && this._frame !== FRAME) {
-      this._frame = FRAME; stats.meshes++; stats.full += cl.fullTris; v.was[0] = v.clusters; v.was[1] = v.n; v.was[2] = v.tris; stats.clusters += v.clusters; stats.draws += v.n; stats.tris += v.tris;
+      this._frame = FRAME; stats.meshes++; stats.full += cl.fullTris; v.was[0] = v.clusters; v.was[1] = v.n; v.was[2] = v.tris; v.was[3] = v.hid; stats.clusters += v.clusters; stats.draws += v.n; stats.tris += v.tris; stats.hid += v.hid;
     }
     return v;
   }

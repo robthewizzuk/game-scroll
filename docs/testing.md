@@ -42,6 +42,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Next Gen / AR / Board / Console on WebGPU | `node scripts/gpu-games.cjs [id ...]` | about 25 s a game (Console: 12 s) |
 | Cluster detail (`src/kit/detail*.js`, `autoDetail` in hd3d.js) | `node scripts/detail-test.cjs` and again with `--webgpu` (`--shots dir` saves the pictures) | about 40 s each |
 | Real surface detail (`src/kit/relief*.js`, `gs.models.relief`) | `npm run kit-test` (the builder), then `node scripts/detail-test.cjs --page relief` and again with `--webgpu`: a roof, a brick house and a trunk flat against relief, near and far | about a minute each |
+| Hiding what is behind other things (`src/kit/occlusion.js`, `src/kit/occlude.js`, `occludeStep` in hd3d.js, the depth meters) | `npm run kit-test` (the depth picture carried over camera moves, 60 random places: nothing seen is ever hidden), then `node scripts/detail-test.cjs --page occlude` and again with `--webgpu`: a street walked, driven and flown over, every frame drawn twice (hidden things left out, then all of it) and compared, with a gate that opens, a balloon rising from behind a bridge, glass, a fence, a swaying tree, cluster detail and copies. `--q tier=1` draws with one sample a pixel, where the two pictures must match to the pixel (with several, the software renderer lets a far triangle's sample through a wall in the whole picture now and then: up to 2 pixels a frame are let by). `--bench` gives triangles, draws and code time with it off and on; `--q trace` a line a frame, `--q "trace&dump=5,20"` those frames' depth pictures as text | about 1.5 min each |
 | Detail levels for copies (`autoCopies` in hd3d.js, `buildLevels`, `gpuProps` in hd3d-gpu.js, `src/kit/props.js`) | `npm run kit-test` (the levels, `props.move`, which copies are sent), then `node scripts/detail-test.cjs --page copies` and again with `--webgpu`: a field of rocks and posts whole against levels from three cameras, a zoom, a hidden and a moved copy, and on WebGPU that only changed copies go to the chip. `--bench --q "forest=20000"` (add `&cpucull` on WebGPU for the path frame generation uses) gives triangles, draws, list time and KB sent a frame | about 40 s each |
 | Shaders built mid-round (hd3d `holdNew`) | `node scripts/shader-hold.cjs [--webgpu]` | about a minute |
 | The close-up look of `gs.models.material()` on WebGPU (`hd3d-gpu.js` `recipeTwin`, `hd3d.js` `swapTwins`) | `node scripts/close-up.cjs [--shots dir] [--only uvs\|scatter\|solid]`: a floor the camera stands on is never hidden while its close-up shader comes in, its far end is as steady as the painted textures when the picture moves by part of a pixel, and a panel at the camera is sharper than them with its pattern in the same place | about 40 s |
@@ -52,7 +53,8 @@ How to check a change without waiting longer than you need to. Written for peopl
 | The frame lab (`src/framelab.js`) | `node scripts/framelab-test.cjs [2d-id] [3d-id] [--shots dir] [--report file.html]` | about 3 min |
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
-| The tour itself (`src/tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 40 s |
+| What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 6 min |
+| The tour itself (`src/tour.js`, `src/detail-tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 2 min |
 | Everything (before a big engine PR) | `node scripts/smoke.cjs` (all 162 games) | about 3.5 min |
 
 The PR check (`.github/workflows/game-pr-check.yml`) runs the node checks (`npm run games`,
@@ -182,6 +184,54 @@ second tour in the other order (or of only the slow games) tells heat from a slo
 In a test browser, `__gs.tour({ ids, seconds })` runs it and `(await __gs.tourKit()).reportText(result)`
 makes the report; `node scripts/app-test.cjs tour` checks the guest, the bot, the frame sums, the
 plugin check (against a stand-in app) and the sheet.
+
+### The engine test scenes: what the detail systems are worth on a phone
+
+The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail) are
+checked by `scripts/detail-test.cjs` on a build machine's software renderer. That can count triangles
+and compare pictures; it can't say what a phone's graphics chip gains. The tour can:
+
+1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
+   for each run and press **Start**.
+2. Four heavy scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+   and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
+   **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
+   with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses
+   (their bricks, slates and planks as real triangles) and a **town** of 25 houses with 400 statues, urns, rocks and
+   crates round them, walked through by lanes that end at houses (hiding what is behind other things; the report says
+   how many things it left out a frame and how long finding them took. It is kept at work all through that run, where
+   in a game it would rest wherever it saves next to nothing). About 6 minutes at 20 seconds a run, longer the
+   first time: the systems build what they need in the background, which the report times, and keep it
+   on the phone.
+3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
+   the size the 3D was drawn and shown at) and for each scene:
+
+   ```
+   VALLEY · cluster detail · 1,915,460 triangles in 55 meshes · made in 1.4 s
+     every triangle             58 fps · worst 1% 44 fps · longest 31 ms · chip 15.2 ms · code 1.1 ms · 1,583,930 triangles in 212 draws
+     cluster detail             120 fps · worst 1% 97 fps · longest 12 ms · chip 4.0 ms · code 1.3 ms · 47,604 triangles in 140 draws · ready in 21.4 s · 37 meshes drawn in clusters · cluster tables 15.3 MB
+     = cluster detail against every triangle: 2.1 times the frame rate · 3.8 times less chip time · 33 times fewer triangles
+   ```
+
+   (Those numbers are made up to show the shape: nobody has run it on a phone yet.) `chip` is the
+   graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps); `code` is
+   the time the engine's code took to draw a frame; `ready in` is how long the system took to build
+   what it needs.
+
+How the runs are kept comparable: the feed is emptied and the scenes draw on a canvas of their own
+over the app, with the 3D canvas under it as on a game's card; quality is pinned to the tier the
+phone's class starts on, at full resolution, so neither run can trade sharpness for speed; frame
+generation is off, so every frame timed is a real one; before a run is timed its builds are waited
+for and the whole flight is flown once quickly, so its shaders are built; and each run flies the same
+path by the clock. A frame rate can't go above the screen's rate, so where both runs keep it, the chip
+time is what tells them apart. The valley's "every triangle" run also turns the older whole-mesh
+levels off (`HD.autoLod`), which would otherwise arrive part-way through it.
+
+In a test browser, `__gs.tour({ scenes: true, seconds, size, only })` runs them (`size: .1` for small
+scenes, `only: ['valley']` for one); `node scripts/app-test.cjs tour` flies small ones and checks the
+counts, the stage, and that the feed comes back as it was. A new detail system gets a scene in
+`src/detail-scenes.js`: `[key, name, what it tries, make]`, where `make({ gs, HD, size, gpu })` gives
+`{ v, holds, modes: [{ key, name, enter(draw) }], path(t, cam), tell(), dispose() }`.
 
 ## Measuring engine speed: perf-bench
 

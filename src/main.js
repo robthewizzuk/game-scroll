@@ -620,6 +620,7 @@ function topUpLater(wait=QUIET){
 // it the first time), so no single piece is long enough to be felt if a swipe starts meanwhile. A
 // card that comes on screen before it's finished is finished at once (setActive).
 function addStaged(ok,done){
+  if(stay){done();return}   // (a top-up asked for before the tour's test scenes took the screen)
   const defs=pickDefs(1);if(!defs.length){addBatch(1);done();return}
   const s=makeSlide(defs[0]);s.unready=true;feed.appendChild(s.el);slides.push(s);io.observe(s.el);feedMsg(null);
   const step=(f,next)=>idleSlot(()=>{if(s.dropped||!s.unready)return done();if(!ok()){setTimeout(()=>step(f,next),100);return}f();next?next():done()});
@@ -628,6 +629,7 @@ function addStaged(ok,done){
 function finishCard(s){if(!s.unready)return;s.unready=false;fit(s);paint(s)}
 let waiting=false;
 function addBatch(n=AHEAD+1){
+  if(stay)return;   // the tour's test scenes have the screen: the feed stays empty until they end
   // a shared game goes first (openShared): the empty feed waits for it, while the games after it download
   if(lead&&!slides.length){if(!feed.querySelector('.feed-msg'))feedMsg('loading');return}
   const defs=pickDefs(n);
@@ -809,13 +811,14 @@ addEventListener('gs-framelab',()=>frameLab());
 const tourDriver={games:()=>GAMES,active:()=>active,was:null,
   begin(api){if(guest)return;this.was=filter;playstats.left();guest=api},   // (the card on screen is left now, not when the tour ends)
   show(id){filter='id:'+id;rebuild()},
+  clear(){stay=true;slides.forEach(dropSlide);feed.innerHTML='';slides=[];active=null;lastId=null;queue=[];speed.game=null},   // an empty feed that stays empty, the screen kept on: the engine test scenes draw over it (src/detail-tour.js)
   play(){if(active)startGame(active)},
   resume(){if(active)resumeGame(active)},
   full(on){const s=active;if(!s||!canFull(s.def))return false;if(on)enterFull(s);else if(isFull(s))leaveFull();return isFull(s)},   // Next Gen: the way it's played
-  end(){if(!guest)return;guest=null;filter=this.was;rebuild()}};
+  end(){if(!guest)return;guest=null;stay=false;filter=this.was;rebuild()}};
 addEventListener('gs-tour',()=>import('./tour.js').then(m=>m.openTour(tourDriver)));
 addEventListener('keydown',e=>{if(e.key==='F3'){frameLab();e.preventDefault()}});
-let lastT=performance.now(),nextAt=0,realAt=0;
+let lastT=performance.now(),nextAt=0,realAt=0,stay=false;   // stay: the tour's test scenes are flying, with no card and no round
 // A 2D game on a big screen (a foldable opened up) draws twice a phone's pixels each frame. If it can't keep
 // up (two windows of 45 frames a quarter over the frame budget), its canvas drops to at most LITE_PX and the
 // screen stretches it; after ~6 s of easy frames it goes back to full sharpness (once per visit to the card, so it
@@ -838,7 +841,7 @@ function frame(now){
   // the screen's rate for the game being played (src/kit/screenrate.js; the phone decides between rounds)
   screenWish(s&&s.state==='playing'&&!s.paused?s.def:null);
   // the screen stays on while a round is in play, so tilt, voice and camera games don't dim and lock (src/kit/awake.js)
-  keepAwake(!!s&&s.state==='playing'&&!s.paused,s?Math.max(lastGameInput,s.startPerf||0):0,now);
+  keepAwake(stay||!!s&&s.state==='playing'&&!s.paused,stay?now:s?Math.max(lastGameInput,s.startPerf||0):0,now);
   // Frame rate per game and phone (src/kit/speed.js): on a 120 Hz screen a 60 fps game skips every
   // other refresh, which saves battery and heat. Frames are due on a steady beat (nextAt), not a gap
   // since the last one, so a 60 fps game on a 90 Hz screen alternates 1 and 2 refreshes and still

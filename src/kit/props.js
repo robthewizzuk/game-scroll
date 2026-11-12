@@ -34,12 +34,27 @@ export const simplifyReady = MeshoptSimplifier.ready.then(() => { canSimplify = 
 // A set of copies says when one of them is moved, hidden or shown (userData.gsChanged, a count that goes
 // up): the Next Gen view keeps the shadows of still things from frame to frame (hd3d.js shadowLights), and
 // nothing else about the set changes when one copy does.
+// A view that hides what is behind other things (occlude.js) also wants to know which copy, and where it was:
+// userData.occWatch = { ids, old (x, y, z and reach of each, in the set's own space), all } while one is watching.
 function watched(m) {
   for (const k of ['setMatrixAt', 'setVisibilityAt', 'setActiveAt', 'setActiveAndVisibilityAt', 'updateInstances', 'updateInstancesPosition']) {
     const own = m[k]; if (typeof own !== 'function') continue;
-    m[k] = function (a, b, c) { this.userData.gsChanged = (this.userData.gsChanged || 0) + 1; return own.call(this, a, b, c); };
+    const one = !k.startsWith('update');
+    m[k] = function (a, b, c) {
+      this.userData.gsChanged = (this.userData.gsChanged || 0) + 1;
+      const w = this.userData.occWatch; if (w && !w.all) noteCopy(this, w, one ? a : -1);
+      return own.call(this, a, b, c);
+    };
   }
   return m;
+}
+function noteCopy(m, w, id) {
+  const D = m.matricesTexture?._data, g = m.geometry;
+  if (!(id >= 0) || w.ids.length >= 64 || !D || !g || id * 16 + 15 >= D.length) { w.all = true; return; }
+  if (!g.boundingSphere) g.computeBoundingSphere();
+  const c = g.boundingSphere.center, o = id * 16;
+  const s = Math.sqrt(Math.max(D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2], D[o + 4] * D[o + 4] + D[o + 5] * D[o + 5] + D[o + 6] * D[o + 6], D[o + 8] * D[o + 8] + D[o + 9] * D[o + 9] + D[o + 10] * D[o + 10]));
+  w.ids.push(id); w.old.push(D[o] * c.x + D[o + 4] * c.y + D[o + 8] * c.z + D[o + 12], D[o + 1] * c.x + D[o + 5] * c.y + D[o + 9] * c.z + D[o + 13], D[o + 2] * c.x + D[o + 6] * c.y + D[o + 10] * c.z + D[o + 14], g.boundingSphere.radius * s);
 }
 
 /** A simpler copy of a geometry with about `keep` (0..1) of its points. */

@@ -57,6 +57,7 @@ import { packing } from './pack.js';
 import { makeRenderer } from './renderer.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
+import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
@@ -207,6 +208,15 @@ export const HD = {
   relief: true,
   /** Detail levels for copies (gs.props kinds and perCopy sets with none of their own; autoCopies below): false draws every copy whole. */
   copies: true,
+  /**
+   * Occlusion culling (occlude.js): what is fully hidden behind other things is not drawn. occlude: false draws it all.
+   * occludeDepth: what hides things is found from the last frame's own depth, with nothing listed (false: only the boxes
+   * a game lists with v.occluders). occludeSleep: a view where it saves next to nothing stops for a while (false: never,
+   * and small views are tried too: tests). occludeTexels: the size of the depth picture it reads back, texels in all (more hides a
+   * little more of what is small and far, for more work each frame: 6000 costs about twice as much). occludeShow:
+   * tests, true works out what is hidden and draws it all the same (the picture to compare a frame with).
+   */
+  occlude: true, occludeDepth: true, occludeSleep: true, occludeTexels: 2400, occludeShow: false,
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -1494,18 +1504,32 @@ export class HDView {
     for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh) x.userData.detail = set; });
     return this;
   }
+  /** Is cluster detail still getting ready: a big mesh not looked at yet or waiting for its clusters, or a twin waiting for its shader? (tests, the engine test scenes) */
+  detailPending() {
+    if (HD.detail === false) return false;
+    const D = this.details;
+    if (D) for (const e of D.map.values()) if (!e.twin || (e.twin.layers.mask & HOLD_BIT)) return true;
+    let more = false;
+    this.scene.traverseVisible(o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (HD.relief !== false && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
+    return more;
+  }
   /**
-   * Occlusion culling: skip what's fully hidden behind big solid boxes before the frame is drawn (city
-   * blocks behind a row of buildings, rooms behind walls). list: boxes { x0, x1, y0, y1, z0, z1 } in
-   * world metres (city.occluders() gives them), Box3s, or solid box-like meshes; null turns it off.
-   * Only what you list hides things, so give the big, solid, still things (not glass, not fences).
-   * Every mesh (by its bounding box), and each instance of gs.props (InstancedMesh2), is tested; mark a
-   * mesh userData.noOcclude to always draw it. Hidden things still cast their shadows. Same on WebGL and
-   * WebGPU (it runs on the CPU, see occlusion.js). o: { max: boxes drawn per frame (nearest first, 300),
-   * w: depth picture width (128) }. v.occlusion.stats: { boxes, tested, hidden, ms } for the last frame.
+   * Occlusion culling: what is fully hidden behind other things is skipped before the frame is drawn (city
+   * blocks behind a row of buildings, rooms behind walls, a village behind a hill). It is automatic: a view
+   * with enough in it to be worth it finds what hides things from the last frame's own depth, so nothing
+   * has to be listed and anything solid counts (v.autoOcclude = false, or HD.occludeDepth = false, to stop
+   * that). A view where it saves next to nothing stops by itself and looks again later.
+   * occluders(list) also gives it boxes that hide things, for where there is no depth to go by (AR, the
+   * first frames): boxes { x0, x1, y0, y1, z0, z1 } in world metres (city.occluders() gives them), Box3s, or
+   * solid box-like meshes; null takes them away. List only big, solid, still things (not glass, not fences).
+   * Every mesh (by its bounding box), each part of a cluster detail mesh and each copy of gs.props is
+   * tested; mark a mesh userData.noOcclude to always draw it. Hidden things still cast their shadows, are
+   * still hit by raycasts and still show in reflections. Same on WebGL and WebGPU (it runs on the CPU, see
+   * occlusion.js). o: { max: boxes drawn per frame (nearest first, 300), w: the boxes' picture width (128) }.
+   * v.occlusion.stats: { boxes, tested, hidden, ms, depth } for the last frame; HD.info.occluded: meshes hidden.
    */
   occluders(list, o = {}) {
-    if (!list) { this.showHidden(); this.occlusion = null; return this; }
+    if (!list) { showAll(this); this.occlusion?.set([]); return this; }
     (this.occlusion ||= new Occlusion(o)).set(list); Object.assign(this.occlusion, o);
     return this;
   }
@@ -1552,22 +1576,17 @@ export class HDView {
     });
     HD.info.held = held.size;
   }
-  // hides (from the view's camera only: shadows and reflections still see them) what the occluders cover
-  cullHidden() {
-    const oc = this.occlusion, hid = this.occHid ||= new Map(); this.showHidden();
-    oc.frame(this.cam, this.W / this.H);
-    const view = this;
-    this.scene.traverseVisible(o => {
-      if (o.isLight) { if (o.shadow) o.shadow.camera.layers.enable(OCC_LAYER); return; }
-      if (o.isInstancedMesh2) {
-        if (!o.occWrapped) { const own = o.onFrustumEnter; o.occWrapped = true; o.onFrustumEnter = (i, cam, ...a) => (cam !== view.cam || !view.occlusion?.ready || !view.occlusion.hiddenInstance(o, i)) && (!own || own(i, cam, ...a)); }
-        return;
-      }
-      if (!o.isMesh || !o.frustumCulled || o.userData.noOcclude || !(o.layers.mask & 1)) return;
-      if (oc.hiddenObject(o)) { hid.set(o, o.layers.mask); o.layers.mask = (o.layers.mask & ~1) | (1 << OCC_LAYER); }
-    });
+  // Occlusion culling for this frame (occlude.js): works out what is hidden behind other things, from the last
+  // frame's own depth (depth: this frame may use it) or the boxes the game listed. Nothing is hidden yet:
+  // hideNow() does that round the main draw alone, so that everything else that looks at the scene (shadows,
+  // raycasts, bakes, contact shadows) finds it whole. Gives the job for this frame's depth picture, or null.
+  occludeStep(depth, pw, ph) {
+    const I = HD.info, cam = this.cam;
+    const job = occludeFrame(this, cam, { world: false, on: HD.occlude !== false, depth: depth && HD.occludeDepth !== false && this.autoOcclude !== false && !!cam.isPerspectiveCamera, other: lastView !== this, W: pw, H: ph, tris: this.drew?.[0] || 0, calls: this.drew?.[1] || 0, sleep: HD.occludeSleep, texels: HD.occludeTexels });
+    const A = this.occAuto; I.occluded = A.hidden; I.occTris = A.tris; I.occAwake = A.awake; I.occMs = A.ms;
+    return job;
   }
-  showHidden() { const hid = this.occHid; if (!hid?.size) return; for (const [o, m] of hid) o.layers.mask = m; hid.clear(); }
+  showHidden() { showAll(this); }
   /**
    * Gives back everything this view keeps off the camera's layer: pieces merged by static batching, ones
    * waiting for their shaders, and ones hidden behind occluders. For kit code that moves objects into
@@ -1578,7 +1597,7 @@ export class HDView {
     if (this.batches?.list.length) unbatchAll(this);
     detailDropAll(this);
     if (this.held?.size) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
-    this.showHidden();
+    occludeDrop(this);
     return this;
   }
   // bounce light and room reflections, baked by the renderer drawing this frame (G: WebGPU) when they need it
@@ -1947,15 +1966,19 @@ export class HDView {
     // (built for the screen, not the chain's own picture: a pipeline built for that picture also bound it to read, which WebGPU refuses)
     this.holdNew(r, baking || off, now);
     detailShow(this);
+    // SGSR 2: the scene at pw x ph (ph the passes' own rounding of the canvas height), upscaled to the canvas
+    const pw = up ? up.pw : r.domElement.width, ph = up ? Math.max(1, Math.floor(up.fh * (pw + .5) / up.fw)) : r.domElement.height;
+    // what is hidden behind other things this frame (a card's picture is drawn whole)
+    this.scene.updateMatrixWorld();   // (once, for what follows: what is hidden, the shadow maps)
+    const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !r.reversedDepthBuffer, pw, ph);
+    if (HD.occludeShow) DETAIL.occ = null;
     const shc = this.shadowCams ||= []; shc.length = 0;
     if (tier().shadow > 0) this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
-    const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = this.occlusion?.ready && HD.occlude !== false ? this.occlusion : null;
-    this.scene.traverse(o => { if (o.isInstancedMesh2 && o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null); });
+    const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
+    this.scene.traverse(o => { if (o.isInstancedMesh2 && o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null); });
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
-    // SGSR 2: the scene at pw x ph (ph the passes' own rounding of the canvas height), upscaled to the canvas
-    const pw = up ? up.pw : r.domElement.width, ph = up ? Math.max(1, Math.floor(up.fh * (pw + .5) / up.fw)) : r.domElement.height;
     const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao, msaa: T.msaa, bloomScale: T.bloom, smooth: !T.msaa, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
@@ -2000,10 +2023,10 @@ export class HDView {
       }
     }
     if (!baking && !off) { autoLod(this, r.domElement.height); if (this.batches?.list.length) unbatchAll(this); }   // (static batching: WebGL only, see autoBatch)
+    r.info.autoReset = false; r.info.reset();   // (HD.info counts the frame from here: the shadow maps drawn below as well, as on WebGL)
     // shadows: each light's map is drawn again only when it or a caster it sees moved (shadowLights)
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
     if (T.shadow > 0) {
-      this.scene.updateMatrixWorld();
       if (this.shadowLights(lastView !== this || baking || off, true) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
       for (const l of this.shL) {
         const sh = l.shadow;
@@ -2017,7 +2040,6 @@ export class HDView {
     // won't bind; it draws nothing anyway, so it sits this frame out
     const empty = []; this.scene.traverseVisible(o => { if (o.isInstancedMesh && (!o.count || !o.instanceMatrix.count)) empty.push(o); });
     for (const e of empty) e.visible = false;
-    r.info.autoReset = false; r.info.reset();
     const cut = lastView !== this || this._cut; lastView = this; this._cut = false; if (TEST) window.__hdView = this;
     // Frame generation starts again after a cut (another view drew, v.cut(), a pause, the camera
     // jumping): the frames either side of one don't belong together.
@@ -2043,7 +2065,12 @@ export class HDView {
     let shown = false;
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
-    try { shown = ch.render(o) || false; } finally { G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; }
+    if (!baking && !off && !HD.occludeShow) hideNow(this);
+    try { shown = ch.render(o) || false; } finally { showAll(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; }
+    // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
+    // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
+    const drawn = ch.occAt !== r.info.frame; ch.occAt = r.info.frame;
+    if (occJob && ch.sp && drawn) { occJob.pad = s2 || o.msaa ? 1 : 0; (ch.occM ||= G.fx.depthMeter(r)).read(ch.sp.getTexture('depth'), occJob, occBack); }
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
     const made = !!fg && !!shown;
     if (made) HD.fgTap?.(shown, r.domElement, 'frame');
@@ -2058,7 +2085,7 @@ export class HDView {
     }
     if (!baking && !off) {
       gpuTime(r);
-      HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
+      HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
       HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0;
     }
   }
@@ -2193,7 +2220,7 @@ export class HDView {
     if (!baking && !off) speed.gpu = !!G;   // (frame generation needs the game on screen drawn with WebGPU)
     autoDetail(this, now, !!(baking || off));
     autoCopies(this, ph, now, !!(baking || off));
-    if (this.occlusion && HD.occlude !== false) { this.cullHidden(); HD.info.occluded = this.occlusion.stats.hidden; } else if (this.occHid?.size) this.showHidden();
+    if (this.occHid?.size) showAll(this);   // (nothing stays hidden between frames: see occludeStep)
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
     else {
     if (!baking && !off) { speed.between = null; HD.info.framegen = false; }   // (frame generation is WebGPU only)
@@ -2267,6 +2294,11 @@ export class HDView {
     // shadows: redraw the maps only when a shadow caster or a shadow light moved (or the tier, view or map changed)
     this.scene.updateMatrixWorld();
     if (!baking && !off) { autoLod(this, r.domElement.height); autoBatch(this, now); }
+    // what is hidden behind other things this frame (a card's picture is drawn whole), and this frame's depth read back for the frames to come
+    P.occ?.poll();
+    const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !ssr, pw, ph);
+    if (HD.occludeShow) DETAIL.occ = null;
+    if (occJob) { occJob.pad = s2 || T.msaa ? 1 : 0; (P.occ ||= new DepthMeter()).job = occJob; cp.passes.splice(1, 0, P.occ); }
     r.shadowMap.enabled = T.shadow > 0;
     let shadows = false; const cut = lastView !== this || this._cut; this._cut = false;
     if (T.shadow > 0 && this.shadowLights(lastView !== this)) r.shadowMap.needsUpdate = shadows = true;
@@ -2275,8 +2307,9 @@ export class HDView {
     r.info.autoReset = false; r.info.reset();
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
-    try { cp.render(); } finally { this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); }
-    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; }
+    if (!baking && !off && !HD.occludeShow) hideNow(this);
+    try { cp.render(); } finally { showAll(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); }
+    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
     c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
@@ -2531,7 +2564,6 @@ function shadowSize(sh, n) {
   sh.mapSize.set(n, n); sh.needsUpdate = true;
   if (sh.map?.isWebGLRenderTarget) { sh.map.dispose(); sh.map = null; } else sh.map?.setSize(n, n, sh.map.depth);
 }
-// the layer things hidden by occlusion culling move to: the view's camera doesn't draw it, shadow cameras do
 // Automatic level of detail for the game's own meshes (Unreal and Unity make these on import; here they're
 // made in the background as a game plays). A detailed mesh (LOD_MIN_TRIS or more) gets simpler copies
 // from meshoptimizer, each with the most it may move a point (its error, in metres at the mesh's size).
@@ -2610,7 +2642,7 @@ class Eye {
   // read now and then (one read at a time)
   want() { return !this.busy && ++this.n % 6 === 0; }
 }
-const OCC_LAYER = 30, OCC_BIT = 1 << OCC_LAYER;
+const occBack = (job, px) => depthBack(job, px, false);   // (a depth picture back from the WebGPU meter: its rows run from the top)
 // Automatic static batching (HD.batch, on by default): the many small still things of a level (crates,
 // posts, rocks, walls, lamps) that share a material are merged into one mesh per material and area, one
 // draw call (and one shadow draw) where there were dozens: Unity's static batching, done by itself.
