@@ -293,6 +293,12 @@ up a tier first.
   scattering for skin, wax, leaves, jade and ears against the light: light passing through glows out
   of the far side in `colour` (default a skin red). On WebGPU this is three.js's MeshSSSNodeMaterial
   (fast translucency, as in Frostbite); WebGL phones get a soft tinted rim in its place.
+  That lets light through the whole thing, thick or thin. For something only thin in places (a head: the
+  ears glow, the skull does not) add `thin: true` and give the mesh a `gsThin` attribute, two numbers a
+  point: how thin it is there (0 solid .. 1 a sheet) and how open it is straight behind (0 something is
+  in the way .. 1 clear). Light then comes through only where it is thin and has somewhere to come from
+  (`back: .8` is how strongly), and the thin parts are left out of the shadow map, which is too coarse
+  to tell an ear from the head a centimetre behind it. `gs.models.human` measures this by itself.
 - Richer materials on `pbr()` (three.js's MeshPhysicalMaterial, the same on WebGL and WebGPU):
   `aniso: .9` (and `anisoDir` in radians) stretches highlights along brushed or turned metal, hair and
   satin; `film: 1` is a thin rainbow film (soap bubbles, oil, beetle shells, lens coatings);
@@ -881,9 +887,10 @@ const barrel = gs.models.prop('barrel', { seed: 2 }); barrel.position.set(1, 0, 
 wear(wall, { moss: .7 });                                                    // moss on the top
 ```
 
-- **`material(name, o)`**: 17 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
-  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`
-  (`gs.models.materials` lists them). Change the recipe's colours (`colour`, `dark`, `mortar`, `gap`, `rust`,
+- **`material(name, o)`**: 18 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
+  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`
+  (`gs.models.materials` lists them; `skin` is pores and fine lines, a tile to 16 mm at 64 repeats a metre:
+  what the kit's people wear). Change the recipe's colours (`colour`, `dark`, `mortar`, `gap`, `rust`,
   `under`, `vein`, `grout`...), `seed` for another pattern, `repeat: [u, v]`, `size` (texture pixels, 256).
   Each is painted once into tiling colour, bump, roughness and metal textures, and kept across launches
   (the next launch reads them back instead of painting again). On WebGPU: `closeUp` (on by default)
@@ -1019,6 +1026,11 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide.
+  Skin and eyes read as flesh close up, with nothing to set: the skin has pores and fine lines (the `skin`
+  recipe, laid on so it never smears at a seam; cloth and leather the same), an ear against the sun glows
+  red while the head beside it stays solid (WebGPU; WebGL has a soft warm rim), and each eye has an iris
+  that shades softly into the white, fine streaks out from a small pupil, and a cornea with a small sharp
+  wet highlight that slides as the eye turns.
 - **`creature(o)`**: an animal or a monster made in code from a seed, built the way people are (soft shapes
   melted into one skin, creases in soft shadow, eyes that catch the light, no model or texture file). 35 to
   start from, in five kinds: four legs (`dog`, `cat`, `horse`, `deer`, `cow`, `pig`, `bear`, `rabbit`, `mouse`,
