@@ -305,18 +305,20 @@ async function fonts(b) {
 
   // use() in make(): "Loading…" first, then the game is made again with the font in
   const q = await open(b);
-  await q.evaluate(id => { const d = __gs.GAMES.find(g => g.id === id), make = d.make; window.__f = { makes: 0, ready: [], draws: 0 }; d.make = api => { __f.makes++; __gs.kits.fonts.use('Orbitron', ['Fredoka', 700]); __f.ready.push(__gs.kits.fonts.ready('Orbitron') && __gs.kits.fonts.ready('Fredoka', 700)); const g = make(api), dr = g.draw; g.draw = (...a) => { __f.draws++; return dr.apply(g, a); }; return g; }; }, CASUAL);
+  await q.evaluate(id => { const d = __gs.GAMES.find(g => g.id === id), make = d.make; window.__f = { makes: 0, ready: [], draws: 0, below: 0 }; d.make = api => { __f.makes++; __gs.kits.fonts.use('Orbitron', ['Fredoka', 700]); __f.ready.push(__gs.kits.fonts.ready('Orbitron') && __gs.kits.fonts.ready('Fredoka', 700)); const g = make(api), dr = g.draw; g.draw = (...a) => { if (__gs.active?.game === g) __f.draws++; else __f.below++; return dr.apply(g, a); }; return g; }; }, CASUAL);
   await q.evaluate(id => __gs.only(id), CASUAL);
   const first = await q.evaluate(() => ({ loading: !!__gs.active.loading, makes: __f.makes, ready: __f.ready.length }));
   await q.waitForFunction(() => __gs.active && !__gs.active.loading && __f.ready.length, null, { timeout: 30000 });
   s = await q.evaluate(() => ({ ...__f, loading: !!__gs.active.loading }));
   check(first.loading && first.ready === 0 && s.ready.every(Boolean) && s.makes > s.ready.length, 'use() in make() shows "Loading…" until the fonts are in, then the game is made with them', JSON.stringify({ first, then: s }));
   // a card waiting in the feed is drawn again when a font arrives later
+  // (draws counts the card on screen. The feed goes on adding cards of the same game below it, one at a time when it is calm, and each
+  // is drawn once as it arrives: on a slow machine that is not over by now, and one of those was counted as the waiting card drawn again)
   await q.waitForTimeout(700); const idle = await q.evaluate(() => __f.draws); await q.waitForTimeout(500);
   const still = await q.evaluate(() => { const n = __f.draws; __gs.kits.fonts.font('Rye', 20); return n; });
   await q.waitForFunction(() => __gs.kits.fonts.ready('Rye'), null, { timeout: 15000 }); await q.waitForTimeout(400);
   const after = await q.evaluate(() => __f.draws);
-  check(still === idle && after > still, 'a waiting card is not redrawn every frame, but is drawn again when a font arrives', JSON.stringify({ idle, still, after }));
+  check(still === idle && after > still, 'a waiting card is not redrawn every frame, but is drawn again when a font arrives', JSON.stringify({ idle, still, after, below: await q.evaluate(() => __f.below) }));
   await q.done();
 
   // pixel text in the pixel fonts: crisp (every pixel fully on or off), at the size where the font's pixels are the game's
