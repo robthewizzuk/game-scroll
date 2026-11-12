@@ -2,8 +2,9 @@
 // round, finer touch, even pixels and the LCD look for pocket games, the one-line soundtrack, the bigger
 // save that stays on the phone, the font library, the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons),
 // the phone test tour (a bot that plays as a guest, the frame report, the plugin check, the engine test scenes), and loading a big
-// 3D game a little each frame (each pass on a fresh copy of the game's file).
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading]   (SHOTS=<dir> saves a picture of every font and look)
+// 3D game a little each frame (each pass on a fresh copy of the game's file), the fill-ins for old WebViews, and that a
+// test build sends no play stats or crash reports.
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading|oldweb|reports]   (SHOTS=<dir> saves a picture of every font and look)
 const { chromium } = require('playwright');
 
 let failed = 0;
@@ -756,10 +757,66 @@ async function loading(b) {
   await q.done();
 }
 
+/* ---------- old WebViews: the fill-ins for roundRect, Object.hasOwn and structuredClone ---------- */
+async function oldweb(b) {
+  console.log('\nOld WebViews');
+  const SHAPES = [[20, 20, 120, 70, 14], [20, 20, 120, 70, [30, 4]], [20, 20, 120, 70, [8, 20, 40]], [20, 20, 120, 70, [0, 12, 24, 36]], [20, 20, 120, 70, [{ x: 40, y: 10 }, 6]],
+    [20, 20, 120, 70, 500], [150, 100, -120, -70, [30, 4, 12, 0]], [150, 20, -120, 70, [30, 4, 12, 0]], [20, 20, 120, 70]];
+  // each box drawn with whichever roundRect the page has: how solid every pixel came out
+  const draw = shapes => shapes.map(s => { const c = document.createElement('canvas'); c.width = 170; c.height = 120; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.beginPath(); x.roundRect(...s); x.fill(); return [...x.getImageData(0, 0, 170, 120).data].filter((_, i) => i % 4 === 3); });
+  const now = await open(b), want = await now.evaluate(draw, SHAPES); await now.done();
+  // a browser from before these existed
+  const p = await open(b, { before: () => {
+    for (const k of ['CanvasRenderingContext2D', 'OffscreenCanvasRenderingContext2D', 'Path2D']) if (self[k]) delete self[k].prototype.roundRect;
+    delete Object.hasOwn; delete window.structuredClone; window.__gone = typeof Object.hasOwn + ' ' + typeof window.structuredClone + ' ' + typeof CanvasRenderingContext2D.prototype.roundRect;
+  } });
+  const r = await p.evaluate(() => {
+    const cyc = { list: [1, { deep: true }], when: new Date(5), map: new Map([['k', { v: 1 }]]), set: new Set([1, 2]), nums: new Float32Array([1.5, 2.5]) }; cyc.me = cyc;
+    const c = structuredClone(cyc); let threw = '';
+    try { structuredClone({ f() {} }); } catch (e) { threw = e.name; }
+    try { Object.hasOwn(null, 'a'); threw += ' none'; } catch (e) { threw += ' ' + e.name; }
+    return { gone: __gone, native: /native code/.test(String(CanvasRenderingContext2D.prototype.roundRect)), path: typeof Path2D.prototype.roundRect, off: !self.OffscreenCanvasRenderingContext2D || typeof OffscreenCanvasRenderingContext2D.prototype.roundRect,
+      own: Object.hasOwn({ a: 1 }, 'a') && !Object.hasOwn({}, 'toString') && Object.hasOwn([5], 0), threw,
+      clone: c !== cyc && c.me === c && c.list !== cyc.list && c.list[1].deep && c.list[1] !== cyc.list[1] && c.when.getTime() === 5 && c.map.get('k').v === 1 && c.map.get('k') !== cyc.map.get('k') && c.set.has(2) && c.nums[1] === 2.5 && c.nums !== cyc.nums };
+  });
+  check(r.gone === 'undefined undefined undefined' && !r.native, 'the test browser has no roundRect, Object.hasOwn or structuredClone of its own', JSON.stringify(r));
+  check(r.path === 'function' && (r.off === true || r.off === 'function'), 'the app adds roundRect to canvases and paths', JSON.stringify(r));
+  check(r.own && r.threw === 'DataCloneError TypeError', 'Object.hasOwn answers as the real one does', JSON.stringify(r));
+  check(r.clone, 'structuredClone copies nested data, a Map, a Set, a date, numbers and a loop');
+  const got = await p.evaluate(draw, SHAPES);
+  const off = got.map((g, i) => g.reduce((n, a, j) => n + (Math.abs(a - want[i][j]) > 40 ? 1 : 0), 0)), solid = want.map(w => w.reduce((n, a) => n + (a > 128 ? 1 : 0), 0));
+  check(off.every(n => n <= 6) && solid.every(n => n > 2000), 'rounded boxes come out as the browser\'s own do (one radius, several, ovals, too big, drawn backwards)', JSON.stringify({ off, solid }));
+  // a game that draws rounded boxes, and one whose hex library asks Object.hasOwn, both play
+  for (const id of ['liquid-mixer', 'hex-merge']) {
+    await p.game(id); await p.evaluate(() => __gs.start()); await p.waitForTimeout(1200);
+    check(await p.evaluate(() => !__gs.active.failed && __gs.active.state !== 'ready'), `${id} plays a round there`, await p.evaluate(() => __gs.active.state + ' ' + !!__gs.active.failed));
+  }
+  await p.done();
+}
+
+/* ---------- a test build counts rounds and frames for itself, and sends no play stats or crash reports ---------- */
+async function reports(b) {
+  console.log('\nReports');
+  const p = await open(b), sent = [];
+  await p.route(u => /\/(perf|stats)$/.test(u.pathname), (route, req) => { if (req.method() !== 'POST') return route.fallback(); sent.push(req.url()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
+  await p.game(CASUAL); await p.evaluate(() => __gs.start()); await p.waitForTimeout(1500);
+  await p.evaluate(() => { __gs.perf.error(new Error('a test error')); __gs.api(__gs.active).over(); }); await p.waitForTimeout(300);
+  const r = await p.evaluate(async id => {
+    await __gs.perf.flush(); await __gs.playstats.flush();
+    // the app going to the background sends what is waiting, too
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); await new Promise(r => setTimeout(r, 300));
+    delete document.visibilityState;
+    return { on: __gs.playstats.enabled, frames: __gs.perf.local(id)?.f || 0, plays: JSON.parse(localStorage.gs_stats_pending || '{}')[id]?.p || 0 };
+  }, CASUAL);
+  check(r.on && r.frames > 30 && r.plays >= 1, 'a test build still counts its own rounds and frames', JSON.stringify(r));
+  check(sent.length === 0, 'and sends no play stats or crash reports', sent.join(' '));
+  await p.done();
+}
+
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading };
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading, oldweb, reports };
   for (const [name, fn] of Object.entries(parts)) if (!only.length || only.includes(name)) await fn(b);
   await b.close(); server.httpServer.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall app checks passed'); process.exit(failed ? 1 : 0);

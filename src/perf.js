@@ -12,10 +12,11 @@
 //
 // Sent about once a minute to api.game-scroll.com/perf with the phone model (e.g. SM-F966B), OS
 // version, app build and screen size class, and nothing else. Uses the same off switch as play
-// stats (Settings). This phone's own numbers are also kept for the QA panel, even in test builds.
+// stats (Settings). This phone's own numbers are also kept for the QA panel, even in test builds,
+// which send nothing (REAL in hearts.js).
 import { Capacitor } from '@capacitor/core';
 import { store } from './util.js';
-import { HEARTS_URL, deviceId } from './hearts.js';
+import { HEARTS_URL, REAL, deviceId } from './hearts.js';
 import { playstats } from './playstats.js';
 
 const PENDING_KEY = 'gs_perf_pending', LOCAL_KEY = 'gs_perf_local', GLOBAL_KEY = 'gs_perf_global', OPEN_KEY = 'gs_perf_open';
@@ -29,7 +30,7 @@ let global = store.get(GLOBAL_KEY, null);                                  // ev
 let info = { platform: Capacitor.getPlatform(), model: 'unknown', os: '', app: BUILD };
 let current = '', playing = false, lastFrame = 0, flushing = false, lastLoad = 0, saveT = 0;
 
-const sending = () => !!HEARTS_URL && playstats.enabled;
+const sending = () => REAL && !!HEARTS_URL && playstats.enabled;
 const form = () => Math.min(innerWidth, innerHeight) >= 600 ? 'wide' : 'phone';
 // Frames come in at 60-120 a second: save to storage at most every few seconds.
 const save = () => { if (!saveT) saveT = setTimeout(() => { saveT = 0; store.set(PENDING_KEY, pending); store.set(LOCAL_KEY, local); }, 3000); };

@@ -1,3 +1,4 @@
+import './polyfill.js';   // first: old WebViews get what the rest of the app expects
 import './style.css';
 import '@fontsource/press-start-2p/latin-400.css';
 import '@fontsource/rubik/latin-400.css';

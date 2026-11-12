@@ -44,7 +44,7 @@ The first table lists every phone model that has sent reports. Not all of them a
 | Label | What it is |
 | --- | --- |
 | phone | A real phone or tablet. |
-| web browser | The test website, opened in a browser. Our own test scripts show up here too, as an "iPhone" at a few frames a second, because they draw 3D without a graphics chip. |
+| web browser | The test website, opened in a browser. Rows from before 13 November 2026 also include our own test scripts, as an "iPhone" at a few frames a second (they draw 3D without a graphics chip). Test builds, `npm run dev` and browsers driven by a script now count for themselves only and send nothing. |
 | emulator | An Android emulator, such as `sdk_gphone64_arm64`. |
 | probably a test robot | A phone model that has run a dozen or more builds at six or more a day. Google Play runs every build sent to a testing track on a few phones of its own, and those robots report like anyone else. Their "app closed while open" crashes are the robot ending its run. |
 

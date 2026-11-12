@@ -6,7 +6,7 @@
 // The totals come back (GET /stats, last 30 days) for the QA panel and to give the feed a gentle
 // nudge towards games people actually play. Off switch: Settings → "Share anonymous play stats".
 import { store } from './util.js';
-import { HEARTS_URL, deviceId } from './hearts.js';
+import { HEARTS_URL, REAL, deviceId } from './hearts.js';
 import { history } from './history.js';
 
 const PENDING_KEY = 'gs_stats_pending', GLOBAL_KEY = 'gs_stats_global', OFF_KEY = 'gs_stats_off';
@@ -55,7 +55,7 @@ export const playstats = {
 
   /** Send what's been counted. keepalive lets it finish while the app goes to the background. */
   async flush(keepalive = false) {
-    if (flushing || !this.enabled) return;
+    if (flushing || !this.enabled || !REAL) return;   // (test builds count, for the app's own checks, but never send)
     const ids = Object.keys(pending).slice(0, 60);
     if (!ids.length) return;
     const batch = Object.fromEntries(ids.map(id => [id, { ...pending[id] }]));
