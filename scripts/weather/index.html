@@ -1,0 +1,100 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A film of gs.sky.Weather changing a place, for scripts/weather.cjs: a house with a porch and an open door,
+// a lean-to with a flat roof, a paved yard, trees, a pond and two people. One story of weather runs along the
+// film (rain comes on, it dries, snow settles, it melts), a row for each camera, so the wet ground, the
+// puddles, the snow and the dry floor indoors can be judged (and tuned) by eye. It also notes what a frame of
+// weather.update() cost, how long the map of what the sky can see took, and the most pictures any one
+// material reads at once (phones allow 16).
+//   ?views=yard,porch,in,roof,top,pond (default: all)   &cols=8   &cell=300x210   &gpu (WebGPU)
+//   &story=rain,dry,snow,melt   &secs=8 (each part)   &phys (the level as a physics world; default: its meshes)
+//   &time=14 (hour)   &cover=0 (no level given: wet and white everywhere)   &hold=<part>:<0..1> (one moment only, in every column)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { loadPhysics3D } from '../../src/kit/physics3d.js';
+import { bakeRenderer } from '../../src/kit/hd3d.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); if (Q.has('phys')) await loadPhysics3D();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), M = gs.models, { Water, Land } = gs.outdoors;
+  const VIEWS = {
+    yard: [[9.5, 2.4, 10.5], [0.5, 1.1, 0]],        // the whole place
+    porch: [[4.4, 1.5, 4.6], [-.6, .5, .9]],        // the porch's edge: a dry strip along the wall
+    in: [[0, 1.6, -4], [0, .8, 3.5]],               // from indoors, out of the open door
+    roof: [[-7.5, 6.5, 8], [0.5, 2.8, -1]],         // down onto the roofs
+    top: [[2, 24, 2.02], [2, 0, 2]],                // straight down
+    pond: [[-4.5, 1.7, 10.5], [-10, -.4, 5]],       // the pond in the hollow
+  };
+  const views = (Q.get('views') || Object.keys(VIEWS).join(',')).split(','), cols = +(Q.get('cols') || 8), [cw, ch] = (Q.get('cell') || '300x210').split('x').map(Number);
+  const story = (Q.get('story') || 'rain,dry,snow,melt').split(','), secs = +(Q.get('secs') || 8), COVER = Q.get('cover') !== '0';
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;   // (a film: nothing waits, hidden, for its shader)
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * views.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#aab4c0', fog: 0, env: .55, amb: .5 });
+  const sun = gs.hd.sun('#fff2e0', 1.6, 26, [.5, .8, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sky = new gs.sky.Sky(v, { time: +(Q.get('time') || 14), env: true, clouds: .6 }); v.air({ haze: .0012 });
+  // the place
+  const world = new T.Group(); v.scene.add(world);
+  const lie = (x, z) => -1.3 * Math.exp(-((x + 10) ** 2 + (z - 5) ** 2) / 16) + .04 * Math.sin(x * .6) * Math.sin(z * .5) * Math.min(1, Math.hypot(x, z + 2) / 9);
+  const land = new Land({ kind: lie, size: 90, segments: 120, material: M.material('dirt', { repeat: [30, 30] }) }); world.add(land.object);
+  const box = (mat, w, h, d, x, y, z, into = world) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; into.add(m); return m; };
+  const brick = M.material('brick', { repeat: [3, 1.5] }), planks = M.material('planks', { repeat: [3, 3] }), tiles = M.material('tiles', { colour: '#8a4a3a', grout: '#4a2c26', repeat: [8, 12] }), wood = M.material('wood'), cobbles = M.material('cobbles', { repeat: [5, 4] }), metal = M.material('metal', { repeat: [2, 2] });
+  const house = new T.Group(); world.add(house);
+  box(brick, 6, 2.6, .25, 0, 1.3, -5, house); box(brick, .25, 2.6, 5, -2.875, 1.3, -2.5, house); box(brick, .25, 2.6, 5, 2.875, 1.3, -2.5, house);   // back and sides
+  box(brick, 2.5, 2.6, .25, -1.75, 1.3, 0, house); box(brick, 2.5, 2.6, .25, 1.75, 1.3, 0, house); box(brick, 1, .5, .25, 0, 2.35, 0, house);         // the front, with a doorway
+  box(planks, 5.5, .08, 4.75, 0, .04, -2.5, house); box(planks, 6.4, .12, 2.3, 0, .06, 1.15, house);                                                   // the floor indoors, and the porch
+  const pitch = Math.atan2(1.8, 3.4), slope = Math.hypot(1.8, 3.4);
+  for (const s of [-1, 1]) { const r = box(tiles, slope + .1, .12, 7.9, s * 1.7, 2.6 + .9 + .06, -1.45, house); r.rotation.z = -s * pitch; }          // the roof: its gable end over the porch
+  for (const z of [-5, 0]) { const sh = new T.Shape(); sh.moveTo(-3, 0); sh.lineTo(3, 0); sh.lineTo(0, 1.59); sh.closePath(); const g = new T.Mesh(new T.ExtrudeGeometry(sh, { depth: .25, bevelEnabled: false }), brick); g.position.set(0, 2.6, z - .125); g.castShadow = g.receiveShadow = true; house.add(g); }
+  for (const x of [-3, 3]) box(wood, .14, 2.6, .14, x, 1.3, 2.2, house);
+  const leanTo = new T.Group(); world.add(leanTo);
+  box(metal, 3.4, .06, 3.4, 7.2, 2.25, 3.2, leanTo); for (const [x, z] of [[5.6, 1.6], [8.8, 1.6], [5.6, 4.8], [8.8, 4.8]]) box(wood, .1, 2.25, .1, x, 1.125, z, leanTo);
+  box(cobbles, 9, .1, 5.5, 4.2, 0, 5.2);                                                                                                               // a paved yard, flat: puddles lie on it
+  const put = (o, x, z, turn = 0) => { o.position.set(x, lie(x, z), z); o.rotation.y = turn; world.add(o); return o; };
+  put(M.prop('crate'), 1.9, 1.3).position.y = .12; put(M.prop('crate'), 3.4, 4.6, .5).position.y = .05; put(M.prop('barrel'), 6.4, 2.6).position.y = .05; put(M.prop('bench'), -1.6, 3.4, .1); put(M.prop('barrel'), 7.4, 3.4).position.y = .05;
+  put(M.tree('oak', { seed: 2 }), 8, -4); put(M.tree('pine', { seed: 5 }), -6.5, -6); put(M.tree('bush', { seed: 3 }), -3.9, 1.2);
+  const person = (x, z, turn) => put(gs.poses.person({ mat: c => gs.hd.pbr(c) }), x, z, turn); person(2.2, 6.2, -.6); person(-1.1, 1.2, .3).position.y = .12;
+  const pond = new Water({ level: -.45, waves: .12, size: 14, segments: 24, ripples: false }); pond.mesh.position.set(-10, pond.mesh.position.y, 5); world.add(pond.mesh);
+  world.updateMatrixWorld(true);
+  // the level the weather is given: the house and the lean-to as they are drawn, or as a physics world; the oak's crown as a ball
+  let level = [house, leanTo], phys = null;
+  if (Q.has('phys')) { phys = new gs.physics3d.World3D({ gravity: -9.81 }); for (const g of [house, leanTo]) g.traverse(o => { if (o.isMesh) phys.ground(o); }); phys.step(1 / 60); level = [phys]; }
+  const crown = { x: 8, y: 4.4, z: -4, r: 2.5 };
+  level.push((f, d, max) => { const dx = f.x - crown.x, dz = f.z - crown.z, q = crown.r * crown.r - dx * dx - dz * dz; return q > 0 && f.y > crown.y ? f.y - crown.y - Math.sqrt(q) : Infinity; });
+  const speed = secs / 8, weather = new gs.sky.Weather(v, { kind: 'clear', amount: 1, area: 26, max: 1400, ...(COVER ? { level, ground: (x, z) => Math.max(lie(x, z), Math.abs(x - 4.2) < 4.5 && Math.abs(z - 5.2) < 2.75 ? .05 : -9) } : { level: true }), water: pond, soak: 2.6 * speed, dry: 6 * speed, settle: 4.6 * speed, melt: 6.5 * speed });
+  const hold = Q.get('hold')?.split(':');
+  const dt = 1 / 60, N = Math.round(story.length * secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((hold ? (story.indexOf(hold[0]) + +hold[1]) / story.length : (i + .5) / cols) * N)), info = [];
+  const player = [2, 1.6, 4.5]; let cost = 0, worst = 0, ready = -1, part = -1;
+  for (let i = 0; i <= N; i++) {
+    const t = i * dt, now = Math.min(story.length - 1, Math.floor(t / secs));
+    if (now !== part) { part = now; const k = story[part]; weather.set(k === 'rain' || k === 'storm' || k === 'snow' ? k : 'clear', 1); }
+    v.cam.position.set(...player); v.cam.updateMatrixWorld();
+    sky.update(dt);
+    const c0 = performance.now(); weather.update(dt); const c = performance.now() - c0; if (i > 5) { cost += c; worst = Math.max(worst, c); }
+    if (ready < 0 && (!weather.cover || weather.cover.ready)) ready = i;
+    pond.update(dt, { x: -10, z: 5 });
+    for (let k = 0; k < cols; k++) if (shots[k] === i) {
+      for (let r = 0; r < views.length; r++) {
+        const V = VIEWS[views[r]]; if (!V) throw new Error('no view ' + views[r] + ': ' + Object.keys(VIEWS).join(', '));
+        v.cam.fov = 50; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix(); v.cam.position.set(...V[0]); v.cam.lookAt(...V[1]); v.cam.updateMatrixWorld();
+        v.cut?.(); sun.follow(2, 0, 2);
+        for (let n = 0; n < (k || r ? 2 : 8); n++) { v.t = t; v.render(cx, cw, ch); await frame(); }
+        sx.drawImage(cell, k * cw, r * ch);
+        sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${views[r]}  ${story[part]} ${(t - part * secs).toFixed(1)}s  wet ${weather.wet.toFixed(2)} pools ${weather.pools.toFixed(2)} snow ${weather.snow.toFixed(2)}`, k * cw + 4, r * ch + 12);
+      }
+      if (hold) break;
+    }
+  }
+  const P = (x, y, z) => ({ x, y, z });
+  info.push(`weather.update ${(cost / N).toFixed(3)} ms a frame, worst ${worst.toFixed(2)}; the map of what the sky can see: ${weather.cover ? `${weather.cover.N} cells of ${weather.cover.cell} m, ${weather.cover.asked} spots asked, all known after ${ready} frames` : 'none'}`);
+  info.push(`at the end: wet ${weather.wet.toFixed(2)}, pools ${weather.pools.toFixed(2)}, snow ${weather.snow.toFixed(2)}; open: yard ${weather.open(P(3, .1, 6))}, indoors ${weather.open(P(0, .1, -2.5))}, porch ${weather.open(P(0, .15, 1))}, under the lean-to ${weather.open(P(7.2, .1, 3.2))}, on the roof ${weather.open(P(1.5, 3.7, -2))}, under the oak ${weather.open(P(8, .1, -4))}`);
+  if (!GPU) {   // the most pictures one material reads at once
+    const r = bakeRenderer(), gl = r.getContext(), SAMPLERS = new Set([0x8B5E, 0x8B5F, 0x8B60, 0x8B62, 0x8DC1, 0x8DC4, 0x8DC5, 0x8DCA, 0x8DCB, 0x8DD2, 0x8DD3]); let most = 0, name = '', n = 0;
+    for (const p of r.info.programs || []) { const g = p.program; if (!g) continue; let k = 0; for (let u = 0, U = gl.getProgramParameter(g, gl.ACTIVE_UNIFORMS); u < U; u++) { const a = gl.getActiveUniform(g, u); if (a && SAMPLERS.has(a.type)) k += a.size; } n++; if (k > most) { most = k; name = p.name; } }
+    info.push(`${n} shaders; the most pictures one reads: ${most} (${name}); this chip allows ${gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)}`);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

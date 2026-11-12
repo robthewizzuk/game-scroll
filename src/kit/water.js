@@ -223,27 +223,28 @@ class Ripples {
   dispose() { this.normalTex.dispose(); this.foamTex.dispose(); }
 }
 
-// Spray: drops thrown up that fall back, drawn as copies of one small shape.
-class Spray {
+// Spray: drops thrown up that fall back, drawn as copies of one small shape. floor(x, z): the height they land
+// at; landed(x, z, size): told of each one that does. (gs.sky.Weather uses it too, for rain hopping off the ground.)
+export class Spray {
   constructor(max, colour) {
     this.n = max; this.P = new Float32Array(max * 3); this.Vl = new Float32Array(max * 3); this.S = new Float32Array(max); this.L = new Float32Array(max); this.next = 0; this.alive = 0;
     this.mesh = new InstancedMesh(new IcosahedronGeometry(1, 0), new MeshStandardMaterial({ color: colour, roughness: .75, metalness: 0 }), max);
-    this.mesh.instanceMatrix.setUsage(DynamicDrawUsage); this.mesh.instanceMatrix.array.fill(0); this.mesh.frustumCulled = false; this.mesh.castShadow = false; this.mesh.name = 'water:spray'; this.mesh.userData.detail = false;
+    this.mesh.instanceMatrix.setUsage(DynamicDrawUsage); this.mesh.instanceMatrix.array.fill(0); this.mesh.frustumCulled = false; this.mesh.castShadow = false; this.mesh.name = 'water:spray'; this.mesh.userData.detail = false; this.mesh.userData.noSettle = true;
     this.mesh.visible = false;
   }
   add(x, y, z, vx, vy, vz, size) {
     const i = this.next; this.next = (i + 1) % this.n; if (!(this.L[i] > 0)) this.alive++;
     this.P[i * 3] = x; this.P[i * 3 + 1] = y; this.P[i * 3 + 2] = z; this.Vl[i * 3] = vx; this.Vl[i * 3 + 1] = vy; this.Vl[i * 3 + 2] = vz; this.S[i] = size; this.L[i] = 1;
   }
-  update(dt, water) {
+  update(dt, floor, landed = null) {
     if (!this.alive) { if (this.mesh.visible) this.mesh.visible = false; return; }
     const { P, Vl, S, L } = this, A = this.mesh.instanceMatrix.array; this.mesh.visible = true;
     for (let i = 0; i < this.n; i++) {
       if (!(L[i] > 0)) continue;
       const k = i * 3, o = i * 16; Vl[k + 1] -= 9.8 * dt; const drag = 1 - .6 * dt; Vl[k] *= drag; Vl[k + 2] *= drag;
       P[k] += Vl[k] * dt; P[k + 1] += Vl[k + 1] * dt; P[k + 2] += Vl[k + 2] * dt; L[i] -= dt * .45;
-      const done = L[i] <= 0 || (Vl[k + 1] < 0 && P[k + 1] < water.swellAt(P[k], P[k + 2]) + water.level);
-      if (done) { L[i] = 0; this.alive--; A[o] = A[o + 5] = A[o + 10] = 0; if (S[i] > .05) water.rip?.foam(P[k], P[k + 2], S[i] * 2.5, .5, .6); continue; }
+      const done = L[i] <= 0 || (Vl[k + 1] < 0 && P[k + 1] < floor(P[k], P[k + 2]));
+      if (done) { L[i] = 0; this.alive--; A[o] = A[o + 5] = A[o + 10] = 0; landed?.(P[k], P[k + 2], S[i]); continue; }
       const s = S[i] * (.6 + .4 * L[i]), tall = s * (1 + Math.min(1.5, Math.abs(Vl[k + 1]) * .12));   // (drawn out along its fall)
       A[o] = s; A[o + 5] = tall; A[o + 10] = s; A[o + 12] = P[k]; A[o + 13] = P[k + 1]; A[o + 14] = P[k + 2]; A[o + 15] = 1;
     }
@@ -298,11 +299,11 @@ export class Water {
     let s = seed; const R = () => (s = (s * 16807) % 2147483647) / 2147483647;
     this.list = Array.isArray(waves) ? waves : Array.from({ length: 4 }, (_, i) => ({ dir: R() * Math.PI * 2, length: [24, 13, 7, 4][i], height: waves * [.35, .18, .08, .04][i], speed: 0 }));
     for (const w of this.list) { w.k = Math.PI * 2 / w.length; w.c = w.speed || Math.sqrt(9.8 / w.k); w.dx = Math.cos(w.dir); w.dz = Math.sin(w.dir); w.ph = R() * 6.28; }
-    this.rnd = R;
+    this.rnd = R; this.floor = (x, z) => this.level + this.swellAt(x, z); this.landed = (x, z, size) => { if (size > .05) this.rip?.foam(x, z, size * 2.5, .5, .6); };   // (where spray lands, and the foam a big drop leaves)
     this.swell = this.list.reduce((a, w) => a + Math.abs(w.height), 0);   // the most the waves can lift it
     const g = new PlaneGeometry(size, size, segments, segments); g.rotateX(-Math.PI / 2);
     this.own = !material;
-    this.mesh = new Mesh(g, material || new MeshStandardMaterial({ color: colour, roughness: .15, metalness: .1, transparent: opacity < 1, opacity }));
+    this.mesh = new Mesh(g, material || new MeshStandardMaterial({ color: colour, roughness: .15, metalness: .1, transparent: opacity < 1, opacity })); this.mesh.userData.noSettle = true;   // (no puddles or snow lie on water: gs.sky.Weather)
     this.mesh.receiveShadow = true; this.base = Float32Array.from(g.attributes.position.array);
     this.deep = new Color(colour); this.shallow = shallow ? new Color(shallow) : this.deep.clone().lerp(new Color('#9fe0d0'), .55); this.foamColour = foam;
     this.sprayMax = spray; this.rain = 0; this.rained = false; this.busy = false; this.splashes = []; this.pending = []; this.watched = []; this.under = 0; this.rip = null; this.spray = null; this.dapple = null; this.foamMesh = null; this.medium = null;
@@ -325,7 +326,7 @@ export class Water {
       for (let iy = a0; iy < a1; iy++) for (let ix = a0; ix < a1; ix++) { const a = ix + (n + 1) * iy, b = ix + (n + 1) * (iy + 1), c = ix + 1 + (n + 1) * (iy + 1), d = ix + 1 + (n + 1) * iy; idx.push(a, b, d, b, c, d); }
       const fg = new BufferGeometry(); for (const k of ['position', 'normal', 'uv']) fg.setAttribute(k, g.attributes[k]); fg.setIndex(idx);
       this.foamMesh = new Mesh(fg, new MeshStandardMaterial({ color: this.foamColour, roughness: .9, metalness: 0, map: this.lace = lace().clone(), alphaMap: r.foamTex, alphaTest: .5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-      this.foamMesh.frustumCulled = false; this.foamMesh.renderOrder = this.mesh.renderOrder + 1; this.foamMesh.receiveShadow = true; this.foamMesh.name = 'water:foam'; this.foamMesh.userData.detail = false;
+      this.foamMesh.frustumCulled = false; this.foamMesh.renderOrder = this.mesh.renderOrder + 1; this.foamMesh.receiveShadow = true; this.foamMesh.name = 'water:foam'; this.foamMesh.userData.detail = false; this.foamMesh.userData.noSettle = true;
       this.mesh.add(this.foamMesh);
     }
     r.wantFoam = !!this.foamMesh;
@@ -517,7 +518,7 @@ export class Water {
       this.busy = r.update(dt);
     }
     if (this.rain > 0 || this.rained) this.wetting(dt);
-    if (r || this.spray) { this.spray?.update(dt, this); this.dapple?.update(dt, this); this.lay(); }
+    if (r || this.spray) { this.spray?.update(dt, this.floor, this.landed); this.dapple?.update(dt, this); this.lay(); }
     this.heave();
     if (this.bed) { const key = p.x + ',' + p.z; if (key !== this.shadeAt) { this.shadeAt = key; this.shade(); } }
     if (this.medium) this.dive();

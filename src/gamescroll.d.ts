@@ -1240,6 +1240,8 @@ export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; 
 export interface HdAir {
   haze: number; colour: Loose; sunColour: Loose | null; mist: number; mistFall: number; mistY: number; patchy: number;
   clouds: number; cloudShade: number; cloudHeight: number; cloudSize: number; wind: [number, number]; wet: number; sun: Loose | null;
+  /** Set by a gs.sky.Weather that was given the level: what it has made wet and white, drawn only where the sky can see. */
+  world: { wet: number; snow: number; pools: number; cover: SkyCover | null } | null;
 }
 /** v.grade: saturation and contrast (1 = no change), tints for the shadows and the highlights ('#rrggbb', a Color or [r, g, b]). */
 export interface HdGrade { saturation?: number; contrast?: number; shadows?: Loose; highlights?: Loose }
@@ -1914,10 +1916,51 @@ export interface SkyPart {
     time: number; speed: number; night: number; clouds: number; gap: number; /** 0..1 lights up the sky and clouds (lightning): set it while a flash shows. */ flash: number;
     readonly dayPart: number; update(dt: number): Loose; apply(): Loose; dispose(): void;
   };
-  Weather: new (view: Loose, o?: { kind?: 'rain' | 'snow' | 'storm' | 'clear'; amount?: number; area?: number; /** [x, z] push, or a gs.outdoors.Wind to follow. */ wind?: number[] | { x?: number; z?: number; [k: string]: Loose }; max?: number; color?: string }) => {
-    kind: string; amount: number; wind: [number, number]; onFlash: ((far: number) => void) | null; readonly flashing: boolean;
-    set(kind: 'rain' | 'snow' | 'storm' | 'clear', amount?: number): Loose; flash(): Loose; update(dt: number): Loose; dispose(): void;
-  };
+  /**
+   * Rain, snow or a storm round the camera. Given the level (Next Gen views with air()), it also changes the world: rain and
+   * snow stop at roofs, what the sky can see gets wet, puddles spread on flat ground and dry up again, snow settles and
+   * melts, and floors indoors, porches and the ground under a bridge stay dry. docs/nextgen-3d.md "Weather that changes the world".
+   */
+  Weather: new (view: Loose, o?: WeatherOptions) => WeatherPart;
+}
+export interface WeatherOptions {
+  kind?: 'rain' | 'snow' | 'storm' | 'clear'; amount?: number; area?: number; /** [x, z] push, or a gs.outdoors.Wind to follow. */ wind?: number[] | { x?: number; z?: number; [k: string]: Loose }; max?: number; color?: string;
+  /** How big a snowflake is drawn, in metres (with a level: .07 at most). */ flake?: number;
+  /**
+   * What stands in the weather, so it can change the world: a gs.physics3d World3D, a City, Voxels, a function
+   * (from, dir, max) => metres to the first solid thing, three.js meshes or groups (keep those to a few simple shapes),
+   * or a list of these. true: no roofs anywhere, everything is out in it.
+   */
+  level?: Loose;
+  /** (x, z) => the height of the land, for land that is not in the level (land.height). */ ground?: (x: number, z: number) => number;
+  /** The map of what the sky can see: cells (128) of cell metres (.5) round the camera, rise and drop (80 m: how far above and below the camera it looks), rays (400 spots asked a frame at most), ms (1.5 at most). */
+  cover?: { cells?: number; cell?: number; rise?: number; drop?: number; rays?: number; ms?: number; again?: number };
+  /** gs.outdoors.Water (one or a list): the rain falls on it too (it sets water.rain). */ water?: WaterPart | WaterPart[];
+  /** Seconds of full rain until everything is wet (20), and of no rain until it is dry again (90). Puddles take twice as long to fill and go last. */ soak?: number; dry?: number;
+  /** Seconds of full snow until it has all settled (40), and until it has melted once the snow stops (150; rain washes it away six times as fast). */ settle?: number; melt?: number;
+  /** How deep settled snow lies, in metres (.25): what snowAt() answers with. */ deep?: number;
+  /** How many drops hop off the ground near the camera at once in the rain (96; 0: none). */ hops?: number;
+}
+export interface WeatherPart {
+  kind: string; amount: number; wind: [number, number]; onFlash: ((far: number) => void) | null; readonly flashing: boolean;
+  /** How wet the open world is, how far the puddles have spread and how much snow has settled, each 0..1 (with a level). Set them to start a round after rain or in deep snow. */
+  wet: number; pools: number; snow: number;
+  /** How hard it is raining and snowing now, 0..1. */ readonly rain: number; readonly snowing: number;
+  /** The map of what the sky can see (with a level): cover.at(x, z) is the height of the highest solid thing over a spot. */ readonly cover: SkyCover | null;
+  set(kind: 'rain' | 'snow' | 'storm' | 'clear', amount?: number): WeatherPart; flash(): WeatherPart; update(dt: number): WeatherPart; dispose(): void;
+  /** Can the sky see this point (is nothing over it)? Always true with no level. */ open(p: Fx3dPos): boolean;
+  /** How wet a spot is now, 0..1: 0 under a roof (slippery floors, footsteps that splash, a dog that shakes itself indoors). */ wetAt(p: Fx3dPos): number;
+  /** How deep the snow lies at a spot, in metres: 0 under a roof (footprints, slower walking). */ snowAt(p: Fx3dPos): number;
+}
+/** What the sky can see, as numbers on a grid round the camera (weather.cover). */
+export interface SkyCover {
+  /** Cells a side and metres a cell; the middle of the square it knows, and how far from it the answers reach. */
+  readonly N: number; readonly cell: number; readonly cx: number; readonly cz: number; readonly reach: number;
+  /** True once every spot in its square has been asked about (a few frames after a jump). */ readonly ready: boolean;
+  /** The height of the highest solid thing over x, z (a roof, a bridge, the ground): -Infinity where it does not know. */ at(x: number, z: number): number;
+  /** Is nothing over this point? slack: how far under the highest thing still counts (.3 m). */ open(x: number, y: number, z: number, slack?: number): boolean;
+  /** You changed the level here (a roof came off, a door opened): it asks again within r metres (4) first. It looks everything over again every few seconds anyway. */ touch(x: number, z: number, r?: number): SkyCover;
+  /** Every spot now, not a few a frame (while loading). */ update(all?: boolean): SkyCover;
 }
 
 // ---------- round 7: action, stealth, traversal, missions, sport, big levels ----------

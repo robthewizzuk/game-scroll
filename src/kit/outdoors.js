@@ -278,7 +278,7 @@ export class River {
     const m = material || new MeshStandardMaterial({ color: '#ffffff', roughness: .1, metalness: 0 });
     if (!lavaK) { m.transparent = m.transparent || stream.kind !== 'mud'; m.opacity = Math.min(m.opacity, stream.kind === 'mud' ? 1 : .9); m.depthWrite = !m.transparent; }
     this.look = lavaK ? LOOKS.lava(m, { length: stream.length || 1, ...look }) : LOOKS.flow(m, { ...acid, ...look });
-    this.mesh = new Mesh(g, m); this.mesh.receiveShadow = !lavaK; this.mesh.castShadow = false;
+    this.mesh = new Mesh(g, m); this.mesh.receiveShadow = !lavaK; this.mesh.castShadow = false; this.mesh.userData.noSettle = true;
   }
   ribbon(s, step, n, lift) {
     const L = s.length, rows = Math.max(2, Math.ceil(L / step) + 1), pos = [], fl = [], dir = [], idx = [];
@@ -335,7 +335,7 @@ export class FloodWater {
     g.setAttribute('color', new Float32BufferAttribute(new Float32Array(N * N * 3), 3)); g.setIndex(idx);
     this.look.geometry = g; this.look.cellsIn = s => this.cellsIn(s);
     const m = new MeshStandardMaterial({ vertexColors: true, roughness: rough, metalness: 0, transparent: opacity < 1, opacity, depthWrite: opacity >= 1 });
-    this.mesh = new Mesh(g, m); this.mesh.frustumCulled = false; this.mesh.renderOrder = 2;
+    this.mesh = new Mesh(g, m); this.mesh.frustumCulled = false; this.mesh.renderOrder = 2; this.mesh.userData.noSettle = true;
     this.view = view; if (view) (view.sims ||= []).push(this);
     this.sync();
   }

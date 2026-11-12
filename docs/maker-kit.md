@@ -68,6 +68,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Cars and karts that drift and boost, laps | `gs.vehicles`, `World3D.vehicle()` | [Game kits](#game-kits) |
 | A 3D level from a text map | `gs.level3d` | [Game kits](#game-kits) |
 | Time of day, rain, snow, lightning | `gs.sky` | [Game kits](#game-kits) |
+| Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -1809,7 +1810,9 @@ sky for Next Gen). `clouds: 0..1` adds drifting clouds lit by the sun, and on Ne
 lights the scene's reflections from the sky; with `v.air()` their shadows cross the ground (see
 [nextgen-3d.md](nextgen-3d.md#outdoor-worlds-sun-air-sky-and-grade)). `Weather(view, { kind: 'rain' | 'snow' | 'storm' })` falls around the camera;
 storms flash lightning, and `onFlash(far)` is your cue for thunder. In AR the camera feed is the sky,
-so use `Weather` alone.
+so use `Weather` alone. Given the level (`Weather(view, { level: world })`) it changes the world too: rain and
+snow stop at roofs, the open ground gets wet and puddled and dries again, and snow settles and melts: see
+[Weather that changes the world](#weather-that-changes-the-world).
 
 ## Action and adventure kits
 
@@ -2541,7 +2544,7 @@ make():   sea = new Water({ level: 0, waves: .6, ripples: true, bed: (x, z) => l
           sea.watch(boat, { radius: 1.2 });                          // by itself from now on: its wake, its foam, a splash if it lands
 reset() { sea.calm(); }
 update(dt) {
-  sky.update(dt); sea.rain = weather.kind === 'rain' ? weather.amount : 0;   // 0..1
+  sky.update(dt); sea.rain = weather.rain;                            // 0..1 (a Weather given `water: sea` sets it itself)
   sea.update(dt, camera.position);                                   // after the sky and your own view.air()
   for (const s of sea.splashes) ears.play('splash', s);              // what landed in it this frame
   mixer.muffle(sea.under ? .8 : 0);
@@ -2580,3 +2583,62 @@ sea.ring(x, z, { size: .3 });                                        // somethin
   otherwise, in the middle of a round. `foam: false` and `spray: 0` leave those out.
 - Not there: waves that break, water that flows or changes level (`gs.flow`, `gs.fluid`), and a split
   picture while the camera is half under.
+
+## Weather that changes the world
+
+`const { Weather } = gs.sky;` (3D; the look is Next Gen.) Tell the weather what stands in it and the rain
+and snow no longer fall through roofs, and the world answers to them:
+
+```js
+make():   weather = new Weather(view, { kind: 'rain', level: world, ground: (x, z) => land.height(x, z), water: sea });
+reset() { weather.set('clear'); weather.wet = weather.pools = weather.snow = 0; }
+update(dt) {
+  weather.update(dt);                                   // after the camera has moved
+  if (weather.wetAt(player.pos) > .5) grip = .7;         // wet underfoot (0 indoors and under a roof)
+  speed *= 1 - weather.snowAt(player.pos) * 1.5;         // metres of snow lying here (0 under a roof)
+}
+weather.set('snow');                                    // it starts to settle; 'rain' washes it away again
+```
+
+- `level` is what keeps the weather off: a `gs.physics3d` `World3D`, a `City`, `Voxels`, a function
+  `(from, dir, max) => metres to the first solid thing`, three.js meshes or groups (their triangles are
+  asked one by one, so keep those to a few simple shapes: a physics world is much quicker), or a list of
+  these. `ground: (x, z) => height` is for land that is not in the level. `level: true` says there are no
+  roofs: everything is out in it.
+- From these the weather keeps a **map of what the sky can see**: for every half metre within 32 m of the
+  camera, the height of the highest solid thing. It fills from the camera outwards a few hundred spots a
+  frame (a second or so after a jump), follows the camera, and looks everything over again every six
+  seconds, so a roof that is blown off lets the rain in. `weather.cover.touch(x, z, r)` asks again round
+  a spot at once. Beyond the map everything counts as open.
+- **What you see** (a Next Gen view; the weather turns the view's `air()` on if it is off). In rain the
+  drops stop at the first thing they meet, little drops hop off the ground round the camera, and
+  everything the sky can see gets darker and shinier over `soak` seconds (20). Then puddles open on flat
+  ground and spread (they take twice as long), and when the rain stops it all dries over `dry` seconds
+  (90), the puddles last. In snow the flakes stop at roofs too, and snow settles over `settle` seconds
+  (40): first in patches on flat tops, then over everything that is not too steep (ground, roofs, crates,
+  the tops of walls, the leaves that face up). When the snow stops it melts over `melt` seconds (150),
+  leaving the ground wet; rain washes it away six times as fast. `melt: Infinity` keeps it lying. Floors
+  indoors, porches, the ground under a bridge or a lean-to and the foot of a wall under its eaves stay
+  dry, with a soft edge.
+- **What you can ask**: `weather.wet`, `weather.pools` and `weather.snow` (each 0..1; set them to start a
+  round after rain or in deep snow), `weather.rain` and `weather.snowing` (how hard, now), `open(p)` (can
+  the sky see this point), `wetAt(p)` (how wet a spot is, 0 under a roof), `snowAt(p)` (metres of snow
+  lying there; `deep`, .25, when it has all settled) and `weather.cover.at(x, z)` (the height of the
+  highest thing over a spot). Slipping, slower steps, footprints, splashing footsteps, the sound of rain
+  on a roof overhead and who comes in out of the rain are yours, from these.
+- `water` (one `gs.outdoors.Water`, or a list): the rain falls on it too (it sets `water.rain`), and its
+  drops hop off the water's surface.
+- Nothing settles on water, on people and animals (skinned meshes), or on anything whose mesh or material
+  has `userData.noSettle = true` (a car that drives about); they still get wet. Your own `ShaderMaterial`s
+  and materials with `fog: false` are left alone, as with the air.
+- Make it with the level, in `make()`, before the first frame is drawn: the look is added to each
+  material as it is first drawn, on WebGL and WebGPU alike, and costs no extra pass (three small texture
+  reads a pixel). On WebGPU a material that was drawn before there was such a weather keeps its plain wet
+  look, with no puddles or snow; and a game with no such weather pays nothing for it. Measured on a
+  desktop, `weather.update()` is .15 ms a frame in rain with the map kept up (not yet measured on a
+  phone). `cover: { cells: 64 }` is a smaller map (16 m round the camera), `hops: 0` leaves the hopping
+  drops out.
+- With no `level` the weather is what it always was: it only falls, and `open()` is always true.
+- Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth for your footprints),
+  puddles do not seek out the hollows of the land (they lie on flat ground where the map of them says),
+  water does not run down walls or drip off eaves, and nothing piles up on things that move.

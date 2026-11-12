@@ -612,6 +612,23 @@ try {
     ok(still.white < .002 && sea.dapple.alive > 300 && wet.light > still.light + .5 && !bad, 'water: calm() clears it, and rain leaves rings (the picture ' + (wet.light - still.light).toFixed(1) + ' lighter of 255)');
     sea.dispose(); r.dispose();
   }
+  // gs.sky.Weather given the level, drawn in a Next Gen view from above: a floor with a roof over its left half (the roof is only
+  // told to the weather, not drawn, so the floor under it shows). Rain darkens the open half, snow whitens it, and the half
+  // under the roof stays as it was (kit-test.mjs has the rules; scripts/weather.cjs films it)
+  {
+    const T = gs.THREE, hold = window.__hd.hold; window.__hd.hold = false;
+    const v = new gs.hd.HDView({ bg: '#404040', amb: .6, env: 0 }), c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    v.cam.fov = 50; v.cam.aspect = 1; v.cam.updateProjectionMatrix(); v.cam.position.set(0, 14, .01); v.cam.lookAt(0, 0, 0); v.cam.updateMatrixWorld();
+    const sl = gs.hd.sun('#fff', 2, 12, [1, .5, 0]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0); v.air({ haze: 0 });   // (a low sun: its glint is off the floor)
+    const floor = new T.Mesh(new T.BoxGeometry(16, .2, 16), gs.hd.pbr('#7a6a5a', { rough: .9 })); floor.position.y = -.1; v.scene.add(floor);
+    const w = new gs.sky.Weather(v, { kind: 'clear', level: f => (f.x < 0 && f.y >= 3 ? f.y - 3 : Infinity), ground: () => 0 }); w.update(1 / 60); w.cover.update(true);
+    const look = async () => { for (let i = 0; i < 8; i++) { w.update(0); v.render(x, 128, 128); await frame(); } const d = x.getImageData(0, 0, 128, 128).data, half = x0 => { let s = 0, n = 0; for (let j = 16; j < 112; j++) for (let i = x0; i < x0 + 40; i++) { const k = (j * 128 + i) * 4; s += d[k] + d[k + 1] + d[k + 2]; n += 3; } return s / n; }; return { roofed: half(8), open: half(80) }; };
+    const dry = await look(); w.wet = 1; const wet = await look(); w.wet = 0; w.snow = 1; const snow = await look();
+    ok(w.cover.ready && !w.open({ x: -4, y: 0, z: 0 }) && w.open({ x: 4, y: 0, z: 0 }) && Math.abs(dry.roofed - dry.open) < 4 && dry.open > 30, `weather: the same floor on both sides while it is dry (${dry.roofed.toFixed(0)} and ${dry.open.toFixed(0)} of 255)`);
+    ok(wet.open < wet.roofed * .85 && Math.abs(wet.roofed - dry.roofed) < 5, `weather: rain darkens the open half (${wet.open.toFixed(0)} of 255), the half under the roof stays dry (${wet.roofed.toFixed(0)})`);
+    ok(snow.open > snow.roofed * 2 && Math.abs(snow.roofed - dry.roofed) < 5, `weather: snow whitens the open half (${snow.open.toFixed(0)} of 255), not the half under the roof (${snow.roofed.toFixed(0)})`);
+    w.dispose(); window.__hd.hold = hold;
+  }
 }
 window.result = out;
 </script>

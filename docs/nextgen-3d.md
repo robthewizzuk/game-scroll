@@ -398,6 +398,13 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   (`[x, z]` m/s they drift) and `wet` (0..1: rain darkens things and makes up-facing surfaces shiny).
   It returns the settings, which you can change any time (`v.air().wet = rain.amount`); `v.air(false)`
   turns it off. Your own `ShaderMaterial`s and materials with `fog: false` are left alone.
+- **Weather that changes the world** (`new gs.sky.Weather(v, { kind: 'rain', level: world, ground: land.height })`):
+  given the level, the weather wets only what the sky can see, so the floor of a house and a porch stay
+  dry; puddles spread on flat ground and dry up; snow settles on ground and roofs and melts. It keeps a
+  map of the highest solid thing over each half metre round the camera (rays into the level a few
+  hundred a frame) and the air reads it, so it costs no extra pass and is the same on WebGL and WebGPU.
+  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. The full list is in
+  [maker-kit.md](maker-kit.md#weather-that-changes-the-world); `node scripts/weather.cjs film.png` films it.
 - **Sky** (`gs.sky`'s `Sky`) with `clouds: 0..1` draws drifting clouds lit from the sun's side (your
   own colours with `cloudLight` and `cloudDark`; `gap` keeps the low sky round the sun clear). It aims
   the sun, and on a view with air it colours the haze from the sky and lays the clouds' shadows on the

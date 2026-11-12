@@ -3343,5 +3343,78 @@ console.log('physics ok');
   console.log('water you can disturb: the same waves, calm water free, rings, a square that follows, splashes, watched things and wakes, shallows and shore foam, under the surface, rain, your own material ok');
 }
 
+// weather that changes the world (src/kit/cover.js, src/kit/sky.js: gs.sky.Weather with a level)
+{
+  const THREE = await import('three'), { Weather } = await import('../src/kit/sky.js'), { Cover } = await import('../src/kit/cover.js'), { Water } = await import('../src/kit/water.js');
+  // a place: flat ground, and a roof 8 m square, 3 m up, round the middle (it can be taken away)
+  const place = { roof: true }, level = (f, d, max) => (place.roof && Math.abs(f.x) <= 4 && Math.abs(f.z) <= 4 && f.y >= 3 ? f.y - 3 : Infinity), ground = () => 0;
+  const P = (x, y, z) => ({ x, y, z });
+  // the map of what the sky can see
+  {
+    const c = new Cover({ level, ground }); assert.ok(c.N === 128 && c.cell === .5 && !c.ready && c.at(0, 0) === -Infinity && c.open(0, 1, 0), 'nothing known yet: all open');
+    c.place(0, 1.6, 0).update(); assert.ok(!c.ready && c.asked <= 400 && c.at(0, 0) === 3 && c.at(30, 30) === -Infinity, 'a few hundred spots a frame, from the middle outwards');
+    let n = 1; while (!c.ready && n < 200) { c.update(); n++; } assert.ok(c.ready && n < 60 && c.asked >= 128 * 128, 'all known after ' + n + ' updates');
+    assert.deepEqual([c.at(0, 0), c.at(3.9, -3.9), c.at(4.6, 0), c.at(-20, 12), c.at(40, 0)], [3, 3, 0, 0, -Infinity], 'the roof, the ground, and outside its square');
+    assert.ok(!c.open(0, 1, 0) && c.open(0, 3, 0) && c.open(0, 2.8, 0) && c.open(6, 0, 0) && c.open(6, -.2, 0) && !c.open(6, -1, 0) && c.open(99, 0, 0), 'open(): on the roof and in the yard, not under the roof or the ground');
+    assert.ok(Math.abs(THREE.DataUtils.fromHalfFloat(c.pix[0]) - 3) < .01 && THREE.DataUtils.fromHalfFloat(c.pix[127 * 128 + 100]) === 0 && c.texture.image.width === 128, 'and the same numbers as a picture for the graphics chip');
+    // it follows a whole cell at a time: what it knew stays, only the strip that came in is asked
+    const v = c.texture.version, a0 = c.asked; c.again = 0; c.place(.2, 1.6, 0).update(); assert.ok(c.asked === a0 && c.texture.version === v && c.cx === 0, 'a move inside the cell: nothing asked, nothing sent');
+    c.place(3, 1.6, 0); assert.ok(c.cx === 3 && c.at(0, 0) === 3 && c.at(34.7, 0) === -Infinity && c.left === 6 * 128); c.update(); c.update();
+    assert.ok(c.ready && c.asked === a0 + 6 * 128 && c.at(34.7, 0) === 0 && c.at(-29.2, 0) === -Infinity, 'the strip that came in');
+    // a roof that goes: touch() asks again there first; without it the slow look round finds it
+    place.roof = false; c.touch(0, 0, 2); c.update(); assert.ok(c.at(0, 0) === 0 && c.at(3.6, 3.6) === 3, 'touch() asks again round a point'); c.again = 48;
+    let k = 0; while (c.at(3.6, 3.6) !== 0 && k < 500) { c.update(); k++; } assert.ok(k > 1 && k <= 128 * 128 / 48 + 1, 'the rest is found again in ' + k + ' updates');
+    place.roof = true; c.place(500, 1.6, 0).update(); assert.ok(c.at(0, 0) === -Infinity && c.at(500, 0) === 0 && c.at(520, 0) === -Infinity, 'a jump: it starts again from the middle'); c.update(true); assert.ok(c.ready && c.at(530, 20) === 0);
+    c.dispose();
+    // three.js meshes are asked through their triangles
+    const m = new THREE.Mesh(new THREE.BoxGeometry(4, .2, 4), new THREE.MeshBasicMaterial()); m.position.set(10, 2, 0); m.updateMatrixWorld(true);
+    const c2 = new Cover({ level: [m, level], ground, cells: 64 }); c2.place(8, 1, 0).update(true);
+    assert.ok(Math.abs(c2.at(10, 0) - 2.1) < 1e-6 && c2.at(0, 0) === 3 && c2.at(6, 0) === 0 && c2.N === 64, 'a mesh and a function together');
+  }
+  // the weather: how wet and how white the world is, and what it hides under a roof
+  const view = () => ({ cam: { position: new THREE.Vector3(0, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, _air: null, air() { return this._air ||= { wet: 0, world: null }; } });
+  const run = (w, secs) => { for (let i = 0; i < Math.round(secs * 60); i++) w.update(1 / 60); };
+  {
+    const v = view(), pond = new Water({ size: 10 }), w = new Weather(v, { kind: 'rain', level, ground, water: pond, soak: 4, dry: 6, settle: 5, melt: 8 });
+    assert.ok(w.world && w.cover && v._air.world === w.shown && w.wet === 0 && w.hops && v.scene.children.includes(w.hops.mesh), 'given the level it tells the air what to draw');
+    run(w, 1); assert.ok(w.cover.ready && Math.abs(w.wet - .25) < .01 && w.pools === 0 && w.rain === 1 && pond.rain === 1, 'rain soaks in, and falls on the water it was given');
+    assert.ok(w.open(P(8, 0, 0)) && !w.open(P(0, 0, 0)) && w.wetAt(P(8, 0, 0)) === w.wet && w.wetAt(P(0, 0, 0)) === 0 && w.wetAt(P(0, 3, 0)) === w.wet, 'wet in the yard and on the roof, dry under it');
+    // no drop is drawn under the roof (its two ends are one point), and the drops that hop come up off what the sky can see
+    const a = w.rainMesh.geometry.attributes.position.array; let under = 0, shown = 0;
+    for (let i = 0; i < 900; i++) { const x = a[i * 6], y = a[i * 6 + 1], z = a[i * 6 + 2], drawn = a[i * 6 + 4] !== y; if (Math.abs(x) < 3.5 && Math.abs(z) < 3.5 && y < 3) { under++; assert.ok(!drawn, 'a drop under the roof'); } else if (drawn) shown++; }
+    assert.ok(under > 5 && shown > 300, under + ' drops hidden under the roof, ' + shown + ' drawn');
+    assert.ok(w.hops.alive > 20, 'drops hop off the ground: ' + w.hops.alive); for (let i = 0; i < w.hops.n; i++) if (w.hops.L[i] > 0) { const x = w.hops.P[i * 3], z = w.hops.P[i * 3 + 2]; assert.ok(w.hops.P[i * 3 + 1] >= w.cover.at(x, z) - .05, 'a hop under what it landed on'); }
+    run(w, 4); assert.ok(w.wet === 1 && w.pools > .2 && w.pools < .5 && v._air.world.pools === w.pools, 'puddles start once it is wet through: ' + w.pools); run(w, 8); assert.ok(w.pools === 1);
+    // it dries; the puddles go last
+    w.set('clear'); run(w, 3); assert.ok(w.rain === 0 && pond.rain === 0 && Math.abs(w.wet - .5) < .01 && w.pools > .6); run(w, 3.1); assert.ok(w.wet === 0 && w.pools > .3, 'dry ground, puddles left'); run(w, 4); assert.ok(w.pools === 0 && !w.hops.alive);
+    // snow settles where the sky sees, and no flake is drawn under the roof
+    w.set('snow'); run(w, 2.5); assert.ok(Math.abs(w.snow - .5) < .01 && w.wet === 0 && w.snowing === 1 && Math.abs(w.snowAt(P(8, 0, 0)) - .125) < .003 && w.snowAt(P(0, 0, 0)) === 0, 'snow lies ' + w.snowAt(P(8, 0, 0)) + ' m deep in the yard');
+    const s = w.snowMesh.geometry.attributes.position.array; for (let i = 0; i < 900; i++) assert.ok(!(Math.abs(s[i * 3]) < 3.5 && Math.abs(s[i * 3 + 2]) < 3.5 && s[i * 3 + 1] < 3 && s[i * 3 + 1] > -20), 'a flake under the roof');
+    run(w, 3); assert.ok(w.snow === 1 && v._air.world.snow === 1);
+    // it melts slowly when the snow stops (the ground under it gets wet, bit by bit), and fast in rain
+    w.set('clear'); run(w, .5); assert.ok(w.snow > .93 && w.wet > .3 && w.wet < .45, 'melting: wet comes in gradually: ' + w.wet); run(w, 3.5); const left = w.snow; assert.ok(Math.abs(left - .5) < .01 && w.wet === 1);
+    w.set('rain'); run(w, .5); assert.ok(left - w.snow > .3, 'rain washes it away: ' + (left - w.snow)); run(w, 1); assert.ok(w.snow === 0);
+    // the game can say how things start, and take it all away
+    w.set('clear'); w.snow = .8; w.wet = .2; w.update(1 / 60); assert.ok(v._air.world.snow > .79 && v._air.world.cover === w.cover);
+    w.dispose(); assert.ok(v._air.world === null && v.scene.children.length === 0 && pond.rain === 0, 'dispose()');
+  }
+  // with no level it is the weather it always was; level: true is wet and white everywhere, no map
+  {
+    const v = view(), w = new Weather(v, { kind: 'rain' }); run(w, 1);
+    assert.ok(!w.world && w.cover === null && v._air === null && w.wet === 0 && w.hops === null && w.open(P(0, 0, 0)) && w.rain === 1 && v.scene.children.length === 2, 'no level: only what falls'); w.dispose();
+    const v2 = view(), w2 = new Weather(v2, { kind: 'snow', level: true, settle: 2 }); run(w2, 1);
+    assert.ok(w2.world && w2.cover === null && Math.abs(w2.snow - .5) < .01 && v2._air.world.cover === null && w2.open(P(0, 0, 0)) && w2.snowAt(P(0, 0, 0)) > .1, 'level: true'); w2.dispose();
+    // one map can be made by the game and shared, and is then the game's to throw away
+    const c = new Cover({ level, ground, cells: 32 }), v3 = view(), w3 = new Weather(v3, { cover: c }); run(w3, .2);
+    assert.ok(w3.cover === c && c.ready && !w3.open(P(0, 0, 0))); w3.dispose(); assert.ok(c.at(0, 0) === 3, 'a shared map outlives the weather'); c.dispose();
+  }
+  // a frame of it is cheap (rain on, the map all known and looked over again a little each frame)
+  {
+    const v = view(), w = new Weather(v, { kind: 'rain', level, ground }); run(w, 2); const t0 = performance.now(); run(w, 5); const ms = (performance.now() - t0) / 300;
+    assert.ok(ms < 1.5, 'weather.update() ' + ms.toFixed(3) + ' ms a frame'); w.dispose();
+    console.log('weather that changes the world: the map of what the sky can see (fills, follows, finds changes, meshes), rain soaks in and pools and dries, snow settles and melts, roofs keep it off, no level as before ok (' + ms.toFixed(3) + ' ms a frame)');
+  }
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
