@@ -1,0 +1,205 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Crowds (gs.props.Crowd, src/kit/crowd.js), for scripts/detail-test.cjs --page crowd.
+// 1. A line of people and a dog, each posed by its own rig and skeleton, against the same line drawn as
+//    members of a crowd (the same moves at the same points in them): the pictures must match, shadows and
+//    all, at each level of detail.
+// 2. A few hundred walking round a field: how many are sent, at which levels, in how many draws and
+//    triangles; that leaving out the ones out of view changes nothing in the picture; that a stride follows
+//    the ground covered, a new move blends in, a move that plays once ends, and hidden members are gone.
+//   ?gpu  WebGPU    ?tier=2    ?w=640&h=360    ?n=300 (how many in the field)
+//   ?bench (--bench): n people each with a skeleton of its own against n in a crowd: draws, triangles and
+//   the engine's own time a frame (&n=300 &frames=40)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 640), H = +(Q.get('h') || 360), { Crowd } = gs.props, { human, creature } = gs.models;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false;
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const SPECS = [{ seed: 1, strands: false }, { sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], DOG = { like: 'dog', fur: false };
+  await Promise.all([human.ready(SPECS), creature.ready([DOG])]);
+  const figures = () => [human(SPECS[0]), human(SPECS[1]), creature(DOG)];
+  function stage() {
+    const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+    const sun = gs.hd.sun('#fff2d8', 2.6, 30, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(300, 300).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8a66', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    v.cam.fov = 40; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix();
+    return { v, c, x, sun };
+  }
+  const look = (S, from, at) => { S.v.cam.position.set(...from); S.v.cam.lookAt(...at); S.v.cam.updateMatrixWorld(); S.v.cut?.(); };
+  // a picture once it has stopped changing (new shaders come in over a frame or two)
+  const shot = async (S, most = 40) => {
+    let last = null, same = 0;
+    for (let i = 0; i < most && same < 2; i++) {
+      S.v.t = 0; S.v.render(S.x, W, H); await nextFrame();
+      const d = S.x.getImageData(0, 0, W, H).data; same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d;
+    }
+    return last;
+  };
+  const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); };
+
+  if (Q.has('bench')) {
+    // n people with a skeleton each against n in a crowd, walking round a field
+    const N = +(Q.get('n') || 300), frames = +(Q.get('frames') || 40), res = {};
+    for (const mode of ['skeletons', 'crowd']) {
+      const S = stage(), src = figures(), R = gs.math.rng(5), who = [];
+      look(S, [0, 9, 46], [0, 0, 0]);
+      const crowd = mode === 'crowd' ? new Crowd(S.v, { of: src, moves: ['idle', 'walk', 'run'] }) : null;
+      for (let i = 0; i < N; i++) {
+        const o = { x: (R() - .5) * 70, z: (R() - .5) * 70, turn: R() * 6.28, kind: i % 3, move: 'walk', size: .95 + R() * .1 };
+        if (crowd) who.push(crowd.add(o)); else { const f = src[o.kind].twin(); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; f.rig.play?.('walk'); f.lod = 2; S.v.scene.add(f); who.push(f); }
+      }
+      const step = async () => {
+        const t0 = performance.now();
+        for (const p of who) {
+          if (crowd) { p.x += Math.sin(p.turn) * .022; p.z += Math.cos(p.turn) * .022; p.turn += .004; }
+          else { p.position.x += Math.sin(p.rotation.y) * .022; p.position.z += Math.cos(p.rotation.y) * .022; p.rotation.y += .004; p.rig.update(1 / 60, { speed: 1.3 }); p.see(S.v.cam, H); }
+        }
+        crowd?.update(1 / 60);
+        const js = performance.now() - t0;
+        S.v.t = 0; S.v.render(S.x, W, H); await nextFrame(); return js;
+      };
+      for (let i = 0; i < 20; i++) await step();
+      const js = [], cpu = [], tris = [], calls = [];
+      for (let i = 0; i < frames; i++) { js.push(await step()); cpu.push(HD.info.cpu); tris.push(HD.info.tris); calls.push(HD.info.calls); }
+      const med = a => +[...a].sort((p, q) => p - q)[a.length >> 1].toFixed(2), mean = a => Math.round(a.reduce((s, q) => s + q, 0) / a.length);
+      res[mode] = { backend: HD.info.backend, people: N, posingMs: med(js), drawMs: med(cpu), triangles: mean(tris), draws: mean(calls), ...(crowd ? { sent: crowd.info.drawn, levels: crowd.info.levels.join('/') } : {}) };
+      out[mode] = S.c.toDataURL();
+      crowd?.dispose(); S.v.dispose?.();
+    }
+    window.result = { out, info: res, checks };
+    throw new Error('bench done');
+  }
+
+  /* ---------- 1. the same picture as skeletons ---------- */
+  const S = stage(), src = figures(), crowd = new Crowd(S.v, { of: src, moves: ['idle', 'walk', 'run'] });
+  info.kinds = crowd.kinds.map((k, i) => ({ kind: i, moves: Object.keys(k.plan).join(' '), triangles: k.levels.map(l => l.tris).join('/'), tall: +(k.h * k.size).toFixed(2) }));
+  info.texture = { wide: crowd.tex.image.width, rows: crowd.tex.image.height, kb: Math.round(crowd.tex.image.data.byteLength / 1024) };
+  const rowsOf = (kind, move) => crowd.kinds[kind].plan[move].n;
+  const LINE = [
+    { kind: 0, move: 'walk', f: 5, x: -3.3, z: 0, turn: .5, size: 1 }, { kind: 1, move: 'walk', f: 20, x: -2, z: .4, turn: -.7, size: .92 },
+    { kind: 0, move: 'run', f: 9, x: -.7, z: -.3, turn: 2.4, size: 1.08 }, { kind: 1, move: 'idle', f: 11, x: .6, z: .2, turn: 0, size: 1 },
+    { kind: 2, move: 'walk', f: 3, x: 1.9, z: .5, turn: 1.2, size: 1 }, { kind: 2, move: 'run', f: 17, x: 3.2, z: -.2, turn: -2, size: 1.3 },
+  ].map(o => ({ ...o, phase: o.f / rowsOf(o.kind, o.move) }));
+  look(S, [0, 1.5, 6.4], [0, .85, 0]);
+  const empty = await shot(S);
+  const worst = [];
+  for (const L of [0, 1, 2]) {
+    crowd.clear(); crowd.update(0);
+    const real = LINE.map(o => { const f = src[o.kind].twin(); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; f.scale.multiplyScalar(o.size); f.lod = L; pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
+    const a = await shot(S); out['skeletons-' + L] = S.c.toDataURL();
+    for (const f of real) S.v.scene.remove(f);
+    crowd.clear(); crowd.lod = L; for (const o of LINE) crowd.add(o); crowd.update(0);
+    const b = await shot(S); out['crowd-' + L] = S.c.toDataURL();
+    const there = differ(a, empty, 6), off = differ(a, b, 12), offAny = differ(a, b, 2);
+    worst.push(off / Math.max(1, there));
+    check(`level ${L}: a crowd's members are the same picture as the same people posed by their own skeletons`, there > 2000 && off <= there * .01, `${off} of the ${there} pixels they cover differ by more than 12 of 255; ${offAny} by more than 2`);
+  }
+  crowd.lod = null;
+  // a point between two rows of a move: still the rig's pose, near enough
+  {
+    const o = { ...LINE[0], phase: (LINE[0].f + .5) / rowsOf(0, 'walk'), x: 0, z: 0 }, f = src[0].twin(); f.position.set(0, 0, 0); f.rotation.y = o.turn; f.lod = 0; pin(f, o.move, o.phase); S.v.scene.add(f);
+    look(S, [0, 1.2, 3.4], [0, .9, 0]); crowd.clear();
+    const a = await shot(S); S.v.scene.remove(f); crowd.lod = 0; crowd.add(o); crowd.update(0); const b = await shot(S); crowd.lod = null; out.between = S.c.toDataURL();
+    const off = differ(a, b, 12);
+    check('between two rows of a move a member is still where its rig would have it', off <= W * H * .004, `${off} pixels differ by more than 12 of 255`);
+  }
+
+  /* ---------- 2. a field of them ---------- */
+  const N = +(Q.get('n') || 300), R = gs.math.rng(7);
+  crowd.clear(); look(S, [0, 7, 44], [0, 0, 0]);
+  const emptyCalls = (await shot(S), HD.info.calls), emptyTris = HD.info.tris;
+  const who = []; for (let i = 0; i < N; i++) who.push(crowd.add({ x: (R() - .5) * 70, z: (R() - .5) * 70, turn: R() * 6.28, kind: i % 3, move: i % 5 ? 'walk' : 'idle', size: .95 + R() * .1 }));
+  const walk = (frames, dt = 1 / 60) => { for (let f = 0; f < frames; f++) { for (const p of who) if (p.move !== 'idle') { p.x += Math.sin(p.turn) * 1.3 * dt; p.z += Math.cos(p.turn) * 1.3 * dt; } crowd.update(dt); } };
+  walk(30); await shot(S); out.field = S.c.toDataURL();
+  const I = { ...crowd.info, levels: [...crowd.info.levels] }, t0 = crowd.kinds.reduce((s, k, i) => s + k.levels[0].tris * who.filter(p => p.kind === i).length, 0);
+  check('the crowd is drawn on the backend that was asked for', HD.info.backend === (GPU ? 'webgpu' : 'webgl'), HD.info.backend + (HD.info.webgl ? ': ' + HD.info.webgl : ''));
+  info.field = { backend: HD.info.backend, members: I.members, sent: I.drawn, levels: I.levels.join('/'), crowdDraws: I.draws, crowdTriangles: I.triangles, allAtFinest: t0, frameDraws: HD.info.calls, frameTriangles: HD.info.tris, emptyDraws: emptyCalls, emptyTriangles: emptyTris };
+  check('members out of view are not sent to be drawn', I.drawn > 0 && I.drawn < I.members, `${I.drawn} of ${I.members}`);
+  check('far members are drawn at the coarser levels', I.levels.filter(n => n > 0).length >= 2 && I.triangles < t0 * .3, `levels ${I.levels.join('/')}: ${I.triangles} triangles against ${t0} with everyone at the finest`);
+  check('a few hundred take a few draws', I.draws <= 40 && HD.info.calls - emptyCalls <= I.draws * 4, `${I.draws} draws for the crowd, ${HD.info.calls - emptyCalls} more in the frame with its shadows, for ${I.drawn} members`);
+  // leaving out the ones out of view changes nothing that is seen
+  {
+    crowd.update(0); const a = await shot(S); const was = crowd.reach; crowd.reach = 1e6; crowd.update(0); const b = await shot(S); const all = crowd.info.drawn; crowd.reach = was; crowd.update(0);
+    const off = differ(a, b, 6);
+    check('leaving out the members out of view changes nothing in the picture', off <= 4 && all > I.drawn, `${off} pixels differ; ${all} sent with nobody left out`);
+  }
+  // shadows
+  {
+    crowd.update(0); const a = await shot(S); for (const k of crowd.kinds) for (const l of k.levels) l.mesh.castShadow = false;
+    const b = await shot(S); for (const k of crowd.kinds) for (const l of k.levels) l.mesh.castShadow = true;
+    const off = differ(a, b, 10);
+    check('members cast shadows', off > 300, `${off} pixels are darker with their shadows`);
+  }
+  // a stride follows the ground covered; a member standing still does not step
+  {
+    const p = who.find(q => q.kind === 0 && q.move === 'walk'), m = crowd.kinds[0].plan.walk, p0 = p.phase, x0 = p.x, z0 = p.z, still = who.find(q => q.kind === 1 && q.move === 'walk'), s0 = still.phase, keep = who.slice();
+    who.length = 0; who.push(p); walk(40);   // (only p walks on: 40 frames at 1.3 m a second)
+    const went = Math.hypot(p.x - x0, p.z - z0), want = went * m.rate / (crowd.kinds[0].size * p.size), got = ((p.phase - p0) % 1 + 1) % 1;
+    who.length = 0; who.push(...keep);
+    check('a walk steps on by the ground covered', Math.abs(got - want % 1) < 1e-6 && went > .5, `${went.toFixed(3)} m: ${got.toFixed(4)} of a stride, ${(want % 1).toFixed(4)} expected`);
+    check('a walker that stands still does not step', still.phase === s0);
+  }
+  // a new move blends in from the old one
+  {
+    const p = who.find(q => q.kind === 0 && q.move === 'walk'), k = crowd.kinds[0], rowsIn = (m, r) => r >= m.base && r <= m.base + m.n;
+    crowd.lod = 0; for (const q of who) q.hide = q !== p; crowd.update(0);
+    const a = k.levels[0].a, before = [a[4], a[5], a[6]];
+    p.move = 'run'; crowd.update(.05); const mid = [a[4], a[5], a[6]]; crowd.update(.1); const later = a[6]; crowd.update(.2); const after = [a[4], a[5], a[6]];
+    check('a new move blends in from where the old one was', rowsIn(k.plan.walk, mid[0]) && rowsIn(k.plan.run, mid[1]) && mid[2] > 0 && mid[2] < later && later < 1 && rowsIn(k.plan.run, after[0]) && rowsIn(k.plan.run, after[1]),
+      `rows ${before.slice(0, 2)} then ${mid[0]} to ${mid[1]} at ${mid[2].toFixed(2)}, ${later.toFixed(2)}, then ${after.slice(0, 2)}`);
+    p.move = 'walk'; crowd.update(.3);
+    // hidden members are not sent; clear() empties it
+    check('hidden members are not sent', crowd.info.drawn === 1, crowd.info.drawn);
+    for (const q of who) q.hide = false; crowd.lod = null;
+    crowd.remove(p); crowd.update(0); check('a member taken out is gone', crowd.info.members === N - 1);
+    crowd.clear(); crowd.update(0); look(S, [0, 1.5, 6.4], [0, .85, 0]); const e = await shot(S);
+    check('clear() leaves nothing drawn', crowd.info.drawn === 0 && differ(e, empty, 6) <= 4, differ(e, empty, 6) + ' pixels differ from the empty field');
+    // a ray finds the member it points at (a shot, a tap)
+    const m1 = crowd.add({ x: 3, z: -4, kind: 0, move: 'idle' }), m2 = crowd.add({ x: 3, z: -9, kind: 1, move: 'idle' }); crowd.update(0);
+    const hit = crowd.ray({ x: 3.05, y: 1.2, z: 6 }, { x: 0, y: 0, z: -1 }), miss = crowd.ray({ x: 4.2, y: 1.2, z: 6 }, { x: 0, y: 0, z: -1 }), over = crowd.ray({ x: 3, y: 2.4, z: 6 }, { x: 0, y: 0, z: -1 }), short = crowd.ray({ x: 3, y: 1.2, z: 6 }, { x: 0, y: 0, z: -1 }, 5);
+    m1.hide = true; const next = crowd.ray({ x: 3.05, y: 1.2, z: 6 }, { x: 0, y: 0, z: -1 });
+    check('a ray finds the first member it meets, and none beside, over or out of reach', hit?.member === m1 && Math.abs(hit.distance - 9.8) < .15 && Math.abs(hit.height - 1.2 / 1.82) < .05 && !miss && !over && !short && next?.member === m2,
+      hit ? `${hit.distance.toFixed(2)} m, ${hit.height.toFixed(2)} of the way up` : 'missed');
+    crowd.clear();
+  }
+  /* ---------- 3. WebGPU: how far each pixel of a member moved since the last frame (frame generation, SGSR 2 and motion blur go by it) ---------- */
+  if (GPU) {
+    const TW = await import('three/webgpu'), { texture, uv, vec4 } = await import('three/tsl');
+    S.v.motionBlur = { amount: .001 };   // (the view then draws the picture of how each pixel moved; too little blur to see)
+    look(S, [0, 1.2, 8], [0, 1.2, 0]);
+    // a walker and a post that will both go 30 cm to the right, at the same distance, and a dog that stands
+    const mover = crowd.add({ x: -2.6, z: 0, kind: 0, move: 'walk', turn: Math.PI / 2, phase: .1 }), dog = crowd.add({ x: 2.6, z: 0, kind: 2, move: 'idle' });
+    const post = new T.Mesh(new T.BoxGeometry(.5, 1.8, .5), gs.hd.pbr('#888888')); post.position.set(0, .9, 0); S.v.scene.add(post);
+    crowd.update(0); await shot(S);
+    const chain = [S.v._gpuChain, S.v._gpuBakeChain].find(c => c?.sp), r = chain.r, rt8 = new TW.RenderTarget(W, H), qm = new TW.NodeMaterial(), src = texture(new TW.Texture());
+    qm.fragmentNode = vec4(src.sample(uv()).xy.mul(4).add(.5), 0, 1); const quad = new TW.QuadMesh(qm);
+    // the moving pixels of each third of the picture (left: the walker; middle: the post; right: the dog), and their middle move across
+    const moved = async () => {
+      src.value = chain.sp.getTexture('velocity'); r.setRenderTarget(rt8); quad.render(r); r.setRenderTarget(null);
+      const px = await r.readRenderTargetPixelsAsync(rt8, 0, 0, W, H), row = px.length / H, third = [[], [], []];
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const vx = (px[y * row + x * 4] / 255 - .5) / 4, vy = (px[y * row + x * 4 + 1] / 255 - .5) / 4; if (Math.abs(vx) > .004 || Math.abs(vy) > .004) third[Math.min(2, x * 3 / W | 0)].push(vx); }
+      return third.map(a => ({ n: a.length, mid: a.length ? a.sort((p, q) => p - q)[a.length >> 1] : 0 }));
+    };
+    const one = async () => { S.v.t = 0; S.v.render(S.x, W, H); await nextFrame(); return moved(); };
+    const still = await one();
+    mover.x += .3; post.position.x += .3; crowd.update(0);
+    const went = await one(), again = await one();   // (the second: a frame drawn with no update since, as a game on a fixed tick draws on a fast screen)
+    info.motion = { still, went, again };
+    check('WebGPU: standing members have not moved since the last frame', still.every(t => t.n <= 4), JSON.stringify(still));
+    check('WebGPU: a member that moved says so, by as much as a solid thing moved as far', went[0].n > 300 && went[1].n > 300 && Math.abs(went[0].mid - went[1].mid) < Math.abs(went[1].mid) * .2 && went[2].n <= 4,
+      `the walker's pixels moved ${went[0].mid.toFixed(4)} of the picture's half width (${went[0].n} of them), the post's ${went[1].mid.toFixed(4)} (${went[1].n}); ${went[2].n} of the dog's moved`);
+    check('WebGPU: a frame drawn again with no update shows nobody moving', again.every(t => t.n <= 4), JSON.stringify(again));
+    S.v.scene.remove(post); S.v.motionBlur = null; crowd.clear(); rt8.dispose();
+  }
+  info.worst = worst.map(w => +(w * 100).toFixed(2) + '%').join(' ');
+  window.result = { out, info, checks };
+} catch (e) { if (e.message !== 'bench done') window.result = { error: String(e && e.stack || e) }; else throw e; }
+</script>

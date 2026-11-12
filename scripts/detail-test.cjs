@@ -6,6 +6,8 @@
 //   node scripts/detail-test.cjs --page relief [--webgpu] [--shots dir]      real surface detail (gs.models.relief): a roof, a brick house and a trunk, flat against relief
 //   node scripts/detail-test.cjs --page copies [--webgpu] [--shots dir]      detail levels for copies (gs.props): rocks and posts whole against levels, a hidden and a moved copy, what is sent to the chip
 //   node scripts/detail-test.cjs --page copies --bench [--webgpu] --q "forest=20000"   a forest flown over with levels off and on (&cpucull: WebGPU without GPU culling, as under frame generation)
+//   node scripts/detail-test.cjs --page crowd [--webgpu] [--shots dir]       crowds (gs.props.Crowd): people and a dog posed by their own skeletons against the same as members of a crowd, then a field of 300
+//   node scripts/detail-test.cjs --page crowd --bench [--webgpu] --q "n=300"   300 with a skeleton each against 300 in a crowd: draws, triangles, posing and drawing time a frame
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {

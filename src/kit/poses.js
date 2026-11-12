@@ -223,6 +223,8 @@ export class Rig {
     this.layers.push({ name, w: 0, phase: at ?? from ?? (this.poses[name]?.once || again ? 0 : this.phase), pin: at != null });
     return this;
   }
+  /** How a pose moves on: { rate: cycles a metre (walks and runs; 0 for the rest), per: cycles a second (0: it stands still), once }. null: no such pose. */
+  pace(name) { const d = this.poses[name]; return d ? { rate: d.rate || 0, per: d.rate ? 0 : d.time ? 1 / d.time : d.per ?? TIMED[name] ?? .2, once: !!d.once } : null; }
   /** An upper-body pose over the legs (aim, wave, punch), or null to let go. */
   upper(name) { if (name) this.top = name; this.topOn = !!name; return this; }
   /**

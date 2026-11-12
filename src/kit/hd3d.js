@@ -789,6 +789,9 @@ function hideSeeThrough(scene, cache) {
   for (const o of cache) o.visible = false;
 }
 function aoHide() { hideSeeThrough(this.scene, this._visibilityCache); }
+// A crowd (gs.props.Crowd) is posed by a shader of its own, which such a one-material picture knows nothing of:
+// it draws nothing with another's material, and draws itself into the picture afterwards. how: 'normal' | 'black'.
+function drawPosed(scene, r, cam, rt, how) { const s = scene.userData.gsPosed; if (s) for (const c of s) c.drawPosed(r, cam, rt, how); }
 function chain(r, w, h) {
   const T = tier();
   if (comp && compKey !== T.msaa) {   // MSAA on/off: re-create just the two buffers
@@ -803,6 +806,7 @@ function chain(r, w, h) {
     P.ao = new GTAOPass(new Scene(), new PerspectiveCamera(), w, h);
     P.ao.updateGtaoMaterial({ radius: .6, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 }); P.ao.blendIntensity = .9;
     P.ao._overrideVisibility = aoHide;
+    const aoOver = P.ao._renderOverride.bind(P.ao); P.ao._renderOverride = (r0, m, t, cc, ca) => { aoOver(r0, m, t, cc, ca); drawPosed(P.ao.scene, r0, P.ao.camera, t, 'normal'); };
     // the AO is worked out at the tier's fraction of the picture (half size on high) and blended back up
     const aoSize = P.ao.setSize.bind(P.ao); P.ao.scale = 1;
     P.ao.setSize = (w, h) => { P.ao.fw = w; P.ao.fh = h; aoSize(Math.max(1, Math.round(w * P.ao.scale)), Math.max(1, Math.round(h * P.ao.scale))); };
@@ -1970,7 +1974,7 @@ export class HDView {
       // (a set of copies counts up when one of them is moved, hidden or shown: props.js watched(); nothing else about it changes)
       if (o.isInstancedMesh2) h += ((o._parentLOD || o).userData.gsChanged || 0) * 13 * w;
       if (tw?.matrixWorld) { h += ((tw.instanceCount ?? 0) * 7 + (tw.matricesTexture?.version ?? 0) + (tw.userData.gsChanged || 0) * 13 + tw.matrixWorld.elements[12] * 3 + tw.matrixWorld.elements[14] * 5) * w; wide = true; copies = o.count; }
-      else if (o.userData.gsMoved !== undefined) { h += (o.userData.gsMoved + 1) * 7 * w; wide = true; copies = o.count ?? 1; }   // (moved on the graphics chip: a count that goes up when it does, gs.fluid's drops)
+      else if (o.userData.gsMoved !== undefined) { h += (o.userData.gsMoved + 1) * 7 * w; wide = !o.userData.gsBall; copies = g?.isInstancedBufferGeometry ? g.instanceCount : o.count ?? 1; }   // (moved on the graphics chip: a count that goes up when it does, gs.fluid's drops; gsBall: its shape's ball is kept round where it is drawn, gs.props.Crowd)
       // (a gs.props set by how many copies it has, not by how many of them the last camera to draw it could see: that changes as the camera turns, and nothing about the shadows does)
       else if (o.isInstancedMesh2) { h += (((o._parentLOD || o).instancesCount ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = (o._parentLOD || o).instancesCount ?? 1; }
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
@@ -2289,6 +2293,8 @@ export class HDView {
       c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore();
       return;
     }
+    // (crowds keep their members' numbers as the last frame drew them, for frame generation: gs.props.Crowd)
+    { const posed = this.scene.userData.gsPosed; if (posed) for (const p of posed) p.frame(); }
     // (each is a whole frame of another card plus a copy: never while a round is played or the feed moves)
     if (!baking && !off) { this.drawnAt = now; if (bakes.length && !speed.playing() && !speed.busy()) { const [v, bc] = bakes.shift(); if (bc.canvas.isConnected && host?.canvas !== bc.canvas) try { v.bake(bc, true); } catch (_) { /* best effort */ } } }   // (one a frame: several at once were one long stall)
     const direct = HD.direct && !baking && !off && !!c.canvas.parentNode && mount(r.domElement, c, this);
@@ -2348,7 +2354,8 @@ export class HDView {
       if (!P.ssr) {
         P.ssr = new SSRPass({ renderer: r, scene: this.scene, camera: this.cam, width: pw, height: ph, selects: [], groundReflector: null });
         const ro = P.ssr._renderOverride.bind(P.ssr);   // its normals picture: solid surfaces only (see seeThrough3d)
-        P.ssr._renderOverride = (...a) => { const hid = []; hideSeeThrough(P.ssr.scene, hid); try { ro(...a); } finally { for (const o of hid) o.visible = true; } };
+        P.ssr._renderOverride = (...a) => { const hid = []; hideSeeThrough(P.ssr.scene, hid); try { ro(...a); } finally { for (const o of hid) o.visible = true; } drawPosed(P.ssr.scene, a[0], P.ssr.camera, a[2], 'normal'); };
+        const rm = P.ssr._renderMetalness.bind(P.ssr); P.ssr._renderMetalness = (...a) => { rm(...a); drawPosed(P.ssr.scene, a[0], P.ssr.camera, a[2], 'black'); };
         Object.assign(P.ssr, { thickness: .02, maxDistance: 8, opacity: .55, blur: true, fresnel: true, distanceAttenuation: true, bouncing: false, infiniteThick: false }); P.ssr.cw = pw; P.ssr.ch = ph;
       }
       P.ssr.scene = this.scene; P.ssr.camera = this.cam; P.ssr.selects = this.reflectors;
@@ -2436,6 +2443,7 @@ const REFL_FULL = { scale: 1 }, REFL_HALF = { scale: .5 };
 // one of the kit's ported look effects). docs/webgpu-move.md lists what's left to port.
 const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'meadow', 'room', 'flow', 'lava']);
 PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
+PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)

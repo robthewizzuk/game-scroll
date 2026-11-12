@@ -2303,6 +2303,8 @@ export interface RigT {
   weight: number;
   /** Blends to a pose. at: where in the pose it stands (0..1), for a pose the game drives itself (call each frame); from: where it starts; again: start a playing pose over. */
   play(name: string, o?: { fade?: number; at?: number | null; from?: number | null; again?: boolean }): RigT; upper(name: string | null): RigT;
+  /** How a pose moves on: rate: cycles a metre (walks and runs; 0 for the rest), per: cycles a second (0: it stands still), once: it plays through and holds. null: no such pose. */
+  pace(name: string): { rate: number; per: number; once: boolean } | null;
   /** Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. rate: cycles a metre moved; or { time: seconds a cycle, once: play through and hold the end }. keys() makes fn from key poses. */
   add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number }): RigT;
   /** 1D blend space: { pose: value }, mixed at v with every cycle in step. */
@@ -2407,7 +2409,65 @@ export interface StructureT {
   /** Out of the scene and the physics world. */
   remove(): void;
 }
+/** One of a gs.props.Crowd: change these as your game likes, then call crowd.update(dt). */
+export interface CrowdMember {
+  x: number; y: number; z: number;
+  /** Which way it faces, radians, as rotation.y (0 faces +z). */
+  turn: number;
+  /** Which of the crowd's figures it is a copy of (0, 1...). */
+  readonly kind: number;
+  /** The pose it plays, one of the crowd's `moves`. A new one blends in over a quarter of a second; a walk or run steps on by the ground the member covers, the rest by the clock. */
+  move: string;
+  size: number;
+  /** A colour its own colours are multiplied by (a THREE.Color: member.tint.set('#c9d8ff')). */
+  tint: Loose;
+  /** true: not drawn (and not hit by ray()). */
+  hide: boolean;
+  /** Where in its move it is, 0..1. */
+  phase: number;
+  /** true once a move that plays once has ended. */
+  readonly done: boolean;
+  /** Yours: whatever you gave add(). */
+  data?: Loose;
+}
+/**
+ * Hundreds of animated people or animals in a few draws (Next Gen). Each kind's moves are written into a texture once and
+ * the graphics chip bends every member into its pose, so nobody has a skeleton to work out in JavaScript.
+ */
+export interface CrowdT {
+  /** The members, in the order they were added. */
+  readonly list: CrowdMember[];
+  /** false: nobody is drawn (their moves still step on). */
+  visible: boolean;
+  /** 0, 1 or 2: every member at that one of its figure's own levels of detail. null (the default): by its size on screen. */
+  lod: number | null;
+  /** Metres past which nobody is drawn. */
+  far: number;
+  /** What the last update() drew: members, how many were sent to be drawn, how many at each level of detail (finest first), draws and triangles a frame. */
+  readonly info: { members: number; drawn: number; levels: number[]; draws: number; triangles: number };
+  /** Adds a member. move: one of the crowd's moves (the first by default); phase: where in it to start (by default each starts somewhere else, so the crowd is out of step); tint: a colour its own are multiplied by; data: yours. */
+  add(o?: { x?: number; y?: number; z?: number; turn?: number; kind?: number; move?: string; size?: number; tint?: string | number; phase?: number; data?: Loose }): CrowdMember;
+  remove(member: CrowdMember): CrowdT;
+  /** Takes everyone out (call in reset()). */
+  clear(): CrowdT;
+  /** The members within r metres of (x, z). */
+  near(x: number, z: number, r: number, out?: CrowdMember[]): CrowdMember[];
+  /** The first member a ray meets (a shot, a tap through the camera). dir has length 1. Each member counts as an upright rounded post as tall as it stands. height: 0 at its feet .. 1 at the top of its head. */
+  ray(origin: XYZ, dir: XYZ, far?: number): { member: CrowdMember; distance: number; height: number } | null;
+  /** Each frame, after the members and the camera have moved. */
+  update(dt?: number): CrowdT;
+  /** Out of the scene, and what it made freed. */
+  dispose(): void;
+}
 export interface PropsPart {
+  /**
+   * A crowd in a Next Gen view. of: the figures its members are copies of, one a kind (each a gs.models.human(), gs.poses.person() or
+   * gs.models.creature() made for the crowd: don't put it in the scene); moves: the poses of their rigs the members will use
+   * (['idle', 'walk', 'run'] by default; add your own to a figure's rig with rig.add() first); far: metres past which nobody is drawn (160);
+   * shadows: whether they cast them (true); reach: how many metres out of view a member is still drawn, for its shadow (5).
+   * Make it in make(), clear() and add() in reset(), update(dt) each frame. Not in a crowd: faces, hair in strands and fur, hands onto things.
+   */
+  Crowd: new (view: Loose, o: { of: Loose[]; moves?: string[]; far?: number; shadows?: boolean; reach?: number }) => CrowdT;
   simplify(geometry: Loose, keep?: number): Loose;
   /** A finished InstancedMesh of still things, swapped in place for one that skips the copies off screen (same look). Returns the new mesh. */
   perCopy(instancedMesh: Loose, o?: { renderer?: Loose }): Loose;
