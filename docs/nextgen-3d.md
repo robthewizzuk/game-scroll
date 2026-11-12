@@ -946,3 +946,18 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   creatures in `make()` or `reset()`, and several kinds together and first (`creature.all([...])`, or
   `creature.need([...])` before anything costly is built). `node scripts/creatures.cjs sheet.png` draws every
   animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.
+- **`vehicle(kind, o)`**: a car, a lorry, a tank, a train, a boat or a plane made in code: a shell skinned
+  over cross-sections from a few measures, in paint, glass, chrome and rubber, aged with `wear()`, with
+  the parts that turn on pivots of their own. 30 to start from (`vehicle.kinds`): cars `saloon`, `hatch`,
+  `estate`, `sports`, `van`, `pickup`, `jeep`; trucks `flat`, `canvas`, `box`, `tanker`; tanks `medium`,
+  `light`, `heavy`; trains `steam`, `diesel` and the wagons `van`, `open`, `flat`, `tanker`, `coach`; boats
+  `rowboat`, `motor`, `fishing`, `patrol`; planes `prop`, `biplane`, `twin`, `jet`.
+  ```js
+  const jeep = gs.models.vehicle('car', { style: 'jeep', seed: 4 }); view.add(jeep);   // in make(); its nose points along -z
+  jeep.move(dt, speed, { steer });   // each frame: wheels roll and steer, the body rocks on its springs
+  const train = gs.models.vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] });
+  train.along(rails, metres).roll(metres);   // each car between its own wheels, round the curve
+  ```
+  Options, the parts and points of each kind, real springs (`car.chassis()` with `World3D.vehicle`), boats
+  and planes on `gs.craft`, and what each costs: [Vehicles made in code](maker-kit.md#vehicles-made-in-code).
+  `node scripts/vehicles.cjs sheet.png` draws them all from five sides, to look them over.

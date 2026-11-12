@@ -3416,5 +3416,121 @@ console.log('physics ok');
   }
 }
 
+// vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
+{
+  const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
+  const { vehicle } = await import('../src/kit/models/vehicles.js');
+  // what a shape's triangles say: its volume (triangles facing out make it positive), its box, edges that are not shared by two triangles, corners that are not numbers
+  const facts = geos => {
+    let vol = 0, tris = 0, bad = 0; const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9], edges = new Map(), key = (a, i) => `${Math.round(a[i] * 1e4)},${Math.round(a[i + 1] * 1e4)},${Math.round(a[i + 2] * 1e4)}`; let outward = 0, n = 0;
+    for (const g of geos) {
+      const a = g.attributes.position.array, nn = g.attributes.normal.array;
+      for (let i = 0; i < a.length; i += 9) {
+        const [x0, y0, z0, x1, y1, z1, x2, y2, z2] = a.subarray(i, i + 9); tris++;
+        vol += (x0 * (y1 * z2 - z1 * y2) - y0 * (x1 * z2 - z1 * x2) + z0 * (x1 * y2 - y1 * x2)) / 6;
+        const fx = (y1 - y0) * (z2 - z0) - (z1 - z0) * (y2 - y0), fy = (z1 - z0) * (x2 - x0) - (x1 - x0) * (z2 - z0), fz = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+        for (let c = 0; c < 9; c += 3) { if (!Number.isFinite(a[i + c] + a[i + c + 1] + a[i + c + 2] + nn[i + c] + nn[i + c + 1] + nn[i + c + 2])) bad++; n++; if (fx * nn[i + c] + fy * nn[i + c + 1] + fz * nn[i + c + 2] > 0) outward++; lo[0] = Math.min(lo[0], a[i + c]); lo[1] = Math.min(lo[1], a[i + c + 1]); lo[2] = Math.min(lo[2], a[i + c + 2]); hi[0] = Math.max(hi[0], a[i + c]); hi[1] = Math.max(hi[1], a[i + c + 1]); hi[2] = Math.max(hi[2], a[i + c + 2]); }
+        for (const [p, q] of [[0, 3], [3, 6], [6, 0]]) { const A = key(a, i + p), B = key(a, i + q); edges.set(A + '>' + B, (edges.get(A + '>' + B) || 0) + 1); }
+      }
+    }
+    let open = 0; for (const [e, c] of edges) { const [A, B] = e.split('>'); if ((edges.get(B + '>' + A) || 0) !== c) open++; }
+    return { vol, tris, bad, lo, hi, open, facing: outward / n };
+  };
+  const all = shape => [...shape.slots.values()].flat(), near = (a, b, tol) => Math.abs(a - b) <= tol;
+  // the tools: lines through knots, places to cut, a skin over cross-sections, a belt round wheels, wheels
+  {
+    const f = P.line([[0, 1], [2, 3], [4, 3]]), g = P.line([[0, 1], [2, 3], [4, 3]], .5);
+    assert.ok(f(-1) === 1 && f(1) === 2 && f(3) === 3 && f(9) === 3 && g(2) < 3 && g(2) > 2.7 && near(g(1), 2, 1e-9), 'a line through knots, and with its corner rounded');
+    const st = P.stations(0, 1, .25, [.5, .52, .9]); assert.deepEqual(st, [0, .25, .5, .52, .75, .9, 1], 'places to cut: every step, and exactly where asked');
+    // a box 2 x 1 x 3 as a skin: closed, facing out, the volume it should have; with rounded corners a little less, still closed
+    const ring = z => [[-1, 0, z], [1, 0, z], [1, 1, z], [-1, 1, z]], box = new P.Shape().skin([0, 1, 2, 3].map(ring), { capA: 'paint', capB: 'paint' }), bf = facts(all(box));
+    assert.ok(near(bf.vol, 6, 1e-6) && bf.open === 0 && bf.facing === 1 && bf.tris === 3 * 4 * 2 + 8 && box.tris === bf.tris, 'a skinned box is closed and faces out');
+    const soft = new P.Shape().skin([0, 1, 2, 3].map(ring), { capA: 'paint', capB: 'paint', round: .2 }), sf = facts(all(soft));
+    assert.ok(sf.vol < 6 && sf.vol > 5.8 && sf.open === 0 && sf.tris > bf.tris && sf.facing === 1, 'rounded corners: ' + sf.vol.toFixed(3));
+    // the same box with its rings given the other way round still faces out; sides sharper than the crease keep their own normals, a gentle bend shades smooth
+    const back = facts(all(new P.Shape().skin([0, 1, 2, 3].map(z => ring(z).reverse()), { capA: 'paint', capB: 'paint' }))); assert.ok(near(back.vol, 6, 1e-6) && back.facing === 1, 'a skin faces out whichever way its rings run');
+    const nrm = box.slots.get('paint')[0].attributes.normal.array; let axis = 0; for (let i = 0; i < nrm.length; i += 3) if (Math.max(Math.abs(nrm[i]), Math.abs(nrm[i + 1]), Math.abs(nrm[i + 2])) > .999) axis++; assert.equal(axis, nrm.length / 3, 'a box keeps its edges sharp');
+    const tube = new P.Shape().skin([0, 1].map(z => Array.from({ length: 24 }, (_, i) => [Math.cos(i / 24 * 6.2832), Math.sin(i / 24 * 6.2832), z]))), tn = tube.slots.get('paint')[0].attributes, off = []; for (let i = 0; i < tn.position.count; i++) off.push(Math.hypot(tn.normal.getX(i) - tn.position.getX(i), tn.normal.getY(i) - tn.position.getY(i)));
+    assert.ok(Math.max(...off) < .01, 'a round tube shades smooth: its normals point straight out');
+    // slots: a function picks each piece's, null leaves a hole
+    const two = new P.Shape().skin([0, 1, 2].map(ring), { slot: (i, j) => j === 2 ? (i ? null : 'glass') : 'paint' });
+    assert.ok(two.slots.get('glass')[0].attributes.position.count === 6 && two.slots.get('paint')[0].attributes.position.count === 6 * 6, 'a slot for each piece, and a hole');
+    // a mirrored part keeps facing out
+    const pair = new P.Shape().box('a', 1, 1, 1, [2, 0, 0]).add('a', new THREE.BoxGeometry(1, 1, 1), [-2, 0, 0], [0, 0, 0], [-1, 1, 1]), pf = facts(all(pair)); assert.ok(near(pf.vol, 2, 1e-6) && pf.lo[0] === -2.5 && pf.facing === 1, 'a mirrored copy still faces out: ' + pf.vol + ' ' + pf.lo[0] + ' ' + pf.facing);
+    const bar = facts(all(new P.Shape().bar('a', [0, 0, 0], [3, 4, 0], .1, 16))); assert.ok(near(bar.vol, Math.PI * .01 * 5, .01) && near(bar.hi[0], 3.08, .01), 'a bar between two points');
+    // a belt round two wheels: twice the gap and one turn; round four, its points keep the wheels' distance
+    const b2 = P.belt([[2, 1, .5], [-2, 1, .5]]); assert.ok(near(b2.length, 8 + Math.PI, .01), 'a belt round two wheels: ' + b2.length.toFixed(3));
+    const top = b2.at(1), bot = b2.at(b2.length / 2 + 1); assert.ok(near(top.y, 1.5, 1e-3) && near(top.dz, -1, 1e-3) && near(bot.y, .5, 1e-3) && near(bot.dz, 1, 1e-3) && near(b2.at(1 + b2.length * 3).z, top.z, 1e-6), 'forward along the top, back along the ground, and round again');
+    const b4 = P.belt([[3, 1, .3], [-3, 1.1, .35], [-2.4, .4, .4], [2.4, .4, .4]]); let far = 0; for (let s = 0; s < b4.length; s += .05) { const p = b4.at(s); far = Math.max(far, Math.abs(Math.hypot(p.dz, p.dy) - 1)); assert.ok(p.y >= -1e-6 && Math.abs(p.z) <= 3.36); } assert.ok(far < 1e-6 && b4.length > 13 && b4.length < 15);
+    // wheels: round, as wide as asked, their axle along x, coloured; a railway pair spans the gauge
+    const wf = facts([P.wheelGeo({ r: .4, w: .25, lugs: 0 })]), lug = facts([P.wheelGeo({ r: .4, w: .25, lugs: 18 })]), wg = P.wheelGeo({ r: .4, w: .25, dual: true });
+    assert.ok(near(wf.hi[1], .4, .002) && near(wf.hi[2], .4, .002) && near(wf.hi[0] - wf.lo[0], .25, .03) && lug.hi[1] > .4 && lug.tris > wf.tris && wg.attributes.color && wf.bad === 0, 'a road wheel');
+    const ws = facts([P.wheelsetGeo({ r: .46, gauge: 1.435 })]), sp = P.wheelsetGeo({ r: .66, spokes: 14, weight: 1.1 });
+    assert.ok(near(ws.hi[0], 1.435 / 2 + .13, .03) && near(ws.lo[0], -ws.hi[0], 1e-6) && near(ws.hi[1], .49, .01) && sp.attributes.position.count > P.wheelsetGeo({ r: .66 }).attributes.position.count && ws.bad === 0, 'a railway wheelset');
+  }
+  // every vehicle's plan: real numbers, the size it says, its nose along -z, its wheels on the ground
+  {
+    const plans = [], t0 = performance.now();
+    for (const st of S.KINDS.car) plans.push(S.car({ style: st })); for (const st of S.KINDS.truck) plans.push(S.truck({ style: st })); plans.push(S.truck({ style: 'flat', axles: 3 }));
+    for (const st of S.KINDS.tank) plans.push(S.tank({ style: st })); for (const st of R.RAIL) plans.push(R.railcar(st)); for (const st of C.CRAFT.boat) plans.push(C.boat({ style: st })); for (const st of C.CRAFT.plane) plans.push(C.plane({ style: st }));
+    const ms = performance.now() - t0; let tris = 0;
+    for (const p of plans) {
+      const name = p.kind + ' ' + p.style, f = facts(all(p.body)); tris += f.tris;
+      assert.ok(f.bad === 0 && f.tris > 800, name + ': ' + f.tris + ' triangles, all real numbers'); assert.ok(f.facing > .97, name + ': faces out (' + f.facing.toFixed(3) + ')');
+      assert.ok(near(f.hi[2] - f.lo[2], p.size.length, p.size.length * .12 + .4) && f.hi[0] - f.lo[0] <= p.size.width + .05 && near(f.lo[0], -f.hi[0], .25), name + ': the size it says, the same both sides');
+      for (const q of Object.values(p.parts || {})) assert.equal(facts(all(q.shape)).bad, 0);
+      for (const w of p.wheels) { assert.ok(w.geo.r > .1 && (p.kind === 'plane' ? near(w.at[1] - w.geo.r, -p.gear, .01) || w.at[2] > 3 : near(w.at[1], w.geo.r, 1e-9)), name + ': wheels on the ground'); }
+      for (const pt of Object.values(p.points)) assert.ok((Array.isArray(pt) ? pt : pt.at).every(Number.isFinite));
+    }
+    const car = plans[0], jeep = plans.find(p => p.style === 'jeep'), lorry = plans.find(p => p.kind === 'truck'), six = plans.find(p => p.kind === 'truck' && p.wheels.length === 6);
+    assert.ok(car.wheels.length === 4 && car.wheels[0].steer && !car.wheels[2].steer && car.wheels[0].at[0] < 0 && car.wheels[1].at[0] > 0 && car.wheels[0].at[2] < car.wheels[2].at[2] && near(car.wheels[2].at[2] - car.wheels[0].at[2], car.wheelbase, 1e-9) && near(car.wheels[1].at[0] * 2, car.track, 1e-9), 'a car: front left, front right, back left, back right; the front pair steers');
+    assert.ok(car.points.lampL[2] < -2 && car.points.exhaust[2] > 2 && car.body.slots.has('glass') && car.body.slots.has('lamp') && car.body.slots.has('tail') && jeep.body.slots.has('screen') && !jeep.body.slots.has('glass') && jeep.spares.length === 1, 'lamps at the nose, an exhaust at the tail, glass; a jeep is open');
+    assert.ok(lorry.wheels.length === 4 && lorry.wheels[2].geo.dual && six && six.size.length > lorry.size.length && lorry.body.slots.has('wood') && plans.find(p => p.style === 'canvas').body.slots.has('canvas'), 'a lorry: twin tyres at the back, a third axle when asked');
+    for (const t of plans.filter(p => p.kind === 'tank')) { const k = t.tracks; assert.ok(k.run.length > t.size.length * 1.9 && k.wheels.length >= 6 && t.parts.gun.on === 'turret' && t.points.muzzle.on === 'gun' && near(-t.points.muzzle.at[2], t.gun, .2) && k.wheels.every(w => w.y >= w.r), 'a tank: tracks, a gun on a turret'); let low = 9; for (let s = 0; s < k.run.length; s += .1) low = Math.min(low, k.run.at(s).y); assert.ok(near(low, .025, .01), 'its tracks lie on the ground'); }
+    for (const c of plans.filter(p => p.kind === 'train')) assert.ok(c.length >= 7 && c.sets.every(s => s.at.every(a => a[0] === s.geo.r)) && c.reach >= 1.7 && near(c.points.front[2], -c.length / 2, 1e-9), 'a railway car stands on the rails: ' + c.style);
+    const steam = plans.find(p => p.style === 'steam'); assert.ok(steam.rods && steam.parts.rods && steam.parts.mainRods && steam.sets[0].geo.spokes && steam.points.smoke[1] > 3, 'a steam engine: spoked wheels, rods, a chimney to smoke from');
+    for (const bt of plans.filter(p => p.kind === 'boat')) { const f = facts(all(bt.body)); assert.ok(near(f.lo[1], -bt.draft, .02) && f.hi[1] > .3, bt.style + ' floats: ' + f.lo[1].toFixed(2) + ' m below the water'); const bow = facts(all(bt.body).map(g => { const a = g.attributes.position.array, keep = []; for (let i = 0; i < a.length; i += 9) if (Math.max(a[i + 2], a[i + 5], a[i + 8]) < f.lo[2] + .25) keep.push(...a.subarray(i, i + 9)); const o = new THREE.BufferGeometry(); o.setAttribute('position', new THREE.BufferAttribute(new Float32Array(keep), 3)); o.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(keep.length), 3)); return o; }).filter(g => g.attributes.position.count)); assert.ok(bow.hi[0] - bow.lo[0] < bt.size.width * .45, bt.style + ': a bow at -z'); }
+    for (const pl of plans.filter(p => p.kind === 'plane')) { const f = facts(all(pl.body)); assert.ok(near(f.hi[0] - f.lo[0], pl.size.width, pl.size.width * .1) && pl.props.every(n => pl.parts[n].shape.slots.has('blur')) && pl.gear > 1 && pl.points.pilot, pl.style + ': wings as wide as it says'); }
+    assert.ok(ms < 4000, 'every plan in ' + ms.toFixed(0) + ' ms');
+    // the made vehicle: its parts move as asked; a copy shares its shapes
+    const v = vehicle('car', { style: 'saloon', seed: 3 }), w = v.twin();
+    assert.ok(v.isGroup && v.kind === 'car' && v.style === 'saloon' && v.wheels.length === 4 && v.tris > 5000 && v.points.driver.isObject3D && v.size.length > 4 && w !== v && w.shell.children[0].geometry === v.shell.children[0].geometry && w.wheels[0] !== v.wheels[0] && vehicle('car', { style: 'saloon', seed: 3 }).shell.children[0].material === v.shell.children[0].material, 'a car, and its twin sharing its shapes');
+    v.roll(1); assert.ok(near(v.wheels[0].rotation.x, -1 / v.radius, 1e-9) && w.wheels[0].rotation.x === 0, 'a metre forward turns its wheels (not its twin\'s)');
+    v.steer(.3); assert.ok(v.wheels[0].rotation.y === -.3 && v.wheels[1].rotation.y === -.3 && v.wheels[2].rotation.y === 0, 'the front wheels steer');
+    for (let i = 0; i < 60; i++) v.move(1 / 60, 12, { steer: 1 }); assert.ok(near(v.wheels[2].rotation.x, -(1 + 12) / v.radius, 1e-6) && near(v.wheels[0].rotation.y, -.55, .01) && v.shell.rotation.z > .02, 'move(): rolls, steers, and the body rolls outwards in the turn');
+    const ch = v.chassis({ power: 9 }); assert.ok(ch.wheels.length === 4 && ch.wheels[0] === v.wheels[0] && near(ch.l, v.wheelbase + v.radius * 1.8, 1e-9) && near(ch.w, v.track + .1, 1e-9) && ch.radius === v.radius && ch.power === 9 && v.shell.position.y < -.5, 'chassis(): what World3D.vehicle wants');
+    // on gs.physics3d springs: its own wheels stand on the road and turn; a sensor in the way (a pickup, a goal) does not lift it; the world can be freed after
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); pw.box(null, 8, 1, 8, { at: { x: 0, y: .6, z: 0 }, fixed: true, sensor: true });
+      const pc = vehicle('car', { style: 'hatch' }), hold = new THREE.Scene(); hold.add(pc); const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1.2, z: 0 } })), wy = () => { pc.updateMatrixWorld(true); return pc.wheels.map(q => q.getWorldPosition(new THREE.Vector3()).y); };
+      for (let i = 0; i < 90; i++) pw.step(1 / 60); const stood = wy(), low = new THREE.Box3().setFromObject(pc.shell).min.y;
+      assert.ok(drv.grounded && stood.every(y => near(y, pc.radius, .05)) && low > .08 && low < .3, 'a car on springs stands on the road, through a sensor: wheels at ' + stood.map(y => y.toFixed(2)) + ', its floor ' + low.toFixed(2) + ' m up');
+      for (let i = 0; i < 150; i++) { drv.drive(1, .4); pw.step(1 / 60); } const ran = wy();
+      assert.ok(drv.speed > 3 && !drv.upsideDown && pc.position.z < -2 && Math.abs(pc.position.x) > .2 && ran.every(y => near(y, pc.radius, .08)) && Math.abs(pc.wheels[0].rotation.x) > 1 && Math.abs(pc.wheels[0].rotation.y) > .05 && pc.wheels[2].rotation.y === 0, 'and drives and steers on them: ' + drv.speed.toFixed(1) + ' m/s');
+      assert.doesNotThrow(() => pw.free(), 'a world with a car in it can be freed');
+    }
+    let bad = null; try { vehicle('car', { style: 'hovercraft' }); } catch (e) { bad = e; } assert.ok(/no car called 'hovercraft'/.test(bad?.message)); bad = null; try { vehicle('sled'); } catch (e) { bad = e; } assert.ok(/no vehicle 'sled'/.test(bad?.message), 'what it does not know is an error that names what it does');
+    assert.deepEqual(Object.keys(vehicle.kinds), ['car', 'truck', 'tank', 'train', 'boat', 'plane']);
+    // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
+    const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
+    tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
+    assert.ok(links.isInstancedMesh && near(moved, .07, .002) && m0.equals(m1) && !tk.chassis, 'a tank\'s left track runs 7 cm; its right stays');
+    tk.aim(.5, 2); assert.ok(tk.parts.turret.rotation.y === .5 && tk.parts.gun.rotation.x === .45 && tk.parts.gun.parent === tk.parts.turret && tk.points.muzzle.parent === tk.parts.gun);
+    tk.updateMatrixWorld(true); const mz = tk.points.muzzle.getWorldPosition(new THREE.Vector3()); assert.ok(mz.x < -.5 && mz.y > 2.4 && mz.z < -1, 'the muzzle is where the gun points: ' + mz.toArray().map(q => q.toFixed(2)));
+    // a train: cars coupled nose to tail, laid along a track so each sits between its own wheels
+    const tr = vehicle('train', { style: 'diesel', cars: ['coach', 'coach'] }), len = tr.cars.reduce((t, c) => t + c.length, 0);
+    assert.ok(tr.cars.length === 3 && near(tr.length, len, 1e-9) && near(tr.cars[0].position.z, -len / 2 + tr.cars[0].length / 2, 1e-9) && near(tr.cars[1].position.z - tr.cars[0].position.z, (tr.cars[0].length + tr.cars[1].length) / 2, 1e-9) && tr.cars[1].shell.children[0].geometry === tr.cars[2].shell.children[0].geometry, 'a train: three cars coupled');
+    const Rr = 60, track = s => ({ x: Rr * (1 - Math.cos(s / Rr)), y: s * .02, z: -Rr * Math.sin(s / Rr) }); tr.along(track, 100);
+    for (const c of tr.cars) { const mid = track(100 - c.back); assert.ok(Math.hypot(c.position.x - mid.x, c.position.z - mid.z) < c.reach * c.reach / (2 * Rr) + .02 && near(c.rotation.x, .02, .003) && near(c.rotation.y, -(100 - c.back) / Rr, .01), 'each car on the curve, turned along it, tipped with the slope'); }
+    tr.roll(2); const wm = new THREE.Matrix4(); tr.cars[0].children.find(m => m.name === 'wheels').getMatrixAt(0, wm); assert.ok(near(Math.atan2(wm.elements[6], wm.elements[5]), -2 / .5 + 2 * Math.PI, 1e-4) || near(Math.atan2(wm.elements[6], wm.elements[5]), -2 / .5, 1e-4), 'its wheels turn with the distance');
+    // a plane: its propeller turns, then blurs; a patrol boat's radar goes round
+    const pl = vehicle('plane'), blades = pl.parts.prop.children.find(m => m.name !== 'blur'), blur = pl.parts.prop.children.find(m => m.name === 'blur');
+    assert.ok(blades.visible && !blur.visible && pl.gear > 1.5 && pl.sit > 0); for (let i = 0; i < 120; i++) pl.move(1 / 60, 50); assert.ok(!blades.visible && blur.visible && pl.parts.prop.rotation.z > 20 && pl.wheels[0].rotation.x === 0, 'a propeller spins up into a blur; wheels in the air keep still');
+    const pb = vehicle('boat', { style: 'patrol' }); pb.move(.5, 6, { steer: 1 }); assert.ok(pb.parts.radar.rotation.y > 1 && pb.draft > 1 && pb.parts.gun && pb.aim(.2, .1).parts.turret.rotation.y === .2);
+    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, propellers and radar ok`);
+  }
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

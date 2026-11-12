@@ -77,6 +77,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
+| Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
 | Ball games with boosting, flipping cars | `gs.arena` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -1798,6 +1799,8 @@ following. `Laps(checkpoints)` counts laps, places racers and gives computer dri
 For real suspension and cars that can roll over, `World3D.vehicle(mesh, { wheels })` in
 `gs.physics3d` uses Rapier's ray-cast vehicle: `car.drive(throttle, steer, brake)`, `car.speed`,
 `car.upsideDown`, `car.rightUp()`.
+These are how a car handles; what it looks like is yours, or `gs.models.vehicle('car')`:
+[Vehicles made in code](#vehicles-made-in-code).
 
 **3D levels from text** (`gs.level3d.Level3D(text, { size, wall, look })`): the same text maps in 3D.
 `#` walls, `.` floor, `1`-`9` raised floors, `~` water, `=` low walls, spaces as holes, letters as
@@ -2642,3 +2645,86 @@ weather.set('snow');                                    // it starts to settle; 
 - Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth for your footprints),
   puddles do not seek out the hollows of the land (they lie on flat ground where the map of them says),
   water does not run down walls or drip off eaves, and nothing piles up on things that move.
+
+## Vehicles made in code
+
+`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, tanks, trains, boats and planes with no model
+files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
+a little, and handed back as a three.js Group with the parts that turn on pivots of their own:
+
+```js
+make():   jeep = vehicle('car', { style: 'jeep', seed: 4 }); view.add(jeep);
+          tank = vehicle('tank', { style: 'heavy', finish: 'worn' }); view.add(tank);
+          train = vehicle('train', { style: 'steam', cars: ['van', 'open', 'coach'] }); view.add(train);
+update(dt) {
+  kart.update(dt, input); kart.place(jeep);                 // gs.vehicles says where it is...
+  jeep.move(dt, kart.speed, { steer: input.steer });        // ...this rolls and steers its wheels and rocks its body
+  tank.move(dt, speed, { turn, aim: [bearing, lift] });     // tracks run, one ahead of the other in a turn; the turret comes round
+  along += 12 * dt; train.along(rails, along).roll(along);  // each car between its own wheels, round the curve
+}
+```
+
+| `kind` | `style` (the first is what you get with none) | What turns | `points` |
+| --- | --- | --- | --- |
+| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
+| `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
+| `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
+| `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a wagon's `load`, a coach's `door` |
+| `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
+| `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
+
+`vehicle.kinds` is the same list, for a menu or a test.
+
+- **Which way round.** Its nose points along -z and +x is its right side, in metres, as `gs.vehicles`,
+  `gs.craft` and `World3D.vehicle` push things. A road vehicle and a train stand on y = 0. A boat floats
+  with its waterline at y = 0 (`boat.draft` is how deep). A plane's origin is on its centre line:
+  `plane.gear` is how high that stands above the ground on its wheels and `plane.sit` how far its nose
+  points up there.
+- **Options**: `style`; `seed` (which of its kind's colours, where its wear falls: the same on every phone);
+  `colour` and `trim` (its second colour: a coach's band, a wheelhouse, a stripe); `finish`: `'gloss'`,
+  `'satin'`, `'matt'`, `'worn'` (paint rubbed through to the metal) or `'rusty'`, each kind starting with its
+  own; `wear` (0..1 how aged, `false` for straight from the factory); `lit: true` (lamps that glow;
+  `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles). A
+  train also takes `cars` (what the engine pulls, in order) and `gauge` (metres between the rails, 1.435).
+- **`move(dt, speed, o)`** is the easy way to keep one alive each frame, whatever moves it: wheels and
+  tracks roll for the speed (metres a second), the front wheels ease to `steer` (-1..1, + right; `lock`
+  is how far they turn at 1, .55 radians), the body rolls outwards in a turn, squats as it pulls away and dips as it brakes, as a car on
+  springs does (`sway: 0` for none), propellers spin up to a blur with `power` (0..1), a boat's outboard turns with the steering
+  and a patrol boat's radar goes round. A tank takes `turn` (-1..1: one track runs ahead of the other, on
+  the spot when it stands) and `aim: [bearing, lift]`, which eases its turret and gun there. `ground:
+  false` keeps a plane's wheels still in the air (it is the default for a plane).
+- **By hand** instead: `roll(metres so far)` (a tank: `roll(left, right)`), `steer(radians)`,
+  `aim(bearing, lift)` (the gun stops at its own limits), or turn any of `parts` yourself (they are
+  Groups: `boat.parts.oarL.rotation.y = stroke`).
+- **`points`** are places on it that move with it (three.js objects, turned as the vehicle is):
+  `car.points.driver` is the driver's seat (`points.driver.add(person)` with a sitting pose and
+  `person.rotation.y = Math.PI`, since the kit's people face +z; in a wheelhouse, on a footplate or in
+  a turret hatch it is where they stand), `tank.points.muzzle.getWorldPosition(v)` for the flash and the
+  shell, `points.exhaust` and a steam engine's `points.smoke` for `gs.fx3d` smoke, `points.wake` for
+  `water.watch()`.
+- **`size`** (`length`, `width`, `height` in metres), `wheelbase`, `track` (between the wheels across),
+  `radius` (of a wheel), `tris` (triangles), and `look` (what it was made with) are there to read.
+- **On real springs** (cars and lorries): `drive = world.vehicle(car, car.chassis({ power: 14 }))` gives
+  `gs.physics3d` the chassis and the car's own four wheels, so they ride the bumps and it can roll over;
+  then `drive.drive(throttle, steer, brake)` each frame as ever (don't call `move()` as well). `chassis()`
+  moves the body so its origin is the middle of the chassis and not the road, so call it once, when you
+  make the car. A third axle's wheels follow the second's.
+- **Boats and planes** are the look for `gs.craft`: `boat = new Boat(sea, { length: hull.size.length,
+  width: hull.size.width, draft: 0 })`, then `hull.position.copy(boat.pos); hull.quaternion.copy(boat.quat);
+  hull.move(dt, boat.speed, { steer })` each frame; a plane the same from a `Plane({ ground, gear:
+  plane.gear })`, with `move(dt, speed, { power: throttle, ground: flying.onGround })`.
+- **A train** is its cars coupled nose to tail (`train.cars`, the engine first, each a vehicle of its own
+  with its `length` over the buffers), its middle at the origin. `train.along(track, d)` lays it on your
+  rails with its front `d` metres along them: `track` is `(metres) => ({ x, y, z })` on top of the rails
+  or a `gs.paths.Path`, measured in the train's own space, and each car goes between its own wheels, so
+  a train bends round curves and tips on slopes. `roll(d)` turns the wheels and a steam engine's rods.
+- **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
+  21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 4,500 to
+  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less
+  on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
+  shares its shapes and materials and costs almost nothing: a car park is one car made once.
+  Wagons of one kind share theirs too. Make vehicles in `make()`.
+- Not there: nothing dents or comes off, doors and bonnets do not open, cars have dark glass with no
+  inside behind it (the jeep, the lorry's bed, the boats and the cockpits are open and have seats),
+  there are no simpler shapes for far away made by themselves, and a train has no physics of its
+  own.

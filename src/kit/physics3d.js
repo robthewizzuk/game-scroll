@@ -165,7 +165,9 @@ class Vehicle3 {
       this.ctl.setWheelEngineForce(i, -this.throttle * this.power * this.chassis.body.mass() / 4);   // power: metres per second² of push, all four wheels
       this.ctl.setWheelBrake(i, this.braking ? this.brakes * this.chassis.body.mass() : 0);
     }
-    this.ctl.updateVehicle(h, undefined, undefined, c => c !== this.chassis.collider && !c.isSensor());
+    // sensors are left out by flag: asking each collider from inside this call (c.isSensor()) goes back into the engine while it
+    // holds the colliders, which left sensors in and the world unable to be freed. The controller skips its own chassis by itself.
+    this.ctl.updateVehicle(h, R.QueryFilterFlags.EXCLUDE_SENSORS);
   }
   sync() {
     this.wheelMeshes.forEach((m, i) => {
