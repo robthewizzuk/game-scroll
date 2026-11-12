@@ -1,0 +1,210 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Detail for copies (hd3d.js autoCopies: levels made by themselves for gs.props kinds), for
+// scripts/detail-test.cjs --page copies. A field of rocks, posts and trees is drawn with every copy whole
+// ('plain') and with levels ('auto'); the pictures are compared and what each drew is counted. Then copies
+// are moved and hidden, and on WebGPU it checks that copies staying in view are not sent to the chip again.
+//   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?rocks=300
+//   ?forest=20000 (--bench): a big forest, levels off and on: triangles, draws, and (WebGPU, copies picked on
+//   the CPU as while frame generation runs) the time spent filling the lists and what is sent each frame
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { clearBuilds } from '../../src/kit/detail.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480), { Props } = gs.props;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.gpuCull = Q.has('cull') ? true : 'auto';
+if (Q.has('fresh')) await clearBuilds();
+// a knobbly rock: a ball pushed in and out (smooth normals, shared points)
+function rock() {
+  const g = gs.props.simplify(new T.IcosahedronGeometry(1.4, 12), 1), p = g.attributes.position, v = new T.Vector3();
+  for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const k = 1 + .16 * Math.sin(v.x * 2.6) * Math.sin(v.y * 3.1 + 1) + .05 * Math.sin(v.z * 7 + 2) * Math.sin(v.x * 8); p.setXYZ(i, v.x * k, v.y * k * .8, v.z * k); }
+  g.computeVertexNormals(); return g;
+}
+const post = () => new T.CylinderGeometry(.22, .3, 3, 20, 6).translate(0, 1.5, 0);
+const tree = (seg, rings) => { const a = new T.ConeGeometry(1.6, 5, seg, rings).translate(0, 4.5, 0); return a; };
+const cards = () => { const P = [], U = [], I = []; for (let k = 0; k < 2; k++) { const a = k * Math.PI / 2, x = Math.cos(a) * 1.6, z = Math.sin(a) * 1.6, b = P.length / 3; P.push(-x, 2, -z, x, 2, z, x, 7, z, -x, 7, -z); U.push(0, 0, 1, 0, 1, 1, 0, 1); I.push(b, b + 1, b + 2, b, b + 2, b + 3); } const g = new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new T.Float32BufferAttribute(U, 2)); g.setIndex(I); g.computeVertexNormals(); return g; };
+const AREA = { x0: -250, z0: -250, x1: 250, z1: 250 }, NR = +(Q.get('rocks') || 300);
+function scene() {
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .001, amb: .4 }), c = document.createElement('canvas'); v.cam.far = 800; v.cam.updateProjectionMatrix();   // (the whole field in view)
+  c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 3, 60, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0); if (Q.has('noshadow')) sun.castShadow = false;
+  const ground = new T.Mesh(new T.PlaneGeometry(700, 700).rotateX(-Math.PI / 2), gs.hd.pbr('#6f8a52', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  const props = new Props(v.scene), stone = gs.hd.pbr('#9a948a', { rough: .7 }), wood = gs.hd.pbr('#8a6a48', { rough: .8 }), green = gs.hd.pbr('#3f6b3a', { rough: .9 });
+  const K = {};
+  K.rock = props.kind('rock', rock(), stone);                                             // big enough: levels by themselves
+  K.post = props.kind('post', post(), wood);                                             // 280 triangles a copy, hundreds of them: levels too
+  K.tree = props.kind('tree', tree(24, 8), green, { lod: [[30, tree(10, 2)], [80, tree(5, 1)]] });   // levels of its own: left alone
+  K.tuft = props.kind('tuft', cards(), new T.MeshStandardMaterial({ color: '#7da05a', alphaTest: .5, side: T.DoubleSide }), { shadows: false });   // cut-out: left alone
+  K.few = props.kind('few', new T.TorusKnotGeometry(.8, .25, 40, 6).translate(0, 1.5, 0), wood);   // three copies of a small thing: not worth levels
+  K.forced = props.kind('forced', new T.TorusGeometry(1, .35, 10, 24).translate(0, 1.4, 0), stone, { lod: 'auto' });   // asked for
+  K.never = props.kind('never', rock(), wood, { lod: false });                           // told not to
+  props.scatter('rock', NR, AREA, { seed: 3, gap: 9, scale: [.6, 1.6] });
+  props.scatter('post', 300, AREA, { seed: 5, gap: 6 });
+  props.scatter('tree', 500, AREA, { seed: 7, gap: 7, scale: [.8, 1.3] });
+  props.scatter('tuft', 200, AREA, { seed: 9, gap: 4 });
+  props.scatter('few', 3, { x0: -10, z0: -30, x1: 10, z1: -10 }, { seed: 11, gap: 5 });
+  props.scatter('forced', 5, { x0: -20, z0: -40, x1: 20, z1: 0 }, { seed: 13, gap: 6 });
+  props.scatter('never', 40, AREA, { seed: 15, gap: 20 });
+  props.done();
+  return { v, c, x, props, K };
+}
+const out = {}, info = {}, pix = {}, checks = [];
+// ?forest=20000: a big forest walked through with levels off and on (--bench: numbers, no checks).
+// &size=900 (metres across) &frames=240 &speed=.5 (metres a frame) &own (firs with levels of their own, as a
+// game would give them) &cpucull (WebGPU: copies picked on the CPU, as while frame generation runs)
+async function forest(N) {
+  const size = +(Q.get('size') || 900), frames = +(Q.get('frames') || 240), speed = +(Q.get('speed') || .5), own = Q.has('own');
+  if (Q.has('cpucull')) HD.gpuCull = false;
+  const merge = list => { const P = [], Nn = [], U = [], I = []; for (const g of list) { const b = P.length / 3; P.push(...g.attributes.position.array); Nn.push(...g.attributes.normal.array); U.push(...g.attributes.uv.array); for (const i of g.index.array) I.push(b + i); } const g = new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new T.Float32BufferAttribute(Nn, 3)); g.setAttribute('uv', new T.Float32BufferAttribute(U, 2)); g.setIndex(I); return g; };
+  const fir = (seg, rings) => merge([new T.ConeGeometry(1.7, 3, seg, rings).translate(0, 2.6, 0), new T.ConeGeometry(1.3, 2.6, seg, rings).translate(0, 4.4, 0), new T.ConeGeometry(.9, 2.2, seg, rings).translate(0, 6, 0), new T.CylinderGeometry(.18, .24, 1.4, Math.max(5, seg >> 1), 1).translate(0, .7, 0)]);
+  const area = { x0: -size / 2, z0: -size / 2, x1: size / 2, z1: size / 2 }, res = {};
+  for (const mode of (Q.get('modes') || 'whole,levels').split(',')) {
+    HD.copies = mode !== 'whole';
+    const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .0015, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+    v.cam.far = size * 1.5; v.cam.updateProjectionMatrix();
+    const sun = gs.hd.sun('#fff2d8', 3, 60, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun;
+    const ground = new T.Mesh(new T.PlaneGeometry(size * 1.4, size * 1.4).rotateX(-Math.PI / 2), gs.hd.pbr('#6f8a52', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    const props = new Props(v.scene), green = gs.hd.pbr('#3f6b3a', { rough: .9 }), stone = gs.hd.pbr('#9a948a', { rough: .7 });
+    const kf = props.kind('fir', fir(16, 4), green, { lod: own ? [[45, fir(8, 1)], [140, cards(), green]] : [], capacity: N }), kr = props.kind('rock', rock(), stone, { capacity: N / 10 | 0 });
+    const t0 = performance.now();
+    props.scatter('fir', N, area, { seed: 7, gap: 2.5, scale: [.8, 1.4] }); props.scatter('rock', N / 10 | 0, area, { seed: 3, gap: 6, scale: [.5, 1.3] }); props.done();
+    const placed = performance.now() - t0, S = { v, c, x };
+    v.cam.position.set(0, 6, 0); v.cam.lookAt(0, 5, -50); sun.follow(0, 0, 0);
+    if (mode !== 'whole') for (let i = 0; i < 400 && !(levels(kr) && (own || levels(kf))); i++) { await draw(S); await wait(30); }
+    await wait(700); await draw(S, 60);
+    const cpu = [], tris = [], calls = [];
+    // (WebGPU with the copies picked on the CPU: the time spent filling the lists, and what goes up to the chip for them)
+    let syncMs = 0, upBytes = 0, upRanges = 0;
+    for (const m of [kf, kr]) { const tw = m.userData.gpuTwin; if (!tw?.sync) continue; const s0 = tw.sync.bind(tw);
+      tw.sync = (...a) => {
+        const L = []; for (const o of tw.group.children) if (o.userData.slots) { L.push(o.instanceMatrix); if (o.userData.slots.prev) L.push(o.userData.slots.prev); }
+        const was = L.map(a => a.updateRanges.length), t = performance.now(), r = s0(...a); syncMs += performance.now() - t;
+        L.forEach((a, i) => { const u = a.updateRanges; for (let j = u.length >= was[i] ? was[i] : 0; j < u.length; j++) { upBytes += u[j].count * 4; upRanges++; } });
+        return r; }; }
+    if (Q.has('trace')) await new Promise(r => { window.__benchGo = r; });   // (&trace: waits for a profiler to say go, and lists every frame's time)
+    for (let i = 0; i < frames; i++) {
+      const R = size * .28, a = i * speed / R;   // (a walk round a circle: `speed` metres a frame)
+      v.cam.position.set(Math.cos(a) * R, 6, Math.sin(a) * R); v.cam.lookAt(Math.cos(a + .5) * R * 1.4, 4, Math.sin(a + .5) * R * 1.4); v.cam.updateMatrixWorld();
+      sun.follow(v.cam.position.x, 0, v.cam.position.z);
+      v.t = 0; v.render(x, W, H); cpu.push(HD.info.cpu); tris.push(HD.info.tris); calls.push(HD.info.calls);
+      if (i === (frames >> 1)) out['forest-' + mode] = c.toDataURL();
+      await nextFrame();
+    }
+    // (a frame costs its JavaScript alone, or it waits for the chip to catch up, which a software chip is always behind on: jsMs is the middle one of the first kind, chipMs of the second)
+    const sorted = [...cpu].sort((a, b) => a - b), mean = a => a.reduce((s, q) => s + q, 0) / a.length, med = a => a.length ? +a[a.length >> 1].toFixed(1) : 0;
+    res[mode] = { backend: HD.info.backend, firs: props.count('fir'), rocks: props.count('rock'), placed: Math.round(placed), levels: { fir: levels(kf) || own_(kf), rock: levels(kr) }, jsMs: med(sorted.filter(t => t < 40)), chipMs: med(sorted.filter(t => t >= 40)), tris: Math.round(mean(tris)), calls: Math.round(mean(calls)),
+      listsMs: +(syncMs / frames).toFixed(3), sentKB: +(upBytes / frames / 1024).toFixed(1), sentRanges: +(upRanges / frames).toFixed(1) };
+    if (Q.has('trace')) res[mode + ' frames'] = cpu.map(c => +c.toFixed(1)).join(' ');
+    props.clear(); v.dispose?.();
+  }
+  HD.copies = true;
+  return res;
+}
+const CAMS = { near: [[0, 3, 12], [0, 1.5, -30]], high: [[0, 110, 300], [0, 0, 0]], across: [[-245, 7, 245], [200, 0, -200]] };
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+const draw = async (S, frames = 1) => { for (let i = 0; i < frames; i++) { S.v.t = 0; S.v.render(S.x, W, H); if (i < frames - 1) await nextFrame(); } };
+const levels = m => m.userData.gsLevels?.levels || 0, own = m => (m.LODinfo?.render?.levels.length || 1) - 1, own_ = own;
+const diff = (a, b) => { let sum = 0, off = 0; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 24) off++; } return { mean: sum / (a.length / 4), share: off / (a.length / 4) }; };
+try {
+  if (Q.has('forest')) { Object.assign(info, await forest(+Q.get('forest') || 20000)); window.result = { out, info, checks }; throw 'bench done'; }
+  const S = {}; window.S = S;
+  for (const mode of ['plain', 'auto']) {
+    HD.copies = mode !== 'plain';
+    const t0 = performance.now(), s = S[mode] = scene(); let build = 0;
+    s.v.cam.position.set(...CAMS.near[0]); s.v.cam.lookAt(...CAMS.near[1]);
+    if (mode !== 'plain') {
+      for (let i = 0; i < 600 && !(levels(s.K.rock) && levels(s.K.post) && levels(s.K.forced)); i++) { await draw(s); await wait(30); }
+      build = performance.now() - t0;
+    }
+    if (mode === 'auto') {
+      check('rocks, posts and the kind that asked got levels by themselves', levels(s.K.rock) >= 3 && levels(s.K.post) >= 1 && levels(s.K.forced) >= 1, `rock ${levels(s.K.rock)}, post ${levels(s.K.post)}, asked ${levels(s.K.forced)} after ${Math.round(build)} ms`);
+      check('a kind with levels of its own, a cut-out one, a small one and one told not to were left alone', own(s.K.tree) === 2 && !levels(s.K.tree) && !own(s.K.tuft) && !own(s.K.few) && !own(s.K.never));
+      info.levels = { rock: s.K.rock.userData.gsLevels, post: s.K.post.userData.gsLevels };
+    }
+    for (const [name, [at, to]] of Object.entries(CAMS)) {
+      s.v.cam.position.set(...at); s.v.cam.lookAt(...to); s.v.cam.updateMatrixWorld();
+      await draw(s, 3);
+      await draw(s, 2);
+      out[mode + '-' + name] = s.c.toDataURL(); pix[mode + '-' + name] = s.x.getImageData(0, 0, W, H).data;
+      info[mode + '-' + name] = { backend: HD.info.backend, tris: HD.info.tris, calls: HD.info.calls, cpu: +HD.info.cpu.toFixed(2), build: Math.round(build) };
+    }
+  }
+  for (const name of Object.keys(CAMS)) {
+    const P = info['plain-' + name], A = info['auto-' + name], a = diff(pix['plain-' + name], pix['auto-' + name]);
+    A.diff = { mean: +a.mean.toFixed(3), off: +(a.share * 100).toFixed(3) };
+    check(name + ': with levels the picture matches every copy drawn whole', a.mean < 1 && a.share < .003, `mean ${a.mean.toFixed(2)} of 255, ${(a.share * 100).toFixed(2)}% of pixels off`);
+    check(name + ': far fewer triangles', A.tris < P.tris * .4, `${A.tris} against ${P.tris}`);
+  }
+  // levels follow the camera's field of view (a scope's zoom) and can be taken away
+  {
+    const s = S.auto, v = s.v, m = s.K.rock, d0 = Math.sqrt(m.LODinfo.render.levels[1].distance);
+    v.cam.fov /= 4; v.cam.updateProjectionMatrix(); await draw(s, 2);
+    const d1 = Math.sqrt(m.LODinfo.render.levels[1].distance);
+    check('zooming in four times pushes the levels out', d1 > d0 * 3 && d1 < d0 * 4.2, `${d0.toFixed(1)} m to ${d1.toFixed(1)} m`);
+    v.cam.fov *= 4; v.cam.updateProjectionMatrix(); await draw(s, 2);
+    m.userData.detail = false; await draw(s, 2);
+    check('userData.detail = false draws that kind whole again', !own(m) && !m.userData.gsLevels);
+    HD.copies = false; await draw(s, 2);
+    check('HD.copies = false takes every kind\'s levels away, and leaves a kind\'s own', !own(s.K.post) && !own(s.K.forced) && own(s.K.tree) === 2);
+    HD.copies = true; delete m.userData.detail;
+    for (let i = 0; i < 400 && !(levels(m) && levels(s.K.post)); i++) { await draw(s); await wait(30); }
+    check('and on again brings them back', levels(m) >= 3 && levels(s.K.post) >= 1);
+  }
+  // copies moved, hidden and shown: the picture follows, with and without levels. Drawn first until the view
+  // keeps their shadows from frame to frame (as it does in a game: a change then has to be noticed), and each
+  // change is compared with the same frame after every shadow map is drawn again
+  for (const mode of ['plain', 'auto']) {
+    const s = S[mode], v = s.v, p = s.props; HD.copies = mode !== 'plain';
+    v.cam.position.set(...CAMS.near[0]); v.cam.lookAt(...CAMS.near[1]); v.cam.updateMatrixWorld(); await draw(s, 70);
+    const shot = () => s.x.getImageData(0, 0, W, H).data, was = shot();
+    const fresh = async () => { v.shadowsDirty(); await draw(s, 3); return shot(); };   // (every shadow map drawn again)
+    // the post nearest the middle of the view
+    const P = new T.Vector3(); let id = -1, best = 1e9;
+    p.kinds.get('post').items.forEach((q, i) => { const far = Math.hypot(q.x - v.cam.position.x, q.z - v.cam.position.z); P.set(q.x, 1.5, q.z).project(v.cam); if (P.z < 1 && Math.abs(P.x) < .6 && Math.abs(P.y) < .6 && far > 6 && far < best) { best = far; id = i; } });
+    const q = p.kinds.get('post').items[id]; info[mode + '-post'] = { id, away: +best.toFixed(1) };
+    p.hide('post', id); await draw(s, 3); const gonePic = shot(), gone = diff(was, gonePic), goneKept = diff(gonePic, await fresh());
+    p.hide('post', id, false); await draw(s, 3); const back = diff(was, shot());
+    p.move('post', id, q.x + 2.5, 0, q.z); await draw(s, 3); const movedPic = shot(), moved = diff(was, movedPic), movedKept = diff(movedPic, await fresh());
+    if (mode === 'auto') out['auto-moved'] = s.c.toDataURL();
+    p.move('post', id, q.x, 0, q.z); await draw(s, 3); const home = diff(was, shot());
+    const pc = d => (d.share * 100).toFixed(3) + '%';
+    check(mode + ': a hidden copy goes from the picture, its shadow with it, and comes back', gone.share > .0005 && goneKept.share < .0002 && back.share < .0002, `${pc(gone)} of pixels changed, ${pc(goneKept)} from the frame with its shadows drawn again, then ${pc(back)}`);
+    check(mode + ': a moved copy is drawn where it was put, its shadow with it, and back again', moved.share > .0005 && movedKept.share < .0002 && home.share < .0002, `${pc(moved)} of pixels changed, ${pc(movedKept)} from the frame with its shadows drawn again, then ${pc(home)}`);
+    if (GPU) {
+      // WebGPU: each level's list of copies keeps what it holds from frame to frame, and only what changed is sent
+      let sent = 0, slots = 0;
+      await draw(s, 30);   // (copies that left the view keep their slots a little while: past that)
+      for (const m of Object.values(s.K)) { const tw = m.userData.gpuTwin; if (!tw?.sync || tw.isGpu()) continue; const s0 = tw.sync.bind(tw);
+        // (the ranges this call marked to go up: ones from before a list first went up are still listed, and have gone with it)
+        tw.sync = (...a) => { const L = tw.group.children.filter(o => o.userData.slots), was = L.map(o => o.instanceMatrix.updateRanges.length), r = s0(...a); L.forEach((o, i) => { const u = o.instanceMatrix.updateRanges; for (let j = u.length >= was[i] ? was[i] : 0; j < u.length; j++) sent += u[j].count / 16; }); return r; }; }
+      await draw(s, 4); const still = sent; sent = 0;
+      for (const m of Object.values(s.K)) for (const o of m.userData.gpuTwin?.group.children || []) if (o.userData.slots) slots += o.count;
+      check(mode + ': with the camera still, no copy is sent to the chip again', slots > 100 && still === 0, `${still} of ${slots} slots sent in 4 frames`);
+      v.cam.position.x += .4; v.cam.updateMatrixWorld(); await draw(s, 1); const step = sent; sent = 0;
+      check(mode + ': a step sideways sends only the copies that came into view or changed level', step < slots * .25, `${step} of ${slots} slots`);
+      p.move('post', id, q.x + .5, 0, q.z); await draw(s, 1); const all = sent; p.move('post', id, q.x, 0, q.z); await draw(s, 2);
+      check(mode + ': the game moving a copy sends its kind\'s lists again', all >= 1, `${all} slots`);
+      v.cam.position.x -= .4; v.cam.updateMatrixWorld(); await draw(s, 2);
+    }
+  }
+  HD.copies = true;
+  if (GPU) {
+    // A kind made while a shader build waits its turn (a game building its level between two frames) is not
+    // that build's to touch: the next frame gives it its twins. (three ran the library's WebGL hook on it,
+    // which threw and left its material patched; the view took that for a shader of the game's own, went
+    // back to WebGL, and there the patched material called itself until the stack ran out.)
+    const s = S.auto, v = s.v, mat = gs.hd.pbr('#c8b070', { rough: .5 });
+    const builds = [v.precompile(), v.precompile()];
+    const late = s.props.kind('late', new T.TorusGeometry(1.2, .2, 8, 32).translate(0, 1.6, 0), mat);
+    for (let i = 0; i < 8; i++) s.props.add('late', -14 + i * 4, 0, -12);
+    await Promise.all(builds); await draw(s, 3);
+    check('a kind made while shaders build in the background is left for the next frame to take on', late._currentMaterial === null && !late.visible && !!late.userData.gpuTwin && HD.info.backend === 'webgpu',
+      `${late._currentMaterial ? 'its material was left patched' : 'its material is as it was'}, drawn on ${HD.info.backend}${HD.info.backend === 'webgl' && HD.info.webgl ? ' (' + HD.info.webgl + ')' : ''}`);
+  }
+  window.result = { out, info, checks };
+} catch (e) { if (e !== 'bench done') window.result = { error: String(e && e.stack || e) }; }
+</script>

@@ -19,7 +19,7 @@ import { MeshoptClusterizer } from 'three/examples/jsm/libs/meshopt_clusterizer.
 /** Resolves once buildClusters() can run. */
 export const buildReady = Promise.all([MeshoptSimplifier.ready, MeshoptClusterizer.ready]);
 
-export const BUILD_VERSION = 2;   // (part of every saved build's key: raise it when the tables change)
+export const BUILD_VERSION = 2;   // (kept in every build: raise it when the tables change, and saved builds from before are made again; detail-worker.js)
 const MAX_VERTS = 256, HUGE = 3e38;
 
 // one level's clusters from a triangle list: [{ idx (into the caller's points), sphere [x, y, z, r] }]
@@ -215,6 +215,59 @@ export function buildFrom({ positions, index, nv, parts = [], stride = 0, weight
   }
   if (!index) { index = new Uint32Array(nv); for (let i = 0; i < nv; i++) index[i] = i; }
   return buildClusters({ positions, index, attrs, stride, weights }, o);
+}
+
+/**
+ * Whole detail levels of a mesh, for things drawn as many copies (gs.props; hd3d.js autoCopies picks one
+ * for each copy by how far off it is): the mesh simplified to each of `keep` (fractions of its triangles)
+ * for as long as it will simplify, never below `min` triangles. Every level uses the mesh's own points,
+ * and comes with its error against the mesh itself, in the mesh's units. Takes what buildClusters() takes.
+ * Returns { version, levels: n, index (every level's triangles, one after another), start, count, error }.
+ */
+export function buildLevels({ positions, index, attrs = null, stride = 0, weights = null }, { keep = [.5, .2, .07, .02, .005], min = 8 } = {}) {
+  const nv = positions.length / 3, I = index instanceof Uint32Array ? index : Uint32Array.from(index);
+  // (normals, UVs and colours steer which points go but count for less than in a cluster build: a whole level
+  // is swapped far off, where the shape is what shows, and heavy weights measurably cost shape)
+  const A = attrs && stride > 0 ? attrs : new Float32Array(0), S = attrs && stride > 0 ? stride : 0, W = S ? Array.from(weights || new Array(S).fill(.5), w => w * .3) : [];
+  const made = []; let last = I.length;
+  for (const k of keep) {
+    const target = Math.max(min, Math.floor(I.length * k / 3)) * 3, enough = last * .85;
+    if (target > enough) break;
+    // Twice: with creases and seams kept, and with leave to cross them (Permissive). The kept one is taken
+    // unless it is clearly further out: a ball's seam and poles, or a flat-shaded mesh (all creases), hold
+    // more triangles than a far level may have, and reaching the count round them caves the shape in. If
+    // neither gets there, small loose parts may go too (a door knob, a chimney pot: Prune), and last,
+    // roughly, nearby points are merged. An answer far under what was asked is not taken (Prune on a mesh
+    // whose every triangle has points of its own takes the lot).
+    const tried = [], run = more => {
+      const [o, e] = MeshoptSimplifier.simplifyWithAttributes(I, positions, 3, A, S, W, null, target, HUGE, ['ErrorAbsolute', ...more]);
+      if (o.length >= target * .5 && o.length <= enough) tried.push({ idx: o, err: e });
+    }, there = () => tried.filter(t => t.idx.length <= target * 1.25);
+    run([]); run(['Permissive']);
+    if (!there().length) { run(['Prune']); run(['Prune', 'Permissive']); }
+    if (!there().length) { const [o, e] = MeshoptSimplifier.simplifySloppy(I, positions, 3, null, target, HUGE); if (o.length >= target * .5 && o.length <= enough) tried.push({ idx: o, err: e * MeshoptSimplifier.getScale(positions, 3) * 2 }); }
+    if (!tried.length) break;   // as simple as it gets
+    const got = there(); let best = (got.length ? got : tried)[0];
+    if (got.length) { for (const t of got) if (t.err * 1.5 < best.err) best = t; }   // (the first, plain, unless another is half as far out again)
+    else for (const t of tried) if (t.idx.length < best.idx.length) best = t;        // (none got there: the simplest)
+    let { idx: out, err } = best;
+    if (made.length && err < made.at(-1).err) err = made.at(-1).err;   // (a coarser level is never called truer than a finer one)
+    made.push({ idx: out, err }); last = out.length;
+  }
+  let total = 0; for (const m of made) total += m.idx.length;
+  const out = nv > 65535 ? new Uint32Array(total) : new Uint16Array(total), start = new Uint32Array(made.length), count = new Uint32Array(made.length), error = new Float32Array(made.length);
+  let at = 0; made.forEach((m, i) => { start[i] = at; count[i] = m.idx.length; error[i] = m.err; out.set(m.idx, at); at += m.idx.length; });
+  return { version: BUILD_VERSION, levels: made.length, index: out, start, count, error };
+}
+/** buildLevels() from a geometry's plain arrays (see buildFrom). */
+export function levelsFrom({ positions, index, nv, parts = [], stride = 0, weights = [] }, o) {
+  let attrs = null;
+  if (stride) {
+    attrs = new Float32Array(nv * stride); let at = 0;
+    for (const p of parts) { for (let i = 0; i < nv; i++) for (let k = 0; k < p.use; k++) attrs[i * stride + at + k] = p.array[i * p.size + k]; at += p.use; }
+  }
+  if (!index) { index = new Uint32Array(nv); for (let i = 0; i < nv; i++) index[i] = i; }
+  return buildLevels({ positions, index, attrs, stride, weights }, o);
 }
 
 /** Every typed array in a build (to hand it to another thread without a copy). */

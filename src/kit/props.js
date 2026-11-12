@@ -14,6 +14,11 @@
 //   areas: areas.add('hall', hallGroup, box).add('vault', vaultGroup, box).link('hall', 'vault'); update: areas.update(camera.position)
 //   perCopy(instancedMesh): a finished InstancedMesh of still things (towers, trees, rocks) skips the copies off screen
 //   chunks: new Chunks(view.scene, { size: 40, radius: 2, make: (cx, cz) => buildChunk(cx, cz) }); update: chunks.update(player.pos)
+//
+// Detail levels by themselves: a kind with no `lod` of its own gets levels made in the background by the
+// Next Gen, AR and Board views once it is big enough to matter (hd3d.js autoCopies), each copy drawn at the
+// simplest level whose error doesn't show where it stands; `lod: 'auto'` asks for that whatever its size,
+// `lod: false` keeps every copy whole.
 
 import { Vector3, Box3, Color, Matrix4 } from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
@@ -25,6 +30,17 @@ import { InstancedMesh2 } from '@three.ez/instanced-mesh';
 let canSimplify = false;
 /** Resolves once simplify() can work (gamescroll.js waits for it while loading the 3D parts). */
 export const simplifyReady = MeshoptSimplifier.ready.then(() => { canSimplify = true; }, () => {});
+
+// A set of copies says when one of them is moved, hidden or shown (userData.gsChanged, a count that goes
+// up): the Next Gen view keeps the shadows of still things from frame to frame (hd3d.js shadowLights), and
+// nothing else about the set changes when one copy does.
+function watched(m) {
+  for (const k of ['setMatrixAt', 'setVisibilityAt', 'setActiveAt', 'setActiveAndVisibilityAt', 'updateInstances', 'updateInstancesPosition']) {
+    const own = m[k]; if (typeof own !== 'function') continue;
+    m[k] = function (a, b, c) { this.userData.gsChanged = (this.userData.gsChanged || 0) + 1; return own.call(this, a, b, c); };
+  }
+  return m;
+}
 
 /** A simpler copy of a geometry with about `keep` (0..1) of its points. */
 export function simplify(geometry, keep = .5) {
@@ -50,7 +66,7 @@ export function simplify(geometry, keep = .5) {
  */
 const PM4 = new Matrix4(), PC = new Color();
 export function perCopy(im, { renderer = null } = {}) {
-  const n = im.count, m = new InstancedMesh2(im.geometry, im.material, { capacity: Math.max(1, n), renderer: renderer || undefined });
+  const n = im.count, m = watched(new InstancedMesh2(im.geometry, im.material, { capacity: Math.max(1, n), renderer: renderer || undefined }));
   for (const k of ['name', 'castShadow', 'receiveShadow', 'renderOrder', 'visible']) m[k] = im[k];
   m.layers.mask = im.layers.mask; Object.assign(m.userData, im.userData);
   m.position.copy(im.position); m.quaternion.copy(im.quaternion); m.scale.copy(im.scale);
@@ -76,12 +92,15 @@ export class Props {
   /**
    * A kind of prop. lod: distances where simpler shapes take over (made by simplify(), keeping
    * `keep` of the detail at each step), or [[distance, geometry, material?], ...] for your own (a
-   * material of its own for that level, e.g. gs.outdoors impostor() cards); shadowFar:
-   * past this the shadow uses the simplest shape; capacity: how many to expect (it grows if needed).
+   * material of its own for that level, e.g. gs.outdoors impostor() cards), or 'auto': levels made in the
+   * background with distances worked out so the change can't be seen (the views do this by themselves
+   * for a big enough kind with no lod; false: never). shadowFar: past this the shadow uses the simplest
+   * shape; capacity: how many to expect (it grows if needed).
    */
   kind(name, geometry, material, { lod = [], keep = [.45, .15], shadows = this.shadows, shadowFar = 40, capacity = 256 } = {}) {
-    const m = new InstancedMesh2(geometry, material, { capacity, renderer: this.renderer || undefined });
+    const m = watched(new InstancedMesh2(geometry, material, { capacity, renderer: this.renderer || undefined }));
     m.castShadow = shadows; m.receiveShadow = true; m.name = 'props:' + name;
+    if (lod === 'auto') { m.userData.detail = true; lod = []; } else if (lod === false) { m.userData.detail = false; lod = []; }
     if (lod.length) {
       m.setFirstLODDistance(0);
       lod.forEach((d, i) => { const [dist, geo, mat] = Array.isArray(d) ? d : [d, simplify(geometry, keep[i] ?? keep.at(-1) / (i + 1))]; m.addLOD(geo, mat || material, dist); });
@@ -108,7 +127,13 @@ export class Props {
     return id;
   }
   /** Moves one (fine now and then; for things moving every frame use plain meshes). */
-  move(name, id, x, y, z) { const k = this.kinds.get(name); k.mesh.updateInstances(o => { if (o.id === id) o.position.set(x, y, z); }); k.items[id] = { x, y, z }; return this; }
+  move(name, id, x, y, z) {
+    // (the one copy's own matrix: the library's updateInstances() starts every copy again from no turn and no scale)
+    const k = this.kinds.get(name), m = k.mesh;
+    m.getMatrixAt(id, PM4); PM4.setPosition(x, y, z); m.setMatrixAt(id, PM4);
+    k.items[id] = { x, y, z };
+    return this;
+  }
   remove(name, id) { const k = this.kinds.get(name); if (!k) return this; k.mesh.removeInstances(id); delete k.items[id]; return this; }
   hide(name, id, hidden = true) { this.kinds.get(name)?.mesh.setVisibilityAt(id, !hidden); return this; }
   /**

@@ -1639,6 +1639,64 @@ console.log('physics ok');
   console.log('frame generation: props keep their places on WebGPU ok');
 }
 
+// ...and only the copies that changed go to the graphics chip again (every list used to go up whole each
+// frame, and three's copy of it for motion with it): the ranges marked on a level's list
+{
+  const { gpuProps } = await import('../src/kit/hd3d-gpu.js');
+  const { PerspectiveCamera, Matrix4, BoxGeometry, MeshBasicMaterial } = await import('three');
+  // 600 boxes in ten rows of sixty, in front of the camera
+  const n = 600, D = new Float32Array(n * 16), M4 = new Matrix4();
+  for (let i = 0; i < n; i++) M4.makeTranslation((i % 60) * 2 - 59, 0, -10 - Math.floor(i / 60) * 2).toArray(D, i * 16);
+  const geo = new BoxGeometry(1, 1, 1); geo.computeBoundingSphere();
+  const tex = { _data: D, enqueueUpdate() {} };   // (the copies library tells its texture of every change this way)
+  const im = { name: 'props:box', geometry: geo, material: new MeshBasicMaterial(), castShadow: false, receiveShadow: false, matrixWorld: new Matrix4(),
+    _capacity: n, _instancesArrayCount: n, matricesTexture: tex, colorsTexture: null, getActiveAndVisibilityAt: i => i < n };
+  const tw = gpuProps(im), list = tw.group.children[0].instanceMatrix, cam = new PerspectiveCamera(50, 1, .1, 100);
+  const sent = () => { let s = 0; for (const r of list.updateRanges) s += r.count / 16; list.clearUpdateRanges(); return s; };
+  cam.position.set(0, 3, 0); cam.lookAt(0, 0, -20); tw.sync(cam);
+  const seen = sent(), v = list.version;
+  assert.ok(seen > 40 && seen < n, 'the copies in view go up the first time: ' + seen + ' of ' + n);
+  tw.sync(cam); tw.sync(cam);
+  assert.ok(list.version === v && sent() === 0, 'a still camera sends nothing again');
+  cam.lookAt(1.5, 0, -20); tw.sync(cam);
+  const turned = sent();
+  assert.ok(turned > 0 && turned < seen / 3, 'a small turn sends the few copies that came in or left: ' + turned + ' slots of ' + seen);
+  tex.enqueueUpdate(5); tw.sync(cam);   // the game moved, hid or recoloured a copy
+  const all = sent();
+  assert.ok(all >= seen * .8, 'a copy the game changed sends the kind\'s list again: ' + all + ' slots');
+  tw.sync(cam);
+  assert.equal(sent(), 0, 'and then nothing again');
+  // Motion (frame generation, SGSR 2) comes from three's own copy of each list, "last frame's": for a still
+  // copy it must hold the copy's own place at every draw, the first one in a new slot too (a copy changing
+  // detail level takes a slot in another list, in the middle of the picture). three as its renderer treats
+  // that copy: sent when its version passes the one last sent (its marked ranges, or whole), then set to
+  // the list and the list's version after the draw.
+  const lv = [{ object: { geometry: geo, material: im.material }, distance: 0, hysteresis: 0 }, { object: { geometry: geo, material: im.material }, distance: 15 * 15, hysteresis: 0 }];
+  const tw2 = gpuProps({ ...im, LODinfo: { render: { levels: lv } } });
+  const chips = tw2.group.children.map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });
+  const draw = () => {
+    let wrong = 0, drawn = 0;
+    for (const g of chips) {
+      if (g.sent < 0 || !g.prev.updateRanges.length) { if (g.sent < g.prev.version) g.chip.set(g.prev.array); }
+      else if (g.sent < g.prev.version) for (const r of g.prev.updateRanges) g.chip.set(g.prev.array.subarray(r.start, r.start + r.count), r.start);
+      if (g.sent < g.prev.version) { g.prev.clearUpdateRanges(); g.sent = g.prev.version; }
+      const S = g.m.userData.slots;
+      for (let s = 0; s < S.top; s++) { const i = S.owner[s] - 1; if (i < 0) continue; drawn++; for (let j = 0; j < 16; j++) if (g.chip[s * 16 + j] !== D[i * 16 + j]) { wrong++; break; } }
+      g.prev.array.set(g.m.instanceMatrix.array); g.prev.version = g.m.instanceMatrix.version;
+    }
+    return { wrong, drawn, near: chips[0].m.count, far: chips[1].m.count };
+  };
+  cam.lookAt(0, 0, -20); tw2.sync(cam); draw();   // (three makes its copy during the first draw: nothing to hold yet)
+  tw2.sync(cam); const d2 = draw(); tw2.sync(cam); const d3 = draw();
+  assert.ok(d2.wrong + d3.wrong === 0 && d3.near > 0 && d3.far > 0, 'last frame\'s list holds every still copy where it stands (' + d3.near + ' near, ' + d3.far + ' far)');
+  lv[1].distance = 30 * 30; tw2.sync(cam);   // a zoom: the far level takes over further out, and the copies between change lists
+  const d4 = draw();
+  assert.ok(d4.near > d3.near + 20 && d4.wrong === 0, 'a copy that changes level has its own place in last frame\'s list at once: ' + d4.wrong + ' of ' + d4.drawn + ' wrong, ' + (d4.near - d3.near) + ' changed');
+  cam.lookAt(2, 0, -20); tw2.sync(cam); const d5 = draw(); lv[1].distance = 15 * 15; tw2.sync(cam); const d6 = draw(); tw2.sync(cam); const d7 = draw();
+  assert.equal(d5.wrong + d6.wrong + d7.wrong, 0, 'and through a turn and the change back');
+  console.log('gs.props on WebGPU: only changed copies are sent, and each keeps its own motion ok');
+}
+
 // gs.models material recipes: each tiles seamlessly (the same at p and p + one tile), with finite numbers
 {
   const { JS } = await import('../src/kit/models/ops.js'), { RECIPES } = await import('../src/kit/models/recipes.js');
@@ -2837,6 +2895,67 @@ console.log('physics ok');
   assert.ok(reliefOf(twin).clusters === R.clusters, 'a copy of the mesh shares the one build');
   relief(mesh, false); assert.ok(mesh.userData.relief === undefined && !reliefOf(mesh), 'relief(mesh, false) takes it off');
   console.log('gs.models relief ok');
+}
+
+// whole detail levels for things drawn as many copies (detail-build.js buildLevels, detail.js levelsFor): the
+// mesh simplified a few times over on its own points, each level with its measured error
+{
+  const { TorusKnotGeometry, CylinderGeometry, IcosahedronGeometry, SphereGeometry, BoxGeometry } = await import('three');
+  const { levelsFor, levelGeometry } = await import('../src/kit/detail.js');
+  const tris = g => (g.index ? g.index.count : g.attributes.position.count) / 3;
+  const sound = (g, lv, what) => {
+    const nv = g.attributes.position.count; let was = tris(g), err = 0;
+    for (let i = 0; i < lv.levels; i++) {
+      const t = lv.count[i] / 3;
+      assert.ok(t >= 1 && t <= was * .85 && lv.error[i] > 0 && lv.error[i] >= err, `${what}: level ${i + 1} is simpler than the one before and no truer (${t} triangles, out by ${lv.error[i].toFixed(4)})`);
+      for (let k = lv.start[i]; k < lv.start[i] + lv.count[i]; k++) if (lv.index[k] >= nv) assert.fail(what + ': a level uses a point the mesh does not have');
+      was = t; err = lv.error[i];
+    }
+    return [...lv.count].map(c => c / 3).join(', ');
+  };
+  const knot = new TorusKnotGeometry(1, .35, 160, 24), lv = await levelsFor(knot), list = sound(knot, lv, 'knot');
+  assert.ok(lv.levels === 5 && lv.count[4] / 3 < tris(knot) * .01 && lv.error[0] < .02 && lv.error[4] < 1.4, 'a knot of ' + tris(knot) + ' triangles: ' + list);
+  assert.ok(await levelsFor(knot.clone()) === lv, 'found again in memory, by the mesh\'s content');
+  const g1 = levelGeometry(knot, lv, 1);
+  assert.ok(g1.attributes.position === knot.attributes.position && g1.attributes.uv === knot.attributes.uv && g1.index.count === lv.count[1] && g1.boundingSphere.radius === knot.boundingSphere.radius && g1.boundingSphere !== knot.boundingSphere,
+    'a level is the mesh\'s own points with fewer triangles');
+  // a post with caps (three parts, seams round the rims) and a faceted rock (every triangle its own points)
+  const post = new CylinderGeometry(.1, .12, 1.4, 20, 6), lp = await levelsFor(post), posts = sound(post, lp, 'post');
+  assert.ok(lp.levels >= 3 && lp.count[lp.levels - 1] / 3 <= 20, 'a post of ' + tris(post) + ' triangles: ' + posts);
+  const rock = new IcosahedronGeometry(1, 12); rock.computeVertexNormals();
+  const lr = await levelsFor(rock), rocks = sound(rock, lr, 'rock');
+  assert.ok(!rock.index && lr.levels >= 4 && lr.count[lr.levels - 1] / 3 < tris(rock) * .02, 'a faceted rock of ' + tris(rock) + ' triangles: ' + rocks);
+  // a ball's seam and poles hold more triangles than its far levels may have: keeping them would cave the
+  // ball in to reach the count, so those levels cross the seam and stay round
+  const ball = new SphereGeometry(1, 120, 90), lb = await levelsFor(ball), balls = sound(ball, lb, 'ball');
+  assert.ok(lb.levels === 5 && lb.count[4] / 3 < 160 && lb.error[4] < .1, 'a ball of ' + tris(ball) + ' triangles stays a ball: ' + balls + ', the last out by ' + lb.error[4].toFixed(3));
+  const box = await levelsFor(new BoxGeometry(1, 1, 1));
+  assert.ok(box.levels <= 1, 'a box is as simple as it gets, or nearly');
+  console.log('gs.hd detail levels for copies ok');
+}
+
+// gs.props: a kind's detail option, moving one copy (the others used to lose their turn and scale), and the
+// count the view's kept shadows go by
+{
+  const { BoxGeometry, MeshBasicMaterial, Scene, Matrix4, Vector3, Quaternion } = await import('three');
+  const { Props } = await import('../src/kit/props.js');
+  const props = new Props(new Scene()), geo = new BoxGeometry(1, 1, 1), mat = new MeshBasicMaterial();
+  props.kind('box', geo, mat);
+  assert.ok(props.kind('auto', geo, mat, { lod: 'auto' }).userData.detail === true && props.kind('whole', geo, mat, { lod: false }).userData.detail === false && props.mesh('box').userData.detail === undefined,
+    'lod: \'auto\' asks the view for levels, lod: false turns them down');
+  const a = props.add('box', 1, 0, 2, { rot: 1.2, scale: 3 }), b = props.add('box', 5, 0, 6, { rot: .4, scale: 2 });
+  const m = props.mesh('box'), M = new Matrix4(), p = new Vector3(), q = new Quaternion(), s = new Vector3();
+  const read = id => { m.getMatrixAt(id, M); M.decompose(p, q, s); return [p.x, p.y, p.z, s.x, 2 * Math.atan2(q.y, q.w)].map(v => +v.toFixed(3)); };
+  props.move('box', a, 9, 1, 9);
+  assert.deepEqual(read(a), [9, 1, 9, 3, 1.2], 'the moved copy keeps its turn and scale');
+  assert.deepEqual(read(b), [5, 0, 6, 2, .4], 'the others stay where they were, turned and sized as they were');
+  assert.deepEqual(props.near('box', { x: 9, y: 1, z: 9 }, 1).map(i => i.id), [a], 'and near() finds it where it went');
+  // the view keeps still things' shadows from frame to frame: a set says when a copy is moved, hidden or shown
+  const said = m.userData.gsChanged; props.hide('box', b);
+  const hid = m.userData.gsChanged; props.hide('box', b, false);
+  const shown = m.userData.gsChanged; m.setMatrixAt(a, M);
+  assert.ok(said > 0 && hid > said && shown > hid && m.userData.gsChanged > shown && !m.getVisibilityAt(a) === false && m.getVisibilityAt(b), 'a set counts up when a copy is moved, hidden or shown');
+  console.log('gs.props detail option and move ok');
 }
 
 // sound that knows the level (src/kit/acoustics.js, gs.sound.Ears with a level): walls muffle, places ring

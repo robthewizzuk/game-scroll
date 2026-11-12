@@ -3,7 +3,7 @@
 // also saved in the app's own IndexedDB under the key detail.js gives it (the mesh's content), so the
 // next launch reads it back instead of building: 'get' answers with the saved build or null, 'build'
 // builds, saves and answers. The newest builds stay, up to CAP bytes.
-import { buildFrom, buildReady, buffersOf } from './detail-build.js';
+import { buildFrom, levelsFrom, buildReady, buffersOf, BUILD_VERSION } from './detail-build.js';
 import { buildRelief, reliefReady, reliefClusters, reliefBuffers } from './relief-build.js';
 
 const DB = 'gs-detail', CAP = 64 * 1048576;
@@ -17,7 +17,9 @@ const open = () => dbp ||= new Promise(res => {
 });
 const tx = (db, mode, fn) => new Promise(res => { try { const t = db.transaction(['builds', 'when'], mode), r = fn(t.objectStore('builds'), t.objectStore('when')); t.oncomplete = () => res(r?.result); t.onerror = t.onabort = () => res(null); } catch (e) { res(null); } });
 const bytesOf = d => d.index.byteLength + (d.relief ? reliefBuffers(d.relief).reduce((n, b) => n + b.byteLength, 0) : 0);
-const good = d => d && d.index?.length > 0 && d.start?.length > 0 && d.gFirst && d.roots > 0;
+// (a set of whole levels, for copies: detail-build.js buildLevels, may hold none: a mesh that won't simplify)
+const good = d => d && d.version === BUILD_VERSION && d.index && d.start && (d.levels >= 0 && d.error ? d.start.length === d.levels : d.index.length > 0 && d.start.length > 0 && d.gFirst && d.roots > 0);
+const levelBuffers = d => [d.index, d.start, d.count, d.error].map(a => a.buffer);
 async function saved(key) {
   const db = await open(); if (!db) return null;
   const d = await tx(db, 'readonly', b => b.get(key)); if (!good(d)) return null;
@@ -38,7 +40,9 @@ async function save(key, d) {
 self.onmessage = async e => {
   const { id, op, key } = e.data;
   try {
-    if (op === 'get') { const d = await saved(key); self.postMessage({ id, r: d }, d ? [...buffersOf(d), ...(d.relief ? reliefBuffers(d.relief) : [])] : []); }
+    if (op === 'get') { const d = await saved(key); self.postMessage({ id, r: d }, d ? (d.error ? levelBuffers(d) : [...buffersOf(d), ...(d.relief ? reliefBuffers(d.relief) : [])]) : []); }
+    // whole detail levels for a mesh drawn as copies (hd3d.js autoCopies)
+    else if (op === 'levels') { await buildReady; const d = levelsFrom(e.data.input, e.data.opts); await save(key, d); self.postMessage({ id, r: d }, levelBuffers(d)); }
     // real surface detail (relief-build.js): the mesh with its material's bumps made real, and its clusters, in one go
     else if (op === 'relief') {
       await Promise.all([buildReady, reliefReady]);
