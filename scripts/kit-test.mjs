@@ -1492,10 +1492,16 @@ console.log('physics ok');
   for (const [sd, s] of [['L', 1], ['R', -1]]) { mk('leg' + sd, B.hips, s * .094, -.045, 0); mk('shin' + sd, B['leg' + sd], 0, -.435, 0); mk('foot' + sd, B['shin' + sd], 0, -.435, 0); mk('arm' + sd, B.spine, s * .2, .4, 0); mk('fore' + sd, B['arm' + sd], 0, -.3, 0); mk('hand' + sd, B['fore' + sd], 0, -.27, 0); }
   const rig = new Rig(B, { poses: LIFELIKE });
   // a planted foot stays where it landed while the body passes over it (the flat part of each stance)
-  for (const [name, v, lo, hi] of [['walk', 1.36, .12, .4], ['jog', 3.4, .07, .24], ['run', 5.6, .07, .19], ['sneak', 1, .12, .48]]) {
+  for (const [name, v, lo, hi] of [['walk', 1.36, .12, .4], ['jog', 3.4, .07, .22], ['run', 5.6, .06, .15], ['sneak', 1, .12, .48]]) {
     rig.play(name, { fade: 0 }); let x = 0, n = 0, last = 0, a = Infinity, b = -Infinity, low = Infinity; const at = new Vector3();
     for (let i = 0; i < 960; i++) { rig.update(1 / 240, { speed: v }); x += v / 240; root.position.z = x; root.updateMatrixWorld(true); B.footL.getWorldPosition(at); const ph = rig.phase; if (ph < last) n++; last = ph; low = Math.min(low, at.y); if (n === 1 && ph > lo && ph < hi) { a = Math.min(a, at.z); b = Math.max(b, at.z); } }
     assert.ok(b - a < .012, name + ': the planted foot slides ' + (b - a).toFixed(4) + ' m'); assert.ok(low > .08, name + ': no foot goes through the floor ' + low.toFixed(3));
+  }
+  // a runner lands on a bent knee under the body and brings the other leg through bent (not both legs flung out straight)
+  for (const name of ['jog', 'run', 'sprint']) {
+    const c = LIFELIKE[name].cycle, strike = c(0).j, late = c(.9).j;
+    assert.ok(strike.shinL[0] > .2, name + ': lands on a bent knee ' + strike.shinL[0].toFixed(2)); assert.ok(late.shinL[0] > .6, name + ': the leg comes through bent ' + late.shinL[0].toFixed(2));
+    assert.ok(-strike.legL[0] < .6, name + ': the foot lands near under the body ' + (-strike.legL[0]).toFixed(2));
   }
   // a pose by the clock: once plays through and holds (rig.done); at: the game holds the phase
   rig.add('vault', keys([[0, { spine: [0, 0, 0] }], [1, { spine: [1, 0, 0] }]]), { time: .5, once: true }); rig.play('vault', { fade: 0 });
@@ -1599,6 +1605,29 @@ console.log('physics ok');
   sp.setFrameGenPick('auto'); sp.speed.gpu = false;
   assert.equal(sp.screenWant(ng), 60, 'on WebGL (no frame generation): its own rate');
   screen.rates = []; screen.top = 0;
+  // guessing ahead: one frame per real frame at most, unless the player or the game asked for ahead (Long
+  // Shadow on Rob's Fold, 2026-11-12: at 30 on 120 Hz it made three guesses in a row and Wren smeared)
+  for (let i = 0, t = 1000; i < 40; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'the screen measures as 120 Hz');
+  sp.speed.gpu = true;
+  const g60 = { id: 'kt-fg60', era: 'nextgen', fps: 60 }, g30 = { id: 'kt-fg30', era: 'nextgen', fps: 30 };
+  assert.equal(sp.frameGenFor(g60), 'blend', 'a 60 fps game on 120 Hz: blend by default');
+  assert.equal(sp.frameGenPace(g60.id), true, 'blend too full for it: it switches itself to ahead');
+  // (a machine with four cores or fewer counts as a slow phone, where every 3D game runs at 30: four refreshes a frame there too)
+  assert.equal(sp.frameGenFor(g60), sp.frameGenSteps(g60) > 2.5 ? 'blend' : 'ahead', 'and makes its one frame per real frame ahead');
+  assert.equal(sp.frameGenPace(g30.id), true);
+  assert.equal(sp.frameGenSteps(g30), 4, 'a 30 fps game on 120 Hz has three frames to make');
+  assert.equal(sp.frameGenFor(g30), 'blend', 'three guesses in a row are not made: blended instead');
+  assert.equal(sp.frameGenFor({ ...g30, frameGen: 'ahead' }), 'ahead', 'a game that asks for ahead keeps it');
+  sp.setFrameGenHow('ahead'); assert.equal(sp.frameGenFor(g30), 'ahead', 'and so does the player\'s pick in Settings');
+  sp.setFrameGenHow('game'); sp.speed.gpu = false;
+  // where a game settled is kept for a day, then it starts from the phone's class again (how its frames are made stays)
+  sp.settle('kt-old', { tier: 0, lvl: 3, fps: 30 }); sp.settle('kt-old', { fgHow: 'ahead' });
+  assert.equal(sp.settledFor('kt-old').fps, 30, 'a game\'s settled quality is remembered');
+  sp.settledFor('kt-old').at -= 25 * 3600 * 1000;
+  assert.deepEqual(sp.settledFor('kt-old'), { fgHow: 'ahead' }, 'a day later only how its frames are made is left');
+  sp.settle('kt-old2', { tier: 1 }); sp.settledFor('kt-old2').at -= 25 * 3600 * 1000;
+  assert.equal(sp.settledFor('kt-old2'), null, 'and a game with nothing lasting is forgotten');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
   const B = 1000 / 60;
   assert.equal(sp.qualityVerdict(B * 1.3, 0, B), 'slow', 'a slow average steps down');
@@ -1606,7 +1635,7 @@ console.log('physics ok');
   assert.equal(sp.qualityVerdict(B, 1, B), 'ok', 'one late frame in a window (a hitch) is not enough');
   assert.equal(sp.qualityVerdict(B, 1, B) === 'fast', false, 'and is never room to climb');
   assert.equal(sp.qualityVerdict(B, 0, B), 'fast', 'on the beat with none late: room to climb');
-  console.log('frame generation: exact camera turns, battery and heat, pacing by the clock, screen rate, stutter-aware quality ok');
+  console.log('frame generation: exact camera turns, battery and heat, pacing by the clock, screen rate, one guess ahead at most, stutter-aware quality that starts afresh after a day ok');
 }
 
 // gs.props on WebGPU: each copy keeps its slot in the drawn list while it stays in view (three's motion,

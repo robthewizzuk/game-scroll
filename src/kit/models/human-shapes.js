@@ -60,12 +60,13 @@ function torsoOf(b, kind) {
   return new Loft([
     [.99, .15 * W + ease, .106 * W + ease, 0, 0, 2.3], [1.08, .147 * W + ease, .106 * W + ease, .002, 0, 2.3],
     [1.17, .156 * C + ease, .113 * C + ease, .006, 0, 2.4], [1.27, .166 * C + ease, .123 * C + ease, .011 + b.bust * .014, 0, 2.4],
-    [1.35, .166 * SH + ease * .5, .122 * C + ease, .008 + b.bust * .006, 0, 2.4], [1.42, .176 * SH, .104 * C, 0, 0, 2.3],
-    [1.455, .176 * SH, .092, -.006, 0, 2.2], [1.478, .156 * SH, .084, -.01, 0, 2.1], [1.497, .104, .074, -.012, 0, 2], [1.514, .07, .066, -.012], [1.54, .056, .056, -.012],
+    [1.35, .166 * SH + ease * .5, .122 * C + ease, .008 + b.bust * .006, 0, 2.4], [1.43, .176 * SH, .102 * C, 0, 0, 2.3],
+    // the shoulders: one even slope from the side of the neck out over the top of the arm, whose cap is only the roundness beyond it (a shelf with a corner reads as a box)
+    [1.455, .179 * SH, .092, -.006, 0, 2.2], [1.468, .172 * SH, .086, -.008, 0, 2.1], [1.478, .158 * SH, .082, -.01, 0, 2.1], [1.488, .14 * SH, .077, -.011, 0, 2.1], [1.499, .104 + .014 * SH, .071, -.012, 0, 2], [1.511, .093, .066, -.012], [1.525, .072, .061, -.012], [1.545, .058, .056, -.012],
   ]);
 }
-const sleeveRows = LM => [[.892, .036 * LM, .038 * LM, .004, .2], [.93, .0385 * LM, .04 * LM, .004, .2], [1.02, .0445 * LM, .046 * LM, 0, .2], [1.1, .0475 * LM, .049 * LM, -.006, .2], [1.165, .0465 * LM, .049 * LM, -.01, .2],
-  [1.27, .051 * LM, .054 * LM, -.012, .198], [1.36, .0535 * LM, .057 * LM, -.012, .193], [1.42, .05 * LM, .056 * LM, -.012, .189], [1.45, .04 * LM, .05 * LM, -.012, .186]];
+const sleeveRows = LM => [[.892, .036 * LM, .038 * LM, .004, .2], [.93, .0385 * LM, .04 * LM, .004, .2], [1.02, .0445 * LM, .046 * LM, 0, .2], [1.1, .0475 * LM, .049 * LM, -.006, .2], [1.165, .0455 * LM, .049 * LM, -.01, .1985],
+  [1.27, .0475 * LM, .053 * LM, -.012, .194], [1.36, .0505 * LM, .056 * LM, -.012, .19], [1.42, .05 * LM, .056 * LM, -.012, .188], [1.45, .04 * LM, .05 * LM, -.012, .186]];   // narrower above the elbow than at the shoulder's cap, as an arm is
 
 /**
  * The left arm in its sleeve, shoulder to cuff. A piece of its own, not melted into the trunk: it turns in the
@@ -77,7 +78,7 @@ function arm(a) {
   const sleeve = new Loft(short ? rows.filter(r => r[0] > 1.2).concat([[1.21, .053 * LM, .055 * LM, -.012, .199]]) : rows);
   const elbow = (x, y, z) => { const th = Math.atan2(x - .2, z + .01), w = lumps(x * 11, y * 15, z * 11); return .0022 * bump(y, 1.17, .06) * sin(y * 190 + th * 1.6 + 3.2 * w) * (.65 + .35 * cos(th)) + .002 * bump(y, 1.39, .05) * sin(th * 6 + y * 30 + 3 * w); };
   const SL = { loft: sleeve, slot: 'top', space: ARMSP, lumpy: [.06, .0026], folds: elbow, foldMax: .004, blend: 0 }, onA = s => on(SL, { space: ARMSP, ...s }); S.push(SL);
-  S.push(onA({ ball: [.0525 * LM, .047, .0585 * LM], at: [.188, 1.417, -.012], slot: 'top', blend: .02 }));   // the cap of the shoulder, round the joint
+  S.push(onA({ ball: [.062 * LM, .058, .062 * LM], at: [.18, 1.404, -.012], slot: 'top', blend: .02 }));   // the cap of the shoulder, round the joint: its top lies just under the trunk's slope, so the line of the shoulder runs over it and down the arm
   if (short) S.push({ loft: rows.filter(r => r[0] < 1.24).map(r => [r[0], r[1] * .86, r[2] * .86, r[3], r[4]]), slot: 'skin', space: ARMSP, blend: .006 });
   else S.push(onA({ band: sleeve, y: [.892, .945], out: .003, slot: top.cuffs ? 'trim' : 'top', edge: .002 }), { ball: .031, at: [.2, .884, .004], space: ARMSP, cut: true, blend: .004 });   // a cuff, open at the wrist
   if (top.band) S.push(onA({ band: sleeve, y: [1.29, 1.355], out: .0036, slot: 'band', edge: .002 }));   // an armband
@@ -128,8 +129,9 @@ function trunk(a) {
   S.push({ box: [1.2, .3, 1.2], at: [0, -.15, 0], cut: true, blend: 0 });   // soles flat on the ground
   // ---- the top's details
   if (top.collar !== false) {
-    const col = new Loft([[1.486, .077, .074, -.012], [1.52, .069, .068, -.012], [1.556, .0655, .0645, -.01]]);
-    S.push({ loft: col, slot: top.collar ? 'trim' : 'top', part: 'torso', blend: .006 }, { loft: [[1.532, .0545, .054, -.011], [1.6, .0555, .055, -.01]], cut: true, blend: .003 });
+    // a collar stands higher at the back of the neck than at the throat
+    const col = new Loft([[1.486, .077, .074, -.012], [1.52, .069, .068, -.012], [1.556, .0655, .0645, -.011], [1.592, .064, .063, -.012]]);
+    S.push({ loft: col, clip: [[0, -1, -.2326], -1.5686, .003], slot: top.collar ? 'trim' : 'top', part: 'torso', blend: .006 }, { loft: [[1.532, .0545, .054, -.011], [1.63, .0555, .055, -.011]], cut: true, blend: .003 });
     if (kind !== 'smock') S.push({ box: [.03, .07, .05], at: [0, 1.56, .06], rot: [0, 0, PI / 4], cut: true, blend: .004 });   // open at the throat
     if (top.tabs) for (const s of [1, -1]) S.push({ patch: col, at: [s * .5, 1.522], size: [.04, .024], round: .004, out: .0022, slot: 'tab', part: 'torso' });
   }
@@ -142,7 +144,7 @@ function trunk(a) {
       on(T, { patch: torso, at: [s * .46, 1.35], size: [.1, .042], round: .012, out: .0072, slot: 'top', part: 'torso' }));
     if (top.buttons) stud(X, torso.at(s * .46, 1.343, .0072), [sin(s * .46), 0, cos(s * .46)], .007, .0035, 'button', { part: 'torso' });
   }
-  if (top.straps) for (const s of [1, -1]) S.push({ box: [.1, .007, .044], round: .003, at: [s * .137, 1.487, -.012], rot: [0, 0, -s * .46], slot: top.strapColour ? 'trim' : 'top', part: 'torso', blend: .002 }); if (top.straps && top.buttons) for (const s of [1, -1]) stud(X, [s * .1, 1.5075, -.012], [s * .44, .9, 0], .0065, .003, 'button', { part: 'torso' });
+  if (top.straps) for (const s of [1, -1]) S.push({ box: [.085, .007, .044], round: .003, at: [s * .127, 1.495, -.012], rot: [0, 0, -s * .52], slot: top.strapColour ? 'trim' : 'top', part: 'torso', blend: .002 }); if (top.straps && top.buttons) for (const s of [1, -1]) stud(X, [s * .098, 1.5135, -.012], [s * .5, .87, 0], .0065, .003, 'button', { part: 'torso' });
   // ---- belt, straps and pouches
   if (belt) {
     S.push(on(T, { band: torso, y: [1.03, 1.084], out: .0068, slot: 'belt', part: 'torso', edge: .003 }));
@@ -150,11 +152,10 @@ function trunk(a) {
   }
   if (web) {
     if (web.y) {
-      for (const s of [1, -1]) {
-        S.push(on(T, { patch: torso, at: [s * .4, 1.275], size: [.03, .37], turn: -s * .1, round: .004, out: .0088, slot: 'strap', part: 'torso' }));                 // up the front
-        S.push({ box: [.03, .008, .17], round: .003, at: [s * .112, 1.4925, -.014], rot: [0, 0, -s * .36], slot: 'strap', part: 'torso', blend: .002 });             // over the shoulder
-        S.push(on(T, { patch: torso, at: [s * (PI - .26), 1.37], size: [.03, .22], turn: -s * .33, round: .004, out: .0088, slot: 'strap', part: 'torso' }));       // down the back to the middle
-      }
+      // a strap over each shoulder: the cloth grown a little and cut to a strip between two planes, so it lies on the body all the way over (a straight bar stood off it at both ends)
+      const strip = (n, off, more) => on(T, { loft: torso, out: .0088, clip: [[n, off - .015, .003], [n.map(v => -v), -off - .015, .003], ...more], slot: 'strap', part: 'torso', mirror: true });
+      S.push(strip([-.9921, .1252, 0], .08885, [[[0, 0, 1], -.012, .003], [[0, 1, 0], 1.06, .003]]));   // up the front from the belt and onto the shoulder
+      S.push(strip([-.8962, .4437, 0], .5768, [[[0, 0, -1], .012, .003], [[1, 0, 0], 0, .002]]));       // down the back to the middle
       S.push(on(T, { patch: torso, at: [PI, 1.18], size: [.03, .2], round: .004, out: .0088, slot: 'strap', part: 'torso' }), { torus: [.014, .0045], at: torso.at(PI, 1.275, .006), rot: [PI / 2, 0, 0], slot: 'buckle', part: 'torso', blend: .001 });
     }
     if (web.cross) S.push(on(T, { patch: torso, at: [.05, 1.27], size: [.032, .52], turn: .62, round: .004, out: .0088, slot: 'strap', part: 'torso' }), on(T, { patch: torso, at: [PI - .05, 1.27], size: [.032, .52], turn: -.62, round: .004, out: .0088, slot: 'strap', part: 'torso' }));
@@ -171,7 +172,7 @@ function trunk(a) {
   if (ex.holster) { const th = ex.holster === 'left' ? .95 : -.95, p = sk.at(th, .985, .022); S.push({ box: [.075, .14, .04], round: .014, at: p, rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: 'hips', blend: .004 }, { box: [.078, .05, .044], round: .012, at: [p[0], p[1] + .05, p[2]], rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: 'hips', blend: .002 }); }
   if (ex.scarf) S.push({ torus: [.06, .026], at: [0, 1.535, -.008], rot: [-.22, 0, 0], slot: 'scarf', part: 'torso', lumpy: [.025, .006], blend: .012 }, { ball: [.034, .05, .02], at: [.012, 1.49, .068], rot: [.25, 0, .15], slot: 'scarf', part: 'torso', lumpy: [.025, .005], blend: .016 });   // wound round the neck, an end tucked in at the throat
   // what stands over the trunk and shades it: the neck and head, and the arms
-  S.push({ taper: [[0, 1.5, -.014], Hd(0, -.07, -.01)], r: [.055, .05], ghost: true }, { ball: [.08, .1, .1], at: Hd(0, 0, -.004), ghost: true }, { loft: sleeveRows(LM), mirror: true, space: ARMSP, ghost: true });
+  S.push({ taper: [[0, 1.5, -.014], Hd(0, -.07, -.01)], r: [.06, .054], ghost: true }, { ball: [.08, .1, .1], at: Hd(0, 0, -.004), ghost: true }, { loft: sleeveRows(LM), mirror: true, space: ARMSP, ghost: true });
   S.extra = X.I.length ? X : null;
   return S;
 }
@@ -211,6 +212,8 @@ function hand(a) {
 }
 
 export const EYE = [.032, 0, .07];   // the middle of the left eye, from the middle of the head
+// the left brow: inner end, arch, tail (on the lower edge of the brow ridge, close over the eye: high on the forehead they look startled); how far the mouth's line dips to its corners (a slope)
+export const BROW = [[.0115, .0195, .093], [.031, .0232, .089], [.0525, .0195, .0745]], MOUTH_DIP = .07;
 /** The head and neck: a face sculpted from the skull out. f: jaw, chin, brow, nose, lips, cheeks, eyes (1 = average), soft (0 a man's .. 1 a woman's). */
 function head(a) {
   const f = a.face, S = [], A = s => S.push({ slot: 'skin', ...s }), so = f.soft, J = f.jaw, nk = a.neck, y0 = HC[1], z0 = HC[2];
@@ -224,21 +227,21 @@ function head(a) {
   A({ ball: [.017, .024, .014], at: Hd(.043, -.044, .044), rot: [0, .5, .1], mirror: true, blend: .034 });                   // the flesh of the cheek under them
   A({ ball: [.0205, .0125, .013], at: Hd(EYE[0] + .001, .002, .0875), mirror: true, cut: true, blend: .011 });               // eye sockets
   S.push({ ball: .0138, at: Hd(...EYE), mirror: true, slot: 'lid', blend: .006 });                                           // the lids, a shell over each eye
-  S.push({ ball: [.0138 * f.eyes, .0044 * f.eyes, .012], at: Hd(EYE[0], -.0024, .084), rot: [0, 0, .07], mirror: true, cut: true, slot: 'lash', blend: .0012 });   // ... opened
-  A({ taper: [Hd(0, .008, .0885), Hd(0, -.028, .1075)], r: [.005 - .0008 * so, .0064 * f.nose], blend: .009 });                           // nose: bridge
-  A({ ball: [.0078 * f.nose, .007 * f.nose, .0082 * f.nose], at: Hd(0, -.034, .1105), blend: .009 });                        // tip
-  A({ ball: [.0058 * f.nose, .0052, .007], at: Hd(.0115, -.0385, .097), mirror: true, blend: .009 });                        // wings
+  S.push({ ball: [.0146 * f.eyes, .0038 * f.eyes, .012], at: Hd(EYE[0], -.0009, .084), rot: [0, 0, .07], mirror: true, cut: true, slot: 'lash', blend: .0012 });   // ... opened: the upper lid over the top of the iris, the lower one at its foot (white showing under the iris is a stare)
+  A({ taper: [Hd(0, .008, .0885), Hd(0, -.028, .1075)], r: [.0052 - .0008 * so, .0072 * f.nose], blend: .009 });                          // nose: the bridge, widening into the tip (a ball on a thin stem is a clown's)
+  A({ ball: [.0074 * f.nose, .0064 * f.nose, .0078 * f.nose], at: Hd(0, -.0335, .1105), blend: .01 });                       // tip
+  A({ ball: [.0056 * f.nose, .005, .0075], at: Hd(.0118, -.0385, .0955), mirror: true, blend: .011 });                       // wings, tucked in beside it
   A({ ball: [.0036, .003, .005], at: Hd(.007, -.0465, .101), mirror: true, cut: true, blend: .003 });                        // nostrils
   A({ ball: [.026 - .004 * so, .02 - .002 * so, .018 - .002 * so], at: Hd(0, -.066, .073), blend: .018 });                                                       // the muzzle the lips sit on
   S.push({ ball: [.0245 - .0035 * so, .0044 * f.lips, .0085], at: Hd(0, -.0622, .0915 - .002 * so), slot: 'lips', blend: .004 }, { ball: [.021 - .002 * so, .0058 * f.lips, .009], at: Hd(0, -.073, .09 - .002 * so), slot: 'lips', blend: .004 });   // (a woman's: not so wide)
-  S.push({ box: [.046 - .007 * so, .0032, .02], round: .0015, at: Hd(0, -.0672, .1015), cut: true, blend: .002 });                       // the line between them (human.js colours the lips and the line)
+  S.push({ box: [.0235 - .0035 * so, .0022, .02], round: .001, at: Hd(.0113 - .0017 * so, -.0668 - MOUTH_DIP * .0113, .1015), rot: [0, 0, -MOUTH_DIP], mirror: true, cut: true, blend: .002 });   // the line between them, a touch lower at the corners than the middle (human.js colours the lips and the line)
   A({ ball: [.0195 * f.chin, .0155 * f.chin, .0155], at: Hd(0, -.099, .078), blend: .018 });                                 // chin
   A({ taper: [Hd(.043 * J, -.072, -.004), Hd(.017, -.108, .056)], r: [.009 - .0015 * so, .01 - .002 * so], mirror: true, blend: .02 });             // jaw line
   A({ ball: [.0055, .031, .0165], at: Hd(.0775, -.004, -.012), rot: [0, -.38, -.1], mirror: true, blend: .007 });            // ears
   A({ ball: [.0035, .015, .0085], at: Hd(.0835, -.002, -.0085), rot: [0, -.38, -.1], mirror: true, cut: true, blend: .004 });
-  A({ taper: [Hd(0, -.08, -.022), [0, 1.488, -.022]], r: [.047 * nk, .053 * nk], blend: .03 });                              // neck
+  A({ taper: [Hd(0, -.08, -.022), [0, 1.488, -.016]], r: [.052 * nk, .059 * nk], blend: .03 });                              // neck (as wide as the jaw: a thinner one is a stalk the head sits on)
   if (so < .5) A({ ball: .0095, at: Hd(0, -.15, .028), blend: .02 });
-  A({ taper: [Hd(.058, -.048, -.034), [.02, 1.5, .03]], r: [.011, .012], mirror: true, blend: .022 });
+  A({ taper: [Hd(.06, -.048, -.034), [.022, 1.5, .034]], r: [.012, .013], mirror: true, blend: .022 });
   // hair, cut along a line from the top of the forehead to the nape
   const hs = a.hair, hair = s => S.push({ slot: 'hair', lumpy: [.011, .0026], ...s });
   if (hs && hs !== 'bald') {
@@ -249,7 +252,7 @@ function head(a) {
   }
   // brows painted on the ridge; a moustache stands a little proud
   const bw = 1 - .32 * so;   // a woman's are finer
-  S.push({ taper: [Hd(.0125, .0245, .093), Hd(.031, .0285, .089)], r: [.0046 * bw, .0042 * bw], mirror: true, slot: 'brow', paint: true }, { taper: [Hd(.031, .0285, .089), Hd(.051, .0245, .0745)], r: [.0042 * bw, .003 * bw], mirror: true, slot: 'brow', paint: true });
+  S.push({ taper: [Hd(...BROW[0]), Hd(...BROW[1])], r: [.0046 * bw, .0042 * bw], mirror: true, slot: 'brow', paint: true }, { taper: [Hd(...BROW[1]), Hd(...BROW[2])], r: [.0042 * bw, .003 * bw], mirror: true, slot: 'brow', paint: true });
   if (a.moustache) S.push({ ball: [.019, .0045, .0065], at: Hd(.011, -.0535, .0965), rot: [0, .3, -.18], mirror: true, slot: 'brow', lumpy: [.004, .001], blend: .002 });
   // the hat stands over the face: a brim's shadow on the brow
   const hat = a.hat && listed(HATS, a.hat.kind);
@@ -258,7 +261,7 @@ function head(a) {
 }
 // an eye: white, iris, pupil in clean rings (looking along +z)
 function eyeball(c, r, n = 14) {
-  const rings = [[0, 0], [9.5, 0], [9.5, 1], [27, 1], [27, 2], [30.5, 2], [30.5, 3], [62, 3], [98, 3]], P = [], N = [], K = [], I = [];
+  const rings = [[0, 0], [9.5, 0], [9.5, 1], [28.5, 1], [28.5, 2], [31.5, 2], [31.5, 3], [62, 3], [98, 3]], P = [], N = [], K = [], I = [];
   for (const [deg, k] of rings) for (let i = 0; i < n; i++) { const a = deg * PI / 180, t = i / n * PI * 2, x = sin(a) * cos(t), y = sin(a) * sin(t), z = cos(a); P.push(c[0] + x * r, c[1] + y * r, c[2] + z * r); N.push(x, y, z); K.push(k); }
   for (let q = 0; q < rings.length - 1; q++) { if (rings[q][0] === rings[q + 1][0]) continue; for (let i = 0; i < n; i++) { const a = q * n + i, b = q * n + (i + 1) % n, d = a + n, e = b + n; I.push(a, e, b, a, d, e); } }
   return { P, N, K, I };
@@ -303,7 +306,7 @@ const HATS = new Map(Object.entries({
   hood(o) {
     const S = [{ ball: [.094, .112, .116], at: Hd(0, .016, -.02), slot: 'hat', lumpy: [.04, .005], blend: 0 }, { ball: [.085, .06, .08], at: Hd(0, -.1, -.03), slot: 'hat', lumpy: [.03, .005], blend: .04 },
       { torus: [.07, .02], at: Hd(0, -.118, -.01), rot: [-.12, 0, 0], slot: 'hat', lumpy: [.02, .004], blend: .02 }];
-    S.push({ ball: [.068, .094, .075], at: Hd(0, -.012, .062), cut: true, blend: .014 }, { ball: [.081, .1, .101], at: Hd(0, .016, -.012), cut: true, blend: .004 }, { taper: [Hd(0, -.07, -.02), Hd(0, -.2, -.03)], r: .058, cut: true, blend: .004 });
+    S.push({ ball: [.068, .094, .075], at: Hd(0, -.012, .062), cut: true, blend: .014 }, { ball: [.081, .1, .101], at: Hd(0, .016, -.012), cut: true, blend: .004 }, { taper: [Hd(0, -.07, -.02), Hd(0, -.2, -.03)], r: .063, cut: true, blend: .004 });
     return { S, ghost: [{ ball: [.094, .112, .116], at: Hd(0, .016, -.02), shell: .012, clip: [[0, .3, -1], -(HC[2] + .03) + HC[1] * .3, .01] }] };
   },
 }));
@@ -414,4 +417,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, torsoOf, sleeveRows, arm, armBones, hand, head, eyeball, stud, finish, sculpt, ...HATS.values(), ...PACKS.values()].map(String).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, torsoOf, sleeveRows, arm, armBones, hand, head, eyeball, stud, finish, sculpt, ...HATS.values(), ...PACKS.values(), BROW, MOUTH_DIP].map(String).join(''));

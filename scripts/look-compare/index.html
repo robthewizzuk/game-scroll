@@ -93,6 +93,37 @@ async function sparksScene() {
   }
   return [c.toDataURL(), window.__hd.info.backend];
 }
+// Dust low over a floor by a wall (gs.hd.Particles, soft): every puff a soft disc, and the floor round it
+// shaded as it is without the dust. (WebGPU: a see-through sprite wrote over the scene's normals across its
+// whole square, so ambient occlusion took the floor there for a wall facing the camera: a dark square round each puff)
+async function dustScene() {
+  window.__hd.force = 3;
+  const v = new HV({ bg: '#9ab4d0', fog: .002, amb: .5 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
+  v.cam.position.set(0, 1.5, 5); v.cam.lookAt(0, .3, 0); v.cam.updateMatrixWorld();
+  const sun = gs.hd.sun('#fff2d8', 3, 12, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const floor = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#b8b0a0', { rough: .9 })); floor.receiveShadow = true; v.scene.add(floor);
+  const wall = new T.Mesh(new T.BoxGeometry(8, 3, .4), gs.hd.pbr('#8a8f98', { rough: .8 })); wall.position.set(0, 1.5, -1.6); wall.castShadow = wall.receiveShadow = true; v.scene.add(wall);
+  const dust = new gs.hd.Particles(v, { max: 16, additive: false });
+  const draw = async () => { for (let i = 0; i < 4; i++) { dust.update(0); v.t = 0; v.render(x, 240, 320); await frame(); } return x.getImageData(0, 0, 240, 320).data; };
+  const bare = await draw(), puffs = [];
+  for (let i = 0; i < 6; i++) puffs.push({ x: -1.25 + (i % 3) * 1.25, y: .14, z: i < 3 ? -.9 : 1.2, life: 1e6, size: i < 3 ? .9 : .6, col: [.8, .74, .62], a: .3 });
+  for (const p of puffs) dust.emit(p);
+  const pic = await draw();
+  // the corners of each puff's square, outside its disc, are as they were without the dust
+  const right = new T.Vector3(1, 0, 0).applyQuaternion(v.cam.quaternion);
+  let off = 0, n = 0;
+  for (const p of puffs) {
+    const m = new T.Vector3(p.x, p.y, p.z), e = m.clone().addScaledVector(right, p.size / 2); m.project(v.cam); e.project(v.cam);
+    const cx = (m.x + 1) * 120, cy = (1 - m.y) * 160, r = (e.x - m.x) * 120;
+    for (let py = Math.ceil(cy - r + 1); py <= cy + r - 1; py++) for (let px = Math.ceil(cx - r + 1); px <= cx + r - 1; px++) {
+      if (Math.hypot(px - cx, py - cy) < r + 2) continue;
+      const i = (py * 240 + px) * 4; n++;
+      if (Math.abs(pic[i] - bare[i]) + Math.abs(pic[i + 1] - bare[i + 1]) + Math.abs(pic[i + 2] - bare[i + 2]) > 9) off++;
+    }
+  }
+  if (off > n * .1) throw new Error(`dust: ${off} of the ${n} pixels in the corners of the puffs' squares changed when the dust was drawn (each puff sits in a square)`);
+  return [c.toDataURL(), window.__hd.info.backend];
+}
 // skinned people (gs.poses.person): one walking to a run on a blend space, one with a foot on a step
 // (foot IK), one up close smiling with the mouth open (blend shapes)
 async function peopleScene() {
@@ -785,7 +816,7 @@ async function shadowOffScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
-const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
+const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
 const PICK = new URLSearchParams(location.search).get('pick');
 if (PICK) try { for (const n of PICK.split(',')) if (n === 'beams') { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; } else [out[n], backends[n]] = await SCENES[n](); } catch (e) { out.error = String(e && e.stack || e); }
 else try {
@@ -798,6 +829,7 @@ else try {
   [out['pulse-two'], backends['pulse-two']] = await pulseTwoScene();
   [out['shadow-off'], backends['shadow-off']] = await shadowOffScene();
   [out.sparks, backends.sparks] = await sparksScene();
+  [out.dust, backends.dust] = await dustScene();
   [out.people, backends.people] = await peopleScene();
   [out.room, backends.room] = await roomScene();
   [out.area, backends.area] = await areaScene();

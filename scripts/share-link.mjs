@@ -75,6 +75,12 @@ const feedUp = p => p.waitForFunction(() => window.__gs && __gs.active && !docum
 const until = async (ok, ms) => { const t = Date.now(); while (!ok() && Date.now() - t < ms) await sleep(50); };
 const cardCount = p => p.evaluate(() => document.querySelectorAll('#feed .slide').length);
 const playing = (p, id) => p.waitForFunction(id => __gs.active && __gs.active.state === 'playing' && (!id || __gs.active.def.id === id), id || '', { timeout: 20000 });
+// A card whose game is still being made says "Loading…" and takes no notice of Play (a 3D game is made a
+// little each frame), and which game a feed puts first is drawn at random: wait for it before tapping Play.
+const made = async p => {
+  try { await p.waitForFunction(() => __gs.active && !__gs.active.loading, null, { timeout: 60000 }); }
+  catch (_) { throw new Error(`${(await look(p)).active} was still loading after a minute`); }
+};
 const look = p => p.evaluate(() => {
   const feed = document.getElementById('feed'), cards = [...feed.querySelectorAll('.slide')], top = feed.getBoundingClientRect().top;
   const shown = cards.find(c => Math.abs(c.getBoundingClientRect().top - top) < 40), toast = document.querySelector('.qa-toast.on');
@@ -96,6 +102,7 @@ async function landed(v, { first = true } = {}) {
   const copies = r.cards.slice(Math.max(0, r.at)).filter(t => t === TITLE).length;
   if (!bad.length && copies !== 1) bad.push(`"${TITLE}" is in the feed ${copies} times from the card on screen down`);
   if (r.query.includes('g=')) bad.push('?g= is still in the address (a reload would jump back)');
+  if (!bad.length) await made(v.p).catch(e => bad.push(e.message));
   if (!bad.length) {
     await v.p.locator('#feed .slide').nth(r.at).locator('.overlay button.play').click({ force: true, timeout: 10000 }).catch(e => bad.push('no Play button to tap: ' + String(e.message).split('\n')[0]));
     await playing(v.p, ID).catch(() => bad.push('Play did not start the shared game'));
@@ -176,6 +183,7 @@ const tests = {
     v.net = { game: 40, hold: true };
     await v.p.goto(SITE + '?g=' + ID);
     await feedUp(v.p);   // 10 s in: the usual games
+    await made(v.p);
     await v.p.locator('#feed .slide').first().locator('.overlay button.play').click({ force: true });
     await playing(v.p);
     const round = (await look(v.p)).active;
@@ -205,6 +213,7 @@ const tests = {
     await v.p.waitForFunction(() => document.querySelectorAll('#feed .slide').length >= 4, null, { timeout: 30000 });
     // whichever game is three cards down: a link to it arrives
     const below = await v.p.evaluate(() => { const c = document.querySelectorAll('#feed .slide')[3].getAttribute('aria-label'); return __gs.GAMES.find(g => g.title === c).id; });
+    await made(v.p);
     await v.p.locator('#feed .slide').first().locator('.overlay button.play').click({ force: true });
     await playing(v.p);
     await v.p.evaluate(id => __gs.shared(id), below);
