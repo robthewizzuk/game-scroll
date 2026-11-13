@@ -380,8 +380,9 @@ export function handPlan(a) {
     for (let j = 0; j < 3; j++) { const l = L[j] * fl[i] * k; px -= sin(an) * l; py -= cos(an) * l; J.push([px, py, pz]); if (j < 2) an += P.bend[j + 1]; }
     P[name] = J;
   });
-  // the thumb: out from the heel of the hand, forward and across the palm
-  const t0 = [wx - .008, wy - .036 * k, wz + .034 * k], dx = -.3 - grip * .5, dy = -.72, dz = .62 - grip * .3, l = Math.hypot(dx, dy, dz), m = [t0[0] + dx / l * .036 * k, t0[1] + dy / l * .036 * k, t0[2] + dz / l * .036 * k], e = [m[0] + (dx - .25) / l * .03 * k, m[1] + (dy - .1) / l * .03 * k, m[2] + (dz - .3) / l * .03 * k];
+  // the thumb: out from the heel of the hand, forward and across the palm. Closed (grip), it lies clear of the index finger by more than the
+  // mesh's cell and blend (about 7 mm): touching, the two would be sculpted as one skin, which draws out into a thread once they move apart
+  const t0 = [wx - .008, wy - .036 * k, wz + (.034 + grip * .006) * k], dx = -.3 - grip * .5, dy = -.72, dz = .62 - grip * .3, l = Math.hypot(dx, dy, dz), m = [t0[0] + dx / l * .036 * k, t0[1] + dy / l * .036 * k, t0[2] + dz / l * .036 * k], e = [m[0] + (dx - .25) / l * .03 * k, m[1] + (dy - .1) / l * .03 * k, m[2] + (dz - .3) / l * .03 * k];
   P.thumb = [t0, m, e];
   // it closes over the fingers: turned from the way it points towards a line across the palm
   const c = [-.78, -.6, -.18], ax = [dy * c[2] - dz * c[1], dz * c[0] - dx * c[2], dx * c[1] - dy * c[0]], al = Math.hypot(...ax); P.turn = ax.map(v => v / al);

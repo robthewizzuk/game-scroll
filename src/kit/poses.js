@@ -442,6 +442,7 @@ export class Rig {
     }
     if (this.follow?.things.length) { if (this.fine === false) this.follow.still(); else this.follow.swing(dt); }   // (what hangs swings close up only)
     if (this.face && this.fine !== false) this.face.step(dt, true);   // a live face (gs.models.human's): blinks, eyes, brows and mouth, close up only
+    if (this.hands && this.fine !== false) this.hands.step(dt, speed);   // hands that hold (gs.models.human's): fingers round what they hold, relaxed otherwise, close up only
     return this;
   }
   // Momentum between moves. A new move begins at once, and what the body was doing is carried over into it: how far each
