@@ -188,7 +188,7 @@ export function verdict(r) {
 const PLUGINS = [
   ['Device', 'getInfo'], ['App', 'getState'], ['Haptics', 'selectionStart'], ['KeepAwake', 'isSupported'], ['Geolocation', 'checkPermissions'],
   ['Motion', null], ['Filesystem', 'checkPermissions'], ['Share', 'canShare'], ['TextToSpeech', 'getSupportedLanguages'],
-  ['PowerState', 'get'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
+  ['PowerState', 'get'], ['AppHealth', 'get', { since: 0 }, r => r ? { robot: r.robot, known: r.known, exits: (r.exits || []).length, web: !!r.web } : r, 'android'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
   ['NativeAR', 'available'], ['NPU', 'available'], ['PhoneAI', 'modelAvailable'], ['PhoneAI', 'speechAvailable', { language: 'en-US' }],
   ['GameServices', 'signIn', {}],
   ['SpeechAudio', 'render', { text: 'Testing, one two.', lang: 'en-GB', rate: 1, pitch: 1 },
@@ -202,8 +202,9 @@ const brief = v => { let t; try { t = JSON.stringify(v); } catch { t = String(v)
 export async function checkPlugins(cap = Capacitor, limit = PLUGIN_LIMIT) {
   if (!cap.isNativePlatform()) return null;
   const out = [];
-  for (const [name, method, args, tell] of PLUGINS) {
+  for (const [name, method, args, tell, only] of PLUGINS) {
     const label = method ? `${name}.${method}` : name;
+    if (only && cap.getPlatform && cap.getPlatform() !== only) continue;   // (a plugin one kind of phone has no use for)
     if (!cap.isPluginAvailable(name)) { out.push({ name: label, state: 'MISSING', ms: 0, note: 'not in this build of the app' }); continue; }
     if (!method) { out.push({ name: label, state: 'ok', ms: 0, note: 'in the app (not asked: it only sends readings)' }); continue; }
     const t0 = performance.now();

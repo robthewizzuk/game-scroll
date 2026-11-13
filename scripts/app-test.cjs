@@ -2,8 +2,9 @@
 // round, finer touch, even pixels and the LCD look for pocket games, the one-line soundtrack, the bigger
 // save that stays on the phone, the font library, the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons),
 // the phone test tour (a bot that plays as a guest, the frame report, the plugin check, the engine test scenes), and loading a big
-// 3D game a little each frame (each pass on a fresh copy of the game's file).
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading]   (SHOTS=<dir> saves a picture of every font and look)
+// 3D game a little each frame (each pass on a fresh copy of the game's file), the fill-ins for old WebViews, and that a
+// test build sends no play stats or crash reports.
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading|oldweb|reports]   (SHOTS=<dir> saves a picture of every font and look)
 const { chromium } = require('playwright');
 
 let failed = 0;
@@ -553,6 +554,10 @@ async function tour(b) {
     const cap = { isNativePlatform: () => true, isPluginAvailable: n => ['PowerState', 'ScreenRate', 'NPU', 'Motion'].includes(n),
       Plugins: { PowerState: { get: async () => ({ thermal: 0, saver: false }) }, ScreenRate: { get: () => new Promise(() => {}) }, NPU: { available: async () => { throw new Error('boom'); } } } };
     out.plugins = await k.checkPlugins(cap, 150); out.web = await k.checkPlugins();
+    // a plugin only one kind of phone has: asked there, and not listed as missing on the other
+    const health = { ...cap, isPluginAvailable: n => n === 'AppHealth', Plugins: { AppHealth: { get: async () => ({ robot: '', known: true, exits: [{ at: 1, reason: 10 }] }) } } };
+    out.android = (await k.checkPlugins({ ...health, getPlatform: () => 'android' }, 150)).find(x => x.name === 'AppHealth.get');
+    out.ios = (await k.checkPlugins({ ...health, getPlatform: () => 'ios' }, 150)).some(x => x.name === 'AppHealth.get');
     return out;
   });
   check(k.sum.frames === 4 && k.sum.worst === 100 && k.sum.freezes === 1 && Math.abs(k.sum.fps - 4000 / 130) < .01 && Math.abs(k.sum.low - 10) < .01 && k.sum.slow === .25 && k.sum.work === 2 && k.none.frames === 0,
@@ -571,6 +576,7 @@ async function tour(b) {
     && by['Motion'].state === 'ok' && by['RichHaptics.supported'].state === 'MISSING' && k.plugins.length >= 18,
     'each native plugin is asked once: an answer, no answer in time, an error and "not in this build" are told apart', JSON.stringify(k.plugins.filter(x => /Power|Screen|NPU|Motion|Rich/.test(x.name))));
   check(k.web === null, 'the web version has no plugins to ask');
+  check(k.android?.state === 'ok' && /"exits":1/.test(k.android.note) && k.ios === false, 'a plugin only Android has is asked there and left out on an iPhone', JSON.stringify({ android: k.android, ios: k.ios }));
 
   // a tour of two games, one of them changed to do everything a guest must not leave behind
   await p.game(CASUAL);
@@ -764,10 +770,111 @@ async function loading(b) {
   await q.done();
 }
 
+/* ---------- old WebViews: the fill-ins for roundRect, Object.hasOwn and structuredClone ---------- */
+async function oldweb(b) {
+  console.log('\nOld WebViews');
+  const SHAPES = [[20, 20, 120, 70, 14], [20, 20, 120, 70, [30, 4]], [20, 20, 120, 70, [8, 20, 40]], [20, 20, 120, 70, [0, 12, 24, 36]], [20, 20, 120, 70, [{ x: 40, y: 10 }, 6]],
+    [20, 20, 120, 70, 500], [150, 100, -120, -70, [30, 4, 12, 0]], [150, 20, -120, 70, [30, 4, 12, 0]], [20, 20, 120, 70]];
+  // each box drawn with whichever roundRect the page has: how solid every pixel came out
+  const draw = shapes => shapes.map(s => { const c = document.createElement('canvas'); c.width = 170; c.height = 120; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.beginPath(); x.roundRect(...s); x.fill(); return [...x.getImageData(0, 0, 170, 120).data].filter((_, i) => i % 4 === 3); });
+  const now = await open(b), want = await now.evaluate(draw, SHAPES); await now.done();
+  // a browser from before these existed
+  const p = await open(b, { before: () => {
+    for (const k of ['CanvasRenderingContext2D', 'OffscreenCanvasRenderingContext2D', 'Path2D']) if (self[k]) delete self[k].prototype.roundRect;
+    delete Object.hasOwn; delete window.structuredClone; window.__gone = typeof Object.hasOwn + ' ' + typeof window.structuredClone + ' ' + typeof CanvasRenderingContext2D.prototype.roundRect;
+  } });
+  const r = await p.evaluate(() => {
+    const cyc = { list: [1, { deep: true }], when: new Date(5), map: new Map([['k', { v: 1 }]]), set: new Set([1, 2]), nums: new Float32Array([1.5, 2.5]) }; cyc.me = cyc;
+    const c = structuredClone(cyc); let threw = '';
+    try { structuredClone({ f() {} }); } catch (e) { threw = e.name; }
+    try { Object.hasOwn(null, 'a'); threw += ' none'; } catch (e) { threw += ' ' + e.name; }
+    return { gone: __gone, native: /native code/.test(String(CanvasRenderingContext2D.prototype.roundRect)), path: typeof Path2D.prototype.roundRect, off: !self.OffscreenCanvasRenderingContext2D || typeof OffscreenCanvasRenderingContext2D.prototype.roundRect,
+      own: Object.hasOwn({ a: 1 }, 'a') && !Object.hasOwn({}, 'toString') && Object.hasOwn([5], 0), threw,
+      clone: c !== cyc && c.me === c && c.list !== cyc.list && c.list[1].deep && c.list[1] !== cyc.list[1] && c.when.getTime() === 5 && c.map.get('k').v === 1 && c.map.get('k') !== cyc.map.get('k') && c.set.has(2) && c.nums[1] === 2.5 && c.nums !== cyc.nums };
+  });
+  check(r.gone === 'undefined undefined undefined' && !r.native, 'the test browser has no roundRect, Object.hasOwn or structuredClone of its own', JSON.stringify(r));
+  check(r.path === 'function' && (r.off === true || r.off === 'function'), 'the app adds roundRect to canvases and paths', JSON.stringify(r));
+  check(r.own && r.threw === 'DataCloneError TypeError', 'Object.hasOwn answers as the real one does', JSON.stringify(r));
+  check(r.clone, 'structuredClone copies nested data, a Map, a Set, a date, numbers and a loop');
+  const got = await p.evaluate(draw, SHAPES);
+  const off = got.map((g, i) => g.reduce((n, a, j) => n + (Math.abs(a - want[i][j]) > 40 ? 1 : 0), 0)), solid = want.map(w => w.reduce((n, a) => n + (a > 128 ? 1 : 0), 0));
+  check(off.every(n => n <= 6) && solid.every(n => n > 2000), 'rounded boxes come out as the browser\'s own do (one radius, several, ovals, too big, drawn backwards)', JSON.stringify({ off, solid }));
+  // a game that draws rounded boxes, and one whose hex library asks Object.hasOwn, both play
+  for (const id of ['liquid-mixer', 'hex-merge']) {
+    await p.game(id); await p.evaluate(() => __gs.start()); await p.waitForTimeout(1200);
+    check(await p.evaluate(() => !__gs.active.failed && __gs.active.state !== 'ready'), `${id} plays a round there`, await p.evaluate(() => __gs.active.state + ' ' + !!__gs.active.failed));
+  }
+  await p.done();
+}
+
+/* ---------- a test build counts rounds and frames for itself, and sends no play stats or crash reports ---------- */
+async function reports(b) {
+  console.log('\nReports');
+  const p = await open(b), sent = [];
+  await p.route(u => /\/(perf|stats)$/.test(u.pathname), (route, req) => { if (req.method() !== 'POST') return route.fallback(); sent.push(req.url()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
+  await p.game(CASUAL); await p.evaluate(() => __gs.start()); await p.waitForTimeout(1500);
+  await p.evaluate(() => { __gs.perf.error(new Error('a test error')); __gs.api(__gs.active).over(); }); await p.waitForTimeout(300);
+  const r = await p.evaluate(async id => {
+    await __gs.perf.flush(); await __gs.playstats.flush();
+    // the app going to the background sends what is waiting, too
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); await new Promise(r => setTimeout(r, 300));
+    delete document.visibilityState;
+    return { on: __gs.playstats.enabled, frames: __gs.perf.local(id)?.f || 0, plays: JSON.parse(localStorage.gs_stats_pending || '{}')[id]?.p || 0 };
+  }, CASUAL);
+  check(r.on && r.frames > 30 && r.plays >= 1, 'a test build still counts its own rounds and frames', JSON.stringify(r));
+  check(sent.length === 0, 'and sends no play stats or crash reports', sent.join(' '));
+  await p.done();
+
+  // what a real build would send, caught in a list in place of the network
+  const q = await open(b); await q.game(CASUAL);
+  const o = await q.evaluate(async id => {
+    const P = __gs.perf, nap = ms => new Promise(r => setTimeout(r, ms)); P.outbox = []; P.versionOf = () => 'abc123def456';
+    Object.assign(P.power, { thermal: 3, heat: 2 }); __gs.start(); await nap(1200);
+    Object.assign(P.power, { thermal: 2, heat: 1 }); await nap(700);
+    P.error(new Error('a test error')); __gs.api(__gs.active).over(); await nap(200);
+    await P.flush();
+    // how a session ended, as the phone tells it: [what it left, what the phone says] -> what is reported
+    const app = P.info().app, tell = [];
+    let t = Date.now();
+    const was = (playing = true) => ({ game: id, ver: 'v1', playing, app, at: (t += 100000) }), end = x => ({ at: t + 5000, importance: 100, what: '', ...x });
+    const tries = [
+      [was(), { known: true, exits: [end({ reason: 10, importance: 400, what: 'remove task' })] }],                  // swiped away at the wrong moment
+      [was(), { known: true, exits: [end({ reason: 3, what: 'lmk: 1234 kB free' })] }],                              // out of memory, on screen
+      [was(false), { known: true, exits: [end({ reason: 2, status: 9 })], web: { at: t + 4700, crashed: false } }],  // the web view's process was killed
+      [was(), { known: true, exits: [end({ reason: 5 })], web: { at: t + 4900, crashed: true } }],                   // ...or crashed
+      [null, { known: true, exits: [{ at: (t += 100000), reason: 2, status: 9, importance: 400, what: '' }] }],      // let go of in the background
+      [null, { known: true, exits: [{ at: (t += 100000), reason: 4, importance: 400, what: 'crash' }] }],            // a crash in the background
+      [was(), null],                                                                                                // a phone that keeps no record
+      [was(), { known: true, exits: [] }],                                                                          // a record, but not of that session
+    ];
+    for (const [w, h] of tries) { P.waiting.errors.length = 0; await P.lastTime(w, h); tell.push(P.waiting.errors.map(e => [e.game, e.msg, e.place, e.v || '', e.at ? 'timed' : 'now'].join(' | ')).join(' + ')); }
+    // told once: the same records again say nothing new
+    P.waiting.errors.length = 0; await P.lastTime(null, tries[5][1]); const again = P.waiting.errors.length;
+    // a test robot says so in every batch from then on
+    await P.lastTime(null, { robot: 'test lab', known: false }); P.error(new Error('robot error')); await P.flush();
+    return { first: P.outbox[0], robot: P.outbox[1]?.info, tell, again };
+  }, CASUAL);
+  const g = o.first?.games?.[CASUAL] || {}, e = o.first?.errors?.[0] || {};
+  check(o.first && g.v === 'abc123def456' && e.v === 'abc123def456' && /a test error/.test(e.msg) && !o.first.info.robot, 'a batch says which version of the game\'s file it is about', JSON.stringify(o.first));
+  check(g.hk > 1500 && g.hk <= g.ms + 1 && g.hh > 800 && g.hw > 300 && g.hh + g.hw <= g.hk + 1, 'and how much of the play was with the phone warm or hot', JSON.stringify(g));
+  check(o.tell.join('\n') === [
+    '',
+    `${CASUAL} | App closed while playing: the phone ran out of memory | android: lmk | v1 | timed`,
+    `${CASUAL} | App closed while open: the web view was killed, usually for memory |  | v1 | timed`,
+    `${CASUAL} | App closed while playing: the web view crashed |  | v1 | timed`,
+    '',
+    ' | App closed in the background: the app crashed | android: crash |  | timed',
+    `${CASUAL} | App closed while playing |  | v1 | now`,
+    `${CASUAL} | App closed while playing |  | v1 | now`,
+  ].join('\n'), 'the phone\'s own record says why the app closed, and being swiped away is no crash', '\n     ' + o.tell.join('\n     '));
+  check(o.again === 0 && o.robot?.robot === true, 'each ending is told once, and a test robot is marked as one', JSON.stringify({ again: o.again, robot: o.robot }));
+  await q.done();
+}
+
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading };
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading, oldweb, reports };
   for (const [name, fn] of Object.entries(parts)) if (!only.length || only.includes(name)) await fn(b);
   await b.close(); server.httpServer.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall app checks passed'); process.exit(failed ? 1 : 0);

@@ -106,7 +106,7 @@ Matches https://game-scroll.com/privacy/.
 | App interactions (anonymous per-game views, plays, skips, play time) | Yes | No | Optional (Settings) | Analytics, app functionality |
 | Location | **No** (rounded and used on device only during play, never stored or sent) | | | |
 | Photos/videos, audio | **No** (camera and mic processed on device only) | | | |
-| App info and performance → Crash logs, Diagnostics (anonymous crash markers, game script errors, frame timings, phone model, OS and app version; kept 14 days) | Yes | No | Optional (same Settings switch) | Analytics, app functionality |
+| App info and performance → Crash logs, Diagnostics (anonymous crash markers with Android's own reason the app last closed, game script errors, frame timings and how warm the phone was, phone model, OS, app and game file version; kept 14 days) | Yes | No | Optional (same Settings switch) | Analytics, app functionality |
 
 Data processed only on the device and never sent off it doesn't need declaring (Google's definition of "collected").
 Google Play Games data is handled by Google under its own policy.
