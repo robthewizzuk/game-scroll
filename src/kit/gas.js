@@ -414,9 +414,10 @@ class Puffs {
       return m;
     };
     this.soft = mk(false); this.glow = mk(true);
-    // the camera the puffs were last drawn with: they face it, and the far ones are drawn first
+    // the camera the puffs were last drawn with: they face it, and the far ones are drawn first (not a camera that
+    // looks for something else: a reflection's, or a map drawn from above; a Console view's own camera can be a flat one)
     this.right = new Vector3(1, 0, 0); this.up = new Vector3(0, 1, 0); this.eye = new Vector3(0, 0, 10); this.fwd = new Vector3(0, 0, -1);
-    this.soft.onBeforeRender = (r, s, cam) => { if (cam.parent?.type === 'CubeCamera' || cam.isOrthographicCamera) return; const e = cam.matrixWorld.elements; this.right.set(e[0], e[1], e[2]).normalize(); this.up.set(e[4], e[5], e[6]).normalize(); this.fwd.set(-e[8], -e[9], -e[10]).normalize(); this.eye.set(e[12], e[13], e[14]); };
+    this.soft.onBeforeRender = (r, s, cam) => { if (cam.parent?.type === 'CubeCamera' || (cam.isOrthographicCamera && cam !== gas.view?.cam)) return; const e = cam.matrixWorld.elements; this.right.set(e[0], e[1], e[2]).normalize(); this.up.set(e[4], e[5], e[6]).normalize(); this.fwd.set(-e[8], -e[9], -e[10]).normalize(); this.eye.set(e[12], e[13], e[14]); };
     this.order = []; this.key = new Float32Array(cap);
   }
   // a step of the gas: the puffs drift with it, old ones go, new ones are born where the gas is
@@ -653,7 +654,7 @@ export class Gas {
   inBox(x, y, z) { const b = this.bounds; return x >= b[0] && x <= b[3] && y >= b[1] && y <= b[4] && z >= b[2] && z <= b[5]; }
   /** How thick the smoke is at a place: 0 clear air, about 1 thick smoke. */
   smokeAt(x, y, z) { return this.inBox(x, y, z) ? this.at(x, y, z)[0] : 0; }
-  /** How hot the gas is at a place: 0 cool, over about .25 flame, 1 and more the heart of a fire. */
+  /** How hot the gas is at a place: 0 cool, up to .4 warm smoke, over .45 flame, 1 and more the heart of a fire. */
   heatAt(x, y, z) { return this.inBox(x, y, z) ? this.at(x, y, z)[1] : 0; }
   /** Which way and how fast the gas moves at a place (units a second), into out ({ x, y, z }). */
   flowAt(x, y, z, out = {}) {
