@@ -1542,6 +1542,32 @@ console.log('physics ok');
   F.dispose(); PG.dispose();
   console.log('city cars up close: seats behind see-through glass close by, dark glass further off, the paint look on cars drawn whole, the parked cars\' glass ok');
 }
+// the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
+// pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
+{
+  const THREE = await import('three'), { GroundPaint } = await import('../src/kit/ground-paint.js'), { looksOf } = await import('../src/kit/looks.js');
+  const drawn = [], fake = { autoClear: true, getRenderTarget: () => null, setRenderTarget() {}, render(scene, cam) { drawn.push({ ...this.cur, l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, x: cam.position.x, z: cam.position.z }); } };
+  const view = { scene: new THREE.Scene(), _onGpu: false }, gp = new GroundPaint(view); gp.gl = fake;
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial()); road.updateMatrixWorld(true);
+  gp.add(road, 'asphalt', { base: '#333' });
+  assert.ok(looksOf(road.material).includes('groundpaint'), 'the road reads the ground paint');
+  const watch = L => { const rt = gp.target(L, null), set = rt.viewport.set.bind(rt.viewport); rt.viewport.set = (x, y, w, h) => { fake.cur = { x0: x, y0: y, w, h, L }; return set(x, y, w, h); }; };
+  for (const L of gp.levels) watch(L);
+  const at = new THREE.Vector3(.3, 1.6, -.2); gp.update(at);
+  const T = list => list.reduce((t, d) => t + d.w * d.h, 0);
+  assert.ok(T(drawn) === 2 * 1024 * 1024 && gp.U.gpOn.value === 1 && drawn.every(d => d.x0 >= 0 && d.y0 >= 0 && d.x0 + d.w <= 1024 && d.y0 + d.h <= 1024), 'both levels painted whole at first, in pieces inside the pictures');
+  // each piece's camera is over the world its texels stand for (columns along x, rows along -z, both wrapping round)
+  for (const d of drawn) { const S = d.L.size, N = d.L.px, c0 = (((d.x + d.l) / S * N) % N + N) % N, r0 = (((-(d.z + d.t)) / S * N) % N + N) % N; assert.ok(Math.abs(c0 - d.x0) < 1e-6 && Math.abs(r0 - d.y0) < 1e-6 && Math.abs((d.r - d.l) / S * N - d.w) < 1e-6, 'a piece over the world its texels stand for'); }
+  drawn.length = 0; at.x += 4.1; gp.update(at);
+  assert.ok(T(drawn) === 128 * 1024 && drawn.every(d => d.L === gp.levels[0]), 'a step along: only the fine level\'s uncovered strip is painted (' + T(drawn) + ' texels)');
+  drawn.length = 0; at.set(at.x + 200, 1.6, at.z - 300); gp.update(at);
+  assert.ok(T(drawn) === 2 * 1024 * 1024, 'a jump: both painted whole again');
+  drawn.length = 0; gp.update(at); assert.equal(drawn.length, 0, 'standing still paints nothing');
+  gp.stamp(at.x + 2, at.z + 1, 'oil', { size: .8 }); gp.stamp(at.x + 5000, at.z, 'skid', { size: 6 }); gp.update(at);
+  assert.ok(drawn.length >= 2 && drawn.length <= 8 && T(drawn) < 2 * 4096, 'a mark close by is painted on both levels; one far off is not (' + T(drawn) + ' texels)');
+  gp.dispose(); assert.equal(gp.U.gpOn.value, 0, 'disposed: the ground reads its own pictures again');
+  console.log('ground paint: painted whole, then only what a move uncovers, pieces over the right world, marks where they fall ok');
+}
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
 {

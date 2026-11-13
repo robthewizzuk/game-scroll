@@ -2950,6 +2950,7 @@ PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 PORTED_LOOKS.add('rooms');   // gs.city's rooms behind the windows (city-rooms.js, city-gpu.js)
 PORTED_LOOKS.add('carpaint').add('carglass');   // gs.models.vehicle's paint and glass (models/vehicle-looks.js, models/vehicle-gpu.js)
+PORTED_LOOKS.add('groundpaint');   // gs.city's ground paint (ground-paint.js, ground-paint-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)

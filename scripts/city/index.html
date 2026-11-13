@@ -39,6 +39,10 @@ try {
     folk: () => [[b.x0 + 3, 1.6, b.z0 + 3], [b.x0 + 30, 1.2, b.z0 + 3]],
     shop: () => [[(front.x0 + front.x1) / 2 - 3, 1.6, front.z0 - 4.5], [(front.x0 + front.x1) / 2 + 1, 2.2, front.z0]],
     corner: () => [[b.x0 - 6, 2.2, b.z0 - 6], [b.x0 + 20, 8, b.z0 + 10]],
+    // the ground at your feet at a corner: road, kerb and paving, and down a street to see that nothing repeats
+    ground: () => [[b.x0 - 3, 1.7, b.z0 - 3], [b.x0 + 1.5, 0, b.z0 + .5]],
+    road: () => [[b.x0 - 5.5, 1.4, b.z0 - 2], [b.x0 - 5.5, 0, b.z0 + 30]],
+    above: () => [[b.x0 - 6, 14, b.z0 - 12], [b.x0 + 2, 0, b.z0 + 4]],
     high: () => [[b.x0 - 30, 45, b.z0 - 60], [b.x0 + 40, 10, b.z0 + 60]],
     far: () => [[P.bounds.x0 - 20, 90, P.bounds.z0 - 20], [0, 20, 0]],
     // looking up a front from across the street; along a row of parked cars; over the roofs nearby
