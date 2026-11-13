@@ -145,7 +145,7 @@ What it does (`src/tour.js`):
 
 - **Plugins.** Each native plugin is asked one harmless question with a 4 second limit: Device, App,
   Haptics, KeepAwake, Geolocation (only its permission state), Filesystem, Share, TextToSpeech,
-  PowerState, ScreenRate, PhoneSensors (which sensors, and where sound is going), RichHaptics,
+  PowerState, AppHealth (Android: why the app last closed), ScreenRate, PhoneSensors (which sensors, and where sound is going), RichHaptics,
   NativeAR, NPU, PhoneAI (the model, and speech), GameServices (whether the player is signed in
   already) and SpeechAudio (the phone writes three words of speech to sound, unheard: the answer says
   how many samples a second, how long it is and how many word marks came with it, which is what shaped

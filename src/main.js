@@ -59,6 +59,7 @@ import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
 // Dev and test builds (--mode bundled) have every file in src/games/ built in instead.
 const GAMES = BUNDLED.filter(g => g && g.id && g.make).map(g => ({ likes: 300 + hash(g.id) % 6000, ...g }));
 const STREAM = remote.enabled;
+perf.versionOf = id => STREAM ? remote.version(id) : '';   // reports say which version of a game's file they are about
 const playable = g => STREAM ? remote.def(g) : g;   // null while a streamed game is still downloading
 let booted = false;
 if (STREAM) remote.init(meta => { const g = { likes: 300 + hash(meta.id) % 6000, ...meta }; GAMES.push(g); return g; },

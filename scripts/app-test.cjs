@@ -554,6 +554,10 @@ async function tour(b) {
     const cap = { isNativePlatform: () => true, isPluginAvailable: n => ['PowerState', 'ScreenRate', 'NPU', 'Motion'].includes(n),
       Plugins: { PowerState: { get: async () => ({ thermal: 0, saver: false }) }, ScreenRate: { get: () => new Promise(() => {}) }, NPU: { available: async () => { throw new Error('boom'); } } } };
     out.plugins = await k.checkPlugins(cap, 150); out.web = await k.checkPlugins();
+    // a plugin only one kind of phone has: asked there, and not listed as missing on the other
+    const health = { ...cap, isPluginAvailable: n => n === 'AppHealth', Plugins: { AppHealth: { get: async () => ({ robot: '', known: true, exits: [{ at: 1, reason: 10 }] }) } } };
+    out.android = (await k.checkPlugins({ ...health, getPlatform: () => 'android' }, 150)).find(x => x.name === 'AppHealth.get');
+    out.ios = (await k.checkPlugins({ ...health, getPlatform: () => 'ios' }, 150)).some(x => x.name === 'AppHealth.get');
     return out;
   });
   check(k.sum.frames === 4 && k.sum.worst === 100 && k.sum.freezes === 1 && Math.abs(k.sum.fps - 4000 / 130) < .01 && Math.abs(k.sum.low - 10) < .01 && k.sum.slow === .25 && k.sum.work === 2 && k.none.frames === 0,
@@ -572,6 +576,7 @@ async function tour(b) {
     && by['Motion'].state === 'ok' && by['RichHaptics.supported'].state === 'MISSING' && k.plugins.length >= 18,
     'each native plugin is asked once: an answer, no answer in time, an error and "not in this build" are told apart', JSON.stringify(k.plugins.filter(x => /Power|Screen|NPU|Motion|Rich/.test(x.name))));
   check(k.web === null, 'the web version has no plugins to ask');
+  check(k.android?.state === 'ok' && /"exits":1/.test(k.android.note) && k.ios === false, 'a plugin only Android has is asked there and left out on an iPhone', JSON.stringify({ android: k.android, ios: k.ios }));
 
   // a tour of two games, one of them changed to do everything a guest must not leave behind
   await p.game(CASUAL);
@@ -811,6 +816,51 @@ async function reports(b) {
   check(r.on && r.frames > 30 && r.plays >= 1, 'a test build still counts its own rounds and frames', JSON.stringify(r));
   check(sent.length === 0, 'and sends no play stats or crash reports', sent.join(' '));
   await p.done();
+
+  // what a real build would send, caught in a list in place of the network
+  const q = await open(b); await q.game(CASUAL);
+  const o = await q.evaluate(async id => {
+    const P = __gs.perf, nap = ms => new Promise(r => setTimeout(r, ms)); P.outbox = []; P.versionOf = () => 'abc123def456';
+    Object.assign(P.power, { thermal: 3, heat: 2 }); __gs.start(); await nap(1200);
+    Object.assign(P.power, { thermal: 2, heat: 1 }); await nap(700);
+    P.error(new Error('a test error')); __gs.api(__gs.active).over(); await nap(200);
+    await P.flush();
+    // how a session ended, as the phone tells it: [what it left, what the phone says] -> what is reported
+    const app = P.info().app, tell = [];
+    let t = Date.now();
+    const was = (playing = true) => ({ game: id, ver: 'v1', playing, app, at: (t += 100000) }), end = x => ({ at: t + 5000, importance: 100, what: '', ...x });
+    const tries = [
+      [was(), { known: true, exits: [end({ reason: 10, importance: 400, what: 'remove task' })] }],                  // swiped away at the wrong moment
+      [was(), { known: true, exits: [end({ reason: 3, what: 'lmk: 1234 kB free' })] }],                              // out of memory, on screen
+      [was(false), { known: true, exits: [end({ reason: 2, status: 9 })], web: { at: t + 4700, crashed: false } }],  // the web view's process was killed
+      [was(), { known: true, exits: [end({ reason: 5 })], web: { at: t + 4900, crashed: true } }],                   // ...or crashed
+      [null, { known: true, exits: [{ at: (t += 100000), reason: 2, status: 9, importance: 400, what: '' }] }],      // let go of in the background
+      [null, { known: true, exits: [{ at: (t += 100000), reason: 4, importance: 400, what: 'crash' }] }],            // a crash in the background
+      [was(), null],                                                                                                // a phone that keeps no record
+      [was(), { known: true, exits: [] }],                                                                          // a record, but not of that session
+    ];
+    for (const [w, h] of tries) { P.waiting.errors.length = 0; await P.lastTime(w, h); tell.push(P.waiting.errors.map(e => [e.game, e.msg, e.place, e.v || '', e.at ? 'timed' : 'now'].join(' | ')).join(' + ')); }
+    // told once: the same records again say nothing new
+    P.waiting.errors.length = 0; await P.lastTime(null, tries[5][1]); const again = P.waiting.errors.length;
+    // a test robot says so in every batch from then on
+    await P.lastTime(null, { robot: 'test lab', known: false }); P.error(new Error('robot error')); await P.flush();
+    return { first: P.outbox[0], robot: P.outbox[1]?.info, tell, again };
+  }, CASUAL);
+  const g = o.first?.games?.[CASUAL] || {}, e = o.first?.errors?.[0] || {};
+  check(o.first && g.v === 'abc123def456' && e.v === 'abc123def456' && /a test error/.test(e.msg) && !o.first.info.robot, 'a batch says which version of the game\'s file it is about', JSON.stringify(o.first));
+  check(g.hk > 1500 && g.hk <= g.ms + 1 && g.hh > 800 && g.hw > 300 && g.hh + g.hw <= g.hk + 1, 'and how much of the play was with the phone warm or hot', JSON.stringify(g));
+  check(o.tell.join('\n') === [
+    '',
+    `${CASUAL} | App closed while playing: the phone ran out of memory | android: lmk | v1 | timed`,
+    `${CASUAL} | App closed while open: the web view was killed, usually for memory |  | v1 | timed`,
+    `${CASUAL} | App closed while playing: the web view crashed |  | v1 | timed`,
+    '',
+    ' | App closed in the background: the app crashed | android: crash |  | timed',
+    `${CASUAL} | App closed while playing |  | v1 | now`,
+    `${CASUAL} | App closed while playing |  | v1 | now`,
+  ].join('\n'), 'the phone\'s own record says why the app closed, and being swiped away is no crash', '\n     ' + o.tell.join('\n     '));
+  check(o.again === 0 && o.robot?.robot === true, 'each ending is told once, and a test robot is marked as one', JSON.stringify({ again: o.again, robot: o.robot }));
+  await q.done();
 }
 
 (async () => {
