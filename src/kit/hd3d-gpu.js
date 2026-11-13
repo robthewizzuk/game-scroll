@@ -8,7 +8,7 @@
 // hurt, smoothing), plus three's own GTAO for ambient occlusion and the outdoor air as a fog node.
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
-import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
+import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
   MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
@@ -25,7 +25,7 @@ import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
-import { eachShown } from './scene-list.js';
+import { eachShown, listPipeline } from './scene-list.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
 import { RECIPES } from './models/recipes.js';
@@ -603,6 +603,9 @@ class KitLighting extends ClusteredLighting {
   shadowDraw(scene, go) { const was = this.gsShadowOf; this.gsShadowOf = scene; try { return go(); } finally { this.gsShadowOf = was; } }
 }
 export function manyLights(r) { r.lighting = new KitLighting(256, 32, 24, 32); r.gsClustered = true; }
+// three's walk of the scene for each render (the picture, each shadow map), made over the scene's list (scene-list.js)
+let ListPipeline = null;
+export function listWalk(r) { ListPipeline ||= listPipeline({ StandardDrawingPipeline }); r.drawingPipeline = new ListPipeline(); }
 /* ---------- sharper textures under SGSR 2 ---------- */
 // A scene drawn smaller than the screen reads its textures for the small picture: a mip level too soft
 // for the screen SGSR 2 builds it up to. The usual answer (FSR 2 and DLSS ask for it too) is a mip bias
@@ -1648,10 +1651,10 @@ export class GpuChain {
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
-    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
+    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
-    this.aoN = this.dnN = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
+    this.aoN = this.dnN = this.dnT = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     // v.oit: three's weighted blended order-independent transparency (McGuire and Bavoil) in place of the plain
     // scene pass: see-through things blend right whatever order they're drawn in (glass behind glass, smoke in water)
@@ -1720,7 +1723,14 @@ export class GpuChain {
       // (WebGL's GTAOPass smooths its own noise; here three's denoise does it)
       this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), this.nrmN, this.cam);
       this.dnN.noiseNode = texture(denoiseNoise());   // (the same noise for every view and every run: denoiseNoise above)
-      aoF = mix(float(1), this.dnN.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
+      // smoothed once, at the ambient occlusion's own size (half the picture on high), into a picture of its own, as WebGL's
+      // GTAOPass does. three's denoise is worked out where it is used: 16 reads each of the occlusion, the depth and the
+      // normals for every pixel of the full picture in the finishing pass, and again in the bloom's first pass. On the
+      // Fold the finishing pass was the chip's biggest (2.6 ms of 9.3 in the town, 2026-11-13); the picture is read
+      // back with one smooth read where the occlusion is laid on
+      this.dnT = rtt(vec4(this.dnN.r, 0, 0, 1), null, null, { depthBuffer: false, type: UnsignedByteType, format: RedFormat });
+      this.dnT.renderTarget.gsPart = 'ao';
+      aoF = mix(float(1), this.dnT.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
     }
     let src = colT, srcAo = aoF;
     const V = this.V, dT = sp.getTextureNode('depth');
@@ -1847,10 +1857,13 @@ export class GpuChain {
         const fl = this.flareN.rgb, asp = U.aspect, du = uv.sub(.5).mul(vec2(min(asp, 1), min(float(1).div(asp), 1))).add(.5);
         col = col.add(fl.mul(F.k)).add(F.dirt.sample(du).rgb.mul(bl.add(fl)).mul(F.dk));
       }
-      // grade (v.grade) and sun glare (v.glare), only while the sun itself shows (how much: five reads round it)
-      const su = U.sunUV, tap = o => colT.sample(su.add(o)).rgb;
-      const s0 = tap(vec2(0, 0)).add(tap(vec2(.006, 0))).add(tap(vec2(-.006, 0))).add(tap(vec2(0, .008))).add(tap(vec2(0, -.008)));
-      const seen = smoothstep(1.5, 6, dot(s0, LUM).mul(.2));
+      // grade (v.grade) and sun glare (v.glare), only while the sun itself shows (how much: five reads round it, made
+      // only while there is glare: the same for every pixel, so the chip skips them all together)
+      const su = U.sunUV, tap = o => colT.sample(su.add(o)).rgb, seen = float(0).toVar();
+      If(U.glare.greaterThan(0), () => {
+        const s0 = tap(vec2(0, 0)).add(tap(vec2(.006, 0))).add(tap(vec2(-.006, 0))).add(tap(vec2(0, .008))).add(tap(vec2(0, -.008)));
+        seen.assign(smoothstep(1.5, 6, dot(s0, LUM).mul(.2)));
+      });
       return GRADE({ col, sat: U.sat, con: U.con, lo: U.lo, hi: U.hi, on: U.gradeOn, uv, su, aspect: U.aspect, seen, sunCol: U.sunCol, glare: U.glare }, half);
     })();
     // tone mapping (ACES, the renderer's exposure) and sRGB (named outright under SGSR 2 and 1: drawn outside the pipeline)
@@ -1914,7 +1927,7 @@ export class GpuChain {
     if (this.sp.getResolutionScale() !== k) this.sp.setResolutionScale(k);
     if (!this.clear) {
       const U = this.U;
-      if (this.aoN && this.aoN.resolutionScale !== o.ao * k) this.aoN.resolutionScale = o.ao * k;
+      if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT.setResolutionScale(o.ao * k); }
       this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }
@@ -2094,7 +2107,7 @@ export class GpuChain {
     try { r.setRenderTarget(null); this.showQ.render(r); } finally { r.toneMapping = tm; r.outputColorSpace = cs; }
   }
   dispose() {
-    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
+    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = null; this.sched = null; this.lastColor = null;
     this._bf?.rt.dispose(); this._bf = null;

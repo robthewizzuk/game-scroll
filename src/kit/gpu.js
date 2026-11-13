@@ -112,6 +112,7 @@ export function prepareGPU() {
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path
       r.gsBackend = 'webgpu';
       fx.manyLights(r);
+      fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
       freeUnbuilt(r);
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
@@ -157,7 +158,7 @@ export function prepareConsoleGPU() {
       const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false });
       await r.init();
       if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
-      r.gsBackend = 'webgpu'; freeUnbuilt(r); fx.setup(r);
+      r.gsBackend = 'webgpu'; freeUnbuilt(r); fx.setup(r); G.fx.listWalk(r);
       return con = { r, W: G.W, fx };
     } catch (e) { console.warn('Console WebGPU did not start:', e); return null; } finally { conTried = true; }
   })();

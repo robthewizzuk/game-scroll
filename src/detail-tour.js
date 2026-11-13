@@ -31,6 +31,7 @@ import { power } from './kit/power.js';
 import { speed, fpsFor, screenHz, phoneClass } from './kit/speed.js';
 import { screen as display } from './kit/screenrate.js';
 import { webgpu } from './kit/gpu.js';
+import { PROF, take } from './kit/prof.js';
 import { SCENES } from './detail-scenes.js';
 import { summarise, phone, powerNow, head, guestApi } from './tour.js';
 
@@ -106,11 +107,13 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     let last = 0, seen = null, away = 0, lastPic = 0, drawn = 0;
     HD.info.gpuMs = HD.info.madeMs = HD.info.fgEasy = null; hid = false;
     const drops0 = HD.info.fgDrops || 0;
+    // the engine's code by part (prof.js), for each frame timed: on for the run, as it was afterwards
+    const codeBy = {}, profWas = PROF.on; let codeN = 0; PROF.on = true; take();
     const start = performance.now();
-    for (;;) {
+    try { for (;;) {
       const t = (performance.now() - start - away) / 1000;
       if (t >= seconds || stopped()) break;
-      let now, isReal = true, pic = true;
+      let now, isReal = true, pic = true, counted = false;
       if (pace) ({ now, real: isReal, pic } = await beat(pace, t));
       else { S.path(t, S.v.cam); now = await draw(); }
       const I = HD.info;
@@ -123,7 +126,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
         else {
           dts.push(dt);
           if (isReal) {
-            drawn++; cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.fgPace) paces[I.fgPace] = (paces[I.fgPace] || 0) + 1;
+            drawn++; cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.fgPace) paces[I.fgPace] = (paces[I.fgPace] || 0) + 1; take(codeBy); codeN++; counted = true;
             if (I.gpuMs != null && I.gpuMs !== seen && t > .5) {
               chip.push(seen = I.gpuMs); for (const k in I.gpuParts || {}) by[k] = (by[k] || 0) + I.gpuParts[k];
               if (I.gpuReal != null) real.push(I.gpuReal); if (I.madeMs != null) made.push(I.madeMs); if (I.fgEasy != null) easy.push(I.fgEasy);
@@ -133,11 +136,13 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
         }
       }
       if (pic) lastPic = now;
+      if (!counted) take();   // (as the code's time is a drawn frame's: a made frame's, or one not timed, counts for nothing)
       hid = false; last = now; onPlay?.({ played: t });
-    }
+    } } finally { PROF.on = profWas; take(); }
     const I = HD.info;
     for (const k in by) by[k] /= chip.length;
-    const res = { ...summarise(dts, cpu, budget), chip: chip.length ? mean(chip) : null, chipBy: chip.length ? by : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
+    for (const k in codeBy) codeBy[k] /= codeN || 1;
+    const res = { ...summarise(dts, cpu, budget), chip: chip.length ? mean(chip) : null, chipBy: chip.length ? by : null, codeBy: codeN ? codeBy : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
     // frame generation's runs: the frame rate is of the pictures that reached a refresh (drawn or made), and how
     // many of them were drawn; the refreshes the page got a second (fewer than the screen's when the phone held
     // them back); the code's time is each drawn frame's
@@ -246,8 +251,15 @@ function chipBy(by) {
   const all = Object.entries(by).filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]);
   return all.length ? ` (${all.map(([k, v]) => `${PASS[k] || k} ${v.toFixed(1)}`).join(', ')})` : '';
 }
+// the 3D kit's code by part, biggest first: " (scene pass 9.1, shadow maps 7.2, the rest 3.1, passes 1.2, detail 0.4)"
+// (prof.js spans: '3D render' is the view's render, its own time what no part of it took)
+function codeBy(by) {
+  if (!by) return '';
+  const all = Object.entries(by).filter(([k, v]) => k.startsWith('3D') && v >= .05).map(([k, v]) => [k === '3D render' ? 'the rest' : k.replace(/^3D: /, ''), v]).sort((a, b) => b[1] - a[1]);
+  return all.length ? ` (${all.slice(0, 7).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', ')})` : '';
+}
 function modeLine(m) {
-  const parts = [`${Math.round(m.fps)} fps`, `worst 1% ${Math.round(m.low)} fps`, `longest ${Math.round(m.worst)} ms`, m.chip != null ? `chip ${m.chip.toFixed(1)} ms${chipBy(m.chipBy)}` : 'chip time not told', `code ${m.work.toFixed(1)} ms`, m.uncounted ? `${num(m.calls)} draws (the chip picks the copies, so their triangles are not counted)` : `${num(m.tris)} triangles in ${num(m.calls)} draws`];
+  const parts = [`${Math.round(m.fps)} fps`, `worst 1% ${Math.round(m.low)} fps`, `longest ${Math.round(m.worst)} ms`, m.chip != null ? `chip ${m.chip.toFixed(1)} ms${chipBy(m.chipBy)}` : 'chip time not told', `code ${m.work.toFixed(1)} ms${codeBy(m.codeBy)}`, m.uncounted ? `${num(m.calls)} draws (the chip picks the copies, so their triangles are not counted)` : `${num(m.tris)} triangles in ${num(m.calls)} draws`];
   if (m.build != null) parts.push(`ready in ${secs(m.build)}`);
   if (m.note) parts.push(m.note);
   if (m.tell) parts.push(m.tell);
@@ -335,6 +347,6 @@ export function scenesText(t) {
     lines.push('\nEach scene is flown through with its system on, at a pinned quality, five ways: as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone); half the screen\'s rate drawn and nothing made; and half drawn with the refreshes between made: blended (between the last two drawn frames) as before (each made frame on its real frame\'s refresh, every part of the picture the full way, none dropped), blended as now (each frame on a refresh of its own unless the chip has room for both, easy parts of the picture the quick way, a made frame that would come late dropped) and ahead (guessed past the newest). Frame generation is forced on or off for each run whatever Settings say, and the screen is asked for the rate a game drawn that way would get. pictures a second: the drawn and made frames that reached a refresh (a refresh that showed the same picture again is not counted), with how many of them were drawn; worst 1% and longest are of the gaps between them. chip: the graphics chip\'s time for each drawn frame with the frames made after it, where the phone tells it; a made frame: its own chip time, and where it went (moving: each pixel along its motion; motion: the optical flow and which tiles are easy, once a pair; picture: putting it together; holes: filling what was uncovered; keeping: the newest frame kept for the next pair); chip time a picture shares a drawn frame\'s time among the pictures it gave. (A phone clocks its chip down at half rate, so frames drawn with none made take it longer.) "the page got": fewer refreshes than the screen\'s rate, where the phone held them back because the chip was behind.');
     return lines.join('\n');
   }
-  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
+  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame, and in brackets where it went: scene pass is three\'s work on the game\'s things (finding what is in view, sorting, setting up each draw), shadow maps the same for the shadows, passes the full-screen passes after the scene, the rest the 3D kit\'s own steps that are not named. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
   return lines.join('\n');
 }
