@@ -489,6 +489,17 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   (the same on WebGL and WebGPU, nothing where the ground is unmarked), and every mark is remembered,
   so `marks.trail()` can be followed. The full list is in
   [maker-kit.md](maker-kit.md#ground-that-takes-marks); `node scripts/marks.cjs film.png` films it.
+- **Cliffs, caves and overhangs** (`land.rocks({ caves, shapes })` on a `gs.outdoors` `Land`): real rock on
+  the height map that can fold over itself. Cliffs with beds, ledges and lips that overhang come by
+  themselves where the land is steep; `caves: [{ path, radius }]` cuts tunnels you can walk through (the
+  land's own squares are left out at their mouths); `shapes` melts in arches, blocks and balls of rock, or
+  cuts hollows. Afterwards `land.height()` is the top of the rock, `land.floor(x, y, z)` what a thing
+  stands on (a cave's floor, a ledge), `land.roof()`, `land.sky()` (how dark it is in there) and
+  `land.ray()` answer the rest, and the weather, the sound, the physics, the grass and the marks all take
+  the rock with the land. It is drawn with one stock material and a colour at every point (the same on
+  WebGL and WebGPU; `looks.rock(land.rock.material)` adds grit), and its numbers are worked out in a
+  background worker while the card loads. The full list is in
+  [maker-kit.md](maker-kit.md#cliffs-caves-and-overhangs); `node scripts/rocks.cjs out.png` takes pictures of it.
 - **Sky** (`gs.sky`'s `Sky`) with `clouds: 0..1` draws drifting clouds lit from the sun's side (your
   own colours with `cloudLight` and `cloudDark`; `gap` keeps the low sky round the sun clear). It aims
   the sun, and on a view with air it colours the haze from the sky and lays the clouds' shadows on the

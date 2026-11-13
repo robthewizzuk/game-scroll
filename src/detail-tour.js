@@ -1,6 +1,6 @@
 // Engine test scenes, for the phone test tour (src/tour.js; QA panel › Phone test tour › Engine test
 // scenes). The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail,
-// hiding what is behind other things, shadows in tiles, crowds, ground that takes marks) are checked on a build machine's software renderer, which can count triangles and compare pictures but
+// hiding what is behind other things, shadows in tiles, crowds, ground that takes marks, land with cliffs and caves) are checked on a build machine's software renderer, which can count triangles and compare pictures but
 // says nothing about a phone's graphics chip. This flies through a heavy scene for each (src/detail-scenes.js)
 // with the system off and then on, on the phone in your hand, and gives one report to copy.
 //

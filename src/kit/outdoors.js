@@ -22,7 +22,7 @@
 //
 // Sizes are metres; y is up. Keep segments modest on phones (64-128 a side).
 
-import { BufferAttribute, BufferGeometry, Color, DataTexture, InstancedBufferAttribute, InstancedMesh, LinearFilter, RGBAFormat, ConeGeometry, CylinderGeometry, DodecahedronGeometry, DoubleSide, Float32BufferAttribute, IcosahedronGeometry, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, OrthographicCamera, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, Vector4, WebGLRenderTarget } from 'three';
+import { BufferAttribute, BufferGeometry, Color, DataTexture, Group, InstancedBufferAttribute, InstancedMesh, LinearFilter, RGBAFormat, ConeGeometry, CylinderGeometry, DodecahedronGeometry, DoubleSide, Float32BufferAttribute, IcosahedronGeometry, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, OrthographicCamera, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, Vector4, WebGLRenderTarget } from 'three';
 import { fbm } from './math.js';
 import { bakeRenderer as renderer } from './hd3d.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -30,7 +30,14 @@ export { looks, groundDetail, horizon } from './looks.js';
 export { Water } from './water.js';
 export { Marks } from './marks.js';
 import { looks as LOOKS } from './looks.js';
+import { rockArrays, RockMap } from './land-rock.js';
+import { pause, built, need, loading } from './slices.js';
+import { run, canRun } from './jobs.js';
 import Terrain, { TerrainNS, createSeededRandom, scatterGrass, updateGrass, updateGrassLOD } from 'three.terrain.js';
+
+// rock made for a land (land.rocks()): the same land and the same asking again get the same arrays
+const ROCKS = new Map();
+const keepRock = (key, a) => { if (ROCKS.size >= 3 && !loading()) ROCKS.delete(ROCKS.keys().next().value); ROCKS.set(key, a); return a; };
 
 const KINDS = {
   hills: TerrainNS.PerlinLayers, mountains: TerrainNS.DiamondSquare, rolling: TerrainNS.SimplexLayers, islands: TerrainNS.HillIsland,
@@ -63,10 +70,12 @@ export class Land {
     this.object.updateMatrixWorld(true);
     this.z = this.mesh.geometry.attributes.position.array;   // local z is world height
     if (colours) this.paint(colours);
-    this.grassScene = null; this.grassMesh = null; this.time = 0; this.meadows = []; this.parting = null;
+    this.grassScene = null; this.grassMesh = null; this.time = 0; this.meadows = []; this.parting = null; this.rock = null;
   }
-  /** The ground height at world x, z (between grid points it's blended). */
-  height(x, z) {
+  /** The ground height at world x, z (between grid points it's blended); with land.rocks(), the top of the rock where rock stands over the ground. */
+  height(x, z) { return this.rock ? this.rock.map.top(x, z) : this.height0(x, z); }
+  // the height map itself
+  height0(x, z) {
     const n = this.segments, s = this.size / n, fc = (x + this.size / 2) / s, fr = (z + this.size / 2) / s;
     const c = Math.max(0, Math.min(n - 1, Math.floor(fc))), r = Math.max(0, Math.min(n - 1, Math.floor(fr)));
     const u = Math.max(0, Math.min(1, fc - c)), v = Math.max(0, Math.min(1, fr - r)), Z = this.z, w = n + 1;
@@ -91,6 +100,7 @@ export class Land {
       const k = d <= r ? 1 : 1 - (d - r) / soft, i = (rr * w + cc) * 3 + 2; this.z[i] += (h - this.z[i]) * k * k * (3 - 2 * k);
     }
     const g = this.mesh.geometry; g.attributes.position.needsUpdate = true; g.computeVertexNormals(); g.computeBoundingSphere(); if (this.colours) this.paint(this.colours);
+    if (this.rock) this.rocks(this.rock.options);   // (the rock stands on the land as it now is)
     return this;
   }
   /**
@@ -115,8 +125,86 @@ export class Land {
     }
     g.setAttribute('color', new BufferAttribute(cols, 3)); const m = this.mesh.material; if (m && !m.vertexColors) { m.vertexColors = true; m.needsUpdate = true; } return this;
   }
+  /**
+   * Rock on the land: cliffs with ledges and overhangs where it is steep, caves and hollows cut through it, and
+   * rock of your own shape melted into it. A height map has one height for each spot; this adds real rock that
+   * can fold over itself. Call it once the land has its shape and colours (after flatten() and paint()), before
+   * meadow(), scatter() and solid(). o:
+   *   cliffs: true | { steep (.42: how steep the land must be, as land.slope()), depth (1: how far the rock stands
+   *     out, x), beds (1.8 m: how thick the layers of stone), ledge (1.1 m: how far a hard bed stands out past a
+   *     soft one), lip (.7 m: how far a bed leans out towards its top: overhangs), rough (.45), cracks (.5: the
+   *     joints that run down the face), area: [x0, z0, x1, z1] (only here) }
+   *   caves: [{ path: [[x, y, z, radius?], ...], radius (2.5), rough (.35) }]: a tunnel along a path; it is open
+   *     wherever the path comes out of the ground, and the land's own squares are left out there
+   *   shapes: [{ box: [wide, high, deep] | ball: radius | arch: [span, rise, thick, deep] | path, at: [x, y, z],
+   *     turn, rough, blend (.6 m: how softly it melts into the land), cut: true (taken out instead: a hollow) }]
+   *   cell (.4 m: how fine; halve it and there are four times the triangles), seed, colours: { rock, dark, top
+   *     (flat tops and where rock meets the ground; default the land's own colour there), floor (a cave's) },
+   *   material (your own instead of the plain one with these colours).
+   * Afterwards land.height(x, z) is the top of whatever is highest, land.floor(x, y, z) what a thing at height y
+   * stands on (a cave's floor, the ground under an overhang, a ledge), land.roof(x, y, z) the underside of what is
+   * over it (Infinity: open sky), land.ray(from, dir, max) metres to the ground or rock, land.rocky(x, z) whether
+   * rock shows there, land.sky(x, y, z) how much daylight reaches (1 .. about .1 deep in a cave). The weather, the
+   * sound and the physics take the rock with the land (a Weather's ground: land.height keeps caves dry). Returns
+   * the group of rock meshes (on the land already). land.rocks(false) takes it away.
+   */
+  rocks(o = {}) {
+    if (this.rock) {   // (asked again: taken away first, and the land's own squares put back)
+      const R = this.rock; R.group.removeFromParent(); R.group.traverse(m => m.geometry?.dispose()); if (R.own) R.material.dispose();
+      this.mesh.geometry.setIndex(R.index0); this.rock = null;
+    }
+    if (o === false) return null;
+    const n = this.segments, w = n + 1, g = this.mesh.geometry, I = g.index.array, Z = new Float32Array(w * w); for (let i = 0; i < w * w; i++) Z[i] = this.z[i * 3 + 2];
+    const cut = I[0] === 0 && I[1] === w && I[2] === 1 && I[3] === w && I[4] === w + 1 && I[5] === 1, ca = g.attributes.color;
+    const lin = (c, d) => { const k = new Color(c ?? d); return [k.r, k.g, k.b]; }, K = o.colours || {};
+    const opts = { cell: o.cell ?? .4, seed: o.seed ?? 1, cliffs: o.cliffs ?? true, caves: o.caves || [], shapes: o.shapes || [], colours: { rock: lin(K.rock, '#a39a8a'), dark: lin(K.dark, '#5e564b'), top: K.top ? lin(K.top) : null, floor: lin(K.floor, '#4a4136') } };
+    const grid = { z: Z, size: this.size, segments: n, cut, tint: ca && ca.itemSize === 3 ? Float32Array.from(ca.array) : null };
+    // (the same land and the same asking give the same rock: kept, so a card that loads in passes makes it once;
+    // while a card loads it is made in a background worker, the card waiting for it)
+    let h = 2166136261; { const b = new Uint8Array(Z.buffer); for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 16777619); if (grid.tint) { const t = new Uint8Array(grid.tint.buffer); for (let i = 0; i < t.length; i += 7) h = Math.imul(h ^ t[i], 16777619); } }
+    const key = 'rock|' + (h >>> 0) + '|' + this.size + '|' + JSON.stringify(opts);
+    let A = ROCKS.get(key);
+    if (!A) A = need('Land', key, () => canRun() && run('rock', { grid, o: opts }).then(a => ROCKS.get(key) || keepRock(key, a)));
+    if (!A) { pause('Land'); A = keepRock(key, rockArrays(grid, opts)); built(); }
+    const group = new Group(); group.name = 'rocks'; group.rotation.x = Math.PI / 2;   // (the land's own object is turned to lie flat: this turns the rock back, so it is in the world's own metres)
+    const material = o.material || new MeshStandardMaterial({ color: '#ffffff', roughness: .93, metalness: 0, vertexColors: true });
+    let tris = 0;
+    for (const p of A.pieces) {
+      if (!p.I.length) continue;
+      const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p.P, 3)); geo.setAttribute('normal', new BufferAttribute(p.N, 3)); geo.setAttribute('color', new BufferAttribute(p.C, 3)); geo.setIndex(new BufferAttribute(p.I, 1));
+      geo.computeBoundingBox(); geo.computeBoundingSphere();
+      const m = new Mesh(geo, material); m.name = 'rock'; m.castShadow = m.receiveShadow = true; group.add(m); tris += p.I.length / 3;
+    }
+    // the land's own squares where a cave comes through the ground are left out
+    const index0 = g.index;
+    if (A.holes.length) {
+      const gone = new Uint8Array(n * n); for (const q of A.holes) gone[q] = 1;
+      const out = new (I.constructor)(I.length - A.holes.length * 6); let k = 0;
+      for (let q = 0; q < n * n; q++) if (!gone[q]) for (let j = 0; j < 6; j++) out[k++] = I[q * 6 + j];
+      g.setIndex(new BufferAttribute(out, 1));
+    }
+    this.object.add(group);
+    this.rock = { group, material, own: !o.material, options: o, index0, holes: A.holes, tris, pieces: group.children.length, ms: A.stats.ms, map: new RockMap(A, grid, opts, (x, z) => this.height0(x, z)) };
+    return group;
+  }
+  /** What a thing at height y stands on at x, z: the highest ground or rock at or under y + reach (a cave's floor, a ledge, the ground under an overhang). Without rocks: the land's height. */
+  floor(x, y, z, reach = .6) { return this.rock ? this.rock.map.floor(x, y, z, reach) : this.height0(x, z); }
+  /** The underside of what is over a point: Infinity under open sky. */
+  roof(x, y, z) { return this.rock ? this.rock.map.roof(x, y, z) : y < this.height0(x, z) ? y : Infinity; }
+  /** Does rock show at x, z (or has a cave taken the ground away there)? Grass and scattered things keep off it. */
+  rocky(x, z) { const M = this.rock?.map; return !!M && M.changed(x, z) && Math.abs(M.top(x, z) - this.height0(x, z)) > .03; }
+  /** How much daylight reaches a point: 1 in the open, about .7 under an overhang, down to .1 deep in a cave. */
+  sky(x, y, z) { return this.rock ? this.rock.map.sky(x, y, z) : 1; }
+  /** Metres from `from` along the unit direction `dir` to the ground or the rock ({ distance }), or null within max. (So a Land can be the level of a gs.sound Ears or a Weather.) */
+  ray(from, dir, max = 100) {
+    const M = this.rock ? this.rock.map : this.plain ||= new RockMap({ pieces: [], cell: .5, side: 16, nch: Math.ceil(this.size / 16) }, { z: new Float32Array(4), size: this.size, segments: 1 }, {}, (x, z) => this.height0(x, z));
+    const d = M.ray(from, dir, max); return d < Infinity ? { distance: d } : null;
+  }
   /** Makes it solid in a gs.physics3d World3D (walk, roll and drive on it). */
-  solid(world, o = {}) { return world.ground(this.object, o); }
+  solid(world, o = {}) {   // (the land's own squares, less those a cave took away, and the rock: not the grass that grows on it)
+    const parts = [this.mesh, this.rock?.group].filter(Boolean);
+    return world.ground({ updateMatrixWorld: () => this.object.updateMatrixWorld(true), traverse: fn => { for (const p of parts) p.traverse(fn); } }, o);
+  }
   /**
    * Covers the land in grass tufts that sway (three.terrain.js grass). count: about how many tufts;
    * colour or tint: [min, max] colours; below / above: heights to keep between; steep: max slope (0..1).
@@ -129,7 +217,7 @@ export class Land {
       instanced: true, width, height, bladeCount: blades, color: colour, windStrength: wind, maxTilt: 0, randomRotationAxis: 'y', positionJitter: this.size / this.segments * .5,
       w: this.segments, h: this.segments, instancesPerFace: per, random: createSeededRandom(seed), maxSlope: Math.acos(1 - steep),
       tintRange: tint ? { min: new Color(tint[0]).getHex(), max: new Color(tint[1]).getHex() } : { min: lo.getHex(), max: hi.getHex() },
-      spread: (v) => v.z >= above && v.z <= below && pick() < spread,
+      spread: (v) => v.z >= above && v.z <= below && pick() < spread && !(this.rock && this.rocky(v.x, -v.y)),
     });
     this.grassScene.traverse(o => { if (o.isMesh) { o.receiveShadow = true; this.grassMesh ||= o; } });
     this.grassFar = far; this.object.add(this.grassScene);
@@ -168,7 +256,7 @@ export class Land {
     const plant = (i, j) => {
       const slot = (((j % n) + n) % n) * n + (((i % n) + n) % n), q = slot * 16;
       const x = (i + .5 + (H(i, j, 1) - .5) * .9) * gap, z = (j + .5 + (H(i, j, 2) - .5) * .9) * gap, y = this.height(x, z) - .015;
-      let w = this.inside(x, z) && this.slope(x, z) < steep ? 1 : 0; if (w && where) w = where(x, z);
+      let w = this.inside(x, z) && this.slope(x, z) < steep && !(this.rock && this.rocky(x, z)) ? 1 : 0; if (w && where) w = where(x, z);
       const on = w > 0 && H(i, j, 3) < w * 1.25, s = on ? (.6 + .75 * H(i, j, 4)) * (.55 + .45 * Math.min(1, w)) : 0, a = H(i, j, 5) * 6.2832, c = Math.cos(a) * s, sn = Math.sin(a) * s;
       const up = on && tall ? Math.max(.05, tall(x, z)) : 1;
       M[q] = c; M[q + 1] = 0; M[q + 2] = -sn; M[q + 3] = 0; M[q + 4] = 0; M[q + 5] = s * (.85 + .3 * H(i, j, 6)) * up; M[q + 6] = 0; M[q + 7] = 0;
@@ -210,7 +298,7 @@ export class Land {
   scatter(props, name, count, { above = -Infinity, below = Infinity, steep = .5, keepOut = null, inset = 2, ...o } = {}) {
     const h = this.size / 2 - inset;
     return props.scatter(name, count, { x0: -h, z0: -h, x1: h, z1: h }, { ...o, y: (x, z) => this.height(x, z),
-      keepOut: (x, z) => { const y = this.height(x, z); return y < above || y > below || this.slope(x, z) > steep || !!keepOut?.(x, z); } });
+      keepOut: (x, z) => { const y = this.height(x, z); return y < above || y > below || this.slope(x, z) > steep || !!(this.rock && this.rocky(x, z)) || !!keepOut?.(x, z); } });
   }
   /** Each frame: sways the grass and hides tufts far from the camera. */
   update(dt, camera = null) {

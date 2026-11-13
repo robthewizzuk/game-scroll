@@ -70,6 +70,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Time of day, rain, snow, lightning | `gs.sky` | [Game kits](#game-kits) |
 | Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Footprints and tyre tracks in snow, mud and sand, grass that parts, a trail to follow | `gs.outdoors` `Marks` | [Ground that takes marks](#ground-that-takes-marks) |
+| Cliffs with ledges and overhangs, caves to walk through, arches, rock of your own shape | `gs.outdoors` `land.rocks()` | [Cliffs, caves and overhangs](#cliffs-caves-and-overhangs) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -2061,7 +2062,8 @@ makes terrain (`hills`, `mountains`, `rolling`, `islands`, `bumps`, `dunes`, `cr
 the ground is, `flatten()` makes a pad for a village or a landing strip, `paint([[0, '#dc9'], [3, '#4a3']])`
 colours it by height in your palette, `solid(world)` makes it solid in `gs.physics3d`, `grass()` scatters
 blades that sway (only near the camera), and `scatter(props, 'tree', 300, { above: 1, steep: .3 })` puts
-`gs.props` things on suitable ground. For a camera down in the grass (a sniper's nest, a crawl, a close-up), `land.meadow({ reach: 22, gap: .55 })`
+`gs.props` things on suitable ground. `land.rocks({ caves, shapes })` puts real rock on it (cliffs that overhang, caves, arches: see
+[Cliffs, caves and overhangs](#cliffs-caves-and-overhangs)). For a camera down in the grass (a sniper's nest, a crawl, a close-up), `land.meadow({ reach: 22, gap: .55 })`
 keeps a square of thick tufts round the camera wherever it goes: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `tree({ kind: 'pine' | 'round' | 'palm' | 'bush' })` and `rock()`
 make simple shapes to scatter. Next Gen worlds can paint it instead with `looks.ground` (fields, hedges, lanes, mud, puddles), ring it with far hills (`horizon(land)`) and give rocks and leaves their looks: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `River(stream)` and `FloodWater(flood)` draw `gs.flow` rivers, waterfalls, lava and floods (see Flowing liquids). `Water({ level, waves })` is a sea of rolling waves you can ask about
 anywhere (`height(x, z)`, `normal`, `depth(p)`); call `update(dt, camera.position)` each frame. It can be disturbed too (rings, splashes, wakes,
@@ -2836,8 +2838,82 @@ update(dt) {
   field if they were given it before they were first drawn.
 - Not there: the ground itself does not move (a print is at most 5 cm deep, drawn on a sheet, so
   deep drifts you wade through and ruts a wheel sinks into are not here), marks do not show beyond
-  `reach`, `land.grass()` (the far grass) does not part, and things do not get muddy or snowy from
-  walking in it.
+  `reach`, `land.grass()` (the far grass) does not part, things do not get muddy or snowy from
+  walking in it, and rock (`land.rocks()`) takes no marks: not on it, and not in a cave under it.
+
+## Cliffs, caves and overhangs
+
+`land.rocks(o)`, on a `gs.outdoors` `Land`. (3D; the look is Next Gen.) A height map has one height for
+each spot, so it cannot fold over itself. This puts real rock on it that can: cliffs with ledges and
+overhangs wherever the land is steep, caves to walk through, arches, and rock of your own shape.
+
+```js
+make():   land = new Land({ kind: (x, z) => myHeight(x, z), size: 160, colours });
+          land.rocks({
+            seed: 3,
+            caves: [{ path: [[-3, 2.3, -5], [-4.5, 2.5, 10], [-3, 2.3, 31]], radius: 2.6 }],   // a tunnel under a spur: points [x, y, z]
+            shapes: [{ arch: [9, 5.5, 2.2, 3], at: [-22, 0, 28], turn: .5 },                  // [span, rise, thick, deep], standing on `at`
+                     { box: [8, 1.8, 6], at: [8.5, 10, -25] }],                               // a shelf that sticks out of the cliff
+          });
+          gs.outdoors.looks.rock(land.rock.material, { mossy: 0 });   // if you like: grit and cracks over its colours
+          land.meadow({ reach: 16 }); land.solid(world);              // after the rock: grass keeps off it, physics takes it
+          weather = new Weather(view, { ground: (x, z) => land.height(x, z) });   // snow on the ledges, none in the cave
+update(dt) {
+  player.y = land.floor(player.x, player.y, player.z);                // what it stands on: the cave's floor, not the hill over it
+  view.hemi.intensity = fill * land.sky(cam.x, cam.y, cam.z);         // your fill light, dimmer in a cave
+}
+```
+
+- **Cliffs** come by themselves wherever the land is steeper than `steep` (.42, as `land.slope()` counts
+  it): the stone lies in beds (`beds`: 1.8 m thick), hard beds stand out past soft ones as ledges
+  (`ledge`: 1.1 m), each bed leans out towards its top, which is what overhangs (`lip`: .7 m), and joints
+  run down the face (`cracks`). `cliffs: { steep, depth, beds, ledge, lip, rough, cracks, area: [x0, z0,
+  x1, z1] }` changes them, `cliffs: false` leaves them out. The top of a cliff is level with the ground
+  behind it, and flat ledges take the land's own colour, so grass seems to grow on them.
+- **Caves** are tunnels along a path of `[x, y, z, radius?]` points (`radius`: 2.5 m; a cave is a little
+  lower than it is wide, so its floor is about .85 of the radius under the path). Wherever the path comes
+  out of the ground the cave is open: the land's own squares are left out there, and a low rim of rock
+  covers their edge. Run the path a few metres out past the hillside at each mouth.
+- **Shapes** are rock of your own, melted into the land and into each other over `blend` metres (.6):
+  `box: [wide, high, deep]`, `ball: radius`, `arch: [span, rise, thick, deep]` or a tube along a `path`,
+  at `at: [x, y, z]` (a box's or ball's middle; where an arch stands), turned by `turn`. They get the same
+  beds, lumps and joints as the cliffs. `cut: true` takes the shape out instead: a hollow, a pit, a notch
+  in a cliff.
+- **Asking about it.** `land.height(x, z)` is now the top of whatever is highest (so everything that
+  already asks the land, like the weather, sees the rock). `land.floor(x, y, z)` is what a thing at height
+  `y` stands on: the highest ground or rock at or under `y + .6`, so give it the thing's own last height
+  and it follows a cave's floor in and out, steps up a ledge, and stays under an overhang.
+  `land.roof(x, y, z)` is the underside of what is over a point (`Infinity` under open sky),
+  `land.rocky(x, z)` whether rock shows there (or a cave has taken the ground away), `land.sky(x, y, z)`
+  how much daylight reaches a point (1 in the open, .7 under an overhang, down to .1 deep in a cave), and
+  `land.ray(from, dir, max)` how far it is to the ground or the rock (`{ distance }` or `null`).
+- **What works with it.** A `Weather` given `ground: (x, z) => land.height(x, z)` (or `level: land`) lets
+  snow lie on ledges and cliff tops and keeps caves and the ground under overhangs dry.
+  `new gs.sound.Ears({ level: land })` muffles sounds behind rock and gives a cave its echo.
+  `land.solid(world)` makes the rock solid with the land. `land.meadow()`, `land.grass()` and
+  `land.scatter()` keep off it (call them after `rocks()`). `gs.outdoors.Marks` takes no marks on rock,
+  and something walking in a cave leaves none on the hill above.
+- **How it is made, and what it costs.** The rock is a second surface, made from a density (how far in
+  or out of stone a point is) with surface nets, in pieces 13 m across that are culled one by one. Where
+  no rock stands out it lies just under the ground and is not drawn, so rock comes out of the land along
+  a line with nothing to stitch. It is drawn with one stock material and a colour at every point (beds of
+  two tints, streaks, darker in creases and down caves): no shader patch, so WebGL and WebGPU draw the
+  same thing. The valley used for testing (160 m, a cliff 16 m high, a 36 m cave, an arch and a shelf) is
+  82,000 triangles in 30 pieces and 2 MB; its numbers take .8 seconds on a desktop (not yet measured on
+  a phone), in a background worker while the card says Loading, and are kept, so Play again does not make
+  them again. `cell: .6` (metres a cell; the default is .4) is 36,000 triangles in .3 seconds, `cell: .8`
+  19,000 in .2, with rounder ledges. Asking `height()` or `floor()` near rock costs about a quarter of a
+  microsecond.
+- `colours: { rock, dark, top, floor }` are the stone's two tints, the colour of flat tops and of where
+  rock meets the ground (the land's own colour there, if you give none) and of a cave's floor.
+  `material` is your own for the rock instead; `land.rock.material` is the one it made, and
+  `land.rock.group` its meshes.
+- Make it in `make()`, once the land has its shape and colours (after `flatten()` and `paint()`). The
+  same land and the same asking always give the same rock. `land.rocks(false)` takes it away.
+- Not there: the rock cannot be dug or broken while playing (it is made once: `gs.voxels` is for ground
+  that changes, `gs.destruction` for things that come apart); it has no uvs, so a texture of your own
+  has to be mapped by position, as `looks.rock` does; it is drawn as finely far away as close to; and
+  nobody climbs it by themselves (`gs.climb` is yours to place).
 
 ## Vehicles made in code
 
