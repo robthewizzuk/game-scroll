@@ -70,7 +70,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { power } from './power.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
-import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, frameGenSteady, fgSaving, screenHz, qualityVerdict } from './speed.js';
+import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, screenHz, qualityVerdict } from './speed.js';
 
 export * as THREE from 'three';
 
@@ -120,8 +120,6 @@ function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2
 const LEVELS = [1, .85, .7, .55];
 // Most pixels in the final picture once a game has stepped down (about a phone screen's worth; see draw()).
 const OUT_PX = 2.4e6;
-// How many more pixels the 3D gets while frame generation makes every other refresh (see draw()).
-const FG_PX = 1.6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
@@ -2409,10 +2407,11 @@ export class HDView {
     const made = !!fg && !!shown;
     if (made) HD.fgTap?.(shown, r.domElement, 'frame');
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
-    speed.between = made ? (last = true, now = null) => { const k = ch.between(last, now); if (k) HD.fgTap?.(k, r.domElement, 'between'); } : null;
+    speed.between = made ? (last = true, now = null) => { const k = ch.between(last, now); if (k) HD.fgTap?.(k, r.domElement, 'between'); return k; } : null;
     // the refreshes between kept not coming (the phone is too busy to draw them in time): blend puts the
     // made frame on the real frame's refresh, so first try ahead (its work is spread over both); then stop for this game
-    if (made && ch.fgWin.real >= 90) {
+    // (not while it is forced on: a test, or the engine test scenes' frame generation runs, which time it as it is)
+    if (made && ch.fgWin.real >= 90 && !speed.forceFrameGen) {
       const miss = ch.missRate(), id = speed.game?.id;
       if (miss > .3 || (miss > .08 && how === 'blend' && !frameGenPace(id))) { if (!speed.shield) { frameGenFailed(id); console.info('Frame generation off for this game: the phone is too busy for the frames between'); } }
       else if (miss > .08 && how === 'blend') console.info('Frame generation: ahead for this game, its refreshes were too full in blend');
@@ -2537,12 +2536,10 @@ export class HDView {
     // screen stretches it. A game keeping up is never touched.
     let fw = c.canvas.width, fh = c.canvas.height;
     if (!baking && !off && HD.scale == null && Q.force == null && Q.lvl >= 1 && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
-    // With frame generation on, each real frame has two (or more) refreshes' time, so the 3D is drawn with
-    // more pixels (SGSR 2 has less to make up). Not while it's on to save power; the stutter shield's
-    // short spells neither add nor take away pixels (a change of size costs a frame of its own). The
-    // resolution steps still take them back if the phone can't keep up.
-    const fgMore = !baking && !off && G && !fgSaving() && frameGenSteady(speed.game) ? FG_PX : 1;
-    let pw = fw, ph = fh; const px = baking === 'small' ? Math.min(T.px, PIC_PX) : T.px * fgMore, q = HD.scale ?? Math.min(1, Math.sqrt(px / (pw * ph))) * HD.res;
+    // (Frame generation leaves the 3D's size as it is. It used to give each real frame 1.6 times the pixels, as its
+    // two refreshes' time, but the made frames take some of that time, and the Fold is held back by its pixels:
+    // the real frame got slower, which is the opposite of what frame generation is for.)
+    let pw = fw, ph = fh; const px = baking === 'small' ? Math.min(T.px, PIC_PX) : T.px, q = HD.scale ?? Math.min(1, Math.sqrt(px / (pw * ph))) * HD.res;
     pw = Math.max(16, Math.round(pw * q)); ph = Math.max(16, Math.round(ph * q));
     if (!baking && !off) { HD.info.rw = pw; HD.info.rh = ph; HD.info.ow = fw; HD.info.oh = fh; }   // the 3D's own size and the final picture's (the frame lab's resolution counter)
     // The 3D is drawn at pw x ph (fewer pixels on big screens and when the phone struggles). Below the
@@ -2791,14 +2788,13 @@ function forPass(r, view, go) {
 // half as much again to spare. A picture that needs more makes the lists anew, which gives the scene's lights
 // a new key: every lit shader's text written until then is thrown away and written again in the frames (10 to
 // 28 ms each on the build machine, for a village of houses). The first picture is often a small one: a build's
-// 4 x 4 stand-in, a canvas nothing has sized yet, a card's small picture; and frame generation, once it is
-// steady, draws the game with FG_PX times the pixels. So before a view's first build or frame the grid is given
+// 4 x 4 stand-in, a canvas nothing has sized yet, a card's small picture. So before a view's first build or frame the grid is given
 // room for the most pixels a frame of this tier can have. (The kit's shadow maps keep away from it: KitLighting.)
 const gridAsked = new WeakMap();
 function gridRoom(r, view) {
   const n = r.gsClustered && view?.scene?.isScene ? r.lighting.getNode(view.scene) : null;
   if (!n?.isClusteredLightsNode) return;
-  const cv = r.domElement, px = HD.scale != null ? Math.max(cv.width * cv.height, 16384) : tier().px * FG_PX;
+  const cv = r.domElement, px = HD.scale != null ? Math.max(cv.width * cv.height, 16384) : tier().px;
   if ((gridAsked.get(n) || 0) >= px) return;
   gridAsked.set(n, px);
   const side = Math.ceil(Math.sqrt(px)); n.setSize(side, side);

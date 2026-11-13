@@ -67,6 +67,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
 | What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 13 min |
+| What frame generation costs and gives on a real phone (pictures a second, the made frames' chip time) | the tour's frame generation runs: QA panel › Phone test tour › Frame generation (see below) | about 8 min |
 | The tour itself (`src/tour.js`, `src/detail-tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 2 min |
 | Everything (before a big engine PR) | `node scripts/smoke.cjs` (all 162 games) | about 3.5 min |
 
@@ -279,6 +280,44 @@ scenes, `only: ['valley']` for one); `node scripts/app-test.cjs tour` flies smal
 counts, the stage, and that the feed comes back as it was. A new detail system gets a scene in
 `src/detail-scenes.js`: `[key, name, what it tries, make]`, where `make({ gs, HD, size, gpu })` gives
 `{ v, holds, modes: [{ key, name, enter(draw) }], path(t, cam), tell(), dispose() }`.
+
+### Frame generation on a phone
+
+Under **Play**, **Frame generation** flies four of those scenes (the town, the square, the forest and the
+yard: houses and shadows, people, thin leaves, smoke and fire) with their system on, four ways each:
+
+- as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone),
+- half the screen's rate drawn and nothing made,
+- half drawn with the refreshes between made by blending between the last two drawn frames,
+- half drawn with the refreshes between guessed ahead of the newest.
+
+Each run is paced the way the app paces a game (`src/main.js` `frame()`: a real frame on a steady beat,
+and `speed.between` on the refreshes between). Frame generation is forced on or off for the run whatever
+Settings say (`speed.forceFrameGen`), and the screen is asked for the rate a game drawn that way would get
+(`speed.standIn`). About 8 minutes at 20 seconds a run.
+
+```
+SQUARE · crowds · 300 people and dogs walking, running and standing in a square · made in 0.4 s
+  120 drawn, none made       112 pictures a second · worst 1% 71 · longest 25 ms · chip 8.1 ms a drawn frame (scene 4.2, …) · code 1.9 ms · 3D at 907 x 1434 · screen 120 Hz
+  60 drawn, none made        60 pictures a second · … · screen 60 Hz
+  60 drawn, 60 blended       116 pictures a second (58 drawn) · … · chip 10.3 ms a drawn frame (…, compute 1.8) · …
+  60 drawn, 60 ahead         118 pictures a second (59 drawn) · …
+  = the frames made: 2.2 ms blended, 1.9 ms ahead of chip time for each drawn frame
+  = 60 drawn, 60 blended against 120 drawn, none made: 116 pictures a second against 112 · worst 1% 80 against 71 · 1.6 times less chip time a picture
+```
+
+(Made-up numbers, to show the shape.) `pictures a second` counts the drawn and made frames that reached
+a refresh (a refresh that showed the same picture again isn't counted), with how many were drawn; worst
+1% and longest are of the gaps between those pictures. `chip` is the graphics chip's time for each drawn
+frame together with the frames made after it, so set against "none made" it is what the made frames
+cost; "chip time a picture" shares it among the pictures it gave. "the page got N refreshes a second"
+shows up when the phone held refreshes back because the chip was behind. On WebGL there is nothing to
+time (frame generation is WebGPU only), and the report says so.
+
+In a test browser, `__gs.tour({ scenes: true, framegen: true, alternate: true, seconds, size, only })`
+runs them (`alternate`: every other refresh is one between real frames, since a software renderer's
+frames come too slowly for a beat); `node scripts/app-test.cjs tour` runs the square that way on WebGPU's
+software renderer.
 
 ## Measuring engine speed: perf-bench
 
