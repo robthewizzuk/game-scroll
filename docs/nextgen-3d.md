@@ -361,10 +361,21 @@ compiles the new shaders in the background and resolves when they're ready, so f
 Anything that still needs a new shader mid-round (a new kind of thing, a swapped material) doesn't
 stop the frame either: it waits, hidden, for a frame or two while its shader builds in the background
 (three.js's `compileAsync`: WebGPU's async pipelines, WebGL's parallel shader compile), then appears.
-It waits at most `__hd.holdMs` (500 ms). Mark something that must show on its very first frame (the
+It waits at most `__hd.holdMs` (500 ms); a mesh drawn in clusters (cluster detail) is drawn whole until
+its clusters' shader is built, however long that takes. Mark something that must show on its very first frame (the
 player, say) `userData.noHold = true`; it then builds in the frame as before. `__hd.hold = false`
 turns waiting off; `__hd.info.held` says how many things are waiting. `node scripts/shader-hold.cjs
 [--webgpu]` measures the difference.
+On WebGPU a shader is built for the picture the scene is drawn into (its layout is part of what three.js
+keeps a shader under), so the background builds are made for that picture and a frame finds them. What
+the frames have not drawn yet (a muzzle flash that is switched off, the wall behind the camera, the next
+room) is built too, one kind of thing at a time for about 3 ms a frame over the view's first frames, so
+turning round or switching a thing on mid-round does not stop a frame: `v.shadersLeft` says how many
+things are still to look at (a loading screen can wait for 0), and `v.precompile()` waits for them once
+the view has drawn a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
+there only gets textures and the canvas's own shaders ready and the first frame builds what it draws.
+The shader-hold script fails on WebGPU if a pipeline or a shader's text is made in the middle of a frame
+for a thing switched on, turned to or added, or for anything at all after a view's first frame.
 `__hd.info` reports `{ calls, tris, cpu, shadows, upscaled, backend, framegen }` for the last frame. The 3D frame is rendered at the tier's pixel count (and lower while the phone struggles), then upscaled to the card's full resolution with **Snapdragon Game Super Resolution 2** (Qualcomm's temporal upscaler, `src/kit/sgsr2.js`): the camera is nudged by a fraction of a pixel each frame and each new small frame is blended into the full-size picture of the frames before, moved by the camera's own move. That gives a sharper, steadier picture than one frame can, and it also runs at full size as anti-aliasing (grass, leaves, wires and thin poles stop shimmering; FXAA is off then). Things that move fast across a still camera can leave a short soft trail (there are no per-object motion vectors), so a view can set `v.upscaler = 'sgsr1'` to use **SGSR 1** (`src/kit/sgsr.js`, one frame, edge-aware sharpening). AR views and frames with screen-space reflections use SGSR 1 too, and `HD.upscaler = 'sgsr1'` switches every view. `HD.upscale = false` shows the plain stretched picture for comparison, and `node scripts/upscale-compare.cjs` scores plain, SGSR 1 and SGSR 2 against a supersampled picture (`--webgpu` for the WebGPU path, which has its own TSL versions of both). SGSR 2 has two changes of ours to Qualcomm's upscale pass, on WebGPU (`hd3d-gpu.js` `sgsr2Gpu`) and on WebGL (`sgsr2.js`): the history is read sharply (Catmull-Rom) instead of bilinearly, which was softening it a little every frame the camera moved, and a pixel that stays put lets its history count for more (up to four times), so a still picture shimmers less. `__hd.sgsrTune = false` draws it as it was, and the comparison draws both and fails if ours comes out worse. On WebGPU, textures under SGSR 2 are read as the screen's size would read them, not as the small picture does (a mip bias of log2(drawn width / screen width), the value FSR 2 and DLSS ask for too): the small picture's mip level is too soft for the screen it is built up to, and the jitter and history settle the finer detail. WebGPU samplers have no bias, so each texture's node is given one through three.js's hook on the renderer's context (`hd3d-gpu.js` `sharpMips`), with no shader patched and nothing added to the cost of a texture read: every standard material's maps get it, and the kit's own shaders that read textures elsewhere (parallax, scattered and position-laid recipes) scale their gradients to match. On the comparison's textured scene the picture came out 8 to 9% closer to the true one at 1.5x and 10 to 11% at 1.8x, with a little more flicker when nothing moves; half a mip level sharper again was closer still with more shimmer, so it stops at the usual value. (Scaling every texture's uv gradients instead was 11 to 16% closer, but explicit gradients are a slower kind of texture read: 15 to 20% of a frame in the software renderer, not measured on a phone, so the bias it is. three has no hook for a bias, so it is handed to the texture's node for the one read three makes after asking for gradients; if a three.js update changes that, textures go back to being read as drawn and the comparison's textured runs fail.) `__hd.mipBias = false` reads textures as drawn (a number adds that many mip levels on top). WebGL keeps the textures as drawn: WebGL 2 has no sampler bias, and the only other way is patching three's shaders. The 2D HUD is always drawn at
 full resolution on top. `v.onTier(T => ...)` lets a game react (for example `spotLight.setTier(T)`).
 
@@ -742,8 +753,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   - It costs about half a millisecond of code a frame on a build machine (`__hd.info.occMs`), so a
     view of fewer than 20,000 triangles and 120 draws is never tried, and a view where it saves next
     to nothing (under 2,000 triangles a frame, or 2% of the frame) rests for a while and tries again
-    later. `__hd.info.occluded` and `occTris` say what the last frame left out; `occAwake` whether it
-    is at work.
+    later. It also rests unless what it leaves out is worth more than finding it costs: on a phone the
+    graphics chip's time goes on pixels more than triangles (a Galaxy Z Fold 8 saved about 9 ms for a
+    million triangles and 0.01 ms a draw), so the triangles and draws left out are turned into
+    milliseconds at those rates and set against the code time it took plus the depth picture's
+    (`occludePays` in `src/kit/occlude.js`). A town where it cut a quarter of the triangles for no
+    gain in frame rate now rests; a view where most of the scene is behind a wall keeps it.
+    `__hd.info.occluded` and `occTris` say what the last frame left out; `occAwake` whether it
+    is at work, `occPays` what the last trial found.
   - Limits: on WebGL, the still things that static batching has merged are left out a merged mesh at
     a time. On WebGPU, a `gs.props` kind picked on the chip (2,000 copies or more) or one that casts
     shadows is not left out copy by copy. The shadow maps do not use it (they keep to what changed
@@ -1016,6 +1033,13 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   knows. `mesh.userData.relief` says how it stands (`'building'`, `'ready'`, `'failed'`: it then just
   draws flat), `await gs.models.relief.ready(target)` waits for it, `relief(target, false)` takes it off
   and `__hd.relief = false` draws them all flat.
+  What it may cost a frame is set by the quality tier, not by how many surfaces a game gave it: the
+  surfaces are drawn to within `__hd.reliefPx` pixels (2.5; cluster detail's own meshes keep 1), and when
+  they come to more triangles a frame than the tier's budget (none on low, where they draw flat, 60,000
+  on medium, 150,000 on high, 300,000 on ultra; `__hd.reliefTris` sets one of your own) every surface
+  is drawn a little more coarsely until they fit. `__hd.info.reliefTris` and `reliefPx` say what the
+  last frame drew. (A village of twelve houses drew 354,000 relief triangles a frame at one pixel on a
+  Fold's picture and ran at 34 frames a second against 58 flat; at 2.5 pixels it draws 117,000.)
   It pays where the depth shows: roofs, stone walls, bark and cobbles seen close or against the light.
   A brick wall's thin mortar takes a great many triangles for little you can see; leave that to the
   normal map, or give it a larger `fine`. Not for materials laid on by position or scattered (`solid`,

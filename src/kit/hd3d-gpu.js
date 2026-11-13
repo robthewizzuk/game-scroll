@@ -543,7 +543,26 @@ export function pcss(light) {
     return lit;
   });
 }
-export function manyLights(r) { r.lighting = new ClusteredLighting(256, 32, 24, 32); r.gsClustered = true; }
+// three's clustered lighting keeps one lights node for a scene and fits its grid of cells to the picture of each
+// render of that scene that is not inside another one. A shadow map the kit draws itself (shadowOps draw, before
+// the frame: three draws its own from inside it) is such a render, so the scene's grid was fitted to the shadow
+// map and back again every frame. A map with more cells than the picture had room for (the sun's 2048 map, on
+// any phone) made the grid's lists of lamps anew, which gives the scene's lights a new key: every lit shader's
+// text written until then was thrown away and written again in the next frames, the ones the background builds
+// were for. So a shadow map the kit draws has a lights node of its own (its materials use no lights: nothing is
+// made for it), and the scene's grid only ever meets the game's own picture.
+class KitLighting extends ClusteredLighting {
+  constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
+  getNode(scene) {
+    if (scene !== this.gsShadowOf) return super.getNode(scene);
+    let n = this.gsShadowNodes.get(scene);
+    if (!n) { n = this.createNode(); this.gsShadowNodes.set(scene, n); this._track?.(n); }
+    return n;
+  }
+  /** go(), with every render of scene inside it taken for a shadow map's. */
+  shadowDraw(scene, go) { const was = this.gsShadowOf; this.gsShadowOf = scene; try { return go(); } finally { this.gsShadowOf = was; } }
+}
+export function manyLights(r) { r.lighting = new KitLighting(256, 32, 24, 32); r.gsClustered = true; }
 /* ---------- sharper textures under SGSR 2 ---------- */
 // A scene drawn smaller than the screen reads its textures for the small picture: a mip level too soft
 // for the screen SGSR 2 builds it up to. The usual answer (FSR 2 and DLSS ask for it too) is a mip bias
@@ -703,11 +722,15 @@ export function shadowOps(r) {
         c.setViewOffset(N, N, x, y, w, h); map.viewport.set(x, y, w, h); map.scissor.set(x, y, w, h); map.scissorTest = true;
       }
       c.layers.mask = mask; node.gsKeep = keep || !!q; node.gsPart = !!q;
-      try { node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera }); }
+      const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
       finally { c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
     },
     copy(l, from, to, qs, px) { if (qs) (blit ||= shadowBlit(r)).copy(from.depthTexture, to, qs, px); else r.copyTextureToTexture(from.depthTexture, to.depthTexture); },
     shift(l, from, to, dx, dy, dz) { (blit ||= shadowBlit(r)).shift(from.depthTexture, to, dx, dy, dz); },
+    // the copies' shaders, built when the kept copy is made (a frame that is building shaders anyway) and not in
+    // the frame the sun first steps a tile, which stopped for the three of them
+    warm(l, map, cache) { (blit ||= shadowBlit(r)).warm(map, cache); },
     make(l) {
       const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
@@ -724,8 +747,9 @@ function shadowBlit(r) {
   const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64;
   const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
   const mesh = new Mesh(geo, null), cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); mesh.frustumCulled = false;
-  const finish = m => { m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
+  const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
   let far = null;
+  const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
   const matFor = tex => {
     let m = mats.get(tex); if (m) return m;
     m = new NodeMaterial(); const dT = texture(tex);
@@ -756,7 +780,13 @@ function shadowBlit(r) {
   return {
     copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; quads(qs, px, to.width); run(matFor(tex), to); },
     shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to); },
-    wipe(to, q, px) { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } ALL2[0] = q; quads(ALL2, px, to.width); run(far, to); },
+    wipe(to, q, px) { ALL2[0] = q; quads(ALL2, px, to.width); run(farMat(), to); },
+    // each of the three drawn once with a rectangle of no size: nothing is written, the shaders and pipelines are made
+    warm(map, cache) {
+      if (warmed.get(cache) === map) return; warmed.set(cache, map);
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1; quads(NONE, 1, map.width);
+      run(matFor(map.depthTexture), cache); run(matFor(cache.depthTexture), map); run(farMat(), map);
+    },
   };
 }
 const ALL2 = [null];
@@ -1695,6 +1725,28 @@ export class GpuChain {
     if (s1) this.s1 = sgsr1Gpu(fin);
     this.pp.outputNode = s1 ? this.s1.node : fin; this.pp.needsUpdate = true;
   }
+  // What a shader built in the background is built for: a small picture laid out as the scene pass's own (how many
+  // pictures, their formats, samples a pixel, a depth picture) and what the pass writes into them. three keeps a
+  // material's shader and its pipeline by that layout, not by the picture itself: built for anything else (the screen,
+  // as it used to be), the pass found neither and built both in the frame the thing first drew, which is the long
+  // frame the build was sent to the background to avoid. (Not the pass's own picture: it is still being read.)
+  // null until the pass has been built.
+  buildFor() {
+    const sp = this.sp, rt = sp?.renderTarget; if (!rt) return null;
+    let sig = rt.samples + '|' + rt.depthBuffer + '|' + rt.stencilBuffer + '|' + (rt.depthTexture ? rt.depthTexture.format + ':' + rt.depthTexture.type : '');
+    for (const t of rt.textures) sig += '|' + t.format + ':' + t.type + ':' + t.colorSpace;
+    const b = this._bf;
+    if (b?.sig !== sig) {
+      // (made afresh, not rt.clone(): a copy's pictures share the pass's own image sizes, and sizing the copy shrank the pass's)
+      b?.rt.dispose();
+      const c = new RenderTarget(4, 4, { count: rt.textures.length, samples: rt.samples, depthBuffer: rt.depthBuffer, stencilBuffer: rt.stencilBuffer });
+      rt.textures.forEach((t, i) => { const q = c.textures[i]; q.format = t.format; q.type = t.type; q.colorSpace = t.colorSpace; q.name = t.name; q.generateMipmaps = false; });
+      if (rt.depthTexture) { const d = new DepthTexture(4, 4, rt.depthTexture.type); d.format = rt.depthTexture.format; c.depthTexture = d; }
+      this._bf = { sig, rt: c, mrt: null };
+    }
+    this._bf.mrt = sp.getMRT?.() ?? null;
+    return this._bf;
+  }
   /** Sets the numbers from the view and tier, then draws. o: { ao (AO resolution, 0 = off), msaa, bloomScale, smooth, bloom, t, hurt, grade, glare, sunUV, sunCol, aspect,
    *  fg (frame generation: { mode: 'blend' | 'ahead', reset, jd: SGSR 2's jitter change in NDC }) }. With fg, returns what it showed ('real' | 'made'). */
   render(o) {
@@ -1853,6 +1905,7 @@ export class GpuChain {
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = null; this.sched = null; this.lastColor = null;
+    this._bf?.rt.dispose(); this._bf = null;
   }
 }
 const AIM_POSE = newPose(), AIM_HOLD = 150;   // fresh aim: the pose a frame was made for; ms the input counts as turning the camera after it last did
