@@ -2397,7 +2397,7 @@ export class HDView {
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');
-    try { shown = ch.render(o) || false; } finally { showAll(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    try { shown = ch.render(o) || false; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
     if (pm >= 0) leave(pm);
@@ -2656,7 +2656,7 @@ export class HDView {
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
-    try { cp.render(); } finally { showAll(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
+    try { cp.render(); } finally { showAll(this); lodBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
     if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.refl = ssr ? 'screen' : ''; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
@@ -3040,7 +3040,14 @@ function shadowSize(sh, n) {
 // Skinned and morphing meshes too (their bone weights and shapes are shared points). Off for instanced and
 // multi-material meshes, see-through ones and userData.noLod. (Sets of copies, gs.props, get levels of
 // their own: autoCopies below.)
-const LOD_MIN_TRIS = 3000, LOD_PX = .6, LOD_KEEP = [.5, .25, .1], LODS = new WeakMap(), LOD_Q = [];
+// The swap is for the frame's drawing only: lodBack() puts each mesh's own geometry back once the frame is
+// drawn, so the game never meets a copy. (It once did: Frost Line reshapes its slope's pieces as it goes and
+// calls mesh.geometry.computeVertexNormals(); run on a far copy's few triangles, that zeroed nine normals in
+// ten of the shared list, and the slope drew black once the rider got near.) A copy is made for the points
+// and triangles as they were then, so a mesh whose points or triangles change is drawn whole, and its
+// copies are made again once it has kept still for LOD_STILL ms (one that changes every frame is drawn whole).
+const LOD_MIN_TRIS = 3000, LOD_PX = .6, LOD_KEEP = [.5, .25, .1], LOD_STILL = 1000;
+const LODS = new WeakMap();   // geometry -> { lv: its levels (null: none yet, or not worth it), pos, ver, idx, iv: what they were made from, due, at }
 let lodReady = false; MeshoptSimplifier.ready.then(() => { lodReady = true; }, () => {});
 function lodLevels(g) {
   const idx = g.index, pos = g.attributes.position;
@@ -3055,14 +3062,32 @@ function lodLevels(g) {
     for (const n in g.attributes) lg.setAttribute(n, g.attributes[n]);
     lg.morphAttributes = g.morphAttributes; lg.morphTargetsRelative = g.morphTargetsRelative;
     lg.setIndex(new BufferAttribute(pos.count > 65535 ? ix : Uint16Array.from(ix), 1));
-    lg.boundingSphere = g.boundingSphere; lg.boundingBox = g.boundingBox; lg.name = g.name + ':lod';
+    lg.boundingSphere = g.boundingSphere; lg.boundingBox = g.boundingBox; lg.name = g.name + ':lod'; lg.userData.gsLodOf = g;
     out.push({ g: lg, err: err * scale, tris: ix.length / 3 });
   }
   return out.length > 1 ? out : null;
 }
+// a geometry's entry in LODS, brought up to date: levels made for points or triangles that have changed since are let go
+function lodEntry(g, now) {
+  let e = LODS.get(g); const p = g.attributes.position, ix = g.index;
+  if (!e) LODS.set(g, e = { lv: null, due: true, at: -Infinity });   // (new: made as soon as there's a frame for it)
+  else if (e.pos === p && e.ver === p.version && e.idx === ix && e.iv === ix?.version && lodLists(g, e.lv)) return e;
+  else { e.lv = null; e.due = true; e.at = now; }   // changed: drawn whole until it keeps still
+  e.pos = p; e.ver = p?.version; e.idx = ix; e.iv = ix?.version;
+  return e;
+}
+// the copies still share the geometry's lists (the game may have added, swapped or taken one away)
+function lodLists(g, lv) {
+  if (!lv) return true;
+  const lg = lv[1].g;
+  for (const n in g.attributes) if (lg.attributes[n] !== g.attributes[n]) return false;
+  for (const n in lg.attributes) if (!(n in g.attributes)) return false;
+  return true;
+}
 function autoLod(v, ph) {
+  if (v.lodOn?.length) lodBack(v);   // (each mesh starts the frame as itself)
   if (HD.autoLod === false) return;
-  const cam = v.cam, k = ph / (2 * Math.tan(cam.fov * Math.PI / 360));   // pixels per metre at 1 m
+  const cam = v.cam, k = ph / (2 * Math.tan(cam.fov * Math.PI / 360)), now = performance.now();   // k: pixels per metre at 1 m
   let built = 0;
   v.scene.traverseVisible(o => {
     if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.userData.noLod) return;
@@ -3072,19 +3097,29 @@ function autoLod(v, ph) {
       const g = o.geometry;
       if (!g?.index || g.groups.length > 1 || Array.isArray(o.material) || o.material.transparent || g.index.count < LOD_MIN_TRIS * 3) { o.userData.gsLod = null; return; }
       if (!g.boundingSphere) g.computeBoundingSphere();
-      let lv = LODS.get(g);
-      if (lv === undefined) { if (built++ > 0 || !lodReady) return; try { lv = lodLevels(g); } catch (e) { lv = null; } LODS.set(g, lv); }   // one a frame
-      o.userData.gsLod = L = lv ? { lv, base: g } : null;
+      o.userData.gsLod = L = { base: g };
     }
     if (!L) return;
-    if (o.geometry !== L.base && !L.lv.some(x => x.g === o.geometry)) { o.userData.gsLod = undefined; return; }   // the game swapped the geometry itself
-    const bs = L.base.boundingSphere, e = o.matrixWorld.elements, sc = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
+    const g = L.base;
+    if (o.geometry !== g) { o.userData.gsLod = undefined; return; }   // the game swapped the geometry itself
+    const E = lodEntry(g, now);
+    if (E.due && lodReady && now - E.at >= LOD_STILL && built++ === 0) { E.due = false; try { E.lv = lodLevels(g); } catch (err) { E.lv = null; } }   // one a frame
+    const lv = E.lv; if (!lv || !g.boundingSphere) return;
+    const bs = g.boundingSphere, e = o.matrixWorld.elements, sc = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
     LOD_V.copy(bs.center).applyMatrix4(o.matrixWorld);
     const d = Math.max(.01, LOD_V.distanceTo(cam.position) - bs.radius * sc), px = k * sc / d;
-    let pick = L.lv[0];
-    for (let i = L.lv.length - 1; i > 0; i--) if (L.lv[i].err * px < LOD_PX) { pick = L.lv[i]; break; }
-    if (o.geometry !== pick.g) o.geometry = pick.g;
+    let pick = null;
+    for (let i = lv.length - 1; i > 0; i--) if (lv[i].err * px < LOD_PX) { pick = lv[i].g; break; }
+    if (!pick) return;
+    pick.boundingSphere = g.boundingSphere; pick.boundingBox = g.boundingBox;   // (the game may have made new ones)
+    o.geometry = pick; (v.lodOn ||= []).push(o);
   });
+}
+// after the frame: every mesh drawn by a simpler copy gets its own geometry back
+function lodBack(v) {
+  const list = v.lodOn; if (!list) return;
+  for (const o of list) { const g = o.geometry?.userData.gsLodOf; if (g) o.geometry = g; }
+  list.length = 0;
 }
 const LOD_V = new Vector3();
 // Auto exposure (v.autoExposure): the eye adapting, as every big engine does. A light meter reads the

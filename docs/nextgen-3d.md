@@ -193,7 +193,10 @@ shows it and logs each change. Tests pin a step with `HD.fxStep('bloom', 2)`.
   show as under a pixel: far soldiers and props need a fraction of their triangles and look the
   same. The copies share the original's points, so normals, UVs and bone weights stay exact. Off for
   instanced and multi-material meshes, see-through ones and `mesh.userData.noLod = true`;
-  `__hd.autoLod = false` turns it off. (gs.props makes LODs for instanced props.)
+  `__hd.autoLod = false` turns it off. (gs.props makes LODs for instanced props.) The copy is swapped
+  in for the frame's drawing only: between frames `mesh.geometry` is always the game's own, so a game
+  can reshape it, work out its normals again or build physics from it as usual. A mesh whose points
+  or triangles change is drawn whole, and its copies are made again once it has kept still for a second.
 - Cluster detail (a Nanite-style level of detail, by itself): a big still mesh (20,000 triangles or
   more: a hillside, a cliff, a hall made in code) is cut into clusters of a few hundred triangles with
   coarser and coarser versions of each neighbourhood, and every frame each part of it is drawn only as

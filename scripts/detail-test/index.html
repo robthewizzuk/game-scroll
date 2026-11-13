@@ -140,6 +140,30 @@ try {
   check('v.detail(mesh, false) draws it whole', !v.details.map.has(S.parts[5]) && (S.parts[5].layers.mask & 1));
   HD.detail = false; await draw(S, 2);
   check('HD.detail = false puts every mesh back', v.details.map.size === 0 && (ground.layers.mask & 1) && !v.scene.children.some(o => o.isDetailMesh));
+  // Automatic LOD (a mesh too small for cluster detail drawn by a simpler copy far off): the game never meets the
+  // copy, so a game that reshapes its own mesh and works out its normals again (Frost Line's slope) gets all of
+  // them, and a reshaped mesh is drawn whole until its copies are made again for its new shape
+  {
+    HD.autoLod = true;
+    const L = new gs.hd.HDView({ bg: '#9ab4d0', amb: .35 }), lc = document.createElement('canvas'); lc.width = W; lc.height = H; const lx = lc.getContext('2d');
+    const g = land(60, 30), hill = new T.Mesh(g, gs.hd.pbr('#dfe7f2', { rough: .9 })); L.scene.add(hill);
+    L.cam.position.set(0, 25, 95); L.cam.lookAt(0, 0, 0);   // (a small hill well off, inside the camera's 120 m)
+    const frame = async () => { L.t = 0; L.render(lx, W, H); await nextFrame(); return HD.info.tris; };
+    const whole = g.index.count / 3, until = async (ok, ms) => { let t = 0; for (const t0 = performance.now(); performance.now() - t0 < ms;) { t = await frame(); if (ok(t)) break; await new Promise(r => setTimeout(r, 40)); } return t; };
+    const drawn = t => t > whole * .05 && t < whole * .8;   // (on WebGPU nothing at all draws while its shader is built)
+    const far = await until(drawn, 15000);
+    check('auto LOD: a far mesh is drawn by a simpler copy', drawn(far), `${far} of ${whole} triangles`);
+    check('auto LOD: between frames the game meets its own geometry', hill.geometry === g);
+    const p = hill.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) * -.7 + 2 * Math.sin(p.getX(i) * .13));
+    p.needsUpdate = true; hill.geometry.computeVertexNormals();
+    const n = hill.geometry.attributes.normal; let zero = 0; for (let i = 0; i < n.count; i++) if (!n.getX(i) && !n.getY(i) && !n.getZ(i)) zero++;
+    check('auto LOD: a game working out its normals again gets all of them', zero === 0, `${zero} of ${n.count} zero`);
+    const after = await frame();
+    check('auto LOD: a reshaped mesh is drawn whole', after >= whole, `${after} of ${whole} triangles`);
+    const again = await until(drawn, 8000);
+    check('auto LOD: its copies are made again once it keeps still', drawn(again), `${again} of ${whole} triangles`);
+  }
   HD.detail = true;
   window.result = { out, info, checks };
 } catch (e) { window.result = { error: String(e && e.stack || e) }; }
