@@ -99,6 +99,15 @@ Nothing a game can ask for from `gs.fx3d`, `v.reflect()` or `v.bakeLight()` keep
 - **Reflections**: the scene's pass writes one more picture (which pixels are the marked shiny things,
   and how rough) and three's `ssr()` node traces only those; on high (half size) and ultra here, where
   WebGL has them on ultra only.
+- **Ray traced reflections** (`hd3d-gpu-trace.js`, the best phones): in place of `ssr()`, a half-size
+  pass sends a ray from each shiny pixel through a copy of the level kept in four storage buffers
+  (three-mesh-bvh's packed tree, walked by its own WGSL functions inside a TSL stage). `trace-scene.js`
+  picks what goes in, `trace-build.js` makes the blocks in a worker (`trace-worker.js`), and the tree
+  over the blocks is our own, written again whenever something moves. The scene's extra picture
+  (`gsRefl`) also says which pixels are things the copy doesn't hold; rays look for those along the
+  screen. The first frames with new buffers are drawn inside a WebGPU error scope: a driver that
+  refuses the shader puts the view back on `ssr()`. Phone ray tracing hardware can't be reached from
+  WebGPU, which is why the rays are walked in a shader.
 - **Light probes**: `v.bakeLight()` bakes with the renderer the view draws with (a `CubeRenderTarget`
   on WebGPU).
 - **The scene pass's pictures**: each extra picture is 8 bytes a pixel and WebGPU promises only 32 in

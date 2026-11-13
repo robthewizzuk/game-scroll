@@ -637,7 +637,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 4 && sheet.opts[3] === 'Engine test scenes (8)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 4 && sheet.opts[3] === 'Engine test scenes (9)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -654,7 +654,7 @@ async function tour(b) {
   // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^Eight scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  check(/^Nine scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
 
@@ -676,8 +676,12 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 8 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard and along a cliff, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 9 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff and a hall, each with its system off and then on', JSON.stringify(sc.scenes));
+  // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
+  check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
+    && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
+    'the hall is walked without reflections and then with them', JSON.stringify(sby.hall));
   check(M('valley', 'on').tris < M('valley', 'off').tris * .8 && /^\d+ mesh(es)? drawn in clusters$/.test(M('valley', 'on').note) && +M('valley', 'on').note.split(' ')[0] >= 1 && /tables [\d.]+ MB/.test(M('valley', 'on').tell),
     'the valley draws fewer triangles through cluster detail, once its clusters are built', JSON.stringify(sby.valley));
   check(M('forest', 'on').tris < M('forest', 'off').tris * .8 && /simpler levels of a fir/.test(M('forest', 'on').note), 'the forest draws fewer triangles with detail levels for its copies', JSON.stringify(sby.forest));
