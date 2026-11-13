@@ -1896,7 +1896,11 @@ person turned or shifted while standing steps round to stand under himself, a fo
 turn like a statue on a turntable. Nothing to call: move the person, then `rig.update(dt, { speed })` as before.
 It works in the poses that stand on the ground (the lifelike walks and runs and standing easy); say so for a
 pose of your own with `rig.add('guard', fn, { ground: true })` (a walk of your own also gives `stance: .6`, the
-share of a stride a foot is down). `rig.stride.feet[0].landed` (left; `[1]` right) is true on the update a foot
+share of a stride a foot is down). Low stances of your own can stand on the ground too: a leg the pose puts down
+on its knee is not stood on, so a kneeling person turned quickly comes round on the knee and steps only the front
+foot, and a change from one way of standing to another (standing easy to a kneel, a kneel to a crouch) moves the
+feet as the poses draw them, with no shuffling after. A quick turn on the spot opens with the foot on the side it
+turns to. `rig.stride.feet[0].landed` (left; `[1]` right) is true on the update a foot
 touches the ground, for a footstep sound. It stands down by itself for a walk on the spot (a figure in a menu),
 a person carried along faster than a slow walk, a far-off person and one that `Reactions` has off its balance;
 `rig.steps = false` leaves every pose as drawn (a person riding on something slow).

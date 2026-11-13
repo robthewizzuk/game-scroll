@@ -2284,7 +2284,32 @@ console.log('physics ok');
   // mixed with standing, a walk keeps its own beat and takes shorter steps (it took longer ones more slowly, and slid)
   { const p = skeleton({}); p.rig.steps = false; p.rig.blend(STR, .5); for (let i = 0; i < 30; i++) p.rig.update(dt, { speed: .5 }); const a = p.rig.blendPhase; for (let i = 0; i < 30; i++) p.rig.update(dt, { speed: .5 });
     const beat = ((p.rig.blendPhase - a + 1) % 1) / .5, own = 1.3 / 1.36 / p.rig.size; assert.ok(Math.abs(beat - own) < .03, `a slow walk steps at the walk's own beat: ${beat.toFixed(3)} strides a second against ${own.toFixed(3)}`); }
-  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance) ok');
+  // low stances of a game's own that stand on the ground: a kneel turns on its knee (its foot behind went 60 to 70 cm from its place and
+  // was stepped up after), a change of stance moves the feet as it draws them (both were left behind and stepped up for a second after);
+  // and a quick turn on the spot opens with the foot on the side it turns to (the feet came within 10 cm of each other)
+  {
+    const { Matrix4 } = await import('three'), inv = new Matrix4();
+    const KNEEL = () => ({ j: { hips: [.04, -.25, 0], spine: [.14, .2, 0], legL: [-1.71, 0, .1], shinL: [1.53, 0, 0], footL: [.12, 0, 0], legR: [.38, 0, -.06], shinR: [1.17, 0, 0], footR: [.92, 0, 0] }, drop: .27 });
+    const DUCK = () => ({ j: { hips: [.25, 0, 0], spine: [.62, 0, 0], legL: [-2.05, 0, .16], shinL: [2.45, 0, 0], footL: [-.17, 0, 0], legR: [-1.9, 0, -.14], shinR: [2.5, 0, 0], footR: [-.38, 0, 0] }, drop: .311 });
+    const low = (secs, fn) => {
+      const p = skeleton({}), R = { steps: [0, 0], far: 0, close: 9 }; p.rig.add('kneel', KNEEL, { time: 4, ground: true }); p.rig.add('duck', DUCK, { time: 3.5, ground: true });
+      for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+        const t = i * dt; p.rotation.y = fn(p, t); p.rig.update(dt); p.updateMatrixWorld(true); inv.copy(p.matrixWorld).invert();
+        p.rig.stride.feet.forEach((f, k) => { if (f.landed) R.steps[k]++; R.far = Math.max(R.far, Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z)); });
+        if (t > .9) R.close = Math.min(R.close, p.bones.footL.getWorldPosition(w).applyMatrix4(inv).x - p.bones.footR.getWorldPosition(new Vector3()).applyMatrix4(inv).x);
+      }
+      return R;
+    };
+    r = low(6, (p, t) => { p.rig.play(t < 1 ? 'idle' : t < 2.5 ? 'kneel' : t < 4 ? 'duck' : 'idle', { fade: .2 }); return 0; });
+    assert.ok(r.steps[0] + r.steps[1] <= 1 && r.far < .08, `standing easy, a kneel, a crouch and up again: ${r.steps[0] + r.steps[1]} steps, a foot ${(r.far * 100).toFixed(0)} cm from where the pose has it`);
+    for (const dir of [1, -1]) {
+      r = low(3, (p, t) => { p.rig.play('kneel', { fade: .16 }); return dir * 4 * Math.max(0, Math.min(.5, t - 1.5)); });
+      assert.ok(r.far < .35 && r.steps[1] === 0, `a kneel turned 4 rad/s: a foot ${(r.far * 100).toFixed(0)} cm from its place, ${r.steps[1]} steps of the leg on its knee`);
+      r = low(3, (p, t) => { p.rig.play('idle', { fade: .2 }); return dir * 4 * Math.max(0, Math.min(.5, t - 1)); });
+      assert.ok(r.close > .13, `turned 4 rad/s on the spot: the feet ${(r.close * 100).toFixed(0)} cm apart at the closest (24 standing)`);
+    }
+  }
+  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance; kneeling, changes of stance, quick turns) ok');
 }
 
 // momentum between moves (Rig.carried) and follow-through (follow.js): a person's rig takes a new move up with the speed the body had, and

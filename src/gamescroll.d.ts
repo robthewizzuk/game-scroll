@@ -2553,7 +2553,8 @@ export interface RigT {
   /**
    * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
    * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really
-   * goes (a bend, a body faster or slower than its walk), and a person turned or shifted while standing steps round, a foot at a time. Move the person,
+   * goes (a bend, a body faster or slower than its walk), and a person turned or shifted while standing steps round, a foot at a time (a kneel turns on its knee, and a change from one way of standing to another
+   * moves the feet as drawn). Move the person,
    * then call update(dt, { speed }). false leaves every pose as drawn (a person riding on something slow). It stands down by itself for a walk on the
    * spot, a person carried along, a far-off person and one that gs.characters.Reactions has off its balance.
    */
