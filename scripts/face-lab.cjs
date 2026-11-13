@@ -1,12 +1,12 @@
 // The face lab (scripts/face-lab/index.html): people's faces close up under different lights, a row for each
 // person and a column for each light and view, to judge heads, skin, eyes and hair by eye.
-//   node scripts/face-lab.cjs <out.png> [who=0,3] [cols=sun:face,lamp:face] [cell=300x360] [wrap=4] [look=real] [tier=3] [frames=4] [time] [noao] [noshadow] [nocontact] [blinks] [--webgpu]
+//   node scripts/face-lab.cjs <out.png> [who=0,3] [cols=sun:face,lamp:face] [cell=300x360] [wrap=4] [look=real] [tier=3] [frames=4] [time] [noao] [noshadow] [nocontact] [nowet] [blinks] [--webgpu]
 // Lights: sun, overcast, lamp, indoor, back. Views: face, eyes, nose, front, side, bust, body. See the page for the rest.
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
   const argv = process.argv.slice(2), gpu = argv.includes('--webgpu'), [out, ...q] = argv.filter(a => !a.startsWith('--'));
-  if (!out) { console.log('usage: face-lab.cjs <out.png> [who=0,3] [cols=light:view,...] [cell=300x360] [wrap=4] [look=real] [tier=3] [frames=4] [time] [noao] [noshadow] [nocontact] [blinks] [--webgpu]'); process.exit(2); }
+  if (!out) { console.log('usage: face-lab.cjs <out.png> [who=0,3] [cols=light:view,...] [cell=300x360] [wrap=4] [look=real] [tier=3] [frames=4] [time] [noao] [noshadow] [nocontact] [nowet] [blinks] [--webgpu]'); process.exit(2); }
   const vite = await import('vite'), port = +(process.env.PORT || 4187);
   const server = await vite.createServer({ server: { port }, mode: 'bundled', logLevel: 'error' }); await server.listen();
   const icd = path.join(path.dirname(chromium.executablePath()), 'vk_swiftshader_icd.json');

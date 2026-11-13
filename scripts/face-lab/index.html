@@ -6,7 +6,7 @@
 //   &who=0,3,7 (which of the twelve)   &cols=sun:face,overcast:face,lamp:face,indoor:face   light:view
 //   lights: sun (a clear day), overcast (soft and even), lamp (a street lamp at night), indoor (a window to one side), back (the sun behind)
 //   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
-//   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &blinks (let them blink)
+//   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &nowet (a real face's wet film over the eyes left out)   &blinks (let them blink)
 //   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
 //   &wrap=4 (cells to a row of the sheet: people run on across rows)   &look=clean|real (every person drawn in that look)   &pose=idle   &mouth=.5 (open it)   &expr=smile:1 (a face shape set)
 import gs, { loadParts } from '../../src/gamescroll.js';
@@ -67,6 +67,7 @@ try {
   for (let r = 0; r < pick.length; r++) {
     const p = human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
+    if (Q.has('nowet') && p.wet) p.wet.visible = false;   // (&nowet: a real face's wet film over the eyes left out)
     p.rig.play?.(Q.get('pose') || 'idle'); for (let i = 0; i < 30; i++) p.rig.update(1 / 30);
     if (Q.has('expr')) for (const e of Q.get('expr').split(';')) { const [k, a] = e.split(':'); p.face?.set?.(k, +a); }
     if (Q.has('mouth')) p.face?.mouth?.(+Q.get('mouth'));

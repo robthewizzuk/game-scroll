@@ -29,9 +29,9 @@ import { slimShared, floatsOf } from '../slim.js';
 const PI = Math.PI, abs = Math.abs;
 
 // ---- which material each kind of surface is drawn with (a maker's own slots say theirs: { colour, as })
-const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'hard', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
+const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
   belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
-const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
+const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair', 'lash'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
 
 // ---- the grain's seams, worked out once for a piece and kept with it (and with its mirrored and turned copies, made once too)
 // The grain of skin, cloth and leather is laid on by the way each point faces (0 from above, 1 from the side, 2 from the front).
@@ -178,6 +178,7 @@ function mats() {
   // over them has it (wetOf), drawn adding its light only, so the eye shows through it
   { const t = new DataTexture(paintIris(), IRIS.w, IRIS.w, RGBAFormat, UnsignedByteType); t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; t.name = 'human:iris';
     MATS.eyesReal = pbr('#ffffff', { rough: .5, vertexColors: true }); MATS.eyesReal.map = t; MATS.eyesReal.color.setScalar(1 / IRIS.plain); }
+  MATS.lash = pbr('#ffffff', { rough: .8, vertexColors: true }); MATS.lash.envMapIntensity = .3;   // (a real face's lashes: thin and dark, so a shine on them would be all reflection, and it came out pink, the skin's)
   MATS.wet = pbr('#000000', { rough: .05 }); Object.assign(MATS.wet, { transparent: true, depthWrite: false, blending: AdditiveBlending });
   // hair: combed strands in a small picture made in code (human-paint.js), over the hair's own colour and its sculpted locks
   { const { colour, normal } = paintHair(), tex = (px, srgb) => { const t = new DataTexture(px, HAIR.w, HAIR.h, RGBAFormat, UnsignedByteType); if (srgb) t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = RepeatWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t; };
@@ -466,7 +467,7 @@ export function human(o = {}) {
   const tu = new InterleavedBuffer(TU, 4);
   const attrs = { position: new BufferAttribute(P, 3), normal: new BufferAttribute(N, 3), color: new BufferAttribute(C, 3), uv: new BufferAttribute(U, 2), skinIndex: new BufferAttribute(SI, 4), skinWeight: new BufferAttribute(SW, 4), gsThin: new InterleavedBufferAttribute(tu, 2, 0), uv1: new InterleavedBufferAttribute(tu, 2, 2) };
   // each level: its triangles in groups by material (close: all six; middle: skin and the rest; far: one)
-  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, M.hair], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
+  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, M.hair, M.lash], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
   const geos = [0, 1, 2].map(L => {
     const by = matsFor[L].map(() => []);
     pieces.forEach((p, pi) => { const I = L ? p.I[L] : seam[pi].I, off = offs[pi]; for (let t = 0; t < I.length; t += 3) { const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, k = cls[b] === cls[c] ? cls[b] : cls[a]; by[groupOf[L](k)].push(a, b, c); } });
