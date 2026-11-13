@@ -404,7 +404,7 @@ function showReport(text, driver) {
 export function openTour(driver) {
   if (running) return;
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
-  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);   // (not games: the Next Gen engine's detail systems, off and on, and frame generation four ways; src/detail-tour.js)
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);   // (not games: the Next Gen engine's detail systems, off and on, and frame generation five ways; src/detail-tour.js)
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>
@@ -422,7 +422,7 @@ export function openTour(driver) {
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
     // (twenty-seven runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
-    est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds four ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by frame generation, blended and then ahead: about ${Math.max(1, Math.round((16 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
+    est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds five ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by frame generation, blended as before, blended as now and then ahead: about ${Math.max(1, Math.round((20 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
       : scenes() ? `Eleven scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((27 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };

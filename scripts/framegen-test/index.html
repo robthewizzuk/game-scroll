@@ -216,6 +216,7 @@ try {
     const steadyCam = jitter ? S.cam.clone() : null, steady = jitter ? pass(S.scene, steadyCam) : null;
     const pps = jitter ? new THREE.RenderPipeline(r) : null; if (pps) { pps.outputNode = steady; pps.outputColorTransform = false; }
     const fg = new FrameGen(r, { flow: Q.get('flow') !== '0', fill: Q.get('fill') !== '0', sharp: Q.get('sharp') !== '0', quick: Q.get('quick') !== '0' });
+    fg.parts = Q.get('parts') === '1';   // (each step its own pass, as the phone test tour times them: the same picture)
     const prev = new THREE.RenderTarget(OW, OH, { type: THREE.HalfFloatType });
     // three's passes draw once per animation frame, so each real frame waits for the next one
     const t0 = 1.3, frame = async (t, shake = jitter) => {

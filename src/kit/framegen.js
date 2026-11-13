@@ -658,7 +658,7 @@ export class FrameGen {
   /** Call after the last make() between a pair and BEFORE the next real frame is drawn: copies the newest frame to be next time's last frame. */
   keep() {
     if (!this.frames) return;
-    const list = this.cKeepC ? [this.cKeepC, this.cKeepD] : [this.cKeepD]; list.gsPart = 'frame generation';
+    const list = this.cKeepC ? [this.cKeepC, this.cKeepD] : [this.cKeepD]; list.gsPart = this.parts ? 'fg:keep' : 'fg';
     this.r.compute(list);
   }
   /** The share of the screen's tiles (0..1) that took the quick way at the last pair's made frames (a read back: tests and the phone test tour). */
@@ -683,17 +683,21 @@ export class FrameGen {
     // flow (and the cut check that comes with it) is worked out once for each pair of real frames.
     // The tile sort (which tiles take compose's quick way) is done with it, and shared by all the frames made
     // between the pair: everything that doesn't depend on the moment made is worked out once.
-    const steps = [this.cClear, this.cSplat, this.cResolve, this.cFill];
+    const moving = [this.cClear, this.cSplat, this.cResolve, this.cFill], motion = [];
     if (this.flowFor !== this.frames) {
-      this.flowFor = this.frames; steps.push(this.cCutClear);
-      if (U.flowOn.value) steps.push(...this.cLum, ...this.cFlow, this.cCutDecide);
-      this.sorted = !!(U.flowOn.value && U.quick.value); if (this.sorted) steps.push(this.cMarkClear, this.cMark, this.cTiles);
+      this.flowFor = this.frames; motion.push(this.cCutClear);
+      if (U.flowOn.value) motion.push(...this.cLum, ...this.cFlow, this.cCutDecide);
+      this.sorted = !!(U.flowOn.value && U.quick.value); if (this.sorted) motion.push(this.cMarkClear, this.cMark, this.cTiles);
     }
     U.go.value = this.sorted && U.quick.value ? 1 : 0;
-    steps.push(this.cCompose); if (U.fillOn.value) steps.push(...this.cPyr);
-    // (marked for the app's chip time by part: hd3d.js gpuTime)
-    const list = [...steps, this.cInpaint]; list.gsPart = 'frame generation';
-    r.compute(list);
+    const filling = U.fillOn.value ? [...this.cPyr, this.cInpaint] : [this.cInpaint];
+    // marked for the app's chip time (hd3d.js gpuTime): 'fg' as one pass; with parts on (the phone test tour),
+    // each step its own pass, so the report says where a made frame's time goes
+    if (this.parts) {
+      const run = (list, part) => { if (list.length) { list.gsPart = part; r.compute(list); } };
+      run(moving, 'fg:moving'); run(motion, 'fg:motion'); run([this.cCompose], 'fg:picture'); run(filling, 'fg:holes');
+    } else { const list = [...moving, ...motion, this.cCompose, ...filling]; list.gsPart = 'fg'; r.compute(list); }
+    r.gsMade = (r.gsMade || 0) + 1;   // (frames made since the app last counted: hd3d.js gpuTime shares frame generation's chip time among them)
     this.stats.made++; this.stats.ms = this.stats.ms * .9 + (performance.now() - t0) * .1;   // CPU time to queue it (the GPU time is measured by the app)
     return true;
   }

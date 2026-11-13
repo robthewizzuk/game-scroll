@@ -11,6 +11,7 @@
 // --kinds shapes: blend shapes (morph targets) on still things, one held, one coming and going.
 // --query '&quick=0': without the quick way for easy tiles (each line says how many tiles took it: "% quick").
 // --query '&bench=9': also times one more made frame between the same pair, 9 times (the middle one is told).
+// --query '&parts=1': each step of a made frame sent as its own pass, as the phone test tour times them.
 //   node scripts/framegen-test.cjs --check [--save]
 // The quality check the PR check runs when frame generation's code changes: every suite below, each
 // scene no worse than scripts/framegen-test/baseline.json (and better than repeating a frame). --save
