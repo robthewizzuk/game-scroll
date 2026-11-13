@@ -336,11 +336,14 @@ const PAIRS = {
   backend: { title: 'WebGL vs WebGPU', a: 'WebGL', b: 'WebGPU', set: async on => { setGpuPick(on ? 'webgpu' : 'webgl'); if (on) await prepareGPU(); }, needs: () => !!webgpu() || gpuPick() === 'webgl' },
   res: { title: 'Half vs full resolution', a: '50% of the 3D size', b: 'the tier\'s own size', set: on => { HD.scale = on ? null : HD.info.rw && HD.info.ow ? .5 * HD.info.rw / HD.info.ow : .5; } },
   tier: { title: 'Low vs ultra tier', a: 'low', b: 'ultra', set: on => { HD.force = on ? 3 : 0; } },
+  half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
 };
+// half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
+function halfCan() { return HD?.info.backend === 'webgpu' && !/no half/.test(HD.info.half || 'no half'); }
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -354,7 +357,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -462,6 +465,42 @@ async function runFG() {
     images: [{ label: 'real before', cv: worst.t[0].cv }, { label: 'made', cv: worst.m.cv }, { label: 'real after', cv: worst.t[worst.t.length - 1].cv }],
   };
   shots.push(shot); UI.busy(''); viewer(shot);
+}
+
+/* ---------- half check: the chip's time with the kit's own passes in full and in half precision ---------- */
+// Live, while the round plays: full, half, full, half, each 1 s to settle (the chain is built again at each
+// switch, its shaders with it) then 2.5 s of the chip's own time a frame by pass (HD.info.gpuParts). The two
+// runs of each are put together, so the phone warming up over the check counts against both alike.
+async function runHalf() {
+  const s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash('Half check needs a Next Gen or AR game.');
+  if (!halfCan()) return UI.flash(PAIRS.half.no);
+  if (s.state !== 'playing') return UI.flash('Start a round first: the check times the chip while it plays.');
+  const keep = HD.half, was = frozen, sum = { full: { n: 0, ms: 0, by: {} }, half: { n: 0, ms: 0, by: {} } }; let pic = null;
+  setFrozen(false);
+  try {
+    for (const on of [false, true, false, true]) {
+      HD.half = on; UI.busy(`Half check: ${on ? 'half' : 'full'} precision…`);
+      await waitFrames(30, 1000);
+      const S = sum[on ? 'half' : 'full'], t0 = performance.now(); let seen = HD.info.gpuParts;
+      while (performance.now() - t0 < 2500) {
+        await new Promise(r => setTimeout(r, 50));
+        const by = HD.info.gpuParts; if (!by || by === seen) continue;   // (a new one each time the chip's times are read)
+        seen = by; S.n++; S.ms += HD.info.gpuMs; for (const k in by) S.by[k] = (S.by[k] || 0) + by[k];
+      }
+    }
+    pic = await nextGrab(900);   // (in half: the last run's)
+  } finally { HD.half = keep; setFrozen(was); UI.busy(''); }
+  if (!sum.full.n || !sum.half.n) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
+  const F = sum.full, H = sum.half, pc = (f, h) => f > .005 ? ` (${h <= f ? '−' : '+'}${Math.abs(Math.round(100 * (h - f) / f))}%)` : '';
+  const parts = [...new Set([...Object.keys(F.by), ...Object.keys(H.by)])].map(k => ({ k, f: (F.by[k] || 0) / F.n, h: (H.by[k] || 0) / H.n })).sort((a, b) => b.f - a.f);
+  const shot = {
+    kind: 'half', title: 'Half precision check', game: s.def.id,
+    notes: [`chip time a frame: full ${r2(F.ms / F.n)} ms, half ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${HD.info.half})`,
+      ...parts.map(p => `  ${p.k}: full ${r2(p.f)} ms, half ${r2(p.h)} ms${pc(p.f, p.h)}`),
+      `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh} → ${HD.info.ow}x${HD.info.oh} · ${HD.info.upscaled || 'no upscaler'}; in half: SGSR 2's upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare`],
+    images: pic ? [{ label: 'half precision', cv: pic }] : [],
+  };
+  shots.push(shot); viewer(shot);
 }
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
@@ -679,7 +718,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -699,6 +738,7 @@ function panel() {
       case 'ab': UI.menu.hidden = !UI.menu.hidden; break;
       case 'shimmer': runShimmer(); break;
       case 'fg': runFG(); break;
+      case 'half': runHalf(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -796,7 +836,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)

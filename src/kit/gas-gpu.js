@@ -17,6 +17,7 @@ import {
 } from 'three/tsl';
 import { SOURCES, SOLIDS, SOLID, IGNITE, HEAT, BURNS_AT, FLAME, SMOKE_MAX, VMAX, SHARP, NEAR, GAS, emptyField } from './gas.js';
 import { ORIGIN } from './origin.js';
+import { halfFn, halfWanted } from './half.js';
 
 const LK = 10, LSTEP = 1.5;   // the sun's light: this many looks through the smoke towards it, this many cells apart
 const SHADE = .55;            // smoke passes light on as well as stopping it: its own shadow is this much lighter than how much it hides
@@ -300,10 +301,35 @@ export function gpuGas(F) {
 // light away and sends some back: the sun's (as much as gets through the smoke above, more when looking
 // towards the sun), the sky's, and the glow of flames nearby; heat over FLAME shines with the flame's own
 // colours. Half size, then softened and laid over the picture.
-const flameOf = (heat, Q) => {
-  const on = smoothstep(FLAME, FLAME + .3, heat).mul(heat.mul(heat).add(.3)).mul(Q.k.y);
-  return mix(mix(Q.f0, Q.f1, clamp(heat.sub(.5).div(.35), 0, 1)), Q.f2, clamp(heat.sub(.85).div(.5), 0, 1)).mul(on);
-};
+// The walk, in WGSL: the places along the ray, the smoke's depth through a step and what's left of the light
+// (Tr) and colour so far (acc) in full precision; each step's colours (the smoke's, the light on it, the
+// flame's) in half where the chip has it (half.js). The same steps as the TSL it was written from.
+const GAS_MARCH = halfFn('gsGasMarch', `(cam: vec3<f32>, rd: vec3<f32>, tn: f32, tf: f32, n: f32, steps: f32, lo: vec3<f32>, size: vec3<f32>, lk: vec3<f32>,
+    D: texture_3d<f32>, DS: sampler, Lt: texture_3d<f32>, LS: sampler, sun: vec3<f32>, sunCol: vec3<f32>, skyCol: vec3<f32>,
+    c1: vec3<f32>, c2: vec3<f32>, f0: vec3<f32>, f1: vec3<f32>, f2: vec3<f32>, k: vec4<f32>) -> vec4<f32> {
+  var acc = vec3<f32>(0.0); var Tr = 1.0;
+  if (k.w > 0.5 && tf > tn) {
+    let ds = max((tf - tn) / steps, k.z * 0.5); var t = tn + ds * n;
+    // (smoke sends more light on the way it was going: brighter looking towards the sun)
+    let cs = dot(rd, sun); let ph = hf(mix(1.0, ${1 - .4 * .4} / pow(${1 + .4 * .4} - cs * 0.8, 1.5), 0.6));
+    let sc = hf3(sunCol); let kc = hf3(skyCol); let a1 = hf3(c1); let a2 = hf3(c2); let g0 = hf3(f0); let g1 = hf3(f1); let g2 = hf3(f2); let glow = hf(k.y); let dsh = hf(ds);
+    for (var i = 0; i < ${MAXS}; i++) {
+      if (t >= tf || Tr < 0.01) { break; }
+      let w = (cam + rd * t - lo) / size; let g = textureSampleLevel(D, DS, w, 0.0);
+      if (g.x > 0.002 || g.y > ${FLAME}) {
+        let l = hf4(textureSampleLevel(Lt, LS, w * lk, 0.0)); let cover = 1.0 - exp(-(g.x * k.x * ds));
+        let alb = mix(a1, a2, clamp(hf(g.z / max(g.x, 1e-4)), hf(0.0), hf(1.0)));
+        let light = sc * (l.x * ph) + kc * (l.x * hf(0.45) + hf(0.55)) + g1 * (l.y * glow * hf(14.0));
+        let heat = hf(min(g.y, 100.0));
+        let on = smoothstep(hf(${FLAME}), hf(${FLAME + .3}), heat) * (heat * heat + hf(0.3)) * glow;
+        let flame = mix(mix(g0, g1, clamp((heat - hf(0.5)) / hf(0.35), hf(0.0), hf(1.0))), g2, clamp((heat - hf(0.85)) / hf(0.5), hf(0.0), hf(1.0))) * on;
+        acc += vec3<f32>(alb * light * hf(cover) + flame * dsh * hf(2.6)) * Tr; Tr *= 1.0 - cover;
+      }
+      t += ds;
+    }
+  }
+  return vec4<f32>(acc, 1.0 - Tr);
+}`);
 export function gasStage(s, src, U, keep, scaled, ch) {
   const D3 = texture3D(NONE3), L3 = texture3D(NONE3), dT = ch.sp.getTextureNode('depth');
   const Q = {
@@ -312,30 +338,15 @@ export function gasStage(s, src, U, keep, scaled, ch) {
     k: uniform(new Vector4()),   // how much a unit of smoke hides, how bright flame is, a cell's width, on (1) or off
     steps: uniform(48), px: uniform(new Vector2(1, 1)),
   };
+  const inHalf = halfWanted();
   const half = rtt(Fn(() => {
     const q = uv(), d = dT.sample(q).r, vp = getViewPosition(q, d, Q.invProj), wp = Q.camWorld.mul(vec4(vp, 1)).xyz;
     const rd0 = wp.sub(Q.cam), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toVar(), far = select(d.greaterThanEqual(1), float(1e6), L0);
     // where the ray enters and leaves the gas's box
     const inv = select(rd.greaterThanEqual(vec3(0)), vec3(1), vec3(-1)).div(max(abs(rd), vec3(1e-5))).toVar(), a = Q.lo.sub(Q.cam).mul(inv).toVar(), b = Q.lo.add(Q.size).sub(Q.cam).mul(inv).toVar(), t0 = min(a, b), t1 = max(a, b);
     const tn = max(max(t0.x, t0.y), max(t0.z, float(0))).toVar(), tf = min(min(t1.x, t1.y), min(t1.z, far)).toVar();
-    const acc = vec3(0).toVar(), Tr = float(1).toVar();
-    If(Q.k.w.greaterThan(.5).and(tf.greaterThan(tn)), () => {
-      const ds = max(tf.sub(tn).div(Q.steps), Q.k.z.mul(.5)).toVar(), t = tn.add(ds.mul(interleavedGradientNoise(screenCoordinate))).toVar();
-      // (smoke sends more light on the way it was going: brighter looking towards the sun)
-      const cs = dot(rd, Q.sun), ph = mix(float(1), float(1 - .4 * .4).div(pow(float(1 + .4 * .4).sub(cs.mul(.8)), 1.5)), .6).toVar();
-      Loop({ start: int(0), end: int(MAXS), type: 'int' }, () => {
-        If(t.greaterThanEqual(tf).or(Tr.lessThan(.01)), () => { Break(); });
-        const w = Q.cam.add(rd.mul(t)).sub(Q.lo).div(Q.size).toVar(), g = D3.sample(w).level(0).toVar();
-        If(g.x.greaterThan(.002).or(g.y.greaterThan(FLAME)), () => {
-          const l = L3.sample(w.mul(Q.lk)).level(0), cover = float(1).sub(exp(g.x.mul(Q.k.x).mul(ds).negate())).toVar();
-          const alb = mix(Q.c1, Q.c2, clamp(g.z.div(max(g.x, 1e-4)), 0, 1));
-          const light = Q.sunCol.mul(l.x.mul(ph)).add(Q.skyCol.mul(l.x.mul(.45).add(.55))).add(Q.f1.mul(l.y.mul(Q.k.y).mul(14)));
-          acc.addAssign(alb.mul(light).mul(cover).add(flameOf(g.y, Q).mul(ds).mul(2.6)).mul(Tr)); Tr.mulAssign(cover.oneMinus());
-        });
-        t.addAssign(ds);
-      });
-    });
-    return vec4(acc, Tr.oneMinus());
+    return GAS_MARCH({ cam: Q.cam, rd, tn, tf, n: interleavedGradientNoise(screenCoordinate), steps: Q.steps, lo: Q.lo, size: Q.size, lk: Q.lk, D: D3, DS: D3, Lt: L3, LS: L3,
+      sun: Q.sun, sunCol: Q.sunCol, skyCol: Q.skyCol, c1: Q.c1, c2: Q.c2, f0: Q.f0, f1: Q.f1, f2: Q.f2, k: Q.k }, inHalf);
   })(), 1, 1, HALF);
   ch.fxN.push(half);
   let hw = 0, hh = 0;
