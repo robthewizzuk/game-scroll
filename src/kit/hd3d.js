@@ -203,8 +203,10 @@ function startGame(def) {
 // and added up they came to 225 ms a frame, bloom's chain of small passes 66 ms of it, while the frames came every
 // 16.7 ms. Each read is checked against the time its frames took; after BAD of the last 10 reads don't fit, the
 // chip's times are left alone for the rest of the session (HD.info.gpuOff: null, as on WebGL, and the quality
-// steps, the effects' sizes and the gas go by frame times).
-export const chipFits = (gpuMs, wallMs) => !(gpuMs > wallMs * 1.3 + 1);
+// steps, the effects' sizes and the gas go by frame times). Twice the frames' time (and 2 ms) is let by, and reads
+// with made frames in them aren't judged: a software chip (the tests' SwiftShader) works on several threads, so
+// its times run past its frames now and then (up to 3.7x, 2026-11-13) and well past them while it makes frames.
+export const chipFits = (gpuMs, wallMs) => !(gpuMs > wallMs * 2 + 2);
 const BAD = 6;
 const GT = { n: 0, busy: false, full: true, at: 0, fits: [] }, PARTS = new Map();
 function partOf(o, rt) {
@@ -260,7 +262,7 @@ function gpuTime(r, full = true) {
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
     if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; GT.at = now - wall * n; return; }   // nothing read: those frames count towards the next read
     const f = (draw + comp) / n;
-    if (wall > 0 && wall < 250) {
+    if (!made && wall > 0 && wall < 250) {
       GT.fits.push(chipFits(f, wall)); if (GT.fits.length > 10) GT.fits.shift();
       if (GT.fits.filter(x => !x).length >= BAD) { chipOff(); return; }
     }

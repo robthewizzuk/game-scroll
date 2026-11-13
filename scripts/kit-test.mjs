@@ -5919,9 +5919,9 @@ console.log('physics ok');
 // from stage boundaries, so a chain of passes overlap and add up to more than the frames take
 {
   const { chipFits } = await import('../src/kit/hd3d.js');
-  assert.ok(chipFits(9, 16.7) && chipFits(16, 16.7) && chipFits(22, 16.7), 'a chip busy for its whole frame, or a read that lags a frame, fits');
-  assert.ok(!chipFits(225, 16.7) && !chipFits(60, 33.3), 'more of the chip\'s time than the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
-  assert.ok(chipFits(1.2, .2) && !chipFits(1.5, .2), 'a tiny frame is given a millisecond\'s slack');
+  assert.ok(chipFits(9, 16.7) && chipFits(16, 16.7) && chipFits(34, 16.7), 'a chip busy for its whole frame, or a read that lags a frame or overlaps on a software chip, fits');
+  assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
+  assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
   console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
 }
 
