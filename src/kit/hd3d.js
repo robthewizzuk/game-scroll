@@ -1625,14 +1625,19 @@ export class HDView {
    * frame or two while three builds it on the driver's own threads (compileAsync: WebGPU's
    * createRenderPipelineAsync, WebGL's KHR_parallel_shader_compile), instead of the whole frame stopping
    * while it builds. What's there on the view's first frame, or when precompile() finishes, never
-   * waits. It waits at most HD.holdMs (500 ms), then draws anyway. userData.noHold draws a mesh at
+   * waits. It waits at most HD.holdMs (500 ms), then draws anyway (a cluster twin waits for its shader
+   * however long it takes: its mesh draws meanwhile). userData.noHold draws a mesh at
    * once; HD.hold = false turns it all off.
    */
   holdNew(r, skip, now, rt = null, mrt = null) {   // rt, mrt: the picture the scene is drawn into (shaders are built for it)
     const held = this.held ||= new Map(), seen = this.shSeen ||= new Set(), jobs = this.shJobs ||= new Map();
-    // the ones whose shaders are ready (or waited long enough) come back
-    for (const [o, j] of held) if (j.done || now - j.t0 > HD.holdMs || skip || HD.hold === false) { o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); held.delete(o); }
-    for (const [k, j] of jobs) if (j.done || now - j.t0 > HD.holdMs) { seen.add(k); jobs.delete(k); }
+    // the ones whose shaders are ready (or waited long enough) come back. A thing something else draws in the
+    // place of (a cluster twin: its mesh, detailShow) waits for its build however long that takes (j.keep): on
+    // WebGPU three leaves a thing out of the frame while its pipeline is being made, so a twin let go early drew
+    // nothing, and its mesh was hidden for it by then
+    const late = j => !j.keep && now - j.t0 > HD.holdMs;
+    for (const [o, j] of held) if (j.done || late(j) || skip || HD.hold === false) { o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); held.delete(o); }
+    for (const [k, j] of jobs) if (j.done || late(j)) { seen.add(k); jobs.delete(k); }
     if (skip || HD.hold === false) return;
     // the first frame, and after warm() or precompile() (which built the hidden things' shaders too), are where
     // the waiting starts from: what's there now draws at once
@@ -1660,7 +1665,7 @@ export class HDView {
         const onLayer = go => inReach(o, go);
         try { (r.isWebGPURenderer ? compileGPU(r, o, this.cam, this.scene, onLayer, this) : Promise.resolve(forPicture(() => r.compileAsync(o, this.cam, this.scene)))).then(fin, fin); } catch (_) { fin(); }
       }
-      if (!j.done) { held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
+      if (!j.done) { if (o.isDetailMesh) j.keep = true; held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
     });
     HD.info.held = held.size;
   }

@@ -361,7 +361,8 @@ compiles the new shaders in the background and resolves when they're ready, so f
 Anything that still needs a new shader mid-round (a new kind of thing, a swapped material) doesn't
 stop the frame either: it waits, hidden, for a frame or two while its shader builds in the background
 (three.js's `compileAsync`: WebGPU's async pipelines, WebGL's parallel shader compile), then appears.
-It waits at most `__hd.holdMs` (500 ms). Mark something that must show on its very first frame (the
+It waits at most `__hd.holdMs` (500 ms); a mesh drawn in clusters (cluster detail) is drawn whole until
+its clusters' shader is built, however long that takes. Mark something that must show on its very first frame (the
 player, say) `userData.noHold = true`; it then builds in the frame as before. `__hd.hold = false`
 turns waiting off; `__hd.info.held` says how many things are waiting. `node scripts/shader-hold.cjs
 [--webgpu]` measures the difference.
