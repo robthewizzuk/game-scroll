@@ -9,14 +9,14 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
   attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
-  modelViewProjection, acos, getParallaxCorrectNormal, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
+  modelViewProjection, acos, getParallaxCorrectNormal, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, sample, packNormalToRGB, unpackRGBToNormal, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
 } from 'three/tsl';
 import * as TSL from 'three/tsl';
 import { lut3D } from 'three/examples/jsm/tsl/display/Lut3DNode.js';
@@ -25,6 +25,7 @@ import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
+import { eachShown } from './scene-list.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
 import { RECIPES } from './models/recipes.js';
@@ -1092,7 +1093,25 @@ const drawnOver = m => seeThrough(m) && m.depthWrite === false;
 const surface = node => new PerMaterial(m => drawnOver(m) ? vec4(0) : node);
 // (the normals picture's alpha: 1 where the pixel takes no ambient occlusion. See-through things that do write
 // depth, water and glass, are the surface at their pixels: their normal goes in whole, with no AO on them)
-const normalOut = skip => new PerMaterial(m => drawnOver(m) ? vec4(0) : vec4(normalView, skip || seeThrough(m) ? 1 : 0));
+// (kept in 8 bits a channel, as three's own examples keep it: the view-space normal moved into 0..1, packNormalToRGB; the
+// readers take it back through sceneNormals below. A zero left by the pass's clear, or by something drawn over, stays zero)
+const normalOut = skip => new PerMaterial(m => drawnOver(m) ? vec4(0) : vec4(packNormalToRGB(normalView), skip || seeThrough(m) ? 1 : 0));
+/**
+ * The scene pass's pictures in fewer bytes (Rob's Fold, 2026-11-13: three quarters of the chip's frame went on the passes
+ * that read the scene's pictures, so bytes read and written a pixel are what it pays for): the normals in 8 bits a channel
+ * (half the bytes; the alpha only says whether a pixel takes ambient occlusion) and the motion in two channels (its other
+ * two were never read: frame generation, SGSR 2 and motion blur read x and y). The see-through mask keeps four (frame
+ * generation reads all of it). Before the pass is first drawn (the formats are what its pipelines are built for).
+ */
+function slimPictures(sp, { normals, motion }) {
+  if (normals) { const t = sp.getTexture('normal'); t.type = UnsignedByteType; t.colorSpace = NoColorSpace; }
+  if (motion) sp.getTexture('velocity').format = RGFormat;
+}
+/** The scene's normals as the readers want them (view space, -1..1; zero where nothing solid was drawn): a node that can be sampled anywhere. */
+function sceneNormals(sp) {
+  const t = sp.getTextureNode('normal');
+  return sample(q => { const c = t.sample(q); return select(dot(c.rgb, c.rgb).lessThan(1e-6), vec3(0), unpackRGBToNormal(c.rgb)); });
+}
 const ownBlend = (m, names) => { for (const n of names) m.setBlendMode(n, OWN); return m; };
 
 /** A material that takes no ambient occlusion (hd3d.js seeThrough3d: see-through, cut-out, noAO). */
@@ -1294,7 +1313,7 @@ export function gpuContact(cs) {
       if (cs.mat.map !== a.texture) { cs.mat.map = a.texture; cs.mat.needsUpdate = true; }
       dark.value = cs.depth.userData.dark.value;
       const hidden = [];
-      scene.traverseVisible(o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && (!o.castShadow || o.userData.noContact)) hidden.push(o); });
+      eachShown(scene, o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && (!o.castShadow || o.userData.noContact)) hidden.push(o); });
       for (const o of hidden) o.visible = false;
       const bg = scene.background, fog = scene.fog, fogN = scene.fogNode, env = scene.environment, prevT = r.getRenderTarget(), clr = r.getClearAlpha();
       scene.background = null; scene.fog = null; scene.fogNode = null; scene.overrideMaterial = over;
@@ -1378,7 +1397,7 @@ function touches(U, col, t, k) {
 // the rest a plain bilinear read, alpha kept (AR draws over the camera). It works in WebGL's frame
 // (rows counted from the bottom), as the shader was written, by turning the reads over.
 function sgsr1Gpu(src) {
-  const low = rtt(src, 1, 1, { depthBuffer: false, type: HalfFloatType }), vp = uniform(new Vector4(1, 1, 1, 1)); low.renderTarget.gsPart = 'upscale';   // 1/w, 1/h, w, h of the small picture
+  const low = rtt(src, 1, 1, { depthBuffer: false, type: HalfFloatType }), vp = uniform(new Vector4(1, 1, 1, 1)); low.renderTarget.gsPart = 'finish';   // 1/w, 1/h, w, h of the small picture
   const node = Fn(() => {
     const H = int(vp.w), hi = ivec2(int(vp.z).sub(1), H.sub(1));
     const g = p => low.load(ivec2(p.x, H.sub(1).sub(p.y))).g;
@@ -1480,7 +1499,7 @@ ${S2_TAPS.map(([x, y], i) => `  { let c = hf3(c${i}); let o = s + hf2(${x.toFixe
 function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
     fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()) };
-  const low = rtt(fin, 1, 1, { depthBuffer: false }); low.renderTarget.gsPart = 'upscale';
+  const low = rtt(fin, 1, 1, { depthBuffer: false }); low.renderTarget.gsPart = 'finish';   // (the finishing pass: hd3d.js gpuTime tells it apart from SGSR 2's own)
   // convert: motion back to last frame from the nearest depth and the camera's move, and the depth clip
   const conv = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1);
@@ -1638,7 +1657,7 @@ export class GpuChain {
     // scene pass: see-through things blend right whatever order they're drawn in (glass behind glass, smoke in water)
     const sp = this.sp = (oitOn ? oitPass : pass)(this.scene, this.cam, { samples: msaa || 0 });
     // frame generation and SGSR 2: the scene's pass also writes each pixel's motion and where see-through things are
-    if (mrtOn && this.clear) sp.setMRT(frameGenMRT());
+    if (mrtOn && this.clear) { sp.setMRT(frameGenMRT()); slimPictures(sp, { motion: true }); }
     if (this.clear) {
       // AR: just the scene on a see-through background, tone mapped (bloom and the grade would tint the room behind it);
       // with SGSR 1, drawn small and upscaled (tone mapping named outright: drawn outside the pipeline's own)
@@ -1661,7 +1680,9 @@ export class GpuChain {
     if (reflOn) nrm.gsRefl = tr ? new PerMaterial(m => drawnOver(m) ? vec4(0) : TR.tracedMRT(m)) : surface(reflMRT());
     // (motion blur alone: velocity for each thing's own move; see-through things leave the motion behind them, as frameGenMRT's do)
     const pics = mrtOn ? frameGenMRT(nrm) : mbOn ? ownBlend(mrt({ output, velocity: new PerMaterial(m => seeThrough(m) ? vec4(0) : vec4(velocity, 0, 1)), ...nrm }), ['velocity']) : aoOn ? mrt({ output, ...nrm }) : null;
-    if (pics) sp.setMRT(ownBlend(pics, Object.keys(nrm)));
+    if (pics) { sp.setMRT(ownBlend(pics, Object.keys(nrm))); slimPictures(sp, { normals: !!nrm.normal, motion: mrtOn || mbOn }); }
+    // (what reads the normals reads them through this: ambient occlusion and its smoothing, bounce light, reflections)
+    this.nrmN = nrm.normal ? sceneNormals(sp) : null;
     const U = this.U;
     let colT = sp.getTextureNode('output');
     // (OIT: the see-through things are blended over the scene by the pass node itself, so that's what's read on)
@@ -1672,7 +1693,7 @@ export class GpuChain {
     // traced through them in cones: off-screen walls count too, the level's shape built once).
     // (its noise is the same every frame: no pass right after it averages a changing one over frames)
     if (giOn && aoOn) {
-      const dN = sp.getTextureNode('depth'), nN = sp.getTextureNode('normal'), dif = sp.getTextureNode('diffuse'), C = colT;
+      const dN = sp.getTextureNode('depth'), nN = this.nrmN, dif = sp.getTextureNode('diffuse'), C = colT;
       let g;
       if (giOn === 'voxel') {
         const n = this.giN = vxgi(dN, nN, this.scene, this.cam, this.giRes || 64); n.useTemporalFiltering = false; n.bounces = 1;
@@ -1693,11 +1714,11 @@ export class GpuChain {
     if (reflOn) colT = tr ? TR.traceStage(this, sp, colT, tr) : reflStage(this, sp, colT);
     let lit = colT.rgb, aoF = float(1);
     if (aoOn) {
-      this.aoN = ao(sp.getTextureNode('depth'), sp.getTextureNode('normal'), this.cam);
+      this.aoN = ao(sp.getTextureNode('depth'), this.nrmN, this.cam);
       Object.assign(this.aoN, { resolutionScale: 1 });
       this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = 12;
       // (WebGL's GTAOPass smooths its own noise; here three's denoise does it)
-      this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), sp.getTextureNode('normal'), this.cam);
+      this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), this.nrmN, this.cam);
       this.dnN.noiseNode = texture(denoiseNoise());   // (the same noise for every view and every run: denoiseNoise above)
       aoF = mix(float(1), this.dnN.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
     }

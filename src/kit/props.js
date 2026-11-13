@@ -21,6 +21,7 @@
 // `lod: false` keeps every copy whole.
 
 import { timed } from './prof.js';
+import { sceneEdited } from './scene-list.js';
 import { Vector3, Box3, Color, Matrix4 } from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -89,7 +90,7 @@ export function perCopy(im, { renderer = null } = {}) {
   if (n) m.addInstances(n);
   for (let i = 0; i < n; i++) { im.getMatrixAt(i, PM4); m.setMatrixAt(i, PM4); if (im.instanceColor) { im.getColorAt(i, PC); m.setColorAt(i, PC); } }
   m.computeBVH();
-  const par = im.parent; if (par) { par.children[par.children.indexOf(im)] = m; m.parent = par; im.parent = null; }
+  const par = im.parent; if (par) { par.children[par.children.indexOf(im)] = m; m.parent = par; im.parent = null; sceneEdited(par); }
   return m;
 }
 

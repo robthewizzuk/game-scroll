@@ -730,6 +730,16 @@ async function tour(b) {
     && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
+  // two runs at the chip's own times by pass (Rob's Fold, the village, 2026-11-13): the chip took 1.8 times as long in the second,
+  // and so did the passes that do the same work in both, so the report says the work is the same and that the chip slowed down
+  const work = await q.evaluate(async () => {
+    const { sceneLines } = await (await __gs.tourKit()).scenesKit();
+    const run = (key, name, fps, chip, by) => ({ key, name, frames: 600, fps, low: 40, worst: 30, work: 3, tris: 1000, calls: 50, chip, chipBy: by });
+    const one = { key: 'village', name: 'Village', what: 'real surface detail', modes: [run('off', 'flat', 85, 10.3, { upscale: 4.1, scene: 1.9, ao: 1.7, bloom: 1.5, compute: .6, show: .4 }), run('on', 'real', 50, 18.1, { upscale: 6.9, scene: 4.3, ao: 2.9, bloom: 2.6, compute: .8, show: .6 })] };
+    return sceneLines(one, 120).join('\n');
+  });
+  check(/\n  = real against flat: 1\.7 times slower · 1\.8 times more chip time · the same chip work \(the chip ran 1\.7 times slower in this run: go by the work\) · the same triangles/.test(work),
+    'set against the passes that do the same work in both runs, a run in which the chip slowed down costs the same work', work);
   // one scene alone, on a bigger screen: in a picture that small a brick's depth is under a pixel, and a surface is then drawn as flat as before.
   // Each of its timed frames is held up for over half a second, which is what a slow build machine's are at this size. They are frames
   // all the same: they used to be taken for the phone having gone to another app, the run's clock stood still, and this step ran for

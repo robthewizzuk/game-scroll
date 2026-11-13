@@ -136,7 +136,7 @@ export const reflMRT = () => vec4(SHINY, ROUGH, 0, 1);
 /** The scene's colour with the reflections added (a picture node). */
 export function reflStage(ch, sp, colT) {
   const R = sp.getTextureNode('gsRefl'), C = colT;
-  const n = ch.ssrN = ssr(C, sp.getTextureNode('depth'), sp.getTextureNode('normal'), { metalnessNode: R.r, roughnessNode: R.g, camera: ch.cam });
+  const n = ch.ssrN = ssr(C, sp.getTextureNode('depth'), ch.nrmN, { metalnessNode: R.r, roughnessNode: R.g, camera: ch.cam });
   n.maxDistance.value = 8; n.thickness.value = .05; n.intensity.value = .55; n.quality.value = .5;
   const hit = n.getTextureNode();
   ch.ssrT = rtt(Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(), 1, 1, HALF);

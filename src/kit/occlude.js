@@ -19,6 +19,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { Occlusion, pictureSize } from './occlusion.js';
 import { DETAIL, stats as detailStats } from './detail.js';
 import { ORIGIN } from './origin.js';
+import { eachShown } from './scene-list.js';
 
 /** The layer hidden things move to for the main draw: the view's camera does not draw it, shadow cameras do. */
 export const OCC_LAYER = 30, OCC_BIT = 1 << OCC_LAYER;
@@ -286,7 +287,7 @@ function occludeWork(view, cam, o, A) {
   // what the camera draws: what has moved, who sways, what could be hidden
   const f = ++A.f, recs = A.recs, list = A.list; list.length = 0; let soft = false, copies = 0; A.softN = 0; A.softAll = false;
   if (o.world !== false) view.scene.updateMatrixWorld();
-  view.scene.traverseVisible(ob => {
+  eachShown(view.scene, ob => {
     if (ob.isLight) { if (ob.shadow) ob.shadow.camera.layers.enable(OCC_LAYER); return; }
     if (!(ob.isMesh || ob.isPoints || ob.isLine || ob.isSprite) || !(ob.layers.mask & 1) || ob._parentLOD) return;
     const set = ob.isInstancedMesh2 ? ob : ob.userData.gsTwin?.isInstancedMesh2 ? ob.userData.gsTwin : null;
