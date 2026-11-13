@@ -12,14 +12,14 @@
 // each piece is saved on the phone, so the next launch has them at once. People in the same cut of
 // clothes share their pieces whatever their colours; twin() makes another of the very same person for free.
 // Kit use only: games reach it as gs.models.human.
-import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
+import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between } from '../poses.js';
 import { reach } from '../characters.js';
 import { LiveFace } from './human-face.js';
-import { FACE, HAIR, SEAM, faceUV, paintFace, paintHair, paintSeams } from './human-paint.js';
+import { FACE, FACE_REAL, HAIR, SEAM, faceUV, paintFace, paintDetail, paintHair, paintSeams } from './human-paint.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { sceneEdited } from '../scene-list.js';
@@ -140,7 +140,13 @@ const missing = list => { const out = new Map(); for (const o of list) for (cons
 let MATS = null;
 // skin: pores and fine lines (the 'skin' recipe, a tile every 16 mm), and light through the ears (sss.thin: see `gsThin` below)
 // (the pores are faint: any stronger and where a cheek turns from the sun they speckle it dark, like dirt)
-const skinMat = () => { const m = material('skin', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true, sss: { colour: '#e0603c', scale: .5, thin: true } }); m.normalScale.set(.25, .25); m.name = 'human:skin'; return m; };
+// (a real face's skin, real: works out the light under it on WebGPU (hd3d-gpu.js FleshModel.skin), soft and warm where it turns from the light;
+// WebGL keeps a softer rim, nearer the skin's own colour, standing for it)
+const skinMat = (real = false) => {
+  const m = material('skin', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true, sss: { colour: '#e0603c', scale: .5, thin: true, skin: real } }); m.normalScale.set(.25, .25); m.name = real ? 'human:skin:real' : 'human:skin';
+  if (real) { m.sheen = .3; m.sheenColor.set('#d08068'); }
+  return m;
+};
 // A face's paint (human-paint.js): brows, the lashes' lines and lips in a small picture made in code, laid over the skin's own colour by the
 // head's second set of UVs. One skin material for each look (people who look alike share it); its pores stay the recipe's.
 const looks = new Map();
@@ -150,7 +156,12 @@ function skinOf(sp, pal, stubble) {
   const t = new DataTexture(paintFace({ face: sp.face, fem: sp.fem, stubble, skin: lin(pal.skin), brow: lin(pal.brow), lips: lin(pal.lips), lash: lin(pal.lash), mouth: lin(pal.mouth) }), FACE.w, FACE.h, RGBAFormat, UnsignedByteType);
   t.colorSpace = SRGBColorSpace; t.channel = 1; t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
   // (the soft red rim that stands for light under the skin follows the paint too: none of it on a brow or a lash)
-  m = skinMat(); m.map = t; m.color.setScalar(1 / FACE.plain); m.sheenColorMap = t; m.sheen /= FACE.plain;
+  m = skinMat(!!sp.face.real); m.map = t; m.color.setScalar(1 / FACE.plain); m.sheenColorMap = t; m.sheen /= FACE.plain;
+  if (sp.face.real) {   // a real face's fine lines and oily skin, a picture laid on as the paint is: WebGPU bends the light by it (hd3d-gpu.js sss)
+    const d = new DataTexture(paintDetail({ face: sp.face }), FACE_REAL.w, FACE_REAL.h, RGFormat, UnsignedByteType);
+    d.channel = 1; d.wrapS = d.wrapT = ClampToEdgeWrapping; d.magFilter = LinearFilter; d.minFilter = LinearMipmapLinearFilter; d.generateMipmaps = true; d.needsUpdate = true; d.name = 'human:face-detail';
+    m.userData.faceDetail = d;
+  }
   looks.set(key, m); return m;
 }
 function mats() {
@@ -237,7 +248,7 @@ export function realFace(o, fem, base) {
   const f = {
     ...base, real: 1, es: 1, age, fat, jaw: vary(base.jaw, .06), chin: vary(base.chin, .07), brow: vary(base.brow, .1), nose: vary(base.nose, .06) * (1 + .05 * a), lips: vary(base.lips * 1.12, .1) * (1 - .22 * a),
     cheeks: has ? base.cheeks + g(.25) : base.cheeks, eyes: vary(base.eyes * (fem ? .97 : 1), .04) * (1 - .07 * a), noseW: vary(1, .08), bridge: vary(1, .12), tip: has ? Math.max(-1, Math.min(1, g(.6))) : 0,
-    tilt: has ? g(.045) : 0, lidFold: Math.max(0, Math.min(1, (has ? .3 + g(.28) : .3) + .3 * a)), faceW: vary(1, .035), ears: vary(1, .07) * (1 + .08 * a), asym: has ? .3 + .6 * r() : .3, aseed: has ? Math.floor(r() * 1e3) / 1e2 : 0,
+    tilt: has ? g(.045) : 0, lidFold: Math.max(0, Math.min(1, (has ? .3 + g(.28) : .3) + .3 * a)), faceW: vary(1, .035), ears: vary(1, .07) * (1 + .08 * a), asym: has ? .3 + .6 * r() : .3, aseed: has ? Math.floor(r() * 1e3) / 1e2 : 0, freckles: has && r() < .35 ? .3 + .7 * r() : 0,
     ...(o.face || {}),
   };
   for (const k in f) if (typeof f[k] === 'number' && k !== 'age') f[k] = Math.round(f[k] * 1e4) / 1e4;   // (a few figures: the face names the saved shape)
@@ -370,7 +381,7 @@ export function human(o = {}) {
         if (stub && name !== 'brow') { const top = -.042 + .045 * ss(.035, .07, abs(x)), sh = ss(top, top - .016, hy) * ss(-.045, -.01, hz) * ss(-.165, -.125, hy) * stub; col.r *= 1 - sh * .38; col.g *= 1 - sh * .33; col.b *= 1 - sh * .24; }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
         const ES = esOf(sp.face), so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), EYE[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
-        faceUV(x, y, z, uv1); TU[j * 4 + 2] = uv1[0]; TU[j * 4 + 3] = uv1[1];   // where it is on the face's paint
+        faceUV(x, y, z, uv1, sp.face.real ? FACE_REAL : FACE); TU[j * 4 + 2] = uv1[0]; TU[j * 4 + 3] = uv1[1];   // where it is on the face's paint
       }
       // a man's short back and sides: clipped close over the ears and at the nape, the skin showing through, so lighter there than on top
       // (and never one flat colour). One dark block down to the hairline read as a cap of paint

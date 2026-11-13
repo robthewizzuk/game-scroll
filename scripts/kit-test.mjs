@@ -2709,7 +2709,16 @@ console.log('physics ok');
     const clean = meshOf(base), real = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: 0 }), uneven = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: .9, aseed: 3.3 });
     assert.ok(jaw(real) > jaw(clean) + .004, `a real jaw is broader: ${(jaw(clean) * 2000).toFixed(0)} mm across the clean face's, ${(jaw(real) * 2000).toFixed(0)} mm a real one's`);
     assert.ok(halves(real) < .002 && halves(uneven) > halves(real) * 2, `an even face's halves alike (${halves(real).toFixed(4)}), an uneven one's not (${halves(uneven).toFixed(4)})`); }
-  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw) ok');
+  // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
+  { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = age => { const ff = f(age), rim = HH.rimOf(ff); let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };
+    const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
+    assert.ok(y0 === 0 && m0 === 0 && y1 > 0 && y2 > y1 * 1.5 && m2 <= 1, `fine lines come with age: none at 22, ${y1.toFixed(0)} at 45, ${y2.toFixed(0)} at 75 (summed over the face)`);
+    assert.ok(HP.oilAt(0, .025, 0) > .5 && HP.oilAt(.005, -.02, 0) > .5 && HP.oilAt(.05, -.03, 0) === 0, 'oily down the middle of the face (the forehead, the nose), not on the cheeks');
+    const det = HP.paintDetail({ face: f(70) }), W = HP.FACE_REAL.w, H = HP.FACE_REAL.h; let low = 0, oily = 0; for (let i = 0; i < W * H; i++) { if (det[i * 2] < 200) low++; if (det[i * 2 + 1] > 128) oily++; }
+    assert.ok(det.length === W * H * 2 && low > 200 && low < W * H * .05 && oily > W * H * .01 && oily < W * H * .2 && det[0] === 255 && det[(W - 1) * 2] === 255, `a picture of it: ${low} dots in a line, ${oily} oily, its edges plain`);
+    const paint = o => HP.paintFace({ face: { ...f(30), ...o }, fem: true, skin: [.7, .5, .4], brow: [.1, .08, .06], lips: [.5, .25, .2], lash: [.05, .04, .03], mouth: [.1, .05, .05] }), a = paint({ freckles: 1 }), b = paint({ freckles: 0 }); let more = 0; for (let i = 0; i < a.length; i += 4) if (a[i + 1] < b[i + 1] - 8) more++;
+    assert.ok(more > 100 && more < a.length / 4 * .05, `freckles on fair skin that has them: ${more} dots darker`); }
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)

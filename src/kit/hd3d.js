@@ -1035,7 +1035,7 @@ export function pbr(col = '#ffffff', { rough = .6, metal = 0, glow = 0, glowCol,
   // glowing out the far side. WebGPU: three.js's MeshSSSNodeMaterial (fast translucency, Barré-Brisebois
   // and Bouchard, as in Frostbite); WebGL phones get a soft tinted rim (sheen) in its place.
   if (sss) {
-    const S = m.userData.sss = { colour: new Color(sss.colour ?? sss.color ?? '#ff5a3c'), power: sss.power ?? 3, scale: sss.scale ?? 1, distortion: sss.distortion ?? .2, ambient: sss.ambient ?? .02, attenuation: sss.attenuation ?? .35, thin: !!sss.thin, back: sss.back ?? .8 };
+    const S = m.userData.sss = { colour: new Color(sss.colour ?? sss.color ?? '#ff5a3c'), power: sss.power ?? 3, scale: sss.scale ?? 1, distortion: sss.distortion ?? .2, ambient: sss.ambient ?? .02, attenuation: sss.attenuation ?? .35, thin: !!sss.thin, back: sss.back ?? .8, skin: sss.skin || false };
     m.userData.gsGpu = 'sss'; if (!o.sheen) { m.sheen = .5; m.sheenColor = S.colour.clone(); m.sheenRoughness = .7; }
   }
   if (glow) { m.emissive = new Color(glowCol || col); m.emissiveIntensity = glow; }

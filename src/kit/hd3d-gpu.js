@@ -16,6 +16,7 @@ import {
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
   attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
+  roughness, specularColor, specularColorBlended, specularF90, diffuseContribution, BRDF_GGX, BRDF_Lambert, F_Schlick,
   modelViewProjection, acos, getParallaxCorrectNormal, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, sample, packNormalToRGB, unpackRGBToNormal, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
 } from 'three/tsl';
 import * as TSL from 'three/tsl';
@@ -116,7 +117,26 @@ class FleshModel extends PhysicalLightingModel {
     const through = positionViewDirection.dot(lightDirection.add(normalView.mul(F.distortion)).normalize().negate()).saturate().pow(F.power).mul(F.scale);
     const way = mix(float(1), F.open, smoothstep(.35, .85, on));
     reflectedLight.directDiffuse.addAssign(F.colour.mul(lightColor).mul(back.add(through).mul(way).add(F.ambient).mul(F.attenuation).mul(F.thin)));
-    super.direct(input, builder);
+    if (F.skin) this.skin(input); else super.direct(input, builder);
+  }
+  // Skin (pbr's sss.skin: a real face). Light goes in, spreads under the skin and comes out a little way off, red furthest (it
+  // travels millimetres in skin, blue hardly at all). Worked out as pre-integrated skin shading does (Penner and Borshukov, GPU Pro 2),
+  // without its picture: where the surface turns faster than the light spreads (a nose, a chin, a cheek turning from the sun) light
+  // reaches on round past where it would stop, so the line between lit and unlit is soft and warm instead of a grey edge. How fast
+  // the surface turns is read from the screen (the smooth normal's change against the position's, a pixel to the next). And the
+  // pores and fine lines darken only the light that does not travel: red, which has come from millimetres off, sees the smooth
+  // surface under them, blue the pores (Penner's blurred normals); they all show in the shine. The shine is two lobes, as on a real
+  // face: a tight one off the skin's oil and a broad one off its fine roughness.
+  skin({ lightDirection: L, lightColor, reflectedLight }) {
+    const F = this.F, nG = normalViewGeometry, lg = nG.dot(L), ld = normalView.dot(L), nl = vec3(lg, mix(lg, ld, .45), ld);
+    const curve = length(fwidth(nG)).div(max(length(fwidth(positionView)), 1e-6));   // (1 / metres: a nose's tip is about 150, a cheek 20)
+    const w = vec3(.62, .27, .14).mul(curve.mul(.02).clamp(.35, 1)).mul(F.wrap);
+    const d = nl.add(w).div(w.add(1)).saturate(), lit = pow(d, w.add(1));   // (lit side as Lambert's; the reach past the edge in a tail, red's longest)
+    const H = L.add(positionViewDirection).normalize(), fr = F_Schlick({ f0: specularColor, f90: specularF90, dotVH: positionViewDirection.dot(H).saturate() });
+    reflectedLight.directDiffuse.addAssign(lit.mul(lightColor).mul(BRDF_Lambert({ diffuseColor: diffuseContribution })).mul(fr.oneMinus()));
+    const spec = BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(.92) }).mul(.8)
+      .add(BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(1.4).min(1) }).mul(.2));
+    reflectedLight.directSpecular.addAssign(ld.saturate().mul(lightColor).mul(spec).mul(this.multiScatteringCompensation));
   }
 }
 
@@ -175,8 +195,18 @@ export const gpuMaterials = {
   sss(gm) {
     const S = gm.userData.sss, m = S.thin ? new MeshPhysicalNodeMaterial() : new MeshSSSNodeMaterial();
     for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];   // (as three's own NodeLibrary.fromMaterial)
-    if (S.thin) {   // (the soft tinted rim stays, as on WebGL: it stands for the light that scatters about under the skin, which this does not do)
-      const at = attribute('gsThin', 'vec2'), F = { ...S, colour: uniform(S.colour), thin: at.x, open: at.y };
+    if (S.thin) {   // (the soft tinted rim stays, as on WebGL: it stands for the light that scatters about under the skin, which this does not do;
+      // real skin (S.skin) works that light out itself, FleshModel.skin(), and has no rim)
+      const at = attribute('gsThin', 'vec2'), F = { ...S, colour: uniform(S.colour), thin: at.x, open: at.y, wrap: float(S.skin === true ? 1 : S.skin || 0) };
+      if (S.skin) { m.sheen = 0; m.ior = 1.4; }   // (skin reflects a little less than glass or plastic: 2.8% straight on)
+      // a real face's fine lines bend the light (a picture of how high the skin is, on the face's own UVs: human-paint.js paintDetail),
+      // over the pores' own normals; and its oily parts (the middle of the forehead, the nose, the chin, the lips) shine more
+      const FD = S.skin && gm.userData.faceDetail;
+      if (FD) {
+        const D = texture(FD, uv(1)), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
+        m.normalNode = bumpN(D.r, float(.00016), pores);
+        m.roughnessNode = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1));
+      }
       m.setupLightingModel = function () { return new FleshModel(this, F); };
       // what light comes through throws no shadow: an ear would shade its own far side, where the light comes out
       // (a face turned from the light is tested against itself in the shadow map, and the map's own grain shows)
