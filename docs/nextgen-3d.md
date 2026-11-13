@@ -705,13 +705,30 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   second) gets frame generation at once for two seconds, so the refreshes it would miss show made
   frames instead of the same frame twice. It can't help a hitch that holds the whole app up (nothing
   is shown then), only a run of slow frames.
-- **Pacing per phone:** blend puts a made frame on the same refresh as the real frame's work. If the
-  refreshes in between keep coming late in blend, that game switches to ahead on that phone (the work
-  is spread over both refreshes; it's remembered with the game's settled frame rate); if they still
-  don't come, frame generation turns off for that game until the app restarts. A game that switched
-  itself to ahead only guesses one frame per real frame: with two or three to make (a game at 30 on a
-  120 Hz screen) they are blended again, because guesses that far past the newest frame smear a
-  running figure. Ahead picked in Settings, or by the game's own `frameGen: 'ahead'`, is kept.
+- **A refresh each:** a refresh's picture reaches the screen only once all the work sent in it is done
+  (the chip has one queue), so what counts is the work in each refresh, not in each pair. Blend has two
+  paces (`speed.js` `frameGenPaceOf`): **after** makes a frame on the real frame's own refresh (the least
+  delay, where the chip has room for both, by its timestamps), **first** shows the last real frame there
+  and makes every frame on a refresh of its own (a refresh later). Unknown times start on first. A made
+  frame that can't be ready for the next refresh (the chip is still on the real frame) is dropped, so it
+  never holds up the next real frame; a real frame is never dropped.
+- **Only where it fits:** Auto makes frames only where a real frame and a made frame each fit a refresh
+  by the chip's times (`frameGenFits`; 8.3 ms at 120 Hz), so it can't rescue a game whose real frames
+  take the chip longer than that; it helps one held back by the phone's processor, and saves power and
+  heat. Unknown times are tried. A game at 120 that slows down steps to 60 with frames made between
+  before its picture loses sharpness, where they'd fit (`frameGenCould`), and goes back to 120 only with
+  room in a refresh. The chip's times count only from frames that kept it busy: a phone clocks its chip
+  down at half rate (`speed.cost`).
+- **Pacing per phone:** if the refreshes in between keep coming late on after, that game switches to
+  first on that phone (remembered with the game's settled frame rate); if they still don't come, or most
+  made frames are dropped as late, frame generation turns off for that game until the app restarts. Ahead
+  only guesses one frame per real frame: with two or three to make (a game at 30 on a 120 Hz screen) they
+  are blended, because guesses that far past the newest frame smear a running figure, unless ahead is
+  picked in Settings or by the game's own `frameGen: 'ahead'`.
+- **Easy tiles the quick way:** once a pair, each 8 x 8 tile of the screen is sorted: where nothing is
+  see-through, nothing uncovers, the optical flow agrees with the game's motion and the newest frame
+  moved back along it matches the last one, the made frame is a plain read along the motion; the rest
+  take the full way. Made frames don't clear or copy the motion pictures (only the holes are filled).
 - **How:** blend (the default) makes the frames between the last two real frames and shows them
   before the newest, so each real frame shows a little later (half a frame at 60 on 120 Hz, about
   8 ms), with the fewest flaws. Ahead guesses past the newest, so nothing is delayed; edges round fast

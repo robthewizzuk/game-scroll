@@ -215,7 +215,8 @@ try {
     const halton = (i, b) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
     const steadyCam = jitter ? S.cam.clone() : null, steady = jitter ? pass(S.scene, steadyCam) : null;
     const pps = jitter ? new THREE.RenderPipeline(r) : null; if (pps) { pps.outputNode = steady; pps.outputColorTransform = false; }
-    const fg = new FrameGen(r, { flow: Q.get('flow') !== '0', fill: Q.get('fill') !== '0', sharp: Q.get('sharp') !== '0' });
+    const fg = new FrameGen(r, { flow: Q.get('flow') !== '0', fill: Q.get('fill') !== '0', sharp: Q.get('sharp') !== '0', quick: Q.get('quick') !== '0' });
+    fg.parts = Q.get('parts') === '1';   // (each step its own pass, as the phone test tour times them: the same picture)
     const prev = new THREE.RenderTarget(OW, OH, { type: THREE.HalfFloatType });
     // three's passes draw once per animation frame, so each real frame waits for the next one
     const t0 = 1.3, frame = async (t, shake = jitter) => {
@@ -247,11 +248,26 @@ try {
     const before = await grab(prev.texture);
     ma.value = prev.texture; mb.value = colorOf(); r.setRenderTarget(mixRT); mixQuad.render(r); r.setRenderTarget(null);
     const blend = await grab(mixRT.texture);
-    const made = [];
+    const made = []; let easy = null;
     for (const tm of TIMES) {
       const ms0 = performance.now(); fg.make(tm); await r.backend.device.queue.onSubmittedWorkDone();
       made.push({ tm, px: await grab(fg.output), ms: performance.now() - ms0 });
+      easy ??= await fg.easyShare();   // (the tiles that took the quick way, sorted at the pair's first made frame)
       if (Q.has('cutinfo')) { const c = new Uint32Array(await r.getArrayBufferAsync(fg.cutAttr)); console.warn(`cut ${kind}: hist ${(c[67] / 4096).toFixed(3)} miss ${(c[68] / 4096).toFixed(3)} cut ${c[66]}`); }
+    }
+    // &bench=N: the first moment made N times more (the pair's shared work, the optical flow and the tile sort, is
+    // done by then), each timed on its own: what one more made frame costs (software time, to compare two ways)
+    let bench = null;
+    if (Q.has('bench')) {
+      const n = +Q.get('bench') || 8, t = [];
+      for (let i = 0; i < n; i++) { const a = performance.now(); fg.make(TIMES[0]); await r.backend.device.queue.onSubmittedWorkDone(); t.push(performance.now() - a); }
+      t.sort((a, b) => a - b); bench = +t[t.length >> 1].toFixed(1);
+      // &probe: each of a made frame's steps on its own (software time, the middle of n)
+      if (Q.has('probe')) {
+        const each = { clear: fg.cClear, splat: fg.cSplat, resolve: fg.cResolve, fill: fg.cFill, compose: fg.cCompose, pyramid: fg.cPyr, inpaint: fg.cInpaint, empty: fg.cCutClear }, says = [];
+        for (const [k, c] of Object.entries(each)) { const z = []; for (let i = 0; i < n; i++) { const a = performance.now(); r.compute(c); await r.backend.device.queue.onSubmittedWorkDone(); z.push(performance.now() - a); } z.sort((a, b) => a - b); says.push(`${k} ${z[z.length >> 1].toFixed(1)}`); }
+        console.warn(`${kind} steps (ms): ${says.join(', ')}`);
+      }
     }
     // the truth: the scene at each time (drawn last so the frames above are left alone); the error is the
     // mean over the made frames, broken the worst
@@ -265,7 +281,7 @@ try {
       if (Q.has('shots')) { const tag = `${kind}-${Math.round(m.tm * 100)}`; Object.assign(out.shots, { [tag + '-framegen']: shot(m.px), [tag + '-truth']: shot(truth) }); }
     }
     const avg = l => l.length ? { error: +(l.reduce((s, x) => s + x.error, 0) / l.length).toFixed(2), broken: Math.max(...l.map(x => x.broken)) } : null;
-    out.scenes[kind] = { framegen: avg(sum.framegen), repeat: avg(sum.repeat), mix: avg(sum.mix), ms: +(ms / made.length).toFixed(1) };
+    out.scenes[kind] = { framegen: avg(sum.framegen), repeat: avg(sum.repeat), mix: avg(sum.mix), ms: +(ms / made.length).toFixed(1), bench, easy: easy == null ? null : Math.round(easy * 100) };
     if (Q.has('shots')) Object.assign(out.shots, { [kind + '-repeat']: shot(ahead ? last : before), [kind + '-mix']: shot(blend) });
     fg.dispose(); pp.dispose?.(); pps?.dispose?.(); prev.dispose();
   }
