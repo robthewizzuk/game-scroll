@@ -240,6 +240,9 @@ export const remote = {
   /** Get the next few games in the feed ready so they open instantly. */
   prefetch(list) { for (const d of list) if (this.has(d.id)) this.load(d.id); },
 
+  /** The version of the game's file that is loaded and running (its short hash), or '' if it isn't. */
+  version(id) { return loaded.get(id)?.hash || ''; },
+
   /** Mark a game as just played, so the cache keeps it. */
   touch(id) { const g = entries.get(id); if (g && index[g.file]) { index[g.file][0] = Date.now(); saveIndex(); } },
 

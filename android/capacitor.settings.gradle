@@ -26,6 +26,9 @@ project(':capacitor-haptics').projectDir = new File('../node_modules/@capacitor/
 include ':capacitor-share'
 project(':capacitor-share').projectDir = new File('../node_modules/@capacitor/share/android')
 
+include ':app-health'
+project(':app-health').projectDir = new File('../plugins/app-health/android')
+
 include ':game-services'
 project(':game-services').projectDir = new File('../plugins/game-services/android')
 

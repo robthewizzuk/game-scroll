@@ -137,6 +137,19 @@ drains. `src/kit/fluid.js` runs the same steps line for line in JavaScript for W
 The look-compare `gpu-fluid` scene runs a dam break with a tap, a cup and a drain on whichever backend
 is drawing and fails if liquid is lost or comes to rest somewhere else.
 
+## Smoke and fire that flow
+
+`gs.gas` is WebGPU-first as well: a stable-fluids gas as TSL compute passes over storage buffers
+(`src/kit/gas-gpu.js`: which cells are solid, carry everything along the flow, put the smoke right with
+the burning, the lift and the sources, the swirl, swirls kept alive, how much the flow piles up, two
+dozen rounds of pressure, the flow gives way), then once a frame the sun's light through the smoke and
+the fire's glow into two 3D pictures, and a screen pass at half size (`gasStage` in
+`src/kit/hd3d-gpu-fx.js`) that walks each pixel's ray through them and lays the gas over the scene
+behind what is in front of it. Every few frames the gas is copied back, four cells to one, for the
+game's questions. `src/kit/gas.js` runs the same steps line for line in JavaScript for WebGL, in a much
+coarser grid, drawn as soft puffs (stock `MeshBasicMaterial`, no shader patching). The look-compare
+`gpu-gas` scene gives both the same grid and fails if their cells part.
+
 ## Done for Long Shadow and Deep Pressure
 
 - **Outdoor looks as TSL**: `gpuLooks` in `hd3d-gpu.js` has `ground` (fields, roads, wear), `hills`,

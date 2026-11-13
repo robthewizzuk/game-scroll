@@ -1,6 +1,6 @@
 // Engine test scenes, for the phone test tour (src/tour.js; QA panel › Phone test tour › Engine test
 // scenes). The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail,
-// hiding what is behind other things, shadows in tiles, crowds, ground that takes marks) are checked on a build machine's software renderer, which can count triangles and compare pictures but
+// hiding what is behind other things, shadows in tiles, crowds, ground that takes marks, smoke and fire that flow) are checked on a build machine's software renderer, which can count triangles and compare pictures but
 // says nothing about a phone's graphics chip. This flies through a heavy scene for each (src/detail-scenes.js)
 // with the system off and then on, on the phone in your hand, and gives one report to copy.
 //
@@ -11,7 +11,8 @@
 //    trade sharpness for speed. Frame generation is off: every frame timed is a real one.
 //  - Before a run is timed, whatever the system has to build is waited for (and its time is told), and
 //    the whole flight is flown once quickly so its shaders are built.
-//  - Each run flies the same path by the clock, so a slow run and a fast one see the same things.
+//  - Each run flies the same path by the clock, so a slow run and a fast one see the same things. Time
+//    spent in another app is left out of the clock; a slow frame, however long, is a frame.
 import gs, { loadParts } from './gamescroll.js';
 import { ownedBy, release } from './kit/cleanup.js';
 import { power } from './kit/power.js';
@@ -36,7 +37,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   const t0 = Date.now(), list = SCENES.filter(s => !only || only.includes(s[0])), stopped = () => !!signal.stop;
   const out = { kind: 'scenes', at: new Date().toISOString(), seconds, size, asked: list.length, scenes: [], stopped: false };
   out.phone = await phone(); out.powerBefore = powerNow();
-  await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'THREE']);
+  await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'gas', 'THREE']);
   const { HD } = await import('./kit/hd3d.js');
   // the stage: a canvas over the whole app, as a card's is over its 3D picture
   const stage = document.createElement('div'); stage.className = 'tour-stage';
@@ -50,13 +51,14 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     W = w; H = h; ctx.setTransform(k, 0, 0, k, 0, 0); sized = true;
   };
   const was = { force: HD.force };
-  let S = null;
+  let S = null, hid = false;
+  const hide = () => { if (document.visibilityState !== 'visible') hid = true; };   // the phone went to another app (see fly())
   const draw = () => { if (stopped()) throw STOP; if (!sized) fit(); S.v.render(ctx, W, H); return frame(); };
   // one timed run along the path
   const fly = async () => {
     const dts = [], cpu = [], tris = [], calls = [], chip = [], budget = 1000 / screenHz();
     let last = 0, seen = null, away = 0;
-    HD.info.gpuMs = null;
+    HD.info.gpuMs = null; hid = false;
     const start = performance.now();
     for (;;) {
       const t = (performance.now() - start - away) / 1000;
@@ -65,19 +67,22 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
       const now = await draw(), I = HD.info;
       if (last) {
         const dt = now - last;
-        if (dt > 500 || document.visibilityState !== 'visible') away += dt;   // the phone went to another app: that gap is nobody's frame
+        // The phone went to another app: that gap is nobody's frame. It is told by the page having been hidden,
+        // not by how long the gap was: a frame that takes over half a second is a slow frame, and where every
+        // frame did (a build machine drawing a big picture) the clock stood still and the run never ended.
+        if (hid || document.visibilityState !== 'visible') away += dt;
         else { dts.push(dt); cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.gpuMs != null && I.gpuMs !== seen && t > .5) chip.push(seen = I.gpuMs); }
       }
-      last = now; onPlay?.({ played: t });
+      hid = false; last = now; onPlay?.({ played: t });
     }
     const I = HD.info;
     return { ...summarise(dts, cpu, budget), chip: chip.length ? mean(chip) : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
   };
   try {
     HD.force = phoneClass() === 'low' ? 1 : 2; out.tier = HD.force;
-    document.body.classList.add('touring'); addEventListener('resize', resized);
+    document.body.classList.add('touring'); addEventListener('resize', resized); document.addEventListener('visibilitychange', hide);
     driver.begin(guestApi); driver.clear();
-    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
+    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' || key === 'yard' && gpu ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
     let done = 0;
     for (const [key, name, what, make] of list) {
       if (stopped()) break;
@@ -107,7 +112,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
       await new Promise(r => setTimeout(r, 300));   // a breath between scenes: the last one's memory is let go
     }
   } finally {
-    HD.force = was.force; removeEventListener('resize', resized); stage.remove(); document.body.classList.remove('touring'); driver.end();
+    HD.force = was.force; removeEventListener('resize', resized); document.removeEventListener('visibilitychange', hide); stage.remove(); document.body.classList.remove('touring'); driver.end();
     out.stopped = stopped(); out.took = Math.round((Date.now() - t0) / 1000); out.powerAfter = powerNow();
   }
   out.text = scenesText(out);
