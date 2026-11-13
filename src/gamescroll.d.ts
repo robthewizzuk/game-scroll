@@ -2680,7 +2680,7 @@ export interface RigT {
   blend(space: Record<string, number>, v: number): RigT;
   /** 2D blend space: { pose: [x, y] }, mixed at (x, y). */
   blend2(space: Record<string, [number, number]>, x: number, y: number): RigT;
-  /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. */
+  /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. A gs.models.human's feet lie along a slope (as far as an ankle tilts) and keep the point they stand on. */
   plant(ground: (x: number, z: number) => number, body: Loose, o?: { most?: number }): RigT;
   /**
    * speed: metres a second (strides follow it); aim: up/down aim for the upper layer (radians); turn: radians a second (with weight: banks into it).
@@ -2721,6 +2721,17 @@ export interface RigT {
    * face is set on something (face.look). amount: 0 turns it off, 1 as a person does it, more to make it plainer; reset() stills it (a new round).
    */
   readonly lead?: { amount: number; reset(): void } | null;
+  /**
+   * A walk of one's own (gs.models.human people; on by itself): from the body (an older person takes shorter, quicker steps, swings the arms
+   * less, leans and stands wider; a heavy one walks wider and rolls more; a muscled one carries the arms out) and the seed (how much the arms
+   * swing, one more than the other, the hips, how upright, a habit of the head), the same on every phone; a twin() walks a little differently.
+   * No two strides alike (their time, the arms' swing, the feet's width and the lean wander from stride to stride, 1/f), each footfall felt
+   * (the hips give, the rib cage dips, the elbows bounce), and slopes read from how the body rises as it goes (uphill it leans in and takes
+   * shorter steps, downhill leans back with the knees bent; with rig.plant the feet lie along the slope). mood: 'brisk' | 'tired' | 'wary' |
+   * 'proud' | 'sad' | 'limp' (side: the leg that hurts, 'L' or 'R'), or { tired: .5, limp: 1 }, eased in over a second; null for none. A mood
+   * changes how a person walks at the speed you give: slow a tired or hurt person yourself. amount: 0 the walk as drawn, 1 a person's own.
+   */
+  manner?: { mood: string | Record<string, number> | null; side: 'L' | 'R'; amount: number; readonly pace: number; readonly limp: number; reset(): void } | null;
   /**
    * Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. How far each joint was
    * from where the new move has it, and how fast it was turning, die away smoothly in about the fade asked for, so a limb in mid swing swings on a

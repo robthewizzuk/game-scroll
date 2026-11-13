@@ -8,6 +8,8 @@
 //   ?acts=start,stop (default: all)   &cols=8   &cell=200x240   &view=side|three|front|back|top   &near (head and shoulders)   &gpu (WebGPU)
 //   &toward (the game says where the body is turning to: rig.update's toward)
 //   &cmp=lead,plan (each act twice: those parts of the movement off in the row above, on in the row below)
+//   rows may be act:mood~build (walk:tired, walk~old, run~heavy, walk:limp~s7): a mood (manner.js) and a person's build (old, young, heavy,
+//   built, or sN for seed N)
 //   &who=human|figure   &seed=3   &from=0&to=1 (the share of each act filmed)   &dbg=6 (numbers every sixth frame on the console: ALLWARN=1)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
@@ -34,7 +36,13 @@ try {
     spin: { secs: 2.6, seg: [[.5, { yaw: 120, w: 2.5 }]] },
     turngo: { secs: 3, seg: [[.5, { yaw: 90, w: 4, v: 1.4, a: 3 }]] },
     jog: { secs: 4, seg: [[.4, { v: 3.4, a: 5 }], [2.6, { v: 0, a: 5 }]] },
+    walk: { secs: 3.2, v0: 1.4 },
+    run: { secs: 2.4, v0: 5.6 },
+    uphill: { secs: 3.2, v0: 1.4, grade: .3 },
+    downhill: { secs: 3.2, v0: 1.4, grade: -.3 },
   };
+  const BUILDS = { old: { look: 'real', age: 78 }, young: { look: 'real', age: 19 }, heavy: { look: 'real', weight: .95 }, built: { look: 'real', muscle: .95 } };
+  const buildOf = b => !b ? {} : BUILDS[b] || (/^s\d+$/.test(b) ? { seed: +b.slice(1) } : (() => { throw new Error('no build ' + b + ': ' + Object.keys(BUILDS).join(', ') + ', sN'); })());
   const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(','), cols = +(Q.get('cols') || 8), [cw, ch] = (Q.get('cell') || '200x240').split('x').map(Number);
   const cmp = Q.get('cmp') ? Q.get('cmp').split(',') : null, rows = acts.flatMap(a => cmp ? [[a, false], [a, true]] : [[a, null]]);
   const from = +(Q.get('from') || 0), to = +(Q.get('to') || 1), plan = ch;   // (the plan from above: a square at the end of each row)
@@ -44,14 +52,15 @@ try {
   const sheet = document.createElement('canvas'); sheet.width = cw * cols + plan; sheet.height = ch * rows.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
   sx.fillStyle = '#222'; sx.fillRect(0, 0, sheet.width, sheet.height);
   const info = [], opts = { seed: +(Q.get('seed') || 3), build: 'medium' };
-  if (who === 'human') await gs.models.human.ready([opts]);
+  if (who === 'human') await gs.models.human.ready([opts, ...new Set(rows.map(([n]) => n.split('~')[1]).filter(Boolean))].map(b => typeof b === 'string' ? { ...opts, ...buildOf(b) } : b));
   const VIEW = { side: [1, .16, .1], three: [.8, .35, .75], front: [.12, .2, 1], back: [.8, .3, -.75], top: [.02, 1, .2] }, view = VIEW[Q.get('view')] || VIEW.three;
   const markGeo = new T.BoxGeometry(.09, .006, .24), markMat = [gs.hd.pbr('#2050c0', { rough: .8 }), gs.hd.pbr('#c03030', { rough: .8 })];
   for (let r = 0; r < rows.length; r++) {
-    const [name, on] = rows[r], A = ACTS[name]; if (!A) throw new Error('no act ' + name + ': ' + Object.keys(ACTS).join(', '));
+    const [name, on] = rows[r], [act, mood] = name.split('~')[0].split(':'), A = ACTS[act]; if (!A) throw new Error('no act ' + act + ': ' + Object.keys(ACTS).join(', '));
     const world = new T.Group(); v.scene.add(world);
-    const floor = new T.Mesh(new T.BoxGeometry(200, .4, 200), gs.hd.pbr('#7d8274', { rough: .9 })); floor.position.y = -.2; floor.receiveShadow = true; world.add(floor);
-    const body = who === 'human' ? gs.models.human(opts) : gs.poses.figure({ mat: c => gs.hd.pbr(c) }); world.add(body);
+    const floor = new T.Mesh(new T.BoxGeometry(200, .4, 200), gs.hd.pbr('#7d8274', { rough: .9 })); floor.position.y = -.2 / Math.cos(Math.atan(A.grade || 0)); floor.rotation.x = -Math.atan(A.grade || 0); floor.receiveShadow = true; world.add(floor);
+    const body = who === 'human' ? gs.models.human({ ...opts, ...buildOf(name.split('~')[1]) }) : gs.poses.figure({ mat: c => gs.hd.pbr(c) }); world.add(body);
+    if (mood && body.rig.manner) body.rig.manner.mood = mood;
     const rig = body.rig, P = rig.parts;
     if (on != null) for (const k of cmp) { if (k === 'steps') rig.steps = on; else if (k === 'plan') { if (rig.stride) rig.stride.plan = on; } else if (k === 'momentum') rig.momentum = on; else if (k === 'follow') { if (rig.follow) rig.follow.amount = on ? 1 : 0; } else if (rig[k] && typeof rig[k] === 'object' && 'amount' in rig[k]) rig[k].amount = on ? 1 : 0; else rig[k] = on ? (typeof rig[k] === 'number' ? 1 : true) : (typeof rig[k] === 'number' ? 0 : false); }
     const dt = 1 / 60, N = Math.round(A.secs / dt), segs = (A.seg || []).map(([t, s]) => [Math.round(t / dt), s]);
@@ -65,15 +74,15 @@ try {
       speed += Math.max(-acc * dt, Math.min(acc * dt, want - speed));
       let turn = rate; if (aimYaw != null) { const e = wrap(aimYaw - yaw); turn = Math.max(-w, Math.min(w, e * 8)); }
       yaw += turn * dt; body.rotation.y = yaw;
-      body.position.x += Math.sin(yaw) * speed * dt; body.position.z += Math.cos(yaw) * speed * dt; moved += speed * dt;
+      body.position.x += Math.sin(yaw) * speed * dt; body.position.z += Math.cos(yaw) * speed * dt; moved += speed * dt; if (A.grade) body.position.y = body.position.z * A.grade;
       const c0 = performance.now();
       if (rig.poses.jog) rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, speed); else rig.play(speed > 3 ? 'run' : speed > .3 ? 'walk' : 'idle');
-      body.updateMatrixWorld(true); rig.update(dt, { speed, turn, toward: Q.has('toward') && aimYaw != null ? aimYaw : null }); body.updateMatrixWorld(true);
+      body.updateMatrixWorld(true); rig.update(dt, { speed, turn, toward: Q.has('toward') && aimYaw != null ? aimYaw : null }); if (A.grade) rig.plant((x, z) => z * A.grade, body); body.updateMatrixWorld(true);
       cost += performance.now() - c0;
       // where the feet came down, and how far a planted one slid
       const feet = [P.footL || P.shinL, P.footR || P.shinR].map(f => f.getWorldPosition(new T.Vector3()));
       // (the point of each sole that is lowest, heel or ball: what stands on the ground, which a planted foot keeps where it is)
-      const sole = [P.footL, P.footR].map((f, k) => { if (!f) return feet[k]; const q = f.getWorldQuaternion(new T.Quaternion()), sc = body.scale.y, h = new T.Vector3(0, -.085, -.06).applyQuaternion(q).multiplyScalar(sc).add(feet[k]), b = new T.Vector3(0, -.085, .13).applyQuaternion(q).multiplyScalar(sc).add(feet[k]); return h.y < b.y - .004 ? Object.assign(h, { at: 0 }) : b.y < h.y - .004 ? Object.assign(b, { at: 1 }) : Object.assign(h, { at: 2 }); });
+      const sole = [P.footL, P.footR].map((f, k) => { if (!f) return feet[k]; const q = f.getWorldQuaternion(new T.Quaternion()), sc = body.scale.y, h = new T.Vector3(0, -.085, -.06).applyQuaternion(q).multiplyScalar(sc).add(feet[k]), b = new T.Vector3(0, -.085, .13).applyQuaternion(q).multiplyScalar(sc).add(feet[k]); const gr = A.grade || 0, hh = h.y - h.z * gr, bh = b.y - b.z * gr; return hh < bh - .004 ? Object.assign(h, { at: 0 }) : bh < hh - .004 ? Object.assign(b, { at: 1 }) : Object.assign(h, { at: 2 }); });
       const st = rig.stride?.feet;
       for (let k = 0; k < 2; k++) {
         const isDown = st ? st[k].down : feet[k].y < .12;
@@ -81,7 +90,7 @@ try {
           steps++; if (stopAt != null) lastFall = i * dt;
           const fw = new T.Vector3(0, 0, 1).applyQuaternion((P.footL ? [P.footL, P.footR][k] : body).getWorldQuaternion(new T.Quaternion())); fw.y = 0; fw.normalize();
           prints.push({ x: feet[k].x, z: feet[k].z, a: Math.atan2(fw.x, fw.z), k });
-          const m = new T.Mesh(markGeo, markMat[k]); m.position.set(feet[k].x + fw.x * .05, .003, feet[k].z + fw.z * .05); m.rotation.y = Math.atan2(fw.x, fw.z); world.add(m);
+          const m = new T.Mesh(markGeo, markMat[k]); m.position.set(feet[k].x + fw.x * .05, .003 + (feet[k].z + fw.z * .05) * (A.grade || 0), feet[k].z + fw.z * .05); m.rotation.x = -Math.atan(A.grade || 0); m.rotation.y = Math.atan2(fw.x, fw.z); world.add(m);
         }
         if (isDown && down[k] && sole[k].at === down[k].at && sole[k].at < 2) slide += Math.hypot(sole[k].x - down[k].x, sole[k].z - down[k].z);
         down[k] = isDown ? { x: sole[k].x, z: sole[k].z, at: sole[k].at } : null;
@@ -95,7 +104,7 @@ try {
       if (Q.has('dbg') && i % (+Q.get('dbg') || 6) === 0) console.warn(`${name}${on == null ? '' : on ? '+' : '-'} ${(i * dt).toFixed(2)}s v ${speed.toFixed(2)} yaw ${(yaw / D).toFixed(0)} head ${(wrap(hdy - yaw) / D).toFixed(1)} eyes ${(wrap(edy - yaw) / D).toFixed(1)} feet ${st ? st.map(f => (f.down ? 'D' : 'u') + f.sw + ' ' + (Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) * 100).toFixed(0) + 'cm').join(' ') : ''}${rig.stride ? ` sk ${rig.stride.sk.toFixed(2)} rest ${rig.stride.rx.toFixed(2)},${rig.stride.rz.toFixed(2)} ac ${rig.stride.ac.toFixed(1)} stand ${rig.stride.stand.map(a => a.map(x => x.toFixed(3)).join(',')).join(' ')}` : ''} hips ${P.hips.getWorldPosition(new T.Vector3()).toArray().map(x => x.toFixed(3)).join(' ')}`);
       const k = shots.indexOf(i);
       if (k >= 0) {
-        const near = Q.has('near'), hp = P.hips.getWorldPosition(new T.Vector3()), aim = new T.Vector3(hp.x, near ? 1.35 : .85, hp.z), len = Math.hypot(...view), dist = near ? 2.3 : 4.4;
+        const near = Q.has('near'), hp = P.hips.getWorldPosition(new T.Vector3()), aim = new T.Vector3(hp.x, (near ? 1.35 : .85) + body.position.y, hp.z), len = Math.hypot(...view), dist = near ? 2.3 : 4.4;
         v.cam.fov = 30; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
         v.cam.position.set(aim.x + view[0] / len * dist, aim.y + view[1] / len * dist + .2, aim.z + view[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
         sun.follow(hp.x, 0, hp.z);

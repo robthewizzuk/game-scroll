@@ -1200,7 +1200,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   taken" in the maker kit guide; a new move takes up the speed the body had, and arms, head and kit swing on
   and settle when it starts, stops or turns: "Momentum and follow-through" there; it stops in two steps and its
   eyes and head go first into a turn, `rig.update(dt, { speed, toward })` to say where it means to go: "The eyes
-  and the head go first") in three levels of detail: call
+  and the head go first"; it walks its own way, from its body and seed, with moods, `rig.manner.mood = 'sad'`: "A walk
+  of one's own") in three levels of detail: call
   `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after
