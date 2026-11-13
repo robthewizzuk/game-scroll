@@ -818,6 +818,15 @@ try {
       const rb = coat(rbo), cb = coat(cbo), rm = coat(rmo), rbm = human(rbo).mesh.material[0];
       ok(real.mesh.material[6].anisotropy > 0 && !(M[6].anisotropy > 0) && !rb && !rm && cb && front(cb) < 1.545 && rbm.map !== rs.map,
         `real hair: a shine across the strands (anisotropy ${real.mesh.material[6].anisotropy}); a real beard and moustache single hairs over their own paint, no coat (${!rb && !rm}); the clean look's beard a coat down to ${((1.69 - (cb ? front(cb) : 0)) * 100).toFixed(1)} cm below the head's middle`);
+      // a real head of hair's strips (human-hair.js, worked out with the head): one geometry drawn twice, what is mostly hair solid (the alpha
+      // test) and the rest see-through over it, on the head's bones, close up only, the picture's own smaller copies; none on the clean look,
+      // on a bald head or with cards: false
+      const sto = { ...ro, cards: false }, sbo = { ...ro, hairStyle: 'bald', hair: null }; await human.ready([sto, sbo]);
+      const [s0, s1] = real.strips, sg = s0?.geometry, stAt = l => { real.lod = l; const v = s0.visible && s1.visible; real.lod = 0; return v; };
+      const sv = sg ? Array.from(sg.attributes.uv.array).filter((v, i) => i % 2 === 1) : [], sbn = sg ? new Set(Array.from(sg.attributes.skinIndex.array).filter((v, i) => i % 4 === 0).map(i => s0.skeleton.bones[i].name)) : new Set();
+      ok(real.strips.length === 2 && s1.geometry === sg && s0.material.alphaTest === .5 && !s0.material.transparent && s1.material.transparent && !s1.material.depthWrite && s0.material.map?.mipmaps?.length > 5
+        && sg.index.count / 3 > 2000 && sbn.has('head') && stAt(0) && !stAt(1) && Math.min(...sv) >= -.2 && Math.max(...sv) <= 1.001 && plain.strips.length === 0 && human(sto).strips.length === 0 && human(sbo).strips.length === 0,
+        `real hair's strips: ${sg ? sg.index.count / 3 : 0} triangles drawn solid and then see-through, on ${[...sbn].join(', ')}, close up only; none on the clean look, a bald head or with cards: false`);
       // a face light (HDView.faceLight): one soft light beside the camera, made once, aimed between the eyes each frame wherever the camera
       // goes, as bright on the face near or far; no shadow, no ray traced light, left out of WebGPU's clustered lamps (its skin takes no shine
       // from it); null only dims it
