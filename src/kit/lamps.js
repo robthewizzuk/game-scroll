@@ -298,12 +298,14 @@ export class LampPool {
    * its lamp. ti: the tier's index.
    */
   prepare(T, ti) {
-    const K = T.shadow > 0 ? SLOTS[ti] : 0, px = Math.max(64, T.shadow >> 1), rows = Math.ceil(K / this.cols);
+    const lights = this._want ||= []; lights.length = 0;
+    for (const l of this.view.lamps) { const L = l.userData.gsLamp; if (L) L.slotOf = null; if (l.visible && l.intensity > 0 && L?.want) lights.push(l); }
+    // (no slots, and no atlas, until a lamp first wants a shadow: a pool of flashes, or lamps without shadows, has none)
+    if (lights.length) this.shadowy = true;
+    const K = T.shadow > 0 && this.shadowy ? SLOTS[ti] : 0, px = Math.max(64, T.shadow >> 1), rows = Math.ceil(K / this.cols);
     if (px !== this.slotPx || rows !== this.rows) { this.slotPx = px; this.rows = rows; }   // (atlasGen: the atlas's own, set after it is sized: lamps-gpu.js)
     while (this.slots.length < K) this.slots.push(newSlot(this.slots.length));
     this.slots.length = K;
-    const lights = this._want ||= []; lights.length = 0;
-    for (const l of this.view.lamps) { const L = l.userData.gsLamp; if (L) L.slotOf = null; if (l.visible && l.intensity > 0 && L?.want) lights.push(l); }
     lights.sort((a, b) => a.userData.gsLamp.near - b.userData.gsLamp.near);
     if (lights.length > K) lights.length = K;
     for (const s of this.slots) if (s.light && !lights.includes(s.light)) { s.light = null; s.ready = false; }
