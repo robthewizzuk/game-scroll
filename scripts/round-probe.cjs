@@ -3,7 +3,8 @@
 // each frame. Any of them in the middle of play is a frame that can stall on a phone. It starts the round
 // the real way (Play, through the loading screen), then plays it with random input and lists the frames
 // that did such work and what it was for.
-//   node scripts/round-probe.cjs [ids...] [--secs 15] [--jobs 2] [--json out.json] [--quiet]
+//   node scripts/round-probe.cjs [ids...] [--secs 15] [--jobs 2] [--json out.json] [--quiet] [--console text]
+//   --console text: also print the page's console lines that start with text (a console.log of your own while you look)
 //   no ids: every Next Gen game. WebGPU only (the WebGL renderer is the kit's own, out of reach here).
 // It runs the dev server, so the stacks name the kit's and the game's functions. The software renderer says
 // nothing about how long the chip takes: read counts and main-thread time. An upload that takes long here is
@@ -13,7 +14,7 @@ const fs = require('fs'), path = require('path');
 const { jobs, pool } = require('./lib/pool.cjs');
 (async () => {
   const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv.splice(i, 2)[1] : d; };
-  const secs = +opt('--secs', 15), out = opt('--json'), quiet = argv.includes('--quiet');
+  const secs = +opt('--secs', 15), out = opt('--json'), quiet = argv.includes('--quiet'), say = opt('--console');
   const n = jobs(argv, 'heavy'), ids0 = argv.filter(a => !a.startsWith('--'));
   const port = +(process.env.PORT || 4213);
   const vite = await import('vite');   // (the dev server: real names in the stacks)
@@ -24,6 +25,7 @@ const { jobs, pool } = require('./lib/pool.cjs');
     const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
     const p = await ctx.newPage(), w = { b, p, errs: [] };
     p.on('pageerror', e => w.errs.push(e.message));
+    if (say) p.on('console', m => { const t = m.text(); if (t.startsWith(say)) console.log('  page: ' + t); });
     await p.goto(`http://localhost:${port}/`); await p.waitForFunction(() => window.__gs, null, { timeout: 120000 }); await p.waitForTimeout(300);
     await p.evaluate(async () => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick('webgpu'); await window.__gpu.ready(); });
     return w;
