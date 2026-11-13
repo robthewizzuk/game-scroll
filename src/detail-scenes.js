@@ -794,12 +794,12 @@ function street({ gs, size }) {
   const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
   v.air({ haze: .0012, colour: '#9aa6bc' });
   const sky = new gs.sky.Sky(v, { time: 17.2, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
-  const blocks = Math.max(3, Math.round(6 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.25, Math.min(1, size));
+  const blocks = size < .3 ? 2 : Math.max(3, Math.round(6 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.25, Math.min(1, size));   // (a test's small size: a city of 2 x 2 blocks)
   const OLD = { rooms: false, fleet: false, crowd: false };
   let city = null, mode = '', ready = false;
   const sum = { n: 0, ms: 0, t: 0, hour: -1 };
   const enter = key => async draw => {
-    const t0 = performance.now(), opts = { seed: 7, blocks, style: 'downtown', sky, traffic: busy, people: busy, ...(key === 'old' ? OLD : {}) };
+    const t0 = performance.now(), opts = { seed: 7, blocks, style: 'downtown', sky, traffic: busy, people: busy, sound: false, ...(key === 'old' ? OLD : {}) };
     if (key !== 'old' && !ready) {   // (the people are sculpted the first time a phone meets them, and kept)
       let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
       await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the city\'s people were not sculpted in time'); ready = true;
