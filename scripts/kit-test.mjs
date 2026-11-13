@@ -3006,7 +3006,7 @@ console.log('physics ok');
     const br = []; for (let k = 0; k < bh2.length; k += 12) br.push(at(bd, bh2[k]));
     const mid = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] < -.07 && r[1] > -.09).length, edge = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] > -.04 && r[1] < -.02).length, lowB = Math.min(...br.map(r => r[1]));
     assert.ok(br.length > 1500 && lowB > -.17 && lowB < -.12 && mid > edge * 2 && br.every(r => r[0] < .08), `a beard of ${br.length} single hairs, down to ${(-lowB * 100).toFixed(1)} cm below the head's middle, ${mid} on a patch of the jaw to ${edge} on as much of its edge up the cheek`); }
-  console.log('gs.models: the real look (a face from a seed, older and greyer with age; a heritage's head, from the seed and the skin, a woman's as wide as a real one, no lump under the chin; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; the head of a heritage, from the seed and the skin, a woman as wide in the face as a real one, no lump under the chin; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
