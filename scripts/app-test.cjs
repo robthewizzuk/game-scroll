@@ -676,7 +676,7 @@ async function tour(b) {
     const res = await __gs.tour({ scenes: true, seconds: 1.5, size: .1, onStep(s) { steps.push(`${s.i + 1}/${s.n} ${s.game.title}: ${s.what}`); },
       onPlay() { seen.stage = seen.stage || !!document.querySelector('.tour-stage canvas.hd-host'); seen.cards = document.querySelectorAll('.slide').length; seen.awake = seen.awake || __gs.awake.on; seen.force = window.__hd.force; } });
     __hd.direct = false; await new Promise(r => setTimeout(r, 400));
-    return { text: kit.reportText(res), scenes: res.scenes.map(s => ({ key: s.key, error: s.error, holds: s.holds, modes: s.modes.map(m => ({ key: m.key, frames: m.frames, fps: Math.round(m.fps), tris: Math.round(m.tris), calls: Math.round(m.calls), build: m.build == null ? null : Math.round(m.build), note: m.note, tell: m.tell, backend: m.backend })) })),
+    return { text: kit.reportText(res), scenes: res.scenes.map(s => ({ key: s.key, error: s.error, holds: s.holds, modes: s.modes.map(m => ({ key: m.key, frames: m.frames, fps: Math.round(m.fps), tris: Math.round(m.tris), calls: Math.round(m.calls), build: m.build == null ? null : Math.round(m.build), note: m.note, tell: m.tell, backend: m.backend, work: m.work, codeBy: m.codeBy })) })),
       took: res.took, stopped: res.stopped, steps, seen,
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
@@ -700,6 +700,12 @@ async function tour(b) {
   const sent = /^posed in [\d.]+ ms a frame · (\d+) of 30 sent to be drawn a frame, in (\d+) draws$/.exec(M('square', 'on').tell || '');
   check(sent && +sent[1] >= 3 && +sent[2] >= 1 && M('square', 'on').calls < M('square', 'off').calls * .75 && M('square', 'on').tris < M('square', 'off').tris * .7 && M('square', 'off').build > 0 && M('square', 'on').build == null && /^posed in [\d.]+ ms a frame$/.test(M('square', 'off').tell) && /\nSQUARE · crowds · 30 people and dogs walking, running and standing in a square · made in /.test(sc.text) && /\n  = one crowd against a skeleton each: /.test(sc.text),
     'the square\'s people take fewer draws and triangles as one crowd than with a skeleton each', JSON.stringify(sby.square));
+  // where the engine's code went for the people with a skeleton each, by part (prof.js): three's own work on the scene and the shadow maps
+  // on WebGPU (the renders three starts, told by its inspector), the 3D kit's steps; the parts add up to about the code's time
+  const cb = M('square', 'off').codeBy || {}, cbSum = Object.entries(cb).reduce((a, [k, v]) => a + (k.startsWith('3D') ? v : 0), 0), gpuSq = M('square', 'off').backend === 'webgpu';
+  check(cb['3D render'] >= 0 && (gpuSq ? cb['3D: scene pass'] > 0 && cb['3D: shadow maps'] >= 0 && cb['3D: passes'] > 0 : cb['3D: drawing'] > 0) && cbSum > M('square', 'off').work * .6 && cbSum < M('square', 'off').work * 1.6 + 1
+    && new RegExp(`\\n  a skeleton each +.* · code [\\d.]+ ms \\([^)]*${gpuSq ? 'scene pass' : 'drawing'} [\\d.]+`).test(sc.text),
+    'the report says where the engine\'s code went for the square\'s people, by part', JSON.stringify({ codeBy: cb, work: M('square', 'off').work, backend: M('square', 'off').backend }));
   // the field: people, a dog and a jeep on snow, once leaving no trace and once with their prints and tracks on sheets of their own
   const kept = /^(\d+) marks kept, (\d+) tiles of them drawn, made in [\d.]+ ms a frame$/.exec(M('field', 'on').tell || '');
   check(kept && +kept[1] >= 6 && +kept[2] >= 2 && M('field', 'on').calls > M('field', 'off').calls && !M('field', 'off').tell && /\nFIELD · ground that takes marks · 2 people, a dog and a jeep going round a field of sand, grass and bare earth, in snow, then on wet earth, then dry · made in /.test(sc.text) && /\n  = prints, tracks, parted grass against ground that takes no marks: /.test(sc.text),
@@ -727,7 +733,7 @@ async function tour(b) {
   check(!sc.after.stage && !sc.after.touring && sc.after.force == null && sc.after.active === 'bunker-breakout' && !sc.after.awake && !sc.after.msg,
     'afterwards the stage is gone, quality is the phone\'s own again and the feed is back on the game it was on', JSON.stringify(sc.after));
   check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · frame generation off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
-    && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
+    && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms \([a-z ]+ [\d.]+(, [a-z ]+ [\d.]+)*\) · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
   // two runs at the chip's own times by pass (Rob's Fold, the village, 2026-11-13): the chip took 1.8 times as long in the second,
