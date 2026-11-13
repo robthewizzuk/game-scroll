@@ -741,7 +741,8 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
 refreshes per real frame, `fgMs` the CPU time to queue it and `still` whether the last refresh
 showed a still picture again. `node scripts/framegen-test.cjs [--mode ahead] [--steps 3] [--hard]`
 scores made frames against the truth on test scenes (moving things, things going round in circles,
-a camera turning round the scene and on the spot, glass, sparks, smoke, SGSR 2's jitter; `--kinds
+a camera turning round the scene and on the spot, glass, sparks, smoke, SGSR 2's jitter; `--kinds shapes`
+for blend shapes (morph targets, as fur and faces use them) on still things; `--kinds
 shadow,scroll,cut` for a moving shadow, a scrolling texture and a cut, with `--query '&flow=0'`,
 `&fill=0` or `&sharp=0` to compare without the optical flow, the gap pyramid or the sharp filter), and
 `node scripts/framegen-test.cjs --check` runs every suite against `scripts/framegen-test/baseline.json`

@@ -518,6 +518,27 @@ if (ClusteredLightsNode.prototype.shadowNode === undefined) ClusteredLightsNode.
 // over. With shadows off the node now answers "no shadow". look-compare's 'shadow-off' scene draws it.)
 const shadowSetup = ShadowNode.prototype.setup;
 ShadowNode.prototype.setup = function (builder) { return builder.renderer.shadowMap.enabled === false ? float(1) : shadowSetup.call(this, builder); };
+// Blend shapes in the motion picture. (three r187 moves a morphing mesh's points by its shapes but leaves
+// where they were a frame ago unmoved by them, so the motion picture held each shape's whole offset every
+// frame, still or not: fur.js's shells, pushed out along the normal by a shape, said they were sinking back
+// into the skin; a face held in a smile said it was going back to rest. SGSR 2, motion blur and frame
+// generation all move pixels by that picture: fur and faces swam and smeared, and frame generation's made
+// frames were worse there than showing the last frame again: scripts/framegen-test.cjs --kinds shapes.)
+// Where a pass writes motion, a frame ago's points now take the shapes too (three's own morph code run
+// once more, before the skin's bones, which then move both as before). A shape changing between frames
+// (a mouth opening) is not followed as motion: its pixels blend from one frame to the next, as unmarked
+// changes do.
+const positionSetup = NodeMaterial.prototype.setupPosition;
+NodeMaterial.prototype.setupPosition = function (builder) {
+  const { object, geometry } = builder;
+  if (!geometry?.morphAttributes?.position || !object?.morphTargetInfluences || !builder.needsPreviousData()) return positionSetup.call(this, builder);
+  TSL.morphReference(object);
+  positionPrevious.assign(positionLocal);
+  // the points and normals back as the geometry has them, for three's own pass (setupPosition)
+  positionLocal.assign(positionGeometry);
+  if (geometry.morphAttributes.normal && geometry.hasAttribute('normal')) TSL.normalLocal.assign(TSL.normalGeometry);
+  return positionSetup.call(this, builder);
+};
 // area lights' LTC tables (hd3d.js panel), once they've loaded
 export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
 // Soft shadows that harden where things touch (hd3d.js sun().softShadows): PCSS (Fernando, NVIDIA 2005)
