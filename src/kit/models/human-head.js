@@ -3,7 +3,7 @@
 // from the middle of the head (HC): y up from the line of the eyes, z forward. The measures are the ones a
 // portrait sculptor works to: the eyes half way up the head, the face as wide as five eyes, the foot of the
 // nose half way from the eyes to the chin, the mouth a third of the way from the nose to the chin, the ears
-// from the brow to the foot of the nose, the jaw's corners under the ears and nearly as wide as the cheekbones.
+// from the eyes to the foot of the nose, the jaw's corners under the ears and nearly as wide as the cheekbones.
 // Like the rest of the sculpting it needs no three.js and runs in background workers. Kit use only.
 import { Loft, ready, smin, smax, lumps, ss, bump } from './field.js';
 import { row as slice, shoulderRows, neckRows, neckOpening } from './human-body.js';
@@ -12,7 +12,12 @@ export { ss, bump };
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs, mx = Math.max, hyp = Math.hypot, pow = Math.pow;
 export const HC = [0, 1.69, .008];   // the middle of the head
 export const Hd = (x, y, z) => [x, HC[1] + y, HC[2] + z];
-export const EYE = [.032, 0, .07];   // the middle of the left eye, from the middle of the head
+// The face is a little simpler and friendlier than life, the way a good character model is, because a head this plain with every measure
+// true to life looks like a mask. The eyes are a tenth bigger (ES: every measure of an eye, its lids and its socket is multiplied by it)
+// and open taller, with their irises; the chin is shorter and the jaw narrows to it; the brow ridge, the sockets and the nose are softer.
+// What is too fine to sculpt (brows, lashes, the lips' colour) is painted: human-paint.js.
+export const ES = 1.1;
+export const EYE = [.0335, 0, .071];   // the middle of the left eye, from the middle of the head
 // how far the mouth's line dips to its corners (a slope: much of one and it scowls), and how far its very ends turn up again
 export const MOUTH_DIP = .02, MOUTH_UP = .0007;
 /**
@@ -20,9 +25,9 @@ export const MOUTH_DIP = .02, MOUTH_UP = .0007;
  * on the lower edge of the brow ridge, close over the eye (high on the forehead they look startled), the tail
  * no higher than the inner end (a brow that climbs to its tail scowls). A woman's stands a little higher and arches more.
  */
-export const browOf = soft => [[.013, .0205 + .0012 * soft, .0925], [.0325 + .0015 * soft, .0238 + .0022 * soft, .0885], [.0535, .0186 + .001 * soft, .0735]];
+export const browOf = soft => [[.0135, .0214 + .0012 * soft, .0925], [.036 + .0015 * soft, .0248 + .0022 * soft, .0885], [.0555, .0208 + .001 * soft, .0725]];
 // the line between the lips (y from the eyes) and half its length; the inner corner of the left eye (where the lids meet by the nose: pink, not white)
-export const MOUTH = { y: -.0672, half: .0255 }, CORNER = [EYE[0] - .0138, -.0012];
+export const MOUTH = { y: -.0655, half: .0235 }, CORNER = [EYE[0] - .0138 * ES, -.0012 * ES];
 
 // a slice of the face: y from the eyes, half width, the front and the back of it (z), where it is widest (z), how square in front and behind
 const row = (y, w, zf, zb, zc, pf = 2.2, pb = 2) => [HC[1] + y, w, zf - zc, HC[2] + zc, 0, pf, zc - zb, pb];
@@ -38,8 +43,8 @@ const ball3 = (x, y, z, rx, ry, rz) => { const X = x / rx, Y = y / ry, Z = z / r
  */
 export function eyeOpening(open) {
   const ex = EYE[0], ey = HC[1] + EYE[1], ez = HC[2] + EYE[2], rim = eyeRim(open), w = rim.w, cx = rim.cx;
-  const field = (x, y, z) => mx(rim(x, y - HC[1])[0], ez + .0035 + .75 * mx(0, ex - .01 - x) + .5 * mx(0, x - ex - .01) - z);
-  return { field, lo: [cx - w - .003, ey - .009, ez], hi: [cx + w + .003, ey + .01, ez + .03] };
+  const field = (x, y, z) => mx(rim(x, y - HC[1])[0], ez + .0035 * ES + .75 * mx(0, ex - .01 * ES - x) + .5 * mx(0, x - ex - .01 * ES) - z);
+  return { field, lo: [cx - w - .003, ey - .009 * ES, ez], hi: [cx + w + .003, ey + .01 * ES, ez + .03 * ES] };
 }
 /**
  * The outline of the left eye's opening, seen from in front: a function (x, y from the eyes) => [how far outside
@@ -47,19 +52,19 @@ export function eyeOpening(open) {
  * The sculpting carves by it and the painting draws the line of the lashes along it. (The same array each call.)
  */
 export function eyeRim(open) {
-  const w = .0143, cx = EYE[0] - .001, ct = cos(.075), st = sin(.075), o = [0, 0];
-  const hu = .0034 * open, hl = .0046 * open, R1 = (w * w + hu * hu) / (2 * hu), c1 = hu - R1, R2 = (w * w + hl * hl) / (2 * hl), c2 = R2 - hl;
+  const w = .0143 * ES, cx = EYE[0] - .001 * ES, ct = cos(.075), st = sin(.075), o = [0, 0];
+  const hu = .0044 * ES * open, hl = .0052 * ES * open, R1 = (w * w + hu * hu) / (2 * hu), c1 = hu - R1, R2 = (w * w + hl * hl) / (2 * hl), c2 = R2 - hl;
   const rim = (x, hy) => { const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx, a = hyp(u, v - c1) - R1, b = hyp(u, v - c2) - R2; o[0] = mx(a, b); o[1] = a > b ? 1 : 0; return o; };
   // how much of the upper lid a point is (0..1): all of it along the lid's edge and a little way up, none of it a finger's width above; less towards
   // the corners, where the lids meet and nothing moves. T: for strips across the eye from its inner corner out, the share of the lid's whole turn
   // that brings its edge down onto the lower lid's there (lidPlan() measures it on the mesh; without it, by how tall the opening was drawn)
   rim.lid = (x, hy, T) => {
     const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx; if (abs(u) >= w) return 0;
-    const a = hyp(u, v - c1) - R1; if (a <= -.0016 || a >= .0105) return 0;
+    const a = hyp(u, v - c1) - R1; if (a <= -.0016 * ES || a >= .0105 * ES) return 0;
     let lat;
     if (T) { const q = (u / w * .5 + .5) * T.length - .5, i = Math.floor(q), t = q - i, A = i < 0 ? 0 : T[i], B = i + 1 >= T.length ? 0 : T[i + 1]; lat = i < 0 ? A + (B - A) * (t * 2 - 1) : i + 1 >= T.length ? A * (1 - t * 2) : A + (B - A) * t; }
     else lat = (c1 + Math.sqrt(R1 * R1 - u * u) - c2 + Math.sqrt(R2 * R2 - u * u)) / (hu + hl);
-    return mx(0, lat) * ss(-.0016, -.0004, a) * ss(.0105, .0012, a);
+    return mx(0, lat) * ss(-.0016 * ES, -.0004 * ES, a) * ss(.0105 * ES, .0012 * ES, a);
   };
   // (for lidPlan: how far across the opening a point is, -1 at the inner corner .. 1 at the outer; how far outside the upper edge, and the lower)
   rim.at = (x, hy, out) => { const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx; out[0] = u / w; out[1] = hyp(u, v - c1) - R1; out[2] = hyp(u, v - c2) - R2; return out; };
@@ -78,21 +83,22 @@ export function mouthAt(x, hy, f, out = M3) {
   const so = f.soft, LP = f.lips, half = MOUTH.half - .002 * so, u = abs(x), e = u / half, v = hy - (MOUTH.y - MOUTH_DIP * u + MOUTH_UP * ss(.7, 1.1, e));
   let rise = 0, lip = 0;
   if (e < 1.4 && v < .014 && v > -.016) {
-    const T = e < 1 ? pow(1 - e * e, .6) : 0, Tl = e < 1 ? pow(1 - pow(e, 2.4), .7) : 0;
-    // (each lip rises from the line between them in a round, not a crease: a crease that small would mesh as a row of teeth)
-    if (v >= 0) { const H = .0072 * LP * T * (1 - .16 * bump(u, 0, .0035)); if (H > 1e-5) { const t = v / H; if (t < 1) rise = .0026 * (.5 + .5 * T) * ss(0, .45, t) * ss(1, .55, t); lip = ss(1.1, .78, t); } }
-    else { const H = .0094 * LP * Tl; if (H > 1e-5) { const t = -v / H; if (t < 1) rise = .0032 * (.5 + .5 * Tl) * ss(0, .42, t) * ss(1, .52, t); lip = ss(1.1, .78, t); } }
+    const T = e < 1 ? pow(1 - pow(e, 1.25), .85) : 0, Tl = e < 1 ? pow(1 - e * e, .85) : 0;   // (the upper lip runs to a point at each corner; the lower is a fuller round)
+    // (each lip rises from the line between them in a round, not a crease: a crease that small would mesh as a row of teeth; and towards the
+    // corners, where a lip is thinner than the sculpting's grid can carry, it lies flat and is paint alone)
+    if (v >= 0) { const H = .0078 * LP * T * (1 - .2 * bump(u, 0, .0036)); if (H > 1e-5) { const t = v / H; if (t < 1.25) rise = .0019 * (.5 + .5 * T) * ss(.002, .0055, H) * ss(0, .36, t) * ss(1.25, .4, t); lip = ss(1.1, .78, t); } }
+    else { const H = .0094 * LP * Tl; if (H > 1e-5) { const t = -v / H; if (t < 1.25) rise = .0028 * (.5 + .5 * Tl) * ss(.002, .0055, H) * ss(0, .4, t) * ss(1.25, .45, t); lip = ss(1.1, .78, t); } }
     lip *= ss(1, .9, e);
-    rise -= .001 * bump(u, half + .0012, .0028) * bump(v, 0, .0035);   // a dimple at each corner
+    rise -= .0006 * bump(u, half + .0015, .004) * bump(v, 0, .005);   // a dimple at each corner
   }
-  if (hy > -.064 && hy < -.045) rise -= .0008 * bump(x, 0, .0028) * ss(-.046, -.051, hy) * ss(-.0635, -.0595, hy);   // the dip from the nose to the bow of the lip
-  out[0] = rise; out[1] = lip; out[2] = e < 1.4 ? bump(v, 0, .002) * ss(1, .78, e) : 0;
+  if (hy > MOUTH.y + .0032 && hy < MOUTH.y + .0222) rise -= .0008 * bump(x, 0, .0028) * ss(MOUTH.y + .0212, MOUTH.y + .0162, hy) * ss(MOUTH.y + .0037, MOUTH.y + .0077, hy);   // the dip from the nose to the bow of the lip
+  out[0] = rise; out[1] = lip; out[2] = e < 1.4 ? bump(v, 0, .0015) * ss(1, .78, e) : 0;
   return out;
 }
 
 // the mouth: the round of the teeth under the skin, with the lips standing out of it
 function mouthShape(f) {
-  const so = f.soft, cy = HC[1] - .0645, cz = HC[2] + .071, rx = .027 - .003 * so, ry = .0185 - .0015 * so, rz = .024, o = [0, 0, 0];
+  const so = f.soft, cy = HC[1] + MOUTH.y + .0027, cz = HC[2] + .0695, rx = .0255 - .003 * so, ry = .0185 - .0015 * so, rz = .024, o = [0, 0, 0];
   return {
     field(x, y, z) { const d = ball3(x, y - cy, z - cz, rx, ry, rz); return z < cz || d < -.008 || d > .012 ? d : d - mouthAt(x, y - HC[1], f, o)[0]; },
     lo: [-rx - .003, cy - ry - .003, cz - rz], hi: [rx + .003, cy + ry + .003, cz + rz + .004],
@@ -101,7 +107,7 @@ function mouthShape(f) {
 
 // ================================================================= a live face
 // The bones a face moves on, and how much of the head's skin goes with each. They only show close up: further off each stands in as the head.
-export const JAW = [-.014, .002], LID_R = .0138;   // where the jaw turns (y from the eyes, z: a little in front of the ears); how far the lids lie from the middle of the eye
+export const JAW = [-.014, .002], LID_R = .0138 * ES;   // where the jaw turns (y from the eyes, z: a little in front of the ears); how far the lids lie from the middle of the eye
 /** The line between the lips at x (y from the eyes), for a face f. */
 export const lipLine = (x, f) => { const u = abs(x); return MOUTH.y - MOUTH_DIP * u + MOUTH_UP * ss(.7, 1.1, u / (MOUTH.half - .002 * f.soft)); };
 /**
@@ -115,9 +121,9 @@ export function lidPlan(m, f) {
   const up = { L: new Float32Array(K).fill(9), R: new Float32Array(K).fill(9) }, lo = { L: new Float32Array(K).fill(-9), R: new Float32Array(K).fill(-9) };
   for (let i = 0; i < m.n; i++) {
     const x = m.P[i * 3], ax = abs(x), hy = m.P[i * 3 + 1] - HC[1], dy = hy - EYE[1], dz = m.P[i * 3 + 2] - HC[2] - EYE[2];
-    if (dz < .008 || abs(dy) > .012 || abs(ax - rim.cx) >= rim.w || hyp(ax - EYE[0], dy, dz) < .0124) continue;   // (inside the eyeball it is never seen)
+    if (dz < .008 * ES || abs(dy) > .012 * ES || abs(ax - rim.cx) >= rim.w || hyp(ax - EYE[0], dy, dz) < .0124 * ES) continue;   // (inside the eyeball it is never seen)
     rim.at(ax, hy, o); const k = Math.min(K - 1, Math.floor((o[0] * .5 + .5) * K)), an = Math.atan2(dy, dz), sd = x >= 0 ? 'L' : 'R';
-    if (o[1] > o[2]) { if (o[1] > -.0006 && o[1] < .004) up[sd][k] = Math.min(up[sd][k], an); } else if (o[2] > -.0006 && o[2] < .004) lo[sd][k] = Math.max(lo[sd][k], an);
+    if (o[1] > o[2]) { if (o[1] > -.0006 && o[1] < .004 * ES) up[sd][k] = Math.min(up[sd][k], an); } else if (o[2] > -.0006 && o[2] < .004 * ES) lo[sd][k] = Math.max(lo[sd][k], an);
   }
   for (const sd of ['L', 'R']) {
     const need = new Float32Array(K), have = [];
@@ -157,7 +163,7 @@ export function faceShare(x, y, z, f, side = 0, lids = null) {
   if (hy > -.02) {
     if (hz < .045) return NONE;
     let lid = 0;
-    if (hy < .02 && hz > .06) { if (RIMO !== f.eyes) { RIM = eyeRim(f.eyes); RIMO = f.eyes; } lid = RIM.lid(ax, hy, lids && lids[sd]); if (lid > 0) out.push(['lid' + sd, lid]); }
+    if (hy < .02 * ES && hz > .058) { if (RIMO !== f.eyes) { RIM = eyeRim(f.eyes); RIMO = f.eyes; } lid = RIM.lid(ax, hy, lids && lids[sd]); if (lid > 0) out.push(['lid' + sd, lid]); }
     if (hy > .004) {
       const [b0, b1, b2] = browOf(f.soft), q = ax < b1[0] ? [b0, b1] : [b1, b2], t = mx(0, Math.min(1, (ax - q[0][0]) / (q[1][0] - q[0][0])));
       const k = ss(.017, .006, hyp(ax < b0[0] ? b0[0] - ax : ax > b2[0] ? ax - b2[0] : 0, hy - (q[0][1] + (q[1][1] - q[0][1]) * t))) * ss(.045, .06, hz) * (1 - lid);
@@ -280,28 +286,55 @@ export function mouthInside(m, f) {
   return { P, N, K, I, src, ao, close: true };
 }
 
-// the edge of the hair: how high it is (from the eyes) at each angle round the head (degrees from straight ahead):
-// across the forehead, back at the temples, down in front of the ear (a man's sideburn), over the ear, down behind it, across the nape
-const LINE_M = [[0, .072], [24, .076], [42, .072], [52, .06], [59, .042], [65, .028], [70, .018], [73.5, -.008], [81, -.008], [84.5, .015], [90, .021], [100, .022], [107, .016], [113, -.01], [122, -.044], [135, -.06], [180, -.064]];
-const LINE_F = [[0, .068], [22, .07], [40, .064], [54, .044], [64, .02], [72, .002], [80, -.006], [100, .002], [108, -.03], [118, -.066], [135, -.082], [180, -.086]];
+// the edge of the hair: how high it is (from the eyes) at each angle round the head (degrees from straight ahead): level across
+// the forehead to a corner at each temple, down in front of the ear (a sideburn), over the ear, down behind it, across the nape
+const LINE_M = [[0, .071], [20, .074], [33, .074], [39, .07], [43, .061], [47, .048], [52, .036], [57, .026], [61, .016], [64, .005], [65.5, -.006], [67, -.011], [79.5, -.011], [81.5, -.002], [84, .008], [88, .0135], [100, .0145], [107, .008], [112, -.012], [119, -.036], [128, -.054], [140, -.062], [180, -.064]];
+const LINE_F = [[0, .068], [22, .07], [36, .068], [42, .06], [48, .046], [56, .03], [64, .016], [70, .002], [73, -.01], [79, -.012], [81, -.004], [84, .008], [88, .0135], [100, .0145], [106, .006], [110, -.03], [118, -.066], [135, -.082], [180, -.086]];
 const lineAt = (L, deg) => { let i = 0; while (i < L.length - 2 && deg > L[i + 1][0]) i++; const a = L[i], b = L[i + 1]; return a[1] + (b[1] - a[1]) * Math.max(0, Math.min(1, (deg - a[0]) / (b[0] - a[0]))); };
+// How far outside a hairline a point of the head is (metres, measured round the head and up it; negative inside, and no further
+// than 3 cm either way): the hair's outline. The line's corners are rounded (its height is taken over a few degrees either side).
+const outside = L => {
+  const z0 = HC[2] - .0125, y0 = HC[1], R = .074 * PI / 180, STEP = 1.5, n = 120, Q = [];   // (angles are taken round a line up through the ears' fronts; a degree round the head is about 1.3 mm)
+  for (let i = 0; i <= n; i++) { let h = 0, w = 0; for (let k = -3; k <= 3; k++) { const q = 1 - abs(k) / 4, dg = i * STEP + k * .8; h += q * lineAt(L, dg < 0 ? -dg : dg > 180 ? 360 - dg : dg); w += q; } Q.push([i * STEP * R, h / w]); }
+  return (x, y, z) => {
+    const deg = Math.atan2(abs(x), z - z0) * 180 / PI, h = y - y0, s = deg * R, j = Math.min(n - 1, Math.floor(deg / STEP)), i0 = mx(0, j - 16), i1 = Math.min(n, j + 17); let best = 9e-4;
+    for (let i = i0; i < i1; i++) {
+      const a = Q[i], b = Q[i + 1], ex = b[0] - a[0], ey = b[1] - a[1], t = mx(0, Math.min(1, ((s - a[0]) * ex + (h - a[1]) * ey) / (ex * ex + ey * ey))), dx = s - a[0] - ex * t, dy = h - a[1] - ey * t, q = dx * dx + dy * dy;
+      if (q < best) best = q;
+    }
+    const a = Q[j], b = Q[j + 1]; return h > a[1] + (b[1] - a[1]) * (s - a[0]) / (b[0] - a[0]) ? -Math.sqrt(best) : Math.sqrt(best);
+  };
+};
 /**
- * Hair that grows out of the head: the head's own shape (base: how far outside it a point is) made thicker
- * by the hair's length inside the hairline, thinning to nothing at it (under the skin beyond it), combed in
- * streaks from the forehead back and down the sides. th: [length on top, at the sides]; fem: a woman's hairline.
+ * Hair that grows out of the head: one clean shape, as a character model's is. The head's own shape (base: how far outside it
+ * a point is) made thicker by the hair's length inside the hairline, which is an outline of its own (the mesh has an edge along
+ * it and the hair's colour stops dead there: a coat that thinned away to nothing had an edge like a saw's). It stands up from
+ * the skin in a step at the hairline, less than its full length, and is combed in locks from the forehead back and down the
+ * sides. th: [length on top, at the sides]; fem: a woman's hairline. At the hairline it stands at least 3 mm (short hair all of its length).
  */
 function hairShape(base, th, fem) {
-  const L = fem ? LINE_F : LINE_M, z0 = HC[2] - .0125, y0 = HC[1];   // (angles are taken round a line up through the ears' fronts)
+  const L = fem ? LINE_F : LINE_M, z0 = HC[2] - .0125, y0 = HC[1], m = outside(L);
   return {
     field(x, y, z) {
-      const d = base(x, y, z); if (d > .03 || d < -.02) return d + .004;
-      // (well outside the hairline there is none of it at all: just under the skin it would fill the openings carved for the eyes)
-      const hy = y - y0, zr = z - z0, ax = abs(x), deg = Math.atan2(ax, zr) * 180 / PI, up = hy - lineAt(L, deg), m = ss(-.002, .011 + .014 * ss(62, 40, deg) + (fem ? .016 * ss(95, 115, deg) : 0), up);
-      if (m <= 0) return d + .004 + .05 * ss(-.004, -.016, up);
-      const top = ss(.05, .09, hy), streak = top * lumps(x * 190, 2.5, z * 14) * .0011 + (1 - top) * lumps(deg * .58, y * 16, 7.5) * .0006;
-      return d - (th[1] + (th[0] - th[1]) * top + streak) * m + .004 * (1 - m);
+      const d = base(x, y, z); if (d > .04 || d < -.02) return d + .004;
+      const e = m(x, y, z); if (e > .012) return mx(e, d + .004);   // (well outside the hairline there is none of it at all)
+      // (it lengthens evenly from the ears to the crown: all of the change in a short way up made a ledge round the head. The locks run
+      // out from the crown on top and down the sides and the back, as the strands painted on it do: human.js)
+      const hy = y - y0, top = ss(-.01, .1, hy), tk = ss(.05, .09, hy), deg = Math.atan2(abs(x), z - z0) * 180 / PI, inn = ss(0, -.02, e);
+      const lock = (tk * (lumps(deg * .4, 3.1, 5.5) * .0019 + lumps(deg * .14, 6.1, 2.2) * .0015) * ss(.012, .045, hyp(x, z - z0)) + (1 - tk) * lumps(deg * .45, y * 12, 7.5) * .0011);
+      const T0 = (th[1] + (th[0] - th[1]) * top) * (1 - .4 * ss(-.02, -.06, hy)), T = T0 * inn + mx(.45 * T0, Math.min(T0, .0032)) * (1 - inn) + lock * (.3 + .7 * inn) * Math.min(1, th[0] / .008);
+      return smax(d - T, e, .0035);
     },
-    lo: [-.092, y0 - .08, HC[2] - .125], hi: [.092, y0 + .135, HC[2] + .1],
+    m, lo: [-.1, y0 - .095, HC[2] - .13], hi: [.1, y0 + .14, HC[2] + .112],
+  };
+}
+// A woman's long hair: a fall of it down the back of the head and the neck to between the shoulders, combed straight down
+function longShape() {
+  const c = Hd(0, -.07, -.075);
+  return {
+    field: (x, y, z) => ball3(x - c[0], y - c[1], z - c[2], .085, .12, .06),
+    folds(x, y, z) { const deg = Math.atan2(abs(x), z - HC[2] + .0125) * 180 / PI; return lumps(deg * .5, y * 5, 7.5) * .0022 + lumps(deg * .17, y * 3, 2.5) * .0012; },
+    foldMax: .0035, lo: [c[0] - .088, c[1] - .123, c[2] - .063], hi: [c[0] + .088, c[1] + .123, c[2] + .063],
   };
 }
 // A woman's short hair: a bob. A round of hair standing off the skull, cut to the jaw beside the face and shorter at the nape, open at the face
@@ -337,11 +370,11 @@ export function head(a, ghosts = []) {
   // ---- the mass of it: the face in slices from under the chin to the forehead, widest at the cheekbones, the jaw's
   // corners under the ears (each slice ends at the back of the jaw: behind it is the neck), and the skull, a ball over
   // and behind it (the slices end inside the ball: the top of the forehead and the crown are the ball's own round)
-  const CJ = (CH + J) / 2, sq = .3 * so;   // (a woman's jaw is rounder across)
+  const CJ = (CH + J) / 2, sq = .15 * so;   // (a woman's jaw is rounder across)
   const face = new Loft([
-    row(-.1195, .0105 * CH, .074, .052, .064), row(-.114, .021 * CH, .0815, .034, .058, 2.4 - sq), row(-.107, .0315 * CJ, .0855, .016, .046, 2.6 - sq), row(-.097, .0435 * J, .0865, -.003, .028, 2.6 - sq),
-    row(-.086, .054 * J, .0855, -.017, .012, 2.5 - sq), row(-.076, .0575 * (.15 + .85 * J), .0835, -.022, .006, 2.4 - sq), row(-.066, .06 * (.4 + .6 * J), .082, -.026, .005, 2.3 - sq / 2),
-    row(-.046, .064 * (.7 + .3 * J) + .003 * (CK - 1) * 10, .084, -.034, .006, 2.25 + .1 * so), row(-.02, .0675, .0865, -.042, .008, 2.25 + .1 * so), row(0, .069, .088, -.05, .006, 2.3),
+    row(-.1085, .0105 * CH, .0745, .054, .064), row(-.1045, .0195 * CH, .081, .04, .06, 2.15 - sq), row(-.0985, .027 * CJ, .0845, .026, .052, 2.15 - sq), row(-.0905, .035 * J, .0855, .01, .038, 2.15 - sq),
+    row(-.0805, .043 * J, .085, -.006, .022, 2.1 - sq), row(-.07, .0495 * (.15 + .85 * J), .0835, -.016, .01, 2.1 - sq), row(-.058, .0568 * (.4 + .6 * J), .0825, -.024, .006, 2.1 - sq / 2),
+    row(-.043, .0622 * (.7 + .3 * J) + .003 * (CK - 1) * 10, .084, -.034, .006, 2.15 - sq / 3), row(-.02, .066, .0865, -.042, .008, 2.2), row(0, .0685, .088, -.05, .006, 2.3),
     row(.022, .0705, .0905, -.06, 0, 2.35), row(.045, .0725, .0915, -.08, -.01, 2.3), row(.068, .066, .081, -.09, -.014, 2.2), row(.084, .05, .062, -.08, -.014),
   ]);
   // the neck: as deep as it is wide and nearly as wide as the jaw, standing behind it (its front a hand's width back from the chin), wider at its foot
@@ -357,58 +390,59 @@ export function head(a, ghosts = []) {
     A({ field: (x, y, z) => { const e = neckOpening(x, y, z); return smax(mx(top.d(x, y, z) + .0022 * ss(-.006, -.001, e), e - .005), y - 1.546, .012); }, lo: [-.1, 1.44, -.105], hi: [.1, 1.56, .105], blend: .028 });
     A({ taper: [[.017, 1.4795, .0445], [.064, 1.487, .037]], r: [.0071, .0056], mirror: true, blend: .014 }); A({ ball: [.014, .008, .006], at: [0, 1.487, .057], cut: true, blend: .018 });
   }
-  A({ taper: [Hd(.012, .0215, .0855), Hd(.05, .024, .067)], r: [.0092 * BR, .007 * BR], mirror: true, blend: .016 });   // brow ridge
-  A({ ball: .0092 * BR, at: Hd(0, .0195, .083), blend: .014 });
-  A({ ball: [.014, .0105, .011], at: Hd(.047, -.016, .0575), mirror: true, blend: .026 });                               // cheekbones
+  A({ taper: [Hd(.0125, .0225, .083), Hd(.052, .025, .0655)], r: [.0086 * BR, .0066 * BR], mirror: true, blend: .02 });   // brow ridge
+  A({ ball: .0078 * BR, at: Hd(0, .0205, .0812), blend: .018 });
+  A({ ball: [.0115, .015, .012], at: Hd(.046, -.021, .056), mirror: true, blend: .03 });                                  // cheekbones (a round cheek: a shelf of bone with a hollow under it is a gaunt face)
   // ---- eyes: a socket under the brow, the lids a shell over the eyeball that fills it, a fold of skin over the upper lid, and the opening between the lids
-  A({ ball: [.0195, .0165, .0115], at: Hd(EYE[0] - .0002, .0035, .09), mirror: true, cut: true, blend: .012 });
-  S.push({ ball: [.0158, .0138, .0138], at: Hd(EYE[0] - .0008, 0, EYE[2]), mirror: true, slot: 'lid', blend: .006 });
-  A({ taper: [Hd(EYE[0] - .0135, .0088, .0745), Hd(EYE[0] + .001, .0128, .0752)], r: [.003, .0036], mirror: true, blend: .003 });
-  A({ taper: [Hd(EYE[0] + .001, .0128, .0752), Hd(EYE[0] + .0155, .0088, .0685)], r: [.0036, .003], mirror: true, blend: .003 });
+  const E = (dx, dy, dz) => Hd(EYE[0] + dx * ES, EYE[1] + dy * ES, EYE[2] + dz * ES);   // (a place by the left eye, as far from its middle as on a life-size one)
+  A({ ball: [.019 * ES, .016 * ES, .0115 * ES], at: E(-.0002, .0035, .0222), mirror: true, cut: true, blend: .018 });
+  S.push({ ball: [.0158 * ES, .0138 * ES, .0138 * ES], at: E(-.0008, 0, 0), mirror: true, slot: 'lid', blend: .006 });
+  A({ taper: [E(-.0135, .0088, .0045), E(.001, .0128, .0052)], r: [.0032, .0039], mirror: true, blend: .003 });
+  A({ taper: [E(.001, .0128, .0052), E(.0145, .0088, -.0045)], r: [.0039, .0028], mirror: true, blend: .003 });
   S.push({ ...eyeOpening(f.eyes), mirror: true, cut: true, slot: 'lash', blend: .0022 });
   // ---- nose: a wedge standing out of the face from between the eyes (the bridge, with its flanks), the tip, the wings beside it, the nostrils under them
-  A({ taper: [Hd(0, .004, .0815), Hd(0, -.026, .1055)], r: [.0054 - .0008 * so, .0074 * NS], blend: .008 });
-  A({ ball: [.0125 * NS, .0235, .0095], at: Hd(0, -.0165, .0872), rot: [-.56, 0, 0], blend: .011 });
-  A({ ball: [.0088 * NS, .0078 * NS, .0085 * NS], at: Hd(0, -.0345, .108), blend: .008 });
-  A({ ball: [.0068 * NS, .0062, .0082], at: Hd(.0108 * NS, -.0395, .097), mirror: true, blend: .007 });
-  A({ taper: [Hd(0, -.0385, .1105), Hd(0, -.0428, .0925)], r: [.0034, .004], blend: .005 });
-  A({ ball: [.0042, .0034, .0062], at: Hd(.0064, -.0452, .1005), rot: [.5, 0, .2], mirror: true, cut: true, blend: .003 });
+  A({ taper: [Hd(0, .004, .081), Hd(0, -.026, .1025)], r: [.0054 - .0008 * so, .0074 * NS], blend: .013 });
+  A({ ball: [.014 * NS, .0235, .0095], at: Hd(0, -.0165, .086), rot: [-.56, 0, 0], blend: .016 });
+  A({ ball: [.0092 * NS, .0082 * NS, .0085 * NS], at: Hd(0, -.034, .1048), blend: .009 });
+  A({ ball: [.0068 * NS, .0062, .0082], at: Hd(.0108 * NS, -.039, .0948), mirror: true, blend: .008 });
+  A({ taper: [Hd(0, -.038, .1075), Hd(0, -.0423, .091)], r: [.0034, .004], blend: .005 });
+  A({ ball: [.0042, .0034, .0062], at: Hd(.0064, -.0447, .098), rot: [.5, 0, .2], mirror: true, cut: true, blend: .003 });
   // ---- mouth: the lips on the round of the teeth; the chin under it
   A({ ...mouthShape(f), blend: .013 });
-  A({ ball: [.0175 * CH, .0125 * CH, .012], at: Hd(0, -.1025, .0745 - .0015 * so), blend: .01 });
+  A({ ball: [.0165 * CH, .0115 * CH, .0115], at: Hd(0, -.0935, .075 - .0015 * so), blend: .01 });
   // ---- ears: a shell held out a little from the head behind the jaw, wide at the top and narrow at the lobe, its rim rolled, a bowl in the middle
   // (flesh: thin enough for light to come through, where it stands clear of the skull: human-shapes.js finish())
-  { const at = Hd(.07, -.012, -.006), sp = { at, rot: [0, -.3, -.1] }, E = (s, more) => A({ ...s, space: sp, mirror: true, flesh: true, ...more }), P = (x, y, z) => [at[0] + x, at[1] + y, at[2] + z];
-    E({ ball: [.0038, .027, .0155], at: P(.004, .003, -.012), blend: .006 }); E({ ball: [.004, .007, .0075], at: P(.003, -.0225, -.008), blend: .006 });
-    E({ torus: [.0165, .0026], at: P(.0052, .008, -.012), rot: [0, 0, PI / 2], blend: .0035 });
-    E({ taper: [P(.0066, .018, -.0145), P(.0066, -.006, -.017)], r: .0026, blend: .003 }); E({ ball: [.0028, .004, .003], at: P(.0035, -.004, .002), blend: .003 });
-    E({ ball: [.0035, .0085, .0065], at: P(.0078, .0005, -.0075), cut: true, blend: .004 }); }
+  { const at = Hd(.0695, -.014, -.008), sp = { at, rot: [0, -.2, -.08] }, E = (s, more) => A({ ...s, space: sp, mirror: true, flesh: true, ...more }), P = (x, y, z) => [at[0] + x, at[1] + y, at[2] + z];
+    E({ ball: [.0034, .0225, .013], at: P(.0035, .002, -.0105), blend: .006 }); E({ ball: [.0034, .006, .006], at: P(.0026, -.019, -.007), blend: .006 });
+    E({ torus: [.014, .0022], at: P(.0045, .0065, -.0105), rot: [0, 0, PI / 2], blend: .0035 });
+    E({ taper: [P(.0056, .015, -.0125), P(.0056, -.005, -.0145)], r: .0022, blend: .003 }); E({ ball: [.0024, .0034, .0026], at: P(.003, -.0035, .0015), blend: .003 });
+    E({ ball: [.003, .0072, .0055], at: P(.0066, .0005, -.0065), cut: true, blend: .004 }); }
   // ---- neck: the two cords from behind the jaw's corners (they start inside the neck there) to the breastbone, a man's Adam's apple
   A({ taper: [Hd(.047 * nk, -.045, -.034), [.02 * nk, 1.5, .03]], r: [.0105 * (1 - .3 * so), .012 * (1 - .3 * so)], mirror: true, blend: .02 + .01 * so });
   if (so < .5) A({ ball: .009, at: [0, 1.553, .031], blend: .018 });
-  // ---- hair: cropped close under a hat, a man's short back and sides, a woman's lower at the temples (over the tops of her ears) and at the nape:
+  // ---- hair: cropped close under a hat, a man's short back and sides, a woman's lower at the temples and at the nape:
   // tied back in a bun, long down her back, or short in a bob that stands off it
   const hs = a.hair, fem = so > .5;
   if (hs && hs !== 'bald') {
-    const B = ready(base), skull = (x, y, z) => { let d = 1e9; for (const s of B) d = smin(d, s.d(x, y, z), s.k); return d; };
-    const bob = fem && hs === 'short' && !a.hat, th = a.hat ? [.0028, .0028] : !fem ? [.0066, .004] : hs === 'long' ? [.0105, .0095] : [.0055, .005];
-    S.push({ ...hairShape(skull, th, fem), slot: 'hair', blend: .003 });
-    if (bob) {
+    // (what it grows out of: the head's mass, and over the top of the head the skull's ball alone: the slices of the face end there, and a
+    // centimetre off them their measure jumps where they end, which stood in the hair as a ledge round the head)
+    const B = ready(base), all = (x, y, z) => { let d = 1e9; for (const s of B) d = smin(d, s.d(x, y, z), s.k); return d; }, crown = B[1].d;
+    const skull = (x, y, z) => { const w = ss(.035, .06, y - HC[1]); return w <= 0 ? all(x, y, z) : w >= 1 ? crown(x, y, z) : crown(x, y, z) * w + all(x, y, z) * (1 - w); };
+    const bob = fem && hs === 'short' && !a.hat, th = a.hat ? [.003, .003] : !fem ? [.0105, .006] : hs === 'long' ? [.012, .011] : [.007, .006];
+    if (!bob) S.push({ ...hairShape(skull, th, fem), out: .0015, slot: 'hair', blend: .003 });
+    if (bob || hs === 'long') {
       // (its edge is an outline of its own: the line where the surface stops being the bob's and becomes the face's, made straight)
-      const U = ready(S.filter(s => !s.paint && !s.ghost)), b = bobShape(), near = (s, x, y, z) => x > s.lo[0] - .02 && x < s.hi[0] + .02 && y > s.lo[1] - .02 && y < s.hi[1] + .02 && z > s.lo[2] - .02 && z < s.hi[2] + .02;
+      const U = ready(S.filter(s => !s.paint && !s.ghost)), b = bob ? bobShape() : longShape(), near = (s, x, y, z) => x > s.lo[0] - .02 && x < s.hi[0] + .02 && y > s.lo[1] - .02 && y < s.hi[1] + .02 && z > s.lo[2] - .02 && z < s.hi[2] + .02;
       const under = (x, y, z) => { let d = 1e9; for (const s of U) if (near(s, x, y, z)) d = s.cut ? smax(d, -s.d(x, y, z), s.k) : smin(d, s.d(x, y, z), s.k); return d; };
-      S.push({ ...b, m: (x, y, z) => b.field(x, y, z) - under(x, y, z), out: .002, slot: 'hair', blend: .004 });
+      S.push({ ...b, m: (x, y, z) => b.field(x, y, z) - under(x, y, z), out: .002, slot: 'hair', blend: bob ? .004 : .012 });
     }
     if (hs === 'bun') S.push({ ball: .034, at: Hd(0, .034, -.108), slot: 'hair', lumpy: [.011, .0022], blend: .012 });
-    if (hs === 'long') S.push({ ball: [.085, .12, .06], at: Hd(0, -.07, -.075), slot: 'hair', lumpy: [.011, .0026], blend: .02 });
   }
-  // brows painted on the ridge; a moustache stands a little proud
-  const bw = 1 - .3 * so, BROW = browOf(so);   // a woman's are finer
-  S.push({ taper: [Hd(...BROW[0]), Hd(...BROW[1])], r: [.0036 * bw, .0034 * bw], mirror: true, slot: 'brow', paint: true }, { taper: [Hd(...BROW[1]), Hd(...BROW[2])], r: [.0034 * bw, .0021 * bw], mirror: true, slot: 'brow', paint: true });
-  if (a.moustache) S.push({ ball: [.019, .0045, .0055], at: Hd(.011, -.0552, .0885), rot: [0, .3, -.18], mirror: true, slot: 'brow', lumpy: [.004, .001], blend: .002 });
+  // (the brows are in the face's paint: human-paint.js) a moustache stands a little proud
+  if (a.moustache) S.push({ ball: [.0175, .0045, .0055], at: Hd(.0102, MOUTH.y + .012, .0872), rot: [0, .3, -.18], mirror: true, slot: 'brow', lumpy: [.004, .001], blend: .002 });
   // the hat stands over the face: a brim's shadow on the brow
   for (const g of ghosts) S.push({ ...g, ghost: true, slot: null });
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = [row, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, hairShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside].map(String).join('') + JSON.stringify([HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = [row, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside].map(String).join('') + JSON.stringify([ES, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);

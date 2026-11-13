@@ -1112,8 +1112,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.
 - **`fur(mesh, o)`**: fur or hair in layers, with no texture files: copies of the surface pushed out along
   its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
-  themselves (`creature.fur`; `fur: false` to leave it off), and people's hair, moustaches and beards are
-  strands (`human({ beard: 1 })`, `person.hair`; `strands: false` for the sculpted hair alone). Close up
+  themselves (`creature.fur`; `fur: false` to leave it off), and people's moustaches and beards are
+  strands (`human({ beard: 1 })`, `person.hair`; `strands: true` for the hair of the head too, which is a
+  clean combed shape otherwise; `strands: false` for none). Close up
   only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
   fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
   [Fur and hair](maker-kit.md#fur-and-hair).

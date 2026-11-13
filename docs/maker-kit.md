@@ -79,7 +79,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
 | Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
-| Fur on animals, hair in strands and beards on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
+| Fur on animals, beards (and hair, when asked) in strands on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
 | Ball games with boosting, flipping cars | `gs.arena` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -3026,11 +3026,12 @@ update(dt) {
 
 ## Fur and hair
 
-(Next Gen.) Animals with a coat of fur have fur, and people's hair is strands, by themselves:
+(Next Gen.) Animals with a coat of fur have fur, and people's beards and moustaches are strands, by themselves
+(the hair of a head is a clean combed shape, and wears strands when asked):
 
 ```js
 make():   fox = gs.models.creature({ like: 'dog', seed: 9 }); view.add(fox);          // furry close up, nothing to ask for
-          man = gs.models.human({ hair: '#8a8a88', beard: 1 }); view.add(man);        // hair in strands, and a beard
+          man = gs.models.human({ hair: '#8a8a88', beard: 1 }); view.add(man);        // a beard in strands (strands: true for his hair too)
           rug = gs.models.fur(mesh, { length: .04, lean: .8 });                        // or fur on any mesh of your own
 update(dt) { fox.move(dt, speed); if (scared) fox.fur.length = 1.5; }                  // its fur stands on end
 ```
@@ -3049,11 +3050,14 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   strand longer than about half of how thick what it grows on is, so ears, thin tails and legs keep their
   shape. A seed makes one a little shaggier or sleeker. `fur: false` leaves it off; `fur: { length: .04,
   layers: 8, lean: .7, tile: .08 }` tunes it (metres). `creature.fur` is the coat, or `null`.
-- **People.** `human()` lays strands over the sculpted hair, streaming from the crown (from the bun, for
-  `hairStyle: 'bun'`), over a moustache, and over a beard: `beard: 0..1.5` is how long (`true` is .6; the
-  painted `stubble` is still there for a shave two days old). `person.hair` is the coat, or `null`: bald
-  with no beard, under a hat (the hair there stays as sculpted, cropped close), or `strands: false`.
-  `strands: { length: .02, layers: 8 }` tunes it.
+- **People.** `human()` lays strands over a moustache and over a beard: `beard: 0..1.5` is how long (`true`
+  is .6; the painted `stubble` is still there for a shave two days old). The hair of the head is a clean
+  sculpted shape with a crisp hairline and combed strands painted on it (a small picture made in code, laid
+  round the head from the crown), which reads well at every distance and costs nothing extra; `strands: true`
+  lays real strands over it as well, streaming from the crown (from the bun, for `hairStyle: 'bun'`), and
+  `strands: { length: .02, layers: 8 }` tunes them. `person.hair` is the coat, or `null`: no beard or
+  moustache and no strands asked for, under a hat (the hair there stays as sculpted, cropped close), or
+  `strands: false` (none anywhere).
 - **Any mesh.** `gs.models.fur(mesh, o)`: `length` (in the mesh's own units), `kind` (`'fur'` on end, `'hair'`
   lying side by side), `where` (how much of the length grows at each point: a `Float32Array` of 0..1, or
   `(i, x, y, z) => 0..1`; strands shorten toward where none grow and the coat thins out there, so it has
