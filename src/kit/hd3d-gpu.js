@@ -149,6 +149,7 @@ class FleshModel extends PhysicalLightingModel {
 /* ---------- kit materials with a shader of their own, as node materials ---------- */
 // gs.models.human's weaves (human.js WEAVES: plain, twill, denim, knit, canvas, wool, fine): threads a tile, and the sheen each catches at a glance
 const WEAVE_N = [0, 18, 11, 20, 9, 10, 30], WEAVE_SHEEN = [.12, .12, .08, .25, .06, .4, .1];
+const HAIR_MIN_PX = .5, HAIR_MOST = 40;   // (hairs: the least a strand reaches out from its middle, in pixels, and the most it is widened by)
 const ARM_OUT = .27;   // (human-shapes.js ARM: the arms out as a person's mesh was bound)
 const NO_BEND = new Vector4(0, -9, 0, 0), NO_GRIME = new Vector4();   // (a mesh with no elbows or knees; a person clean and dry)
 const ridge = x => { const f = fract(x); return f.mul(f.oneMinus()).mul(4); };   // a thread's round top: 0 at its edges, 1 along its middle
@@ -221,7 +222,7 @@ export const gpuMaterials = {
         m.normalNode = bumpN(FW ? D.r.sub(texture(FW, uv(1)).dot(wr).mul(2.6)) : D.r, float(.00016), pores);
         // (and rougher where the pores turn the surface faster than a pixel can show, Kaplanyan and Hoffman's specular antialiasing: a pore
         // a pixel or two across had each caught the light as a glint of its own, so a close face glittered like wet sand, darkest skin most)
-        const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1)), ex = dFdx(normalView), ey = dFdy(normalView);
+        const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1).sub(smoothstep(.9, 1, D.g).mul(.22))), ex = dFdx(normalView), ey = dFdy(normalView);
         const spread = ex.dot(ex).add(ey.dot(ey)).mul(.5).min(.18).toVar();
         m.roughnessNode = sqrt(r0.mul(r0).add(spread)).min(1);
         // (and less of it where the skin is dry, and where the pores are too small to see: a pore's hollow shines little, so as they blur into
@@ -238,6 +239,25 @@ export const gpuMaterials = {
       m.thicknessDistortionNode = float(S.distortion); m.thicknessAmbientNode = float(S.ambient); m.thicknessAttenuationNode = float(S.attenuation);
     }
     m.name = gm.name || 'sss';
+    return m;
+  },
+  // gs.models.human's hairs one by one (a real face's lashes, brows, moustache and beard: human-head.js eyeParts). A brow hair is a tenth
+  // of a millimetre across, a small part of a pixel even with the face filling the screen: drawn as it is, only the few pixels whose middles
+  // it crosses showed it, a dark speck each, and a brow or a beard read as specks. So each strand is drawn at least a pixel wide, widened
+  // out from the middle of each of its rings (the way out in gsThin and uv1.x: human.js hairRings), and as see-through as it is thinner than
+  // that: what a pixel shows is how much of it the hairs cover, as with a real face's brow seen from across a room. Its shadow is its own size.
+  hairs(gm) {
+    const m = new MeshPhysicalNodeMaterial();
+    for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];
+    m.name = gm.name || 'hairs';
+    const o = vec3(attribute('gsThin', 'vec2'), attribute('uv1', 'vec2').x), p11 = uniform(1).onRenderUpdate(({ camera }) => camera?.projectionMatrix?.elements[5] ?? 1);
+    // (how many pixels its round reaches out from its middle here, at its depth; a pixel across is half of one out)
+    const depth = max(TSL.modelViewMatrix.mul(vec4(positionLocal, 1)).z.negate(), 1e-3), px = length(o).mul(p11).mul(TSL.screenSize.y).mul(.5).div(depth);
+    const wide = max(float(1), float(HAIR_MIN_PX).div(max(px, 1e-5))).min(HAIR_MOST);
+    m.positionNode = positionLocal.add(o.mul(wide.sub(1)));
+    m.castShadowPositionNode = positionLocal;
+    m.opacityNode = materialOpacity.mul(TSL.varying(float(1).div(wide), 'gsHairCover'));
+    m.transparent = true; m.depthWrite = false;
     return m;
   },
   // gs.models.human's clothes (userData.grime: 'cloth', 'leather', or 'far' for the plain stand-in further off). Close up each cloth is woven
