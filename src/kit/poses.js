@@ -29,6 +29,7 @@ import { Bone, BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, 
 import { reach } from './characters.js';
 import { Stride } from './stride.js';
 import { Follow } from './follow.js';
+import { Lead } from './lead.js';
 export { person, Face, shapes, visemes, FACE_SHAPES } from './skin.js';
 
 const JOINTS = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
@@ -267,10 +268,11 @@ const grounded = (d, w, phase) => { if (!d?.ground || w <= 0) return; const G = 
  * foot touches down (left, right).
  * momentum: true: a new move begins at once and takes up what the body was doing, where other rigs cross-fade
  * (carried(), below). follow: true (with body): what the body carries goes on a moment and settles when the
- * game starts, stops, turns or drops it (follow.js); rig.follow.amount = 0 turns that off.
+ * game starts, stops, turns or drops it (follow.js); rig.follow.amount = 0 turns that off. lead (as follow unless
+ * given): the eyes and the head go first into a turn (lead.js); rig.lead.amount = 0 turns that off.
  */
 export class Rig {
-  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false } = {}) {
+  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false, lead = follow } = {}) {
     this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses }; this.weight = weight; this.size = size; this.done = false;
     this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
     // a full skeleton: the joints in between, which fill() works out (the waist under the rib cage, the neck under the head, each a
@@ -287,6 +289,7 @@ export class Rig {
     this.stride = body ? new Stride(this, body) : null; this.steps = true;
     this.momentum = momentum; this.mom = null; this.cutT = null;
     this.follow = body && follow ? new Follow(this, body) : null;
+    this.lead = body && lead ? new Lead(this, body) : null;
   }
   /**
    * Blends to a pose by name. at: where in the pose (0..1) it stands, for a pose the game drives itself
@@ -373,8 +376,12 @@ export class Rig {
     return this;
   }
   sample(name, phase) { const def = this.poses[name]; if (!def) return { j: {}, drop: 0 }; return def.cycle(phase); }
-  /** speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer. */
-  update(dt, { speed = 0, aim = 0, turn = 0 } = {}) {
+  /**
+   * speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer; turn: how fast
+   * the body turns (rad/s, to its left +; the body banks into it); toward: where the person means to go next, a point { x, z }
+   * or a heading (radians, as rotation.y), so the eyes and head turn there first (lead.js; read from the body's own turning without it).
+   */
+  update(dt, { speed = 0, aim = 0, turn = 0, toward = null } = {}) {
     this.lastDt = dt;
     // a blend space: its walks and runs share one phase. The stride of a mix is the mix of the strides, and a pose that
     // stands still has none: mixed with standing, a walk takes shorter steps at its own beat (its feet slid when it
@@ -434,6 +441,7 @@ export class Rig {
     else if (turn) (out.spine ||= [0, 0, 0])[2] -= turn * .1;
     if (this.follow?.body) { if (this.near === false) this.follow.on = false; else this.follow.pose(dt, out); }   // follow-through: what the body carries goes on a moment and settles
     if (this.idle) this.idle.pose(dt, out, speed, this.fine !== false, this.near !== false);   // a person standing about (gs.models.human's person.idle): fidgets close up, the head after the eyes, glances, gestures
+    if (this.lead) this.lead.pose(dt, out, toward);   // the eyes and the head go first into a turn
     this.phase = last.phase;
     if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
     else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
