@@ -1542,6 +1542,21 @@ console.log('physics ok');
   F.dispose(); PG.dispose();
   console.log('city cars up close: seats behind see-through glass close by, dark glass further off, the paint look on cars drawn whole, the parked cars\' glass ok');
 }
+// what the street walls wear (city-walls.js): the same for the same seed, flat on the walls that face the street, posters, tags and grime
+{
+  const { layout, FACADES } = await import('../src/kit/city.js'), { wallMarks, wallGeometry } = await import('../src/kit/city-walls.js');
+  const WIN = { punched: [.24, .22, .76, .8], curtain: [.04, .22, .96, .96], house: [.3, .25, .7, .75], shed: [.1, .68, .9, .9] };
+  for (const style of ['oldtown', 'harbour']) {
+    const p = layout({ seed: 5, blocks: [4, 4], style }), inside = (x, z) => p.buildings.some(b => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1);
+    const run = () => { const out = []; for (const b of p.buildings) { const F = FACADES[b.facade]; wallMarks(b, F, WIN[F.kind], .15 + (b.shops ? 4.6 : 0), .15, 5, (x, z) => !inside(x, z), 1, out); } return out; };
+    const M = run(), kinds = new Set(M.map(m => m.q.w === 2 && m.q.h === .5 ? 'grime' : m.q.h === .72 ? 'tag' : m.q.w === 2 ? 'piece' : m.q.y >= 3 ? 'streak' : 'poster'));
+    assert.equal(JSON.stringify(M), JSON.stringify(run()), style + ': the same seed, the same walls');
+    for (const m of M) assert.ok(!inside(m.x + m.nx * .5, m.z + m.nz * .5) && inside(m.x - m.nx * .5, m.z - m.nz * .5), style + ': a mark off a street wall');
+    assert.ok(kinds.has('grime') && kinds.has('tag') && kinds.has(style === 'harbour' ? 'piece' : 'poster'), style + ': grime, tags and ' + (style === 'harbour' ? 'pieces' : 'posters') + ' (' + [...kinds] + ')');
+    const g = wallGeometry(M); assert.ok(g.index.count === M.length * 6 && g.attributes.color.count === M.length * 4, style + ': one quad a mark');
+  }
+  console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {

@@ -282,11 +282,13 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    and a broken lamp (`src/kit/models/vehicle-damage.js`); each run says how many triangles a car is, the
    second what the hit car took.
    And the **ground**: a drive at 9 metres a second down the streets of a made-up old town at midday, once on
-   the tiled ground pictures the city had (they repeat every few metres), then on the ground painted round the
-   camera (`src/kit/ground-paint.js`): patches, cracks and tar lines in the asphalt, slabs laid in a bond with
-   a cracked one here and there, gum and stains, oil under parked cars and skid marks before stop lines, painted
-   into two pictures that follow the camera a strip at a time and read in place of the tiles; the second run
-   says how many strips were painted and how many texels a frame on average.
+   the tiled ground pictures the city had (they repeat every few metres) past bare walls, then on the ground
+   painted round the camera (`src/kit/ground-paint.js`): patches, cracks and tar lines in the asphalt, slabs
+   laid in a bond with a cracked one here and there, gum and stains, oil under parked cars and skid marks before
+   stop lines, painted into two pictures that follow the camera a strip at a time and read in place of the
+   tiles, with posters, made-up tags, damp streaks and grime on the street walls (`src/kit/city-walls.js`); the
+   second run says how many strips were painted, how many texels a frame on average and how many things the
+   walls wear.
    About 17 minutes at 20 seconds a run on WebGPU (33 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.

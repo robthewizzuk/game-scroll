@@ -43,6 +43,9 @@ try {
     ground: () => [[b.x0 - 3, 1.7, b.z0 - 3], [b.x0 + 1.5, 0, b.z0 + .5]],
     road: () => [[b.x0 - 5.5, 1.4, b.z0 - 2], [b.x0 - 5.5, 0, b.z0 + 30]],
     above: () => [[b.x0 - 6, 14, b.z0 - 12], [b.x0 + 2, 0, b.z0 + 4]],
+    // along a street wall at a pedestrian's height: posters, tags, grime
+    walls: () => { const o = P.buildings.filter(x => x.face === 0 && !x.shops).sort((p, q) => (q.x1 - q.x0) - (p.x1 - p.x0))[0] || front; return [[o.x0 + 1, 1.6, o.z0 - 3.6], [o.x0 + 9, 1.1, o.z0]]; },
+    across: () => { const o = P.buildings.filter(x => x.face === 0 && !x.shops).sort((p, q) => (q.x1 - q.x0) - (p.x1 - p.x0))[0] || front, m = (o.x0 + o.x1) / 2; return [[m, 1.7, o.z0 - 10], [m, 1.6, o.z0]]; },
     high: () => [[b.x0 - 30, 45, b.z0 - 60], [b.x0 + 40, 10, b.z0 + 60]],
     far: () => [[P.bounds.x0 - 20, 90, P.bounds.z0 - 20], [0, 20, 0]],
     // looking up a front from across the street; along a row of parked cars; over the roofs nearby
