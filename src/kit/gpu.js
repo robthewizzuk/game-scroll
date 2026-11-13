@@ -112,12 +112,26 @@ export function prepareGPU() {
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path
       r.gsBackend = 'webgpu';
       fx.manyLights(r);
+      freeUnbuilt(r);
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
       installPack(r);   // code-made textures packed into the chip's compressed formats (spark.js)
       r.backend.device?.lost?.then(info => { console.warn('WebGPU device lost:', info?.reason, info?.message); if (gpu?.r === r) { gpu = null; con = null; conLoad = null; conTried = false; } gpuLoad = null; });   // the GPU went away: back to WebGL
       return gpu = { r, W, fx };
     } catch (e) { console.warn('WebGPU did not start:', e); gpuLoad = null; return null; }
   })();
+}
+// A geometry freed (geometry.dispose()) has three free what each of its render objects sent to the chip, and
+// three asks a render object for that by building its shader. One whose shader was still being built in the
+// background (hd3d.js compileGPU: a new thing held back, a level part let go of before it showed) was built
+// there and then, between frames, for the screen with no extra outputs, and three kept that build for the
+// render object and under its key: the picture the scene is drawn into has two or more outputs, so the next
+// thing of that look got a pipeline WebGPU refuses ("Color target has no corresponding fragment stage output")
+// and was not drawn: people's eyes and clothes, after a scene that freed its people. A render object not built
+// yet has sent nothing to the chip: there is nothing of it to free.
+function freeUnbuilt(r) {
+  const G = r._geometries, free = G?.deleteNodeAttributes;
+  if (typeof free !== 'function') return;
+  G.deleteNodeAttributes = function (ro) { if (ro.attributes == null && !ro._nodeBuilderState) return; return free.call(this, ro); };
 }
 // HDR output: on screens that report a high dynamic range, unless a test turned it off or on (setHdr)
 let hdrPick = null;
@@ -142,7 +156,7 @@ export function prepareConsoleGPU() {
       const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false });
       await r.init();
       if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
-      r.gsBackend = 'webgpu'; fx.setup(r);
+      r.gsBackend = 'webgpu'; freeUnbuilt(r); fx.setup(r);
       return con = { r, W: G.W, fx };
     } catch (e) { console.warn('Console WebGPU did not start:', e); return null; } finally { conTried = true; }
   })();
