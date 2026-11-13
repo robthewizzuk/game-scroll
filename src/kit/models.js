@@ -10,7 +10,7 @@ export const ready = () => Promise.all([warm(), loadTrees()]);
 export { wear, curvature } from './models/wear.js';
 export { prop, PROP_NAMES as props } from './models/props.js';
 export { sculpt } from './models/sculpt.js';
-export { tree, TREE_KINDS as trees } from './models/trees.js';
+export { tree, ivy, weeds, TREE_KINDS as trees } from './models/trees.js';
 export { building, BUILDING_STYLES as buildings } from './models/buildings.js';
 export { human } from './models/human.js';
 export { creature } from './models/creature.js';

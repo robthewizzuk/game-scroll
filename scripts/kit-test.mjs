@@ -2880,7 +2880,7 @@ console.log('physics ok');
     assert.ok(out === 0 && proud > .00024 && proud < .00026, `the cornea stands ${(proud * 1000).toFixed(2)} mm proud of the ball (the lids pass a fifth of a millimetre over it) and nothing else does`);
     assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
   // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
-  { assert.ok(RECIPES.skin && Object.keys(RECIPES).length === 18, 'a skin among the recipes: ' + Object.keys(RECIPES).length); }
+  { assert.ok(RECIPES.skin && RECIPES.palm && Object.keys(RECIPES).length === 19, 'a skin (and a palm trunk) among the recipes: ' + Object.keys(RECIPES).length); }
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 

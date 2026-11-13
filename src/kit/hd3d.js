@@ -2787,7 +2787,7 @@ const REFL_FULL = { scale: 1 }, REFL_HALF = { scale: .5 };
 // contact shadows, reflections, sun shafts, light probes, a sky's own reflections, cloud shadows and
 // rain on the air, and any material with its own shader (ShaderMaterial or a shader patch that isn't
 // one of the kit's ported look effects). docs/webgpu-move.md lists what's left to port.
-const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'meadow', 'room', 'flow', 'lava']);
+const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'fronds', 'meadow', 'room', 'flow', 'lava']);
 PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)

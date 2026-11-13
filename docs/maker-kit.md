@@ -90,7 +90,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Sounds muffled by walls, each place with its own echo, by themselves | `new Ears({ level })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Knocks by what things are made of, footsteps by what is underfoot, engines that rev through the gears, by themselves | `gs.sound.Foley` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
-| Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
+| Materials, props, sculpted shapes, trees and plants (palms, ferns, swamp plants, ivy over walls, weeds in cracks), buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Water you can disturb: rings, splashes and spray, wakes and foam behind boats and swimmers, rain on it, foam at the shore, the view from under it | `gs.outdoors.Water` | [Water you can disturb](#water-you-can-disturb) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
