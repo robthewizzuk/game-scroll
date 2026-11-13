@@ -22,6 +22,9 @@ export function installPack(r) {
     if (!textures || !device || r.gsPack) return;
     const per = new WeakMap(); r.gsPack = per;
     let spark = null, sparkLoad = null, busy = false; const queue = [];
+    // r.gsPacking: textures waiting to be packed or being packed now (a loading screen waits for these a little,
+    // getready.js: each one's upload can hold up a frame where the chip is slow)
+    Object.defineProperty(r, 'gsPacking', { get: () => queue.length + (busy ? 1 : 0), configurable: true });
     const load = () => sparkLoad ||= import('@ludicon/spark.js').then(({ Spark }) => Spark.create(device)).then(s => (spark = s), e => { console.warn('Texture packing off:', e?.message || e); return null; });
     // one at a time, so a level full of new textures doesn't load the chip all at once
     const next = async () => {

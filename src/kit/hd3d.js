@@ -2808,8 +2808,9 @@ function bakeLater(view, c) {
 // Getting a round ready (getready.js; the app draws the round's first frames under its loading screen): what
 // the views on the 3D canvas still have on their way. Hard: shaders being built in the background and the
 // things hidden until theirs are (holdNew), and on WebGPU every build still waiting its turn. Soft: cluster
-// detail not in yet (it only makes frames quicker, and comes in unseen), and shaders a view is building ahead
-// for things it has not shown yet (view.shadersLeft, where a view has it, counts those too).
+// detail not in yet (it only makes frames quicker, and comes in unseen), shaders a view is building ahead
+// for things it has not shown yet (view.shadersLeft, where a view has it, counts those too), and on WebGPU
+// textures still being packed into the chip's own formats (r.gsPacking: each upload can hold up a frame).
 const LIVE = new Set();   // the views drawn on the 3D canvas lately (a game can draw more than one)
 function liveView(v, now) { LIVE.add(v); if (LIVE.size > 1) for (const o of LIVE) if (now - o.drawnAt > 2000) LIVE.delete(o); }
 function stillComing() {
@@ -2820,8 +2821,9 @@ function stillComing() {
     hard += here; if (v.shadersLeft > here) ahead++;
     if (HD.detail !== false && v.detailPending()) soft++;
   }
-  hard += webgpu()?.r.gsBuilding || 0;
-  return hard || soft || ahead ? { hard, soft: soft + ahead, what: hard || ahead ? 'Shaders' : 'Detail' } : null;
+  const G = webgpu(), packs = G?.r.gsPacking || 0;   // (textures still to pack: pack.js)
+  hard += G?.r.gsBuilding || 0;
+  return hard || soft || ahead || packs ? { hard, soft: soft + ahead + packs, what: hard || ahead ? 'Shaders' : soft ? 'Detail' : 'Textures' } : null;
 }
 waitsOn(stillComing);
 function mount(cv, c, view) {

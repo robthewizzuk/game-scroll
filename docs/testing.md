@@ -305,7 +305,8 @@ drawing) are not in them: `perf-bench.cjs` and `shader-hold.cjs` measure those.
 Play on a Next Gen, AR or Board game does not start the round at once. The app puts a loading screen
 over the card, runs the game's `reset()`, draws the round's first frames under the cover (`draw()`
 with no `update()`), runs the round's first `update()` there too, once, and starts the round when the
-3D kit has nothing left on its way (shaders being built, things hidden until theirs are) and a few
+3D kit has nothing left on its way (shaders being built, things hidden until theirs are; for up to 4 s
+also cluster detail, shaders built ahead and, on WebGPU, textures still being packed for the chip) and a few
 frames in a row came on time (`getReady` in `src/main.js`; `src/kit/getready.js` is what the app and
 the kits share). A card that has been through it once is quick the next time, so "Play again" usually
 shows no loading screen at all. A 2D game still starts the instant Play is pressed.

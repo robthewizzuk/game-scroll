@@ -402,7 +402,7 @@ function beginRound(s,ready){
 // A card that has been through this once is quick the next time ("Play again"), so its cover only goes up
 // if getting ready takes longer than a blink (GATE.show), unless its reset() is a long one. A cover that has
 // gone up stays a moment (GATE.hold), so it never flashes. Nothing waits for ever: GATE.most ends it, and
-// what only makes frames faster (cluster detail) is waited for GATE.soft at most. Swiping to another game,
+// what only makes frames faster (cluster detail, textures packed for the chip) is waited for GATE.soft at most. Swiping to another game,
 // or the card failing, gives the start up (dropReady): nothing was spent and the card is ready again.
 // A game on any other style that is still being made when Play is pressed waits for it the same way, and
 // starts as soon as it is made.
