@@ -3096,11 +3096,20 @@ function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.ma
 function autoDetail(v, now, quiet) {
   const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
   // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
-  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off.
+  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off. A step finer
+  // that went over is not tried again (D.bad: the scale that went over) until the view is a quarter lighter or
+  // the budget changes: a few surfaces seen whole jump between two levels, one over the budget and one well
+  // under, and the scale swung between them every frame, the surfaces changing with it.
   const budget = reliefBudget(), reliefOn = budget > 0;
   if (!quiet) {
     let drew = 0; for (const e of D.map.values()) if (e.relief && e.twin) drew += drawnTris(e.twin);
-    if (reliefOn && drew > budget * 1.1) D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); else if (D.rk > 1 && drew < budget * .7) D.rk = Math.max(1, D.rk / 1.1);
+    if (D.badB !== budget) { D.bad = 0; D.badB = budget; }
+    if (reliefOn && drew > budget * 1.1) { D.bad = D.rk; D.badDrew = -1; D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); }
+    else if (D.rk > 1 && drew < budget * .7) {
+      if (D.bad) { if (D.badDrew < 0) D.badDrew = drew; else if (!drew || drew < D.badDrew * .75) D.bad = 0; }
+      const next = Math.max(1, D.rk / 1.1);
+      if (next > D.bad) D.rk = next;
+    }
     HD.info.reliefTris = drew; HD.info.reliefPx = HD.reliefPx * D.rk;
     detailTick(); detailFrame(v.cam);
   }
