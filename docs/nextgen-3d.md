@@ -1249,6 +1249,15 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png
   look=real` draws twelve people of different ages, builds and skin under four lights to judge them by.
+  The body comes from the same seed, age and weight, and `muscle` (0 slight .. 1 built; from the seed when not
+  given): muscle broadens the shoulders and fills the arms, weight and age thicken the waist and the belly, a
+  woman's hips and bust follow her weight, and the seed sets the height a few centimetres either way (`build`
+  and `scale`, when given, win). The body lives, with nothing to call: a bicep swells as its elbow bends (more
+  on a muscled arm), shoulders, elbows, hips and knees keep their girth in a deep bend, and the chest and belly
+  breathe (`person.breath`): about fifteen breaths a minute at rest, the belly more in a man and the chest a
+  little more in a woman, faster and deeper after a run and back to rest over half a minute, and a heavy belly
+  lags a moment behind the hips in a stride or a landing and settles. `breath.on = false` holds a breath (a
+  sniper before the shot); `breath.puff = 1` leaves someone winded. Close up only.
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide. Besides the

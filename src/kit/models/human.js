@@ -14,9 +14,10 @@
 // Kit use only: games reach it as gs.models.human.
 import { AdditiveBlending, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
-import { Rig, LIFELIKE, Between } from '../poses.js';
+import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
+import { Breath } from './human-life.js';
 import { reach } from '../characters.js';
 import { LiveFace, MOVES } from './human-face.js';
 import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams } from './human-paint.js';
@@ -206,7 +207,7 @@ function mats() {
 }
 
 // ================================================================= putting a person together
-const ARMB = /^(shoulder|arm|elbow|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
+const ARMB = /^(shoulder|arm|bicep|elbow|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
 const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|lowLid|cheek|nose|lipUp|lipLow|(thumb|index|middle|ring|little)\d)[LR]|jaw|chin)$/, _m4 = new Matrix4();   // the small bones, which only show close up (fingers, toes, the face's own)
 /**
  * The skeleton a person of this build stands on: the bones' names, their parents and where each is (atOf), with
@@ -250,9 +251,10 @@ function frameOf(sp) {
   const atOf = b => { const k = rest[b] ? b : own[b], a = rest[k]; return inset && ARMB.test(k) ? [a[0] - Math.sign(a[0]) * inset, a[1], a[2]] : a; };
   const tree = () => {
     const B = {};
-    for (const b of bones) { const bone = BETWEEN[b] ? new Between() : new Bone(); bone.name = b; B[b] = bone; }
+    for (const b of bones) { const bone = BETWEEN[b] ? new Between() : BULGE[b] ? new Bulge() : new Bone(); bone.name = b; B[b] = bone; }
     for (const b of bones) { const par = parent[b], a = atOf(b); if (par) { const pa = atOf(par); B[b].position.set(a[0] - pa[0], a[1] - pa[1], a[2] - pa[2]); B[par].add(B[b]); } else B[b].position.set(...a); }
     for (const b in BETWEEN) { const [of, out] = BETWEEN[b], h = B[b]; h.of = B[of]; h.home = h.position.clone(); h.out = out && (out[0] || out[1] || out[2]) ? out : null; }   // the joints in between: each takes half its joint's turn by itself
+    for (const b in BULGE) { const [of, out] = BULGE[b], h = B[b]; h.of = B[of]; h.home = h.position.clone(); h.out = out; h.size = .4 + 1.3 * (sp.build.muscle ?? .45); }   // the biceps: they bulge as the elbow bends, more on a muscled arm
     B.shinL.userData.ikLength = B.shinR.userData.ikLength = .435; B.foreL.userData.ikLength = B.foreR.userData.ikLength = .27;
     B.spine.userData.pivot = PIVOT.spine; B.head.userData.pivot = PIVOT.head;   // (where the rib cage and the head turn about: see Rig.fill)
     return B;
@@ -262,11 +264,16 @@ function frameOf(sp) {
   return { bones, parent, own, HAND, inset, atOf, tree, kit };
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
-const rigOf = (B, scale, body) => { const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR]; return rig; };
+// (and breathe: the chest and belly bones rise and fall, the belly settles behind the hips; the rig steps it)
+const rigOf = (B, scale, body, sp) => {
+  const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR];
+  if (sp && B.chest) rig.breath = new Breath(B, { fem: sp.fem, fat: sp.face.fat ?? (sp.build.waist > 1.05 ? .7 : .5), muscle: sp.build.muscle ?? .45 });
+  return rig;
+};
 /** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
 export function skeleton(o = {}) {
-  const sp = specOf(o), B = frameOf(sp).tree(), root = new Group(), scale = (o.scale ?? 1) * (sp.fem ? .945 : 1);
-  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale, root); root.face = root.rig.face = new LiveFace(root, B); root.updateMatrixWorld(true);
+  const sp = specOf(o), B = frameOf(sp).tree(), root = new Group(), scale = (o.scale ?? sp.tall) * (sp.fem ? .945 : 1);
+  root.add(B.hips); root.scale.setScalar(scale); root.bones = B; root.rig = rigOf(B, scale, root, sp); root.face = root.rig.face = new LiveFace(root, B); root.updateMatrixWorld(true);
   return root;
 }
 const DETAIL = [.5, .75, 1, 1];   // see(): how tall a person counts as, by quality tier
@@ -304,6 +311,31 @@ export function realFace(o, fem, base) {
   if (hair && grey > 0) hair = '#' + new Color(hair).lerp(new Color('#b8b6b0'), grey).getHexString();
   return { f, skin, hair, iris: o.iris === undefined && has ? pickOf(dark ? IRISES.dark : IRISES.light) : null };
 }
+/**
+ * A real body's build from the seed (or the game's own): from the person's weight, age and how muscular they are (o.muscle 0..1, from the seed
+ * when not given), where each puts on or takes off: a heavy man's at the waist first, a heavy woman's at the hips and thighs, and both
+ * fuller in the arms and the chest; muscle broadens the shoulders, deepens the chest, thickens the arms and leaves the waist; age thickens
+ * the waist and narrows the shoulders a little. And how tall (tall: 1 as made, from the seed when it is given and the game gave no scale).
+ */
+export function realBody(o, fem, f) {
+  const r = rngOf('body:' + (o.seed ?? JSON.stringify([o.sex, o.skin, o.hair, o.age]))), g = (k = 1) => (r() + r() + r() - 1.5) * k * 1.15, has = o.seed != null;
+  const fat = ((f.fat ?? .5) - .5) * 2, a = ss(24, 78, f.age ?? 30), mu = Math.max(0, Math.min(1, o.muscle ?? (has ? (fem ? .3 : .45) + g(.2) : fem ? .3 : .45))), m = mu - (fem ? .3 : .45);
+  const k3 = v => Math.round(v * 1e3) / 1e3;   // (a few figures: the build names the saved sculpt)
+  return {
+    muscle: k3(mu),
+    build: {
+      shoulders: k3((fem ? .9 : 1) * (1 + .16 * m + (has ? g(.028) : 0) - .025 * a)),
+      chest: k3((fem ? .92 : 1) * (1 + .09 * fat + .14 * m)),
+      waist: k3((fem ? .87 : 1) * (1 + (fem ? .15 : .24) * fat + (fem ? .05 : .08) * a - .04 * m + (has ? g(.025) : 0))),
+      hips: k3((fem ? 1.04 : 1) * (1 + (fem ? .14 : .07) * fat + (has ? g(.025) : 0))),
+      limbs: k3((fem ? .88 : 1) * (1 + .12 * fat + .12 * m + (has ? g(.02) : 0))),
+      // (a heavy man carries it in front, low, more with age; a heavy woman more on her hips and thighs, a little in front)
+      belly: k3(Math.max(0, fat + (has ? g(.12) : 0)) * (fem ? .45 : 1) * (.55 + .45 * a)),
+      bust: fem ? k3(Math.max(.6, 1 + .35 * fat + (has ? g(.15) : 0))) : 0,
+    },
+    tall: has && o.scale == null ? k3(1 + g(.032)) : 1,
+  };
+}
 function specOf(o) {
   const fem = o.sex === 'f' || o.sex === 'female', g = o.girth ?? 1, real = (LOOKS.includes(o.look) ? o.look : LOOK) === 'real';
   const build = { shoulders: fem ? .9 : 1, chest: (fem ? .92 : 1) * g, waist: (fem ? .87 : 1) * g, hips: (fem ? 1.04 : 1) * g ** .5, limbs: fem ? .88 : 1, bust: fem ? 1 : 0, neck: fem ? .8 : .92, ...(o.build || {}) };
@@ -311,15 +343,18 @@ function specOf(o) {
   if (top.kind === 'tunic') { top.pockets ??= 4; } if (top.collar === undefined) top.collar = top.kind === 'shirt' ? false : null;
   const legs = { kind: 'trousers', colour: o.legs ?? '#2b2b38', ...(of.legs || {}) }, feet = { kind: 'shoes', colour: o.shoes ?? '#1a1a1a', ...(of.feet || {}) };
   let face = { jaw: o.jaw ?? (fem ? .94 : 1), chin: fem ? .9 : 1, brow: fem ? .62 : .82, nose: o.nose ?? (fem ? .86 : 1), lips: fem ? 1.12 : 1, cheeks: 1, eyes: fem ? 1.08 : 1, soft: fem ? 1 : 0, ...(o.face || {}) };
-  let seeded = null;
+  let seeded = null, body = null;
   if (real) {
     // a real neck is fuller than the clean one's (and a heavy person's fuller still)
     seeded = realFace(o, fem, face); face = seeded.f; if (!o.build?.neck) build.neck = (fem ? .87 : 1.02) * (1 + .1 * (face.fat - .5) * 2);
+    // and a body to go with the face: its build from its weight, age and muscle (the game's own build and girth still win)
+    body = realBody(o, fem, face); for (const k in body.build) if (o.build?.[k] == null) build[k] = body.build[k] * (k === 'hips' ? g ** .5 : k === 'chest' || k === 'waist' ? g : 1);
+    build.muscle = o.build?.muscle ?? body.muscle; if (!o.build?.neck) build.neck = Math.round(build.neck * (1 + .1 * (build.muscle - (fem ? .3 : .45))) * 1e3) / 1e3;   // (and a muscled neck is thicker)
     o = { ...o, skin: realSkin(o.skin ?? seeded.skin ?? DEF.skin), hair: o.hair === undefined ? seeded.hair ?? undefined : o.hair, iris: o.iris ?? seeded.iris ?? undefined };
   }
   const hat = of.hat ? { kind: 'helmet', ...of.hat } : null;
   return { build, top, legs, feet, face, hat, belt: of.belt || null, web: of.webbing || null, extras: of.extras || {}, pack: of.pack || null, gear: o.gear || [], hands: o.hands || 'open', gloves: of.gloves || null,
-    hair: o.hair === null ? null : o.hair ?? DEF.hair, hairStyle: o.hairStyle || 'short', moustache: !!o.moustache, beard: o.beard === true ? .6 : Math.max(0, Math.min(1.5, +o.beard || 0)), fem, o };
+    hair: o.hair === null ? null : o.hair ?? DEF.hair, hairStyle: o.hairStyle || 'short', moustache: !!o.moustache, beard: o.beard === true ? .6 : Math.max(0, Math.min(1.5, +o.beard || 0)), fem, tall: body?.tall ?? 1, o };
 }
 // an eye's colours, band by band from the pupil out (human-shapes.js eyeball()): the pupil, the iris (paler and warmer by the pupil, darker
 // at its edge), the dark ring round it, and the white (greyer by the iris, pinker far round, where the lids' corners are)
@@ -589,7 +624,7 @@ export function human(o = {}) {
     return m;
   };
 
-  const sh = o.shadows !== false, scale = (o.scale ?? 1) * (sp.fem ? .945 : 1), tris = geos.map(g => g.index.count / 3);
+  const sh = o.shadows !== false, scale = (o.scale ?? sp.tall) * (sp.fem ? .945 : 1), tris = geos.map(g => g.index.count / 3);
   const wetGeo = headP && sp.face.real ? wetOf(sp.face, bones) : null;
   const stand = () => {
     const B = tree(), root = new Group();
@@ -615,9 +650,10 @@ export function human(o = {}) {
     if (wet) { wet.name = 'human:wet'; wet.castShadow = wet.receiveShadow = false; wet.userData.noAO = true; wet.frustumCulled = true; wet.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(wet); wet.bind(skel, new Matrix4()); }
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet;
-    root.rig = rigOf(B, scale, root);
+    root.rig = rigOf(B, scale, root, sp);
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
     root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
+    root.breath = root.rig.breath;   // (breathing and soft flesh: it runs by itself; set breath.on = false to hold it, breath.puff for a winded one)
     // (a real face's eyeballs a hair smaller than the lids were sculpted round: the lower lid lies on the ball, and where it dipped a fraction
     // of a millimetre into it the white showed through the lid's edge as the eye turned and the iris, set back in the ball, went by)
     if (sp.face.real) root.face.eyeSize = .975;

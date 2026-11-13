@@ -72,6 +72,17 @@ export class Between extends Bone {
   }
 }
 
+// A muscle that bulges as a joint bends (gs.models.human's biceps, as the elbow bends): it takes none of the joint's turn, and stands out from
+// where it is (home) by out (in its parent's terms) times how far its joint is bent (1 folded right over); size scales it (how muscled)
+export class Bulge extends Bone {
+  constructor() { super(); this.of = null; this.out = null; this.home = null; this.size = 1; }
+  updateMatrix() {
+    const of = this.of, o = this.out;
+    if (of && o) { const k = (1 - of.quaternion.w * of.quaternion.w) * this.size; this.position.set(this.home.x + o[0] * k, this.home.y + o[1] * k, this.home.z + o[2] * k); }
+    super.updateMatrix();
+  }
+}
+
 // A pose: { joint: [rx, ry, rz] } plus drop (hips lower, in body heights) and shift ([x, y, z]: the hips
 // moved, in metres on a 1.8 m figure). Forward swing of an arm or leg is negative x; knees bend positive
 // x; elbows bend negative x; a foot's toes point down with positive x. Hands and feet (handL, footL...)
@@ -441,6 +452,7 @@ export class Rig {
       }
     }
     if (this.follow?.things.length) { if (this.fine === false) this.follow.still(); else this.follow.swing(dt); }   // (what hangs swings close up only)
+    if (this.breath) this.breath.step(dt, speed, this.fine !== false);   // breathing and soft flesh (gs.models.human's chest and belly)
     if (this.face && this.fine !== false) this.face.step(dt, true);   // a live face (gs.models.human's): blinks, eyes, brows and mouth, close up only
     if (this.hands && this.fine !== false) this.hands.step(dt, speed);   // hands that hold (gs.models.human's): fingers round what they hold, relaxed otherwise, close up only
     return this;

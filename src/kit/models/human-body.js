@@ -19,19 +19,20 @@ export const easeOf = kind => kind === 'smock' ? .016 : kind === 'shirt' ? 0 : .
 const hangOf = kind => kind === 'smock' ? .016 : kind === 'shirt' ? .003 : .009;
 
 /**
- * The trunk in its top, from below the belt to the neck. b: the build ({ shoulders, chest, waist, hips, bust, neck }: 1 a man's).
+ * The trunk in its top, from below the belt to the neck. b: the build ({ shoulders, chest, waist, hips, bust, neck }: 1 a man's; belly: 0 none .. 1 a big one,
+ * forward and low, where a heavy man carries his weight, a little over the belt at the sides too).
  * The widest place is the shoulders, at the joints; the chest is deepest at the nipples and the back at the
  * shoulder blades, a little higher; the waist is the narrowest place and the back is hollow there; the top of
  * the shoulders slopes from the side of the neck down to the joint, and the arm's cap carries the line on.
  */
 export function torsoOf(b, kind) {
-  const W = b.waist, C = b.chest, SH = b.shoulders, HP = b.hips, bu = b.bust, nk = b.neck ?? 1, e = easeOf(kind), h = hangOf(kind), M = (W + C) / 2;
+  const W = b.waist, C = b.chest, SH = b.shoulders, HP = b.hips, bu = b.bust, nk = b.neck ?? 1, e = easeOf(kind), h = hangOf(kind), M = (W + C) / 2, bl = b.belly ?? 0;
   return new Loft([
-    row(.985, .162 * HP + e, .098 * W + e, -.120 * HP - e, -.008, 2.3, 2.5),
-    row(1.03, .150 * W + e, .101 * W + e, -.102 * W - e - h * .5, 0, 2.3, 2.4),
-    row(1.075, .1425 * W + e, .103 * W + e, -.088 * W - e - h, .004, 2.25, 2.3),                       // the waist
-    row(1.12, .142 * M + e, .104 * M + e, -.085 * M - e - h, .006, 2.25, 2.3),
-    row(1.17, .146 * C + e, .106 * C + e, -.090 * C - e - h * .6, .006, 2.3, 2.4),
+    row(.985, .162 * HP + e, .098 * W + e + .016 * bl, -.120 * HP - e, -.008, 2.3, 2.5),
+    row(1.03, .150 * W + e + .008 * bl, .101 * W + e + .042 * bl, -.102 * W - e - h * .5, 0, 2.3, 2.4 - .25 * bl),
+    row(1.075, .1425 * W + e + .009 * bl, .103 * W + e + .056 * bl, -.088 * W - e - h, .004, 2.25, 2.3 - .3 * bl),                       // the waist
+    row(1.12, .142 * M + e + .005 * bl, .104 * M + e + .046 * bl, -.085 * M - e - h, .006, 2.25, 2.3 - .2 * bl),
+    row(1.17, .146 * C + e, .106 * C + e + .02 * bl, -.090 * C - e - h * .6, .006, 2.3, 2.4),
     row(1.23, .153 * C + e, .111 * C + e + bu * .005, -.100 * C - e - h * .2, .004, 2.4, 2.5),
     row(1.30, .159 * C + e, .118 * C + e + bu * .016, -.109 * C - e, .002, 2.45, 2.6),              // the chest
     row(1.36, .163 * (C + SH) / 2 + e * .7, .113 * C + e + bu * .008, -.115 * C - e, -.004, 2.4, 2.6),   // under the arms; the shoulder blades behind
@@ -80,19 +81,21 @@ export function torsoForms(b) {
  * An arm is deeper than it is wide above the elbow (the muscles lie in front and behind), the point of the elbow
  * stands out behind, the forearm is fullest a hand's width below the elbow and tapers to the wrist.
  */
-export function sleeveRows(LM, e = 0) {
-  const k = LM, c = e * .8;   // (a jacket's sleeve tapers less than the arm in it)
+export function sleeveRows(LM, e = 0, MU = .45) {
+  // MU: how muscular (.45 as made): the biceps fuller in front above the elbow, the triceps behind, the forearm at its fullest, and less of a taper to the wrist
+  const k = LM, c = e * .8, d = MU - .45, bi = 1 + .26 * d, tri = 1 + .13 * d, w = 1 + .09 * d, fa = 1 + .12 * d;   // (a jacket's sleeve tapers less than the arm in it)
   return [
     row(.892, .0345 * k + c, .04 * k + c, -.032 * k - c, .004, 2.1, 2.1, .2), row(.93, .0355 * k + c, .0405 * k + c, -.0325 * k - c, .004, 2.1, 2.1, .2),
-    row(.99, .0375 * k + e, .042 * k + e, -.037 * k - e, .002, 2.1, 2.1, .2), row(1.06, .042 * k + e, .042 * k + e, -.047 * k - e, -.004, 2.1, 2.1, .2),
-    row(1.115, .044 * k + e, .0405 * k + e, -.0525 * k - e, -.007, 2.1, 2.1, .2),                    // the fullest of the forearm
+    row(.99, .0375 * k * (1 + .5 * (fa - 1)) + e, .042 * k + e, -.037 * k - e, .002, 2.1, 2.1, .2), row(1.06, .042 * k * fa + e, .042 * k * fa + e, -.047 * k - e, -.004, 2.1, 2.1, .2),
+    row(1.115, .044 * k * fa + e, .0405 * k * fa + e, -.0525 * k * fa - e, -.007, 2.1, 2.1, .2),                    // the fullest of the forearm
     row(1.165, .0425 * k + e, .033 * k + e, -.059 * k - e, -.01, 2.1, 2.1, .1985),                     // the elbow
-    row(1.21, .0445 * k + e, .0355 * k + e, -.0605 * k - e, -.012, 2.15, 2.15, .1975), row(1.27, .0475 * k + e, .0405 * k + e, -.0625 * k - e, -.012, 2.2, 2.2, .194),
-    row(1.34, .0505 * k + e * .85, .0415 * k + e * .85, -.0665 * k - e * .85, -.012, 2.2, 2.2, .19), row(1.385, .0495 * k + e * .6, .0395 * k + e * .6, -.0655 * k - e * .6, -.012, 2.05, 2.05, .1875),   // into the shoulder's muscle (the cap rounds it over: capOf)
+    row(1.21, .0445 * k * w + e, .0355 * k * (1 + .5 * (bi - 1)) + e, -.0605 * k * tri - e, -.012, 2.15, 2.15, .1975), row(1.27, .0475 * k * w + e, .0405 * k * bi + e, -.0625 * k * tri - e, -.012, 2.2, 2.2, .194),
+    row(1.34, .0505 * k * w + e * .85, .0415 * k * bi + e * .85, -.0665 * k * tri - e * .85, -.012, 2.2, 2.2, .19), row(1.385, .0495 * k * w + e * .6, .0395 * k * w + e * .6, -.0655 * k * w - e * .6, -.012, 2.05, 2.05, .1875),   // into the shoulder's muscle (the cap rounds it over: capOf)
   ];
 }
 // the cap of the shoulder, round the joint: the sleeve's own top slice rounded over, its top at the end of the trunk's slope, so the line of the shoulder runs over it and down the arm
-export const capOf = (LM, e = 0) => ({ ball: [.056 * LM + e * .7, .06 + e * .45, .0595 * LM + e * .7], at: [.187, 1.403, -.013] });
+// (MU: a muscled shoulder's cap rounder and broader)
+export const capOf = (LM, e = 0, MU = .45) => { const d = 1 + .12 * (MU - .45); return { ball: [.056 * LM * d + e * .7, .06 * (1 + .04 * (MU - .45)) + e * .45, .0595 * LM * d + e * .7], at: [.187, 1.403, -.013] }; };
 
 /**
  * The seat in its trousers, from where the legs part up to the waistband, which lies on the top. The hips are

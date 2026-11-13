@@ -7,6 +7,8 @@
 //   lights: sun (a clear day), overcast (soft and even), lamp (a street lamp at night), indoor (a window to one side), back (the sun behind)
 //   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
 //   light:view:expr: that column's face set (expr: smile, or smile+squint, or browInnerUp.7+frown: shapes or face-capture movements, each at 1 or the amount after it)
+//   light:view:expr:pose: that column's pose too (crouch, sit, aim...; the person stands in it a moment first); views arm (the left arm from the front), legs (hips to feet, from the side) and profile (the whole person from the side)
+//   &sleeves=short (bare forearms)
 //   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &nowet (a real face's wet film over the eyes left out)   &blinks (let them blink)
 //   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
 //   &ref (one more row: a reference head scan, ref/LeePerrySmith.glb from three.js's examples (CC BY 3.0, Lee Perry-Smith / Infinite Realities), drawn
@@ -37,7 +39,7 @@ try {
   const T = gs.THREE, human = gs.models.human, frame = () => new Promise(r => requestAnimationFrame(r));
   const pick = Q.has('who') ? Q.get('who').split(',').map(Number) : LAB.map((_, i) => i);
   if (Q.has('ref')) { LAB.push({ name: 'Scan (reference)', scan: true }); pick.push(LAB.length - 1); }
-  const cols = (Q.get('cols') || 'sun:face,overcast:face,lamp:face,indoor:face').split(',').map(c => { const [light, view = 'face', expr = ''] = c.split(':'); return { light, view, expr }; });
+  const cols = (Q.get('cols') || 'sun:face,overcast:face,lamp:face,indoor:face').split(',').map(c => { const [light, view = 'face', expr = '', pose = ''] = c.split(':'); return { light, view, expr, pose }; });
   const [cw, ch] = (Q.get('cell') || '300x360').split('x').map(Number);
   window.__hd.force = Q.has('tier') ? +Q.get('tier') : 3; window.__hd.upscale = false; window.__hd.hold = false;   // (a sheet wants every cell drawn, not a frame's wait for a new shader)
   const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .3, fov: 30 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
@@ -64,11 +66,11 @@ try {
   sheet.width = cw * WRAP; sheet.height = (ch + LABEL) * Math.ceil(cells / WRAP); const sx = sheet.getContext('2d'); document.body.append(sheet);
   sx.fillStyle = '#1c1c1e'; sx.fillRect(0, 0, sheet.width, sheet.height);
   const info = [], t0 = performance.now();
-  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; return o; };
+  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); return o; };
   await human.ready(pick.filter(i => !LAB[i].scan).map(optsOf));
   const scan = Q.has('ref') ? await refHead(T, v) : null;
   info.push('sculpted ' + pick.length + ' in ' + Math.round(performance.now() - t0) + ' ms');
-  const VIEW = { eyes: [.3, .04, 1, .17], nose: [.5, .02, 1, .3], mouth: [.45, -.05, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.1] };
+  const VIEW = { eyes: [.3, .04, 1, .17], nose: [.5, .02, 1, .3], mouth: [.45, -.05, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.9], profile: [1, .15, .02, 3.9], arm: [.25, .05, 1, .75], legs: [1, .1, .15, 1.5] };
   for (let r = 0; r < pick.length; r++) {
     const p = LAB[pick[r]].scan ? scan : human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
@@ -81,11 +83,12 @@ try {
     for (let i = 0; i < 20; i++) p.rig.update(1 / 30);
     info.push(`${LAB[pick[r]].name}: ${p.tris.join('/')} triangles`);
     for (let k = 0; k < cols.length; k++) {
-      const { light, view, expr } = cols[k], d = VIEW[view] || VIEW.face;
+      const { light, view, expr, pose } = cols[k], d = VIEW[view] || VIEW.face;
+      if (cols.some(c => c.pose)) { p.rig.play?.(pose || Q.get('pose') || 'idle'); for (let i = 0; i < 40; i++) p.rig.update(1 / 30); }
       if (p.face && cols.some(c => c.expr)) { const one = e => { const m = /^([a-zA-Z]+)([\d.]*)$/.exec(e); return [m[1], m[2] ? +m[2] : 1]; };
         for (const c of cols) for (const e of c.expr.split(/[+ ]/).filter(Boolean)) p.face.set(one(e)[0], 0); for (const e of expr.split(/[+ ]/).filter(Boolean)) p.face.set(...one(e)); for (let i = 0; i < 30; i++) p.rig.update(1 / 30); }
       const len = Math.hypot(d[0], d[1], d[2]), dist = d[3];
-      p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); aim.y += view === 'body' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : view === 'mouth' ? .07 : view === 'eyes' ? .148 : .1;
+      p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); if (view === 'arm') p.bones.foreL.getWorldPosition(aim); else if (view === 'legs') { p.bones.shinL.getWorldPosition(aim); aim.y += .12; } else aim.y += view === 'body' || view === 'profile' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : view === 'mouth' ? .07 : view === 'eyes' ? .148 : .1;
       setLight(light, aim);
       v.cam.aspect = cw / ch; v.cam.near = dist * .05; v.cam.far = dist * 80; v.cam.updateProjectionMatrix();
       v.cam.position.set(aim.x + d[0] / len * dist, aim.y + d[1] / len * dist, aim.z + d[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
@@ -93,7 +96,7 @@ try {
       for (let i = 0, nf = +(Q.get('frames') || 4); i < nf; i++) { v.t = 0; p.rig.update(1 / 60); v.render(cx, cw, ch); await frame(); }
       const [px, py] = at(r, k); sx.drawImage(cell, px, py + LABEL);
       if (Q.has('time')) { const t1 = performance.now(); for (let i = 0; i < 10; i++) { v.t = 0; v.render(cx, cw, ch); } info.push(`  ${light}:${view} ${((performance.now() - t1) / 10).toFixed(1)} ms a frame`); }
-      sx.font = '12px sans-serif'; sx.fillStyle = '#ddd'; sx.fillText(`${LAB[pick[r]].name} · ${expr || light}`, px + 5, py + 13);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#ddd'; sx.fillText(`${LAB[pick[r]].name} · ${[expr, pose].filter(Boolean).join(' ') || light}`, px + 5, py + 13);
     }
     v.scene.remove(p); if (Q.has('facelight')) v.faceLight(null);
   }
