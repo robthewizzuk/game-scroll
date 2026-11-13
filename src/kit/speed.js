@@ -67,13 +67,16 @@ export function phoneClass() {
 
 /* ---------- the screen's refresh rate ---------- */
 // Measured from the gaps between animation frames: the middle of the last 40 gaps.
-const gaps = [];
-let lastTick = 0, hz = 60;
+// (kept in fixed lists, so measuring every refresh makes no garbage)
+const GAPS = 40, gaps = new Float64Array(GAPS), sorted = new Float64Array(GAPS);
+let lastTick = 0, hz = 60, nGaps = 0, at = 0;
 export function tick(now) {
   const g = now - lastTick; lastTick = now;
-  if (g > 4 && g < 40) { gaps.push(g); if (gaps.length > 40) gaps.shift(); }
-  if (gaps.length >= 20 && gaps.length % 10 === 0) {
-    const s = [...gaps].sort((a, b) => a - b), mid = s[s.length >> 1], f = 1000 / mid;
+  if (g > 4 && g < 40) { gaps[at] = g; at = (at + 1) % GAPS; if (nGaps < GAPS) nGaps++; }
+  if (nGaps >= 20 && nGaps % 10 === 0) {
+    const s = nGaps < GAPS ? sorted.subarray(0, nGaps) : sorted;
+    s.set(nGaps < GAPS ? gaps.subarray(0, nGaps) : gaps); s.sort();
+    const f = 1000 / s[nGaps >> 1];
     hz = f > 130 ? 144 : f > 100 ? 120 : f > 75 ? 90 : 60;
   }
 }
