@@ -617,7 +617,10 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   dry; puddles spread on flat ground and dry up; snow settles on ground and roofs and melts. It keeps a
   map of the highest solid thing over each half metre round the camera (rays into the level a few
   hundred a frame) and the air reads it, so it costs no extra pass and is the same on WebGL and WebGPU.
-  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. The full list is in
+  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. In the rain water runs down walls and
+  windows, beads sit on glass and car paint and rings open on the puddles (all in the same look); drops land
+  on the lens (`view.drops`; `lens: false` keeps it dry); and `weather.watch(car)` throws spray off its
+  tyres on a wet road. The full list is in
   [maker-kit.md](maker-kit.md#weather-that-changes-the-world); `node scripts/weather.cjs film.png` films it.
 - **Ground that takes marks** (`new gs.outdoors.Marks(v, { land, weather, mud, sand })`, then
   `marks.watch(person)` and `marks.update(dt)`): feet leave prints and wheels leave tracks in snow where

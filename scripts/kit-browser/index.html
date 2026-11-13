@@ -671,6 +671,25 @@ try {
     ok(snow.open > snow.roofed * 2 && Math.abs(snow.roofed - dry.roofed) < 5, `weather: snow whitens the open half (${snow.open.toFixed(0)} of 255), not the half under the roof (${snow.roofed.toFixed(0)})`);
     w.dispose(); window.__hd.hold = hold;
   }
+  // rain that runs: a window pane facing the camera gets rivulets and beads while it rains (not once it stops, though it is still
+  // wet), and drops on the lens bend the picture where they sit, until the lens is wiped (look-compare.cjs's rain scene holds
+  // WebGPU to the same; scripts/weather.cjs views=glass,lens films it)
+  {
+    const T = gs.THREE, hold = window.__hd.hold; window.__hd.hold = false;
+    const v = new gs.hd.HDView({ bg: '#8090a0', amb: .6, env: .5 }), c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    v.cam.fov = 40; v.cam.aspect = 1; v.cam.updateProjectionMatrix(); v.cam.position.set(0, 1, 2.2); v.cam.lookAt(0, 1, 0); v.cam.updateMatrixWorld();
+    const sl = gs.hd.sun('#fff', 1.6, 8, [.4, .8, .6]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0); v.air({ haze: 0 });
+    const pane = new T.Mesh(new T.BoxGeometry(1.6, 1.6, .03), gs.hd.pbr('#5f7380', { rough: .05, metal: .1 })); pane.position.y = 1; v.scene.add(pane);
+    const w = new gs.sky.Weather(v, { kind: 'clear', level: true, max: 1, hops: 0 }); w.rainMesh.removeFromParent(); w.wet = 1;
+    const look = async () => { for (let i = 0; i < 6; i++) { v.t = 0; v.render(x, 128, 128); await frame(); } return x.getImageData(0, 0, 128, 128).data; };
+    const diff = (a, b, x0, y0, n) => { let s = 0, k = 0; for (let j = y0; j < y0 + n; j++) for (let i = x0; i < x0 + n; i++) { const q = (j * 128 + i) * 4; s += Math.abs(a[q] - b[q]) + Math.abs(a[q + 1] - b[q + 1]) + Math.abs(a[q + 2] - b[q + 2]); k += 3; } return s / k; };
+    w.update(0); const still = await look(); w.set('rain'); w.update(1 / 60); const running = await look();
+    v.drops.clear(); v.drops.add(.5, .5, .18); v.drops.update(.2, 0); const drop = await look(); v.drops.clear(); const wiped = await look();
+    const onPane = diff(still, running, 34, 34, 60), dropped = diff(running, drop, 54, 54, 20), after = diff(running, wiped, 54, 54, 20);
+    ok(onPane > 1.5 && w.shown.rain === 1, `rain that runs: rivulets and beads show on a wet window pane while it rains (${onPane.toFixed(1)} of 255 changed)`);
+    ok(dropped > 6 && after < dropped * .25, `rain that runs: a drop on the lens bends the picture where it sits (${dropped.toFixed(1)} of 255), and wiping the lens takes it away (${after.toFixed(1)})`);
+    w.dispose(); window.__hd.hold = hold;
+  }
   // gs.outdoors.Marks drawn in a Next Gen view from above: a floor under snow, pressed in the middle. The print shows in the
   // picture as a darker dent, the snow beside it stays as it was, and clear() takes it away again (kit-test.mjs has the rules;
   // scripts/marks.cjs films it)
