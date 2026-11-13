@@ -32,7 +32,7 @@ import { prefs } from './kit/prefs.js';
 
 const SLOW_MS = 25, FREEZE_MS = 70;   // the same lines src/perf.js draws
 const EARLY_MS = 2000;                // a freeze this soon after Play is the round starting up, not play
-const LOAD_LIMIT = 40, PLUGIN_LIMIT = 4000, LAST_KEY = 'gs_tour_last', SCENES = 'scenes', FRAMEGEN = 'framegen';
+const LOAD_LIMIT = 40, PLUGIN_LIMIT = 4000, LAST_KEY = 'gs_tour_last', SCENES = 'scenes', TRACED = 'traced', FRAMEGEN = 'framegen';
 const ERAS = { console: 'Console', nextgen: 'Next Gen', ar: 'AR', board: 'Board' };
 const is3D = g => !!ERAS[g.era];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -304,13 +304,14 @@ let running = null;
  * vibration on; off by default), plugins (ask the native plugins; true), onStep({ i, n, game }) and onPlay({ id, played }) for a progress
  * display, signal ({ stop: true } ends it after the current frame). Gives the result; reportText()
  * turns it into the report. scenes: true flies through the engine test scenes instead of playing games
- * (src/detail-tour.js; size and only are its options, and framegen (with alternate) times frame generation in them).
+ * (src/detail-tour.js; size and only are its options, traced flies only the ray tracing scene, the hall, and framegen
+ * (with alternate) times frame generation in them).
  */
 /** The engine test scenes' own module (src/detail-tour.js), for tests of its report. */
 export const scenesKit = () => import('./detail-tour.js');
-export async function runTour(driver, { ids = null, seconds = 20, full = true, sound: loud = false, plugins = true, onStep = null, onPlay = null, signal = {}, scenes = false, size = 1, only = null, framegen = false, alternate = false } = {}) {
+export async function runTour(driver, { ids = null, seconds = 20, full = true, sound: loud = false, plugins = true, onStep = null, onPlay = null, signal = {}, scenes = false, size = 1, only = null, traced = false, framegen = false, alternate = false } = {}) {
   if (running) return running;
-  if (scenes) return running = import('./detail-tour.js').then(m => m.runScenes(driver, { seconds: clamp(+seconds || 20, 1, 120), size, only, onStep, onPlay, signal, framegen, alternate })).finally(() => { running = null; });
+  if (scenes) return running = import('./detail-tour.js').then(m => m.runScenes(driver, { seconds: clamp(+seconds || 20, 1, 120), size, only, onStep, onPlay, signal, traced, framegen, alternate })).finally(() => { running = null; });
   const all = driver.games(), list = (ids ? ids.map(id => all.find(g => g.id === id)).filter(Boolean) : all.filter(is3D));
   const o = { seconds: clamp(+seconds || 20, 1, 120), full: !!full, stopped: () => !!signal.stop };
   return running = (async () => {
@@ -406,7 +407,9 @@ function showReport(text, driver) {
 export function openTour(driver) {
   if (running) return;
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
-  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);   // (not games: the Next Gen engine's detail systems, off and on, and frame generation five ways; src/detail-tour.js)
+  // (not games: the Next Gen engine's detail systems, off and on; the ray tracing scene alone, the hall, three ways; and frame
+  // generation five ways; src/detail-tour.js. The number in brackets is how many scenes.)
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', Array(12).fill(0)], [TRACED, 'Ray tracing only', [0]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>
@@ -420,11 +423,13 @@ export function openTour(driver) {
     <div class="qa-actions"><button class="tour-go">Start</button>${last ? '<button class="qa-lab tour-last">Last report</button>' : ''}</div>`;
   document.body.appendChild(el);
   const set = el.querySelector('.tour-set'), secs = el.querySelector('.tour-secs'), est = el.querySelector('.tour-est');
-  const picked = () => choice.find(([k]) => k === set.value)[2], fg = () => set.value === FRAMEGEN, scenes = () => set.value === SCENES || fg();
+  const picked = () => choice.find(([k]) => k === set.value)[2], fg = () => set.value === FRAMEGEN, rt = () => set.value === TRACED, scenes = () => set.value === SCENES || rt() || fg();
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
     // (twenty-nine runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
     est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds five ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by frame generation, blended as before, blended as now and then ahead: about ${Math.max(1, Math.round((20 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
+      // (the hall three times on WebGPU, with the traced copy of the hall made before the third)
+      : rt() ? `The ray tracing scene alone: a polished hall, flown through for ${secs.value} seconds three ways, with no reflections, with reflections worked out from the screen and ray traced (the last needs WebGPU): about ${Math.max(1, Math.round((3 * (+secs.value + 8) + 20) / 60))} min, and longer the first time, while the traced copy of the hall is made. Leave the phone on a table with the screen on.`
       : scenes() ? `Twelve scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((29 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };
@@ -433,7 +438,7 @@ export function openTour(driver) {
   el.addEventListener('close', () => el.remove());
   if (last) el.querySelector('.tour-last').onclick = () => { el.close(); showReport(last, driver); };
   el.querySelector('.tour-go').onclick = async () => {
-    const what = scenes(), framegen = fg(), ids = what ? [] : picked().map(g => g.id), seconds = +secs.value, loud = el.querySelector('.tour-loud').checked, full = el.querySelector('.tour-full').checked;
+    const what = scenes(), framegen = fg(), traced = rt(), ids = what ? [] : picked().map(g => g.id), seconds = +secs.value, loud = el.querySelector('.tour-loud').checked, full = el.querySelector('.tour-full').checked;
     el.close();
     // while it runs: a small bar over the top of the app, out of the game's way
     const bar = document.createElement('div'); bar.className = 'tour-bar'; bar.setAttribute('role', 'status');
@@ -444,7 +449,7 @@ export function openTour(driver) {
     let step = { i: 0, n: ids.length || 1, game: null }, shown = -1;
     try {
       const result = await runTour(driver, {
-        ids, seconds, full, sound: loud, signal, scenes: what, framegen,
+        ids, seconds, full, sound: loud, signal, scenes: what, traced, framegen,
         onStep(s) { step = s; shown = -1; now.textContent = `${s.i + 1} of ${s.n} · ${s.game.title} · ${s.what || 'loading'}`; meter.style.width = `${100 * s.i / s.n}%`; },
         onPlay({ played }) { const sec = Math.floor(played); if (sec === shown || signal.stop) return; shown = sec; now.textContent = `${step.i + 1} of ${step.n} · ${step.game.title} · ${sec} s`; meter.style.width = `${100 * (step.i + played / seconds) / step.n}%`; },
       });
