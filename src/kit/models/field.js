@@ -184,7 +184,8 @@ const KINDS = {
   },
   // { field: (x, y, z) => metres outside (negative inside), lo, hi }: a shape measured by a function of its own (a face's opening for an eye, hair that thins to nothing at its edge)
   // (m, out: an outline of its own, as a band's or a patch's: m(x, y, z) is how far outside it a point is; what lies inside is this shape's, and its edge is made straight)
-  field(s) { return s.m ? { d: s.field, m: s.m, out: s.out || 0, lo: s.lo.slice(), hi: s.hi.slice() } : { d: s.field, lo: s.lo.slice(), hi: s.hi.slice() }; },
+  // (along, loop: for a row of stitching round its outline, as a band's: see `stitch` below)
+  field(s) { return s.m ? { d: s.field, m: s.m, out: s.out || 0, lo: s.lo.slice(), hi: s.hi.slice(), along: s.along || null, loop: s.loop || 0 } : { d: s.field, lo: s.lo.slice(), hi: s.hi.slice() }; },
   // { loft: Loft | rows, out }: a body part in slices (see Loft); out: grown by this much (a coat over a body)
   loft(s) {
     const L = s.loft instanceof Loft ? s.loft : new Loft(s.loft), o = s.out || 0;
@@ -201,7 +202,9 @@ const KINDS = {
       if (th) { const c = L.sec(y), a = Math.atan2(x - c[3], z - c[2]); let da = a - tm; da -= Math.round(da / (2 * PI)) * 2 * PI; m = mx(m, (abs(da) - tw) * sqrt(c[0] * c[1])); }
       return m;
     };
-    return { d: (x, y, z) => smax(L.wall(L.sec(y), x, z) - o, m(x, y, z), e), m, lo, hi, out: o };
+    // (along its edges, for a row of stitching: metres round from the back, once round being `loop`)
+    const cm = L.sec(ym), loop = 2 * PI * sqrt(cm[0] * mx(cm[1], cm[6])), along = (x, y, z) => { const c = L.sec(y); return (Math.atan2(x - c[3], z - c[2]) + PI) / (2 * PI) * loop; };
+    return { d: (x, y, z) => smax(L.wall(L.sec(y), x, z) - o, m(x, y, z), e), m, lo, hi, out: o, along, loop: th ? 0 : loop };
   },
   // { patch: Loft, at: [angle, y], size: [w, h], turn, round, out }: a flat piece laid on a loft's wall
   // (a pocket, a flap, a strap, a badge): w across, h up, turned by `turn`, standing `out` proud
@@ -212,12 +215,15 @@ const KINDS = {
       const u = hw * (i / 2 - 1), v = hh * (j / 5 - 1), y = cl(y0 + u * st + v * ct, L.y0, L.y1), c = L.sec(y), p = L.at(t0 + (u * ct - v * st) / sqrt(c[0] * c[1]), y);
       for (let a = 0; a < 3; a++) { lo[a] = mn(lo[a], p[a] - g); hi[a] = mx(hi[a], p[a] + g); }
     }
-    const m = (x, y, z) => {
-      const sc = L.sec(y), a = Math.atan2(x - sc[3], z - sc[2]); let da = a - t0; da -= Math.round(da / (2 * PI)) * 2 * PI;
-      const u0 = da * sqrt(sc[0] * sc[1]), v0 = y - y0, u = abs(u0 * ct + v0 * st) - hw + r, v = abs(-u0 * st + v0 * ct) - hh + r;
-      return sqrt(mx(u, 0) ** 2 + mx(v, 0) ** 2) + mn(mx(u, v), 0) - r;
+    const local = (x, y, z, out) => { const sc = L.sec(y), a = Math.atan2(x - sc[3], z - sc[2]); let da = a - t0; da -= Math.round(da / (2 * PI)) * 2 * PI; const u0 = da * sqrt(sc[0] * sc[1]), v0 = y - y0; out[0] = u0 * ct + v0 * st; out[1] = -u0 * st + v0 * ct; return out; };
+    const q = [0, 0], m = (x, y, z) => { local(x, y, z, q); const u = abs(q[0]) - hw + r, v = abs(q[1]) - hh + r; return sqrt(mx(u, 0) ** 2 + mx(v, 0) ** 2) + mn(mx(u, v), 0) - r; };
+    // (round its outline, for a row of stitching: metres from the bottom left corner, along the bottom first; once round is `loop`.
+    // Each side goes by the one it is nearest, so at a corner the two count the same)
+    const loop = 4 * (hw + hh), along = (x, y, z) => {
+      local(x, y, z, q); const u = cl(q[0], -hw, hw), v = cl(q[1], -hh, hh), du = hw - abs(u), dv = hh - abs(v);
+      return dv <= du ? (v < 0 ? u + hw : 2 * hw + 2 * hh + hw - u) : (u > 0 ? 2 * hw + v + hh : 4 * hw + 2 * hh + hh - v);
     };
-    return { d: (x, y, z) => smax(L.wall(L.sec(y), x, z) - o, m(x, y, z), e), m, lo, hi, out: o };
+    return { d: (x, y, z) => smax(L.wall(L.sec(y), x, z) - o, m(x, y, z), e), m, lo, hi, out: o, along, loop };
   },
 };
 const kindOf = s => Object.keys(KINDS).find(k => s[k] !== undefined);
@@ -230,7 +236,9 @@ const kindOf = s => Object.keys(KINDS).find(k => s[k] !== undefined);
  * inside it takes its slot, a brow or a stripe painted on; over: only where the surface has that slot), lumpy ([size in metres, height]: uneven like cloth),
  * folds (fn(x, y, z) => extra height, for wrinkles; foldMax: the most it adds, .006), shell (hollow, this
  * thick), clip ([[nx, ny, nz], offset, soft], or a list of them: only the part where n.p > offset is kept),
- * space ({ at, rot }: the shape, lumps and folds and all, is given in a space of its own, turned by rot about `at`).
+ * space ({ at, rot }: the shape, lumps and folds and all, is given in a space of its own, turned by rot about `at`),
+ * stitch (a band, a patch or a field with an outline: true lays a line along its outline for a row of stitching, see
+ * mesh()'s `lines`; 'seam' for a seam there instead), seams (false: no line of `lines` runs over its surface).
  * Thin slivers (a slit, a seam) measure best as boxes or rods: a very flat ball is only roughly measured.
  */
 export function ready(shapes, blend = .01) {
@@ -261,9 +269,27 @@ export function ready(shapes, blend = .01) {
     if (flip) { const a = lo[0]; lo[0] = -hi[0]; hi[0] = -a; }
     // bl, bh: the box to test against (a mirrored shape's is its own side's, met with |x|)
     const bl = lo.slice(), bh = hi.slice(); if (mir) { bl[0] = mx(lo[0], 0); const m = mx(abs(lo[0]), abs(hi[0])); lo[0] = -m; hi[0] = m; }
-    const dd = wrap(d), m = c.m ? side(sp ? sp(c.m) : c.m) : null;
-    return { i, m, out: c.out || 0, d: dd, d0: wob ? wrap(f) : dd, lo, hi, bl, bh, wob, k: s.blend ?? blend, cut: !!s.cut, ghost: !!s.ghost, paint: !!s.paint, slot: s.slot ?? null, bone: s.bone ?? null, tag: s.tag ?? null, mirror: mir, flip, src: s, loft: c.loft || null };
+    const dd = wrap(d), m = c.m ? side(sp ? sp(c.m) : c.m) : null, along = c.m && c.along ? side(sp ? sp(c.along) : c.along) : null;
+    return { i, m, out: c.out || 0, d: dd, d0: wob ? wrap(f) : dd, lo, hi, bl, bh, wob, k: s.blend ?? blend, cut: !!s.cut, ghost: !!s.ghost, paint: !!s.paint, slot: s.slot ?? null, bone: s.bone ?? null, tag: s.tag ?? null, mirror: mir, flip, src: s, loft: c.loft || null, along, loop: c.loop || 0 };
   });
+}
+// ---- a line on the surface made ready (mesh()'s `lines`): its measure is OFF outside its box, and a loop's count is a whole number of periods
+// (REACH: how far either side of a line its picture can go, a little more than the 8 mm the picture is drawn across; a line's box is
+// grown by as much, so a line inside its box is drawn whole, and one that runs out of it stops there. FAR: how far off a point still
+// counts the stitches of its nearest line, though it is plain cloth: a triangle from a line out to plain cloth then counts them the same
+// at every corner, and needs no twin, see human-shapes.js evenStitches)
+const OFF = 1e3, REACH = .012, FAR = .03;
+function lineOf(L, period, shape = null) {
+  let m = L.m, al = L.along || ((x, y, z) => y);
+  if (L.lo) { const lo = L.lo.map(v => v - FAR), hi = L.hi.map(v => v + FAR), m0 = m; m = (x, y, z) => x < lo[0] || y < lo[1] || z < lo[2] || x > hi[0] || y > hi[1] || z > hi[2] ? OFF : m0(x, y, z); }
+  if (L.space) { const [px, py, pz] = L.space.at || [0, 0, 0], R = rotOf(L.space), to = g => (x, y, z) => { x -= px; y -= py; z -= pz; return g(px + R[0] * x + R[1] * y + R[2] * z, py + R[3] * x + R[4] * y + R[5] * z, pz + R[6] * x + R[7] * y + R[8] * z); }; m = to(m); al = to(al); }
+  if (L.mirror) { const m0 = m, a0 = al; m = (x, y, z) => m0(x < 0 ? -x : x, y, z); al = (x, y, z) => a0(x < 0 ? -x : x, y, z); }
+  if (shape) { const m0 = m; m = (x, y, z) => boxGap(shape, x, y, z) > FAR ? OFF : m0(x, y, z); }
+  if (L.loop > 0) { const k = mx(1, Math.round(L.loop / period)) * period / L.loop, a0 = al; al = (x, y, z) => a0(x, y, z) * k; }
+  // (in: inside its own box, grown by REACH, where its picture is drawn; outside that, out to FAR, it only counts stitches)
+  const lo = L.lo && L.lo.map(v => v - REACH), hi = L.hi && L.hi.map(v => v + REACH);
+  const inside = lo ? (x, y, z) => { if (L.mirror && x < 0) x = -x; if (L.space) { const [px, py, pz] = L.space.at || [0, 0, 0], R = rotOf(L.space), dx = x - px, dy = y - py, dz = z - pz; x = px + R[0] * dx + R[1] * dy + R[2] * dz; y = py + R[3] * dx + R[4] * dy + R[5] * dz; z = pz + R[6] * dx + R[7] * dy + R[8] * dz; } return x >= lo[0] && y >= lo[1] && z >= lo[2] && x <= hi[0] && y <= hi[1] && z <= hi[2]; } : shape ? (x, y, z) => boxGap(shape, x, y, z) <= REACH : () => true;
+  return { m, along: al, inside, kind: L.kind | 0, slots: L.slots || null, own: L.own ?? -1 };
 }
 // at least this far from a shape's box (0 inside it)
 const boxGap = (s, x, y, z) => {
@@ -323,9 +349,20 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
  * worked out only for the points that stay, so a thinned mesh is also a much quicker one).
  * Surface nets on a grid measured only near the surface: blocks of 4 cells far from every shape are
  * filled in from a coarse grid, and each block only measures the shapes that reach it.
+ * lines: seams and rows of stitching on the surface, for a picture to draw (human-paint.js): [{ m(x, y, z) (how far
+ * from the line, metres, one side negative), along(x, y, z) (metres along it), kind (0 a seam, 1 a row of stitching),
+ * slots (only on the surface of these), lo, hi (the box it is in, in its own space), space, mirror, loop (a line that
+ * goes right round: metres once round) }], and the outlines of shapes marked `stitch`. A row of points is laid along
+ * each (the points beside it are slid onto it, and thinning keeps them), so however few triangles are left it is
+ * drawn as one clean line. Gives back `line`: for each point [how far from the nearest line along the surface
+ * (metres; 1 for plain cloth near one, which still counts its stitches; 1e3 with none within 3 cm), how far along it, its kind];
+ * period: a loop's length is made a whole number
+ * of these, so where its count starts again the picture carries on.
  */
-export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, keep = 1, error = .0015, bounds = null } = {}) {
+export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, keep = 1, error = .0015, bounds = null, lines = null, period = .0035 } = {}) {
   const t0 = now(), S = ready(shapes, blend), solid = S.filter(s => !s.ghost && !s.paint), ghosts = S.filter(s => s.ghost), paints = S.filter(s => s.paint);
+  const LN = (lines || []).map(L => lineOf(L, period));
+  for (const s of S) if (s.src.stitch && s.m && !s.ghost) LN.push(lineOf({ m: s.m, along: s.along || ((x, y, z) => y), kind: s.src.stitch === 'seam' ? 0 : 1, loop: s.loop, own: s.i }, period, s));
   const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
   if (bounds) { for (let a = 0; a < 3; a++) { lo[a] = bounds[0][a]; hi[a] = bounds[1][a]; } }
   else for (const s of solid) { if (s.cut) continue; for (let a = 0; a < 3; a++) { lo[a] = mn(lo[a], s.lo[a] - s.k * .25); hi[a] = mx(hi[a], s.hi[a] + s.k * .25); } }
@@ -394,6 +431,29 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
     for (let j = 0; j < paints.length; j++) { const s = paints[j]; if (boxGap(s, x, y, z) === 0 && s.d(x, y, z) < 0 && (!s.src.over || (o && o.slot === s.src.over))) own[i] = s.i; }
     if (press && o && o.wob) press[i] = (E[bj] - o.d(x, y, z)) / o.wob;   // how far its lumps and folds will move it (-1..1)
   }
+  // ---- lines on the surface (seams, rows of stitching): where one passes between two points, the nearer is slid along the surface onto it
+  // (before the outlines: where a line meets the edge of a pocket or a belt, that edge wins)
+  // (a shape's own row of stitching is on that shape only, inside its outline; other lines on the surfaces of the slots they name, never over a
+  // pocket or a strap)
+  const lineOn = (L, o) => o >= 0 && (L.own >= 0 ? o === L.own : !S[o].m && S[o].src.seams !== false && (!L.slots || L.slots.includes(S[o].slot)));
+  if (LN.length) {
+    const M = new Float32Array(n), best = new Float32Array(n).fill(1), to = new Int16Array(n).fill(-1);
+    for (let li = 0; li < LN.length; li++) {
+      const L = LN[li]; for (let i = 0; i < n; i++) M[i] = lineOn(L, own[i]) ? L.m(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]) : OFF;
+      for (let t = 0; t < ni; t += 3) for (let e = 0; e < 3; e++) {
+        const a = I[t + e], b = I[t + (e + 1) % 3], ma = M[a], mb = M[b]; if (abs(ma) >= OFF * .5 || abs(mb) >= OFF * .5 || (ma < 0) === (mb < 0)) continue;
+        const v = abs(ma) <= abs(mb) ? a : b, mv = abs(M[v]); if (mv < cell * .75 && mv < best[v] && L.inside(P[v * 3], P[v * 3 + 1], P[v * 3 + 2])) { best[v] = mv; to[v] = li; }
+      }
+    }
+    const hh = cell * .5;
+    for (let i = 0; i < n; i++) {
+      if (to[i] < 0) continue; const m = LN[to[i]].m, x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], m0 = m(x, y, z);
+      let gx = (m(x + hh, y, z) - m(x - hh, y, z)) * ic, gy = (m(x, y + hh, z) - m(x, y - hh, z)) * ic, gz = (m(x, y, z + hh) - m(x, y, z - hh)) * ic;
+      const qd = gx * Q[i * 3] + gy * Q[i * 3 + 1] + gz * Q[i * 3 + 2]; gx -= qd * Q[i * 3]; gy -= qd * Q[i * 3 + 1]; gz -= qd * Q[i * 3 + 2];
+      const g2 = gx * gx + gy * gy + gz * gz; if (g2 < .1 || g2 > 50) continue;
+      const st = -m0 / g2; P[i * 3] = x + gx * st; P[i * 3 + 1] = y + gy * st; P[i * 3 + 2] = z + gz * st;
+    }
+  }
   let ride = null;   // whose bones each point goes with, where that is not its own shape's (see below)
   // ---- the outlines of pockets, straps, belts and cuffs made straight: a point beside one is slid along the surface onto it
   // (points sit a cell apart, so an outline drawn by "which side is each point on" would be a saw's edge)
@@ -435,12 +495,14 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
   const t2b = now();
   // ---- thinned first (edges between slots and the folds to come are kept), so the fine work is only done for the points that stay
   if (keep < 1 && canThin && ni > 36) {
-    const A = new Float32Array(n * 7), ids = [];
+    // (a point on a line is kept as an edge between slots is: the line stays where it is, however long the triangles along it)
+    const W = LN.length ? 8 : 7, A = new Float32Array(n * W), ids = [];
     for (let i = 0; i < n; i++) {
       const sl = own[i] < 0 ? '' : S[own[i]].slot ?? ''; let k = ids.indexOf(sl); if (k < 0) k = ids.push(sl) - 1;
-      A[i * 7] = Q[i * 3]; A[i * 7 + 1] = Q[i * 3 + 1]; A[i * 7 + 2] = Q[i * 3 + 2]; A[i * 7 + 3] = ((k * 53) % 7) / 6; A[i * 7 + 4] = ((k * 29) % 5) / 4; A[i * 7 + 5] = ((k * 17) % 3) / 2; A[i * 7 + 6] = press ? press[i] : 0;
+      A[i * W] = Q[i * 3]; A[i * W + 1] = Q[i * 3 + 1]; A[i * W + 2] = Q[i * 3 + 2]; A[i * W + 3] = ((k * 53) % 7) / 6; A[i * W + 4] = ((k * 29) % 5) / 4; A[i * W + 5] = ((k * 17) % 3) / 2; A[i * W + 6] = press ? press[i] : 0;
+      if (W > 7) { const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2]; for (const L of LN) if (lineOn(L, own[i]) && abs(L.m(x, y, z)) < cell * .05 && L.inside(x, y, z)) { A[i * W + 7] = 1; break; } }
     }
-    const J = thinBy(I, P, A, 7, [.5, .5, .5, .8, .8, .8, .35], keep, error), map = new Int32Array(n).fill(-1); let k = 0;
+    const J = thinBy(I, P, A, W, W > 7 ? [.5, .5, .5, .8, .8, .8, .35, .6] : [.5, .5, .5, .8, .8, .8, .35], keep, error), map = new Int32Array(n).fill(-1); let k = 0;
     for (let i = 0; i < J.length; i++) if (map[J[i]] < 0) map[J[i]] = k++;
     const P2 = new Float32Array(k * 3), Q2 = new Float32Array(k * 3), o2 = new Int16Array(k), r2 = ride && new Int16Array(k), I2 = new Uint32Array(J.length);
     for (let i = 0; i < n; i++) { const j = map[i]; if (j >= 0) { for (let c = 0; c < 3; c++) { P2[j * 3 + c] = P[i * 3 + c]; Q2[j * 3 + c] = Q[i * 3 + c]; } o2[j] = own[i]; if (ride) r2[j] = ride[i]; } }
@@ -474,7 +536,27 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
       AO[i] = 1 - cl(occ / tot);
     }
   }
-  return { P, N, I, own, ride: ride || own, ao: AO, n, shapes: S, at: sample, ms: [t1 - t0, t2 - t1, t2b - t2, t3 - t2b, now() - t3] };
+  // ---- for each point: how far along the surface it is from the nearest line, how far along that, and its kind
+  let line = null;
+  if (LN.length) {
+    line = new Float32Array(n * 3); const q = cell * .25, iq = 1 / (2 * q);
+    for (let i = 0; i < n; i++) {
+      const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], nx = N[i * 3], ny = N[i * 3 + 1], nz = N[i * 3 + 2]; let bd = OFF, bl = -1;
+      for (let li = 0; li < LN.length; li++) {
+        const L = LN[li]; if (!lineOn(L, own[i])) continue; const m0 = L.m(x, y, z); if (abs(m0) >= FAR) continue;
+        if (abs(m0) > REACH * 1.25) { if (abs(m0) < bd) { bd = abs(m0); bl = li; } continue; }   // (plain cloth: near enough)
+        // (measured across the surface: the line's measure over how steeply it rises along the surface)
+        let gx = (L.m(x + q, y, z) - L.m(x - q, y, z)) * iq, gy = (L.m(x, y + q, z) - L.m(x, y - q, z)) * iq, gz = (L.m(x, y, z + q) - L.m(x, y, z - q)) * iq;
+        if (abs(gx) > 1e2 || abs(gy) > 1e2 || abs(gz) > 1e2) continue;   // (at the edge of its box)
+        const gd = gx * nx + gy * ny + gz * nz; gx -= gd * nx; gy -= gd * ny; gz -= gd * nz;
+        const d = abs(m0) / mx(.3, sqrt(gx * gx + gy * gy + gz * gz)); if (d < bd) { bd = d; bl = li; }
+      }
+      // (d: how far from the line; beyond REACH, or past the end of the line's box, it is plain cloth that only counts its stitches)
+      if (bl >= 0 && bd < FAR) { const L = LN[bl]; line[i * 3] = bd < REACH && L.inside(x, y, z) ? bd : 1; line[i * 3 + 1] = L.along(x, y, z); line[i * 3 + 2] = L.kind; }
+      else line[i * 3] = OFF;
+    }
+  }
+  return { P, N, I, own, ride: ride || own, ao: AO, n, shapes: S, at: sample, line, ms: [t1 - t0, t2 - t1, t2b - t2, t3 - t2b, now() - t3] };
 }
 
 /**

@@ -1158,7 +1158,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   recipe, laid on so it never smears at a seam; cloth and leather the same), an ear against the sun glows
   red while the head beside it stays solid (WebGPU; WebGL has a soft warm rim), and each eye has an iris
   that shades softly into the white, fine streaks out from a small pupil, and a cornea with a small sharp
-  wet highlight that slides as the eye turns.
+  wet highlight that slides as the eye turns. Clothes are sewn: a top has seams down its sides, over its
+  shoulders and round its sleeves, trousers down the legs, between them and a stitched fly, and pockets,
+  plackets, cuffs, hems, belts, straps and boots have rows of stitching along their edges. They are drawn by
+  one small picture made in code, along lines of points the sculpting lays into the mesh, so they stay clean
+  however far the mesh is thinned; nothing to set. A `gear` shape with an outline (a `band`, a `patch`, or a
+  `field` with `m`) says `stitch: true` for a row of its own (cloth and leather slots).
 - **`creature(o)`**: an animal or a monster made in code from a seed, built the way people are (soft shapes
   melted into one skin, creases in soft shadow, eyes that catch the light, no model or texture file). 35 to
   start from, in five kinds: four legs (`dog`, `cat`, `horse`, `deer`, `cow`, `pig`, `bear`, `rabbit`, `mouse`,

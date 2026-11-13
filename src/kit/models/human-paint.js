@@ -118,3 +118,64 @@ export function paintHair() {
   }
   return { colour, normal };
 }
+
+/**
+ * Seams and rows of stitching on clothes and leather: one small picture for all of them, laid on by each point's second set of UVs
+ * from the lines the sculpting lays on the surface (field.js mesh() `lines`; human-shapes.js says where they run). Across the picture
+ * (u) is how far a point is from its line: a seam's from the left edge (u 0 on the line, .5 a distance D off, plain), a row of stitching's
+ * from the right (u 1 on the line). Between the two, far from every line, it is plain, so a triangle running from near the one kind to
+ * near the other crosses nothing on the way. Down it (v) is one stitch, repeating along the line every L metres. A seam is a fine
+ * groove with a row of stitches either side of it; stitching is a row either side of an edge (a pocket's, a belt's: the outer row
+ * runs down the edge's own side). The thread is the cloth's own colour, lighter (on leather: much lighter, a pale thread).
+ * plain: the value that leaves the cloth as it is (the material's colour is 1 / plain, so thread can be lighter than the cloth).
+ */
+export const SEAM = { w: 64, h: 16, D: .008, L: .0035 };
+/** Where a point is on the seam picture: out = [u, v]. d: metres from its line (8 mm or more: plain; 1e3: no line near), along: metres, kind: 0 a seam, 1 stitching. */
+export function seamUV(d, along, kind, out) {
+  if (!(d < 100)) { out[0] = .5; out[1] = 0; return out; }   // (none near: d is 1e3)
+  const f = mn(1, d / SEAM.D) * .5; out[0] = kind ? 1 - f : f; out[1] = along / SEAM.L; return out;
+}
+/**
+ * The picture (sRGB bytes), its smaller copies, and its plain value. leather: a pale thread, pulled deep into it.
+ * The smaller copies are made here, not by the graphics chip: each is the stitches evened out along the line, but read across
+ * it at the middle of each dot, never averaged across. Averaged, a far seam's dots took in the plain cloth and the other kind of
+ * line, and the cloth either side of every seam turned grey; read like this, plain stays plain at any size.
+ */
+export function paintSeams(leather = false) {
+  const { w, h, D } = SEAM, plain = leather ? .45 : .65, px = new Uint8Array(w * h * 4), mm = 1000 * D * 2, K = new Float32Array(w * h);
+  const thread = leather ? 1.75 : 1.16, deep = leather ? .5 : .3;
+  // a row of stitches r millimetres off the line: d (mm) across, s (0..1) along one stitch. Each stitch is a short length of thread lying on
+  // the surface, round on top, between two holes it is pulled into
+  const row = (d, s, r) => {
+    const a = 1 - ss(.16, .36, abs(d - r)), on = ss(.04, .14, s) * ss(.94, .84, s), top = Math.sin(Math.PI * mn(1, mx(0, (s - .04) / .9)));
+    const hole = (1 - ss(.1, .32, abs(d - r))) * (bump(s, 0, .07) + bump(s, 1, .07));
+    return [a * on, (.86 + .2 * top), hole];
+  };
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const u = (i + .5) / w, seam = u < .5, d = (seam ? u : 1 - u) * mm, s = (j + .5) / h; let k = 1;
+    if (seam) {
+      // (wide enough to be seen a few paces off, where a dot of the screen is a few millimetres of cloth: a seam drawn only as fine as it
+      // really is went with the first smaller copy of the picture)
+      k *= 1 - (leather ? .55 : .5) * (1 - ss(.25, 1.1, d));   // the groove where the two pieces meet
+      k *= 1 - .1 * (1 - ss(1, 3, d));                          // its shade on the cloth either side
+      k *= 1 + .07 * bump(d, 3.2, 1.1);                         // the cloth folded under it, a little raised either side
+      k *= 1 + .025 * Math.sin(s * Math.PI * 2) * (1 - ss(1, 3.6, d));   // puckered a little at every stitch
+    } else k *= 1 - .16 * (1 - ss(.15, .7, d));                // the edge itself
+    const r = seam ? 4.2 : 2.4, [a, lit, hole] = row(d, s, r);
+    k = k * (1 - a) + a * thread * lit; k *= 1 - deep * hole; K[j * w + i] = k;
+    const at = (j * w + i) * 4, b = enc(plain * k); px[at] = px[at + 1] = px[at + 2] = b; px[at + 3] = 255;
+  }
+  const mips = [{ data: px, width: w, height: h }];
+  for (let lw = w >> 1, lh = h >> 1; lw >= 1 || lh >= 1; lw >>= 1, lh >>= 1) {
+    const W2 = mx(1, lw), H2 = mx(1, lh), q = new Uint8Array(W2 * H2 * 4), rows = h / H2;
+    for (let j = 0; j < H2; j++) for (let i = 0; i < W2; i++) {
+      // (the four smallest are plain: they are read only where a triangle's corners count stitches from far apart places, and plain cloth
+      // there came out a shade lighter or darker in a saw's teeth)
+      const c = mn(w - 1, Math.floor((i + .5) / W2 * w)); let k = 0; for (let y = j * rows; y < (j + 1) * rows; y++) k += K[y * w + c];
+      const at = (j * W2 + i) * 4, b = enc(plain * (W2 > 4 ? k / rows : 1)); q[at] = q[at + 1] = q[at + 2] = b; q[at + 3] = 255;
+    }
+    mips.push({ data: q, width: W2, height: H2 });
+    if (W2 === 1 && H2 === 1) break;
+  }
+  return { px, mips, plain };
+}
