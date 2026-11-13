@@ -14,6 +14,9 @@
 //  - Each run flies the same path by the clock, so a slow run and a fast one see the same things. Time
 //    spent in another app is left out of the clock; a slow frame, however long, is a frame.
 //
+// Ray tracing alone (runScenes({ traced: true }); the tour's "Ray tracing only" choice) flies just the hall: no
+// reflections, reflections from the screen and ray traced, so a phone can time ray tracing in a few minutes.
+//
 // Frame generation (runScenes({ framegen: true }); the tour's "Frame generation" choice) flies a few of the
 // scenes with their system on, five ways: as many frames drawn as this class of phone draws a Next Gen game
 // (every refresh on a top phone), half the screen's rate drawn and nothing made, and half drawn with the
@@ -42,6 +45,8 @@ const secs = ms => ms < 950 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)
 const TIER = ['low', 'medium', 'high', 'ultra'], STOP = {};   // STOP: thrown out of a build's wait when Stop is pressed
 // the scenes frame generation is flown through: houses and shadows, people walking, thin leaves, smoke and fire
 const FG_SCENES = ['town', 'square', 'forest', 'yard'];
+// the scenes ray tracing is set against reflections from the screen and none in (the tour's "Ray tracing only")
+const TRACE_SCENES = ['hall'];
 // frame generation's five runs, for a screen whose fastest rate is top (a stand-in game definition each: fps its
 // beat; hd: the 3D kit's switches for the run, put back after: 'before' is blend as it was before pacing by the
 // chip's times, the quick way for easy tiles and dropping late frames)
@@ -59,15 +64,17 @@ const FG_HD = ['fgPace', 'fgQuick', 'fgDrop', 'fgParts'];
 
 /**
  * Runs the scenes. driver: the feed (src/main.js). Options: seconds (of flight for each run, 20), size
- * (1: the full scenes; the app's own check runs small ones), only (scene keys), onStep({ i, n, game: { title }, what })
+ * (1: the full scenes; the app's own check runs small ones), only (scene keys), traced (only the ray tracing scenes,
+ * TRACE_SCENES, unless only says), onStep({ i, n, game: { title }, what })
  * and onPlay({ played }) for a progress display, signal ({ stop: true } ends it). framegen: frame generation's
  * runs instead of each system off and on (FG_SCENES unless only says); alternate: in those, every other refresh
  * is one between real frames, whatever the clock says (a test browser, whose frames come too slowly for a beat).
  * Gives the result, with its report as .text.
  */
-export async function runScenes(driver, { seconds = 20, size = 1, only = null, onStep = null, onPlay = null, signal = {}, framegen = false, alternate = false } = {}) {
-  const t0 = Date.now(), list = SCENES.filter(s => only ? only.includes(s[0]) : !framegen || FG_SCENES.includes(s[0])), stopped = () => !!signal.stop;
-  const out = { kind: 'scenes', framegen: !!framegen, at: new Date().toISOString(), seconds, size, asked: list.length, scenes: [], stopped: false };
+export async function runScenes(driver, { seconds = 20, size = 1, only = null, onStep = null, onPlay = null, signal = {}, traced = false, framegen = false, alternate = false } = {}) {
+  traced = !!traced && !framegen;
+  const t0 = Date.now(), list = SCENES.filter(s => only ? only.includes(s[0]) : framegen ? FG_SCENES.includes(s[0]) : !traced || TRACE_SCENES.includes(s[0])), stopped = () => !!signal.stop;
+  const out = { kind: 'scenes', framegen: !!framegen, traced, at: new Date().toISOString(), seconds, size, asked: list.length, scenes: [], stopped: false };
   out.phone = await phone(); out.powerBefore = powerNow();
   await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'gas', 'THREE']);
   const { HD } = await import('./kit/hd3d.js');
@@ -164,6 +171,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     // frame generation: WebGPU only; its runs for the screen's fastest rate (what a game asks for while it makes frames)
     const fgTop = Math.max(display.top || 0, screenHz()), fg = framegen && gpu ? fgRuns(fgTop) : null;
     if (framegen) { out.fgTop = fgTop; if (!gpu) out.note = 'Frame generation needs WebGPU, and this phone draws the 3D with WebGL here, so there was nothing to time.'; }
+    if (traced && !gpu) out.note = 'Ray tracing needs WebGPU, and this phone draws the 3D with WebGL here, so the hall was walked with no reflections and with reflections from the screen only.';
     const runsOf = key => fg ? fg.length : key === 'forest' && gpu ? 4 : key === 'town' || ((key === 'yard' || key === 'hall') && gpu) ? 3 : 2, runs = framegen && !gpu ? 0 : list.reduce((n, s) => n + runsOf(s[0]), 0);
     let done = 0;
     for (const [key, name, what, make] of list) {
@@ -338,7 +346,7 @@ export function sceneLines(s, hz) {
 /** The scenes' result as the text to copy. */
 export function scenesText(t) {
   const m0 = t.scenes.flatMap(s => s.modes).find(m => m.frames), hz = t.phone.hz;
-  const lines = head(t, t.framegen ? 'engine test scenes, frame generation' : 'engine test scenes', t.stopped ? ` · STOPPED after ${t.scenes.length} of ${t.asked} scenes` : '');
+  const lines = head(t, t.framegen ? 'engine test scenes, frame generation' : t.traced ? 'engine test scenes, ray tracing' : 'engine test scenes', t.stopped ? ` · STOPPED after ${t.scenes.length} of ${t.asked} scenes` : '');
   lines.push(m0 ? `PICTURE: ${m0.backend === 'webgpu' ? 'WebGPU' : 'WebGL' + (m0.why ? ` (${m0.why})` : '')} · quality ${TIER[t.tier] || t.tier}, pinned · 3D drawn at ${m0.rw} x ${m0.rh}, shown at ${m0.ow} x ${m0.oh}${m0.upscaled ? ` (${m0.upscaled === 'sgsr2' ? 'SGSR 2' : 'SGSR 1'})` : ''} · ${t.framegen ? `frame generation as each run says, for a ${t.fgTop} Hz screen` : 'frame generation off'} · ${t.seconds} s a run${t.size !== 1 ? ` · scenes at ${t.size} of full size` : ''}`
     : 'PICTURE: no frames were timed');
   if (t.note) lines.push(t.note);
@@ -347,6 +355,6 @@ export function scenesText(t) {
     lines.push('\nEach scene is flown through with its system on, at a pinned quality, five ways: as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone); half the screen\'s rate drawn and nothing made; and half drawn with the refreshes between made: blended (between the last two drawn frames) as before (each made frame on its real frame\'s refresh, every part of the picture the full way, none dropped), blended as now (each frame on a refresh of its own unless the chip has room for both, easy parts of the picture the quick way, a made frame that would come late dropped) and ahead (guessed past the newest). Frame generation is forced on or off for each run whatever Settings say, and the screen is asked for the rate a game drawn that way would get. pictures a second: the drawn and made frames that reached a refresh (a refresh that showed the same picture again is not counted), with how many of them were drawn; worst 1% and longest are of the gaps between them. chip: the graphics chip\'s time for each drawn frame with the frames made after it, where the phone tells it; a made frame: its own chip time, and where it went (moving: each pixel along its motion; motion: the optical flow and which tiles are easy, once a pair; picture: putting it together; holes: filling what was uncovered; keeping: the newest frame kept for the next pair); chip time a picture shares a drawn frame\'s time among the pictures it gave. (A phone clocks its chip down at half rate, so frames drawn with none made take it longer.) "the page got": fewer refreshes than the screen\'s rate, where the phone held them back because the chip was behind.');
     return lines.join('\n');
   }
-  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame, and in brackets where it went: scene pass is three\'s work on the game\'s things (finding what is in view, sorting, setting up each draw), shadow maps the same for the shadows, passes the full-screen passes after the scene, the rest the 3D kit\'s own steps that are not named. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
+  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, reflections the passes that find what shiny things reflect (on the screen, or by sending rays through a copy of the scene), effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame, and in brackets where it went: scene pass is three\'s work on the game\'s things (finding what is in view, sorting, setting up each draw), shadow maps the same for the shadows, passes the full-screen passes after the scene, the rest the 3D kit\'s own steps that are not named. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
   return lines.join('\n');
 }

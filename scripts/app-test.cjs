@@ -638,7 +638,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 5 && sheet.opts[3] === 'Engine test scenes (10)' && sheet.opts[4] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (12)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -656,6 +656,18 @@ async function tour(b) {
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
   check(/^Twelve scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  // and the ray tracing scene alone (the hall), started from the sheet: the bar names the hall, and Stop gives its report
+  await p.selectOption('.tour-set', 'traced');
+  const sheet4 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
+  check(/^The ray tracing scene alone: a polished hall, flown through for \d+ seconds three ways, with no reflections, with reflections worked out from the screen and ray traced .*: about [1-3] min/.test(sheet4.est) && sheet4.ticks.every(d => d === 'none'),
+    'the sheet also offers ray tracing alone: the hall, three ways, in a few minutes', JSON.stringify(sheet4));
+  await p.click('.tour-go'); await p.waitForFunction(() => /^1 of [23] · Hall/.test(document.querySelector('.tour-now')?.textContent || ''), null, { timeout: 60000 });
+  await p.click('.tour-bar button'); await p.waitForSelector('dialog.tour[open] .tour-text', { timeout: 60000 });
+  const rtRep = await p.evaluate(() => document.querySelector('.tour-text').value);
+  check(/^Game Scroll engine test scenes, ray tracing · .* · STOPPED after 1 of 1 scenes\n/.test(rtRep) && /\nHALL · ray traced reflections · /.test(rtRep) && !/\n(VALLEY|FOREST|TOWN) · /.test(rtRep),
+    'started from the sheet, ray tracing alone flies only the hall, and its report says so', rtRep.slice(0, 400));
+  await p.click('dialog.tour[open] .qa-x');
+  await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   await p.selectOption('.tour-set', 'framegen');
   const sheet3 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display), name: document.querySelector('.tour-set option[value="framegen"]')?.textContent }));
   check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
@@ -773,6 +785,14 @@ async function tour(b) {
   check(one.modes[0]?.frames === one.plays[0] - 2 && one.modes[1]?.frames === one.plays[1] - 1,
     'time spent in another app in the middle of a run is nobody\'s frame', JSON.stringify(one));
   if (process.env.SHOTS) require('fs').writeFileSync(process.env.SHOTS + '/scenes-report.txt', sc.text);
+  // ray tracing alone: only the hall, flown as in the engine test scenes; drawn with WebGL it has no ray traced run, and the report says so
+  // (back on the small screen: at 720 x 960 the software renderer draws a frame in a quarter of a second)
+  await q.setViewportSize({ width: 240, height: 320 }); await q.waitForTimeout(400);
+  const rt = await q.evaluate(async () => { const r = await __gs.tour({ scenes: true, traced: true, seconds: 1.5, size: .1 }); return { keys: r.scenes.map(s => s.key), modes: r.scenes[0]?.modes.map(m => m.key + ':' + m.frames + ':' + m.backend), error: r.scenes[0]?.error, note: r.note || '', text: r.text, active: __gs.active?.def.id }; });
+  const rtGpu = /\nPICTURE: WebGPU/.test(rt.text);
+  check(rt.keys.join() === 'hall' && !rt.error && (rtGpu ? rt.modes.length === 3 && !rt.note : rt.modes.length === 2 && /^Ray tracing needs WebGPU/.test(rt.note) && rt.text.includes(rt.note)) && rt.modes.every(m => +m.split(':')[1] > 3)
+    && /^Game Scroll engine test scenes, ray tracing · /.test(rt.text) && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, /.test(rt.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(rt.text) && rt.active === 'bunker-breakout',
+    'ray tracing alone flies only the hall, with the engine test scenes\' report', JSON.stringify(rt));
   // frame generation's runs need WebGPU: drawn with WebGL, the report says so and nothing is flown
   const noFg = await q.evaluate(async () => { const r = await __gs.tour({ scenes: true, framegen: true, seconds: 1, size: .1 }); return { n: r.scenes.length, note: r.note || '', text: r.text, active: __gs.active?.def.id }; });
   check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
