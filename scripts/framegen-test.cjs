@@ -8,6 +8,7 @@
 // they move), smoke and SGSR 2's camera jitter. --steps 3 makes two frames between each pair (40 fps on 120 Hz).
 // --kinds shadow,scroll,cut: what the game's motion doesn't describe (the optical flow's cases) and a cut.
 // --kinds copies: things drawn as gs.props copies, changing detail level at the newest real frame.
+// --kinds shapes: blend shapes (morph targets) on still things, one held, one coming and going.
 //   node scripts/framegen-test.cjs --check [--save]
 // The quality check the PR check runs when frame generation's code changes: every suite below, each
 // scene no worse than scripts/framegen-test/baseline.json (and better than repeating a frame). --save
@@ -28,6 +29,9 @@ const SUITES = {
   // gs.props copies on WebGPU (hd3d-gpu.js gpuProps), every one in the middle distance changing detail
   // level at the newest real frame: a copy's motion must be its own, whatever place in the list it takes
   copies: '&kinds=copies', 'copies-ahead': '&kinds=copies&mode=ahead',
+  // blend shapes (morph targets: the kit's fur shells and faces) on still things: their motion is the shapes' own
+  // change, not the whole offset (three leaves a frame ago's points unshaped; hd3d-gpu.js gives them a frame ago's shapes)
+  shapes: '&kinds=shapes', 'shapes-ahead': '&kinds=shapes&mode=ahead',
 };
 const BASELINE = path.join(__dirname, 'framegen-test', 'baseline.json');
 // how much worse than the baseline a scene may score before the check fails (SwiftShader gives the same

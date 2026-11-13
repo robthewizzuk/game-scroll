@@ -3,7 +3,7 @@
 // them. Every few frames the depths and flows are copied back for flood.depth(), level() and current().
 // Kit use only (hd3d-gpu.js exports it as gpuFlood).
 import { Mesh, MeshStandardNodeMaterial, BufferGeometry, Float32BufferAttribute, Vector4 } from 'three/webgpu';
-import { Fn, instancedArray, instanceIndex, vertexIndex, uniform, uniformArray, Loop, If, int, float, vec3, vec4, max, min, select, smoothstep, mix, normalize, attribute, varying, transformNormalToView } from 'three/tsl';
+import { Fn, instancedArray, instanceIndex, vertexIndex, uniform, uniformArray, Loop, If, int, float, vec3, vec4, max, min, select, smoothstep, mix, normalize, attribute, varying, transformNormalToView, positionPrevious } from 'three/tsl';
 
 export const FLOOD_SOURCES = 16;
 
@@ -48,7 +48,10 @@ export function gpuFlood(flood, look) {
   const hU = surf(select(vj.greaterThan(0), vi.sub(N), vi)), hD = surf(select(vj.lessThan(N - 1), vi.add(N), vi));
   const nx = hL.sub(hR).div(select(vi_.greaterThan(0).and(vi_.lessThan(N - 1)), float(2 * l), float(l))), nz = hU.sub(hD).div(select(vj.greaterThan(0).and(vj.lessThan(N - 1)), float(2 * l), float(l)));
   const p = attribute('position', 'vec3');
-  m.positionNode = vec3(p.x, surf(vi), p.z);
+  // (where the pass writes motion, a frame ago's point is the surface too: left at the flat mesh's own height, the
+  // whole depth of the water counted as motion, and SGSR 2 and frame generation dragged opaque water and lava with it.
+  // How far the surface itself rose in a frame isn't kept: a few millimetres)
+  m.positionNode = Fn(builder => { const at = vec3(p.x, surf(vi), p.z); if (builder.needsPreviousData()) positionPrevious.assign(at); return at; })();
   m.normalNode = normalize(transformNormalToView(varying(normalize(vec3(nx, 1, nz)), 'vFloodN')));
   const dep = varying(Db.element(vi), 'vFloodD');
   m.colorNode = vec4(mix(vec3(look.shallowV), vec3(look.deepV), smoothstep(0, look.full, dep)), 1);
