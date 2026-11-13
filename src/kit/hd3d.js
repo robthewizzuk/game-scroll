@@ -3733,6 +3733,12 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
 // camera doesn't make shadow edges crawl and the map's tiles can be kept (shadow-tiles.js).
 // around: k keeps the box to k times the distance to what's in the middle of the view (a scope looking
 // across a valley: sharp shadows round the target instead of thin ones over the hills behind it).
+// A box that changes size (or a light that moves up or down, or a depth range that changes) means the
+// whole map is drawn again, so in tiles the box grows at once but shrinks only once it has been too big
+// for SHRINK_HOLD fits in a row (frames: a second and a half at 60 fps), and the light's height and depth
+// grow with ROOM metres to spare: looking round from one place (what's in view nearer, then further, then
+// nearer again) keeps the box it has instead of drawing every shadow again every other frame.
+const SHRINK_HOLD = 90, ROOM = 40;
 const FX = new Vector3(), FY = new Vector3(), FZ = new Vector3(), FP = new Vector3(), FR = new Vector3(), UPV = new Vector3(0, 1, 0);
 const step4 = h => 2 ** (Math.ceil(Math.log2(Math.max(h, 1)) * 4) / 4);
 function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tall = 20, margin = 3, rays = 5, max = 500, soft = 1, around = 0 } = {}) {
@@ -3766,13 +3772,24 @@ function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tal
     }
   }
   if (!n) { const g = ground ? ground(o.x, o.z) ?? o.y : o.y; both(FP.set(o.x, g, o.z)); }
-  const msz = s.shadow.mapSize.x || 1024, tiles = HD.shadowTiles !== false, was = tiles ? s.gsFit ||= { hx: 0, hy: 0, cx: NaN, cy: NaN, top: NaN, depth: NaN } : null;
+  const msz = s.shadow.mapSize.x || 1024, tiles = HD.shadowTiles !== false, was = tiles ? s.gsFit ||= { hx: 0, hy: 0, cx: NaN, cy: NaN, top: NaN, depth: NaN, big: 0 } : null;
   // (in tiles, shadow-tiles.js: the box is a little bigger, so that its middle can go a tile at a time and
   // still cover what is seen, and it is kept while it is no more than a step too big, so a camera on
   // the edge of a step doesn't have every shadow drawn again each frame)
-  const grow = tiles ? TILES / (TILES - 1.2) : 1, keep = (need, had) => (had >= need && had <= need * 1.2 ? had : need);
+  const grow = tiles ? TILES / (TILES - 1.2) : 1;
   let hx = Math.min(max, step4(((x1 - x0) / 2 + margin) * grow)), hy = Math.min(max, step4(((y1 - y0) / 2 + margin) * grow));
-  if (tiles) { hx = keep(hx, was.hx); hy = keep(hy, was.hy); }
+  // the light sits above the tallest thing that could shade what's seen, low suns further off; the depth reaches below the lowest
+  let top = Math.ceil((z1 + tall / Math.max(d.y, .05) + 10) / 10) * 10;
+  const deep = t => Math.ceil((t - z0 + 20) / 10) * 10;
+  let depth = deep(top);
+  if (tiles) {
+    // the box it has, while it still covers what is seen: kept while snug (no more than a step too big, and the light no more than
+    // ROOM * 2 too high or deep), and for SHRINK_HOLD fits when too big (what's in view may be further off again in a moment)
+    const fits = was.hx >= hx && was.hy >= hy && was.top >= top && was.depth >= deep(was.top);
+    const snug = fits && was.hx <= hx * 1.2 && was.hy <= hy * 1.2 && was.top <= top + ROOM * 2 && was.depth <= deep(was.top) + ROOM * 2;
+    if (fits && (snug || ++was.big < SHRINK_HOLD)) { hx = was.hx; hy = was.hy; top = was.top; depth = was.depth; if (snug) was.big = 0; }
+    else { top += ROOM; depth = deep(top) + ROOM; was.big = 0; }   // (grown, or shrunk at last: the box as needed, the light with room)
+  }
   // too big to cover it all: keep the camera's end of it
   let cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; const ox = o.dot(FX), oy = o.dot(FY);
   if ((x1 - x0) / 2 + margin > hx) cx = Math.min(Math.max(cx, ox - hx + margin), ox + hx - margin);
@@ -3782,9 +3799,6 @@ function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tal
     if (was.hx === hx && Math.abs(cx - was.cx) <= .6 * tx) cx = was.cx; else cx = Math.round(cx / tx) * tx;
     if (was.hy === hy && Math.abs(cy - was.cy) <= .6 * ty) cy = was.cy; else cy = Math.round(cy / ty) * ty;
   } else { cx = Math.round(cx / tx) * tx; cy = Math.round(cy / ty) * ty; }
-  // the light sits above the tallest thing that could shade what's seen, low suns further off
-  let top = Math.ceil((z1 + tall / Math.max(d.y, .05) + 10) / 10) * 10; if (tiles && was.top >= top && was.top <= top + 20) top = was.top;
-  let depth = Math.ceil((top - z0 + 20) / 10) * 10; if (tiles && was.depth >= depth && was.depth <= depth + 20) depth = was.depth;
   if (tiles) { was.hx = hx; was.hy = hy; was.cx = cx; was.cy = cy; was.top = top; was.depth = depth; }
   FP.copy(FX).multiplyScalar(cx).addScaledVector(FY, cy).addScaledVector(FZ, top);
   s.position.copy(FP); s.target.position.copy(FP).sub(FZ); s.target.updateMatrixWorld();

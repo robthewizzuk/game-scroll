@@ -97,9 +97,14 @@ const is3D = def => def && (def.era === 'nextgen' || def.era === 'ar' || def.era
 const SETTLE_MS = 24 * 3600 * 1000;
 // (fgHow 'ahead' was set by the 3D kit before fgPace: it was making room on the real frame's refresh, which is 'first' now)
 const lasting = s => (s?.fgPace || s?.fgHow === 'ahead' ? { fgPace: 'first' } : null);
+// A step down in frame rate is forgotten a day after it was taken (fpsAt), however often the picture has
+// changed since (each change dates the entry again: a game played every day would otherwise keep a step
+// it took once, on an older build or a hot afternoon, for good)
+const fpsOld = (s, now = Date.now()) => s?.fps != null && !(Math.abs(now - (s.fpsAt ?? s.at)) < SETTLE_MS);
+const noFps = s => { const { fps, fpsAt, ...rest } = s; return rest; };
 function fresh(all, now = Date.now()) {
   const out = {};
-  for (const [id, s] of Object.entries(all || {})) { const keep = s && Math.abs(now - s.at) < SETTLE_MS ? s : lasting(s); if (keep) out[id] = keep; }
+  for (const [id, s] of Object.entries(all || {})) { const keep = s && Math.abs(now - s.at) < SETTLE_MS ? (fpsOld(s, now) ? noFps(s) : s) : lasting(s); if (keep) out[id] = keep; }
   return out;
 }
 let settled = fresh(store.get(SETTLE_KEY, {}));
@@ -116,9 +121,14 @@ export function autoFps(def) {
   if (is3D(def)) return k === 'top' ? 120 : k === 'mid' ? 60 : 30;
   return k === 'low' ? 60 : 120;
 }
+// the frame rate this game was stepped down to (999: none); a step older than a day is let go here
+function heldFps(id) {
+  const s = settled[id]; if (fpsOld(s)) { settled[id] = noFps(s); store.set(SETTLE_KEY, settled); }
+  return settled[id]?.fps || 999;
+}
 // the rate a game draws real frames at without frame generation
 function realFps(def) {
-  let f = pick === 'auto' ? Math.min(autoFps(def), settled[def?.id]?.fps || 999) : pick;
+  let f = pick === 'auto' ? Math.min(autoFps(def), heldFps(def?.id)) : pick;
   if (def?.fps) f = Math.min(f, def.fps);
   return Math.max(30, Math.min(f, hz));
 }
@@ -293,7 +303,7 @@ export function frameGenFailed(id) { if (id) fgFailed.add(id); }
 export function screenWant(def) {
   const top = screen.top;
   if (!def || !top) return 0;
-  let f = pick === 'auto' ? Math.min(autoFps(def), settled[def.id]?.fps || 999) : pick;
+  let f = pick === 'auto' ? Math.min(autoFps(def), heldFps(def.id)) : pick;
   if (def.fps) f = Math.min(f, def.fps);
   f = Math.max(30, Math.min(f, top));
   // frame generation could fill in (as frameGenFor, at the screen's fastest rate) and the game runs below it
@@ -323,7 +333,8 @@ export function settle(id, o) {
   if (!id) return;
   const was = settled[id] || {}, now = { ...was, ...o };
   if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgPace === now.fgPace && JSON.stringify(was.fx || null) === JSON.stringify(now.fx || null)) return;
-  now.at = Date.now(); settled[id] = now; store.set(SETTLE_KEY, settled);
+  now.at = Date.now(); if (now.fps !== was.fps) now.fpsAt = now.at;   // (when the frame rate was stepped, apart from the rest)
+  settled[id] = now; store.set(SETTLE_KEY, settled);
 }
 /** Where this game settled, if that was within the last day (older: forgotten here, so the game starts from the phone's class again). */
 export function settledFor(id) {
@@ -343,7 +354,7 @@ export function stepUp(def) {
   if (pick !== 'auto' || !def) return false;
   const s = settled[def.id]; if (!s?.fps) return false;
   const next = s.fps < 60 ? 60 : 120;
-  if (next >= autoFps(def)) { const { fps, ...rest } = s; settled[def.id] = { ...rest, at: Date.now() }; store.set(SETTLE_KEY, settled); } else settle(def.id, { fps: next });
+  if (next >= autoFps(def)) { settled[def.id] = { ...noFps(s), at: Date.now() }; store.set(SETTLE_KEY, settled); } else settle(def.id, { fps: next });
   return true;
 }
 

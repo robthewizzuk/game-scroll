@@ -69,6 +69,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
 | What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 13 min |
+| What ray traced reflections cost on a real phone's graphics chip | the hall alone: QA panel › Phone test tour › Ray tracing only (see below) | about 2 min |
 | What frame generation costs and gives on a real phone (pictures a second, the made frames' chip time) | the tour's frame generation runs: QA panel › Phone test tour › Frame generation (see below) | about 8 min |
 | The tour itself (`src/tour.js`, `src/detail-tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 2 min |
 | Everything (before a big engine PR) | `node scripts/smoke.cjs` (all 162 games) | about 3.5 min |
@@ -300,6 +301,16 @@ scenes, `only: ['valley']` for one); `node scripts/app-test.cjs tour` flies smal
 counts, the stage, and that the feed comes back as it was. A new detail system gets a scene in
 `src/detail-scenes.js`: `[key, name, what it tries, make]`, where `make({ gs, HD, size, gpu })` gives
 `{ v, holds, modes: [{ key, name, enter(draw) }], path(t, cam), tell(), dispose() }`.
+
+### Ray tracing alone on a phone
+
+Under **Play**, **Ray tracing only** flies just the **hall**, the same way and with the same report as
+in the engine test scenes (its header says `engine test scenes, ray tracing`): with no reflections, with
+reflections worked out from the screen and ray traced, about 2 minutes at 20 seconds a run in place of
+the full tour's 15. Read `= ray traced against from the screen` for what tracing costs, and the
+`reflections` part of each run's chip time for the reflection passes themselves. On WebGL the hall is
+walked twice, without the ray traced run, and the report says ray tracing needs WebGPU. In a test
+browser: `__gs.tour({ scenes: true, traced: true, seconds, size })`.
 
 ### Frame generation on a phone
 

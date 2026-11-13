@@ -97,7 +97,8 @@ never above a level that was too slow in the last 30 seconds, so it does not bou
 step reallocates render targets). Where a game settles (tier and frame rate) is remembered per game,
 so its next round starts there instead of stuttering down again. It is remembered for a day: what pushed
 a game down (a warm phone, a low battery, a busy spell while it loaded) has passed by then, and falling
-is quick where climbing back is slow, so after a day the game starts from the phone's class again. A
+is quick where climbing back is slow, so after a day the game starts from the phone's class again (a step
+down in frame rate counts its day from when it was taken, however often the picture changed since). A
 game held up by the CPU above 60 fps (the graphics chip has room) goes straight to 60 instead of giving
 up a tier first.
 
@@ -165,6 +166,11 @@ shows it and logs each change. Tests pin a step with `HD.fxStep('bloom', 2)`.
     falls the other way by the last bit of a sum. On the walk that is at most 35 texels of a map's
     262,144, never four together, and a pixel or two of the picture in a few frames (on WebGL none
     at all once the village's still things have been merged).
+  - A map fitted to the view (`s.fit(...)`) whose box changes size, or whose light moves up or down,
+    is drawn whole. So in tiles its box grows at once but shrinks only after a second and a half of
+    being too big, and its height and depth keep 40 m to spare: looking round from one place keeps the
+    box it has. (Rob's Fold, mission 2 of Long Shadow: the shadow maps' worst frame was 18 ms; panning
+    round in the test browser drew the whole map 29 times in 60 frames before, 4 after.)
   - Switches: `__hd.shadowTiles = false` (the sun moves a shadow texel at a time and its map is drawn
     whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all).
     `node scripts/detail-test.cjs --page shadows` (and `--webgpu`) walks the village both ways and

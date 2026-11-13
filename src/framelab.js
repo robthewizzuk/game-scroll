@@ -156,7 +156,7 @@ function tick(now, s, how, upd = 0, drw = 0) {
   const i = head; T[i] = now; K[i] = k; PLAY[i] = playing ? 1 : 0; EXP[i] = exp; head = (head + 1) % N; if (count < N) count++;
   if (rec) {
     const R = rec.rows; R.t.push(r2(now - rec.t0)); R.k.push(k); R.p.push(PLAY[i]);
-    if (k === 1) { R.upd.push(r2(upd)); R.drw.push(r2(drw)); R.cpu3d.push(HD && is3D(s?.def) ? r2(HD.info.cpu) : 0); R.fg.push(fg ? r2(HD.info.fgMs) : 0); R.gpu.push(HD?.info.gpuMs != null ? r2(HD.info.gpuMs) : null); R.ft.push(R.t.length - 1); }
+    if (k === 1) { R.upd.push(r2(upd)); R.drw.push(r2(drw)); R.cpu3d.push(HD && is3D(s?.def) ? r2(HD.info.cpu) : 0); R.fg.push(fg ? r2(HD.info.fgMs) : 0); R.gpu.push(HD?.info.gpuMs != null ? r2(HD.info.gpuMs) : null); R.ft.push(R.t.length - 1); if (playing) chipParts(); }
     if (now - rec.t0 > REC_MAX) stopRec();
   }
   if (k) {
@@ -171,6 +171,15 @@ function tick(now, s, how, upd = 0, drw = 0) {
   if (fgArm && k) fgArm(k, s);
 }
 const last = { upd: 0, drw: 0 };
+// The chip's own time a frame by pass (HD.info.gpuParts, a new list each time the 3D kit reads the chip's
+// timestamps: every few frames, where the phone has them) and the draws and triangles a frame, while playing
+let chipSeen = null;
+function chipParts() {
+  const I = HD?.info; if (!I || !rec) return;
+  if (I.calls > 0) { rec.draws.n++; rec.draws.calls += I.calls; rec.draws.tris += I.tris || 0; }
+  const by = I.gpuParts; if (!by || by === chipSeen) return; chipSeen = by;
+  rec.chipN++; for (const k in by) rec.chip[k] = (rec.chip[k] || 0) + by[k];
+}
 // CPU by part (prof.js): what each part took since the last real frame, the game's own code being what is
 // left of update() and draw(). Live: a running average a frame; recorded: the sum and the worst frame.
 const SYS = new Map(), carry = {}; let carryIn = 0;
@@ -246,7 +255,7 @@ function windowRows(ms) {
 
 /* ---------- recording ---------- */
 function startRec(s) {
-  rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0 };
+  rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0, chip: {}, chipN: 0, draws: { n: 0, calls: 0, tris: 0 } };
   rec.cfg.push(config(s)); sample();
 }
 function stopRec() {
@@ -602,6 +611,7 @@ export function summary(R = lastRec) {
     m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}` : 'not enough frames in play',
     cpuLine(R),
     sysLine(R),
+    chipLine(R),
     memLine(S),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
@@ -631,6 +641,14 @@ function sysLine(R) {
   const l = Object.entries(S).map(([k, e]) => [k, e.sum / n, e.max]).filter(([, a]) => a >= .05).sort((a, b) => b[1] - a[1]).slice(0, 10);
   return l.length ? `CPU by part in ms a frame (average/worst): ${l.map(([k, a, m]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}/${m.toFixed(1)}`).join(' · ')}` : '';
 }
+// The chip by pass over the recording (the average a frame, biggest first) and the draws a frame: where a
+// frame's GPU time goes (the scene, its shadows, then the passes after it), so a run says what to cut
+function chipLine(R) {
+  const n = R.chipN, d = R.draws, l = n ? Object.entries(R.chip || {}).map(([k, v]) => [k, v / n]).filter(([, a]) => a >= .05).sort((a, b) => b[1] - a[1]).slice(0, 10) : [];
+  const draws = d?.n ? `${Math.round(d.calls / d.n)} draws, ${Math.round(d.tris / d.n / 1000)}k triangles a frame` : '';
+  if (!l.length && !draws) return '';
+  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
+}
 let model = '';
 (async () => { try { const { Device } = await import('@capacitor/device'); const d = await Device.getInfo(); model = `${d.manufacturer || ''} ${d.model || ''}`.trim(); } catch (_) {} })();
 const phoneLabel = () => model || (navigator.userAgentData?.platform || navigator.platform || 'browser');
@@ -639,7 +657,7 @@ function reportData(R = lastRec) {
   const all = shots.map(s => ({ kind: s.kind, title: s.title, game: s.game, notes: s.notes, images: s.images.filter(i => i.cv).map(i => ({ label: i.label, url: toURL(i.cv) })), heat: s.heat ? { url: toURL(s.heat.cv), boxes: s.heat.boxes } : null }));
   return {
     made: new Date().toISOString(), build: BUILD, phone: phoneLabel(), platform: Capacitor.getPlatform(), ua: navigator.userAgent, summary: summary(R),
-    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
+    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
     shots: all,
   };
 }
