@@ -256,7 +256,9 @@ export const gpuMaterials = {
     // (and where the tiles are laid on stretched, seen along the way they were projected, the threads would show many times their size: there
     // the weave goes too, by the tiles a metre of the surface really has, which should be 64 every way)
     const dqx = length(dFdx(q)), dqy = length(dFdy(q)), tight = min(dqx.div(max(length(dFdx(positionView)), 1e-7)), dqy.div(max(length(dFdy(positionView)), 1e-7)));
-    const N = leather ? float(10) : by(WEAVE_N), per = max(dqx, dqy).mul(N), near = smoothstep(.4, .15, per).mul(smoothstep(20, 40, tight)).toVar('gsNear');
+    const N = leather ? float(10) : by(WEAVE_N), per = max(dqx, dqy).mul(N), facing = abs(dot(normalView, positionViewDirection)).toVar('gsFacing');
+    // (and both the weave and the creases go where the cloth is seen edge on, where bumps only sparkle along the outline)
+    const near = smoothstep(.4, .15, per).mul(smoothstep(20, 40, tight)).mul(smoothstep(.12, .35, facing)).toVar('gsNear');
     // the threads' height (0..1) and each yarn's own shade
     const ht = leather ? vec2(mx_noise_float(vec3(q.mul(10), 3.7)).abs().min(.35).mul(1.6), 1)   // (pebbled grain: creases where the noise crosses nought)
       : Fn(() => {
@@ -286,7 +288,7 @@ export const gpuMaterials = {
       const ax = arm ? vec3(TSL.sign(J.x).mul(Math.sin(ARM_OUT)), -Math.cos(ARM_OUT), 0) : vec3(0, -1, 0);
       const d = P.sub(J.xyz), along = dot(d, ax), r = length(d.sub(ax.mul(along))), inside = arm ? NG.z : NG.z.negate();
       // (a bent joint squeezes the skin of its inside into a few pixels: the folds go before they are finer than the pixels can show)
-      const env = smoothstep(.06, .012, abs(along)).mul(smoothstep(.12, .08, r)).mul(smoothstep(-.35, .45, inside)).mul(J.w.mul(2).min(1)).mul(smoothstep(.45, .2, fwidth(along).div(.03)));
+      const env = smoothstep(.06, .012, abs(along)).mul(smoothstep(.12, .08, r)).mul(smoothstep(-.35, .45, inside)).mul(J.w.mul(2).min(1)).mul(smoothstep(.45, .2, fwidth(along).div(.03))).mul(smoothstep(.15, .4, facing));
       fold = fold.add(sin(along.mul(2 * Math.PI / .03).add(n.mul(2.4))).mul(env));
     }
     m.normalNode = bumpN(h.mul(near).mul(leather ? .00018 : .00024).add(fold.mul(.0018)), 1, TSL.materialNormal);
@@ -642,9 +644,9 @@ export function grime(m, kind, o, AIR, air) {
   const top = g.y.mul(.55), mud = smoothstep(top, top.sub(.1), P.y.add(n.mul(.05))).mul(smoothstep(0, .2, g.y)).mul(n.mul(.2).add(.85)).min(1).toVar('gsMud');
   const dust = g.z.mul(smoothstep(1.5, .2, P.y).mul(.6).add(.4)).mul(n.mul(.3).add(.7)).mul(skin ? .5 : 1).toVar('gsDust');
   const snow = skin ? float(0) : smoothstep(.5, .95, normalWorld.y.add(n.mul(.35))).mul(max(g.w, ws.mul(.9)).mul(1.5).min(1)).toVar('gsSnow');
-  const dark = skin ? .06 : leather ? .3 : .45, wetR = skin ? .3 : leather ? .28 : .6;   // (wet skin glistens, but rain on a face is beads and a film, not a varnish)
+  const dark = skin ? .06 : leather ? .3 : .45, wetR = skin ? .4 : leather ? .28 : .6;   // (wet skin glistens, but rain on a face is beads and a film, not a varnish)
   let r = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
-  r = mix(r, wetR, soak.mul(skin ? .7 : 1)); r = mix(r, .6, mud); r = mix(r, .95, dust); if (!skin) r = mix(r, .9, snow);
+  r = mix(r, wetR, soak.mul(skin ? .55 : 1)); r = mix(r, .6, mud); r = mix(r, .95, dust); if (!skin) r = mix(r, .9, snow);
   m.roughnessNode = r;
   afterColor(m, o, c => { let k = mix(c.mul(float(1).sub(soak.mul(dark))), MUD, mud.mul(.88)); k = mix(k, DUST, dust.mul(.5)); return skin ? k : mix(k, SNOW, snow); });
   if (m.sheenNode) m.sheenNode = vec3(m.sheenNode).mul(float(1).sub(soak.mul(.8)).mul(mud.oneMinus()));
