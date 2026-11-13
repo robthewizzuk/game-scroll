@@ -19,6 +19,9 @@ import { MAKERS as ROAD, KINDS as ROADS } from './vehicle-shapes.js';
 import { railcar, RAIL } from './vehicle-rail.js';
 import { boat, plane, CRAFT } from './vehicle-craft.js';
 import { wheelGeo, wheelsetGeo } from './vehicle-parts.js';
+import { carPaint, carGlass } from './vehicle-looks.js';
+import { wearAndTear } from './vehicle-damage.js';
+import { looksOf } from '../looks.js';
 
 const MAKERS = { ...ROAD, train: o => railcar(o.style, o), boat, plane }, KINDS = { ...ROADS, train: RAIL, ...CRAFT };
 
@@ -33,10 +36,14 @@ const finish = (colour, f) => f === 'gloss' ? soft(pbr(colour, { rough: .45, met
 const SLOTS = {
   paint: k => finish(k.colour, k.finish), paint2: k => finish(k.trim, k.finish === 'gloss' ? 'satin' : k.finish),
   under: () => pbr('#141516', { rough: .92 }), dark: () => pbr('#1b1c1f', { rough: .55 }), rubber: () => pbr('#18181a', { rough: .85 }),
-  glass: () => pbr('#0a0f13', { rough: .26 }), screen: () => pbr('#b9cdd4', { rough: .08, transparent: true, opacity: .3, depthWrite: false }),   // (glass: a closed cabin's, dark; screen: glass with the open air behind it, seen through)
+  // (glass: a closed cabin's, dark; with its inside made, see-through as glass is, its look making it a mirror edge on)
+  glass: k => k.inside ? pbr('#26323a', { rough: .04, transparent: true, opacity: .42, depthWrite: false }) : pbr('#0a0f13', { rough: .26 }), screen: () => pbr('#b9cdd4', { rough: .08, transparent: true, opacity: .3, depthWrite: false }),   // (glass: a closed cabin's, dark; screen: glass with the open air behind it, seen through)
   chrome: () => pbr('#e6e9ec', { rough: .1, metal: 1 }), steel: () => pbr('#5c6064', { rough: .42, metal: .85 }), iron: () => pbr('#2c2d2f', { rough: .6, metal: .6 }),
   lamp: k => k.lit ? pbr('#fff6e0', { rough: .2, glow: 3 }) : pbr('#f2eee2', { rough: .3 }), tail: k => pbr('#9c1010', { rough: .25, glow: k.lit ? 1.6 : 0 }),
-  plate: () => pbr('#e6e3d6', { rough: .5 }), seat: () => pbr('#4a3c2a', { rough: .9 }), coal: () => pbr('#0e0e10', { rough: .55 }), bottom: () => pbr('#5c211c', { rough: .8 }), prop: () => pbr('#26272a', { rough: .5, metal: .4 }), blur: () => pbr('#34342f', { rough: .9, transparent: true, opacity: .22, depthWrite: false }), brass: () => pbr('#b08a3c', { rough: .32, metal: 1 }), beam: () => pbr('#96201a', { rough: .6 }),
+  plate: () => pbr('#e6e3d6', { rough: .5 }), seat: k => pbr(k.seat || '#4a3c2a', { rough: .9 }),
+  // a closed car's inside: the door cards and pillars, the headliner, the floor, the dashboard, its dials (lit with the lamps)
+  lining: () => pbr('#2e2f32', { rough: .88 }), liner: () => pbr('#9d9890', { rough: .95 }), carpet: () => pbr('#1c1d1f', { rough: .98 }), dash: () => pbr('#232428', { rough: .62 }),
+  dials: k => pbr('#182024', { rough: .22, glow: k.lit ? .9 : 0, glowCol: '#bfe0ff' }), coal: () => pbr('#0e0e10', { rough: .55 }), bottom: () => pbr('#5c211c', { rough: .8 }), prop: () => pbr('#26272a', { rough: .5, metal: .4 }), blur: () => pbr('#34342f', { rough: .9, transparent: true, opacity: .22, depthWrite: false }), brass: () => pbr('#b08a3c', { rough: .32, metal: 1 }), beam: () => pbr('#96201a', { rough: .6 }),
   wood: () => material('planks', { colour: '#8a6a44' }), canvas: k => pbr(k.canvas || '#5c6040', { rough: .95 }), rust: () => material('rust', {}),
   // a railway's own: boards in a wagon's colour (bare wood with none), bare timber (floors, crates), a tarred roof, copper pipes, oil drums, a fire, riveted plate
   boards: k => { const t = boarding(); return pbr(k.boards || '#8a6a44', { rough: .92, ...(t ? { tex: t } : {}) }); }, tar: () => pbr('#454544', { rough: .96 }), copper: () => pbr('#96603c', { rough: .38, metal: .9 }),
@@ -74,7 +81,11 @@ function boarding() {
 }
 const AGES = { paint: 1, paint2: 1, plates: 1, wood: .8, boards: .8, timber: .8, canvas: .7, tar: .6, steel: .6, iron: .5, drum: .7, under: 0 };   // (which slots wear() ages, and how much)
 const shared = new Map();
-const matOf = (slot, k) => { const key = slot + '|' + (slot === 'paint' || slot === 'paint2' || slot === 'plates' ? [k.colour, k.trim, k.finish] : slot === 'lamp' || slot === 'tail' || slot === 'fire' ? k.lit : slot === 'canvas' ? k.canvas : slot === 'boards' ? k.boards : ''); let m = shared.get(key); if (!m) shared.set(key, m = (SLOTS[slot] || SLOTS.paint)(k)); return m; };
+// (a car's or a lorry's paint, glass and lamps wear their looks, vehicle-looks.js: theirs are kept apart from a train's, and a paint
+// from another style's, as the look knows where the car's sills and tail are)
+const keyOf = (slot, k) => slot === 'paint' || slot === 'paint2' || slot === 'plates' ? [k.colour, k.trim, k.finish, k.flakes || 0, k.fit || ''] : slot === 'lamp' || slot === 'tail' || slot === 'fire' || slot === 'dials' ? [k.lit, !!k.fit]
+  : slot === 'canvas' ? k.canvas : slot === 'boards' ? k.boards : slot === 'glass' ? [!!k.inside, k.fit || ''] : slot === 'seat' ? k.seat : '';
+const matOf = (slot, k) => { const key = slot + '|' + keyOf(slot, k); let m = shared.get(key); if (!m) shared.set(key, m = (SLOTS[slot] || SLOTS.paint)(k)); return m; };
 let wheelMat = null; const wheelGeos = new Map();
 const wheelOf = g => { const key = JSON.stringify(g); let w = wheelGeos.get(key); if (!w) wheelGeos.set(key, w = g.gauge ? wheelsetGeo(g) : wheelGeo(g)); return w; };
 
@@ -104,6 +115,7 @@ function dress(shape, k, seed, age) {
   return out;
 }
 
+const SEATS = ['#2a2b2e', '#45484d', '#8c7c64', '#5a3a28', '#2e3442'];   // (a car's seats: black, grey, beige, brown, navy)
 const made = new Map();   // finished vehicles by everything that shapes them: copies share geometry and materials
 /**
  * A vehicle: 'car' | 'truck' | 'tank' | 'train' | 'boat' | 'plane'. Options: style (each kind's own: vehicle.kinds), seed (which
@@ -121,7 +133,12 @@ export function vehicle(kind = 'car', o = {}) {
   const bad = [o.style, ...(kind === 'train' ? (o.cars || []).map(c => carOf(c).style || '?') : [])].find(x => x && !KINDS[kind].includes(x));
   if (bad) throw new Error(`gs.models.vehicle: no ${kind} called '${bad}' (try ${KINDS[kind].join(', ')})`);
   const seed = o.seed | 0, style = o.style || KINDS[kind][0], age0 = o.wear === false ? 0 : typeof o.wear === 'number' ? o.wear : null, { cars, load, fuse: fused, ...rest } = o, opts = { ...rest, style, seed, ...(load && kind !== 'train' ? { load } : {}) };
-  const lookOf = (st, own = {}) => { const L = { ...LOOKS[kind], ...LOOKS[kind].by?.[st] }, mine = own.colour ?? own.color; return [{ colour: o.colour ?? o.color ?? L.colours[(hash(seed + 1) * L.colours.length) | 0], trim: mine ?? o.trim ?? L.trim ?? '#d9d6cc', finish: o.finish ?? L.finish, lit: !!o.lit, canvas: own.canvas ?? o.canvas, boards: mine }, age0 ?? L.wear]; };
+  const lookOf = (st, own = {}) => {
+    const L = { ...LOOKS[kind], ...LOOKS[kind].by?.[st] }, mine = own.colour ?? own.color, finish = o.finish ?? L.finish;
+    const k = { colour: o.colour ?? o.color ?? L.colours[(hash(seed + 1) * L.colours.length) | 0], trim: mine ?? o.trim ?? L.trim ?? '#d9d6cc', finish, lit: !!o.lit, canvas: own.canvas ?? o.canvas, boards: mine };
+    if (kind === 'car') { k.seat = o.seat ?? SEATS[(hash(seed + 5) * SEATS.length) | 0]; k.flakes = o.flakes ?? (finish === 'gloss' && hash(seed + 9) < .6 ? .75 : 0); }
+    return [k, age0 ?? L.wear];
+  };
   if (kind !== 'train') return one(kind, opts, ...lookOf(style));
   // (a wagon can be a name, or { style, load, colour, canvas }: its own planks and tank in its own colour; a wagon by itself takes the train's)
   const wagon = !['steam', 'diesel', 'tender', 'coach'].includes(style);
@@ -135,13 +152,28 @@ function one(kind, opts, k, age) {
   let v = made.get(key);
   if (!v) {
     pause('Models');   // (while a card loads, a frame may go by before each new vehicle: slices.js)
-    const plan = MAKERS[kind](opts);
-    v = { plan, body: dress(plan.body, k, opts.seed, age), parts: {} };
-    for (const [name, p] of Object.entries(plan.parts || {})) v.parts[name] = dress(p.shape, k, opts.seed + 7, age);
+    const plan = MAKERS[kind](opts), road = kind === 'car' || kind === 'truck';
+    const kk = road ? { ...k, inside: !!plan.inside, fit: [plan.size.length, plan.size.height, plan.clear].map(mm).join() } : k;
+    v = { plan, k: kk, body: dress(plan.body, kk, opts.seed, age), parts: {} };
+    for (const [name, p] of Object.entries(plan.parts || {})) v.parts[name] = dress(p.shape, kk, opts.seed + 7, age);
+    if (road) looks(v, kk, opts.seed);
     if (made.size >= 48 && !loading()) made.delete(made.keys().next().value);
     made.set(key, v); built();
   }
-  return stand(kind, v, k, opts);
+  return stand(kind, v, v.k || k, opts);
+}
+// a car's and a lorry's looks (vehicle-looks.js), once on each of their shared materials: flakes, dirt and beading on the
+// paint; see-through glass that breaks, with its wipers' fans on the screen; lamps that can break
+function looks(v, k, seed) {
+  const { plan } = v, size = [plan.size.length, plan.size.height, plan.clear || .2];
+  const sc = plan.screen ? [-.31, plan.screen[0], plan.screen[1], .6] : [0, 0, 0, 0];
+  for (const p of v.body) {
+    if (looksOf(p.mat).length || p.mat.userData?.pom) continue;
+    if (p.slot === 'paint' || p.slot === 'paint2') carPaint(p.mat, { flakes: p.slot === 'paint' ? k.flakes || 0 : 0, size, seed });
+    else if (p.slot === 'glass') carGlass(p.mat, { see: k.inside ? .42 : -1, size, screen: sc, seed });
+  }
+  // its lamps, lit and not (lights() swaps one for the other; a broken lamp starts from the lit one)
+  for (const slot of ['lamp', 'tail']) if (v.body.some(p => p.slot === slot)) for (const lit of [false, true]) { const m = matOf(slot, { ...k, lit }); if (!looksOf(m).length) carGlass(m, { see: -1, size, seed }); }
 }
 
 const mm = v => Math.round(v * 1000) / 1000;
@@ -177,7 +209,7 @@ function stand(kind, v, k, opts) {
   root.tris = Math.round(tris);   // (with its tracks and railway wheels)
   const props = (plan.props || (parts.prop ? ['prop'] : [])).map(n => parts[n]);   // propellers: blades, and the blur that stands in for them at speed
   for (const p of props) for (const m of p.children) if (m.name === 'blur') { m.visible = false; m.castShadow = false; }
-  root.traverse(m => { if (m.name === 'screen') m.castShadow = false; });
+  root.traverse(m => { if (m.name === 'screen' || (m.name === 'glass' && k.inside) || m.name === 'dials') m.castShadow = false; });   // (sun through a see-through cabin's windows)
   for (const key of ['gear', 'sit', 'draft']) if (plan[key] != null) root[key] = plan[key];
   let dist = 0, turn = 0, was = 0, lean = 0, pitch = 0, yaw = 0, lift = 0, rev = 0;
   /** Turns its wheels (and tracks) for a distance travelled so far, in metres (backwards: a smaller number). */
@@ -193,6 +225,7 @@ function stand(kind, v, k, opts) {
    */
   root.move = (dt, speed = 0, { steer = 0, lock = .55, sway = 1, turn: spin = 0, aim = null, power = speed ? 1 : 0, ground = kind !== 'plane' } = {}) => {
     const h = min(1, dt * 8), a = dt > 0 ? (speed - was) / dt : 0; was = speed;
+    root.update?.(dt);
     if (tracks) { const dv = clamp(spin, -1, 1) * max(1.2, abs(speed) * .5); tracks.left += (speed + dv) * dt; tracks.right += (speed - dv) * dt; root.roll(tracks.left, tracks.right); } else if (ground) root.roll(dist + speed * dt);
     root.steer(turn + (clamp(steer, -1, 1) * lock - turn) * h);
     if (props.length) { rev += (clamp(power, 0, 1) - rev) * min(1, dt * 1.5); const fast = rev > .45; for (const p of props) { p.rotation.z += rev * 42 * dt; for (const m of p.children) m.visible = (m.name === 'blur') === fast; } }
@@ -219,7 +252,14 @@ function stand(kind, v, k, opts) {
   /** A tank's turret turned (radians, + to its left, from straight ahead) and its gun lifted (radians up). */
   root.aim = (y = 0, up = 0) => { yaw = y; lift = clamp(up, -.14, .45); if (parts.turret) parts.turret.rotation.y = yaw; if (parts.gun) parts.gun.rotation.x = lift; return root; };
   /** Its lamps on or off (it gets lamps of its own, so its copies keep theirs). */
-  root.lights = (on = true) => { root.traverse(m => { if (m.isMesh && (m.name === 'lamp' || m.name === 'tail')) m.material = matOf(m.name, { lit: !!on }); }); return root; };
+  root.lights = (on = true) => {
+    root.userData.lit = !!on;
+    root.traverse(m => { if (m.isMesh && (m.name === 'lamp' || m.name === 'tail' || m.name === 'dials')) { if (m.userData.gsOwn) m.material.emissiveIntensity = on ? m.userData.gsGlow : 0; else m.material = matOf(m.name, { ...k, lit: !!on }); } });
+    return root;
+  };
+  root.userData.lit = !!k.lit;
+  // a car's and a lorry's own dirt, rain and damage (vehicle-damage.js)
+  if (kind === 'car' || kind === 'truck') wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) });
   /** Another one just like it (sharing its shapes and materials). */
   root.twin = () => stand(kind, v, k, opts);
   return root;

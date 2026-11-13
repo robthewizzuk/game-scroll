@@ -2468,6 +2468,12 @@ export interface VehicleOptions {
   lit?: boolean;
   /** A car's or a truck's shell and wheels: 1, or .5 a little coarser (about a fifth fewer triangles). */
   detail?: number;
+  /** A closed car: false leaves out its inside (seats, dashboard, door cards, headliner, about 9,000 triangles) and gives it dark glass in place of see-through glass. */
+  inside?: boolean;
+  /** A car's seats' colour (one of five from its seed when none is given). */
+  seat?: string;
+  /** How much its gloss paint sparkles with metal flakes close up, 0..1 (some colours have them by their seed). */
+  flakes?: number;
   /** A truck: the colour of a 'canvas' tilt (a train: of the canvas over a wagon's load); 3 axles (2); tyres with lugs for mud. */
   canvas?: string; axles?: 2 | 3; offroad?: boolean;
   /**
@@ -2537,6 +2543,22 @@ export type VehicleT = Loose & {
   aim(turn?: number, lift?: number): VehicleT;
   /** Its lamps on or off. */
   lights(on?: boolean): VehicleT;
+  /** A car's and a truck's: how dirty, 0 clean .. 1 caked (road grime low down and behind, dust on top, a film on the glass the wipers cleared). With no number, how dirty it is. This car only (its twins keep theirs). */
+  dirt?(v?: number): VehicleT;
+  /** How wet of its own, 0..1: beading on its paint and glass (a car just out of the wash or the rain). In the rain the view's air beads it by itself (gs.sky.Weather), so this is for when the air is dry. */
+  wet?(v?: number | null): VehicleT;
+  /** A dent where it was hit (a point in the world): the panels pushed in (along `dir`, or toward its middle), crumpled, the paint scraped to primer and metal. power 0..1.5 sets its size; radius and depth (metres) to set them yourself. Dents add up. */
+  dent?(point: Loose, o?: { power?: number; dir?: Loose; radius?: number; depth?: number }): VehicleT;
+  /** Glass hit at a point: a lamp breaks and goes dark; the windscreen crazes and stays; a side or back window cracks from a soft hit (power under .45) or breaks, its bits falling and lying on the ground. Says which: 'lamp' | 'screen' | 'crack' | 'window', or null for no glass near. */
+  smash?(point: Loose, o?: { power?: number }): 'lamp' | 'screen' | 'crack' | 'window' | null;
+  /** A knock: dent(), then smash() as well when power is over .25. */
+  hit?(point: Loose, o?: { power?: number; dir?: Loose }): 'lamp' | 'screen' | 'crack' | 'window' | null;
+  /** Mended: its shapes and materials shared again, the broken glass gone (its dirt and wet stay). */
+  mend?(): VehicleT;
+  /** Each frame while glass is falling (the bits lie still once down). */
+  update?(dt: number): VehicleT;
+  /** What it has taken: dents, panes of glass broken or crazed, lamps broken. */
+  readonly damage?: { dents: number; glass: number; lamps: number };
   /** Another just like it, sharing its shapes and materials. */
   twin(): VehicleT;
 };

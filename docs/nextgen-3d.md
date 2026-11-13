@@ -1470,6 +1470,18 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   A train that only runs straight can be made with `fuse: true`: its cars' shells joined into one mesh a
   kind of surface and its wheels drawn as copies, a third of the draws for the same picture (`along()`
   then throws). `polished: false` is a working engine with nothing kept bright.
+  Cars hold up close: a closed car has its seats, dashboard, steering wheel and door cards behind see-through
+  glass (`inside: false` for dark glass and none, about 9,000 triangles fewer), gloss paint has metal flakes
+  in some colours (`flakes: 0..1`), and cars and trucks get dirty, wet and knocked about, each car on its own
+  materials (its twins keep theirs):
+  ```js
+  car.dirt(.4).wet(.6);   // road grime low down and behind, dust on top, a film the wipers cleared; wet: beading of its own (in the rain the air beads it by itself)
+  car.hit(point, { power: 1, dir });   // a dent (the paint scraped to primer and metal), then glass: a broken lamp, a crazed windscreen or a side window that breaks
+  car.update(dt);   // each frame while its broken glass falls to the road; car.damage says what it took, car.mend() puts it right
+  ```
+  The paint and glass are looks of their own (`src/kit/models/vehicle-looks.js`, and a twin for WebGPU in
+  `vehicle-gpu.js`); `node scripts/vehicles.cjs sheet.png show=car:saloon views=near,in,screen,dent dirt=.5 wet=1 hit`
+  draws them close up.
   Options, the parts and points of each kind, real springs (`car.chassis()` with `World3D.vehicle`), boats
   and planes on `gs.craft`, and what each costs: [Vehicles made in code](maker-kit.md#vehicles-made-in-code).
   `node scripts/vehicles.cjs sheet.png` draws them all from five sides, to look them over.

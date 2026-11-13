@@ -4,6 +4,7 @@
 // is and how long it took to make.
 //   node scripts/vehicles.cjs <out.png> [show=car:saloon,car:jeep,tank,...] [views=front,side,back,top,move] [cell=360x230] [finish=worn] [wear=1] [lit] [seed=3] [time=15] [zoom=2] [at=-3] [--webgpu]
 //   a train: show=train:steam-van_6b3024-open_tarp-flat_crates-guard (wagons joined by -, a wagon's load and colour after _)
+//   cars up close: dirt=.6 wet=1 (wet=w: the air's rain instead) hit (a dent, broken glass, a lamp) flakes=1 noinside; views near, in, screen, dent
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {

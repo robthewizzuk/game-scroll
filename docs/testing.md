@@ -219,7 +219,7 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
    for each run and press **Start**.
-2. Fourteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+2. Fifteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
    and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
    **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
    with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses
@@ -274,6 +274,12 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    only when something it sees moved), headlights in a dipped beam's shape and the neon and sign lighting the
    road from their length (`src/kit/lamps.js`); the second run says how many lights were lit, how many had a
    shadow and how many shadow slots were drawn a frame.
+   And **cars**: a kerb of parked cars walked past at arm's length in a low sun, once as cars were (dark glass
+   with nothing behind it, plain paint), then with seats, dashboards and door cards behind see-through glass,
+   paint with flakes, road grime and rain beading (`src/kit/models/vehicle-looks.js`), and one car hit early on:
+   a dent with scraped paint, a side window that breaks and drops its glass on the road, a crazed windscreen
+   and a broken lamp (`src/kit/models/vehicle-damage.js`); each run says how many triangles a car is, the
+   second what the hit car took.
    About 16 minutes at 20 seconds a run on WebGPU (31 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.

@@ -53,7 +53,7 @@ import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
 import { pause, built } from './slices.js';
 import { rooms, ROOMS } from './city-rooms.js';
-import { Fleet, CITY_CARS, carKit, parkKinds } from './city-cars.js';
+import { Fleet, CITY_CARS, carKit, parkKinds, ParkedGlass } from './city-cars.js';
 import { DRESS_SHAPES, signAtlas, dressBuilding, dressBits, dressShops, dressPlan, kerbs, blades, wires, drain } from './city-dress.js';
 import { Crowd } from './crowd.js';
 import { human } from './models/human.js';
@@ -973,10 +973,11 @@ export class City {
       for (const p of Dr.bollards) props.add('bollard', p.x, KERB, p.z);
       for (const p of Dr.psigns) props.add('psign', p.x, KERB, p.z, { rot: p.rot });
       for (const p of Dr.poles) props.add('upole', p.x, KERB, p.z, { rot: p.rot });
-      // parked cars: each style a kind for its paint (coloured car by car) and one for the rest (city-cars.js)
+      // parked cars: each style a kind for its paint (coloured car by car) and one for the rest, and the glass of those close by (city-cars.js)
       if (this.parked.length) {
         const kinds = parkKinds(props, this.parkStyles, this.parked);
         for (const c of this.parked) { const k = kinds[c.style], rot = c.heading + Math.PI; props.add(k.paint, c.x, c.y, c.z, { rot, color: c.colour }); props.add(k.rest, c.x, c.y, c.z, { rot }); }
+        this.parkGlass = new ParkedGlass(this.group, this.parkStyles, this.parked);
       }
     }
     props.done();
@@ -1061,6 +1062,7 @@ export class City {
     for (const c of this.chunks.values()) if (c.detail) c.detail.visible = Math.hypot(c.x - f.x, c.z - f.z) < this.detail;
     this.cars.update(dt, f, this.t); this.people.update(dt, f, this.t);
     this.cars.draw(this.night, dt); this.people.draw(dt); this.signalTick();
+    this.parkGlass?.update(this.view.cam.position);
     if (this.lampsOn && this.view.placeLamps && this.night > .05) {
       if (!this.view.lamps?.length) this.view.lampLights(26);
       const near = this.lampSpots.filter(s => Math.abs(s.x - f.x) < 70 && Math.abs(s.z - f.z) < 70);
@@ -1270,7 +1272,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
