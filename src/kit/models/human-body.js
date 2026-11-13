@@ -63,12 +63,6 @@ const EGG = [.0885, .09, .09];
 /** How far outside the opening of a round-necked top a point is (metres; negative inside it). The top's edge is where this is 0 on the body. */
 export const neckOpening = (x, y, z) => { const u = x / EGG[0], v = (y - 1.545) / EGG[1], w = (z - .004) / EGG[2], k = Math.hypot(u, v, w) || 1e-9; return smax((k - 1) * k / Math.hypot(u / EGG[0], v / EGG[1], w / EGG[2]), (1.513 - .4 * (z + .08) - y) * .93, .008); };
 /**
- * The round of the shoulder that stays on the trunk: the arm's cap lies a few millimetres outside it while the arm
- * hangs (so chest and back run up to the sleeve with only a seam between, no deep groove), and when the arm is
- * raised it is what is left of the shoulder under it. The left one; out as for shoulderRows().
- */
-export const shoulderOf = (SH, out = 0) => ({ ball: [.049 + out, .04 + out, .052 + out], at: [.187 + .176 * (SH - 1), 1.42, -.013] });
-/**
  * What a trunk's cloth shows of the body under it, as a height to add (metres; a fold function): the furrow of
  * the spine between the muscles of the back, the shoulder blades, the two sides of a chest and the dip between them.
  */
@@ -151,4 +145,4 @@ export const FOOT = [
   { ball: [.039, .028, .045], at: [.103, .033, .152], rot: [0, .06, 0] },
 ];
 // everything above as it stands, for the number that names saved pieces
-export const BODY_STAMP = [row, over, easeOf, hangOf, torsoOf, shoulderRows, neckRows, neckOpening, EGG, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows].map(String).join('') + JSON.stringify(FOOT);
+export const BODY_STAMP = [row, over, easeOf, hangOf, torsoOf, shoulderRows, neckRows, neckOpening, EGG, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows].map(String).join('') + JSON.stringify(FOOT);

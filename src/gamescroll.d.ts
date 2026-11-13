@@ -2586,6 +2586,8 @@ export interface RigT {
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
+  /** A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go with, so a bent limb keeps its girth. Kit use: gs.models.human() makes them; nothing poses them. of: the joint it follows; home: its place; out: where the outside of the bend is (metres), or null. */
+  Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null };
   /** Lifelike idle, walk, jog, run, sprint and sneak for a figure with feet and hands (heel strike, push off the toes, planted feet that don't slide): new Rig(parts, { poses: LIFELIKE, weight: 1 }). gs.models.human people move with it. */
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */

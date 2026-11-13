@@ -25,7 +25,7 @@
 // The figure faces +z (the way Object3D.lookAt turns things). Angles are radians.
 
 import { timed } from './prof.js';
-import { BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { Bone, BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { reach } from './characters.js';
 import { Stride } from './stride.js';
 import { Follow } from './follow.js';
@@ -47,6 +47,29 @@ function shareOf(q, sw, tw, out) {
   const bx = x * t0 + z * ty, bz = z * t0 - x * ty, bl = Math.hypot(bx, bz), hb = Math.atan2(bl, tl) * sw, k = bl > 1e-9 ? Math.sin(hb) / bl : 0, ax = bx * k, az = bz * k, aw = Math.cos(hb);
   const ht = Math.atan2(ty, t0) * tw, by = Math.sin(ht), bw = Math.cos(ht);
   return out.set(ax * bw - az * by, aw * by, az * bw + ax * by, aw * bw);
+}
+
+/**
+ * A joint in between (gs.models.human's shoulders, elbows, hips and knees): a bone at a joint's own place that takes
+ * half of that joint's turn, by itself, every time the skeleton is worked out, whoever turned the joint (a pose, a
+ * hand brought onto a rifle, a ragdoll, a game's own code). Skin shared between only the two bones either side of
+ * a joint pinches in as it bends, the more the further it bends; skin that goes round the joint with this bone
+ * keeps its girth, and what lies either side of it has only half the bend to bridge. `out`: where the outside of
+ * the bend is, from the joint (metres, in the bone's own space): the bone moves that way as the joint closes, all
+ * of it once the joint is folded right over (the point of an elbow and a kneecap stand out of a bent limb).
+ * Kit use: nothing poses these, and a pose never names them.
+ */
+export class Between extends Bone {
+  constructor() { super(); this.of = null; this.out = null; this.home = null; }
+  updateMatrix() {
+    const of = this.of;
+    if (of) {
+      const q = of.quaternion, s = q.w < 0 ? -1 : 1, w = q.w * s + 1, l = 1 / Math.hypot(q.x, q.y, q.z, w), o = this.out;
+      this.quaternion.set(q.x * s * l, q.y * s * l, q.z * s * l, w * l);   // (half a turn q is q + 1, made a turn again)
+      if (o) { const k = 1 - q.w * q.w; _v.set(o[0] * k, o[1] * k, o[2] * k).applyQuaternion(this.quaternion); this.position.copy(this.home).add(_v); }
+    }
+    super.updateMatrix();
+  }
 }
 
 // A pose: { joint: [rx, ry, rz] } plus drop (hips lower, in body heights) and shift ([x, y, z]: the hips

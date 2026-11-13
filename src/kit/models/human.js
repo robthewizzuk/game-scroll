@@ -14,9 +14,9 @@
 // Kit use only: games reach it as gs.models.human.
 import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, RGBAFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, PIVOT, HC, ARM, EYE, ES, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, ES, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
-import { Rig, LIFELIKE } from '../poses.js';
+import { Rig, LIFELIKE, Between } from '../poses.js';
 import { reach } from '../characters.js';
 import { LiveFace } from './human-face.js';
 import { FACE, HAIR, SEAM, faceUV, paintFace, paintHair, paintSeams } from './human-paint.js';
@@ -95,7 +95,7 @@ async function save(key, p) {
 const idle = [], waiting = new Map(), queue = [];
 let workers = 0, off = typeof Worker !== 'function', jobId = 0, rest = 0;
 const MOST = () => Math.max(1, Math.min(4, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency || 4) - 2));
-const heavy = { trunk: 10, head: 4, arm: 3, collar: 2, hat: 2, pack: 2, gear: 2, hand: 1 };
+const heavy = { trunk: 14, head: 4, collar: 2, hat: 2, pack: 2, gear: 2, hand: 1 };
 function pump() {
   clearTimeout(rest);
   while (queue.length && !off) {
@@ -178,7 +178,7 @@ function mats() {
 }
 
 // ================================================================= putting a person together
-const ARMB = /^(arm|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
+const ARMB = /^(shoulder|arm|elbow|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
 const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|(thumb|index|middle|ring|little)\d)[LR]|jaw)$/, _m4 = new Matrix4();   // the small bones, which only show close up (fingers, toes, the face's own)
 /**
  * The skeleton a person of this build stands on: the bones' names, their parents and where each is (atOf), with
@@ -194,8 +194,9 @@ function frameOf(sp) {
   const atOf = b => { const k = rest[b] ? b : own[b], a = rest[k]; return inset && ARMB.test(k) ? [a[0] - Math.sign(a[0]) * inset, a[1], a[2]] : a; };
   const tree = () => {
     const B = {};
-    for (const b of bones) { const bone = new Bone(); bone.name = b; B[b] = bone; }
+    for (const b of bones) { const bone = BETWEEN[b] ? new Between() : new Bone(); bone.name = b; B[b] = bone; }
     for (const b of bones) { const par = parent[b], a = atOf(b); if (par) { const pa = atOf(par); B[b].position.set(a[0] - pa[0], a[1] - pa[1], a[2] - pa[2]); B[par].add(B[b]); } else B[b].position.set(...a); }
+    for (const b in BETWEEN) { const [of, out] = BETWEEN[b], h = B[b]; h.of = B[of]; h.home = h.position.clone(); h.out = out && (out[0] || out[1] || out[2]) ? out : null; }   // the joints in between: each takes half its joint's turn by itself
     B.shinL.userData.ikLength = B.shinR.userData.ikLength = .435; B.foreL.userData.ikLength = B.foreR.userData.ikLength = .27;
     B.spine.userData.pivot = PIVOT.spine; B.head.userData.pivot = PIVOT.head;   // (where the rib cage and the head turn about: see Rig.fill)
     return B;
@@ -289,7 +290,6 @@ export function human(o = {}) {
   for (const j of jobs) {
     const e = made.get(j.key), p = e.p; e.t = clock();
     if (j.kind === 'hand') pieces.push(moved(copyOf(p, 'L', () => turned(p, 1)), -inset), moved(copyOf(p, 'R', () => turned(mirrored(p), -1)), inset));   // sculpted hanging straight down, then turned out with the arms
-    else if (j.kind === 'arm') { if (j.side !== 'R') pieces.push(moved(p, -inset)); if (j.side !== 'L') pieces.push(moved(copyOf(p, 'M', () => mirrored(p)), inset)); }   // sculpted as a left arm
     else if (j.kind === 'head') pieces.push(headP = p);
     else if (j.kind === 'hat') pieces.push(onBone(p, sp.hat.hide === false ? 'head' : ownBone('hat', 'head')));
     else if (j.kind === 'pack') { const sa = atOf('spine'); pieces.push(onBone(p, ownBone('pack', 'spine'))); hung.push(['pack', { pivot: [0, 1.45 - sa[1], -.1 - sa[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1] }]); }   // (it hangs from the shoulders)

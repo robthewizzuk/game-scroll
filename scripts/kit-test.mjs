@@ -2110,27 +2110,27 @@ console.log('physics ok');
     const right = HS.mirrored(hand); assert.ok(right.names.includes('handR') && right.names.every(b => b.endsWith('R'))); assert.ok(right.P[0] === -hand.P[0] && right.I[0][1] === hand.I[0][2], 'the other hand: turned over');
     const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', sleeves: 'long', pockets: 4, buttons: '#888', collar: '#333' }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, face: { jaw: 1 }, hat: { kind: 'helmet', colour: '#444' }, belt: { colour: '#222' }, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
     const jobs = HS.jobsFor(sp), again = HS.jobsFor({ ...sp, top: { ...sp.top, buttons: '#abc', collar: '#def' }, hat: { kind: 'helmet', colour: '#f00' } });
-    assert.deepEqual(jobs.map(j => j.kind), ['trunk', 'arm', 'hand', 'head', 'hat', 'collar']); assert.deepEqual(jobs.map(j => j.key), again.map(j => j.key), 'colours do not change what is sculpted');
-    const hat = HS.sculpt(jobs[4]); assert.ok(hat.n > 300 && hat.slots.includes('helm') && hat.names[0] === '$', 'a helmet on a bone of its own');
-    // each arm is a piece of its own (it turns in the shoulder; nothing is stretched across the armpit): one sculpt serves both, unless the left wears an armband
-    assert.equal(jobs[1].side, 'LR'); const banded = HS.jobsFor({ ...sp, top: { ...sp.top, band: '#dd0' } }).filter(j => j.kind === 'arm'); assert.deepEqual(banded.map(j => j.side), ['L', 'R']); assert.equal(banded[1].key, jobs[1].key, 'the bare arm is shared');
-    const arm = HS.sculpt(jobs[1]); assert.deepEqual([...arm.names].sort(), ['armL', 'foreL', 'twistL']); assert.ok(arm.n > 500 && arm.slots.includes('top'));
-    let minX = 9; for (let i = 0; i < arm.n; i++) minX = Math.min(minX, arm.P[i * 3]); assert.ok(minX > .1, 'a left arm, on its own side: ' + minX);
-    assert.deepEqual([...HS.mirrored(arm).names].sort(), ['armR', 'foreR', 'twistR']);
+    assert.deepEqual(jobs.map(j => j.kind), ['trunk', 'hand', 'head', 'hat', 'collar']); assert.deepEqual(jobs.map(j => j.key), again.map(j => j.key), 'colours do not change what is sculpted');
+    const hat = HS.sculpt(jobs[3]); assert.ok(hat.n > 300 && hat.slots.includes('helm') && hat.names[0] === '$', 'a helmet on a bone of its own');
+    // the arms are the trunk's own (one skin from the chest over the shoulder and down the arm): no piece of their own, and an armband or a short
+    // sleeve is another trunk
+    assert.ok(!jobs.some(j => j.kind === 'arm') && HS.jobsFor({ ...sp, top: { ...sp.top, band: '#dd0' } })[0].key !== jobs[0].key && HS.jobsFor({ ...sp, top: { ...sp.top, sleeves: 'short' } })[0].key !== jobs[0].key, 'the arms are sculpted with the trunk');
     // a kind that is not on the list is no hat and no pack, even a name every object answers to (a kind reaches the sculptor as text, over a worker message)
     for (const kind of ['constructor', 'toString', 'nonsuch']) {
-      assert.deepEqual(HS.jobsFor({ ...sp, hat: { kind }, pack: { kind } }).map(j => j.kind), ['trunk', 'arm', 'hand', 'head', 'collar'], 'no hat or pack of kind ' + kind);
+      assert.deepEqual(HS.jobsFor({ ...sp, hat: { kind }, pack: { kind } }).map(j => j.kind), ['trunk', 'hand', 'head', 'collar'], 'no hat or pack of kind ' + kind);
       for (const what of ['hat', 'pack']) assert.throws(() => HS.sculpt({ kind: what, a: { kind } }), new RegExp(`no ${what} called '${kind}'`));
     }
     // what is worn round the neck is a piece of its own, finer than the trunk it stands on and moving with it (the trunk's bones): a collar
     // for every top but a round-necked one, with a scarf wound inside it or a scarf alone
     const round = { ...sp, top: { ...sp.top, kind: 'shirt', collar: false } }, kinds = q => HS.jobsFor(q).map(j => j.kind);
     assert.ok(!kinds(round).includes('collar') && kinds({ ...round, extras: { scarf: '#553' } }).includes('collar'), 'a round neck has no collar piece, unless a scarf is worn');
-    const col = HS.sculpt(jobs[5]), wound = HS.sculpt(HS.jobsFor({ ...sp, extras: { scarf: '#553' } })[5]);
+    const collarOf = q => HS.jobsFor(q).find(j => j.kind === 'collar'), col = HS.sculpt(collarOf(sp)), wound = HS.sculpt(collarOf({ ...sp, extras: { scarf: '#553' } }));
     assert.ok(col.n > 600 && col.slots.includes('trim') && !col.slots.includes('scarf') && wound.slots.includes('scarf') && wound.n > col.n, 'a collar, and one with a scarf in it: ' + [col.n, wound.n, col.slots, wound.slots]);
     assert.ok(col.names.includes('spine') && col.names.every(b => b === 'spine' || b.startsWith('collar')), 'a collar goes with the rib cage and the collar bones: ' + col.names);
     let top = 0, low = 9; for (let i = 0; i < col.n; i++) { top = Math.max(top, col.P[i * 3 + 1]); low = Math.min(low, col.P[i * 3 + 1]); } assert.ok(top > 1.57 && top < 1.6 && low > 1.47 && low < 1.52, 'it stands from inside the shoulders to under the jaw: ' + [low, top]);
     const tr = HS.sculpt(jobs[0]); assert.ok(!tr.slots.includes('trim'), 'and the trunk has none of it: ' + tr.slots);
+    // and its arms, on the joints in between too: round each shoulder and elbow the skin goes with the joint that takes half the turn
+    for (const n of ['armL', 'foreL', 'twistL', 'shoulderL', 'elbowL', 'armR', 'foreR', 'twistR', 'shoulderR', 'elbowR', 'hipL', 'kneeL', 'hipR', 'kneeR']) assert.ok(tr.names.includes(n), 'the trunk goes with ' + n + ': ' + tr.names);
     assert.ok(typeof HS.VERSION === 'string' && HS.VERSION.length > 4, 'the sculptor has a stamp for saved copies');
   }
   console.log('gs.models: sculpted people ok');
@@ -2148,7 +2148,7 @@ console.log('physics ok');
     };
     const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
     const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
-    assert.equal(Object.keys(b.bones).length, 62, 'sixty-two bones: twenty-three, fourteen to a hand and eleven in the face');
+    assert.equal(Object.keys(b.bones).length, 70, 'seventy bones: thirty-one (eight of them joints in between), fourteen to a hand and eleven in the face');
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
     const worst = {}, note = (k, v) => { worst[k] = Math.max(worst[k] || 0, v); };
@@ -2174,6 +2174,10 @@ console.log('physics ok');
       assert.ok(Math.abs(B.collarL.rotation.z - lift) < .02 && Math.abs(B.collarL.rotation.y + fwd) < .02 && Math.abs(B.collarR.rotation.z + lift) < .02 && Math.abs(B.collarR.rotation.y - fwd) < .02, `collar bones for an arm at ${arm}: ${B.collarL.rotation.z.toFixed(2)}, ${B.collarL.rotation.y.toFixed(2)}`);
       assert.ok(wp(B.armL).y - wp(a.bones.armL).y >= up - .005 && wq(B.armL).angleTo(wq(a.bones.armL)) < 1e-6 && wq(B.armR).angleTo(wq(a.bones.armR)) < 1e-6, 'the shoulder rises, the arm points where it did');
     }
+    // a joint in between (gs.poses Between) takes half its joint's turn, whoever turned it, and stays at the joint
+    one({ foreL: [-1.2, 0, 0], shinR: [1, 0, 0], armL: [-.8, .3, .4], legR: [-.6, 0, 0] });
+    for (const [h, of] of [['elbowL', 'foreL'], ['kneeR', 'shinR'], ['shoulderL', 'armL'], ['hipR', 'legR']]) { const q = B[of].quaternion, half = new T.Quaternion().slerp(q, .5); assert.ok(B[h].quaternion.angleTo(half) < 1e-6 && wp(B[h]).distanceTo(wp(B[of])) < 1e-9, `${h} takes half of ${of}'s turn, at its place`); }
+    B.foreL.quaternion.setFromEuler(new T.Euler(-2, 0, 0)); b.updateMatrixWorld(true); assert.ok(Math.abs(B.elbowL.quaternion.angleTo(new T.Quaternion()) - 1) < 1e-6, 'a joint turned by hand: half of it too');
     // the forearm's skin turns with the hand: seven tenths of the way at the wrist
     one({ handL: [0, .8, 0], handR: [.2, -.5, 0] }); assert.ok(Math.abs(B.twistL.rotation.y - .56) < 1e-6 && Math.abs(B.twistR.rotation.y + .35) < .01 && B.foreL.rotation.y === 0, 'the turn along the forearm: ' + B.twistL.rotation.y);
     // toes: flat on the ground while the heel comes up off them (with fifteen bones the tip of the shoe went centimetres into it)
@@ -2199,7 +2203,7 @@ console.log('physics ok');
     // the skin: each new joint has skin of its own to move
     { const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'shirt', sleeves: 'long', pockets: 0 }, legs: { kind: 'trousers' }, feet: { kind: 'shoes' }, face: { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, hat: null, belt: null, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
       const share = p => { const u = {}; for (let i = 0; i < p.n; i++) for (let q = 0; q < 4; q++) if (p.SW[i * 4 + q]) { const n = p.names[p.SI[i * 4 + q]]; u[n] = (u[n] || 0) + p.SW[i * 4 + q] / 255 / p.n; } return u; };
-      const jobs = HS.jobsFor(sp), body = HS.sculpt(jobs[0]), trunk = share(body), head = share(HS.sculpt(jobs[3]));
+      const jobs = HS.jobsFor(sp), body = HS.sculpt(jobs[0]), trunk = share(body), head = share(HS.sculpt(jobs.find(j => j.kind === 'head')));
       // a seam holds: the two sides of a hem or of a strap's edge have points of their own in the same place (so the colour stops
       // dead at the line), and those go with the same bones, or the seam would open when a joint bends (a trouser hem over a shoe did)
       { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (body.SW[i * 4 + q]) u[body.names[body.SI[i * 4 + q]]] = body.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0, eg = '';
@@ -2208,7 +2212,7 @@ console.log('physics ok');
           const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) { torn++; eg ||= `at ${body.P[i * 3 + 1].toFixed(3)} up: ${JSON.stringify(a)} against ${JSON.stringify(b)}`; }
         }
         assert.ok(pairs > 100 && torn === 0, `points in the same place go with the same bones: ${torn} of ${pairs} pairs do not (${eg})`); }
-      for (const n of ['waist', 'spine', 'collarL', 'collarR', 'toeL', 'toeR']) assert.ok(trunk[n] > .01, `the trunk's skin on ${n}: ${trunk[n]}`); assert.ok(Math.abs(trunk.collarL - trunk.collarR) < .004 && Math.abs(trunk.toeL - trunk.toeR) < .004, 'the same on both sides');
+      for (const n of ['waist', 'spine', 'collarL', 'collarR', 'toeL', 'toeR', 'shoulderL', 'shoulderR', 'elbowL', 'elbowR', 'hipL', 'hipR', 'kneeL', 'kneeR']) assert.ok(trunk[n] > .01, `the trunk's skin on ${n}: ${trunk[n]}`); assert.ok(Math.abs(trunk.collarL - trunk.collarR) < .004 && Math.abs(trunk.toeL - trunk.toeR) < .004, 'the same on both sides');
       assert.ok(head.neck > .01 && head.head > .7 && head.spine > .03, 'a neck between the collar and the head: ' + JSON.stringify(head)); }   // (a share of all the head's points: fewer of them are the neck's now that the hair is a shape of its own with points of its own)
   }
   console.log('gs.models: the fuller skeleton (waist, neck, collar bones, forearm twist, toes, fingers; old joints turned as they were) ok');
