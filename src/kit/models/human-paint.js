@@ -340,6 +340,60 @@ export function paintHair() {
 }
 
 /**
+ * The picture laid along the strips of a real head of hair (human-hair.js): n kinds side by side, each w / n dots across a strip, h along it from
+ * its root (v 0) to its tips (v 1). plain: as HAIR's.
+ */
+export const CARD = { w: 512, h: 256, n: 4, plain: .82 };
+/**
+ * The hairs on a strip of real hair: some sixty across each kind, most of them near its middle and fewer towards its two edges (so a strip
+ * shows no edge of its own), each its own lightness, wandering a little side to side, starting near the root (a few further along, so the
+ * root end thickens gradually) and ending where it ends (soonest at the edges), thinning to its tip and drawn in at it, as the tips of a lock gather. What lies between them is see-through: the alpha is
+ * how much of each dot the hairs cover, the colour (sRGB) their mean lightness, darker in at the root and where they pile up. Returns
+ * { px, mips }: the picture and its smaller copies, made here so that each covers as much as the whole picture does (a copy averaged
+ * by the graphics chip covers less and less, and a head of strips seen from a few paces went thin and see-through).
+ */
+export function paintCards() {
+  const { w, h, n, plain } = CARD, cw = w / n, cover = new Float32Array(w * h), lit = new Float32Array(w * h), sum = new Float32Array(w * h);
+  for (let q = 0; q < n; q++) {
+    let seed = 7 + q * 7919; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let k = 0; k < 64; k++) {
+      const u0 = .5 + (rnd() - .5) * (rnd() < .6 ? .6 : .94), mid = 1 - abs(u0 - .5) * 2;   // (mid: 1 in the middle, 0 at the edges)
+      const v0 = .3 * rnd() ** 1.8, v1 = mn(1, .45 + .26 * mid + .32 * rnd()), wid = .45 + .55 * rnd(), l = .78 + .42 * rnd(), wav = (rnd() - .5) * 2.6, ph = rnd() * 6.3, fr = 5 + 6 * rnd();
+      for (let j = Math.floor(v0 * h); j < mn(h, Math.ceil(v1 * h)); j++) {
+        const v = j / h, t = (v - v0) / (v1 - v0), x = q * cw + cw * (u0 + (.5 - u0) * .28 * t * t) + wav * Math.sin(v * fr + ph), r = wid * (1 - .6 * t);
+        const a = ss(1, .78, t) * ss(0, .04, t);   // (fine where it comes out of the root, fading at its tip)
+        for (let i = mx(q * cw, Math.floor(x - r - 1)); i <= mn((q + 1) * cw - 1, Math.ceil(x + r + 1)); i++) {
+          const c = mx(0, mn(1, r + .5 - abs(i + .5 - x))) * a; if (c <= 0) continue;
+          const at = j * w + i; cover[at] = 1 - (1 - cover[at]) * (1 - c); lit[at] += c * l; sum[at] += c;
+        }
+      }
+    }
+  }
+  const px = new Uint8Array(w * h * 4), A = new Float32Array(w * h), K = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const at = j * w + i, c = cover[at], s = sum[at] > 0 ? lit[at] / sum[at] : 1;
+    K[at] = mn(1.2, s * (.86 + .14 * ss(0, .3, j / h)) * (1 - .08 * c)); A[at] = mn(1, c * 1.1);   // (darker in at the root, and where they pile up)
+    px[at * 4] = px[at * 4 + 1] = px[at * 4 + 2] = enc(plain * K[at]); px[at * 4 + 3] = Math.round(255 * A[at]);
+  }
+  const over = (a, k = 1) => { let m = 0; for (let i = 0; i < a.length; i++) if (a[i] * k > .5) m++; return m / a.length; }, want = over(A), mips = [{ data: px, width: w, height: h }];
+  let pa = A, pk = K, pw = w, ph = h;
+  while (pw > 1 || ph > 1) {
+    const W2 = mx(1, pw >> 1), H2 = mx(1, ph >> 1), a2 = new Float32Array(W2 * H2), k2 = new Float32Array(W2 * H2), sx = pw / W2, sy = ph / H2;
+    for (let j = 0; j < H2; j++) for (let i = 0; i < W2; i++) {
+      let a = 0, k = 0; for (let y = 0; y < sy; y++) for (let x = 0; x < sx; x++) { const at = (j * sy + y) * pw + i * sx + x; a += pa[at]; k += pa[at] * pk[at]; }
+      a2[j * W2 + i] = a / (sx * sy); k2[j * W2 + i] = a > 0 ? k / a : 1;   // (the colour of the hairs alone, not of what is between them)
+    }
+    // (as much of it over the alpha test as of the whole picture: the alpha scaled up until it is, though not past two and a half times,
+    // or the smallest copies, read where a strip is seen edge on, came out as solid blocks)
+    let lo = 1, hi = 2.5; for (let it = 0; it < 14; it++) { const s = (lo + hi) / 2; if (over(a2, s) < want) lo = s; else hi = s; }
+    const q = new Uint8Array(W2 * H2 * 4);
+    for (let at = 0; at < W2 * H2; at++) { q[at * 4] = q[at * 4 + 1] = q[at * 4 + 2] = enc(plain * k2[at]); q[at * 4 + 3] = Math.round(255 * mn(1, a2[at] * hi)); }
+    mips.push({ data: q, width: W2, height: H2 }); pa = a2; pk = k2; pw = W2; ph = H2;
+  }
+  return { px, mips };
+}
+
+/**
  * Seams and rows of stitching on clothes and leather: one small picture for all of them, laid on by each point's second set of UVs
  * from the lines the sculpting lays on the surface (field.js mesh() `lines`; human-shapes.js says where they run). Across the picture
  * (u) is how far a point is from its line: a seam's from the left edge (u 0 on the line, .5 a distance D off, plain), a row of stitching's

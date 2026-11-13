@@ -22,7 +22,8 @@ import { Breath, Grime } from './human-life.js';
 import { Idle } from './human-idle.js';
 import { reach } from '../characters.js';
 import { LiveFace, MOVES } from './human-face.js';
-import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams } from './human-paint.js';
+import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, CARD, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams, paintCards } from './human-paint.js';
+import { stripsOn, easeEdge } from './human-hair.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { sceneEdited } from '../scene-list.js';
@@ -205,6 +206,12 @@ function mats() {
   // (less of the sky in it than the shine off the sun or a lamp: under a grey sky dark hair had turned silver)
   MATS.hairReal = pbr('#ffffff', { rough: .52, vertexColors: true, aniso: .7 }); Object.assign(MATS.hairReal, { envMapIntensity: .25, specularIntensity: .55 });
   Object.assign(MATS.hairReal, { map: MATS.hair.map, normalMap: MATS.hair.normalMap }); MATS.hairReal.normalScale.set(.6, .6); MATS.hairReal.color.copy(MATS.hair.color);
+  // a real head of hair's strips (human-hair.js), lit as that hair is: drawn twice, first what is mostly hair (solid, kept to: the alpha test),
+  // then what is between and round it, see-through, over that (no MSAA on the phones' WebGPU, so the alpha test's edge alone stepped and crawled)
+  { const { px, mips } = paintCards(), t = new DataTexture(px, CARD.w, CARD.h, RGBAFormat, UnsignedByteType);
+    t.mipmaps = mips; t.generateMipmaps = false; t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.anisotropy = 4; t.name = 'human:hair strips'; t.needsUpdate = true;
+    MATS.cards = pbr('#ffffff', { rough: .5, vertexColors: true, aniso: .7, map: t, alphaTest: .5 }); Object.assign(MATS.cards, { envMapIntensity: .25, specularIntensity: .55 }); MATS.cards.color.setScalar(1 / CARD.plain);
+    MATS.cardsSoft = MATS.cards.clone(); Object.assign(MATS.cardsSoft, { alphaTest: .02, transparent: true, depthWrite: false }); }
   // cloth and leather: their seams and rows of stitching in a small picture made in code (human-paint.js), laid on by the lines the
   // sculpting runs along them (the second set of UVs: how far from the line, how far along it). It takes the place of the recipe's own
   // colour picture there (the grain's bumps stay)
@@ -490,7 +497,8 @@ function palette(sp) {
  * Looks: sex ('m' | 'f'), build ({ shoulders, chest, waist, hips, limbs }: 1 = average), girth, scale, skin,
  * hair (null: none), hairStyle ('short' (a woman's: a bob) | 'bun' | 'long' | 'bald'), iris, lips, moustache, beard (0..1.5 how long;
  * true: .6), strands (the layers of strands that lie over a moustache and a beard close up, see fur.js: true, or
- * { length (metres), layers, lean, tile }, for the hair of the head too; false for none), face ({ jaw, chin, brow, nose, lips,
+ * { length (metres), layers, lean, tile }, for the hair of the head too; false for none), cards (a real face's hair close up wears
+ * strips of single hairs with see-through edges, human-hair.js: false leaves them off), face ({ jaw, chin, brow, nose, lips,
  * cheeks, eyes }), hands ('open' | 'grip').
  * outfit: top { kind: 'shirt' | 'tunic' | 'blouse' | 'smock', colour, camo ([colour, colour]: blotches over it; legs and hat take it too), sleeves, collar (a colour, or false), pockets (0, 2, 4),
  * buttons (a colour), straps (shoulder straps), tabs (collar patches' colour), cuffs, band (an armband's colour, left arm) },
@@ -507,6 +515,7 @@ function palette(sp) {
  * it blinks and its eyes move by themselves; look(point), say(text), set('smile', 1), wince(), awake), hair (the coat of strands
  * over a beard, a moustache and (when asked: strands) the hair, or null: hair.length, hair.lean, hair.level), twin() (another of the
  * same person, sharing everything but the skeleton: a squad from two or three faces costs little memory),
+ * strips (a real face's hair's strips, two meshes: solid, then see-through; [] for none),
  * hold(thing, rightPoint, leftPoint) (both hands onto a thing he carries: after rig.update()).
  * Make people in make() or reset(): a cut of clothes this phone hasn't sculpted yet takes a second or two in
  * the background (the app shows "Loading…" and makes the game again), then it is saved. Several kinds of
@@ -612,6 +621,17 @@ export function human(o = {}) {
       for (let q = 0; q < 4; q++) { SI[j * 4 + q] = SI[v * 4 + q]; SW[j * 4 + q] = SW[v * 4 + q]; }
     }
     at += p.n + sm.n;
+  }
+  // a real head of hair: strips over it, its strands breaking up its outline, hairline and ends (human-hair.js, worked out with the head; not
+  // under a hat, nor where the hair wears layers of strands, strands: true), and the sculpted hair's edge eased into the skin under them
+  const st = headP?.strips && sp.face.real && sp.hair && sp.hairStyle !== 'bald' && !sp.hat && !o.strands && o.cards !== false ? headP.strips : null;
+  let cardGeo = null;
+  if (st) {
+    const hoff = offs[pieces.indexOf(headP)], on = stripsOn(st, { off: hoff, C, SI, SW }); easeEdge(st, { off: hoff, C });
+    cardGeo = new BufferGeometry(); cardGeo.name = 'human:hair strips';
+    cardGeo.setAttribute('position', new BufferAttribute(st.P, 3)); cardGeo.setAttribute('normal', new BufferAttribute(st.N, 3, true)); cardGeo.setAttribute('color', new BufferAttribute(on.C, 3));
+    cardGeo.setAttribute('uv', new BufferAttribute(st.U, 2)); cardGeo.setAttribute('skinIndex', new BufferAttribute(on.SI, 4)); cardGeo.setAttribute('skinWeight', new BufferAttribute(on.SW, 4)); cardGeo.setIndex(new BufferAttribute(st.I, 1));
+    cardGeo.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3);
   }
   // (gsThin and uv1 share one list: WebGPU takes eight lists a mesh at most, and these would have been the seventh and the eighth)
   const tu = new InterleavedBuffer(TU, 4);
@@ -726,8 +746,10 @@ export function human(o = {}) {
     if (wet) { wet.name = 'human:wet'; wet.castShadow = wet.receiveShadow = false; wet.userData.noAO = true; wet.frustumCulled = true; wet.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(wet); wet.bind(skel, new Matrix4()); }
     const occ = occGeo ? new SkinnedMesh(occGeo, M.occ) : null;   // (and the shadow the lids cast over the eyes: drawn before the wet film's shine)
     if (occ) { occ.name = 'human:eye shadow'; occ.castShadow = occ.receiveShadow = false; occ.userData.noAO = true; occ.renderOrder = -1; occ.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(occ); occ.bind(skel, new Matrix4()); }
+    // (a real head of hair's strips, twice over: solid, then see-through; close up only. The sculpted hair under them casts the shadow)
+    const strips = cardGeo ? [M.cards, M.cardsSoft].map((mt, k) => { const c = new SkinnedMesh(cardGeo, mt); c.name = k ? 'human:hair strips (soft)' : 'human:hair strips'; c.castShadow = false; c.receiveShadow = sh; c.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(c); c.bind(skel, new Matrix4()); return c; }) : [];
     root.scale.setScalar(scale);
-    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet; root.eyeShadow = occ;
+    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet; root.eyeShadow = occ; root.strips = strips;
     root.rig = rigOf(B, scale, root, sp, n);
     root.grime = root.rig.grime = new Grime(B, jointAt);   // (how wet, muddy, dusty and snowy, and the elbows' and knees' bends: what the clothes' and skin's look reads on WebGPU)
     for (const m of lods) { m.userData.gsGrime = root.grime.v; m.userData.gsBends = root.grime.bends; }
@@ -741,7 +763,7 @@ export function human(o = {}) {
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
-      lods[cur].visible = false; lods[v].visible = true; if (wet) wet.visible = !v; if (occ) occ.visible = !v;
+      lods[cur].visible = false; lods[v].visible = true; if (wet) wet.visible = !v; if (occ) occ.visible = !v; for (const c of strips) c.visible = !v;
       if (!v !== !cur) {
         for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
         if (small.some(holds)) sceneEdited(root);   // (something a game hung on a finger or the jaw: the scene's list has to know it went or came back)

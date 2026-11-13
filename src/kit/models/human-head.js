@@ -531,7 +531,7 @@ const outside = L => {
  * the skin in a step at the hairline, less than its full length, and is combed in locks from the forehead back and down the
  * sides. th: [length on top, at the sides]; fem: a woman's hairline. At the hairline it stands at least 3 mm (short hair all of its length).
  */
-function hairShape(base, th, fem) {
+function hairShape(base, th, fem, soft = false) {
   const L = fem ? LINE_F : LINE_M, z0 = HC[2] - .0125, y0 = HC[1], m = outside(L);
   return {
     field(x, y, z) {
@@ -539,9 +539,11 @@ function hairShape(base, th, fem) {
       const e = m(x, y, z); if (e > .012) return mx(e, d + .004);   // (well outside the hairline there is none of it at all)
       // (it lengthens evenly from the ears to the crown: all of the change in a short way up made a ledge round the head. The locks run
       // out from the crown on top and down the sides and the back, as the strands painted on it do: human.js)
-      const hy = y - y0, top = ss(-.01, .1, hy), tk = ss(.05, .09, hy), deg = Math.atan2(abs(x), z - z0) * 180 / PI, inn = ss(0, -.02, e);
+      // (soft: a real face's, whose hair has strips over it, human-hair.js: it thins out to nothing at the hairline, as hair does, with no
+      // ledge for the strips to stand on; else it ends a few millimetres thick, the edge of a clean sculpted shape)
+      const hy = y - y0, top = ss(-.01, .1, hy), tk = ss(.05, .09, hy), deg = Math.atan2(abs(x), z - z0) * 180 / PI, inn = ss(0, soft ? -.025 : -.02, e);
       const lock = (tk * (lumps(deg * .4, 3.1, 5.5) * .0019 + lumps(deg * .14, 6.1, 2.2) * .0015) * ss(.012, .045, hyp(x, z - z0)) + (1 - tk) * lumps(deg * .45, y * 12, 7.5) * .0011);
-      const T0 = (th[1] + (th[0] - th[1]) * top) * (1 - .4 * ss(-.02, -.06, hy)), T = T0 * inn + mx(.45 * T0, Math.min(T0, .0032)) * (1 - inn) + lock * (.3 + .7 * inn) * Math.min(1, th[0] / .008);
+      const T0 = (th[1] + (th[0] - th[1]) * top) * (1 - .4 * ss(-.02, -.06, hy)), T = T0 * inn + (soft ? .0006 : mx(.45 * T0, Math.min(T0, .0032))) * (1 - inn) + lock * (.3 + .7 * inn) * Math.min(1, th[0] / .008);
       return smax(d - T, e, .0035);
     },
     m, lo: [-.1, y0 - .095, HC[2] - .13], hi: [.1, y0 + .14, HC[2] + .112],
@@ -750,7 +752,7 @@ export function head(a, ghosts = []) {
     const B = ready(real ? base.map(fitted) : base), all = (x, y, z) => { let d = 1e9; for (const s of B) d = smin(d, s.d(x, y, z), s.k); return d; }, crown = B[1].d;
     const skull = (x, y, z) => { const w = ss(.035, .06, y - HC[1]); return w <= 0 ? all(x, y, z) : w >= 1 ? crown(x, y, z) : crown(x, y, z) * w + all(x, y, z) * (1 - w); };
     const bob = fem && hs === 'short' && !a.hat, th = a.hat ? [.003, .003] : !fem ? [.0105, .006] : hs === 'long' ? [.012, .011] : [.007, .006];
-    if (!bob) S.push({ ...hairShape(skull, th, fem), out: .0015, slot: 'hair', blend: .003 });
+    if (!bob) S.push({ ...hairShape(skull, th, fem, real && !a.hat), out: .0015, slot: 'hair', blend: .003 });
     if (bob || hs === 'long') {
       // (its edge is an outline of its own: the line where the surface stops being the bob's and becomes the face's, made straight)
       const U = ready(S.filter(s => !s.paint && !s.ghost)), b = bob ? bobShape() : longShape(), near = (s, x, y, z) => x > s.lo[0] - .02 && x < s.hi[0] + .02 && y > s.lo[1] - .02 && y < s.hi[1] + .02 && z > s.lo[2] - .02 && z < s.hi[2] + .02;
