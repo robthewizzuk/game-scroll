@@ -138,6 +138,16 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
     check(/chip time a frame: full [\d.]+ ms, half [\d.]+ ms/.test(hc.notes[0] || '') && hc.notes.some(n => /^  \w[\w ]*: full/.test(n)) && hc.half === true && /^half/.test(hc.info), 'Half check times full and half by pass and puts the switch back');
     if (hc.notes.length) await shot('half-check');
     await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); __hd.halfPretend = false; });
+    // effects spread over frames (src/kit/hd3d-gpu-spread.js): the Spread check times every sample against spread and puts the switch back
+    const spread = await p.evaluate(() => __hd.info.spread);
+    if (spread) {
+      await p.evaluate(async () => (await __gs.lab(true)).spread());
+      const sc = await p.evaluate(async () => { const L = await __gs.lab(true); const s = L.shots[L.shots.length - 1]; return { notes: s && s.kind === 'spread' ? s.notes : [], on: __hd.spread, info: __hd.info.spread }; });
+      console.log('   Spread check: ' + sc.notes.join(' | '));
+      check(/chip time a frame: every sample [\d.]+ ms, spread [\d.]+ ms/.test(sc.notes[0] || '') && sc.notes.some(n => /^  \w[\w ]*: every sample/.test(n)) && sc.on === true && !!sc.info, 'Spread check times every sample and spread by pass and puts the switch back');
+      if (sc.notes.length) await shot('spread-check');
+      await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
+    } else console.log('SKIP Spread check (nothing spread in this game at this tier: ' + JSON.stringify(spread) + ')');
   }
 
   await p.evaluate(async () => (await __gs.lab(true)).rec(false));

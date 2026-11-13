@@ -67,6 +67,7 @@ import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
+import { SpreadFrame, SpreadNode, ownFrames } from './hd3d-gpu-spread.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 // Ray traced reflections (hd3d-gpu-trace.js) load the first time a view wants them (something marked shiny on
 // one of the best phones), not with every 3D game: the part brings a tree builder and a simplifier with it.
@@ -1815,14 +1816,16 @@ export class GpuChain {
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
-  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${halfKey()}`;
+  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false) {
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${halfKey()}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
+    for (const k of ['spAO', 'spVol', 'spGI']) { this[k]?.dispose(); this[k] = null; }
+    this.spread = '';
     this.aoN = this.dnN = this.dnT = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     // v.oit: three's weighted blended order-independent transparency (McGuire and Bavoil) in place of the plain
@@ -1864,6 +1867,10 @@ export class GpuChain {
     // 'screen': three's SSGI (what's on screen bounces); 'voxel': three's VXGI (the level as voxels, light
     // traced through them in cones: off-screen walls count too, the level's shape built once).
     // (its noise is the same every frame: no pass right after it averages a changing one over frames)
+    // (spread over frames, HD.spread: hd3d-gpu-spread.js; the scene's motion picture where it draws one, so moving things are followed)
+    // (spreadOn: true, or a list of the ones to spread, 'ao,vol,bounce': tests and the frame lab, to tell them apart)
+    const SP = spreadOn ? (this.SP ||= new SpreadFrame()) : null, velN = spreadOn && (mrtOn || mbOn) ? sp.getTextureNode('velocity') : null;
+    const spr = k => !!SP && (spreadOn === true || String(spreadOn).split(',').includes(k));
     if (giOn && aoOn) {
       const dN = sp.getTextureNode('depth'), nN = this.nrmN, dif = sp.getTextureNode('diffuse'), C = colT;
       let g;
@@ -1876,7 +1883,10 @@ export class GpuChain {
       } else {
         const n = this.giN = ssgi(C, dN, nN, this.cam); n.useTemporalFiltering = false;
         n.sliceCount.value = 3; n.stepCount.value = 8; n.radius.value = 6; n.giIntensity.value = 4; n.aoIntensity.value = 0;
-        const gt = n.getGINode();
+        let gt = n.getGINode();
+        // spread: three's low setting for temporal filtering (one slice of 12 steps, against three of 8), at half the
+        // size, its pattern turning each frame and the frames before filling in
+        if (spr('bounce')) { ownFrames(n, SP); n.sliceCount.value = 1; n.stepCount.value = 12; this.spGI = new SpreadNode(gt, dN, SP, { vel: velN, part: 'bounce light' }); gt = this.spGI.getTextureNode(); this.spread += ' bounce'; }
         g = Fn(() => vec4(C.sample(uv()).rgb.add(dif.sample(uv()).rgb.mul(gt.sample(uv()).rgb).mul(U.giK)), 1))();
       }
       this.giT = rtt(g, 1, 1, { type: HalfFloatType, depthBuffer: false }); colT = this.giT; this.giT.renderTarget.gsPart = 'bounce light';
@@ -1888,7 +1898,12 @@ export class GpuChain {
     if (aoOn) {
       this.aoN = ao(sp.getTextureNode('depth'), this.nrmN, this.cam);
       Object.assign(this.aoN, { resolutionScale: 1 });
-      this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = 12;
+      this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = spr('ao') ? 8 : 12;
+      let aoT;
+      // spread: half the samples (3 directions of 2 steps, not 4), the directions turning each frame, and no denoise: the
+      // frames before fill in, and the blend's own nine neighbours on the same surface smooth what is new
+      if (spr('ao')) { ownFrames(this.aoN, SP); this.spAO = new SpreadNode(this.aoN.getTextureNode(), sp.getTextureNode('depth'), SP, { vel: velN, wide: true, one: true, part: 'ao' }); aoT = this.spAO.getTextureNode(); this.spread += ' ao'; }
+      else {
       // (WebGL's GTAOPass smooths its own noise; here three's denoise does it)
       this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), this.nrmN, this.cam);
       this.dnN.noiseNode = texture(denoiseNoise());   // (the same noise for every view and every run: denoiseNoise above)
@@ -1898,8 +1913,9 @@ export class GpuChain {
       // Fold the finishing pass was the chip's biggest (2.6 ms of 9.3 in the town, 2026-11-13); the picture is read
       // back with one smooth read where the occlusion is laid on
       this.dnT = rtt(vec4(this.dnN.r, 0, 0, 1), null, null, { depthBuffer: false, type: UnsignedByteType, format: RedFormat });
-      this.dnT.renderTarget.gsPart = 'ao';
-      aoF = mix(float(1), this.dnT.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
+      this.dnT.renderTarget.gsPart = 'ao'; aoT = this.dnT;
+      }
+      aoF = mix(float(1), aoT.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
     }
     let src = colT, srcAo = aoF;
     const V = this.V, dT = sp.getTextureNode('depth');
@@ -1910,7 +1926,7 @@ export class GpuChain {
         const q = uv(), d = dT.sample(q).r, vp = getViewPosition(q, d, V.invProj), wp = V.camWorld.mul(vec4(vp, 1)).xyz;
         const rd0 = wp.sub(V.camPos), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toConst();
         const L = select(d.greaterThanEqual(1), V.k.y, min(L0, V.k.y)).toConst(), dt = L.div(V.steps).toConst();
-        const t = dt.mul(interleavedGradientNoise(screenCoordinate)).toVar(), sum = float(0).toVar(), g = V.k.z, spot = V.lt.x.greaterThan(.5);
+        const t = dt.mul(spr('vol') ? fract(interleavedGradientNoise(screenCoordinate).add(SP.turn)) : interleavedGradientNoise(screenCoordinate)).toVar(), sum = float(0).toVar(), g = V.k.z, spot = V.lt.x.greaterThan(.5);
         Loop({ start: 0, end: VOL_MAX }, ({ i }) => {
           If(float(i).greaterThanEqual(V.steps), () => { Break(); });
           const p = V.camPos.add(rd.mul(t)), s4 = V.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
@@ -1922,12 +1938,18 @@ export class GpuChain {
           const c = dot(rd, select(spot, qn.negate(), V.lDir.negate()));
           sum.addAssign(lit.mul(g.mul(g).oneMinus()).div(pow(g.mul(g).add(1).sub(g.mul(2).mul(c)), 1.5)).mul(.25)); t.addAssign(dt);
         });
-        return vec4(exp(V.k.x.negate().mul(L).mul(sum).div(V.steps)).oneMinus(), 0, 0, 1);
+        // (spread: the light gathered along the ray, before it is turned into how much shows (1 - e^-x). Frames are
+        // blended in that, as a few steps' guesses averaged after the turn come out darker than the full number of steps)
+        const x = V.k.x.mul(L).mul(sum).div(V.steps);
+        return vec4(spr('vol') ? x : exp(x.negate()).oneMinus(), 0, 0, 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
-      const volT = this.volT, vpx = this.volPx = uniform(new Vector2(1, 1)); volT.renderTarget.gsPart = 'volumetric light';
+      let volT = this.volT; const vpx = this.volPx = uniform(new Vector2(1, 1)); volT.renderTarget.gsPart = 'volumetric light';
+      // spread: a third of the steps along each ray (render() below), starting a different way along each frame
+      if (spr('vol')) { this.spVol = new SpreadNode(volT, dT, SP, { vel: velN, one: true, hold: false, view: true, alpha: .2, keep: 16, part: 'volumetric light' }); volT = this.spVol.getTextureNode(); this.spread += ' vol'; }
+      const shows = this.spVol ? p => exp(volT.sample(p).r.negate()).oneMinus() : p => volT.sample(p).r;
       this.baseT = rtt(Fn(() => {
-        const q = uv(), a = volT.sample(q.add(vpx.mul(vec2(-1, -1)))).r.add(volT.sample(q.add(vpx.mul(vec2(1, -1)))).r)
-          .add(volT.sample(q.add(vpx.mul(vec2(-1, 1)))).r).add(volT.sample(q.add(vpx.mul(vec2(1, 1)))).r);
+        const q = uv(), a = shows(q.add(vpx.mul(vec2(-1, -1)))).add(shows(q.add(vpx.mul(vec2(1, -1)))))
+          .add(shows(q.add(vpx.mul(vec2(-1, 1))))).add(shows(q.add(vpx.mul(vec2(1, 1)))));
         return vec4(colT.sample(q).rgb.mul(aoF).add(V.tint.mul(a.mul(.25))), 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
       src = this.baseT; srcAo = float(1);   // (this full-size mix, which also lays the ambient occlusion on, counts as 'effects')
@@ -2089,14 +2111,30 @@ export class GpuChain {
     // gs.fx3d's screen effects and reflections have a key of their own: the chain is built again when it changes
     // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
     { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
-    this.build(!this.clear && o.ao > 0, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, !this.clear && o.ao > 0 && o.gi ? o.gi.kind : false);
+    const fx = !this.clear && o.ao > 0;
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false);
+    // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
+    // again or the volumetric light's light moved, which change the picture though the camera didn't)
+    if (this.spread) {
+      let stir = !!o.shDrawn; const m = this.spVol && o.vol;
+      if (m) { const k = this.volKey ||= new Float64Array(6), put = (i, x) => { if (k[i] !== x) { k[i] = x; stir = true; } };
+        put(0, m.lDir.x); put(1, m.lDir.y); put(2, m.lDir.z); put(3, m.lPos.x); put(4, m.lPos.y); put(5, m.lPos.z);
+        // (another light, its shadow map there or not yet (the first frame has none: the whole room lit), or other settings: what the
+        // frames before gathered is of another light, so it starts again from this frame. Blended in at a fifth a frame, a game's first
+        // frames, or a lamp turned on in place of the sun, kept the old light in the air for a dozen frames)
+        const id = `${m.lt.x}|${m.map ? m.map.id : 0}|${m.density}|${m.far}|${m.g}|${m.tint.r},${m.tint.g},${m.tint.b}`;
+        if (m.light !== this.volLight || id !== this.volId) { this.volLight = m.light; this.volId = id; this.spVol.fresh = true; } }
+      this.SP.frame(this.cam, !!o.cut, stir, f ? f.jd : null);
+    }
     if (this.s1) this.s1.size(o.w, o.h);
     // the passes size themselves from the canvas: upscaled, the canvas is the screen's size, so scale them down
     const k = f || s1 ? (o.w + .5) / o.fw : 1;
     if (this.sp.getResolutionScale() !== k) this.sp.setResolutionScale(k);
     if (!this.clear) {
       const U = this.U;
-      if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT.setResolutionScale(o.ao * k); }
+      if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT?.setResolutionScale(o.ao * k); }
+      // (three's SSGI sizes itself from the canvas, the screen's size under an upscaler: the picture's size, or half of it spread)
+      if (this.giN && 'resolutionScale' in this.giN) this.giN.resolutionScale = (this.spGI ? .5 : 1) * k;
       this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }
@@ -2119,7 +2157,7 @@ export class GpuChain {
         this.volPx.value.set(1 / this.volT.renderTarget.width, 1 / this.volT.renderTarget.height);
         if (m) {
           this.volShadow.value = m.map || NO_SHADOW; if (m.shadowM) V.shM.value = m.shadowM; cam.getWorldPosition(V.camPos.value);
-          V.lDir.value.copy(m.lDir); V.lPos.value.copy(m.lPos); V.lt.value.copy(m.lt); V.k.value.set(m.density, m.far, m.g, m.map ? 1 : 0); V.steps.value = m.steps; V.tint.value.copy(m.tint);
+          V.lDir.value.copy(m.lDir); V.lPos.value.copy(m.lPos); V.lt.value.copy(m.lt); V.k.value.set(m.density, m.far, m.g, m.map ? 1 : 0); V.steps.value = this.spVol ? Math.max(6, Math.ceil(m.steps / 3)) : m.steps; V.tint.value.copy(m.tint);
         } else { V.tint.value.setRGB(0, 0, 0); V.steps.value = 1; }
       }
       if (this.mbT) { this.mbT.setSize(o.w, o.h); { const tw = Math.max(1, Math.ceil(o.w / 16)), th = Math.max(1, Math.ceil(o.h / 16)); this.mbTile.setSize(tw, th); this.mbTilePx.value.set(1 / tw, 1 / th); } const m = o.mb; if (m) { V.prevVP.value.copy(m.prevVP); V.mb.value.copy(m.mb); V.mbObj.value = m.obj; } else V.mb.value.set(0, 0, 0, 1); }

@@ -317,7 +317,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full' },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -378,6 +378,13 @@ export const HD = {
   sgsrTune: true,
   /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
   half: true,
+  /**
+   * WebGPU: ambient occlusion, volumetric light and live bounce light take a part of their samples each frame, the
+   * pattern turning from frame to frame, and the frames before fill in the rest (hd3d-gpu-spread.js). false: all of
+   * them every frame, as before (the frame lab's A/B and spread check, tests); a list ('ao,vol,bounce') spreads only those.
+   * HD.info.spread says which are spread.
+   */
+  spread: true,
   /** Tests: act as if the graphics chip had half precision (the build machine's WebGPU has none), drawing the same passes in full, so the switch, the rebuild and the frame lab's check can be tried. */
   halfPretend: false,
   /** Tests and the frame lab's A/B: how textures are read under SGSR 2 on WebGPU. null: the usual, as the screen's size would read them (hd3d-gpu.js sharpMips); false: as drawn, the small picture's mip level; a number: that many mip levels on top of the usual (negative: sharper). */
@@ -819,7 +826,7 @@ function beamsFrame(v) {
   L.updateMatrixWorld(); L.target.updateMatrixWorld();
   L.getWorldPosition(m.lPos); L.target.getWorldPosition(m.lDir); m.lDir.sub(m.lPos).normalize();
   const spot = !!L.isSpotLight, a = spot ? L.angle : 0;
-  m.lt.set(spot ? 1 : 0, Math.cos(a), Math.cos(a * (1 - (L.penumbra || 0)) * .999), spot ? L.distance || 20 : 1);
+  m.lt.set(spot ? 1 : 0, Math.cos(a), Math.cos(a * (1 - (L.penumbra || 0)) * .999), spot ? L.distance || 20 : 1); m.light = L;
   m.map = L.castShadow && L.shadow?.map?.depthTexture || null; m.shadowM = L.shadow.matrix;   // (the light's own: the renderer updates it when it redraws the map this frame)
   m.tint.copy(L.color).multiplyScalar(Math.max(0, b.strength ?? 1));
   m.density = Math.max(0, b.density ?? .02); m.far = Math.max(1, b.far ?? 60); m.g = Math.min(.9, Math.max(0, b.glow ?? .5)); m.steps = Math.round(Math.min(VOL_MAX, Math.max(4, b.steps ?? 24)));
@@ -2436,7 +2443,7 @@ export class HDView {
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
     if (T.shadow > 0) {
       if (pm >= 0) enter('3D: shadows');
-      if (this.shadowLights(lastView !== this || baking || off, true) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
+      if ((o.shDrawn = !!this.shadowLights(lastView !== this || baking || off, true)) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
       for (const l of this.shL) {
         const sh = l.shadow;
         // (a sun that could go into tiles: the shaders its tiles' copies need are made now, not in the frame it goes in: hd3d-gpu.js shadowOps ahead)
@@ -2476,6 +2483,9 @@ export class HDView {
     // the scene's pass writes each pixel's motion and the see-through mask while frame generation could
     // come on for this game (so it can start without rebuilding the chain) or SGSR 2 can use them
     o.live = live; o.mrt = live && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
+    // (effects spread over frames: a cut starts them from this frame alone)
+    // (a card's picture is a frame of its own: it keeps nothing from the last one baked)
+    o.spread = HD.spread === false ? false : typeof HD.spread === 'string' ? HD.spread : true; o.cut = cut || !!baking;
     // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
     o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
     if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); }
@@ -2488,7 +2498,7 @@ export class HDView {
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
-    try { shown = ch.render(o) || false; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
     if (pm >= 0) leave(pm);
