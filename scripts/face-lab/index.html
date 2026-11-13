@@ -143,6 +143,8 @@ async function refHead(T, v) {
   // (measured off the scan: its crown at y 3.97 and its chin near -.65, so a 23 cm head is .05 of it; its eyes near 1.9 up; it faces +z as a person does)
   const k = .23 / 4.6, p = new T.Group(), inner = new T.Group(), head = new T.Object3D(); inner.add(mesh); p.add(inner, head); inner.scale.setScalar(k);
   head.position.set(0, 1.5, 0); inner.position.set(0, 1.5 + .148 - 1.9 * k, 0);   // (a person's head bone .148 under the eyes)
-  return Object.assign(p, { bones: { head }, rig: { play() {}, update() {} }, face: { look() {}, awake: true }, tris: [mesh.geometry.index ? mesh.geometry.index.count / 3 : 0], wet: null });
+  // (where its eyes' middles are, for the close views that aim at an eye or the mouth: its shut lids at x .48 and -.75, y 1.9, less an eyeball's depth)
+  const eyeL = new T.Object3D(), eyeR = new T.Object3D(); eyeL.position.set(.48 * k, 1.5 + .148, .068); eyeR.position.set(-.75 * k, 1.5 + .148, .068); p.add(eyeL, eyeR);
+  return Object.assign(p, { bones: { head, eyeL, eyeR }, rig: { play() {}, update() {} }, face: { look() {}, awake: true }, tris: [mesh.geometry.index ? mesh.geometry.index.count / 3 : 0], wet: null });
 }
 </script>

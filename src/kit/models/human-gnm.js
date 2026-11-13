@@ -248,6 +248,38 @@ export const gnmReady = () => DATA ? Promise.resolve(true) : loadP ||= import('.
 export const gnmLoaded = () => !!DATA;
 
 const FIELDS = new Map();
+const ss = (a, b, x) => { const t = mx(0, mn(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, bump = (x, c, r) => { const t = (x - c) / r; return t * t < 1 ? (1 - t * t) ** 2 : 0; };
+// a GNM head grown old (A: 0 at 24 .. 1 at 78; heavy: 0..1), as a real face gives way with age: GNM's heads are of adults of no particular
+// age, and its face young and smooth beside a real one of seventy. The flesh of the cheeks slides down off the cheekbones and gathers in
+// jowls over the line of the jaw, more on a heavy face; the lips thin and sink back as their red turns in; the tip of the nose drops. (The
+// folds that come with age, from the nose to the mouth, under the eyes, down from the mouth's corners, the hollows of the temples and
+// the cheeks, are pressed in on top, human-head.js reliefOf.) Each point moves along the skin's normal, and down, by smooth amounts from
+// where it lies on the face: x from the middle, hy and hz from the eyes' middle (g: f.gnm's outlines, in the same space).
+export function gnmAged(V, N, tris, g, A, heavy, at) {
+  const Nn = new Float64Array(N * 3);
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3, ux = V[b] - V[a], uy = V[b + 1] - V[a + 1], uz = V[b + 2] - V[a + 2], vx = V[c] - V[a], vy = V[c + 1] - V[a + 1], vz = V[c + 2] - V[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    for (const i of [a, b, c]) { Nn[i] += nx; Nn[i + 1] += ny; Nn[i + 2] += nz; }
+  }
+  const MY = g.lip.line[0], half = g.lip.half, ex = g.eye[0], ey = g.eye[1], ez = g.eye[2], oy = at[1] - ey, oz = at[2] - ez;
+  for (let i = 0; i < N * 3; i += 3) {
+    const x = V[i], ax = abs(x), hy = V[i + 1] - oy, hz = V[i + 2] - oz; if (hz < -.01 || hy > .06 || hy < -.16) continue;
+    let out = 0, down = 0;
+    // jowls: over the line of the jaw, out from the corners of the mouth towards the angle of the jaw
+    const j = bump(ax, half + .019, .019) * bump(hy, MY - .04, .016) * ss(.0, .04, hz); out += (.0028 + .0016 * heavy) * A * j; down += .002 * A * j;
+    // the cheeks: flatter under the eyes and over the cheekbones, the flesh gone down towards the mouth
+    const k = bump(ax, ex + .006, .02) * bump(hy, ey - .026, .016) * ss(.03, .06, hz); out -= .0012 * A * k; down += .0018 * A * (k + bump(ax, ex, .024) * bump(hy, MY + .012, .02) * ss(.03, .06, hz));
+    // the lips: thinner, their red turned in
+    // (straight back: along their normals the two lips' rows where they meet would part, the upper up and the lower down)
+    const e = ax / half, l = ss(1.1, .55, e) * bump(hy - MY, 0, .011) * ss(.06, .085, hz), back = .0013 * A * l;
+    // the tip of the nose, a little lower
+    down += .0016 * A * bump(ax, 0, .014) * bump(hy, ey - .042, .016) * ss(.085, .105, hz);
+    if (!out && !down && !back) continue;
+    const n = Math.hypot(Nn[i], Nn[i + 1], Nn[i + 2]) || 1;
+    V[i] += out * Nn[i] / n; V[i + 1] += out * Nn[i + 1] / n - down; V[i + 2] += out * Nn[i + 2] / n - back;
+  }
+}
 /**
  * The GNM head of a face f (f.gnm: { c, ... } from gnmFace) as a shape for the sculpting: { d (x, y, z) => metres outside, lo, hi, cut } in
  * the person's space, its eyes' middle at at ([x, y, z]: where the head puts it); cut(x, y, z): how far above the line where our neck takes
@@ -255,7 +287,7 @@ const FIELDS = new Map();
  */
 export function gnmHead(f, at) {
   if (!DATA) throw new Error('GNM heads not loaded (gnmReady)');
-  const c = f.gnm.c, key = c.join() + ':' + at.join(); let G = FIELDS.get(key); if (G) return G;
+  const c = f.gnm.c, A = ss(24, 78, f.age ?? 30), heavy = mx(0, ((f.fat ?? .5) - .5) * 2), key = c.join() + ':' + at.join() + ':' + A.toFixed(3) + ':' + heavy.toFixed(3); let G = FIELDS.get(key); if (G) return G;
   const { N, P: P0, ways, steps, tris, mouth, neck } = DATA, n3 = N * 3, V = new Float64Array(n3 + 3);
   V.set(P0); for (let k = 0; k < K; k++) { const ck = c[k] * steps[k]; if (!ck) continue; const o = k * n3; for (let i = 0; i < n3; i++) V[i] += ck * ways[o + i]; }
   // the mouth closed: each point of the lips' rows where they meet halfway to the point across from it (worked out from where they all
@@ -270,6 +302,7 @@ export function gnmHead(f, at) {
   // well above it)
   for (const i of neck) for (let e = 0; e < 3; e++) V[n3 + e] += V[i * 3 + e] / neck.length;
   for (let i = 0; i < n3 + 3; i += 3) { V[i] += tx; V[i + 1] += ty; V[i + 2] += tz; }
+  if (A > 0) gnmAged(V, N, tris, f.gnm, A, heavy, at);
   const I = new Uint32Array(tris.length + neck.length * 3); I.set(tris);
   for (let i = 0, o = tris.length; i < neck.length; i++, o += 3) { I[o] = neck[i]; I[o + 1] = neck[(i + 1) % neck.length]; I[o + 2] = N; }
   const cut = (x, y, z) => y - at[1] + .135 + .333 * (z - at[2]);

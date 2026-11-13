@@ -50,7 +50,7 @@ export function browAt(x, hy, B, fem, real = false) {
 }
 
 // a hash of whole numbers, 0..1 (the same on every phone)
-const M4 = [0, 0, 0];
+const M4 = [0, 0, 0, 0];
 const hash = (a, b, c) => { let q = (a * 374761393 + b * 668265263 + c * 2147483647) | 0; q = (q ^ (q >>> 13)) * 1274126177 | 0; return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
 // how far a point is from a line from (x0, y0) to (x1, y1), and how far along it (0..1): out
 const seg = (x, y, x0, y0, x1, y1, out) => {
@@ -118,7 +118,7 @@ export function oilAt(x, hy, lip) {
  * shinier by the second (hd3d-gpu.js sss twin); WebGL shows the lines in the paint alone. Returns its bytes (RG, w * h * 2, the bottom row first).
  */
 export function paintDetail(o) {
-  const { w, h, x1, y0, y1 } = FACE_REAL, f = o.face, rim = rimOf(f), px = new Uint8Array(w * h * 2), m3 = [0, 0, 0];
+  const { w, h, x1, y0, y1 } = FACE_REAL, f = o.face, rim = rimOf(f), px = new Uint8Array(w * h * 2), m3 = [0, 0, 0, 0];
   for (let j = 0; j < h; j++) {
     const hy = y0 + (j + .5) / h * (y1 - y0);
     for (let i = 0; i < w; i++) {
@@ -203,8 +203,8 @@ export function paintFace(o) {
   const { w, h, x1, y0, y1, plain } = o.face.real ? FACE_REAL : FACE, f = o.face, fem = !!o.fem, px = new Uint8Array(w * h * 4), S = o.skin;
   // each colour as a share of the skin's (what the skin's colour has to be multiplied by to become it), no lighter than the picture can say
   const of = c => [0, 1, 2].map(i => mn(1 / plain, c[i] / mx(1e-4, S[i]))), BR = of(o.brow), LP = of(o.lips), LA = of(o.lash), MO = of(o.mouth);
-  const B = browOf(f.soft, f), rim = rimOf(f), ES = esOf(f), EF = eyeOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
-  const stub = o.stubble || 0, P = enc(plain), R = !!f.real; let r, g, b;
+  const B = browOf(f.soft, f), rim = rimOf(f), ES = esOf(f), EF = eyeOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0, 0];
+  const stub = o.stubble || 0, P = enc(plain), R = !!f.real, G = R && !!f.gnm; let r, g, b;
   // (a real beard or moustache, o.beard { beard, moustache, colour }: the skin under its single hairs (human-head.js eyeParts) the colour of the
   // hairs lying close over it and their roots, in fine strokes down the face, so what shows between the hairs is more beard, not bare skin)
   const BD = R && o.beard ? { face: f, beard: o.beard.beard || 0, moustache: !!o.beard.moustache } : null, BC = BD ? of(o.beard.colour) : null, B2 = [0, 0];
@@ -231,6 +231,10 @@ export function paintFace(o) {
           const wl = (fem ? .0021 : .0016) * (R ? .45 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * (R ? .3 : 1) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
           const line = d <= 0 ? 1 : ss(wl + .0003, wl - .0001, d), shade = ss(.0062, .001, d) * ss(-.1, .25, a) * ss(1.25, .9, a) * (fem ? .2 : .14) * (R ? .6 : 1);
           put(LA, mx(line * (fem ? .96 : .92), shade) * (1 - pink));
+          // (a GNM face's crease across the upper lid, where the skin above folds in over it when the eye is open: a shadow five or six
+          // millimetres over the lashes, sharp along its top and fading down the lid, lower and deeper with age as the skin over it
+          // slackens; GNM's own is too fine for the sculpting's grid)
+          if (G && d > .003) { const ag = ss(24, 78, f.age ?? 30), c = (fem ? .006 : .0054) - .001 * ag, k = (.4 + .15 * ag) * (d < c ? bump(d, c, .0024) : bump(d, c, .0011)) * ss(-.02, .2, a) * ss(1.12, .85, a); if (k > 0) put(LA, k); }
         } else {
           const line = d <= 0 ? ss(-.0009, -.0001, d) * .2 : ss(.0007, .0001, d) * ss(.15, .5, a) * (fem ? .45 : .28);
           if (d <= 0) { r *= 1 + .03 * (1 - pink); g *= 1 - .07 * (1 - pink); b *= 1 - .06 * (1 - pink); }   // (the wet edge of the lower lid)
@@ -245,7 +249,9 @@ export function paintFace(o) {
         if (lip > 0) {
           const v = hy - lipLine(x, f), k = ss(0, .55, lip) * (R ? (fem ? .92 : .88) : fem ? .92 : .86), sh = v > 0 ? .9 : 1 + .1 * bump(v, -.0042 * f.lips, .0022) * bump(x, 0, .012);
           const sk = R ? sh * (1 - .1 * lipLines(x, hy, f)) * (1 - .1 * bump(v, 0, .0016)) : sh;   // (a real lip darker in its creases and where it turns in to meet the other)
-          put([LP[0] * sk, LP[1] * sk, LP[2] * sk], k);
+          // (a GNM face's lips at their reddest in the middle of each, paler out towards their borders, and less so on a man: one even
+          // colour out to a sharp edge read as lipstick)
+          put([LP[0] * sk, LP[1] * sk, LP[2] * sk], G ? k * (fem ? .92 : .8) * (1 - .3 * ss(.35, 1, abs(m[3]))) : k);
         }
         else if (R && hy > lipLine(x, f) && mouthAt(x, hy - .0009, f, M4)[1] > .3) { r *= 1.05; g *= 1.05; b *= 1.04; }   // (the pale line along the border of a real upper lip, just outside it)
         if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? f.gnm ? 1.1 : .8 : 1)));
@@ -268,7 +274,7 @@ export function paintFace(o) {
         // (and on a grown man the shadow of a shaven beard over the jaw, the chin and the upper lip: a little greyer and bluer, as on the scan)
         const sh = fem ? 0 : ss(15, 24, f.age ?? 30) * ss(btop, btop - .012, hy) * (1 - lip) * .07 * (1 - .7 * dark); if (sh > 0) { r *= 1 - sh * 1.3; g *= 1 - sh; b *= 1 - sh * .4; }
         if (BD) { beardArea(BD, x, hy, .095 - 6 * x * x, B2); const kb = B2[0], km = B2[1]; if (kb + km > .01) put(BC, mn(.8, mx(kb ** 1.4 * mn(1, .4 + BD.beard) * .72, km ** 1.4 * .62) * (.6 + .4 * lumps(x * 2600, hy * 420, 3.3)) * ss(x1, x1 - .012, x))); }   // (fading out before the picture's edge: the skin's own colouring carries it on)
-        const ln = linesAt(x, hy, f, rim); if (ln > 0) { const k = .1 * ln; r *= 1 - k * .9; g *= 1 - k; b *= 1 - k * .95; }
+        const ln = linesAt(x, hy, f, rim); if (ln > 0) { const k = (G ? .2 : .1) * ln; r *= 1 - k * .9; g *= 1 - k; b *= 1 - k * .95; }
         const bl = lumps(x * 55 + ph, hy * 55, 1.1) * .022, bl2 = lumps(x * 140 + 4, hy * 140 + ph, 2.3) * .012; r *= 1 + bl + bl2; g *= 1 + bl * .6 + bl2; b *= 1 + bl * .3 + bl2 * .8;
         const ue = bump(hy, -.0135, .0055) * bump(x, .034, .011) * (.05 + .05 * ss(30, 70, f.age ?? 30)); if (ue > 0) { r *= 1 - ue * .8; g *= 1 - ue; b *= 1 - ue * .7; }
         if (frk > 0) {   // freckles: on the cheeks and over the nose most, a few on the forehead

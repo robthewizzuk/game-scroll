@@ -3087,7 +3087,13 @@ console.log('physics ok');
     assert.ok(bubble < 0 && pocket > 0, `no bubble behind the lips (${(bubble * 1000).toFixed(1)} mm), no pocket beside the neck (${(pocket * 1000).toFixed(1)} mm)`);
     let deep = 0, line = 0; HS.finish(HH.head({ face: k, neck: 1, hair: 'bald' }, []), { cell: .002, bones: () => [['head', 1]], keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01,
       after: m => { const r = HH.partLips(m, k); line = r.line.length; for (const [u] of r.line) if (r.P[u * 3 + 2] - HC[2] < .09 && Math.abs(r.P[u * 3]) < .017) deep++; return r; } });
-    assert.ok(line > 30 && deep === 0, `the lips cut along where they meet (${line} points), never deep in the head (${deep})`); }
+    assert.ok(line > 30 && deep === 0, `the lips cut along where they meet (${line} points), never deep in the head (${deep})`);
+    // grown old (gnmAged): the same head at 78 has jowls over the line of the jaw and its lips sunk back
+    const aged = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 78 }, true, base).f, young = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 24 }, true, base).f;
+    const Ho = G.gnmHead(aged, at), Hy = G.gnmHead(young, at), front = (x, hy) => { let z = .2; while (z > 0 && Hy.d(x, HC[1] + hy, HC[2] + z) > 0) z -= .0002; return z; };
+    const jx = young.gnm.lip.half + .019, jy = young.gnm.lip.line[0] - .04, jz = front(jx, jy), ly = young.gnm.lip.line[0] + .003, lz = front(0, ly);
+    const jowl = -Ho.d(jx, HC[1] + jy, HC[2] + jz), sunk = Ho.d(0, HC[1] + ly, HC[2] + lz);
+    assert.ok(jowl > .001 && sunk > .0005, `grown old: jowls ${(jowl * 1000).toFixed(1)} mm out, lips ${(sunk * 1000).toFixed(1)} mm back`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
