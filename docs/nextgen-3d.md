@@ -711,8 +711,9 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   its last picture again instead of drawing, and draws one frame in six to look again.
 - **With SGSR 2:** SGSR 2 uses the same per-pixel motion (so moving things stop leaving soft trails)
   and the see-through mask (glass and sparks don't smear into its history), whether frame generation
-  is on or not. While frame generation is on, each real frame is drawn with 1.6 times the pixels (it
-  has twice the time), and at moving edges the made frame picks, of the motions round each screen
+  is on or not. Frame generation leaves the 3D's size as it is (it used to draw each real frame with
+  1.6 times the pixels, but the made frames take part of that time and a phone like the Fold is held
+  back by its pixels). At moving edges the made frame picks, of the motions round each screen
   pixel, the one both real frames agree on, so upscaled edges stay sharp. Motion blur is cut by the
   number of refreshes each real frame covers, so it isn't doubled.
 - **The HUD** is drawn on the card's own canvas over the 3D, so it is never warped. Vignette, grain
