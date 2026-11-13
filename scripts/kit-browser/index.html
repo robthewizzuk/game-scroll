@@ -2,7 +2,13 @@
 <canvas id="c" width="320" height="240"></canvas>
 <script type="module">
 import gs from '/src/gamescroll.js';
+import { ML_VERSION, ML_FILES } from '/src/kit/vision-files.js';
 const out = []; const ok = (c, m) => out.push((c ? 'ok   ' : 'FAIL ') + m);
+// the face, hand, object and sound models' files (npm run ml; kit-browser.cjs fetches them when they are missing). Without them the
+// dev server answers with a web page, MediaPipe gives up part way through its wasm and the graphics chip goes with it, so every 3D
+// check after it drew nothing: the model checks are left out instead, with one FAIL that says why
+const noML = (await Promise.all(ML_FILES.map(f => fetch(`ml/${ML_VERSION}/${f.name}`, { method: 'HEAD' }).then(r => r.ok && !/html/.test(r.headers.get('content-type') || '') ? null : f.name, () => f.name)))).filter(Boolean);
+if (noML.length) ok(false, `the models' files are missing (${noML.join(', ')}): run npm run ml; the face, hand, object and sound model checks are left out`);
 const c = document.getElementById('c').getContext('2d');
 try {
   // pixel
@@ -82,8 +88,8 @@ try {
   const arm = new gs.THREE.Group(); arm.position.set(.2, .2, 0); arm.add(new gs.THREE.Mesh(new gs.THREE.BoxGeometry(.1, .4, .1).translate(0, -.2, 0))); guy.add(arm);
   const w4 = new gs.physics3d.World3D(); w4.floor(0); const rag = w4.ragdoll(guy); for (let i = 0; i < 60; i++) w4.step(1 / 60); ok(rag.parts.length === 2 && guy.position.y < .9, 'ragdoll');
   // vision library loads (no camera here)
-  try { new gs.vision.Face(); } catch (x) { e = x; } ok(e?.kitLoading, 'vision StillLoading'); await e.kitLoading; const f = new gs.vision.Face(); const task = await f.makeTask(); ok(!!task, 'face model loads');
-  const hands = new gs.vision.Hands(); ok(!!(await hands.makeTask()), 'hand model loads');
+  try { new gs.vision.Face(); } catch (x) { e = x; } ok(e?.kitLoading, 'vision StillLoading'); await e.kitLoading; if (!noML.length) { const f = new gs.vision.Face(); const task = await f.makeTask(); ok(!!task, 'face model loads'); }
+  if (!noML.length) { const hands = new gs.vision.Hands(); ok(!!(await hands.makeTask()), 'hand model loads'); }
   {
     // a camera that knows things: a made-up camera (a canvas) shows codes to the Scanner and a plain wall to Objects
     const { Scanner, Objects } = gs.vision, frame = () => new Promise(r => requestAnimationFrame(r));
@@ -117,10 +123,12 @@ try {
     show = null; ok(Objects.names.length === 80 && Object.isFrozen(Objects.names), 'vision: Objects knows 80 things');
     bad = null; try { new Objects({ want: ['cupp'] }); } catch (x) { bad = x; } ok(/doesn't know "cupp"/.test(bad?.message), 'vision: a thing it does not know says so');
     const eyes = new Objects({ want: ['cup', 'phone'], shape: 300 / 460 }); ok(eyes.want.join() === 'cup,cell phone', 'vision: other words for things (phone)');
+    if (!noML.length) {
     await eyes.start(); ok(eyes.ready && !eyes.failed && !!eyes.task, 'vision: the object model loads');
     let looked = false; for (let i = 0; i < 600 && !looked; i++) { await frame(); looked = eyes.update(); }
     ok(looked && !eyes.error && eyes.list.length === 0 && !eyes.found && eyes.seen() === null && eyes.seeing('cup') === 0 && eyes.count('cup') === 0, 'vision: a look at a plain wall finds nothing' + (eyes.error ? ' (' + eyes.error + ')' : ''));
     ok(eyes.picture && Math.abs(eyes.picture.width / eyes.picture.height - 300 / 460) < .01, 'vision: its picture is the card\'s shape (' + eyes.picture?.width + ' x ' + eyes.picture?.height + ')');
+    }
     eyes.take([{ name: 'cup', sure: .8, x: .5, y: .5, w: .2, h: .2, left: .4, top: .4 }]); ok(!eyes.seen('cup'), 'vision: one look is not yet "seen"');
     eyes.take([{ name: 'cup', sure: .7, x: .5, y: .5, w: .2, h: .2, left: .4, top: .4 }]); ok(eyes.seen('mug') && !eyes.seen('cup') && eyes.seeing('cup') === .7 && eyes.count('cup') === 1 && eyes.top.name === 'cup', 'vision: two looks running are: seen() once, seeing(), count(), top');
     eyes.stop(); clearInterval(paint); navigator.mediaDevices.getUserMedia = real;
@@ -433,8 +441,8 @@ try {
   // the smarts: sound recognition loads and hears the fake mic; a doodle is named in a real browser
   let gx; try { gs.hear; } catch (x) { gx = x; } ok(gx?.kitLoading, 'gs.hear StillLoading'); await gx.kitLoading;
   let e2; try { new gs.hear.Sounds(); } catch (x) { e2 = x; } ok(e2?.kitLoading, 'Sounds StillLoading'); await e2.kitLoading;
-  const ears = new gs.hear.Sounds({ every: 0 }); await ears.start();
-  ok(ears.ready && !ears.failed, 'sound model loads and the mic starts' + (ears.failed ? ': ' + ears.failed : ''));
+  const ears = new gs.hear.Sounds({ every: 0 }); if (!noML.length) await ears.start();
+  if (!noML.length) ok(ears.ready && !ears.failed, 'sound model loads and the mic starts' + (ears.failed ? ': ' + ears.failed : ''));
   if (ears.ready) {
     const n = 15600 * 2, buf = new Float32Array(n); for (let i = 0; i < n; i++) buf[i] = .5 * Math.sin(i / 16000 * 2 * Math.PI * 1800);
     const res = ears.task.classify(buf, 16000), cats = res?.[0]?.classifications?.[0]?.categories || [];
