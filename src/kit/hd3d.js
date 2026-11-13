@@ -64,6 +64,7 @@ import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occlu
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
+import { eachThing, eachShown } from './scene-list.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -803,7 +804,7 @@ function fogFrame(v) {
   } else { m.sunCol.setRGB(0, 0, 0); m.shadow = null; }
   // the nearest lit lamps (point and spot lights), up to 8
   FOG_L.length = 0; const cp = CW.setFromMatrixPosition(v.cam.matrixWorld);   // (where the frame's matrices put it, as the lamps are: origin.js)
-  if (f.lamps !== false) v.scene.traverseVisible(o => { if ((o.isPointLight || o.isSpotLight) && o.intensity > 0) FOG_L.push(o); });
+  if (f.lamps !== false) eachShown(v.scene, o => { if ((o.isPointLight || o.isSpotLight) && o.intensity > 0) FOG_L.push(o); });
   if (FOG_L.length > 8) FOG_L.sort((a, b) => a.getWorldPosition(GV).distanceToSquared(cp) - b.getWorldPosition(GW).distanceToSquared(cp));
   const n = Math.min(8, FOG_L.length);
   while (m.lamps.length < n) m.lamps.push({ p: new Vector4(), c: new Vector4() });
@@ -926,7 +927,7 @@ function seeThrough3d(o) {
   return ms.some(m => m && (m.transparent || !m.depthWrite || m.alphaTest > 0 || m.alphaMap || m.blending !== NormalBlending));
 }
 function hideSeeThrough(scene, cache) {
-  scene.traverseVisible(o => { if (seeThrough3d(o)) cache.push(o); });
+  eachShown(scene, o => { if (seeThrough3d(o)) cache.push(o); });
   for (const o of cache) o.visible = false;
 }
 function aoHide() { hideSeeThrough(this.scene, this._visibilityCache); }
@@ -1738,7 +1739,7 @@ export class HDView {
     const D = this.details;
     if (D) for (const e of D.map.values()) if (!e.twin || (e.twin.layers.mask & HOLD_BIT)) return true;
     let more = false;
-    this.scene.traverseVisible(o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (reliefBudget() > 0 && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
+    eachShown(this.scene, o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (reliefBudget() > 0 && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
     return more;
   }
   /**
@@ -1785,10 +1786,10 @@ export class HDView {
     // the waiting starts from: what's there now draws at once
     if (this.holdBase !== true) {
       const all = this.holdBase === 'all'; this.holdBase = true;
-      this.scene[all ? 'traverse' : 'traverseVisible'](o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material) seen.add(shaderKey(o)); });
+      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material) seen.add(shaderKey(o)); });
       return;
     }
-    this.scene.traverseVisible(o => {
+    eachShown(this.scene, o => {
       if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || !(o.layers.mask & 1)) return;
       const k = shaderKey(o);
       if (seen.has(k)) return;
@@ -1988,7 +1989,7 @@ export class HDView {
     const cs = this.cascade;
     if (cs?.near.visible && cs.near.castShadow && cs.near.parent) {
       // three numbers the sun lights in the order it meets them in the scene, shadow casters first
-      const dirs = []; this.scene.traverseVisible(o => { if (o.isDirectionalLight && o.layers.test(this.cam.layers)) dirs.push(o); });
+      const dirs = []; eachShown(this.scene, o => { if (o.isDirectionalLight && o.layers.test(this.cam.layers)) dirs.push(o); });
       const key = l => (l.castShadow ? 2 : 0) + (l.map ? 1 : 0);
       dirs.sort((p, q) => key(q) - key(p));
       U.gsCasc.value.x = dirs.indexOf(cs.near); U.gsCasc.value.y = dirs.indexOf(cs.far); U.gsCasc.value.z = cs.fade;
@@ -2161,7 +2162,7 @@ export class HDView {
   shadowLights(force, gpu = false) {
     if (this.shAll) { force = true; this.shAll = false; }   // (shadowsDirty(): the kept copies of still things too)
     const L = this.shL ||= [], keys = this.shK ||= new Map(), TL = this.shT ||= []; L.length = 0;
-    this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow) L.push(o); });
+    eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow) L.push(o); });
     const n = L.length; if (!n) return false;
     if (SH_H.length < n * 5) SH_H = new Float64Array(n * 10);
     const H = SH_H; H.fill(0, 0, n * 5);   // per light: [own, still sum, moving sum, still triangles, moving triangles]
@@ -2178,7 +2179,7 @@ export class HDView {
       if (tiled) { st = sh.gsTiles ||= new ShadowTiles(); st.begin(c.matrixWorld.elements, c.left, c.right, c.bottom, c.top, c.near, c.far, N, gpu); } else sh.gsTiles?.drop();
       TL[i] = st;
     }
-    this.scene.traverseVisible(o => {
+    eachShown(this.scene, o => {
       if (o.isLight || o.layers.mask === BATCH_BIT) return;   // (a merged piece: its group's mesh casts for it)
       if (!o.castShadow) { if (o.layers.mask & SH_BITS) o.layers.mask &= ~SH_BITS; return; }
       const e = o.matrixWorld.elements, w = (o.id % 89) + 1, held = (o.layers.mask & HOLD_BIT) !== 0;
@@ -2303,7 +2304,7 @@ export class HDView {
     if (HD.occludeShow) DETAIL.occ = null;
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
-    if (tier().shadow > 0) this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
+    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
@@ -2389,7 +2390,7 @@ export class HDView {
     if (!this.warmed && !off) { this.warmed = true; this.aheadAgain = true; }   // (what this frame does not draw is built over the next ones: buildAhead)
     // an instanced mesh made with room for none (an empty list in a game) has a zero-size buffer that WebGPU
     // won't bind; it draws nothing anyway, so it sits this frame out
-    const empty = []; this.scene.traverseVisible(o => { if (o.isInstancedMesh && (!o.count || !o.instanceMatrix.count)) empty.push(o); });
+    const empty = []; eachShown(this.scene, o => { if (o.isInstancedMesh && (!o.count || !o.instanceMatrix.count)) empty.push(o); });
     for (const e of empty) e.visible = false;
     const cut = lastView !== this || this._cut; lastView = this; this._cut = false; if (TEST) window.__hdView = this;
     // Frame generation starts again after a cut (another view drew, v.cut(), a pause, the camera
@@ -2727,7 +2728,7 @@ export function gpuFits(v) {
   let why = '';
   // (every frame: no array is made per thing, so the walk leaves no garbage behind)
   const no = (o, m) => { why = `a material with its own shader (${m.type}${o.name ? ' on ' + o.name : ''})`; };
-  v.scene.traverse(o => {
+  eachThing(v.scene, o => {
     const ms = o.material; if (why || !ms || o.userData.gsTwin) return;
     if (!Array.isArray(ms)) { if (!materialFits(ms)) no(o, ms); return; }
     for (let i = 0; i < ms.length; i++) if (!materialFits(ms[i])) { no(o, ms[i]); break; }
@@ -3001,7 +3002,7 @@ function gpuSwap(v, G) {
   // (the air is laid on every material here, as WebGL's frame does. A material made since the last frame got
   // it whenever something next asked for all of them (a city building a block in its first update()), which
   // marks it changed: three then built it again and it was hidden meanwhile, the van a round starts in)
-  v.scene.traverse(o => {   // (every frame: no array is made per thing)
+  eachThing(v.scene, o => {   // (every frame: no array is made per thing)
     if (G && v._air && o.material) airOf(o);
     if (o.isMesh) {
       swapOne(o, v.scene, G, v.cam, seen, v._air, v);
@@ -3179,7 +3180,7 @@ function autoLod(v, ph) {
   if (HD.autoLod === false) return;
   const cam = v.cam, k = ph / (2 * Math.tan(cam.fov * Math.PI / 360)), now = performance.now();   // k: pixels per metre at 1 m
   let built = 0;
-  v.scene.traverseVisible(o => {
+  eachShown(v.scene, o => {
     if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.userData.noLod) return;
     let L = o.userData.gsLod;
     if (L === undefined) {
@@ -3451,7 +3452,7 @@ function autoDetail(v, now, quiet) {
   }
   // now and then: the scene's big meshes that aren't in yet (their clusters come from memory at once, or are asked for, a couple at a time)
   if (quiet || (now - D.t < DETAIL_SCAN && D.news === reliefNews.n)) return; D.t = now; D.news = reliefNews.n;
-  v.scene.traverseVisible(o => {
+  eachShown(v.scene, o => {
     if (D.map.has(o)) return;
     const R = o.isMesh ? reliefOf(o) : undefined;
     if (R && reliefOn && reliefReady(o, R)) { if (detailFits(o)) D.map.set(o, { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), cl: R.clusters, twin: null, failed: false, gone: false, relief: R, shown: false }); return; }
@@ -3544,7 +3545,7 @@ function autoCopies(v, ph, now, quiet) {
     for (const obj of e.objs) { obj.castShadow = o.castShadow; obj.receiveShadow = o.receiveShadow; if ((obj.userData.gsGlMat || obj.material) !== m) { obj.material = m; delete obj.userData.gsGlMat; } }
   }
   if (!scan) return; C.t = now;
-  v.scene.traverseVisible(o => {
+  eachShown(v.scene, o => {
     const set = o.isInstancedMesh2 ? o : o.userData.gsTwin;   // (on WebGPU a set is itself hidden and its twins draw)
     if (set?.isInstancedMesh2 && !C.map.has(set) && copyable(set)) copiesAsk(C, set);
   });
@@ -3812,7 +3813,7 @@ export class ContactShadows {
     if (this.mat.map !== this.rt.texture) { this.mat.map = this.rt.texture; this.mat.needsUpdate = true; }   // back from WebGPU (hd3d-gpu.js gpuContact)
     // only things that cast shadows go in (not floors, shadow catchers or effects)
     const hidden = [];
-    scene.traverseVisible(o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && (!o.castShadow || o.userData.noContact)) hidden.push(o); });
+    eachShown(scene, o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && (!o.castShadow || o.userData.noContact)) hidden.push(o); });
     for (const o of hidden) o.visible = false;
     const bg = scene.background, fog = scene.fog, prevT = r.getRenderTarget(), clr = r.getClearAlpha(), auto = r.autoClear;
     scene.background = null; scene.fog = null; scene.overrideMaterial = this.depth;

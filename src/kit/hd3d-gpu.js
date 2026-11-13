@@ -25,6 +25,7 @@ import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
+import { eachShown } from './scene-list.js';
 import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
@@ -1310,7 +1311,7 @@ export function gpuContact(cs) {
       if (cs.mat.map !== a.texture) { cs.mat.map = a.texture; cs.mat.needsUpdate = true; }
       dark.value = cs.depth.userData.dark.value;
       const hidden = [];
-      scene.traverseVisible(o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && (!o.castShadow || o.userData.noContact)) hidden.push(o); });
+      eachShown(scene, o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && (!o.castShadow || o.userData.noContact)) hidden.push(o); });
       for (const o of hidden) o.visible = false;
       const bg = scene.background, fog = scene.fog, fogN = scene.fogNode, env = scene.environment, prevT = r.getRenderTarget(), clr = r.getClearAlpha();
       scene.background = null; scene.fog = null; scene.fogNode = null; scene.overrideMaterial = over;

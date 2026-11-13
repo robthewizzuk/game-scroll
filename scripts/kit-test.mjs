@@ -206,6 +206,43 @@ console.log('physics ok');
   assert.ok(gs2[0].senses.mood === 'alert' && gs2[1].senses.mood === 'calm', 'alertAll radius');
   console.log('aim + senses ok');
 }
+// one list of a scene for all of a frame's steps (scene-list.js): the same things, in the same order, as three's own
+// walks find, through things added, taken out, moved to other parents, hidden and shown
+{
+  const THREE = await import('three');
+  const { eachThing, eachShown, thingCount, sceneEdited, listStats } = await import('../src/kit/scene-list.js');
+  let seed = 7; const R = () => (seed = (seed * 16807) % 2147483647) / 2147483647, pick = a => a[Math.floor(R() * a.length)];
+  const S = new THREE.Scene(), geo = new THREE.BoxGeometry(), mat = new THREE.MeshBasicMaterial(), nodes = [S];
+  const thing = o => o.isMesh || o.isLight || o.isPoints || o.isLine || o.isSprite || o.material !== undefined;
+  const make = () => { const k = R(); return k < .3 ? new THREE.Mesh(geo, mat) : k < .5 ? new THREE.Bone() : k < .6 ? new THREE.PointLight() : k < .7 ? new THREE.Points(geo, new THREE.PointsMaterial()) : new THREE.Group(); };
+  const inside = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
+  const same = (step) => {
+    for (const vis of [false, true]) {
+      const want = [], got = []; S[vis ? 'traverseVisible' : 'traverse'](o => { if (thing(o)) want.push(o); }); (vis ? eachShown : eachThing)(S, o => got.push(o));
+      assert.ok(want.length === got.length && want.every((o, i) => o === got[i]), `scene list ${vis ? 'shown' : 'all'} after step ${step}: ${got.length} things, three finds ${want.length}`);
+    }
+  };
+  for (let step = 0; step < 400; step++) {
+    const k = R(), live = nodes.filter(o => inside(o, S));
+    if (k < .35) { const o = make(); pick(live).add(o); nodes.push(o); }
+    else if (k < .45) { const o = pick(live); if (o !== S) o.removeFromParent(); }
+    else if (k < .55) { const o = pick(live), to = pick(live); if (o !== S && !inside(to, o)) to.attach(o); }
+    else if (k < .62) { const o = pick(nodes); if (!o.parent && o !== S) pick(live).add(o); }   // (something taken out earlier comes back)
+    else if (k < .66) { const o = pick(live); if (o !== S && o.children.length) o.clear(); }
+    else if (k < .7) { const o = pick(live); if (o.parent) { const p = o.parent, n = make(); p.children[p.children.indexOf(o)] = n; n.parent = p; o.parent = null; nodes.push(n); sceneEdited(p); } }   // (props.js perCopy)
+    else { const o = pick(nodes); o.visible = !o.visible; }   // (hiding and showing is not an edit: asked at each walk)
+    same(step);
+  }
+  // a walk whose step changes the scene goes on through the list it began with; the next walk sees the change
+  const extra = new THREE.Mesh(geo, mat); let seen = 0; eachThing(S, () => { seen++; if (!extra.parent) S.add(extra); });
+  assert.ok(seen === thingCount(S) - 1, 'a walk that added a thing went on through its own list');
+  same('after an add mid-walk');
+  // nothing changed but what is shown: the list is kept; a thing added to another scene leaves this one's list alone
+  const b0 = listStats.built, other = new THREE.Scene(); eachShown(S, () => {}); for (const o of nodes) o.visible = true; other.add(new THREE.Mesh(geo, mat)); eachShown(S, () => {}); eachThing(S, () => {});
+  assert.equal(listStats.built, b0, 'the scene list was kept between walks with no change to the scene');
+  S.add(new THREE.Group()); eachShown(S, () => {}); assert.equal(listStats.built, b0 + 1, 'and made again once after a change');
+  console.log(`scene list ok (${thingCount(S)} things after 400 changes)`);
+}
 // camera rigs and living characters (three.js maths only)
 {
   const THREE = await import('three');

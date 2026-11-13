@@ -266,11 +266,21 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
 
    (Those numbers are made up to show the shape: nobody has run it on a phone yet.) `chip` is the
    graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps), followed in
-   brackets by where it went, biggest first (`chip 15.2 ms (scene 6.1, upscale 3.4, AO 2.3, bloom 1.6,
-   shadows 1.2, to screen 0.6)`: the game's own things, the pass that makes the full-size picture, the soft
-   shading in corners, the glow, the shadow maps, the last pass onto the screen); `code` is
+   brackets by where it went, biggest first (`chip 15.2 ms (scene 6.1, upscale 2.4, AO 2.3, bloom 1.6,
+   shadows 1.2, finishing 1.0, to screen 0.6)`: the game's own things, the passes that make the full-size
+   picture, the soft shading in corners, the glow, the shadow maps, the pass that lays the shading and glow
+   on the small picture and grades it, the last pass onto the screen); `code` is
    the time the engine's code took to draw a frame; `ready in` is how long the system took to build
    what it needs.
+
+   A phone's chip doesn't run at one speed: it slows down as it gets hot, and when the code holds the
+   frames up it clocks down to fill the time (on Rob's Fold, 2026-11-13, the bloom and the upscale, which
+   do the same work in every run, each took from one to four times as long from one run to the next, and
+   always kept to the same share of each other). So where the chip says where its time went, the `=`
+   line also gives the **chip work**: the frame's chip time measured against the passes that do the same
+   work in every run (finishing, upscale, bloom, to screen), which takes the phone's own slowing down out,
+   and says so when the chip ran more than 15% slower or faster in one of the two runs. Go by the chip
+   work where it and the chip time disagree.
 
 How the runs are kept comparable: the feed is emptied and the scenes draw on a canvas of their own
 over the app, with the 3D canvas under it as on a game's card; quality is pinned to the tier the

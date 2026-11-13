@@ -8,6 +8,7 @@
 // Needs nothing from the page beyond a 2D canvas for a texture's average colour (without one: white).
 // Kit use only.
 import { ORIGIN } from './origin.js';
+import { eachShown } from './scene-list.js';
 const BACK = 1, SETTLE = 8, SETTLE_OVER = 24, GLOWS = 127, OTHERS = 48;
 // A thing's matrix in the world's own numbers: while a view draws, matrixWorld is about the drawing's centre (origin.js),
 // and the copy is kept in the world's numbers so a move of that centre moves nothing in it (rays are sent with it added back)
@@ -106,7 +107,7 @@ export class TraceLevel {
     const n = ++this.n, { recs, bits, gone } = this, others = this.others, lights = this.lights, settle = this.moving > SETTLE_OVER; let still = false, movers = false, other = 0, moving = 0;
     others.length = 0; lights.length = 0;
     const hit = r => { if (r.moving) movers = true; else still = true; };
-    scene.traverseVisible(o => {
+    eachShown(scene, o => {
       if (!o.isMesh) { if (o.isLight) lights.push(o); return; }
       if (!traceable(o, bits)) { if (o.userData.gsTraced) o.userData.gsTraced = false; if ((o.layers.mask & bits) && !o.userData.noTrace && !o.isDetailMesh) { other++; if (others.length < OTHERS) others.push(o); } return; }
       const g = shapeOf(o), ver = g.attributes.position.version + (g.index ? g.index.version : 0), ms = mats(o), e = ownMatrix(o.matrixWorld.elements);
