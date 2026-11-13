@@ -53,7 +53,8 @@ async function dev() {
     await p.evaluate(() => { const a = document.createElement('a'); a.href = 'https://example.com/b'; document.body.append(a); a.click(); a.remove(); });
     await p.waitForTimeout(600);
     const opened = await app.evaluate(() => global.__opened), wins = app.windows().length, at = await p.evaluate(() => location.origin);
-    ok(opened.includes('https://example.com/a') && opened.includes('https://example.com/b') && wins === 1 && at === 'https://localhost', 'links out open in the browser, the window stays', JSON.stringify(opened));
+    const went = new Set(opened);
+    ok(went.has('https://example.com/a') && went.has('https://example.com/b') && wins === 1 && at === 'https://localhost', 'links out open in the browser, the window stays', JSON.stringify(opened));
     // a 2D game, played with the mouse
     await p.evaluate(() => __gs.only('sky-drifter', true)); await p.waitForTimeout(400);
     await p.waitForFunction(() => __gs.active && __gs.active.def.id === 'sky-drifter' && !__gs.active.loading, null, { timeout: 30000 });

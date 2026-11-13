@@ -28,9 +28,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Electron and its builder keep their downloads here, so a run can reuse the last one's
-  ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache/electron
-  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-cache/builder
+  # Electron and its builder keep their downloads here, so a run can reuse the last one's. Under desktop/,
+  # not the repository's root: the builder runs .js tools from its cache, and the root package.json's
+  # "type": "module" would make Node read them as ES modules (they are CommonJS).
+  ELECTRON_CACHE: ${{ github.workspace }}/desktop/.electron-cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/desktop/.electron-cache/builder
 
 jobs:
   # The web app, built once (the same files go into both apps), and the desktop checks on Linux
@@ -103,7 +105,7 @@ jobs:
 
       - uses: actions/cache@v6
         with:
-          path: .electron-cache
+          path: desktop/.electron-cache
           key: electron-${{ matrix.os }}-${{ hashFiles('desktop/package-lock.json') }}
 
       - name: Install the desktop app's tools
