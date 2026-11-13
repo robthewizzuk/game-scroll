@@ -19,7 +19,7 @@ import { material } from './materials.js';
 import { Rig, LIFELIKE } from '../poses.js';
 import { reach } from '../characters.js';
 import { LiveFace } from './human-face.js';
-import { FACE, HAIR, faceUV, paintFace, paintHair } from './human-paint.js';
+import { FACE, HAIR, SEAM, faceUV, paintFace, paintHair, paintSeams } from './human-paint.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { fur } from './fur.js';
@@ -164,6 +164,14 @@ function mats() {
   // hair: combed strands in a small picture made in code (human-paint.js), over the hair's own colour and its sculpted locks
   { const { colour, normal } = paintHair(), tex = (px, srgb) => { const t = new DataTexture(px, HAIR.w, HAIR.h, RGBAFormat, UnsignedByteType); if (srgb) t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = RepeatWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t; };
     MATS.hair.map = tex(colour, true); MATS.hair.normalMap = tex(normal, false); MATS.hair.normalScale.set(.6, .6); MATS.hair.color.setScalar(1 / HAIR.plain); }
+  // cloth and leather: their seams and rows of stitching in a small picture made in code (human-paint.js), laid on by the lines the
+  // sculpting runs along them (the second set of UVs: how far from the line, how far along it). It takes the place of the recipe's own
+  // colour picture there (the grain's bumps stay)
+  for (const [m, leatherLike] of [[cloth, false], [leather, true]]) {
+    const { px, mips, plain } = paintSeams(leatherLike), t = new DataTexture(px, SEAM.w, SEAM.h, RGBAFormat, UnsignedByteType);
+    t.mipmaps = mips; t.generateMipmaps = false; t.colorSpace = SRGBColorSpace; t.channel = 1; t.wrapS = ClampToEdgeWrapping; t.wrapT = RepeatWrapping;
+    t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.anisotropy = 8; t.name = 'human:seams'; t.needsUpdate = true; m.map = t; m.color.setScalar(1 / plain);
+  }
   for (const [k, m] of Object.entries(MATS)) m.name = 'human:' + k;
   return MATS;
 }
@@ -304,6 +312,7 @@ export function human(o = {}) {
       const j = at + i, x = p.P[i * 3], y = p.P[i * 3 + 1], z = p.P[i * 3 + 2], s = cs[p.slot[i]], ao = p.ao[i] / 255;
       const nx = p.N[i * 3] / 32767, ny = p.N[i * 3 + 1] / 32767, nz = p.N[i * 3 + 2] / 32767; N[j * 3] = nx; N[j * 3 + 1] = ny; N[j * 3 + 2] = nz;
       col.copy(s.c); cls[j] = s.k; TU[j * 4 + 2] = TU[j * 4 + 3] = 1;   // (off the face's paint: its plain corner)
+      if (s.a === 'cloth' || s.a === 'leather') { TU[j * 4 + 2] = p.seam ? p.seam[i * 2] : .5; TU[j * 4 + 3] = p.seam ? p.seam[i * 2 + 1] : 0; }   // (where it is on the picture of seams)
       if (s.camo) {   // camouflage: a second and a third colour brushed on in blotches
         const n1 = lumps(x * 13 + 3.1, y * 9 + 1.7, z * 13 + 5.3) + .35 * lumps(x * 37, y * 31, z * 37); col.lerp(s.camo[0], ss(.1, .26, n1));
         if (s.camo[1]) { const n2 = lumps(x * 17 - 4.2, y * 12 + 8.1, z * 17 + 2.6) + .35 * lumps(x * 41 + 9, y * 35, z * 41); col.lerp(s.camo[1], ss(.2, .36, n2)); }
