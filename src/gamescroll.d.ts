@@ -3382,8 +3382,9 @@ export interface ModelsPart {
    * given, those come from the seed too), age (years, 16..95: older, the folds deepen, the lips thin, the lids hood and the hair greys) and weight (0 thin .. 1 heavy).
    * A real head's shape is a real man's or woman's of a background (heritage: 'african' | 'east-asian' | 'european' | 'middle-eastern', or a mix such as
    * { european: .6, 'east-asian': .4 }; fitted to Google's GNM Head by measurement), from the seed and the skin when not given; heritage: false keeps the one scan's fit.
-   * gnm: true (look 'real', being tried out: off unless asked for) makes the face itself one of GNM Head's, learned from real scans: its whole shape, eyes, nose and
-   * lips from this seed, sex and heritage, joined to our neck, hair and hats. Its numbers (2.9 MB) load the first time one is made; with now: true, await human.gnmReady() first.
+   * And the face itself is one of GNM Head's, learned from real scans: its whole shape, eyes, nose and lips from this seed, sex and heritage, joined to our neck,
+   * hair and hats, sagging with age as a real face does; gnm: false keeps the older sculpted face. Its numbers (2.9 MB) load the first time one is made; with now: true,
+   * await human.gnmReady() first.
    * A real person's body comes from the same seed, age and weight, and muscle (0 slight .. 1 built): broader shoulders and thicker arms with muscle, a thicker waist and
    * belly with weight and age, a woman's hips and bust from her weight, and a height a few centimetres either way (build and scale, when given, win).
    * The body lives: biceps swell as an elbow bends (more on a muscled arm), elbows, shoulders, hips and knees keep their girth in a deep bend, and person.breath (a BreathT)
