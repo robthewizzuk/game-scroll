@@ -26,6 +26,8 @@ import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
+import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
+export { SKY };
 import { eachShown, listPipeline } from './scene-list.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -324,6 +326,8 @@ export const gpuMaterials = {
   // disc, and drifting clouds lit from the sun's side
   skyDome(gm) {
     const u = gm.uniforms, L = k => live(u[k]), clouds = 'CLOUDS' in (gm.defines || {});
+    // (its GPU half: the air's picture (physical skies) and the clouds marched through, hd3d-gpu-sky.js; the view's drawGPU runs it)
+    const S = gm.userData.gsSky, SG = S ? (S.gpu ||= new SkyGpu(S, clouds ? u.noise.value : null)) : null;
     const m = new MeshBasicNodeMaterial({ side: BackSide, depthWrite: false, fog: false });
     m.name = 'sky';
     m.colorNode = Fn(() => {
@@ -341,6 +345,8 @@ export const gpuMaterials = {
         // soft knee (as sky.js): the glow round a low sun is bright, but no brighter than a painted sky's
         const l = max(c.r, max(c.g, c.b)), e = max(l.sub(1), 0);
         c.mulAssign(select(l.greaterThan(1), float(1).add(e.div(float(1).add(e.div(1.5)))).div(max(l, 1e-4)), float(1)));
+        // on WebGPU, Hillaire's air (hd3d-gpu-sky.js) in place of Preetham's sums: below the horizon, the horizon's own, darkened as before
+        if (SG) If(SG.atmOn.greaterThan(.5), () => { const a = SG.domeAir(normalize(vec3(d.x, max(d.y, 0), d.z)), sd); c.assign(knee(mix(a, a.mul(.55), clamp(h.negate().mul(3), 0, 1)))); });
       }).Else(() => {
         const c1 = mix(L('horizon'), L('top'), pow(max(h, 0), .55));
         c.assign(mix(c1, L('horizon').mul(.55), clamp(h.negate().mul(3), 0, 1)).add(sunCol.mul(pow(s, 24).mul(.35).add(pow(s, 90).mul(.4)))));
@@ -353,8 +359,15 @@ export const gpuMaterials = {
         const cv = cloud.x.mul(float(1).sub(cloud.y.mul(pow(max(dot(normalize(d.xz.add(1e-4)), normalize(sd.xz.add(1e-4))), 0), 3)).mul(float(1).sub(smoothstep(.02, .22, h)))));
         const cov = smoothstep(cv.oneMinus(), float(1.1).sub(cv.mul(.62)), n), dens = smoothstep(cv.oneMinus(), float(1.32).sub(cv.mul(.5)), n);
         const cc = mix(L('cloudLit'), L('cloudDark'), dens.mul(.9)).add(sunCol.mul(cov).mul(dens.oneMinus()).mul(pow(s, 5).mul(2.2).add(.18)));
-        const a = cov.mul(smoothstep(-.03, .1, h)).mul(step(-.03, h));
+        const a = cov.mul(smoothstep(-.03, .1, h)).mul(step(-.03, h)).mul(SG ? SG.volOn.oneMinus() : float(1));   // (none where the real clouds are drawn)
         c.assign(mix(c, cc.add(vec3(.75, .8, 1).mul(cloud.w)), a.mul(.97))); sun = sun.mul(a.oneMinus());
+        if (SG) {
+          // the clouds marched through (high and ultra): what they let through of the sky behind, and their own light; lightning lights them too
+          // (their light kept under the bloom's threshold, as a camera keeps a white cloud just under white: past it the bloom
+          // spreads a whole sunlit cloud over the sky as a veil)
+          const cl = SG.cloudTex.sample(screenUV), v = SG.volOn;
+          c.assign(mix(c, c.mul(cl.a).add(cloudKnee(cl.rgb)).add(vec3(.75, .8, 1).mul(cloud.w).mul(cl.a.oneMinus())), v)); sun = sun.mul(mix(float(1), cl.a, v));
+        }
       }
       return c.add(sunCol.mul(sun).mul(L('disc'))).add(vec3(.25, .27, .32).mul(cloud.w).mul(max(h, 0).mul(.6).add(.4)));
     })();
@@ -384,7 +397,13 @@ export function airNodes(AIR) {
     const mist = float(1).sub(exp(max(fy, 0).mul(mix(float(1), n.mul(1.3).add(.35), U.patchy)).negate()));
     const s = max(dot(rd, U.sun), 0);
     const f = float(1).sub(float(1).sub(haze).mul(float(1).sub(mist)));
-    return vec4(mix(output.rgb, mix(U.c, U.cs, pow(s, 6).mul(.9)), f), output.a);
+    // under a physical sky on WebGPU (hd3d-gpu-sky.js): the haze takes the low sky's own colour that way (orange towards a low sun,
+    // blue-grey away from it: air near the ground lit as the horizon is, whatever the angle it is seen at), and real air's
+    // extinction, bluest first, over the distance: the blue of far hills
+    const low = normalize(vec3(rd.x, length(rd.xz).mul(.03).add(.001), rd.z));
+    const paint = mix(U.c, U.cs, pow(s, 6).mul(.9)), air = mix(knee(skyAt(low, SKY.sun)), paint, SKY.night);
+    const fa = vec3(f).oneMinus().mul(exp(SKY.ext.mul(t).negate())).oneMinus();
+    return vec4(select(SKY.on.greaterThan(.5), mix(output.rgb, air, fa), mix(output.rgb, paint, f)), output.a);
   })();
   return { sync, node };
 }
@@ -1174,7 +1193,7 @@ export function froxels() {
       const s4 = U.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
       const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.lessThan(1));
       const sd = shT.load(ivec2(vec2(sc.x, sc.y.oneMinus()).mul(U.shSize))).x;
-      const lit = select(inside, step(sc.z, sd), float(1));
+      const lit = select(inside, step(sc.z, sd), float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir));   // (and under the clouds' shadow)
       const L = vec3(U.sunCol).mul(lit.mul(sunPh)).add(U.amb).toVar();
       // lamps: soft round falloff to their range, scattered evenly
       Loop({ start: 0, end: FLAMPS }, ({ i: j }) => {
@@ -1227,7 +1246,9 @@ export function gpuSunLight(l, AIR, noise) {
   const wp = positionWorld, S = live(AIR.gsSun), CL = live(AIR.gsCloud), DR = live(AIR.gsDrift);
   const cuv = wp.xz.add(ORG.xz).add(S.xz.div(max(S.y, .15)).mul(CL.z.sub(wp.y)));
   const n = texture(noise, cuv.div(max(CL.w, 1)).add(DR)).r;
-  const shade = select(live(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
+  // (the clouds marched through on WebGPU cast their own shadow, hd3d-gpu-sky.js; else the painted clouds' pattern on the air)
+  const flat = select(live(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
+  const shade = select(SKY.shadeOn.greaterThan(.5), cloudShadeAt(wp.add(ORG), S), flat);
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());
   const nearW = select(p.z.greaterThan(0).and(p.z.lessThan(1)), smoothstep(0, CASC.fade, min(e.x, e.y)), float(0));
   l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1))));
@@ -1934,7 +1955,7 @@ export class GpuChain {
           const sh = shT.sample(vec2(sc.x, sc.y.oneMinus())).compare(sc.z).r;
           const q0 = p.sub(V.lPos), dl = length(q0), qn = q0.div(max(dl, 1e-4));
           const cone = smoothstep(V.lt.y, V.lt.z, dot(qn, V.lDir)).div(dl.mul(dl).div(V.lt.w.mul(V.lt.w)).add(1));
-          const lit = select(inside.and(V.k.w.greaterThan(.5)), sh, float(1)).mul(select(spot, cone, float(1)));
+          const lit = select(inside.and(V.k.w.greaterThan(.5)), sh, float(1)).mul(select(spot, cone, cloudShadeAt(p.add(ORG), V.lDir.negate())));
           const c = dot(rd, select(spot, qn.negate(), V.lDir.negate()));
           sum.addAssign(lit.mul(g.mul(g).oneMinus()).div(pow(g.mul(g).add(1).sub(g.mul(2).mul(c)), 1.5)).mul(.25)); t.addAssign(dt);
         });

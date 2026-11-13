@@ -33,6 +33,7 @@ import { prefs } from './prefs.js';
 import { HD, noiseTex } from './hd3d.js';
 import { Cover } from './cover.js';
 import { Spray } from './water.js';
+import { airOf, luts, skyLight, transmittance, RG, SKY_K } from './atmosphere.js';
 
 const C = c => new Color(c);
 // Preetham daylight (the same sums as three.js's Sky shader), worked out on the CPU for the colours the
@@ -137,12 +138,12 @@ export class Sky {
             gl_FragColor = vec4(c, 1.); }`,
       }));
       // (the kit swaps in its WebGPU version, hd3d-gpu.js gpuMaterials.skyDome, while the view draws on WebGPU: keep using this.mat)
-      this.mat = this.dome.material; this.mat.userData.gsGpu = 'skyDome';
+      this.mat = this.dome.material; this.mat.userData.gsGpu = 'skyDome'; this.mat.userData.gsSky = this;
       this.dome.scale.setScalar(R);
     }
     this.dome.frustumCulled = false; this.dome.renderOrder = -10; this.dome.name = 'sky';
     if (isToon(view)) this.dome.layers.set(1);
-    view.scene.add(this.dome);
+    view.scene.add(this.dome); view._sky = this;   // (the view runs its GPU half before each WebGPU frame: hd3d-gpu-sky.js)
     // the view makes the sky's reflections the first time it compiles its shaders (v.warm()), so the
     // first frame is already lit by this sky
     if (this.makesEnv) view.envMaker = this.envMaker = () => { if (this.envAt == null) this.makeEnv(); };
@@ -177,7 +178,8 @@ export class Sky {
   makeEnv() {
     if (!this.envScene) { this.envScene = new Scene(); this.envDome = new Mesh(this.dome.geometry, this.mat); this.envDome.scale.setScalar(1000); this.envScene.add(this.envDome); }
     // a softer sun in reflections (wrap: also when the view makes them again on the other renderer)
-    const u = this.mat.uniforms, wrap = f => { const d = u.disc.value; u.disc.value = Math.min(d, 6); try { return f(); } finally { u.disc.value = d; } };
+    // (and the painted clouds in place of the real ones on WebGPU: those are marched for the view's own camera)
+    const u = this.mat.uniforms, wrap = f => { const d = u.disc.value, g = this.gpu, v = g?.volOn.value; u.disc.value = Math.min(d, 6); if (g) g.volOn.value = 0; try { return f(); } finally { u.disc.value = d; if (g) g.volOn.value = v; } };
     this.view.envFrom(this.envScene, { wrap });
     this.envAt = this.envKey(); this.envT = 3;
     return this;
@@ -193,7 +195,8 @@ export class Sky {
     const ang = (t - 6) / 12 * Math.PI, up = Math.sin(ang);
     this.sunDir.set(Math.cos(ang), up, this.tilt).normalize();
     this.night = Math.min(1, Math.max(0, (-up + .1) * 3));
-    const lightDir = this.night > .5 ? this.sunDir.clone().negate() : this.sunDir;   // moonlight from the other side
+    const lightDir = this.lightDir = this.night > .5 ? this.sunDir.clone().negate() : this.sunDir;   // moonlight from the other side
+    this.sunI = sunI;
     if (this.phys) {
       // the colours come from the scattering sums: overhead, round the horizon, and the sunlight itself
       const q = physConsts(this.phys, this.sunDir, this.pq), u = this.mat.uniforms, d = new Vector3(), tmp = C('#000');
@@ -211,6 +214,8 @@ export class Sky {
       const o = physAt(q, side.multiplyScalar(.0698).addScaledVector(sd, .9976).normalize(), sd, tmp);
       const ol = Math.max(o.r, o.g, o.b), kn = ol > 1 ? (1 + (ol - 1) / (1 + (ol - 1) / 1.5)) / ol : 1;   // the dome's soft knee
       this.view.shaftsAt = this.night > .5 ? null : (.2126 * o.r + .7152 * o.g + .0722 * o.b) * kn;
+      // drawn on WebGPU: the air as the dome draws it there (Hillaire's sums) in place of these
+      if (this.view._onGpu && HD.atmosphere !== false) this.hillaire(a, b, k);
     } else if (this.mat.uniforms?.pSun) { this.mat.uniforms.pSun.value.z = 0; this.view.shaftsAt = null; }
     if (this.stars) this.stars.material.opacity = this.night * .9;
     if (this.light && this.sunLight) {
@@ -236,7 +241,28 @@ export class Sky {
     if (s.background?.isColor) s.background.copy(this.horizon);
     return this;
   }
-  dispose() { if (this.phys) this.view.shaftsAt = null; if (this.envMaker && this.view.envMaker === this.envMaker) this.view.envMaker = null; this.dome.removeFromParent(); this.dome.geometry?.dispose(); this.mat.dispose(); this.stars?.removeFromParent(); this.stars?.geometry.dispose(); }
+  // the colours from the air as WebGPU draws it (Hillaire's sums, atmosphere.js; the dome reads the same air's picture):
+  // overhead, round the horizon, the sun's own colour and how bright the sky is next to the sun
+  hillaire(a, b, k) {
+    const L = luts(airOf(this.phys)), s = this.sunDir, K = SKY_K * (this.phys.bright ?? .55), h = Math.max(.0005, (this.view.cam?.position.y ?? 0) / 1000), o = [0, 0, 0], d = new Vector3();
+    // (worked out again only when the sun, the camera's height or the air has changed: kept, they are copied back each time)
+    const key = L.A.key + K + '|' + s.x.toFixed(4) + s.y.toFixed(4) + s.z.toFixed(4) + '|' + h.toFixed(3) + '|' + this.night.toFixed(3), H = this._hl ||= { key: '', top: C('#000'), horizon: C('#000'), sunCol: C('#fff'), shafts: null };
+    if (H.key === key) { this.top.copy(H.top); this.horizon.copy(H.horizon); this.sunCol.copy(H.sunCol); this.view.shaftsAt = H.shafts; return; }
+    const put = (c, v) => c.setRGB(v[0] * K, v[1] * K, v[2] * K);
+    put(this.top, skyLight(L, d.set(0, 1, 0), s, h, o));
+    this.horizon.setRGB(0, 0, 0); const tmp = C('#000');
+    for (let i = 0; i < 8; i++) { const an = i / 8 * Math.PI * 2; this.horizon.add(put(tmp, skyLight(L, d.set(Math.cos(an), .06, Math.sin(an)).normalize(), s, h, o))); }
+    this.horizon.multiplyScalar(1 / 8);
+    const m = Math.max(this.horizon.r, this.horizon.g, this.horizon.b, this.top.r, this.top.g, this.top.b); if (m > 1) { this.horizon.multiplyScalar(1 / m); this.top.multiplyScalar(1 / m); }
+    if (this.night > 0) { this.top.lerp(C(a.top).lerp(C(b.top), k), this.night); this.horizon.lerp(C(a.horizon).lerp(C(b.horizon), k), this.night); }
+    const t = transmittance(L, RG + h, Math.max(-1, Math.min(1, s.y)), o), tm = Math.max(t[0], t[1], t[2], 1e-6);
+    this.sunCol.setRGB(t[0] / tm, t[1] / tm, t[2] / tm); if (this.night > .5) this.sunCol.set(a.sun).lerp(C(b.sun), k);
+    const side = d.set(-s.z, 0, s.x); if (side.lengthSq() < 1e-6) side.set(1, 0, 0); side.normalize();
+    const n = skyLight(L, side.multiplyScalar(.0698).addScaledVector(s, .9976).normalize(), s, h, o), ol = Math.max(n[0], n[1], n[2]) * K, kn = ol > 1 ? (1 + (ol - 1) / (1 + (ol - 1) / 1.5)) / ol : 1;
+    this.view.shaftsAt = this.night > .5 ? null : (.2126 * n[0] + .7152 * n[1] + .0722 * n[2]) * K * kn;
+    H.key = key; H.top.copy(this.top); H.horizon.copy(this.horizon); H.sunCol.copy(this.sunCol); H.shafts = this.view.shaftsAt;
+  }
+  dispose() { if (this.view._sky === this) this.view._sky = null; this.gpu?.dispose(); if (this.phys) this.view.shaftsAt = null; if (this.envMaker && this.view.envMaker === this.envMaker) this.view.envMaker = null; this.dome.removeFromParent(); this.dome.geometry?.dispose(); this.mat.dispose(); this.stars?.removeFromParent(); this.stars?.geometry.dispose(); }
 }
 
 /**
