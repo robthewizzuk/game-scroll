@@ -4323,7 +4323,7 @@ console.log('physics ok');
 // land with cliffs, caves and overhangs (src/kit/land-rock.js: gs.outdoors land.rocks())
 {
   globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
-  const THREE = await import('three'), { Marks, Land } = await import('../src/kit/outdoors.js'), R = await import('../src/kit/land-rock.js'), { caster } = await import('../src/kit/acoustics.js');
+  const THREE = await import('three'), { Marks, Land } = await import('../src/kit/outdoors.js'), R = await import('../src/kit/land-rock.js'), { caster, blocked } = await import('../src/kit/acoustics.js');
   const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, near = (a, b, e = 1e-3) => Math.abs(a - b) < e, within = (v, lo, hi) => v >= lo && v <= hi;
   // a valley in the west (0 m), a plateau in the east (10 m), a cliff between them; a cave from the foot of the
   // cliff in under the plateau, a block of rock and an arch on the valley floor, a hollow in the plateau
@@ -4385,7 +4385,8 @@ console.log('physics ok');
   { land.object.updateMatrixWorld(true); const m = group.children[0], P = m.geometry.attributes.position.array, p = new THREE.Vector3(P[0], P[1], P[2]).applyMatrix4(m.matrixWorld); assert.ok(near(p.x, P[0], 1e-4) && near(p.y, P[1], 1e-4) && near(p.z, P[2], 1e-4), 'the rock is in the world\'s own metres'); }
   assert.ok(land.height(6, 0) === 10 && within(land.floor(6, 1, 0), 0, .9) && within(land.roof(6, 2, 0), 3.8, 5) && land.sky(6, 2, 0) < .6 && within(land.height(-20, -20), 1.8, 3.2) && land.rocky(-20, -20) && !land.rocky(-25, 0) && !land.rocky(6, 0) && land.height(-25, 0) === land.height0(-25, 0), 'land.height() is the top of the rock, land.floor() what you stand on');
   { let n2 = 0; for (const q of K.holes) { const x = -S / 2 + (q % n + .5) * S / n, z = -S / 2 + (Math.floor(q / n) + .5) * S / n; if (land.rocky(x, z)) n2++; } assert.ok(n2 > K.holes.length * .6, 'where the ground was taken away counts as rock: ' + n2 + ' of ' + K.holes.length); }
-  { const cast = caster(land); assert.ok(near(cast({ x: 6, y: 30, z: 0 }, D, 100), 20, .01) && within(cast({ x: 6, y: 2, z: 0 }, U, 100), 1.4, 3) && cast({ x: -25, y: 2, z: 0 }, U, 100) === Infinity, 'a Land answers rays as a level does (for the weather and for sound)'); }
+  { const cast = caster(land); assert.ok(near(cast({ x: 6, y: 30, z: 0 }, D, 100), 20, .01) && within(cast({ x: 6, y: 2, z: 0 }, U, 100), 1.4, 3) && cast({ x: -25, y: 2, z: 0 }, U, 100) === Infinity, 'a Land answers rays as a level does (for the weather and for sound)');
+    assert.ok(blocked(cast, { x: 8, y: 2, z: 0 }, { x: -12, y: 2, z: 0 }) === 0 && blocked(cast, { x: 8, y: 2, z: 0 }, { x: 8, y: 11.6, z: 0 }) > .9 && blocked(cast, { x: -20, y: 1.6, z: 5 }, { x: -12, y: 1.6, z: -5 }) === 0, 'a sound in the cave is heard out of its mouth, and not through the rock over it'); }
   { const t2 = performance.now(), tris0 = K.tris; land.rocks(O); assert.ok(performance.now() - t2 < 120 && land.rock.tris === tris0 && land.object.children.filter(c => c.name === 'rocks').length === 1, 'asked again for the same rock: kept, not made again'); }
   // marks: none on rock, none from a walker in the cave, prints from one in the valley
   {
