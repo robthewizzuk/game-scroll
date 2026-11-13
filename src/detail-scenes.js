@@ -11,6 +11,8 @@
 //   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
 //   field    ground that takes marks (src/kit/marks.js, gs.outdoors.Marks): people, a dog, a jeep and a tank going round a field of sand, grass
 //            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
+//   yard     smoke and fire that flow (src/kit/gas.js, gs.gas): a camp fire under a beam, a smoking chimney, a burning drum and an explosion every
+//            seven seconds, in a wind that swings round: with no gas, as the smaller version (soft puffs), and on WebGPU as the gas on the graphics chip
 //   cliff    land with cliffs, caves and overhangs (src/kit/land-rock.js, gs.outdoors land.rocks()): a walk along the foot of a cliff, through a
 //            cave under a spur, out and under an arch: once on the height map alone (over the spur), then with the rock
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
@@ -372,6 +374,58 @@ function field({ gs, size }) {
   };
 }
 
+/* ---------- yard: smoke and fire that flow ---------- */
+function yard({ gs, size, gpu }) {
+  const T = gs.THREE, { Gas } = gs.gas, { v, sun } = view(gs, 140, .004);
+  const stone = gs.hd.pbr('#8d8a84', { rough: .9 }), wood = gs.hd.pbr('#5a3a22', { rough: .85 }), iron = gs.hd.pbr('#3a3d42', { rough: .55, metal: .6 }), brick = gs.hd.pbr('#8a4a3a', { rough: .9 });
+  const add = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  const ground = add(new T.PlaneGeometry(90, 90).rotateX(-Math.PI / 2), gs.hd.pbr('#6f6a5e', { rough: .95 }), 0, 0, 0); ground.castShadow = false;
+  // a yard with walls on two sides: a camp fire under a beam on two posts, a chimney, a burning drum
+  add(new T.BoxGeometry(12, 3.4, .4), stone, 0, 1.7, -4.4); add(new T.BoxGeometry(.4, 3.4, 9), stone, -5.4, 1.7, 0);
+  add(new T.CylinderGeometry(.09, .09, 1.3, 8).rotateZ(1.2), wood, -1.6, .15, .4); add(new T.CylinderGeometry(.09, .09, 1.3, 8).rotateZ(-1.2).rotateY(1), wood, -1.6, .15, .4);
+  add(new T.BoxGeometry(2.4, .4, .6), wood, -1.6, 2.5, .4); add(new T.BoxGeometry(.16, 2.4, .16), wood, -2.7, 1.2, .4); add(new T.BoxGeometry(.16, 2.4, .16), wood, -.5, 1.2, .4);
+  add(new T.BoxGeometry(.7, 2.4, .7), brick, 2.4, 1.2, -1.8); add(new T.CylinderGeometry(.32, .32, .9, 16), iron, 1.6, .45, 1.6);
+  // the gas of the run that is on: none, the smaller version (soft puffs, in JavaScript), or the gas on the graphics chip
+  const BOX = [-4.2, 0, -3.4, 4.2, 6.2, 3.2], k = Math.min(1, Math.max(.12, size));
+  let gas = null;
+  const set = key => {
+    gas?.dispose(); gas = null; if (key === 'none') return;
+    gas = new Gas(v, { box: BOX, kind: 'fire', lamp: true, gpu: key === 'chip', cells: size >= 1 ? undefined : Math.round((key === 'chip' ? Gas.max() : 12000 * 2.5) * k) });
+    gas.fire({ x: -1.6, y: .25, z: .4, size: 1.1 }); gas.box({ x: -1.6, y: 2.5, z: .4, w: 2.4, h: .4, d: .6 });   // (its flames and smoke go round the beam)
+    gas.smoke({ x: 2.4, y: 2.6, z: -1.8, size: .9, rate: 1.6, heat: .8, tint: .5 });
+    gas.fire({ x: 1.6, y: 1, z: 1.6, size: .6, power: .8 }); gas.tube({ x: 1.6, y: .45, z: 1.6, r: .32, h: .9 });
+  };
+  const sum = { n: 0, ms: 0, t: 1e9, next: 3 };
+  const enter = key => async draw => { set(key); sum.t = 1e9; for (let i = 0; i < 6; i++) await draw(); };
+  return {
+    v, holds: 'a camp fire under a beam, a chimney smoking in a wind that swings round, a burning drum and an explosion every seven seconds',
+    modes: [
+      { key: 'none', name: 'no smoke or fire', enter: enter('none') },
+      { key: 'puffs', name: 'the smaller version', enter: enter('puffs') },
+      ...(gpu ? [{ key: 'chip', name: 'on the graphics chip', enter: enter('chip') }] : []),
+    ],
+    pairs: gpu ? [['none', 'puffs', 'the smaller version (soft puffs) against no smoke or fire'], ['none', 'chip', 'the gas on the graphics chip against no smoke or fire'], ['puffs', 'chip', 'on the graphics chip against the smaller version']]
+      : [['none', 'puffs', 'the smaller version (soft puffs) against no smoke or fire']],
+    // the camera swings round the open side of the yard; the gas takes its steps by the clock, so every run sees the same fire
+    path(t, cam) {
+      const back = t < sum.t, dt = back ? 0 : Math.min(.1, t - sum.t), a = .9 + .7 * Math.sin(t * .25);
+      if (back) { sum.n = sum.ms = 0; sum.next = 3; gas?.clear(); }
+      sum.t = t;
+      cam.position.set(Math.sin(a) * 8, 2.1 + .4 * Math.sin(t * .3), Math.cos(a) * 8); cam.lookAt(-.2, 2, -.2); cam.updateMatrixWorld(); sun.follow(0, 0, 0);
+      if (!gas) return;
+      gas.wind.x = .9 * Math.sin(t * .35); gas.wind.z = .3 * Math.cos(t * .23);
+      if (t >= sum.next) { sum.next += 7; gas.burst(.3, .8, -1.2, { size: 1.8 }); }
+      const t0 = performance.now(); gas.update(dt); sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!gas || !sum.n) return null;
+      const cells = `${num(gas.cells)} cells of ${Math.round(gas.cell * 100)} cm`, ms = `${(sum.ms / sum.n).toFixed(2)} ms of the kit's code a frame`;
+      return gas.backend === 'gpu' ? `${cells} on the graphics chip, ${ms}` : `${cells} in JavaScript, ${num(gas.puffs.shown || 0)} puffs drawn, ${ms}`;
+    },
+    dispose() { gas?.dispose(); gas = null; clear(v); },
+  };
+}
+
 /* ---------- cliff: land with cliffs, caves and overhangs ---------- */
 function cliff({ gs, size }) {
   const T = gs.THREE, { human } = gs.models, { Land, looks } = gs.outdoors, { v, sun } = view(gs, 320, .0015), amb = v.hemi.intensity;
@@ -444,5 +498,6 @@ export const SCENES = [
   ['town', 'Town', 'hiding what is behind other things, and shadows in tiles', town],
   ['square', 'Square', 'crowds', square],
   ['field', 'Field', 'ground that takes marks', field],
+  ['yard', 'Yard', 'smoke and fire that flow', yard],
   ['cliff', 'Cliff', 'land with cliffs, caves and overhangs', cliff],
 ];

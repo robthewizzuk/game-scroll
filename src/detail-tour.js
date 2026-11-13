@@ -1,6 +1,6 @@
 // Engine test scenes, for the phone test tour (src/tour.js; QA panel › Phone test tour › Engine test
 // scenes). The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail,
-// hiding what is behind other things, shadows in tiles, crowds, ground that takes marks, land with cliffs and caves) are checked on a build machine's software renderer, which can count triangles and compare pictures but
+// hiding what is behind other things, shadows in tiles, crowds, ground that takes marks, smoke and fire that flow, land with cliffs and caves) are checked on a build machine's software renderer, which can count triangles and compare pictures but
 // says nothing about a phone's graphics chip. This flies through a heavy scene for each (src/detail-scenes.js)
 // with the system off and then on, on the phone in your hand, and gives one report to copy.
 //
@@ -36,7 +36,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   const t0 = Date.now(), list = SCENES.filter(s => !only || only.includes(s[0])), stopped = () => !!signal.stop;
   const out = { kind: 'scenes', at: new Date().toISOString(), seconds, size, asked: list.length, scenes: [], stopped: false };
   out.phone = await phone(); out.powerBefore = powerNow();
-  await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'THREE']);
+  await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'gas', 'THREE']);
   const { HD } = await import('./kit/hd3d.js');
   // the stage: a canvas over the whole app, as a card's is over its 3D picture
   const stage = document.createElement('div'); stage.className = 'tour-stage';
@@ -77,7 +77,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     HD.force = phoneClass() === 'low' ? 1 : 2; out.tier = HD.force;
     document.body.classList.add('touring'); addEventListener('resize', resized);
     driver.begin(guestApi); driver.clear();
-    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
+    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' || key === 'yard' && gpu ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
     let done = 0;
     for (const [key, name, what, make] of list) {
       if (stopped()) break;

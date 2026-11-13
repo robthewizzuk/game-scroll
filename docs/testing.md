@@ -38,6 +38,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Water you can disturb (`src/kit/water.js`: `gs.outdoors.Water`) | `npm run kit-test` (the same waves as before, calm water doing no work, rings, the square that follows the centre, splashes, watched things and wakes, shallows and shore foam, under the surface, rain, your own material), then `node scripts/water.cjs film.png [acts=pebble,rock,drop,boat,swim,rain,shore,wade,under] [cols=8] [cell=300x210] [cells=128] [reach=24] [waves=.6] [view=top\|near] [from= to=] [--webgpu]`: a film strip, a row for each thing that happens to the water, and what a frame of `water.update()` cost. Look at it on WebGL and with `--webgpu` |
 | Weather that changes the world (`src/kit/cover.js`, `Weather` in `src/kit/sky.js`, `AIR_WET` in `src/kit/hd3d.js`, `gpuWet` in `src/kit/hd3d-gpu.js`) | `npm run kit-test` (the map of what the sky can see: filling, following, finding changes, meshes; rain soaking in, pooling and drying; snow settling and melting; roofs keeping it off; no level as before), then `node scripts/weather.cjs film.png [views=yard,porch,in,roof,top,pond] [cols=8] [cell=300x210] [story=rain,dry,snow,melt] [secs=8] [phys] [cover=0] [hold=snow:.9] [--webgpu]`: one story of weather along the film, a row a camera, over a house with a porch and an open door, a lean-to, a yard, trees and a pond; it prints what `weather.update()` cost, how long the map took and the most pictures any one material reads at once (phones allow 16). Film it on WebGL and with `--webgpu` and compare: puddles and snow lie in the same places on both. `npm run kit-browser` has three checks on a floor half under a roof. |
 | Ground that takes marks (`src/kit/marks.js`: `gs.outdoors.Marks`; the meadow's `LK_PART` in `src/kit/looks.js` and `gpuLooks.meadow` in `src/kit/hd3d-gpu.js`) | `npm run kit-test` (a print's dent, rim and pictures; sheets that meet; tracks that join up; what is remembered; snow, mud and sand by the weather; filling, washing and blowing out; watched feet, paws, wheels and belts; the land's own triangles; grass that parts and mends), then `node scripts/marks.cjs film.png [views=mud,sand,grass,lawn,top,low,close,wide] [cols=6] [cell=420x300] [story=snow,fresh,rain,wet,dry] [secs=8] [hold=snow:.9] [who=people,dog,jeep,tank] [off] [cellsize=.025] [reach=10] [prof] [--webgpu]`: one story of weather along the film, a row a camera, over a field of sand, grass and bare earth with two people, a dog and a jeep going round it; it prints what `marks.update()` cost (`prof`: each part of it), how many marks are kept and how many tiles are drawn. `off` is the same film with no Marks, to compare. Film it on WebGL and with `--webgpu` | 55 s for the tests, then about 40 s a film |
+| Smoke and fire that flow (`src/kit/gas.js`, `src/kit/gas-gpu.js`: `gs.gas`; `gasStage` in `src/kit/hd3d-gpu-fx.js`) | `npm run kit-test` (smoke that climbs and goes round a ball, a closed room, solid things, wind, a fan, fire, a jet, an explosion, dust, resizing, the answers copied back, seeds), then `node scripts/gas.cjs film.png [acts=camp,room,blast,wind,ball,torch,dust] [cols=6] [cell=300x380] [cells=20000] [klass=top\|mid\|low] [--webgpu]`: a row for each thing smoke and fire do, a picture every so often along it, to judge by eye how it rises, curls, spreads and is lit; it prints what the gas ran on, how many cells it had and what `gas.update()` cost. Film it without `--webgpu` (the JavaScript version, soft puffs) and with (the lit volume: on a build machine's software chip, so keep `cells` small), one film at a time, and don't edit `src/` while one runs (the page reloads). Then `PICK=gpu-gas node scripts/look-compare.cjs save <dir> --webgpu` (the two versions cell for cell) | 1 min 10 s for the tests, then about 20 s an act |
 | Cliffs, caves and overhangs (`src/kit/land-rock.js`, `Land.rocks()` and its answers in `src/kit/outdoors.js`, the `rock` job in `src/kit/job-worker.js`) | `npm run kit-test` (the rock as numbers: pieces that meet, hidden rock left out, overhangs, the same seed the same rock; a cave's floor and roof, an arch, a hollow, rays, a walk in at a cave's mouth; then on a Land: the squares a cave takes, marks, physics, `flatten()`, `rocks(false)`), then `node scripts/rocks.cjs out.png [views=wide,cliff,mouth,inside,arch,under,edge,top] [cols=4] [cell=480x340] [off] [rockcell=.4] [seed=3] [snow] [time=15.5] [nomeadow] [flat] [look] [--webgpu]`: a picture from each camera of a valley with a cliff, a cave through a spur, an arch and a shelf of rock, people standing about for scale; it prints how many triangles the rock is, in how many pieces, and how long it took. `off` is the land as a height map alone, `flat` the bare shapes with no beds or joints, `snow` with snow lying (on the ledges, not in the cave), `look` with `looks.rock` over it. Take it on WebGL and with `--webgpu` and compare. A change to how long it takes: `node scripts/load-time.cjs <a game that uses it> --passes` says whether the numbers still go to a worker | 55 s for the tests, then about 30 s a sheet |
 | Fur and hair (`gs.models.fur`: `src/kit/models/fur.js`, and its use in `creature.js` and `human.js`) | `npm run kit-test` (the strand pictures, the shell: lengths, thin things, edges, a crown; the layers; thinning with distance; a cat, a horse's mane, a pig without) and `npm run kit-browser` (a furry cat and a bearded person drawn in a Next Gen view, a coat put away far off), then `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [fur=auto] [time] [--webgpu]` to look at it: a row can be a person (`person:` then a hair style and any of `f`, `beard`, `moustache`, `hat`, `grey`, `fair`, `red`, `black`), `time` prints how long a frame takes | 2 s for the tests' part, then about 3 s a row (10 s with `--webgpu`) |
 | People (`gs.models.human`: `src/kit/models/human*.js`, `field.js`; skin's light in `sss()` of `src/kit/hd3d-gpu.js`) | `npm run kit-test` (the skeleton, the sculpted pieces, the live face, strides, and for skin and eyes: how thin a sheet, a rim and a block measure, only the ears of a head thin, an eye's rings and cornea) and `npm run kit-browser` (no close-up triangle with its grain smeared, thin flesh at the ears only, the skin and eye materials), then `PICK=humans node scripts/look-compare.cjs check base` on WebGL and with `--webgpu`, and smoke a game with people in it (`long-shadow`). Look at a face close up on both backends before believing it: ears against the sun, the eye's highlight | 1 min + pictures |
@@ -58,7 +59,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | The frame lab (`src/framelab.js`) | `node scripts/framelab-test.cjs [2d-id] [3d-id] [--shots dir] [--report file.html]` | about 3 min |
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
-| What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 8 min |
+| What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 10 min |
 | The tour itself (`src/tour.js`, `src/detail-tour.js`, the guest in `src/main.js`) | `node scripts/app-test.cjs tour` | about 2 min |
 | Everything (before a big engine PR) | `node scripts/smoke.cjs` (all 162 games) | about 3.5 min |
 
@@ -195,12 +196,12 @@ plugin check (against a stand-in app) and the sheet.
 ### The engine test scenes: what the detail systems are worth on a phone
 
 The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail, hiding
-what is behind other things, shadows in tiles, crowds) are checked by `scripts/detail-test.cjs` on a build machine's software renderer (ground that takes marks by `scripts/marks.cjs`). That can count triangles
+what is behind other things, shadows in tiles, crowds) are checked by `scripts/detail-test.cjs` on a build machine's software renderer (ground that takes marks by `scripts/marks.cjs`, smoke and fire by `scripts/gas.cjs`). That can count triangles
 and compare pictures; it can't say what a phone's graphics chip gains. The tour can:
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
    for each run and press **Start**.
-2. Seven scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+2. Eight scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
    and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
    **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
    with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses
@@ -216,10 +217,15 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    dog, a jeep and a tank going round it, as snow lies, thaws to wet earth and dries (the weather goes
    round every 18 seconds): once leaving no trace, then with their prints, tracks and parted grass
    (`gs.outdoors.Marks`); that run says how many marks are kept, how many tiles of them are drawn and how
-   long making them took a frame. Last, a walk along the foot of a **cliff**, in at a cave under a spur,
-   out the other side and under an arch: once on the height map alone (the walk goes over the spur),
-   then with the rock on it (`land.rocks()`); that run says how many triangles the rock is, in how many
-   pieces, and how long its numbers took. About 9 minutes at 20 seconds a run, longer the
+   long making them took a frame. And a **yard** with a camp fire under a beam, a smoking chimney, a
+   burning drum and an explosion every seven seconds, in a wind that swings round (`gs.gas`): once with
+   no smoke or fire, then as the smaller version (the gas worked out in JavaScript, drawn as soft puffs)
+   and, on WebGPU, a third time as the gas on the graphics chip, drawn as a lit volume; each run says how
+   many cells the gas has, how wide one is and how long the kit's own code took a frame. Last, a walk
+   along the foot of a **cliff**, in at a cave under a spur, out the other side and under an arch: once
+   on the height map alone (the walk goes over the spur), then with the rock on it (`land.rocks()`);
+   that run says how many triangles the rock is, in how many pieces, and how long its numbers took.
+   About 11 minutes at 20 seconds a run on WebGPU (20 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
@@ -308,6 +314,12 @@ drawing) are not in them: `perf-bench.cjs` and `shader-hold.cjs` measure those.
   break round a cup with a tap, a ball, a blast and a drain on the graphics chip, with the JavaScript
   version beside it, and fails if the two part by more than a hundredth of a cell or liquid is lost;
   without `--webgpu` it draws the JavaScript version. `npm run kit-test` has the liquid's rules.
+- Smoke and fire (`gs.gas`): `PICK=gpu-gas node scripts/look-compare.cjs save <dir> --webgpu` burns a fire and
+  a smoke maker under a ball on the graphics chip with the JavaScript version beside it, given the same grid
+  and the same steps, and fails if their cells part by more than a hundredth of the smoke or the answers
+  copied back (where the fire is, how smoky the box is) are not the other's; then a closed room with ground,
+  a wall, wind, a fan, a tube, a turning box, an explosion and a puff, held to the same rule. Without
+  `--webgpu` it draws the JavaScript version. `npm run kit-test` has the gas's rules.
 - GPU culling of `gs.props`: `PICK=gpu-cull-cpu,gpu-cull node scripts/look-compare.cjs save <dir> --webgpu`
   draws the same forest culled on the CPU and on the GPU (`Q=n=6000` sets the number of trees). The two
   pictures should match, and each line gives the CPU time per frame and the time spent building the lists.
