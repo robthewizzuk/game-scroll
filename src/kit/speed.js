@@ -76,7 +76,10 @@ export function tick(now) {
   if (nGaps >= 20 && nGaps % 10 === 0) {
     const s = nGaps < GAPS ? sorted.subarray(0, nGaps) : sorted;
     s.set(nGaps < GAPS ? gaps.subarray(0, nGaps) : gaps); s.sort();
-    const f = 1000 / s[nGaps >> 1];
+    // the screen's rate from the shorter gaps (a quarter in): a refresh the page didn't get, because the chip was
+    // behind, only makes a gap longer. The middle gap read a 120 Hz screen as 60 whenever a busy chip held back
+    // every other refresh, and the beat then stopped making frames between (the Fold's tour, 2026-11-13)
+    const f = 1000 / s[nGaps >> 2];
     hz = f > 130 ? 144 : f > 100 ? 120 : f > 75 ? 90 : 60;
   }
 }
@@ -89,10 +92,11 @@ const is3D = def => def && (def.era === 'nextgen' || def.era === 'ar' || def.era
 // passed by then (a warm phone, a low battery, a busy spell while it loaded), and falling is quick where
 // climbing back is slow: a game left at its lowest picture and 30 frames a second stayed there for good
 // (Long Shadow on Rob's Fold, 2026-11-12). After a day it starts from the phone's class again and steps
-// down within seconds if it still has to. How its frames are made (fgHow) is about the phone's screen
+// down within seconds if it still has to. How its frames are made (fgPace) is about the phone's screen
 // pacing, not its heat: that is kept. (An entry with no date is from before dates were kept: old.)
 const SETTLE_MS = 24 * 3600 * 1000;
-const lasting = s => (s?.fgHow ? { fgHow: s.fgHow } : null);
+// (fgHow 'ahead' was set by the 3D kit before fgPace: it was making room on the real frame's refresh, which is 'first' now)
+const lasting = s => (s?.fgPace || s?.fgHow === 'ahead' ? { fgPace: 'first' } : null);
 function fresh(all, now = Date.now()) {
   const out = {};
   for (const [id, s] of Object.entries(all || {})) { const keep = s && Math.abs(now - s.at) < SETTLE_MS ? s : lasting(s); if (keep) out[id] = keep; }
@@ -149,7 +153,8 @@ const late = [];
 let shieldUntil = 0;
 export function frameLate(now) {
   late.push(now); while (late.length && now - late[0] > 1000) late.shift();
-  if (late.length >= 2) shieldUntil = now + 2000;
+  // (not where a made frame wouldn't fit a refresh: frames made then would come late too)
+  if (late.length >= 2 && frameGenFits(speed.game, hz / 2)) shieldUntil = now + 2000;
 }
 const shieldOn = () => typeof performance !== 'undefined' && performance.now() < shieldUntil;
 // the real frame rate with frame generation on (0: it isn't)
@@ -173,11 +178,13 @@ export function frameGenReady(def) {
  */
 export function frameGenFor(def) {
   if (!is3D(def) || def.frameGen === false) return false;
-  const how = fgHow !== 'game' ? fgHow : def.frameGen === 'ahead' || settled[def.id]?.fgHow === 'ahead' ? 'ahead' : 'blend';
+  const how = fgHow !== 'game' ? fgHow : def.frameGen === 'ahead' ? 'ahead' : 'blend';
   if (speed.forceFrameGen) return speed.forceFrameGen === true ? how : speed.forceFrameGen;
   if (fgPick === 'off' || !speed.gpu || hz < FG_HZ || fgFailed.has(def.id) || pick !== 'auto') return false;   // a pinned rate is what the screen shows
   const real = fgRate(def);
   if (!real) return false;
+  // Auto (not Always): only where a real frame and a made frame each fit a refresh by the chip's times
+  if (fgPick !== 'always' && !frameGenFits(def, real)) return false;
   // A guess ahead holds for one frame. With two or three to make between real frames (a game at 30 on
   // a 120 Hz screen: the last of them three quarters of a real frame past the newest) a running figure
   // comes apart, so those are blended between real frames instead; unless ahead is the player's pick or
@@ -185,13 +192,73 @@ export function frameGenFor(def) {
   return how === 'ahead' && hz / real > AHEAD_MAX && fgHow === 'game' && def.frameGen !== 'ahead' ? 'blend' : how;
 }
 /**
- * The 3D kit found blend's refreshes too full for this game on this phone (the made frame shares the
- * real frame's refresh): from now on it makes them ahead (its work is spread over both). False if it
- * can't switch (already ahead, or the player picked how).
+ * The 3D kit found blend's refreshes too full for this game on this phone (pace 'after': a made frame shares
+ * the real frame's refresh): from now on its pace is 'first' (each refresh holds one frame's work). False if it
+ * already is.
  */
 export function frameGenPace(id) {
-  if (!id || fgHow !== 'game' || settled[id]?.fgHow === 'ahead') return false;
-  settle(id, { fgHow: 'ahead' }); return true;
+  if (!id || settled[id]?.fgPace === 'first') return false;
+  settle(id, { fgPace: 'first' }); return true;
+}
+/**
+ * Blend's pace for this game now (hd3d-gpu.js GpuChain): 'after' makes a frame on the real frame's own refresh
+ * (the least delay, where the chip has room for both), 'first' shows the last real frame there and makes every
+ * frame on a refresh of its own (a refresh later, but no refresh holds two frames' work). steps: refreshes per
+ * real frame; one that isn't whole (60 fps on 90 Hz) is always 'after'. speed.pace (tests, the tour) decides for it.
+ */
+let paceWas = '';
+export function frameGenPaceOf(def, steps) {
+  if (speed.pace) return speed.pace;
+  if (Math.abs(steps - Math.round(steps)) > .05) return (paceWas = 'after');
+  const c = speed.cost, made = madeGuess(), rf = 1000 / hz;
+  const was = settled[def?.id];
+  if (was?.fgPace === 'first' || was?.fgHow === 'ahead' || c.id !== (def?.id ?? null) || !(c.nr >= READS) || !(made > 0)) return (paceWas = 'first');
+  return (paceWas = c.real + made < rf * (paceWas === 'after' ? .8 : .65) ? 'after' : 'first');
+}
+
+/* ---------- the chip's time, for frame generation's checks ---------- */
+// speed.cost: the graphics chip's time in ms for the game being played (id): real, a real frame's own (from frames
+// that kept the chip busy: a phone clocks its chip down at half rate), and made, a made frame's (the pair's
+// shared work counted in); null until the phone has told it (WebGPU timestamps, hd3d.js gpuTime); nr and nm:
+// how many reads each is from (a check goes by three or more). A made frame's time for each million pixels on
+// screen is kept on the phone, so whether to step a game down to frames made between has a figure to go by before
+// it has made any (only that: a guess never keeps frame generation off, or a slow figure kept from an older
+// build would stop it from ever being tried again).
+const FG_COST_KEY = 'gs_fg_cost';
+let madePerMpx = +store.get(FG_COST_KEY, 0) || 0, costSaved = 0;
+const ease = (a, b) => a > 0 ? a * .8 + b * .2 : b;
+/** The 3D kit read the chip's times (ms; null: not this time) for the game being played. */
+export function chipCost(id, real, made) {
+  const c = speed.cost;
+  if (c.id !== (id ?? null)) { c.id = id ?? null; c.real = c.made = null; c.nr = c.nm = 0; }
+  if (real > 0) { c.real = ease(c.real, real); c.nr++; }
+  if (made > 0) {
+    c.made = ease(c.made, made); c.nm++;
+    if (speed.outMpx > 0) { madePerMpx = ease(madePerMpx, made / speed.outMpx); const now = Date.now(); if (now - costSaved > 30000) { costSaved = now; store.set(FG_COST_KEY, +madePerMpx.toFixed(3)); } }
+  }
+}
+const madeGuess = () => speed.cost.made > 0 ? speed.cost.made : madePerMpx > 0 && speed.outMpx > 0 ? madePerMpx * speed.outMpx : null;
+const READS = 3;
+/**
+ * Whether frames made between this game's real ones (rate real frames a second) fit this phone, by the chip's
+ * times: a refresh's picture reaches the screen only once all the work sent in it is done (one queue on the
+ * chip), so the real frame and each made frame need a refresh each (pace 'first'), or the two of them one
+ * refresh where the made frame shares the real one's (a rate that isn't a whole number of refreshes). So it
+ * can't rescue a game whose real frames take the chip longer than a refresh. True while the times aren't
+ * known: it is tried, and the 3D kit turns it off if the refreshes between don't come.
+ */
+// guess: a made frame's time may come from the figure kept on the phone (see above)
+export function frameGenFits(def, rate = 0, guess = false) {
+  const c = speed.cost, lim = 900 / hz;
+  if (c.id !== (def?.id ?? null)) return true;
+  const real = c.nr >= READS ? c.real : null, made = c.nm >= READS ? c.made : guess && c.made == null ? madeGuess() : null;
+  const n = rate > 0 ? hz / rate : 2, whole = Math.abs(n - Math.round(n)) < .05;
+  return whole ? !(real > lim) && !(made > lim) : !((real || 0) + (made || 0) > lim);
+}
+/** Auto would make frames between for this game at rate real frames a second, and they'd fit (frameGenFits). */
+export function frameGenCould(def, rate) {
+  if (!is3D(def) || def.frameGen === false || fgPick === 'off' || !speed.gpu || hz < FG_HZ || fgFailed.has(def.id) || pick !== 'auto') return false;
+  return rate >= 25 && hz / rate >= 1.4 && frameGenFits(def, rate, true);
 }
 /** One line for Settings: whether the game on screen makes frames in between now, and if not, why. */
 export function frameGenStatus(def) {
@@ -203,6 +270,8 @@ export function frameGenStatus(def) {
   if (hz < FG_HZ) return `Off: this screen runs at ${hz} Hz, so there are no refreshes in between to fill.`;
   if (!speed.gpu) return `Off: ${name} draws with WebGL here (an effect it uses isn’t ready for WebGPU).`;
   if (fgFailed.has(def.id)) return `Off for ${name} until the app restarts: the phone was too busy for the frames in between.`;
+  const fr = fgRate(def);
+  if (fr && fgPick !== 'always' && !frameGenFits(def, fr)) return `Off for ${name}: a frame takes the graphics chip longer than a refresh holds (${(1000 / hz).toFixed(1)} ms), so frames made between would come late.`;
   const how = frameGenFor(def);
   if (how) {
     const real = Math.round(fpsFor(def)), why = fgPick === 'always' ? '' : shieldOn() ? ', riding out a busy moment' : fgSaving() ? `, ${power.why || 'saving power'}` : '';
@@ -229,7 +298,7 @@ export function screenWant(def) {
   f = Math.max(30, Math.min(f, top));
   // frame generation could fill in (as frameGenFor, at the screen's fastest rate) and the game runs below it
   const fg = is3D(def) && def.frameGen !== false && (!!speed.forceFrameGen
-    || (fgPick !== 'off' && pick === 'auto' && top >= FG_HZ && speed.gpu && !fgFailed.has(def.id)));
+    || (fgPick !== 'off' && pick === 'auto' && top >= FG_HZ && speed.gpu && !fgFailed.has(def.id) && (fgPick === 'always' || frameGenFits(def, f))));
   return pickRate(screen.rates, f, fg && f < top * .9);
 }
 /** The feed, every refresh: the game being played (null between rounds, paused, or in the feed). */
@@ -246,14 +315,14 @@ export function screenWish(def) { def ||= speed.standIn; askRate(def ? screenWan
 // inputAt: when a finger, key or pad last moved the game on screen (performance.now(), set by the feed).
 // shield: the stutter shield is on (frameLate()).
 // standIn: a game definition the engine test scenes stand in for while no round is played (the screen's rate is asked for as for it).
-export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, standIn: null, inputAt: 0, busy: () => false, playing: () => false };
+export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, pace: null, standIn: null, inputAt: 0, cost: { id: null, real: null, made: null, nr: 0, nm: 0 }, outMpx: 0, busy: () => false, playing: () => false };
 Object.defineProperty(speed, 'shield', { get: shieldOn });
 
 /** The 3D kit settled on a tier and frame rate for this game: start there next time. */
 export function settle(id, o) {
   if (!id) return;
   const was = settled[id] || {}, now = { ...was, ...o };
-  if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgHow === now.fgHow && JSON.stringify(was.fx || null) === JSON.stringify(now.fx || null)) return;
+  if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgPace === now.fgPace && JSON.stringify(was.fx || null) === JSON.stringify(now.fx || null)) return;
   now.at = Date.now(); settled[id] = now; store.set(SETTLE_KEY, settled);
 }
 /** Where this game settled, if that was within the last day (older: forgotten here, so the game starts from the phone's class again). */

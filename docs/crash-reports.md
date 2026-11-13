@@ -12,8 +12,9 @@ crash reports**.
   its own page (`/perf/report?game=<id>`): that game's history by phone, day and build.
 - **In the app:** tap the GAME SCROLL logo for the QA panel. Each game shows "this phone" and
   "everyone" fps / slow frames / freezes, there's a **Crashes & stutters ↗** link to the page above,
-  and **Copy report** now includes the worst stutters and the top crashes and errors.
-- **Raw JSON:** `GET https://api.game-scroll.com/perf`.
+  and **Copy report** now includes the worst stutters and the top crashes and errors. Everyone's
+  numbers are fetched when the panel opens (at most every 30 minutes), not when the app starts.
+- **Raw JSON:** `GET https://api.game-scroll.com/perf` (worked out at most every 30 minutes).
 
 ## When did it happen, and is it already fixed?
 

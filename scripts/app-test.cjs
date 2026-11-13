@@ -658,7 +658,7 @@ async function tour(b) {
   check(/^Eleven scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   await p.selectOption('.tour-set', 'framegen');
   const sheet3 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display), name: document.querySelector('.tour-set option[value="framegen"]')?.textContent }));
-  check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds four ways: .* blended and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
+  check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
     'the sheet also offers frame generation, timed in four of the engine test scenes', JSON.stringify(sheet3));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
@@ -763,7 +763,7 @@ async function tour(b) {
 }
 
 // Frame generation's runs in the engine test scenes (src/detail-tour.js), on a browser with WebGPU on its
-// software renderer: the square with its people as one crowd, four ways. Its frames come far too slowly for a
+// software renderer: the square with its people as one crowd, five ways. Its frames come far too slowly for a
 // beat, so every other refresh is one between real frames (alternate), whatever the clock says.
 async function framegenScenes() {
   const path = require('path'), icd = path.join(path.dirname(chromium.executablePath()), 'vk_swiftshader_icd.json');
@@ -775,18 +775,25 @@ async function framegenScenes() {
     const res = await __gs.tour({ scenes: true, framegen: true, alternate: true, seconds: 2, size: .1, only: ['square'], onStep(s) { steps.push(`${s.i + 1}/${s.n} ${s.game.title}: ${s.what}`); } });
     __hd.direct = false; await new Promise(r => setTimeout(r, 400));
     const s = res.scenes[0];
-    return { text: res.text, steps, error: s?.error, modes: (s?.modes || []).map(m => ({ key: m.key, name: m.name, frames: m.frames, pictures: m.pictures, drawn: m.drawn, how: m.how, backend: m.backend })), active: __gs.active?.def.id, stage: !!document.querySelector('.tour-stage') };
+    return { text: res.text, steps, error: s?.error, modes: (s?.modes || []).map(m => ({ key: m.key, name: m.name, frames: m.frames, pictures: m.pictures, drawn: m.drawn, how: m.how, backend: m.backend, pace: m.pace, madeMs: m.madeMs, dropped: m.dropped, easy: m.easy })), active: __gs.active?.def.id, stage: !!document.querySelector('.tour-stage') };
   });
   const M = k => fg.modes.find(m => m.key === k) || {};
-  check(!fg.error && fg.modes.map(m => m.key).join() === 'every,half,blend,ahead' && fg.modes.every(m => m.frames > 3 && m.pictures >= 3 && m.backend === 'webgpu'),
-    'frame generation is timed in the square four ways: as many drawn as the phone draws, half of them, and half with the rest blended, then made ahead', JSON.stringify(fg.modes));
-  check(M('half').pictures === M('half').drawn && !M('half').how && M('blend').how === 'blend' && M('ahead').how === 'ahead' && M('blend').pictures > M('blend').drawn * 1.5 && M('ahead').pictures > M('ahead').drawn * 1.5,
+  check(!fg.error && fg.modes.map(m => m.key).join() === 'every,half,before,blend,ahead' && fg.modes.every(m => m.frames > 3 && m.pictures >= 3 && m.backend === 'webgpu'),
+    'frame generation is timed in the square five ways: as many drawn as the phone draws, half of them, and half with the rest blended as before, blended as now, then made ahead', JSON.stringify(fg.modes));
+  check(M('half').pictures === M('half').drawn && !M('half').how && M('before').how === 'blend' && M('blend').how === 'blend' && M('ahead').how === 'ahead' && ['before', 'blend', 'ahead'].every(k => M(k).pictures > M(k).drawn * 1.5),
     'with none made only the drawn frames are new pictures; blended and ahead, the refreshes between show made frames', JSON.stringify(fg.modes));
+  check(M('before').pace === 'after' && ['first', 'after'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
+    'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times', JSON.stringify(fg.modes));
+  const told = !/chip time not told/.test(fg.text);
   check(/^Game Scroll engine test scenes, frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · frame generation as each run says, for a \d+ Hz screen · /.test(fg.text)
-    && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · (chip [\d.]+ ms a drawn frame \(.*compute [\d.]+.*\)|chip time not told) · code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
-    && (/\n  = the frames made: -?[\d.]+ ms blended, -?[\d.]+ ms ahead of chip time for each drawn frame/.test(fg.text) || /chip time not told/.test(fg.text)) && /\n  = \d+ drawn, \d+ ahead against \d+ drawn, none made: \d+ pictures a second against \d+ · /.test(fg.text),
-    'the report says what the made frames cost the chip and sets them against drawing frames alone', fg.text);
-  check(fg.active === 'bunker-breakout' && !fg.stage && fg.steps.some(t => /^3\/4 Square · \d+ drawn, \d+ blended: getting ready$/.test(t)), 'afterwards the feed is back on the game it was on', JSON.stringify({ active: fg.active, stage: fg.stage, steps: fg.steps }));
+    && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · .*(each frame on a refresh of its own|the made frame on the real one's refresh) · .*code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
+    && /\n  \d+ \+ \d+ blended before +\d+ pictures a second \(\d+ drawn\) · .*the made frame on the real one's refresh · /.test(fg.text)
+    && (!told || (/\n  \d+ drawn, \d+ blended +.*chip [\d.]+ ms a drawn frame \(.*made frames [\d.]+.*\) · a made frame [\d.]+ ms \(.*picture [\d.]+.*\)/.test(fg.text)
+      && /\n  = a made frame: [\d.]+ ms blended before, [\d.]+ ms blended, [\d.]+ ms ahead of chip time/.test(fg.text)))
+    && /\n  = \d+ drawn, \d+ blended against \d+ \+ \d+ blended before: \d+ pictures a second against \d+ · worst 1% \d+ against \d+/.test(fg.text)
+    && /\n  = \d+ drawn, \d+ ahead against \d+ drawn, none made: \d+ pictures a second against \d+ · /.test(fg.text),
+    'the report says what a made frame costs the chip and where, sets blend as now against blend before, and both against drawing frames alone', fg.text);
+  check(fg.active === 'bunker-breakout' && !fg.stage && fg.steps.some(t => /^4\/5 Square · \d+ drawn, \d+ blended: getting ready$/.test(t)), 'afterwards the feed is back on the game it was on', JSON.stringify({ active: fg.active, stage: fg.stage, steps: fg.steps }));
   if (process.env.SHOTS) require('fs').writeFileSync(process.env.SHOTS + '/framegen-report.txt', fg.text);
   await q.done(); await g.close();
 }

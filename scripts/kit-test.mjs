@@ -1925,23 +1925,68 @@ console.log('physics ok');
   // Shadow on Rob's Fold, 2026-11-12: at 30 on 120 Hz it made three guesses in a row and Wren smeared)
   for (let i = 0, t = 1000; i < 40; i++) sp.tick(t += 1000 / 120);
   assert.equal(sp.screenHz(), 120, 'the screen measures as 120 Hz');
+  // a busy chip holds back refreshes (here two in three gaps are a refresh long): still a 120 Hz screen (the
+  // middle gap read it as 60 on the Fold, 2026-11-13, and the beat stopped making frames between)
+  for (let i = 0, t = 3000; i < 60; i++) sp.tick(t += (i % 3 ? 2 : 1) * 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'refreshes the page did not get are not the screen\'s rate');
   sp.speed.gpu = true;
   const g60 = { id: 'kt-fg60', era: 'nextgen', fps: 60 }, g30 = { id: 'kt-fg30', era: 'nextgen', fps: 30 };
   assert.equal(sp.frameGenFor(g60), 'blend', 'a 60 fps game on 120 Hz: blend by default');
-  assert.equal(sp.frameGenPace(g60.id), true, 'blend too full for it: it switches itself to ahead');
-  // (a machine with four cores or fewer counts as a slow phone, where every 3D game runs at 30: four refreshes a frame there too)
-  assert.equal(sp.frameGenFor(g60), sp.frameGenSteps(g60) > 2.5 ? 'blend' : 'ahead', 'and makes its one frame per real frame ahead');
-  assert.equal(sp.frameGenPace(g30.id), true);
+  assert.equal(sp.frameGenPace(g60.id), true, 'blend too full for it: each made frame gets a refresh of its own');
+  assert.equal(sp.frameGenPace(g60.id), false, 'once');
+  assert.equal(sp.frameGenFor(g60), 'blend', 'and it still blends');
+  assert.equal(sp.frameGenPaceOf(g60, 2), 'first', 'pace first from then on');
   assert.equal(sp.frameGenSteps(g30), 4, 'a 30 fps game on 120 Hz has three frames to make');
   assert.equal(sp.frameGenFor(g30), 'blend', 'three guesses in a row are not made: blended instead');
   assert.equal(sp.frameGenFor({ ...g30, frameGen: 'ahead' }), 'ahead', 'a game that asks for ahead keeps it');
   sp.setFrameGenHow('ahead'); assert.equal(sp.frameGenFor(g30), 'ahead', 'and so does the player\'s pick in Settings');
-  sp.setFrameGenHow('game'); sp.speed.gpu = false;
-  // where a game settled is kept for a day, then it starts from the phone's class again (how its frames are made stays)
-  sp.settle('kt-old', { tier: 0, lvl: 3, fps: 30 }); sp.settle('kt-old', { fgHow: 'ahead' });
+  sp.setFrameGenHow('game');
+  // the chip's times (Rob's Fold, 2026-11-13): a refresh's picture shows once all the work sent in it is done, so
+  // a real frame and each made frame need a refresh each (8.3 ms at 120 Hz); unknown times: it is tried
+  const fit = { id: 'kt-fit', era: 'nextgen', fps: 60 }, heavy = { id: 'kt-heavy', era: 'nextgen', fps: 60 }, light = { id: 'kt-light', era: 'nextgen', fps: 60 };
+  sp.speed.game = fit; assert.equal(sp.frameGenFits(fit, 60), true, 'nothing measured yet: try it');
+  assert.equal(sp.frameGenPaceOf(fit, 2), 'first', 'and pace first');
+  for (let i = 0; i < 3; i++) sp.chipCost(fit.id, 6, 7.3);   // the forest: 6 ms a real frame, 7.3 a made one
+  assert.equal(sp.frameGenFits(fit, 60), true, 'each fits a refresh of its own');
+  assert.equal(sp.frameGenFor(fit), 'blend');
+  assert.equal(sp.frameGenPaceOf(fit, 2), 'first', 'but not both in one: pace first');
+  assert.equal(sp.frameGenPaceOf(fit, 1.5), 'after', '60 fps on 90 Hz: not a whole number of refreshes, after');
+  sp.speed.game = heavy; for (let i = 0; i < 3; i++) sp.chipCost(heavy.id, 11, 12.6);   // the town
+  assert.equal(sp.frameGenFits(heavy, 60), false, 'a real frame longer than a refresh: frames made between would come late');
+  assert.equal(sp.frameGenFor(heavy), false, 'so Auto makes none');
+  assert.match(sp.frameGenStatus(heavy), /longer than a refresh/, 'and Settings says why');
+  screen.rates = [60, 120]; screen.top = 120;
+  assert.equal(sp.screenWant(heavy), 60, 'and the screen is asked for the game\'s own rate');
+  screen.rates = []; screen.top = 0;
+  sp.setFrameGenPick('always'); assert.equal(sp.frameGenFor(heavy), 'blend', 'Always is the player\'s word'); sp.setFrameGenPick('auto');
+  sp.speed.game = light; for (let i = 0; i < 3; i++) sp.chipCost(light.id, 3, 2);
+  assert.equal(sp.frameGenPaceOf(light, 2), 'after', 'room for both in one refresh: after (the least delay)');
+  assert.equal(sp.frameGenCould(light, 60), true, 'a light game could step down to frames made between');
+  sp.speed.game = heavy; for (let i = 0; i < 3; i++) sp.chipCost(heavy.id, 11, null);   // (the times are the game being played's)
+  assert.equal(sp.frameGenCould(heavy, 60), false, 'a heavy one keeps its sharpness steps first');
+  sp.chipCost('kt-new', 5, null); sp.chipCost('kt-new', 5, null);
+  assert.equal(sp.frameGenFits({ id: 'kt-new' }, 60), true, 'two reads are not enough to judge');
+  sp.speed.game = null; sp.speed.gpu = false;
+  // drop a made frame that would come late, never a real one (hd3d-gpu.js GpuChain): the chip still on the real frame
+  const { GpuChain } = await import('../src/kit/hd3d-gpu.js');
+  const late = (d, c, now) => GpuChain.prototype.late.call({ realDone: d, cost: c }, now);
+  const C = { real: 6, made: 7.3 }, rf = 1000 / 120;
+  assert.equal(late({ start: 0, sent: 3, rf, done: false }, C, 8.3), false, 'real frame due done by 6 ms: room for the made one');
+  assert.equal(late({ start: 0, sent: 3, rf, done: false }, { real: 11, made: 7.3 }, 8.3), true, 'still on an 11 ms real frame: dropped');
+  assert.equal(late({ start: 0, sent: 3, rf, done: true }, { real: 11, made: 7.3 }, 8.3), false, 'the chip said it is done: made');
+  assert.equal(late({ start: 0, sent: 3, rf, done: false }, null, 8.3), false, 'no chip times: never dropped (the miss check decides)');
+  const due = (S, ready = true) => GpuChain.prototype.dueMade.call({ fg: { ready } }, S);
+  assert.equal(due({ k: 1, D: 2, gap: 2, first: true }), true, 'pace first: the refresh between makes a frame');
+  assert.equal(due({ k: 0, D: 2, gap: 3, first: true }), false, 'its real frame\'s own refresh never does, even after a late one');
+  assert.equal(due({ k: 1, D: 1, gap: 2, first: false }), false, 'pace after: the refresh between shows the newest real frame');
+  sp.speed.gpu = false;
+  // where a game settled is kept for a day, then it starts from the phone's class again (how its frames are paced stays)
+  sp.settle('kt-old', { tier: 0, lvl: 3, fps: 30 }); sp.settle('kt-old', { fgPace: 'first' });
   assert.equal(sp.settledFor('kt-old').fps, 30, 'a game\'s settled quality is remembered');
   sp.settledFor('kt-old').at -= 25 * 3600 * 1000;
-  assert.deepEqual(sp.settledFor('kt-old'), { fgHow: 'ahead' }, 'a day later only how its frames are made is left');
+  assert.deepEqual(sp.settledFor('kt-old'), { fgPace: 'first' }, 'a day later only how its frames are paced is left');
+  sp.settle('kt-old3', { tier: 1, fgHow: 'ahead' }); sp.settledFor('kt-old3').at -= 25 * 3600 * 1000;
+  assert.deepEqual(sp.settledFor('kt-old3'), { fgPace: 'first' }, 'the old switch to ahead (to make room on the real frame\'s refresh) is pace first now');
   sp.settle('kt-old2', { tier: 1 }); sp.settledFor('kt-old2').at -= 25 * 3600 * 1000;
   assert.equal(sp.settledFor('kt-old2'), null, 'and a game with nothing lasting is forgotten');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
@@ -1951,7 +1996,7 @@ console.log('physics ok');
   assert.equal(sp.qualityVerdict(B, 1, B), 'ok', 'one late frame in a window (a hitch) is not enough');
   assert.equal(sp.qualityVerdict(B, 1, B) === 'fast', false, 'and is never room to climb');
   assert.equal(sp.qualityVerdict(B, 0, B), 'fast', 'on the beat with none late: room to climb');
-  console.log('frame generation: exact camera turns, battery and heat, pacing by the clock, screen rate, one guess ahead at most, stutter-aware quality that starts afresh after a day ok');
+  console.log('frame generation: exact camera turns, battery and heat, pacing by the clock, screen rate (also with a busy chip), one guess ahead at most, a refresh each for real and made frames by the chip\'s times, late made frames dropped, stutter-aware quality that starts afresh after a day ok');
 }
 
 // gs.props on WebGPU: each copy keeps its slot in the drawn list while it stays in view (three's motion,

@@ -26,6 +26,7 @@ const MUTANTS = [
   ['challenge: forged one accepted', 'workers/hearts/src/session.js', "if (!equal(mac, await hmac(secret, concat(enc.encode('c:'), body)))) return false;", '', worker],
   ['challenge: reused one accepted', 'workers/hearts/src/index.js', "if (!used.meta.changes) return json(req, { error: 'challenge already used' }, 400);", '', worker],
   ['ENFORCE: hearts without a pass accepted', 'workers/hearts/src/index.js', "else if (env.ENFORCE === 'on') return json(req, { error: 'app not verified', session: true }, 401);", '', worker],
+  ['D1 reads: kept answers worked out again every time', 'workers/hearts/src/kept.js', 'if (row && row.at <= now && now - row.at < ttl * 1000) return { text: row.body, at: row.at };', '', worker],
   ['scores: too-short round accepted', 'workers/hearts/src/scores.js', "if (secs < MIN_SECS) return 'round too short';", '', worker],
   ['scores: round longer than the gap accepted', 'workers/hearts/src/scores.js', "if (last && now - last.at + SLACK_MS < secs * 1000) why =", 'if (false) why =', worker],
   ['scores: too-fast scoring accepted', 'workers/hearts/src/scores.js', "if (rate && score > rate * Math.max(secs, 1) + (goal || 0)) return 'scored too fast';", '', worker],

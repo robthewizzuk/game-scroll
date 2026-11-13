@@ -1617,8 +1617,9 @@ export class GpuChain {
     // last touches, so the refreshes in between can show made frames (framegen.js), a still scene can be
     // shown again without drawing it, and frame generation can come and go without rebuilding the chain.
     // fg: the generator; sched: where the refreshes since the newest real frame stand; fgWin: how often a
-    // refresh between real frames didn't come; still: the still-picture check
-    this.fg = null; this.sched = null; this.fgMode = null; this.fgWin = { real: 0, missed: 0 }; this.still = null; this.lastShown = null;
+    // refresh between real frames didn't come, and how many made frames were dropped as late; realDone: when the
+    // chip finishes the newest real frame (sent()); cost: the chip's time for a real and a made frame (hd3d.js); still: the still-picture check
+    this.fg = null; this.sched = null; this.fgMode = null; this.fgWin = { real: 0, missed: 0, made: 0, dropped: 0 }; this.realDone = null; this.cost = null; this.still = null; this.lastShown = null;
     this.warp = uniform(new Matrix3()); this.aim = null; this.aimBase = newPose(); this.aimAt = -1e9;
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
@@ -1934,13 +1935,19 @@ export class GpuChain {
 
   /* ---------- the game on screen: real frames, made frames, still frames ---------- */
   // Each real frame is drawn into a picture (SGSR 2's own, or one of ours) and shown by a copy that adds
-  // the last touches. With frame generation (o.fg: { mode, reset, jd, jit, steps, hz }), every refresh
-  // shows a moment on an even beat: t = 1 + (k - D) / gap, k refreshes after the newest real frame, which
-  // came gap refreshes after the last one. blend shows each moment D refreshes late, so every moment is
-  // between two real frames (D = 1 at twice the game's rate, 2 at three times...); ahead (D = 0) shows
-  // the newest real frame on its own refresh and guesses past it after. That covers two, three or four
-  // refreshes per real frame, and a screen that isn't a whole multiple (60 fps on 90 Hz: one or two).
-  // The refreshes between are the ones the feed skips (src/main.js, speed.between).
+  // the last touches. With frame generation (o.fg: { mode, pace, quick, parts, cost, reset, jd, jit, steps, hz }),
+  // every refresh shows a moment on an even beat: t = 1 + (k - D) / gap, k refreshes after the newest real
+  // frame, which came gap refreshes after the last one. blend shows each moment D refreshes late, so every
+  // moment is between two real frames; ahead (D = 0) shows the newest real frame on its own refresh and
+  // guesses past it after. That covers two, three or four refreshes per real frame, and a screen that isn't
+  // a whole multiple (60 fps on 90 Hz: one or two). The refreshes between are the ones the feed skips
+  // (src/main.js, speed.between).
+  // blend's pace: 'after' (D = 1 at twice the game's rate, 2 at three times...) makes a frame on the real
+  // frame's own refresh, so that refresh holds both (the least delay, for a phone with room for both);
+  // 'first' (D = the refreshes per real frame) shows the last real frame on that refresh and makes every
+  // frame on the refreshes between, so no refresh holds more than one frame's work, a refresh later. A
+  // refresh's picture reaches the screen only once all the work sent in it is done (one queue on the
+  // chip), so what counts is the work in each refresh, not in each pair.
   realFrame(o, f) {
     const r = this.r, sp = this.sp, fgo = o.mrt ? o.fg : null, cam = this.cam;
     if (!fgo && this.fg?.frames) { this.fg.reset(); this.sched = null; }
@@ -1970,7 +1977,7 @@ export class GpuChain {
     const fg = this.fg ||= new FrameGen(r);
     const mode = fgo.mode === 'ahead' ? 'ahead' : 'blend';
     if (fgo.reset || mode !== this.fgMode) { fg.reset(); this.sched = null; }
-    this.fgMode = mode;
+    this.fgMode = mode; fg.parts = !!fgo.parts; fg.U.quick.value = fgo.quick === false ? 0 : 1; this.cost = fgo.cost || null; this.drop = fgo.drop !== false;
     const vel = sp.getTexture('velocity');
     this.U.gk.value = vel.image.width / o.fw;
     // (the picture is tone mapped and in sRGB by now: in 0..1 unless the screen is HDR, where it goes past white)
@@ -1982,7 +1989,8 @@ export class GpuChain {
     let gap = S ? Math.round((o.now - S.at) / ms) : 0;
     if (!(gap >= 1 && gap <= 6)) gap = Math.max(1, Math.round(steps));
     if (S) { this.fgWin.real++; if (S.k < gap - 1) this.fgWin.missed++; }   // refreshes in that gap showed nothing new
-    this.sched = { at: o.now, ms, gap, k: 0, D: mode === 'blend' ? Math.max(1, Math.ceil(steps - .01) - 1) : 0 };
+    const n = Math.max(1, Math.ceil(steps - .01)), first = mode === 'blend' && fgo.pace === 'first';
+    this.sched = { at: o.now, ms, gap, k: 0, first, D: mode === 'ahead' ? 0 : first ? n : Math.max(1, n - 1) };
     this.owe = true;
     // fresh aim: where the input pointed the camera for this frame (a later change is the finger's own)
     const base = this.aim && fg.ready ? this.aim() : null; if (base) copyPose(base, this.aimBase);
@@ -1992,7 +2000,8 @@ export class GpuChain {
   showAt(k) {
     const S = this.sched, fg = this.fg, t = 1 + (k - S.D) / S.gap;
     if (!fg.ready || Math.abs(t - 1) < .02) { this.showFrame(this.lastColor, 1); return 'real'; }
-    if (t < .02) { this.showFrame(fg.prev, 0); return 'real'; }
+    // (first: the real frame's own refresh only ever shows the last real frame, even after a late one)
+    if (t < .02 || (S.first && k === 0)) { this.showFrame(fg.prev, 0); return 'real'; }
     if (t > 2.6) return false;   // too far past the newest to guess: the screen keeps what it has
     fg.make(t); this.showFrame(fg.output, t); return 'made';
   }
@@ -2005,14 +2014,43 @@ export class GpuChain {
   between(last = true, now = null) {
     const S = this.sched; if (!S || !this.fg) return false;
     S.k = refreshesSince(S, now);
+    // a made frame that can't be ready for the refresh after this one (the chip still on the real frame) is
+    // dropped: the screen keeps what it shows, and the next real frame isn't held up behind it
+    if (this.drop && this.dueMade(S) && this.late(now)) { this.fgWin.dropped++; this.drops = (this.drops || 0) + 1; return false; }
     const shown = this.showAt(S.k);
+    if (shown === 'made') this.fgWin.made++;
     if (last && this.owe) { this.fg.keep(); this.owe = false; }
     return shown;
   }
+  // the moment due at refresh S.k is one to make (not the newest or the last real frame, nor too far past to guess)
+  dueMade(S) { const t = 1 + (S.k - S.D) / S.gap; return this.fg.ready && Math.abs(t - 1) >= .02 && t >= .02 && t <= 2.6 && !(S.first && S.k === 0); }
+  /**
+   * Whether a frame made now would miss the next refresh: the chip hasn't finished the newest real frame (sent()),
+   * and by the chip's times (this.cost, ms: { real, made }) it won't be free in time to make one too. Without the
+   * chip's times (a phone that doesn't tell them) nothing is dropped: hd3d.js's miss check decides.
+   */
+  late(now) {
+    const d = this.realDone, c = this.cost;
+    if (!d || d.done || now == null || !(c?.real > 0) || !(c.made > 0)) return false;
+    const free = Math.max(now, d.sent, d.start + c.real);
+    return free + c.made > now + d.rf * .9;
+  }
+  /** After a real frame's work is all sent (drawGPU's end): start is when its drawing began, rf the screen's refresh in ms. */
+  sent(start, rf) {
+    const dev = this.r.backend?.device; if (!dev?.queue?.onSubmittedWorkDone || !this.sched) { this.realDone = null; return; }
+    const d = this.realDone = { start, sent: performance.now(), rf, done: false };
+    dev.queue.onSubmittedWorkDone().then(() => { d.done = true; }, () => { d.done = true; });
+  }
   /** Shows the last real frame again (a still scene that isn't drawn this refresh). */
   showLast() { if (!this.lastColor) return false; this.warp.value.identity(); this.show(this.lastColor); return true; }
-  /** How often, out of the last real frames, the refresh between them didn't come (0..1), then starts counting again. */
-  missRate() { const w = this.fgWin, m = w.real ? w.missed / w.real : 0; w.real = w.missed = 0; return m; }
+  /**
+   * Since it was last asked: miss, how often out of the real frames the refresh between them didn't come; dropped,
+   * the share of the frames due to be made that were dropped as late (both 0..1). Then starts counting again.
+   */
+  missRate() {
+    const w = this.fgWin, out = { miss: w.real ? w.missed / w.real : 0, dropped: w.made + w.dropped ? w.dropped / (w.made + w.dropped) : 0 };
+    w.real = w.missed = w.made = w.dropped = 0; return out;
+  }
   // a frame onto the screen; with fresh aim (this.aim: the camera's pose now, from the newest input), turned
   // from the camera it was made for (the moment t) to where the camera points now. Only while the input is
   // turning the camera between real frames (a finger looking round, the phone turning in AR): a turn the

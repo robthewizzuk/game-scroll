@@ -9,6 +9,9 @@
 // --kinds shadow,scroll,cut: what the game's motion doesn't describe (the optical flow's cases) and a cut.
 // --kinds copies: things drawn as gs.props copies, changing detail level at the newest real frame.
 // --kinds shapes: blend shapes (morph targets) on still things, one held, one coming and going.
+// --query '&quick=0': without the quick way for easy tiles (each line says how many tiles took it: "% quick").
+// --query '&bench=9': also times one more made frame between the same pair, 9 times (the middle one is told).
+// --query '&parts=1': each step of a made frame sent as its own pass, as the phone test tour times them.
 //   node scripts/framegen-test.cjs --check [--save]
 // The quality check the PR check runs when frame generation's code changes: every suite below, each
 // scene no worse than scripts/framegen-test/baseline.json (and better than repeating a frame). --save
@@ -78,7 +81,7 @@ const slack = (now, was) => now > was * 1.1 + .1;
       if (k === 'cut' && (f.error > rp.error + .5 || f.broken > rp.broken + .5)) why = 'a cut mixed two scenes';
       if (check && !save && was && (slack(f.error, was.error) || slack(f.broken, was.broken))) why = `worse than the baseline (${was.error} / ${was.broken}%)`;
       if (why) bad++;
-      console.log(`  ${k.padEnd(13)} framegen ${String(f.error).padStart(5)} / ${String(f.broken).padStart(5)}%   repeat ${String(rp.error).padStart(5)} / ${String(rp.broken).padStart(5)}%` + (s.mix ? `   mix ${String(s.mix.error).padStart(5)} / ${String(s.mix.broken).padStart(5)}%` : '') + `   ${s.ms} ms` + (why ? `   FAIL: ${why}` : ''));
+      console.log(`  ${k.padEnd(13)} framegen ${String(f.error).padStart(5)} / ${String(f.broken).padStart(5)}%   repeat ${String(rp.error).padStart(5)} / ${String(rp.broken).padStart(5)}%` + (s.mix ? `   mix ${String(s.mix.error).padStart(5)} / ${String(s.mix.broken).padStart(5)}%` : '') + `   ${s.ms} ms` + (s.bench != null ? ` (one more: ${s.bench} ms)` : '') + (s.easy != null ? `   ${s.easy}% quick` : '') + (why ? `   FAIL: ${why}` : ''));
     }
     if (errs.length) console.log('  console:\n    ' + [...new Set(errs)].slice(0, 12).join('\n    '));
     if (shots) { fs.mkdirSync(shots, { recursive: true }); for (const [k, u] of Object.entries(res.shots)) fs.writeFileSync(path.join(shots, k + '.png'), Buffer.from(u.split(',')[1], 'base64')); console.log('shots in', shots); }

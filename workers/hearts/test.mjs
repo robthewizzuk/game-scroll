@@ -18,6 +18,7 @@ import { cleanBatch } from './src/stats.js';
 import { sharePage, shareGame, idFromPath } from './src/sharepage.js';
 import { cleanPerf, perfPage, perfReport } from './src/perf.js';
 import { plausible, cleanSecs } from './src/scores.js';
+import { kept, left, forget } from './src/kept.js';
 
 x509.cryptoProvider.set(crypto);
 const ok = msg => console.log('  ✓ ' + msg);
@@ -171,6 +172,34 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   assert.match(one, /Game Scroll performance: Mini Golf/); assert.match(one, /21:34 to 21:44/); assert.ok(!one.includes('?game='));
   assert.match(one, /<td class="n warn">hot 75%<\/td>/); assert.match(one, /<td class="n mute">–<\/td>/); assert.match(one, /game file aaaaaaaa \(current\)/);
   ok('perf report page escapes reported text, flags slow games and says when, on which build and game file, and how hot the phone was');
+}
+
+/* ---------- answers kept for every location ---------- */
+{
+  // a stand-in for D1 that knows the one table
+  const rows = new Map(), reads = [];
+  const db = { prepare: sql => ({ bind: (...a) => ({
+    first: async () => { reads.push(a[0]); return rows.get(a[0]) || null; },
+    run: async () => {
+      if (/^DELETE FROM snapshots WHERE at < \?1$/.test(sql)) { for (const [k, r] of rows) if (r.at < a[0]) rows.delete(k); }
+      else { assert.match(sql, /INSERT INTO snapshots/); rows.set(a[0], { at: a[1], body: a[2] }); }
+      return { meta: {} }; } }) }) };
+  let made = 0;
+  const make = async () => 'answer ' + ++made, t = 1_000_000;
+  assert.deepEqual(await kept(db, 'report', 300, make, t), { text: 'answer 1', at: t });
+  assert.deepEqual(await kept(db, 'report', 300, make, t + 299_000), { text: 'answer 1', at: t }, 'another location gets the kept answer');
+  assert.equal(made, 1);
+  assert.deepEqual(await kept(db, 'report', 300, make, t + 300_000), { text: 'answer 2', at: t + 300_000 }, 'worked out again once it is old');
+  assert.equal((await kept(db, 'report:mini-golf', 300, make, t + 300_000)).text, 'answer 3', 'each key is kept apart');
+  reads.length = 0;
+  assert.equal((await kept(db, 'report', 0, make, t + 300_000)).text, 'answer 4', 'tests keep nothing');
+  assert.equal(reads.length, 0); assert.equal(rows.get('report').body, 'answer 2');
+  const big = 'x'.repeat(2_000_000);
+  assert.equal((await kept(db, 'big', 300, async () => big, t)).text, big); assert.ok(!rows.has('big'), 'too big for a D1 row: served, not kept');
+  assert.equal(left(300, t, t + 100_000), 200); assert.equal(left(300, t, t + 400_000), 1);
+  await forget(db, t + 300_000 + 86_400_000); assert.deepEqual([...rows.keys()], ['report', 'report:mini-golf'], 'a day later, only what was asked for since is kept');
+  await forget(db, t + 300_001 + 86_400_000); assert.equal(rows.size, 0);
+  ok('expensive answers are worked out once and kept for every location, for as long as asked');
 }
 
 /* ---------- sessions ---------- */
@@ -403,6 +432,8 @@ await run({}, async url => {
   assert.match(r.headers.get('content-type'), /text\/html/); assert.match(await r.text(), /TypeError: boom/);
   r = await post(url, '/perf', { device: A, games: 'x' }); assert.equal(r.status, 400);
   ok('perf reports add up per game and phone, and show on the report page');
+  r = await fetch(url + '/robots.txt'); assert.equal(r.status, 200); assert.match(await r.text(), /User-agent: \*\nDisallow: \//);
+  ok('search engines are kept off the API');
 
   // When, and on which build: an old build reports an error, then a newer build plays the same game without it.
   const C = 'test-device-c-' + run_, other = { 'CF-Connecting-IP': IP + '.2' }, g2 = 'when-game-' + run_, phone = 'Fold-' + run_;

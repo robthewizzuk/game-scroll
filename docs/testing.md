@@ -291,34 +291,44 @@ counts, the stage, and that the feed comes back as it was. A new detail system g
 ### Frame generation on a phone
 
 Under **Play**, **Frame generation** flies four of those scenes (the town, the square, the forest and the
-yard: houses and shadows, people, thin leaves, smoke and fire) with their system on, four ways each:
+yard: houses and shadows, people, thin leaves, smoke and fire) with their system on, five ways each:
 
 - as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone),
 - half the screen's rate drawn and nothing made,
-- half drawn with the refreshes between made by blending between the last two drawn frames,
+- half drawn with the refreshes between blended as before (each made frame on its real frame's refresh,
+  every tile the full way, none dropped: `HD.fgPace = 'after'`, `HD.fgQuick = false`, `HD.fgDrop = false`),
+- half drawn with the refreshes between blended as now (paced by the chip's times, easy tiles the quick
+  way, a made frame that would come late dropped),
 - half drawn with the refreshes between guessed ahead of the newest.
 
 Each run is paced the way the app paces a game (`src/main.js` `frame()`: a real frame on a steady beat,
 and `speed.between` on the refreshes between). Frame generation is forced on or off for the run whatever
 Settings say (`speed.forceFrameGen`), and the screen is asked for the rate a game drawn that way would get
-(`speed.standIn`). About 8 minutes at 20 seconds a run.
+(`speed.standIn`). Each step of a made frame is timed as a pass of its own (`HD.fgParts`), so the report
+says where a made frame's time goes. About 10 minutes at 20 seconds a run.
 
 ```
 SQUARE · crowds · 300 people and dogs walking, running and standing in a square · made in 0.4 s
   120 drawn, none made       112 pictures a second · worst 1% 71 · longest 25 ms · chip 8.1 ms a drawn frame (scene 4.2, …) · code 1.9 ms · 3D at 907 x 1434 · screen 120 Hz
   60 drawn, none made        60 pictures a second · … · screen 60 Hz
-  60 drawn, 60 blended       116 pictures a second (58 drawn) · … · chip 10.3 ms a drawn frame (…, compute 1.8) · …
+  60 + 60 blended before     92 pictures a second (50 drawn) · … · chip 13.8 ms a drawn frame (made frames 7.8, …) · a made frame 7.6 ms (picture 2.9, moving 2.2, …) · the made frame on the real one's refresh · …
+  60 drawn, 60 blended       116 pictures a second (58 drawn) · … · chip 10.3 ms a drawn frame (made frames 4.1, …) · a made frame 4.1 ms (…) · each frame on a refresh of its own · 81% of tiles the quick way · …
   60 drawn, 60 ahead         118 pictures a second (59 drawn) · …
-  = the frames made: 2.2 ms blended, 1.9 ms ahead of chip time for each drawn frame
+  = a made frame: 7.6 ms blended before, 4.1 ms blended, 4.0 ms ahead of chip time, against 6.0 ms for a drawn frame with the chip as busy
+  = 60 drawn, 60 blended against 60 + 60 blended before: 116 pictures a second against 92 · worst 1% 80 against 22 · a made frame 4.1 ms against 7.6
   = 60 drawn, 60 blended against 120 drawn, none made: 116 pictures a second against 112 · worst 1% 80 against 71 · 1.6 times less chip time a picture
 ```
 
 (Made-up numbers, to show the shape.) `pictures a second` counts the drawn and made frames that reached
 a refresh (a refresh that showed the same picture again isn't counted), with how many were drawn; worst
 1% and longest are of the gaps between those pictures. `chip` is the graphics chip's time for each drawn
-frame together with the frames made after it, so set against "none made" it is what the made frames
-cost; "chip time a picture" shares it among the pictures it gave. "the page got N refreshes a second"
-shows up when the phone held refreshes back because the chip was behind. On WebGL there is nothing to
+frame together with the frames made after it; "a made frame" is a made frame's own passes (moving: each
+pixel along its motion; motion: the optical flow and the tile sort, once a pair; picture: putting it
+together; holes: filling what was uncovered; keeping: the newest frame kept for the next pair). Don't
+take the difference from "none made" as the made frames' cost: a phone clocks its chip down at half
+rate, so frames drawn with none made take it longer (11.8 ms against 6.2 in the forest on the Fold).
+"chip time a picture" shares a drawn frame's time among the pictures it gave. "the page got N
+refreshes a second" shows up when the phone held refreshes back because the chip was behind. On WebGL there is nothing to
 time (frame generation is WebGPU only), and the report says so.
 
 In a test browser, `__gs.tour({ scenes: true, framegen: true, alternate: true, seconds, size, only })`
