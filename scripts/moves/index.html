@@ -7,7 +7,7 @@
 // ahead of the body the head and eyes turned and how much sooner, how long a stop took.
 //   ?acts=start,stop (default: all)   &cols=8   &cell=200x240   &view=side|three|front|back|top   &near (head and shoulders)   &gpu (WebGPU)
 //   &toward (the game says where the body is turning to: rig.update's toward)
-//   &cmp=gaze,balance (each act twice: those parts of the movement off in the row above, on in the row below)
+//   &cmp=lead,plan (each act twice: those parts of the movement off in the row above, on in the row below)
 //   &who=human|figure   &seed=3   &from=0&to=1 (the share of each act filmed)   &dbg=6 (numbers every sixth frame on the console: ALLWARN=1)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
