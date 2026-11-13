@@ -1069,19 +1069,19 @@ const PEOPLE_SPEC = (() => {
     top: { kind: 'blouse', colour: '#6b6f40', collar: null, pockets: 2, buttons: '#5a5840' }, legs: { kind: 'trousers', colour: '#5a5e37' }, feet: { kind: 'gaiters', colour: '#2b231a', gaiter: '#8a8464' },
     hat: { kind: 'beret', colour: '#3f4a2c', badge: '#b8a050' }, belt: { colour: '#7d7656', buckle: '#a09060' }, webbing: { colour: '#7d7656', y: true, pouches: 1, kind: 'big' }, pack: { kind: 'pack', colour: '#5f6238', roll: '#6a6450', hide: true } } });
   return {
-    grey: [grey({ skin: '#d2a583', hair: '#4a3626', iris: '#6c8296', stubble: .4 }), grey({ skin: '#c9997a', hair: '#2e241c', iris: '#5a4a34', stubble: .65, face: { jaw: 1.08, nose: 1.08, brow: 1.12 } }),
+    grey: [grey({ skin: '#d2a583', hair: '#4a3626', iris: '#6c8296', stubble: .45, face: { jaw: 1.1, chin: 1.06, brow: 1.08, nose: .96, lips: .92, eyes: .95 } }), grey({ skin: '#c9997a', hair: '#2e241c', iris: '#5a4a34', stubble: .65, face: { jaw: 1.15, chin: 1.04, nose: 1.08, brow: 1.2, lips: .88, eyes: .92 } }),
       grey({ skin: '#dcb394', hair: '#8a6a3c', iris: '#5f7f6a', stubble: .12, face: { jaw: .93, chin: .94, nose: .94, cheeks: .9 } })],
-    officer: [{ skin: '#d8ae8c', hair: '#3a2c20', iris: '#5a6f7a', moustache: true, stubble: .2, outfit: {
+    officer: [{ skin: '#d8ae8c', hair: '#3a2c20', iris: '#5a6f7a', moustache: true, stubble: .2, face: { jaw: 1.04, chin: 1.12, brow: 1.1, nose: 1.1, lips: .85, eyes: .92 }, outfit: {
       top: { kind: 'tunic', colour: '#3d434b', collar: '#262b31', pockets: 4, buttons: '#b0a678', straps: true, tabs: '#8a2a22', cuffs: '#262b31', band: '#d9c25a' },
       legs: { kind: 'breeches', colour: '#2f343a' }, feet: { kind: 'tall', colour: '#141210' }, hat: { kind: 'cap', colour: '#353b42', band: '#d9c25a', badge: '#c0b070' },   // (the Order's yellow on his cap too: he is the one to find)
       belt: { colour: '#3a2416', buckle: '#b0a678' }, webbing: { colour: '#3a2416', cross: true }, extras: { holster: 'left' }, gloves: { colour: '#33261a' } } }],
     // Sgt. Rook, their marksman: a camouflage smock, a knitted cap, a scarf against the tower's wind
-    rook: [{ hands: 'grip', skin: '#c79a7c', hair: '#57534c', iris: '#7a8a8a', stubble: .8, face: { jaw: 1.06, brow: 1.15, cheeks: .85, nose: 1.05 }, outfit: {
+    rook: [{ hands: 'grip', skin: '#c79a7c', hair: '#57534c', iris: '#7a8a8a', stubble: .8, face: { jaw: 1.08, brow: 1.18, cheeks: .96, nose: 1.05, lips: .88, eyes: .9 }, outfit: {
       top: { kind: 'smock', colour: '#4a4f3c', camo: ['#32372b', '#6b6551'], collar: null, pockets: 4 }, legs: { kind: 'trousers', colour: '#4a5057' }, feet: { kind: 'tall', colour: '#1f1c19' }, hat: { kind: 'wool', colour: '#3a3f38' },
       belt: { colour: '#2b2723', buckle: '#6d6c62' }, webbing: { colour: '#2b2723', pouches: 2 }, extras: { scarf: '#55584a' } } }],
-    ally: [hale({ skin: '#e0b28b', hair: '#3a2a1a', iris: '#5a4a34', stubble: .3 }), hale({ skin: '#b98a68', hair: '#1e1814', iris: '#3f3428', stubble: .5, face: { jaw: 1.05, nose: 1.1 } }), hale({ skin: '#e6bea0', hair: '#9a6a3a', iris: '#5a7a8a', stubble: .1, face: { jaw: .95, chin: .95 } })],
+    ally: [hale({ skin: '#e0b28b', hair: '#3a2a1a', iris: '#5a4a34', stubble: .5, face: { jaw: 1.12, chin: 1.08, brow: 1.12, lips: .9, cheeks: 1.03, eyes: .94 } }), hale({ skin: '#b98a68', hair: '#1e1814', iris: '#3f3428', stubble: .5, face: { jaw: 1.05, nose: 1.1, brow: 1.1, lips: .92, cheeks: 1.04 } }), hale({ skin: '#e6bea0', hair: '#9a6a3a', iris: '#5a7a8a', stubble: .1, face: { jaw: .95, chin: .95 } })],
     // Wren: a brushed camouflage smock and trousers, canvas gaiters, a knitted cap, a scarf of scrim at his neck
-    wren: [{ hands: 'grip', skin: '#d6a985', hair: '#3a2a1c', iris: '#6b7a58', stubble: .3, face: { jaw: 1.03, brow: 1.06, cheeks: .92 }, outfit: {
+    wren: [{ hands: 'grip', skin: '#d6a985', hair: '#3a2a1c', iris: '#6b7a58', stubble: .45, face: { jaw: 1.1, chin: 1.06, brow: 1.12, nose: 1.02, lips: .9, cheeks: .97, eyes: .94 }, outfit: {
       top: { kind: 'smock', colour: '#5f6742', camo: ['#3c472b', '#7b6b47'], collar: null, pockets: 4 }, legs: { kind: 'trousers', colour: '#4b4d33', camo: ['#3c472b', '#6e6444'] }, feet: { kind: 'gaiters', colour: '#2a221a', gaiter: '#6f6a4a' },
       hat: { kind: 'wool', colour: '#4a4a34', hide: false }, belt: { colour: '#5e5640', buckle: '#8a7a50' }, webbing: { colour: '#5e5640', y: true, pouches: 2 }, extras: { scarf: '#6b6a45', bag: '#545238' } } }],
   };
