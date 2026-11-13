@@ -116,6 +116,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Block worlds to dig, build and craft in | `gs.voxels` | [Voxel worlds](#voxel-worlds) |
 | Liquid you can pour, splash and fill things with, in 3D | `gs.fluid` | [Real 3D liquids](#real-3d-liquids) |
 | Smoke and fire that rise, curl, fill a room and go round things, in 3D | `gs.gas` | [Smoke and fire that flow](#smoke-and-fire-that-flow) |
+| A world too big to build before play; levels built only when the player picks them | `gs.regions` | [Big worlds in parts](#big-worlds-in-parts) |
 | Night in the game when it is night outside; the real moon; plug in to charge; headphones in | `gs.real` (SunCalc) | [The real world: sun, moon, battery, headphones](#the-real-world-sun-moon-battery-headphones) |
 
 ## What `gs` has, and what it doesn't
@@ -2738,6 +2739,66 @@ update(dt) { camp.on = lit; gas.wind.x = 1.5; gas.update(dt);
   more slowly and wider, so more smoke hangs in the box: a camp fire's box held up to nearly three times
   the smoke in 11,000 cells that it held in 290,000, and most other things up to twice. Set what a game
   decides by (`smokeAt(...) > .4`, `sees(...) < .3`) with room to spare, and play it on both.
+
+## Big worlds in parts
+
+`gs.regions.Regions` (3D): a world in parts that are made a little each frame while they are wanted and
+let go of when they are not. Use it for levels a game should build only once the player picks one (a
+campaign's missions, the inside of a house), for a world bigger than a phone can hold at once (squares of
+it made round the player as they walk, and freed behind), and for ground in tiles that are finer close by.
+
+```js
+const { Regions } = gs.regions;
+const regions = new Regions(view, { world });   // world: a gs.physics3d.World3D, if the parts make bodies
+// a named part: what it adds to the scene, the bodies it makes in `world` and what it hands r.keep() are its own
+regions.part('harbour', function* (r) {
+  view.scene.add(quay());
+  yield;                                          // the rest waits for the next frame
+  for (const p of CRATES) { r.add(prop('crate'), p); yield; }
+  const people = yield r.wait(human.ready(DOCKERS)); // background work: the part goes on once it is in
+});
+regions.part('fort', makeFort);                   // a plain function is made in one go
+// in reset(): made at once, under the loading screen; later (a menu pick): over the next frames
+regions.want(pick === 1 ? 'harbour' : 'fort');
+// squares round the player, and ground in tiles (finer close by, solid within one square)
+regions.cells({ size: 64, reach: 2, make: r => scatterTrees(r.x0, r.z0, r.size, r.seed) });
+const ground = regions.land({ height: (x, z) => 20 * gs.math.fbm(x * .004, z * .004), size: 64, reach: 5, solid: 1,
+  colour: (x, y, z, slope) => slope > .35 ? '#7a7466' : '#5c7f3a' });
+// each frame
+regions.update(dt, player.position);
+if (!regions.has('fort')) drawLoading(regions.progress);
+```
+
+- **Parts.** `part(name, make)` says how to make one; `want(...names)` says which are wanted (and no
+  others). Inside `make()` or `reset()` a wanted part is made at once, so the card's loading screen covers
+  it; after that it is made in the frame's spare time (`budget` milliseconds a frame, 3 by default), and
+  `has(name)` says when it is in. A part no longer wanted is kept for later (`keep: 1` by default: the
+  last one) while the phone has memory to spare, so picking it again is instant; short of memory it is let
+  go of at once. A part let go of while it is still being made stops.
+- **What belongs to a part.** Everything its make adds to the top of the scene (or `r.add(obj, at, parent)`
+  adds), the bodies made in `world` while it runs, and what it hands `r.keep(thing)` (anything with
+  `dispose()`, `stop()` or `remove()`, or a function). When it goes, those are taken out, and the geometry
+  and pictures that were made while it ran are freed once nothing left in the scene uses them. Materials
+  are kept: making one again would build its shader, a stall in play. `r.on(fn)` runs when it goes.
+- **Generators.** A make that is a generator function (`function*`) can `yield` between pieces; the rest
+  waits for the next frame's budget. `yield r.wait(promise)` waits for background work and hands back its
+  answer. A sculpt or a library that isn't in yet (a `human()` not sculpted on this phone) starts the part
+  again once it is in.
+- **Squares.** `cells({ size, reach, make, level })` makes the squares within `reach` of the player
+  (nearest first, then those in front), and lets go of those beyond `reach + 1`. `make(r)` gets `r.cx`,
+  `r.cz`, `r.x0`, `r.z0`, `r.size`, `r.ring` and `r.seed` (the same every time for that square, so it
+  looks the same when it comes back). With `level(ring)`, a square whose detail level changes as you near
+  it is made again and the old one stays until the new one is in.
+- **Land.** `land({ height, size, reach, segments, solid, material, colour })` is ground in tiles of
+  `size` metres from your `height(x, z)`: `segments` across for the nearest, half that for each ring out,
+  each tile's edge sloping the way its neighbour's does and a skirt below its edges so a fine and a coarse
+  tile meet without a gap; within `solid` squares it is solid in `world` (a heightfield, much lighter than
+  a mesh). `colour(x, y, z, slope)` paints it; every tile shares `material`.
+- **Memory.** Short of memory (the app's memory guard), parts kept for later are let go of, and squares
+  and land reach one square less (two when critical).
+- `ready` (every wanted part made, and the squares next to the player), `progress` (0..1), `info` (what
+  is in, and this frame's building time), `clear()` (everything let go of, made again as wanted),
+  `dispose()`.
 
 ## Buildings that come apart
 

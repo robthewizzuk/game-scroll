@@ -5263,5 +5263,99 @@ console.log('physics ok');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
 }
 
+// gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
+{
+  const THREE = await import('three');
+  const { Regions } = await import('../src/kit/regions.js');
+  const { ownedBy } = await import('../src/kit/cleanup.js');
+  const { forceMemory } = await import('../src/kit/memory.js');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(60, 1, .1, 1000); scene.add(cam);
+  const view = { scene, cam }, world = new World3D();
+  const shared = new THREE.BoxGeometry(1, 1, 1), mat = new THREE.MeshStandardMaterial();
+  const keep = new THREE.Mesh(shared, mat); scene.add(keep);   // the game's own, outside any part: never freed
+  let stopped = 0, own = null, ownTex = null, crateBody = null;
+  forceMemory(0);   // (the memory guard's own checks above leave it short)
+  const R = new Regions(view, { world, budget: 50, keep: 1 });
+  R.part('dock', function* (r) {
+    own = new THREE.Mesh(new THREE.SphereGeometry(1), new THREE.MeshStandardMaterial({ map: ownTex = new THREE.DataTexture(new Uint8Array(4), 1, 1) })); scene.add(own);
+    yield;
+    const crate = r.add(new THREE.Mesh(shared, mat), { x: 3, y: 1, z: 0 }); crateBody = world.box(crate, 1, 1, 1, { fixed: true });
+    const answer = yield r.wait(Promise.resolve(42)); r.answer = answer;
+    r.keep({ stop() { stopped++; } });
+  });
+  R.part('fort', r => { scene.add(new THREE.Mesh(shared, mat)); });
+  R.want('dock');
+  assert.ok(!R.has('dock') && !R.ready, 'want() in play: made over the next frames, not at once');
+  R.update(1 / 60); assert.ok(!R.has('dock'), 'it waits on its background work');
+  await new Promise(r => setTimeout(r, 0)); R.update(1 / 60);
+  assert.ok(R.has('dock') && R.ready && R.progress === 1 && scene.children.includes(own) && world.bodies.includes(crateBody), 'then it is made: its meshes in the scene, its body in the world');
+  const dockGeo = own.geometry; let freed = 0; dockGeo.addEventListener('dispose', () => freed++); let sharedFreed = 0; shared.addEventListener('dispose', () => sharedFreed++);
+  let texFreed = 0; ownTex.addEventListener('dispose', () => texFreed++);
+  // another part wanted: the dock is kept for later (keep: 1) while memory is fine
+  R.want('fort'); R.update(1 / 60);
+  assert.ok(R.has('fort') && R.parts.get('dock').piece?.done && scene.children.includes(own), 'keep: 1 keeps the last part for later');
+  R.want('dock'); R.update(1 / 60); assert.ok(R.has('dock') && R.parts.get('fort').piece?.done, 'wanted again: back at once, no rebuilding');
+  R.want('fort'); forceMemory(1);
+  assert.ok(!scene.children.includes(own) && !world.bodies.includes(crateBody) && stopped === 1 && freed === 1 && texFreed === 1, 'short of memory: the part kept for later is let go of (off the scene, its body out of the world, what it kept stopped, its geometry and picture freed)');
+  assert.ok(sharedFreed === 0 && scene.children.includes(keep), 'a geometry the game made outside the part, still in use, is not freed');
+  forceMemory(0);
+  // made inside make() / reset(): at once, under the card's loading screen
+  R.part('cave', function* (r) { scene.add(new THREE.Mesh(shared, mat)); yield; yield; scene.add(new THREE.Mesh(shared, mat)); });
+  ownedBy({}, () => R.want('cave'));
+  assert.ok(R.has('cave'), 'want() inside make() or reset() makes it at once');
+  // a generator spread over frames by the budget
+  const slow = new Regions(view, { budget: 0 }); let steps = 0;
+  slow.part('long', function* () { for (let i = 0; i < 5; i++) { steps++; yield; } });
+  slow.want('long'); slow.update(0); slow.update(0);
+  assert.ok(steps <= 2 && !slow.has('long'), 'a tiny budget: a step a frame (' + steps + ')');
+  for (let i = 0; i < 6; i++) slow.update(0); assert.ok(slow.has('long'), 'and it gets there');
+  // let go of while still being made: it stops
+  let ran = 0; slow.part('big', function* () { for (;;) { ran++; yield; } }); slow.want('big'); slow.update(0); slow.want('long'); const r0 = ran; slow.update(0); slow.update(0);
+  assert.equal(ran, r0, 'a part no longer wanted stops being made');
+  assert.throws(() => R.want('nowhere'), /no part called 'nowhere'/, 'an unknown part says so');
+  // squares round the player
+  const made = [], gone = [];
+  const C = new Regions(view, { budget: 1e9 });
+  const L = C.cells({ size: 10, reach: 1, make: r => { made.push(r.cx + ',' + r.cz); const m = new THREE.Mesh(shared, mat); m.position.set(r.x0, 0, r.z0); scene.add(m); r.on(() => gone.push(r.cx + ',' + r.cz)); } });
+  C.update(0, { x: 5, z: 5 });
+  assert.ok(made.length === 9 && made[0] === '0,0' && L.count === 9, 'the nine squares round the player, its own first: ' + made.slice(0, 3));
+  C.update(0, { x: 25, z: 5 });
+  assert.ok(made.includes('3,0') && !gone.includes('0,0'), 'moving on: new squares ahead; the old within reach + 1 stay');
+  C.update(0, { x: 35, z: 5 });
+  assert.ok(gone.includes('0,0') && gone.includes('1,0') === false, 'beyond reach + 1: let go of');
+  // a detail level by distance: the old stays until the new is in
+  const lv = [], D = new Regions(view, { budget: 1e9 });
+  const LL = D.cells({ size: 10, reach: 2, level: ring => ring, make: r => { lv.push(r.cx + ',' + r.cz + '@' + r.level); scene.add(new THREE.Mesh(shared, mat)); } });
+  D.update(0, { x: 5, z: 5 }); D.update(0, { x: 15, z: 5 });
+  assert.ok(lv.includes('1,0@1') && lv.includes('1,0@0'), 'a square coming closer is made again at its finer level');
+  // land in tiles
+  const H = (x, z) => 3 * Math.sin(x * .05) + 2 * Math.cos(z * .07) + .01 * x;
+  const W2 = new World3D(), G = new Regions(view, { world: W2, budget: 1e9 });
+  const land = G.land({ height: H, size: 32, reach: 2, segments: 16, solid: 1, colour: (x, y, z, slope) => slope > .3 ? '#777766' : '#55aa44' });
+  G.update(0, { x: 16, z: 16 });
+  const tiles = scene.children.filter(o => o.userData.gsLand);
+  assert.ok(tiles.length === 25 && G.ready, '25 tiles of land round the player: ' + tiles.length + ' ' + G.ready);
+  const t00 = tiles.find(t => t.name === 'land 0,0'), t10 = tiles.find(t => t.name === 'land 1,0'), t20 = tiles.find(t => t.name === 'land 2,0');
+  const P0 = t00.geometry.attributes.position, n0 = 16; let worst = 0;
+  for (let j = 0; j <= n0; j++) for (let i = 0; i <= n0; i++) { const k = j * (n0 + 1) + i; worst = Math.max(worst, Math.abs(P0.getY(k) - H(P0.getX(k), P0.getZ(k)))); }
+  assert.ok(worst < 1e-4, 'the tile is the height function at its points: ' + worst);
+  // neighbours meet: the shared edge has the same heights and normals
+  const P1 = t10.geometry.attributes.position, N0 = t00.geometry.attributes.normal, N1 = t10.geometry.attributes.normal; let gap = 0, bend = 0;
+  for (let j = 0; j <= n0; j++) { const a = j * (n0 + 1) + n0, b = j * (n0 + 1); gap = Math.max(gap, Math.abs(P0.getY(a) - P1.getY(b))); bend = Math.max(bend, Math.abs(N0.getX(a) - N1.getX(b)) + Math.abs(N0.getY(a) - N1.getY(b)) + Math.abs(N0.getZ(a) - N1.getZ(b))); }
+  assert.ok(gap < 1e-5 && bend < 1e-5, 'neighbouring tiles meet with the same heights and slopes: ' + gap + ', ' + bend);
+  assert.ok(t20.geometry.attributes.position.count < P0.count && t20.geometry.attributes.color, 'a tile two squares out is coarser, and painted');
+  W2.step(1 / 60);
+  const hit = W2.ray({ x: 20.3, y: 50, z: 13.7 }, { x: 0, y: -1, z: 0 }, 100), y0 = H(20.3, 13.7);
+  assert.ok(hit && Math.abs(hit.point.y - y0) < .15, 'the near land is solid where it stands: ' + hit?.point.y.toFixed(3) + ' vs ' + y0.toFixed(3));
+  const far = W2.ray({ x: 80, y: 50, z: 16 }, { x: 0, y: -1, z: 0 }, 100);
+  assert.ok(!far, 'land two squares out is drawn only, not solid');
+  G.update(0, { x: 200, z: 16 }); W2.step(1 / 60);
+  assert.ok(!scene.children.includes(t00) && !W2.ray({ x: 20.3, y: 50, z: 13.7 }, { x: 0, y: -1, z: 0 }, 100) && W2.ray({ x: 200.5, y: 50, z: 13.7 }, { x: 0, y: -1, z: 0 }, 100), 'left behind: the tiles go, and their ground with them; new ground where the player is');
+  for (const X of [R, slow, C, D, G]) X.dispose();
+  forceMemory(null);
+  console.log('gs.regions: parts made over frames, waits, kept for later, freed short of memory, made at once in reset(), budgets, squares round the player, detail levels, land tiles that meet and stand solid ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

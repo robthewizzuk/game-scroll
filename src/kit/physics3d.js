@@ -263,6 +263,16 @@ export class World3D {
     const g = this.make(null, R.ColliderDesc.trimesh(vertices, indices), { ...o, fixed: true, at: V() }, 'ground');
     g.parts = parts; return g;   // (where each of its meshes lies: ray() says which one it hit)
   }
+  /**
+   * Solid ground from a grid of heights (a tile of land: much lighter than ground(mesh) for it). data holds
+   * (cols + 1) × (rows + 1) heights, a row at a time: data[row * (cols + 1) + col] is the height at
+   * x + col * width / cols, z + row * depth / rows.
+   */
+  heights({ data, cols, rows, x = 0, z = 0, width, depth = width }, o = {}) {
+    const H = new Float32Array((rows + 1) * (cols + 1));
+    for (let r = 0; r <= rows; r++) for (let c = 0; c <= cols; c++) H[r + c * (rows + 1)] = data[r * (cols + 1) + c];   // (Rapier's: rows along z, a column at a time)
+    return this.make(null, R.ColliderDesc.heightfield(rows, cols, H, { x: width, y: 1, z: depth }), { ...o, fixed: true, at: V(x + width / 2, 0, z + depth / 2) }, 'ground');
+  }
   /** A flat floor at height y (endless, invisible). */
   floor(y = 0, o = {}) { return this.make(null, R.ColliderDesc.cuboid(1000, .5, 1000), { ...o, fixed: true, at: V(0, y - .5, 0) }, 'floor'); }
   /** A character controller (see Mover above): radius, height, step (tallest step it climbs), slope (degrees), at. */
