@@ -7,7 +7,7 @@
 //   lights: sun (a clear day), overcast (soft and even), lamp (a street lamp at night), indoor (a window to one side), back (the sun behind)
 //   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
 //   light:view:expr: that column's face set (expr: smile, or smile+squint, or browInnerUp.7+frown: shapes or face-capture movements, each at 1 or the amount after it)
-//   light:view:expr:pose: that column's pose too (crouch, sit, aim...; the person stands in it a moment first); views arm (the left arm from the front), legs (hips to feet, from the side) and profile (the whole person from the side)
+//   light:view:expr:pose: that column's pose too (crouch, sit, aim...; the person stands in it a moment first); pose~gesture plays a gesture held at its fullest (idle~shrug, ~hips, ~cross, ~wave, ~point); views arm (the left arm from the front), legs (hips to feet, from the side) and profile (the whole person from the side)
 //   light:view:expr:pose:dirt: and how wet, muddy, dusty or snowy (wet.8+mud.6+dust+snow: person.grime, drawn on WebGPU); views chest (the cloth close up, to see
 //   its weave), knee (the back of the left knee, its creases) and elbow (the inside of the left elbow)
 //   &weather=rain|snow (a gs.sky.Weather over the open sky: people wet or snowed on by the weather alone)
@@ -82,6 +82,7 @@ try {
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
     if (Q.has('nowet') && p.wet) p.wet.visible = false;   // (&nowet: a real face's wet film over the eyes left out)
     if (Q.has('facelight')) v.faceLight(p, { strength: +Q.get('facelight') || .5 });   // (&facelight=.5: a soft light beside the camera on the face, HDView.faceLight)
+    if (p.idle && !Q.has('idle')) p.idle.on = false;   // (a sheet wants a person held still: &idle lets them fidget and turn the head after the eyes)
     p.rig.play?.(Q.get('pose') || 'idle'); for (let i = 0; i < 30; i++) p.rig.update(1 / 30);
     if (Q.has('expr')) for (const e of Q.get('expr').split(';')) { const [k, a] = e.split(':'); p.face?.set?.(k, +a); }
     if (Q.has('mouth')) p.face?.mouth?.(+Q.get('mouth'));
@@ -91,7 +92,8 @@ try {
     for (let k = 0; k < cols.length; k++) {
       const { light, view, expr, pose, dirt } = cols[k], d = VIEW[view] || VIEW.face;
       if (p.grime) { Object.assign(p.grime, { wet: 0, mud: 0, dust: 0, snow: 0 }); for (const e of dirt.split(/[+ ]/).filter(Boolean)) { const m = /^([a-z]+)([\d.]*)$/.exec(e); p.grime[m[1]] = m[2] ? +m[2] : 1; } p.grime.step(0); }
-      if (cols.some(c => c.pose)) { p.rig.play?.(pose || Q.get('pose') || 'idle'); for (let i = 0; i < 40; i++) p.rig.update(1 / 30); }
+      if (cols.some(c => c.pose)) { const [pn, gn] = pose.split('~'); p.rig.play?.(pn || Q.get('pose') || 'idle'); p.idle?.stop();   // (pose~gesture: idle~shrug, ~cross, ~point (at a place ahead and to the right, up a little))
+        if (gn) p.idle?.gesture(gn, { hold: true, at: [-2.2, 2.1, 2.6] }); for (let i = 0; i < 40; i++) p.rig.update(1 / 30); }
       if (p.face && cols.some(c => c.expr)) { const one = e => { const m = /^([a-zA-Z]+)([\d.]*)$/.exec(e); return [m[1], m[2] ? +m[2] : 1]; };
         for (const c of cols) for (const e of c.expr.split(/[+ ]/).filter(Boolean)) p.face.set(one(e)[0], 0); for (const e of expr.split(/[+ ]/).filter(Boolean)) p.face.set(...one(e)); for (let i = 0; i < 30; i++) p.rig.update(1 / 30); }
       const len = Math.hypot(d[0], d[1], d[2]), dist = d[3];

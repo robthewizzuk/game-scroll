@@ -18,6 +18,7 @@ import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, M
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
 import { Breath, Grime } from './human-life.js';
+import { Idle } from './human-idle.js';
 import { reach } from '../characters.js';
 import { LiveFace, MOVES } from './human-face.js';
 import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams } from './human-paint.js';
@@ -678,6 +679,7 @@ export function human(o = {}) {
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
     root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
     root.breath = root.rig.breath;   // (breathing and soft flesh: it runs by itself; set breath.on = false to hold it, breath.puff for a winded one)
+    root.idle = root.rig.idle = new Idle(root, root.rig);   // (fidgets, the head after the eyes, glances, gestures: person.idle)
     // (a real face's eyeballs a hair smaller than the lids were sculpted round: the lower lid lies on the ball, and where it dipped a fraction
     // of a millimetre into it the white showed through the lid's edge as the eye turned and the iris, set back in the ball, went by)
     if (sp.face.real) root.face.eyeSize = .975;
@@ -719,6 +721,7 @@ export function human(o = {}) {
         if (!pass) { root.rig.fill(); root.updateMatrixWorld(true); }
       }
       for (const [sd, pt] of arms) closeOnThing(sd, thing, pt);   // (and the fingers round it)
+      if (root.idle) root.idle.handsBusy = 2;   // (no hand shaken out of the grip)
       return root;
     };
     // hands and feet onto things in the world: the ball of each foot, the middle of a closed hand, each limb bent to reach
@@ -736,6 +739,7 @@ export function human(o = {}) {
      */
     root.touch = (pts, { blend = 1, elbows = {}, knees = {}, palms = {}, level = 0, round = HAND.grip ? .016 : 0 } = {}) => {
       root.updateMatrixWorld(true);
+      if (root.idle && (pts.handL || pts.handR)) root.idle.handsBusy = 2;   // (no hand shaken off a rung)
       for (const [name, sd, up, low, end, at, bend] of [['handL', 'L', B.armL, B.foreL, fist.L, B.spine, elbows.L || [.45, -.5, -.25]], ['handR', 'R', B.armR, B.foreR, fist.R, B.spine, elbows.R || [-.45, -.5, -.25]],
         ['footL', 'L', B.legL, B.shinL, ball.L, B.hips, knees.L || [.14, -.3, 1]], ['footR', 'R', B.legR, B.shinR, ball.R, B.hips, knees.R || [-.14, -.3, 1]]]) {
         const pt = pts[name], k = typeof blend === 'number' ? blend : blend[name] ?? 1; if (!pt || k <= 0) continue;
