@@ -31,6 +31,12 @@ import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.mo
 /** Resolves once buildRelief() can run. */
 export const reliefReady = MeshoptSimplifier.ready;
 
+// How far past its triangle budget a surface is split before it is thinned back down to the budget. Splitting to
+// four times it, a brick wall at the cap took 3.6 s here (most of it thinning 600,000 triangles); to twice it, 1.4 s
+// for a height error an eighth bigger (7.8 mm against 6.9, a 3 cm deep wall). A surface that is all there under its
+// budget (most roofs and trunks) is split and thinned exactly as before. (Rob's Fold, 2026-11-13: the village's 60
+// surfaces took 38.5 s to build, and the phone was hot through the runs after it.)
+const SPLIT = 2;
 const KEYS = 67108864;   // (2^26: two point numbers in one map key)
 const key = (a, b) => a < b ? a * KEYS + b : b * KEYS + a;
 
@@ -101,7 +107,7 @@ function weld(V, S, nv, eps, x0, y0, z0) {
  * depth and fine as used }.
  */
 export function buildRelief({ positions, normals, uvs, index = null, extra = [], height }, o = {}) {
-  const nv0 = positions.length / 3, mid = o.mid ?? 1, maxTris = o.maxTris ?? 150000, most = maxTris * (o.thin === false ? 1 : 4);
+  const nv0 = positions.length / 3, mid = o.mid ?? 1, maxTris = o.maxTris ?? 150000, most = maxTris * (o.thin === false ? 1 : SPLIT);
   // every number of a point side by side: place, normal, UV, then the extras
   let S = 8; for (const e of extra) S += e.size;
   const nt0 = index ? index.length / 3 : nv0 / 3;
@@ -301,7 +307,9 @@ export function buildRelief({ positions, normals, uvs, index = null, extra = [],
     let ulo = Infinity, uhi = -Infinity; for (let i = 0; i < nv; i++) { const u = V[i * S + 6]; if (u < ulo) ulo = u; if (u > uhi) uhi = u; }
     const wu = .5 / Math.max(1, uhi - ulo); w.push(wu, wu); for (let k = 5; k < A; k++) w.push(.25);
     let [i2, e2] = MeshoptSimplifier.simplifyWithAttributes(idx, out, 3, attrs, A, w, null, 0, tol, ['ErrorAbsolute']);
-    if (i2.length > maxTris * 3) [i2, e2] = MeshoptSimplifier.simplifyWithAttributes(idx, out, 3, attrs, A, w, null, maxTris * 3, 3e38, ['ErrorAbsolute']);
+    // still over the budget: thinned on from there, not again from the start (the first pass's answer is within the
+    // tolerance of it, and is a fraction of its size: a capped wall's second pass went from 0.74 s to 0.26 s)
+    if (i2.length > maxTris * 3) { const [i3, e3] = MeshoptSimplifier.simplifyWithAttributes(i2, out, 3, attrs, A, w, null, maxTris * 3, 3e38, ['ErrorAbsolute']); i2 = i3; e2 += e3; }
     idx = i2; err = e2;
     // only the points still used are kept
     keep = new Int32Array(nv).fill(-1); let n = 0;

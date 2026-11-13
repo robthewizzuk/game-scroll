@@ -27,7 +27,7 @@ export const reliefOf = mesh => RELIEF.get(mesh);
 /** Raised whenever a relief arrives or is taken off (the view looks again the same frame, instead of at its next scan). */
 export const reliefNews = { n: 0 };
 
-const VERSION = 1, MEM = 96 * 1048576;
+const VERSION = 2, MEM = 96 * 1048576;   // (VERSION 2: built with relief-build.js SPLIT, so a surface kept on the phone from before is built again)
 const made = new Map();   // key -> { p (a promise of { geometry, clusters, info }), r (the same once here), t }
 let clock = 0;
 

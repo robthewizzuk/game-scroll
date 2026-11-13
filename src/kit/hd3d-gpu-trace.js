@@ -341,7 +341,7 @@ export function traceStage(ch, sp, colT, tr) {
     invProj: uniform(new Matrix4()), proj: uniform(new Matrix4()), camWorld: uniform(new Matrix4()), view: uniform(new Matrix4()), camPos: uniform(new Vector3()),
     half: uniform(new Vector2(1, 1)), nf: uniform(new Vector2(.05, 120)), focal: uniform(1),
   };
-  const L = tr.U, S = tr.S, dT = sp.getTextureNode('depth'), nT = sp.getTextureNode('normal'), R = sp.getTextureNode('gsRefl'), C = colT;
+  const L = tr.U, S = tr.S, dT = sp.getTextureNode('depth'), nT = ch.nrmN, R = sp.getTextureNode('gsRefl'), C = colT;
   const pal = texture(tr.pal);
   const zAt = q => perspectiveDepthToViewZ(dT.sample(q).r, U.nf.x, U.nf.y);   // (negative in front of the camera)
   const toUV = pv => { const c = U.proj.mul(vec4(pv, 1)), n = c.xy.div(c.w); return vec2(n.x.mul(.5).add(.5), n.y.mul(-.5).add(.5)); };
@@ -384,7 +384,7 @@ export function traceStage(ch, sp, colT, tr) {
   const rays = ch.trH = rtt(Fn(() => {
     const q = uv(), r4 = R.sample(q), out = vec4(0).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
     If(f0.r.add(f0.g).add(f0.b).greaterThan(1e-3).and(smooth.greaterThan(1 + 1 / 64 - ROUGH_MAX)), () => {
-      const vp = getViewPosition(q, dT.sample(q).r, U.invProj).toVar(), nv = normalize(nT.sample(q).xyz).toVar();
+      const vp = getViewPosition(q, dT.sample(q).r, U.invProj).toVar(), nv = normalize(nT.sample(q)).toVar();
       const wp = U.camWorld.mul(vec4(vp, 1)).xyz.toVar(), nw = normalize(U.camWorld.mul(vec4(nv, 0)).xyz).toVar();
       const rd = normalize(reflect(normalize(wp.sub(U.camPos)), nw)).toVar(), lift = max(float(.004), length(vp).mul(.0025)), ro = wp.add(nw.mul(lift)).toVar();
       const H = S.hit(ro.add(ORG), rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), did = H.element(int(2)).w.greaterThan(.5);
@@ -439,7 +439,7 @@ export function traceStage(ch, sp, colT, tr) {
     const q = uv(), c = C.sample(q), r4 = R.sample(q), out = vec3(c.rgb).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
     If(f0.r.add(f0.g).add(f0.b).greaterThan(1e-3).and(smooth.greaterThan(1 + 1 / 64 - ROUGH_MAX)), () => {
       const rough = clamp(float(1 + 1 / 64).sub(smooth), 0, 1), zc = zAt(q);
-      const vp = getViewPosition(q, dT.sample(q).r, U.invProj), nv = normalize(nT.sample(q).xyz), vd = normalize(vp).negate(), nov = clamp(dot(nv, vd), 0, 1);
+      const vp = getViewPosition(q, dT.sample(q).r, U.invProj), nv = normalize(nT.sample(q)), vd = normalize(vp).negate(), nov = clamp(dot(nv, vd), 0, 1);
       const acc = vec3(0).toVar(), cov = float(0).toVar(), ws = float(0).toVar(), top = ivec2(U.half).sub(1);
       // a traced pixel counts by how near its surface is to this one's (a ray from the wall behind says nothing about the floor)
       const tap = (px, w0) => {

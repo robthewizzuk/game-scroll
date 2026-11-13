@@ -42,9 +42,18 @@ import { own } from './cleanup.js';
 export const SOURCES = 16, SOLIDS = 8, WARM = .4, IGNITE = .3, HEAT = 2.2, BURNS_AT = 1.25, FLAME = .45, QUENCH = 7, SMOKE_MAX = 4, HEAT_MAX = 2, FUEL_MAX = 2, VMAX = 6, SHARP = .6, NEAR = .35;
 // (bits of a cell's neighbours, two a side in the order -x +x -y +y -z +z: 0 gas, 1 a wall or solid thing, 2 open air beyond the box; SOLID: the cell itself is solid)
 export const SOLID = 0x1000;
-const BUDGET = { gpu: { top: 300000, mid: 160000, low: 80000 }, cpu: { top: 12000, mid: 8000, low: 5000 } };
+// Cells by the phone's class. On the graphics chip a phone gets far fewer than a desktop's (desk): Rob's Fold (Adreno 840,
+// the fastest phone chip there is, 2026-11-13) took about 10 ms of its chip a step for 297,360 cells, two steps a frame
+// once it fell to 24 frames a second; 110,000 is about 3.5 ms a step there.
+const BUDGET = { gpu: { desk: 300000, top: 110000, mid: 50000, low: 30000 }, cpu: { top: 12000, mid: 8000, low: 5000 } };
+const PHONE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 const RATE = { gpu: 60, cpu: 30 }, JACOBI = { gpu: 24, cpu: 10 };
 const PUFFS = { top: 700, mid: 480, low: 300 }, MARCH = { top: 56, mid: 44, low: 32 };   // puffs drawn (the smaller version); steps a pixel's ray takes through the gas (WebGPU)
+// While the graphics chip takes longer than the game's frame (its own timestamps, WebGPU), the gas on it does less: the
+// pressure gets fewer rounds (down to JACOBI_LOW), each pixel's ray fewer steps (down to MARCH_LOW of them), and a frame
+// takes at most one step, so steps that fell behind are let go (the smoke runs a little slow, where catching up made the
+// frame slower still: two or three steps a frame at 24 a second). Each comes back as the chip has room again.
+const JACOBI_LOW = 12, MARCH_LOW = .65;
 
 /**
  * Ready-made gases. colour: the smoke; colour2: a second smoke colour (a source's `tint` 0..1 blends to it);
@@ -71,7 +80,7 @@ const BASE = { flame: ['#c21a05', '#ff7a12', '#ffe9a8'], soot: .5, burn: 8, curl
  */
 export const GAS = { klass: null, force: 0, twin: false, backend: '', cells: 0 };
 if (typeof window !== 'undefined' && navigator.webdriver) window.__gas = GAS;
-const budget = big => { const c = GAS.klass || phoneClass(), k = big ? 'gpu' : 'cpu', r = big || GAS.twin ? 'gpu' : 'cpu'; return { cells: GAS.force || BUDGET[k][c] || BUDGET[k].low, rate: RATE[r], jacobi: JACOBI[r], puffs: PUFFS[c] || PUFFS.low, march: MARCH[c] || MARCH.low }; };
+const budget = big => { const c0 = GAS.klass || phoneClass(), c = big && c0 === 'top' && !PHONE && !GAS.klass ? 'desk' : c0, k = big ? 'gpu' : 'cpu', r = big || GAS.twin ? 'gpu' : 'cpu'; return { cells: GAS.force || BUDGET[k][c] || BUDGET[k].low, rate: RATE[r], jacobi: JACOBI[r], puffs: PUFFS[c] || PUFFS.low, march: MARCH[c] || MARCH.low }; };
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 // its own dice (mulberry32): the same seed makes the same gas every time
 const dice = seed => { seed >>>= 0; return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
@@ -519,6 +528,7 @@ export class Gas {
     const b = budget(this.big);
     this.sim = new Sim(this, Math.min(this.want, b.cells), b.rate, this.big); this.iters = b.jacobi; this.steps = b.march;
     this.mode = this.big ? 'wait' : 'cpu'; this.waited = 0; this.pending = 0; this.acc = 0; this.t = 0; this.twin = null; this.field = null; this.fresh = true;
+    this.load = 0; this.jacobi = b.jacobi; this.march = b.march;   // (load: 0 the chip has room .. 1 it is over the game's frame: see JACOBI_LOW)
     this.puffs = new Puffs(this, b.puffs);
     this.glowAt = { x: 0, y: 0, z: 0, power: 0, stamp: -1 };
     if (view) { (view.sims ||= []).push(this); const sc = view.scene || view; sc.add?.(this.puffs.soft); sc.add?.(this.puffs.glow); }
@@ -687,14 +697,21 @@ export class Gas {
   }
 
   /* ----- the graphics chip takes over (hd3d.js gpuSwap calls this every frame the view draws) ----- */
-  gpuStep(G) {
+  // chip: the graphics chip's time for the last frames (ms, null where it is not told); budget: the game's frame (ms)
+  gpuStep(G, chip = null, budget = 0) {
     if (G && (!G.fx.gpuGas || !this.wantGpu())) G = null;
     if (G) {
       if (this.mode === 'cpu') this.resize(true);
       if (this.twin?.r !== G.r || this.twin.sim !== this.sim) { this.twin?.dispose(); this.twin = { r: G.r, sim: this.sim, ...G.fx.gpuGas(this) }; this.fresh = true; }
       this.mode = 'gpu'; this.puffs.clear();
       this.twin.show(this.draws);
-      this.twin.step(G.r, this.pending); this.pending = 0;
+      // less work while the chip is over the frame (JACOBI_LOW), eased in a few frames and out over a second or so
+      // (not while a test holds the gas against its JavaScript twin, GAS.twin: the two must take the same steps)
+      const over = chip > 0 && budget > 0 && !GAS.twin ? chip / budget : 0;
+      if (over > 1.05) this.load = Math.min(1, this.load + .1); else if (over < .85) this.load = Math.max(0, this.load - .02);
+      this.iters = 2 * Math.round((this.jacobi - (this.jacobi - JACOBI_LOW) * this.load) / 2);
+      this.steps = Math.round(this.march * (1 - (1 - MARCH_LOW) * this.load));
+      this.twin.step(G.r, over > 1 ? Math.min(1, this.pending) : this.pending); this.pending = 0;
     } else if (this.mode !== 'cpu') this.toCpu();
   }
   // (an AR view has no chain of screen passes for the volume to be drawn in: the smaller version there)
@@ -702,7 +719,7 @@ export class Gas {
   toCpu() { this.twin?.dispose(); this.twin = null; this.resize(false); }
   // the same gas at another size: the new grid takes what the old one (or its coarse copy) had there
   resize(big) {
-    const old = this.ans, had = old.steps > 0 || old.stamp > 0, b = budget(big); this.big = big; this.iters = b.jacobi;
+    const old = this.ans, had = old.steps > 0 || old.stamp > 0, b = budget(big); this.big = big; this.iters = this.jacobi = b.jacobi; this.steps = this.march = b.march;
     const S = this.sim = new Sim(this, Math.min(this.want, b.cells), b.rate, big);
     if (had && big) { S.S = new Float32Array(S.cells * 4); S.U = new Float32Array(S.cells * 4); }   // (sent up to the graphics chip, then let go: gas-gpu.js)
     if (had && old.S) for (let k = 0, c = 0; k < S.nz; k++) for (let j = 0; j < S.ny; j++) for (let i = 0; i < S.nx; i++, c++) {

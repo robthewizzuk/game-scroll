@@ -306,6 +306,8 @@ let running = null;
  * turns it into the report. scenes: true flies through the engine test scenes instead of playing games
  * (src/detail-tour.js; size and only are its options, and framegen (with alternate) times frame generation in them).
  */
+/** The engine test scenes' own module (src/detail-tour.js), for tests of its report. */
+export const scenesKit = () => import('./detail-tour.js');
 export async function runTour(driver, { ids = null, seconds = 20, full = true, sound: loud = false, plugins = true, onStep = null, onPlay = null, signal = {}, scenes = false, size = 1, only = null, framegen = false, alternate = false } = {}) {
   if (running) return running;
   if (scenes) return running = import('./detail-tour.js').then(m => m.runScenes(driver, { seconds: clamp(+seconds || 20, 1, 120), size, only, onStep, onPlay, signal, framegen, alternate })).finally(() => { running = null; });

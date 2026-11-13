@@ -190,7 +190,20 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
 // how two numbers stand to each other, in words: k times `up` when a is the bigger, `down` when b is, `same` within 5%
 const times = (a, b, up, down, same) => { if (!(a > 0 && b > 0)) return ''; const k = a / b, n = v => v.toFixed(v < 10 ? 1 : 0); return Math.abs(k - 1) < .05 ? same : k > 1 ? `${n(k)} times ${up}` : `${n(1 / k)} times ${down}`; };
 // the chip's time by pass, biggest first: " (scene 6.1, AO 2.3, upscale 1.6, bloom 1.4, shadows 1.2, rest 0.8)"
-const PASS = { scene: 'scene', shadows: 'shadows', ao: 'AO', bloom: 'bloom', upscale: 'upscale', effects: 'effects', show: 'to screen', compute: 'compute' };
+const PASS = { scene: 'scene', shadows: 'shadows', ao: 'AO', bloom: 'bloom', finish: 'finishing', upscale: 'upscale', effects: 'effects', show: 'to screen', compute: 'compute' };
+// The passes that do the same work in every run of a scene, whatever its system does: finishing the small picture, the
+// upscale, the bloom and the last pass onto the screen (a fixed number of pixels each). A phone's chip runs at very
+// different speeds from one run to the next (slower as it gets hot, and slower again while it waits on the code), and
+// these slow down with it, so the chip's time for a frame measured against them is the frame's work at one speed.
+// (Rob's Fold, 2026-11-13: bloom and the upscale kept to the same share of each other in all 27 runs while both took
+// from one to four times as long.)
+const STEADY = ['finish', 'upscale', 'bloom', 'show'];
+/** How many of these passes' worth of time a frame took (null where the chip's time by pass is not told). */
+export function chipWork(m) {
+  if (m?.chip == null || !m.chipBy) return null;
+  let s = 0; for (const k of STEADY) s += m.chipBy[k] || 0;
+  return s > .2 ? m.chip / s : null;
+}
 function chipBy(by) {
   if (!by) return '';
   const all = Object.entries(by).filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]);
@@ -245,8 +258,12 @@ function sceneLines(s, hz) {
     if (!(a?.frames && b?.frames)) continue;
     const capped = Math.min(a.fps, b.fps) > hz * .95;
     const say = [capped ? `both keep the screen's ${hz} Hz` : times(b.fps, a.fps, 'the frame rate', 'slower', 'the same frame rate')];
-    if (a.chip != null && b.chip != null) say.push(times(a.chip, b.chip, 'less chip time', 'more chip time', 'the same chip time'));
-    else if (capped) say.push('this phone does not tell the chip\'s time, so the triangles are what is left to go by');
+    if (a.chip != null && b.chip != null) {
+      say.push(times(a.chip, b.chip, 'less chip time', 'more chip time', 'the same chip time'));
+      // the same at one speed of the chip: what the system itself costs or saves, with the phone's slowing down taken out
+      const wa = chipWork(a), wb = chipWork(b), sa = wa && a.chip / wa, sb = wb && b.chip / wb;
+      if (wa && wb) say.push(times(wa, wb, 'less chip work', 'more chip work', 'the same chip work') + (Math.abs(sb / sa - 1) > .15 ? ` (the chip ran ${times(sb, sa, 'slower', 'faster', '')} in this run: go by the work)` : ''));
+    } else if (capped) say.push('this phone does not tell the chip\'s time, so the triangles are what is left to go by');
     if (!a.uncounted && !b.uncounted) say.push(times(a.tris, b.tris, 'fewer triangles', 'more triangles', 'the same triangles'));
     lines.push(`  = ${words || `${b.name} against ${a.name}`}: ${say.filter(Boolean).join(' · ')}`);
   }
@@ -264,6 +281,6 @@ export function scenesText(t) {
     lines.push('\nEach scene is flown through with its system on, at a pinned quality, four ways: as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone); half the screen\'s rate drawn and nothing made; and half drawn with the refreshes between made, blended (between the last two drawn frames) and then ahead (guessed past the newest). Frame generation is forced on or off for each run whatever Settings say, and the screen is asked for the rate a game drawn that way would get. pictures a second: the drawn and made frames that reached a refresh (a refresh that showed the same picture again is not counted), with how many of them were drawn; worst 1% and longest are of the gaps between them. chip: the graphics chip\'s time for each drawn frame with the frames made after it, where the phone tells it, so set against "none made" it is what the made frames cost; chip time a picture shares it among the pictures it gave. "the page got": fewer refreshes than the screen\'s rate, where the phone held them back because the chip was behind.');
     return lines.join('\n');
   }
-  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, upscale the pass that makes the full-size picture, effects the other passes, to screen the last one. code: the time the engine\'s own code took to draw a frame. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
+  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
   return lines.join('\n');
 }

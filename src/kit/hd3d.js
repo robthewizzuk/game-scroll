@@ -175,8 +175,9 @@ function startGame(def) {
 // was made after it. (One read at a time: the answer comes back a frame or two later.)
 // HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
 // shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'bounce light', 'depth of field',
-// 'motion blur', 'screen effects' (gs.fx3d's), upscale (SGSR), effects (the other passes drawn into pictures of
-// their own), show (the last pass, onto the screen), compute }, in milliseconds a frame. three tells its
+// 'motion blur', 'screen effects' (gs.fx3d's), finish (under an upscaler: the small picture finished, with the
+// ambient occlusion and bloom laid on, graded and tone mapped), upscale (SGSR's own passes), effects (the other
+// passes drawn into pictures of their own), show (the last pass, onto the screen), compute }, in milliseconds a frame. three tells its
 // inspector as each pass begins (the name its time comes back under, what is drawn and into which picture),
 // and partOf() files it.
 const GT = { n: 0, busy: false }, PARTS = new Map();
@@ -184,7 +185,7 @@ function partOf(o, rt) {
   if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
   if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
   const n = o?.material?.name || '';
-  return n === 'GTAO' ? 'ao' : n.startsWith('SGSR') ? 'upscale' : n === 'Shadow map copy' ? 'shadows' : n.startsWith('SSRNode') ? 'reflections' : n === 'SSGI' ? 'bounce light' : rt ? 'effects' : 'show';
+  return n === 'GTAO' ? 'ao' : n === 'SGSR2 out' ? 'show' : n.startsWith('SGSR') ? 'upscale' : n === 'Shadow map copy' ? 'shadows' : n.startsWith('SSRNode') ? 'reflections' : n === 'SSGI' ? 'bounce light' : rt ? 'effects' : 'show';
 }
 function gpuParts(r) {
   const ins = r.inspector; if (!ins || ins.gsParts) return; ins.gsParts = true;
@@ -3020,7 +3021,9 @@ function gpuSwap(v, G) {
       o.visible = false; ud.gpuTwin.group.visible = ud.gpuWasVisible;
     } else if (ud.gpuHid) { o.visible = ud.gpuWasVisible; ud.gpuHid = false; ud.gpuTwin?.group.removeFromParent(); }
   }
-  for (const s of v.sims || []) s.gpuStep(G);   // simulations with a compute twin (gs.outdoors FloodWater)
+  // simulations with a compute twin (gs.outdoors FloodWater, gs.gas): with the chip's time and the game's frame, so they can do less while the chip is behind
+  const chipMs = HD.info.gpuMs, frameMs = 1000 / (Q.game ? fpsFor(Q.game) : 60);
+  for (const s of v.sims || []) s.gpuStep(G, chipMs, frameMs);
   for (const p of v.parts) {
     if (G) {
       const tw = p.gpuTwin?.r === G.r ? p.gpuTwin : (p.gpuTwin = { r: G.r, ...(p.makeTwin ? p.makeTwin(G) : G.fx.gpuParticles(p)) });
