@@ -12,7 +12,13 @@
 //     turning quickly it opens with the foot on the side it turns to (the other would cross in front of it), and steps quicker;
 //   - a leg the pose puts down on its knee (a kneel) is not stood on: it comes round with the body on its knee;
 //   - the pose itself changing from one way of standing to another (standing easy to a kneel, a kneel to a crouch)
-//     moves the feet as it draws them: they are not left behind to be stepped up a foot at a time afterwards.
+//     moves the feet as it draws them: they are not left behind to be stepped up a foot at a time afterwards;
+//   - setting off from standing, the foot that bears less of the weight (or the one on the side it turns to) steps
+//     first, after a moment in which the weight goes over the other, and the first step is a short one;
+//   - coming to a stop, the body is a weight that will come to rest a little ahead (at the rate it is slowing): the
+//     foot in the air comes down there as a braking step, where it will stand at rest, and the other is brought up
+//     beside it straight after, so a walker stops in two steps and stands square, not with a shuffle a moment later;
+//   - turning hard, a foot is put down already turned some way into the turn, so it is not wrung round under the body.
 // The Rig calls this by itself for poses that stand on the ground (the lifelike walks and runs, and standing easy;
 // rig.add(name, fn, { ground: true, stance }) for your own), when it was made with the `body` the game moves
 // (gs.models.human is). rig.steps = false turns it off. It does nothing while the body is carried along standing
@@ -25,25 +31,32 @@ const _A = new Vector3(), _K = new Vector3(), _F = new Vector3(), _d = new Vecto
 const _qp = new Quaternion(), _qu = new Quaternion(), _ql = new Quaternion(), _qe = new Quaternion(), _r = new Quaternion(), _r2 = new Quaternion(), _qi = new Quaternion(), _m = new Matrix4();
 const UP = new Vector3(0, 1, 0), _h = new Vector3(), _c = new Vector3();
 const STEP = .13, TURN = .42;   // standing: how far (metres on a 1.8 m person) or how far round (radians) a foot may be from its place before it steps
+const STAND = [[.105, .01], [-.105, .01]];   // where each foot stands at rest, from the body (to its left, ahead; metres on a 1.8 m person) until it has been seen standing
+const G = 9.81, HIPS = .95;   // the body as a weight on legs (for where it would come to rest): gravity, and how high the weight rides
 
 export class Stride {
   constructor(rig, body) {
     const P = rig.parts;
     this.rig = rig; this.body = body; this.on = false; this.a = 0;
     const k = (rig.height || 1.8) / 1.8; this.heel = [0, -.085 * k, -.06 * k]; this.ball = [0, -.085 * k, .13 * k];   // the two points of its sole a foot stands on, from its ankle
-    this.legs = [['legL', 'shinL', 'footL'], ['legR', 'shinR', 'footR']].map(([u, l, e]) => P[u] && P[l] && P[e] ? { up: P[u], lo: P[l], end: P[e], F: new Vector3(), T: new Vector3(), Q: new Quaternion(), down: true, landed: false, sw: 0, on: 0, Cx: 0, Cz: 0, hx: 0, hz: 0, bx: 0, bz: 0, fy: 0, yaw0: 0, dyaw: 0, dy0: 0, ox: 0, oz: 0, u0: 0, hop: 0, t: 0, dur: .25, lift: 0, fx: 0, fz: 0, need: 0, len: 1, lx: 0, lz: 0, dl: 0, df: 0, kd: 0 } : null);
+    this.legs = [['legL', 'shinL', 'footL'], ['legR', 'shinR', 'footR']].map(([u, l, e]) => P[u] && P[l] && P[e] ? { up: P[u], lo: P[l], end: P[e], F: new Vector3(), T: new Vector3(), Q: new Quaternion(), down: true, landed: false, sw: 0, on: 0, Cx: 0, Cz: 0, hx: 0, hz: 0, bx: 0, bz: 0, fy: 0, yaw0: 0, dyaw: 0, dy0: 0, ox: 0, oz: 0, u0: 0, hop: 0, t: 0, dur: .25, lift: 0, fx: 0, fz: 0, need: 0, len: 1, lx: 0, lz: 0, dl: 0, df: 0, kd: 0, okl: 0, okf: 0, goal: null } : null);
     this.ok = !!(P.hips && this.legs[0] && this.legs[1]);
     this.px = this.pz = this.yaw = this.vx = this.vz = this.w = 0; this.ox = this.oz = this.sink = 0; this.rest = 0; this.cool = 0; this.last = 1; this.hold = false; this.fresh = 0; this.go = false; this.turned = 0; this.walked = 0; this.chg = 0;
+    this.vf = 0; this.ac = 0; this.sp = 0; this.ap = 0; this.sk = 0; this.rx = 0; this.rz = 0; this.cp = 0; this.after = 9; this.was = false; this.stand = STAND.map(a => a.slice());
+    /** false: no planned starts, stops and turning steps (the walk as drawn decides where the feet come down, as before). */
+    this.plan = true;
   }
   /** The feet as they are now: [{ down, landed (true on the update it touches the ground: a footstep) }, ...], left then right. */
   get feet() { return this.legs; }
   // put down where it is: on its ball if the toes point down, else on its heel (a flat foot stands on its heel)
-  lock(f, yaw) { f.down = true; f.sw = 0; f.on = f.fy < -.004 ? 1 : 0; f.Cx = f.T.x + (f.on ? f.bx : f.hx); f.Cz = f.T.z + (f.on ? f.bz : f.hz); f.yaw0 = yaw; f.dyaw = 0; }
+  // (dy: put down turned that far from the way the body faces, into a turn)
+  lock(f, yaw, dy = 0) { f.down = true; f.sw = 0; f.on = f.fy < -.004 ? 1 : 0; const c = Math.cos(dy), s = Math.sin(dy), ox = f.on ? f.bx : f.hx, oz = f.on ? f.bz : f.hz; f.Cx = f.T.x + ox * c + oz * s; f.Cz = f.T.z + oz * c - ox * s; f.yaw0 = yaw + dy; f.dyaw = dy; }
   // lifted for the walk's own swing from wherever it stood: it makes up the difference on its way, and is lifted a little more the more it has to make up
   // (a foot left behind as a walk slows would otherwise be dragged home along the ground)
   swing(f, u, sc) { f.down = false; f.sw = 1; f.u0 = Math.min(.9, Math.max(0, u)); f.ox = f.T.x - f.F.x; f.oz = f.T.z - f.F.z; f.dy0 = f.dyaw; f.hop = Math.min(.05 * sc, .25 * Math.hypot(f.ox, f.oz)); }
   // picked up, to be put down where the pose has it by the time it lands (dur seconds on); the further it has to go the higher it is lifted
-  step(f, dur, sc) { f.down = false; f.sw = 2; f.fx = f.T.x; f.fz = f.T.z; f.t = 0; f.dur = dur; f.lift = (.03 + .05 * Math.min(1, Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) / sc / .4)) * sc; f.dy0 = f.dyaw; }
+  // (to: [x, z] where to put it down, in place of where the pose has it)
+  step(f, dur, sc, to = null) { f.down = false; f.sw = 2; f.fx = f.T.x; f.fz = f.T.z; f.t = 0; f.dur = dur; f.goal = to; f.lift = (.03 + .05 * Math.min(1, Math.hypot(f.T.x - (to ? to[0] : f.F.x), f.T.z - (to ? to[1] : f.F.z)) / sc / .4)) * sc; f.dy0 = f.dyaw; }
   /** Lets go of the feet at once (what rig.steps = false does). */
   off() { this.on = false; this.a = 0; }
   reset(yaw) { for (const f of this.legs) { f.T.copy(f.F); this.lock(f, yaw); f.landed = false; } this.ox = this.oz = this.sink = 0; this.rest = 0; }
@@ -74,6 +87,9 @@ export class Stride {
     if (jump) { this.vx = this.vz = this.w = 0; this.reset(turned); this.on = true; this.fresh = 2; }
     else if (dt > 0) { const k = this.fresh ? 1 : 1 - Math.exp(-dt * 20); this.vx += ((px - this.px) / dt - this.vx) * k; this.vz += ((pz - this.pz) / dt - this.vz) * k; this.w += (dyaw / dt - this.w) * k; }
     this.px = px; this.pz = pz; this.yaw = yaw;
+    // the body's speed along the way it faces, and how fast that changes (for starts and stops)
+    const vf = this.vx * s + this.vz * c;
+    if (jump || this.fresh) { this.vf = vf; this.ac = this.ap = 0; this.sp = speed; } else if (dt > 0) { this.ac += ((vf - this.vf) / dt - this.ac) * (1 - Math.exp(-dt * 10)); this.vf = vf; this.ap += ((speed - this.sp) / dt - this.ap) * (1 - Math.exp(-dt * 25)); this.sp = speed; }
     // where each foot is drawn, seen from the body (it moves there only when the pose itself changes)
     const lat = f => ((f.F.x - px) * c - (f.F.z - pz) * s) / sc, fwd = f => ((f.F.x - px) * s + (f.F.z - pz) * c) / sc;
     const v = Math.hypot(this.vx, this.vz), pace = Math.abs(speed), gait = gw > .05 && pace > .05, back = speed < 0;   // (back: the walk is run backwards, for a person backing away)
@@ -90,14 +106,52 @@ export class Stride {
     if (gait) { if (v > .5 * pace && v < 1.8 * pace + .4 * sc) this.go = true; else if (v < .15 * pace || v > 2.2 * pace + .6 * sc) this.go = false; }
     else if (v < .5 * sc) this.go = true; else if (v > .9 * sc) this.go = false;
     const want = this.hold || !this.go ? 0 : g;
+    // setting off from standing (the walk has just begun, both feet down)
+    const start = this.plan && gait && !this.was && !back && !jump && !this.fresh && L[0].down && L[1].down; this.was = gait;
+    if (gait) for (const f of L) f.okl = f.okf = 0;
+    // coming to a stop: the body is a weight on legs, and at the rate it is slowing it comes to rest a little ahead (rx, rz). A person
+    // stopping puts the foot in the air down there, where it will stand at rest, as a braking step, and brings the other up beside it;
+    // stopped harder than legs could (a game can stop a body dead), the braking foot reaches a little further, toward where a weight
+    // going at that speed would have to be caught (its capture point: speed over the rate of a pendulum as long as the legs, cp)
+    // (the speed the game gives says it sooner than the body's own, which is measured over a few updates: that one, while the two agree)
+    const vg = Math.max(0, vf), dec = -(Math.abs(Math.abs(speed) - vg) < .3 + .3 * vg ? Math.min(this.ac, this.ap) : this.ac), stopping = this.plan && gait && !back && vg > .05 && dec > .8 && vg * vg / (2 * dec) < 1.1 * sc;
+    if (stopping) { const d = Math.min(.6 * sc, vg * vg / (2 * dec)), cp = vg / Math.sqrt(G / (HIPS * sc)); this.rx = px + s * d; this.rz = pz + c * d; this.cp = Math.max(0, Math.min(.06 * sc, (cp - d) * .3)); this.after = 0; }
+    else if (dt > 0) { this.after += dt; if (!gait && this.after < 1) { this.rx = px; this.rz = pz; } }   // (stopped: it has come to rest here)
+    if (dt > 0) this.sk += ((stopping ? 1 : 0) - this.sk) * (1 - Math.exp(-dt * 14));
+    const rest = (i, ahead) => { const st = this.stand[i], l = st[0] * sc, w = st[1] * sc + ahead; return [this.rx + l * c + w * s, this.rz - l * s + w * c]; };
+    // where a foot is put down to stop: where it stands at rest; but where the other foot is already down near its own, level with that one (a person stops square)
+    const place = i => { const o = L[1 - i], P = rest(1 - i, this.cp); if (o.down && Math.hypot(o.T.x - P[0], o.T.z - P[1]) < .14 * sc) { const l = this.stand[i][0] * sc, w = (o.T.x - this.rx) * s + (o.T.z - this.rz) * c - (this.stand[1 - i][1] - this.stand[i][1]) * sc; return [this.rx + l * c + w * s, this.rz - l * s + w * c]; } return rest(i, this.cp); };
     // (it comes in and goes out softly, but not on a person who has just appeared: the feet are where the pose has them, and the first move tells how the body goes)
     if (this.fresh) { this.a = want; if (dt > 0) this.fresh--; } else if (dt > 0) this.a += (want - this.a) * (1 - Math.exp(-dt * 10));
     if (this.hold || (this.a < .002 && want <= 0)) { this.a = 0; this.reset(turned); return; }
     // a foot in the air comes down a little off the walk's own place when the body does not go as the walk was drawn: half a stance's worth of the difference
     let shx = 0, shz = 0;
     if (gait) { const half = Math.min(.7, st / Math.max(.3, beat)) * .4; shx = (this.vx - s * speed) * half; shz = (this.vz - c * speed) * half; const l = Math.hypot(shx, shz), most = .4 * sc; if (l > most) { shx *= most / l; shz *= most / l; } }
+    // turning hard, a foot comes down already turned into the turn, by about half of how far the body will turn while it stands on it
+    // (it is wrung round less under the body: a step turn)
+    const lead = this.plan && gait ? Math.max(-.5, Math.min(.5, this.w * st / Math.max(.3, beat) * .45)) : 0;
+    // setting off: the foot that bears less of the weight (the one further from under the hips; one already behind; or, turning, the one on
+    // the side it turns to) steps first, after a moment in which the weight goes over the other: the walk is begun just before that foot leaves the ground
+    let phase = ph;
+    if (start) {
+      const h = this.rig.parts.hips.matrixWorld.elements, hl = (h[12] - px) * c - (h[14] - pz) * s, tl = f => (f.T.x - px) * c - (f.T.z - pz) * s, tf = f => (f.T.x - px) * s + (f.T.z - pz) * c;
+      let p = Math.abs(tl(L[0]) - hl) > Math.abs(tl(L[1]) - hl) ? 0 : 1; const d = tf(L[0]) - tf(L[1]);
+      if (Math.abs(d) > .06 * sc) p = d < 0 ? 0 : 1; if (Math.abs(this.w) > .6) p = this.w > 0 ? 0 : 1;
+      phase = ((st - .08 - .5 * p) % 1 + 1) % 1;
+      const R = this.rig; if (R.blendOn && R.bw) R.blendPhase = phase; else { const l = R.layers[R.layers.length - 1]; if (l && R.poses[l.name]?.rate && !l.pin) l.phase = phase; }
+    }
     for (let i = 0; i < 2; i++) {
-      const f = L[i], fr = ph + i * .5 - Math.floor(ph + i * .5), wantDown = !gait || fr < st, u = !gait ? 0 : back ? (1 - fr) / (1 - st) : (fr - st) / (1 - st);
+      const f = L[i], fr = phase + i * .5 - Math.floor(phase + i * .5), wantDown = !gait || fr < st, u = !gait ? 0 : back ? (1 - fr) / (1 - st) : (fr - st) / (1 - st);
+      // where a foot in the air is to come down: as the walk has it (a little off that when the body does not go as drawn); stopping, where it will stand at rest
+      let ex = f.F.x + shx, ez = f.F.z + shz;
+      if (this.sk > 1e-3 && gait && !f.down) {
+        let [bx, bz] = place(i);
+        // (no more than a little further than the walk itself would put it, which is about as far as a leg reaches from where the body will be when
+        // it comes down: a runner who has further to go to stop takes more braking steps)
+        const ahead = (bx - ex) * s + (bz - ez) * c, most = .1 * sc;
+        if (ahead > most) { bx -= s * (ahead - most); bz -= c * (ahead - most); }
+        ex += (bx - ex) * this.sk; ez += (bz - ez) * this.sk;
+      }
       if (f.down) {
         if (!wantDown) this.swing(f, u, sc);
         else {
@@ -112,29 +166,43 @@ export class Stride {
         }
       }
       if (!f.down && f.sw === 1) {
-        if (!gait) this.step(f, .18, sc);   // the walk has stopped with this foot in the air: it is set down as a step
-        else if (wantDown) { f.T.set(f.F.x + shx, f.F.y, f.F.z + shz); this.lock(f, turned); f.landed = true; }
-        else { const pr = Math.max(0, Math.min(1, (u - f.u0) / (1 - f.u0))), k = 1 - sm(pr); f.T.set(f.F.x + f.ox * k + shx * (1 - k), f.F.y + f.hop * Math.sin(Math.PI * pr), f.F.z + f.oz * k + shz * (1 - k)); f.dyaw = f.dy0 * k; }
+        if (!gait) { const to = this.plan && this.after < .4 ? place(i) : null; this.step(f, to ? .17 + .1 * Math.min(1, Math.hypot(f.T.x - to[0], f.T.z - to[1]) / sc / .4) : .18, sc, to); }   // the walk has stopped with this foot in the air: it is set down as a step (stopping, where it stands at rest)
+        else if (wantDown) { f.T.set(ex, f.F.y, ez); this.lock(f, turned, lead); f.landed = true; }
+        else { const pr = Math.max(0, Math.min(1, (u - f.u0) / (1 - f.u0))), k = 1 - sm(pr); f.T.set(f.F.x + f.ox * k + (ex - f.F.x) * (1 - k), f.F.y + (f.hop + .03 * sc * this.sk) * Math.sin(Math.PI * pr), f.F.z + f.oz * k + (ez - f.F.z) * (1 - k)); f.dyaw = f.dy0 * k + lead * (1 - k); }
       }
       if (!f.down && f.sw === 2) {
         if (gait && !wantDown) this.swing(f, u, sc);   // (a walk begins with this foot already in the air)
         else {
           f.t += dt / f.dur;
-          if (f.t >= 1) { f.T.copy(f.F); this.lock(f, turned); f.landed = true; this.cool = .06; }
-          else { const k = sm(f.t); f.T.set(f.fx + (f.F.x - f.fx) * k, f.F.y + f.lift * Math.sin(Math.PI * f.t), f.fz + (f.F.z - f.fz) * k); f.dyaw = f.dy0 * (1 - k); }
+          const gx = f.goal ? f.goal[0] : f.F.x, gz = f.goal ? f.goal[1] : f.F.z;
+          if (f.t >= 1) { f.T.set(gx, f.F.y, gz); this.lock(f, turned); f.landed = true; this.cool = .06; }
+          else { const k = sm(f.t); f.T.set(f.fx + (gx - f.fx) * k, f.F.y + f.lift * Math.sin(Math.PI * f.t), f.fz + (gz - f.fz) * k); f.dyaw = f.dy0 * (1 - k); }
         }
       }
     }
     // standing: a foot too far from its place, or turned too far from the way the body faces, steps (one at a time; sooner once the body has come to rest)
     if (!gait && dt > 0) {
       this.rest = v < .08 * sc && Math.abs(this.w) < .15 ? this.rest + dt : 0; this.cool -= dt;
+      // (where the feet stand at rest, as the pose draws them, for the next stop to put them there)
+      if (this.rest > .4 && kc === 0 && gw <= 0 && g > .99 && L[0].down && L[1].down) for (let i = 0; i < 2; i++) { const f = L[i], l = lat(f), w = fwd(f); if (f.kd < .5 && Math.abs(l) > .04 && Math.abs(l) < .3 && Math.abs(w) < .2) { const k = 1 - Math.exp(-dt * 2), a = this.stand[i]; a[0] += (l - a[0]) * k; a[1] += (w - a[1]) * k; } }
       // turning quickly: the foot on the side it turns to steps first (the other would have to cross in front of it), steps are quicker,
       // and the second may lift as the first comes down
       const spin = Math.abs(this.w), open = this.w > 0 ? 0 : 1, quick = 1 + .25 * Math.max(0, spin - 1.5), up = L[0].down ? L[1].down ? null : L[1] : L[0];
-      if (this.cool <= 0 && kc < .5 && (!up || (up.sw === 2 && up.t > .65 && spin > 2.5 && L[0].down !== L[1].down))) {
+      // just stopped: a foot not yet where it stands at rest is brought up there at once (square beside the other, a little ahead after a hard
+      // stop); and then the stance it stopped in is its own, so it is not stepped up again a moment later to stand exactly as drawn
+      let planned = false;
+      if (this.plan && this.after < 1.2 && !up && kc < .5) {
+        if (this.cool <= 0 && this.after < 1) {
+          const P = [place(0), place(1)], d = L.map((f, i) => Math.hypot(f.T.x - P[i][0], f.T.z - P[i][1]));
+          let pick = -1, worst = .07 * sc; for (let i = 0; i < 2; i++) if (L[i].kd < .5 && d[i] > worst && (pick < 0 || d[i] > d[pick])) { worst = d[i]; pick = i; }
+          if (pick >= 0) { this.step(L[pick], .2 + .16 * Math.min(1, worst / sc / .4), sc, P[pick]); this.last = pick; planned = true; }
+        }
+        if (!planned) for (const f of L) { const dx = f.T.x - f.F.x, dz = f.T.z - f.F.z, l = (dx * c - dz * s) / sc, w = (dx * s + dz * c) / sc, m = Math.hypot(l, w), k = m > .12 ? .12 / m : 1; f.okl = l * k; f.okf = w * k; }
+      }
+      if (!planned && this.cool <= 0 && kc < .5 && (!up || (up.sw === 2 && up.t > .65 && spin > 2.5 && L[0].down !== L[1].down))) {
         const lim = this.rest > .5 ? .55 : 1; let pick = -1, worst = up ? 1.4 : 1;
-        for (let i = 0; i < 2; i++) { const f = L[i]; if (!f.down || f.kd > .5) continue; const q = Math.max(Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) / (STEP * sc), Math.abs(f.dyaw) / TURN) / lim * (i === this.last ? .9 : 1) * (spin > 1 ? i === open ? 1.25 : .8 : 1); if (q > worst) { worst = q; pick = i; } }
-        if (pick >= 0) { const f = L[pick]; this.step(f, Math.max(.12, (.2 + .22 * Math.min(1, Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) / sc / .5)) / quick), sc); this.last = pick; }
+        for (let i = 0; i < 2; i++) { const f = L[i]; if (!f.down || f.kd > .5) continue; const q = Math.max(Math.hypot(f.T.x - f.F.x - (f.okl * c + f.okf * s) * sc, f.T.z - f.F.z - (f.okf * c - f.okl * s) * sc) / (STEP * sc), Math.abs(f.dyaw) / TURN) / lim * (i === this.last ? .9 : 1) * (spin > 1 ? i === open ? 1.25 : .8 : 1); if (q > worst) { worst = q; pick = i; } }
+        if (pick >= 0) { const f = L[pick]; f.okl = f.okf = 0; this.step(f, Math.max(.12, (.2 + .22 * Math.min(1, Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) / sc / .5)) / quick), sc); this.last = pick; }
       }
     }
     // the hips: standing they stay half way over the feet, and go over the foot that bears the weight while the other steps
@@ -157,7 +225,7 @@ export class Stride {
       const tx = f.F.x + (f.T.x - f.F.x) * a - m[12] - hx, tz = f.F.z + (f.T.z - f.F.z) * a - m[14] - hz, h2 = tx * tx + tz * tz, vy = m[13] - (f.F.y + (f.T.y - f.F.y) * a);
       f.len = len; f.need = h2 < len * len ? vy - Math.sqrt(len * len - h2) : 1;
       // walking, a foot the body has left too far behind (a start from standing, a shove) is picked up and put in its place, as a person shuffles a foot up
-      if (gait && dt > 0 && f.down && f.need > .04 * sc) this.step(f, .16, sc);
+      if (gait && dt > 0 && f.down && f.need > (.04 + .07 * this.sk) * sc) this.step(f, .16, sc);   // (stopping, the hips may sink further over a braking step: the knees give)
       if (f.down && !(f.kd > .5 && !gait)) need = Math.max(need, f.need);   // (a foot in the air needs no room made for it: the leg straightens and it comes up; nor one the pose has on its knee)
     }
     need = Math.max(0, Math.min(.12 * sc, need));

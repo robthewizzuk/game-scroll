@@ -18,7 +18,7 @@ await loadParts();
 if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 640), H = +(Q.get('h') || 360), { Crowd } = gs.props, { human, creature } = gs.models;
 const nextFrame = () => new Promise(r => requestAnimationFrame(r));
-HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false;
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false;
 const out = {}, info = {}, checks = [];
 const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
 try {

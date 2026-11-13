@@ -2680,10 +2680,14 @@ export interface RigT {
   blend(space: Record<string, number>, v: number): RigT;
   /** 2D blend space: { pose: [x, y] }, mixed at (x, y). */
   blend2(space: Record<string, [number, number]>, x: number, y: number): RigT;
-  /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. */
+  /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. A gs.models.human's feet lie along a slope (as far as an ankle tilts) and keep the point they stand on. */
   plant(ground: (x: number, z: number) => number, body: Loose, o?: { most?: number }): RigT;
-  /** speed: metres a second (strides follow it); aim: up/down aim for the upper layer (radians); turn: radians a second (with weight: banks into it). */
-  update(dt: number, o?: { speed?: number; aim?: number; turn?: number }): RigT;
+  /**
+   * speed: metres a second (strides follow it); aim: up/down aim for the upper layer (radians); turn: radians a second (with weight: banks into it).
+   * toward: where the person means to go, a point { x, z } in the world or a heading (radians, as the body's rotation.y): a person with lead (see
+   * lead) looks there before the body turns. Left out, the turn is read from how the body is turning.
+   */
+  update(dt: number, o?: { speed?: number; aim?: number; turn?: number; toward?: { x: number; z: number } | number | null }): RigT;
   /** A full skeleton (gs.models.human's): brings the joints in between into line (the waist with the rib cage, the neck with the head, a collar bone with each arm, the forearm's skin with the hand). update() does it; call it after turning joints yourself. Nothing on a plain figure. */
   fill(pose?: Record<string, number[]> | null): RigT;
   /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
@@ -2703,8 +2707,31 @@ export interface RigT {
    * spot, a person carried along, a far-off person and one that gs.characters.Reactions has off its balance.
    */
   steps?: boolean;
-  /** The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands. */
-  readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[] } | null;
+  /**
+   * The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands.
+   * plan (true): starts, stops and turns stepped as a person keeps their balance: setting off, the foot that bears less weight (or the one on the side
+   * the body turns to) goes first; stopping, the braking foot comes down where it will stand and the other is brought up square beside it (a hard
+   * stop a little further ahead, a run in more steps); round a bend each foot comes down already turned into it. false: the walk's own footfalls.
+   */
+  readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[]; plan: boolean } | null;
+  /**
+   * The eyes and the head go first into a turn (gs.models.human people; on by itself): the eyes flick round, the head follows, then the rib cage,
+   * and the hips and feet come last. Round a curve the gaze goes about to where the person will be in half a second; told where they mean to go
+   * (update(dt, { toward })), it goes there before the body has begun to turn. Nothing while aiming, off balance or far off; little while the
+   * face is set on something (face.look). amount: 0 turns it off, 1 as a person does it, more to make it plainer; reset() stills it (a new round).
+   */
+  readonly lead?: { amount: number; reset(): void } | null;
+  /**
+   * A walk of one's own (gs.models.human people; on by itself): from the body (an older person takes shorter, quicker steps, swings the arms
+   * less, leans and stands wider; a heavy one walks wider and rolls more; a muscled one carries the arms out) and the seed (how much the arms
+   * swing, one more than the other, the hips, how upright, a habit of the head), the same on every phone; a twin() walks a little differently.
+   * No two strides alike (their time, the arms' swing, the feet's width and the lean wander from stride to stride, 1/f), each footfall felt
+   * (the hips give, the rib cage dips, the elbows bounce), and slopes read from how the body rises as it goes (uphill it leans in and takes
+   * shorter steps, downhill leans back with the knees bent; with rig.plant the feet lie along the slope). mood: 'brisk' | 'tired' | 'wary' |
+   * 'proud' | 'sad' | 'limp' (side: the leg that hurts, 'L' or 'R'), or { tired: .5, limp: 1 }, eased in over a second; null for none. A mood
+   * changes how a person walks at the speed you give: slow a tired or hurt person yourself. amount: 0 the walk as drawn, 1 a person's own.
+   */
+  manner?: { mood: string | Record<string, number> | null; side: 'L' | 'R'; amount: number; readonly pace: number; readonly limp: number; reset(): void } | null;
   /**
    * Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. How far each joint was
    * from where the new move has it, and how fast it was turning, die away smoothly in about the fade asked for, so a limb in mid swing swings on a
@@ -2739,8 +2766,8 @@ export interface PosesPart {
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
   keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] };
-  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. body: the object the game moves (steps that are really taken, follow-through); momentum, follow: see RigT (gs.models.human asks for all three). */
-  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: Loose; momentum?: boolean; follow?: boolean }) => RigT;
+  /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. body: the object the game moves (steps that are really taken, follow-through); momentum, follow, lead: see RigT (gs.models.human asks for all of them; lead comes with follow unless false). */
+  Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: Loose; momentum?: boolean; follow?: boolean; lead?: boolean }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
   person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: number; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose & { rig: RigT; face: FaceT; mesh: Loose; bones: Record<string, Loose> };
   Face: CharactersPart['Face']; shapes: CharactersPart['shapes']; visemes: CharactersPart['visemes']; FACE_SHAPES: string[];

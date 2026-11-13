@@ -1,0 +1,140 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A film of how a person moves when a game moves it, for scripts/moves.cjs: one row for each thing a game does with a
+// body (starts it walking, stops it, turns it, runs it round a curve...), a picture every so often along it with a mark
+// wherever a foot came down, and at the end of the row a plan seen from above: the path, every footprint, and the way
+// the body (grey), head (blue) and eyes (red) pointed. It also prints numbers: steps, how far planted feet slid, how far
+// ahead of the body the head and eyes turned and how much sooner, how long a stop took.
+//   ?acts=start,stop (default: all)   &cols=8   &cell=200x240   &view=side|three|front|back|top   &near (head and shoulders)   &gpu (WebGPU)
+//   &toward (the game says where the body is turning to: rig.update's toward)
+//   &cmp=lead,plan (each act twice: those parts of the movement off in the row above, on in the row below)
+//   rows may be act:mood~build (walk:tired, walk~old, run~heavy, walk:limp~s7): a mood (manner.js) and a person's build (old, young, heavy,
+//   built, or sN for seed N)
+//   &who=human|figure   &seed=3   &from=0&to=1 (the share of each act filmed)   &dbg=6 (numbers every sixth frame on the console: ALLWARN=1)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+const D = Math.PI / 180, wrap = a => a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI;
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), who = Q.get('who') || 'human';
+  // each act: how long it runs, how fast the body starts (v0, m/s), and from when (seconds) what the game asks of it:
+  // v: the speed to go at, a: how quickly it gets there (m/s²); yaw: the way to face (degrees, to its left +), w: how fast it may turn
+  // (rad/s); rate: a steady turning (rad/s, a curve)
+  const ACTS = {
+    start: { secs: 2.6, seg: [[.5, { v: 1.4, a: 3 }]] },
+    stop: { secs: 3.2, v0: 1.4, seg: [[1.2, { v: 0, a: 3 }]] },
+    hardstop: { secs: 3, v0: 1.4, seg: [[1.2, { v: 0, a: 14 }]] },
+    jogstop: { secs: 3.2, v0: 3.4, seg: [[1, { v: 0, a: 6 }]] },
+    runstop: { secs: 3.2, v0: 5.6, seg: [[1, { v: 0, a: 9 }]] },
+    turn90: { secs: 3, v0: 1.4, seg: [[1, { yaw: 90, w: 3 }]] },
+    uturn: { secs: 3.4, v0: 1.4, seg: [[1, { yaw: 180, w: 4 }]] },
+    curve: { secs: 4, v0: 1.4, seg: [[0, { rate: .5 }]] },
+    zigzag: { secs: 4.4, v0: 1.4, seg: [[.8, { yaw: 50, w: 2.5 }], [2, { yaw: -40 }], [3.2, { yaw: 20 }]] },
+    spin: { secs: 2.6, seg: [[.5, { yaw: 120, w: 2.5 }]] },
+    turngo: { secs: 3, seg: [[.5, { yaw: 90, w: 4, v: 1.4, a: 3 }]] },
+    jog: { secs: 4, seg: [[.4, { v: 3.4, a: 5 }], [2.6, { v: 0, a: 5 }]] },
+    walk: { secs: 3.2, v0: 1.4 },
+    run: { secs: 2.4, v0: 5.6 },
+    uphill: { secs: 3.2, v0: 1.4, grade: .3 },
+    downhill: { secs: 3.2, v0: 1.4, grade: -.3 },
+  };
+  const BUILDS = { old: { look: 'real', age: 78 }, young: { look: 'real', age: 19 }, heavy: { look: 'real', weight: .95 }, built: { look: 'real', muscle: .95 } };
+  const buildOf = b => !b ? {} : BUILDS[b] || (/^s\d+$/.test(b) ? { seed: +b.slice(1) } : (() => { throw new Error('no build ' + b + ': ' + Object.keys(BUILDS).join(', ') + ', sN'); })());
+  const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(','), cols = +(Q.get('cols') || 8), [cw, ch] = (Q.get('cell') || '200x240').split('x').map(Number);
+  const cmp = Q.get('cmp') ? Q.get('cmp').split(',') : null, rows = acts.flatMap(a => cmp ? [[a, false], [a, true]] : [[a, null]]);
+  const from = +(Q.get('from') || 0), to = +(Q.get('to') || 1), plan = ch;   // (the plan from above: a square at the end of each row)
+  window.__hd.force = 2; window.__hd.upscale = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .3 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sun = gs.hd.sun('#fff2d8', 1.9, 4, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols + plan; sheet.height = ch * rows.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  sx.fillStyle = '#222'; sx.fillRect(0, 0, sheet.width, sheet.height);
+  const info = [], opts = { seed: +(Q.get('seed') || 3), build: 'medium' };
+  if (who === 'human') await gs.models.human.ready([opts, ...new Set(rows.map(([n]) => n.split('~')[1]).filter(Boolean))].map(b => typeof b === 'string' ? { ...opts, ...buildOf(b) } : b));
+  const VIEW = { side: [1, .16, .1], three: [.8, .35, .75], front: [.12, .2, 1], back: [.8, .3, -.75], top: [.02, 1, .2] }, view = VIEW[Q.get('view')] || VIEW.three;
+  const markGeo = new T.BoxGeometry(.09, .006, .24), markMat = [gs.hd.pbr('#2050c0', { rough: .8 }), gs.hd.pbr('#c03030', { rough: .8 })];
+  for (let r = 0; r < rows.length; r++) {
+    const [name, on] = rows[r], [act, mood] = name.split('~')[0].split(':'), A = ACTS[act]; if (!A) throw new Error('no act ' + act + ': ' + Object.keys(ACTS).join(', '));
+    const world = new T.Group(); v.scene.add(world);
+    const floor = new T.Mesh(new T.BoxGeometry(200, .4, 200), gs.hd.pbr('#7d8274', { rough: .9 })); floor.position.y = -.2 / Math.cos(Math.atan(A.grade || 0)); floor.rotation.x = -Math.atan(A.grade || 0); floor.receiveShadow = true; world.add(floor);
+    const body = who === 'human' ? gs.models.human({ ...opts, ...buildOf(name.split('~')[1]) }) : gs.poses.figure({ mat: c => gs.hd.pbr(c) }); world.add(body);
+    if (mood && body.rig.manner) body.rig.manner.mood = mood;
+    const rig = body.rig, P = rig.parts;
+    if (on != null) for (const k of cmp) { if (k === 'steps') rig.steps = on; else if (k === 'plan') { if (rig.stride) rig.stride.plan = on; } else if (k === 'momentum') rig.momentum = on; else if (k === 'follow') { if (rig.follow) rig.follow.amount = on ? 1 : 0; } else if (rig[k] && typeof rig[k] === 'object' && 'amount' in rig[k]) rig[k].amount = on ? 1 : 0; else rig[k] = on ? (typeof rig[k] === 'number' ? 1 : true) : (typeof rig[k] === 'number' ? 0 : false); }
+    const dt = 1 / 60, N = Math.round(A.secs / dt), segs = (A.seg || []).map(([t, s]) => [Math.round(t / dt), s]);
+    let speed = A.v0 || 0, want = speed, acc = 3, yaw = 0, aimYaw = null, w = 2, rate = 0, steps = 0, slide = 0, moved = 0, stopAt = null, lastFall = null, settle = null;
+    const shots = Array.from({ length: cols }, (_, i) => Math.round((from + (to - from) * (i + .5) / cols) * N));
+    const track = [], prints = [], down = [null, null], hy = [], by = [], ey = [];
+    let cost = 0;
+    for (let i = 0; i <= N; i++) {
+      for (const [at, s] of segs) if (at === i) { if (s.v != null) { want = s.v; if (s.v === 0 && speed > 0) stopAt = i * dt; } if (s.a) acc = s.a; if (s.yaw != null) aimYaw = s.yaw * D; if (s.w) w = s.w; if (s.rate != null) rate = s.rate; }
+      // the body moved as a game moves one: speed eased to what is wanted, turned toward a heading at most w rad/s
+      speed += Math.max(-acc * dt, Math.min(acc * dt, want - speed));
+      let turn = rate; if (aimYaw != null) { const e = wrap(aimYaw - yaw); turn = Math.max(-w, Math.min(w, e * 8)); }
+      yaw += turn * dt; body.rotation.y = yaw;
+      body.position.x += Math.sin(yaw) * speed * dt; body.position.z += Math.cos(yaw) * speed * dt; moved += speed * dt; if (A.grade) body.position.y = body.position.z * A.grade;
+      const c0 = performance.now();
+      if (rig.poses.jog) rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, speed); else rig.play(speed > 3 ? 'run' : speed > .3 ? 'walk' : 'idle');
+      body.updateMatrixWorld(true); rig.update(dt, { speed, turn, toward: Q.has('toward') && aimYaw != null ? aimYaw : null }); if (A.grade) rig.plant((x, z) => z * A.grade, body); body.updateMatrixWorld(true);
+      cost += performance.now() - c0;
+      // where the feet came down, and how far a planted one slid
+      const feet = [P.footL || P.shinL, P.footR || P.shinR].map(f => f.getWorldPosition(new T.Vector3()));
+      // (the point of each sole that is lowest, heel or ball: what stands on the ground, which a planted foot keeps where it is)
+      const sole = [P.footL, P.footR].map((f, k) => { if (!f) return feet[k]; const q = f.getWorldQuaternion(new T.Quaternion()), sc = body.scale.y, h = new T.Vector3(0, -.085, -.06).applyQuaternion(q).multiplyScalar(sc).add(feet[k]), b = new T.Vector3(0, -.085, .13).applyQuaternion(q).multiplyScalar(sc).add(feet[k]); const gr = A.grade || 0, hh = h.y - h.z * gr, bh = b.y - b.z * gr; return hh < bh - .004 ? Object.assign(h, { at: 0 }) : bh < hh - .004 ? Object.assign(b, { at: 1 }) : Object.assign(h, { at: 2 }); });
+      const st = rig.stride?.feet;
+      for (let k = 0; k < 2; k++) {
+        const isDown = st ? st[k].down : feet[k].y < .12;
+        if (st?.[k].landed || (!st && isDown && !down[k])) {
+          steps++; if (stopAt != null) lastFall = i * dt;
+          const fw = new T.Vector3(0, 0, 1).applyQuaternion((P.footL ? [P.footL, P.footR][k] : body).getWorldQuaternion(new T.Quaternion())); fw.y = 0; fw.normalize();
+          prints.push({ x: feet[k].x, z: feet[k].z, a: Math.atan2(fw.x, fw.z), k });
+          const m = new T.Mesh(markGeo, markMat[k]); m.position.set(feet[k].x + fw.x * .05, .003 + (feet[k].z + fw.z * .05) * (A.grade || 0), feet[k].z + fw.z * .05); m.rotation.x = -Math.atan(A.grade || 0); m.rotation.y = Math.atan2(fw.x, fw.z); world.add(m);
+        }
+        if (isDown && down[k] && sole[k].at === down[k].at && sole[k].at < 2) slide += Math.hypot(sole[k].x - down[k].x, sole[k].z - down[k].z);
+        down[k] = isDown ? { x: sole[k].x, z: sole[k].z, at: sole[k].at } : null;
+      }
+      // which way the head and the eyes point, in the world (yaw), against the body
+      const hq = P.head.getWorldQuaternion(new T.Quaternion()), hf = new T.Vector3(0, 0, 1).applyQuaternion(hq), hdy = Math.atan2(hf.x, hf.z);
+      const eb = body.bones?.eyeL, ef = eb ? new T.Vector3(0, 0, 1).applyQuaternion(eb.getWorldQuaternion(new T.Quaternion())) : hf, edy = Math.atan2(ef.x, ef.z);
+      by.push(yaw); hy.push(yaw + wrap(hdy - yaw)); ey.push(yaw + wrap(edy - yaw));
+      track.push([body.position.x, body.position.z, yaw, hdy, edy]);
+      if (stopAt != null && settle == null && speed === 0 && i * dt > stopAt) { const still = !st || (st[0].down && st[1].down); if (still) settle = i * dt; }
+      if (Q.has('dbg') && i % (+Q.get('dbg') || 6) === 0) console.warn(`${name}${on == null ? '' : on ? '+' : '-'} ${(i * dt).toFixed(2)}s v ${speed.toFixed(2)} yaw ${(yaw / D).toFixed(0)} head ${(wrap(hdy - yaw) / D).toFixed(1)} eyes ${(wrap(edy - yaw) / D).toFixed(1)} feet ${st ? st.map(f => (f.down ? 'D' : 'u') + f.sw + ' ' + (Math.hypot(f.T.x - f.F.x, f.T.z - f.F.z) * 100).toFixed(0) + 'cm').join(' ') : ''}${rig.stride ? ` sk ${rig.stride.sk.toFixed(2)} rest ${rig.stride.rx.toFixed(2)},${rig.stride.rz.toFixed(2)} ac ${rig.stride.ac.toFixed(1)} stand ${rig.stride.stand.map(a => a.map(x => x.toFixed(3)).join(',')).join(' ')}` : ''} hips ${P.hips.getWorldPosition(new T.Vector3()).toArray().map(x => x.toFixed(3)).join(' ')}`);
+      const k = shots.indexOf(i);
+      if (k >= 0) {
+        const near = Q.has('near'), hp = P.hips.getWorldPosition(new T.Vector3()), aim = new T.Vector3(hp.x, (near ? 1.35 : .85) + body.position.y, hp.z), len = Math.hypot(...view), dist = near ? 2.3 : 4.4;
+        v.cam.fov = 30; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+        v.cam.position.set(aim.x + view[0] / len * dist, aim.y + view[1] / len * dist + .2, aim.z + view[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
+        sun.follow(hp.x, 0, hp.z);
+        for (let n = 0; n < (k ? 2 : 5); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+        sx.drawImage(cell, k * cw, r * ch);
+        sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${name}${on == null ? '' : on ? ' (on)' : ' (off)'} ${(i * dt).toFixed(2)}s`, k * cw + 4, r * ch + 12);
+      }
+    }
+    // the plan from above: the path, the footprints, and every quarter second the way the body, head and eyes point
+    {
+      const ox = cw * cols, oy = r * ch, xs = track.map(t => t[0]).concat(prints.map(p => p.x)), zs = track.map(t => t[1]).concat(prints.map(p => p.z));
+      const x0 = Math.min(...xs) - .5, x1 = Math.max(...xs) + .5, z0 = Math.min(...zs) - .5, z1 = Math.max(...zs) + .5, s = Math.min(plan / Math.max(2.5, x1 - x0), plan / Math.max(2.5, z1 - z0)) * .95;
+      const X = x => ox + plan / 2 - (x - (x0 + x1) / 2) * s, Y = z => oy + plan / 2 - (z - (z0 + z1) / 2) * s;   // (seen from above with +z up the page and the body's left to the left)
+      sx.fillStyle = '#f4f1e8'; sx.fillRect(ox, oy, plan, plan); sx.strokeStyle = '#ccc'; sx.lineWidth = 1;
+      for (let g = Math.ceil(x0); g <= x1; g++) { sx.beginPath(); sx.moveTo(X(g), oy); sx.lineTo(X(g), oy + plan); sx.stroke(); }
+      for (let g = Math.ceil(z0); g <= z1; g++) { sx.beginPath(); sx.moveTo(ox, Y(g)); sx.lineTo(ox + plan, Y(g)); sx.stroke(); }
+      sx.strokeStyle = '#888'; sx.beginPath(); track.forEach((t, j) => j ? sx.lineTo(X(t[0]), Y(t[1])) : sx.moveTo(X(t[0]), Y(t[1]))); sx.stroke();
+      for (const p of prints) { sx.save(); sx.translate(X(p.x), Y(p.z)); sx.rotate(p.a); sx.fillStyle = p.k ? '#c03030' : '#2050c0'; sx.fillRect(-.045 * s, -.17 * s, .09 * s, .24 * s); sx.restore(); }
+      for (let j = 0; j < track.length; j += 15) {
+        const [x, z, b, h, e] = track[j], ray = (a, l, col) => { sx.strokeStyle = col; sx.beginPath(); sx.moveTo(X(x), Y(z)); sx.lineTo(X(x + Math.sin(a) * l), Y(z + Math.cos(a) * l)); sx.stroke(); };
+        ray(b, .35, '#777'); ray(h, .5, '#2a6ad0'); ray(e, .65, '#d03a2a');
+      }
+      sx.fillStyle = '#000'; sx.font = '11px sans-serif'; sx.fillText(`${name}${on == null ? '' : on ? ' on' : ' off'}: ${steps} steps`, ox + 4, oy + 12);
+    }
+    // how far ahead of the body the head and the eyes turned, and how much sooner (the shift that best lines each up with the body's own turning)
+    const lead = (a, b) => { let best = Infinity, bl = 0; for (let L = -30; L <= 30; L++) { let sum = 0, n = 0; for (let j = Math.max(0, -L); j < a.length && j + L < a.length; j++) { const d = a[j] - b[j + L]; sum += d * d; n++; } if (sum / n < best - 1e-9) { best = sum / n; bl = L; } } return bl * dt * 1000; };
+    const most = arr => Math.max(...arr.map((h, j) => Math.abs(h - by[j]))) / D, turned = Math.max(...by) - Math.min(...by) > 20 * D;
+    info.push(`${name}${on == null ? '' : on ? ' (on)' : ' (off)'}: ${steps} steps; planted feet slid ${(slide * 100).toFixed(1)} cm (${(slide * 100 / Math.max(.5, moved)).toFixed(2)} cm a metre over ${moved.toFixed(2)} m); head up to ${most(hy).toFixed(1)} deg off the body${turned ? `, ${lead(hy, by).toFixed(0)} ms ahead` : ''}; eyes ${most(ey).toFixed(1)} deg${turned ? `, ${lead(ey, by).toFixed(0)} ms ahead` : ''}${stopAt != null ? `; stop asked at ${stopAt.toFixed(2)}s, last footfall ${lastFall?.toFixed(2) ?? '-'}s, settled ${settle?.toFixed(2) ?? '-'}s` : ''}; ${(cost / N).toFixed(3)} ms a frame`);
+    v.scene.remove(world);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

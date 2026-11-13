@@ -34,6 +34,7 @@
 //             (temporal instability: shimmering edges, upscaler or anti-aliasing jitter)
 //   FG check  while playing on WebGPU: grabs real, made, real triples and maps the made pixels that
 //             match neither real frame nearby (ghosting, smears, holes behind moving things)
+//   Half, Spread  while playing on WebGPU: the chip's time by pass with a switch off and on (runCheck)
 //
 // Kit-free and game-free: it reads what the feed (src/main.js), the 3D kit (HD.info) and the phone
 // (src/kit/power.js) already know, plus browser APIs. Timing comes from requestAnimationFrame, which on
@@ -346,13 +347,16 @@ const PAIRS = {
   res: { title: 'Half vs full resolution', a: '50% of the 3D size', b: 'the tier\'s own size', set: on => { HD.scale = on ? null : HD.info.rw && HD.info.ow ? .5 * HD.info.rw / HD.info.ow : .5; } },
   tier: { title: 'Low vs ultra tier', a: 'low', b: 'ultra', set: on => { HD.force = on ? 3 : 0; } },
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
+  spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
 function halfCan() { return HD?.info.backend === 'webgpu' && !/no half/.test(HD.info.half || 'no half'); }
+// effects spread over frames (src/kit/hd3d-gpu-spread.js) can be compared: WebGPU, and something spread (or switched off now)
+function spreadCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.spread || HD.spread === false); }
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -366,7 +370,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -476,41 +480,51 @@ async function runFG() {
   shots.push(shot); UI.busy(''); viewer(shot);
 }
 
-/* ---------- half check: the chip's time with the kit's own passes in full and in half precision ---------- */
-// Live, while the round plays: full, half, full, half, each 1 s to settle (the chain is built again at each
-// switch, its shaders with it) then 2.5 s of the chip's own time a frame by pass (HD.info.gpuParts). The two
-// runs of each are put together, so the phone warming up over the check counts against both alike.
-async function runHalf() {
-  const s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash('Half check needs a Next Gen or AR game.');
-  if (!halfCan()) return UI.flash(PAIRS.half.no);
+/* ---------- half and spread checks: the chip's time with a switch off and on ---------- */
+// Live, while the round plays: off, on, off, on, each 1 s to settle (the chain is built again at each switch, its
+// shaders with it) then 2.5 s of the chip's own time a frame by pass (HD.info.gpuParts). The two runs of each are
+// put together, so the phone warming up over the check counts against both alike.
+//   Half:   the kit's own WebGPU passes in full and in half precision (src/kit/half.js)
+//   Spread: ambient occlusion, volumetric light and bounce light with every sample every frame, and spread over frames
+//           (src/kit/hd3d-gpu-spread.js)
+const CHECKS = {
+  half: { title: 'Half precision check', name: 'Half check', key: 'half', off: 'full', on: 'half', can: halfCan, no: () => PAIRS.half.no, says: () => HD.info.half,
+    note: 'in half: SGSR 2\'s upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare' },
+  spread: { title: 'Spread check', name: 'Spread check', key: 'spread', off: 'every sample', on: 'spread', can: spreadCan, no: () => PAIRS.spread.no, says: () => 'spread: ' + (HD.info.spread || 'none'),
+    note: 'spread over frames: ambient occlusion (a part of its directions a frame), volumetric light (a third of its steps) and bounce light (one slice at half size), the frames before filling in' },
+};
+async function runCheck(kind) {
+  const C = CHECKS[kind], s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash(`${C.name} needs a Next Gen or AR game.`);
+  if (!C.can()) return UI.flash(C.no());
   if (s.state !== 'playing') return UI.flash('Start a round first: the check times the chip while it plays.');
-  const keep = HD.half, was = frozen, sum = { full: { n: 0, ms: 0, by: {} }, half: { n: 0, ms: 0, by: {} } }; let pic = null;
+  const keep = HD[C.key], was = frozen, sum = { off: { n: 0, ms: 0, by: {} }, on: { n: 0, ms: 0, by: {} } }; let pic = null, says = '';
   setFrozen(false);
   try {
     for (const on of [false, true, false, true]) {
-      HD.half = on; UI.busy(`Half check: ${on ? 'half' : 'full'} precision…`);
+      HD[C.key] = on; UI.busy(`${C.name}: ${on ? C.on : C.off}…`);
       await waitFrames(30, 1000);
-      const S = sum[on ? 'half' : 'full'], t0 = performance.now(); let seen = HD.info.gpuParts;
+      const S = sum[on ? 'on' : 'off'], t0 = performance.now(); let seen = HD.info.gpuParts;
       while (performance.now() - t0 < 2500) {
         await new Promise(r => setTimeout(r, 50));
         const by = HD.info.gpuParts; if (!by || by === seen) continue;   // (a new one each time the chip's times are read)
         seen = by; S.n++; S.ms += HD.info.gpuMs; for (const k in by) S.by[k] = (S.by[k] || 0) + by[k];
       }
     }
-    pic = await nextGrab(900);   // (in half: the last run's)
-  } finally { HD.half = keep; setFrozen(was); UI.busy(''); }
-  if (!sum.full.n || !sum.half.n) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
-  const F = sum.full, H = sum.half, pc = (f, h) => f > .005 ? ` (${h <= f ? '−' : '+'}${Math.abs(Math.round(100 * (h - f) / f))}%)` : '';
+    pic = await nextGrab(900); says = C.says();   // (switched on: the last run's)
+  } finally { HD[C.key] = keep; setFrozen(was); UI.busy(''); }
+  if (!sum.off.n || !sum.on.n) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
+  const F = sum.off, H = sum.on, pc = (f, h) => f > .005 ? ` (${h <= f ? '−' : '+'}${Math.abs(Math.round(100 * (h - f) / f))}%)` : '';
   const parts = [...new Set([...Object.keys(F.by), ...Object.keys(H.by)])].map(k => ({ k, f: (F.by[k] || 0) / F.n, h: (H.by[k] || 0) / H.n })).sort((a, b) => b.f - a.f);
   const shot = {
-    kind: 'half', title: 'Half precision check', game: s.def.id,
-    notes: [`chip time a frame: full ${r2(F.ms / F.n)} ms, half ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${HD.info.half})`,
-      ...parts.map(p => `  ${p.k}: full ${r2(p.f)} ms, half ${r2(p.h)} ms${pc(p.f, p.h)}`),
-      `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh} → ${HD.info.ow}x${HD.info.oh} · ${HD.info.upscaled || 'no upscaler'}; in half: SGSR 2's upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare`],
-    images: pic ? [{ label: 'half precision', cv: pic }] : [],
+    kind, title: C.title, game: s.def.id,
+    notes: [`chip time a frame: ${C.off} ${r2(F.ms / F.n)} ms, ${C.on} ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${says})`,
+      ...parts.map(p => `  ${p.k}: ${C.off} ${r2(p.f)} ms, ${C.on} ${r2(p.h)} ms${pc(p.f, p.h)}`),
+      `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh} → ${HD.info.ow}x${HD.info.oh} · ${HD.info.upscaled || 'no upscaler'}; ${C.note}`],
+    images: pic ? [{ label: C.on, cv: pic }] : [],
   };
   shots.push(shot); viewer(shot);
 }
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -736,7 +750,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -757,6 +771,7 @@ function panel() {
       case 'shimmer': runShimmer(); break;
       case 'fg': runFG(); break;
       case 'half': runHalf(); break;
+      case 'spread': runSpread(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -854,7 +869,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)
