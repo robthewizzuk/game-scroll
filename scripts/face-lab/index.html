@@ -5,9 +5,9 @@
 // a game might put them in. Twelve people of different ages, builds and skin unless asked otherwise.
 //   &who=0,3,7 (which of the twelve)   &cols=sun:face,overcast:face,lamp:face,indoor:face   light:view
 //   lights: sun (a clear day), overcast (soft and even), lamp (a street lamp at night), indoor (a window to one side), back (the sun behind)
-//   views: face (three quarters, close), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
+//   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
 //   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &blinks (let them blink)
-//   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
+//   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
 //   &wrap=4 (cells to a row of the sheet: people run on across rows)   &look=clean|real (every person drawn in that look)   &pose=idle   &mouth=.5 (open it)   &expr=smile:1 (a face shape set)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
@@ -63,7 +63,7 @@ try {
   const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (o.hairStyle === 'bald') o.hair = null; return o; };
   await human.ready(pick.map(optsOf));
   info.push('sculpted ' + pick.length + ' in ' + Math.round(performance.now() - t0) + ' ms');
-  const VIEW = { nose: [.5, .02, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.1] };
+  const VIEW = { eyes: [.3, .04, 1, .17], nose: [.5, .02, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.1] };
   for (let r = 0; r < pick.length; r++) {
     const p = human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
@@ -75,12 +75,12 @@ try {
     info.push(`${LAB[pick[r]].name}: ${p.tris.join('/')} triangles`);
     for (let k = 0; k < cols.length; k++) {
       const { light, view } = cols[k], d = VIEW[view] || VIEW.face, len = Math.hypot(d[0], d[1], d[2]), dist = d[3];
-      p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); aim.y += view === 'body' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : .1;
+      p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); aim.y += view === 'body' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : view === 'eyes' ? .148 : .1;
       setLight(light, aim);
       v.cam.aspect = cw / ch; v.cam.near = dist * .05; v.cam.far = dist * 80; v.cam.updateProjectionMatrix();
       v.cam.position.set(aim.x + d[0] / len * dist, aim.y + d[1] / len * dist, aim.z + d[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
       p.face?.look?.(v.cam.position);
-      for (let i = 0; i < 4; i++) { v.t = 0; p.rig.update(1 / 60); v.render(cx, cw, ch); await frame(); }
+      for (let i = 0, nf = +(Q.get('frames') || 4); i < nf; i++) { v.t = 0; p.rig.update(1 / 60); v.render(cx, cw, ch); await frame(); }
       const [px, py] = at(r, k); sx.drawImage(cell, px, py + LABEL);
       if (Q.has('time')) { const t1 = performance.now(); for (let i = 0; i < 10; i++) { v.t = 0; v.render(cx, cw, ch); } info.push(`  ${light}:${view} ${((performance.now() - t1) / 10).toFixed(1)} ms a frame`); }
       sx.font = '12px sans-serif'; sx.fillStyle = '#ddd'; sx.fillText(`${LAB[pick[r]].name} · ${light}`, px + 5, py + 13);

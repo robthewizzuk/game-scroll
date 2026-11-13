@@ -801,6 +801,13 @@ try {
       const real = human(ro), rs = real.mesh.material[0], other2 = human(ro2).mesh.material[0];
       ok(rs.userData.sss?.skin === true && rs.userData.sss.thin === true && rs.name === 'human:skin:real' && rs.sheen < M[0].sheen && M[0].userData.sss.skin === false && rs.map !== M[0].map && other2.map !== rs.map && real.mesh.geometry !== plain.mesh.geometry && rs.userData.faceDetail?.isDataTexture && rs.userData.faceDetail.channel === 1 && !M[0].userData.faceDetail,
         `real look: its own skin (light under it, a rim of ${rs.sheen.toFixed(2)} where the clean look's is ${M[0].sheen.toFixed(2)}), its own sculpt and paint and a picture of its fine lines and oil, another seed another face`);
+      // a real face's eyes: an iris painted in code under no shine of its own, and a wet film over them (the cornea, the tears along the lower
+      // lid) that adds only its light, on the eyes' and the head's bones, close up only; none on the clean look
+      const re = real.mesh.material[1], wet = real.wet, wg = wet?.geometry, wb = wg && new Set(Array.from(wg.attributes.skinIndex.array).filter((v, i) => i % 4 === 0).map(i => wet.skeleton.bones[i].name));
+      const atLod = l => { real.lod = l; const v = wet.visible; real.lod = 0; return v; };
+      ok(re !== M[1] && re.map?.isDataTexture && re.map.image.width >= 128 && !re.clearcoat && M[1].clearcoat === 1 && wet?.isSkinnedMesh && wet.material.transparent && wet.material.blending === gs.THREE.AdditiveBlending && !wet.material.depthWrite && !wet.castShadow && wg.index.count > 3000
+        && ['eyeL', 'eyeR', 'head'].every(b => wb.has(b)) && atLod(0) && !atLod(1) && plain.wet === null && wet.parent === real && human(ro).wet.geometry === wg,
+        `real eyes: an iris painted in code (${re.map?.image.width} x ${re.map?.image.width}) and a wet film over them (${wg?.index.count / 3} triangles, on ${[...(wb || [])].join(', ')}) close up only; none on the clean look`);
       // seams and stitching (field.js lines, human-paint.js paintSeams): cloth and leather wear one small picture by the same second set of
       // coordinates, across a line and along it; some of every kind of cloth is near a seam or a row of stitching, and no close-up triangle
       // counts more stitches between its corners than its length can hold (where a count starts again, a corner has a twin)

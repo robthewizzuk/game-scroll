@@ -1218,7 +1218,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   real one, made in code for each face: faint blotches of colour, freckles on fair skin that has them, a few
   moles, brown spots with age, and fine lines that come with age (across the forehead, between the brows,
   crow's feet, under the eyes, over the upper lip), shading in the paint on both renderers and bending the
-  light on WebGPU, where the middle of the face (forehead, nose, chin) and the lips shine a little more. A real face comes from `seed` (the same
+  light on WebGPU, where the middle of the face (forehead, nose, chin) and the lips shine a little more. Its
+  eyes are wet and deep: the iris is a flat disc of fine fibres, crypts and a collarette (painted in code) set
+  back under a clear cornea, so from one side it lies inside the eye; a film of tears over the whole eye and a
+  line of tears along each lower lid add only their shine (the cornea's small sharp highlight slides as the eye
+  turns); the white is shaded where the lids shade it; real lashes, a few hundred strands in clumps, curl from
+  the lids and blink with them; and the inner corner has its small pink mound. Close up only, on both renderers. A real face comes from `seed` (the same
   seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png

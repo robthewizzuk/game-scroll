@@ -131,7 +131,8 @@ export function paintFace(o) {
   const ph = (f.aseed || 0) * 3.7, seed = Math.floor((f.aseed || 0) * 100), lum = .3 * S[0] + .59 * S[1] + .11 * S[2], fair = ss(.18, .5, lum), dark = 1 - ss(.04, .16, lum);
   const frk = R ? (f.freckles || 0) * fair : 0, spots = R ? ss(55, 82, f.age ?? 30) * (1 - .6 * dark) : 0;
   const moles = R ? Array.from({ length: Math.floor(hash(seed, 3, 1) * 3.6) }, (_, k) => [.012 + .055 * hash(seed, k, 11), -.1 + .12 * hash(seed, k, 12), .0006 + .0006 * hash(seed, k, 13)]) : [];
-  // (a real face's paint is quieter: finer brows with skin between the hairs, a thinner line along the lashes, lips nearer the skin's own colour)
+  // (a real face's paint is quieter: finer brows with skin between the hairs, a thin even line along the lashes (their roots: the lashes are
+  // strands, human-head.js eyeParts), lips nearer the skin's own colour)
   const put = (C, k) => { r += (C[0] - r) * k; g += (C[1] - g) * k; b += (C[2] - b) * k; };
   for (let j = 0; j < h; j++) {
     const hy = y0 + (j + .5) / h * (y1 - y0);
@@ -144,7 +145,7 @@ export function paintFace(o) {
       if (abs(hy - EYE[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {
         const q = rim(x, hy), d = q[0], up = q[1], a = (x - ex0) / exw, pink = d < .0004 ? ss(.0098 * ES, .0118 * ES, EYE[0] - x) : 0;
         if (up) {
-          const wl = (fem ? .0021 : .0016) * (R ? .72 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
+          const wl = (fem ? .0021 : .0016) * (R ? .45 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * (R ? .3 : 1) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
           const line = d <= 0 ? 1 : ss(wl + .0003, wl - .0001, d), shade = ss(.0062, .001, d) * ss(-.1, .25, a) * ss(1.25, .9, a) * (fem ? .2 : .14) * (R ? .6 : 1);
           put(LA, mx(line * (fem ? .96 : .92), shade) * (1 - pink));
         } else {
@@ -199,6 +200,33 @@ export function paintFace(o) {
 
 /** The picture of combed hair: w by h dots; round: how many times it is laid round a head; plain: the value that leaves the hair's own colour as it is. */
 export const HAIR = { w: 256, h: 4, round: 8, plain: .82 };
+
+/**
+ * The fine work of an iris, for a real face's eyes (one picture for everybody: each eye is turned its own way on it, human.js): w by w dots
+ * of the iris seen from in front, its edge (the limbus) at `edge` of the picture's half width and plain beyond (the white is laid there), the
+ * pupil's edge at `pupil` of the iris's radius. Shares of the eye's own colours, as light (plain: the value that leaves them be): fine fibres
+ * running out from the pupil, a darker ruff round it, the collarette (a wavy ring a little way out, warmer and lighter, as most eyes have),
+ * crypts (dark pits) between it and the edge, rings of furrows near the edge, and the edge itself a shade darker. Returns RGBA bytes.
+ */
+export const IRIS = { w: 256, plain: .7, edge: .98, pupil: .36 };
+export function paintIris() {
+  const { w, plain, edge, pupil } = IRIS, px = new Uint8Array(w * w * 4), P = Math.round(255 * plain), byte = v => mn(255, mx(0, Math.round(255 * plain * v)));
+  for (let j = 0; j < w; j++) for (let i = 0; i < w; i++) {
+    const x = (i + .5) / w * 2 - 1, y = (j + .5) / w * 2 - 1, rho = Math.hypot(x, y) / edge, at = (j * w + i) * 4; px[at + 3] = 255;
+    if (rho >= 1) { px[at] = px[at + 1] = px[at + 2] = P; continue; }
+    const th = Math.atan2(y, x), c = Math.cos(th), sn = Math.sin(th), q = (rho - pupil) / (1 - pupil);   // (q: 0 at the pupil's edge .. 1 at the limbus)
+    let v = 1 + .2 * lumps(30 * c, 30 * sn, rho * 2.5) + .12 * lumps(70 * c + 3, 70 * sn, rho * 5) + .06 * lumps(140 * c, 140 * sn + 7, rho * 9);   // fibres
+    v *= 1 - .3 * bump(q, .05, .06);   // the ruff round the pupil
+    const cq = .3 + .045 * Math.sin(th * 7 + 1.3) + .03 * lumps(6 * c, 6 * sn, 4.4), col = bump(q, cq, .045);
+    v *= 1 + .22 * col;
+    const crypt = ss(.3, .62, lumps(11 * c + 2, 11 * sn, q * 5 + 9)) * bump(q, .58, .2); v *= 1 - .38 * crypt;   // crypts
+    v *= (1 - .08 * bump(q, .78, .012) * ss(-.2, .4, lumps(5 * c, 5 * sn, 2))) * (1 - .08 * bump(q, .88, .01));   // furrows
+    v *= 1 - .18 * ss(.86, 1, q);   // the edge
+    const warm = ss(.55, .2, q) * .7 + .3 * col;   // (warmer about the pupil and along the collarette)
+    px[at] = byte(v * (1 + .1 * warm)); px[at + 1] = byte(v * (1 + .01 * warm)); px[at + 2] = byte(v * (1 - .14 * warm));
+  }
+  return px;
+}
 /**
  * Paints combed hair: strands side by side in locks (they run up the picture, so it is laid on with its width across them: round the head,
  * so the strands run out from the crown and down its sides and its back). It tiles. Returns { colour (RGBA bytes, to be read as sRGB: it multiplies the hair's

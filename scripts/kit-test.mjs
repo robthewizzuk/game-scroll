@@ -2718,7 +2718,27 @@ console.log('physics ok');
     assert.ok(det.length === W * H * 2 && low > 200 && low < W * H * .05 && oily > W * H * .01 && oily < W * H * .2 && det[0] === 255 && det[(W - 1) * 2] === 255, `a picture of it: ${low} dots in a line, ${oily} oily, its edges plain`);
     const paint = o => HP.paintFace({ face: { ...f(30), ...o }, fem: true, skin: [.7, .5, .4], brow: [.1, .08, .06], lips: [.5, .25, .2], lash: [.05, .04, .03], mouth: [.1, .05, .05] }), a = paint({ freckles: 1 }), b = paint({ freckles: 0 }); let more = 0; for (let i = 0; i < a.length; i += 4) if (a[i + 1] < b[i + 1] - 8) more++;
     assert.ok(more > 100 && more < a.length / 4 * .05, `freckles on fair skin that has them: ${more} dots darker`); }
-  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles) ok');
+  // ---- a real face's eyes (human-shapes.js realEyeball, human-head.js eyeParts): the iris a flat disc set back under where the cornea is, the
+  // white shaded under the upper lid; lashes on both lids of both eyes (the upper ones longer, riding the upper lid, fewer with age) and a pink
+  // mound in each inner corner, all in the close set of triangles only; the clean face has none of it
+  { const S = await import('../src/kit/models/human-shapes.js'), face = { ...base, real: 1, es: 1, age: 30, fat: .5, asym: 0, aseed: 1.7 }, a = { face, neck: 1, hair: 'bald', moustache: 0, hat: null, foot: 0 };
+    const p = S.sculpt({ kind: 'head', a }), clean = S.sculpt({ kind: 'head', a: { ...a, face: base } }), name = (q, i) => q.slots[q.slot[i]];
+    const irisZ = q => { let lo = 9, hi = -9; for (let i = 0; i < q.n; i++) { const s = name(q, i); if (/^eye[0-4]$/.test(s) && q.P[i * 3] > 0) { lo = Math.min(lo, q.P[i * 3 + 2]); hi = Math.max(hi, q.P[i * 3 + 2]); } } return hi - lo; };
+    assert.ok(irisZ(p) < .0006 && irisZ(clean) > .001, `the iris a flat disc: ${(irisZ(p) * 1000).toFixed(2)} mm deep from its middle to its edge (the clean eye's is ${(irisZ(clean) * 1000).toFixed(2)} mm, the ball's round)`);
+    const shade = (q, up) => { let s = 0, c = 0; const ao = q.ao; for (let i = 0; i < q.n; i++) if (name(q, i) === 'eye6' && q.P[i * 3] > 0) { const dy = q.P[i * 3 + 1] - HC[1] - HH.EYE[1]; if (up ? dy > .004 : Math.abs(dy) < .002) { s += ao[i]; c++; } } return s / c; };
+    assert.ok(shade(p, true) < shade(p, false) * .85, `the white shaded under the upper lid: ${shade(p, true).toFixed(0)} against ${shade(p, false).toFixed(0)} across the middle`);
+    const lash = q => { const pts = []; for (let i = 0; i < q.n; i++) if (name(q, i) === 'lashes') pts.push(i); return pts; }, L = lash(p), far = new Set(p.I[1]);
+    const strands = L.length / 12, caruncle = []; for (let i = 0; i < p.n; i++) if (name(p, i) === 'caruncle') caruncle.push(i);
+    assert.ok(strands > 140 && Number.isInteger(strands) && lash(clean).length === 0 && L.every(i => !far.has(i)) && caruncle.length > 40 && caruncle.every(i => !far.has(i)), `lashes: ${strands} strands, a pink mound in each corner, close up only; none on the clean face`);
+    // (upper lashes: their roots above the eye's middle, longer than the lower ones, going with the upper lid's bone)
+    let up = [0, 0], dn = [0, 0], lid = 0, lidOf = 0; const lidB = p.names.indexOf('lidL');
+    for (let k = 0; k < L.length; k += 12) {
+      const r = L[k], t = L[k + 9], len = Math.hypot(p.P[t * 3] - p.P[r * 3], p.P[t * 3 + 1] - p.P[r * 3 + 1], p.P[t * 3 + 2] - p.P[r * 3 + 2]), above = p.P[r * 3 + 1] > HC[1] + HH.EYE[1];
+      if (above) { up[0] += len; up[1]++; if (p.P[r * 3] > 0) { lidOf++; for (let q = 0; q < 4; q++) if (p.SI[r * 4 + q] === lidB && p.SW[r * 4 + q] > 128) { lid++; break; } } } else { dn[0] += len; dn[1]++; }
+    }
+    assert.ok(up[1] > dn[1] * 2 && up[0] / up[1] > dn[0] / dn[1] * 2 && lid > lidOf * .8, `upper lashes ${(up[0] / up[1] * 1000).toFixed(1)} mm on average, lower ${(dn[0] / dn[1] * 1000).toFixed(1)} mm; ${lid} of ${lidOf} upper ones on the left go with its lid`);
+    const old = lash(S.sculpt({ kind: 'head', a: { ...a, face: { ...face, age: 78 } } })).length / 12; assert.ok(old < strands * .85, `fewer lashes with age: ${old} at 78`); }
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes and the inner corner close up) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
