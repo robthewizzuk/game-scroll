@@ -188,7 +188,7 @@ export function verdict(r) {
 const PLUGINS = [
   ['Device', 'getInfo'], ['App', 'getState'], ['Haptics', 'selectionStart'], ['KeepAwake', 'isSupported'], ['Geolocation', 'checkPermissions'],
   ['Motion', null], ['Filesystem', 'checkPermissions'], ['Share', 'canShare'], ['TextToSpeech', 'getSupportedLanguages'],
-  ['PowerState', 'get'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
+  ['PowerState', 'get'], ['AppHealth', 'get', { since: 0 }, r => r ? { robot: r.robot, known: r.known, exits: (r.exits || []).length, web: !!r.web } : r, 'android'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
   ['NativeAR', 'available'], ['NPU', 'available'], ['PhoneAI', 'modelAvailable'], ['PhoneAI', 'speechAvailable', { language: 'en-US' }],
   ['GameServices', 'signIn', {}],
   ['SpeechAudio', 'render', { text: 'Testing, one two.', lang: 'en-GB', rate: 1, pitch: 1 },
@@ -202,8 +202,9 @@ const brief = v => { let t; try { t = JSON.stringify(v); } catch { t = String(v)
 export async function checkPlugins(cap = Capacitor, limit = PLUGIN_LIMIT) {
   if (!cap.isNativePlatform()) return null;
   const out = [];
-  for (const [name, method, args, tell] of PLUGINS) {
+  for (const [name, method, args, tell, only] of PLUGINS) {
     const label = method ? `${name}.${method}` : name;
+    if (only && cap.getPlatform && cap.getPlatform() !== only) continue;   // (a plugin one kind of phone has no use for)
     if (!cap.isPluginAvailable(name)) { out.push({ name: label, state: 'MISSING', ms: 0, note: 'not in this build of the app' }); continue; }
     if (!method) { out.push({ name: label, state: 'ok', ms: 0, note: 'in the app (not asked: it only sends readings)' }); continue; }
     const t0 = performance.now();
@@ -401,7 +402,7 @@ function showReport(text, driver) {
 export function openTour(driver) {
   if (running) return;
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
-  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5]]);   // (not games: the Next Gen engine's detail systems, off and on; src/detail-tour.js)
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5, 6]]);   // (not games: the Next Gen engine's detail systems, off and on; src/detail-tour.js)
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>
@@ -418,8 +419,8 @@ export function openTour(driver) {
   const picked = () => choice.find(([k]) => k === set.value)[2], scenes = () => set.value === SCENES;
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
-    // (thirteen runs where the forest flies four, on WebGPU; each has a few seconds of getting ready before it)
-    est.textContent = scenes() ? `Five scenes, each flown through for ${secs.value} seconds with one of the engine's detail systems off, then on: about ${Math.max(1, Math.round((13 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
+    // (fifteen runs where the forest flies four, on WebGPU; each has a few seconds of getting ready before it)
+    est.textContent = scenes() ? `Six scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((15 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };
   set.onchange = secs.onchange = paint; paint();

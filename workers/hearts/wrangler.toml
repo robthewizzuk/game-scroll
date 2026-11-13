@@ -33,6 +33,8 @@ ANDROID_ALLOW_SIDELOAD = "off"
 WEB_PLAY_URL = "https://robthewizzuk.github.io/game-scroll/"
 # The live catalogue, used to accept hearts only for games that exist.
 MANIFEST_URL = "https://assets.game-scroll.com/manifest.json"
+# The repository, so each build on the crash and stutter report links to the commit it was built from (empty = no links).
+REPO_URL = "https://github.com/robthewizzuk/game-scroll"
 
 [[d1_databases]]
 binding = "DB"
@@ -58,6 +60,12 @@ simple = { limit = 60, period = 60 }
 name = "LIMIT_STATS"
 namespace_id = "7304"
 simple = { limit = 6, period = 60 }
+
+# One game's page on the crash and stutter report, when it isn't already cached: per address.
+[[ratelimits]]
+name = "LIMIT_PAGES"
+namespace_id = "7305"
+simple = { limit = 30, period = 60 }
 
 # Challenges and passes: per address (each pass costs an Apple/Google check).
 [[ratelimits]]

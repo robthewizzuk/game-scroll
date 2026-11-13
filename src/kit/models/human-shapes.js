@@ -4,7 +4,7 @@
 // Nothing in here needs three.js or the page: it runs in background workers (human-worker.js), so a
 // game never stops while its people are made, and what it makes is plain numbers that can be saved.
 // Kit use only: games reach it as gs.models.human.
-import { Loft, mesh as meshOf, thin, ready, smin, lumps, stamp, thinReady } from './field.js';
+import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
 import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { row, easeOf, torsoOf, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
@@ -333,11 +333,20 @@ const headBonesOf = (f, lids) => function headBones(x, y, z, s, side = 0) {
   out.push(['head', hd * Math.max(0, rest)]);
   return out;
 };
-// an eye: white, iris, pupil in clean rings (looking along +z)
-function eyeball(c, r, n = 14) {
-  const rings = [[0, 0], [9.5, 0], [9.5, 1], [28.5, 1], [28.5, 2], [31.5, 2], [31.5, 3], [62, 3], [98, 3], [128, 3]], P = [], N = [], K = [], I = [];   // (the white goes well round the back: the eye turns)
-  for (const [deg, k] of rings) for (let i = 0; i < n; i++) { const a = deg * PI / 180, t = i / n * PI * 2, x = sin(a) * cos(t), y = sin(a) * sin(t), z = cos(a); P.push(c[0] + x * r, c[1] + y * r, c[2] + z * r); N.push(x, y, z); K.push(k); }
-  for (let q = 0; q < rings.length - 1; q++) { if (rings[q][0] === rings[q + 1][0]) continue; for (let i = 0; i < n; i++) { const a = q * n + i, b = q * n + (i + 1) % n, d = a + n, e = b + n; I.push(a, e, b, a, d, e); } }
+// An eye (looking along +z): rings from the middle of the pupil out and round the back (the white goes well round: the eye turns), each
+// [degrees from the way it looks, band]. The bands are its colours (human.js: 0 the pupil, 1 to 3 the iris from the pupil out, 4 the dark
+// ring round it, 5 the white beside it, 6 the white, 7 the white far round), and they run into one another from ring to ring: no hard lines.
+// The cornea: over the iris the ball stands a quarter of a millimetre proud (no more: the lids' edges pass a fifth of a millimetre over the
+// ball), but its normals are a real cornea's, a cap a millimetre high and more sharply curved than the ball: the wet highlight on it is
+// small and slides as the eye turns.
+function eyeball(c, r, n = 24) {
+  const rings = [[0, 0], [8, 0], [10.5, 1], [16, 2], [23, 3], [28, 4], [31, 5], [36, 6], [62, 6], [98, 7], [128, 7]], P = [], N = [], K = [], I = [], LIMB = 30 * PI / 180;
+  for (const [deg, k] of rings) for (let i = 0; i < n; i++) {
+    const a = deg * PI / 180, t = i / n * PI * 2, u = Math.min(1, a / LIMB), up = (1 - u * u) ** 2, slope = -4 * u * (1 - u * u) / LIMB;   // the cap's height (0..1) and how fast it falls
+    const ex = sin(a) * cos(t), ey = sin(a) * sin(t), ez = cos(a), tx = cos(a) * cos(t), ty = cos(a) * sin(t), tz = -sin(a), rr = r + .00025 * up, q = .0011 * slope / r;
+    P.push(c[0] + ex * rr, c[1] + ey * rr, c[2] + ez * rr); const nx = ex - q * tx, ny = ey - q * ty, nz = ez - q * tz, nl = Math.hypot(nx, ny, nz); N.push(nx / nl, ny / nl, nz / nl); K.push(k);
+  }
+  for (let q = 0; q < rings.length - 1; q++) for (let i = 0; i < n; i++) { const a = q * n + i, b = q * n + (i + 1) % n, d = a + n, e = b + n; I.push(a, e, b, a, d, e); }
   return { P, N, K, I };
 }
 
@@ -412,9 +421,13 @@ const fake = i => [((i * 53) % 7) / 6, ((i * 29) % 5) / 4, ((i * 17) % 3) / 2];
  * extra: hard-edged parts joined on as they are (eyes, buttons, teeth), one or a list: { P, N, K (slot for each point, by name), I, ao (one
  * shade, or one for each point), src (what each point rides, for its bones), close (true: its triangles are in the close set only) }. A number
  * under 0 in I names a point of the mesh itself (-1 - its number), for a part that hangs on the mesh's own points.
+ * flesh: [thin, thick] (metres): the piece also says how thin it is at each point of the shapes marked `flesh: true`, for the light that comes
+ * through an ear (field.js thickness()): `thin`, two 8-bit numbers a point: how thin (all of it where the solid behind the point is `thin`
+ * through or less, none where it is `thick` or more), and how open it is straight behind (none with something within 2 cm behind it, as the
+ * skull is behind an ear; all of it with 7 cm clear).
  */
-export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null, after = null }) {
-  let m = meshOf(shapes, { cell, blend, reach, keep: keep[0], error: err[0] }); const X = [].concat(extra || []);
+export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null, after = null, flesh = null }) {
+  let m = meshOf(shapes, { cell, blend, reach, keep: keep[0], error: err[0] }); const X = [].concat(extra || []), solid = m.at;
   if (after) { m = after(m); if (m.extra) X.push(m.extra); }
   let { P, N, I } = m; const n0 = m.n, slots = [], names = [], side = m.side;
   let slot = new Uint8Array(n0), ao = m.ao, SI = new Uint8Array(n0 * 4), SW = new Float32Array(n0 * 4);
@@ -447,7 +460,23 @@ export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.00
   for (let i = 0; i < n * 3; i++) Nq[i] = Math.round(N[i] * 32767);
   for (let i = 0; i < n; i++) aq[i] = Math.round(Math.max(0, Math.min(1, ao[i])) * 255);
   for (let i = 0; i < n * 4; i++) Wq[i] = Math.round(SW[i] * 255);
-  return { n, P: P.byteOffset || P.buffer.byteLength !== P.byteLength ? P.slice() : P, N: Nq, slot, ao: aq, SI, SW: Wq, I: [tri(I), tri(I1), tri(I2)], slots, names };
+  const out = { n, P: P.byteOffset || P.buffer.byteLength !== P.byteLength ? P.slice() : P, N: Nq, slot, ao: aq, SI, SW: Wq, I: [tri(I), tri(I1), tri(I2)], slots, names };
+  if (flesh && solid) {   // (the mesh's own points; what was joined on, an eye or a tooth, lets no light through)
+    const th = out.thin = new Uint8Array(n * 2), V = new Float32Array(n * 2), on = new Uint8Array(n), r = [0, 0];
+    for (let i = 0; i < n0; i++) if (m.shapes[m.own[i]]?.src.flesh) {
+      on[i] = 1; thickness(solid, P[i * 3], P[i * 3 + 1], P[i * 3 + 2], N[i * 3], N[i * 3 + 1], N[i * 3 + 2], cell * .75, flesh[1] + cell, .004, .08, r);
+      V[i * 2] = 1 - ss(flesh[0], flesh[1], r[0]); V[i * 2 + 1] = ss(.02, .07, r[1]);
+    }
+    // evened out over each point's neighbours, twice (read a cell apart, the measure comes in steps: they showed as rings on an ear)
+    const sum = new Float32Array(n * 2), cnt = new Uint16Array(n);
+    for (let pass = 0; pass < 2; pass++) {
+      sum.fill(0); cnt.fill(0);
+      for (let t = 0; t < I.length; t += 3) for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3]; if (!on[a] || !on[b]) continue; sum[a * 2] += V[b * 2]; sum[a * 2 + 1] += V[b * 2 + 1]; cnt[a]++; sum[b * 2] += V[a * 2]; sum[b * 2 + 1] += V[a * 2 + 1]; cnt[b]++; }
+      for (let i = 0; i < n0; i++) if (cnt[i]) { V[i * 2] = (V[i * 2] + sum[i * 2] / cnt[i]) / 2; V[i * 2 + 1] = (V[i * 2 + 1] + sum[i * 2 + 1] / cnt[i]) / 2; }
+    }
+    for (let i = 0; i < n0 * 2; i++) th[i] = Math.round(255 * V[i]);
+  }
+  return out;
 }
 /** The same piece on the other side: x turned over, triangles turned round, left bones for right. */
 export function mirrored(p) {
@@ -504,7 +533,7 @@ export function sculpt({ kind, a }) {
     for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
-    const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye,
+    const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],
       after: m => { const r = partLips(m, f), inside = mouthInside(r, f); if (inside) r.extra = inside; lids = lidPlan(r, f); return r; } });
     p.lid = lids.turn;   // (how far the upper lids turn to close, for human-face.js)
     return p;

@@ -156,7 +156,7 @@ function stand(kind, v, k, opts) {
   for (const [name, p] of Object.entries(plan.parts || {})) (p.on ? parts[p.on] : shell).add(parts[name]);
   const wheel = (w, into) => {
     const piv = new Object3D(), g = wheelOf(w.geo), m = new Mesh(g, wheelMat); piv.rotation.order = 'YXZ'; piv.position.set(...w.at); if (w.rot) piv.rotation.set(...w.rot);
-    if (w.at[0] < 0 && !w.rot) m.rotation.y = PI; m.castShadow = m.receiveShadow = true; m.name = 'wheel'; piv.add(m); piv.radius = w.geo.r; piv.steers = !!w.steer; into.add(piv); tris += g.attributes.position.count / 3; return piv;
+    if (w.at[0] < 0 && !w.rot) m.rotation.y = PI; m.castShadow = m.receiveShadow = true; m.name = 'wheel'; piv.add(m); piv.radius = w.geo.r; piv.width = w.geo.w; piv.steers = !!w.steer; into.add(piv); tris += g.attributes.position.count / 3; return piv;
   };
   const wheels = (plan.wheels || []).map(w => wheel(w, root));
   for (const s of plan.spares || []) wheel(s, shell);
@@ -165,6 +165,7 @@ function stand(kind, v, k, opts) {
   Object.assign(root, { kind, style: plan.style, shell, wheels, parts, points, size: { length: mm(plan.size.length), width: mm(plan.size.width), height: mm(plan.size.height) }, wheelbase: plan.wheelbase || 0, track: plan.track || 0, radius: plan.radius || 0, tris: Math.round(tris), look: { kind, ...opts, ...k } });
   if (plan.length) { root.length = plan.length; root.reach = plan.reach; }
   const tracks = plan.tracks ? laid(root, shell, plan.tracks, k) : null; if (tracks) tris += tracks.tris;
+  if (tracks) root.belts = { x: plan.tracks.x, width: plan.tracks.link.w };   // (where its two caterpillar tracks run: gs.outdoors.Marks lays their marks)
   const sets = (plan.sets || []).map(st => { const g = wheelOf(st.geo), im = new InstancedMesh(g, wheelMat, st.at.length); im.castShadow = im.receiveShadow = true; im.instanceMatrix.setUsage(DynamicDrawUsage); im.name = 'wheels'; root.add(im); tris += g.attributes.position.count / 3 * st.at.length; return { im, at: st.at, r: st.geo.r }; });
   const spin = d => {   // railway wheels, and a steam engine's rods on their crank pins
     for (const st of sets) { const a = -d / st.r, c = Math.cos(a), sn = Math.sin(a), E = MX.elements; for (let i = 0; i < st.at.length; i++) { E[0] = 1; E[1] = E[2] = E[3] = E[4] = 0; E[5] = c; E[6] = sn; E[7] = E[8] = 0; E[9] = -sn; E[10] = c; E[11] = E[12] = 0; E[13] = st.at[i][0]; E[14] = st.at[i][1]; E[15] = 1; st.im.setMatrixAt(i, MX); } st.im.instanceMatrix.needsUpdate = true; }

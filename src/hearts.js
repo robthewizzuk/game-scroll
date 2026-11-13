@@ -11,12 +11,18 @@
 // and trades it for a pass valid 24 hours, sent with each heart. Until the store builds exist the
 // server accepts hearts without a pass (under tighter limits), so a failed check never blocks play.
 //
-// With no VITE_HEARTS_URL (dev and test builds, or before the backend is set up) nothing is sent.
+// With no VITE_HEARTS_URL (before the backend is set up, and in the streaming tests) nothing is sent.
 import { Capacitor } from '@capacitor/core';
 import { store, deviceId } from './util.js';
 import { nativePlugin } from './kit/services.js';
 
 export const HEARTS_URL = String(import.meta.env.VITE_HEARTS_URL || '').replace(/\/+$/, '');
+/**
+ * A real build in someone's hands: not `npm run dev`, not a test build (`--mode bundled`) and not a
+ * browser that a test script is driving. Only these send play stats and crash reports, so our own
+ * test runs don't show up as players.
+ */
+export const REAL = import.meta.env.MODE === 'production' && !(typeof navigator !== 'undefined' && navigator.webdriver);
 const COUNTS_KEY = 'gs_heart_counts', SENT_KEY = 'gs_heart_sent', QUEUE_KEY = 'gs_heart_queue';
 const REFRESH_MS = 2 * 60 * 1000, FRESH_MS = 3 * 60 * 1000;
 const PASS_KEY = 'gs_api_pass', ATTEST_KEY = 'gs_appattest_key', PASS_RETRY_MS = 30 * 60 * 1000;
