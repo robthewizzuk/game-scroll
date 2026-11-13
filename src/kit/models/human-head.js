@@ -299,6 +299,26 @@ export function mouthInside(m, f) {
   return { P, N, K, I, src, ao, close: true };
 }
 
+// Where a real face's beard and moustache grow (sp: { face, beard, moustache }; x; hy, hz from the middle of the head): [beard, moustache], each 0..1, soft at its edges
+// as real ones are (more and fewer hairs over a centimetre or so, never a line). The beard's line on the cheek runs from beside the nose
+// down past the corner of the mouth and up across the cheek to the sideburn by the ear; its neckline from under the jaw's corner to a
+// finger above the Adam's apple; none behind the front of the ear. The moustache: the whole upper lip, from under the nose down over
+// the lip's edge, out a little past the corners, and on down over most of the upper lip itself, as a real one hangs over it (only the lower
+// lip shows clearly under a full moustache). Both grow right up to the lips, all round: a band of bare skin round the mouth inside a dark
+// beard, and the whole of both lips showing, reads as a painted mask, not a beard.
+export function beardArea(sp, x, hy, hz, out) {
+  const ax = Math.abs(x), sf = sp.face.soft || 0, fl = sp.face.lips || 1, mw = mouthHalf(sp.face) / (MOUTH.half - .002 * sf);
+  const e = .003 * lumps(x * 260, hy * 260 + 3.1, hz * 260) + .0013 * lumps(x * 800 + 5.3, hy * 800, hz * 800 + 1.7);
+  const lip = Math.min(Math.hypot(x / ((.0228 - .0035 * sf) * mw), (hy - MOUTH.y - .005) / (.0048 * fl)), Math.hypot(x / ((.0195 - .002 * sf) * mw), (hy - MOUTH.y + .0058) / (.0062 * fl)));
+  const lipOff = hy > MOUTH.y ? ss(.94, 1.04, lip) : ss(.97, 1.1, lip);
+  const top = -.0485 - .0055 * ss(.012, .03, ax) + .034 * ss(.035, .075, ax) + .014 * ss(.068, .078, ax) + e, dn = ((hz + .04) * .045 + (hy + .085) * .075) / .0875 + .6 * e;
+  const ang = Math.atan2(ax, hz) * 180 / Math.PI, back = 80 + 8 * ss(-.045, -.075, hy);
+  out[0] = sp.beard ? ss(top + .004, top - .004 - .014 * ss(.02, .05, ax), hy) * ss(-.008, .01, dn) * ss(back, back - 12, ang) * lipOff : 0;
+  const over = lipLine(x, sp.face) + .0022 + .0012 * ss(.012, .026, ax) + .4 * e;   // (how far down over the upper lip it hangs: to a couple of millimetres above where the lips meet)
+  const mh = mouthHalf(sp.face);   // (out to the corners of the mouth and a little round them, no further: past them a moustache by itself had left a stray tuft on the cheek)
+  out[1] = sp.moustache || sp.beard ? ss(top + .002, top - .006, hy) * ss(mh * 1.2, mh * .98, ax - .2 * e) * ss(over - .0012, over + .0012, hy) * (sp.moustache ? 1 : ss(0, .3, sp.beard)) : 0;
+  return out;
+}
 /**
  * A real face's eyes close up, as parts joined onto the head's mesh (m: field.js's, its lips parted; the close set of triangles only):
  * - the lashes: each a thin strand of three sides from the front edge of a lid (found on the mesh), in clumps of two or three as lashes lie.
@@ -306,9 +326,10 @@ export function mouthInside(m, f) {
  *   the upper lid as it does (each goes with the skin at its root). The lower ones are fewer, shorter and point down. Fewer and shorter with
  *   age, a little longer on a woman.
  * - in the inner corner of each eye, the small pink mound there (the caruncle).
+ * - the moustache (hair.moustache, or a beard's, hair.beard 0..1.5): its hairs one by one over the upper lip.
  * The lash lines painted along the lids (human-paint.js) are their roots. f: the face. Returns a list of parts.
  */
-export function eyeParts(m, f) {
+export function eyeParts(m, f, hair = {}) {
   const rim = rimOf(f), es = esOf(f), so = f.soft || 0, age = mx(0, Math.min(1, ((f.age ?? 30) - 30) / 50)), MP = m.P, o = [0, 0, 0], e = [0, 0];
   let seed = Math.floor((f.aseed || 0) * 977) + 13; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   // the head's points round the eyes (of the left one: x is mirrored), to find each lid's front edge on
@@ -392,6 +413,49 @@ export function eyeParts(m, f) {
           P.push(c[0] + R[0] * nx, c[1] + R[1] * ny, c[2] + R[2] * nz); N.push(nx / R[0] / nn, ny / R[1] / nn, nz / R[2] / nn); K.push('caruncle'); src.push(like); ao.push(.6 + .3 * mx(0, nz));
         }
         for (let j = 0; j < V; j++) for (let i = 0; i < U; i++) { const a0 = base + j * U + i, b0 = base + j * U + (i + 1) % U; I.push(a0, b0, b0 + U, a0, b0 + U, a0 + U); }
+      }
+    }
+    // the moustache: its hairs one by one over the whole upper lip, from under the nose down to the red of the lip, as a real one grows:
+    // down in the middle, fanning out and down toward the corners, lying over the lip and arching out over its edge to a couple of millimetres
+    // above where the lips meet; fewer toward its edges, so it thins out there and does not end in a line (a coat of fur over the lip had
+    // read as a solid block). Each goes with the skin at its root.
+    const slotOf = m.slots && m.slot ? i => m.slots[m.slot[i]] : () => 'skin';
+    if (hair.moustache || hair.beard > 0) {
+      const full = hair.moustache ? 1 : Math.min(1, hair.beard * 1.4), mh = mouthHalf(f), nm = Math.round(680 * (.5 + .5 * full) * (1 - .2 * age));
+      const top = ax => -.0482 + .0022 * bump(ax, .0175, .0045) - .0075 * ss(.02, .031, ax), bot = ax => lipLine(ax, f) + .0042, q3 = [0, 0, 0];
+      const skin = [];
+      for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1]; if (ax < mh * 1.3 && hy > -.078 && hy < -.04 && MP[i * 3 + 2] - HC[2] > .05 && m.N[i * 3 + 2] > .2 && slotOf(i) === 'skin') skin.push(i); }
+      for (let i = 0, tries = 0; i < nm && tries < nm * 30; tries++) {
+        const x = rnd() * mh * 1.15, t0 = top(x), b0 = bot(x), hy = b0 + (t0 - b0) * rnd(); if (t0 <= b0) continue;
+        if (rnd() > ss(t0 + .0008, t0 - .0028, hy) * ss(mh * 1.15, mh * .78, x) * (.75 + .25 * full) || mouthAt(x, hy, f, q3)[1] > .02) continue;
+        let w = 0, z = 0; const n = [0, 0, 0];
+        for (const j of skin) { const d2 = (abs(MP[j * 3]) - x) ** 2 + (MP[j * 3 + 1] - HC[1] - hy) ** 2; if (d2 > 4e-6) continue; const q = 1 / (d2 + 1e-7); w += q; z += q * (MP[j * 3 + 2] - HC[2]); n[0] += q * m.N[j * 3] * (MP[j * 3] < 0 ? -1 : 1); n[1] += q * m.N[j * 3 + 1]; n[2] += q * m.N[j * 3 + 2]; }
+        if (!w) continue; i++;
+        const nn = unit(n), N3 = [s * nn[0], nn[1], nn[2]], root = [s * x, HC[1] + hy, HC[2] + z / w - nn[2] * .0002], like = { like: [root[0], root[1], root[2], 0] };
+        // (down, and out the further from the middle; lifted off the skin, and curling back down over the lip)
+        const way = [s * (.1 + .95 * ss(.002, .027, x) + (rnd() - .5) * .3), -1, 0], along = way[0] * N3[0] + way[1] * N3[1];
+        const d = unit([way[0] - along * N3[0] + .24 * N3[0], way[1] - along * N3[1] + .24 * N3[1], -along * N3[2] + .24 * N3[2]]);
+        // (as long as reaches down to a couple of millimetres above where the lips meet, its curl and all)
+        const c = [-.8 * N3[0], -.6 - .8 * N3[1], -.8 * N3[2]], fall = -(d[1] + .45 * c[1]), drop = hy - lipLine(x, f) - .0022;
+        const L = Math.min((.0095 + .003 * ss(0, .02, x)) * (.7 + .3 * full) * (.75 + .5 * rnd()), drop / mx(.3, fall)); if (L < .0015) continue;
+        strand(root, d, c, L, .45, .00011, like, 'beardhair', .7 + .4 * rnd());
+      }
+    }
+    // the beard: single hairs too, where a real one grows (beardArea), fewer and shorter toward its edges and its neckline, growing down the
+    // face and the jaw, forward off the chin and back under it toward the throat, lying over the skin and curling in to it (a coat of fur
+    // alone had read as felt). The coat under them is shorter, to fill in between.
+    if (hair.beard > 0) {
+      const sp = { face: f, beard: hair.beard, moustache: !!hair.moustache }, B2 = [0, 0], nb = Math.round(2200 * Math.min(1, .35 + hair.beard) * (1 - .15 * age)), roots = [];
+      for (let i = 0; i < m.n; i++) { const x = MP[i * 3] * s, hy = MP[i * 3 + 1] - HC[1], hz = MP[i * 3 + 2] - HC[2]; if (x < -.004 || hy > -.01 || hy < -.17 || slotOf(i) !== 'skin') continue; const kb = beardArea(sp, x, hy, hz, B2)[0]; if (kb > .03) roots.push(i, kb); }
+      for (let i = 0, tries = 0; i < nb && tries < nb * 20 && roots.length; tries++) {
+        const r = Math.floor(rnd() * roots.length / 2) * 2, j = roots[r], kb = roots[r + 1]; if (rnd() > kb ** 1.5) continue; i++;
+        const nn = [s * m.N[j * 3] * (MP[j * 3] * s < 0 ? -1 : 1), m.N[j * 3 + 1], m.N[j * 3 + 2]], hy = MP[j * 3 + 1] - HC[1], hz = MP[j * 3 + 2] - HC[2];
+        const jit = [(rnd() - .5) * .002, (rnd() - .5) * .002, (rnd() - .5) * .002], jn = jit[0] * nn[0] + jit[1] * nn[1] + jit[2] * nn[2];
+        const root = [MP[j * 3] + jit[0] - jn * nn[0] - nn[0] * .0002, MP[j * 3 + 1] + jit[1] - jn * nn[1] - nn[1] * .0002, MP[j * 3 + 2] + jit[2] - jn * nn[2] - nn[2] * .0002], like = { like: [root[0], root[1], root[2], 0] };
+        const under = ss(-.25, -.65, nn[1]), way = [nn[0] * .2 + (rnd() - .5) * .35, -1 + .7 * under, -.9 * under + .15 * (1 - under)], along = way[0] * nn[0] + way[1] * nn[1] + way[2] * nn[2];
+        const d = unit([way[0] - along * nn[0] + .22 * nn[0], way[1] - along * nn[1] + .22 * nn[1], way[2] - along * nn[2] + .22 * nn[2]]);
+        const neck = .35 + .65 * ss(-.004, .03, ((hz + .04) * .045 + (hy + .085) * .075) / .0875), L = (.004 + .011 * hair.beard) * (.4 + .6 * kb) * neck * (.7 + .6 * rnd());
+        strand(root, d, [-.8 * nn[0], -.5 - .8 * nn[1], -.8 * nn[2]], L, .4, .00015, like, 'beardhair', .65 + .45 * rnd());
       }
     }
     parts.push({ P, N, K, I, src, ao, close: true });
@@ -660,4 +724,4 @@ export function head(a, ghosts = []) {
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = FIT_DATA + [mouthHalf, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = FIT_DATA + [mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);

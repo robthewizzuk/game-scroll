@@ -14,7 +14,7 @@
 // Kit use only: games reach it as gs.models.human.
 import { AdditiveBlending, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between } from '../poses.js';
 import { reach } from '../characters.js';
@@ -29,7 +29,7 @@ import { slimShared, floatsOf } from '../slim.js';
 const PI = Math.PI, abs = Math.abs;
 
 // ---- which material each kind of surface is drawn with (a maker's own slots say theirs: { colour, as })
-const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', browhair: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
+const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', browhair: 'lash', beardhair: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
   belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
 const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair', 'lash'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
 
@@ -151,9 +151,10 @@ const skinMat = (real = false) => {
 // head's second set of UVs. One skin material for each look (people who look alike share it); its pores stay the recipe's.
 const looks = new Map();
 function skinOf(sp, pal, stubble) {
-  const key = JSON.stringify([sp.face, sp.fem, stubble, pal.skin, pal.brow, pal.lips, pal.lash, pal.mouth]); let m = looks.get(key); if (m) return m;
+  const beard = sp.face.real && (sp.beard || sp.moustache) ? { beard: sp.beard, moustache: sp.moustache, colour: pal.beardhair } : null;
+  const key = JSON.stringify([sp.face, sp.fem, stubble, pal.skin, pal.brow, pal.lips, pal.lash, pal.mouth, beard]); let m = looks.get(key); if (m) return m;
   const lin = c => { const k = new Color(c); return [k.r, k.g, k.b]; };
-  const t = new DataTexture(paintFace({ face: sp.face, fem: sp.fem, stubble, skin: lin(pal.skin), brow: lin(pal.brow), lips: lin(pal.lips), lash: lin(pal.lash), mouth: lin(pal.mouth) }), FACE.w, FACE.h, RGBAFormat, UnsignedByteType);
+  const t = new DataTexture(paintFace({ face: sp.face, fem: sp.fem, stubble, beard: beard && { ...beard, colour: lin(beard.colour) }, skin: lin(pal.skin), brow: lin(pal.brow), lips: lin(pal.lips), lash: lin(pal.lash), mouth: lin(pal.mouth) }), FACE.w, FACE.h, RGBAFormat, UnsignedByteType);
   t.colorSpace = SRGBColorSpace; t.channel = 1; t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
   // (the soft red rim that stands for light under the skin follows the paint too: none of it on a brow or a lash)
   m = skinMat(!!sp.face.real); m.map = t; m.color.setScalar(1 / FACE.plain); m.sheenColorMap = t; m.sheen /= FACE.plain;
@@ -209,26 +210,7 @@ const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|(thumb|index|middle|ring|l
  * a bigger hand's finger joints are further apart, and a hand sculpted closed round a stock is bent already (HAND).
  * own: bones added for things that come off or hide (a hat, a pack), each at its parent's place.
  */
-// Where a real face's beard and moustache grow (x; hy, hz from the middle of the head): [beard, moustache], each 0..1, soft at its edges
-// as real ones are (more and fewer hairs over a centimetre or so, never a line). The beard's line on the cheek runs from beside the nose
-// down past the corner of the mouth and up across the cheek to the sideburn by the ear; its neckline from under the jaw's corner to a
-// finger above the Adam's apple; none behind the front of the ear. The moustache: the whole upper lip, from under the nose down over
-// the lip's edge, out a little past the corners, and on down over most of the upper lip itself, as a real one hangs over it (only the lower
-// lip shows clearly under a full moustache). Both grow right up to the lips, all round: a band of bare skin round the mouth inside a dark
-// beard, and the whole of both lips showing, reads as a painted mask, not a beard.
-function beardArea(sp, x, hy, hz, out) {
-  const ax = Math.abs(x), sf = sp.face.soft || 0, fl = sp.face.lips || 1, mw = mouthHalf(sp.face) / (MOUTH.half - .002 * sf);
-  const e = .003 * lumps(x * 260, hy * 260 + 3.1, hz * 260) + .0013 * lumps(x * 800 + 5.3, hy * 800, hz * 800 + 1.7);
-  const lip = Math.min(Math.hypot(x / ((.0228 - .0035 * sf) * mw), (hy - MOUTH.y - .005) / (.0048 * fl)), Math.hypot(x / ((.0195 - .002 * sf) * mw), (hy - MOUTH.y + .0058) / (.0062 * fl)));
-  const lipOff = hy > MOUTH.y ? ss(.94, 1.04, lip) : ss(.97, 1.1, lip);
-  const top = -.0485 - .0055 * ss(.012, .03, ax) + .034 * ss(.035, .075, ax) + .014 * ss(.068, .078, ax) + e, dn = ((hz + .04) * .045 + (hy + .085) * .075) / .0875 + .6 * e;
-  const ang = Math.atan2(ax, hz) * 180 / Math.PI, back = 80 + 8 * ss(-.045, -.075, hy);
-  out[0] = sp.beard ? ss(top + .004, top - .004 - .014 * ss(.02, .05, ax), hy) * ss(-.008, .01, dn) * ss(back, back - 12, ang) * lipOff : 0;
-  const over = lipLine(x, sp.face) + .0022 + .0012 * ss(.012, .026, ax) + .4 * e;   // (how far down over the upper lip it hangs: to a couple of millimetres above where the lips meet)
-  const mh = mouthHalf(sp.face);   // (out to the corners of the mouth and a little round them, no further: past them a moustache by itself had left a stray tuft on the cheek)
-  out[1] = sp.moustache || sp.beard ? ss(top + .002, top - .006, hy) * ss(mh * 1.2, mh * .98, ax - .2 * e) * ss(over - .0012, over + .0012, hy) * (sp.moustache ? 1 : ss(0, .3, sp.beard)) : 0;
-  return out;
-}
+// Where a real face's beard and moustache grow: human-head.js beardArea
 // a real beard's colour at a point (linear [r, g, b]): the hair's own, lighter and warmer as beards are (a dark brown head of hair grows a
 // brown beard with red in it; even a black one is a very dark brown in the light), uneven in clumps, with some grey in it from the late
 // thirties (a beard greys before the head does). A near-black beard had read at a few paces as a block of paint
@@ -238,6 +220,8 @@ function beardColour(sp, hc, x, hy, hz, out) {
   out[0] = (r + (.42 - r) * grey) * v; out[1] = (g + (.4 - g) * grey) * v; out[2] = (b + (.38 - b) * grey) * v;
   return out;
 }
+// a real moustache's single hairs (human-head.js eyeParts): the beard's colour in the middle of the upper lip
+const beardHex = sp => { const o = [0, 0, 0]; beardColour(sp, new Color(sp.hair || '#2a1c12'), .012, MOUTH.y + .012, .09, o); return '#' + new Color().setRGB(o[0] * .85, o[1] * .85, o[2] * .85).getHexString(); };
 // a real face's lips (when not given): the skin's own colour, redder and a little darker (never lighter: pale lips in a dark face read
 // as greasepaint). On fair skin a good deal darker and pinker; on dark skin about as dark as the skin, a little warmer
 // (the head scan a real face is fitted to, human-fit.js, has lips about half as bright as its forehead and much redder: these are a little short of it)
@@ -383,7 +367,7 @@ const lashColour = hair => { const h = { h: 0, s: 0, l: 0 }; new Color(hair || '
 function palette(sp) {
   const { top, legs, feet, hat, belt, web, o } = sp, c = v => v, ex = sp.extras;
   return {
-    lashes: lashColour(sp.hair), browhair: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
+    lashes: lashColour(sp.hair), browhair: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), beardhair: beardHex(sp), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
     teeth: '#d6cdbb', tongue: '#7d3f3c', skin: o.skin ?? DEF.skin, lid: o.skin ?? DEF.skin, lash: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#1c120c'), sp.fem ? .94 : .86).getHexString(), lips: sp.face.real && !o.lips ? realLips(o.skin ?? DEF.skin, sp.fem) : sp.fem ? o.lips ?? DEF.lips : '#' + new Color(o.skin ?? DEF.skin).lerp(new Color(o.lips ?? DEF.lips), .62).getHexString(), mouth: '#2e1512', hair: sp.hair || '#3b2a1a', brow: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), glove: sp.gloves?.colour ?? '#4a3d2c',
     top: top.colour, trim: top.collar || top.cuffs || top.strapColour || top.colour, tab: top.tabs || top.colour, band: top.band || '#d9c25a', hatband: hat?.band ?? hat?.colour ?? '#4b5249', button: top.buttons || '#8a8270',
     legs: legs.colour, boots: feet.colour, sole: '#16120e', kit: feet.gaiter || ex.bag || ex.kit || '#6e6a4c', strap: web?.colour ?? belt?.colour ?? '#2b2723', pouch: web?.pouchColour ?? web?.colour ?? belt?.colour ?? '#2b2723',
@@ -477,7 +461,7 @@ export function human(o = {}) {
         // by the ear (a beard's line runs from the corner of the mouth up across the cheek). It shows at a few paces, where the dots don't
         // (a real beard or moustache: the skin under it takes the hair's colour, as the roots and the hairs lying close over it make it look:
         // so what shows between the strands is more beard, not bare skin; it fades out with the beard at its edges)
-        if (sp.face.real && (sp.beard || sp.moustache) && !face) { beardArea(sp, x, hy, hz, BA); const t = Math.max(BA[0] ** 2.2 * Math.min(1, .45 + sp.beard) * .45, BA[1] ** 2 * .55); if (t > .005) { beardColour(sp, hairC, x, hy, hz, BCs); col.r += (BCs[0] * .85 - col.r) * t; col.g += (BCs[1] * .85 - col.g) * t; col.b += (BCs[2] * .85 - col.b) * t; } }
+        if (sp.face.real && (sp.beard || sp.moustache) && !face) { beardArea(sp, x, hy, hz, BA); const t = Math.max(BA[0] ** 2 * Math.min(1, .45 + sp.beard) * .5, BA[1] ** 2 * .4); if (t > .005) { beardColour(sp, hairC, x, hy, hz, BCs); col.r += (BCs[0] * .85 - col.r) * t; col.g += (BCs[1] * .85 - col.g) * t; col.b += (BCs[2] * .85 - col.b) * t; } }
         if (stub && name !== 'brow') { const top = -.042 + .045 * ss(.035, .07, abs(x)), sh = ss(top, top - .016, hy) * ss(-.045, -.01, hz) * ss(-.165, -.125, hy) * stub; col.r *= 1 - sh * .38; col.g *= 1 - sh * .33; col.b *= 1 - sh * .24; }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
         const ES = esOf(sp.face), so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), EYE[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
@@ -535,8 +519,8 @@ export function human(o = {}) {
   // bun, for hair tied back), a moustache of them and a beard on the jaw; close up only. The layers are made in stand()
   // (the hair of the head is a clean sculpted shape by itself: it wears strands too only when asked, strands: true or { ... })
   const so = o.strands === false ? null : typeof o.strands === 'object' && o.strands ? o.strands : {}, onHead = !!o.strands && !!sp.hair && sp.hairStyle !== 'bald'; let hairGeo = null;
-  if (so && headP && (so.layers ?? fur.layers()) > 0 && (onHead || sp.beard || sp.moustache)) {
-    const off = offs[pieces.indexOf(headP)], grow = new Float32Array(n), HAIR = CLASSES.indexOf('hair'), hc = new Color(pal.hair), B2 = [0, 0], BC = [0, 0, 0], fl = sp.face.lips, sf = sp.face.soft, real = !!sp.face.real;
+  if (so && headP && (so.layers ?? fur.layers()) > 0 && (onHead || (!sp.face.real && (sp.beard || sp.moustache)))) {
+    const off = offs[pieces.indexOf(headP)], grow = new Float32Array(n), HAIR = CLASSES.indexOf('hair'), hc = new Color(pal.hair), fl = sp.face.lips, sf = sp.face.soft, real = !!sp.face.real;
     // (under a hat the hair stays as it is sculpted, cropped close: there is little of it to see)
     const long = sp.hat ? 0 : sp.hairStyle === 'long' ? 1.5 : sp.hairStyle === 'bun' ? .75 : 1; let cols = null, cover = null;
     for (let i = 0; i < headP.n; i++) {
@@ -547,19 +531,9 @@ export function human(o = {}) {
       if (!(real ? sp.beard || sp.moustache : sp.beard) || (name !== 'skin' && name !== 'lips')) continue;
       // a beard: where stubble is painted (the jaw, the chin, the upper lip, under the chin), but not on the lips
       const lip = Math.min(Math.hypot(x / (.0228 - .0035 * sf), (hy - MOUTH.y - .005) / (.0048 * fl)), Math.hypot(x / (.0195 - .002 * sf), (hy - MOUTH.y + .0058) / (.0062 * fl)));
-      if (real) {
-        // a real face's (beardArea): the strands longest in the middle of it and thinning out, fewer and shorter, toward its edges
-        const [kb, km] = beardArea(sp, x, hy, hz, B2), k = Math.max(kb, km); if (k <= .02) continue;
-        const neck = .25 + .75 * ss(-.004, .03, ((hz + .04) * .045 + (hy + .085) * .075) / .0875);   // (shorter and fewer toward the neckline: long ones there hung off it like a fringe)
-        const ax = abs(x), under = ss(.008, .014, ax) * ss(.026, .019, ax) * ss(MOUTH.y - .004, MOUTH.y - .01, hy) * ss(MOUTH.y - .03, MOUTH.y - .022, hy);
-        // (a moustache's strands short: they lie over, down the lip, and long ones had all lain on the lip itself, leaving the skin they grow from bare)
-        grow[j] = Math.max(kb * sp.beard * 1.7 * (.5 + .5 * kb) * neck, km * Math.max(.42, Math.min(1, (sp.beard || 0) * 1.4)) * (.55 + .45 * km));
-        (cover ||= new Float32Array(n).fill(1))[j] = ss(0, .9, k) ** 1.3 * (1 - .25 * under) * (.4 + .6 * neck) * (.8 + .2 * lumps(x * 400 + 2.2, hy * 400, hz * 400 + 7.1));
-        // its colour the hair's own (beardColour), and only a little darker in the creases: the creases' full shade on top of the coat's own dark
-        // roots had made a black mass of it
-        cols ||= C.slice(); beardColour(sp, hc, x, hy, hz, BC); const a = .82 + .18 * headP.ao[i] / 255; cols[j * 3] = BC[0] * a; cols[j * 3 + 1] = BC[1] * a; cols[j * 3 + 2] = BC[2] * a;
-        continue;
-      }
+      // (a real face's beard and moustache are single hairs of their own over the beard's colour painted under them, human-head.js eyeParts and
+      // human-paint.js: a coat over them as well had read as felt, or as a solid block on the lip)
+      if (real) continue;
       const k = ss(-.04, -.062, hy) * ss(-.03, .01, hz) * ss(-.165, -.12, hy) * ss(1.25, 2, lip);
       if (k > .02) { grow[j] = k * sp.beard * 1.7; cols ||= C.slice(); const a = (.28 + .72 * headP.ao[i] / 255) * (.75 + .25 * k); cols[j * 3] = hc.r * a; cols[j * 3 + 1] = hc.g * a; cols[j * 3 + 2] = hc.b * a; }
     }

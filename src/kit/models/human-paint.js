@@ -6,7 +6,7 @@
 // The shapes it paints are the ones the sculpting carves (human-head.js: eyeRim, browOf, mouthAt), so the colour lies where the
 // shape is, and it rides the skin as the face moves. No three.js: plain numbers in, bytes out. Kit use only.
 import { lumps } from './field.js';
-import { HC, EYE, esOf, rimOf, browOf, mouthAt, lipLine, ss, bump } from './human-head.js';
+import { HC, EYE, esOf, rimOf, browOf, mouthAt, lipLine, beardArea, ss, bump } from './human-head.js';
 
 const abs = Math.abs, mx = Math.max, mn = Math.min;
 /**
@@ -126,6 +126,9 @@ export function paintFace(o) {
   const of = c => [0, 1, 2].map(i => mn(1 / plain, c[i] / mx(1e-4, S[i]))), BR = of(o.brow), LP = of(o.lips), LA = of(o.lash), MO = of(o.mouth);
   const B = browOf(f.soft), rim = rimOf(f), ES = esOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
   const stub = o.stubble || 0, P = enc(plain), R = !!f.real; let r, g, b;
+  // (a real beard or moustache, o.beard { beard, moustache, colour }: the skin under its single hairs (human-head.js eyeParts) the colour of the
+  // hairs lying close over it and their roots, in fine strokes down the face, so what shows between the hairs is more beard, not bare skin)
+  const BD = R && o.beard ? { face: f, beard: o.beard.beard || 0, moustache: !!o.beard.moustache } : null, BC = BD ? of(o.beard.colour) : null, B2 = [0, 0];
   // (a real face's skin is never one colour: faint blotches of warmer and cooler, freckles on fair skin that has them (f.freckles), a few
   // moles, brown spots with age, a little shadow of colour under the eyes, and its fine lines (linesAt) a shade darker in their depths)
   const ph = (f.aseed || 0) * 3.7, seed = Math.floor((f.aseed || 0) * 100), lum = .3 * S[0] + .59 * S[1] + .11 * S[2], fair = ss(.18, .5, lum), dark = 1 - ss(.04, .16, lum);
@@ -185,6 +188,7 @@ export function paintFace(o) {
         fl = mn(fl, 2.6) * (1 - .55 * dark); if (fl > 0) { r *= 1 + .06 * fl; g *= 1 - .07 * fl; b *= 1 - .05 * fl - .06 * ear * (1 - dark); }
         // (and on a grown man the shadow of a shaven beard over the jaw, the chin and the upper lip: a little greyer and bluer, as on the scan)
         const sh = fem ? 0 : ss(15, 24, f.age ?? 30) * ss(btop, btop - .012, hy) * (1 - lip) * .07 * (1 - .7 * dark); if (sh > 0) { r *= 1 - sh * 1.3; g *= 1 - sh; b *= 1 - sh * .4; }
+        if (BD) { beardArea(BD, x, hy, .095 - 6 * x * x, B2); const kb = B2[0], km = B2[1]; if (kb + km > .01) put(BC, mn(.8, mx(kb ** 1.4 * mn(1, .4 + BD.beard) * .72, km ** 1.4 * .62) * (.6 + .4 * lumps(x * 2600, hy * 420, 3.3)) * ss(x1, x1 - .012, x))); }   // (fading out before the picture's edge: the skin's own colouring carries it on)
         const ln = linesAt(x, hy, f, rim); if (ln > 0) { const k = .1 * ln; r *= 1 - k * .9; g *= 1 - k; b *= 1 - k * .95; }
         const bl = lumps(x * 55 + ph, hy * 55, 1.1) * .022, bl2 = lumps(x * 140 + 4, hy * 140 + ph, 2.3) * .012; r *= 1 + bl + bl2; g *= 1 + bl * .6 + bl2; b *= 1 + bl * .3 + bl2 * .8;
         const ue = bump(hy, -.0135, .0055) * bump(x, .034, .011) * (.05 + .05 * ss(30, 70, f.age ?? 30)); if (ue > 0) { r *= 1 - ue * .8; g *= 1 - ue; b *= 1 - ue * .7; }

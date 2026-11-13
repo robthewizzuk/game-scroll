@@ -2761,7 +2761,18 @@ console.log('physics ok');
     assert.ok(roots > 250 && bh.every(i => !far.has(i)) && onBrow > roots * .8 && out < .012 && Math.min(...ys) > .004 && Math.max(...ys) < .05 && Math.min(...xs) > .006 && Math.max(...xs) < .066 && !clean.slots.includes('browhair'),
       `brows of single hairs: ${roots} of them, ${onBrow} going with the brows' bones, the longest ${(out * 1000).toFixed(1)} mm, close up only; none on the clean face`);
     const mo = S.sculpt({ kind: 'head', a: { ...a, moustache: 1 } }), mc = S.sculpt({ kind: 'head', a: { ...a, face: base, moustache: 1 } });
-    assert.ok(!mo.slots.includes('brow') && mc.slots.includes('brow'), 'a real moustache is grown from the lip (human.js), the clean one sculpted'); }
+    assert.ok(!mo.slots.includes('brow') && mc.slots.includes('brow'), 'a real moustache is grown from the lip (human.js), the clean one sculpted');
+    // (a real moustache's and beard's single hairs, human-head.js eyeParts: the moustache's roots all on the skin of the upper lip, under the
+    // nose and over the red of the lip, hanging no lower than a couple of millimetres above where the lips meet; a beard's down the jaw and under
+    // the chin to a neckline above the throat, fewer at its edges than in the middle; close up only; none on a clean face or a bare one)
+    const hairs = q => { const r = []; for (let i = 0; i < q.n; i++) if (name(q, i) === 'beardhair') r.push(i); return r; }, mh = hairs(mo), bd = S.sculpt({ kind: 'head', a: { ...a, beard: .7 } }), bh2 = hairs(bd);
+    const at = (q, i) => [Math.abs(q.P[i * 3]), q.P[i * 3 + 1] - HC[1], q.P[i * 3 + 2] - HC[2]], mr = []; for (let k = 0; k < mh.length; k += 12) mr.push(at(mo, mh[k]));
+    const lowM = Math.min(...mh.map(i => at(mo, i)[1] - HH.lipLine(at(mo, i)[0], face))), mw = Math.max(...mr.map(r => r[0]));
+    assert.ok(mr.length > 400 && mr.every(r => r[1] < -.044 && r[1] > HH.lipLine(r[0], face)) && lowM > .0008 && mw < HH.mouthHalf(face) * 1.2 && (far2 => mh.every(i => !far2.has(i)))(new Set(mo.I[1])) && !hairs(p).length && !hairs(mc).length,
+      `a moustache of ${mr.length} single hairs over the upper lip (out to ${(mw * 1000).toFixed(1)} mm from the middle), hanging to ${(lowM * 1000).toFixed(1)} mm above where the lips meet; none on a bare face or a clean one`);
+    const br = []; for (let k = 0; k < bh2.length; k += 12) br.push(at(bd, bh2[k]));
+    const mid = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] < -.07 && r[1] > -.09).length, edge = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] > -.04 && r[1] < -.02).length, lowB = Math.min(...br.map(r => r[1]));
+    assert.ok(br.length > 1500 && lowB > -.17 && lowB < -.12 && mid > edge * 2 && br.every(r => r[0] < .08), `a beard of ${br.length} single hairs, down to ${(-lowB * 100).toFixed(1)} cm below the head's middle, ${mid} on a patch of the jaw to ${edge} on as much of its edge up the cheek`); }
   console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
 }
 

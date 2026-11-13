@@ -3269,8 +3269,9 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   sculpted shape with a crisp hairline and combed strands painted on it (a small picture made in code, laid
   round the head from the crown), which reads well at every distance and costs nothing extra; `strands: true`
   lays real strands over it as well, streaming from the crown (from the bun, for `hairStyle: 'bun'`), and
-  `strands: { length: .02, layers: 8 }` tunes them. `person.hair` is the coat, or `null`: no beard or
-  moustache and no strands asked for, under a hat (the hair there stays as sculpted, cropped close), or
+  `strands: { length: .02, layers: 8 }` tunes them. With `look: 'real'` a beard and a moustache are single
+  hairs in the head's own close-up mesh instead, over the beard's colour painted under them, and wear no coat.
+  `person.hair` is the coat, or `null`: no beard or moustache (or a real face's) and no strands asked for, under a hat (the hair there stays as sculpted, cropped close), or
   `strands: false` (none anywhere).
 - **Any mesh.** `gs.models.fur(mesh, o)`: `length` (in the mesh's own units), `kind` (`'fur'` on end, `'hair'`
   lying side by side), `where` (how much of the length grows at each point: a `Float32Array` of 0..1, or

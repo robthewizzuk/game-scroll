@@ -1239,9 +1239,11 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   the lids and blink with them; and the inner corner has its small pink mound. Close up only, on both renderers. Its
   hair is real too: the brows are a few hundred single hairs lying along each brow (standing up at the inner end,
   going with the brows when the face moves), the hair shines in a band across its strands as real hair does
-  (three's anisotropy), a beard grows where a real one does (up the cheek to the sideburn, down to a neckline
-  above the throat, thinning out toward its edges strand by strand) and a moustache is grown from the upper lip,
-  not sculpted on. A real face comes from `seed` (the same
+  (three's anisotropy), and a beard and a moustache are single hairs too, over the beard's colour painted under
+  them in fine strokes: a beard where a real one grows (up the cheek to the sideburn, down to a neckline above
+  the throat, fewer and shorter toward its edges), a moustache over the whole upper lip, down in the middle and
+  fanning out to the corners, hanging to a couple of millimetres above where the lips meet (no coat of fur:
+  `person.hair` is `null` for them). A real face comes from `seed` (the same
   seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png
