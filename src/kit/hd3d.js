@@ -2780,6 +2780,7 @@ const REFL_FULL = { scale: 1 }, REFL_HALF = { scale: .5 };
 const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'meadow', 'room', 'flow', 'lava']);
 PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
+PORTED_LOOKS.add('rooms');   // gs.city's rooms behind the windows (city-rooms.js, city-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)
@@ -3407,7 +3408,7 @@ function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B
 // alpha-tested, multi-material and moving-vertex meshes (leaves, grass, water), marked reflectors, and
 // mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
 const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6;
-const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock']);   // kit looks that leave the points where they are
+const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock', 'rooms']);   // kit looks that leave the points where they are
 const NO_DETAIL = new WeakSet();   // geometries that can't be clustered, aren't worth it, or keep changing
 let detailAsking = 0;
 const OBR = Object3D.prototype.onBeforeRender, OAR = Object3D.prototype.onAfterRender;

@@ -48,6 +48,7 @@ import { phoneClass } from './speed.js';
 import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
 import { pause, built } from './slices.js';
+import { rooms, ROOMS } from './city-rooms.js';
 
 /* ---------- looks ---------- */
 
@@ -319,14 +320,24 @@ function groundTex(kind, base) {
 }
 // a speck for compiling materials up front (the attributes chunk meshes have: position, normal, uv, colour)
 let warmGeo = null;
-const WARM_GEO = () => warmGeo ||= (() => { const q = new Quads(); q.box(0, 0, 0, .01, .01, .01, { r: 1, g: 1, b: 1 }, 1); return q.geometry(); })();
+const WARM_GEO = () => warmGeo ||= (() => { const q = new Quads(true); q.box(0, 0, 0, .01, .01, .01, { r: 1, g: 1, b: 1 }, 1); return q.geometry(); })();
 // the material a chunk mesh of kind k uses (k: 'f:<facade>', 'shop', 'roof', 'tiles', 'plain', 'metal', 'pave', 'plaza', 'grass')
 const chunkMat = (k, S) => k.startsWith('f:') ? facadeMat(k.slice(2)) : k === 'shop' ? shopMat() : k === 'roof' ? roofMat() : k === 'tiles' ? tileMat() : k === 'plain' ? plainMat() : k === 'metal' ? metalMat()
   : k === 'pave' ? pavingMat(S.pavement) : k === 'plaza' ? pavingMat(shade(S.pavement, .85)) : grassMat();
 function mat(key, make) { if (!MATS.has(key)) MATS.set(key, make()); return MATS.get(key); }
-const facadeMat = name => mat('f:' + name, () => { const T = facadeTex(name), F = FACADES[name];
-  return new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: 0, roughnessMap: T.rough, roughness: 1, metalness: F.metal || .05, vertexColors: name === 'house' }); });
-const shopMat = () => mat('shop', () => { const T = shopTex(); return new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: .25, roughnessMap: T.rough, roughness: 1, metalness: .1 }); });
+// the rooms behind each kind of facade (city-rooms.js): where the window is in a cell of the facade picture (as facadeTex
+// paints it), how deep its hole and its rooms are, how much of a room shows through the glass
+const ROOM_KINDS = {
+  punched: { win: [.24, .22, .76, .8], reveal: .22, depth: 4.6, see: .85, frame: .035 },
+  curtain: { win: [.04, .22, .96, .96], reveal: .05, depth: 7.5, see: .5, frame: .018 },
+  house: { win: [.3, .25, .7, .75], reveal: .14, depth: 4, see: .85, frame: .04 },
+  shed: { win: [.1, .68, .9, .9], reveal: .1, depth: 9, see: .6, frame: .02 },
+};
+const facadeMat = name => mat('f:' + name, () => { const T = facadeTex(name), F = FACADES[name], K = ROOM_KINDS[F.kind];
+  const m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: 0, roughnessMap: T.rough, roughness: 1, metalness: F.metal || .05, vertexColors: name === 'house' });
+  return rooms(m, { ...K, kind: F.kind, trim: F.kind === 'curtain' ? F.trim : shade(F.trim, .9), glass: shade(F.glass, .45), metal: F.kind === 'curtain' ? (F.metal || .5) * .6 : .05 }); });
+const shopMat = () => mat('shop', () => { const T = shopTex(), m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: .25, roughnessMap: T.rough, roughness: 1, metalness: .1 });
+  return rooms(m, { win: [.06, .02, .94, .68], cells: [4, 1], reveal: .12, depth: 5.5, kind: 'shop', see: 1, frame: .012, trim: '#26282a', glass: '#080a0c', metal: .05 }); });
 const plainMat = () => mat('plain', () => new MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: .85, metalness: 0 }));
 const metalMat = () => mat('metal', () => new MeshStandardMaterial({ color: '#2a2c2e', roughness: .55, metalness: .7 }));
 const roofMat = () => mat('roof', () => new MeshStandardMaterial({ map: groundTex('gravel', '#66625c'), roughness: .95 }));
@@ -340,13 +351,17 @@ const waterMat = () => mat('water', () => new MeshStandardMaterial({ color: '#1b
 /* ---------- geometry made from many quads, one buffer per material ---------- */
 
 class Quads {
-  constructor() { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; }
+  // rooms: every quad also says which rooms are behind it (gsRoom: bay width and storey height in metres, the
+  // building's seed, 1 where a facade's windows open into rooms: city-rooms.js); room() sets it for the quads after
+  constructor(rooms = false) { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; this.r = rooms ? [] : null; this.rm = [0, 0, 0, 0]; }
+  room(w = 0, h = 0, seed = 0, on = 0) { this.rm = [w, h, seed, on]; return this; }
   // a, b, c, d: corners in order round the face (counter-clockwise seen from the front)
   quad(a, b, c, d, uv = [0, 0, 1, 0, 1, 1, 0, 1], col = null) {
     const k = this.p.length / 3;
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
     for (const q of [a, b, c, d]) { this.p.push(q[0], q[1], q[2]); this.n.push(nx, ny, nz); }
+    if (this.r) for (let j = 0; j < 4; j++) this.r.push(...this.rm);
     this.u.push(...uv);
     if (col) for (let j = 0; j < 4; j++) this.c.push(col.r, col.g, col.b);
     this.i.push(k, k + 1, k + 2, k, k + 2, k + 3);
@@ -355,6 +370,7 @@ class Quads {
     const k = this.p.length / 3, ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1;
     for (const q of [a, b, c]) { this.p.push(...q); this.n.push(nx / l, ny / l, nz / l); }
+    if (this.r) for (let j = 0; j < 3; j++) this.r.push(...this.rm);
     this.u.push(...uv); if (col) for (let j = 0; j < 3; j++) this.c.push(col.r, col.g, col.b);
     this.i.push(k, k + 1, k + 2);
   }
@@ -374,6 +390,7 @@ class Quads {
     g.setAttribute('normal', new BufferAttribute(new Float32Array(this.n), 3));
     g.setAttribute('uv', new BufferAttribute(new Float32Array(this.u), 2));
     if (this.c.length) g.setAttribute('color', new BufferAttribute(new Float32Array(this.c), 3));
+    if (this.r) g.setAttribute('gsRoom', new BufferAttribute(new Float32Array(this.r), 4));
     const n = this.p.length / 3; g.setIndex(new BufferAttribute(n > 65535 ? new Uint32Array(this.i) : new Uint16Array(this.i), 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
     return slim(g);   // (a big one: its normals and colours in fewer bytes, slim.js)
@@ -383,11 +400,12 @@ const C = hex => new Color(hex);
 
 // One building into the chunk's buffers (by material). d: the detail buffers (shops' awnings,
 // cornices, fire escapes), hidden far away.
-function buildBuilding(b, Q, D) {
+function buildBuilding(b, Q, D, { rooms = true } = {}) {
   const F = FACADES[b.facade], fq = Q('f:' + b.facade), g0 = b.shops ? 4.6 : 0, base = KERB + g0;
-  const tint = b.colour ? C(b.colour) : null;
+  const tint = b.colour ? C(b.colour) : null, seed = b.id * 1.618 % 97;
   const facadeUV = (part, s, L, y0, y1) => {
     const n = Math.max(1, Math.round(L / F.win)), u0 = (b.u + s * 3) / CELLS, v0 = b.v / CELLS;
+    fq.room(L / n, F.floor, seed + s * 13, rooms ? 1 : 0);   // (the rooms behind this wall: its bay width, storey height, seed)
     return [u0, v0 + (y0 - base) / F.floor / CELLS, u0 + n / CELLS, v0 + (y0 - base) / F.floor / CELLS, u0 + n / CELLS, v0 + (y1 - base) / F.floor / CELLS, u0, v0 + (y1 - base) / F.floor / CELLS];
   };
   b.parts.forEach((p, k) => {
@@ -398,7 +416,7 @@ function buildBuilding(b, Q, D) {
   const p0 = b.parts[0], top = b.parts.at(-1);
   if (b.shops) {
     const sq = Q('shop'), u = (b.u % 4) / 4;
-    sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; });
+    sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); sq.room(L / n, g0, seed + s * 7 + 50, rooms ? 1 : 0); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; });
     // awnings over some shop fronts on the street side
     const R = rng(b.id * 131 + 5), dq = D('plain'), n = [[0, -1], [1, 0], [0, 1], [-1, 0]][b.face];
     const along = b.face % 2 === 0, len = along ? p0.x1 - p0.x0 : p0.z1 - p0.z0, bays = Math.max(1, Math.round(len / 5)), bw = len / bays;
@@ -790,8 +808,9 @@ export class City {
    * night; sound: the city's hum, horns and birds; at: where the player starts (built first);
    * detail: metres within which awnings, cornices and fire escapes show.
    */
-  constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true, ...over } = {}) {
-    this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
+  constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
+    rooms = true, ...over } = {}) {
+    this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail; this.opts = { rooms };
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
     // What a city keeps from one making to the next comes first: its textures and materials, and the
     // street furniture's shapes. While a card loads, a pass of make() can be stopped between these and
@@ -908,6 +927,7 @@ export class City {
   }
   applyNight() {
     const k = Math.max(0, this._night);
+    ROOMS.gsRmLight.value.set(.11 * (1 - k) + .006, k);   // (rooms: daylight inside, lamps at night)
     for (const name of Object.keys(FACADES)) { const m = MATS.get('f:' + name); if (m) m.emissiveIntensity = k * 1.0; }
     const s = MATS.get('shop'); if (s) s.emissiveIntensity = .3 + k * 1.6;
     if (this.lampGlow) this.lampGlow.emissiveIntensity = k * 5;
@@ -917,13 +937,13 @@ export class City {
   build(c) {
     if (c.group) return;
     const P = this.plan, S = P.style, bufs = new Map(), det = new Map();
-    const Q = k => { if (!bufs.has(k)) bufs.set(k, new Quads()); return bufs.get(k); }, D = k => { if (!det.has(k)) det.set(k, new Quads()); return det.get(k); };
+    const Q = k => { if (!bufs.has(k)) bufs.set(k, new Quads(k.startsWith('f:') || k === 'shop')); return bufs.get(k); }, D = k => { if (!det.has(k)) det.set(k, new Quads()); return det.get(k); };
     for (const b of c.blocks) {
       Q('pave').box(b.x0, -.2, b.z0, b.x1, KERB, b.z1, null, 4);
       const inner = b.kind === 'park' || S.houses ? 'grass' : b.kind === 'plaza' ? 'plaza' : null;
       if (inner) Q(inner).top(b.x0 + b.sw, b.z0 + b.sw, b.x1 - b.sw, b.z1 - b.sw, KERB + .01, 4);
     }
-    for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) buildBuilding(bl, Q, D);
+    for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) buildBuilding(bl, Q, D, this.opts);
     const matOf = k => chunkMat(k, S);
     const g = new Group(), d = new Group(); g.name = 'chunk ' + c.key;
     for (const [k, q] of bufs) if (!q.empty) { const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza'; m.receiveShadow = true; m.userData.city = k; g.add(m); }

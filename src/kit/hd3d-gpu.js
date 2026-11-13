@@ -67,6 +67,7 @@ import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
+import { roomsLook } from './city-gpu.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 // Ray traced reflections (hd3d-gpu-trace.js) load the first time a view wants them (something marked shiny on
 // one of the best phones), not with every 3D game: the part brings a tree builder and a simplifier with it.
@@ -362,6 +363,8 @@ export const gpuLooks = {
   sdf: sdfLook,
   // gs.props.Crowd (crowd.js): members posed from their kind's texture of moves
   crowd: (m, s, o) => crowdLook(m, s, o, afterColor),
+  // gs.city's rooms behind every window (city-rooms.js, city-gpu.js)
+  rooms: (m, s, o) => roomsLook(m, s, o, { afterColor, live }),
   // hd3d.js v.room(): box-projected reflections
   room(m, s) {
     const g = s.gpu ||= { rt: new CubeRenderTarget(s.size, { type: HalfFloatType }) };
