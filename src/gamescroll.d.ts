@@ -1083,6 +1083,97 @@ export interface FluidPart {
   };
   KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>;
 }
+/** A solid thing in the gas (gas.ball, gas.box, gas.tube). */
+export interface GasSolid {
+  x: number; y: number; z: number;
+  /** Puts it somewhere (and turns it: a three.js Quaternion). Call it each frame for a thing that moves: the gas feels how fast it goes. */
+  set(x: number, y: number, z: number, turn?: Loose): this;
+  remove(): void;
+}
+export interface GasSolidOpts { x?: number; y?: number; z?: number; turn?: Loose; follow?: Loose }
+/** A fire that keeps burning (gas.fire): change any of these while it burns. dir and speed: a blown fire (a torch, a jet). */
+export interface GasFire { x: number; y: number; z: number; size: number; power: number; dir: [number, number, number]; speed: number | null; tint: number; on: boolean; remove(): void }
+/** Smoke that keeps coming (gas.smoke): change any of these any time. heat 0..1: 0 hangs where it is, 1 climbs fast. */
+export interface GasSmoke { x: number; y: number; z: number; size: number; rate: number; heat: number; dir: [number, number, number]; speed: number; tint: number; on: boolean; remove(): void }
+/** A fan (gas.fan): the gas in a ball `size` wide is pushed along dir at speed. */
+export interface GasFan { x: number; y: number; z: number; size: number; dir: [number, number, number]; speed: number; on: boolean; remove(): void }
+export type GasKind = 'smoke' | 'fire' | 'steam' | 'dust' | 'toxic' | 'magic';
+/** A kind of gas's numbers and colours (gs.gas.KINDS); any of them can be given to new Gas() as your own. */
+export interface GasLook {
+  /** The smoke's colour, and a second one a source's `tint` (0..1) blends towards. */
+  colour?: string; colour2?: string;
+  /** Three colours, from a flame's cool edge to its core. */
+  flame?: [string, string, string];
+  /** How hard heat rises, and how hard the smoke itself sinks (units a second squared). */
+  lift?: number; weight?: number;
+  /** The share of smoke lost a second, and of heat. */
+  fade?: number; cool?: number;
+  /** How much a unit of smoke hides in a unit of length. */
+  thick?: number;
+  /** Smoke made by burnt fuel; the share of fuel burnt a second (less: taller flames); how lively the swirls are (0..1); how bright flame is. */
+  soot?: number; burn?: number; curl?: number; glow?: number;
+}
+export interface GasT {
+  /** 'gpu' when the gas runs on the graphics chip (WebGPU) and is drawn as a lit volume, else 'cpu' (far fewer cells, drawn as soft puffs). */
+  readonly backend: 'gpu' | 'cpu';
+  /** How many cells the gas has, and how wide one is (world units). */
+  readonly cells: number; readonly cell: number;
+  /** The wind, in units a second. Change it any time. */
+  wind: { x: number; y: number; z: number };
+  /** The kind's numbers (see GasLook). Change them any time. */
+  lift: number; weight: number; fade: number; cool: number; soot: number; burn: number; curl: number;
+  /** false: nothing is drawn (ask it questions and draw your own). */
+  draws: boolean;
+  /** The light that follows the fire (with lamp: true): a three.js PointLight. */
+  readonly lamp?: Loose;
+  /** A fire that keeps burning at x, y, z: size (how wide its base is), power (how fierce). Returns it: change it any time. */
+  fire(o?: Partial<Omit<GasFire, 'remove'>>): GasFire;
+  /** Smoke that keeps coming from x, y, z. Returns it: change it any time. */
+  smoke(o?: Partial<Omit<GasSmoke, 'remove'>>): GasSmoke;
+  /** A fan (or someone blowing). Returns it: change it any time. */
+  fan(o?: Partial<Omit<GasFan, 'remove'>>): GasFan;
+  /** An explosion `size` units wide: fire (how much of it burns; 0: none), smoke, force (how hard it blasts the gas outwards), tint. */
+  burst(x: number, y: number, z: number, o?: { size?: number; fire?: number; smoke?: number; force?: number; tint?: number }): this;
+  /** A cloud of smoke all at once (dust kicked up, a smoke bomb): heat 0..1 (0: it hangs). */
+  puff(x: number, y: number, z: number, o?: { size?: number; amount?: number; heat?: number; tint?: number }): this;
+  /** Takes all the smoke, heat and movement away (fires, smoke makers and solids stay). */
+  clear(): this;
+  /** A solid ball the gas goes round. follow: a three.js object it keeps to. */
+  ball(o?: GasSolidOpts & { r?: number }): GasSolid;
+  /** A solid box. */
+  box(o?: GasSolidOpts & { w?: number; h?: number; d?: number }): GasSolid;
+  /** A solid post standing on its end. */
+  tube(o?: GasSolidOpts & { r?: number; h?: number }): GasSolid;
+  /** The ground under the gas: (x, z) => y. Call it again when the ground changes; null takes it away. */
+  ground(fn: ((x: number, z: number) => number) | null): this;
+  /** The still parts of your world: (x, y, z) => true where it is solid (walls, a doorway's frame, a chimney). Call it again when the world changes. */
+  solid(fn: ((x: number, y: number, z: number) => boolean) | null): this;
+  update(dt: number): this;
+  /** How thick the smoke is at a place: 0 clear air, about 1 thick smoke. */
+  smokeAt(x: number, y: number, z: number): number;
+  /** How hot the gas is at a place: 0 cool, up to .4 warm smoke, over .45 flame, 1 and more the heart of a fire. */
+  heatAt(x: number, y: number, z: number): number;
+  /** Which way and how fast the gas moves at a place (units a second). */
+  flowAt(x: number, y: number, z: number, out?: { x: number; y: number; z: number }): { x: number; y: number; z: number };
+  /** How much can be seen through the smoke from one point to another: 1 clear, 0 nothing. */
+  sees(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number;
+  /** How smoky a box of the world is, [x0, y0, z0, x1, y1, z1] (the whole gas if you don't say). */
+  smokeIn(box?: readonly number[]): number;
+  /** Where the gas's fire is and how much of it there is (power 0: nothing burning). For a light of your own. */
+  readonly glow: { x: number; y: number; z: number; power: number };
+  dispose(): void;
+}
+export interface GasPart {
+  /** Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. */
+  Gas: (new (view: Loose, o?: GasLook & {
+    box?: [number, number, number, number, number, number]; open?: boolean; kind?: GasKind; wind?: { x?: number; y?: number; z?: number };
+    cells?: number; size?: number; lamp?: boolean | { strength?: number; distance?: number }; draw?: boolean; seed?: number; gpu?: boolean;
+  }) => GasT) & {
+    /** The most cells this phone runs well (on the graphics chip where it can). */
+    max(): number;
+  };
+  KINDS: Readonly<Record<GasKind, GasLook>>;
+}
 export interface TickPart {
   /** Ticks per second for the game being played; 0 when it runs one update per frame. */
   readonly rate: number; readonly on: boolean; readonly dt: number;
@@ -3041,7 +3132,7 @@ export interface GS {
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;
