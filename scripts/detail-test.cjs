@@ -8,6 +8,7 @@
 //   node scripts/detail-test.cjs --page copies --bench [--webgpu] --q "forest=20000"   a forest flown over with levels off and on (&cpucull: WebGPU without GPU culling, as under frame generation)
 //   node scripts/detail-test.cjs --page crowd [--webgpu] [--shots dir]       crowds (gs.props.Crowd): people and a dog posed by their own skeletons against the same as members of a crowd, then a field of 300
 //   node scripts/detail-test.cjs --page crowd --bench [--webgpu] --q "n=300"   300 with a skeleton each against 300 in a crowd: draws, triangles, posing and drawing time a frame
+//   node scripts/detail-test.cjs --page slim [--webgpu] [--shots dir]        smaller meshes (src/kit/slim.js): people, a furred dog, a fused train, a relief wall and a crowd as plain floats against kept small
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {

@@ -9,6 +9,7 @@
 //   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
 //            and shadows in tiles (src/kit/shadow-tiles.js): the same walk once more with the sun's shadow map drawn whole, as it used to be
 //   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
+//   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -300,6 +301,59 @@ function square({ gs, size }) {
   };
 }
 
+/* ---------- parade: smaller meshes ---------- */
+function parade({ gs, HD, size }) {
+  const T = gs.THREE, { human, creature, vehicle } = gs.models, N = Math.max(2, Math.round(8 * size)), { v, sun } = view(gs, 200, .002);
+  const ground = new T.Mesh(new T.PlaneGeometry(240, 240).rotateX(-Math.PI / 2), gs.hd.pbr('#8a8478', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
+  // each a person of their own (a face, a build and colours of their own), as a squad's are: so each keeps points of its own
+  const TOPS = ['#5a6648', '#6a5a48', '#4a5a6a', '#7a4a3a'];
+  const SPECS = Array.from({ length: N }, (_, i) => ({ seed: 31 + i, body: TOPS[i % 4], ...(i % 3 === 1 ? { sex: 'f', hairStyle: 'bun' } : {}) })), BEASTS = [{ like: 'dog', seed: 3 }, { like: 'horse', seed: 5 }];
+  const line = new T.Group(); v.scene.add(line);
+  let ready = false, mode = '', figures = [], bytes = null, last = 0;
+  const stand = () => {
+    const out = [], half = (N - 1) / 2 * 1.1;
+    SPECS.forEach((s, i) => { const f = human(s); f.position.set(i * 1.1 - half, 0, i % 2 ? -.5 : 0); f.rotation.y = (i % 3 - 1) * .3; f.rig.play('idle'); line.add(f); out.push(f); });
+    BEASTS.forEach((s, i) => { const f = creature(s); f.position.set((i ? 1 : -1) * (half + 1.9), 0, .3); f.rotation.y = i ? -.9 : .9; line.add(f); out.push(f); });
+    const train = vehicle('train', { style: 'steam', seed: 2, fuse: true, cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }); train.position.set(-6, 0, -9); train.rotation.y = Math.PI / 2; line.add(train);
+    return out;
+  };
+  const drop = () => { const seen = new Set(); line.traverse(o => { if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); } }); line.clear(); figures = []; };
+  // each run makes them again its own way: the people are sculpted the first time a phone meets them (kept on it afterwards)
+  const enter = key => async draw => {
+    let build = null;
+    if (!ready) {
+      const t0 = performance.now(); let done = false, err = null;
+      Promise.all([human.ready(SPECS), creature.ready(BEASTS)]).then(() => { done = true; }, e => { err = e; done = true; });
+      await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+      ready = true; build = performance.now() - t0;
+    }
+    drop();
+    const was = HD.slim; HD.slim = key === 'on';
+    try { figures = stand(); } finally { HD.slim = was; }
+    mode = key; last = 0;
+    for (let i = 0; i < 4; i++) await draw();
+    bytes = HD.meshBytes(line);   // (after they have drawn: on WebGPU three.js widens a plain list of bone numbers when it first sends it)
+    return build != null ? { build, note: `${num(N)} people, a dog and a horse sculpted` } : null;
+  };
+  const mb = n => (n / 1048576).toFixed(1);
+  return {
+    v, holds: `${num(N)} people, each their own, a dog, a horse and a goods train, close up`,
+    modes: [
+      { key: 'off', name: 'plain floats', enter: enter('off') },
+      { key: 'on', name: 'kept small', enter: enter('on') },
+    ],
+    // a slow walk along the line and back, an arm's length from their faces, stepping back now and then to take in the train
+    path(t, cam) {
+      const span = N * 1.1 + 5, u = (t * .5) % (span * 2), x = (u < span ? u : span * 2 - u) - span / 2, far = .5 - .5 * Math.cos(t * .21);
+      cam.position.set(x, 1.55 + far * 1.2, 2.1 + far * 6); cam.lookAt(x * (1 - far * .6), 1.35, -far * 4); sun.follow(cam.position.x, 0, 0);
+      const dt = t > last ? Math.min(.1, t - last) : 0; last = t; cam.updateMatrixWorld();
+      for (const f of figures) { if (f.move) f.move(dt, 0); else f.rig.update(dt); f.see?.(cam, 800); }
+    },
+    tell() { return bytes ? `${num(bytes.points)} points: ${mb(bytes.js)} MB in memory, ${mb(bytes.chip)} MB on the graphics chip` : null; },
+    dispose() { drop(); clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu })]. */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -307,4 +361,5 @@ export const SCENES = [
   ['village', 'Village', 'real surface detail', village],
   ['town', 'Town', 'hiding what is behind other things, and shadows in tiles', town],
   ['square', 'Square', 'crowds', square],
+  ['parade', 'Parade', 'smaller meshes', parade],
 ];

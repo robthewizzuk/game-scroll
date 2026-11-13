@@ -54,6 +54,7 @@ import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU } from './gpu.js';
 import { packing } from './pack.js';
+import { SLIM, isSlim, meshBytes } from './slim.js';
 import { makeRenderer } from './renderer.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
@@ -203,6 +204,14 @@ export const HD = {
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
   get pack() { return packing.on; }, set pack(v) { packing.on = v !== false; }, get packed() { return { textures: packing.packed, savedMB: +(packing.saved / 1048576).toFixed(1), failed: packing.failed }; },
+  /**
+   * Smaller meshes (slim.js): the dense things the kit makes (people, creatures, vehicles, land, real surface detail)
+   * keep their points in about half the bytes, in JavaScript and on the chip. false: plain floats for what is made
+   * from then on (tests). slimmed: how many meshes are kept that way now, and their megabytes before and after.
+   */
+  get slim() { return SLIM.on; }, set slim(v) { SLIM.on = v !== false; }, get slimmed() { const S = SLIM.stats; return { meshes: S.meshes, wasMB: +(S.was / 1048576).toFixed(2), nowMB: +(S.now / 1048576).toFixed(2) }; },
+  /** The bytes the geometries under a thing keep, each list once: { js, chip (worked out for the renderer in use), points } (tests, the engine test scenes). */
+  meshBytes(root) { return meshBytes(root, this.info.backend === 'webgpu'); },
   /** Cluster detail for big still meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is taken; detailPx: pixels its simpler parts may be out by. */
   detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
   /** Real surface detail (gs.models.relief): false draws those meshes flat, as they were. */
@@ -2780,7 +2789,7 @@ const BATCH_SNAP = new WeakMap(), NO_RAY = () => {};
 function batchable(o) {
   if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isSkinnedMesh || o.morphTargetInfluences || o.userData.noBatch || o.userData.gsTwin || o.userData.gsLod) return false;
   const m = o.material, g = o.geometry;
-  if (!m || Array.isArray(m) || m.transparent || m.userData?.gsGpu || !g || g.morphAttributes?.position || g.attributes.position?.isInterleavedBufferAttribute) return false;   // (groups are ignored with one material)
+  if (!m || Array.isArray(m) || m.transparent || m.userData?.gsGpu || !g || g.morphAttributes?.position || g.attributes.position?.isInterleavedBufferAttribute || isSlim(g)) return false;   // (groups are ignored with one material; lists kept in fewer bytes, slim.js, don't merge with plain ones)
   if ((o.layers.mask & ~SH_BITS) !== 1 || !o.frustumCulled || o.onBeforeRender !== Object3D.prototype.onBeforeRender) return false;
   return (g.index ? g.index.count : g.attributes.position.count) / 3 < BATCH_MAX_TRIS;
 }
@@ -2898,6 +2907,10 @@ function reliefMaterial(m) {
   }
   return f;
 }
+// A twin whose places are on a grid is drawn through a matrix that scales them back, and three.js's WebGL shaders move a
+// shadow lookup along a normal that such a scale shortens or lengthens. Its normal matrix is given without the grid's
+// scale, so the twin is lit and shadowed exactly as its mesh would be.
+function gridNormals(t, scale) { const nm = t.normalMatrix, get = nm.getNormalMatrix; nm.getNormalMatrix = function (m) { get.call(this, m); return this.multiplyScalar(scale); }; }
 const reliefReady = (o, R) => R?.state === 'ready' && (o.userData.gsLod?.base || o.geometry) === R.base && R.base.attributes.position.version === R.ver;
 function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
 function detailDrop(v, e, never = false) {
@@ -2928,12 +2941,15 @@ function autoDetail(v, now, quiet) {
       o.userData.gsLod = null;
       const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : null });
       t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
+      if (g.userData.gsGrid) gridNormals(t, g.userData.gsGrid.scale);
       // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
       v.scene.add(t); const ch = v.scene.children; ch.unshift(ch.pop());
     }
     const t = e.twin, ud = o.userData, td = t.userData;
     o.updateWorldMatrix(true, false);
-    t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld);
+    const grid = g.userData.gsGrid;   // (a relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix puts them back where the mesh is)
+    if (grid) t.matrix.multiplyMatrices(o.matrixWorld, grid.matrix); else t.matrix.copy(o.matrixWorld);
+    t.matrixWorld.copy(t.matrix);
     t.visible = shownInScene(o, v.scene);
     if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
     t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : null;
@@ -3077,6 +3093,15 @@ function sameMats(c, mat, g) {
   for (let i = 0; i < mat.length; i++) if (c.ids[i] !== mat[i].id || c.vs[i] !== mat[i].version) return false;
   return true;
 }
+// (a list kept in fewer bytes, slim.js, is another layout to WebGPU, which builds a pipeline for each: so it is part of the key.
+// A plain list of whole numbers, a skinned mesh's bones, is all one kind: three.js widens it to 32 bits in place the first time it
+// is sent on WebGPU, and a key that changed then would have the mesh held for its shader a second time)
+const listKind = a => {
+  const A = a.array, x = a.isInterleavedBufferAttribute === true; if (!A || (!x && A instanceof Float32Array)) return '';
+  const name = A.constructor.name;
+  if (!x && !a.normalized && name[0] !== 'F') return name[0] === 'U' ? ':u' : ':i';
+  return ':' + name[0] + A.BYTES_PER_ELEMENT + (a.normalized ? 'n' : '') + (x ? 'x' : '');
+};
 function shaderKey(o) {
   const mat = o.material, g = o.geometry, c = KEYS.get(o);
   if (c && sameMats(c, mat, g)) return c.key;
@@ -3087,7 +3112,7 @@ function shaderKey(o) {
   const sig = ms.map(m => m.id + '.' + (m.transparent && m.side === DoubleSide && !m.forceSinglePass ? 'd' : m.version)).join(',') + '|' + (g?.id ?? '');
   if (c?.sig === sig) { remember(o, c.sig, c.key, mat, g); return c.key; }
   const key = sig.replace(/\|.*$/, '') + '|' + (o.isSkinnedMesh ? 's' : '') + (o.isInstancedMesh ? 'i' : '') + (o.isBatchedMesh ? 'b' : '') + (o.isPoints ? 'p' : o.isLine ? 'l' : o.isSprite ? 'S' : '') +
-    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '');
+    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '');
   remember(o, sig, key, mat, g);
   return key;
 }

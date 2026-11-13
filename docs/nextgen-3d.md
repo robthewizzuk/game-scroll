@@ -271,6 +271,17 @@ up a tier first.
   Kit code that moves objects from one view's scene into another's (gs.tabletop does, between the 3D
   room and AR) calls `view.release()` on the view they leave first: it returns merged pieces, and
   ones waiting for a shader, to drawing themselves.
+- Smaller meshes (by itself): the dense meshes the kit makes itself (people, creatures and their fur
+  shells, crowds, a fused train, buildings, city blocks, real surface detail) keep what goes with each
+  point in fewer bytes: normals in one byte a part (two on a fused train's paint, which is shiny enough
+  to show the difference), colours as half floats, a point's bones and their weights in eight bytes
+  where they took thirty-two, and a relief's points on a 16-bit grid. A person's points go from 68 bytes
+  each to 37 and a relief wall is about half the size, with pictures that match to within a few pixels.
+  Places stay full floats everywhere but on a relief, so nothing moves. A game's own geometry is never
+  touched. Reading a kit mesh's lists with `getX()` and the like gives the same numbers as before; code
+  that reads `.array` straight off a person's or a creature's geometry now sees the small kinds.
+  `__hd.slim = false` (set before the things are made) keeps plain floats, `__hd.slimmed` says what was
+  saved, and `node scripts/mesh-memory.cjs <id>` lists a game's mesh memory by list and by mesh.
 - On WebGPU, lights use three.js's clustered (Forward+) lighting: each pixel only adds up the point
   and spot lights that reach it, so `v.lampLights()` / `v.placeLamps()` light 8 times as many of the
   nearest lamps (up to 32) for about the same cost, and lamps coming and going build no shaders.

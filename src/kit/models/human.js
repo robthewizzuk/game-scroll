@@ -22,6 +22,7 @@ import { LiveFace } from './human-face.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { fur } from './fur.js';
+import { slimShared, floatsOf } from '../slim.js';
 
 const PI = Math.PI, abs = Math.abs;
 
@@ -296,6 +297,7 @@ export function human(o = {}) {
     g.setIndex(new BufferAttribute(n > 65535 ? all : new Uint16Array(all), 1));
     g.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3); return g;
   });
+  slimShared(geos);   // (normals, colours and bone weights in fewer bytes: slim.js)
 
   // ---- hair in strands (fur.js): layers of them over the sculpted hair, streaming from the crown of the head (from the
   // bun, for hair tied back), a moustache of them and a beard on the jaw; close up only. The layers are made in stand()
@@ -336,11 +338,12 @@ export function human(o = {}) {
     const pi = gearPiece[name]; if (pi == null) return null;
     let g = looseGeo[name];
     if (!g) {
-      const p = pieces[pi], off = offs[pi], a = atOf(gearBones[name]), lp = P.slice(off * 3, (off + p.n) * 3), count = new Array(CLASSES.length).fill(0);
+      const p = pieces[pi], off = offs[pi], a = atOf(gearBones[name]), G = geos[0].attributes, lp = floatsOf(G.position, off, p.n), count = new Array(CLASSES.length).fill(0);
       for (let i = 0; i < p.n; i++) { lp[i * 3] -= a[0]; lp[i * 3 + 1] -= a[1]; lp[i * 3 + 2] -= a[2]; count[cls[off + i]]++; }
       g = looseGeo[name] = new BufferGeometry();
-      g.setAttribute('position', new BufferAttribute(lp, 3)); g.setAttribute('normal', new BufferAttribute(N.slice(off * 3, (off + p.n) * 3), 3));
-      g.setAttribute('color', new BufferAttribute(C.slice(off * 3, (off + p.n) * 3), 3)); g.setAttribute('uv', new BufferAttribute(U.slice(off * 2, (off + p.n) * 2), 2));
+      // (read back from the person's own lists, which are kept small, slim.js: the plain lists they were made from are let go)
+      g.setAttribute('position', new BufferAttribute(lp, 3)); g.setAttribute('normal', new BufferAttribute(floatsOf(G.normal, off, p.n), 3));
+      g.setAttribute('color', new BufferAttribute(floatsOf(G.color, off, p.n), 3)); g.setAttribute('uv', new BufferAttribute(floatsOf(G.uv, off, p.n), 2));
       g.setIndex(new BufferAttribute(p.I[1], 1)); g.computeBoundingBox();
       const c = g.boundingBox.getCenter(new Vector3()); g.translate(-c.x, -c.y, -c.z); g.computeBoundingSphere();
       g.userData = { at: [c.x, c.y, c.z], mat: M[CLASSES[count.indexOf(Math.max(...count))]] || M.far };

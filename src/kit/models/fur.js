@@ -9,6 +9,7 @@
 // Kit use: creatures (creature.js) and people's hair (human.js); games reach it as gs.models.fur.
 import { BufferAttribute, BufferGeometry, DataTexture, LinearFilter, LinearMipmapLinearFilter, Mesh, NoColorSpace, RepeatWrapping, RGBAFormat, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { pbr, HD } from '../hd3d.js';
+import { pickLists, slim } from '../slim.js';
 
 const PI = Math.PI, TAU = PI * 2, mn = Math.min, mx = Math.max;
 const rng = s => { let a = (s | 0) || 1; return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
@@ -126,11 +127,8 @@ function shell(geo, o = {}) {
     }
   }
   const m = src.length, g = new BufferGeometry();
-  for (const name of ['position', 'normal', 'skinIndex', 'skinWeight']) {
-    const a = geo.attributes[name]; if (!a) continue;
-    const s = a.itemSize, A = new a.array.constructor(m * s); for (let i = 0; i < m; i++) for (let q = 0; q < s; q++) A[i * s + q] = a.array[src[i] * s + q];
-    g.setAttribute(name, new BufferAttribute(A, s, a.normalized));
-  }
+  const own = pickLists(geo, ['position', 'normal', 'skinIndex', 'skinWeight'], src);   // (kept as the mesh keeps them: slim.js)
+  for (const name in own) g.setAttribute(name, own[name]);
   // each point's colour, and in its alpha how thick the coat is there: the picture's strands are that much lower, so
   // toward where none grow a coat thins out strand by strand instead of ending at a triangle's edge
   const ca = geo.attributes.color, co = o.colors, full = base * .12, Cc = new Float32Array(m * 4);
@@ -144,7 +142,8 @@ function shell(geo, o = {}) {
   // the two ways a layer moves: out, and over the way the strands lie (what of that runs along the surface)
   const out = new Float32Array(m * 3), over = new Float32Array(m * 3), fl = o.flow, F = Array.isArray(fl) ? fl : DOWN_AND_BACK, droop = cr ? cr.droop ?? .35 : 0; let longest = 0;
   for (let i = 0; i < m; i++) {
-    const v = src[i], l = len[v], nx = N.getX(v), ny = N.getY(v), nz = N.getZ(v), x = P.getX(v), y = P.getY(v), z = P.getZ(v); if (l > longest) longest = l;
+    const v = src[i], l = len[v], x = P.getX(v), y = P.getY(v), z = P.getZ(v); if (l > longest) longest = l;
+    let nx = N.getX(v), ny = N.getY(v), nz = N.getZ(v); const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;   // (a normal kept in bytes is not quite one long: slim.js)
     let f = F;
     if (typeof fl === 'function') f = fl(x, y, z, nx, ny, nz) || F;
     else if (cr && !Array.isArray(fl)) {   // (away from the crown, and down a little)
@@ -159,7 +158,7 @@ function shell(geo, o = {}) {
   if (!geo.boundingSphere) geo.computeBoundingSphere();
   g.boundingSphere = new Sphere(geo.boundingSphere.center.clone(), geo.boundingSphere.radius + longest * 1.6);
   g.userData.fur = { longest, tris: idx.length / 3, points: m };
-  return g;
+  return slim(g, { force: true });   // (its colours as half floats; the lists picked from the mesh are small already)
 }
 
 // ================================================================= the layers' materials (shared by every coat of one kind)

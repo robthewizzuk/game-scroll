@@ -21,6 +21,7 @@
 //   const cl = await clustersFor(geometry);                 // the tables, built once for a geometry's content
 //   const m = new DetailMesh(geometry, material, cl);       // draws like a Mesh of that geometry
 import { BatchedMesh, BufferGeometry, BufferAttribute, DataTexture, RGBAFormat, FloatType, RedIntegerFormat, UnsignedIntType, Matrix4, Frustum, Vector3, Vector2, Mesh } from 'three';
+import { floatsOf } from './slim.js';
 
 /** Tuning (the Next Gen view sets these; tests read stats). */
 export const DETAIL = {
@@ -289,12 +290,16 @@ const F32 = new Float32Array(1), U32 = new Uint32Array(F32.buffer);
 function hashArray(a, h) {
   const n = a.length, step = Math.max(1, Math.floor(n / READ));
   const u = a.BYTES_PER_ELEMENT === 4 && a.byteOffset % 4 === 0 ? new Uint32Array(a.buffer, a.byteOffset, n) : null;
-  for (let i = 0; i < n; i += step) { let x; if (u) x = u[i]; else if (a instanceof Float32Array || a instanceof Float64Array) { F32[0] = a[i]; x = U32[0]; } else x = a[i]; h = Math.imul(h ^ x, 0x9E3779B1); h ^= h >>> 15; }
+  const fl = a instanceof Float32Array || a instanceof Float64Array || (typeof Float16Array !== 'undefined' && a instanceof Float16Array);
+  for (let i = 0; i < n; i += step) { let x; if (u) x = u[i]; else if (fl) { F32[0] = a[i]; x = U32[0]; } else x = a[i]; h = Math.imul(h ^ x, 0x9E3779B1); h ^= h >>> 15; }
   return Math.imul(h ^ n, 0x85EBCA6B) >>> 0;
 }
 // the simplifier is told what else to keep true about a point besides its place: normals, UVs (by how much of the texture, not how many repeats), colours
 const KEEP = [['normal', 3, .5], ['uv', 2, .5], ['color', 3, .25]];
 function plain(at, size) { return at && !at.isInterleavedBufferAttribute && at.array instanceof Float32Array && at.itemSize >= size && at.array.length === at.count * at.itemSize; }
+// (a normal, UV or colour list may be one the kit keeps in fewer bytes, slim.js: read as floats for the build)
+function kept(at, size) { return at && !at.isInterleavedBufferAttribute && at.itemSize >= size && at.array.length === at.count * at.itemSize && (at.array instanceof Float32Array || at.normalized || (typeof Float16Array !== 'undefined' && at.array instanceof Float16Array)); }
+const kindOf = at => (at.array instanceof Float32Array ? '' : at.array.constructor.name[0].toLowerCase() + at.array.BYTES_PER_ELEMENT);
 /** Can this geometry be drawn in clusters? (plain float positions, triangles) */
 export function canCluster(g) {
   const p = g?.attributes?.position;
@@ -306,7 +311,7 @@ export function keyOf(g, o = {}) {
   const p = g.attributes.position, ver = p.version + (g.index ? g.index.version * 65537 : 0), opt = (o.maxTris || 512) + '-' + (o.group || 8);
   const c = KEYS.get(g); if (c && c.ver === ver && c.opt === opt) return c.key;
   let h = hashArray(p.array, 0x1234567), h2 = g.index ? hashArray(g.index.array, 0x7654321) : 1, sig = '';
-  for (const [name, size] of KEEP) { const a = g.attributes[name]; if (plain(a, size)) { sig += name[0] + a.itemSize; h2 = hashArray(a.array, h2); } }
+  for (const [name, size] of KEEP) { const a = g.attributes[name]; if (kept(a, size)) { sig += name[0] + a.itemSize + kindOf(a); h2 = hashArray(a.array, h2); } }
   const key = [KEY_VERSION, p.count, g.index ? g.index.count : 0, sig, opt, h.toString(36), h2.toString(36)].join('-');
   KEYS.set(g, { ver, opt, key });
   return key;
@@ -316,10 +321,10 @@ function inputOf(g) {
   const p = g.attributes.position, nv = p.count, parts = [];
   let stride = 0; const weights = [];
   for (const [name, size, w] of KEEP) {
-    const a = g.attributes[name]; if (!plain(a, size)) continue;
-    let k = w;
-    if (name === 'uv') { let lo = Infinity, hi = -Infinity; const arr = a.array, st = Math.max(1, Math.floor(arr.length / 20000)); for (let i = 0; i < arr.length; i += st) { if (arr[i] < lo) lo = arr[i]; if (arr[i] > hi) hi = arr[i]; } k = w / Math.max(1, hi - lo); }
-    parts.push({ array: a.array.slice(), size: a.itemSize, use: size }); stride += size; for (let i = 0; i < size; i++) weights.push(k);
+    const a = g.attributes[name]; if (!kept(a, size)) continue;
+    let k = w; const arr = floatsOf(a);
+    if (name === 'uv') { let lo = Infinity, hi = -Infinity; const st = Math.max(1, Math.floor(arr.length / 20000)); for (let i = 0; i < arr.length; i += st) { if (arr[i] < lo) lo = arr[i]; if (arr[i] > hi) hi = arr[i]; } k = w / Math.max(1, hi - lo); }
+    parts.push({ array: arr, size: a.itemSize, use: size }); stride += size; for (let i = 0; i < size; i++) weights.push(k);
   }
   return { positions: p.array.slice(), index: g.index ? g.index.array.slice() : null, nv, parts, stride, weights };
 }

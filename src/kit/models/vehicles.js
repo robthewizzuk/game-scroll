@@ -8,6 +8,7 @@
 // Kit use only: games reach it as gs.models.vehicle.
 import { Group, Mesh, Object3D, InstancedMesh, Matrix4, BoxGeometry, BufferAttribute, DynamicDrawUsage } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { SLIM, slim } from '../slim.js';
 import { pause, built, loading } from '../slices.js';
 import { material } from './materials.js';
 import { wear } from './wear.js';
@@ -126,7 +127,7 @@ export function vehicle(kind = 'car', o = {}) {
   const wagon = !['steam', 'diesel', 'tender', 'coach'].includes(style);
   const row = [wagon ? { style, load, colour: o.colour ?? o.color } : { style }, ...(style === 'steam' ? [{ style: 'tender' }] : []), ...(cars || []).map(carOf)];
   const train = coupled(row.map(({ style: t, load, colour, color, canvas }) => one(kind, { ...opts, style: t, ...(load ? { load } : {}) }, ...lookOf(t === 'tender' ? 'steam' : t, { colour, color, canvas }))), () => vehicle(kind, o), { kind, ...o, style });
-  return fused ? fuse(train, JSON.stringify([o, age0])) : train;
+  return fused ? fuse(train, JSON.stringify([o, age0, SLIM.on])) : train;
 }
 vehicle.kinds = KINDS;
 function one(kind, opts, k, age) {
@@ -279,6 +280,7 @@ function fuse(root, key) {
     }
     f = { shell: kinds.map(kd => {
       const geo = kd.geos.length === 1 ? kd.geos[0] : mergeGeometries(kd.geos, false); if (kd.geos.length > 1) for (const g of kd.geos) g.dispose();
+      slim(geo, { normal: 16, uv: true, force: true });   // (a whole train in a few meshes: its normals, colours and small UVs in fewer bytes, slim.js; 16 bits a normal, for paint that shines)
       let mat = kd.mat; if (!kd.own) { mat = kd.mat.clone(); mat.color.setRGB(1, 1, 1); mat.vertexColors = true; }
       return { name: kd.name, cast: kd.cast, geo, mat };
     }), wheels: [...wheels.values()] };

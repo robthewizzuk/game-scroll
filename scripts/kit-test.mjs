@@ -4305,12 +4305,15 @@ console.log('physics ok');
   const A = sh.morphAttributes.position[0], B = sh.morphAttributes.position[1], P = sh.attributes.position, Nn = sh.attributes.normal;
   assert.ok(sh.morphAttributes.position.length === 2 && sh.morphTargetsRelative && sh.attributes.uv.count === P.count && sh.index.count === ball.index.count, 'the shell: the same triangles, two ways to move');
   let worstLen = 0, worstDot = 0, flat = 0;
+  assert.ok(Nn.array instanceof Int8Array && Nn.normalized && sh.userData.gsSlim.lists.includes('normal'), 'the shell keeps its normals in bytes (slim.js)');
   for (let i = 0; i < P.count; i++) {
-    const l = Math.hypot(A.getX(i), A.getY(i), A.getZ(i)), d = (A.getX(i) * Nn.getX(i) + A.getY(i) * Nn.getY(i) + A.getZ(i) * Nn.getZ(i)) / l;
-    worstLen = Math.max(worstLen, Math.abs(l - .1)); worstDot = Math.max(worstDot, Math.abs(d - 1), Math.abs(B.getX(i) * Nn.getX(i) + B.getY(i) * Nn.getY(i) + B.getZ(i) * Nn.getZ(i)));
+    // (against the ball's own normal, which a point of a ball of one is: the shell's is kept in bytes, a fraction of a degree off)
+    const nl = Math.hypot(P.getX(i), P.getY(i), P.getZ(i)), nx = P.getX(i) / nl, ny = P.getY(i) / nl, nz = P.getZ(i) / nl;
+    const l = Math.hypot(A.getX(i), A.getY(i), A.getZ(i)), d = (A.getX(i) * nx + A.getY(i) * ny + A.getZ(i) * nz) / l;
+    worstLen = Math.max(worstLen, Math.abs(l - .1)); worstDot = Math.max(worstDot, Math.abs(d - 1), Math.abs(B.getX(i) * nx + B.getY(i) * ny + B.getZ(i) * nz));
     if (Math.hypot(B.getX(i), B.getY(i), B.getZ(i)) > .05) flat++;
   }
-  assert.ok(worstLen < 1e-5 && worstDot < 1e-4 && flat > P.count * .6, 'strands grow straight out of the skin and lie over along it');
+  assert.ok(worstLen < 1e-5 && worstDot < 6e-4 && flat > P.count * .6, `strands grow straight out of the skin and lie over along it (${worstLen.toExponential(1)}, ${worstDot.toExponential(1)})`);
   assert.ok(P.count > ball.attributes.position.count && P.count < ball.attributes.position.count * 2.2 && [...sh.attributes.uv.array].every(Number.isFinite), 'points are doubled only where the picture is laid on from another side');
   assert.ok(near(sh.boundingSphere.radius, 1.16, .01) && near(sh.userData.fur.longest, .1, 1e-6) && sh.userData.fur.tris === ball.index.count / 3);
   // where: none below the middle, and no cliff where it stops
@@ -4456,6 +4459,99 @@ console.log('physics ok');
     assert.ok(f2.lod === 2 && !f2.bones.foreL.parent.children.includes(f2.bones.foreL) && f0.lod === 0, 'and it is handed back at the level it was given'); c0.dispose(); c2.dispose(); }
   crowd.dispose(); assert.ok(scene.children.length === 0 && scene.userData.gsPosed.size === 0, 'dispose takes it out of the scene');
   console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
+}
+
+// ---- smaller meshes (src/kit/slim.js, slim-core.js): points kept in about half the bytes
+{
+  const THREE = await import('three'), { mergeGeometries } = await import('three/examples/jsm/utils/BufferGeometryUtils.js');
+  const C = await import('../src/kit/slim-core.js'), S = await import('../src/kit/slim.js'), { rng } = await import('../src/kit/math.js');
+  const R = rng(11), deg = 180 / Math.PI, half = typeof Float16Array !== 'undefined';
+  // normals in three bytes: a tenth of a degree off on average, a third at worst, and what faces along an axis is exact
+  const n = 20000, N = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { let x, y, z, l; do { x = R() * 2 - 1; y = R() * 2 - 1; z = R() * 2 - 1; l = Math.hypot(x, y, z); } while (l > 1 || l < .1); const k = i % 7 ? 1 / l : 3 / l; N[i * 3] = x * k; N[i * 3 + 1] = y * k; N[i * 3 + 2] = z * k; }
+  N.set([0, 1, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0]);
+  const angle = (out, top) => { let sum = 0, worst = 0, short = 1; for (let i = 0; i < n; i++) { const a = [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]], b = [out[i * 3] / top, out[i * 3 + 1] / top, out[i * 3 + 2] / top], la = Math.hypot(...a), lb = Math.hypot(...b); if (!la) continue; const e = Math.acos(Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / la / lb)) * deg; sum += e; worst = Math.max(worst, e); short = Math.min(short, lb); } return { mean: sum / n, worst, short }; };
+  const b8 = C.normals8(N), e8 = angle(b8, 127), e16 = angle(C.normals16(N), 32767);
+  assert.ok(b8 instanceof Int8Array && e8.mean < .13 && e8.worst < .35 && e8.short > .97, `normals in bytes: ${e8.mean.toFixed(3)} degrees off on average, ${e8.worst.toFixed(3)} at worst, never shorter than ${e8.short.toFixed(3)}`);
+  assert.deepEqual([...b8.subarray(0, 12)], [0, 127, 0, -127, 0, 0, 0, 0, 127, 0, 0, 0], 'a normal along an axis is exact, and one of no length stays nothing');
+  assert.ok(e16.worst < .004, '16 bits a normal: ' + e16.worst.toFixed(5) + ' degrees at worst');
+  const plainRound = angle(Int8Array.from(N, (v, i) => Math.round(v / Math.hypot(N[i - i % 3], N[i - i % 3 + 1], N[i - i % 3 + 2]) * 127 || 0)), 127);
+  assert.ok(e8.mean < plainRound.mean * .7, `picking the best of a few lengths halves the error of plain rounding (${plainRound.mean.toFixed(3)} degrees)`);
+  const t8 = C.tangents8(Float32Array.from([1, 0, 0, 1, 0, .6, .8, -1]));
+  assert.deepEqual([...t8], [127, 0, 0, 127, 0, 76, 101, -127].map((v, i) => i === 5 || i === 6 ? t8[i] : v), 'a tangent keeps its side'); assert.ok(Math.abs(t8[5] / t8[6] - .75) < .01);
+  // numbers that came from bytes go back to them; anything else is refused
+  assert.deepEqual([...C.units8(Float32Array.from([0, 1, 128 / 255, 3 / 255]))], [0, 255, 128, 3]); assert.equal(C.units8(Float32Array.from([0, 1.2])), null); assert.equal(C.units8(Float32Array.from([0, .5004]), 2, .05), null);
+  // bone numbers and weights in eight bytes: the weights add up to exactly the whole, the biggest first
+  const m = 5000, SI = new Uint16Array(m * 4), SW = new Float32Array(m * 4);
+  for (let i = 0; i < m; i++) { const k = 1 + (i % 4); let s = 0; for (let j = 0; j < 4; j++) { SI[i * 4 + j] = j < k ? Math.floor(R() * 60) : 0; SW[i * 4 + j] = j < k ? R() + .01 : 0; s += SW[i * 4 + j]; } for (let j = 0; j < 4; j++) SW[i * 4 + j] /= s; }
+  SW.fill(0, 0, 4); SI[0] = 7;
+  const sk = C.skin8(SI, SW, m); let worstW = 0, sums = true, order = true, kept = true;
+  for (let i = 1; i < m; i++) {
+    const o = i * 8; let sum = 0; for (let j = 0; j < 4; j++) { sum += sk.array[o + 4 + j]; if (j && sk.array[o + 4 + j] > sk.array[o + 3 + j]) order = false; }
+    if (sum !== 255) sums = false;
+    for (let j = 0; j < 4; j++) { if (!SW[i * 4 + j]) continue; let got = 0; for (let q = 0; q < 4; q++) if (sk.array[o + q] === SI[i * 4 + j]) got += sk.array[o + 4 + q]; let want = 0; for (let q = 0; q < 4; q++) if (SI[i * 4 + q] === SI[i * 4 + j]) want += SW[i * 4 + q]; worstW = Math.max(worstW, Math.abs(got / 255 - want)); if (!got && want > 2 / 255) kept = false; }
+  }
+  assert.ok(sk.array instanceof Uint8Array && sk.top === 255 && sums && order && kept && worstW < 1.01 / 255, `bone weights in bytes: each point's add up to 255, biggest first, ${(worstW * 255).toFixed(2)} of a 255th off at most`);
+  assert.deepEqual([...sk.array.subarray(0, 8)], [7, 0, 0, 0, 255, 0, 0, 0], 'a point no bone holds follows its first');
+  SI[9] = 300; const wide = C.skin8(SI, SW, m); assert.ok(wide.array instanceof Uint16Array && wide.top === 65535 && wide.array[2 * 8 + 4] + wide.array[2 * 8 + 5] + wide.array[2 * 8 + 6] + wide.array[2 * 8 + 7] === 65535, 'more than 256 bones: 16 bits each'); SI[9] = 3;
+  // places on a 16-bit grid: a power of two apart, through the mesh's own zero, so shared edges still meet
+  const P = new Float32Array(3000); for (let i = 0; i < P.length; i++) P[i] = (R() - .3) * 7.3;
+  const g16 = C.places16(P); let off = 0; for (let i = 0; i < P.length; i++) off = Math.max(off, Math.abs(g16.array[i] / 32767 * g16.scale + g16.offset[i % 3] - P[i]));
+  assert.ok(Number.isInteger(Math.log2(g16.step)) && off <= g16.step / 2 + 1e-7 && g16.step < 7.3 / 30000 && g16.offset.every(v => Number.isInteger(v / g16.step)) && g16.array.every(v => v >= -32767), `a grid of ${(g16.step * 1000).toFixed(3)} mm steps: no point moves more than half a step`);
+  { const a = Float32Array.from([0, 0, 0, 4, 0, 0, 4, 3, 0, 0, 3, 0]), b = Float32Array.from([4, 0, 0, 9.5, 0, 0, 9.5, 3, 0, 4, 3, 0]), ga = C.places16(a), gb = C.places16(b), at = (g, i) => g.array[i] / 32767 * g.scale + g.offset[i % 3];
+    assert.ok(at(ga, 3) === at(gb, 0) && at(ga, 6) === at(gb, 9) && at(ga, 7) === at(gb, 10), 'two meshes that share an edge put its points on the same spot'); }
+  // slim(): a dense geometry's lists rewritten in place; a small one left alone
+  S.SLIM.stats.meshes = S.SLIM.stats.was = S.SLIM.stats.now = 0;
+  const small = new THREE.SphereGeometry(1, 12, 8), big = new THREE.SphereGeometry(1, 64, 48), before = big.attributes.normal.array.slice(), pts = big.attributes.position.count;
+  big.setAttribute('color', new THREE.BufferAttribute(Float32Array.from({ length: pts * 3 }, () => R() * 1.5), 3)); const cols = big.attributes.color.array.slice(), uvs = big.attributes.uv.array.slice();
+  big.setAttribute('mask', new THREE.BufferAttribute(Float32Array.from({ length: pts * 4 }, () => Math.floor(R() * 256) / 255), 4));
+  S.slim(small); S.slim(big, { uv: true, unit: ['mask'] });
+  assert.ok(small.attributes.normal.array instanceof Float32Array && !S.isSlim(small) && S.isSlim(big), 'a mesh of a few hundred triangles is left as it was');
+  const bn = big.attributes.normal, bc = big.attributes.color, bu = big.attributes.uv;
+  assert.ok(bn.array instanceof Int8Array && bn.normalized && bn.count === pts && big.attributes.position.array instanceof Float32Array && big.attributes.mask.array instanceof Uint8Array && big.attributes.mask.normalized, 'normals and a mask in bytes, places as they were');
+  assert.ok(half ? bc.array instanceof Float16Array && bu.array instanceof Float16Array : bc.array instanceof Float32Array && bu.array instanceof Float32Array, 'colours and small UVs as half floats where the browser has them');
+  { let wn = 0, wc = 0, wu = 0; const v = new THREE.Vector3(); for (let i = 0; i < pts; i++) { v.fromBufferAttribute(bn, i).normalize(); wn = Math.max(wn, Math.acos(Math.min(1, v.x * before[i * 3] + v.y * before[i * 3 + 1] + v.z * before[i * 3 + 2])) * deg); for (let k = 0; k < 3; k++) wc = Math.max(wc, Math.abs(bc.getComponent(i, k) - cols[i * 3 + k]) / Math.max(.05, cols[i * 3 + k])); for (let k = 0; k < 2; k++) wu = Math.max(wu, Math.abs(bu.getComponent(i, k) - uvs[i * 2 + k])); }
+    assert.ok(wn < .35 && wc < 1 / 1024 && wu < 1 / 2048, `read back through three.js: normals ${wn.toFixed(3)} degrees, colours one part in ${Math.round(1 / (wc || 1e-9))}, UVs ${wu.toExponential(1)}`); }
+  const info = big.userData.gsSlim, st = S.SLIM.stats;
+  assert.ok(info.lists.includes('normal') && info.lists.includes('mask') && info.now < info.was * (half ? .4 : .3) && st.meshes === 1 && st.was === info.was && st.now === info.now, 'what was done is written on the geometry and counted');
+  const again = big.attributes.normal; S.slim(big); assert.ok(big.attributes.normal === again && st.meshes === 1, 'twice does nothing more');
+  { const tiled = new THREE.PlaneGeometry(1, 1, 60, 60); for (let i = 0; i < tiled.attributes.uv.array.length; i++) tiled.attributes.uv.array[i] *= 12; S.slim(tiled, { uv: true }); assert.ok(tiled.attributes.uv.array instanceof Float32Array && tiled.attributes.normal.array instanceof Int8Array, 'UVs that tile many times stay floats'); tiled.dispose(); }
+  { const dyn = new THREE.SphereGeometry(1, 64, 48); dyn.attributes.normal.setUsage(THREE.DynamicDrawUsage); S.slim(dyn); assert.ok(dyn.attributes.normal.array instanceof Float32Array, 'a list marked as changing is left alone'); }
+  S.SLIM.on = false; { const off = new THREE.SphereGeometry(1, 64, 48); S.slim(off); S.gridPlaces(off); assert.ok(!S.isSlim(off), 'SLIM.on = false (HD.slim): plain floats'); } S.SLIM.on = true;
+  // reading it back: floats(), a copy with plain lists (fat()) that three.js can merge, picked points, a second attribute over the same numbers
+  const f = S.floats(bn), fo = S.floatsOf(big.attributes.position), fatG = S.fat(big);
+  assert.ok(f instanceof Float32Array && f.length === pts * 3 && Math.abs(f[4] - bn.getY(1)) < 1e-9 && fo !== big.attributes.position.array && fo[5] === big.attributes.position.array[5] && S.floats(big.attributes.position) === big.attributes.position.array, 'floats(): the real numbers, the list itself where it is plain');
+  assert.ok(!S.isSlim(fatG) && Object.values(fatG.attributes).every(a => a.array instanceof Float32Array && !a.normalized) && fatG.index === big.index && mergeGeometries([fatG, S.fat(small)].map(g => { const c = g.clone(); c.deleteAttribute('color'); c.deleteAttribute('mask'); return c; }), false).attributes.position.count === pts + small.attributes.position.count, 'fat(): plain lists again, which merge with any other');
+  const pick = S.pickLists(big, ['position', 'normal', 'color'], [5, 9, 5]);
+  assert.ok(pick.normal.array instanceof Int8Array && pick.normal.normalized && pick.normal.count === 3 && pick.normal.getX(1) === bn.getX(9) && pick.position.getY(2) === big.attributes.position.getY(5) && pick.color.array.constructor === bc.array.constructor, 'picked points are kept the way the mesh keeps them');
+  const same = S.sameList(bn); assert.ok(same !== bn && same.array === bn.array && same.normalized && same.itemSize === 3, 'a second list over the same numbers');
+  // a figure: bone numbers and weights in one list of bytes, shared by its levels of detail
+  const mk = () => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(m * 3).map(() => R()), 3)); g.setAttribute('normal', new THREE.BufferAttribute(N.slice(0, m * 3), 3)); return g; };
+  const g0 = mk(), g1 = new THREE.BufferGeometry(), g2 = new THREE.BufferGeometry();
+  g0.setAttribute('skinIndex', new THREE.BufferAttribute(SI.slice(), 4)); g0.setAttribute('skinWeight', new THREE.BufferAttribute(SW.slice(), 4));
+  for (const g of [g1, g2]) for (const k in g0.attributes) g.setAttribute(k, g0.attributes[k]);
+  g0.setIndex([0, 1, 2]); g1.setIndex([0, 1, 2]); g2.setIndex([3, 4, 5]);
+  S.slimShared([g0, g1, g2]);
+  const si = g0.attributes.skinIndex, sw = g0.attributes.skinWeight;
+  assert.ok(si.isInterleavedBufferAttribute && sw.isInterleavedBufferAttribute && si.data === sw.data && si.data.array instanceof Uint8Array && si.data.stride === 8 && !si.normalized && sw.normalized && si.offset === 0 && sw.offset === 4, 'bone numbers and weights are two readings of one list of bytes (so WebGPU does not widen them)');
+  assert.ok(g1.attributes.skinIndex === si && g2.attributes.normal === g0.attributes.normal && g2.attributes.normal.array instanceof Int8Array && S.isSlim(g2) && g2.attributes.position === g0.attributes.position, 'levels of detail still share their points');
+  { let w = 0; for (let i = 1; i < 200; i++) { const s4 = sw.getX(i) + sw.getY(i) + sw.getZ(i) + sw.getW(i); w = Math.max(w, Math.abs(s4 - 1)); } assert.ok(w < 1e-6 && si.getX(1) === sk.array[8] && Math.abs(sw.getX(1) - sk.array[12] / 255) < 1e-6, 'three.js reads the weights back as fractions that add up to one'); }
+  const fatS = S.fat(g0); assert.ok(fatS.attributes.skinIndex.array instanceof Uint16Array && fatS.attributes.skinWeight.array instanceof Float32Array && fatS.attributes.skinIndex.getX(1) === si.getX(1), 'and fat() gives plain bone lists back');
+  const mb = S.meshBytes({ traverse: fn => [g0, g1, g2].forEach(g => fn({ geometry: g })) }), mbGpu = S.meshBytes({ traverse: fn => fn({ geometry: g0 }) }, true);
+  assert.ok(mb.points === m && mb.js === m * (12 + 3 + 8) + 3 * 3 * 2 && mbGpu.chip === m * (12 + 4 + 8) + 3 * 2, `meshBytes(): shared lists once (${mb.js} bytes); on WebGPU a normal in bytes is padded to four (${mbGpu.chip})`);
+  // a relief's places: on the grid, with the matrix that puts them back, refused where the grid would be too coarse
+  const wall = new THREE.PlaneGeometry(8, 3, 80, 30), wp = wall.attributes.position.array.slice(); S.gridPlaces(wall, { most: 1e-5 });
+  assert.ok(wall.attributes.position.array instanceof Float32Array && !wall.userData.gsGrid, 'a mesh too big for a grid that fine keeps its floats');
+  S.gridPlaces(wall, { most: .001 }); const grid = wall.userData.gsGrid, wv = new THREE.Vector3(); let wo = 0;
+  for (let i = 0; i < wall.attributes.position.count; i++) { wv.fromBufferAttribute(wall.attributes.position, i).applyMatrix4(grid.matrix); wo = Math.max(wo, Math.abs(wv.x - wp[i * 3]), Math.abs(wv.y - wp[i * 3 + 1]), Math.abs(wv.z - wp[i * 3 + 2])); }
+  assert.ok(wall.attributes.position.array instanceof Int16Array && wall.attributes.position.normalized && wo <= grid.step / 2 + 1e-6 && grid.step <= .001 && wall.boundingSphere.radius < 1.8 && Math.abs(wall.boundingSphere.radius * grid.scale - Math.hypot(4, 1.5)) < .01, `places on a grid of ${(grid.step * 1000).toFixed(3)} mm steps, put back by its matrix; its ball is in the grid's own space`);
+  const fw = S.fat(wall); assert.ok(Math.abs(fw.attributes.position.array[7] - wp[7]) <= grid.step / 2 + 1e-6 && !fw.userData.gsGrid, 'fat() puts the places back');
+  for (const g of [big, g0, wall]) g.dispose(); assert.ok(st.meshes === 0 && Math.abs(st.was) < 1 && Math.abs(st.now) < 1, 'a geometry let go is no longer counted');
+  // the makers use it: a creature's and a fused train's lists
+  { const { creature } = await import('../src/kit/models/creature.js'), dog = creature({ like: 'dog', seed: 3, fur: false, now: true }), g = dog.lods[0].geometry, A = g.attributes;
+    assert.ok(A.normal.array instanceof Int8Array && A.skinIndex.isInterleavedBufferAttribute && A.skinIndex.data.array instanceof Uint8Array && A.position.array instanceof Float32Array && dog.lods.every(l => l.geometry.attributes.normal === A.normal) && g.userData.gsSlim.now < g.userData.gsSlim.was * (half ? .4 : .55), `a creature: ${g.userData.gsSlim.was} bytes of normals, colours and bone weights kept in ${g.userData.gsSlim.now}`);
+    const box = new THREE.Box3().setFromObject(dog, true); assert.ok(box.max.y > .2 && box.max.y < 2 && Number.isFinite(box.min.x), 'and it still knows its size'); }
+  console.log(`smaller meshes: normals in bytes (${e8.mean.toFixed(2)} degrees off on average), tangents, masks, bone weights in eight bytes, places on a 16-bit grid, slim() and what it leaves alone, reading back, fat copies that merge, shared levels, counting, a creature ok`);
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

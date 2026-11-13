@@ -123,7 +123,12 @@ try {
   const tw = v.details.map.get(S.trunk)?.twin; gs.models.relief(S.trunk, false); await draw(S, 2);
   check('relief(mesh, false) draws it as it was', !v.details.map.has(S.trunk) && tw && !tw.parent && (S.trunk.layers.mask & 1) && S.trunk.userData.relief === undefined);
   S.roofMesh.position.x += 1; await draw(S, 2);
-  check('a moved mesh takes its relief with it', v.details.map.get(S.roofMesh)?.twin.matrixWorld.equals(S.roofMesh.matrixWorld));
+  {   // (the relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix is the mesh's, then the grid's)
+    const tw2 = v.details.map.get(S.roofMesh)?.twin, grid = tw2?.source.userData.gsGrid, want = S.roofMesh.matrixWorld.clone(); if (grid) want.multiply(grid.matrix);
+    check('a moved mesh takes its relief with it', tw2 && tw2.matrixWorld.equals(want), grid ? 'places on a grid of ' + (grid.step * 1000).toFixed(3) + ' mm steps' : 'plain places');
+    const P = tw2?.source.attributes.position, Nn = tw2?.source.attributes.normal;
+    check('a relief keeps its points in fewer bytes: places in 16 bits, normals in 8', !HD.slim || (P.array instanceof Int16Array && P.normalized && Nn.array instanceof Int8Array && Nn.normalized), P && `${P.array.constructor.name} places, ${Nn.array.constructor.name} normals, ${tw2.source.attributes.uv.array.constructor.name} UVs`);
+  }
   HD.detail = false; await draw(S, 2);
   check('HD.detail = false draws every mesh as it was', v.details.map.size === 0 && (S.roofMesh.layers.mask & 1) && !v.scene.children.some(o => o.isDetailMesh));
   HD.detail = true;

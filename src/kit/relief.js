@@ -19,6 +19,7 @@
 // their points (skinned, morphing).
 import { BufferGeometry, BufferAttribute } from 'three';
 import { Clusters, keyOf, work, canWork, canCluster } from './detail.js';
+import { SLIM, slim, gridPlaces, floatsOf } from './slim.js';
 
 const RELIEF = new WeakMap();   // mesh -> its relief: { state: 'building' | 'ready' | 'failed', geometry, clusters, base, ver, key, tris, done }
 /** A mesh's relief (kit use: the view reads it), or undefined. */
@@ -59,18 +60,20 @@ const BUMPS = new WeakMap(), CORES = new WeakMap();
  */
 export const noteHeight = (normal, height, core = null) => { if (normal && height) BUMPS.set(normal, height); if (height && core) CORES.set(height, core); };
 const heightOf = (m, o) => { const t = (o.height?.isTexture ? o.height : o.height?.height) || (m.normalMap && BUMPS.get(m.normalMap)) || m.userData.pom?.height || m.userData.recipeHeight; return t && t.isTexture && t.image ? t : null; };   // (a texture has a height of its own: its picture's)
-const plain = (a, size) => a && !a.isInterleavedBufferAttribute && a.array instanceof Float32Array && a.itemSize === size;
+// (a list of plain floats, or one the kit keeps in fewer bytes, slim.js: read as floats for the build)
+const plain = (a, size) => a && !a.isInterleavedBufferAttribute && a.itemSize === size && (a.array instanceof Float32Array || a.normalized || (typeof Float16Array !== 'undefined' && a.array instanceof Float16Array));
 const num = x => +(+x).toPrecision(6);
 
 function build(key, g, pic, tex, opts) {
-  let e = made.get(key);
+  const mk = SLIM.on ? key : key + '|plain';   // (kept in memory by how its points are kept; the worker's copy is the same either way)
+  let e = made.get(mk);
   if (e) { e.t = ++clock; return e.p; }
   const run = async () => {
     let d = canWork() ? await work({ op: 'get', key }).catch(() => null) : null;
     if (!d?.relief) {
       const A = g.attributes, extra = [];
-      for (const name in A) if (name !== 'position' && name !== 'normal' && name !== 'uv' && A[name].array instanceof Float32Array && !A[name].isInterleavedBufferAttribute) extra.push({ name, size: A[name].itemSize, array: A[name].array.slice() });
-      const input = { positions: A.position.array.slice(), normals: A.normal.array.slice(), uvs: A.uv.array.slice(), index: g.index ? Uint32Array.from(g.index.array) : null, extra,
+      for (const name in A) if (name !== 'position' && name !== 'normal' && name !== 'uv' && plain(A[name], A[name].itemSize)) extra.push({ name, size: A[name].itemSize, array: floatsOf(A[name]) });
+      const input = { positions: A.position.array.slice(), normals: floatsOf(A.normal), uvs: floatsOf(A.uv), index: g.index ? Uint32Array.from(g.index.array) : null, extra,
         height: { data: pic.data.slice(), size: pic.size, repeat: [tex.repeat.x, tex.repeat.y], offset: [tex.offset.x, tex.offset.y], flipY: tex.flipY } };
       const cluster = { maxTris: 512, group: 8 };
       if (canWork()) d = await work({ op: 'relief', key, input, opts, cluster }, [input.positions.buffer, input.normals.buffer, input.uvs.buffer, input.height.data.buffer, ...(input.index ? [input.index.buffer] : []), ...extra.map(x => x.array.buffer)]);
@@ -83,15 +86,27 @@ function build(key, g, pic, tex, opts) {
     geometry.setAttribute('position', new BufferAttribute(r.positions, 3)); geometry.setAttribute('normal', new BufferAttribute(r.normals, 3)); geometry.setAttribute('uv', new BufferAttribute(r.uvs, 2));
     r.names.forEach((name, i) => geometry.setAttribute(name, new BufferAttribute(r.extra[i], r.sizes[i])));
     geometry.computeBoundingSphere(); geometry.computeBoundingBox(); geometry.name = (g.name || 'mesh') + ':relief';
+    // Only the view draws this geometry (through a twin), so it is kept in about half the bytes (slim.js): normals in
+    // bytes, colours and small UVs as half floats, and its places on a 16-bit grid of its own. The twin's matrix puts the
+    // grid back where the mesh is (hd3d.js autoDetail), and the cluster tables move onto the grid with the points.
+    // (the grid no coarser than a thirty-second of the relief's depth: a wall a hundred metres long keeps float places)
+    slim(geometry, { uv: true, force: true }); gridPlaces(geometry, { most: r.depth / 32 });
+    const grid = geometry.userData.gsGrid;
+    if (grid) {
+      const k = 1 / grid.scale, [ox, oy, oz] = grid.offset;
+      for (const sp of [d.sphere, d.gSphere]) for (let i = 0; i < sp.length; i += 4) { sp[i] = (sp[i] - ox) * k; sp[i + 1] = (sp[i + 1] - oy) * k; sp[i + 2] = (sp[i + 2] - oz) * k; sp[i + 3] *= k; }
+      for (let i = 0; i < d.gError.length; i++) d.gError[i] *= k;
+    }
     const clusters = new Clusters(d); clusters.key = key; clusters.users = 0;
-    const out = { geometry, clusters, info: { tris: r.tris, points: r.points, split: r.split, full: r.full, depth: r.depth, fine: r.fine, error: r.error }, bytes: clusters.bytes + r.positions.byteLength + r.normals.byteLength + r.uvs.byteLength + r.extra.reduce((n, a) => n + a.byteLength, 0) };
-    const e2 = made.get(key); if (e2) e2.r = out;
+    let bytes = clusters.bytes; for (const name in geometry.attributes) bytes += geometry.attributes[name].array.byteLength;
+    const out = { geometry, clusters, info: { tris: r.tris, points: r.points, split: r.split, full: r.full, depth: r.depth, fine: r.fine, error: r.error }, bytes };
+    const e2 = made.get(mk); if (e2) e2.r = out;
     tidy();
     return out;
   };
   e = { p: null, r: null, t: ++clock };
-  made.set(key, e);
-  e.p = run().catch(err => { made.delete(key); throw err; });
+  made.set(mk, e);
+  e.p = run().catch(err => { made.delete(mk); throw err; });
   return e.p;
 }
 // reliefs nothing draws any more are let go, oldest first, once they add up to more than MEM bytes

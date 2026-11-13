@@ -38,6 +38,7 @@ import {
   SRGBColorSpace, SphereGeometry, Vector3,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { slim } from './slim.js';
 import { rng, makeNoise } from './math.js';
 import { Props, simplify, simplifyReady } from './props.js';
 import { Path } from './paths.js';
@@ -371,7 +372,7 @@ class Quads {
     if (this.c.length) g.setAttribute('color', new BufferAttribute(new Float32Array(this.c), 3));
     const n = this.p.length / 3; g.setIndex(new BufferAttribute(n > 65535 ? new Uint32Array(this.i) : new Uint16Array(this.i), 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
-    return g;
+    return slim(g);   // (a big one: its normals and colours in fewer bytes, slim.js)
   }
 }
 const C = hex => new Color(hex);
