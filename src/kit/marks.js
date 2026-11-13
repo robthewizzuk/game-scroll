@@ -271,7 +271,7 @@ export class Marks {
    * 'round'; side: 1 a left foot, -1 a right one; press: how hard (1 a person's weight: a deeper print up to
    * 1.5); by: who made it (yours, to ask marks.trail() about). Returns the mark, or null on firm ground.
    */
-  step(x, z, { turn = 0, dir = null, size = .29, width = size * .38, shape = 'boot', side = 0, press = 1, by = null } = {}) {
+  step(x, z, { turn = 0, dir = null, size = .29, width = size * .38, shape = 'boot', side = 0, press = 1, by = null, who = by } = {}) {
     const g = this.kindAt(x, z, this._k ||= {}), fx = dir ? dir[0] : Math.sin(turn), fz = dir ? dir[1] : Math.cos(turn), fl = Math.hypot(fx, fz) || 1;
     if (!g.kind) return null;
     if (this.grass && this.grows(x, z) > .05) this.grass.flat(x, z, Math.max(.3, size), Math.min(1, .85 * press));
@@ -279,6 +279,7 @@ export class Marks {
     const kind = NAMES.indexOf(g.kind), L = this.looks[kind], d = g.depth * clamp(press, .2, 1.5);
     const s = this.add({ shape: SHAPES[shape] ? shape : 'round', x, z, fx: fx / fl, fz: fz / fl, l: size, w: width, d, kind, side, by, r: Math.hypot(size, width) * .5 + this.rimOf(L, width) });
     this.made.push({ x, z, kind: g.kind, depth: d, by });
+    who?.grime?.soil?.(g.kind, d);   // (a gs.models.human: mud splashes up the boots and trousers, sand dusts them: person.grime)
     return s;
   }
   /** A round dent, r metres from its middle to its edge: something fell here, or knelt, or landed. */
@@ -369,7 +370,7 @@ export class Marks {
         const a = st.yaw + (f.yaw0 - st.turned), fx = Math.sin(a), fz = Math.cos(a), px = f.T.x + fx * .035 * k, pz = f.T.z + fz * .035 * k, was = w.lastT[i];   // (a: the way the foot points, which is the way the body faced as it was put down)
         if (was && Math.hypot(px - was.x, pz - was.z) < .04) continue;   // (the rig was not moved on since: the same footfall)
         w.lastT[i] = { x: px, z: pz };
-        if (down) this.step(px, pz, { dir: [fx, fz], size, width: o.width ?? size * .38, shape: o.shape ?? 'boot', side: i ? -1 : 1, press: o.press ?? 1, by: w.by });
+        if (down) this.step(px, pz, { dir: [fx, fz], size, width: o.width ?? size * .38, shape: o.shape ?? 'boot', side: i ? -1 : 1, press: o.press ?? 1, by: w.by, who: w.thing });
       }
       w.dist = 0; return;
     }
@@ -379,7 +380,7 @@ export class Marks {
     w.dist += d;
     while (w.dist >= pace) {
       w.dist -= pace; const bx = x - w.hx * w.dist, bz = z - w.hz * w.dist, sd = w.n++ % 2 ? -1 : 1, lx = w.hz * gap * .5 * sd, lz = -w.hx * gap * .5 * sd;
-      const opt = { dir: [w.hx, w.hz], size, width: o.width ?? (o.shape === 'paw' || o.shape === 'hoof' || o.shape === 'shoe' || o.shape === 'round' ? size * .9 : size * .38), shape: o.shape ?? 'boot', side: sd, press: o.press ?? 1, by: w.by };
+      const opt = { dir: [w.hx, w.hz], size, width: o.width ?? (o.shape === 'paw' || o.shape === 'hoof' || o.shape === 'shoe' || o.shape === 'round' ? size * .9 : size * .38), shape: o.shape ?? 'boot', side: sd, press: o.press ?? 1, by: w.by, who: w.thing };
       if (feet === 4) { this.step(bx + lx + w.hx * long * .5, bz + lz + w.hz * long * .5, opt); this.step(bx - lx - w.hx * long * .5 + w.hx * size * .4, bz - lz - w.hz * long * .5 + w.hz * size * .4, { ...opt, side: -sd }); }
       else this.step(bx + lx, bz + lz, opt);
     }

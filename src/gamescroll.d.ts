@@ -1654,6 +1654,26 @@ export interface BreathT {
   /** Back to rest, as made. */
   still(): BreathT;
 }
+/**
+ * How wet, muddy, dusty and snowy a gs.models.human person is (person.grime), drawn on WebGPU on their clothes and skin, on top of what the weather
+ * does under the open sky by itself. Rain soaks a person from the head and shoulders down (cloth much darker, leather a little darker and shiny,
+ * skin glistening) and wet dries over a few minutes; mud splashes up the boots and legs (gs.outdoors Marks: marks.watch(person) adds it a step at a
+ * time in mud, and sand dusts them); snow lies on what faces up and melts. Each 0..1.
+ */
+export interface GrimeT {
+  /** Soaked (1: fell in a river); dries by itself over a few minutes. */
+  wet: number;
+  /** How far up the legs the mud has splashed (1: to mid-thigh); stays until clean(). */
+  mud: number;
+  /** Dust over the lower body most; stays until clean(). */
+  dust: number;
+  /** Snow on the shoulders, the hat and the tops of the arms; melts over a couple of minutes. */
+  snow: number;
+  /** A step in something that marks (gs.outdoors Marks does it for a watched person): kind 'mud' | 'sand' | 'dust', depth of the print in metres. */
+  soil(kind: string, depth?: number): GrimeT;
+  /** Clean and dry. */
+  clean(): GrimeT;
+}
 export interface LiveFaceT extends FaceT {
   set(name: LiveShape, amount?: number): LiveFaceT;
   /** The eyes onto a point in the world, or an Object3D (followed as it moves); null lets them wander again. Each eye turns by itself, as far as eyes do (about 30 degrees to either side): turn the head yourself for more. */
@@ -2637,6 +2657,8 @@ export interface RigT {
   fine?: boolean;
   /** A gs.models.human person's breathing and soft flesh (the same as person.breath); update() steps it. */
   breath?: BreathT;
+  /** A gs.models.human person's wet, mud, dust and snow (the same as person.grime): drawn on WebGPU. */
+  grime?: GrimeT;
   /**
    * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
    * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really
@@ -3159,6 +3181,9 @@ export interface ModelsPart {
    * belly with weight and age, a woman's hips and bust from her weight, and a height a few centimetres either way (build and scale, when given, win).
    * The body lives: biceps swell as an elbow bends (more on a muscled arm), elbows, shoulders, hips and knees keep their girth in a deep bend, and person.breath (a BreathT)
    * breathes the chest and belly and lets a heavy belly settle behind a stride, by itself.
+   * Their clothes on WebGPU: each cloth woven its own way at the size of its threads (outfit.top.weave, outfit.legs.weave, outfit.hat.weave: 'plain' | 'twill' | 'denim' | 'knit' |
+   * 'canvas' | 'wool' | 'fine'; from the kind of garment when not given), leather with its grain, creases at the inside of an elbow and the back of a knee as far as it bends,
+   * and person.grime (a GrimeT): wet, muddy, dusty and snowy, by itself in the weather and in gs.outdoors Marks' mud, or set by the game.
    * Options: look, seed, age, weight, muscle, sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {

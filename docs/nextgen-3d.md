@@ -1258,6 +1258,14 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   little more in a woman, faster and deeper after a run and back to rest over half a minute, and a heavy belly
   lags a moment behind the hips in a stride or a landing and settles. `breath.on = false` holds a breath (a
   sniper before the shot); `breath.puff = 1` leaves someone winded. Close up only.
+  On WebGPU the clothes are woven at the size of their threads, each its own way (`outfit.top.weave`,
+  `outfit.legs.weave`, `outfit.hat.weave`: `plain`, `twill`, `denim`, `knit`, `canvas`, `wool`, `fine`; from the
+  kind of garment when not given), leather has its grain, and sleeves and trousers crease at the inside of the
+  elbow and the back of the knee as far as they bend; it all fades to the plain cloth before the threads get too
+  small to show. `person.grime` (`wet`, `mud`, `dust`, `snow`, each 0..1) is drawn over the clothes and skin: rain
+  soaks a person from the shoulders down by itself under the open sky (with a `gs.sky.Weather`), `marks.watch(person)`
+  splashes mud up the boots and trousers a step at a time in mud and dusts them in sand, and a game sets any of it
+  (`grime.wet = 1` after a fall in a river). Wet dries over a few minutes and snow melts; `grime.clean()`.
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide. Besides the
