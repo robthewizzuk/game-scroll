@@ -3,7 +3,7 @@
 // The face lab for scripts/face-lab.cjs: people's faces close up, one row for each person, one column for each
 // light and view, so skin, eyes, hair and the shape of a head can be judged (and tuned) by eye under the light
 // a game might put them in. Twelve people of different ages, builds and skin unless asked otherwise.
-//   &who=0,3,7 (which of the twelve)   &cols=sun:face,overcast:face,lamp:face,indoor:face   light:view
+//   &who=0,3,7 (which of the twelve)   &kin=off (each head fitted to the one head scan, as before heritage)   &cols=sun:face,overcast:face,lamp:face,indoor:face   light:view
 //   lights: sun (a clear day), overcast (soft and even), lamp (a street lamp at night), indoor (a window to one side), back (the sun behind)
 //   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, back (from behind, three quarters), hairline (the hairline and the hair over the brow, close), bust (head and shoulders), body (the whole person)
 //   light:view:expr: that column's face set (expr: smile, or smile+squint, or browInnerUp.7+frown: shapes or face-capture movements, each at 1 or the amount after it)
@@ -24,18 +24,18 @@ const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 // the twelve: young and old, men and women, heavy and slight, skin from very fair to very dark
 const LAB = [
-  { name: 'Ade, 24', sex: 'm', seed: 1, age: 24, weight: .45, skin: '#5c3a26', hair: '#141210', iris: '#3a2416' },
-  { name: 'Mira, 31', sex: 'f', seed: 2, age: 31, weight: .4, skin: '#e8c2a4', hair: '#6a4024', hairStyle: 'long', iris: '#4a6a3a' },
-  { name: 'Tomas, 46', sex: 'm', seed: 3, age: 46, weight: .6, skin: '#d4a07c', hair: '#3b2a1a', beard: .35, iris: '#5a7a9a' },
-  { name: 'Keiko, 27', sex: 'f', seed: 4, age: 27, weight: .35, skin: '#e6bf98', hair: '#141210', hairStyle: 'short', iris: '#2e1c10' },
-  { name: 'Walt, 71', sex: 'm', seed: 5, age: 71, weight: .55, skin: '#e2b496', hair: '#a8a8a4', iris: '#6a8090' },
-  { name: 'Rosa, 55', sex: 'f', seed: 6, age: 55, weight: .7, skin: '#b88058', hair: '#2a1c12', hairStyle: 'bun', iris: '#3a2416' },
-  { name: 'Dev, 35', sex: 'm', seed: 7, age: 35, weight: .5, skin: '#9a6440', hair: '#141210', moustache: true, iris: '#2e1c10' },
-  { name: 'Edith, 78', sex: 'f', seed: 8, age: 78, weight: .45, skin: '#f0cdb4', hair: '#c8c4bc', hairStyle: 'bun', iris: '#7a8ea0' },
-  { name: 'Finn, 19', sex: 'm', seed: 9, age: 19, weight: .3, skin: '#f2d0b8', hair: '#8a3a1c', iris: '#5a7a5a' },
-  { name: 'Kwame, 60', sex: 'm', seed: 10, age: 60, weight: .75, skin: '#3e2618', hair: '#3a3632', beard: .7, iris: '#2a1810' },
-  { name: 'Lena, 42', sex: 'f', seed: 11, age: 42, weight: .55, skin: '#c69470', hair: '#4a3020', hairStyle: 'long', iris: '#5a4028' },
-  { name: 'Sam, 63', sex: 'm', seed: 12, age: 63, weight: .85, skin: '#dcae8c', hairStyle: 'bald', iris: '#4a5a6a' },
+  { name: 'Ade, 24', heritage: 'african', sex: 'm', seed: 1, age: 24, weight: .45, skin: '#5c3a26', hair: '#141210', iris: '#3a2416' },
+  { name: 'Mira, 31', heritage: 'european', sex: 'f', seed: 2, age: 31, weight: .4, skin: '#e8c2a4', hair: '#6a4024', hairStyle: 'long', iris: '#4a6a3a' },
+  { name: 'Tomas, 46', heritage: 'european', sex: 'm', seed: 3, age: 46, weight: .6, skin: '#d4a07c', hair: '#3b2a1a', beard: .35, iris: '#5a7a9a' },
+  { name: 'Keiko, 27', heritage: 'east-asian', sex: 'f', seed: 4, age: 27, weight: .35, skin: '#e6bf98', hair: '#141210', hairStyle: 'short', iris: '#2e1c10' },
+  { name: 'Walt, 71', heritage: 'european', sex: 'm', seed: 5, age: 71, weight: .55, skin: '#e2b496', hair: '#a8a8a4', iris: '#6a8090' },
+  { name: 'Rosa, 55', heritage: { european: .6, 'east-asian': .25, african: .15 }, sex: 'f', seed: 6, age: 55, weight: .7, skin: '#b88058', hair: '#2a1c12', hairStyle: 'bun', iris: '#3a2416' },
+  { name: 'Dev, 35', heritage: { 'middle-eastern': .75, european: .25 }, sex: 'm', seed: 7, age: 35, weight: .5, skin: '#9a6440', hair: '#141210', moustache: true, iris: '#2e1c10' },
+  { name: 'Edith, 78', heritage: 'european', sex: 'f', seed: 8, age: 78, weight: .45, skin: '#f0cdb4', hair: '#c8c4bc', hairStyle: 'bun', iris: '#7a8ea0' },
+  { name: 'Finn, 19', heritage: 'european', sex: 'm', seed: 9, age: 19, weight: .3, skin: '#f2d0b8', hair: '#8a3a1c', iris: '#5a7a5a' },
+  { name: 'Kwame, 60', heritage: 'african', sex: 'm', seed: 10, age: 60, weight: .75, skin: '#3e2618', hair: '#3a3632', beard: .7, iris: '#2a1810' },
+  { name: 'Lena, 42', heritage: { european: .6, 'middle-eastern': .4 }, sex: 'f', seed: 11, age: 42, weight: .55, skin: '#c69470', hair: '#4a3020', hairStyle: 'long', iris: '#5a4028' },
+  { name: 'Sam, 63', heritage: 'european', sex: 'm', seed: 12, age: 63, weight: .85, skin: '#dcae8c', hairStyle: 'bald', iris: '#4a5a6a' },
 ];
 try {
   await loadParts();
@@ -73,7 +73,7 @@ try {
   sheet.width = cw * WRAP; sheet.height = (ch + LABEL) * Math.ceil(cells / WRAP); const sx = sheet.getContext('2d'); document.body.append(sheet);
   sx.fillStyle = '#1c1c1e'; sx.fillRect(0, 0, sheet.width, sheet.height);
   const info = [], t0 = performance.now();
-  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); return o; };
+  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); if (Q.get('kin') === 'off') o.heritage = false; return o; };
   await human.ready(pick.filter(i => !LAB[i].scan).map(optsOf));
   const scan = Q.has('ref') ? await refHead(T, v) : null;
   info.push('sculpted ' + pick.length + ' in ' + Math.round(performance.now() - t0) + ' ms');

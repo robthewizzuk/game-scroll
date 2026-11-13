@@ -15,6 +15,7 @@
 import { AdditiveBlending, MeshBasicMaterial, MeshPhysicalMaterial, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { KIN } from './human-fit.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
 import { Manner } from '../manner.js';
@@ -338,6 +339,29 @@ const SKINS = ['#f3d6c4', '#ecc6a8', '#e2b496', '#d4a07c', '#c48c64', '#ac7450',
 const HAIRS = { dark: ['#141210', '#1e1712', '#2a1c12', '#3b2a1a'], light: ['#141210', '#2a1c12', '#3b2a1a', '#5a3c22', '#6a4a2c', '#8a6a42', '#b89a68', '#7a3418'] };
 const IRISES = { dark: ['#2a1810', '#3a2416', '#2e1c10', '#4a3020'], light: ['#3a2416', '#4a3020', '#5a7a9a', '#4a6a3a', '#6a8090', '#5a4028', '#7a8ea0'] };
 /**
+ * A real face's heritage: which of the fits of each sex and heritage its head takes (human-fit.js kinTable: the middle of each of the four
+ * groups GNM Head was learned from), as { african, 'east-asian', european, 'middle-eastern' } weights summing to 1. The game's own
+ * (o.heritage: one of those, or weights of them; false: none, the head scan's fit as before); else, for a person with a seed or a skin,
+ * one or two of them drawn from the seed, the likelier those that go with how dark the skin is, the way hair and eyes are; else none.
+ * Drawn from a seed of its own, so faces seeded before it was added keep the rest of their measures.
+ */
+function kinOf(o, tone) {
+  const h = o.heritage;
+  if (h === false) return null;
+  const norm = w => { let t = 0; for (const k of KIN) t += Math.max(0, +w[k] || 0); if (!(t > 0)) return null; const out = {}; for (const k of KIN) { const v = Math.round(Math.max(0, +w[k] || 0) / t * 20) / 20; if (v > 0) out[k] = v; } return out; };
+  if (typeof h === 'string') return KIN.includes(h) ? { [h]: 1 } : null;
+  if (h && typeof h === 'object') return norm(h);
+  if (o.seed == null && !o.skin) return null;
+  // how dark (0 the fairest of SKINS, 1 the darkest), and how likely each is with it (more than one always can be)
+  const t = tone != null ? tone / (SKINS.length - 1) : Math.max(0, Math.min(1, (.86 - new Color(o.skin).getHSL({}).l) / .7));
+  const like = { european: 1 - ss(.25, .6, t) * .95, 'middle-eastern': ss(.08, .3, t) * (1 - ss(.55, .8, t) * .9), 'east-asian': .85 * (1 - ss(.35, .6, t) * .95), african: .05 + ss(.45, .75, t) };
+  const r = rngOf('kin:' + (o.seed ?? JSON.stringify([o.sex, o.skin, o.hair, o.age]))), pick = (skip) => { let sum = 0; for (const k of KIN) if (k !== skip) sum += like[k]; let x = r() * sum; for (const k of KIN) if (k !== skip && (x -= like[k]) <= 0) return k; return KIN.find(k => k !== skip); };
+  const a = pick(null);
+  if (r() > .3) return { [a]: 1 };
+  const b = pick(a), w = Math.round((.2 + .3 * r()) * 20) / 20;
+  return norm({ [a]: 1 - w, [b]: w });
+}
+/**
  * A real face's measures, and its colouring where the game gave none: from the seed (or the game's own face), with its age and weight
  * worked into them (older: thinner lips, a longer nose, bigger ears, lids that hang lower and open less).
  */
@@ -353,6 +377,7 @@ export function realFace(o, fem, base) {
   };
   for (const k in f) if (typeof f[k] === 'number' && k !== 'age') f[k] = Math.round(f[k] * 1e4) / 1e4;   // (a few figures: the face names the saved shape)
   const tone = o.skin ? null : has ? Math.min(SKINS.length - 1.001, r() * SKINS.length) : null;
+  { const kin = kinOf(o, tone); if (kin) f.kin = kin; }
   const dark = tone != null ? tone > 5.5 : o.skin ? new Color(o.skin).getHSL({}).l < .38 : false, pickOf = l => l[Math.floor(r() * l.length)];
   const skin = tone == null ? null : '#' + new Color(SKINS[Math.floor(tone)]).lerp(new Color(SKINS[Math.ceil(tone)]), tone % 1).getHexString();
   let hair = o.hair === undefined && has ? pickOf(dark ? HAIRS.dark : HAIRS.light) : undefined;
