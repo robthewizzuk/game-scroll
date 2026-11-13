@@ -19,6 +19,7 @@ const { Juice } = gs.juice;
 const { HDView, Particles, pbr, rbox, sun, surface, speckle, THREE } = gs.hd;
 const { Land, Water, Wind, looks, groundDetail, horizon, impostor } = gs.outdoors;
 const { Props } = gs.props;
+const { Regions } = gs.regions;
 const { Sky, Weather } = gs.sky;
 const { Gun, Health, Explosives } = gs.combat;
 const { CoverMap, Squad } = gs.tactics;
@@ -439,7 +440,7 @@ function villageTextures() {
 let WD = null;
 function world() {
   if (WD) return WD;
-  human.need(ALL_PEOPLE);   // the people first: if this phone hasn't sculpted them yet the app waits here, before anything else is built
+  human.need(looksOf(LOOKS.both));   // the people first: if this phone hasn't sculpted them yet the app waits here, before anything else is built (each mission's own: see WD.regions)
   const v = new HDView({ bg: '#c9c3b2', env: .55, sky: '#c8d2e0', ground: '#4a4434', amb: .42, fov: 62 });
   v.cam.near = .3; v.cam.far = 1600; v.cam.updateProjectionMatrix();
   v.exposure = 1; v.bloom = .3;
@@ -819,20 +820,7 @@ function world() {
   props.done(); WD.props = props;
 
   // ---- moving things
-  // the supply train: a freight engine of the 1940s, her tender and five wagons (gs.models.vehicle, joined into a
-  // few meshes as she only runs straight, and a working engine with no brightwork). The kit's stands on the rail
-  // tops with its nose along -z; the line runs along x, and the van Wren rides out on is TRAIN.W1 from train.x
-  { const tr = WD.rail = vehicle('train', { style: 'steam', colour: '#1d1e20', deflectors: true, lit: true, gauge: 1.365, fuse: true, polished: false,
-      cars: [{ style: 'van', colour: '#6b3024' }, { style: 'open', load: 'tarp', colour: '#565c50' }, { style: 'tanker', colour: '#2e3235' }, { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] });
-    const van = tr.cars[2], o = new Object3D();
-    // the Order's yellow slash on the van's doors, under the brace that crosses each
-    const mark = new InstancedMesh(new BoxGeometry(.01, .17, .9), pbr('#c4a84a', { rough: .9 }), 2);
-    for (const i of [0, 1]) { o.position.set((i ? -1 : 1) * 1.414, 2.67, .32); o.rotation.x = -.55; o.updateMatrix(); mark.setMatrixAt(i, o.matrix); }
-    mark.receiveShadow = true; van.add(mark);
-    tr.rotation.y = -Math.PI / 2; tr.position.set(TRAIN.W1 + van.position.z, TRAIN.TOP, 0);
-    WD.train = new Group(); WD.train.add(tr); WD.train.visible = false; v.scene.add(WD.train); WD.train.updateMatrixWorld(true);
-    v.detail(tr, false);   // (she moves: drawn whole)
-    TRAIN.RD = tr.radius; TRAIN.ROOF = van.points.roof.getWorldPosition(new Vector3()).y; }
+  // (the supply train is mission 1's own: made in its part of WD.regions, below)
   WD.dust = new Particles(v, { max: 500, additive: false, wind: AIR, blow: .3 });
   WD.sparks = new Particles(v, { max: 300, additive: true });
   WD.trail = new Particles(v, { max: 260, additive: false, wind: AIR, blow: .4 });
@@ -866,7 +854,7 @@ function world() {
   // nest markers (a soft flare where you can move to)
   WD.marks = new Particles(v, { max: 8, additive: true });
   // a helmet that pops off on a head shot
-  WD.helmets = Array.from({ length: 4 }, () => { const m = people().grey[0].gear.hat.loose(); m.visible = false; v.scene.add(m); return { m, vx: 0, vy: 0, vz: 0, life: 0 }; });   // (loose copies of the riflemen's own)
+  WD.helmets = Array.from({ length: 4 }, () => { const m = folk('grey')[0].gear.hat.loose(); m.visible = false; v.scene.add(m); return { m, vx: 0, vy: 0, vz: 0, life: 0 }; });   // (loose copies of the riflemen's own)
 
   // ---- three lost letters in each mission, tucked where you can spot them with the glasses
   {
@@ -926,7 +914,38 @@ function world() {
     for (const [dx, dz] of [[0, 0], [-2, -2], [2, -2], [-2, 2], [2, 2], [0, -2], [0, 2], [-2, 0], [2, 0]]) if (land.height(x + dx, z + dz) < -.9) return true;
     return coverAt(c, r) || land.slope(x, z) > .55;
   });
+  WD.regions = missionParts(v);
   return WD;
+}
+// ------------------------------------------------------------------ each mission's own things (WD.regions)
+// The valley, its village and everything both missions use are made with the file (world()). What only one
+// mission uses is a part of WD.regions, made when that mission is picked (in reset(): under the loading
+// screen; picked on the field file: over the next frames, the GO stamp says LOADING till it's in) and let go
+// of once another is picked and the phone is short of memory.
+function missionParts(v) {
+  const R = new Regions(v, { keep: 1 });
+  // dawn: the supply train Wren rides out on
+  R.part('m1', r => {
+    human.need(looksOf(LOOKS.m1));
+    // the supply train: a freight engine of the 1940s, her tender and five wagons (gs.models.vehicle, joined into a
+    // few meshes as she only runs straight, and a working engine with no brightwork). The kit's stands on the rail
+    // tops with its nose along -z; the line runs along x, and the van Wren rides out on is TRAIN.W1 from train.x
+    const tr = WD.rail = vehicle('train', { style: 'steam', colour: '#1d1e20', deflectors: true, lit: true, gauge: 1.365, fuse: true, polished: false,
+      cars: [{ style: 'van', colour: '#6b3024' }, { style: 'open', load: 'tarp', colour: '#565c50' }, { style: 'tanker', colour: '#2e3235' }, { style: 'flat', load: 'crates' }, { style: 'guard', colour: '#565b5e' }] });
+    const van = tr.cars[2], o = new Object3D();
+    // the Order's yellow slash on the van's doors, under the brace that crosses each
+    const mark = new InstancedMesh(new BoxGeometry(.01, .17, .9), pbr('#c4a84a', { rough: .9 }), 2);
+    for (const i of [0, 1]) { o.position.set((i ? -1 : 1) * 1.414, 2.67, .32); o.rotation.x = -.55; o.updateMatrix(); mark.setMatrixAt(i, o.matrix); }
+    mark.receiveShadow = true; van.add(mark);
+    tr.rotation.y = -Math.PI / 2; tr.position.set(TRAIN.W1 + van.position.z, TRAIN.TOP, 0);
+    WD.train = new Group(); WD.train.add(tr); WD.train.visible = false; v.scene.add(WD.train); WD.train.updateMatrixWorld(true);
+    v.detail(tr, false);   // (she moves: drawn whole)
+    TRAIN.RD = tr.radius; TRAIN.ROOF = van.points.roof.getWorldPosition(new Vector3()).y;
+    r.on(() => { WD.train = WD.rail = null; });
+  });
+  // dusk: Sgt. Rook and Hale's squad (their faces are sculpted now, the first time on this phone)
+  R.part('m2', () => { human.need(looksOf(LOOKS.m2)); });
+  return R;
 }
 function roadZ(x) { const r = ROADS[2]; for (let i = r.length - 2; i >= 0; i--) { const [ax, az] = r[i], [bx, bz] = r[i + 1]; if (x >= ax) return az + (bz - az) * clamp((x - ax) / (bx - ax), 0, 1); } return r[0][1]; }
 function cellKey(x, z) { return Math.floor((x - GX0) / CELL) + ',' + Math.floor((z - GZ0) / CELL); }
@@ -980,10 +999,13 @@ const PEOPLE_SPEC = (() => {
       hat: { kind: 'wool', colour: '#4a4a34', hide: false }, belt: { colour: '#5e5640', buckle: '#8a7a50' }, webbing: { colour: '#5e5640', y: true, pouches: 2 }, extras: { scarf: '#6b6a45', bag: '#545238' } } }],
   };
 })();
-const ALL_PEOPLE = Object.values(PEOPLE_SPEC).flat();
-let PEOPLE = null;
-// the first of each face, made together the first time anyone is needed
-const people = () => PEOPLE ||= (() => { const made = human.all(ALL_PEOPLE), out = {}; let i = 0; for (const k of Object.keys(PEOPLE_SPEC)) out[k] = PEOPLE_SPEC[k].map(() => made[i++]); return out; })();
+// the looks each mission needs: the Grey Order's riflemen and officer and Wren in both; Sgt. Rook and Hale's
+// squad only at dusk (mission 2), so they're sculpted and made only once that mission is picked (WD.regions)
+const LOOKS = { both: ['grey', 'officer', 'wren'], m1: [], m2: ['rook', 'ally'] };
+const looksOf = kinds => kinds.flatMap(k => PEOPLE_SPEC[k]);
+const PEOPLE = {};
+// the first of each face of a kind, made together the first time one of them is needed
+const folk = kind => PEOPLE[kind] ||= human.all(PEOPLE_SPEC[kind]);
 // merges shapes into one geometry with colours (skin: for a soldier, the bone each shape follows;
 // uvs: keep each shape's texture coordinates, times uv [u, v], so a textured material shows its grain)
 function baker(skin = false, uvs = false) {
@@ -1227,7 +1249,7 @@ function man(look) {
   const list = POOL[look] ||= [];
   const free = list.find(f => !f.userData.used);
   if (free) { free.userData.used = true; free.visible = true; free.userData.k = 0; free.lod = 2; hands(free, EASY); return free; }
-  const firsts = people()[look], root = list.length < firsts.length ? firsts[list.length] : firsts[list.length % firsts.length].twin();
+  const firsts = folk(look), root = list.length < firsts.length ? firsts[list.length] : firsts[list.length % firsts.length].twin();
   const none = { visible: true }, gun = look === 'officer' ? null : soldierRifle(look === 'rook' || look === 'wren');
   if (gun) { root.bones.spine.add(gun); gun.position.copy(HOLDS.slung.p); gun.quaternion.copy(HOLDS.slung.q); }
   root.rig.add('shoulder', SHOULDER).add('call', CALL); for (const k in MOVES.poses) root.rig.add(k, ...MOVES.poses[k]);
@@ -2735,7 +2757,7 @@ function make(api) {
     cut = new Cutscene(def.intro(), { bars: .14 }); state = 'intro';
     for (const s of men) { s.m.updateMatrixWorld(true); s.m.rig.update(0, { speed: 0 }); }
     train = { on: id === 'm1', x: -420, speed: 30, next: 26, final: false };
-    WD.train.visible = false;
+    if (WD.train) WD.train.visible = false;
     bell = { ring: 0, next: id === 'm2' ? 14 : 1e9, shotT: -1e9, told: false, tip: false };
     wind = { x: id === 'm1' ? 2.5 : -4, z: 0, base: id === 'm1' ? 2.5 : -4 };
     built = true;
@@ -2903,6 +2925,7 @@ function make(api) {
       keys = {}; hits = []; tagT = 0; spotting = false;
       sel = (camp.next() || camp.missions[0]).id;
       favour = api.load({})?.nests || {}; tiltAim = !!api.load({})?.tilt;
+      WD.regions.want(sel);   // (only the picked mission's own things: made now, under the loading screen)
       begin(sel);
       rehearse();
       state = 'brief';
@@ -2922,6 +2945,7 @@ function make(api) {
         theme ||= music({ ...compose({ mood: 'sad', seed: 'long-shadow' }), vol: .32 }); if (!theme.playing) theme.start();
         // the grass at the mission's first nest is planted while the file is read (a few tufts a frame), not when the camera cuts to it
         if (nest) { const e = nestEye(nest); grassEye.position.set(e.x, e.y, e.z); WD.land.update(dtReal, grassEye); }
+        WD.regions.update(dtReal); if (!built && WD.regions.has(sel)) begin(sel);   // (another mission picked: its own things are made a little each frame)
         return;
       }
       theme?.stop();
@@ -3088,7 +3112,7 @@ function make(api) {
       // the game's own shaders: time for the leaves, the sun for light through them, ripples
       GU.uTime.value = v.t; v.sunDir(GU.uSun.value);
       for (const r of WD.ripples) r.offset.set(v.t * .011, v.t * .004);
-      if (WD.train.visible) { WD.train.position.set(train.x, RAILH, RAILZ); WD.rail.roll(train.x); }
+      if (WD.train?.visible) { WD.train.position.set(train.x, RAILH, RAILZ); WD.rail.roll(train.x); }
       // lit windows shine on their walls, the wet road and whoever walks past: the engine's pool of real lights
       // (a few on WebGL, many on WebGPU) sits at the windows nearest the place the camera looks at
       if (winLit && move && WD.wren.visible) {
@@ -3258,14 +3282,14 @@ function make(api) {
   // mission: the valley's sound beds, the colonel's memory, the ears set in place, and the four wave shapes the sound
   // card works out the first time each is asked for (one note of each, too quiet to hear).
   function go() {
-    if (!built) begin(sel);   // (the mission stands ready behind the file: it was set up, and rehearsed, when the file was opened)
+    if (!built) { if (!WD.regions.has(sel)) return; begin(sel); }   // (the mission stands ready behind the file: it was set up, and rehearsed, when the file was opened; one picked since is made while the file is read)
     built = false; state = 'intro'; audioUp(); haptic('medium'); sounds.click?.();
     meetMarr(); quietT = t - lastShotT; command(0); command(1); audioTick(1e-4);
     for (const wave of /** @type {OscillatorType[]} */ (['sine', 'triangle', 'square', 'sawtooth'])) tone(440, { len: .02, wave, vol: 0 });
   }
   function briefTap(x, y) {
     if (briefT < .3) return;
-    for (const r of briefRows) if (y >= r.y && y <= r.y + r.h && x >= r.x && x <= r.x + r.w) { if (r.id && r.id !== sel && camp.open(r.id)) { sel = r.id; begin(sel); state = 'brief'; haptic('tick'); } return; }
+    for (const r of briefRows) if (y >= r.y && y <= r.y + r.h && x >= r.x && x <= r.x + r.w) { if (r.id && r.id !== sel && camp.open(r.id)) { sel = r.id; built = false; WD.regions.want(sel); if (WD.regions.has(sel)) begin(sel); state = 'brief'; haptic('tick'); } return; }
     if (tiltBtn && inBtn(tiltBtn, x, y)) { tiltAim = !tiltAim; const d = api.load({}) || {}; d.tilt = tiltAim; api.save(d); haptic('tick'); return; }
     if (inBtn(briefGo, x, y)) go();
   }
@@ -3620,7 +3644,7 @@ function make(api) {
     { const tx = x + 12, ty = y + fh - 28, tw = 116; tiltBtn = { x: tx, y: ty - 4, w: tw, h: 26 };
       c.fillStyle = tiltAim ? '#2f3a26' : '#d9cba6'; roundRect(c, tx, ty, tw, 18, 9); c.fill();
       c.fillStyle = tiltAim ? '#e8f0c8' : '#5b4a30'; c.font = '700 9px "Courier New", monospace'; c.textAlign = 'center'; c.fillText('TILT AIM · ' + (tiltAim ? 'ON' : 'OFF'), tx + tw / 2, ty + 12); c.textAlign = 'left'; }
-    c.translate(gx, gy); c.rotate(-.08); c.strokeStyle = red; c.lineWidth = 3; c.strokeRect(-56, -18, 112, 36); c.fillStyle = red; c.font = '800 18px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('GO', 0, 7);
+    c.translate(gx, gy); c.rotate(-.08); c.strokeStyle = red; c.lineWidth = 3; c.strokeRect(-56, -18, 112, 36); c.fillStyle = red; c.font = '800 18px Rubik, sans-serif'; c.textAlign = 'center'; if (WD.regions.has(sel)) c.fillText('GO', 0, 7); else { c.font = '800 12px Rubik, sans-serif'; c.fillText('LOADING', 0, 0); c.fillRect(-40 + 64 * (briefT * .7 % 1), 7, 16, 3); }   // (the mission's own things, being made)
     c.restore();
     briefGo.r = 56;
   }
