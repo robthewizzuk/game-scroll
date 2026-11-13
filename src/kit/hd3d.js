@@ -134,21 +134,46 @@ function startGame(def) {
 // in it, and with two or three frames between reads the rest were dropped), so the passes are added up
 // here, both kinds, and divided by the frames drawn since: the GPU's time for a real frame and whatever
 // was made after it. (One read at a time: the answer comes back a frame or two later.)
-const GT = { n: 0, busy: false };
+// HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
+// shadow maps), ao, bloom, upscale (SGSR), effects (the other passes drawn into pictures of their own), show (the
+// last pass, onto the screen), compute }, in milliseconds a frame. three tells its inspector as each pass begins
+// (the name its time comes back under, what is drawn and into which picture), and partOf() files it.
+const GT = { n: 0, busy: false }, PARTS = new Map();
+function partOf(o, rt) {
+  if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
+  if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
+  const n = o?.material?.name || '';
+  return n === 'GTAO' ? 'ao' : n.startsWith('SGSR') ? 'upscale' : n === 'Shadow map copy' ? 'shadows' : rt ? 'effects' : 'show';
+}
+function gpuParts(r) {
+  const ins = r.inspector; if (!ins || ins.gsParts) return; ins.gsParts = true;
+  const was = ins.beginRender;
+  ins.beginRender = function (uid, scene, camera, rt) { if (PARTS.size > 4096) PARTS.clear(); PARTS.set(uid, partOf(scene, rt)); return was?.call(this, uid, scene, camera, rt); };
+}
 function gpuTime(r) {
   GT.n++;
   const be = r.backend;
-  if (GT.busy || !be?.trackTimestamp) return;
-  const n = GT.n; GT.n = 0; GT.busy = true;
+  if (!be?.trackTimestamp) return;
+  gpuParts(r);
+  if (GT.busy) return;
+  const n = GT.n, by = {}; GT.n = 0; GT.busy = true;
   // (a read that brought nothing new leaves three's list as it was: its frames list is a new one after each real read)
   const read = type => {
     const pool = be.timestampQueryPool?.[type], was = pool?.frames;
     if (!pool) return 0;
-    return r.resolveTimestampsAsync(type).then(() => { let s = 0; if (pool.frames !== was) for (const ms of pool.timestamps.values()) if (ms > 0 && ms < 1000) s += ms; return s; });
+    return r.resolveTimestampsAsync(type).then(() => {
+      let s = 0;
+      if (pool.frames !== was) for (const [uid, ms] of pool.timestamps) {
+        const part = type === 'compute' ? 'compute' : PARTS.get(uid) || 'effects'; PARTS.delete(uid);
+        if (ms > 0 && ms < 1000) { s += ms; by[part] = (by[part] || 0) + ms; }
+      }
+      return s;
+    });
   };
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
     if (!(draw > 0)) { GT.n += n; return; }   // nothing read: those frames count towards the next read
     const f = (draw + comp) / n; HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     if (f < 100) { Q.gsum += f; Q.gcnt++; }
   }, () => {}).finally(() => { GT.busy = false; });
 }
@@ -200,7 +225,7 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
-  info: { gpuMs: null, gpuCompute: 0, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '' },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -3157,11 +3182,20 @@ function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.ma
 function autoDetail(v, now, quiet) {
   const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
   // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
-  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off.
+  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off. A step finer
+  // that went over is not tried again (D.bad: the scale that went over) until the view is a quarter lighter or
+  // the budget changes: a few surfaces seen whole jump between two levels, one over the budget and one well
+  // under, and the scale swung between them every frame, the surfaces changing with it.
   const budget = reliefBudget(), reliefOn = budget > 0;
   if (!quiet) {
     let drew = 0; for (const e of D.map.values()) if (e.relief && e.twin) drew += drawnTris(e.twin);
-    if (reliefOn && drew > budget * 1.1) D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); else if (D.rk > 1 && drew < budget * .7) D.rk = Math.max(1, D.rk / 1.1);
+    if (D.badB !== budget) { D.bad = 0; D.badB = budget; }
+    if (reliefOn && drew > budget * 1.1) { D.bad = D.rk; D.badDrew = -1; D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); }
+    else if (D.rk > 1 && drew < budget * .7) {
+      if (D.bad) { if (D.badDrew < 0) D.badDrew = drew; else if (!drew || drew < D.badDrew * .75) D.bad = 0; }
+      const next = Math.max(1, D.rk / 1.1);
+      if (next > D.bad) D.rk = next;
+    }
     HD.info.reliefTris = drew; HD.info.reliefPx = HD.reliefPx * D.rk;
     detailTick(); detailFrame(v.cam);
   }

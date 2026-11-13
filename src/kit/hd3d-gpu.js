@@ -1251,6 +1251,7 @@ function bloomChain(src, aoF) {
   for (let i = N - 2; i >= 1; i--) U = Us[i] = rtt(vec4(M[i].sample(uv()).rgb.add(up(U, i)), 1), 1, 1, { depthBuffer: false });
   const out = M[0].sample(uv()).rgb.add(up(U, 0));
   const nodes = [...M];
+  for (const n of [...nodes, ...Us]) if (n?.renderTarget) n.renderTarget.gsPart = 'bloom';   // (hd3d.js gpuTime: the chip's time by pass)
   return {
     out,
     size(w, h, scale) {
@@ -1287,7 +1288,7 @@ function touches(U, col, t, k) {
 // the rest a plain bilinear read, alpha kept (AR draws over the camera). It works in WebGL's frame
 // (rows counted from the bottom), as the shader was written, by turning the reads over.
 function sgsr1Gpu(src) {
-  const low = rtt(src, 1, 1, { depthBuffer: false, type: HalfFloatType }), vp = uniform(new Vector4(1, 1, 1, 1));   // 1/w, 1/h, w, h of the small picture
+  const low = rtt(src, 1, 1, { depthBuffer: false, type: HalfFloatType }), vp = uniform(new Vector4(1, 1, 1, 1)); low.renderTarget.gsPart = 'upscale';   // 1/w, 1/h, w, h of the small picture
   const node = Fn(() => {
     const H = int(vp.w), hi = ivec2(int(vp.z).sub(1), H.sub(1));
     const g = p => low.load(ivec2(p.x, H.sub(1).sub(p.y))).g;
@@ -1350,7 +1351,7 @@ function sgsr1Gpu(src) {
 function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
     fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()) };
-  const low = rtt(fin, 1, 1, { depthBuffer: false });
+  const low = rtt(fin, 1, 1, { depthBuffer: false }); low.renderTarget.gsPart = 'upscale';
   // convert: motion back to last frame from the nearest depth and the camera's move, and the depth clip
   const conv = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1);
@@ -1377,7 +1378,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
     const M = select(nz.lessThan(1 - 1e-6), mo.vel.load(near).xy.sub(U.jd), camM);
     return vec4(M, clip, mo.rea.load(P).x);
   })();
-  const mdc = rtt(conv, 1, 1, { depthBuffer: false });
+  const mdc = rtt(conv, 1, 1, { depthBuffer: false }); mdc.renderTarget.gsPart = 'upscale';
   // two history pictures taking turns: this frame's upscale is drawn into one while it reads last
   // frame's from the other. (Copying into a single history picture broke after a resize, like
   // unfolding a Fold: a picture that is only copied into keeps its old size on the GPU.)

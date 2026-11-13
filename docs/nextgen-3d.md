@@ -169,7 +169,8 @@ up a tier first.
   the camera still, moving, and with a thing moving, and almost no view reached it.)
 - WebGPU times each frame on the graphics chip where the phone allows it (`__hd.info.gpuMs`: every
   pass since the last real frame, the made frames and other compute work included, which
-  `__hd.info.gpuCompute` gives on its own). The quality steps use it: a frame slowed by the CPU
+  `__hd.info.gpuCompute` gives on its own; `__hd.info.gpuParts` says where it went, in milliseconds a
+  frame: `scene`, `shadows`, `ao`, `bloom`, `upscale`, `effects`, `show`, `compute`). The quality steps use it: a frame slowed by the CPU
   doesn't give up resolution (it wouldn't help), and a GPU with plenty of room gets sharpness back sooner.
 - Detailed meshes (3,000 triangles or more, skinned ones too) get simpler copies from meshoptimizer
   in the background, one mesh a frame, and each frame draws the simplest copy whose change would
