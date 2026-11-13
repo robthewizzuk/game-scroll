@@ -69,6 +69,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | A 3D level from a text map | `gs.level3d` | [Game kits](#game-kits) |
 | Time of day, rain, snow, lightning | `gs.sky` | [Game kits](#game-kits) |
 | Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
+| Footprints and tyre tracks in snow, mud and sand, grass that parts, a trail to follow | `gs.outdoors` `Marks` | [Ground that takes marks](#ground-that-takes-marks) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -2762,9 +2763,81 @@ weather.set('snow');                                    // it starts to settle; 
   phone). `cover: { cells: 64 }` is a smaller map (16 m round the camera), `hops: 0` leaves the hopping
   drops out.
 - With no `level` the weather is what it always was: it only falls, and `open()` is always true.
-- Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth for your footprints),
+- Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth, and
+  [`gs.outdoors.Marks`](#ground-that-takes-marks) presses prints into it),
   puddles do not seek out the hollows of the land (they lie on flat ground where the map of them says),
   water does not run down walls or drip off eaves, and nothing piles up on things that move.
+
+## Ground that takes marks
+
+`const { Marks } = gs.outdoors;` (3D; the look is Next Gen.) Feet leave prints and wheels leave tracks in
+snow, mud and sand, and grass parts round whatever moves through it:
+
+```js
+make():   marks = new Marks(view, { land, weather, mud: (x, z) => bare(x, z), sand: (x, z) => beach(x, z) });
+          land.meadow({ where: (x, z) => grassy(x, z) });     // after the Marks: its blades read the grass field
+          marks.watch(player); marks.watch(jeep); marks.watch(dog, { feet: 4, size: .08, shape: 'paw' });
+reset() { marks.clear(); }
+update(dt) {
+  marks.update(dt);                                       // after everything has moved (and after rig.update())
+  for (const m of marks.made) if (m.by === player) gs.sound.noise(.07, { vol: .2, from: m.kind === 'snow' ? 2400 : 500 });   // a crunch, a squelch
+  const trail = marks.trail(hunter.x, hunter.z, 4, { by: player, newer: 60 });   // the newest first
+  if (trail[0]) hunter.goTo(trail[0].x, trail[0].z);
+}
+```
+
+- **What the ground is like** comes from your game and the weather. `mud(x, z)` and `sand(x, z)` say
+  (0..1) where the ground is bare earth or sand: use the functions that paint your ground. With a
+  `gs.sky.Weather` that was given the level, **snow** takes prints wherever it has settled (not under a
+  roof, so a trail stops at a porch), **mud** is soft where the rain has wet it (dry earth takes hardly
+  a mark, and earth under a roof stays hard), and wet sand is firmer than dry. `marks.kindAt(x, z)`
+  answers `{ kind: 'snow' | 'mud' | 'sand' | 'grass' | null, soft, depth, y }` for a spot: how far a
+  foot sinks in there, for your own sounds, slowing and splashes. `null` is firm ground.
+- **Things that leave marks by themselves**: `marks.watch(thing)`. A `gs.models.human` leaves a boot
+  print wherever a foot really comes down, pointing the way it was put down. A `gs.models.vehicle`
+  leaves a track behind each wheel as wide as the wheel, with a tyre's tread; a tank its two belts.
+  Anything else that moves (an Object3D or `{ position }`) has prints paced out along its way: `feet`
+  (2, or 4), `size`, `shape` (`'boot' | 'bare' | 'paw' | 'hoof' | 'shoe' | 'round'`), `gap`, `pace`,
+  `long`, `press`. In the air (more than .3 m up, or `grounded: () => false`) nothing is left.
+- **By hand**: `marks.step(x, z, { turn, size, shape, side, press, by })` is one print,
+  `marks.press(x, z, r)` a round dent (something fell, someone knelt), and
+  `marks.roll(id, x, z, { width, tread: 'tyre' | 'cleat' | 'rim' | 'smooth' })` each frame lays a track
+  that joins up behind a wheel, a sled or a dragged crate (`marks.lift(id)` when it leaves the ground).
+- **They do not last for ever.** Fresh snow fills prints in (`fill`: .3 of a full cover), rain washes
+  them out of mud (`wash`: 90 seconds of it), wind blows them out of sand (`blow`: 400 metres of wind
+  over a light breeze, about two minutes of a stiff one), snow that settles hides what was in the mud
+  under it, and melting snow takes its prints with it. `last: { snow: 120 }` gives marks a life in
+  seconds whatever the weather. 4000 marks are remembered (`keep`); then the oldest are forgotten.
+- **A trail to read**: `marks.made` lists what was pressed this frame (`{ x, z, kind, depth, by,
+  rolling }`: for a crunch, a squelch, a puff of snow), `marks.at(x, z)` is how deep the ground is
+  pressed at a spot, and `marks.trail(x, z, r, { by, newer, max })` gives the marks near a point, the
+  newest first, each with where it is, which way it points, what it is in, how old it is and who made
+  it: enough for a tracker that follows the player, or a game about reading who went where.
+- **Grass that parts.** The land's meadow (`land.meadow()`) leans away from whatever is watched, springs
+  back with a wobble when it has passed, and lies flat and a little paler where it was walked or driven
+  on, mending over `mend` seconds (40). `marks.push(x, z, r, { vx, vz })` parts it yourself (a gust
+  from a rotor, a creature you move by hand); `marks.grass.at(x, z)` says how it stands. `grass:
+  (x, z) => 0..1` says where grass grows if you have no meadow (for `kindAt` and `made`); `grass: false`
+  keeps no grass field at all.
+- **How it is drawn, and what it costs.** The prints are a height picture kept in tiles 3 m across round
+  the camera (`reach`: 10 m; `cell`: .025 m a texel, so a boot is eleven texels long); each tile that has
+  any is one thin sheet lying on the land's own triangles, with a colour and a normal picture made from
+  the heights. They are stock materials, so WebGL and WebGPU draw the same thing and ground with no
+  marks costs nothing. `colours: { mud: { floor: '#2a2018', top: '#55452f' } }` matches a print's floor
+  and rim to your ground. Tiles are made again a slice a frame as marks fill in or come into reach
+  (`budget`), so a cut to a new place shows its prints over a few frames, the nearest first:
+  `marks.update(0, centre)` makes them all at once before a cut you know is coming. Measured on a
+  desktop, `marks.update()` is .02 ms a frame for one walker and .25 to .5 ms with a walker, a dog, a
+  car and a tank all churning the ground at once (not yet measured on a phone). `cell: .04` is a third
+  of the work with softer prints.
+- `update(dt, centre)`: `centre` is where prints are drawn round (the camera by default; the spot a
+  scope looks at, for a view through one).
+- Make it in `make()`, before the first frame: on WebGPU the meadow's blades can only read the grass
+  field if they were given it before they were first drawn.
+- Not there: the ground itself does not move (a print is at most 5 cm deep, drawn on a sheet, so
+  deep drifts you wade through and ruts a wheel sinks into are not here), marks do not show beyond
+  `reach`, `land.grass()` (the far grass) does not part, and things do not get muddy or snowy from
+  walking in it.
 
 ## Vehicles made in code
 

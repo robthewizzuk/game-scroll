@@ -28,6 +28,7 @@ import { bakeRenderer as renderer } from './hd3d.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 export { looks, groundDetail, horizon } from './looks.js';
 export { Water } from './water.js';
+export { Marks } from './marks.js';
 import { looks as LOOKS } from './looks.js';
 import Terrain, { TerrainNS, createSeededRandom, scatterGrass, updateGrass, updateGrassLOD } from 'three.terrain.js';
 
@@ -62,7 +63,7 @@ export class Land {
     this.object.updateMatrixWorld(true);
     this.z = this.mesh.geometry.attributes.position.array;   // local z is world height
     if (colours) this.paint(colours);
-    this.grassScene = null; this.grassMesh = null; this.time = 0; this.meadows = [];
+    this.grassScene = null; this.grassMesh = null; this.time = 0; this.meadows = []; this.parting = null;
   }
   /** The ground height at world x, z (between grid points it's blended). */
   height(x, z) {
@@ -157,7 +158,7 @@ export class Land {
     const root = new InstancedBufferAttribute(new Float32Array(N * 4), 4); geo.setAttribute('lkRoot', root);
     // (hardly any shine: a blade edge-on to the eye would glint white against a low sun)
     const mat = new MeshPhysicalMaterial({ color: '#ffffff', vertexColors: true, roughness: .78, side: DoubleSide, specularIntensity: .12 });
-    const look = LOOKS.meadow(mat, { reach: [reach * .55, reach * .97] });
+    const look = LOOKS.meadow(mat, { reach: [reach * .55, reach * .97], part: this.parting });   // (parting: the grass field of a gs.outdoors.Marks on this land)
     const mesh = new InstancedMesh(geo, mat, N); mesh.name = 'meadow'; mesh.frustumCulled = false; mesh.receiveShadow = true; mesh.castShadow = false;
     mesh.rotation.x = Math.PI / 2;   // (the land's own object is turned to lie flat: this turns the meadow back, so it is in the world's own metres)
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(N * 3), 3);
@@ -181,7 +182,7 @@ export class Land {
     // the square's cells, nearest the middle first, and which cell of the world each slot holds now
     const order = new Uint32Array(N), own = new Int32Array(N * 2).fill(0x7fffffff);
     { const d = k => Math.hypot((k % n) - half + .5, ((k / n) | 0) - half + .5), list = Array.from({ length: N }, (_, k) => k).sort((a, b) => d(a) - d(b)); order.set(list); }
-    const st = { n, gap, reach, look, ci: null, cj: null, k: N, at: new Vector3(1e9, 0, 0), planted: 0 };
+    const st = { n, gap, reach, look, where, ci: null, cj: null, k: N, at: new Vector3(1e9, 0, 0), planted: 0 };
     // Plants the cells that came into the square round p and are not planted yet, from the middle out. After
     // a camera cut that is every cell: a few are planted each frame (`budget` milliseconds' worth), so a cut
     // never costs a long frame and the grass at your feet is there first; all: plant the lot now.

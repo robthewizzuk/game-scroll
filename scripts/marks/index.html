@@ -1,0 +1,108 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A film of gs.outdoors.Marks, for scripts/marks.cjs: a field with a strip of sand, a strip of grass and a
+// strip of bare earth, a lean-to with a roof, two people walking, a dog trotting and a jeep driving round.
+// One story of weather runs along the film (snow lying, fresh snow falling, rain on bare ground, dry), a row
+// for each camera, so the prints, the tracks and the parted grass can be judged (and tuned) by eye. It also
+// notes what a frame of marks.update() cost, how many marks are kept and how many tiles of them are drawn.
+//   ?views=mud,sand,grass,lawn,top,low,wide,close (default: all but lawn and close)   &cols=6   &cell=420x300   &gpu (WebGPU)
+//   &story=snow,fresh,rain,dry (also wet: wet earth at once)   &secs=8 (each part)   &hold=<part>:<0..1> (one moment only, in every column)
+//   &off (no Marks at all: the same film without them, to compare)   &cellsize=.025   &reach=10   &who=people,dog,jeep,tank
+//   &prof (what each part of marks.update() cost a frame)   &gap=.24 (metres between the meadow's tufts)   &nomeadow
+// window.__lab ({ marks, land, v, movers, weather, shot(at, to) }) is left for a script that wants a closer look.
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), M = gs.models, { Land, Marks } = gs.outdoors;
+  const VIEWS = {
+    mud: [[5.5, 1.0, 1.7], [4.1, 0, -.5]],          // where the walker crosses the bare earth
+    sand: [[-5.5, 1.0, 1.7], [-4.1, 0, -.5]],       // and the sand
+    grass: [[2.6, 1.7, 3.6], [.3, .1, 1.5]],        // through the grass
+    lawn: [[.4, 4.2, 1.2], [.4, 0, 1.19]],          // the grass from above
+    top: [[.3, 5.2, .5], [.3, 0, .49]],             // straight down on the middle
+    low: [[3.4, .35, 3.6], [1.2, 0, 3.7]],          // along the ground
+    close: [[4.75, .85, .95], [4.2, 0, .1]],        // a print from a kneeling height
+    wide: [[9.5, 4.2, 9.5], [0, 0, 0]],             // the whole place
+  };
+  const views = (Q.get('views') || 'mud,sand,grass,top,low,wide').split(','), cols = +(Q.get('cols') || 6), [cw, ch] = (Q.get('cell') || '420x300').split('x').map(Number);
+  const story = (Q.get('story') || 'snow,fresh,rain,dry').split(','), secs = +(Q.get('secs') || 8), OFF = Q.has('off'), who = (Q.get('who') || 'people,dog,jeep').split(',');
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;   // (a film: nothing waits, hidden, for its shader)
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * views.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#aab4c0', fog: 0, env: .55, amb: .5 });
+  const sun = gs.hd.sun('#fff2e0', 1.7, 26, [.6, .55, .5]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sky = new gs.sky.Sky(v, { time: +(Q.get('time') || 15.5), env: true, clouds: .4 }); v.air({ haze: .0012 });
+  // the place: gentle ground; sand to the west, bare earth to the east, grass between
+  const lie = (x, z) => .12 * Math.sin(x * .31 + 1) * Math.sin(z * .27) + .05 * Math.sin(x * .9) * Math.cos(z * .8);
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const sand = (x, z) => 1 - sm(-3.2, -2.2, x + .5 * Math.sin(z * .7)), mud = (x, z) => sm(2.2, 3.2, x + .5 * Math.sin(z * .6 + 2)), grass = (x, z) => (1 - sand(x, z)) * (1 - mud(x, z));
+  const land = new Land({ kind: lie, size: 70, segments: 140, material: new T.MeshStandardMaterial({ color: '#ffffff', roughness: .95, vertexColors: true }) }); v.scene.add(land.object);
+  { const g = land.mesh.geometry, n = g.attributes.position.count, w = land.segments + 1, s = land.size / land.segments, col = new Float32Array(n * 3), cs = new T.Color('#cdb684'), cm = new T.Color('#4a3d2e'), cg = new T.Color('#55662f'), c = new T.Color();
+    for (let i = 0; i < n; i++) { const x = -land.size / 2 + (i % w) * s, z = -land.size / 2 + Math.floor(i / w) * s; c.copy(cg).lerp(cs, sand(x, z)).lerp(cm, mud(x, z)); col.set([c.r, c.g, c.b], i * 3); }
+    g.setAttribute('color', new T.BufferAttribute(col, 3)); }
+  const wind = new gs.outdoors.Wind({ x: 2.2, z: .8 }); land.wind = wind;
+  const box = (mat, w, h, d, x, y, z, into = v.scene) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; into.add(m); return m; };
+  const leanTo = new T.Group(); v.scene.add(leanTo); const wood = M.material('wood'), metal = M.material('metal', { repeat: [2, 2] });
+  box(metal, 3.2, .06, 3, -.2, 2.2, -4.4, leanTo); for (const [x, z] of [[-1.7, -5.8], [1.3, -5.8], [-1.7, -3], [1.3, -3]]) box(wood, .1, 2.2, .1, x, 1.1, z, leanTo);
+  leanTo.updateMatrixWorld(true);
+  const speed = secs / 8, weather = new gs.sky.Weather(v, { kind: 'clear', amount: 1, area: 26, max: 1200, level: [leanTo], ground: (x, z) => land.height(x, z), soak: 2 * speed, dry: 5 * speed, settle: 4.6 * speed, melt: 5 * speed, wind });
+  const marks = OFF ? null : new Marks(v, { land, weather, sand, mud, grass, wind, cell: +(Q.get('cellsize') || .025), reach: +(Q.get('reach') || 10) });
+  if (!Q.has('nomeadow')) land.meadow({ reach: 13, gap: +(Q.get('gap') || .24), height: .42, blades: 9, where: (x, z) => grass(x, z) });
+  // who moves about: two people on rings, a dog on another, a jeep round the outside (the people's rings pass under the lean-to's edge)
+  const movers = [], ring = (thing, cx, cz, r, pace, a0, dir, o = {}) => { movers.push({ thing, cx, cz, r, pace, a: a0, dir, ...o }); v.scene.add(thing); return thing; };
+  const people = [{ seed: 3, build: 'medium' }, { seed: 8, sex: 'f', build: 'slim' }];
+  if (who.includes('people')) { await M.human.ready(people); const [a, b] = people.map(o => M.human(o)); a.lod = b.lod = 0; ring(a, 0, 0, 4.2, 1.4, -1.2, 1, { human: true }); ring(b, .4, -1.2, 2.7, 1.25, 2, -1, { human: true }); }
+  if (who.includes('dog')) { await M.creature.ready([{ like: 'dog', seed: 2 }]); const dog = M.creature({ like: 'dog', seed: 2 }); dog.lod = 0; ring(dog, -.3, .6, 3.4, 2.4, .5, 1, { creature: true, watch: { feet: 4, size: .075, shape: 'paw', gap: .16, long: .5, pace: .42, press: .6, radius: .25 } }); }
+  if (who.includes('jeep')) { const jeep = M.vehicle('car', { style: 'jeep', seed: 4 }); ring(jeep, 0, 0, 6.6, 3.2, 3.6, 1, { vehicle: true }); }
+  if (who.includes('tank')) { const tank = M.vehicle('tank', { seed: 2 }); ring(tank, 0, 0, 8.4, 2.2, 1, -1, { vehicle: true }); }
+  if (marks) for (const m of movers) marks.watch(m.thing, m.watch || {});
+  const prof = {}; if (marks && Q.has('prof')) for (const [o, names] of [[marks, ['remake', 'paint', 'follow', 'draw', 'lay', 'blank', 'left']], [marks.grass, ['update', 'push', 'flat', 'place']]]) for (const n of names) { const f = o[n].bind(o), k = (o === marks ? '' : 'grass.') + n, P = prof[k] = { ms: 0, n: 0, worst: 0 }; o[n] = (...a) => { const t0 = performance.now(), r = f(...a), d = performance.now() - t0; P.ms += d; P.n++; if (d > P.worst) P.worst = d; return r; }; }
+  const hold = Q.get('hold')?.split(':');
+  const dt = 1 / 60, N = Math.round(story.length * secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((hold ? (story.indexOf(hold[0]) + +hold[1]) / story.length : (i + .5) / cols) * N)), info = [];
+  const player = [0, 1.6, 5]; let cost = 0, worst = 0, part = -1, made = { snow: 0, mud: 0, sand: 0, grass: 0 }, most = 0;
+  for (let i = 0; i <= N; i++) {
+    const t = i * dt, now = Math.min(story.length - 1, Math.floor(t / secs));
+    if (now !== part) {
+      part = now; const k = story[part];
+      if (k === 'snow') { weather.set('clear'); weather.snow = 1; weather.wet = 0; weather.pools = 0; } else if (k === 'fresh') weather.set('snow', 1); else if (k === 'rain') { weather.set('rain', 1); weather.snow = 0; } else if (k === 'wet') { weather.set('clear'); weather.snow = 0; weather.wet = 1; weather.pools = .6; } else { weather.set('clear'); weather.snow = 0; if (k === 'dry') { weather.wet = 0; weather.pools = 0; } }
+    }
+    if (story[part] === 'snow') weather.snow = 1;   // (held: it lies and does not melt)
+    for (const m of movers) {
+      m.a += m.dir * m.pace * dt / m.r; const x = m.cx + m.r * Math.cos(m.a), z = m.cz + m.r * Math.sin(m.a), vx = -Math.sin(m.a) * m.dir, vz = Math.cos(m.a) * m.dir, th = m.thing;
+      th.position.set(x, land.height(x, z), z); th.rotation.y = Math.atan2(vx, vz) + (m.vehicle ? Math.PI : 0);
+      if (m.human) { th.rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, m.pace); th.rig.update(dt, { speed: m.pace }); }
+      else if (m.creature) th.move(dt, m.pace, {});
+      else th.move(dt, m.pace, { steer: -m.dir * .35 });
+      th.updateMatrixWorld(true);
+    }
+    v.cam.position.set(...player); v.cam.updateMatrixWorld();
+    wind.update(dt); sky.update(dt); weather.update(dt);
+    const c0 = performance.now(); marks?.update(dt, v.cam.position); const c = performance.now() - c0; if (i > 5) { cost += c; worst = Math.max(worst, c); }
+    if (marks) { for (const m of marks.made) made[m.kind]++; most = Math.max(most, marks.drawn); }
+    land.update(dt, v.cam);
+    for (let k = 0; k < cols; k++) if (shots[k] === i) {
+      for (let r = 0; r < views.length; r++) {
+        const V = VIEWS[views[r]]; if (!V) throw new Error('no view ' + views[r] + ': ' + Object.keys(VIEWS).join(', '));
+        v.cam.fov = 50; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix(); v.cam.position.set(...V[0]); v.cam.lookAt(...V[1]); v.cam.updateMatrixWorld();
+        v.cut?.(); sun.follow(0, 0, 0);
+        for (let n = 0; n < (k || r ? 2 : 8); n++) { v.t = t; v.render(cx, cw, ch); await frame(); }
+        sx.drawImage(cell, k * cw, r * ch);
+        sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${views[r]}  ${story[part]} ${(t - part * secs).toFixed(1)}s  snow ${weather.snow.toFixed(2)} wet ${weather.wet.toFixed(2)}${marks ? `  ${marks.count} marks, ${marks.drawn} tiles` : '  no marks'}`, k * cw + 4, r * ch + 12);
+      }
+      if (hold) break;
+    }
+  }
+  if (marks) {
+    info.push(`marks.update ${(cost / N).toFixed(3)} ms a frame, worst ${worst.toFixed(2)}; ${marks.count} marks kept, ${marks.drawn} tiles drawn at the end (${most} at most), each ${marks.size.toFixed(2)} m of ${marks.cell} m cells`);
+    info.push(`made: ${Object.entries(made).map(([k, n]) => n + ' in ' + k).join(', ')}; grass cells pushed over or trodden now: ${marks.grass?.count ?? 0}`);
+    const tr = marks.trail(movers[0]?.thing.position.x ?? 0, movers[0]?.thing.position.z ?? 0, 2.5, { by: movers[0]?.thing }); info.push(`the first walker's trail within 2.5 m: ${tr.length} prints, the newest ${tr[0] ? tr[0].age.toFixed(2) + ' s old in ' + tr[0].kind : '-'}`);
+  }
+  if (Q.has('prof')) info.push('per frame: ' + Object.entries(prof).map(([k, P]) => `${k} ${(P.ms / N).toFixed(3)} ms (${(P.n / N).toFixed(1)} calls, worst ${P.worst.toFixed(2)})`).join('; '));
+  window.__lab = { marks, land, v, movers, weather, shot: async (at, to, n = 3) => { v.cam.position.set(...at); v.cam.lookAt(...to); v.cam.updateMatrixWorld(); v.cut?.(); for (let i = 0; i < n; i++) { v.render(cx, cw, ch); await frame(); } return cell.toDataURL(); } };
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

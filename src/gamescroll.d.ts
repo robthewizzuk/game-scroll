@@ -2178,8 +2178,10 @@ export type VehicleT = Loose & {
   kind: 'car' | 'truck' | 'tank' | 'train' | 'boat' | 'plane'; style: string;
   /** Its body (a Group): everything but the wheels. */
   shell: Loose;
-  /** Its wheels' pivots: front left, front right, back left, back right (then a third axle's); each has `radius` and `steers`. A tank's and a train's are drawn as copies and are not here. */
+  /** Its wheels' pivots: front left, front right, back left, back right (then a third axle's); each has `radius`, `width` and `steers`. A tank's and a train's are drawn as copies and are not here. */
   wheels: Loose[];
+  /** A tank: where its two caterpillar tracks run (x: metres either side of its middle) and how wide each is. gs.outdoors.Marks lays their marks. */
+  belts?: { x: number; width: number };
   /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a steam engine's `rods`, `mainRods`. */
   parts: Record<string, Loose>;
   /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, `fire`, a tender's `coal`, a van's and a guard's van's `roof`, a guard's van's `veranda` and `tail`, a tank wagon's `filler`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
@@ -2589,6 +2591,78 @@ export interface LandPart {
   scatter(props: Loose, name: string, count: number, o?: { above?: number; below?: number; steep?: number; keepOut?: (x: number, z: number) => boolean; inset?: number; [k: string]: Loose }): number[];
   update(dt: number, camera?: Loose): LandPart; dispose(): void;
 }
+export interface MarksOptions {
+  /** The gs.outdoors Land it lies on (its sheets follow the land's own triangles, and its meadows part); or ground: (x, z) => height for ground of your own; neither: flat at y = 0. */
+  land?: LandPart | null; ground?: ((x: number, z: number) => number) | null;
+  /** A gs.sky.Weather made with the level: snow takes prints where it has settled, earth is soft where the rain has wet it, and fresh snow and rain take marks away. */
+  weather?: WeatherPart | null;
+  /** Where the ground is bare earth, and where it is sand: (x, z) => 0..1 (the same functions that paint your ground). */
+  mud?: ((x: number, z: number) => number) | null; sand?: ((x: number, z: number) => number) | null;
+  /** Where grass grows: (x, z) => 0..1; true (the default): wherever the land's meadows grow; false: nowhere, and no grass field is kept. */
+  grass?: boolean | ((x: number, z: number) => number);
+  /** Metres from the centre that prints are drawn (10). */ reach?: number;
+  /** Metres a texel of the print picture (.025: a boot is eleven long; .04 is a third of the work). */ cell?: number;
+  /** How many marks are remembered (4000: the oldest are forgotten). */ keep?: number;
+  /** The bottom of a print and the rim round it, to match your ground: { snow: { floor, top }, mud: {...}, sand: {...} } (also edge, rim, rough). */
+  colours?: Partial<Record<'snow' | 'mud' | 'sand', { floor?: string; top?: string; edge?: number; rim?: number; rough?: number; [k: string]: Loose }>>;
+  /** How much fresh snow fills a print in (of a full cover: .3); seconds of rain that wash one out of mud (90); metres of wind that blow one out of sand (400). */
+  fill?: number; wash?: number; blow?: number;
+  /** Seconds a mark lasts whatever the weather (0: until it is filled in). */ last?: { snow?: number; mud?: number; sand?: number };
+  /** Seconds trodden grass takes to stand again (40). */ mend?: number;
+  /** A gs.outdoors Wind (the land's, if it has one), or { speed }. */ wind?: WindPart | { speed: number } | null;
+  /** Metres the sheets lie above the ground (.02). */ above?: number;
+  /** false draws nothing (the numbers and the grass only). */ sheet?: boolean;
+  /** How many texels of prints are made again a frame as marks fill in or come into reach (20000). */ budget?: number;
+  /** The grass field: { cells (128 a side), reach (12 metres from the centre), spring (how fast blades stand up again: 7) }. */ parting?: { cells?: number; reach?: number; spring?: number };
+}
+/** A mark as marks.made reports it this frame (for a sound, a puff of snow): where, in what, how deep (metres), who made it, and whether it is a wheel rolling. */
+export interface MarkMade { x: number; z: number; kind: 'snow' | 'mud' | 'sand' | 'grass'; depth: number; by: Loose; rolling?: boolean }
+/** What a watched thing leaves: see marks.watch(). */
+export interface MarksWatch {
+  /** 2, or 4 for an animal. */ feet?: number; /** A print's length and width, metres. */ size?: number; width?: number;
+  shape?: 'boot' | 'bare' | 'paw' | 'hoof' | 'shoe' | 'round';
+  /** Metres between its left and right prints, from one print to the next, and from front feet to back (four feet). */ gap?: number; pace?: number; long?: number;
+  /** How hard it presses (1: a person). */ press?: number; tread?: 'tyre' | 'cleat' | 'rim' | 'smooth';
+  /** How far round it the grass parts, metres (0: not at all), and how flat it leaves the grass it wades through (0..1: .6). */ radius?: number; trample?: number;
+  /** What marks.trail() and marks.made call it (the thing itself). */ by?: Loose;
+  /** Is it on the ground now? (default: within .3 m of it). */ grounded?: () => boolean; height?: number;
+}
+export interface MarksPart {
+  /** What the ground at x, z is like now. kind null: firm ground that takes no mark. depth: metres a foot sinks in. */
+  kindAt(x: number, z: number, out?: Loose): { kind: 'snow' | 'mud' | 'sand' | 'grass' | null; soft: number; depth: number; y: number };
+  /** One print. turn: which way the foot points (radians round y, 0 towards +z; or dir: [x, z]); side: 1 a left foot, -1 a right one. Null on firm ground and on grass (which is trodden down instead). */
+  step(x: number, z: number, o?: { turn?: number; dir?: [number, number]; size?: number; width?: number; shape?: 'boot' | 'bare' | 'paw' | 'hoof' | 'shoe' | 'round'; side?: number; press?: number; by?: Loose }): Loose | null;
+  /** A round dent r metres from its middle to its edge: something fell here, or knelt. */
+  press(x: number, z: number, r?: number, o?: { press?: number; by?: Loose }): Loose | null;
+  /** A track that joins up: call it each frame with where the wheel (or sled, or dragged thing) is now, under a name of its own. lift(id) when it leaves the ground. */
+  roll(id: Loose, x: number, z: number, o?: { width?: number; tread?: 'tyre' | 'cleat' | 'rim' | 'smooth'; press?: number; by?: Loose }): Loose | null;
+  lift(id: Loose): void;
+  /** Parts the grass within r metres of a point this frame, away from it (vx, vz: the way the thing there is moving). */
+  push(x: number, z: number, r?: number, o?: { vx?: number; vz?: number; amount?: number }): void;
+  /**
+   * From now on this thing leaves marks by itself: a gs.models.human a boot print where each foot really comes down, a gs.models.vehicle a track behind each
+   * wheel (a tank its two belts), anything else that moves (an Object3D, or { position }) prints paced out along its way; and the grass parts round it.
+   */
+  watch<T>(thing: T, o?: MarksWatch): T;
+  unwatch(thing: Loose): void;
+  /** Each frame, after the things that leave marks have moved. centre: where prints are drawn round (the camera). update(0, centre) makes everything in reach at once, before a cut. */
+  update(dt: number, centre?: P3): MarksPart;
+  /** The marks made this frame. */
+  made: MarkMade[];
+  /** How deep the ground is pressed at x, z, in metres (0: not at all, or out of reach of the centre). */
+  at(x: number, z: number): number;
+  /** The marks within r metres of a point, the newest first (a trail to follow, or to read). by: only this one's; newer: only those made in the last so many seconds; max: how many (24). */
+  trail(x: number, z: number, r?: number, o?: { by?: Loose; newer?: number; max?: number }): { x: number; z: number; turn: number; kind: 'snow' | 'mud' | 'sand'; age: number; by: Loose; depth: number }[];
+  /** How many marks are remembered, and how many tiles of them are being drawn. */
+  readonly count: number; readonly drawn: number;
+  /** The grass field (null with grass: false): at(x, z) => { x, z (which way it leans, 0..1 long), flat (0..1 trodden) }, busy. */
+  grass: { at(x: number, z: number, out?: Loose): { x: number; z: number; flat: number }; readonly busy: boolean; texture: Loose; where: Loose; [k: string]: Loose } | null;
+  /** Metres a tile of prints is across, and a texel of it. */
+  size: number; cell: number;
+  /** Takes every mark away and stands the grass up (in reset()); what is watched stays watched. */
+  clear(): MarksPart;
+  dispose(): void;
+}
 /** Something that landed in gs.outdoors.Water since the last update (water.splashes): where, how big across (metres) and how fast it hit (metres a second). */
 export interface WaterSplash { x: number; y: number; z: number; size: number; speed: number }
 /** What water.watch() returns: remove() stops the watching. wet: it is in the surface now. */
@@ -2668,7 +2742,7 @@ export interface OutdoorsPart {
     rock(material: Loose, o?: { detail?: Loose; scale?: number; moss?: string | number[]; mossy?: number }): { uniforms: Record<string, { value: Loose }> };
     leaves(material: Loose, o?: { time?: number | { value: number }; wind?: number | { value: number } | WindPart; sun?: Loose; sway?: number; above?: number; glow?: number; atlas?: [number, number] }): { uniforms: Record<string, { value: Loose }> };
     /** Grass blades for an instanced meadow (land.meadow() uses it): tufts shrink to their roots towards reach[1] metres from the camera and bend with the wind. The mesh needs an instanced vec4 'lkRoot' (each tuft's root) and uv.y from root to tip. */
-    meadow(material: Loose, o?: { reach?: [number, number]; time?: number; bend?: number; dir?: Loose }): { uniforms: Record<string, { value: Loose }> };
+    meadow(material: Loose, o?: { reach?: [number, number]; time?: number; bend?: number; dir?: Loose; /** A gs.outdoors.Marks' grass field (marks.grass): the blades lean away from what passes and lie flat where trodden. */ part?: Loose | null }): { uniforms: Record<string, { value: Loose }>; /** Gives the blades a Marks' grass field to read (null: none). On WebGPU before they are first drawn. */ part(field: Loose | null): void };
     /** Moving water for a River mesh (its lkFlow / lkDir attributes). */
     flow(material: Loose, o?: { deep?: string | number[]; shallow?: string | number[]; foam?: string | number[]; scale?: number; ripple?: number; froth?: number; time?: number | { value: number } }): { uniforms: Record<string, { value: Loose }> };
     /** Molten lava for a River mesh: glowing cracks, cooling crust. */
@@ -2678,6 +2752,13 @@ export interface OutdoorsPart {
   River: new (stream: Loose, o?: { step?: number; across?: number; lift?: number; look?: Loose; material?: Loose }) => { mesh: Loose; stream: Loose; look: { uniforms: Record<string, { value: Loose }> }; update(dt: number): Loose; dispose(): void };
   /** Draws a gs.flow Flood (and runs it on the graphics chip on WebGPU when given the view). update() each frame after flood.update(dt). */
   FloodWater: new (flood: FloodPart, o?: { view?: Loose; deep?: string; shallow?: string; opacity?: number; rough?: number; full?: number }) => { mesh: Loose; flood: FloodPart; update(): Loose; dispose(): void };
+  /**
+   * Ground that takes marks: feet leave prints and wheels leave tracks in snow (where a gs.sky.Weather with a level has let it settle), mud (bare earth the
+   * rain has wet) and sand, and the land's meadow parts round whatever moves through it and stays trodden where it was walked on. Fresh snow fills prints in,
+   * rain washes them out of mud, wind blows them out of sand. Make it in make() (before the meadow is first drawn), marks.watch(thing) what should leave marks,
+   * marks.update(dt) each frame after they have moved, marks.clear() in reset(). view: the 3D view (null: the numbers alone). docs/nextgen-3d.md "Ground that takes marks".
+   */
+  Marks: new (view: Loose | null, o?: MarksOptions) => MarksPart;
   /** One wind for a world: grass (land.wind), leaves, rain, particles, cloud shadows; at(x, z) for bullets and flags. */
   Wind: new (o?: { x?: number; z?: number; gust?: number; gustSize?: number; sway?: number; grass?: number }) => WindPart;
   /** Far stand-in for a tree: crossed cards with baked pictures of it (null without 3D). Use as a props lod level: [dist, imp.geometry, imp.material]. */
