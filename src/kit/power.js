@@ -14,6 +14,8 @@ export const power = { heat: 0, saver: false, level: 1, charging: true, known: f
 
 const native = Capacitor.isNativePlatform();
 const plugin = native && Capacitor.isPluginAvailable('PowerState') ? registerPlugin('PowerState') : null;
+/** The PowerState plugin (null off the phone), shared with the memory guard (src/kit/memory.js): a plugin is registered once. */
+export const powerPlugin = plugin;
 // once saving, keep at it a minute after the last reason went, so it doesn't flip back and forth
 const HOLD = 60000, EVERY = 15000;
 let lastReason = 0, timer = null;

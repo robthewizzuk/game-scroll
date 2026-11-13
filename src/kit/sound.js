@@ -9,6 +9,7 @@
 //
 // Everything respects the player's Sound & haptics settings (sound on/off, volume, music on/off). Music stops by itself when the round ends or the
 // player swipes to another game, but stop it in your own game-over code too if it should end sooner.
+import { timed } from './prof.js';
 import { sfx, sound, audio, setSfxOut, delay } from '../sfx.js';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { buildSamples, SAMPLE_RATE } from './zzfx.js';
@@ -1047,3 +1048,6 @@ export const talking = () => talkingNow > 0;
 /** Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. */
 export const shaped = () => shapedOk;
 register('speech', { stop: stopTalking, pause: stopTalking });
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Ears.prototype, 'place', 'sound');

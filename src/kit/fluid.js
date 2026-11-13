@@ -21,6 +21,7 @@
 // fluid is full (fluid.full) taps stop until some drains away. Questions are answered from the drops:
 // amount(box), level(x, z), wet(x, y, z). On WebGPU the answers are a few frames old.
 // Kit use: view is an HDView (Next Gen, AR, Board); in a Console view it runs the smaller version.
+import { timed } from './prof.js';
 import { Color, IcosahedronGeometry, InstancedMesh, MeshStandardMaterial, Quaternion, Matrix4, Vector3, DynamicDrawUsage } from 'three';
 import { webgpu, sendUsed } from './gpu.js';
 import { phoneClass } from './speed.js';
@@ -720,3 +721,6 @@ export class Fluid {
 }
 /** How foamy a drop looks: thin liquid (spray, the edge of a splash) and fast liquid whiten. q: how full its cells are (1 at rest); speed and f0 (where foam starts) in cells a step. */
 export const foamOf = (q, speed, f0) => Math.min(.85, Math.max(0, (.4 - q) / .3) + Math.max(0, (speed - f0) / (1.4 * f0)));
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Fluid.prototype, 'update', 'liquids');

@@ -2,6 +2,7 @@
 // WebGPU alike. The particles move here, and are drawn as soft dots that face the camera in two
 // meshes (glowing ones and soft ones) with three.js's own plain material, so there is no shader of
 // their own to port and no library to load. Kit use: games get this as gs.fx3d.Particles3D.
+import { timed } from './prof.js';
 import { Mesh, BufferGeometry, BufferAttribute, DynamicDrawUsage, MeshBasicMaterial, CanvasTexture, AdditiveBlending, NormalBlending, Color, Vector3 } from 'three';
 
 let dot = null;
@@ -166,3 +167,6 @@ export class Particles3D {
   clear() { for (const fx of this.live) fx.on = false; this.live.clear(); this.glow.n = this.soft.n = 0; this.glow.step(0); this.soft.step(0); }
   dispose() { this.clear(); this.glow.dispose(); this.soft.dispose(); }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Particles3D.prototype, 'update', 'particles 3D');

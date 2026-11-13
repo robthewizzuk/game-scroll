@@ -19,6 +19,7 @@
 // A bullet: x, y, speed, angle, plus accel (speed per second), turn (radians per second), wave (side to
 // side: [size, rate]), home (turn towards a target, radians per second), kind (a number for your own
 // look and size), life (seconds).
+import { timed } from './prof.js';
 
 export class Bullets {
   /** max: most bullets at once; w, h: the play area (bullets leaving it, plus margin, are dropped). */
@@ -119,3 +120,6 @@ export class Emitter {
   get done() { return this.fired >= this.times; }
   reset() { this.t = 0; this.fired = 0; this.spin = 0; return this; }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Bullets.prototype, 'update', 'bullets');

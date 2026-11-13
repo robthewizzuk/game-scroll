@@ -27,6 +27,7 @@
 // round it. Clouds, reflections, the air's colours, fog and the sky light all follow it; the day keys
 // then only set how strong the sun and fill lights are.
 
+import { timed } from './prof.js';
 import { AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, LineBasicMaterial, LineSegments, Mesh, Points, PointsMaterial, Scene, ShaderMaterial, SphereGeometry, Vector3, Vector4 } from 'three';
 import { prefs } from './prefs.js';
 import { noiseTex } from './hd3d.js';
@@ -363,3 +364,7 @@ export class Weather {
     for (const w of this.waters) w.rain = 0;
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Sky.prototype, 'update', 'sky and weather');
+timed(Weather.prototype, 'update', 'sky and weather');

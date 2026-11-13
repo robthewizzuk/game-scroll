@@ -18,6 +18,7 @@
 //     if (here.fall) feel.boom(...);                            // here: { in, kind, depth, speed, current, edge, fall, stream }
 //   }
 
+import { timed } from './prof.js';
 import { Path } from './paths.js';
 
 const KIND = { water: { hurt: 0, push: 1 }, lava: { hurt: 30, push: .15 }, acid: { hurt: 12, push: .8 }, mud: { hurt: 0, push: .3 }, deep: { hurt: 0, push: 1 } };
@@ -188,3 +189,6 @@ export class Flood {
     }
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Flood.prototype, 'update', 'water flow');

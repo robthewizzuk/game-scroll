@@ -20,6 +20,7 @@
 //
 // Our own code: the JavaScript voxel engines are either unmaintained (voxel.js) or whole game
 // engines of their own; what a game needs here is small.
+import { timed } from './prof.js';
 import * as THREE from 'three';
 import { meshChunk } from './voxel-mesh.js';
 import { rng, noise2, noise3 } from './math.js';
@@ -302,3 +303,6 @@ export class Voxels {
     this.meshes.clear(); this.solidMat.dispose(); this.clearMat.dispose();
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Voxels.prototype, 'update', 'voxels');

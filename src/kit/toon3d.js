@@ -16,6 +16,7 @@
 //    Use v.sv(x, y, z) for positions; z < 0 is further away (background), z > 0 nearer.
 //  - v.persp(fov): a free perspective camera (runners, racers) the game moves itself; use
 //    v.toScreen(x, y, z) to place 2D HUD effects over 3D things.
+import { timed } from './prof.js';
 import {
   Scene, Color, Fog, OrthographicCamera, PerspectiveCamera, DirectionalLight, HemisphereLight,
   MeshToonMaterial, MeshBasicMaterial, ShaderMaterial, ShadowMaterial, Mesh, Group, DataTexture, NearestFilter, RGBAFormat,
@@ -570,3 +571,6 @@ export function figure({ h = 30, body = '#3a6ea5', skin = '#f1c27d', legs = '#2b
   g.rig = new Rig({ hips, spine, head, armL, foreL: armL.userData.fore, armR, foreR: armR.userData.fore, legL, shinL: legL.userData.shin, legR, shinR: legR.userData.shin }, { height: 1.8 });
   return g;
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(View.prototype, 'render', '3D render');

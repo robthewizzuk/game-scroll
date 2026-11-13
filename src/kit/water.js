@@ -14,6 +14,7 @@
 // The ripples are a small grid stepped on the processor and handed to the stock material as two small
 // pictures (a normal map for the water, an alpha map for a layer of foam over it), so it is the same on
 // WebGL and WebGPU and costs nothing while the water is calm. Kit use only: games reach it as gs.outdoors.Water.
+import { timed } from './prof.js';
 import { BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, DoubleSide, DynamicDrawUsage, FogExp2, AdditiveBlending, BackSide, IcosahedronGeometry, InstancedMesh, LinearFilter, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, SphereGeometry, RepeatWrapping, RGBAFormat, RGFormat, UnsignedByteType, Vector2 } from 'three';
 
 const STEP = 1 / 60, TAU = Math.PI * 2, FADE = .996;   // (foam: a third is left after four and a half seconds)
@@ -535,3 +536,6 @@ export class Water {
     this.mesh.geometry.dispose(); this.mesh.removeFromParent();
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Water.prototype, 'update', 'water');

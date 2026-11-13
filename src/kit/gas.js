@@ -23,6 +23,7 @@
 // sees() (how much can be seen through the smoke between two points), smokeIn(box), glow (where its fire
 // is and how big). On WebGPU the answers are a few frames old and four cells coarse.
 // Kit use: view is an HDView (Next Gen, Board); in a Console or AR view it runs the smaller version.
+import { timed } from './prof.js';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, DataTexture, DynamicDrawUsage, LinearFilter, Matrix4, Mesh, MeshBasicMaterial, NormalBlending, PointLight, Quaternion, Vector3 } from 'three';
 import { webgpu } from './gpu.js';
 import { phoneClass } from './speed.js';
@@ -728,3 +729,6 @@ function emptyField(S) {
   return { nx, ny, nz, h: S.h * 4, ox: S.ox, oy: S.oy, oz: S.oz, kv: S.kv, S: new Float32Array(n * 4), U: new Float32Array(n * 4), steps: 0, stamp: 0 };
 }
 export { emptyField, sample };
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Gas.prototype, 'update', 'smoke and fire');

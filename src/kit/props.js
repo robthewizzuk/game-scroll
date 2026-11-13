@@ -20,6 +20,7 @@
 // simplest level whose error doesn't show where it stands; `lod: 'auto'` asks for that whatever its size,
 // `lod: false` keeps every copy whole.
 
+import { timed } from './prof.js';
 import { Vector3, Box3, Color, Matrix4 } from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -246,3 +247,7 @@ export class Chunks {
 
 // hundreds of animated people or animals in a few draws: crowd.js
 export { Crowd } from './crowd.js';
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Chunks.prototype, 'update', 'props');
+timed(Areas.prototype, 'update', 'props');

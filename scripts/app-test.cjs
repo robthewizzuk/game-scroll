@@ -990,6 +990,8 @@ async function reports(b) {
       [null, { known: true, exits: [{ at: (t += 100000), reason: 4, importance: 400, what: 'crash' }] }],            // a crash in the background
       [was(), null],                                                                                                // a phone that keeps no record
       [was(), { known: true, exits: [] }],                                                                          // a record, but not of that session
+      [{ ...was(), mem: 2 }, null],                                                                                 // the memory guard had seen memory low
+      [{ ...was(), mem: 3 }, { known: true, exits: [end({ reason: 2, status: 9 })], web: { at: t + 4800, crashed: false } }],   // ...and the web view was killed
     ];
     for (const [w, h] of tries) { P.waiting.errors.length = 0; await P.lastTime(w, h); tell.push(P.waiting.errors.map(e => [e.game, e.msg, e.place, e.v || '', e.at ? 'timed' : 'now'].join(' | ')).join(' + ')); }
     // told once: the same records again say nothing new
@@ -1010,6 +1012,8 @@ async function reports(b) {
     ' | App closed in the background: the app crashed | android: crash |  | timed',
     `${CASUAL} | App closed while playing |  | v1 | now`,
     `${CASUAL} | App closed while playing |  | v1 | now`,
+    `${CASUAL} | App closed while playing (memory was low) |  | v1 | now`,
+    `${CASUAL} | App closed while playing: the web view was killed, usually for memory (memory was critical) |  | v1 | timed`,
   ].join('\n'), 'the phone\'s own record says why the app closed, and being swiped away is no crash', '\n     ' + o.tell.join('\n     '));
   check(o.again === 0 && o.robot?.robot === true, 'each ending is told once, and a test robot is marked as one', JSON.stringify({ again: o.again, robot: o.robot }));
   await q.done();

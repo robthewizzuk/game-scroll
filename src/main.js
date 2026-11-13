@@ -36,6 +36,7 @@ import { hearts } from './hearts.js';
 import { playstats } from './playstats.js';
 import { boards, rankHTML, openBoard } from './boards.js';
 import { perf } from './perf.js';
+import { onMemory, forceMemory, memory } from './kit/memory.js';
 import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish } from './kit/speed.js';
 import { keepAwake, awake } from './kit/awake.js';
 import * as fontlib from './kit/fontlib.js';
@@ -181,7 +182,7 @@ function makeSlide(def){
   // a pocket game draws on its own small canvas, one canvas pixel per game pixel; present() copies that up to the card
   if(isPixel(def)){s.out=s.ctx;s.lcd=lcdOf(def);s.off=document.createElement('canvas');s.off.width=def.w;s.off.height=def.h;s.ctx=s.off.getContext('2d',s.lcd&&s.lcd.ghost?{willReadFrequently:true}:undefined)}
   s.api={
-    score:n=>{s.score=n;s.scoreEl.textContent=n;if(def.goal&&n>=def.goal)win(s)},
+    score:n=>{s.score=n;badge(s,n);if(def.goal&&n>=def.goal)win(s)},
     over:()=>gameOver(s),
     win:()=>win(s),                                     // for games with a natural win (cleared the board, etc.)
     has:id=>!!(s.run&&s.run.items.has(id)),             // is this shop item active for the current run?
@@ -373,7 +374,7 @@ function prepRound(s){
   const t0=performance.now();
   s.stale=false;if(!resetGame(s)){roundEnded(s.def.id);return null}
   s.resetMs=performance.now()-t0;   // (a long one: the loading screen goes up before it the next time)
-  s.score=0;s.scoreEl.textContent='0';
+  s.score=0;badge(s,0);
   return ready;
 }
 // ...and the round itself: from here the game is updated and takes touches.
@@ -526,7 +527,7 @@ function gameOver(s){
 }
 // later: the card is being swiped away, so its game resets (which can rebuild a whole 3D level) once
 // the swipe has settled, not in the frame the swipe starts (Play resets it anyway if it comes first)
-function resetSlide(s,later=false){dropReady(s);if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;s.scoreEl.textContent='0';
+function resetSlide(s,later=false){dropReady(s);if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;badge(s,0);
   if(later){s.stale=true;renderOverlay(s);whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}});return}
   s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}
 function goPrev(s){
@@ -634,6 +635,9 @@ history.onChange((id,w)=>{if(w&&!rerankDue){rerankDue=true;whenCalm(()=>{rerankD
 // speed.offscreen tells the 3D kits this card isn't the one being played: draw it without taking the shared
 // 3D canvas or the frame-rate tuning away from the card on screen (src/kit/hd3d.js).
 const usesHD=d=>d.era==='nextgen'||d.era==='ar'||d.era==='board';
+// The score badge's text, changed only when the score shown changes: some games tell the app their score
+// every frame, and new text in the page makes the phone lay the page out again (a layout each frame for nothing)
+function badge(s,n){const t=''+n;if(s.badgeText!==t){s.badgeText=t;s.scoreEl.textContent=t}}
 // The score badge's box in the game's own units, roomy enough for a 4-digit score, so a game can keep
 // its HUD out from under it: { x, y, w, h, bottom }. Measured from the page (it moves with the style,
 // the screen size and folding), kept for a quarter second, with a guess when the card isn't laid out.
@@ -698,7 +702,9 @@ function paint(s){
   // (Next Gen and AR cards painted off screen draw no 3D then: hd3d.js paints their picture in once the feed is still)
 }
 // Always keep AHEAD games downloaded and ready below the one you're on, so swiping never waits.
-const AHEAD=5;
+// When the phone runs short of memory (src/kit/memory.js) the feed keeps fewer cards ready below and
+// behind (feedWindow), as each holds a canvas and a whole game.
+let AHEAD=5;
 // The fresh catalogue arrived after the feed started from the saved one. New games join this cycle.
 // Games whose category changed leave the queue, and the slides waiting below you, of a tab they no longer
 // belong to, and slides waiting below you are rebuilt with any changed details.
@@ -869,7 +875,19 @@ function setActive(s){
 // them: every card holds a canvas and a whole game, so a long session would keep using more memory
 // until the phone closes the app. Older cards are dropped a few at a time, once the feed has
 // settled, and the scroll position is corrected in the same frame so nothing on screen moves.
-const BEHIND=8,PRUNE_BATCH=4;
+let BEHIND=8,PRUNE_BATCH=4;
+// memory level (0 fine .. 3 critical) -> [cards ready below, cards kept behind, drop behind in batches of]
+const WINDOW=[[5,8,4],[4,4,2],[2,2,1],[1,1,1]];
+function feedWindow(level,was){
+  [AHEAD,BEHIND,PRUNE_BATCH]=WINDOW[level]||WINDOW[0];
+  if(level<=was)return topUpLater();   // easing off: build back up when calm
+  // short of memory: let go of the cards furthest below now (their games go back to the front of the
+  // queue, to come again), and of the ones behind once the feed is still
+  const i=active?slides.indexOf(active):0,extra=slides.slice(i+1+Math.max(1,AHEAD));
+  for(const s of extra.reverse()){slides.splice(slides.indexOf(s),1);dropSlide(s);queue.unshift(GAMES.find(g=>g.id===s.def.id)||s.def)}
+  schedulePrune(0);
+}
+onMemory(feedWindow);
 let pruneT=0,touches=0;
 addEventListener('pointerdown',()=>{touches++;touchAt=performance.now()},true);
 for(const ev of ['pointerup','pointercancel'])addEventListener(ev,()=>{touches=Math.max(0,touches-1);touchAt=performance.now()},true);
@@ -928,7 +946,7 @@ function hotSwap(d){
     try{s.game.dispose?.()}catch(_){}release(s);
     KEPT.delete(g);s.def=g;s.w=g.w;s.h=g.h;bootGame(s,false);fit(s);
     if(playing&&snap!==undefined&&s.game.restore)try{ownedBy(s,()=>s.game.restore(snap))}catch(e){console.warn('[hot] restore',e)}
-    else if(playing){s.score=0;s.scoreEl.textContent='0'}
+    else if(playing){s.score=0;badge(s,0)}
     else if(s.state==='over'){s.state='ready';s.el.classList.remove('over');renderOverlay(s)}
     s.dirty=true;toast(s.el,'♻ '+g.title,'');
   }
@@ -1123,4 +1141,4 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
 
-if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

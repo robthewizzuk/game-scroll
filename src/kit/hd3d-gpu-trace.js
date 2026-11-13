@@ -466,6 +466,7 @@ export function traceStage(ch, sp, colT, tr) {
 /** This frame's sizes and camera for the stage (w x h: the scene's picture; scale: the rays' share of it). */
 export function traceFrame(ch, w, h, scale) {
   if (!ch.trT) return;
+  ch.trT.renderTarget.gsPart = 'reflections'; if (ch.trH) ch.trH.renderTarget.gsPart = 'reflections';   // (hd3d.js gpuTime: the chip's time by pass)
   const U = ch.trU, cam = ch.cam, hw = Math.max(4, Math.round(w * scale)), hh = Math.max(4, Math.round(h * scale));
   ch.trT.setSize(w, h); ch.trH?.setSize(hw, hh); U.half.value.set(hw, hh);
   U.invProj.value.copy(cam.projectionMatrixInverse); U.proj.value.copy(cam.projectionMatrix); U.camWorld.value.copy(cam.matrixWorld); U.view.value.copy(cam.matrixWorld).invert();

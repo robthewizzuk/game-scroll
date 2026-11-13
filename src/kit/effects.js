@@ -11,6 +11,7 @@
 // Every effect takes an optional colour or size and respects the player's sound and vibration
 // settings. feel.juice is the Juice underneath (gs.juice) for your own particles, tweens and pop-ups.
 
+import { timed } from './prof.js';
 import { Juice } from './juice.js';
 import { sounds, zzfx } from './sound.js';
 import { haptic } from './device.js';
@@ -57,3 +58,6 @@ export class Feel {
   /** Your own ZzFX sound (numbers from the ZzFX designer) plus a buzz. */
   play(zzfxParams, buzz = 'light') { if (this.sound) zzfx(...zzfxParams); this.h(buzz); return this; }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Feel.prototype, 'update', 'effects');

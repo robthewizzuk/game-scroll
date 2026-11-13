@@ -66,6 +66,15 @@ async function visitor() {
       if (!mine) v.others++;
     } catch (_) { /* the page closed while a file was on its way */ }
   });
+  // every note the page shows, as it shows it: a note fades after 3.5 s, and a busy test machine can be
+  // slower than that between the note and the look at it
+  await ctx.addInitScript(() => {
+    const said = window.__toasts = [];
+    new MutationObserver(() => {
+      const t = document.querySelector('.qa-toast.on')?.textContent;
+      if (t && t !== said.at(-1)) said.push(t);
+    }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+  });
   v.p = await ctx.newPage();
   v.p.on('pageerror', e => v.errs.push(e.message));
   if (CPU > 1) await (await ctx.newCDPSession(v.p)).send('Emulation.setCPUThrottlingRate', { rate: CPU });
@@ -86,7 +95,7 @@ const look = p => p.evaluate(() => {
   const shown = cards.find(c => Math.abs(c.getBoundingClientRect().top - top) < 40), toast = document.querySelector('.qa-toast.on');
   return { active: __gs.active ? __gs.active.def.id : null, title: __gs.active ? __gs.active.def.title : null, state: __gs.active ? __gs.active.state : null,
     shown: shown ? shown.getAttribute('aria-label') : null, at: cards.indexOf(shown), first: cards[0] ? cards[0].getAttribute('aria-label') : null,
-    cards: cards.map(c => c.getAttribute('aria-label')), toast: toast ? toast.textContent : '', query: location.search };
+    cards: cards.map(c => c.getAttribute('aria-label')), toast: toast ? toast.textContent : '', toasts: (window.__toasts || []).join(' | '), query: location.search };
 });
 const TITLE = JSON.parse(readFileSync(join(GAMES, 'manifest.json'), 'utf8')).games.find(g => g.id === ID)?.meta?.title;
 if (!TITLE) { console.error(`No game "${ID}" in src/games/`); process.exit(1); }
@@ -145,8 +154,8 @@ const tests = {
   async 'a link to a game that has been taken down opens the feed and says so'(v) {
     v.net = { without: ID, game: 60 };
     await v.p.goto(SITE + '?g=' + ID);
-    await v.p.waitForFunction(() => document.querySelector('.qa-toast.on'), null, { timeout: 15000 }).catch(() => {});
-    const said = (await look(v.p)).toast;   // (the note fades after a few seconds)
+    await v.p.waitForFunction(() => window.__toasts?.length, null, { timeout: 15000 }).catch(() => {});
+    const said = (await look(v.p)).toasts;   // (every note shown: it fades after a few seconds)
     await feedUp(v.p);
     const r = await look(v.p), bad = [];
     if (!r.active || !r.cards.length) bad.push('the feed is empty');
@@ -158,8 +167,8 @@ const tests = {
   async 'a shared game that will not download opens the feed and says so'(v) {
     v.net = { broken: true, game: 60 };
     await v.p.goto(SITE + '?g=' + ID);
-    await v.p.waitForFunction(() => document.querySelector('.qa-toast.on'), null, { timeout: 15000 }).catch(() => {});
-    const said = (await look(v.p)).toast;
+    await v.p.waitForFunction(() => window.__toasts?.length, null, { timeout: 15000 }).catch(() => {});
+    const said = (await look(v.p)).toasts;
     await feedUp(v.p);
     const r = await look(v.p), bad = [];
     if (!r.active || !r.cards.length) bad.push('the feed is empty');

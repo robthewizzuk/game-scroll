@@ -24,6 +24,7 @@
 //
 // The figure faces +z (the way Object3D.lookAt turns things). Angles are radians.
 
+import { timed } from './prof.js';
 import { Bone, BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { reach } from './characters.js';
 import { Stride } from './stride.js';
@@ -560,3 +561,6 @@ export function figure({ body = '#3a6ea5', skin = '#f1c27d', legs = '#2b2b38', s
   root.rig = new Rig({ hips, spine, head, armL, foreL: armL.userData.fore, armR, foreR: armR.userData.fore, legL, shinL: legL.userData.shin, legR, shinR: legR.userData.shin }, { height: 1.8 });
   return root;
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Rig.prototype, 'update', 'poses');

@@ -39,7 +39,16 @@ function read(gp) {
     held: n => s.now.has(n), pressed: n => s.now.has(n) && !s.prev.has(n), released: n => !s.now.has(n) && s.prev.has(n),
   };
 }
-function list() { try { return [...(navigator.getGamepads?.() || [])].filter(g => g && g.connected); } catch { return []; } }
+// A browser shows a page its pads only once one has been used (a button pressed), and says so with
+// 'gamepadconnected'. Until then there is nothing to read, so the pads are asked for only now and then
+// (in case that news was missed): asking every frame cost the feed's frame a call into the browser (and
+// now and then a wait on it) on every phone, almost none of which has a pad.
+let seen = typeof navigator !== 'undefined' && typeof addEventListener === 'function' ? false : true, idle = 0;
+if (!seen) addEventListener('gamepadconnected', () => { seen = true; });
+function list() {
+  if (!seen && (idle = (idle + 1) % 120)) return [];
+  try { const l = [...(navigator.getGamepads?.() || [])].filter(g => g && g.connected); if (l.length) seen = true; return l; } catch { return []; }
+}
 /** The first connected controller (or the one for player `i`), or null. */
 export function pad(i) { const l = list(); const g = i == null ? l[0] : l.find(p => p.index === i) || l[i]; return g ? read(g) : null; }
 /** Every connected controller (local multiplayer). */

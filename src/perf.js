@@ -10,7 +10,8 @@
 //   on screen, so that's sent as a crash for the game that was open. On Android 11 and later the
 //   phone's own record of why the app ended is used instead (src/exits.js): it gives the reason
 //   (crashed, out of memory, not responding) and the time, and leaves out the app being closed by
-//   the player.
+//   the player. The marker also says how short of memory the phone was (src/kit/memory.js), and a
+//   close reported from it says "(memory was low)" when it was.
 // - Heat: how much of the timed play was with the phone warm or hot (src/kit/power.js), since a
 //   hot phone slows itself down and that isn't the game's doing.
 //
@@ -24,7 +25,8 @@ import { store } from './util.js';
 import { HEARTS_URL, REAL, deviceId } from './hearts.js';
 import { playstats } from './playstats.js';
 import { power } from './kit/power.js';
-import { appHealth, judgeExit } from './exits.js';
+import { memory, onMemory } from './kit/memory.js';
+import { appHealth, judgeExit, memoryNote } from './exits.js';
 
 const PENDING_KEY = 'gs_perf_pending', LOCAL_KEY = 'gs_perf_local', GLOBAL_KEY = 'gs_perf_global', OPEN_KEY = 'gs_perf_open';
 const EXIT_KEY = 'gs_perf_exit', BUILD_KEY = 'gs_perf_build';   // the newest exit record already looked at; the build that ran last
@@ -42,8 +44,15 @@ let current = '', curVer = '', playing = false, lastFrame = 0, flushing = false,
 const sending = () => (REAL || !!perf.outbox) && !!HEARTS_URL && playstats.enabled;
 /** The version of a game's file (the short hash from the catalogue), '' for a game built into the app. */
 const verOf = id => { try { return String((id && perf.versionOf && perf.versionOf(id)) || '').slice(0, 16); } catch (_) { return ''; } };
-const key = (id, v) => id + '|' + form() + '|' + v;
-const form = () => Math.min(innerWidth, innerHeight) >= 600 ? 'wide' : 'phone';
+// (the key of the frame being counted is kept, so a frame makes no new string)
+let kId = null, kVer = null, kForm = null, kStr = '';
+const key = (id, v) => { const f = form(); if (id !== kId || v !== kVer || f !== kForm) { kId = id; kVer = v; kForm = f; kStr = id + '|' + f + '|' + v; } return kStr; };
+// Read when the window changes size (folding, unfolding, turning), not on every frame: on a phone, where
+// the page has a viewport, innerWidth first lays the page out again if anything in it changed (a new
+// score), so asking it each frame forced that layout in the middle of the frame's own work.
+let formNow = '';
+const form = () => formNow || (formNow = Math.min(innerWidth, innerHeight) >= 600 ? 'wide' : 'phone');
+if (typeof addEventListener === 'function') addEventListener('resize', () => { formNow = ''; });
 // Frames come in at 60-120 a second: save to storage at most every few seconds.
 const save = () => { if (!saveT) saveT = setTimeout(() => { saveT = 0; store.set(PENDING_KEY, pending); store.set(LOCAL_KEY, local); }, 3000); };
 
@@ -77,7 +86,7 @@ function addError(kind, game, msg, where, v = game && game === current ? curVer 
   save();
 }
 
-function openMarker() { store.set(OPEN_KEY, { game: current, ver: curVer, playing, app: BUILD, at: Date.now() }); }
+function openMarker() { store.set(OPEN_KEY, { game: current, ver: curVer, playing, app: BUILD, at: Date.now(), mem: memory.level }); }
 
 /**
  * How the last session ended. was: the open marker it left (null if it had gone to the background).
@@ -102,8 +111,16 @@ async function lastTime(was, health) {
     if (newest > seen) store.set(EXIT_KEY, newest);
   }
   // Nothing from the phone about it (iPhone, the web, Android 10 and older): the marker is all there is.
-  if (!told && was && was.app === BUILD) addError('crash', was.game || '', was.playing ? 'App closed while playing' : 'App closed while open', '', was.ver || '');
+  if (!told && was && was.app === BUILD) addError('crash', was.game || '', (was.playing ? 'App closed while playing' : 'App closed while open') + memoryNote(was), '', was.ver || '');
   store.set(PENDING_KEY, pending);
+}
+
+function count(c, dt, work, budget, heat) {
+  c.f++; c.ms += dt; c.w += Math.min(work, dt);
+  if (dt >= Math.max(SLOW_MS, budget * 1.5)) c.sl++;
+  if (dt >= FREEZE_MS) c.h++;
+  if (dt > c.x) c.x = dt;
+  if (heat >= 0) { c.hk = (c.hk || 0) + dt; if (heat === 1) c.hw = (c.hw || 0) + dt; else if (heat > 1) c.hh = (c.hh || 0) + dt; }
 }
 
 export const perf = {
@@ -123,13 +140,8 @@ export const perf = {
     if (dt <= 0 || dt > GAP_MS) return;   // first frame, or the app was away
     if (perf.tap) try { perf.tap.frame(id, dt, work, budget); } catch (_) { /* the listener's own trouble */ }
     const heat = power.thermal == null ? -1 : power.heat;   // -1: this phone doesn't say (the web)
-    for (const c of [pending.games[key(id, id === current ? curVer : verOf(id))] ||= blank(), local[id] ||= blank()]) {
-      c.f++; c.ms += dt; c.w += Math.min(work, dt);
-      if (dt >= Math.max(SLOW_MS, budget * 1.5)) c.sl++;
-      if (dt >= FREEZE_MS) c.h++;
-      if (dt > c.x) c.x = dt;
-      if (heat >= 0) { c.hk = (c.hk || 0) + dt; if (heat === 1) c.hw = (c.hw || 0) + dt; else if (heat > 1) c.hh = (c.hh || 0) + dt; }
-    }
+    count(pending.games[key(id, id === current ? curVer : verOf(id))] ||= blank(), dt, work, budget, heat);
+    count(local[id] ||= blank(), dt, work, budget, heat);
     save();
   },
   /** Something paused frames on purpose (a dialog): don't count the gap as a freeze. */
@@ -210,5 +222,7 @@ if (typeof document !== 'undefined') {
     else { lastFrame = 0; openMarker(); perf.load(); }
   });
   addEventListener('pagehide', () => store.set(OPEN_KEY, null));
+  // the marker says how short of memory the phone was, so a close it leaves behind can say so
+  onMemory(() => { if (document.visibilityState !== 'hidden') openMarker(); });
   setInterval(() => { if (document.visibilityState === 'visible') perf.flush(); }, FLUSH_MS);
 }

@@ -18,6 +18,7 @@
 // draw the same thing, and ground with no marks on it costs nothing. Every mark is also kept in a list, so
 // a trail is still there when you come back to it, and a game can read it (marks.trail(): who went where).
 // Kit use only: games reach it as gs.outdoors.Marks.
+import { timed } from './prof.js';
 import { BufferAttribute, BufferGeometry, Color, DataTexture, LinearFilter, Mesh, MeshStandardMaterial, RGBAFormat, RepeatWrapping, SRGBColorSpace, UnsignedByteType, Vector3, Vector4 } from 'three';
 
 const TEX = 128, APRON = 2, T = TEX - APRON * 2;   // a tile's pictures are TEX texels a side: T of its own, and APRON of its neighbours' round them (so the two meet without a seam)
@@ -595,3 +596,6 @@ export class Marks {
     if (this.grass) { if (this.land?.parting === this.grass) { this.land.parting = null; for (const m of this.land.meadows || []) m.userData.meadow?.look?.part?.(null); } this.grass.dispose(); }
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Marks.prototype, 'update', 'ground marks');

@@ -31,6 +31,7 @@
 // player, come from Slop New York by Mr.doob (MIT, github.com/mrdoob/slop-newyork); the city here is
 // made up, with no map data.
 
+import { timed } from './prof.js';
 import {
   BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, Color, CylinderGeometry, DynamicDrawUsage, Group,
   IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, LinearMipmapLinearFilter, Matrix4, Mesh,
@@ -1148,3 +1149,6 @@ export class City {
   }
 }
 const norm = (x, z) => { const l = Math.hypot(x, z) || 1; return { x: x / l, z: z / l }; };
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(City.prototype, 'update', 'city');

@@ -2,7 +2,7 @@
   "name": "power-state",
   "version": "0.1.0",
   "private": true,
-  "description": "Game Scroll's phone heat and power saving state: Android's thermal status and headroom and battery saver, iPhone's thermal state and Low Power Mode. Read by src/kit/power.js for frame generation's power saving.",
+  "description": "Game Scroll's phone heat, power saving and memory state: Android's thermal status and headroom, battery saver, free memory and trim warnings; iPhone's thermal state, Low Power Mode and memory warnings. Read by src/kit/power.js (frame generation's power saving) and src/kit/memory.js (the memory guard).",
   "main": "index.js",
   "files": ["index.js", "Package.swift", "ios/Sources", "android/src/main", "android/build.gradle"],
   "capacitor": {

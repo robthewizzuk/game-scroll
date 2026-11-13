@@ -518,6 +518,27 @@ if (ClusteredLightsNode.prototype.shadowNode === undefined) ClusteredLightsNode.
 // over. With shadows off the node now answers "no shadow". look-compare's 'shadow-off' scene draws it.)
 const shadowSetup = ShadowNode.prototype.setup;
 ShadowNode.prototype.setup = function (builder) { return builder.renderer.shadowMap.enabled === false ? float(1) : shadowSetup.call(this, builder); };
+// Blend shapes in the motion picture. (three r187 moves a morphing mesh's points by its shapes but leaves
+// where they were a frame ago unmoved by them, so the motion picture held each shape's whole offset every
+// frame, still or not: fur.js's shells, pushed out along the normal by a shape, said they were sinking back
+// into the skin; a face held in a smile said it was going back to rest. SGSR 2, motion blur and frame
+// generation all move pixels by that picture: fur and faces swam and smeared, and frame generation's made
+// frames were worse there than showing the last frame again: scripts/framegen-test.cjs --kinds shapes.)
+// Where a pass writes motion, a frame ago's points now take the shapes too (three's own morph code run
+// once more, before the skin's bones, which then move both as before). A shape changing between frames
+// (a mouth opening) is not followed as motion: its pixels blend from one frame to the next, as unmarked
+// changes do.
+const positionSetup = NodeMaterial.prototype.setupPosition;
+NodeMaterial.prototype.setupPosition = function (builder) {
+  const { object, geometry } = builder;
+  if (!geometry?.morphAttributes?.position || !object?.morphTargetInfluences || !builder.needsPreviousData()) return positionSetup.call(this, builder);
+  TSL.morphReference(object);
+  positionPrevious.assign(positionLocal);
+  // the points and normals back as the geometry has them, for three's own pass (setupPosition)
+  positionLocal.assign(positionGeometry);
+  if (geometry.morphAttributes.normal && geometry.hasAttribute('normal')) TSL.normalLocal.assign(TSL.normalGeometry);
+  return positionSetup.call(this, builder);
+};
 // area lights' LTC tables (hd3d.js panel), once they've loaded
 export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
 // Soft shadows that harden where things touch (hd3d.js sun().softShadows): PCSS (Fernando, NVIDIA 2005)
@@ -1223,6 +1244,7 @@ export function gpuContact(cs) {
 // The bright parts at the tier's bloom size (half the picture), shrunk four more times, then grown back
 // up, each step adding a softer copy. Three's own bloom node spreads much wider and lifts dark rooms,
 // so this is the WebGL chain step for step. size(w, h, scale) each frame; out is the sum at the top level.
+const NO_FXK = { reflections: 1, vol: 1, shafts: 1 };   // (render(o) without o.fxK: every effect at its tier's size)
 function bloomChain(src, aoF) {
   const N = 5, px = [], M = [];
   const lvl = (fn, i) => { const p = uniform(new Vector2(1, 1)); px[i] = p; return fn(p); };
@@ -1566,7 +1588,7 @@ export class GpuChain {
         const gt = n.getGINode();
         g = Fn(() => vec4(C.sample(uv()).rgb.add(dif.sample(uv()).rgb.mul(gt.sample(uv()).rgb).mul(U.giK)), 1))();
       }
-      this.giT = rtt(g, 1, 1, { type: HalfFloatType, depthBuffer: false }); colT = this.giT;
+      this.giT = rtt(g, 1, 1, { type: HalfFloatType, depthBuffer: false }); colT = this.giT; this.giT.renderTarget.gsPart = 'bounce light';
     }
     // reflections: three's screen-space reflections on the things the game marked, added to the scene's colour
     // (after the bounce light, before the ambient occlusion and everything else the chain does to the picture)
@@ -1604,13 +1626,13 @@ export class GpuChain {
         });
         return vec4(exp(V.k.x.negate().mul(L).mul(sum).div(V.steps)).oneMinus(), 0, 0, 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
-      const volT = this.volT, vpx = this.volPx = uniform(new Vector2(1, 1));
+      const volT = this.volT, vpx = this.volPx = uniform(new Vector2(1, 1)); volT.renderTarget.gsPart = 'volumetric light';
       this.baseT = rtt(Fn(() => {
         const q = uv(), a = volT.sample(q.add(vpx.mul(vec2(-1, -1)))).r.add(volT.sample(q.add(vpx.mul(vec2(1, -1)))).r)
           .add(volT.sample(q.add(vpx.mul(vec2(-1, 1)))).r).add(volT.sample(q.add(vpx.mul(vec2(1, 1)))).r);
         return vec4(colT.sample(q).rgb.mul(aoF).add(V.tint.mul(a.mul(.25))), 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
-      src = this.baseT; srcAo = float(1);
+      src = this.baseT; srcAo = float(1);   // (this full-size mix, which also lays the ambient occlusion on, counts as 'effects')
     }
     // depth of field (v.focus; the views turn it on once they use it, so focusing doesn't rebuild the
     // chain): what's in focus stays, the rest is blurred by up to lens.w pixels, into a picture of its own
@@ -1631,7 +1653,7 @@ export class GpuChain {
         });
         return vec4(out.mul(SA), 1);
       })();
-      this.dofT = rtt(dof, 1, 1, { depthBuffer: false, type: HalfFloatType }); src = this.dofT; srcAo = float(1);
+      this.dofT = rtt(dof, 1, 1, { depthBuffer: false, type: HalfFloatType }); src = this.dofT; srcAo = float(1); this.dofT.renderTarget.gsPart = 'depth of field';
     }
     // motion blur (v.motionBlur; hd3d.js MB): each pixel smeared along its move on screen as the camera moved
     if (mbOn) {
@@ -1670,7 +1692,7 @@ export class GpuChain {
         const perThing = select(length(dv.div(U.px)).lessThan(.75), base, acc.div(MB_N));
         return vec4(select(V.mbObj.greaterThan(.5), perThing, camOnly), 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
-      src = this.mbT; srcAo = float(1);
+      src = this.mbT; srcAo = float(1); this.mbT.renderTarget.gsPart = this.mbTile.renderTarget.gsPart = 'motion blur';
     }
     // gs.fx3d's screen effects (outline, glitch, trails, pixelate), in the order the game added them
     if (this.fxSlots.length) { src = fxStages(this, src, aoOn && srcAo === aoF ? srcAo : null, U); srcAo = float(1); }
@@ -1688,7 +1710,7 @@ export class GpuChain {
         for (let i = 1; i <= 24; i++) { sum = sum.add(shM.sample(q.sub(dd.mul(i))).rgb.mul(w)); w *= .955; }
         return vec4(sum.div(24).mul(2.2), 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
-      shafts = this.shB.sample(screenUV).rgb.mul(U.shaftTint).mul(U.shaft);
+      shafts = this.shB.sample(screenUV).rgb.mul(U.shaftTint).mul(U.shaft); this.shM.renderTarget.gsPart = this.shB.renderTarget.gsPart = 'light shafts';
     }
     if (src !== colT || shaftsOn) lit = src.sample(screenUV).rgb.mul(srcAo).add(shafts);
     this.bloomN = bloomChain(src, srcAo); this.bloomK = uniform(.56);
@@ -1793,14 +1815,16 @@ export class GpuChain {
       if (o.gi) { U.giK.value = o.gi.strength; if (o.gi.rebuild && this.giN?.volume) this.giN.needsUpdate = true; }
       U.glare.value = o.glare; U.sunUV.value.set(o.sunUV.x, 1 - o.sunUV.y); U.sunCol.value.copy(o.sunCol); U.aspect.value = o.aspect;
       U.px.value.set(1 / o.w, 1 / o.h);
-      fxFrame(this, o.w, o.h, k); if (o.refl) { reflFrame(this, o.w, o.h, o.refl.scale * k); if (this.tracer) TR.traceFrame(this, o.w, o.h, o.refl.scale); }
+      // (o.fxK: the effects hd3d.js's ladder draws smaller by their cost, FXS; only picture sizes change)
+      const fk = o.fxK || NO_FXK, rs = o.refl ? o.refl.scale * fk.reflections : 0;
+      fxFrame(this, o.w, o.h, k); if (o.refl) { reflFrame(this, o.w, o.h, rs * k); if (this.tracer) TR.traceFrame(this, o.w, o.h, rs); }
       if (o.flare) { const F = this.F, f = o.flare; F.tint.value.copy(f.tint); F.th.value = f.threshold; F.sp.value = f.spacing; F.fade.value = f.fade; F.k.value = f.strength; F.dk.value = f.dirt; F.dirt.value = f.dirtTex; }
       if (this.lutN) { this.lutN.lutNode.value = o.lut; this.lutN.size.value = o.lut.image.width; U.lutK.value = Math.min(1, o.lutK ?? 1); }
       if (this.dofT) { this.dofT.setSize(o.w, o.h); const L = o.lens; U.lens.value.set(L ? L[0] : 0, L ? L[1] : 0, L ? L[2] : 0, L ? L[3] : 0); U.cn.value = o.near; U.cf.value = o.far; }
       const V = this.V, cam = this.cam;
       if (this.volT || this.mbT) { V.invProj.value.copy(cam.projectionMatrixInverse); V.camWorld.value.copy(cam.matrixWorld); }
       if (this.volT) {
-        const m = o.vol; this.volT.setSize(Math.max(8, Math.round(o.w / 2)), Math.max(8, Math.round(o.h / 2))); this.baseT.setSize(o.w, o.h);
+        const m = o.vol, vk = (o.fxK || NO_FXK).vol; this.volT.setSize(Math.max(8, Math.round(o.w / 2 * vk)), Math.max(8, Math.round(o.h / 2 * vk))); this.baseT.setSize(o.w, o.h);
         this.volPx.value.set(1 / this.volT.renderTarget.width, 1 / this.volT.renderTarget.height);
         if (m) {
           this.volShadow.value = m.map || NO_SHADOW; if (m.shadowM) V.shM.value = m.shadowM; cam.getWorldPosition(V.camPos.value);
@@ -1808,7 +1832,7 @@ export class GpuChain {
         } else { V.tint.value.setRGB(0, 0, 0); V.steps.value = 1; }
       }
       if (this.mbT) { this.mbT.setSize(o.w, o.h); { const tw = Math.max(1, Math.ceil(o.w / 16)), th = Math.max(1, Math.ceil(o.h / 16)); this.mbTile.setSize(tw, th); this.mbTilePx.value.set(1 / tw, 1 / th); } const m = o.mb; if (m) { V.prevVP.value.copy(m.prevVP); V.mb.value.copy(m.mb); V.mbObj.value = m.obj; } else V.mb.value.set(0, 0, 0, 1); }
-      if (this.shM) { const bw = Math.max(8, Math.round(o.w / 4)), bh = Math.max(8, Math.round(o.h / 4)); this.shM.setSize(bw, bh); this.shB.setSize(bw, bh); U.shaft.value = o.shaft || 0; if (o.shaftCol) U.shaftTint.value.copy(o.shaftCol);
+      if (this.shM) { const sk = (o.fxK || NO_FXK).shafts, bw = Math.max(8, Math.round(o.w / 4 * sk)), bh = Math.max(8, Math.round(o.h / 4 * sk)); this.shM.setSize(bw, bh); this.shB.setSize(bw, bh); U.shaft.value = o.shaft || 0; if (o.shaftCol) U.shaftTint.value.copy(o.shaftCol);
         const t = Math.max(1.1, o.shaftAt ?? 1.1), lit = t > 1.1; U.shThr.value = t; U.shHi.value = lit ? t * 1.2 : t * 2.2; U.shCap.value = lit ? t * 1.2 : 1e9; U.shGain.value = 1.1 / t; }
     }
     // (ray traced reflections: the first frames with new lists on the chip are a trial; a chip that won't take them goes back to screen-space ones)
