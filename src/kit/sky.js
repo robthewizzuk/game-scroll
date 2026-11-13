@@ -30,7 +30,7 @@
 import { timed } from './prof.js';
 import { AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, MeshBasicMaterial, Points, PointsMaterial, Scene, ShaderMaterial, SphereGeometry, Vector3, Vector4 } from 'three';
 import { prefs } from './prefs.js';
-import { HD, noiseTex } from './hd3d.js';
+import { HD, noiseTex, Particles } from './hd3d.js';
 import { Cover } from './cover.js';
 import { Spray } from './water.js';
 
@@ -256,9 +256,11 @@ export class Sky {
  * .snow (0..1) are yours to read, or to set for a level that starts wet or white; wetAt(p) and snowAt(p)
  * answer for one spot. water: a gs.outdoors.Water (or a list) the rain should fall on too. In a Next Gen
  * view the look is part of its air (view.air()), so make the weather with the level, before the first frame.
+ * There, as it rains, water runs down walls and windows, beads on glass and paint and rings the puddles, and
+ * drops land on the lens while the camera looks out under the open sky (lens: false keeps it dry; view.drops).
  */
 export class Weather {
-  constructor(view, { kind = 'rain', amount = 1, area, wind = [0, 0], max = 900, color, flake, level = null, ground = null, cover = null, water = null, soak = 20, dry = 90, settle = 40, melt = 150, deep = .25, hops = 96 } = {}) {
+  constructor(view, { kind = 'rain', amount = 1, area, wind = [0, 0], max = 900, color, flake, level = null, ground = null, cover = null, water = null, soak = 20, dry = 90, settle = 40, melt = 150, deep = .25, hops = 96, lens = true } = {}) {
     this.view = view; this.wind = wind; this.max = max; this.area = area ?? Math.min(radiusOf(view.cam) * .35, (view.cam?.far ?? 100) > 1000 ? 400 : 30);
     this.flashLeft = 0; this.nextFlash = 3 + Math.random() * 5; this.flashI = 0; this.onFlash = null; this.t = 0;
     this.off = new Float32Array(max * 3); for (let i = 0; i < this.off.length; i++) this.off[i] = Math.random();
@@ -276,13 +278,16 @@ export class Weather {
     // the world it changes: what the sky can see, and how wet and how white that is
     this.world = !!(level || ground || cover);
     this.ownCover = !cover?.at; this.cover = cover?.at ? cover : (level && level !== true) || ground || cover ? new Cover({ level, ground, ...(cover || {}) }) : null;   // (cover: one of your own to share, or its settings)
-    Object.assign(this, { soak, dry, settle, melt, deep }); this.wet = 0; this.pools = 0; this.snow = 0; this.rain = 0; this.snowing = 0;
+    Object.assign(this, { soak, dry, settle, melt, deep }); this.wet = 0; this.pools = 0; this.snow = 0; this.rain = 0; this.snowing = 0; this.runT = 0;
     this.waters = water ? [].concat(water) : [];
     this.air = this.world && typeof view.air === 'function' && !isToon(view) ? view.air() : null;
-    this.shown = { wet: 0, snow: 0, pools: 0, cover: this.cover };   // (what the view's air draws: hd3d.js airUniforms)
+    this.shown = { wet: 0, snow: 0, pools: 0, cover: this.cover, rain: 0, runT: 0 };   // (what the view's air draws: hd3d.js airUniforms)
     if (this.air) this.air.world = this.shown;
     this.hops = this.air && hops > 0 ? new Spray(hops, color ?? '#dfe9f2') : null; this.seed = 9151;
     if (this.hops) { view.scene.add(this.hops.mesh); this.floor = (x, z) => this.landAt(x, z); }
+    // rain on the lens of a Next Gen view (lens-drops.js): turned on now, so its shaders are built with it before the first frame
+    this.lens = lens && view.drops ? view.drops : null; if (this.lens) this.lens.on = true;
+    this.watched = []; this.mist = null; this.flung = null; this.road = 0;   // (spray off tyres: watch())
     this.set(kind, amount);
   }
   set(kind, amount = this.amount ?? 1) {
@@ -327,6 +332,15 @@ export class Weather {
       }
       p.needsUpdate = true; this.snowMesh.geometry.setDrawRange(0, n);
     }
+    if (this.lens) {   // drops land on the lens while it rains and the camera looks out under the open sky, more facing up or into the wind
+      let rate = 0;
+      if (this.rain > 0 && cam?.getWorldDirection) {
+        const d = cam.getWorldDirection(LOOK), w = Math.hypot(wx, wz), into = w > 0 ? Math.max(0, -(d.x * wx + d.z * wz) / w) * Math.min(1, w / 6) : 0;
+        rate = this.rain * 6 * Math.max(0, Math.min(1, .2 + d.y * 1.4 + into * .6)) * (this.open(cam.position) ? 1 : 0);
+      }
+      this.lens.update(dt, rate);
+    }
+    if (this.mist) this.tyres(dt);
     if (this.kind === 'storm') { this.nextFlash -= dt; if (this.nextFlash <= 0) { this.flash(); this.nextFlash = 4 + Math.random() * 7 / Math.max(.3, this.amount); } }
     const h = this.view.hemi;
     if (this.flashLeft > 0) {
@@ -344,7 +358,8 @@ export class Weather {
     if (rain > 0) { this.wet = up(this.wet, dt / this.soak * rain); if (this.wet > .5) this.pools = up(this.pools, dt / (this.soak * 2) * rain); }
     else { if (!(this.snow > 0)) this.wet = down(this.wet, dt / this.dry); this.pools = down(this.pools, dt / (this.dry * 1.6)); }
     const cv = this.cover; if (cv) cv.place(cx, cy, cz).update();
-    const S = this.shown; S.wet = this.wet; S.snow = this.snow; S.pools = this.pools; S.cover = cv;
+    this.runT = (this.runT + dt * Math.max(rain, this.wet * .5)) % 4096;   // (the clock running water keeps: on while it rains, slowing as it dries)
+    const S = this.shown; S.wet = this.wet; S.snow = this.snow; S.pools = this.pools; S.cover = cv; S.rain = rain; S.runT = this.runT;
     for (const w of this.waters) w.rain = rain;
     const h = this.hops;
     if (h) {
@@ -358,6 +373,63 @@ export class Weather {
       h.update(dt, this.floor);
     }
   }
+  /**
+   * From now on this vehicle throws spray off its tyres while the road under it is wet: a mist that hangs in the air behind it and drops
+   * flung off the tread, from about 4 m/s and all of it by 25. thing: a gs.models.vehicle (behind each of its wheels), a World3D.vehicle()
+   * made with its wheel meshes, or anything else that moves (an Object3D; o.wheels: where its tyres touch, [[x, z], ...] in its own frame,
+   * nose along -z; default its two back corners). o: amount (1: how much spray), height (of it, metres: a roof higher than this over the
+   * road keeps it dry; from the vehicle, else 2). Next Gen views only. Returns the thing.
+   */
+  watch(thing, o = {}) {
+    if (!this.view.parts || thing.kind === 'boat' || thing.kind === 'train') return thing;   // (a boat's wake is gs.outdoors Water's; rails throw no spray)
+    this.unwatch(thing);
+    if (!this.mist) { this.mist = new Particles(this.view, { max: 600, additive: false }); this.flung = new Spray(160, '#dfe9f2'); this.flung.mesh.name = 'weather:tyre spray'; this.view.scene.add(this.flung.mesh); }
+    const wheels = thing.wheels?.length ? thing.wheels : thing.wheelMeshes?.filter(Boolean).length ? thing.wheelMeshes.filter(Boolean) : null;
+    this.watched.push({ thing, o, wheels, was: null, vx: 0, vz: 0, owed: 0, drops: 0 });
+    return thing;
+  }
+  unwatch(thing) { this.watched = this.watched.filter(w => w.thing !== thing); return this; }
+  // spray off the tyres of what is watched: mist and drops behind each wheel on a wet road, by how fast it goes
+  tyres(dt) {
+    const M = this.mist, F = this.flung, fog = this.view.scene.fog?.color, col = this.mistCol ||= [.75, .78, .8];
+    if (fog) { col[0] = Math.min(1, fog.r * 1.04 + .02); col[1] = Math.min(1, fog.g * 1.04 + .02); col[2] = Math.min(1, fog.b * 1.04 + .02); }   // (the colour of the air it hangs in)
+    const R = () => (this.seed = (this.seed * 16807) % 2147483647) / 2147483647, W = this.wind, wx = W.x ?? W[0] ?? 0, wz = W.z ?? W[1] ?? 0;
+    let road = 0, roads = 0;
+    for (const w of this.watched) {
+      const t = w.thing, obj = t.isObject3D ? t : t.mesh || t.chassis?.mesh; if (!obj || dt <= 0) continue;
+      const p = obj.getWorldPosition(TP);
+      if (!w.was || Math.hypot(p.x - w.was.x, p.z - w.was.z) > Math.max(3, 90 * dt)) { (w.was ||= new Vector3()).copy(p); w.vx = w.vz = 0; continue; }   // (the first look, or it was moved there)
+      const k0 = 1 - Math.exp(-dt * 10); w.vx += ((p.x - w.was.x) / dt - w.vx) * k0; w.vz += ((p.z - w.was.z) / dt - w.vz) * k0; w.was.copy(p);
+      const sp = Math.hypot(w.vx, w.vz); if (sp < 4 || t.grounded === false) continue;
+      const e = obj.matrixWorld.elements, sc = Math.hypot(e[0], e[1], e[2]) || 1, dx = w.vx / sp, dz = w.vz / sp, sx = -dz, sz = dx;   // (the way it goes, and square to it)
+      const tall = w.o.height ?? t.size?.height ?? 2;
+      // where its tyres touch the road
+      const spots = TS; spots.length = 0;
+      if (w.wheels) for (const wh of w.wheels) { const q = wh.getWorldPosition(TQ), r = (wh.radius || t.radius || .35) * sc; spots.push(q.x, q.y - r, q.z, r); }
+      else for (const [lx, lz] of w.o.wheels ?? (() => { const L = (t.size?.length ?? 3.6) * .4, X = t.belts?.x ?? (t.size?.width ?? 1.7) * .4; return [[-X, L], [X, L]]; })()) { TQ.set(lx, 0, lz).applyMatrix4(obj.matrixWorld); spots.push(TQ.x, p.y, TQ.z, .33 * sc); }
+      for (let i = 0; i < spots.length; i += 4) {
+        const x = spots[i], y = spots[i + 1], z = spots[i + 2], r = spots[i + 3], back = (x - p.x) * dx + (z - p.z) * dz < 0 ? 1 : .35;   // (the back wheels throw most: they run in the front ones' wet track)
+        if (this.world && !(this.wet > 0)) break;
+        const top = this.cover ? this.cover.at(x - dx * 2, z - dz * 2) : -Infinity, open = !(top > y + tall + .3);   // (a tunnel or a bridge over the road, not the car itself)
+        const k = (this.world ? (open ? this.wet * (1 + this.pools * .4) : 0) : this.rain) * Math.min(1, (sp - 4) / 21) * (w.o.amount ?? 1);
+        if (k <= .02) continue;
+        road += y; roads++;
+        w.owed += k * dt * 44 * back; w.drops += k * dt * 24 * back;
+        while (w.owed >= 1) {   // mist: swept up behind the tyre, left behind by it at once, hanging, spreading and thinning
+          w.owed -= 1; const a = R(), up = .5 + R() * 1.5, side = (R() - .5) * 2.4;
+          M.emit({ x: x - dx * r * (.5 + a * 1.2) + sx * (R() - .5) * .3, y: y + r * (.15 + R() * .5), z: z - dz * r * (.5 + a * 1.2) + sz * (R() - .5) * .3,
+            vx: w.vx * (.22 + R() * .25) + sx * side + wx * .3, vy: up * (.6 + k * .5), vz: w.vz * (.22 + R() * .25) + sz * side + wz * .3,
+            size: (.45 + R() * .4) * (.7 + .4 * k), grow: 3 + R() * 2, life: 1.2 + R() * 1.2, drag: 2.2, grav: .15, col, a: .12 * Math.min(1, k * 1.4), fadeIn: true, ease: 1.3, floor: y + .02 });
+        }
+        while (w.drops >= 1) {   // drops flung off the tread: up and on, falling back to the road behind it
+          w.drops -= 1; const up = 1.4 + R() * 2.6;
+          F.add(x - dx * r * .7 + sx * (R() - .5) * .2, y + r * (.5 + R() * .4), z - dz * r * .7 + sz * (R() - .5) * .2, w.vx * (.55 + R() * .3) + sx * (R() - .5) * 2, up, w.vz * (.55 + R() * .3) + sz * (R() - .5) * 2, .012 + R() * .016);
+        }
+      }
+    }
+    if (roads) this.road = road / roads;
+    M.update(dt); F.update(dt, this.roadAt ||= (x, z) => { const g = this.cover?.ground?.(x, z); return g ?? this.road; });
+  }
   // where a drop lands at x, z: the highest thing there, or the water over it (-Infinity: not known)
   landAt(x, z) { let y = this.cover ? this.cover.at(x, z) : -Infinity; for (const w of this.waters) { const wy = w.height(x, z); if (wy > y) y = wy; } return y; }
   /** Can the sky see this point (is nothing over it)? Always true with no level. */
@@ -370,13 +442,16 @@ export class Weather {
   get flashing() { return this.flashLeft > 0; }
   dispose() {
     for (const m of [this.rainMesh, this.snowMesh]) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); }
-    if (this.hops) { this.hops.mesh.removeFromParent(); this.hops.mesh.geometry.dispose(); this.hops.mesh.material.dispose(); }
+    for (const s of [this.hops, this.flung]) if (s) { s.mesh.removeFromParent(); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
+    this.mist?.dispose(); this.mist = null; this.watched.length = 0;
     if (this.air?.world === this.shown) this.air.world = null;
+    this.lens?.clear();
     if (this.cover && this.ownCover) this.cover.dispose();
     for (const w of this.waters) w.rain = 0;
   }
 }
 
+const LOOK = new Vector3(), TP = new Vector3(), TQ = new Vector3(), TS = [];
 // per-frame work, timed while the frame lab is open (prof.js)
 timed(Sky.prototype, 'update', 'sky and weather');
 timed(Weather.prototype, 'update', 'sky and weather');

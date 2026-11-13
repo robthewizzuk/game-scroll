@@ -57,6 +57,7 @@ import { copyFrame, webgpu, setGpuPick, prepareGPU } from './gpu.js';
 import { packing } from './pack.js';
 import { SLIM, isSlim, meshBytes } from './slim.js';
 import { makeRenderer } from './renderer.js';
+import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
@@ -564,7 +565,7 @@ export const FINAL_EFFECTS = [
   #ifdef FLARE
   uniform sampler2D tDirt; uniform float flareTh, flareSp, flareFade, flareK, dirtK; uniform vec3 flareTint;
   #endif
-  // (three.js adds its tone mapping and sRGB helpers to every ShaderMaterial drawn to the screen; when
+${DROPS_HEAD}  // (three.js adds its tone mapping and sRGB helpers to every ShaderMaterial drawn to the screen; when
   // SGSR upscales after this pass, it draws into a buffer and three leaves tone mapping out, so here it is)
   #ifndef TONE_MAPPING
 ${ShaderChunk.tonemapping_pars_fragment}
@@ -605,6 +606,7 @@ ${ShaderChunk.tonemapping_pars_fragment}
       col += fl * flareK + texture2D(tDirt, du).rgb * (texture2D(tBloom, vUv).rgb * bloom + fl) * dirtK; }
   #endif
 ` },
+  { name: 'drops', what: 'rain on the lens (v.drops: lens-drops.js; gs.sky.Weather lands them)', glsl: DROPS_GLSL },
   { name: 'grade', what: 'colour grade (v.grade)', glsl: `    // the game's colour grade (v.grade): saturation, contrast round mid grey, a tint for the shadows and one for the highlights
     if (gradeOn > .5) {
       float l = dot(col, vec3(.2126, .7152, .0722));
@@ -652,7 +654,8 @@ class FinalPass extends Pass {
     this.down = qmat(DOWN, { tDiffuse: { value: null }, px: { value: new Vector2() } });
     this.up = qmat(UP, { tDiffuse: { value: null }, px: { value: new Vector2() }, k: { value: 1 } }, { blending: ADD });
     this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
-      gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
+      gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) },
+      drops: { value: Array.from({ length: DROPS_N }, () => new Vector4()) }, dropN: { value: 0 } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
     this.quad = new FullScreenQuad(null); this.mips = []; this.scale = .5; this.w = 0; this.h = 0; this.fxaa = false; this.strength = .7;
   }
   setSize(w, h) {
@@ -678,6 +681,14 @@ class FinalPass extends Pass {
     if (on) { u.flareTh.value = f.threshold; u.flareSp.value = f.spacing; u.flareFade.value = f.fade; u.flareK.value = f.strength; u.dirtK.value = f.dirt; u.flareTint.value.copy(f.tint); u.tDirt.value = f.dirtTex; }
     if (on === ('FLARE' in this.final.defines)) return;
     if (on) this.final.defines.FLARE = ''; else delete this.final.defines.FLARE;
+    this.final.needsUpdate = true;
+  }
+  // v.drops: rain on the lens (null: none can land, and the loop is left out)
+  setDrops(d) {
+    const u = this.final.uniforms, on = !!d;
+    if (on) { u.drops.value = d.vecs; u.dropN.value = d.count; }
+    if (on === ('DROPS' in this.final.defines)) return;
+    if (on) this.final.defines.DROPS = ''; else delete this.final.defines.DROPS;
     this.final.needsUpdate = true;
   }
   setFxaa(on) { if (this.fxaa === on) return; this.fxaa = on; if (on) this.final.defines.FXAA = ''; else delete this.final.defines.FXAA; this.final.needsUpdate = true; }
@@ -1303,10 +1314,13 @@ const AIR = {
   // surface's normal the cover is read; the cover picture (cover.js: the height of the highest thing over each spot) and where it lies
   // (its middle x, z, 1 / its width, how far from the middle it reaches: 0 with no cover)
   gsWx: { value: new Vector4() }, gsCover: { value: null }, gsCoverAt: { value: new Vector4() },
+  // the rain as it falls (0..1) and the weather's own clock for running water, which runs while it rains and slows as it dries
+  gsRain: { value: new Vector4() },
   gsOrigin: ORIGIN_U,   // where the drawing's centre is in the world (origin.js): the clouds, mist patches and wet ground are where they are in the world
 };
 const AIR_GLSL = ORIGIN_GLSL + `
-uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
+uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt, gsRain; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
+float gsH12(vec2 p){ vec3 a = fract(p.xyx * .1031); a += dot(a, a.yzx + 33.33); return fract((a.x + a.y) * a.z); }
 float gsInside(vec4 c){ vec3 p = c.xyz / c.w; vec2 e = min(p.xy, 1. - p.xy); return p.z > 0. && p.z < 1. ? smoothstep(0., gsCasc.z, min(e.x, e.y)) : 0.; }
 float gsShadeAt(vec3 wp){
   vec2 c = wp.xz + gsOrigin.xz + gsSun.xz / max(gsSun.y, .15) * (gsCloud.z - wp.y);
@@ -1327,15 +1341,44 @@ vec3 gsAir(vec3 col, vec3 wp){
 // (gsWet: the game's own, everywhere. gsWx: the weather's, only on what the sky can see: wet, then puddles on
 // flat ground that spread as it goes on raining, then snow, on the flattest tops first and in patches, then on
 // everything that is not too steep. Not on what is marked GS_NO_SETTLE: water, and things that move about.
+// While it rains (gsRain) water runs: rivulets wander down walls and windows with drops sliding down them,
+// beads stand on smooth things (glass, paint, polished stone; more the longer it rains) and rings spread on
+// the puddles where drops land. All worked out where they are drawn, no pictures and no pass of their own.
 // hd3d-gpu.js gpuWet is the same sums as nodes.)
 const AIR_WET = `#ifdef USE_FOG
-  if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z > 0.) {
+  if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z + gsRain.x > 0.) {
     mat3 gsVi = transpose(mat3(viewMatrix)); vec3 gn = gsVi * normal, gg = gsVi * nonPerturbedNormal; float gsOpen = 1.;
     vec2 gsT = gsW.xz + gsOrigin.xz;
     if (gsCoverAt.w > 0.) { vec2 gp = gsT + gg.xz * gsWx.w, gd = abs(gp - gsCoverAt.xy);
       if (max(gd.x, gd.y) < gsCoverAt.w) gsOpen = smoothstep(-.7, -.25, gsW.y - texture2D(gsCover, gp * gsCoverAt.z).r); }
-    float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y));
+    float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y)), gsR0 = roughnessFactor;
     roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb *= 1. - w * .3;
+    if (gsRain.x + gsWx.x > 0.) {
+      // a frame along the surface: level across it (ga) and up it (gd), in metres
+      vec3 gP = gsW + gsOrigin, ga = abs(gg.y) > .98 ? vec3(1., 0., 0.) : normalize(vec3(gg.z, 0., -gg.x)), gd = cross(gg, ga);
+      vec2 gu = vec2(dot(gP, ga), dot(gP, gd)), tilt = vec2(0.);
+      float steep = 1. - smoothstep(.45, .8, abs(gg.y)), slick = 1. - smoothstep(.12, .45, gsR0), now = max(gsRain.x, gsWx.x * .6) * gsOpen, run = 0., bead = 0.;
+#ifdef USE_CLEARCOAT
+      slick = max(slick, min(1., clearcoat * 2.) * (1. - smoothstep(.35, .7, clearcoatRoughness)));   // (paint under a clear coat: the coat is what the water stands on)
+#endif
+      if (steep * now > 0.) {   // rivulets down walls and windows (finer on glass; wide wet streaks on brick and stone), some running, drops sliding down them
+        float q = gu.x * mix(9., 24., slick), h = gsH12(vec2(floor(q), 7.));
+        float x = fract(q) - .5 + (h - .5) * .35 - (sin(gu.y * 4.1 + h * 31.) * .11 + sin(gu.y * 10.3 + h * 17.) * .05) * (1. + slick);
+        float wd = (.07 + .06 * fract(h * 13.)) * (2.2 - 1.2 * slick), ln = smoothstep(wd, wd * .35, abs(x)) * step(h, .25 + .55 * gsWx.x + .2 * gsRain.x);
+        float hd = fract(gu.y * (.5 + h * .6) + gsRain.y * (.3 + h * .45) + h * 9.), drip = smoothstep(0., .05, hd) * smoothstep(.3, .05, hd);
+        run = ln * steep * now * (.5 + .5 * drip); tilt.x -= clamp(x / wd, -1., 1.) * run * .5;
+      }
+      if (slick * gsOpen > 0.) {   // beads on what is smooth, in two layers of cells: a dome each, mostly small, more as it goes on raining; far off, a fine sheen
+        for (int k = 0; k < 2; k++) {
+          vec2 b = k == 0 ? gu * 42. : (mat2(.8, .6, -.6, .8) * gu + 3.7) * 27., f = fract(b) - .5, c = floor(b) + float(k) * 41.3; float h = gsH12(c), h2 = gsH12(c + 17.31), r = .1 + .28 * pow(gsH12(c + 3.1), 3.);
+          vec2 d = (f - (vec2(h, h2) - .5) * (1. - 2. * r) * .9) / r; float dd = dot(d, d), nr = 1. - smoothstep(.35, .9, length(fwidth(b)));
+          float on = step(h2, .2 + .6 * gsWx.x) * (1. - smoothstep(.8, 1., dd)) * slick * gsOpen * step(1e-3, gsWx.x) * smoothstep(-.35, -.1, gg.y);   // (not under what faces down)
+          tilt += d * on * nr * .9; bead = max(bead, on * mix(.35, 1., nr));
+        }
+      }
+      normal = normalize(normal + mat3(viewMatrix) * (ga * tilt.x + gd * tilt.y));
+      roughnessFactor = mix(roughnessFactor, .03, max(run, bead)); diffuseColor.rgb *= 1. - run * mix(.35, .15, slick);
+    }
 #ifndef GS_NO_SETTLE
     if (gsWx.y + gsWx.z > 0.) {
       vec4 gsN1 = texture2D(gsNoise, gsT * .05); float gsN2 = texture2D(gsNoise, gsT * .021).r * .4;
@@ -1344,6 +1387,15 @@ const AIR_WET = `#ifdef USE_FOG
       float s = step(1e-6, gsWx.y) * smoothstep(lim, lim + .14, gg.y + (sn - .5) * .22) * smoothstep(0., .3, gsWx.y * 1.2 - sn * .6) * gsOpen;
       roughnessFactor = mix(mix(roughnessFactor, .03, p), .85, s); metalnessFactor *= 1. - s;
       diffuseColor.rgb = mix(diffuseColor.rgb * (1. - p * .3), vec3(.86, .9, .96), s); normal = normalize(mix(normal, nonPerturbedNormal, max(p * .92, s * .6)));
+      if (gsRain.x * p > 0.) {   // rings spreading on the puddles where drops land: two layers of drops, one a cell, a new one each beat
+        vec2 rr = vec2(0.);
+        for (int k = 0; k < 2; k++) {
+          vec2 q = gsT * 4.2 + float(k) * vec2(.37, .71), c = floor(q) + float(k) * 19.7, f = fract(q) - .5; float h = gsH12(c);
+          float ph = fract(gsRain.y * (.9 + h * .5) + h * 13.); vec2 dv = f - (vec2(h, gsH12(c + 5.3)) - .5) * .4; float dl = length(dv) + 1e-4, xr = (dl - ph * .45) * 22.;
+          rr += dv / dl * sin(xr * 3.14159) * (1. - smoothstep(0., 1.5, abs(xr))) * (1. - ph) * (1. - ph) * step(h, gsRain.x * .85 + .1);
+        }
+        normal = normalize(normal + mat3(viewMatrix) * vec3(rr.x, 0., rr.y) * .4 * p);
+      }
     }
 #endif
   }
@@ -1442,6 +1494,12 @@ export class Particles {
     }
     L.length = n; g.setDrawRange(0, n); this.n = n;
     for (const [a, k] of PART_ATTRS) { const at = g.attributes[a]; at.clearUpdateRanges(); at.addUpdateRange(0, Math.max(1, n * k)); at.needsUpdate = true; }
+  }
+  /** Takes them out of the view for good. */
+  dispose() {
+    this.pts.removeFromParent(); this.pts.geometry.dispose(); this.mat.dispose();
+    const tw = this.gpuTwin; if (tw) { tw.sprite.removeFromParent(); tw.sprite.geometry?.dispose(); this.gpuTwin = null; }
+    const i = this.view.parts.indexOf(this); if (i >= 0) this.view.parts.splice(i, 1);
   }
 }
 
@@ -1600,6 +1658,7 @@ export class HDView {
     this.envI = env; this.hemi = new HemisphereLight(sky, ground, amb); this.scene.add(this.hemi);
     this.cam = new PerspectiveCamera(fov, 1, .05, 120); this.scene.add(this.cam);
     this.hurt = 0; this.t = 0; this.W = 240; this.H = 320; this.exposure = 1; this.bloom = .7; this.tone = 'aces'; this.autoExposure = false; this.eye = null; this.lut = null; this.lutAmount = 1; this.oit = false; this.flare = null; this.fog3d = null; this.liveBounce = null;
+    this.drops = new LensDrops();   // rain on the lens (lens-drops.js): gs.sky.Weather lands drops while it rains; add() for a splash of your own
     this.lamps = []; this.tierSeen = -1; this.parts = []; this.reflectors = []; this.contacts = [];
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
     this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.cascade = null; this.beams = null; this.motionBlur = null;
@@ -2027,7 +2086,7 @@ export class HDView {
     const w = a.wind; U.gsDrift.value.set((w.x ?? w[0]) * this.t / a.cloudSize, (w.z ?? w[1]) * this.t / a.cloudSize);
     U.gsWet.value = a.wet; U.gsNoise.value = noiseTex();
     const wx = a.world, cv = wx?.cover?.ready !== undefined && wx.cover.ix === wx.cover.ix ? wx.cover : null;   // (a cover that has been placed)
-    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0);
+    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0); U.gsRain.value.set(wx?.rain ?? 0, wx?.runT ?? 0, 0, 0);
     if (cv) { U.gsCover.value = cv.texture; U.gsCoverAt.value.set(cv.cx, cv.cz, 1 / cv.span, cv.reach); } else U.gsCoverAt.value.w = 0;
     U.gsCasc.value.x = U.gsCasc.value.y = -1;
     const cs = this.cascade;
@@ -2387,7 +2446,7 @@ export class HDView {
     // smoothing (FXAA) does the work, as on the tiers without MSAA; it had been left off as if MSAA were on, and its place taken by the lens
     // fringing, which turns a dark hair or a lash over skin or sky magenta and green, a pixel to each side)
     const ms = T.msaa >= 4 ? 4 : 0;
-    const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: ms, bloomScale: T.bloom * fxK('bloom'), smooth: !ms, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
+    const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: ms, bloomScale: T.bloom * fxK('bloom'), smooth: !ms, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, drops: this.drops.on ? this.drops : null, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
@@ -2726,7 +2785,7 @@ export class HDView {
       const F = P.final, aoK = T.ao * fxK('ao'), blK = T.bloom * fxK('bloom'); P.ao.enabled = T.ao > 0; if (T.ao > 0 && P.ao.scale !== aoK) { P.ao.scale = aoK; P.ao.setSize(P.ao.fw || pw, P.ao.fh || ph); }
       if (F.scale !== blK) { F.scale = blK; if (F.w) F.setSize(F.w, F.h); }   // (the effects ladder, FXS: the bloom's pictures smaller)
       if (!baking && !off) { fxOn = new Set(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
-      F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
+      F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.setDrops(this.drops.on ? this.drops : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
       const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035;
       const g = this.grade; u.gradeOn.value = g ? 1 : 0;
       if (g) { u.sat.value = g.saturation ?? 1; u.con.value = g.contrast ?? 1; toRGB(g.shadows, u.lo.value); toRGB(g.highlights, u.hi.value); }
