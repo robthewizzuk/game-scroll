@@ -20,9 +20,9 @@
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 //   lineup   people that move (src/kit/stride.js, follow.js, human-face.js, human.js hands): eight people posed as drawn, then stepping, live faced and holding
 //   faces    people close up (gs.models.human look: 'real'): four faces in turn filling the screen, in the clean look and then the real one
-//   street   a city that holds up close (src/kit/city.js, city-rooms.js, city-cars.js): a walk along a made-up downtown street at golden hour
-//            and then at night, once as the city was (windows painted on, cars and people of boxes), then with rooms behind every window,
-//            real cars and sculpted people on the pavements
+//   street   a city that holds up close (src/kit/city.js, city-rooms.js, city-cars.js, city-dress.js): a walk along a made-up downtown street
+//            at golden hour and then at night, once as the city was (windows painted on, cars and people of boxes), then with rooms behind
+//            every window, real cars and cars parked along the kerbs, sculpted people on the pavements and the street dressed
 //   night    lamps with shadows (src/kit/lamps.js, lamps-gpu.js): a wet street at night with lamps on posts, cars with their headlights
 //            and people under the lamps, neon and a lit sign: once with every lamp a plain round light, then with the nearest lamps' shadows
 //            from one shared atlas, headlights in a dipped beam's shape, and neon tubes and the sign lighting the wet road from their length
@@ -798,7 +798,7 @@ function street({ gs, size }) {
   v.air({ haze: .0012, colour: '#9aa6bc' });
   const sky = new gs.sky.Sky(v, { time: 17.2, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
   const blocks = size < .3 ? 2 : Math.max(3, Math.round(6 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.25, Math.min(1, size));   // (a test's small size: a city of 2 x 2 blocks)
-  const OLD = { rooms: false, fleet: false, crowd: false };
+  const OLD = { rooms: false, fleet: false, crowd: false, dress: false, parked: false };
   let city = null, mode = '', ready = false;
   const sum = { n: 0, ms: 0, t: 0, hour: -1 };
   const enter = key => async draw => {
@@ -810,14 +810,14 @@ function street({ gs, size }) {
     city?.dispose(); city = new City(v, opts); city.warm(); mode = key; sum.n = sum.ms = 0; sum.t = 0; sum.hour = -1;
     const build = performance.now() - t0;
     for (let i = 0; i < 4; i++) await draw();
-    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.cars.list.length)} cars, ${num(city.people.list.length)} people` };
+    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.cars.list.length)} cars, ${num(city.parked.length)} parked, ${num(city.people.list.length)} people` };
   };
   const ahead = new gs.THREE.Vector3();
   return {
     v, holds: `a walk along a made-up downtown street of ${blocks} blocks a side, at golden hour and then (after ten seconds) at night`,
     modes: [
       { key: 'old', name: 'windows painted on, boxes for cars and people', enter: enter('old') },
-      { key: 'new', name: 'rooms behind the windows, real cars, sculpted people', enter: enter('new') },
+      { key: 'new', name: 'rooms behind the windows, real and parked cars, sculpted people, the street dressed', enter: enter('new') },
     ],
     // along the pavement past the shops of the middle block, 1.4 metres a second, looking down the street and across at the shop fronts
     path(t, cam) {
@@ -833,7 +833,7 @@ function street({ gs, size }) {
     tell() {
       if (!city || !sum.n) return null;
       const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`, C = city.cars.fleet, crowd = city.people.crowd;
-      return mode === 'old' ? ms : `${ms} · ${num(C ? C.close.size : 0)} cars drawn whole · ${num(crowd ? crowd.info.drawn : 0)} people drawn in ${num(crowd ? crowd.info.draws : 0)} draws`;
+      return mode === 'old' ? ms : `${ms} · ${num(C ? C.close.size : 0)} cars drawn whole · ${num(city.parked.length)} parked · ${num(crowd ? crowd.info.drawn : 0)} people drawn in ${num(crowd ? crowd.info.draws : 0)} draws`;
     },
     dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
   };
@@ -932,6 +932,6 @@ export const SCENES = [
   ['parade', 'Parade', 'smaller meshes', parade],
   ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
   ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
-  ['street', 'Street', 'a city that holds up close: rooms behind the windows, real cars, sculpted people', street],
+  ['street', 'Street', 'a city that holds up close: rooms behind the windows, real and parked cars, sculpted people, the street dressed', street],
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
 ];

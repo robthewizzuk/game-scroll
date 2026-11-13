@@ -3265,8 +3265,12 @@ export interface CityBuilding {
   id: number; block: number; facade: string; floors: number; shops: boolean; face: 0 | 1 | 2 | 3; x0: number; x1: number; z0: number; z1: number; h: number;
   /** Its boxes, bottom up (towers step back as they rise). */
   parts: { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[];
-  roof: 'flat' | 'gable'; colour: string | null; door: CitySpot; fire?: boolean; bits: { kind: string; x: number; y: number; z: number; s: number }[];
+  roof: 'flat' | 'gable'; colour: string | null; door: CitySpot; fire?: boolean; bits: { kind: string; x: number; y: number; z: number; s: number; rot?: number }[];
+  /** The sides of it that face a street (0 north, 1 east, 2 south, 3 west; a corner building has two), when the city is dressed. */
+  streets?: number[];
 }
+/** A parked car (City option parked): where it is, which way it faces and its box. */
+export interface CityParkedCar { parked: true; x: number; y: number; z: number; heading: number; style: number; colour: string; len: number; wid: number; x0: number; x1: number; z0: number; z1: number }
 export interface CitySpot { x: number; y: number; z: number; nx?: number; nz?: number; building?: number; block?: number; heading?: number; lane?: number; edge?: Loose }
 export interface CityCar { id: number; kind: 'car' | 'van'; taxi: boolean; colour: string; x: number; z: number; heading: number; v: number; vmax: number; braking: boolean; stun: number; edge: Loose; lane: number }
 export interface CityPerson { id: number; x: number; z: number; heading: number; speed: number; panic: number; down: number; shirt: string; block: Loose }
@@ -3426,7 +3430,9 @@ export interface CityPart {
    */
   City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: 'right' | 'left';
     traffic?: number; people?: number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
-    /** Rooms behind every window (default true). */ rooms?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean; [style: string]: Loose }) => CityWorld;
+    /** Rooms behind every window (default true). */ rooms?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
+    /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
+    /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean; [style: string]: Loose }) => CityWorld;
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
@@ -3453,8 +3459,10 @@ export interface CityWorld {
   signalLeft(node: CityPlan['nodes'][number], axis: 'x' | 'z', t?: number): number;
   buildingAt(x: number, z: number): CityBuilding | null;
   ground(x: number, z: number): number;
-  /** Pushes a circle out of the buildings (changes p); the building touched, or null. */
-  collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | null;
+  /** Pushes a circle out of the buildings and parked cars (changes p); the building (or parked car) touched, or null. */
+  collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | CityParkedCar | null;
+  /** The parked cars (empty without the parked option). */
+  parked: CityParkedCar[];
   ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number): { point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number }; dist: number; building: CityBuilding } | null;
   /** The nearest point in a lane. */
   road(x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };

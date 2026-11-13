@@ -13,7 +13,7 @@
 // motion the WebGPU view works out for frame generation and SGSR 2 comes from where a thing was drawn last
 // frame, so a reused one would streak from the last car's place.
 // Kit use only: city.js's Traffic draws through it (City option fleet).
-import { BufferAttribute, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial,
+import { BoxGeometry, BufferAttribute, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial,
   NearestFilter, NoColorSpace, Object3D, Quaternion, RGBAFormat, Vector3 } from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
@@ -93,24 +93,24 @@ export function carKit(style) {
   let k = KITS.get(style); if (k) return k;
   pause('Models');
   const v = vehicle('car', { style, seed: 3, colour: '#ffffff', finish: 'gloss' }); v.updateMatrixWorld(true);
-  const paint = [], rest = [], head = [], tail = [], wheelsFar = [];
+  const paint = [], rest = [], head = [], tail = [], wheelsFar = [], lensed = [];
   let paintMat = null;
   for (const m of v.shell.children) {
     if (!m.isMesh || m.isInstancedMesh) continue;
     const mt = m.material;
     if (m.name === 'paint') { paint.push(plain(m, v)); paintMat ||= mt; }
-    else if (m.name === 'lamp') head.push(plain(m, v, { keepColour: false }));
-    else if (m.name === 'tail') tail.push(plain(m, v, { keepColour: false }));
+    else if (m.name === 'lamp') { head.push(plain(m, v, { keepColour: false })); lensed.push(plain(m, v, { colour: new Color('#e2e0d8'), pal: palIndex(.15, 0) })); }
+    else if (m.name === 'tail') { tail.push(plain(m, v, { keepColour: false })); lensed.push(plain(m, v, { colour: new Color('#6e1210'), pal: palIndex(.2, 0) })); }
     else rest.push(plain(m, v, { colour: mt.color, pal: palIndex(mt.transparent ? .1 : mt.roughness, mt.metalness) }));
   }
   const W = v.wheels.map(w => { const m = w.children[0]; return { x: w.position.x, y: w.position.y, z: w.position.z, steers: w.steers, flip: m.rotation.y !== 0, r: w.radius }; });
   const wm = v.wheels[0].children[0], wheelMat = wm.material;
   for (const w of v.wheels) wheelsFar.push(plain(w.children[0], v, { colour: wheelMat.color, pal: palIndex(wheelMat.roughness, wheelMat.metalness) }));
   const wheel = plain(wm, null, { colour: wheelMat.color, pal: palIndex(wheelMat.roughness, wheelMat.metalness) });   // (turned on its pivot, and round for the left side, in pose())
-  const P = join(paint), R = join(rest), lampAt = v.points.lampL?.position;
+  const P = join(paint), R = join(rest), lampAt = v.points.lampL?.position, whole = join([R, ...wheelsFar, ...lensed].map(g => g.clone()));   // (whole: a parked car's, wheels and unlit lamps in)
   k = {
     style, rough: !canKeep, size: { ...v.size }, length: v.size.length, width: Math.min(v.size.width, 2), wheelbase: v.wheelbase, lampY: lampAt ? lampAt.y : .6,
-    paint: P, rest: R, head: join(head), tail: join(tail), wheel, wheels: W, paintLook: paintMat,
+    paint: P, rest: R, whole, head: join(head), tail: join(tail), wheel, wheels: W, paintLook: paintMat,
     far: { paint: farShape(P, .12), rest: farShape(join([R, ...wheelsFar].map(g => g.clone())), .1) },
   };
   if (canKeep) KITS.set(style, k);
@@ -130,6 +130,46 @@ const lampMat = kind => shared(kind, () => kind === 'head' ? new MeshStandardMat
 
 const _m = new Matrix4(), _q = new Quaternion(), _s = new Vector3(1, 1, 1), _p = new Vector3(), _up = new Vector3(0, 1, 0), _c = new Color(), _w = new Object3D();
 const ZERO = new Matrix4().makeScale(0, 0, 0);
+
+// a box as one of a car's surfaces (its corners coloured, its row in the table): the furthest parked cars' shapes
+function block(x0, y0, z0, x1, y1, z1, colour, pal = -1) {
+  const g = new BoxGeometry(x1 - x0, y1 - y0, z1 - z0).toNonIndexed(); g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  const n = g.attributes.position.count, C = new Float32Array(n * 3), c = new Color(colour);
+  for (let i = 0; i < n; i++) { C[i * 3] = c.r; C[i * 3 + 1] = c.g; C[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new BufferAttribute(C, 3));
+  if (pal >= 0) { const U = g.attributes.uv.array, u = (pal + .5) / PAL_N; for (let i = 0; i < n; i++) { U[i * 2] = u; U[i * 2 + 1] = .5; } } else g.deleteAttribute('uv');
+  return g;
+}
+// a parked car's shapes: whole close by, then simpler, then a body and a cabin far off (city.js puts them in gs.props, which picks by distance)
+const PARK = new Map();
+function parkKit(style) {
+  let p = PARK.get(style); if (p) return p;
+  const k = carKit(style); pause('Models');
+  const { length: L, width: W, height: H } = k.size, w = Math.min(W, 2) / 2;
+  const body = block(-w, .16, -L / 2, w, H * .56, L / 2, '#ffffff'), cabin = block(-w * .86, H * .56, -L * .26, w * .86, H * .97, L * .2, '#1c232a', palIndex(.15, .1));
+  p = { paint: [k.paint, farShape(k.paint, .3), k.far.paint, body], rest: [k.whole, farShape(k.whole, .25), k.far.rest, cabin] };
+  if (!k.rough) PARK.set(style, p);
+  built();
+  return p;
+}
+/**
+ * Parked cars as kinds of gs.props: two a style (its paint, coloured car by car, and the rest), whole within
+ * `near` metres, simpler to `mid`, simpler still to `far`, a body and a cabin past it. styles: the city's parked styles; list: the parked cars
+ * ({ style }: an index into styles). Returns { paint, rest } kind names by style (null for a style none use).
+ */
+export function parkKinds(props, styles, list, { near = 12, mid = 40, far = 90 } = {}) {
+  const n = styles.map(() => 0); for (const c of list) n[c.style]++;
+  const look = carKit(styles[0]).paintLook;
+  const pm = shared('parkpaint', () => { const m = look.clone(); m.color.set('#ffffff'); m.vertexColors = true; return m; });
+  const rm = shared('parkrest', () => restMat().clone());
+  return styles.map((s, i) => {
+    if (!n[i]) return null;
+    const k = parkKit(s), name = 'parked:' + s;
+    props.kind(name + ':paint', k.paint[0], pm, { capacity: n[i], lod: [[near, k.paint[1]], [mid, k.paint[2]], [far, k.paint[3]]] });
+    props.kind(name + ':rest', k.rest[0], rm, { capacity: n[i], lod: [[near, k.rest[1]], [mid, k.rest[2]], [far, k.rest[3]]] });
+    return { paint: name + ':paint', rest: name + ':rest' };
+  });
+}
 
 /** The drawing of a city's traffic: styles (CITY_CARS), cap (most cars at once), near (how many drawn whole), reach (metres). */
 export class Fleet {

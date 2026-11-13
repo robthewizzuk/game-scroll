@@ -1496,6 +1496,32 @@ console.log('physics ok');
   }
   assert.notEqual(JSON.stringify(layout({ seed: 1 }).buildings), JSON.stringify(layout({ seed: 2 }).buildings), 'another seed, another city');
   console.log('city: layouts for all styles are repeatable, tidy and joined up');
+  // the street dressing (city-dress.js): its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other
+  const { dressPlan } = await import('../src/kit/city-dress.js');
+  for (const style of Object.keys(STYLES)) {
+    const p = layout({ seed: 42, blocks: [5, 4], style }), before = JSON.stringify(p), kits = [{ length: 4.5, width: 1.8 }, { length: 4.9, width: 1.95 }, { length: 4.1, width: 1.75 }];
+    const at = (x, z) => p.buildings.find(b => x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) || null;
+    const D = dressPlan(p, 42, { kits, buildingAt: at, style });
+    assert.equal(JSON.stringify(p), before, style + ': dressing leaves the plan as it was');
+    assert.equal(JSON.stringify(D), JSON.stringify(dressPlan(p, 42, { kits, buildingAt: at, style })), style + ': same seed, same dressing');
+    assert.ok(D.posts.length === p.blocks.length && D.blades.length === p.blocks.length, style + ': a name sign at every block');
+    if (style !== 'suburb') assert.ok(D.parked.length > 10, style + ': cars parked (' + D.parked.length + ')');
+    for (const c of D.parked) {
+      const ax = Math.abs(Math.sin(c.heading)) > .5, hx = (ax ? c.len : c.wid) / 2, hz = (ax ? c.wid : c.len) / 2;
+      assert.ok(!p.buildings.some(b => c.x + hx > b.x0 && c.x - hx < b.x1 && c.z + hz > b.z0 && c.z - hz < b.z1), style + ': a parked car in a building');
+      for (const d of p.spots.door) assert.ok(Math.hypot(d.x - c.x, d.z - c.z) >= 5.6 || style === 'suburb', style + ': a car parked across a door');
+      if (c.y) continue;   // (on a drive)
+      // in the road: clear of the moving lanes (each lane's car is 1.9 wide) and of the junctions
+      const e = p.edges.find(e => (e.axis === 'x') === ax && Math.abs((ax ? p.nodes[e.a].z : p.nodes[e.a].x) - (ax ? c.z : c.x)) < e.width / 2);
+      assert.ok(e, style + ': a parked car beside no road');
+      const off = Math.abs((ax ? c.z - p.nodes[e.a].z : c.x - p.nodes[e.a].x)), outer = (e.lanes - .5) * 3.2 + .2 + .95;
+      assert.ok(off - c.wid / 2 > outer + .3 && off + c.wid / 2 < e.width / 2, style + ': a parked car in a lane or on the kerb');
+      assert.ok(!p.nodes.some(n => Math.abs(n.x - c.x) < n.hx + 6 && Math.abs(n.z - c.z) < n.hz + 6), style + ': a car parked at a junction');
+    }
+    for (let i = 0; i < D.parked.length; i++) for (let j = i + 1; j < D.parked.length; j++) assert.ok(Math.hypot(D.parked[i].x - D.parked[j].x, D.parked[i].z - D.parked[j].z) > 4, style + ': parked cars on top of each other');
+    if (style === 'oldtown' || style === 'suburb') assert.ok(D.wires.length > 0, style + ': wires');
+  }
+  console.log('city dressing: its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other ok');
 }
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
