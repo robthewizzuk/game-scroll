@@ -4,7 +4,7 @@
 // the sun mask (contact shadows, far shadows over a map of heights, capsule shadows for a crowd), to judge by eye, and
 // what each costs.
 //   ?acts=contact,face,far,crowd (default: all)   &cell=360x300   &gpu (WebGPU)   &tier=3   &frames=8   &people=120
-//   ?scene=shade&at=3,8,13,18&size=.4: the phone test tour's engine test scene instead (src/detail-scenes.js), a row a time along its walk
+//   ?scene=shade&at=3,8,13,18&size=.4[&step=.1]: the phone test tour's engine test scene instead (src/detail-scenes.js), a row a time along its walk
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -57,11 +57,16 @@ try {
     const S = SCENES.find(s => s[0] === Q.get('scene'))[3]({ gs, HD, size: +(Q.get('size') || .4), gpu: GPU });
     const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
     const sheet = document.createElement('canvas'); sheet.width = cw * S.modes.length; sheet.height = ch * at.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
-    const draw = () => { S.v.render(cx, cw, ch); return frame(); }, info = [];
+    const draw = () => { S.v.render(cx, cw, ch); return frame(); }, info = [], step = +(Q.get('step') || .1);
     for (let col = 0; col < S.modes.length; col++) {
       const m = S.modes[col]; await m.enter(draw);
-      for (let k = 0; k < at.length; k++) {
+      for (let k = 0, t0 = 0; k < at.length; k++) {
+        // (the scene run on to just before each time, a tenth of a second a frame, so smoke and the like (some of it moved on
+        // the graphics chip a step a frame drawn: &step=.0333 to give it as many as the scene's seconds ask) have built up as
+        // they would along the tour's run; then eight frames at 30 a second)
+        for (let t = t0; t < at[k] - 8 / 30; t += step) { S.path(t, S.v.cam); await draw(); if (GPU) await done(); }
         for (let f = 0; f < 8; f++) { S.path(at[k] - (7 - f) / 30, S.v.cam); await draw(); if (GPU) await done(); }
+        t0 = at[k];
         sx.drawImage(cell, col * cw, k * ch);
         sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.strokeStyle = '#000'; sx.lineWidth = 3; const label = `${m.name} · ${at[k]} s (${HD.info.backend})`; sx.strokeText(label, col * cw + 6, k * ch + 16); sx.fillText(label, col * cw + 6, k * ch + 16);
       }
