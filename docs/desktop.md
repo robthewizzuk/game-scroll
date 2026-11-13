@@ -57,7 +57,9 @@ Game controllers work as they do on the phones (`gs.pad`).
 **Speed.** Before Chromium starts, `desktop/main.cjs` asks for the fast graphics chip on laptops with two
 (`force_high_performance_gpu`), keeps the graphics chip where Chromium would turn an older driver down to
 software (`ignore-gpu-blocklist`), draws 2D canvases on the graphics chip, and on Windows turns off the
-"is this window covered?" guess that can freeze a window in plain view. The page keeps compiled code from its
+"is this window covered?" guess that can freeze a window in plain view. It also turns off Chromium's rule that a page gets
+no 3D at all once the graphics process has crashed on it twice (`app.disableDomainBlockingFor3DAPIs()`), so a
+computer whose driver resets more than once comes back each time (docs/webgpu-move.md, When the device is lost). The page keeps compiled code from its
 first run, so later starts are quicker.
 
 The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs from a phone:

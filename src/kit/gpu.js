@@ -90,7 +90,7 @@ let gpu = null, gpuLoad = null;
  * to the same thing webgpu() returns. The app calls it while loading the 3D parts.
  */
 export function prepareGPU() {
-  if (pick !== 'webgpu') return Promise.resolve(null);
+  if (pick !== 'webgpu' || LOSS.n > LOSS.most) return Promise.resolve(null);   // (lost too often this session: WebGL)
   return gpuLoad ||= (async () => {
     try {
       if (!await hasWebGPU()) { console.warn('WebGPU: no adapter'); return null; }
@@ -123,8 +123,13 @@ export function prepareGPU() {
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
       installPack(r);   // code-made textures packed into the chip's compressed formats (spark.js)
-      r.backend.device?.lost?.then(info => { console.warn('WebGPU device lost:', info?.reason, info?.message); if (gpu?.r === r) { gpu = null; con = null; conLoad = null; conTried = false; } gpuLoad = null; });   // the GPU went away: back to WebGL
-      return gpu = { r, W, fx };
+      // the graphics chip went away (its driver restarted, the browser's GPU process crashed): three is told it is
+      // lost (it stops drawing on it) and lostGPU() makes a new one (said here, not by three's own handler, which
+      // logs an error)
+      r.onDeviceLost = () => { r._isDeviceLost = true; };
+      const dev = r.backend.device;
+      dev?.lost?.then(info => lostGPU(r, info));
+      return gpu = { r, W, fx, dev, at: LOSS.n };
     } catch (e) { console.warn('WebGPU did not start:', e); gpuLoad = null; return null; }
   })();
 }
@@ -149,6 +154,76 @@ function hdrScreen() { try { return hdrPick ?? (typeof matchMedia === 'function'
 /** The ready WebGPU setup { r (WebGPURenderer), W (three/webgpu), fx (hd3d-gpu.js) }, or null (not supported, not ready, or WebGL forced for a test). */
 export const webgpu = () => pick === 'webgpu' ? gpu : null;
 
+/* ---------- a lost graphics chip ---------- */
+// WebGPU can lose its device at any moment: the phone's graphics driver restarts after a fault or a timeout, the
+// browser's GPU process crashes, the system takes the chip back. Everything made on it is gone: three stops
+// drawing (r._isDeviceLost), and a view kept on it would show its last picture for ever. So (as PlayCanvas and
+// Babylon.js do) a new device and renderer are made at once (LOSS.wait later, so a GPU process that is starting
+// again has room), and everything is sent to the new chip again: the 3D kits keep every renderer's things apart
+// (each view's chain, twins, pictures and shaders say which renderer they were made for), so the next frame on the new
+// renderer makes them anew. A view draws nothing while the new device is on its way (gpuMending), and its shaders are built
+// anew under a cover (the app pauses a round being played: src/main.js). After LOSS.most losses in one session,
+// or if no device comes back, 3D draws with WebGL from then on, as on a phone with no WebGPU. Each loss is
+// reported (src/perf.js: kind 'gpu', with the chip and whether it came back).
+// Not a loss: a device the app destroys itself (reason 'destroyed'), except for the test lever loseGPU().
+const LOSS = { n: 0, last: null, mending: null, wait: 300, most: 3, test: false, quietTill: 0 };
+// What was in flight on the lost device fails as it settles: three's error scopes (a pipeline made in the frame the
+// device went: "Instance dropped in popErrorScope", left unhandled), buffer reads ("unmapped before mapping was
+// resolved"). Those are the loss itself, already told once (src/perf.js): they are not script errors, so they are
+// stopped here, from the loss until a few seconds after the new device came (src/perf.js leaves out what is stopped).
+const LOST_ERR = /Instance dropped|Device (was )?(destroyed|lost)|unmapped before mapping|external Instance reference|device is lost/i;
+if (typeof addEventListener === 'function') addEventListener('unhandledrejection', e => {
+  if (performance.now() > LOSS.quietTill && !LOSS.mending) return;
+  const r = e.reason, msg = String(r?.message ?? r ?? '');
+  if (LOST_ERR.test(msg)) e.preventDefault();
+});
+const lossFns = new Set();
+/**
+ * Hear about lost graphics chips: fn({ kind: 'lost', reason, message, n, canvases (the lost renderers' own) }) at once, then
+ * fn({ kind: 'back', backend, ms, n }): backend 'webgpu' (a new device), 'webgl' (none came back: 3D draws with WebGL from
+ * now on) or 'none' (the browser now refuses this page any 3D, as Chrome does after its graphics process has crashed a few
+ * times on it: until the app starts again). Gives a function that stops it.
+ */
+export function onGpuLoss(fn) { lossFns.add(fn); return () => lossFns.delete(fn); }
+const tell = e => { for (const f of [...lossFns]) try { f(e); } catch (err) { console.warn('GPU loss listener', err); } };
+/** While a new WebGPU device is being made after a loss: a promise of the new setup (or null: WebGL from now on); else null. */
+export const gpuMending = () => LOSS.mending;
+/** The losses this session: { n, last: { reason, message, at (ms since the page opened), backend, ms } | null, mending }. */
+export const gpuLosses = () => ({ n: LOSS.n, last: LOSS.last && { ...LOSS.last }, mending: !!LOSS.mending });
+/** Tests: lose the shared WebGPU device now, as a driver restart would (the app carries on, makes a new one and reports it). False if there is none. */
+export function loseGPU() { const d = gpu?.dev; if (!d) return false; LOSS.test = true; d.destroy(); return true; }
+// whether a WebGL 2 context can be had now (a throwaway one, given straight back)
+function canWebGL() {
+  try { const g = document.createElement('canvas').getContext('webgl2'); if (!g) return false; g.getExtension('WEBGL_lose_context')?.loseContext(); return true; } catch (_) { return false; }
+}
+function lostGPU(r, info) {
+  if (gpu?.r !== r) return;   // (one already given up: a test that switched to WebGL, a fallback at start)
+  if (info?.reason === 'destroyed' && !LOSS.test) return;
+  LOSS.test = false;
+  const reason = info?.reason === 'destroyed' ? 'test' : String(info?.reason || 'unknown'), message = String(info?.message || '').slice(0, 120);
+  const hadCon = !!con, canvases = [r.domElement, con?.r.domElement].filter(Boolean);
+  gpu = null; con = null; conLoad = null; conTried = false; gpuLoad = null; if (computeShared) { compute = null; computeShared = false; }
+  LOSS.n++; const n = LOSS.n, t0 = performance.now(); LOSS.quietTill = t0 + 5000;
+  LOSS.last = { reason, message, at: Math.round(t0), backend: '', ms: 0 };
+  console.warn(`WebGPU device lost (${reason}): ${message || 'no message'}; ${n > LOSS.most ? 'drawing with WebGL from now on' : 'making a new one'}`);
+  tell({ kind: 'lost', reason, message, n, canvases });
+  const mend = LOSS.mending = (async () => {
+    if (n > LOSS.most) return null;
+    await new Promise(ok => setTimeout(ok, LOSS.wait));
+    const G = await prepareGPU();
+    if (G && hadCon) await prepareConsoleGPU();
+    return G;
+  })().catch(() => null).then(G => {
+    if (LOSS.mending === mend) LOSS.mending = null;
+    const ms = Math.round(performance.now() - t0), backend = G ? 'webgpu' : canWebGL() ? 'webgl' : 'none';
+    if (LOSS.n === n) Object.assign(LOSS.last, { backend, ms });
+    LOSS.quietTill = Math.max(LOSS.quietTill, performance.now() + 3000);
+    if (!G) console.warn(backend === 'webgl' ? 'WebGPU did not come back: 3D draws with WebGL' : 'WebGPU did not come back, and the browser refuses WebGL too: no 3D until the app starts again');
+    tell({ kind: 'back', backend, ms, n });
+    return G;
+  });
+}
+
 /* ---------- Classic Console on WebGPU ---------- */
 // Console games get a renderer of their own on the same device: a plain 8-bit canvas (no HDR) that draws
 // in the screen's colours the way the WebGL Console renderer does (toon3d-gpu.js), and whose size and
@@ -164,7 +239,7 @@ export function prepareConsoleGPU() {
       const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false });
       await r.init();
       if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
-      r.gsBackend = 'webgpu'; freeUnbuilt(r); fx.setup(r); G.fx.listWalk(r);
+      r.gsBackend = 'webgpu'; r.onDeviceLost = () => { r._isDeviceLost = true; }; freeUnbuilt(r); fx.setup(r); G.fx.listWalk(r);   // (its device is the Next Gen one's: lostGPU says when it goes)
       return con = { r, W: G.W, fx };
     } catch (e) { console.warn('Console WebGPU did not start:', e); return null; } finally { conTried = true; }
   })();
@@ -175,7 +250,7 @@ export const consoleGPU = () => pick === 'webgpu' ? con : null;
 export const consoleWait = () => (webgpu() && !conTried ? prepareConsoleGPU() : null);
 
 /* ---------- compute only (no drawing): gs.ai Swarm and other number crunching ---------- */
-let compute = null;
+let compute = null, computeShared = false;   // (shared: the 3D renderer's device, so lost with it: lostGPU)
 /**
  * A WebGPU device for compute shaders, or null where there's no WebGPU. Shares the 3D renderer's
  * device when WebGPU drawing is already running, else asks for its own (once). Never rejects. Callers keep a CPU
@@ -185,7 +260,7 @@ export function computeDevice() {
   return compute ||= (async () => {
     try {
       const shared = webgpu()?.r?.backend?.device;   // already made for 3D: share it (never load three for this)
-      if (shared) return shared;
+      if (shared) { computeShared = true; return shared; }
       if (!await hasWebGPU()) return null;
       const a = await navigator.gpu.requestAdapter(), d = a && await a.requestDevice();
       if (!d) return null;
