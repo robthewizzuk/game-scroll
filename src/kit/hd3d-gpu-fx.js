@@ -8,6 +8,7 @@ import { uniform, uv, rtt, Fn, vec2, vec3, vec4, float, mix, smoothstep, max, fl
 import { outline } from 'three/examples/jsm/tsl/display/OutlineNode.js';
 import { afterImage } from 'three/examples/jsm/tsl/display/AfterImageNode.js';
 import { ssr } from 'three/examples/jsm/tsl/display/SSRNode.js';
+import { gasStage } from './gas-gpu.js';
 
 const hash2 = p => { const a = fract(vec3(p.x, p.y, p.x).mul(.1031)), b = a.add(dot(a, a.yzx.add(33.33))); return fract(b.x.add(b.y).mul(b.z)); };
 const HALF = { depthBuffer: false, type: HalfFloatType };
@@ -97,6 +98,8 @@ const STAGE = {
     };
     return keep(Fn(() => vec4(S.sample(uv()).rgb.add(seen.mul(ve).add(hid.mul(he)).mul(k)), 1))());
   },
+  // gs.gas: smoke and fire walked through as a lit volume and laid over the scene (gas-gpu.js)
+  gas: gasStage,
 };
 /**
  * The chain's effect stages after src (a picture node): returns the picture after them. ao: the ambient
@@ -115,7 +118,7 @@ export function fxStages(ch, src, ao, U) {
 export function fxFrame(ch, w, h, k) {
   ch.fxK = k;
   for (const t of ch.fxR) t.setSize(w, h);
-  for (const s of ch.fxSlots) s.set?.(s.pass);
+  for (const s of ch.fxSlots) s.set?.(s.pass, w, h);
 }
 export function fxDispose(ch) {
   for (const t of ch.fxR || []) t.renderTarget?.dispose();

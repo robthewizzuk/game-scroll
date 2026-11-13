@@ -899,6 +899,37 @@ liquid is opaque (coloured, glossy), so it sits in the solid pass with everythin
 extra screen passes. `scripts/look-compare.cjs` draws it (`gpu-fluid`) and checks that the version on
 the graphics chip keeps its liquid and comes to rest where the other does.
 
+## Smoke and fire that flow: gs.gas
+
+`new gs.gas.Gas(view, { box, kind })` is smoke and fire that behave: a gas simulation (the "stable
+fluids" method) in a grid of cells that carry speed, smoke, heat and fuel. Smoke rises and curls,
+spreads under a ceiling, pours round solid things and goes with the wind; fire burns its fuel into heat
+and soot; an explosion rolls up into a mushroom. With WebGPU it runs as compute passes on the graphics
+chip in 80,000 to 300,000 cells (300,000 on a top phone) and is drawn as a lit volume: each pixel's ray
+is walked through the gas at half size, the smoke lit by the sun and the sky and shaded by the smoke
+between it and the sun, flames glowing through it, and the result laid over the picture behind whatever
+stands in front. On WebGL the same steps run in JavaScript in 5,000 to 12,000 cells, drawn as soft puffs
+that ride the flow, so a game plays the same on both and only looks finer on WebGPU.
+
+```js
+const { Gas } = gs.gas;
+gas = new Gas(v, { box: [-4, 0, -4, 4, 6, 4], kind: 'fire', lamp: true });   // once, in setup()
+camp = gas.fire({ x: 0, y: .2, z: 0, size: 1 });
+gas.box({ x: 0, y: 2.6, z: 0, w: 2.4, h: .4, d: .6 });                       // a beam the smoke goes round
+// each frame
+gas.wind.x = 1.2; gas.update(dt); if (gas.sees(gx, gy, gz, px, py, pz) < .3) hidden();
+```
+
+Fires, smoke makers, fans, explosions and puffs, solid balls, boxes and tubes (they push the gas as
+they move), your world's walls and ground, a closed room, wind, and the questions `smokeAt`, `heatAt`,
+`flowAt`, `sees`, `smokeIn` and `glow`: the full list is in
+[maker-kit.md](maker-kit.md#smoke-and-fire-that-flow). `gas.backend` says which version is running.
+Keep the box small (the cells get bigger with it) and build for the smaller version: a cell is about
+three times as wide there. The volume is one more screen pass at half size; the gas casts no shadow on
+the world and is not in reflections. `scripts/look-compare.cjs` runs it (`gpu-gas`) and checks that the
+version on the graphics chip and the JavaScript one, given the same grid, stay the same gas cell for
+cell.
+
 ## Things made in code: gs.models
 
 A game stays one `.js` file with no image or model files, so `gs.models` makes the materials and

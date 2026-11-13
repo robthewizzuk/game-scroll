@@ -53,6 +53,7 @@ export { LightProbeGrid };
 export { bakeProbe };   // v.bakeLight() on this renderer
 export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
+export { gpuGas } from './gas-gpu.js';
 import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';

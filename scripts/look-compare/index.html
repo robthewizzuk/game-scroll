@@ -604,6 +604,72 @@ async function fluidScene() {
     return [pic, window.__hd.info.backend + (onChip ? `, ${a.f.max} drops on the graphics chip, matching the JavaScript version` : `, ${a.f.max} drops in JavaScript`)];
   } finally { F.force = was; }
 }
+
+// gs.gas (smoke and fire that flow): a fire, and smoke that meets a ball. On WebGPU the gas runs on the
+// graphics chip and is drawn as a lit volume; beside it, unseen, the JavaScript version runs the same gas in
+// the same grid at the same rate (__gas.twin), and the two are held against each other cell by cell: the
+// passes in gas-gpu.js are gas.js's maths line for line, so they may only drift as far as two kinds of
+// arithmetic do. Then the rest of the kit the same way: a closed room with ground and a wall of its own, the
+// wind, a fan, a box swept through, a post, an explosion and a puff.
+async function gasScene() {
+  window.__hd.force = 3;
+  const { Gas } = gs.gas, G = window.__gas, was = [G.force, G.twin]; G.force = 9000; G.twin = true;
+  // the smoke and heat of two versions of one gas, held together: how far apart their cells are (of the most any cell holds), and how much each has in all
+  const apart = (A, B, n) => { let d = 0, big = 0, ta = 0, tb = 0, ha = 0, hb = 0, top = 1e-6; for (let c = 0; c < n; c++) { const o = c * 4; top = Math.max(top, B[o]); } for (let c = 0; c < n; c++) { const o = c * 4, e = Math.abs(A[o] - B[o]); d += e; if (e > top * .25) big++; ta += A[o]; tb += B[o]; ha += A[o + 1]; hb += B[o + 1]; } return { mean: d / Math.max(tb, 1e-6), big: big / n, smoke: ta / Math.max(tb, 1e-6), heat: ha / Math.max(hb, 1e-6), tb }; };
+  try {
+    const v = new HV({ bg: '#9ab4d0', fog: .002, amb: .35 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
+    v.cam.position.set(.6, 2.2, 6.4); v.cam.lookAt(0, 1.9, 0); v.cam.updateMatrixWorld();
+    const sun = gs.hd.sun('#fff2d8', 3, 12, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#6a7a58', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    const ballM = new T.Mesh(new T.SphereGeometry(.4, 24, 16), gs.hd.pbr('#d9482b', { rough: .35 })); ballM.castShadow = true; ballM.position.set(.93, 1.72, .27); v.scene.add(ballM);
+    const mk = view => {
+      const g = new Gas(view, { box: [-2, 0, -2, 2, 4.4, 2], kind: 'fire', gpu: !!view, seed: 5 });
+      g.fire({ x: -.8, y: .3, z: -.1, size: .9 }); g.smoke({ x: .93, y: .3, z: .27, size: .9, heat: 1, tint: .6 });
+      return { g, ball: g.ball({ x: .93, y: 1.72, z: .27, r: .4 }) };
+    };
+    const a = mk(v), b = GPU ? mk(null) : null, both = b ? [a, b] : [a];
+    for (let i = 0; i < 150; i++) { for (const k of both) k.g.update(1 / 60); v.t = 0; v.render(x, 240, 320); if (i % 5 === 0) await frame(); }
+    const onChip = a.g.backend === 'gpu' && !!a.g.twin;
+    if (GPU && !onChip) throw new Error('gs.gas did not run on the graphics chip on WebGPU');
+    let note = `${a.g.cells} cells in JavaScript`;
+    if (onChip) {
+      if (a.g.cells !== b.g.cells || a.g.sim.steps !== b.g.sim.steps) throw new Error(`gs.gas: the two versions are not the same gas (${a.g.cells} cells and ${a.g.sim.steps} steps on the graphics chip, ${b.g.cells} and ${b.g.sim.steps} in JavaScript)`);
+      const d = apart(await a.g.twin.cellsNow(a.g.twin.r), b.g.sim.S, b.g.cells);
+      if (!(d.tb > 50 && d.mean < GAS_MEAN && d.big < GAS_BIG && Math.abs(d.smoke - 1) < .05 && Math.abs(d.heat - 1) < .05)) throw new Error(`gs.gas on the graphics chip left the JavaScript version: cells apart by ${d.mean} of the smoke (${d.big} of them by a lot), ${d.smoke} of its smoke and ${d.heat} of its heat`);
+      // its answers, which come back four cells to one and a few frames late: the same fire, the same smoke
+      await a.g.twin.answers(a.g.twin.r);
+      const pa = a.g.glow, pb = b.g.glow, sa = a.g.smokeIn(), sb = b.g.smokeIn(), ia = a.g.smokeAt(.93, 1.72, .27), fa = a.g.flowAt(-.8, 1.2, -.1).y, fb = b.g.flowAt(-.8, 1.2, -.1).y;
+      if (!(pb.power > .3 && Math.abs(pa.power / pb.power - 1) < .2 && Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z) < .35 && Math.abs(sa / sb - 1) < .1 && ia < .1 && fb > 1 && fa > .5 && a.g.sees(-1.8, .6, -.1, 1.8, .6, -.1) < .9))
+        throw new Error(`gs.gas: the answers copied back from the graphics chip are not the gas's (fire ${pa.power} at ${pa.x}, ${pa.y}, ${pa.z} against ${pb.power} at ${pb.x}, ${pb.y}, ${pb.z}; smoke ${sa} against ${sb}; ${ia} inside the ball; climbing at ${fa} against ${fb})`);
+      note = `${a.g.cells} cells on the graphics chip, matching the JavaScript version (cells apart by ${d.mean.toFixed(4)} of the smoke, ${d.big.toFixed(4)} of them by a lot)`;
+    }
+    v.t = 0; v.render(x, 240, 320); const pic = c.toDataURL();
+    for (const k of both) k.g.dispose();
+    if (onChip) {
+      const mk2 = view => {
+        const g = new Gas(view, { box: [-2, 0, -1.5, 2, 2.6, 1.5], kind: 'smoke', open: false, gpu: !!view, seed: 9, wind: { x: .6 }, curl: .5 });
+        g.ground((gx, gz) => gx < -1.2 ? .5 : 0); g.solid((gx, gy, gz) => gx > .9 && gx < 1.15 && gy < 1.4);
+        g.smoke({ x: -.4, y: .3, z: .2, heat: .8 }); g.fan({ x: .2, y: 1.2, z: -.6, size: 1, dir: [0, .2, 1], speed: 3 }); g.tube({ x: -.1, y: .8, z: .7, r: .22, h: 1.6 });
+        return { g, bat: g.box({ x: -1.6, y: 1.5, z: 0, w: .3, h: .8, d: 1.2 }) };
+      };
+      const a2 = mk2(v), b2 = mk2(null), q = new T.Quaternion(), ax = new T.Vector3(0, 1, 0);
+      for (let i = 0; i < 120; i++) {
+        for (const k of [a2, b2]) {
+          if (i > 30 && i < 90) k.bat.set(-1.6 + (i - 30) * .04, 1.5, 0, q.setFromAxisAngle(ax, (i - 30) * .03));
+          if (i === 20) k.g.burst(.3, .7, -.3, { size: 1.1, fire: .6 }); if (i === 50) k.g.puff(-.6, 1.6, .5, { size: .9, tint: 1 });
+          k.g.update(1 / 60);
+        }
+        v.t = 0; v.render(x, 240, 320); if (i % 5 === 0) await frame();
+      }
+      const d = apart(await a2.g.twin.cellsNow(a2.g.twin.r), b2.g.sim.S, b2.g.cells);
+      if (!(a2.g.sim.steps === b2.g.sim.steps && d.tb > 50 && d.mean < GAS_MEAN && d.big < GAS_BIG && Math.abs(d.smoke - 1) < .05 && Math.abs(d.heat - 1) < .05)) throw new Error(`gs.gas (a closed room, ground, a wall, wind, a fan, a swept box, a post, a burst, a puff) on the graphics chip left the JavaScript version: cells apart by ${d.mean} of the smoke (${d.big} of them by a lot), ${d.smoke} of its smoke and ${d.heat} of its heat`);
+      a2.g.dispose(); b2.g.dispose(); note += `; the rest of the kit apart by ${d.mean.toFixed(4)}, ${d.big.toFixed(4)}`;
+    }
+    return [pic, window.__hd.info.backend + ', ' + note];
+  } finally { [G.force, G.twin] = was; }
+}
+// (how far the two versions of a gas may be apart: the mean difference of a cell's smoke as a share of all the smoke; the share of cells out by a quarter of the thickest cell)
+const GAS_MEAN = .01, GAS_BIG = .001;
 // an outdoor valley (gs.outdoors looks, gs.sky, gs.props): painted ground with fields, a lane and mud,
 // far hills, mossy rocks, leaf cards and their impostors, a sky with clouds and its own reflections,
 // air with cloud shadows, rain-wet surfaces, a near shadow cascade, sun shafts and depth of field.
@@ -816,7 +882,7 @@ async function shadowOffScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
-const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
+const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), 'gpu-gas': () => gasScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
 const PICK = new URLSearchParams(location.search).get('pick');
 if (PICK) try { for (const n of PICK.split(',')) if (n === 'beams') { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; } else [out[n], backends[n]] = await SCENES[n](); } catch (e) { out.error = String(e && e.stack || e); }
 else try {
@@ -858,6 +924,7 @@ else try {
   [out.river, backends.river] = await riverScene();
   [out.flood, backends.flood] = await floodScene();
   [out['gpu-fluid'], backends['gpu-fluid']] = await fluidScene();
+  [out['gpu-gas'], backends['gpu-gas']] = await gasScene();
   [out.city, backends.city] = await cityScene();
   for (const t of [1, 3]) [out['outdoor-tier' + t], backends['outdoor-tier' + t]] = await outdoor(t);
   [out['outdoor-physical'], backends['outdoor-physical']] = await outdoor(3, true);

@@ -21,5 +21,6 @@ export * as city from './kit/city.js';
 export * as models from './kit/models.js';
 export * as voxels from './kit/voxels.js';
 export * as fluid from './kit/fluid.js';
+export * as gas from './kit/gas.js';
 export * as tabletop from './kit/tabletop.js';
 export * as THREE from 'three';
