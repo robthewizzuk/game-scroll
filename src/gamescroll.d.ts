@@ -6,6 +6,7 @@
 type Ctx = CanvasRenderingContext2D;
 type XY = { x: number; y: number };
 type XYZ = { x: number; y: number; z: number };
+type Arr3 = [number, number, number];
 type Colour = string | string[];
 type Loose = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -3126,6 +3127,47 @@ export interface WindPart {
   uniforms: { lkWind: { value: number }; lkWindDir: { value: Loose } };
   update(dt: number, at?: P3 | null): WindPart; at(x: number, z: number, out?: Loose): { x: number; z: number; speed: number; gust: number };
 }
+/** What every Cloth piece takes. colour, or colours: stripes (along it, or across: true, from the top down); weight: kilograms a square metre (.15 nylon, .4 canvas); open: how much of the wind reaches it (1; .3 in the lee of a wall; 0 indoors); stiff: 1 (2: a stiffer cloth). */
+export interface ClothPieceOptions { colour?: string; colours?: string[]; across?: boolean; weight?: number; open?: number; stiff?: number }
+export interface ClothPiece {
+  readonly kind: 'flag' | 'banner' | 'awning' | 'rope' | 'sheet'; readonly cols: number; readonly rows: number; open: number; weight: number;
+  /** The wind on it now: x, y, z and its speed. */
+  readonly wind: [number, number, number, number];
+  /** The point at column i, row j now: [x, y, z]. */
+  at(i: number, j: number): [number, number, number];
+  /** Its pins ride a moving thing (an Object3D: a mast, a boat, a person) and keep their place on it; null: they stay where they are. */
+  ride(thing: Loose | null): ClothPiece;
+  /** Moves its pins by (dx, dy, dz) metres; the cloth follows. */
+  move(dx: number, dy: number, dz: number): ClothPiece;
+  remove(): void;
+}
+/** A solid the cloth goes round: set() moves it. */
+export interface ClothSolid { r: number; set(...to: Loose[]): ClothSolid; remove(): void }
+export interface ClothPart {
+  readonly mesh: Loose; readonly N: number; readonly fine: number; readonly pieces: ClothPiece[]; solids: ClothSolid[];
+  /** 'gpu' once the graphics chip runs it (WebGPU), else 'cpu'. */
+  readonly mode: 'cpu' | 'gpu';
+  wind: WindPart | { x?: number; y?: number; z?: number } | null; ground: number | ((x: number, z: number) => number) | null;
+  /** A flag: at, the top of its edge on the pole; size [across, down]; dir: the way it flies out at rest (radians about up, 0 = +x). */
+  flag(o?: ClothPieceOptions & { at?: Arr3; size?: [number, number]; dir?: number }): ClothPiece;
+  /** A banner pinned all along a rail from `from` to `to`, hanging `drop` metres. */
+  banner(o?: ClothPieceOptions & { from?: Arr3; to?: Arr3; drop?: number }): ClothPiece;
+  /** An awning over a door or window: at, the middle of where it meets the wall; width; depth out from the wall; fall (its front below the wall's edge); dir (radians about up, 0 = +z); valance (metres hanging from the front). */
+  awning(o?: ClothPieceOptions & { at?: Arr3; width?: number; depth?: number; fall?: number; dir?: number; valance?: number }): ClothPiece;
+  /** A washing line between two posts that gives under its load: items, how many things hang from it or [{ at: 0..1, size: [w, h], colour }]. Gives [the line, ...the things]. */
+  line(o?: ClothPieceOptions & { from?: Arr3; to?: Arr3; sag?: number; items?: number | { at: number; size?: [number, number]; colour?: string }[] }): ClothPiece[];
+  /** A cloth of your own: cols x rows points at place(i, j); pins: the points (j * cols + i) held where they start. */
+  sheet(o: ClothPieceOptions & { cols?: number; rows?: number; place: (i: number, j: number) => Arr3; pins?: number[] }): ClothPiece;
+  /** A solid ball it drapes over and is pushed aside by: set(x, y, z) moves it. */
+  ball(o?: { x?: number; y?: number; z?: number; r?: number }): ClothSolid;
+  /** A solid rod with round ends (a leg, a post): set(a, b) moves it. */
+  capsule(o?: { a?: Arr3; b?: Arr3; r?: number }): ClothSolid;
+  /** Takes every piece and solid away (reset()). */
+  clear(): ClothPart;
+  /** Each frame, after the wind and anything its pins ride have moved. */
+  update(dt: number): ClothPart;
+  dispose(): void;
+}
 export interface OutdoorsPart {
   /** Terrain (THREE.Terrain): kind 'hills' | 'mountains' | 'rolling' | 'islands' | 'bumps' | 'dunes' | 'cracked' | 'ridges' | 'smooth', or (x, z) => height. */
   Land: new (o?: { kind?: string | ((x: number, z: number) => number); size?: number; segments?: number; low?: number; high?: number; seed?: number; smooth?: number; steps?: number; colours?: [number, string][]; material?: Loose; edge?: number }) => LandPart;
@@ -3160,7 +3202,14 @@ export interface OutdoorsPart {
    * marks.update(dt) each frame after they have moved, marks.clear() in reset(). view: the 3D view (null: the numbers alone). docs/nextgen-3d.md "Ground that takes marks".
    */
   Marks: new (view: Loose | null, o?: MarksOptions) => MarksPart;
-  /** One wind for a world: grass (land.wind), leaves, rain, particles, cloud shadows; at(x, z) for bullets and flags. */
+  /**
+   * Cloth in the wind: flags, banners, awnings, washing lines and sheets of your own that sag, ripple, fly and snap, drape over solid balls and capsules
+   * and lie on the ground. All of a view's cloth is one set, run on the graphics chip on WebGPU (finer: 14 points a metre) and here elsewhere (7).
+   * Make it and its pieces in make() (a piece added later starts as made); clear() in reset(); update(dt) each frame. wind: a gs.outdoors Wind (gusts
+   * where each piece is) or { x, z } metres a second (3 along x without one); ground: a height or (x, z) => height; steps: small steps a frame (4).
+   */
+  Cloth: new (view: Loose | null, o?: { wind?: WindPart | { x?: number; y?: number; z?: number } | null; fine?: number; ground?: number | ((x: number, z: number) => number) | null; rough?: number; steps?: number }) => ClothPart;
+  /** One wind for a world: grass (land.wind), leaves, rain, particles, cloud shadows; at(x, z) for bullets and flags (and gs.outdoors.Cloth). */
   Wind: new (o?: { x?: number; z?: number; gust?: number; gustSize?: number; sway?: number; grass?: number }) => WindPart;
   /** Far stand-in for a tree: crossed cards with baked pictures of it (null without 3D). Use as a props lod level: [dist, imp.geometry, imp.material]. */
   impostor(geometry: Loose, material: Loose, o?: { cards?: number; size?: number; round?: number; material?: Loose }): { geometry: Loose; material: Loose; texture: Loose; dispose(): void } | null;

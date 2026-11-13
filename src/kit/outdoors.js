@@ -30,6 +30,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 export { looks, groundDetail, horizon } from './looks.js';
 export { Water } from './water.js';
 export { Marks } from './marks.js';
+export { Cloth } from './cloth.js';
 import { looks as LOOKS } from './looks.js';
 import { rockArrays, RockMap } from './land-rock.js';
 import { pause, built, need, loading } from './slices.js';
