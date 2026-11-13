@@ -693,8 +693,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 13 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up and a street at night, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 14 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street at night and a coast, each with its system off and then on', JSON.stringify(sc.scenes));
   // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
   check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
     && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
@@ -748,6 +748,11 @@ async function tour(b) {
   const nightLit = nightGpu ? 4 : 2;   // (WebGL: as many round lights as the quality allows, two at the least)
   check(litOf('off')[0] >= nightLit && litOf('off')[1] === null && nightOn[0] >= nightLit && (nightGpu ? nightOn[1] >= 1 && nightOn[2] > 0 : nightOn[1] === null) && /\n  = lamps with shadows, shaped headlights, neon against plain round lamps: /.test(sc.text),
     'the night street is lit by plain round lamps and then by lamps with shadows, shaped headlights and neon', JSON.stringify(sby.night));
+  // the coast: a beach in the rain with the plain water, then the sea and its shore, then rain on the lens and spray off the jeep's tyres
+  const seaOf = m => /^(the plain water|the sea) and the rain worked out in [\d.]+ ms a frame$/.exec(M('coast', m).tell || '')?.[1];
+  check(seaOf('water') === 'the plain water' && seaOf('sea') === 'the sea' && seaOf('runs') === 'the sea' && M('coast', 'sea').tris > M('coast', 'water').tris && /\nCOAST · the open sea and rain that runs · a beach in the rain: /.test(sc.text)
+    && /\n  = the sea and its shore against plain water: /.test(sc.text) && /\n  = rain on the lens and spray off the tyres against none: /.test(sc.text),
+    'the coast is flown with the plain water, then the sea and its shore, then rain on the lens and spray off the tyres', JSON.stringify(sby.coast));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
   check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),

@@ -23,6 +23,8 @@
 //   night    lamps with shadows (src/kit/lamps.js, lamps-gpu.js): a wet street at night with lamps on posts, cars with their headlights
 //            and people under the lamps, neon and a lit sign: once with every lamp a plain round light, then with the nearest lamps' shadows
 //            from one shared atlas, headlights in a dipped beam's shape, and neon tubes and the sign lighting the wet road from their length
+//   coast    the open sea (src/kit/sea.js, sea-gpu.js, gs.outdoors.Sea) and rain that runs (lens-drops.js, gs.sky.Weather watch()): a beach in the
+//            rain followed behind a jeep: with the plain water, with the sea and its shore, then with drops on the lens and spray off the tyres
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -866,6 +868,67 @@ function night({ gs, size }) {
   };
 }
 
+/* ---------- coast: the open sea and rain that runs ---------- */
+function coast({ gs, size }) {
+  const T = gs.THREE, { Land, Water, Sea } = gs.outdoors, { vehicle } = gs.models, { v, sun } = view(gs, 1500, .0008), k = Math.min(1, Math.max(.25, size));
+  const sky = new gs.sky.Sky(v, { time: 15, env: true, clouds: .85 });   // (an overcast afternoon: the water mirrors it)
+  // a beach along x: the sea to the north (+z), the sand rising from a shore that wanders to a coast road, a hut by the road
+  const shore = x => 3 * Math.sin(x * .03) + 1.5 * Math.sin(x * .071 + 1), ROAD = -27;
+  const bed = (x, z) => { const d = z - shore(x); return d > 0 ? -d * .045 - Math.max(0, d - 30) * .05 : Math.min(2, -d * .1); };
+  const land = new Land({ kind: bed, size: 320, segments: Math.max(48, Math.round(200 * Math.sqrt(k))), low: -40, high: 6, material: gs.models.material('sand', { repeat: [80, 80] }) }); v.scene.add(land.object);
+  land.mesh.userData.detail = false;   // (drawn whole in every run, so the runs differ only by their water and rain)
+  const add = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  add(new T.BoxGeometry(320, .2, 6), gs.hd.pbr('#3a3b3d', { rough: .6 }), 0, 2, ROAD).castShadow = false;
+  // the hut: brick walls for the rain to run down, a window facing the sea for it to bead on
+  const glass = gs.hd.pbr('#7f939c', { rough: .04, metal: .1 }), white = gs.hd.pbr('#e8e4dc', { rough: .5 });
+  add(new T.BoxGeometry(7, 3.2, 5), gs.hd.pbr('#9a5a44', { rough: .85 }), 14, 3.6, ROAD - 9); add(new T.BoxGeometry(7.6, .3, 5.6), gs.hd.pbr('#4a4f57', { rough: .7 }), 14, 5.35, ROAD - 9);
+  add(new T.BoxGeometry(2.4, 1.4, .04), glass, 14, 3.9, ROAD - 6.48);
+  for (const [w, h, x, y] of [[2.6, .1, 14, 3.15], [2.6, .1, 14, 4.65], [.1, 1.4, 12.75, 3.9], [.1, 1.4, 15.25, 3.9], [.06, 1.4, 14, 3.9]]) add(new T.BoxGeometry(w, h, .08), white, x, y, ROAD - 6.44);
+  // a jeep going round: east along the road, down to the beach, back west along the sand above the surf, up again
+  const loop = new T.CatmullRomCurve3([[-45, ROAD], [0, ROAD], [45, ROAD], [55, -21], [45, -15], [0, -15], [-45, -15], [-55, -21]].map(([x, z]) => new T.Vector3(x, 0, z)), true, 'centripetal');
+  const LEN = loop.getLength(), SPEED = 12, jeep = vehicle('car', { style: 'jeep', seed: 4 }), boat = vehicle('boat', { style: 'rowboat', seed: 3 });
+  v.scene.add(jeep, boat);
+  // the water of the run that is on: the plain water (gs.outdoors Water) in the rain, the sea in the rain, and the sea
+  // with the rain that runs onto the lens and is thrown off the jeep's tyres. Rain falls in all three, so the wet look is the same.
+  let water = null, weather = null, mode = null;
+  const set = key => {
+    weather?.dispose(); water?.dispose(); weather = water = null; mode = key;
+    const seg = Math.round(96 * Math.sqrt(k));
+    water = key === 'water' ? new Water({ size: 400, segments: seg, bed, colour: '#2f6f8a' }) : new Sea({ wind: 8, dir: -1.35, bed, view: v, segments: seg });
+    v.scene.add(water.mesh);
+    weather = new gs.sky.Weather(v, { kind: 'rain', amount: .5, level: true, water, area: 26, max: Math.round(900 * k), lens: key === 'runs' });
+    weather.wet = 1; weather.pools = .5;
+    if (key === 'runs') weather.watch(jeep); else if (v.drops) v.drops.on = false;
+  };
+  const sum = { n: 0, ms: 0, t: 1e9 }, P = new T.Vector3(), D = new T.Vector3(), ahead = new T.Vector3(), UP = new T.Vector3(0, 1, 0), N = new T.Vector3(), YAW = new T.Quaternion().setFromAxisAngle(UP, .7);
+  const enter = key => async draw => { set(key); sum.t = 1e9; for (let i = 0; i < 6; i++) await draw(); };
+  return {
+    v, holds: 'a beach in the rain: the surf, a jeep going round the coast road and the sand, a hut with a window, a rowing boat offshore',
+    modes: [
+      { key: 'water', name: 'plain water', enter: enter('water') },
+      { key: 'sea', name: 'the sea and its shore', enter: enter('sea') },
+      { key: 'runs', name: 'the sea, rain on the lens and spray', enter: enter('runs') },
+    ],
+    pairs: [['water', 'sea', 'the sea and its shore against plain water'], ['sea', 'runs', 'rain on the lens and spray off the tyres against none']],
+    // the camera follows the jeep from behind and a little inland, looking ahead and out to sea; the water and the rain
+    // take their steps by the clock, so every run sees the same waves
+    path(t, cam) {
+      const back = t < sum.t, dt = back ? 0 : Math.min(.1, t - sum.t);
+      if (back) { sum.n = sum.ms = 0; water.t = 0; water.calm(); weather.lens?.clear(); }
+      sum.t = t;
+      const u = (t * SPEED / LEN) % 1; loop.getPointAt(u, P); loop.getTangentAt(u, D);
+      P.y = Math.abs(P.z - ROAD) < 3 ? 2.1 : land.height(P.x, P.z); jeep.position.copy(P); jeep.rotation.y = Math.atan2(D.x, D.z) + Math.PI; jeep.move(dt, SPEED, { steer: 0 }); jeep.updateMatrixWorld(true);
+      cam.position.set(P.x - D.x * 9, 0, P.z - D.z * 9 - 4); cam.position.y = Math.max(P.y + 3.4, land.height(cam.position.x, cam.position.z) + 1.6);
+      ahead.set(P.x + D.x * 9, P.y + .3, P.z + D.z * 9 + 8); cam.lookAt(ahead); cam.updateMatrixWorld(); sun.follow(P.x, 0, P.z);
+      const t0 = performance.now(); water.update(dt, cam.position); weather.update(dt); sum.ms += performance.now() - t0; sum.n++;
+      // the boat floats where height() says, leaning with normal()
+      const bx = -6, bz = 34, n = water.normal(bx, bz); boat.position.set(bx, water.height(bx, bz) - .12, bz); boat.quaternion.setFromUnitVectors(UP, N.set(n.x, n.y, n.z)).multiply(YAW); boat.updateMatrixWorld(true);
+    },
+    tell() { return sum.n ? `${mode === 'water' ? 'the plain water' : 'the sea'} and the rain worked out in ${(sum.ms / sum.n).toFixed(2)} ms a frame` : null; },
+    dispose() { weather?.dispose(); water?.dispose(); weather = water = null; if (v.drops) v.drops.on = false; sky.dispose(); jeep.removeFromParent(); boat.removeFromParent(); clear(v); },   // (the jeep's and boat's shapes are the kit's own: not freed here)
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -881,4 +944,5 @@ export const SCENES = [
   ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
   ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
+  ['coast', 'Coast', 'the open sea and rain that runs', coast],
 ];

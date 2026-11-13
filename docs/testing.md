@@ -258,13 +258,19 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    Then **faces**: four people (a young woman, an older heavy man, a young man with dark skin, a woman of
    fifty), each in turn filling the screen as the camera drifts round them in a low sun, in the clean look
    and then the real one (`look: 'real'`); the frame rates say what a real face costs close up.
-   Last, a **night** street: a walk down a wet pavement under lamps on posts, cars going by with their
+   Then a **night** street: a walk down a wet pavement under lamps on posts, cars going by with their
    headlights on, people walking, two neon tubes and a lit sign; once with every lamp a plain round light,
    then with the nearest lamps and headlights casting shadows from one shared atlas (each slot drawn again
    only when something it sees moved), headlights in a dipped beam's shape and the neon and sign lighting the
    road from their length (`src/kit/lamps.js`); the second run says how many lights were lit, how many had a
    shadow and how many shadow slots were drawn a frame.
-   About 16 minutes at 20 seconds a run on WebGPU (31 runs), longer the
+   Last, a **coast** in the rain, followed behind a jeep that goes along the coast road and back along the
+   sand above the surf, past a hut with a window and a rowing boat offshore: with the plain water
+   (`gs.outdoors.Water`), with the open sea and its shore (`gs.outdoors.Sea`: the swell, breakers, the
+   swash and wet sand, and on WebGPU the FFT's fine waves and the see-through water), then with the rain
+   that runs onto the lens and is thrown off the jeep's tyres; each run says how long the water and the
+   rain took a frame.
+   About 17 minutes at 20 seconds a run on WebGPU (34 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
