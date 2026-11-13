@@ -637,6 +637,99 @@ function parade({ gs, HD, size }) {
   };
 }
 
+/* ---------- line-up: people that move ---------- */
+// What makes a person move and look alive, all of it worked out each frame in code: steps that are really taken
+// (src/kit/stride.js), momentum between moves and follow-through (follow.js), a live face (human-face.js) and hands
+// that hold (human.js). Off, each person is posed as drawn and nothing more, as people were before.
+const S = Math.sin, TAU = Math.PI * 2;
+const KNEEL = p => ({ j: { hips: [.04, -.25, 0], spine: [.14 + S(p * TAU) * .006, .2, 0], head: [-.05, .05, 0], legL: [-1.71, 0, .1], shinL: [1.53, 0, 0], footL: [.12, 0, 0], legR: [.38, 0, -.06], shinR: [1.17, 0, 0], footR: [.92, 0, 0], armL: [-.5, 0, .1], foreL: [-1, 0, 0], armR: [-.3, 0, -.1], foreR: [-1.2, 0, 0] }, drop: .27 });
+const DUCK = p => ({ j: { hips: [.25, 0, 0], spine: [.62 + S(p * TAU) * .005, 0, 0], head: [.05, 0, 0], legL: [-2.05, 0, .16], shinL: [2.45, 0, 0], footL: [-.17, 0, 0], legR: [-1.9, 0, -.14], shinR: [2.5, 0, 0], footR: [-.38, 0, 0], armL: [-.75, 0, .12], foreL: [-1.3, 0, 0], armR: [-.6, 0, -.1], foreR: [-1.4, 0, 0] }, drop: .311 });
+function lineup({ gs, size }) {
+  const T = gs.THREE, { human } = gs.models, N = Math.max(3, Math.round(8 * size)), GAP = 2.4, { v, sun } = view(gs, 200, .002);
+  const ground = new T.Mesh(new T.PlaneGeometry(240, 240).rotateX(-Math.PI / 2), gs.hd.pbr('#8a8478', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
+  const STR = { idle: 0, walk: 1.3, jog: 3.3 };
+  // what each does, along the line: a ring walked, quick turns on the spot, a kneel turned this way and that, down to a crouch and
+  // up, a rifle held, talking, walking to and fro with stops, and standing easy with a pack on
+  const ACTS = ['ring', 'turn', 'kneel', 'stance', 'rifle', 'talk', 'pace', 'pack'];
+  const KIT = { pack: { kind: 'pack', colour: '#565a44' }, belt: { colour: '#2b2723', buckle: '#8d8c80' }, webbing: { colour: '#2b2723', y: true, pouches: 2 } };
+  const SPECS = Array.from({ length: N }, (_, i) => ({ seed: 51 + i, body: ['#5a6648', '#4a5a6a', '#6a5a48', '#5c636b'][i % 4], ...(ACTS[i % 8] === 'rifle' ? { hands: 'grip' } : {}), ...(ACTS[i % 8] === 'pack' ? { outfit: KIT } : {}), ...(i % 3 === 2 ? { sex: 'f', hairStyle: 'bun' } : {}) }));
+  const line = new T.Group(); v.scene.add(line);
+  let ready = false, mode = '', who = [], gun = null;
+  const rifle = () => {   // a plain stand-in for a rifle, its barrel along -z
+    const g = new T.Group(), wood = gs.hd.pbr('#8a5f3c', { rough: .6 }), steel = gs.hd.pbr('#30343a', { rough: .4, metal: .8 });
+    const st = new T.Mesh(new T.BoxGeometry(.03, .05, .82), wood), ba = new T.Mesh(new T.CylinderGeometry(.01, .01, .62, 8).rotateX(Math.PI / 2), steel), bu = new T.Mesh(new T.BoxGeometry(.034, .12, .1), wood);
+    st.position.set(0, -.005, -.05); ba.position.set(0, .03, -.43); bu.position.set(0, -.05, .32); g.add(st, ba, bu); g.traverse(o => { o.castShadow = true; }); return g;
+  };
+  const stand = on => {
+    who = SPECS.map((s, i) => {
+      const f = human(s), r = f.rig, act = ACTS[i % 8], x = (i - (N - 1) / 2) * GAP;
+      r.add('kneel', KNEEL, { time: 4, ground: true }); r.add('duck', DUCK, { time: 3.5, ground: true });
+      f.position.set(x, 0, 0); r.play(act === 'kneel' ? 'kneel' : 'idle', { fade: 0 }); line.add(f);
+      if (act === 'rifle') { gun = gun || rifle(); gun.rotation.set(-.35, Math.PI, 0, 'YXZ'); gun.position.set(-.05, 1.0, .3); f.add(gun); }
+      if (!on) { r.steps = false; r.stride?.off(); r.momentum = false; r.follow = null; f.fingers?.({ L: .35, R: .35 }); if (r.face) { r.face.still?.(); r.face = null; } }
+      return { f, act, x, yaw: 0, z: 0, sp: 0, pose: '' };
+    });
+  };
+  const drop = () => { gun?.removeFromParent(); line.clear(); who = []; };   // (the people's shapes are the kit's own: not freed here)
+  const enter = key => async draw => {
+    let build = null;
+    if (!ready) {
+      const t0 = performance.now(); let done = false, err = null;
+      human.ready(SPECS).then(() => { done = true; }, e => { err = e; done = true; });
+      await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+      ready = true; build = performance.now() - t0;
+    }
+    drop(); stand(key === 'on'); mode = key; sum.n = sum.ms = sum.steps = 0; sum.t = 0;
+    for (let i = 0; i < 4; i++) await draw();
+    return build != null ? { build, note: `${num(N)} people sculpted` } : null;
+  };
+  const toward = (w, want, rate, dt) => { w.yaw += Math.max(-rate * dt, Math.min(rate * dt, want - w.yaw)); };
+  const play = (w, pose) => { if (w.pose !== pose) { w.pose = pose; w.f.rig.play(pose, { fade: .2 }); } };
+  // each act by the clock, so a slow run and a fast one see the same thing
+  const act = (w, t, dt, cam) => {
+    const r = w.f.rig; let sp = 0;
+    if (w.act === 'ring') { const a = t * 1.3 / .9; w.f.position.set(w.x + .9 * Math.sin(a), 0, .9 * Math.cos(a)); w.yaw = Math.atan2(Math.cos(a), -Math.sin(a)); sp = 1.3; }
+    else if (w.act === 'turn') { play(w, 'idle'); toward(w, Math.floor(t / 2.5) % 2 ? 1.1 : -1.1, 4, dt); }
+    else if (w.act === 'kneel') { play(w, 'kneel'); toward(w, Math.floor(t / 3) % 2 ? .8 : -.8, 4, dt); }
+    else if (w.act === 'stance') play(w, Math.floor(t / 2) % 2 ? 'duck' : 'idle');
+    else if (w.act === 'rifle') { play(w, 'idle'); w.yaw = .5 * Math.sin(t * .6); }
+    else if (w.act === 'talk') { play(w, 'idle'); const face = r.face; if (face) { face.look(cam.position); face.mouth(t % 4 < 2.6 ? Math.max(0, S(t * 13) * (.6 + .4 * S(t * 3.1))) : null); } }   // (a line spoken without a sound: the lips only)
+    else if (w.act === 'pace') {   // 2.4 m there, a second's stop, 2.4 m back: it speeds up and slows down as a person does
+      const u = t % 5.4, go = u < 1.85 ? 1 : u < 2.7 ? 0 : u < 4.55 ? -1 : 0, want = go ? 1.3 : 0;
+      w.sp += Math.max(-4 * dt, Math.min(3 * dt, want - w.sp)); if (go) w.dir = go; toward(w, (w.dir || 1) > 0 ? 0 : Math.PI, 6, dt);
+      w.z = Math.max(-1.2, Math.min(1.2, w.z + (w.dir || 1) * w.sp * dt)); w.f.position.set(w.x, 0, w.z); sp = w.sp;
+    }
+    else if (w.act === 'pack') { play(w, 'idle'); toward(w, Math.floor(t / 4) % 2 ? 1 : -1, 3, dt); }
+    if (sp > .15) { w.pose = ''; r.blend(STR, sp); } else if (w.act === 'ring' || w.act === 'pace') play(w, 'idle');
+    w.f.rotation.y = w.yaw; r.update(dt, { speed: sp }); w.f.see?.(cam, 800);
+    if (w.act === 'rifle' && gun) w.f.hold(gun, [0, -.03, .18], [0, -.01, -.22]);
+    if (mode === 'on') for (const ft of r.stride?.feet || []) if (ft.landed) sum.steps++;
+  };
+  const sum = { n: 0, ms: 0, steps: 0, t: 0 };
+  return {
+    v, holds: `${num(N)} people walking a ring, turning quickly, kneeling, crouching, holding a rifle, talking, pacing and standing with a pack on`,
+    modes: [
+      { key: 'off', name: 'posed as drawn', enter: enter('off') },
+      { key: 'on', name: 'steps, weight, a live face and hands', enter: enter('on') },
+    ],
+    // a slow walk along the line and back at a few paces, at eye height
+    path(t, cam) {
+      const span = N * GAP + 2, u = (t * .6) % (span * 2), x = (u < span ? u : span * 2 - u) - span / 2;
+      cam.position.set(x, 1.5, 3.4); cam.lookAt(x * .9, 1.0, 0); sun.follow(cam.position.x, 0, 0); cam.updateMatrixWorld();
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t; if (!(dt > 0)) return;
+      const t0 = performance.now();
+      for (const w of who) act(w, t, dt, cam);
+      sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!sum.n) return null;
+      const posed = `posed in ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
+      return mode === 'on' ? `${posed} · ${num(sum.steps)} steps taken` : posed;
+    },
+    dispose() { drop(); line.removeFromParent(); gun?.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -649,4 +742,5 @@ export const SCENES = [
   ['cliff', 'Cliff', 'land with cliffs, caves and overhangs', cliff],
   ['hall', 'Hall', 'ray traced reflections', hall],
   ['parade', 'Parade', 'smaller meshes', parade],
+  ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
 ];

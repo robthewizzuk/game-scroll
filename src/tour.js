@@ -421,9 +421,9 @@ export function openTour(driver) {
   const picked = () => choice.find(([k]) => k === set.value)[2], fg = () => set.value === FRAMEGEN, scenes = () => set.value === SCENES || fg();
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
-    // (twenty-five runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
+    // (twenty-seven runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
     est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds four ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by frame generation, blended and then ahead: about ${Math.max(1, Math.round((16 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
-      : scenes() ? `Ten scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((25 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
+      : scenes() ? `Eleven scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((27 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };
   set.onchange = secs.onchange = paint; paint();
