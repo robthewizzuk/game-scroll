@@ -3985,6 +3985,9 @@ export default {
   tag: 'Next Gen · Sniper',
   retro: true, era: 'nextgen', pal: 'grape',
   w: 300, h: 300, maxW: 600, maxH: 420,
+  // 60 frames a second at most: a top phone's Auto would try 120 first, which a valley this big can't hold, and give up
+  // sharpness on the way down to 60 (Rob, 2026-11-13: "I want 60fps")
+  fps: 60,
   goal: 1500, reward: 30,
   hint: 'A sniper campaign in a 1944 valley. Drag to look, tap GLASS to tag soldiers, SCOPE in, hold BREATH and FIRE: aim above far targets and into the wind. Shoot while the train or bell is loud (or ring the bell yourself), and MOVE when they find you.',
   traits: ['theme:military', 'genre:shooter'],
