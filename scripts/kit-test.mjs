@@ -5405,6 +5405,44 @@ console.log('physics ok');
     assert.ok(scene.children.includes(d.mesh) && v.sims.includes(d) && d.mesh.userData.noLod && d.mesh.geometry.attributes.position.count === d.N, 'on a view: its mesh in the scene, stepped with the view (the graphics chip takes over there)');
     d.dispose(); assert.ok(!scene.children.includes(d.mesh) && !v.sims.includes(d), 'dispose() takes it out');
   }
+  // worn: a skirt and a cape on people who walk, then run, round a ring. The body's rods follow its bones; the skirt is cut to fit round them and
+  // goes all round, its front stays in front (the legs carry it, they don't drag it round); it keeps its size, near enough at a sprint (a hem
+  // round both knees), with more small steps while the legs swing fast; nothing ends a frame inside a leg; a cape hangs behind at a walk and flies
+  // at a run; a person put somewhere else at once takes their clothes with them whole
+  {
+    const { skeleton } = await import('../src/kit/models/human.js'), STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, dt = 1 / 60;
+    const a = skeleton({}), b = skeleton({}); a.position.set(.9, 0, 0); b.position.set(-.9, 0, 0); for (const p of [a, b]) p.updateMatrixWorld(true);
+    const c = new Cloth(null, { wind: { x: 1, z: 0 }, ground: 0 }), sk = c.skirt({ on: a, length: .55 }), cp = c.cape({ on: b });
+    assert.ok(sk.loop && sk.cols >= 24 && sk.carry > 0 && cp.carry > 0 && c.bodies.length === 2 && c.solids.length === 2 * CLOTH.BODY.length, 'worn pieces bring their wearers\' bodies: ' + c.solids.length + ' rods');
+    { let along = 0; for (let k = 0; k < c.L.length; k += 4) if (c.L[k] >= sk.base && c.L[k] < sk.base + sk.cols * sk.rows && c.L[k + 3] === 0 && c.L[k + 2] > 0) along++; assert.equal(along, sk.cols * sk.rows + sk.cols * (sk.rows - 1), 'a skirt is a loop: its last column joined to its first all the way down'); }
+    const inRod = (k, s) => { const P = c.P, q = [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]], ab = [s.b[0] - s.a[0], s.b[1] - s.a[1], s.b[2] - s.a[2]], ap = [q[0] - s.a[0], q[1] - s.a[1], q[2] - s.a[2]], bb = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2, t = bb > 1e-12 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / bb)) : 0; return s.r0 + (s.rb0 - s.r0) * t - Math.hypot(ap[0] - ab[0] * t, ap[1] - ab[1] * t, ap[2] - ab[2] * t); };
+    const worn = k => c.pieces.find(p => k >= p.base && k < p.base + p.cols * p.rows), deepest = () => { let d = 0; for (const s of c.solids) for (let k = 0; k < c.N; k++) if (c.W[k] && !(s.arm && s.arm <= worn(k).skips)) d = Math.max(d, inRod(k, s)); return d; };
+    assert.ok(deepest() === 0 && c.bodies[0].solids.some(s => s.arm) && sk.skips === 2 && cp.skips === 0 && new Cloth(null).cape({ on: b, arms: 'upper' }).skips === 1, 'cut to fit: no point starts inside its wearer (a skirt goes by their arms: a hand at the side would only push it into the hips)');
+    const T = new THREE.Matrix4(), V3 = THREE.Vector3, local = (p, x) => new V3(...x).applyMatrix4(T.copy(p.matrixWorld).invert());
+    let ang = 0, front = 0, nf = 0, inside = 0, walkFoot = 0, runFoot = 0, nw = 0, nr = 0; const walkS = [], runS = [], capeS = [], capeR = [], walkN = [], runN = [], q = (x, f) => x.slice().sort((a, b) => a - b)[Math.floor(f * (x.length - 1))];
+    const stretchOf = pc => { let w = 1; for (let k = 0; k < c.L.length; k += 4) { if (!c.L[k + 2] || c.L[k + 3] || c.L[k] < pc.base || c.L[k] >= pc.base + pc.cols * pc.rows) continue; const a3 = c.L[k] * 3, b3 = c.L[k + 1] * 3; w = Math.max(w, Math.hypot(c.P[a3] - c.P[b3], c.P[a3 + 1] - c.P[b3 + 1], c.P[a3 + 2] - c.P[b3 + 2]) / c.L[k + 2]); } return w; };
+    for (let i = 0; i < 360; i++) {
+      const sp = i < 180 ? 1.4 : 4.5, w = sp / 4; ang += w * dt;
+      [a, b].forEach((p, k) => { const rr = 4 + (k ? -.9 : .9); p.position.set(Math.sin(ang) * rr, 0, Math.cos(ang) * rr - 4); p.rotation.y = ang + Math.PI / 2; p.rig.blend(STR, sp); p.updateMatrixWorld(true); p.rig.update(dt, { speed: sp, turn: w }); p.updateMatrixWorld(true); });
+      c.update(dt);
+      if (i > 60 && i < 180) { front += local(a, sk.at(0, sk.rows - 1)).z; nf++; walkFoot += local(b, cp.at(cp.cols >> 1, cp.rows - 1)).y; nw++; }
+      if (i > 270) { runFoot += local(b, cp.at(cp.cols >> 1, cp.rows - 1)).y; nr++; }
+      if (i > 60 && i < 180) { walkS.push(stretchOf(sk)); capeS.push(stretchOf(cp)); walkN.push(c.lastSteps); } if (i > 200) { runS.push(stretchOf(sk)); capeR.push(stretchOf(cp)); runN.push(c.lastSteps); }
+      inside = Math.max(inside, deepest());
+    }
+    const mean = x => x.reduce((a, b) => a + b) / x.length;
+    assert.ok(finite(c) && held(c) < .005 && q(walkS, .9) < 1.15 && q(runS, .5) < 1.15 && q(runS, .9) < 1.35, 'walking and running in them: everything stays a number, near its hold (a leg may push it a little past: ' + (held(c) * 1000).toFixed(1) + ' mm) and the skirt keeps its size (its worst link: ' + q(walkS, .9).toFixed(3) + ' at a walk nine frames in ten, ' + q(runS, .5).toFixed(3) + ' and ' + q(runS, .9).toFixed(3) + ' at a run)');
+    // (a cape's edge may catch over an elbow for a moment as the arm swings back, the cloth spanning it, then slide off)
+    assert.ok(q(capeS, .5) < 1.1 && q(capeS, .9) < 1.6 && q(capeR, .9) < 1.15, 'and the cape (' + q(capeS, .5).toFixed(3) + ' at a walk, ' + q(capeS, .9).toFixed(3) + ' caught on an elbow, ' + q(capeR, .9).toFixed(3) + ' at a run)');
+    assert.ok(mean(walkN) < 7 && mean(runN) > mean(walkN) + 2 && Math.max(...runN) <= 3 * CLOTH.STEPS, 'more small steps while the legs swing fast: ' + mean(walkN).toFixed(1) + ' a frame at a walk, ' + mean(runN).toFixed(1) + ' at a run');
+    assert.ok(front / nf > .12, 'the skirt\'s front stays in front of the legs: its hem ' + (front / nf).toFixed(2) + ' m ahead of the hips on average');
+    assert.ok(inside < .012, 'no point of it ends a frame inside a leg, the body or an arm it goes round (deepest ' + inside.toFixed(3) + ' m)');
+    assert.ok(walkFoot / nw < .75 && runFoot / nr > walkFoot / nw + .2, 'the cape hangs at a walk (its foot ' + (walkFoot / nw).toFixed(2) + ' m up) and flies out at a run (' + (runFoot / nr).toFixed(2) + ')');
+    a.position.x += 10; a.rotation.y += 2; a.updateMatrixWorld(true); c.update(dt);
+    const hip = a.bones.hips.getWorldPosition(new V3()); let far = 0; for (let k = sk.base; k < sk.base + sk.cols * sk.rows; k++) far = Math.max(far, Math.hypot(c.P[k * 3] - hip.x, c.P[k * 3 + 2] - hip.z));
+    assert.ok(far < .6 && finite(c), 'put 10 m away and turned at once, the skirt is still round them (' + far.toFixed(2) + ' m out at most)');
+    const n0 = c.solids.length; c.bodies[1].remove(); assert.ok(c.solids.length === n0 - CLOTH.BODY.length && c.bodies.length === 1, 'a body can be taken away');
+  }
   // what it costs: about a thousand points (a flag, two banners, an awning, a washing line) a frame here
   {
     const wind = new Wind({ x: 5, z: 2, gust: .4 }), c = new Cloth(null, { wind, ground: 0 });
