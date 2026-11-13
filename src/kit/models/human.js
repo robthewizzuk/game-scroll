@@ -14,8 +14,11 @@
 // Kit use only: games reach it as gs.models.human.
 import { AdditiveBlending, MeshBasicMaterial, MeshPhysicalMaterial, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, eyeOf, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { KIN } from './human-fit.js';
+import { gnmDraw, gnmMarks, gnmReady } from './human-gnm.js';
+// GNM faces (human({ gnm: true }), look 'real'): off unless asked for, until they have been seen to beat the sculpted ones beside real scans
+const GNM_ON = false;
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
 import { Manner } from '../manner.js';
@@ -121,7 +124,7 @@ function pump() {
   if (!queue.length && !waiting.size) rest = setTimeout(() => { for (const w of idle.splice(0)) { w.terminate(); workers--; } }, 4000);
 }
 const inWorker = job => new Promise((res, rej) => { queue.push({ job, res, rej }); queue.sort((a, b) => heavy[b.job.kind] - heavy[a.job.kind]); pump(); });
-const here = job => new Promise((res, rej) => setTimeout(() => { try { res(sculpt(job)); } catch (e) { rej(e); } }, 0));
+const here = job => (job.a?.face?.gnm ? gnmReady() : Promise.resolve()).then(() => new Promise((res, rej) => setTimeout(() => { try { res(sculpt(job)); } catch (e) { rej(e); } }, 0)));
 const hold = (key, p) => { made.set(key, { p, t: clock() }); return p; };
 /** A promise for a piece: from memory, the saved copy, or sculpted now (in a worker where it can be). */
 function load(job) {
@@ -378,6 +381,12 @@ export function realFace(o, fem, base) {
   for (const k in f) if (typeof f[k] === 'number' && k !== 'age') f[k] = Math.round(f[k] * 1e4) / 1e4;   // (a few figures: the face names the saved shape)
   const tone = o.skin ? null : has ? Math.min(SKINS.length - 1.001, r() * SKINS.length) : null;
   { const kin = kinOf(o, tone); if (kin) f.kin = kin; }
+  if (o.gnm ?? GNM_ON) {
+    // a face from GNM Head (human-gnm.js): its whole shape, its eyes, its mouth and its nose from one of that model's heads of this sex and
+    // heritage, drawn from the seed (with no seed, the middle of them); its eyes life size, open and set as that head's are
+    const c = gnmDraw(fem, f.kin || null, has ? rngOf('gnm:' + o.seed) : null);
+    f.gnm = { c, ...gnmMarks(c, [0, EYE[1], EYE[2]]) }; f.es = 1; f.eyes = o.face?.eyes ?? 1; f.tilt = o.face?.tilt ?? 0;
+  }
   const dark = tone != null ? tone > 5.5 : o.skin ? new Color(o.skin).getHSL({}).l < .38 : false, pickOf = l => l[Math.floor(r() * l.length)];
   const skin = tone == null ? null : '#' + new Color(SKINS[Math.floor(tone)]).lerp(new Color(SKINS[Math.ceil(tone)]), tone % 1).getHexString();
   let hair = o.hair === undefined && has ? pickOf(dark ? HAIRS.dark : HAIRS.light) : undefined;
@@ -442,12 +451,12 @@ function eyeColours(pupil, iris) {
 // meets the eye, the line of tears that lies there, on that lower lid's bone. bones: the skeleton's bone names (each point's bone by its place).
 const wets = new Map();
 function wetOf(f, bones) {
-  const es = esOf(f), r = .0122 * es, key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('eyeL'), bones.indexOf('eyeR'), bones.indexOf('head'), bones.indexOf('lowLidL'), bones.indexOf('lowLidR')]);
+  const es = esOf(f), r = .0122 * es, E = eyeOf(f), key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('eyeL'), bones.indexOf('eyeR'), bones.indexOf('head'), bones.indexOf('lowLidL'), bones.indexOf('lowLidR'), E, f.gnm?.rim]);
   let g = wets.get(key); if (g) return g;
-  const P = [], N = [], SI = [], I = [], LIMB = 34 * .86 * PI / 180, n = 36, rim = eyeRim(f.eyes, es, f.tilt || 0, !!f.real), e = [0, 0];
+  const P = [], N = [], SI = [], I = [], LIMB = 34 * .86 * PI / 180, n = 36, rim = eyeRim(f.eyes, es, f.tilt || 0, !!f.real, f.gnm), e = [0, 0];
   const sin = Math.sin, cos = Math.cos;
   for (const [s, bone] of [[1, 'eyeL'], [-1, 'eyeR']]) {
-    const c = [s * EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], bi = Math.max(0, bones.indexOf(bone)), base = P.length / 3, rings = [0, 5, 10, 15, 20, 24, 27, 29.24, 32, 38, 46, 56, 68, 82, 100];
+    const c = [s * E[0], HC[1] + E[1], HC[2] + E[2]], bi = Math.max(0, bones.indexOf(bone)), base = P.length / 3, rings = [0, 5, 10, 15, 20, 24, 27, 29.24, 32, 38, 46, 56, 68, 82, 100];
     for (const deg of rings) for (let i = 0; i < n; i++) {
       const a = deg * PI / 180, t = i / n * PI * 2, u = Math.min(1, a / LIMB), up = (1 - u * u) ** 2, slope = -4 * u * (1 - u * u) / LIMB, rr = r + .00025 * up + .00005, q = .0011 * slope / r;
       const ex = sin(a) * cos(t), ey = sin(a) * sin(t), ez = cos(a), nx = ex - q * cos(a) * cos(t), ny = ey - q * cos(a) * sin(t), nz = ez + q * sin(a), nl = Math.hypot(nx, ny, nz);
@@ -457,8 +466,8 @@ function wetOf(f, bones) {
     // the line of tears: a thin tube along the lower lid's edge, as far as the eye reaches under it
     const lb = bones.indexOf(s > 0 ? 'lowLidL' : 'lowLidR'), hb = lb >= 0 ? lb : Math.max(0, bones.indexOf('head')), path = [];   // (on the lower lid's bone: it rises with the lid in a smile)
     for (let k = 0; k <= 24; k++) {
-      const t = -.8 + 1.65 * k / 24; rim.edge(t, false, e); const dx = e[0] - EYE[0], dy = e[1] - EYE[1], d2 = dx * dx + dy * dy; if (d2 > (.97 * r) ** 2) continue;
-      const dz = Math.sqrt(r * r - d2), k2 = (r + .00012) / r; path.push([s * (EYE[0] + dx * k2), HC[1] + EYE[1] + dy * k2, HC[2] + EYE[2] + dz * k2, Math.sin(PI * k / 24) ** .5]);
+      const t = -.8 + 1.65 * k / 24; rim.edge(t, false, e); const dx = e[0] - E[0], dy = e[1] - E[1], d2 = dx * dx + dy * dy; if (d2 > (.97 * r) ** 2) continue;
+      const dz = Math.sqrt(r * r - d2), k2 = (r + .00012) / r; path.push([s * (E[0] + dx * k2), HC[1] + E[1] + dy * k2, HC[2] + E[2] + dz * k2, Math.sin(PI * k / 24) ** .5]);
     }
     const b0 = P.length / 3;
     for (let k = 0; k < path.length; k++) {
@@ -480,15 +489,15 @@ function wetOf(f, bones) {
 // head's. Without it the whites and the iris were lit right up to the lid, which reads as a doll's glass eye.
 const occs = new Map();
 function occOf(f, bones) {
-  const es = esOf(f), r = .0122 * es, key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('lidL'), bones.indexOf('lidR'), bones.indexOf('head')]);
+  const es = esOf(f), r = .0122 * es, E = eyeOf(f), key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('lidL'), bones.indexOf('lidR'), bones.indexOf('head'), E, f.gnm?.rim]);
   let g = occs.get(key); if (g) return g;
-  const rim = eyeRim(f.eyes, es, f.tilt || 0, true), at = [0, 0, 0], P = [], C = [], J = [], W = [], I = [], n = 40, rings = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60], head = Math.max(0, bones.indexOf('head'));
+  const rim = eyeRim(f.eyes, es, f.tilt || 0, true, f.gnm), at = [0, 0, 0], P = [], C = [], J = [], W = [], I = [], n = 40, rings = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60], head = Math.max(0, bones.indexOf('head'));
   for (const [s, lb] of [[1, 'lidL'], [-1, 'lidR']]) {
-    const c = [s * EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], li = bones.indexOf(lb), base = P.length / 3, rr = r + .0006;
+    const c = [s * E[0], HC[1] + E[1], HC[2] + E[2]], li = bones.indexOf(lb), base = P.length / 3, rr = r + .0006;
     for (const deg of rings) for (let i = 0; i < n; i++) {
       const a = deg * Math.PI / 180, t = i / n * Math.PI * 2, ex = Math.sin(a) * Math.cos(t), ey = Math.sin(a) * Math.sin(t), ez = Math.cos(a);
       P.push(c[0] + ex * rr, c[1] + ey * rr, c[2] + ez * rr);
-      rim.at(EYE[0] + s * ex * rr, EYE[1] + ey * rr, at);   // (across the opening, and how far outside its upper and lower edges)
+      rim.at(E[0] + s * ex * rr, E[1] + ey * rr, at);   // (across the opening, and how far outside its upper and lower edges)
       const up = ss(-.0032 * es, .0002 * es, at[1]), low = ss(-.0014 * es, .0002 * es, at[2]), corner = ss(.6, 1, Math.abs(at[0]));
       const inside = ss(.0012 * es, 0, Math.max(at[1], at[2])) * ss(1.12, .98, Math.abs(at[0]));   // (none of it beyond the opening, where it could show through the skin of the lids and cheek)
       C.push(0, 0, 0, inside * Math.min(.7, Math.max(.5 * up * up, .2 * low, .28 * corner)));
@@ -607,7 +616,7 @@ export function human(o = {}) {
         if (sp.face.real && (sp.beard || sp.moustache) && !face) { beardArea(sp, x, hy, hz, BA); const t = Math.max(BA[0] ** 2 * Math.min(1, .45 + sp.beard) * .5, BA[1] ** 2 * .4); if (t > .005) { beardColour(sp, hairC, x, hy, hz, BCs); col.r += (BCs[0] * .85 - col.r) * t; col.g += (BCs[1] * .85 - col.g) * t; col.b += (BCs[2] * .85 - col.b) * t; } }
         if (stub && name !== 'brow') { const top = -.042 + .045 * ss(.035, .07, abs(x)), sh = ss(top, top - .016, hy) * ss(-.045, -.01, hz) * ss(-.165, -.125, hy) * stub; col.r *= 1 - sh * .38; col.g *= 1 - sh * .33; col.b *= 1 - sh * .24; }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
-        const ES = esOf(sp.face), so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), EYE[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
+        const ES = esOf(sp.face), so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), eyeOf(sp.face)[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
         faceUV(x, y, z, uv1, sp.face.real ? FACE_REAL : FACE); TU[j * 4 + 2] = uv1[0]; TU[j * 4 + 3] = uv1[1];   // where it is on the face's paint
       }
       // a man's short back and sides: clipped close over the ears and at the nape, the skin showing through, so lighter there than on top
@@ -626,8 +635,8 @@ export function human(o = {}) {
       // (a real face's eyes: where each point is on the iris's picture, seen from in front, each eye's turned its own way; the white, and the
       // pink in the corner, on the plain ring round it)
       if (s.k === EYESK && sp.face.real && p === headP) {
-        const ri = .0122 * esOf(sp.face) * Math.sin(27.5 * PI / 180) / IRIS.edge, lx = (abs(x) - EYE[0]) / ri, ly = (y - HC[1] - EYE[1]) / ri, an = (sp.face.aseed || 0) * 2.1 + (x > 0 ? 0 : 2.4), ca = Math.cos(an), sa = Math.sin(an);
-        let u = ca * lx - sa * ly, v = sa * lx + ca * ly; const rr = Math.hypot(u, v), out = z - HC[2] < EYE[2] + .0122 * esOf(sp.face) * Math.cos(27.6 * PI / 180) || rr > IRIS.edge;
+        const EF = eyeOf(sp.face), ri = .0122 * esOf(sp.face) * Math.sin(27.5 * PI / 180) / IRIS.edge, lx = (abs(x) - EF[0]) / ri, ly = (y - HC[1] - EF[1]) / ri, an = (sp.face.aseed || 0) * 2.1 + (x > 0 ? 0 : 2.4), ca = Math.cos(an), sa = Math.sin(an);
+        let u = ca * lx - sa * ly, v = sa * lx + ca * ly; const rr = Math.hypot(u, v), out = z - HC[2] < EF[2] + .0122 * esOf(sp.face) * Math.cos(27.6 * PI / 180) || rr > IRIS.edge;
         if (out) { const k = 1.01 / Math.max(1e-6, rr); u *= k; v *= k; if (!(rr > 0)) u = 1.01; }
         U[j * 2] = .5 + .5 * u; U[j * 2 + 1] = .5 + .5 * v;
       }
@@ -1004,6 +1013,8 @@ human.need = list => { const miss = missing(list.filter(o => !o.now)); if (miss.
 human.moves = MOVES;
 /** For tools and tests: a promise that settles once human(options) for each of these would come straight back. */
 human.ready = list => Promise.all(missing([].concat(list)).map(load)).then(() => true);
+/** Loads GNM faces' whole numbers (2.9 MB), for a tool that sculpts one on the spot (now: true); the app's own loading does it by itself. */
+human.gnmReady = gnmReady;
 /** Forgets every saved sculpt (Settings › clear cache, tests). */
 /** The look people are made in when they don't say: 'clean' (as made, a simpler, friendlier face) or 'real' (see human()'s look). */
 human.clear = async () => { made.clear(); const db = await open(); if (db) await tx(db, 'readwrite', (s, w) => { s.clear(); w.clear(); }); };

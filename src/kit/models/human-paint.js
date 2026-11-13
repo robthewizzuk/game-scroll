@@ -6,7 +6,7 @@
 // The shapes it paints are the ones the sculpting carves (human-head.js: eyeRim, browOf, mouthAt), so the colour lies where the
 // shape is, and it rides the skin as the face moves. No three.js: plain numbers in, bytes out. Kit use only.
 import { lumps } from './field.js';
-import { HC, EYE, esOf, rimOf, browOf, mouthAt, lipLine, beardArea, ss, bump } from './human-head.js';
+import { HC, EYE, eyeOf, noseOf, esOf, rimOf, browOf, mouthAt, lipLine, beardArea, ss, bump } from './human-head.js';
 import { skinAt } from './human-fit.js';
 
 const abs = Math.abs, mx = Math.max, mn = Math.min;
@@ -172,7 +172,7 @@ export function wrinklesAt(x, hy, f, rim, out) {
   }
   // from the wing of the nose to beside the corner of the mouth: along the fold the face always has (human-head.js reliefOf), its crease
   // deepened and run on a little further down
-  const wx = .0108 * NS * NW, wy = -.039;
+  const wx = f.gnm ? noseOf(f)[0] : .0108 * NS * NW, wy = f.gnm ? noseOf(f)[1] : -.039;
   if (hy < -.025 && hy > -.095 && x > .01 && x < .05) {
     seg(x, hy, wx + .0068 * NS * NW, wy + .006, .0315 + .002 * a, -.08 - .004 * a, S2);
     out[3] = deep * bump(S2[0], 0, .0012 + .0004 * deep) * ss(0, .1, S2[1]) * ss(1, .8, S2[1]);
@@ -203,7 +203,7 @@ export function paintFace(o) {
   const { w, h, x1, y0, y1, plain } = o.face.real ? FACE_REAL : FACE, f = o.face, fem = !!o.fem, px = new Uint8Array(w * h * 4), S = o.skin;
   // each colour as a share of the skin's (what the skin's colour has to be multiplied by to become it), no lighter than the picture can say
   const of = c => [0, 1, 2].map(i => mn(1 / plain, c[i] / mx(1e-4, S[i]))), BR = of(o.brow), LP = of(o.lips), LA = of(o.lash), MO = of(o.mouth);
-  const B = browOf(f.soft), rim = rimOf(f), ES = esOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
+  const B = browOf(f.soft, f), rim = rimOf(f), ES = esOf(f), EF = eyeOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
   const stub = o.stubble || 0, P = enc(plain), R = !!f.real; let r, g, b;
   // (a real beard or moustache, o.beard { beard, moustache, colour }: the skin under its single hairs (human-head.js eyeParts) the colour of the
   // hairs lying close over it and their roots, in fine strokes down the face, so what shows between the hairs is more beard, not bare skin)
@@ -225,8 +225,8 @@ export function paintFace(o) {
       if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .4 : .48) * (.8 + .2 * lumps(x * 2600, hy * 700, 1.3)) : fem ? .95 : .98)); }
       // ---- the lids: the lashes' line along the upper one (thicker towards its outer end, its edge the lashes' own ends), a fainter one under
       // the eye, a soft shade over the upper lid; inside the opening the upper lid's edge is dark, the lower one's pale, the corner by the nose pink
-      if (abs(hy - EYE[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {
-        const q = rim(x, hy), d = q[0], up = q[1], a = (x - ex0) / exw, pink = d < .0004 ? ss(.0098 * ES, .0118 * ES, EYE[0] - x) : 0;
+      if (abs(hy - EF[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {
+        const q = rim(x, hy), d = q[0], up = q[1], a = (x - ex0) / exw, pink = d < .0004 ? ss(.0098 * ES, .0118 * ES, EF[0] - x) : 0;
         if (up) {
           const wl = (fem ? .0021 : .0016) * (R ? .45 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * (R ? .3 : 1) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
           const line = d <= 0 ? 1 : ss(wl + .0003, wl - .0001, d), shade = ss(.0062, .001, d) * ss(-.1, .25, a) * ss(1.25, .9, a) * (fem ? .2 : .14) * (R ? .6 : 1);
@@ -248,7 +248,7 @@ export function paintFace(o) {
           put([LP[0] * sk, LP[1] * sk, LP[2] * sk], k);
         }
         else if (R && hy > lipLine(x, f) && mouthAt(x, hy - .0009, f, M4)[1] > .3) { r *= 1.05; g *= 1.05; b *= 1.04; }   // (the pale line along the border of a real upper lip, just outside it)
-        if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? .8 : 1)));
+        if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? f.gnm ? 1.1 : .8 : 1)));
       }
       // ---- stubble: fine dots of shadow over the jaw, the chin and the upper lip (the points carry its even shade)
       // (over the same ground as the points' shadow: up the cheek towards the sideburn; each dot the end of a hair, darker than the shade)
