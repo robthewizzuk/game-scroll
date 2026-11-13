@@ -655,7 +655,7 @@ async function tour(b) {
   // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^Twelve scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  check(/^Fourteen scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   // and the ray tracing scene alone (the hall), started from the sheet: the bar names the hall, and Stop gives its report
   await p.selectOption('.tour-set', 'traced');
   const sheet4 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
@@ -693,8 +693,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 14 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street at night and a coast, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 15 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street, a street at night and a coast, each with its system off and then on', JSON.stringify(sc.scenes));
   // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
   check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
     && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
@@ -741,6 +741,11 @@ async function tour(b) {
   // the faces: people close up, each look sculpted the first time it is met, the real one set against the clean one
   check(M('faces', 'clean').build > 0 && M('faces', 'real').build > 0 && /^posed in [\d.]+ ms a frame$/.test(M('faces', 'real').tell || '') && /\n  = the real look against the clean look: /.test(sc.text),
     'the faces are drawn close up in the clean look and then the real one', JSON.stringify(sby.faces));
+  // the street: the city as it was (windows painted on, boxes for cars and people), then with rooms behind its windows, real cars and sculpted people
+  const strt = /^the city's code [\d.]+ ms a frame · (\d+) cars drawn whole · ([\d,]+) people drawn in (\d+) draws$/.exec(M('street', 'new').tell || '');
+  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3] >= 1 && M('street', 'new').calls > M('street', 'old').calls && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
+    && /^\d+ buildings, \d+ cars, \d+ people$/.test(M('street', 'new').note || '') && /\n  = rooms behind the windows, real cars, sculpted people against windows painted on, boxes for cars and people: /.test(sc.text),
+    'the street is walked as the city was and then with rooms behind its windows, real cars and sculpted people', JSON.stringify(sby.street));
   // the night: a wet street with every lamp a plain round light, then with the nearest lamps' shadows (from the atlas on WebGPU, where
   // slots are drawn again only when something they see moved: cars and people do here), shaped headlights and neon
   const litOf = m => { const x = /^([\d.]+) lights lit(?: · ([\d.]+) with a shadow, ([\d.]+) shadow slots drawn a frame)?$/.exec(M('night', m).tell || ''); return x ? [+x[1], x[2] == null ? null : +x[2], x[3] == null ? null : +x[3]] : [NaN, null, null]; };
@@ -985,6 +990,21 @@ async function ready(b) {
   check(r.stepped && !r.starting && r.state === 'ready' && !r.cover && r.ov && after.resets === r.resets + 1 && after.state === 'ready' && after.updates === 1,
     'a start given up after the round\'s first step: no round, the card as it was, and the game reset once the feed is still', JSON.stringify({ r, after }));
   check(r.tune === 'zz-ready-left' && r.ahead === null && r.now === null, 'and the tune made for that round is let go', JSON.stringify([r.tune, r.ahead, r.now]));
+  // reset() for the next round asks for something still loading (the next mission's people, not sculpted on this phone
+  // yet: Play again after a mission): the loading screen waits for it, reset() runs again and the round starts
+  await add('zz-ready-late');
+  r = await p.evaluate(() => new Promise(res => {
+    const s = __gs.active, g = s.game, reset = g.reset.bind(g); let calls = 0, ok = 0, waited = false;
+    g.reset = () => { if (!calls++) { const e = new Error('gs.models.human is still loading'); e.name = 'StillLoading'; e.what = 'gs.models.human'; e.kitLoading = new Promise(r => setTimeout(r, 700)); throw e; } ok++; return reset(); };
+    __gs.play();
+    const t0 = performance.now(), f = () => {
+      if (s.loading && !s.failed) waited = true;
+      if (s.state === 'playing' || s.failed || performance.now() - t0 > 30000) return res({ state: s.state, failed: s.failed, waited, calls, ok, same: s.game === g, ms: Math.round(performance.now() - t0) });
+      requestAnimationFrame(f);
+    }; requestAnimationFrame(f);
+  }));
+  check(r.state === 'playing' && !r.failed && r.waited && r.calls === 2 && r.ok === 1 && r.same && r.ms >= 700,
+    'a reset() that asks for something still loading waits under the loading screen, then reset() once more and the same game starts its round (not "hit a problem")', JSON.stringify(r));
   await p.done();
 
   // a 2D game starts the instant Play is pressed, with no loading screen
