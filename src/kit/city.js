@@ -234,6 +234,9 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
 /* ---------- textures, made in code once and shared by every city ---------- */
 
 const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+// (the textures' canvases are painted in memory, not on the chip, so handing them to WebGPU is a copy, not a
+// wait on the chip's process: hd3d.js surface())
+const CPU = { willReadFrequently: true };
 const texOf = (cv, srgb = true) => { const t = new CanvasTexture(cv); t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = srgb ? SRGBColorSpace : NoColorSpace; t.anisotropy = 4; t.minFilter = LinearMipmapLinearFilter; return t; };
 const shade = (hex, k) => { const c = new Color(hex); c.multiplyScalar(k); return '#' + c.getHexString(); };
 const mixHex = (a, b, t) => '#' + new Color(a).lerp(new Color(b), t).getHexString();
@@ -246,7 +249,7 @@ function facadeTex(name) {
   if (TEX.has(name)) return TEX.get(name);
   pause('Textures');
   const F = FACADES[name], S = texSize(), c = S / CELLS, R = rng(name.length * 977 + name.charCodeAt(0));
-  const col = canvas(S, S), em = canvas(S, S), ro = canvas(S, S), g = col.getContext('2d'), e = em.getContext('2d'), r = ro.getContext('2d');
+  const col = canvas(S, S), em = canvas(S, S), ro = canvas(S, S), g = col.getContext('2d', CPU), e = em.getContext('2d', CPU), r = ro.getContext('2d', CPU);
   e.fillStyle = '#000'; e.fillRect(0, 0, S, S);
   const wallCol = F.kind === 'curtain' ? F.trim : F.wall;
   g.fillStyle = wallCol; g.fillRect(0, 0, S, S); r.fillStyle = '#e6e6e6'; r.fillRect(0, 0, S, S);
@@ -283,7 +286,7 @@ function shopTex() {
   if (TEX.has('shop')) return TEX.get('shop');
   pause('Textures');
   const S = texSize(), h = S / 4, bays = 4, c = S / bays, R = rng(4242);
-  const col = canvas(S, h), em = canvas(S, h), ro = canvas(S, h), g = col.getContext('2d'), e = em.getContext('2d'), r = ro.getContext('2d');
+  const col = canvas(S, h), em = canvas(S, h), ro = canvas(S, h), g = col.getContext('2d', CPU), e = em.getContext('2d', CPU), r = ro.getContext('2d', CPU);
   g.fillStyle = '#2c2a28'; g.fillRect(0, 0, S, h); e.fillStyle = '#000'; e.fillRect(0, 0, S, h); r.fillStyle = '#d0d0d0'; r.fillRect(0, 0, S, h);
   const signs = ['#c8322a', '#1f6aa8', '#2e8a4a', '#d8a020', '#7a3a9a', '#e06a2a', '#20a0a0', '#e8e0d0'];
   for (let i = 0; i < bays; i++) {
@@ -304,7 +307,7 @@ function shopTex() {
 function groundTex(kind, base) {
   const key = kind + base; if (TEX.has(key)) return TEX.get(key);
   pause('Textures');
-  const S = 256, cv = canvas(S, S), g = cv.getContext('2d'), R = rng(kind.length * 31 + 7);
+  const S = 256, cv = canvas(S, S), g = cv.getContext('2d', CPU), R = rng(kind.length * 31 + 7);
   g.fillStyle = base; g.fillRect(0, 0, S, S);
   const dots = (n, col, a, size) => { for (let i = 0; i < n; i++) { g.globalAlpha = R() * a; g.fillStyle = col; g.fillRect(R() * S, R() * S, R() * size + .5, R() * size + .5); } g.globalAlpha = 1; };
   if (kind === 'asphalt') { dots(3000, '#000', .35, 2); dots(1500, '#fff', .12, 1.5); g.globalAlpha = .12; g.fillStyle = '#000'; for (let i = 0; i < 6; i++) { g.beginPath(); g.ellipse(R() * S, R() * S, 10 + R() * 30, 6 + R() * 18, R() * 3, 0, 7); g.fill(); } g.globalAlpha = 1; }

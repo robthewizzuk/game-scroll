@@ -58,7 +58,7 @@ const TEAL = '#19e3b1', AMBER = '#ffc14a';
 let GT = null;
 function gridTex() {
   if (GT) return GT;
-  const S = 512, cv = Object.assign(document.createElement('canvas'), { width: S, height: S }), g = cv.getContext('2d');
+  const S = 512, cv = Object.assign(document.createElement('canvas'), { width: S, height: S }), g = cv.getContext('2d', { willReadFrequently: true });   // (painted in memory: hd3d.js surface())
   g.strokeStyle = '#fff'; g.lineWidth = 2.5;
   for (let i = 0; i <= 12; i++) { const p = 2 + i * (S - 4) / 12; g.beginPath(); g.moveTo(p, 0); g.lineTo(p, S); g.moveTo(0, p); g.lineTo(S, p); g.stroke(); }
   g.globalCompositeOperation = 'destination-in';
