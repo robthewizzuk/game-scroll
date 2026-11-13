@@ -2240,6 +2240,10 @@ console.log('physics ok');
     const tr = HS.sculpt(jobs[0]); assert.ok(!tr.slots.includes('trim'), 'and the trunk has none of it: ' + tr.slots);
     // and its arms, on the joints in between too: round each shoulder and elbow the skin goes with the joint that takes half the turn
     for (const n of ['armL', 'foreL', 'twistL', 'shoulderL', 'elbowL', 'armR', 'foreR', 'twistR', 'shoulderR', 'elbowR', 'hipL', 'kneeL', 'hipR', 'kneeR']) assert.ok(tr.names.includes(n), 'the trunk goes with ' + n + ': ' + tr.names);
+    // a tunic's skirt: what of it does not follow the thighs hangs from the belt on a bone of its own and swings (rig.hang), and only a skirt does
+    { let onHem = 0, most = 0; for (let i = 0; i < tr.n; i++) for (let k = 0; k < 4; k++) if (tr.names[tr.SI[i * 4 + k]] === 'hem' && tr.SW[i * 4 + k] > 0) { onHem++; most = Math.max(most, tr.SW[i * 4 + k] / 255); }
+      const plainTrunk = HS.sculpt(HS.jobsFor({ ...sp, top: { ...sp.top, kind: 'shirt' } })[0]);
+      assert.ok(tr.hang?.hem?.at?.[1] === 1 && onHem > 100 && most > .2 && most < .7 && !plainTrunk.hang?.hem && !plainTrunk.names.includes('hem'), `a tunic's skirt swings from the belt (${onHem} points, at most ${most.toFixed(2)} of each)`); }
     assert.ok(typeof HS.VERSION === 'string' && HS.VERSION.length > 4, 'the sculptor has a stamp for saved copies');
   }
   console.log('gs.models: sculpted people ok');
@@ -2284,6 +2288,18 @@ console.log('physics ok');
       const f = skeleton({ look: 'real', seed: 11, weight: 1 }), fb = f.rig.breath; fb.on = false; f.updateMatrixWorld(true); fb.step(1 / 60, 0);
       let most = 0; for (let k = 0; k < 60; k++) { f.bones.hips.position.y += k < 6 ? -.012 : k < 12 ? .012 : 0; f.updateMatrixWorld(true); fb.step(1 / 60, 0); most = Math.max(most, Math.abs(fb.lag)); }
       assert.ok(most > .001 && Math.abs(fb.lag) < .0003, `a heavy belly swings ${(most * 1e3).toFixed(1)} mm behind a drop and settles (${(fb.lag * 1e3).toFixed(2)} mm left)`);
+      // wet, mud, dust and snow (person.grime, drawn on WebGPU): mud climbs a step at a time in mud, wet dries and snow melts, mud and dust stay,
+      // and the elbows' and knees' bends are measured for the creases in the clothes there
+      const { Grime } = await import('../src/kit/models/human-life.js'), gq = skeleton({ look: 'real', seed: 4 }), gr = new Grime(gq.bones, [[.2, 1.16, 0], [-.2, 1.16, 0], [.1, .52, 0], [-.1, .52, 0]]);
+      let steps = 0; while (gr.mud < .5 && steps < 500) { gr.soil('mud', .03); steps++; }
+      assert.ok(steps > 12 && steps < 60, `mud halfway up the shins after ${steps} steps in mud`);
+      for (let k = 0; k < 400; k++) gr.soil('mud', .05); assert.ok(gr.mud > .9 && gr.mud <= 1, 'and no higher than mid-thigh: ' + gr.mud.toFixed(2));
+      gr.soil('snow', .05); gr.soil('sand'); assert.ok(gr.dust > 0 && gr.snow === 0, 'sand dusts; a step in snow leaves none on the shoulders');
+      gr.wet = 1; gr.snow = 1; for (let t = 0; t < 120; t += .5) gr.step(.5);
+      assert.ok(gr.wet > .4 && gr.wet < .6 && gr.snow < 1e-9 && gr.mud > .9 && gr.v.x === gr.wet && gr.v.y === gr.mud, `wet dries over minutes (${gr.wet.toFixed(2)} left after two), snow melts, mud stays`);
+      gq.bones.foreL.rotation.set(-Math.PI / 2, 0, 0); gq.bones.shinR.rotation.set(1, 0, 0); gr.step(0);
+      assert.ok(Math.abs(gr.bends[0].w - .5) < 1e-6 && gr.bends[1].w === 0 && Math.abs(gr.bends[3].w - Math.sin(.5) ** 2) < 1e-6 && gr.bends[0].x === .2 && gr.bends[2].y === .52, 'the bends of the elbows and knees, at their places as made');
+      gr.clean(); assert.ok(gr.v.length() === 0 && gr.mud === 0, 'clean() and dry');
     }
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
@@ -2530,8 +2546,9 @@ console.log('physics ok');
   // ---- things that hang: the trunk is sculpted with a bone for each thing on its belt, and says where each hangs from
   const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', pockets: 4, collar: null }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, belt: {}, web: { y: true, pouches: 2 }, extras: { bag: true, canteen: true, holster: true }, hat: null, pack: null, gear: [], face: {}, hands: 'grip' };
   const tr = HS.sculpt(HS.jobsFor(sp)[0]), share = {}; for (let i = 0; i < tr.n; i++) for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) { const n = tr.names[tr.SI[i * 4 + q]]; share[n] = (share[n] || 0) + 1; }
-  assert.deepEqual(Object.keys(tr.hang).sort(), ['bag', 'flask', 'holster']); for (const n in tr.hang) { const h = tr.hang[n]; assert.ok(share[n] > 40 && h.at[1] > .95 && h.at[1] < 1.12 && Math.abs(Math.hypot(h.away[0], h.away[2]) - 1) < 1e-9 && h.at[0] * h.away[0] + h.at[2] * h.away[2] > .1, `${n}: ${share[n]} points on a bone of its own, hung from the belt, and it knows which way is out`); }
-  assert.ok(!HS.sculpt(HS.jobsFor({ ...sp, extras: {} })[0]).names.some(n => tr.hang[n]), 'and a trunk with nothing on its belt has no such bones');
+  assert.deepEqual(Object.keys(tr.hang).sort(), ['bag', 'flask', 'hem', 'holster']); for (const n in tr.hang) { if (n === 'hem') continue; const h = tr.hang[n];   // (hem: the tunic's skirt, which swings all round: tested with the sculpted people)
+    assert.ok(share[n] > 40 && h.at[1] > .95 && h.at[1] < 1.12 && Math.abs(Math.hypot(h.away[0], h.away[2]) - 1) < 1e-9 && h.at[0] * h.away[0] + h.at[2] * h.away[2] > .1, `${n}: ${share[n]} points on a bone of its own, hung from the belt, and it knows which way is out`); }
+  assert.ok(!HS.sculpt(HS.jobsFor({ ...sp, extras: {} })[0]).names.some(n => tr.hang[n] && n !== 'hem'), 'and a trunk with nothing on its belt has no such bones (but the skirt of its tunic)');
   { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) u[tr.names[tr.SI[i * 4 + q]]] = tr.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0;
     for (let i = 0; i < tr.n; i++) { const k = [0, 1, 2].map(c => Math.round(tr.P[i * 3 + c] * 1e5)).join(), j = seen.get(k); if (j === undefined) { seen.set(k, i); continue; } const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) torn++; }
     assert.ok(pairs > 100 && torn === 0, `points in the same place still go with the same bones: ${torn} of ${pairs}`); }

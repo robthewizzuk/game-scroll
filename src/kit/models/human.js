@@ -17,7 +17,7 @@ import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
-import { Breath } from './human-life.js';
+import { Breath, Grime } from './human-life.js';
 import { reach } from '../characters.js';
 import { LiveFace, MOVES } from './human-face.js';
 import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams } from './human-paint.js';
@@ -146,6 +146,7 @@ let MATS = null;
 const skinMat = (real = false) => {
   const m = material('skin', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true, sss: { colour: '#e0603c', scale: .5, thin: true, skin: real } }); m.normalScale.set(.25, .25); m.name = real ? 'human:skin:real' : 'human:skin';
   if (real) { m.sheen = .3; m.sheenColor.set('#d08068'); }
+  m.userData.grime = 'skin';   // (wet, mud and dust on WebGPU: hd3d-gpu.js grime, by person.grime and the weather)
   return m;
 };
 // A face's paint (human-paint.js): brows, the lashes' lines and lips in a small picture made in code, laid over the skin's own colour by the
@@ -174,11 +175,15 @@ function mats() {
   if (MATS) return MATS;
   const cloth = material('fabric', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true }), leather = material('leather', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true });
   cloth.normalScale.set(.55, .55); leather.normalScale.set(.3, .3);
+  // (on WebGPU: each cloth woven its own way at the size of its threads, creased where the elbows and knees bend, wet, muddy and dusty by
+  // person.grime and the weather: hd3d-gpu.js gpuMaterials.cloth and grime; WebGL keeps the recipe's weave)
+  cloth.userData.gsGpu = leather.userData.gsGpu = 'cloth'; cloth.userData.grime = 'cloth'; leather.userData.grime = 'leather';
   MATS = {
     skin: skinMat(), eyes: pbr('#ffffff', { rough: .32, clear: 1, vertexColors: true }),
     cloth, leather, hard: pbr('#ffffff', { rough: .52, vertexColors: true }), steel: pbr('#ffffff', { rough: .38, metal: .85, vertexColors: true }), hair: pbr('#ffffff', { rough: .62, vertexColors: true }),
     far: pbr('#ffffff', { rough: .8, vertexColors: true }),
   };
+  MATS.far.userData.gsGpu = 'cloth'; MATS.far.userData.grime = 'far';   // (further off: wet, muddy and dusty as close up, with no weave)
   MATS.eyes.clearcoatRoughness = .04;   // (wet: a small sharp highlight over a softer iris)
   // a real face's eyes: the iris's fine work in a picture made in code (human-paint.js) over its colours, and no shine of their own: a film
   // over them has it (wetOf), drawn adding its light only, so the eye shows through it
@@ -206,9 +211,24 @@ function mats() {
   return MATS;
 }
 
+// How each cloth is woven, at the size of its threads (WebGPU: hd3d-gpu.js gpuMaterials.cloth): plain (the recipe's), twill (the diagonal ribs of
+// drill and gabardine: work trousers, a uniform), denim (a coarser twill, its white weft showing between the blue ribs), knit (jersey: the rows of
+// small loops of a T-shirt or a jumper), canvas (a coarse, even weave: webbing, a bag), wool (a soft twill under a fuzz that catches the light at
+// a glance: a coat, a hat, a scarf, a blanket), fine (shirting: too small to see but at the closest). A garment's own weave: outfit.top.weave and so on.
+export const WEAVES = ['plain', 'twill', 'denim', 'knit', 'canvas', 'wool', 'fine'];
+function weaveOf(sp, o, slot) {
+  const own = typeof o.slots?.[slot] === 'object' && o.slots[slot].weave; if (own) return own;
+  if (slot === 'top') return sp.top.weave || { shirt: 'knit', tunic: 'twill', smock: 'twill', blouse: 'fine' }[sp.top.kind] || 'plain';
+  if (slot === 'legs') return sp.legs.weave || (sp.legs.kind === 'breeches' ? 'wool' : 'twill');
+  if (slot === 'hat' || slot === 'hatband') return sp.hat?.weave || 'wool';
+  if (slot === 'scarf' || slot === 'roll') return 'wool';
+  if (slot === 'glove') return 'knit';
+  if (slot === 'kit' || slot === 'band' || slot === 'tab') return 'canvas';
+  return 'plain';
+}
 // ================================================================= putting a person together
 const ARMB = /^(shoulder|arm|bicep|elbow|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
-const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|lowLid|cheek|nose|lipUp|lipLow|(thumb|index|middle|ring|little)\d)[LR]|jaw|chin)$/, _m4 = new Matrix4();   // the small bones, which only show close up (fingers, toes, the face's own)
+const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|lowLid|cheek|nose|lipUp|lipLow|(thumb|index|middle|ring|little)\d)[LR]|jaw|chin)$/, _m4 = new Matrix4(), _v3 = new Vector3();   // the small bones, which only show close up (fingers, toes, the face's own)
 /**
  * The skeleton a person of this build stands on: the bones' names, their parents and where each is (atOf), with
  * tree() to make them. Narrow or broad shoulders bring the arms (their bones, and all that rides them) in or out;
@@ -473,7 +493,7 @@ export function human(o = {}) {
   const col = new Color(), dirt = new Color('#6a5c48'), skinC = new Color(pal.skin), eyeC = eyeColours(o.eyes ?? DEF.eyes, o.iris ?? DEF.iris), uv1 = [0, 0], hairC = new Color(pal.hair), BA = [0, 0], BCs = [0, 0, 0];
   const asOf = name => (typeof o.slots?.[name] === 'object' && o.slots[name].as) || AS[name] || (name.startsWith('eye') ? 'eyes' : 'hard');
   const camoOf = {}; for (const [slot, part] of [['top', sp.top], ['legs', sp.legs], ['hat', sp.hat]]) if (part?.camo) camoOf[slot] = [].concat(part.camo).map(c => new Color(c));
-  const slotsOf = pieces.map(p => p.slots.map(s => { const a = asOf(s); return { a, camo: camoOf[s], k: CLASSES.indexOf(a), c: s.startsWith('eye') ? eyeC[+s[3]] : new Color(pal[s] ?? '#888888') }; }));
+  const slotsOf = pieces.map(p => p.slots.map(s => { const a = asOf(s); return { a, camo: camoOf[s], k: CLASSES.indexOf(a), w: WEAVES.indexOf(weaveOf(sp, o, s)), c: s.startsWith('eye') ? eyeC[+s[3]] : new Color(pal[s] ?? '#888888') }; }));
   const seam = pieces.map((p, pi) => seams(p.from || p, slotsOf[pi].map(s => s.k)));
   const n = pieces.reduce((a, p, pi) => a + p.n + seam[pi].n, 0), P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), U = new Float32Array(n * 2), SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4), cls = new Uint8Array(n), TU = new Float32Array(n * 4);   // (TU: how thin the flesh is and how open behind, then where the point is on the face's paint)
   let at = 0; const offs = [];
@@ -485,6 +505,7 @@ export function human(o = {}) {
       const nx = p.N[i * 3] / 32767, ny = p.N[i * 3 + 1] / 32767, nz = p.N[i * 3 + 2] / 32767; N[j * 3] = nx; N[j * 3 + 1] = ny; N[j * 3 + 2] = nz;
       col.copy(s.c); cls[j] = s.k; TU[j * 4 + 2] = TU[j * 4 + 3] = 1;   // (off the face's paint: its plain corner)
       if (s.a === 'cloth' || s.a === 'leather') { TU[j * 4 + 2] = p.seam ? p.seam[i * 2] : .5; TU[j * 4 + 3] = p.seam ? p.seam[i * 2 + 1] : 0; }   // (where it is on the picture of seams)
+      if (s.a === 'cloth') TU[j * 4] = Math.max(0, s.w) / 8;   // (how it is woven: WEAVES; in the first of gsThin's two, which only skin reads)
       if (s.camo) {   // camouflage: a second and a third colour brushed on in blotches
         const n1 = lumps(x * 13 + 3.1, y * 9 + 1.7, z * 13 + 5.3) + .35 * lumps(x * 37, y * 31, z * 37); col.lerp(s.camo[0], ss(.1, .26, n1));
         if (s.camo[1]) { const n2 = lumps(x * 17 - 4.2, y * 12 + 8.1, z * 17 + 2.6) + .35 * lumps(x * 41 + 9, y * 35, z * 41); col.lerp(s.camo[1], ss(.2, .36, n2)); }
@@ -630,6 +651,7 @@ export function human(o = {}) {
     const B = tree(), root = new Group();
     root.add(B.hips); B.armL.rotation.z = ARM; B.armR.rotation.z = -ARM; root.updateMatrixWorld(true);   // bound with the arms out, as sculpted
     const skel = new Skeleton(bones.map(b => B[b]));
+    const jointAt = ['elbowL', 'elbowR', 'kneeL', 'kneeR'].map(b => { const i = bones.indexOf(b); return i < 0 ? null : _v3.setFromMatrixPosition(_m4.copy(skel.boneInverses[i]).invert()).toArray(); });   // (where the elbows and knees were as the mesh was made: the creases in the clothes there)
     B.armL.rotation.z = B.armR.rotation.z = 0; root.updateMatrixWorld(true);
     // Further off (the middle and far levels) nobody can see a finger bend, a toe or the turn of a forearm: there each of
     // those small bones stands in as the one it hangs from (the same skin, no other set of weights), is not worked
@@ -651,6 +673,8 @@ export function human(o = {}) {
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet;
     root.rig = rigOf(B, scale, root, sp);
+    root.grime = root.rig.grime = new Grime(B, jointAt);   // (how wet, muddy, dusty and snowy, and the elbows' and knees' bends: what the clothes' and skin's look reads on WebGPU)
+    for (const m of lods) { m.userData.gsGrime = root.grime.v; m.userData.gsBends = root.grime.bends; }
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
     root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
     root.breath = root.rig.breath;   // (breathing and soft flesh: it runs by itself; set breath.on = false to hold it, breath.puff for a winded one)

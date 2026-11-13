@@ -453,6 +453,7 @@ export class Rig {
     }
     if (this.follow?.things.length) { if (this.fine === false) this.follow.still(); else this.follow.swing(dt); }   // (what hangs swings close up only)
     if (this.breath) this.breath.step(dt, speed, this.fine !== false);   // breathing and soft flesh (gs.models.human's chest and belly)
+    if (this.grime) this.grime.step(dt);   // how wet, muddy and dusty, and the bends its clothes crease at (gs.models.human's)
     if (this.face && this.fine !== false) this.face.step(dt, true);   // a live face (gs.models.human's): blinks, eyes, brows and mouth, close up only
     if (this.hands && this.fine !== false) this.hands.step(dt, speed);   // hands that hold (gs.models.human's): fingers round what they hold, relaxed otherwise, close up only
     return this;

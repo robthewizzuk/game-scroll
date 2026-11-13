@@ -241,6 +241,8 @@ function trunk(a) {
   const ex = a.extras, sk = skirtL || seat;
   // what hangs from the belt goes with a bone of its own, so it can swing (S.hang: where each hangs from, which way is out from the body there, and how loosely: see follow.js)
   const hang = S.hang = {}, hung = (name, th, at, o) => { hang[name] = { at, away: [sin(th), 0, cos(th)], ...o }; return name; };
+  // (a tunic's skirt: what of it does not follow the thighs hangs from the belt and swings on a moment as the body starts, stops and turns, round it)
+  if (skirtL) hang.hem = { at: [0, 1.0, 0], swing: .014, bounce: .0004, stiff: 70, damp: 7, most: .1 };
   if (ex.bag) { const th = -(PI - .8), p = sk.at(th, .93, .036), b = hung('bag', th, [p[0] * .9, p[1] + .1, p[2] * .9], { swing: .03, bounce: .0008, stiff: 110, damp: 9, most: .14 }); S.push({ box: [.2, .2, .075], round: .028, at: p, rot: [0, th, 0], slot: 'kit', part: 'gear', bone: b, lumpy: [.04, .004], blend: .006 }, { box: [.205, .085, .08], round: .025, at: [p[0], p[1] + .062, p[2]], rot: [0, th, 0], slot: 'kit', part: 'gear', bone: b, blend: .003 }); }
   if (ex.canteen) { const th = PI - .75, p = sk.at(th, .95, .032), b = hung('flask', th, [p[0] * .92, p[1] + .1, p[2] * .92], { swing: .036, bounce: .0006, stiff: 120, damp: 9, most: .16 }); S.push({ ball: [.056, .078, .037], at: p, rot: [0, th, 0], slot: 'flask', part: 'gear', bone: b, blend: .004 }, { rod: [[p[0], p[1] + .07, p[2]], [p[0], p[1] + .098, p[2]]], r: .017, round: .004, slot: 'steel', part: 'gear', bone: b, blend: .002 }); }
   if (ex.holster) { const th = ex.holster === 'left' ? .95 : -.95, p = sk.at(th, .985, .022), b = hung('holster', th, [p[0] * .94, p[1] + .07, p[2] * .94], { swing: .012, stiff: 160, damp: 12, most: .06 }); S.push({ box: [.075, .14, .04], round: .014, at: p, rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: b, blend: .004 }, { box: [.078, .05, .044], round: .012, at: [p[0], p[1] + .05, p[2]], rot: [.1, th, .1], slot: 'holster', part: 'gear', bone: b, blend: .002 }); }
@@ -266,7 +268,7 @@ function trunk(a) {
   return S;
 }
 // The trunk's bones (for one build). The back bends at the waist and again under the ribs, the top of each shoulder rides its collar
-// bone, a tunic's skirt half follows the thighs, ankles and toes bend. Round each shoulder, elbow, hip and knee the skin goes with
+// bone, a tunic's skirt half follows the thighs (and the rest of it swings from the belt: S.hang.hem), ankles and toes bend. Round each shoulder, elbow, hip and knee the skin goes with
 // the joint in between (BETWEEN, which takes half the joint's turn), and from there hands over to the bones either side, so no
 // place has more than half a joint's bend to bridge: a bent limb keeps its girth where skin shared between two bones pinched in.
 //   - a shoulder: the top of its round stays with the trunk, the arm is the arm's from the armpit down, and the round between them
@@ -310,7 +312,7 @@ const trunkBones = a => {
       out.push(['shoulder' + sd, (1 - tr - ar) * up], ['arm' + sd, ar * up * (1 - bi)], ['bicep' + sd, ar * up * bi]);
       return out;
     }
-    if (part === 'skirt') { const k = ss(1.03, .82, y) * .62, l = ss(-.05, .05, x); return [['hips', 1 - k], ['legL', k * l], ['legR', k * (1 - l)]]; }
+    if (part === 'skirt') { const k = ss(1.03, .82, y) * .62, l = ss(-.05, .05, x), m = ss(1.0, .8, y) * .8; return [['hips', (1 - k) * (1 - m)], ['hem', (1 - k) * m], ['legL', k * l], ['legR', k * (1 - l)]]; }
     if (part === 'leg' || part === 'hips' || part === 'boot') {
       const f = part === 'boot' ? 1 - ss(.07, .15, y) : 0, uk = cl01(.5 + (y - .52) / .19 + RIPPLE * ham(ax, y, z) * Math.max(-1, Math.min(1, (y - .52) / .02))), sh = 1 - ss(0, .5, uk), th = ss(.5, 1, uk);
       out.push(['foot' + sd, f], ['shin' + sd, (1 - f) * sh], ['knee' + sd, (1 - f) * (1 - sh - th)]);
