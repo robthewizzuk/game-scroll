@@ -2047,6 +2047,12 @@ console.log('physics ok');
   assert.deepEqual(sp.settledFor('kt-old3'), { fgPace: 'first' }, 'the old switch to ahead (to make room on the real frame\'s refresh) is pace first now');
   sp.settle('kt-old2', { tier: 1 }); sp.settledFor('kt-old2').at -= 25 * 3600 * 1000;
   assert.equal(sp.settledFor('kt-old2'), null, 'and a game with nothing lasting is forgotten');
+  // a step down in frame rate is let go a day after it was taken, though the picture changed since (each change dates the entry)
+  const stepped = { id: 'kt-step' };
+  sp.settle(stepped.id, { tier: 1, fps: 30 }); assert.equal(sp.fpsFor(stepped), 30, 'a game stepped down to 30 runs at 30');
+  sp.settledFor(stepped.id).fpsAt -= 25 * 3600 * 1000; sp.settle(stepped.id, { tier: 0 });
+  assert.equal(sp.fpsFor(stepped), 60, 'a day after the step it is let go, though the tier changed since');
+  assert.equal(sp.settledFor(stepped.id).tier, 0, 'and the rest is kept');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
   const B = 1000 / 60;
   assert.equal(sp.qualityVerdict(B * 1.3, 0, B), 'slow', 'a slow average steps down');
