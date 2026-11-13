@@ -143,6 +143,8 @@ function menu() {
     { type: 'separator' },
     { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => main?.reload() },
     { label: 'Developer Tools', accelerator: mac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', click: () => main?.webContents.toggleDevTools() },
+    // (F3 opens it too, but a Mac's F3 is Mission Control unless fn is held)
+    { label: 'Frame Lab', accelerator: 'CmdOrCtrl+Shift+L', click: () => main?.webContents.executeJavaScript("dispatchEvent(new Event('gs-framelab'))").catch(() => {}) },
   ];
   const tmpl = [
     ...(mac ? [{ role: 'appMenu' }] : [{ label: 'File', submenu: [{ role: 'quit' }] }]),
