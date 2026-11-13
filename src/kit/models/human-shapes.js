@@ -6,11 +6,11 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, mouthHalf, beardArea, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
+import { head as headOf, eyeOf, mouthY, noseOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, mouthHalf, beardArea, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
 import { hairStrips } from './human-hair.js';
 import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine, mouthHalf, beardArea };
+export { ss, bump, HC, EYE, eyeOf, mouthY, noseOf, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine, mouthHalf, beardArea };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 // how far the point of an elbow (behind the arm) and a kneecap (in front of the leg) stand out of a limb folded right over (metres)
@@ -705,7 +705,7 @@ export function sculpt({ kind, a }) {
   if (kind === 'head') {
     // the eyes: each a ball of its own that turns on its own bone; the lips parted along the line between them, with teeth and the inside of the mouth behind
     const eye = { P: [], N: [], K: [], I: [], src: [], ao: a.face.real ? [] : .78 }, f = a.face;
-    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = f.real ? realEyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f)) : eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f), 24, 1), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); if (e.ao) eye.ao.push(...e.ao); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
+    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const EF = eyeOf(f), e = f.real ? realEyeball(Hd(s * EF[0], EF[1], EF[2]), .0122 * esOf(f)) : eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f), 24, 1), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); if (e.ao) eye.ao.push(...e.ao); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
     const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],
