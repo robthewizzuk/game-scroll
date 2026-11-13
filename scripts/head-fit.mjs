@@ -28,14 +28,13 @@ const SCAN = path.join(ROOT, 'scripts/face-lab/ref', (opt.scan || 'LeePerrySmith
 if (!fs.existsSync(SCAN)) { console.error('no scan at ' + SCAN + ' (see the top of this file)'); process.exit(1); }
 
 const S = await import(path.join(ROOT, 'src/kit/models/human-shapes.js'));
-if (process.env.GNM_PROTO) globalThis.__gnmProto = name => { const J = JSON.parse(fs.readFileSync(path.join(process.env.GNM_PROTO, name + '.json'))); return { V: Float64Array.from(J.V), I: Int32Array.from(J.I), joints: J.joints }; };
 const { HC, EYE } = await import(path.join(ROOT, 'src/kit/models/human-head.js'));
 
 // ---- our head, as a person of these options has it (bald, no hat), in metres about the middle of the head
 function headArgs(o = {}) {
   const fem = 'fem' in o, real = (o.look || 'real') === 'real';
   const base = { jaw: fem ? .94 : 1, chin: fem ? .9 : 1, brow: fem ? .62 : .82, nose: fem ? .86 : 1, lips: fem ? 1.12 : 1, cheeks: 1, eyes: fem ? 1.08 : 1, soft: fem ? 1 : 0 };
-  const face = real ? { ...base, real: 1, es: 1, age: +(o.age ?? 35), fat: +(o.fat ?? .5), asym: 0, aseed: 0, lips: base.lips * 1.12, noseW: 1, bridge: 1, tip: 0, tilt: 0, lidFold: .35, faceW: 1, ears: 1, ...(o.heritage ? { kin: { [o.heritage]: 1 } } : {}), ...(o.gnm ? { gnm: o.gnm } : {}) } : base;
+  const face = real ? { ...base, real: 1, es: 1, age: +(o.age ?? 35), fat: +(o.fat ?? .5), asym: 0, aseed: 0, lips: base.lips * 1.12, noseW: 1, bridge: 1, tip: 0, tilt: 0, lidFold: .35, faceW: 1, ears: 1, ...(o.heritage ? { kin: { [o.heritage]: 1 } } : {}) } : base;
   return { face, neck: 1, hair: 'bald', moustache: 0, hat: null, foot: 0, ...(o.fit === 'off' || 'solve' in o ? { fit: false } : {}) };
 }
 export function ours(o = {}) {

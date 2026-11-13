@@ -2947,6 +2947,26 @@ console.log('physics ok');
     let drawn = 0; for (const [k, z] of fitW.front) if (plainW.front.has(k)) drawn = Math.min(drawn, z - plainW.front.get(k));
     assert.ok(fitW.w > plainW.w + .004, `a woman's face as wide at the mouth as a real one: ${(plainW.w * 2000).toFixed(0)} mm unfitted, ${(fitW.w * 2000).toFixed(0)} mm fitted`);
     assert.ok(drawn > -.001, `the throat under the chin never drawn in (at most ${(-drawn * 1000).toFixed(1)} mm)`); }
+  // ---- a GNM face (human({ gnm: true }), human-gnm.js): one of GNM Head's heads, drawn by sex and heritage from the seed, with the outlines
+  // the rest of the face is built along; its skin a field that is inside the head and outside round it, with no bubble of outside behind
+  // the lips (GNM's lips run on into each other: they are closed in a crease) and no pocket of inside by the neck (the sides of the far
+  // grid are worked out by regions, not handed on from node to node); the lips cut along one line where they meet
+  { const G = await import('../src/kit/models/human-gnm.js'), HS = await import('../src/kit/models/human-shapes.js'); await G.gnmReady();
+    const face = (seed, sex, heritage) => realFace({ seed, sex, heritage, gnm: true }, sex === 'f', base).f, k = face(4, 'f', 'east-asian'), g = k.gnm;
+    assert.deepEqual(face(4, 'f', 'east-asian').gnm.c, g.c, 'the same seed, the same head');
+    assert.ok(g.c.length === 32 && face(5, 'f', 'east-asian').gnm.c.some((v, i) => Math.abs(v - g.c[i]) > .3), 'another seed, another head');
+    const mean = (fem, kin) => G.gnmDraw(fem, kin), far = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
+    assert.ok(far(mean(true, { european: 1 }), mean(false, { european: 1 })) > 1 && far(mean(false, { african: 1 }), mean(false, { 'east-asian': 1 })) > 1, 'a woman\'s head and a man\'s, each background\'s, apart');
+    assert.ok(g.rim.w > .009 && g.rim.w < .014 && g.lip.half > .017 && g.lip.half < .029 && g.eye[0] > .026 && g.eye[0] < .035 && g.lip.up[0] > g.lip.line[0] && g.lip.dn[0] < g.lip.line[0],
+      `its outlines: an eye opening ${(g.rim.w * 2000).toFixed(0)} mm long, a mouth ${(g.lip.half * 2000).toFixed(0)} mm wide, the eyes ${(g.eye[0] * 2000).toFixed(0)} mm apart, each lip's red on its side of the line`);
+    const at = HH.Hd(0, HH.EYE[1], HH.EYE[2]), H = G.gnmHead(k, at), d = (x, y, z) => H.d(x, HC[1] + y, HC[2] + z);
+    assert.ok(d(0, 0, 0) < -.05 && d(0, .2, 0) > .05 && d(.15, 0, 0) > .03, 'inside the head, outside over it and beside it');
+    let bubble = -1; for (const x of [-.0145, .0145]) for (let z = .075; z < .094; z += .001) bubble = Math.max(bubble, d(x, -.066, z));
+    let pocket = 1; for (let x = .085; x < .12; x += .005) pocket = Math.min(pocket, d(x, -.093, -.053));
+    assert.ok(bubble < 0 && pocket > 0, `no bubble behind the lips (${(bubble * 1000).toFixed(1)} mm), no pocket beside the neck (${(pocket * 1000).toFixed(1)} mm)`);
+    let deep = 0, line = 0; HS.finish(HH.head({ face: k, neck: 1, hair: 'bald' }, []), { cell: .002, bones: () => [['head', 1]], keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01,
+      after: m => { const r = HH.partLips(m, k); line = r.line.length; for (const [u] of r.line) if (r.P[u * 3 + 2] - HC[2] < .09 && Math.abs(r.P[u * 3]) < .017) deep++; return r; } });
+    assert.ok(line > 30 && deep === 0, `the lips cut along where they meet (${line} points), never deep in the head (${deep})`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);

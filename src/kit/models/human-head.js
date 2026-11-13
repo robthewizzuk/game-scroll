@@ -114,7 +114,9 @@ export function mouthAt(x, hy, f, out = M3) {
       else { const H = line - lipAt(g, 'dn', x); if (H > 2e-4) lip = ss(1.05, .92, -v / H); }
       lip *= ss(1, .9, e);
     }
-    out[0] = 0; out[1] = lip; out[2] = e < 1.4 ? bump(v, 0, .0015) * ss(1, .78, e) : 0;
+    // (the line between them fine and dark: GNM's lips meet in a crease too shallow for the sculpting's grid to shade, so it is in the paint;
+    // on to the corners, where the lips' meeting runs back into the cheek)
+    out[0] = 0; out[1] = lip; out[2] = e < 1.4 ? (.85 * bump(v, 0, .0008) + .3 * bump(v, 0, .002)) * ss(1.08, .85, e) : 0;
     return out;
   }
   const so = f.soft, LP = f.lips, half = mouthHalf(f), u = abs(x), e = u / half, v = hy - (MOUTH.y - MOUTH_DIP * u / (f.real ? 1.15 : 1) + MOUTH_UP * ss(.7, 1.1, e));
@@ -473,9 +475,10 @@ export function eyeParts(m, f, hair = {}) {
     }
     // the caruncle: a small pink mound in the inner corner, between the lids' edges, lying on the round of the eye (which turns under it)
     // (a real eye's inner corner lies beyond the round of the eyeball, on the floor of the opening there)
-    { const t = -.76, a = rim.edge(t, true, [0, 0]), b = rim.edge(t, false, [0, 0]), x = (a[0] + b[0]) / 2, hy = (a[1] + b[1]) / 2, r = .0122 * es, d2 = (x - EY[0]) ** 2 + (hy - EY[1]) ** 2;
+    // (a GNM face's: further into its corner, which comes to a point, smaller and lying back in it, under the lids' edges)
+    { const G = !!f.gnm, t = G ? -.86 : -.76, a = rim.edge(t, true, [0, 0]), b = rim.edge(t, false, [0, 0]), x = (a[0] + b[0]) / 2, hy = (a[1] + b[1]) / 2, r = .0122 * es, d2 = (x - EY[0]) ** 2 + (hy - EY[1]) ** 2;
       if (d2 < r * r || f.real) {
-        const c = [s * x, HC[1] + hy, HC[2] + EY[2] + mx(Math.sqrt(mx(0, r * r - d2)), f.real ? .0035 * es + .75 * mx(0, EY[0] - .0145 * es - x) : 0) + .0001], R = [.001 * es, .0014 * es, .0007 * es], like = { like: [c[0], c[1], c[2], 0] }, base = P.length / 3, U = 8, V = 6;
+        const c = [s * x, HC[1] + hy, HC[2] + EY[2] + mx(Math.sqrt(mx(0, r * r - d2)), f.real ? .0035 * es + .75 * mx(0, EY[0] - .0145 * es - x) : 0) + (G ? -.0005 : .0001)], R = G ? [.0008 * es, .0011 * es, .0005 * es] : [.001 * es, .0014 * es, .0007 * es], like = { like: [c[0], c[1], c[2], 0] }, base = P.length / 3, U = 8, V = 6;
         for (let j = 0; j <= V; j++) for (let i = 0; i < U; i++) {
           const th = j / V * PI, ph = i / U * PI * 2, nx = sin(th) * cos(ph), ny = cos(th), nz = sin(th) * sin(ph), nn = hyp(nx / R[0], ny / R[1], nz / R[2]);
           P.push(c[0] + R[0] * nx, c[1] + R[1] * ny, c[2] + R[2] * nz); N.push(nx / R[0] / nn, ny / R[1] / nn, nz / R[2] / nn); K.push('caruncle'); src.push(like); ao.push(.6 + .3 * mx(0, nz));
@@ -627,12 +630,13 @@ export function reliefOf(f) {
   const DN = .00035 + .0014 * a + .0005 * heavy - .00015 * so, DT = .00025 + .0011 * a + .0005 * thin, BAG = .0002 + .0009 * a + .0002 * heavy, DM = .0006 + .0005 * a;
   const g = f.gnm, wx = g ? noseOf(f)[0] : .0108 * NS * NW, wy = g ? noseOf(f)[1] : -.039, WR = .0074 * NS, MY = mouthY(f), EY = eyeOf(f), ex = EY[0] - EYE[0];   // the wing of the nose (the mouth, the eyes)
   const AS = (f.asym || 0) * .0011, ph = (f.aseed || 0) * 7.3;   // (how uneven its two sides are, and where its unevenness falls)
+  const sx = g ? g.lip.half - .027 : 0, sy = g ? g.lip.line[6] + .0655 : 0;   // (a GNM face's corners of the mouth from where a real face of ours has them: the folds by them go with them)
   return (x, y, z) => {
     const ax = abs(x), hy = y - HC[1], hz = z - HC[2]; let h = 0;
     if (hy > .07 || hy < -.2) return 0;
     if (hz > .04 && hy > -.1 && hy < -.005) {
       // the fold from the nose to the mouth, with the cheek standing over it (the side away from the middle)
-      seg(ax, hy, wx + .0068 * NS * NW, wy + .006, .0305 + .002 * a, -.074 - .004 * a);
+      seg(ax, hy, wx + .0068 * NS * NW, wy + .006, .0305 + .002 * a + sx, -.074 - .004 * a + sy);
       if (o[0] < .012) { const t = o[1], g = ss(0, .12, t) * ss(1, .78, t) * ss(.05, .065, hz); h -= DN * bump(o[0], 0, .0034) * g; if (o[2] > 0) h += DN * .35 * bump(o[0], .005, .005) * g; }
       // the trough under the eye, from by the nose down and out, a little swell between it and the lower lid
       seg(ax, hy, .0185 + ex, -.0115, .043 + ex, -.0255);
@@ -642,8 +646,8 @@ export function reliefOf(f) {
     }
     if (hz > .04 && hy < -.07 && hy > -.11) {
       // the groove under the lower lip (curving up at its ends), and with age the lines down from the corners of the mouth
-      const yc = MY - .0168 + .009 * (ax / .022) ** 2; h -= DM * bump(hy, yc, .0028) * ss(.026, .016, ax);
-      if (a > 0) { seg(ax, hy, .0262, -.072, .031, -.099); if (o[0] < .014) { const g = ss(0, .15, o[1]) * ss(1, .75, o[1]); h -= .0011 * a * bump(o[0], 0, .0028) * g; if (o[2] > 0) h += .0007 * (a + .5 * heavy) * bump(o[0], .0065, .0055) * ss(.3, .7, o[1]); } }
+      const yc = MY - .0168 + .009 * (ax / .022) ** 2; h -= DM * bump(hy, yc, .0028) * ss(.026 + sx, .016 + sx, ax);
+      if (a > 0) { seg(ax, hy, .0262 + sx, -.072 + sy, .031 + sx, -.099 + sy); if (o[0] < .014) { const g = ss(0, .15, o[1]) * ss(1, .75, o[1]); h -= .0011 * a * bump(o[0], 0, .0028) * g; if (o[2] > 0) h += .0007 * (a + .5 * heavy) * bump(o[0], .0065, .0055) * ss(.3, .7, o[1]); } }
     }
     // hollows: the temples, and under the cheekbones (thin and old faces)
     if (ax > .04) {
@@ -680,7 +684,7 @@ export function head(a, ghosts = []) {
   // (a face from GNM Head, f.gnm: its whole shape from that, human-gnm.js; our neck, hair and hats round it)
   const G = real && f.gnm ? gnmHead(f, Hd(0, EYE[1], EYE[2])) : null;
   const kin = real && a.fit !== false && !(a.fit && typeof a.fit === 'object') && f.kin ? kinTable(so > .5, f.kin) : null, own = kin || (a.fit && typeof a.fit === 'object' ? a.fit : null);
-  const relief = real && !G ? reliefOf(f) : null, fk = real && !G && a.fit !== false ? own ? 1 : 1 - .5 * so : 0;
+  const relief = real ? reliefOf(f) : null, fk = real && !G && a.fit !== false ? own ? 1 : 1 - .5 * so : 0;   // (a GNM head: its own shape, unfitted; the folds of age along its own outlines)
   const grow = fk ? (x, y, z) => fk * fitAt(x, y - HC[1], z - HC[2], own) : null, grown = s => grow ? { ...s, grow, growMax: FIT_MAX } : s, fitted = s => grown(relief ? { ...s, folds: relief, foldMax: RELIEF } : s);
   const A = s => S.push(s.cut ? { slot: 'skin', ...s } : fitted({ slot: 'skin', ...s }));
   // (a real face's width: wider or narrower below the brow, fuller low down when heavy, and with age the flesh of the jaw hanging a little at its corners)

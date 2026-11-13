@@ -248,7 +248,7 @@ export function paintFace(o) {
           put([LP[0] * sk, LP[1] * sk, LP[2] * sk], k);
         }
         else if (R && hy > lipLine(x, f) && mouthAt(x, hy - .0009, f, M4)[1] > .3) { r *= 1.05; g *= 1.05; b *= 1.04; }   // (the pale line along the border of a real upper lip, just outside it)
-        if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? .8 : 1)));
+        if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? f.gnm ? 1.1 : .8 : 1)));
       }
       // ---- stubble: fine dots of shadow over the jaw, the chin and the upper lip (the points carry its even shade)
       // (over the same ground as the points' shadow: up the cheek towards the sideburn; each dot the end of a hair, darker than the shade)
