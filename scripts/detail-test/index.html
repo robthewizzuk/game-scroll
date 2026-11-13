@@ -13,7 +13,7 @@ await loadParts();
 if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480);
 const nextFrame = () => new Promise(r => requestAnimationFrame(r));
-HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0;
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false;
 if (Q.has('fresh')) await clearBuilds();
 // a bumpy hillside, n x n squares
 function land(n, size) {

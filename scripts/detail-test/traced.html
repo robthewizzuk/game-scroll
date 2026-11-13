@@ -26,7 +26,7 @@ try {
   if (!await prepareGPU()) throw new Error('WebGPU did not start in this browser');
   const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480);
   const nextFrame = () => new Promise(r => requestAnimationFrame(r));
-  HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false; HD.still = false; HD.occlude = false;
+  HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.occlude = false;
   for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }
 
   if (Q.has('bench')) {

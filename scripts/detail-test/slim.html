@@ -16,7 +16,7 @@ await loadParts();
 if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 640), H = +(Q.get('h') || 360), { Crowd } = gs.props, { human, creature, vehicle, building, relief } = gs.models;
 const nextFrame = () => new Promise(r => requestAnimationFrame(r));
-HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false;
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false;
 HD.pack = false;   // (WebGPU: a texture draws plain and then swaps to its packed copy a moment later, which would be a difference between the two passes that is not theirs)
 const out = {}, info = {}, pix = {}, checks = [];
 const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
