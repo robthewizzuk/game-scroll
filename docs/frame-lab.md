@@ -132,6 +132,8 @@ One HTML file with everything in it, readable in any browser, phone or desktop:
 - frame rate and 1% low in one-second windows
 - CPU time per real frame (update, draw, frame generation) and GPU time where known
 - CPU by part: the average a frame and the worst frame for each part of the engine
+- the chip by pass: the graphics chip's own time a frame for the scene, its shadows and each pass after
+  it (where the phone gives the chip's times: WebGPU with timestamps), and the draws and triangles a frame
 - the phone: CPU speed, heat, thermal headroom, battery and memory over time
 - frame times in screen refreshes (how many pictures took 1, 2, 3... refreshes)
 - every hitch and event with its causes, and the settings at the start and end
