@@ -172,7 +172,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     const fgTop = Math.max(display.top || 0, screenHz()), fg = framegen && gpu ? fgRuns(fgTop) : null;
     if (framegen) { out.fgTop = fgTop; if (!gpu) out.note = 'Frame generation needs WebGPU, and this phone draws the 3D with WebGL here, so there was nothing to time.'; }
     if (traced && !gpu) out.note = 'Ray tracing needs WebGPU, and this phone draws the 3D with WebGL here, so the hall was walked with no reflections and with reflections from the screen only.';
-    const runsOf = key => fg ? fg.length : key === 'forest' && gpu ? 4 : key === 'town' || ((key === 'yard' || key === 'hall') && gpu) ? 3 : 2, runs = framegen && !gpu ? 0 : list.reduce((n, s) => n + runsOf(s[0]), 0);
+    const runsOf = key => fg ? fg.length : key === 'forest' && gpu ? 4 : key === 'town' || key === 'coast' || ((key === 'yard' || key === 'hall') && gpu) ? 3 : 2, runs = framegen && !gpu ? 0 : list.reduce((n, s) => n + runsOf(s[0]), 0);
     let done = 0;
     for (const [key, name, what, make] of list) {
       if (stopped() || (framegen && !fg)) break;

@@ -220,7 +220,7 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
    for each run and press **Start**.
-2. Fourteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+2. Fifteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
    and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
    **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
    with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses

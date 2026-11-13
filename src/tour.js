@@ -426,11 +426,11 @@ export function openTour(driver) {
   const picked = () => choice.find(([k]) => k === set.value)[2], fg = () => set.value === FRAMEGEN, rt = () => set.value === TRACED, scenes = () => set.value === SCENES || rt() || fg();
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
-    // (twenty-nine runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
+    // (thirty-six runs where the forest flies four and the town, the yard, the hall and the coast three each, on WebGPU; each has a few seconds of getting ready before it)
     est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds five ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by frame generation, blended as before, blended as now and then ahead: about ${Math.max(1, Math.round((20 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
       // (the hall three times on WebGPU, with the traced copy of the hall made before the third)
       : rt() ? `The ray tracing scene alone: a polished hall, flown through for ${secs.value} seconds three ways, with no reflections, with reflections worked out from the screen and ray traced (the last needs WebGPU): about ${Math.max(1, Math.round((3 * (+secs.value + 8) + 20) / 60))} min, and longer the first time, while the traced copy of the hall is made. Leave the phone on a table with the screen on.`
-      : scenes() ? `Fourteen scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((29 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
+      : scenes() ? `Fifteen scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((36 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };
   set.onchange = secs.onchange = paint; paint();
