@@ -6,7 +6,7 @@
 // from the eyes to the foot of the nose, the jaw's corners under the ears and nearly as wide as the cheekbones.
 // Like the rest of the sculpting it needs no three.js and runs in background workers. Kit use only.
 import { Loft, ready, smin, smax, lumps, ss, bump } from './field.js';
-import { fitAt, FIT_MAX, FIT_DATA } from './human-fit.js';
+import { fitAt, FIT_MAX, FIT_DATA, FIT_KIN, kinTable } from './human-fit.js';
 import { row as slice, shoulderRows, neckRows, neckOpening } from './human-body.js';
 export { ss, bump };
 
@@ -649,8 +649,10 @@ export function head(a, ghosts = []) {
   const BG = real ? (f.bridge ?? 1) - 1 : 0, TIP = real ? f.tip ?? 0 : 0, EAR = real ? f.ears ?? 1 : 1, LF = real ? f.lidFold ?? .3 : 0;
   // (and its whole shape brought to lie where a real head's does: the fit to a real head scan, human-fit.js, grown into every shape of its skin
   // before it is meshed (field.js grow); a woman's face has half of it, the rest of her shape being her own; a.fit: false leaves it out, a.fit a
-  // table to use in its place)
-  const relief = real ? reliefOf(f) : null, fk = real && a.fit !== false ? 1 - .5 * so : 0, own = a.fit && typeof a.fit === 'object' ? a.fit : null;
+  // table to use in its place, the whole of it. A face with a heritage (f.kin, human.js realFace) has the fit of its own sex and heritage instead,
+  // the whole of it too (each of those was worked out on that sex's own head with no fit on it: scripts/head-fit.mjs solve=1)
+  const kin = real && a.fit !== false && !(a.fit && typeof a.fit === 'object') && f.kin ? kinTable(so > .5, f.kin) : null, own = kin || (a.fit && typeof a.fit === 'object' ? a.fit : null);
+  const relief = real ? reliefOf(f) : null, fk = real && a.fit !== false ? own ? 1 : 1 - .5 * so : 0;
   const grow = fk ? (x, y, z) => fk * fitAt(x, y - HC[1], z - HC[2], own) : null, grown = s => grow ? { ...s, grow, growMax: FIT_MAX } : s, fitted = s => grown(relief ? { ...s, folds: relief, foldMax: RELIEF } : s);
   const A = s => S.push(s.cut ? { slot: 'skin', ...s } : fitted({ slot: 'skin', ...s }));
   // (a real face's width: wider or narrower below the brow, fuller low down when heavy, and with age the flesh of the jaw hanging a little at its corners)
@@ -661,10 +663,13 @@ export function head(a, ghosts = []) {
   // corners under the ears (each slice ends at the back of the jaw: behind it is the neck), and the skull, a ball over
   // and behind it (the slices end inside the ball: the top of the forehead and the crown are the ball's own round)
   const CJ = (CH + J) / 2, sq = .15 * so;   // (a woman's jaw is rounder across)
+  // (fuller or leaner cheeks: on a real face over the cheek's height, not one slice: one slice alone stood out as a ridge from the corner of
+  // the mouth to the ear, or sank in as a groove)
+  const CKd = .03 * (CK - 1), CKw = real ? [.3, .55, .3] : [0, 1, 0];
   const face = new Loft([
     row(-.1085, .0105 * CH, .0745, .054, .064), row(-.1045, .0195 * CH, .081, .04, .06, 2.15 - sq), row(-.0985, .027 * CJ, .0845, .026, .052, 2.15 - sq), row(-.0905, .035 * J, .0855, .01, .038, 2.15 - sq),
-    row(-.0805, .043 * J, .085, -.006, .022, 2.1 - sq), row(-.07, .0495 * (.15 + .85 * J), .0835, -.016, .01, 2.1 - sq), row(-.058, .0568 * (.4 + .6 * J), .0825, -.024, .006, 2.1 - sq / 2),
-    row(-.043, .0622 * (.7 + .3 * J) + .003 * (CK - 1) * 10, .084, -.034, .006, 2.15 - sq / 3), row(-.02, .066, .0865, -.042, .008, 2.2), row(0, .0685, .088, -.05, .006, 2.3),
+    row(-.0805, .043 * J, .085, -.006, .022, 2.1 - sq), row(-.07, .0495 * (.15 + .85 * J), .0835, -.016, .01, 2.1 - sq), row(-.058, .0568 * (.4 + .6 * J) + CKd * CKw[0], .0825, -.024, .006, 2.1 - sq / 2),
+    row(-.043, .0622 * (.7 + .3 * J) + CKd * CKw[1], .084, -.034, .006, 2.15 - sq / 3), row(-.02, .066 + CKd * CKw[2], .0865, -.042, .008, 2.2), row(0, .0685, .088, -.05, .006, 2.3),
     row(.022, .0705, .0905, -.06, 0, 2.35), row(.045, .0725, .0915, -.08, -.01, 2.3), row(.068, .066, .081, -.09, -.014, 2.2), row(.084, .05, .062, -.08, -.014),
   ]);
   // the neck: as deep as it is wide and nearly as wide as the jaw, standing behind it (its front a hand's width back from the chin), wider at its foot
@@ -768,4 +773,4 @@ export function head(a, ghosts = []) {
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = FIT_DATA + [mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + [kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);

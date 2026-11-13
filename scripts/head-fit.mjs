@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Head fit: a real-look head beside a real head scan, shape only, to see where it differs.
 //
-//   node scripts/head-fit.mjs out.png [age=35] [fat=.5] [fem] [look=clean]
+//   node scripts/head-fit.mjs out.png [age=35] [fat=.5] [fem] [look=clean] [heritage=african] [scan=gnm/m-black-0]
 //
 // The scan is the one the face lab's &ref uses (scripts/face-lab/ref/LeePerrySmith.glb, CC BY 3.0, never committed: fetch it from
 // raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/LeePerrySmith/). It is laid over our head by the points down the
@@ -20,7 +20,11 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const args = process.argv.slice(2), out = args.find(a => a.endsWith('.png')) || 'head-fit.png';
 const opt = Object.fromEntries(args.filter(a => a.includes('=')).map(a => a.split('=')));
-const SCAN = path.join(ROOT, 'scripts/face-lab/ref/LeePerrySmith.glb');
+for (const a of args) if (!a.includes('=') && !a.endsWith('.png')) opt[a] = 1;   // (bare words are switches: fem)
+// scan=gnm/f-black-0 measures against another head in scripts/face-lab/ref/ (gnm/: GNM Head's, written by scripts/face-lab/gnm-heads.py),
+// and with solve=1 writes the fit to table=<file>.json, or with kin=f:african into that entry of human-fit.js FIT_KIN, rather than FIT_DATA.
+// A woman's head (fem) is fitted with no fit on it, as a man's is: each sex's own fit is the whole of it (see human-head.js head)
+const SCAN = path.join(ROOT, 'scripts/face-lab/ref', (opt.scan || 'LeePerrySmith').replace(/\.glb$/, '') + '.glb');
 if (!fs.existsSync(SCAN)) { console.error('no scan at ' + SCAN + ' (see the top of this file)'); process.exit(1); }
 
 const S = await import(path.join(ROOT, 'src/kit/models/human-shapes.js'));
@@ -30,7 +34,7 @@ const { HC, EYE } = await import(path.join(ROOT, 'src/kit/models/human-head.js')
 function headArgs(o = {}) {
   const fem = 'fem' in o, real = (o.look || 'real') === 'real';
   const base = { jaw: fem ? .94 : 1, chin: fem ? .9 : 1, brow: fem ? .62 : .82, nose: fem ? .86 : 1, lips: fem ? 1.12 : 1, cheeks: 1, eyes: fem ? 1.08 : 1, soft: fem ? 1 : 0 };
-  const face = real ? { ...base, real: 1, es: 1, age: +(o.age ?? 35), fat: +(o.fat ?? .5), asym: 0, aseed: 0, lips: base.lips * 1.12, noseW: 1, bridge: 1, tip: 0, tilt: 0, lidFold: .35, faceW: 1, ears: 1 } : base;
+  const face = real ? { ...base, real: 1, es: 1, age: +(o.age ?? 35), fat: +(o.fat ?? .5), asym: 0, aseed: 0, lips: base.lips * 1.12, noseW: 1, bridge: 1, tip: 0, tilt: 0, lidFold: .35, faceW: 1, ears: 1, ...(o.heritage ? { kin: { [o.heritage]: 1 } } : {}) } : base;
   return { face, neck: 1, hair: 'bald', moustache: 0, hat: null, foot: 0, ...(o.fit === 'off' || 'solve' in o ? { fit: false } : {}) };
 }
 export function ours(o = {}) {
@@ -44,7 +48,7 @@ function glb(file) {
   const b = fs.readFileSync(file), jl = b.readUInt32LE(12), J = JSON.parse(b.subarray(20, 20 + jl).toString()), bin = b.subarray(20 + jl + 8);
   const acc = i => { const a = J.accessors[i], v = J.bufferViews[a.bufferView], off = (v.byteOffset || 0) + (a.byteOffset || 0), n = a.count * { SCALAR: 1, VEC2: 2, VEC3: 3 }[a.type];
     const T = { 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array }[a.componentType]; return new T(bin.buffer.slice(bin.byteOffset + off, bin.byteOffset + off + n * T.BYTES_PER_ELEMENT)); };
-  const pr = J.meshes[0].primitives[0]; return { P: Float32Array.from(acc(pr.attributes.POSITION)), I: Uint32Array.from(acc(pr.indices)), n: J.accessors[pr.attributes.POSITION].count, UV: pr.attributes.TEXCOORD_0 != null ? Float32Array.from(acc(pr.attributes.TEXCOORD_0)) : null };
+  const pr = J.meshes[0].primitives[0]; return { P: Float32Array.from(acc(pr.attributes.POSITION)), I: Uint32Array.from(acc(pr.indices)), n: J.accessors[pr.attributes.POSITION].count, UV: pr.attributes.TEXCOORD_0 != null ? Float32Array.from(acc(pr.attributes.TEXCOORD_0)) : null, extras: J.extras || {} };
 }
 
 // ---- the middle line of a head: where a plane x = 0 cuts it, as points (y, z)
@@ -204,11 +208,12 @@ const oursEyes = [[EYE[0], EYE[1], EYE[2] + EYE_R], [-EYE[0], EYE[1], EYE[2] + E
 const lidOf = (m, cx, cy, h) => { const res = h / 40, M = depth(m, 'front', [cx - h, cx + h, cy - h * .6, cy + h * .6], res), { W, H, D } = M; let best = -Infinity, at = null;
   for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) { let s2 = 0, n = 0; for (let v = -2; v <= 2; v++) for (let u = -2; u <= 2; u++) { const d = D[(y + v) * W + x + u]; if (isFinite(d)) { s2 += d; n++; } } if (n === 25 && s2 / n > best) { best = s2 / n; at = [cx - h + (x + .5) * res, cy + h * .6 - (y + .5) * res, best]; } }
   return at; };
-let scanEyes = [lidOf(B, .48, 1.63, .2), lidOf(B, -.75, 1.63, .2)];
+// (a head whose file says where its eyes are, as gnm-heads.py's do, needs no looking)
+let scanEyes = B.extras.eyes ? B.extras.eyes.map(e => [...e]) : [lidOf(B, .48, 1.63, .2), lidOf(B, -.75, 1.63, .2)];
 console.log('the scan\'s eyes (its own units)', JSON.stringify(scanEyes.map(e => e.map(t => +t.toFixed(3)))));
 // first by the eyes and the skull (the scan's units are its own), then again with the ears too, found the same way in both once the scan lies in our frame
 const KEYS3 = ['crown', 'back'], keysOf = (eyes, sk, ears) => [...eyes, ...KEYS3.map(k => sk[k]), ...(ears || [])];
-let fitS = similar(keysOf(scanEyes, skullMarks(B, scanEyes, 20)), keysOf(oursEyes, oursSkull), [3, 3, 1, 1]);
+let fitS = similar(keysOf(scanEyes, skullMarks(B, scanEyes, B.extras.unit ?? 20)), keysOf(oursEyes, oursSkull), [3, 3, 1, 1]);
 moveAll(B, fitS.map); scanEyes = scanEyes.map(fitS.map);
 let total = fitS.s;
 for (let pass = 0; pass < 3; pass++) {
@@ -236,6 +241,8 @@ if ('solve' in opt) {
     return (x, y, z) => { let d = 1e9; for (let j = 0; j < L.length; j++) { const q = L[j], e = q.d(x, y, z); d = q.cut ? smax(d, -e, q.k) : smin(d, e, q.k); } return d; }; };
   // the scan's points the fit is to reach: the whole head but where it is not let move (round the eyes: the scan's are shut; the ears; down the neck)
   // (and only the outermost by each direction from the table's middle: not the insides of the nostrils, the ears or a fold, which the table can't reach)
+  // (nor the front of the throat under the chin: the neck is the body's, and a scan whose jaw sits lower than ours pulled the throat in under a
+  // chin it dropped, which left a lump there; with no point there the throat follows the chin by the table's smoothness)
   // (seen from outside: a ray from the point straight out from the table's middle meets no more of the scan: not the inside of its mouth
   // or nostrils, an ear's folds, a crease)
   const C = FM.FIT_C, BIN = Math.PI / 60, dirOf = (x, y, z) => [Math.atan2(x, z - C[1]), Math.atan2(y - C[0], Math.hypot(x, z - C[1]))], tb = new Map(), key = (a2, e) => a2 + ',' + e;
@@ -251,7 +258,7 @@ if ('solve' in opt) {
       const q = [sv[1] * e1[2] - sv[2] * e1[1], sv[2] * e1[0] - sv[0] * e1[2], sv[0] * e1[1] - sv[1] * e1[0]], v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det; if (v < 0 || u + v > 1) continue;
       if ((e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det > .002) return true; }
     return false; };
-  const pts = []; let seen = 0; for (let i = 0; i < B.n; i++) { const x = Math.abs(B.P[i * 3]), y = B.P[i * 3 + 1], z = B.P[i * 3 + 2]; if (y > .14 || y < -.135 || FM.fitWeight(x, y, z) < .5 || FM.fitPlace(x, y, z)[2] < .05) continue; seen++; if (!hidden(i)) pts.push([x, y, z]); }
+  const pts = []; let seen = 0; for (let i = 0; i < B.n; i++) { const x = Math.abs(B.P[i * 3]), y = B.P[i * 3 + 1], z = B.P[i * 3 + 2]; if (y > .14 || y < -.135 || FM.fitWeight(x, y, z) < .5 || FM.fitPlace(x, y, z)[2] < .05 || (y < -.105 && z < .05 && x < .045)) continue; seen++; if (!hidden(i)) pts.push([x, y, z]); }
   console.log('scan points', seen, 'seen from outside', pts.length);
   // Least squares, a few times over (the head's measure is not quite straight in how far the skin moves): the table's heights such that,
   // read at each scan point the way fitAt reads them, they move our skin onto it, while (lam) neighbouring heights differ as little as
@@ -289,7 +296,11 @@ if ('solve' in opt) {
   { let lo2 = 0, hi2 = 0; for (const t of T) { lo2 = Math.min(lo2, t); hi2 = Math.max(hi2, t); } console.log('the table: from', (lo2 * 1000).toFixed(1), 'to', (hi2 * 1000).toFixed(1), 'mm'); }
   { const F = fieldOf(T), r = pts.map(([x, y, z]) => F(x, y + HC[1], z + HC[2])); let e2 = 0, c = 0; r.forEach(v => { if (Math.abs(v) < .02) { e2 += v * v; c++; } }); console.log('fitted: rms mm', (Math.sqrt(e2 / c) * 1000).toFixed(2)); }
   const bytes = Buffer.from(Array.from(T, v => (Math.round(v / MAX * 127) + 256) % 256));
+  if (opt.table) { fs.writeFileSync(opt.table, JSON.stringify({ scan: opt.scan || 'LeePerrySmith', fem: 'fem' in opt, data: bytes.toString('base64') })); console.log('wrote the table to', opt.table); process.exit(0); }
   const file = path.join(ROOT, 'src/kit/models/human-fit.js'), src = fs.readFileSync(file, 'utf8');
+  // kin=f:african (with scan=gnm/f-black-0 fem): the fit of that sex and heritage (FIT_KIN), not the scan's
+  if (opt.kin) { const re = new RegExp(`'${opt.kin}': '[^']*'`); if (!re.test(src)) { console.error('no ' + opt.kin + ' in FIT_KIN'); process.exit(1); }
+    fs.writeFileSync(file, src.replace(re, `'${opt.kin}': '${bytes.toString('base64')}'`)); console.log('wrote', opt.kin, 'into', file); process.exit(0); }
   fs.writeFileSync(file, src.replace(/export const FIT_DATA = '[^']*';/, `export const FIT_DATA = '${bytes.toString('base64')}';`));
   let big = 0; for (const v of T) big = Math.max(big, Math.abs(v)); console.log('wrote', file, bytes.length, 'points, largest move mm', (big * 1000).toFixed(1));
   process.exit(0);

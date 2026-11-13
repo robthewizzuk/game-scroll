@@ -1292,8 +1292,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   **Two looks.** `look: 'clean'` (the default) is a simpler, friendlier face, the way a good character model
   is. `look: 'real'` is a face as real as the kit makes it: a head the shape of a real one (fitted to a scan of a
   real head by measurement: the sculpted head's skin is moved out or in, smoothly, by up to 1.5 cm, so it lies
-  within about a millimetre and a half of the scan's; a woman's face takes half of it; only those numbers are in
-  the kit, and the scan is credited under Settings › Licence), life-size eyes, a jaw as broad as a real one, the
+  within about a millimetre and a half of the scan's; only those numbers are in the kit, and the scan is
+  credited under Settings › Licence). Its shape is a real man's or woman's of a background: `heritage:
+  'african' | 'east-asian' | 'european' | 'middle-eastern'`, or a mix such as `{ european: .6, 'east-asian': .4 }`,
+  each fitted the same way to the heads of Google's GNM Head model (learned from many scans); with none given it
+  comes from the seed and the skin, and `heritage: false` keeps the one scan's fit (a woman's face then takes half
+  of it). It has life-size eyes, a jaw as broad as a real one, the
   folds of a real face pressed into its skin (from the nose to the mouth, under the eyes, under the lower lip,
   round the nose; with age the lines down from the mouth, hollow temples and cheeks, the cords of an old neck),
   its two sides not quite alike, and quieter brows, lashes and lips. Its skin works out the light under it

@@ -2923,6 +2923,30 @@ console.log('physics ok');
     const clean = meshOf(base), real = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: 0 }), uneven = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: .9, aseed: 3.3 });
     assert.ok(jaw(real) > jaw(clean) + .004, `a real jaw is broader: ${(jaw(clean) * 2000).toFixed(0)} mm across the clean face's, ${(jaw(real) * 2000).toFixed(0)} mm a real one's`);
     assert.ok(halves(real) < .15 && halves(uneven) > halves(real) * 3, `an even face's halves alike (${halves(real).toFixed(2)} mm apart), an uneven one's not (${halves(uneven).toFixed(2)} mm)`); }
+  // ---- a heritage (human.js kinOf, human-fit.js FIT_KIN and kinTable): the shape of a real man's or woman's head of one background, or a
+  // mix, fitted to GNM Head; from the seed and the skin when the game gives none; the throat left to the neck (a scan whose jaw sits lower
+  // than ours had pulled it in under the chin and left a lump), and a woman's fit worked out on a woman's head (it had been on a man's)
+  { const FM = await import('../src/kit/models/human-fit.js'), { KIN, FIT_KIN, kinTable, FIT_N } = FM;
+    assert.deepEqual(realFace({ seed: 7, heritage: 'african' }, false, base).f.kin, { african: 1 }, 'a heritage the game gives is the face\'s');
+    assert.deepEqual(realFace({ seed: 7, heritage: { european: 3, 'east-asian': 1 } }, false, base).f.kin, { european: .75, 'east-asian': .25 }, 'a mix, in shares that come to one');
+    assert.ok(!('kin' in realFace({ seed: 7, heritage: false }, false, base).f) && !('kin' in realFace({}, false, base).f), 'heritage: false, or no seed and no skin: the one scan\'s fit, as before');
+    const tally = skin => { const t = Object.fromEntries(KIN.map(k => [k, 0])); for (let i = 0; i < 60; i++) { const k = realFace({ seed: i, skin }, false, base).f.kin; for (const n in k) t[n] += k[n]; } return t; };
+    const dark = tally('#3b2417'), fair = tally('#f2d6c4');
+    assert.ok(dark.african > 40 && fair.african < 3 && fair.european + fair['east-asian'] > 45, `from the skin: mostly african with a dark one (${JSON.stringify(dark)}), mostly european or east asian with a fair one (${JSON.stringify(fair)})`);
+    const n = FIT_N[0] * FIT_N[1];
+    for (const sx of ['f', 'm']) for (const k of KIN) assert.ok(Buffer.from(FIT_KIN[sx + ':' + k], 'base64').length === n, `a table for each sex and heritage (${sx}:${k})`);
+    const one = kinTable(false, { european: 1 }), mix = kinTable(false, { european: .5, african: .5 }), e = kinTable(false, { european: 1 }), a = kinTable(false, { african: 1 });
+    let off = 0; for (let i = 0; i < n; i++) off = Math.max(off, Math.abs(mix[i] - (e[i] + a[i]) / 2)); assert.ok(one === e && off < 1e-6, 'a mix is the tables in its shares (and the same mix is worked out once)');
+    // the head: a woman's fitted head is as wide low in the face as a real woman's (our own narrows to a V), and the throat under the chin
+    // is never drawn in (the lump), only eased out after a lower chin
+    const woman = { jaw: .94, chin: .9, brow: .62, nose: .86, lips: 1.25, cheeks: 1, eyes: 1.08, soft: 1, real: 1, es: 1, age: 35, fat: .5, asym: 0, aseed: 0 };
+    const wide = (fit, kin) => { const m = F.mesh(HH.head({ face: { ...woman, ...(kin ? { kin } : {}) }, neck: 1, hair: 'bald', ...(fit ? {} : { fit: false }) }), { cell: .004, ao: false, bounds: [[-.1, HC[1] - .17, -.12], [.1, HC[1] + .02, .13]] });
+      let w = 0; const front = new Map(); for (let i = 0; i < m.n; i++) { const x = m.P[i * 3], y = m.P[i * 3 + 1] - HC[1], z = m.P[i * 3 + 2] - HC[2]; if (y > -.068 && y < -.062 && z > -.01) w = Math.max(w, Math.abs(x));
+        if (Math.abs(x) < .004 && y < -.118 && y > -.15) { const k = Math.round(y * 250); front.set(k, Math.max(front.get(k) ?? -1, z)); } } return { w, front }; };
+    const plainW = wide(false), fitW = wide(true, { 'east-asian': 1 });
+    let drawn = 0; for (const [k, z] of fitW.front) if (plainW.front.has(k)) drawn = Math.min(drawn, z - plainW.front.get(k));
+    assert.ok(fitW.w > plainW.w + .004, `a woman's face as wide at the mouth as a real one: ${(plainW.w * 2000).toFixed(0)} mm unfitted, ${(fitW.w * 2000).toFixed(0)} mm fitted`);
+    assert.ok(drawn > -.001, `the throat under the chin never drawn in (at most ${(-drawn * 1000).toFixed(1)} mm)`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
@@ -2982,7 +3006,7 @@ console.log('physics ok');
     const br = []; for (let k = 0; k < bh2.length; k += 12) br.push(at(bd, bh2[k]));
     const mid = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] < -.07 && r[1] > -.09).length, edge = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] > -.04 && r[1] < -.02).length, lowB = Math.min(...br.map(r => r[1]));
     assert.ok(br.length > 1500 && lowB > -.17 && lowB < -.12 && mid > edge * 2 && br.every(r => r[0] < .08), `a beard of ${br.length} single hairs, down to ${(-lowB * 100).toFixed(1)} cm below the head's middle, ${mid} on a patch of the jaw to ${edge} on as much of its edge up the cheek`); }
-  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; the head of a heritage, from the seed and the skin, a woman as wide in the face as a real one, no lump under the chin; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
