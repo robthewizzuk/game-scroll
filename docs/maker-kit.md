@@ -1922,6 +1922,22 @@ there before the body has begun to turn: `rig.update(dt, { speed, toward: { x, z
 while aiming, off balance or far off; little while the face is set on something (`person.face.look(...)`).
 `rig.lead.amount = 0` turns it off (2 makes it plainer).
 
+**A walk of one's own** (`gs.models.human` people, by themselves): no two people walk alike, and nobody takes the
+same step twice. Each person's walk comes from their body: an older person takes shorter, quicker steps, swings the
+arms and hips less, leans and looks down a little more and stands wider with the toes out; a heavy person walks wider
+and rolls more from side to side with the arms held out; a muscled one carries the arms out and a little bent. The
+seed gives the rest of a person's own way of walking (how far the arms swing, one more than the other, how far the
+hips turn, how upright, a habit of the head), the same on every phone, and each `twin()` walks a little differently.
+From stride to stride the time a stride takes, the arms' swing, how wide the feet go and the lean wander a little,
+as they do in a person (slowly, not at random from one step to the next). Each footfall is felt: the hips give, the
+rib cage dips and the head nods after it, the elbows bounce, more at a run and in a heavy person. Slopes are read
+from how the body rises or falls as you move it: uphill the person leans in and takes shorter, quicker steps swinging
+the arms, downhill leans back with the knees bent and the arms out; with `rig.plant(ground, person)` the feet lie
+along the slope and keep the point they stand on. A mood: `person.rig.manner.mood = 'tired'` (`brisk`, `tired`,
+`wary`, `proud`, `sad`, `limp`; `manner.side = 'L'` for the leg that hurts; or a mix, `{ tired: .5, limp: 1 }`;
+`null` for none), eased in over a second. A mood changes how a person walks at the speed you give, so slow a tired or
+limping person yourself. `rig.manner.amount = 0` leaves the walk as drawn.
+
 **Momentum and follow-through** (`gs.models.human` people, by themselves): a body has weight. A new move begins
 at once and takes up what the body was doing: how far each joint was from where the new move has it, and how
 fast it was turning, die away smoothly in about the fade you ask for (`rig.play(name, { fade })`), so a limb in

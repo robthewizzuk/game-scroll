@@ -17,6 +17,7 @@ import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
+import { Manner } from '../manner.js';
 import { Breath, Grime } from './human-life.js';
 import { Idle } from './human-idle.js';
 import { reach } from '../characters.js';
@@ -286,9 +287,10 @@ function frameOf(sp) {
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
 // (and breathe: the chest and belly bones rise and fall, the belly settles behind the hips; the rig steps it)
-const rigOf = (B, scale, body, sp) => {
+const rigOf = (B, scale, body, sp, n = 0) => {
   const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR];
   if (sp && B.chest) rig.breath = new Breath(B, { fem: sp.fem, fat: sp.face.fat ?? (sp.build.waist > 1.05 ? .7 : .5), muscle: sp.build.muscle ?? .45 });
+  if (sp) rig.manner = new Manner(rig, body, { seed: n ? (sp.o.seed ?? '') + '/' + n : sp.o.seed ?? null, age: sp.face.age ?? 30, fat: sp.face.fat ?? (sp.build.waist > 1.05 ? .7 : .5), muscle: sp.build.muscle ?? .45, fem: sp.fem });   // a walk of one's own (and moods, no two steps alike, footfalls felt, slopes)
   return rig;
 };
 /** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
@@ -648,8 +650,9 @@ export function human(o = {}) {
 
   const sh = o.shadows !== false, scale = (o.scale ?? sp.tall) * (sp.fem ? .945 : 1), tris = geos.map(g => g.index.count / 3);
   const wetGeo = headP && sp.face.real ? wetOf(sp.face, bones) : null;
+  let born = 0;   // (each twin walks a little differently: a squad of two or three faces is not a squad of clones on the move)
   const stand = () => {
-    const B = tree(), root = new Group();
+    const B = tree(), root = new Group(), n = born++;
     root.add(B.hips); B.armL.rotation.z = ARM; B.armR.rotation.z = -ARM; root.updateMatrixWorld(true);   // bound with the arms out, as sculpted
     const skel = new Skeleton(bones.map(b => B[b]));
     const jointAt = ['elbowL', 'elbowR', 'kneeL', 'kneeR'].map(b => { const i = bones.indexOf(b); return i < 0 ? null : _v3.setFromMatrixPosition(_m4.copy(skel.boneInverses[i]).invert()).toArray(); });   // (where the elbows and knees were as the mesh was made: the creases in the clothes there)
@@ -673,7 +676,7 @@ export function human(o = {}) {
     if (wet) { wet.name = 'human:wet'; wet.castShadow = wet.receiveShadow = false; wet.userData.noAO = true; wet.frustumCulled = true; wet.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(wet); wet.bind(skel, new Matrix4()); }
     root.scale.setScalar(scale);
     root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet;
-    root.rig = rigOf(B, scale, root, sp);
+    root.rig = rigOf(B, scale, root, sp, n);
     root.grime = root.rig.grime = new Grime(B, jointAt);   // (how wet, muddy, dusty and snowy, and the elbows' and knees' bends: what the clothes' and skin's look reads on WebGPU)
     for (const m of lods) { m.userData.gsGrime = root.grime.v; m.userData.gsBends = root.grime.bends; }
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
