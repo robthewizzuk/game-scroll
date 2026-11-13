@@ -866,7 +866,7 @@ export function pbr(col = '#ffffff', { rough = .6, metal = 0, glow = 0, glowCol,
   // glowing out the far side. WebGPU: three.js's MeshSSSNodeMaterial (fast translucency, Barré-Brisebois
   // and Bouchard, as in Frostbite); WebGL phones get a soft tinted rim (sheen) in its place.
   if (sss) {
-    const S = m.userData.sss = { colour: new Color(sss.colour ?? sss.color ?? '#ff5a3c'), power: sss.power ?? 3, scale: sss.scale ?? 1, distortion: sss.distortion ?? .2, ambient: sss.ambient ?? .02, attenuation: sss.attenuation ?? .35 };
+    const S = m.userData.sss = { colour: new Color(sss.colour ?? sss.color ?? '#ff5a3c'), power: sss.power ?? 3, scale: sss.scale ?? 1, distortion: sss.distortion ?? .2, ambient: sss.ambient ?? .02, attenuation: sss.attenuation ?? .35, thin: !!sss.thin, back: sss.back ?? .8 };
     m.userData.gsGpu = 'sss'; if (!o.sheen) { m.sheen = .5; m.sheenColor = S.colour.clone(); m.sheenRoughness = .7; }
   }
   if (glow) { m.emissive = new Color(glowCol || col); m.emissiveIntensity = glow; }
@@ -2491,7 +2491,7 @@ function gpuFor(v) {
   return v._gpuWhy ? null : G;
 }
 // swap each view's parts between their WebGL and WebGPU versions (particles: points or sprites)
-const gpuLooked = new WeakSet(), gpuTwins = new WeakMap(), sunRoles = new WeakMap();
+const gpuLooked = new WeakSet(), gpuTwins = new WeakMap(), gpuLists = new WeakMap(), sunRoles = new WeakMap();
 // kit ShaderMaterials (GPU_TWINS) swapped for their node material twin on WebGPU, and back
 // A twin can have a close-up version (gs.models materials: the recipe worked out per pixel, fading to the
 // baked look pixel by pixel as the textures get fine enough): drawn while the thing is within its distance
@@ -2534,18 +2534,34 @@ function closeTo(o, at, d) {
   if (!g.boundingBox) g.computeBoundingBox();
   return NEAR_B.copy(g.boundingBox).applyMatrix4(o.matrixWorld).distanceToPoint(at) < d;
 }
+// a material's WebGPU twin, made once for a renderer
+function twinOf(gl, G, o, air) {
+  let tw = gpuTwins.get(gl);
+  if (tw?.r !== G.r) {
+    gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), built: new Set(), building: new Set() });
+    // (with the air on they get wet in the rain as plain materials do: AIR_WET, before their shaders are built)
+    if (air && gl.isMeshStandardMaterial && gl.fog !== false) for (const t of [tw.m, tw.m.userData.gsNear]) if (t?.isMeshStandardNodeMaterial) G.fx.gpuWet(t, o, AIR, noSettle(gl, o), noiseTex(), !!air.world);
+  }
+  return tw;
+}
 function swapTwins(scene, G, cam = null, seen = null, air = null) {   // (air: the view's air settings, if it has the air on)
   scene.traverse(o => {
     if (!o.isMesh) return;
     const gl = o.userData.gsGlMat || o.material;
+    if (Array.isArray(gl)) {
+      // a mesh in several materials (a sculpted person: skin, eyes, cloth, leather...): each drawn as its own twin where it has one
+      // (skin that light soaks through, a recipe's own textures). No close-up versions here: those are built for one material a mesh.
+      if (!gl.some(m => m?.userData?.gsGpu)) return;
+      if (G) {
+        let list = gpuLists.get(gl);
+        if (list?.r !== G.r) gpuLists.set(gl, list = { r: G.r, m: gl.map(m => m?.userData?.gsGpu ? twinOf(m, G, o, air).m : m) });
+        o.userData.gsGlMat = gl; o.material = list.m;
+      } else if (o.userData.gsGlMat) { o.material = gl; delete o.userData.gsGlMat; }
+      return;
+    }
     if (!gl?.userData?.gsGpu) return;
     if (G) {
-      let tw = gpuTwins.get(gl);
-      if (tw?.r !== G.r) {
-        gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), built: new Set(), building: new Set() });
-        // (with the air on they get wet in the rain as plain materials do: AIR_WET, before their shaders are built)
-        if (air && gl.isMeshStandardMaterial && gl.fog !== false) for (const t of [tw.m, tw.m.userData.gsNear]) if (t?.isMeshStandardNodeMaterial) G.fx.gpuWet(t, o, AIR, noSettle(gl, o), noiseTex(), !!air.world);
-      }
+      const tw = twinOf(gl, G, o, air);
       o.userData.gsGlMat = gl;
       const near = tw.m.userData.gsNear;
       let use = tw.m;

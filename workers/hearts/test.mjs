@@ -92,11 +92,29 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   assert.equal(cleanPerf({ games: [] }, known), null);
   assert.equal(cleanPerf({ info: { platform: 'pc', form: 'huge' } }, known).info.platform, 'web');
   ok('perf batches drop unknown games, clean text and keep numbers consistent');
-  const page = perfPage({ days: 14, games: [{ game: 'mini-golf', platform: 'android', model: '<b>SM</b>', form: 'wide', rounds: 3, frames: 600, ms: 12000, work: 6000, slow: 120, hitches: 9, worst: 210, fps: 50 }],
-    errors: [{ kind: 'error', game: 'mini-golf', msg: '<script>alert(1)</script>', place: 'x.js:1', n: 4, last: '2026-11-07', models: 'SM', apps: '1' }] }, known);
-  assert.ok(!page.includes('<script>') && !page.includes('<b>SM'));
-  assert.match(page, /Mini Golf/); assert.match(page, /class="n bad">20\.0%/);
-  ok('perf report page escapes reported text and flags slow games');
+  const d = 20769, at = d * 86400 + 21 * 3600 + 44 * 60;   // 12 Nov 2026, 21:44 UTC
+  const slow = { rounds: 3, frames: 600, ms: 12000, work: 6000, slow: 120, hitches: 9, worst: 210 }, fine = { rounds: 1, frames: 600, ms: 10000, work: 2000, slow: 3, hitches: 0, worst: 40 };
+  const report = { days: 14, at, game: '',
+    phones: [{ platform: 'android', model: '<b>SM</b>', kind: '', app: '1.0.7 abc1234', d0: d - 3, d1: d, t1: at, builds: 2, rounds: 4, ms: 22000 },
+      { platform: 'android', model: 'Robo', kind: 'robot', app: '1.0.7 abc1234', d0: d - 1, d1: d, t1: 0, builds: 40, rounds: 90, ms: 99000 }],
+    games: [{ game: 'mini-golf', platform: 'android', model: '<b>SM</b>', form: 'wide', builds: 2, d0: d - 3, all: slow, app: '1.0.7 abc1234', d1: d, t1: at, now: fine },
+      { game: 'old-game', platform: 'android', model: '<b>SM</b>', form: 'phone', builds: 1, d0: d - 3, all: slow, app: '1.0.5 "><i>x', d1: d - 3, t1: 0, now: slow }],
+    errors: [{ kind: 'error', game: 'mini-golf', msg: '<script>alert(1)</script>', place: 'x.js:1', n: 4, d0: d - 3, d1: d - 2, t0: at, t1: 0, models: ['<b>SM</b>', 'Robo'],
+      apps: [{ app: '1.0.6 fedcba9', d1: d - 2, t1: 0 }, { app: 'local', d1: d - 3, t1: 0 }], state: 'gone', newer: 2 },
+    { kind: 'crash', game: '', msg: 'App closed while open', place: '', n: 1, d0: d, d1: d, t0: at, t1: at, models: ['Robo'], apps: [{ app: '1.0.7 abc1234', d1: d, t1: at }], state: 'now', newer: 0 }] };
+  const page = perfPage(report, known, 'https://github.com/x/y');
+  assert.ok(!page.includes('<script>') && !page.includes('<b>SM') && !page.includes('<i>x'));
+  assert.match(page, /<a href="\?game=mini-golf">Mini Golf<\/a>/); assert.ok(!page.includes('?game=old-game'), 'only games in the catalogue get a page');
+  assert.match(page, /class="n bad">20\.0%/); assert.match(page, /class="n ok">0\.5%/);   // every build, and the newest
+  assert.match(page, /href="https:\/\/github\.com\/x\/y\/commit\/abc1234"/); assert.match(page, /12 Nov 21:44/);
+  assert.match(page, /<td class=t>9 Nov<\/td><td class=t>10 Nov<\/td>/, 'no time is shown for a day whose time was not kept');
+  assert.match(page, /Probably not: 2 newer builds have played it/); assert.match(page, /Yes: on the newest build that phone has run/);
+  assert.match(page, /probably a test robot: 40 builds in 2 days/); assert.match(page, /<tr class=old><td>old-game/);
+  assert.ok(page.indexOf('<details open><summary><b>&lt;b&gt;SM') > 0 && page.indexOf('<details><summary><b>Robo') < 0, 'a phone with no rows gets no block');
+  assert.ok(!perfPage(report, known, 'javascript:alert(1)').includes('javascript:'));
+  const one = perfPage({ ...report, game: 'mini-golf', games: [], history: [{ platform: 'android', model: '<b>SM</b>', form: 'wide', app: '1.0.7 abc1234', day: d, t0: at - 600, t1: at, ...fine }] }, known, 'https://github.com/x/y');
+  assert.match(one, /Game Scroll performance: Mini Golf/); assert.match(one, /21:34 to 21:44/); assert.ok(!one.includes('?game='));
+  ok('perf report page escapes reported text, flags slow games and says when and on which build');
 }
 
 /* ---------- sessions ---------- */
@@ -329,6 +347,30 @@ await run({}, async url => {
   assert.match(r.headers.get('content-type'), /text\/html/); assert.match(await r.text(), /TypeError: boom/);
   r = await post(url, '/perf', { device: A, games: 'x' }); assert.equal(r.status, 400);
   ok('perf reports add up per game and phone, and show on the report page');
+
+  // When, and on which build: an old build reports an error, then a newer build plays the same game without it.
+  const C = 'test-device-c-' + run_, other = { 'CF-Connecting-IP': IP + '.2' }, g2 = 'when-game-' + run_, phone = 'Fold-' + run_;
+  const from = (app, errors = []) => ({ device: C, info: { platform: 'android', model: phone, os: 'Android 17', app, form: 'phone' }, games: { [g2]: { r: 1, f: 600, ms: 10000, w: 3000, sl: 6, h: 1, x: 90 } }, errors });
+  const bug = [{ kind: 'error', game: g2, msg: 'TypeError: old bug', place: 'games/y.js:9' }];
+  // this run's row: the local database keeps earlier runs' rows
+  const errRow = async path => (await (await fetch(url + path)).text()).split('<tr>').find(row => row.includes(g2) && row.includes('TypeError: old bug'));
+  r = await post(url, '/perf', from('1.0.1 aaaaaaa', bug), other); assert.equal(r.status, 200);
+  assert.match(await errRow('/perf/report'), /Yes: on the newest build that phone has run/);
+  await new Promise(done => setTimeout(done, 1100));   // times are kept to the second
+  r = await post(url, '/perf', from('1.0.2 bbbbbbb'), other); assert.equal(r.status, 200);
+  assert.match(await errRow('/perf/report'), /Probably not: 1 newer build has played it/);
+  r = await fetch(url + '/perf/report?game=' + g2); assert.equal(r.status, 200);
+  const hist = await r.text(), past = hist.slice(hist.indexOf('Smoothness by phone, day and build'));
+  assert.ok(past.indexOf('1.0.2 ') > 0 && past.indexOf('1.0.2 ') < past.indexOf('1.0.1 '), 'a game\'s history lists the newest build first');
+  assert.match(hist, /Probably not: 1 newer build has played it/); assert.match(hist, /commit\/bbbbbbb/); assert.ok(!hist.includes(game), 'one game\'s page shows only that game');
+  await new Promise(done => setTimeout(done, 1100));
+  r = await post(url, '/perf', from('1.0.2 bbbbbbb', bug), other); assert.equal(r.status, 200);
+  assert.match(await errRow('/perf/report'), /Yes: on the newest build that phone has run/);
+  assert.match(await errRow('/perf/report?game=' + g2), /Yes: on the newest build that ran this game on that phone/);
+  r = await fetch(url + '/perf/report?game=Not%20a%20game'); assert.equal(r.status, 404);
+  const main = await (await fetch(url + '/perf/report')).text();
+  assert.match(main, new RegExp('<b>' + phone + '</b>')); assert.match(main, new RegExp('href="\\?game=' + g2 + '"'));
+  ok('the report says when and on which build, whether an error is still happening, and has a page per game');
 });
 
 await run({ ENFORCE: 'on' }, async url => {

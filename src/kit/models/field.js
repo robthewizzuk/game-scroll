@@ -474,7 +474,32 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
       AO[i] = 1 - cl(occ / tot);
     }
   }
-  return { P, N, I, own, ride: ride || own, ao: AO, n, shapes: S, ms: [t1 - t0, t2 - t1, t2b - t2, t3 - t2b, now() - t3] };
+  return { P, N, I, own, ride: ride || own, ao: AO, n, shapes: S, at: sample, ms: [t1 - t0, t2 - t1, t2b - t2, t3 - t2b, now() - t3] };
+}
+
+/**
+ * How thick the solid is behind a point of its surface (metres, `far` at most), for light that comes through thin
+ * flesh (an ear): how far straight in until it comes out the other side. It only counts if it comes out into the
+ * open, with `clear` metres of nothing beyond (the foot of an ear has the skull just behind it: no light gets round
+ * there). A way in that never comes out (in from the rim of a sheet, along the sheet) is as thick as twice the
+ * deepest it got: the rim of a sheet reads as thin as the sheet, a square edge as solid as what it is the edge of.
+ * at(x, y, z): the solid's measure (under 0 inside; mesh() gives its own back as `at`); nx, ny, nz: the point's
+ * normal; step: how far apart the measure is read (about a cell). Returns out: [how thick, how far it is open
+ * beyond where the way in came out (metres, `look` at most; 0 where it never came out)].
+ */
+export function thickness(at, x, y, z, nx, ny, nz, step = .0015, far = .016, clear = .004, look = .08, out = [0, 0]) {
+  // (it counts from where it is first inside: a read right at the surface can fall either side of it)
+  let s = step, v0 = at(x - nx * s, y - ny * s, z - nz * s), inside = v0 < 0, deep = inside ? -v0 : 0;
+  for (;;) {
+    const s1 = s + step; if (s1 > far) break; const v1 = at(x - nx * s1, y - ny * s1, z - nz * s1);
+    if (inside && v1 >= 0) {
+      const t = s + step * v0 / (v0 - v1); let q = s1 + step; while (q < t + look && at(x - nx * q, y - ny * q, z - nz * q) >= 0) q += step;
+      const open = mn(look, q - step - t); out[0] = open < clear ? far : t; out[1] = mx(0, open); return out;
+    }
+    if (v1 < 0) { inside = true; if (-v1 > deep) deep = -v1; }
+    s = s1; v0 = v1;
+  }
+  out[0] = mn(far, 2 * deep); out[1] = 0; return out;
 }
 
 /** Resolves once thin() can work (the simplifier's wasm; the app waits for it while the 3D parts load). */
@@ -501,4 +526,4 @@ function thinBy(I, P, A, per, weights, keep, error, lock = null) {
 }
 
 /** This file's workings as text (a saved sculpt made by an older version is thrown away: see human-shapes.js). */
-export const stamp = () => [mesh, ready, nets, thinBy, Loft, ...Object.values(KINDS)].map(String).join('');
+export const stamp = () => [mesh, ready, nets, thinBy, thickness, Loft, ...Object.values(KINDS)].map(String).join('');

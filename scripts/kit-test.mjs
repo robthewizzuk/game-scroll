@@ -2486,6 +2486,51 @@ console.log('physics ok');
   console.log('gs.models: a live face (bones for eyes, lids, brows, jaw and mouth corners; lips that part; a blink that closes the eye; eyes onto a point and holding a spot as the head turns; expressions, speech, sleep, a wince) ok');
 }
 
+// skin and eyes that read as flesh (field.js thickness(), human-shapes.js finish() and eyeball(), recipes.js 'skin'): how thin the
+// flesh is at each point of an ear and how open it is behind (light comes through an ear, and through nothing else), an eye with a
+// cornea, and a skin of pores and fine lines
+{
+  const F = await import('../src/kit/models/field.js'); await F.thinReady;
+  const HS = await import('../src/kit/models/human-shapes.js'), HH = await import('../src/kit/models/human-head.js'), { RECIPES } = await import('../src/kit/models/recipes.js');
+  // ---- how thin: straight in from a point until the solid ends, and how far it is open beyond
+  { const slab = (x, y, z) => Math.max(Math.abs(z) - .002, Math.abs(x) - .05, Math.abs(y) - .05);   // a sheet 4 mm thick, 10 cm square
+    const block = (x, y, z) => Math.max(Math.abs(x) - .05, Math.abs(y) - .05, Math.abs(z) - .05), wall = (x, y, z) => Math.min(slab(x, y, z), Math.max(Math.abs(z + .0265) - .0225, Math.abs(x) - .05, Math.abs(y) - .05));   // (the sheet 2 mm off a block)
+    const T = (at, p, n) => F.thickness(at, ...p, ...n, .0005, .016, .004, .08, [0, 0]), r2 = Math.SQRT1_2;
+    const sheet = T(slab, [0, 0, .002], [0, 0, 1]), rim = T(slab, [.05, 0, 0], [1, 0, 0]), solid = T(block, [0, 0, .05], [0, 0, 1]), edge = T(block, [.05, 0, .05], [r2, 0, r2]), near = T(wall, [0, 0, .002], [0, 0, 1]);
+    assert.ok(Math.abs(sheet[0] - .004) < .0006 && sheet[1] > .079, `a sheet 4 mm thick measures ${(sheet[0] * 1000).toFixed(2)} mm, with ${(sheet[1] * 100).toFixed(1)} cm open behind it`);
+    assert.ok(Math.abs(rim[0] - .004) < .0011 && rim[1] === 0, `its rim reads as thin as the sheet: ${(rim[0] * 1000).toFixed(2)} mm`);
+    assert.ok(solid[0] === .016 && solid[1] === 0 && edge[0] === .016 && edge[1] === 0, `a block is thick, on a face and at a square edge: ${[solid[0], edge[0]]}`);
+    assert.ok(near[0] === .016 && near[1] < .004, `a sheet lying 2 mm off a wall counts as thick: light has nowhere to come from (${(near[1] * 1000).toFixed(1)} mm open)`); }
+  // ---- the head: only the ears are thin
+  const face = { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, { HC, EYE } = HH;
+  const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'shirt', sleeves: 'long', pockets: 0 }, legs: { kind: 'trousers' }, feet: { kind: 'shoes' }, face, hat: null, belt: null, web: null, extras: {}, pack: null, gear: [], hands: 'open', gloves: null, hair: '#333', hairStyle: 'short', moustache: false };
+  const jobs = HS.jobsFor(sp), p = HS.sculpt(jobs.find(j => j.kind === 'head')), P = p.P, n = p.n, th = p.thin;
+  { assert.ok(th instanceof Uint8Array && th.length === n * 2, 'the head says how thin it is and how open behind, two numbers a point');
+    let L = 0, R = 0, most = 0, open = 0, shut = 0, stray = 0; const box = [9, -9, 9, -9, 9, -9];
+    for (let i = 0; i < n; i++) { const t = th[i * 2]; if (!t) { if (th[i * 2 + 1]) stray++; continue; } const x = P[i * 3], ax = Math.abs(x), hy = P[i * 3 + 1] - HC[1], hz = P[i * 3 + 2] - HC[2];
+      if (x > 0) L++; else R++; most = Math.max(most, t); if (th[i * 2 + 1] > 128) open++; else shut++;
+      box[0] = Math.min(box[0], ax); box[1] = Math.max(box[1], ax); box[2] = Math.min(box[2], hy); box[3] = Math.max(box[3], hy); box[4] = Math.min(box[4], hz); box[5] = Math.max(box[5], hz); }
+    assert.ok(L > 150 && Math.abs(L - R) < L * .1 && most > 230 && stray === 0, `thin flesh on both ears alike: ${L} points on the left, ${R} on the right, ${(most / 255).toFixed(2)} at the thinnest`);
+    assert.ok(box[0] > .06 && box[1] < .1 && box[2] > -.05 && box[3] < .05 && box[4] > -.05 && box[5] < .03, `and nowhere but the ears (no lip, lid, nostril or neck): all of it within ${box.map(v => (v * 1000).toFixed(0))} mm of the head's middle`);
+    assert.ok(open > 50 && shut > 50, `the far side of an ear lies against the head: ${open} points are open behind, ${shut} have the skull there`);
+    // measured in steps a cell apart, then evened out between neighbours: no terraces
+    let worst = 0, sum = 0, edges = 0; const I = p.I[0]; for (let t = 0; t < I.length; t += 3) for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3]; if (th[a * 2] && th[b * 2]) { const d = Math.abs(th[a * 2] - th[b * 2]); worst = Math.max(worst, d); sum += d; edges++; } }
+    assert.ok(sum / edges < 40 && worst < 160, `no terraces: it changes by ${(sum / edges / 255).toFixed(2)} from one point to the next on average, ${(worst / 255).toFixed(2)} at the most`);
+    for (const kind of ['hand', 'trunk']) { const q = HS.sculpt(jobs.find(j => j.kind === kind)); assert.ok(!q.thin, `a ${kind} has no thin flesh to measure`); } }
+  // ---- the eyes: rings from the pupil out, a cornea a quarter of a millimetre proud with a real cornea's normals, colours in bands
+  { const r = .0122, c = [EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], bands = new Map(); let count = 0, proud = 0, out = 0, lean = 0, round = 0, mid = null;
+    for (let i = 0; i < n; i++) { const s = p.slots[p.slot[i]]; if (!s.startsWith('eye') || P[i * 3] < 0) continue; count++;
+      const d = [P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]], l = Math.hypot(...d), an = Math.acos(Math.min(1, d[2] / l)), N = [p.N[i * 3] / 32767, p.N[i * 3 + 1] / 32767, p.N[i * 3 + 2] / 32767], na = Math.acos(Math.min(1, N[2]));
+      bands.set(s, (bands.get(s) || 0) + 1); proud = Math.max(proud, l - r); if (l < r - 2e-6 || l > r + .00026) out++;
+      if (an < 1e-3) mid = N; else if (an > .2 && an < .5) lean = Math.max(lean, na - an); else if (an > .65 && Math.abs(na - an) > .01) round++; }
+    assert.ok(count === 264 && [0, 1, 2, 3, 4, 5, 6, 7].every(k => bands.get('eye' + k) >= 24), `an eye is 11 rings of 24 points in 8 bands of colour: ${count} points, ${[...bands].map(b => b.join(' ')).join(', ')}`);
+    assert.ok(out === 0 && proud > .00024 && proud < .00026, `the cornea stands ${(proud * 1000).toFixed(2)} mm proud of the ball (the lids pass a fifth of a millimetre over it) and nothing else does`);
+    assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
+  // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
+  { assert.ok(RECIPES.skin && Object.keys(RECIPES).length === 18, 'a skin among the recipes: ' + Object.keys(RECIPES).length); }
+  console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
+}
+
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
 {
   const CS = await import('../src/kit/models/creature-shapes.js'), MV = await import('../src/kit/models/creature-moves.js'), { Rig } = await import('../src/kit/poses.js'), THREE = await import('three');
