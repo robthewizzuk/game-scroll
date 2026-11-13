@@ -62,6 +62,8 @@ export { gpuGas } from './gas-gpu.js';
 import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
+import { KitLampsNode } from './lamps-gpu.js';
+export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -736,12 +738,12 @@ export function pcss(light) {
 // were for. So a shadow map the kit draws has a lights node of its own (its materials use no lights: nothing is
 // made for it), and the scene's grid only ever meets the game's own picture.
 // (and a light that a material treats as no other, HDView.faceLight's fill, is lit the usual way: a clustered lamp reaches the lighting
-// model as the cluster's node, not as itself)
+// model as the cluster's node, not as itself). The lights node is the kit's own (lamps-gpu.js KitLampsNode): three's clustered lights
+// with the lamps' shadows from one atlas, light shapes, and tube and sign lights.
 const NO_WRINKLE = new Vector4();   // (a face at rest, or a mesh with no live face)
-class KitClusteredLights extends ClusteredLightsNode { _isClusteredLight(l) { return !l.userData.gsFill && super._isClusteredLight(l); } }
 class KitLighting extends ClusteredLighting {
   constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
-  createNode(lights = []) { return new KitClusteredLights(this.maxLights, this.tileSize, this.zSlices, this.maxLightsPerCluster).setLights(lights); }
+  createNode(lights = []) { return new KitLampsNode(this.maxLights, this.tileSize, this.zSlices, this.maxLightsPerCluster).setLights(lights); }
   getNode(scene) {
     if (scene !== this.gsShadowOf) return super.getNode(scene);
     let n = this.gsShadowNodes.get(scene);

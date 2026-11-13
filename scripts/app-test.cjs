@@ -638,7 +638,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (12)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (13)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -693,8 +693,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 12 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up and faces close up, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 13 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up and a street at night, each with its system off and then on', JSON.stringify(sc.scenes));
   // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
   check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
     && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
@@ -741,6 +741,13 @@ async function tour(b) {
   // the faces: people close up, each look sculpted the first time it is met, the real one set against the clean one
   check(M('faces', 'clean').build > 0 && M('faces', 'real').build > 0 && /^posed in [\d.]+ ms a frame$/.test(M('faces', 'real').tell || '') && /\n  = the real look against the clean look: /.test(sc.text),
     'the faces are drawn close up in the clean look and then the real one', JSON.stringify(sby.faces));
+  // the night: a wet street with every lamp a plain round light, then with the nearest lamps' shadows (from the atlas on WebGPU, where
+  // slots are drawn again only when something they see moved: cars and people do here), shaped headlights and neon
+  const litOf = m => { const x = /^([\d.]+) lights lit(?: · ([\d.]+) with a shadow, ([\d.]+) shadow slots drawn a frame)?$/.exec(M('night', m).tell || ''); return x ? [+x[1], x[2] == null ? null : +x[2], x[3] == null ? null : +x[3]] : [NaN, null, null]; };
+  const nightOn = litOf('on'), nightGpu = M('night', 'on').backend === 'webgpu';
+  const nightLit = nightGpu ? 4 : 2;   // (WebGL: as many round lights as the quality allows, two at the least)
+  check(litOf('off')[0] >= nightLit && litOf('off')[1] === null && nightOn[0] >= nightLit && (nightGpu ? nightOn[1] >= 1 && nightOn[2] > 0 : nightOn[1] === null) && /\n  = lamps with shadows, shaped headlights, neon against plain round lamps: /.test(sc.text),
+    'the night street is lit by plain round lamps and then by lamps with shadows, shaped headlights and neon', JSON.stringify(sby.night));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
   check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),

@@ -40,7 +40,26 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
   (the real sun is 0.5; 2 to 4 reads as a soft, hazy day). Call it when you make the sun.
 - **Lamp light pool** (`v.lampLights(range)` then `v.placeLamps(spots, x, y, z, t)` each frame):
   a level can have dozens of lamps; the nearest few get real point lights (with flicker) and the
-  rest only glow. Light count stays fixed, so shaders never recompile mid-game.
+  rest only glow. Light count stays fixed, so shaders never recompile mid-game. A spot is
+  `{ x, y, z, col, i, flick }` and, for any lamp:
+  - `reach` (metres it lights), `dir: [x, y, z]` (a spot light shining that way), `angle` (its half
+    width in radians), `soft` (0..1, how soft its edge).
+  - `shadow: true`: it casts shadows. The nearest few by quality (4, 8 or 16 on WebGPU) get a square
+    of one shared shadow picture, drawn again only when the lamp or something it sees moves, and at
+    most a few a frame, so a street of lamps with cars passing under them costs a few small shadow
+    maps a frame. WebGL phones get one to four real spot lights with shadows. `near` (metres) is where
+    its shadow starts: a headlight's past its own car's nose.
+  - `shape`: a light shape it shines through, drawn in code (no picture files): `'headlamp'` (a dipped
+    beam's sharp top edge), `'window'` (a frame's bars), `'blinds'`, `'cage'` (a lamp's wire cage),
+    `'leaves'` (dappled light under a tree), `'grille'`, `'stained'` (coloured panes), `'bars'`.
+  - `tube: [x, y, z]` (a neon tube from the spot to there) and `rect: { w, h, normal }` (a lit sign's
+    face): on WebGPU they light from their nearest point, and their highlight on a wet or shiny floor is
+    their whole length and face, as a real tube's is; WebGL lights them from their middle.
+  `gs.hd.neon(points, { colour, i, reach })` and `gs.hd.sign(w, h, paint, { colour, i, reach })` make
+  the glowing tube and sign to go with them: pass `n.spots()` / `s.spots()` to `placeLamps` with the
+  rest. A car's headlights: two spots at its nose each frame with `dir` along the car,
+  `shape: 'headlamp'`, `shadow: true`, `reach: 25`, `i: 45`. `v.lampShadows` says what the lamps'
+  shadows did last frame (`slots`, `drawn`, `waiting`).
 - **Post-processing**, one shared chain: HDR render with MSAA (or a light FXAA on lower tiers), ground-truth ambient occlusion
   (GTAO), bloom (anything brighter than about 1 glows: emissive above 1, particle colours above
   1), ACES filmic tone mapping, and a colour grade (vignette, film grain, slight lens fringing at

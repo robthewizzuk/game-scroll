@@ -20,6 +20,9 @@
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 //   lineup   people that move (src/kit/stride.js, follow.js, human-face.js, human.js hands): eight people posed as drawn, then stepping, live faced and holding
 //   faces    people close up (gs.models.human look: 'real'): four faces in turn filling the screen, in the clean look and then the real one
+//   night    lamps with shadows (src/kit/lamps.js, lamps-gpu.js): a wet street at night with lamps on posts, cars with their headlights
+//            and people under the lamps, neon and a lit sign: once with every lamp a plain round light, then with the nearest lamps' shadows
+//            from one shared atlas, headlights in a dipped beam's shape, and neon tubes and the sign lighting the wet road from their length
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -784,6 +787,85 @@ function faces({ gs, size }) {
   };
 }
 
+/* ---------- night: lamps with shadows ---------- */
+// A wet street at night, the kind of place a city game spends its nights in (src/kit/lamps.js, lamps-gpu.js): lamps on posts down both
+// pavements, cars driving through with their headlights on, people walking under the lamps, two neon tubes and a lit sign over a shop.
+// Off, every lamp is a plain round light, as lamps were (a car's headlights two round lights at its nose); on, the nearest lamps and
+// headlights cast shadows from one shared atlas (a slot drawn again only when something it sees moved, a few a frame), the headlights
+// have a dipped beam's shape, and the neon and the sign light the wet road from their whole length and face.
+function night({ gs, size }) {
+  const T = gs.THREE, hd = gs.hd, { vehicle } = gs.models;
+  const v = new hd.HDView({ bg: '#04060b', fog: .012, env: .05, sky: '#141b2c', ground: '#08080a', amb: .05 }).lampLights(14);
+  v.cam.far = 160; v.cam.updateProjectionMatrix(); v.bloom = .5;
+  const LEN = 120, posts = Math.max(4, Math.round(14 * size)), nCars = Math.max(1, Math.round(3 * size)), nPeople = Math.max(2, Math.round(6 * size));
+  const mk = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  mk(new T.PlaneGeometry(12, LEN + 40).rotateX(-Math.PI / 2), hd.pbr('#26272a', { rough: .34, wet: .8 }), 0, 0, 0);
+  const kerb = hd.pbr('#5f5c56', { rough: .8, wet: .4 });
+  for (const sx of [-1, 1]) mk(new T.BoxGeometry(4, .15, LEN + 40), kerb, sx * 8, .075, 0);
+  // the buildings: a row each side, a shop window lit at the foot of some
+  const rnd = (() => { let a = 7; return () => ((a = (a * 16807) % 2147483647) / 2147483647); })();
+  const walls = ['#5a3f34', '#6b645a', '#4a4440', '#704a38'].map(c => hd.pbr(c, { rough: .85 })), glass = new T.MeshStandardMaterial({ color: '#111', emissive: '#ffcf99', emissiveIntensity: 1.2, roughness: .3 });
+  for (const sx of [-1, 1]) for (let z = -LEN / 2; z < LEN / 2; z += 12) {
+    const h = 8 + rnd() * 10; mk(new T.BoxGeometry(6, h, 11.6), walls[(rnd() * 4) | 0], sx * 13, h / 2, z + 6);
+    if (rnd() < .5) { const w = new T.Mesh(new T.PlaneGeometry(5, 2.2), glass); w.position.set(sx * 9.98, 1.6, z + 6); w.rotation.y = -sx * Math.PI / 2; v.scene.add(w); }
+  }
+  // lamps on posts, staggered down both pavements
+  const postMat = hd.pbr('#30343a', { rough: .5, metal: .6 }), lampPosts = [];
+  for (let i = 0; i < posts; i++) {
+    const sx = i % 2 ? 1 : -1, z = -LEN / 2 + (i + .5) * LEN / posts;
+    mk(new T.CylinderGeometry(.07, .1, 5.8, 8), postMat, sx * 6.6, 2.9, z); mk(new T.BoxGeometry(1.4, .08, .08), postMat, sx * 5.95, 5.8, z);
+    lampPosts.push({ x: sx * 5.3, y: 5.65, z, col: '#ffcf8a', i: 22, reach: 14 });
+  }
+  // neon over a shop, and its sign
+  const n1 = hd.neon([[-9.9, 3.6, 8], [-9.9, 3.6, 11], [-9.9, 2.8, 11]], { colour: '#ff2f7a', i: 5, reach: 8 }), n2 = hd.neon([[9.9, 3.2, -14], [9.9, 4.2, -10]], { colour: '#2fd3ff', i: 5, reach: 8 });
+  const sign = hd.sign(2.4, .8, (c, w, h) => { c.fillStyle = '#ffb347'; c.font = `bold ${h * .6}px sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('OPEN', w / 2, h / 2); }, { colour: '#ffb347', i: 4, reach: 8 });
+  sign.position.set(-9.95, 2.6, 2); sign.rotation.y = Math.PI / 2; v.scene.add(n1, n2, sign);
+  // cars, both ways down the road, and people on the pavements (plain figures: the lights are what is tried here)
+  const cars = Array.from({ length: nCars }, (_, i) => { const c = vehicle('car', { seed: 3 + i, lit: true }); v.scene.add(c); return { c, lane: i % 2 ? 1.8 : -1.8, way: i % 2 ? -1 : 1, z0: i * 37, speed: 7 + i * 1.5 }; });
+  const body = hd.pbr('#7a7570', { rough: .7 }), people = Array.from({ length: nPeople }, (_, i) => {
+    const g = new T.Group(), b = new T.Mesh(new T.CapsuleGeometry(.22, 1.2, 4, 10), body), hd2 = new T.Mesh(new T.SphereGeometry(.13, 12, 8), body);
+    b.position.y = .85; hd2.position.y = 1.72; b.castShadow = hd2.castShadow = b.receiveShadow = true; g.add(b, hd2); v.scene.add(g);
+    return { g, x: (i % 2 ? 1 : -1) * (7 + (i % 3) * .5), z0: i * 19, speed: 1.1 + (i % 3) * .3, way: i % 2 ? -1 : 1 };
+  });
+  const wrap = z => ((z + LEN / 2) % LEN + LEN) % LEN - LEN / 2;
+  let on = false, last = 0;
+  const sum = { n: 0, drawn: 0, slots: 0, lit: 0 }, H = new T.Vector3(), D = new T.Vector3();
+  const enter = key => async draw => { on = key === 'on'; sum.n = sum.drawn = sum.slots = sum.lit = 0; last = 0; for (let i = 0; i < 4; i++) await draw(); };
+  return {
+    v, holds: `a wet street at night: ${num(posts)} lamps, ${num(nCars)} car${nCars > 1 ? 's' : ''} with headlights, ${num(nPeople)} people, neon and a lit sign`,
+    modes: [
+      { key: 'off', name: 'plain round lamps', enter: enter('off') },
+      { key: 'on', name: 'lamps with shadows, shaped headlights, neon', enter: enter('on') },
+    ],
+    // a walk down the pavement under the lamps, the cars going by
+    path(t, cam) {
+      const dt = t > last ? Math.min(.1, t - last) : 0; last = t;
+      const z = wrap(-LEN / 2 + 4 + t * 1.6);
+      cam.position.set(-6.2, 1.7, z); cam.lookAt(-1.5, 1.2, z + 12); cam.updateMatrixWorld();
+      const spots = lampPosts.map(l => on ? { ...l, shadow: true } : l);
+      for (const k of cars) {
+        const c = k.c, zc = wrap(k.z0 + k.way * k.speed * t); c.position.set(k.lane, 0, zc); c.rotation.y = k.way > 0 ? Math.PI : 0; c.move?.(dt, k.speed);
+        c.updateMatrixWorld(); D.set(0, -.05, -1).transformDirection(c.matrixWorld);
+        for (const sx of [-1, 1]) {
+          H.set(sx * c.size.width * .36, .62, -c.size.length / 2 - .05).applyMatrix4(c.matrixWorld);
+          spots.push(on ? { x: H.x, y: H.y, z: H.z, dir: [D.x, D.y, D.z], angle: .5, soft: .35, shape: 'headlamp', shadow: true, col: '#fff3dc', i: 45, reach: 26 } : { x: H.x, y: H.y, z: H.z, col: '#fff3dc', i: 8, reach: 12 });
+        }
+      }
+      for (const s of [...n1.spots(), ...n2.spots(), ...sign.spots()]) spots.push(on ? s : { x: s.x, y: s.y, z: s.z, col: s.col, i: s.i, reach: s.reach });
+      for (const p of people) p.g.position.set(p.x, 0, wrap(p.z0 + p.way * p.speed * t));
+      v.placeLamps(spots, cam.position.x, cam.position.y, cam.position.z, t);
+      const st = v.lampShadows; sum.n++; sum.lit += v.lamps.filter(l => l.visible && l.intensity > 0).length;
+      if (st) { sum.drawn += st.drawn; sum.slots += st.slots; }
+    },
+    tell() {
+      if (!sum.n) return null;
+      const lit = `${(sum.lit / sum.n).toFixed(1)} lights lit`;
+      return on && sum.slots ? `${lit} · ${(sum.slots / sum.n).toFixed(1)} with a shadow, ${(sum.drawn / sum.n).toFixed(2)} shadow slots drawn a frame` : lit;
+    },
+    dispose() { clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -798,4 +880,5 @@ export const SCENES = [
   ['parade', 'Parade', 'smaller meshes', parade],
   ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
   ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
+  ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
 ];
