@@ -3,7 +3,7 @@
 // Measures the sound kit in a browser. ?part=sounds (every ready-made sound and the limiter, rendered
 // faster than real time), ?part=band (the instrument sets, same way), ?part=clock (the music clock on
 // the real sound clock, with the page made busy on purpose), ?part=level (sound that knows the level:
-// walls and places, rendered the same way), ?part=speech (shaped speech: the treatments measured, then
+// walls and places, rendered the same way), ?part=cap (the voice cap), ?part=foley (the sounds a world makes by itself), ?part=speech (shaped speech: the treatments measured, then
 // say() end to end against a pretend phone). scripts/sound-test.cjs runs all five.
 const part = new URLSearchParams(location.search).get('part') || 'sounds';
 const out = [], ok = (c, m) => out.push((c ? 'ok   ' : 'FAIL ') + m), note = m => out.push('     ' + m);
@@ -218,6 +218,122 @@ try {
     ok(ringE > dryE * .04 && ringE < dryE * .4 && ringLate > dryE * 1e-5, `and sounds ring in it by themselves (${dB(ringE / dryE)} dB of the sound's energy)`);
     ok(loopA > .5 && loopB < .05 && loopC > .5, `a sound that goes on is heard again as it moves: behind ${loopA.toFixed(2)}, in the open ${loopB.toFixed(2)}, behind again ${loopC.toFixed(2)}`);
   }
+  if (part === 'cap') {
+    // the voice cap: only so many sounds at once (32), the quietest give way, a pile of one sound plays a few
+    // times, the music is never counted, and HRTF only for the nearest eight sounds at a point
+    const SLOT = 2; offline(SLOT * 4);
+    const snd = await import('/src/kit/sound.js'), { audio } = await import('/src/sfx.js');
+    const a = audio(), { tone, noise, sounds, Ears, mixer, voiceCap } = snd, models = [];
+    const mk = a.ctx.createPanner.bind(a.ctx); a.ctx.createPanner = () => { const pn = mk(); models.push(pn); return pn; };
+    let r = {};
+    const jobs = [
+      () => {
+        const c0 = voiceCap();
+        for (let i = 0; i < 60; i++) tone(200 + i * 11, { len: 1, wave: 'sine', vol: .01, hold: .9 });
+        const c1 = voiceCap(); tone(3000, { len: .5, wave: 'sine', vol: .2 }); const c2 = voiceCap();
+        r.sixty = { played: c1.played - c0.played, left: c1.left - c0.left, playing: c1.playing }; r.loud = { cut: c2.cut - c1.cut, playing: c2.playing };
+        tone(2000, { len: .5, wave: 'sine', vol: .001 }); r.quiet = voiceCap().left - c2.left;
+        for (let i = 0; i < 40; i++) tone(300 + i * 7, { len: .5, bus: 'music' }); r.music = voiceCap().playing;
+      },
+      () => {
+        r.after = voiceCap().playing;
+        const c0 = voiceCap(); for (let i = 0; i < 20; i++) sounds.coin(); const c1 = voiceCap();
+        r.coins = c1.played - c0.played;
+        const ears = new Ears({ hrtf: true }); ears.place({ x: 0, y: 0, z: 0 });
+        const p0 = models.length; for (let i = 0; i < 12; i++) ears.tone(400 + i * 30, { x: i + 1, y: 0, z: 0 }, { len: .4, vol: .05 });
+        r.hrtf = models.slice(p0).filter(pn => pn.panningModel === 'HRTF').length; r.panners = models.length - p0;
+        // a far sound fills the cap, a near one of the same loudness takes a place
+        for (let i = 0; i < 40; i++) ears.tone(150 + i * 13, { x: 40, y: 0, z: 0 }, { len: .9, vol: .05, hold: .8 });
+        const c2 = voiceCap(); ears.tone(5000, { x: 1, y: 0, z: 0 }, { len: .3, vol: .05 }); const c3 = voiceCap();
+        r.near = c3.cut - c2.cut; r.full = c2.playing;
+        mixer.voices(64); for (let i = 0; i < 40; i++) tone(700 + i * 9, { len: .5, vol: .01 }); r.more = voiceCap().playing; mixer.reset(); r.back = voiceCap().max;
+      },
+      () => {},
+    ];
+    jobs.forEach((job, i) => { if (i === 0) job(); else a.ctx.suspend(i * SLOT).then(() => { try { job(); } catch (e) { out.push('FAIL threw: ' + e.message); } a.ctx.go(); }); });
+    await a.ctx.startRendering();
+    note(JSON.stringify(r));
+    ok(r.sixty.played === 32 && r.sixty.left === 28 && r.sixty.playing === 32, `sixty sounds at once: 32 play, 28 are left out (${r.sixty.played}, ${r.sixty.left})`);
+    ok(r.loud.cut === 1 && r.loud.playing === 32, 'a louder sound takes the quietest one\'s place');
+    ok(r.quiet === 1, 'a sound quieter than every one playing is left out');
+    ok(r.music === 32, 'the music is never counted (forty notes on the music channel, still 32 playing)');
+    ok(r.after === 0, 'once they have died away there is room again');
+    ok(r.coins === 6, `twenty coins picked up at once play three times (each coin is two notes: ${r.coins} notes)`);
+    ok(r.panners === 12 && r.hrtf === 8, `sounds at a point: the first eight with HRTF, the rest plain left and right (${r.hrtf} of ${r.panners})`);
+    ok(r.full === 32 && r.near === 1, 'a near sound takes the place of a far one as loud where it is made');
+    ok(r.more === 64 && r.back === 32, `mixer.voices(64) lets more play (${r.more}), and the round's end puts it back to 32`);
+  }
+
+  if (part === 'foley') {
+    // the sounds a world makes by itself (gs.sound.Foley): what things are made of, knocks and steps by material,
+    // knocks from a physics world, what is underfoot, and engines through the gears
+    const SLOT = 1.5, MATS = ['wood', 'metal', 'stone', 'glass', 'plastic', 'rubber', 'cloth', 'body', 'dirt', 'grass', 'gravel', 'sand', 'snow', 'mud', 'water', 'ice', 'leaves', 'carpet'];
+    offline(SLOT * (MATS.length * 2 + 4));
+    const snd = await import('/src/kit/sound.js'), { audio } = await import('/src/sfx.js'), { Foley } = await import('/src/kit/foley.js');
+    const THREE = await import('three'), { World3D, loadPhysics3D } = await import('/src/kit/physics3d.js');
+    const a = audio(), f = new Foley(), tap = a.ctx.createChannelMerger(4); a.out.connect(tap, 0, 2); tap.connect(a.ctx.destination);
+    // what things are made of
+    const mesh = (name, o = {}) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial(o)); m.material.name = name; return m; };
+    const recipe = mesh('models:planks'); recipe.material.userData.recipe = { name: 'planks' };
+    const shiny = mesh('', { metalness: .9 }), told = mesh('anything'); told.userData.sound = 'glass';
+    const barrel = new THREE.Group(); const staves = mesh('models:wood'); staves.geometry = new THREE.SphereGeometry(1, 16, 12); barrel.add(staves, mesh('models:metal'));
+    const said = [Foley.materialOf(recipe), Foley.materialOf(shiny), Foley.materialOf(told), Foley.materialOf(barrel), Foley.materialOf(mesh('brick wall')), Foley.materialOf(mesh('x'))];
+    ok(JSON.stringify(said) === JSON.stringify(['wood', 'metal', 'glass', 'wood', 'stone', null]), `what things are made of: a recipe, a metal, userData.sound, a barrel (its staves), a name, nothing (${said.join(', ')})`);
+    // a knock and a step on each material, each in its own slot
+    const jobs = [];
+    for (const m of MATS) jobs.push(() => f.hit({ x: 0, y: 0, z: 0 }, m, { speed: 6, size: .4 }));
+    for (const m of MATS) jobs.push(() => f.step({ x: 0, y: 0, z: 0 }, m));
+    // an engine: a car going through the gears, then the same car standing
+    const car = new THREE.Group(); car.kind = 'car'; car.style = 'saloon'; car.shell = new THREE.Group(); car.wheels = [];
+    const truck = new THREE.Group(); truck.kind = 'truck'; truck.style = 'box'; truck.shell = new THREE.Group(); truck.wheels = [];
+    let gears = [], revs = [], truckRevs = 0, idle = 0, engines = {};
+    jobs.push(() => {   // the car speeds up from rest to 40 m/s over 20 s (updates only: the sound clock stands still here)
+      f.watch(car); const e = f.watching[0].engine; engines.car = e.name;
+      for (let i = 0, v = 0; i < 1200; i++) { v = Math.min(40, v + 2 * (1 / 60)); car.position.z -= v / 60; car.updateMatrixWorld(); f.update(1 / 60); if (i % 60 === 59) { gears.push(e.gear); revs.push(Math.round(e.rpm)); } }
+      for (let i = 0; i < 600; i++) { car.updateMatrixWorld(); f.update(1 / 60); } idle = Math.round(e.rpm);   // and stands for ten seconds
+      f.watch(truck); const t = f.watching[1].engine; engines.truck = t.name;
+      for (let i = 0; i < 300; i++) { truck.position.z -= 20 / 60; truck.updateMatrixWorld(); f.update(1 / 60); } truckRevs = Math.round(t.rpm);
+    });
+    jobs.push(() => { f.clear(); });
+    // the world's own knocks: a metal box dropped on a floor, and one set down gently
+    let knocks = {};
+    await loadPhysics3D();
+    jobs.push(() => {
+      const w = new World3D({ gravity: -20 }); f.world = w; w.floor(0); const c0 = snd.voiceCap().played;
+      const box = w.box(null, .4, .4, .4, { at: { x: 0, y: 2, z: 0 }, sound: 'metal' });
+      for (let i = 0; i < 90; i++) w.step(1 / 60);
+      knocks.drop = snd.voiceCap().played - c0;
+      const c1 = snd.voiceCap().played; w.box(null, .4, .4, .4, { at: { x: 3, y: .21, z: 0 }, sound: 'metal' }); for (let i = 0; i < 30; i++) w.step(1 / 60); knocks.gentle = snd.voiceCap().played - c1;
+      // what is underfoot: a level of two meshes made solid at once, one wooden and one of metal
+      const lvl = new THREE.Group(), deck = mesh('models:planks'), grate = mesh('steel grate'); deck.material.userData.recipe = { name: 'planks' };
+      deck.scale.set(4, .2, 4); deck.position.set(10, .4, 0); grate.scale.set(4, .2, 4); grate.position.set(20, .4, 0); lvl.add(deck, grate); lvl.updateMatrixWorld(true); w.ground(lvl); w.step(1 / 60);   // (a stage half a metre up; rays see a body from the world's next step)
+      knocks.under = [f.surface({ x: 10, y: .5, z: 0 }), f.surface({ x: 20, y: .5, z: 0 }), f.surface({ x: 50, y: 0, z: 50 })];
+      f.world = null; w.free();
+    });
+    jobs.push(() => {});
+    jobs.forEach((job, i) => { if (i === 0) job(); else a.ctx.suspend(i * SLOT).then(() => { try { job(); } catch (e) { out.push('FAIL threw: ' + e.message); } a.ctx.go(); }); });
+    const raw = (await a.ctx.startRendering()).getChannelData(2);
+    const meas = i => { const s0 = Math.round(i * SLOT * RATE), e0 = Math.round((i + 1) * SLOT * RATE); let sum = 0, cnt = 0, last = s0, d = 0, m = 0; for (let k = s0; k < e0; k++) { const x = raw[k]; if (Math.abs(x) > .002) { sum += x * x; cnt++; last = k; } if (k > s0) { d += Math.abs(x - raw[k - 1]); m += Math.abs(x); } } return { rms: cnt ? Math.sqrt(sum / cnt) : 0, len: (last - s0) / RATE, bright: m ? d / m : 0 }; };
+    const K = MATS.map((_, i) => meas(i)), S = MATS.map((_, i) => meas(MATS.length + i));
+    MATS.forEach((m, i) => note(`${m.padEnd(8)} knock ${db(K[i].rms)} dB ${K[i].len.toFixed(2)} s bright ${K[i].bright.toFixed(2)} · step ${db(S[i].rms)} dB ${S[i].len.toFixed(2)} s`));
+    const quiet = MATS.filter((_, i) => K[i].rms < .004 || S[i].rms < .002);
+    ok(!quiet.length, 'a knock and a step on every material can be heard' + (quiet.length ? ': too quiet ' + quiet.join(', ') : ''));
+    const at = m => MATS.indexOf(m);
+    ok(K[at('metal')].len > K[at('wood')].len * 3 && K[at('metal')].len > .3, `metal rings on (${K[at('metal')].len.toFixed(2)} s), wood does not (${K[at('wood')].len.toFixed(2)} s)`);
+    ok(K[at('glass')].bright > K[at('stone')].bright && K[at('glass')].bright > K[at('dirt')].bright * 2, 'glass is brighter than stone and dirt');
+    ok(S[at('snow')].len > S[at('stone')].len && S[at('gravel')].bright > S[at('carpet')].bright * 2, 'snow crunches on longer than a step on stone, gravel is brighter than carpet');
+    note(`car (${engines.car}) through 20 s of speeding up: gears ${gears.join(' ')}, revs ${revs.join(' ')}; standing ${idle}; truck (${engines.truck}) at 20 m/s ${truckRevs}`);
+    ok(engines.car === 'petrol' && engines.truck === 'diesel', 'a car has a petrol engine, a lorry a diesel');
+    ok(gears[0] === 0 && gears.at(-1) >= 3 && gears.every((g, i) => !i || g >= gears[i - 1]), 'the car goes up through the gears as it speeds up');
+    ok(Math.max(...revs) < 6800 && Math.min(...revs.slice(3)) > 1500, 'its revs stay between idle and the red line while it pulls');
+    ok(idle < 1300, `standing, it settles back to idle (${idle})`);
+    ok(truckRevs > 600 && truckRevs < 2500, `a lorry's diesel turns slower (${truckRevs} at 20 m/s)`);
+    note(`world: a metal box dropped ${knocks.drop} voices, set down gently ${knocks.gentle}; underfoot ${knocks.under?.join(', ')}`);
+    ok(knocks.drop >= 4, 'a box dropped in the world knocks by itself');
+    ok(knocks.gentle === 0, 'one set down gently makes no sound');
+    ok(JSON.stringify(knocks.under) === JSON.stringify(['wood', 'metal', 'stone']), 'underfoot: the mesh of the level the foot stands on (wood, metal), else stone');
+  }
+
   if (part === 'speech') {
     // Shaped speech (say() with a size or fx). The phone is pretend (scripts/lib/fake-speech-audio.js): it
     // "writes" a made-up voice the way the SpeechAudio plugin hands a line over. First the shaping by

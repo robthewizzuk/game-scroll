@@ -6,7 +6,7 @@
 //   const { sfx, sounds } = gs.sound, { haptic } = gs.device, { clamp, rnd } = gs.util;
 //
 // What's on it (docs/maker-kit.md has the full guide):
-//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer, speech (say)
+//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say)
 //   gs.device    haptics (and rich haptic patterns), tilt, shake, mic (level, pitch, claps, blowing), camera, compass, steps, air pressure, room light, proximity
 //   gs.util      clamp, rnd, pix, hash, fmt, disc, flickTracker
 //   gs.math      seeded random, daily seed, smooth noise, vectors, overlap tests, Grid, Timers
@@ -44,6 +44,7 @@
 //   gs.brains    Tiny Brains: small neural networks that learn as you play, with guard rails (Brain, Wave, Imagine, Predict, Player, Nemesis, Shadow, tune)
 //   gs.board     grid boards: match, fall and refill, slide and merge, flood fill, hints
 //   gs.battle    turn-based battles: fighters, moves, types, status effects, items (Bag), XP and loot
+//   gs.stats     real-time stats: buffs that run out, perks, debuffs over time, pools that drain and refill, cooldowns with charges
 //   gs.gen       levels made by code: dungeons, caves, mazes, islands, heightmaps, tile patterns, field of view
 //   gs.drag      drag, drop and snap pieces into slots; reorderable lists
 //   gs.history   undo and redo: each step of the round, back and forward, undos counted
@@ -139,6 +140,7 @@ import { tweak } from './kit/tweak.js';
 import * as brains from './kit/brains.js';
 import * as board from './kit/board.js';
 import * as battle from './kit/battle.js';
+import * as stats from './kit/stats.js';
 import * as gen from './kit/gen.js';
 import * as drag from './kit/drag.js';
 import * as idle from './kit/idle.js';
@@ -161,6 +163,7 @@ import * as paths from './kit/paths.js';
 import * as bones from './kit/bones.js';
 import { tick } from './kit/tick.js';
 import * as composer from './kit/compose.js';
+import * as foley from './kit/foley.js';
 import * as solve from './kit/solve.js';
 import * as phoneSensors from './kit/sensors.js';
 import * as real from './kit/real.js';
@@ -170,7 +173,7 @@ import { StillLoading } from './kit/lazy.js';
 // App-only exports games never get: raw storage, the player's settings, the unrounded location,
 // the install's anonymous id, and the hooks the app uses to stop things between rounds.
 export const HIDDEN = {
-  sound: ['sound', 'setSound', 'audio', 'setSfxOut', 'stopMusic', 'pauseMusic', 'resumeMusic', 'warm'],
+  sound: ['sound', 'setSound', 'audio', 'setSfxOut', 'stopMusic', 'pauseMusic', 'resumeMusic', 'warm', 'voiceCap', 'kitBus'],
   util: ['store', 'deviceId'],
   device: ['location', 'hapticSettings', 'setHaptics', 'stopSensors'],
   real: ['guessPlace', 'readOutputs'],
@@ -273,7 +276,7 @@ export function offers(names) {
 }
 
 const core = {
-  sound: pick('sound', sound, sfx, composer),
+  sound: pick('sound', sound, sfx, composer, foley),
   device: pick('device', device, phoneSensors),
   util: pick('util', util),
   math: pick('math', math),
@@ -308,6 +311,7 @@ const core = {
   brains: pick('brains', brains),
   board: pick('board', board),
   battle: pick('battle', battle),
+  stats: pick('stats', stats),
   gen: pick('gen', gen),
   drag: pick('drag', drag),
   idle: pick('idle', idle),

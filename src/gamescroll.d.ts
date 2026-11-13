@@ -217,6 +217,15 @@ export interface SoundPart {
     heard(p: { x: number; y: number; z?: number }): number;
   };
   /**
+   * The sounds a world makes by itself, with nothing more to call than update() each frame: things that knock into each
+   * other in a gs.physics3d World3D sound of what they are made of (a body's `sound` option, else read from its mesh),
+   * watched people step on what is under each foot as it comes down, and watched vehicles' engines rev through the gears
+   * with their speed (tyres on the ground, skids, a steam engine's chuffs, a jet's spool). ears: an Ears for sounds at their
+   * points (without one they play as they are); marks, weather, land: what is underfoot; ground: (x, z, y) => a material
+   * or nothing, the game's own say.
+   */
+  Foley: FoleyClass;
+  /**
    * The sums behind sound that knows the level, for your own sounds and subtitles (no audio): caster(level) makes
    * one question of any level (cast(from, dir, max) => metres to the first solid thing, or Infinity), blocked(cast, ear, source)
    * is 0 clear .. 1 behind a thick wall, muffleOf(amount) what such a sound keeps, Room feels out a place a few rays at a time.
@@ -246,6 +255,8 @@ export interface SoundPart {
     duck(name?: string, to?: number, hold?: number, back?: number): Loose;
     room(r?: 'none' | 'room' | 'hall' | 'cave' | 'pipe' | { reverb?: number; size?: number; echo?: number; delay?: number }): Loose;
     muffle(x?: number, fade?: number): Loose;
+    /** How many sounds play at once (32; the music is never counted): past that a quieter new sound is left out and a louder one takes the quietest one's place. Back to 32 when the round ends. */
+    voices(n?: number): Loose;
     /** The echo of the place the listener is in, for effects and voices (not the music); null for none. new Ears({ level }) sets it by itself. */
     place(o?: { tail?: number; wet?: number; echo?: number; delay?: number } | null, fade?: number): Loose;
     channel(name: string): { volume(v: number, fade?: number): Loose; duck(to?: number, hold?: number, back?: number): Loose };
@@ -269,6 +280,45 @@ export interface SoundPart {
   talking(): boolean;
   /** Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. */
   shaped(): boolean | null;
+}
+
+/** What a thing is made of, for gs.sound.Foley's knocks and steps. */
+export type FoleyMaterial = 'wood' | 'metal' | 'stone' | 'glass' | 'plastic' | 'rubber' | 'cloth' | 'body' | 'dirt' | 'grass' | 'gravel' | 'sand' | 'snow' | 'mud' | 'water' | 'ice' | 'leaves' | 'carpet';
+/** An engine for gs.sound.Foley.watch(vehicle, { engine }) (read from a gs.models.vehicle's kind and style by itself). */
+export type FoleyEngine = 'petrol' | 'sports' | 'van' | 'jeep' | 'kart' | 'diesel' | 'tank' | 'rail diesel' | 'steam' | 'rail' | 'outboard' | 'boat diesel' | 'rowboat' | 'prop' | 'jet' | 'electric';
+export interface Foley {
+  /** The World3D whose knocks sound by themselves (set it again for a new world). */
+  world: Loose;
+  ears: Loose; marks: Loose; weather: Loose; land: Loose;
+  ground: ((x: number, z: number, y: number) => FoleyMaterial | string | null | undefined | void) | null;
+  /** 0..1 for every sound it makes. */
+  volume: number;
+  /** false: the world's knocks are left alone. */
+  knocks: boolean;
+  /**
+   * From now on this thing makes its own sounds. A gs.models.human: a footstep wherever a foot comes down. A gs.models.vehicle,
+   * a World3D.vehicle() or a gs.vehicles Car or Kart: its engine. Anything else that moves: steps paced out along its way.
+   * shoe: 'boot' | 'bare' | 'paw' | 'hoof'; weight: kg (75); feet: 2 or 4; pace: metres a step; for an engine: engine, top (metres a second at its top speed), throttle: () => 0..1, vol.
+   */
+  watch<T>(thing: T, o?: { shoe?: 'boot' | 'bare' | 'paw' | 'hoof'; weight?: number; feet?: 2 | 4; pace?: number; grounded?: () => boolean; engine?: FoleyEngine; top?: number; throttle?: () => number; vol?: number }): T;
+  unwatch(thing: Loose): void;
+  /** Stops every engine and forgets everything watched. */
+  clear(): void;
+  /** Each frame: footsteps and engines (the world's knocks come as it steps). */
+  update(dt: number): void;
+  /** A footstep at p on what is there (or on `on`). Returns the material it stepped on. */
+  step(p: { x: number; y: number; z?: number }, on?: FoleyMaterial | null, o?: { weight?: number; run?: number; shoe?: 'boot' | 'bare' | 'paw' | 'hoof' }): string;
+  /** A knock at p: something made of `of` hit at speed (metres a second). The harder and heavier, the louder; the bigger, the lower. */
+  hit(p: { x: number; y: number; z?: number }, of?: FoleyMaterial, o?: { speed?: number; size?: number; mass?: number; soft?: boolean }): boolean;
+  /** What is underfoot at p. by: what stands there (left out of the world's ray). */
+  surface(p: { x: number; y: number; z?: number }, by?: Loose): FoleyMaterial;
+}
+export interface FoleyClass {
+  new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; ground?: ((x: number, z: number, y: number) => FoleyMaterial | string | null | undefined | void) | null; volume?: number; knocks?: boolean; under?: FoleyMaterial | null }): Foley;
+  readonly materials: FoleyMaterial[];
+  readonly engines: FoleyEngine[];
+  /** What a mesh or group is made of, as Foley hears it (userData.sound, its material's recipe or name); null if nothing says. */
+  materialOf(obj: Loose): FoleyMaterial | null;
 }
 
 /** What stands in the way of sound for gs.sound.Ears: anything with ray() or sees() (World3D, TileMap, City, Voxels, 2D Physics, NavGrid), a function, or a list. */
@@ -1760,6 +1810,44 @@ export interface BattlePart {
   gainXp(f: Fighter, xp: number, o?: { growth?: Record<string, number>; curve?: { base?: number; power?: number } }): number;
   /** Picks an entry from a weighted table: [{ id: 'coin', w: 10 }, { id: 'gem', w: 1 }]. */
   loot<T extends { w?: number }>(table: T[], rng?: () => number): T;
+}
+
+/** A buff or perk spec (gs.stats). for: seconds (none: a perk, on until removed). */
+export interface StatBuff {
+  for?: number; add?: Record<string, number>; mul?: Record<string, number>; tags?: string[]; blocks?: string[];
+  /** Pools drained per second (negative heals); with every, counted each tick instead. */
+  drain?: Record<string, number>; every?: number; tick?: (stats: Stats, effect: StatEffect) => void;
+  /** Most doses (1) and what putting it on again does: refresh the time (default), extend it, stack a dose, keep the first, strongest (the longer). */
+  stacks?: number; stack?: 'refresh' | 'extend' | 'stack' | 'keep' | 'strongest' | (string & {}); bad?: boolean; [k: string]: Loose;
+}
+export interface StatEffect { readonly id: string; spec: StatBuff; stacks: number; left: number; since: number; readonly perk: boolean; readonly bad: boolean; readonly part: number; readonly tags: string[] }
+export interface Stats {
+  on(ev: 'buff' | 'end' | 'tick' | 'change' | 'empty' | 'full' | 'ready' | 'blocked', fn: (...a: Loose[]) => void): this;
+  /** A stat with everything on it now ((base + adds) x muls, held to its min and max); a pool's amount. */
+  get(name: string): number; baseOf(name: string): number; setBase(name: string, v: number): this;
+  /** A pool's most ('name.max'). */
+  max(name: string): number;
+  /** 0..1: a pool's fill; part(name, 'cool') a cooldown's refill (1 ready); a buff's time left by id. */
+  part(name: string, kind?: 'cool'): number;
+  /** Moves a pool (negative takes away; a loss holds off regen for its delay). Returns how much it moved. */
+  change(name: string, n: number, why?: string | null): number;
+  spend(name: string, n: number): boolean; fill(name: string, share?: number): number; empty(name: string): boolean; full(name: string): boolean;
+  /** Puts a buff on by its table name or a spec; null if something on blocks it. */
+  buff(id: string, spec?: StatBuff | null, o?: { for?: number; stacks?: number }): StatEffect | null;
+  perk(id: string, spec?: StatBuff | null, o?: { stacks?: number }): StatEffect | null;
+  remove(id: string, why?: string, o?: { dose?: boolean }): boolean;
+  /** Doses on (0: not on). */
+  has(id: string): number; is(tag: string): boolean; readonly buffs: StatEffect[]; cleanse(fn?: (e: StatEffect) => boolean): number;
+  /** A cooldown: seconds per use, charges stored, by (a stat that speeds it: 1.25 a quarter quicker). */
+  cool(name: string, seconds: number, o?: { charges?: number; by?: string | null; start?: number }): this;
+  ready(name: string): boolean; use(name: string): boolean; left(name: string): number; charges(name: string): number;
+  hurry(name: string, seconds: number, o?: { all?: boolean }): void;
+  update(dt: number): void; clear(o?: { perks?: boolean }): this;
+  pack(): Loose; unpack(d: Loose): this;
+}
+export interface StatsPart {
+  /** stats: { name: number | { base, min, max } | a pool { max, regen, delay, start, min } }; buffs: the table buff(id) and perk(id) read. */
+  Stats: new (stats?: Record<string, number | { base: number; min?: number; max?: number } | { max: number; regen?: number; delay?: number; start?: number; min?: number }>, o?: { buffs?: Record<string, StatBuff> }) => Stats;
 }
 
 export interface GenMap { grid: string[]; readonly text: string; w: number; h: number }
@@ -3254,7 +3342,7 @@ export interface GS {
   things: ThingsPart; rounds: RoundsPart; pacing: PacingPart; aim: AimPart; senses: SensesPart; prefs: PrefsPart; tick: TickPart; solve: SolvePart;
   camera2d: Camera2dPart; tiles: TilesPart; movers: MoversPart; anim: AnimPart; story: StoryPart; replay: ReplayPart; look2d: Look2dPart;
   tweak: TweakFn; brains: BrainsPart;
-  board: BoardPart; battle: BattlePart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
+  board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
