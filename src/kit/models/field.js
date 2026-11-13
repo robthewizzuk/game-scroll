@@ -346,7 +346,8 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
  * deep in a crease). cell: metres per cell; blend: the shapes' own if they give none; ao: false to skip
  * the crease shading; reach: how far the crease shading looks (metres); keep (0..1) and error (metres):
  * thinned to this share of its triangles before the fine work is done (normals and creases are then
- * worked out only for the points that stay, so a thinned mesh is also a much quicker one).
+ * worked out only for the points that stay, so a thinned mesh is also a much quicker one); detail(x, y, z, shape)
+ * => a number: thinning also keeps the points where this changes from one to the next (lines that only show when a joint bends).
  * Surface nets on a grid measured only near the surface: blocks of 4 cells far from every shape are
  * filled in from a coarse grid, and each block only measures the shapes that reach it.
  * lines: seams and rows of stitching on the surface, for a picture to draw (human-paint.js): [{ m(x, y, z) (how far
@@ -359,7 +360,7 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
  * period: a loop's length is made a whole number
  * of these, so where its count starts again the picture carries on.
  */
-export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, keep = 1, error = .0015, bounds = null, lines = null, period = .0035 } = {}) {
+export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, keep = 1, error = .0015, bounds = null, lines = null, period = .0035, detail = null } = {}) {
   const t0 = now(), S = ready(shapes, blend), solid = S.filter(s => !s.ghost && !s.paint), ghosts = S.filter(s => s.ghost), paints = S.filter(s => s.paint);
   const LN = (lines || []).map(L => lineOf(L, period));
   for (const s of S) if (s.src.stitch && s.m && !s.ghost) LN.push(lineOf({ m: s.m, along: s.along || ((x, y, z) => y), kind: s.src.stitch === 'seam' ? 0 : 1, loop: s.loop, own: s.i }, period, s));
@@ -495,14 +496,17 @@ export function mesh(shapes, { cell = .006, blend = .01, ao = true, reach = .1, 
   const t2b = now();
   // ---- thinned first (edges between slots and the folds to come are kept), so the fine work is only done for the points that stay
   if (keep < 1 && canThin && ni > 36) {
-    // (a point on a line is kept as an edge between slots is: the line stays where it is, however long the triangles along it)
-    const W = LN.length ? 8 : 7, A = new Float32Array(n * W), ids = [];
+    // (a point on a line is kept as an edge between slots is: the line stays where it is, however long the triangles along it; and so is
+    // where detail() changes, the creases that only show when a joint bends)
+    const WL = LN.length ? 7 : -1, WD = detail ? (WL > 0 ? 8 : 7) : -1, W = 7 + (WL > 0) + (WD > 0), A = new Float32Array(n * W), ids = [];
     for (let i = 0; i < n; i++) {
       const sl = own[i] < 0 ? '' : S[own[i]].slot ?? ''; let k = ids.indexOf(sl); if (k < 0) k = ids.push(sl) - 1;
       A[i * W] = Q[i * 3]; A[i * W + 1] = Q[i * 3 + 1]; A[i * W + 2] = Q[i * 3 + 2]; A[i * W + 3] = ((k * 53) % 7) / 6; A[i * W + 4] = ((k * 29) % 5) / 4; A[i * W + 5] = ((k * 17) % 3) / 2; A[i * W + 6] = press ? press[i] : 0;
-      if (W > 7) { const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2]; for (const L of LN) if (lineOn(L, own[i]) && abs(L.m(x, y, z)) < cell * .05 && L.inside(x, y, z)) { A[i * W + 7] = 1; break; } }
+      const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+      if (WL > 0) for (const L of LN) if (lineOn(L, own[i]) && abs(L.m(x, y, z)) < cell * .05 && L.inside(x, y, z)) { A[i * W + WL] = 1; break; }
+      if (WD > 0 && own[i] >= 0) A[i * W + WD] = detail(x, y, z, S[own[i]].src);
     }
-    const J = thinBy(I, P, A, W, W > 7 ? [.5, .5, .5, .8, .8, .8, .35, .6] : [.5, .5, .5, .8, .8, .8, .35], keep, error), map = new Int32Array(n).fill(-1); let k = 0;
+    const J = thinBy(I, P, A, W, [.5, .5, .5, .8, .8, .8, .35, .6, .6].slice(0, W), keep, error), map = new Int32Array(n).fill(-1); let k = 0;
     for (let i = 0; i < J.length; i++) if (map[J[i]] < 0) map[J[i]] = k++;
     const P2 = new Float32Array(k * 3), Q2 = new Float32Array(k * 3), o2 = new Int16Array(k), r2 = ride && new Int16Array(k), I2 = new Uint32Array(J.length);
     for (let i = 0; i < n; i++) { const j = map[i]; if (j >= 0) { for (let c = 0; c < 3; c++) { P2[j * 3 + c] = P[i * 3 + c]; Q2[j * 3 + c] = Q[i * 3 + c]; } o2[j] = own[i]; if (ride) r2[j] = ride[i]; } }
