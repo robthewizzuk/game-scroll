@@ -12,7 +12,7 @@
 //     walking across a square doesn't have the sun's map drawn again every frame.
 // Kit use only.
 import { RenderTarget, HalfFloatType, FloatType, RGFormat, RedFormat, RGBAFormat, NearestFilter, DataTexture, NodeMaterial, QuadMesh, Mesh, PlaneGeometry, OrthographicCamera, Matrix4, Vector2, Vector3, Vector4, RendererUtils, DoubleSide, AlwaysDepth, NoBlending } from 'three/webgpu';
-import { Fn, Loop, If, Break, float, int, vec2, vec4, ivec2, uniform, renderGroup, texture, uv, positionWorld, positionGeometry, select, smoothstep, clamp, min, max, abs, dot, length, mix, fract, floor, pow, getViewPosition, interleavedGradientNoise, screenCoordinate } from 'three/tsl';
+import { Fn, Loop, If, Break, float, int, vec2, vec4, ivec2, uniform, renderGroup, texture, uv, positionWorld, positionGeometry, select, smoothstep, clamp, min, max, abs, dot, length, mix, fract, floor, pow, getViewPosition, interleavedGradientNoise, screenCoordinate, dFdx, dFdy } from 'three/tsl';
 import { CAPS, GRID, HeightTiles } from './sunmask.js';
 import { ORIGIN } from './origin.js';
 
@@ -78,8 +78,12 @@ function maskMaterial(depthTex, rev) {
   const depthAt = q => dT.sample(q).x;
   m.fragmentNode = Fn(() => {
     const q = uv(), d = depthAt(q).toVar(), out = vec4(1, 60000, 0, 1).toVar();
+    // (how far the surface's depth changes from one of the mask's pixels to the next: ground seen at a slant, far off,
+    // changes by a lot, and a ray's step lands on a neighbouring pixel's depth, which must not count as something in
+    // front. Worked out here, before any branch, as the graphics chip's screen differences need)
+    const P = getViewPosition(q, d, U.invProj).toVar(), fz = min(max(abs(dFdx(P.z)), abs(dFdy(P.z))), 2).toVar();
     If((rev ? d.greaterThan(0) : d.lessThan(1)), () => {
-      const P = getViewPosition(q, d, U.invProj).toVar(), dist = P.z.negate().toVar(), vis = float(1).toVar();
+      const dist = P.z.negate().toVar(), vis = float(1).toVar();
       // contact: a few steps towards the sun through the depth picture; a surface in front of the ray (and not too far in front) shades it
       If(U.contact.x.greaterThan(.5).and(dist.lessThan(U.contact.w)), () => {
         const len = U.contact.y, jit = interleavedGradientNoise(screenCoordinate), occ = float(0).toVar();
@@ -88,7 +92,8 @@ function maskMaterial(depthTex, rev) {
           const c = U.proj.mul(vec4(Q, 1)), n = c.xy.div(c.w), qq = vec2(n.x.mul(.5).add(.5), n.y.mul(-.5).add(.5));
           If(qq.x.lessThan(0).or(qq.x.greaterThan(1)).or(qq.y.lessThan(0)).or(qq.y.greaterThan(1)), () => { Break(); });
           const S = getViewPosition(qq, depthAt(qq), U.invProj), gap = S.z.sub(Q.z), qd = Q.z.negate();
-          If(gap.greaterThan(qd.mul(.004).add(.006)).and(gap.lessThan(U.contact.z.add(qd.mul(.01)))), () => { occ.assign(float(1).sub(t.div(len).mul(.5))); Break(); });
+          const slack = qd.mul(.004).add(.006).add(fz.mul(2));
+          If(gap.greaterThan(slack).and(gap.lessThan(U.contact.z.add(qd.mul(.01)).add(slack))), () => { occ.assign(float(1).sub(t.div(len).mul(.5))); Break(); });
         });
         vis.mulAssign(float(1).sub(occ.mul(smoothstep(U.contact.w.mul(.7), U.contact.w, dist).oneMinus())));
       });
