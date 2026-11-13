@@ -116,7 +116,8 @@ Matches https://game-scroll.com/privacy/.
   - *Usage Data → Product Interaction*: anonymous per-game counts of views, plays, skips and play time.
     Purpose: Analytics, App Functionality. (Can be turned off in Settings.)
   - *Diagnostics → Crash Data, Performance Data, Other Diagnostic Data*: anonymous crash markers, game
-    script errors and frame timings, with phone model, OS version and app build (kept 14 days).
+    script errors, frame timings and how warm the phone was, with phone model, OS version, app build
+    and game file version (kept 14 days).
     Purpose: App Functionality, Analytics. (Same Settings switch.) Details: docs/crash-reports.md.
 - Location, camera, microphone: **not collected** (processed on device only, never sent; location is
   rounded to about 1 km, or 10 m for walk-around games, and only read while such a game is played).

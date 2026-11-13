@@ -263,10 +263,12 @@ const lastFrame = o => {
 // color_fragment leaves it): fn(rgb) => rgb. Node materials multiply vertex colours in after colorNode,
 // so the result is divided by them here; looks stack (each starts from the one before).
 function afterColor(m, o, fn) {
-  const vc = m.vertexColors && o?.geometry?.attributes?.color ? vertexColor() : null;
-  const base = m.colorNode ? vec4(m.colorNode) : materialColor, d = vc ? base.rgb.mul(vc.rgb) : base.rgb;
-  const out = fn(d);
-  m.colorNode = vec4(vc ? out.div(max(vc.rgb, 1e-4)) : out, base.a);
+  // (three multiplies the vertex colours, and each copy's own colour, in after the colour node: the look is given
+  // the colour with them in and what it answers has them divided out again, so snow on tinted copies is white)
+  const vc = m.vertexColors && o?.geometry?.attributes?.color ? vertexColor() : null, ic = o?.instanceColor && TSL.instanceColor ? TSL.instanceColor : null;
+  const base = m.colorNode ? vec4(m.colorNode) : materialColor; let d = base.rgb; if (vc) d = d.mul(vc.rgb); if (ic) d = d.mul(ic);
+  let out = fn(d); if (vc) out = out.div(max(vc.rgb, 1e-4)); if (ic) out = out.div(max(ic, 1e-4));
+  m.colorNode = vec4(out, base.a);
 }
 const hash2 = p => { const a = fract(vec3(p.x, p.y, p.x).mul(.1031)), b = a.add(dot(a, a.yzx.add(33.33))); return fract(b.x.add(b.y).mul(b.z)); };
 // hd3d.js v.room(): the room's own cube picture, read box-projected. The reflection direction comes from
@@ -427,17 +429,27 @@ export const gpuLooks = {
   },
   // looks.js meadow(): the blades of land.meadow(): each tuft shrinks into the ground towards the edge of the
   // patch that travels with the camera, bends downwind in rolling gusts, and is lit alike on both sides
-  meadow(m, s) {
+  meadow(m, s, o) {
     const u = s.uniforms, K = live(u.lkMeadow), root = attribute('lkRoot', 'vec4').xyz, t = uv().y;
+    // (the grass field is read only by blades that were given one before they were first drawn: looks.js meadow().part)
+    const part = u.lkPart.value ? c => texture(u.lkPart.value, c).onRenderUpdate(() => u.lkPart.value || BLANK_PART()) : null, PA = part ? live(u.lkPartAt) : null;
     const moved = (p, time, bend, dir) => {
       const far = smoothstep(K.x, K.y, distance(root.xz, cameraPosition.xz)), q = root.add(p.sub(root).mul(far.oneMinus())), hh = q.y.sub(root.y);
       const ph = dot(root.xz, dir).mul(.35).sub(time.mul(2.2)), gust = sin(ph).mul(.3).add(sin(ph.mul(2.7).add(root.z.mul(.9))).mul(.15)).add(.55);
-      const b = bend.mul(gust).mul(t).mul(hh), fl = hh.mul(t).mul(.05);
-      return q.add(vec3(dir.x.mul(b).add(sin(time.mul(3.1).add(p.x.mul(9))).mul(fl)), b.mul(-.35), dir.y.mul(b).add(cos(time.mul(2.6).add(p.z.mul(9))).mul(fl))));
+      let b = bend.mul(gust).mul(t).mul(hh), fl = hh.mul(t).mul(.05), at = q;
+      if (part) {   // grass that parts (gs.outdoors.Marks): pushed over away from what passes, and lying flat where it was trodden
+        const pd = abs(root.xz.sub(PA.xy)), pk = part(root.xz.mul(PA.z)).mul(step(max(pd.x, pd.y), PA.w));
+        const ln = pk.rg.mul(2).sub(1.00392).mul(step(.5, pk.a)), dn = min(float(.92), min(float(1), length(ln)).mul(.62).add(pk.b.mul(.9)));
+        at = vec3(q.x.add(ln.x.mul(1.1).mul(hh)).add(q.x.sub(root.x).mul(pk.b).mul(1.5)), q.y.sub(hh.mul(dn)), q.z.add(ln.y.mul(1.1).mul(hh)).add(q.z.sub(root.z).mul(pk.b).mul(1.5)));
+        b = b.mul(dn.oneMinus()); fl = fl.mul(dn.oneMinus());
+      }
+      return at.add(vec3(dir.x.mul(b).add(sin(time.mul(3.1).add(p.x.mul(9))).mul(fl)), b.mul(-.35), dir.y.mul(b).add(cos(time.mul(2.6).add(p.z.mul(9))).mul(fl))));
     };
     // (where the blades were last frame as well, for the motion three works out: see leaves)
     m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(moved(positionPrevious, lastFrame(u.lkTime), lastFrame(u.lkBend), lastFrame(u.lkBendDir))); return moved(positionLocal, live(u.lkTime), live(u.lkBend), live(u.lkBendDir)); })();
-    m.normalNode = normalViewGeometry;
+    // (grass lying flat shows its pale side: a trodden lane reads from above)
+    if (part) { const pd = abs(root.xz.sub(PA.xy)), flat = part(root.xz.mul(PA.z)).b.mul(step(max(pd.x, pd.y), PA.w)); afterColor(m, o, c => c.mul(TSL.varying(vec3(1).add(vec3(.34, .3, .12).mul(flat))))); }
+    m.normalNode = normalViewGeometry; m.userData.gsBothSides = true;   // (gpuWet: rain and snow lie on a blade's two sides alike, as on WebGL)
   },
 };
 // hd3d.js AIR_WET: wet, darker, shinier surfaces in the rain (lit standard materials with the air). gsWet is the
@@ -446,6 +458,8 @@ export const gpuLooks = {
 // The puddle and snow amounts come from the surface's own normal, not the bumps on it, so they can flatten the bumps.
 // world: is there such a weather on the view now (air.world)? Without one the material gets the game's own wet
 // only, which reads no picture at all: nodes have no branch to skip the weather's three reads a pixel with.
+let NO_PART = null;
+const BLANK_PART = () => NO_PART ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1), { needsUpdate: true });   // (grass that stands as it grew: a Marks that was taken away)
 let BLANK_COVER = null;
 const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { needsUpdate: true });   // (one spot at -1000 m: all open)
 export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world = true) {
@@ -455,7 +469,7 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
     afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))));
     return;
   }
-  const facing = TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at)
+  const facing = m.userData.gsBothSides ? n => n : TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at; grass blades are lit alike on both, so snow lies on both)
   const on = live(AIR.gsAirOn), wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld, gg = facing(normalWorldGeometry), flat = facing(normalViewGeometry);
   const gp = wp.xz.add(gg.xz.mul(wx.w)), gd = abs(gp.sub(at.xy));
   const top = texture(AIR.gsCover.value || blankCover(), gp.mul(at.z)).onRenderUpdate(() => AIR.gsCover.value || blankCover()).r;

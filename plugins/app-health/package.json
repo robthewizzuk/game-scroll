@@ -1,0 +1,12 @@
+{
+  "name": "app-health",
+  "version": "0.1.0",
+  "private": true,
+  "description": "How Game Scroll last ended on Android, for crash reports: the system's own exit reasons (crashed, out of memory, not responding, closed by the user), whether the web view's process died, and whether a test robot is driving the phone. Read by src/perf.js.",
+  "main": "index.js",
+  "files": ["index.js", "android/src/main", "android/build.gradle"],
+  "capacitor": {
+    "android": { "src": "android" }
+  },
+  "peerDependencies": { "@capacitor/core": "^8.0.0" }
+}
