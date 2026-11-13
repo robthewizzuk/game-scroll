@@ -21,6 +21,7 @@ export const OPEN_SOURCE = [
     packages: ['@dimforge/rapier2d-compat', '@dimforge/rapier3d-compat', '@dimforge/rapier2d-simd-compat', '@dimforge/rapier3d-simd-compat'] },
   { name: 'MediaPipe', for: 'face and hand tracking, sound recognition, and their models', licence: 'Apache 2.0', spdx: 'Apache-2.0',
     packages: ['@mediapipe/tasks-vision', '@mediapipe/tasks-audio'] },
+  { name: 'Electron', for: 'the Mac and Windows app: Chromium and Node.js in one, by the OpenJS Foundation; Chromium\'s own parts are listed in LICENSES.chromium.html inside the app', licence: 'MIT (Chromium: BSD and others)', spdx: 'MIT', native: 'desktop/package.json', notice: '© Electron contributors, © The Chromium Authors' },
   { name: 'ONNX Runtime', for: "running the face, hand and sound models on the phone's AI chip, by Microsoft", licence: 'MIT', spdx: 'MIT', native: 'plugins/npu/android/build.gradle', notice: '© Microsoft Corporation' },
   { name: 'CameraX', for: 'the front camera for face and hand tracking on Android, by Google', licence: 'Apache 2.0', spdx: 'Apache-2.0', native: 'plugins/npu/android/build.gradle' },
   { name: 'YAMNet', for: 'recognising everyday sounds, by Google (model downloaded on first use)', licence: 'Apache 2.0', spdx: 'Apache-2.0', vendored: 'src/kit/vision-files.js' },

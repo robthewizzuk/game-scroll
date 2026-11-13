@@ -1,4 +1,4 @@
-// Builds every app icon (Android, iOS, web) from the layered SVGs in resources/icon/.
+// Builds every app icon (Android, iOS, web, Mac and Windows) from the layered SVGs in resources/icon/.
 //   background.svg       full-bleed backdrop (gradient)
 //   background-dark.svg  backdrop for the iOS dark-mode icon
 //   foreground.svg       the artwork, drawn at its normal size on a 1024 canvas
@@ -63,6 +63,19 @@ async function render(page, out, size, layers, { shape = 'square', bg = 'transpa
   await render(page, path.join(web, 'icon-192.png'), 192, full, { shape: 'rounded' });
   await render(page, path.join(web, 'icon-512.png'), 512, full, { shape: 'rounded' });
   await render(page, path.join(web, 'maskable-512.png'), 512, adaptive, { bg: '#FF6A2B' });
+
+  // Mac and Windows app (desktop/build, made into .icns and .ico when the app is built). A Mac icon is a
+  // rounded square on Apple's grid: 824 of the 1024 canvas, with room round it for its shadow.
+  const desk = path.join(ROOT, 'desktop/build');
+  await page.setViewportSize({ width: 1024, height: 1024 });
+  await page.setContent(`<html><body style="margin:0;background:transparent">
+    <div style="position:absolute;left:100px;top:92px;width:824px;height:824px;border-radius:185px;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.32)">
+      ${full.map(l => `<img src="${uri(l.src)}" style="position:absolute;inset:0;width:100%;height:100%">`).join('')}</div></body></html>`);
+  await page.waitForFunction(() => [...document.images].every(i => i.complete));
+  fs.mkdirSync(desk, { recursive: true });
+  await page.screenshot({ path: path.join(desk, 'icon.png'), omitBackground: true });
+  console.log('desktop/build/icon.png', 1024);
+  await render(page, path.join(desk, 'icon-win.png'), 256, full, { shape: 'rounded' });
   await browser.close();
 
   // SVG favicon: background + foreground merged into one rounded file.

@@ -98,6 +98,9 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   assert.equal(cleanPerf({ info: { platform: 'android', robot: true } }, known).info.platform, 'android-robot');
   assert.equal(cleanPerf({ info: { platform: 'android', robot: 'yes' } }, known).info.platform, 'android');
   assert.equal(cleanPerf({ info: { platform: 'web', robot: true } }, known).info.platform, 'web');
+  assert.equal(cleanPerf({ info: { platform: 'mac' } }, known).info.platform, 'mac', 'the desktop app says which computer');
+  assert.equal(cleanPerf({ info: { platform: 'windows' } }, known).info.platform, 'windows');
+  assert.equal(cleanPerf({ info: { platform: 'linux' } }, known).info.platform, 'web');
   ok('perf batches drop unknown games, clean text and keep numbers consistent');
   const d = 20769, at = d * 86400 + 21 * 3600 + 44 * 60;   // 12 Nov 2026, 21:44 UTC
   const slow = { rounds: 3, frames: 600, ms: 12000, work: 6000, slow: 120, hitches: 9, worst: 210, heat: 12000, warm: 2000, hot: 9000 }, fine = { rounds: 1, frames: 600, ms: 10000, work: 2000, slow: 3, hitches: 0, worst: 40, heat: 10000, warm: 3000, hot: 0 };
@@ -357,9 +360,13 @@ await run({}, async url => {
   r = await fetch(url + '/counts', { headers: { Origin: 'capacitor://localhost' } }); assert.equal(r.status, 200);
   assert.equal(r.headers.get('access-control-allow-origin'), 'capacitor://localhost');
   assert.equal((await r.json()).counts[game], 1);
-  r = await fetch(url + '/counts', { headers: { Origin: 'https://evil.example' } });
-  assert.equal(r.headers.get('access-control-allow-origin'), null);
-  ok('counts readable; browsers only allowed from the app and test site');
+  r = await fetch(url + '/counts', { headers: { Origin: 'https://localhost' } });
+  assert.equal(r.headers.get('access-control-allow-origin'), 'https://localhost', 'the Android and desktop apps');
+  for (const o of ['https://evil.example', 'https://robthewizzuk.github.io']) {
+    r = await fetch(url + '/counts', { headers: { Origin: o } });
+    assert.equal(r.headers.get('access-control-allow-origin'), null, o);
+  }
+  ok('counts readable; browsers only allowed from the apps (the GitHub Pages test site is gone)');
   // leaderboards: best score kept per device, ranks, today's board, made-up names
   r = await post(url, '/score', { device: A, game, score: 50, secs: 10 }); assert.equal(r.status, 200);
   let sc = await r.json(); assert.deepEqual([sc.all.rank, sc.all.of, sc.day.rank], [1, 1, 1]);

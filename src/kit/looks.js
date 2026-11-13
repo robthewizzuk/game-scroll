@@ -342,10 +342,66 @@ function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .01
   return { uniforms: U, part: f => partOf(m, U, f) };
 }
 
+// ---- how a frond moves in the wind (looks.fronds; the shaders below do the same sums, frondSway is the reference the kit tests check):
+// each leaf is a springy rod held at its root with its own pitch (long palm fronds slow, a fern's short leaves quick; from its length,
+// as a cantilever's is) and a little damping. The wind's gusts are frozen turbulence carried downwind (Taylor), so a gust rolls
+// through a grove from the upwind trees to the downwind ones; each leaf answers each part of the gust as a damped spring does (a slow
+// gust it follows, one near its own pitch it swings with and lags, a quick one it hardly feels), is bent downwind by the wind's drag
+// (which grows as the square of the wind) as much as it lies across the wind, and rings at its own pitch, bobbing up and down most at the tip. It bends rather than slides: the leaf turns about its root, more
+// further out (a cantilever's shape), so it keeps its length however hard it blows; the leaflets flutter on top.
+const GUSTS = [[.09, .5], [.23, .32], [.51, .18]], GUST_RUN = 4, FROND_DAMP = .12;   // (gusts: [Hz, share]; carried downwind at 4 m/s)
+/** The numbers frondSway works by (the WebGPU fronds read them too). */
+export const FROND = Object.freeze({ GUSTS, RUN: GUST_RUN, DAMP: FROND_DAMP });
+const frondPitch = (len, id) => 1.15 / Math.sqrt(Math.max(len, .15)) * (.9 + .2 * ((id * .618) % 1));   // Hz
+const frondShape = a => { a = Math.max(a, 1e-3); return (1 - (1 - (1 - a) ** 4) / (4 * a)) / .75; };   // (the chord's turn at a, 1 at the tip)
+function turn(v, k, th) {   // v turned th radians about the unit axis k (Rodrigues)
+  const c = Math.cos(th), s = Math.sin(th), d = (k[0] * v[0] + k[1] * v[1] + k[2] * v[2]) * (1 - c);
+  return [v[0] * c + (k[1] * v[2] - k[2] * v[1]) * s + k[0] * d, v[1] * c + (k[2] * v[0] - k[0] * v[2]) * s + k[1] * d, v[2] * c + (k[0] * v[1] - k[1] * v[0]) * s + k[2] * d];
+}
+/**
+ * Where a point of a frond moves to in the wind (metres, world): v, the point less its leaf's root; a, how far along the leaf (0..1);
+ * id and len (lkFrondId); t, seconds; wind, its strength (looks.fronds' lkWind); dir, which way it blows ([x, z], [0, 0]: no way);
+ * sway (lkSway); root, the leaf's root [x, z] (where it is in the gusts). Gives [dx, dy, dz].
+ */
+export function frondSway(v, a, id, len, t, wind, dir, sway = .08, root = [0, 0], flutter = true) {
+  const w0 = 2 * Math.PI * frondPitch(len, id), dl = Math.hypot(dir[0], dir[1]), lean = dl > .5 ? 1 : 0, dx = lean ? dir[0] / dl : .7071, dz = lean ? dir[1] / dl : .7071;
+  const along = root[0] * dx + root[1] * dz, across = root[1] * dx - root[0] * dz;
+  let g = 0, g2 = 0;
+  for (const [f, share] of GUSTS) {
+    const w = 2 * Math.PI * f, r = w / w0, H = 1 / Math.sqrt((1 - r * r) ** 2 + (2 * FROND_DAMP * r) ** 2), lag = Math.atan2(2 * FROND_DAMP * r, 1 - r * r), ph = w * t - w * along / GUST_RUN + across * .3;
+    g += share * H * Math.cos(ph - lag); g2 += share * Math.cos(ph);
+  }
+  const ring = Math.sin(w0 * t - w0 * along / GUST_RUN + id * 2.4) * (.55 + .45 * g2), k = wind * sway;
+  const bend = Math.max(-1.1, Math.min(1.1, k * (lean * (1.1 + 4 * k) + .9 * g))), flap = k * 1.6 * ring, m = frondShape(a);
+  // (bobbing about the level line across the leaf; bent by the drag on it about the line square to it and the wind, as much as it lies
+  // across the wind: a leaf pointing downwind streams, one across it swings round, one into it is lifted and pressed back)
+  const h = Math.hypot(v[0], v[2]) || 1, vl = Math.hypot(v[0], v[1], v[2]) || 1, fl = turn(v, [-v[2] / h, 0, v[0] / h], flap * m);
+  const cx = v[1] * dz / vl, cy = (v[2] * dx - v[0] * dz) / vl, cz = -v[1] * dx / vl, cs = Math.hypot(cx, cy, cz), out = cs > 1e-6 ? turn(fl, [cx / cs, cy / cs, cz / cs], bend * m * cs) : fl;
+  if (flutter) out[1] -= k * len * a * a * .12 * Math.sin(t * 8.7 + id * 3.1 + a * 6);
+  return [out[0] - v[0], out[1] - v[1], out[2] - v[2]];
+}
+
+// frondSway in GLSL (the same sums; the WebGPU one is hd3d-gpu.js gpuLooks.fronds)
+const FROND_GLSL = `
+vec3 lkTurn(vec3 v, vec3 k, float th) { float c = cos(th), s = sin(th); return v * c + cross(k, v) * s + k * dot(k, v) * (1. - c); }
+vec3 lkFrondSway(vec3 v, float a, float id, float len, float t, float wind, vec2 dir, float sway, vec2 root) {
+  float w0 = 6.28318 * 1.15 / sqrt(max(len, .15)) * (.9 + .2 * fract(id * .618)), dl = length(dir), lean = step(.5, dl);
+  vec2 d = lean > .5 ? dir / dl : vec2(.7071); float along = dot(root, d), across = root.y * d.x - root.x * d.y, g = 0., g2 = 0.;
+  ${GUSTS.map(([f, share]) => `{ float w = ${(2 * Math.PI * f).toFixed(5)}, r = w / w0, H = 1. / sqrt((1. - r * r) * (1. - r * r) + ${(2 * FROND_DAMP).toFixed(3)} * r * ${(2 * FROND_DAMP).toFixed(3)} * r), ph = w * t - w * along / ${GUST_RUN.toFixed(1)} + across * .3;
+    g += ${share} * H * cos(ph - atan(${(2 * FROND_DAMP).toFixed(3)} * r, 1. - r * r)); g2 += ${share} * cos(ph); }`).join('\n  ')}
+  float ring = sin(w0 * t - w0 * along / ${GUST_RUN.toFixed(1)} + id * 2.4) * (.55 + .45 * g2), k = wind * sway;
+  float bend = clamp(k * (lean * (1.1 + 4. * k) + .9 * g), -1.1, 1.1), flap = k * 1.6 * ring, aa = max(a, 1e-3), m = (1. - (1. - pow(1. - aa, 4.)) / (4. * aa)) / .75;
+  float h = max(length(v.xz), 1e-6), vl = max(length(v), 1e-6); vec3 fl = lkTurn(v, vec3(-v.z / h, 0., v.x / h), flap * m);
+  vec3 c = vec3(v.y * d.y, v.z * d.x - v.x * d.y, -v.y * d.x) / vl; float cs = length(c);
+  vec3 o = cs > 1e-6 ? lkTurn(fl, c / cs, bend * m * cs) : fl;
+  o.y -= k * len * a * a * .12 * sin(t * 8.7 + id * 3.1 + a * 6.);
+  return o - v;
+}`;
 /**
  * looks.fronds(material, o): long leaves that grow out from one point (palm fronds, fan palm and banana
- * leaves, ferns, reeds, ivy, hanging moss, weeds): each bounces and flutters more towards its tip and leans
- * downwind, light comes through towards the sun, outlines hold up far away, and both sides are lit alike.
+ * leaves, ferns, reeds, ivy, hanging moss, weeds): each a springy rod turning about its root (frondSway: its
+ * own pitch, bent by the drag across it, gusts that roll downwind, leaflets that flutter), light comes through
+ * towards the sun, outlines hold up far away, and both sides are lit alike.
  * The mesh says, at each point, where its leaf starts and how far along it the point is (lkFrond: x, y, z in
  * the plant's own metres, 0..1 along) and which leaf it is (lkFrondId: a number, its length in metres):
  * gs.models' plants do. o: time, wind (a number, or a gs.outdoors Wind: then they lean and stream the way it
@@ -361,12 +417,14 @@ function fronds(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .08
   lookPatch(m, 'fronds', spec('fronds', {
     uniforms: U, world: true,
     vertex: {
-      head: 'attribute vec4 lkFrond; attribute vec2 lkFrondId; uniform float lkTime, lkWind, lkSway; uniform vec2 lkWindDir;' + PART_HEAD,
+      head: 'attribute vec4 lkFrond; attribute vec2 lkFrondId; uniform float lkTime, lkWind, lkSway; uniform vec2 lkWindDir;' + PART_HEAD + FROND_GLSL,
       after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz) + gsOrigin;
-    float a = lkFrond.w, k = lkWind * lkSway * lkFrondId.y * a * a, ph = wp.x * .11 + wp.z * .13 + lkFrondId.x * 1.93;   // (the tip moves most; the phase runs along a leaf a little, so it flexes)
-    vec3 sw = vec3(sin(lkTime * 1.3 + ph) + sin(lkTime * 2.9 + ph * 1.7) * .35, 0., cos(lkTime * 1.1 + ph * 1.3)) * k * .45;
-    sw.y = -k * (.5 * sin(lkTime * 2.1 + ph * 1.6) + .12 * sin(lkTime * 8.7 + ph * 3.1 + a * 6.));   // it bounces, and flutters
-    sw.xz += lkWindDir * k * (1.1 + .6 * sin(lkTime * .8 + ph * .4)); sw.y -= length(lkWindDir) * k * .25;   // a lean downwind (none without a Wind)${PART_GLSL('a * lkFrondId.y', '(1. - smoothstep(1.8, 2.6, position.y))')}
+    vec4 rm = vec4(lkFrond.xyz, 1.);   // (its leaf's root, put where the point is put)
+#ifdef USE_INSTANCING
+    rm = instanceMatrix * rm;
+#endif
+    rm = modelViewMatrix * rm; vec3 rw = transpose(mat3(viewMatrix)) * (rm.xyz - viewMatrix[3].xyz) + gsOrigin;
+    float a = lkFrond.w; vec3 sw = lkFrondSway(wp - rw, a, lkFrondId.x, lkFrondId.y, lkTime, lkWind, lkWindDir, lkSway, rw.xz);   // (frondSway, below)${PART_GLSL('a * lkFrondId.y', '(1. - smoothstep(1.8, 2.6, position.y))')}
     mvPosition.xyz += mat3(viewMatrix) * sw; gl_Position = projectionMatrix * mvPosition; }` },
     },
     fragment: {

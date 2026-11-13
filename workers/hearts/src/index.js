@@ -28,14 +28,13 @@ import { kept, left, forget } from './kept.js';
 import { cleanScore, cleanSecs, checkScore, saveScore, board, pruneScores } from './scores.js';
 import { cleanBrain, saveBrain, sharedBrain, pruneBrains, NAME_RE, SHAPE_RE } from './brains.js';
 
-// Browsers may call the API only from the app itself and the test website. (Not a security
-// boundary on its own, since scripts outside a browser ignore CORS, but it stops other sites
-// from using the API through their visitors.)
+// Browsers may call the API only from the app itself. (Not a security boundary on its own, since
+// scripts outside a browser ignore CORS, but it stops other sites from using the API through their
+// visitors.)
 const ORIGINS = [
   /^capacitor:\/\/localhost$/,            // iOS app
-  /^https?:\/\/localhost(:\d+)?$/,        // Android app, local dev
+  /^https?:\/\/localhost(:\d+)?$/,        // Android app, the Mac and Windows app (desktop/), local dev
   /^http:\/\/127\.0\.0\.1(:\d+)?$/,       // local dev
-  /^https:\/\/robthewizzuk\.github\.io$/, // test website
   /^https:\/\/([a-z0-9-]+\.)?game-scroll\.com$/,
 ];
 const COUNTS_TTL = 60;

@@ -10,8 +10,9 @@
 //     { at: 2.5, do: () => blowUp(bridge) },
 //     { at: 4, cam: [{ x: 4, y: 2, z: 4 }], look: villain, time: 2 },
 //     { at: 4.5, say: 'You should not have come back.', who: 'Kade' },
+//     { at: 5, lens: { fstop: 1.8, focus: villain, pull: .8 } },   // a Next Gen lens (v.lens): a focus pull onto Kade
 //   ], { bars: .12 });
-//   update(dt) { if (intro.playing) { intro.update(dt); const s = intro.shot; cam.position.set(s.x, s.y, s.z); cam.lookAt(s.look.x, s.look.y, s.look.z); } }
+//   update(dt) { if (intro.playing) { intro.update(dt); const s = intro.shot; cam.position.set(s.x, s.y, s.z); cam.lookAt(s.look.x, s.look.y, s.look.z); v.lens = intro.lens; } }
 //   down() { if (intro.playing) intro.skip(); }                    // jumps to the end, running every action it passed
 //   draw(c) { intro.drawBars(c, W, H); intro.drawLine(c, W, H); } // or draw your own from intro.bars and intro.line
 //
@@ -34,8 +35,8 @@ export function along(points, u) {
 export class Cutscene {
   /**
    * steps: [{ at (seconds), and one of: cam: [points] + time + look + ease; say + who + time; do: fn;
-   * shake: strength + time; bars: 0..1 (letterbox height share) }]. Options: bars (default letterbox),
-   * skippable.
+   * shake: strength + time; bars: 0..1 (letterbox height share); lens: a Next Gen view's lens from then on (v.lens:
+   * f-stop, focus, pull...; null for none), read as this.lens }]. Options: bars (default letterbox), skippable.
    */
   constructor(steps, { bars = .1, skippable = true } = {}) {
     this.steps = steps.map((s, i) => ({ ...s, at: s.at ?? 0, i, ran: false })).sort((a, b) => a.at - b.at || a.i - b.i);
@@ -45,7 +46,7 @@ export class Cutscene {
   }
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
   emit(ev, ...a) { for (const f of this.handlers[ev] || []) f(...a); }
-  reset() { this.t = 0; this.playing = true; this.done = false; this.bars = 0; this.line = null; this.shot = null; this.shakeLeft = 0; this.shakeAmt = 0; for (const s of this.steps) s.ran = false; this.camStep = null; return this; }
+  reset() { this.t = 0; this.playing = true; this.done = false; this.bars = 0; this.line = null; this.shot = null; this.shakeLeft = 0; this.shakeAmt = 0; for (const s of this.steps) s.ran = false; this.camStep = null; this.lens = null; return this; }
   get progress() { return this.length ? Math.min(1, this.t / this.length) : 1; }
   update(dt) {
     if (!this.playing) { this.bars = Math.max(0, this.bars - dt * 1.5 * this.barsTo); return this; }
@@ -72,6 +73,7 @@ export class Cutscene {
     if (s.do) s.do(this);
     if (s.shake) { this.shakeAmt = s.shake; this.shakeLeft = s.time ?? .5; }
     if (s.bars != null) this.barsTo = s.bars;
+    if (s.lens !== undefined) this.lens = s.lens;
   }
   /** Jumps to the end: every action not yet run runs now, in order. */
   skip() { if (!this.skippable || !this.playing) return this; for (const s of this.steps) if (!s.ran) { s.ran = true; if (s.do) s.do(this); } this.t = this.length; this.line = null; this.emit('skip'); this.finish(); return this; }

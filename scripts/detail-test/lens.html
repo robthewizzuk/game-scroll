@@ -1,0 +1,137 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// A camera like a real lens (v.lens: src/kit/lens.js, src/kit/hd3d-gpu-lens.js) for scripts/detail-test.cjs --page lens:
+// a street at dusk with a person-sized post 3 m off, a red post 0.9 m in front of the lens, a checkered wall 30 m
+// away and small lamps beyond, through a 50 mm lens at f/1.8. Checked: what is in focus stays sharp and the wall goes
+// soft; a far lamp becomes a disc as wide as the lens says (its circle of confusion) and evenly lit; a near post's
+// blur spills over what is behind its edge; blades shape the discs; autofocus finds the post and then the wall;
+// a focus pull eases there in about `pull` seconds without overshooting; the exposure follows f-stop, shutter and
+// ISO in stops (sunny sixteen shows the game's own look), and iso 'auto' lifts a night more than its own look does;
+// the shutter sets motion blur's amount; a card's picture matches; v.lens = null draws as before. WebGL: the same
+// blur as soft discs without blades (from a half-size copy), autofocus and exposure.
+//   ?gpu  ?w=320&h=400  ?frames=12 (frames drawn for each picture)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 320), H = +(Q.get('h') || 400), FR = +(Q.get('frames') || 12);
+HD.force = 2; HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note });
+try {
+  const v = new gs.hd.HDView({ bg: '#1a2238', fog: 0, env: .25, amb: .25 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  v.bloom = 0; v.cam.near = .1; v.cam.far = 400; v.cam.fov = 2 * Math.atan(12 / 50) * 180 / Math.PI; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffd9b0', 1.2, 30, [-.4, .5, .3]); v.scene.add(sun, sun.target); v.sun = sun;
+  const ground = new T.Mesh(new T.PlaneGeometry(200, 200), gs.hd.pbr('#4a4a50', { rough: .9 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; v.scene.add(ground);
+  // the subject: a post 3 m ahead (a little left), striped so its sharpness shows
+  const stripes = (a, b, n) => { const cv = document.createElement('canvas'); cv.width = 8; cv.height = n * 2; const g = cv.getContext('2d'); for (let i = 0; i < n * 2; i++) { g.fillStyle = i % 2 ? a : b; g.fillRect(0, i, 8, 1); } const t = new T.CanvasTexture(cv); t.magFilter = T.NearestFilter; t.colorSpace = T.SRGBColorSpace; return t; };
+  const post = new T.Mesh(new T.BoxGeometry(.35, 2, .35), new T.MeshStandardMaterial({ map: stripes('#f0e8d8', '#202020', 40), roughness: .7 })); post.position.set(-.22, 1, -3); post.castShadow = true; v.scene.add(post);
+  // a checkered wall 30 m off, and lamps 40 m off against the dark beyond it
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64; { const g = cv.getContext('2d'); for (let i = 0; i < 16; i++) for (let j = 0; j < 16; j++) { g.fillStyle = (i + j) % 2 ? '#d8d0c0' : '#303848'; g.fillRect(i * 4, j * 4, 4, 4); } }
+  const ct = new T.CanvasTexture(cv); ct.magFilter = T.NearestFilter; ct.colorSpace = T.SRGBColorSpace;
+  const wall = new T.Mesh(new T.PlaneGeometry(2.6, 3), new T.MeshStandardMaterial({ map: ct, roughness: .9 })); wall.position.set(1.14, 1.2, -30); v.scene.add(wall);
+  const lampMat = new T.MeshStandardMaterial({ color: '#000', emissive: '#ffe2b0', emissiveIntensity: 40 }), lamps = [];
+  for (let i = 0; i < 4; i++) { const m = new T.Mesh(new T.SphereGeometry(.07, 12, 8), lampMat); m.position.set(-5.5 + i * 2.6, 7.6 + (i % 2) * .8, -40); v.scene.add(m); lamps.push(m); }
+  // a red post right in front of the lens, its edge in the middle of the picture's right half
+  const near = new T.Mesh(new T.BoxGeometry(.12, 3, .12), new T.MeshStandardMaterial({ color: '#d02018', roughness: .6 })); near.position.set(.136, 1.2, -.9); v.scene.add(near);
+  const look = () => { v.cam.position.set(0, 1.6, 0); v.cam.rotation.set(.02, 0, 0, 'YXZ'); v.cam.updateMatrixWorld(); };
+  look();
+  const grab = () => x.getImageData(0, 0, W, H).data.slice();
+  const pic = px => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H); im.data.set(px); g.putImageData(im, 0, 0); return cv.toDataURL(); };
+  const draw = async (n = 1) => { for (let i = 0; i < n; i++) { v.render(x, W, H); await frame(); } x.getImageData(0, 0, 1, 1); };
+  const lum = (px, i) => .2126 * px[i] + .7152 * px[i + 1] + .0722 * px[i + 2];
+  const region = (px, x0, y0, x1, y1) => { let r = 0, g = 0, b = 0, n = 0, s = 0, s2 = 0; for (let y = Math.max(0, Math.floor(y0)); y < Math.min(H, y1); y++) for (let xx = Math.max(0, Math.floor(x0)); xx < Math.min(W, x1); xx++) { const i = (y * W + xx) * 4, l = lum(px, i); r += px[i]; g += px[i + 1]; b += px[i + 2]; s += l; s2 += l * l; n++; } return { r: r / n, g: g / n, b: b / n, l: s / n, std: Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2)) }; };
+  const apart = (a, b) => { let sum = 0, big = 0; const n = a.length / 4; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 24) big++; } return { mean: +(sum / n).toFixed(2), big: +(big / n * 100).toFixed(2) }; };
+  const R = n => ({ r: +n.r.toFixed(1), g: +n.g.toFixed(1), b: +n.b.toFixed(1), l: +n.l.toFixed(1), std: +n.std.toFixed(1) });
+  const toScreen = p => { const q = p.clone().project(v.cam); return [(q.x * .5 + .5) * W, (-q.y * .5 + .5) * H]; };
+  const box = o => { const b = new T.Box3().setFromObject(o), cs = []; for (const X of [b.min.x, b.max.x]) for (const Y of [b.min.y, b.max.y]) for (const Z of [b.min.z, b.max.z]) cs.push(toScreen(new T.Vector3(X, Y, Z))); return { x0: Math.min(...cs.map(p => p[0])), x1: Math.max(...cs.map(p => p[0])), y0: Math.min(...cs.map(p => p[1])), y1: Math.max(...cs.map(p => p[1])) }; };
+  async function shoot(name, lens, n = FR) { v.lens = lens; look(); v.cut(); await draw(n); const px = grab(); out[name] = pic(px); return px; }
+  // a lamp's disc: pixels brighter than three quarters of the way from the dark round it to its brightest, in a square round
+  // where it is (tone mapping squeezes the bright end: three quarters of the way on screen is about half the light)
+  const disc = (px, lamp, reach) => {
+    const [cx, cy] = toScreen(lamp.getWorldPosition(new T.Vector3())); let peak = 0, bgl = 1e9; const pts = [];
+    for (let y = Math.floor(cy - reach); y <= cy + reach; y++) for (let xx = Math.floor(cx - reach); xx <= cx + reach; xx++) { if (xx < 0 || y < 0 || xx >= W || y >= H) continue; const l = lum(px, (y * W + xx) * 4); pts.push([xx, y, l]); peak = Math.max(peak, l); if (Math.hypot(xx - cx, y - cy) > reach * .9) bgl = Math.min(bgl, l); }
+    const th = bgl + (peak - bgl) * .75, inn = pts.filter(p => p[2] >= th); const r = Math.sqrt(inn.length / Math.PI);
+    // even: the inner half of the disc no dimmer than 60% of its middle's brightest
+    const core = inn.filter(p => Math.hypot(p[0] - cx, p[1] - cy) < r * .6).map(p => p[2]);
+    return { cx: +cx.toFixed(1), cy: +cy.toFixed(1), r: +r.toFixed(2), peak: +peak.toFixed(0), even: core.length ? +(Math.min(...core) / Math.max(...core)).toFixed(2) : 0 };
+  };
+  const sharp = await shoot('sharp', null);
+  const lens = { fstop: 1.8, focal: 50, focus: 3, pull: 0 };
+  const near3 = await shoot('focus-3m', lens);
+  const far30 = await shoot('focus-30m', { ...lens, focus: 30 });
+  const blades = await shoot('blades-6', { ...lens, blades: 6, turn: 15 });
+  v.lens = null; v.focus = { at: 3, range: .15, depth: .5, blur: 24 }; look(); v.cut(); await draw(FR); out['old-focus'] = pic(grab()); v.focus = null;
+  info.backend = HD.info.backend;
+  const pb = box(post), wb = box(wall);
+  const subj = px => region(px, pb.x0 + 2, pb.y0 + 4, pb.x1 - 2, pb.y1 - 4), wallR = px => region(px, wb.x0 + 4, wb.y0 + 4, Math.min(wb.x1, box(near).x0) - 4, wb.y1 - 4);
+  info.subject = { sharp: R(subj(sharp)), lens: R(subj(near3)) }; info.wall = { sharp: R(wallR(sharp)), lens: R(wallR(near3)) };
+  check('in focus stays sharp (the post at 3 m)', subj(near3).std > subj(sharp).std * .8, `stripes' spread ${subj(near3).std.toFixed(1)} through the lens, ${subj(sharp).std.toFixed(1)} sharp`);
+  check('out of focus goes soft (the wall at 30 m)', wallR(near3).std < wallR(sharp).std * .5, `checks' spread ${wallR(near3).std.toFixed(1)} through the lens, ${wallR(sharp).std.toFixed(1)} sharp`);
+  // the circle of confusion a 50 mm f/1.8 lens focused at 3 m gives a point 40 m off, on this picture
+  const f = 50, A = f / 1.8, s = 3000, coc = A * f * s / (s - f) / 1000 * Math.abs(1 / 3 - 1 / 40) / 24 * H;
+  const d0 = disc(sharp, lamps[1], coc * 2.2), d1 = disc(near3, lamps[1], coc * 2.2), d6 = disc(blades, lamps[1], coc * 2.2); info.disc = { cocPx: +coc.toFixed(2), sharp: d0, lens: d1, blades: d6 };
+  // (WebGL: a soft disc about as wide, from the half-size copy; not a ring of dots)
+  check('a far lamp becomes a disc as wide as the lens says', Math.abs(d1.r - coc) < coc * .2 && d1.r > d0.r * 2, `radius ${d1.r} px, the lens's circle of confusion ${coc.toFixed(2)} px (sharp: ${d0.r})`);
+  check('the disc is evenly lit, not a speckle', d1.even > .55, `dimmest of its inner part ${d1.even} of the brightest`);
+  if (HD.info.backend === 'webgpu') {
+    // blades: a hexagon's area is 83% of its circle's: a smaller disc than the round one
+    check('six blades shape the disc (smaller than the round one)', d6.r < d1.r * .97 && d6.r > d1.r * .8, `radius ${d6.r} with six blades, ${d1.r} round`);
+  }
+  // the red post's blur spills over the street behind its left edge (it is 0.9 m off, focused at 3 m)
+  const nb = box(near), spill = px => region(px, nb.x0 - 7, H * .45, nb.x0 - 1, H * .6);
+  info.spill = { sharp: R(spill(sharp)), lens: R(spill(near3)) };
+  check('a soft thing in front spills over what is behind its edge', spill(near3).r - spill(near3).b > spill(sharp).r - spill(sharp).b + 12, `beside the near post's edge red minus blue ${(spill(near3).r - spill(near3).b).toFixed(1)}, ${(spill(sharp).r - spill(sharp).b).toFixed(1)} sharp`);
+  check('focused far, the near post and subject go soft', subj(far30).std < subj(sharp).std * .7, `the post's stripes ${subj(far30).std.toFixed(1)}, ${subj(sharp).std.toFixed(1)} sharp`);
+  // autofocus: on the post at the middle of its box, then on the wall
+  const af = { fstop: 1.8, focal: 50, focus: 'auto', pull: .2 }, P = [(pb.x0 + pb.x1) / 2 / W, (pb.y0 + pb.y1) / 2 / H];
+  // (the post's front is 2.825 m off along the camera's look; the first reading back can take a second in a software renderer)
+  v.lens = { ...af, spot: P }; look(); v.cut(); for (let i = 0; i < 200 && !(Math.abs(v.lens.at - 2.825) <= .08); i++) await draw(1); await draw(6);
+  const atPost = v.lens.at; v.lens.spot = [(wb.x0 + Math.min(wb.x1, box(near).x0)) / 2 / W, (wb.y0 + wb.y1) / 2 / H];
+  for (let i = 0; i < 200 && !(Math.abs(v.lens.at - 30) <= 1); i++) await draw(1); await draw(6); const atWall = v.lens.at;
+  info.autofocus = { post: +atPost.toFixed(2), wall: +atWall.toFixed(2) };
+  check('autofocus finds the post, then the wall', Math.abs(atPost - 2.825) < .15 && Math.abs(atWall - 30) < 1.5, `${atPost.toFixed(2)} m on the post (its front 2.83 m off), ${atWall.toFixed(2)} m on the wall (30)`);
+  // a focus pull from 3 m to 30 m over half a second: eased, never past, there in about that time
+  v.lens = { ...lens, focus: 3, pull: .5 }; look(); v.cut(); await draw(3);
+  // (timed by the lens's own clock: real time, at most 0.1 s a frame, as frames are slow in a software renderer)
+  v.lens.focus = 30; let tl = 0, last = performance.now(); const pull = [];
+  while (tl < 1.1) { await draw(1); const now = performance.now(); tl += Math.min(.1, (now - last) / 1000); last = now; pull.push([+tl.toFixed(3), +v.lens.at.toFixed(2)]); }
+  const at = t => { let best = pull[0]; for (const p of pull) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p; return best[1]; };
+  const mono = pull.every((p, i) => i === 0 || p[1] >= pull[i - 1][1] - 1e-6), past = Math.max(...pull.map(p => p[1]));
+  info.pull = { at: pull.filter((_, i) => i % 4 === 0) };
+  check('a focus pull eases there in about pull seconds, never past', mono && past <= 30.01 && at(.1) < 12 && at(.75) > 25 && Math.abs(pull[pull.length - 1][1] - 30) < .5, `at 0.1 s ${at(.1)} m, 0.25 s ${at(.25)}, 0.5 s ${at(.5)}, 0.75 s ${at(.75)}, end ${pull[pull.length - 1][1]}; furthest ${past}`);
+  // exposure in stops: the sunny sixteen rule shows the game's own look; f/8 is two stops more light
+  const s16 = await shoot('sunny-16', { fstop: 16, shutter: 1 / 125, iso: 100, focus: 3, focal: 50, max: 0 }), s16s = v.lens.stops;
+  const f8 = await shoot('f8', { fstop: 8, shutter: 1 / 125, iso: 100, focus: 3, focal: 50, max: 0 }), f8s = v.lens.stops;
+  const all = px => region(px, 0, 0, W, H);
+  info.exposure = { sharp: R(all(sharp)), sunny16: R(all(s16)), f8: R(all(f8)), stops: [+s16s.toFixed(2), +f8s.toFixed(2)] };
+  check('f/16 at 1/125 s, ISO 100 shows the game\'s own look', Math.abs(s16s) < .05 && apart(s16, sharp).mean < 3, `${s16s.toFixed(3)} stops, picture ${apart(s16, sharp).mean}/255 from the sharp one`);
+  check('f/8 is two stops more light', Math.abs(f8s - 2) < .05 && all(f8).l > all(s16).l * 1.25, `${f8s.toFixed(3)} stops, mean ${all(f8).l.toFixed(1)} against ${all(s16).l.toFixed(1)}`);
+  // the shutter sets motion blur's amount (a part of each frame's move)
+  v.motionBlur = { amount: .5 }; v.lens = { focus: 3, focal: 50, shutter: 1 / 30 }; look(); await draw(4);
+  const mbA = v._mbm?.mb.x, ls = v._ls; info.shutter = { amount: mbA && +mbA.toFixed(3), lens: ls?.mb && +ls.mb.toFixed(3) };
+  check('the shutter sets motion blur\'s amount (its share of a frame)', ls?.mb > 0 && Math.abs(mbA - ls.mb) < 1e-6, `amount ${mbA?.toFixed(3)} at 1/30 s`);
+  v.motionBlur = null;
+  // a card's picture (a bake) through the lens: the same picture
+  const live = await shoot('lens-live', lens);
+  look(); x.clearRect(0, 0, W, H); v.render(x, W, H, true); await frame(); const baked = grab(); out['lens-baked'] = pic(baked);
+  check('a card\'s picture through the lens matches', apart(baked, live).mean < 3, `mean ${apart(baked, live).mean}/255`);
+  // v.lens = null: the picture as without it
+  const back = await shoot('lens-off', null);
+  check('v.lens = null draws as before', apart(back, sharp).mean < 1, `mean ${apart(back, sharp).mean}/255`);
+  // (last: the sky changes the view's lights)
+  // iso 'auto' through a day: the same lens at noon and at midnight; the night is lifted more than the day is
+  const sky = new gs.sky.Sky(v, { time: 12, stars: 0 });
+  const dayNight = async lensO => { const r = {}; for (const [k, t] of [['day', 12], ['night', 0]]) { sky.time = t; sky.update(0); v.lens = lensO && { ...lensO }; v.eye = null; look(); v.cut(); await draw(FR);
+    // (the camera's meter: until it has read the picture and settled; a first reading back can take a second here)
+    if (lensO) for (let i = 0; i < 300 && !(v.eye?.avg != null && Math.abs(v.eye.goal - v.eye.e) < .02); i++) await draw(1); const px = grab(); r[k] = all(px).l; r[k + 'Avg'] = v.eye?.avg; out[(lensO ? 'auto-' : 'own-') + k] = pic(px); } return r; };
+  const own = await dayNight(null), auto = await dayNight({ fstop: 2.8, focal: 50, focus: 3, iso: 'auto', max: 0 });
+  info.dayNight = { own: { day: +own.day.toFixed(1), night: +own.night.toFixed(1) }, auto: { day: +auto.day.toFixed(1), night: +auto.night.toFixed(1), meterDay: auto.dayAvg, meterNight: auto.nightAvg, eye: v.eye && { e: v.eye.e, goal: v.eye.goal, n: v.eye.n }, ae: !!v._ls?.ae } };
+  check('iso auto lifts a night more than a day, and night stays darker', auto.night / own.night > auto.day / own.day * 1.15 && auto.night < auto.day * .85, `day ${own.day.toFixed(1)} -> ${auto.day.toFixed(1)}, night ${own.night.toFixed(1)} -> ${auto.night.toFixed(1)}`);
+  window.result = { checks, info, out };
+} catch (e) { window.result = { error: (e && e.stack) || String(e) }; }
+</script>

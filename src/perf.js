@@ -27,6 +27,8 @@ import { playstats } from './playstats.js';
 import { power } from './kit/power.js';
 import { memory, onMemory } from './kit/memory.js';
 import { appHealth, judgeExit, memoryNote } from './exits.js';
+import { desktop } from './desktop.js';
+import { gpuName, chipLabel } from './kit/gpu.js';
 
 const PENDING_KEY = 'gs_perf_pending', LOCAL_KEY = 'gs_perf_local', GLOBAL_KEY = 'gs_perf_global', OPEN_KEY = 'gs_perf_open';
 const EXIT_KEY = 'gs_perf_exit', BUILD_KEY = 'gs_perf_build';   // the newest exit record already looked at; the build that ran last
@@ -38,7 +40,8 @@ const blank = () => ({ r: 0, f: 0, ms: 0, w: 0, sl: 0, h: 0, x: 0, hk: 0, hw: 0,
 let pending = store.get(PENDING_KEY, null) || { games: {}, errors: [] };   // not sent yet: games by 'id|form|version'
 let local = store.get(LOCAL_KEY, {}) || {};                                // this phone, all time: id -> counts
 let global = store.get(GLOBAL_KEY, null);                                  // everyone, from GET /perf
-let info = { platform: Capacitor.getPlatform(), model: 'unknown', os: '', app: BUILD };
+// (the Mac and Windows app reports as 'mac' or 'windows', so its numbers aren't taken for a browser's)
+let info = { platform: desktop && (desktop.os === 'mac' || desktop.os === 'windows') ? desktop.os : Capacitor.getPlatform(), model: 'unknown', os: '', app: BUILD };
 let current = '', curVer = '', playing = false, lastFrame = 0, flushing = false, lastLoad = 0, saveT = 0;
 
 const sending = () => (REAL || !!perf.outbox) && !!HEARTS_URL && playstats.enabled;
@@ -62,6 +65,8 @@ const save = () => { if (!saveT) saveT = setTimeout(() => { saveT = 0; store.set
     const { Device } = await import('@capacitor/device');
     const d = await Device.getInfo();
     info = { ...info, model: String(d.model || 'unknown').slice(0, 40), os: `${d.operatingSystem || ''} ${d.osVersion || ''}`.trim().slice(0, 40) };
+    // a computer: its graphics chip stands for the phone model ("Apple M2 Pro", "NVIDIA GeForce RTX 4070"), not "Macintosh"
+    if (desktop) info.model = chipLabel(gpuName()) || info.model;
   } catch (_) { /* keep 'unknown' */ }
 })();
 

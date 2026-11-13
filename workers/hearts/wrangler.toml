@@ -29,8 +29,9 @@ ANDROID_ALLOW_SIDELOAD = "off"
 # Secrets (set with wrangler secret put, never in this file):
 #   SESSION_SECRET         signs challenges and passes; the deploy workflow creates it once
 #   GOOGLE_SERVICE_ACCOUNT JSON key for the Play Integrity decode API
-# "Play in your browser" on shared-link pages (the test website for now; empty hides the button).
-WEB_PLAY_URL = "https://robthewizzuk.github.io/game-scroll/"
+# "Play in your browser" on shared-link pages (empty hides the button). Empty since the GitHub Pages test
+# website was taken down for the Mac and Windows app (2026-11-13), which opens the "Open in Game Scroll" link.
+WEB_PLAY_URL = ""
 # The live catalogue, used to accept hearts only for games that exist.
 MANIFEST_URL = "https://assets.game-scroll.com/manifest.json"
 # The repository, so each build on the crash and stutter report links to the commit it was built from (empty = no links).

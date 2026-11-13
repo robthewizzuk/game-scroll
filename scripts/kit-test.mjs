@@ -1496,6 +1496,32 @@ console.log('physics ok');
   }
   assert.notEqual(JSON.stringify(layout({ seed: 1 }).buildings), JSON.stringify(layout({ seed: 2 }).buildings), 'another seed, another city');
   console.log('city: layouts for all styles are repeatable, tidy and joined up');
+  // the street dressing (city-dress.js): its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other
+  const { dressPlan } = await import('../src/kit/city-dress.js');
+  for (const style of Object.keys(STYLES)) {
+    const p = layout({ seed: 42, blocks: [5, 4], style }), before = JSON.stringify(p), kits = [{ length: 4.5, width: 1.8 }, { length: 4.9, width: 1.95 }, { length: 4.1, width: 1.75 }];
+    const at = (x, z) => p.buildings.find(b => x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) || null;
+    const D = dressPlan(p, 42, { kits, buildingAt: at, style });
+    assert.equal(JSON.stringify(p), before, style + ': dressing leaves the plan as it was');
+    assert.equal(JSON.stringify(D), JSON.stringify(dressPlan(p, 42, { kits, buildingAt: at, style })), style + ': same seed, same dressing');
+    assert.ok(D.posts.length === p.blocks.length && D.blades.length === p.blocks.length, style + ': a name sign at every block');
+    if (style !== 'suburb') assert.ok(D.parked.length > 10, style + ': cars parked (' + D.parked.length + ')');
+    for (const c of D.parked) {
+      const ax = Math.abs(Math.sin(c.heading)) > .5, hx = (ax ? c.len : c.wid) / 2, hz = (ax ? c.wid : c.len) / 2;
+      assert.ok(!p.buildings.some(b => c.x + hx > b.x0 && c.x - hx < b.x1 && c.z + hz > b.z0 && c.z - hz < b.z1), style + ': a parked car in a building');
+      for (const d of p.spots.door) assert.ok(Math.hypot(d.x - c.x, d.z - c.z) >= 5.6 || style === 'suburb', style + ': a car parked across a door');
+      if (c.y) continue;   // (on a drive)
+      // in the road: clear of the moving lanes (each lane's car is 1.9 wide) and of the junctions
+      const e = p.edges.find(e => (e.axis === 'x') === ax && Math.abs((ax ? p.nodes[e.a].z : p.nodes[e.a].x) - (ax ? c.z : c.x)) < e.width / 2);
+      assert.ok(e, style + ': a parked car beside no road');
+      const off = Math.abs((ax ? c.z - p.nodes[e.a].z : c.x - p.nodes[e.a].x)), outer = (e.lanes - .5) * 3.2 + .2 + .95;
+      assert.ok(off - c.wid / 2 > outer + .3 && off + c.wid / 2 < e.width / 2, style + ': a parked car in a lane or on the kerb');
+      assert.ok(!p.nodes.some(n => Math.abs(n.x - c.x) < n.hx + 6 && Math.abs(n.z - c.z) < n.hz + 6), style + ': a car parked at a junction');
+    }
+    for (let i = 0; i < D.parked.length; i++) for (let j = i + 1; j < D.parked.length; j++) assert.ok(Math.hypot(D.parked[i].x - D.parked[j].x, D.parked[i].z - D.parked[j].z) > 4, style + ': parked cars on top of each other');
+    if (style === 'oldtown' || style === 'suburb') assert.ok(D.wires.length > 0, style + ': wires');
+  }
+  console.log('city dressing: its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other ok');
 }
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
@@ -2053,6 +2079,41 @@ console.log('physics ok');
   sp.settledFor(stepped.id).fpsAt -= 25 * 3600 * 1000; sp.settle(stepped.id, { tier: 0 });
   assert.equal(sp.fpsFor(stepped), 60, 'a day after the step it is let go, though the tier changed since');
   assert.equal(sp.settledFor(stepped.id).tier, 0, 'and the rest is kept');
+  // a computer (the Mac and Windows app, src/desktop.js): its class from its graphics chip as a desktop browser names it,
+  // screens up to 360 Hz, Auto at the screen's own rate, and 3D games stepping down a whole number of refreshes at a time
+  const DESK = {
+    'ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)': 'top', 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)': 'top',
+    'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top', 'ANGLE (AMD, AMD Radeon RX 6800 XT (0x000073BF) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top',
+    'ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top', 'ANGLE (Qualcomm, Qualcomm(R) Adreno(TM) X1-85 GPU (0x36334330) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top',
+    'ANGLE (ATI Technologies Inc., AMD Radeon Pro 5500M OpenGL Engine, OpenGL 4.1)': 'top',
+    'ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid', 'ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics 655, OpenGL 4.1)': 'mid',
+    'ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid', 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid',
+    'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)': 'low', 'ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)': 'low', '': 'top',
+  };
+  for (const [n, k] of Object.entries(DESK)) assert.equal(sp.classifyDesktop(n), k, n || '(no name)');
+  assert.equal(sp.classify(Object.keys(DESK)[0], '', 8, 8, false, false), 'mid', 'the phone rule reads a Mac as a mid-range iPhone (why computers have their own)');
+  assert.equal(sp.classify(Object.keys(DESK)[2], '', 4, 8, false, true), 'mid', 'a computer with four cores or less: one class lower');
+  const { chipLabel } = await import('../src/kit/gpu.js');
+  assert.equal(chipLabel(Object.keys(DESK)[0]), 'Apple M2 Pro'); assert.equal(chipLabel(Object.keys(DESK)[2]), 'NVIDIA GeForce RTX 4070', 'the chip\'s name for the reports');
+  for (const [f, want] of [[146, 144], [166, 165], [238, 240], [74.4, 75], [61, 60], [118, 120], [355, 360]]) assert.equal(sp.snapHz(f, true), want, `a computer's ${f} Hz`);
+  assert.equal(sp.snapHz(238, false), 144, 'a phone keeps its own steps');
+  assert.equal(sp.evenRate(144, 60), 72, '144 Hz near 60: 72 (two refreshes a frame)'); assert.equal(sp.evenRate(60, 60), 60); assert.equal(sp.evenRate(165, 60), 82.5); assert.equal(sp.evenRate(144, 30), 36);
+  assert.equal(sp.rateBelow(144, 144), 72); assert.equal(sp.rateBelow(144, 72), 48); assert.equal(sp.rateBelow(240, 240), 120); assert.equal(sp.rateBelow(60, 60), 30);
+  assert.equal(sp.rateBelow(60, 30), 0, 'nothing below 30'); assert.equal(sp.rateAbove(144, 48), 72); assert.equal(sp.rateAbove(144, 72), 144); assert.equal(sp.rateAbove(144, 144), Infinity);
+  sp.speed.desktop = true; sp.speed.klass = 'top';
+  for (let i = 0, t = 9000; i < 60; i++) sp.tick(t += 1000 / 144);
+  assert.equal(sp.screenHz(), 144, 'a 144 Hz computer screen measures as 144');
+  const d2 = { id: 'kt-desk-2d' }, d3 = { id: 'kt-desk-3d', era: 'nextgen' };
+  assert.equal(sp.fpsFor(d2), 144, 'a 2D game runs at the computer screen\'s own rate (a phone stops at 120)');
+  assert.equal(sp.fpsFor(d3), 144, 'and a 3D game on a top computer');
+  assert.equal(sp.stepDown(d3), true); assert.equal(sp.fpsFor(d3), 72, 'stepping down: two refreshes a frame, not 60 on 144 Hz');
+  assert.equal(sp.stepDown(d3), true); assert.equal(sp.fpsFor(d3), 48, 'then three');
+  assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 72, 'and back up a refresh at a time');
+  assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 144, 'to the screen\'s rate');
+  sp.speed.klass = 'mid'; assert.equal(sp.fpsFor({ id: 'kt-desk-mid', era: 'nextgen' }), 72, 'a mid computer\'s 3D games: near 60 in whole refreshes');
+  sp.speed.desktop = false; sp.speed.klass = null;
+  for (let i = 0, t = 20000; i < 60; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'back on a phone\'s 120 Hz screen');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
   const B = 1000 / 60;
   assert.equal(sp.qualityVerdict(B * 1.3, 0, B), 'slow', 'a slow average steps down');
@@ -5580,6 +5641,28 @@ console.log('physics ok');
     assert.ok(finite(c) && ms < 3, 'cloth.update() ' + ms.toFixed(3) + ' ms a frame for ' + c.N + ' points');
     console.log(`cloth in the wind: a flag hangs in still air and flies in a breeze, a gale doesn't tear it, banners, awnings and washing lines hang right, a sheet stays on a ball, pins ride things, pieces come and go ok (${ms.toFixed(3)} ms a frame for ${c.N} points; ${CLOTH.STEPS} small steps)`);
   }
+}
+
+// ---- fronds in the wind (looks.js frondSway: what the fronds look's shaders do, on WebGL and WebGPU alike): each leaf a springy rod
+// turning about its root, so it keeps its length; bent by the drag across it (a leaf across the wind swings downwind, one pointing
+// downwind streams lower, one into it is lifted and pressed back), more as the square of the wind; long leaves bob slower than short
+// ones, at their own pitch; gusts roll downwind, reaching a tree 8 m further on about 2 s later; with no wind's way there's no lean
+{
+  const { frondSway } = await import('../src/kit/looks.js');
+  const run = (v, o = {}) => { const { len = 3.1, id = 3, wind = .8, dir = [1, 0], root = [0, 0], secs = 30, a = 1 } = o, out = []; for (let t = 0; t < secs; t += 1 / 30) out.push(frondSway(v, a, id, len, t, wind, dir, .08, root, false)); return out; };
+  const mean = (x, e) => x.reduce((s, d) => s + d[e], 0) / x.length;
+  let kept = 0; for (const v of [[0, .4, 3], [3, -.6, .5], [-2, 1, -2]]) for (const d of run(v, { wind: 2 })) kept = Math.max(kept, Math.abs(Math.hypot(v[0] + d[0], v[1] + d[1], v[2] + d[2]) / Math.hypot(...v) - 1));
+  assert.ok(kept < 1e-9, 'a frond turns about its root: it keeps its length (' + kept.toExponential(1) + ')');
+  const across = mean(run([0, .4, 3]), 0), down = mean(run([3, .4, 0]), 1), into = mean(run([-3, .4, 0]), 1), lo = mean(run([0, .4, 3], { wind: .4 }), 0), hi = mean(run([0, .4, 3], { wind: 1.6 }), 0);
+  assert.ok(across > .1 && down < -.01 && into > .01 && hi > 4.5 * lo, `bent by the drag across it: across the wind ${across.toFixed(2)} m downwind, pointing downwind ${down.toFixed(3)} m lower, into it ${into.toFixed(3)} m higher; four times the wind leans it ${(hi / lo).toFixed(1)} times as far`);
+  const bobs = len => { let z = 0, last = 0; for (const d of run([0, 0, len], { len, id: 7 })) { if (last && Math.sign(d[1]) !== Math.sign(last)) z++; last = d[1]; } return z / 60; }, slow = bobs(3.1), quick = bobs(.6);
+  assert.ok(slow > .4 && slow < .9 && quick > 2 * slow, `a long frond bobs slower than a short one: ${slow.toFixed(2)} and ${quick.toFixed(2)} times a second`);
+  const sx = r => run([0, .4, 3], { root: r, secs: 60 }).map(d => d[0]), A = sx([0, 0]), B = sx([8, 0]); let best = -Infinity, lag = 0;
+  for (let l = -120; l <= 120; l++) { let c = 0; for (let i = 150; i < A.length - 150; i++) c += A[i] * B[i + l]; if (c > best) { best = c; lag = l / 30; } }
+  assert.ok(Math.abs(lag - 2) < .3, 'gusts roll downwind: a frond 8 m downwind sways the same ' + lag.toFixed(2) + ' s later');
+  const calm = run([0, .4, 3], { dir: [0, 0] }); let moved = 0; for (const d of calm) moved = Math.max(moved, Math.hypot(...d));
+  assert.ok(Math.abs(mean(calm, 0)) < .02 && moved > .05, 'with no way to the wind it moves (' + moved.toFixed(2) + ' m at most) but leans nowhere');
+  console.log('fronds in the wind: they keep their length, are bent by the drag across them, bob at their own pitch and feel gusts that roll downwind ok');
 }
 
 // ---- smaller meshes (src/kit/slim.js, slim-core.js): points kept in about half the bytes
