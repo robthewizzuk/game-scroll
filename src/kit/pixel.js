@@ -46,6 +46,12 @@ function canvas(w, h) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(Math.max(1, w), Math.max(1, h));
   const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c;
 }
+// Text in a font is snapped to hard pixels by reading its pixels back. On a canvas kept by the graphics chip that read
+// waits for the chip (0.8 ms a new piece of text on the test machine, up to 13 ms), so it is drawn on one kept in memory
+// (0.1 ms): a score or a timer in the 8×8 font changes every second or so.
+const CPU = { willReadFrequently: true };
+let probeG = null;
+const probe = font => { probeG ||= canvas(1, 1).getContext('2d', CPU); probeG.font = font; return probeG; };
 // Adds a 1-pixel outline round the solid pixels of a mask (an ImageData-sized alpha test).
 function outlined(src, color) {
   const w = src.width + 2, h = src.height + 2, c = canvas(w, h), g = c.getContext('2d');
@@ -78,10 +84,9 @@ function loadBig() {
 }
 function bigText(str, color) {
   loadBig();
-  const lines = String(str).split('\n'), probe = canvas(1, 1).getContext('2d');
-  probe.font = `8px ${bigFont}`;
-  const w = Math.ceil(Math.max(...lines.map(l => probe.measureText(l).width))), h = lines.length * 10 - 2;
-  const c = canvas(w, h), g = c.getContext('2d');
+  const lines = String(str).split('\n'), pr = probe(`8px ${bigFont}`);
+  const w = Math.ceil(Math.max(...lines.map(l => pr.measureText(l).width))), h = lines.length * 10 - 2;
+  const c = canvas(w, h), g = c.getContext('2d', CPU);
   g.font = `8px ${bigFont}`; g.textBaseline = 'top'; g.fillStyle = color;
   lines.forEach((l, i) => g.fillText(l, 0, i * 10));
   // snap to hard pixels: every pixel either fully on or off
@@ -100,17 +105,16 @@ const shapes = new Map();              // 'name weight' -> { cap, desc, step }: 
 function shapeOf(f, weight) {
   const key = f.name + ' ' + weight; let m = shapes.get(key);
   if (!m) {
-    const g = canvas(1, 1).getContext('2d'); g.font = `${weight} ${f.pixel}px "${f.name}"`;
+    const g = probe(`${weight} ${f.pixel}px "${f.name}"`);
     const cap = Math.round(g.measureText('H').actualBoundingBoxAscent), desc = Math.max(1, Math.round(g.measureText('gjpqy,').actualBoundingBoxDescent));
     shapes.set(key, m = { cap, desc, step: cap + desc + Math.max(1, Math.round(cap / 5)) });
   }
   return m;
 }
 function libText(f, weight, str, color) {
-  const lines = String(str).split('\n'), probe = canvas(1, 1).getContext('2d'), css = `${weight} ${f.pixel}px "${f.name}"`, m = shapeOf(f, weight);
-  probe.font = css;
-  const w = Math.max(1, Math.ceil(Math.max(...lines.map(l => probe.measureText(l).width)))), h = (lines.length - 1) * m.step + m.cap + m.desc;
-  const c = canvas(w, h), g = c.getContext('2d');
+  const lines = String(str).split('\n'), css = `${weight} ${f.pixel}px "${f.name}"`, m = shapeOf(f, weight), pr = probe(css);
+  const w = Math.max(1, Math.ceil(Math.max(...lines.map(l => pr.measureText(l).width)))), h = (lines.length - 1) * m.step + m.cap + m.desc;
+  const c = canvas(w, h), g = c.getContext('2d', CPU);
   g.font = css; g.textBaseline = 'alphabetic'; g.fillStyle = color;
   lines.forEach((l, i) => g.fillText(l, 0, i * m.step + m.cap));
   const d = g.getImageData(0, 0, c.width, c.height), a = d.data;
@@ -127,6 +131,15 @@ function libFont(font) {
   return ready(p.font.name, p.weight) ? p : null;
 }
 
+// the picture of a piece of text (remembered); its key is left in pictureKey (no array a call)
+let pictureKey = '';
+function picture(str, font, color, outline) {
+  const lib = libFont(font), kind = lib ? font : font === 'small' ? 'small' : 'big';
+  if (kind === 'big') loadBig();
+  const key = pictureKey = kind + '|' + color + '|' + (outline || '') + '|' + (lib ? arrived : bigFont) + '|' + str;
+  return remember(key, () => { const t = lib ? libText(lib.font, lib.weight, str, color) : kind === 'big' ? bigText(str, color) : smallText(str, color); return outline ? outlined(t, outline) : t; });
+}
+
 /**
  * Draws pixel text with its top-left at (x, y). Options: color, size (whole-number scale), font:
  * 'small' (3×5 capitals, default) | 'big' (8×8) | 'silkscreen' | 'silkscreen bold' | 'tiny' (5 high, with
@@ -134,10 +147,7 @@ function libFont(font) {
  * (a colour), shadow (a colour, drawn one pixel down-right). Returns the width drawn. '\n' starts a new line.
  */
 export function text(c, str, x, y, { color = '#ffffff', size = 1, font = 'small', align = 'left', outline = null, shadow = null } = {}) {
-  const lib = libFont(font), kind = lib ? font : font === 'small' ? 'small' : 'big';
-  if (kind === 'big') loadBig();
-  const key = kind + '|' + color + '|' + (outline || '') + '|' + (lib ? arrived : bigFont) + '|' + str;
-  const img = remember(key, () => { const t = lib ? libText(lib.font, lib.weight, str, color) : kind === 'big' ? bigText(str, color) : smallText(str, color); return outline ? outlined(t, outline) : t; });
+  const img = picture(str, font, color, outline), key = pictureKey;
   const s = Math.max(1, Math.round(size)), w = img.width * s, h = img.height * s;
   const px = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x) - (outline ? s : 0), py = Math.round(y) - (outline ? s : 0);
   const smooth = c.imageSmoothingEnabled; c.imageSmoothingEnabled = false;
@@ -149,7 +159,7 @@ export function text(c, str, x, y, { color = '#ffffff', size = 1, font = 'small'
 /** Width and height (in pixels at size 1) of a piece of pixel text. */
 export function measure(str, font = 'small') {
   if (font === 'small') { const lines = String(str).split('\n'); return { w: Math.max(...lines.map(l => l.length)) * 4 - 1, h: lines.length * 6 - 1 }; }
-  const lib = libFont(font), t = lib ? libText(lib.font, lib.weight, str, '#fff') : bigText(str, '#fff'); return { w: t.width, h: t.height };
+  const t = picture(str, font, '#ffffff', null); return { w: t.width, h: t.height };   // (the same picture text() draws in white)
 }
 
 /* ---------- sprites from text ---------- */
