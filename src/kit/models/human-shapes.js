@@ -6,10 +6,10 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
+import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, mouthHalf, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
 import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
+export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine, mouthHalf };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 // how far the point of an elbow (behind the arm) and a kneecap (in front of the leg) stand out of a limb folded right over (metres)

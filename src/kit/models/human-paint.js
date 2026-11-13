@@ -38,7 +38,7 @@ export function browAt(x, hy, B, fem, real = false) {
   const [b0, b1, b2] = B, x0 = b0[0], x1 = b1[0], x2 = b2[0]; if (x < x0 - .004 || x > x2 + .003) return 0;
   // the middle line: the round through the three points
   const yc = b0[1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + b1[1] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2)) + b2[1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1)), dy = hy - yc;
-  const t = (x - x0) / (x2 - x0), full = (fem ? .0019 : .0027) * (real ? .85 : 1), half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t);
+  const t = (x - x0) / (x2 - x0), full = real ? (fem ? .0025 : .0036) : fem ? .0019 : .0027, half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t);
   if (abs(dy) > half * 1.6 + .0006) return 0;
   // the hairs: lines that lean out along the brow, more upright by the nose; each a little longer or shorter, darker or lighter than the next
   const lean = 1.5 - 1.25 * ss(0, .8, t), q = (x - dy / lean) * 3100, hair = lumps(q, 3.7, fem ? 9.1 : 2.3), fine = lumps(q * 2.3 + 11, 1.9, 5.5);
@@ -139,7 +139,7 @@ export function paintFace(o) {
     for (let i = 0; i < w; i++) {
       const x = (i + .5) / w * x1; let lip = 0; r = g = b = 1;
       // ---- brows
-      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .55 : .6) * (.8 + .2 * lumps(x * 5200, hy * 900, 1.3)) : fem ? .95 : .98)); }
+      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .72 : .8) * (.75 + .25 * lumps(x * 5200, hy * 900, 1.3)) : fem ? .95 : .98)); }
       // ---- the lids: the lashes' line along the upper one (thicker towards its outer end, its edge the lashes' own ends), a fainter one under
       // the eye, a soft shade over the upper lid; inside the opening the upper lid's edge is dark, the lower one's pale, the corner by the nose pink
       if (abs(hy - EYE[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {
@@ -160,7 +160,7 @@ export function paintFace(o) {
       if (hy < -.045 && hy > -.092 && x < .034) {
         const m = mouthAt(x, hy, f, m3), line = m[2]; lip = m[1];
         if (lip > 0) {
-          const v = hy - lipLine(x, f), k = ss(0, .55, lip) * (R ? (fem ? .74 : .5) : fem ? .92 : .86), sh = v > 0 ? .9 : 1 + .1 * bump(v, -.0042 * f.lips, .0022) * bump(x, 0, .012);
+          const v = hy - lipLine(x, f), k = ss(0, .55, lip) * (R ? (fem ? .92 : .88) : fem ? .92 : .86), sh = v > 0 ? .9 : 1 + .1 * bump(v, -.0042 * f.lips, .0022) * bump(x, 0, .012);
           put([LP[0] * sh, LP[1] * sh, LP[2] * sh], k);
         }
         if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? .8 : 1)));
@@ -172,6 +172,19 @@ export function paintFace(o) {
         const k = ss(btop, btop - .014, hy) * (1 - lip) * mn(1, stub * 1.4) * mx(0, lumps(x * 3300, hy * 3300, 3.3)) * .55; if (k > 0) { r *= 1 - k; g *= 1 - k * .92; b *= 1 - k * .8; }
       }
       if (R) {
+        // ---- the colour of a real skin, part by part, as the head scan a real face is fitted to has it (human-fit.js; measured as the red
+        // against the green of each part beside the forehead's, its light left out): the lids and between the brows reddest (thin skin), the
+        // nose, under the eyes, the cheeks, round the mouth and the chin a little, the ears warmer; less of it the darker the skin
+        let fl = 0;
+        if (hy > -.004 && hy < .022 && x > ex0 - .004 && x < ex0 + exw + .006) { const q = rim(x, hy), a = (x - ex0) / exw; if (q[1]) fl += 1.5 * ss(-.0002, .0009, q[0]) * ss(.011, .0045, q[0]) * ss(-.12, .12, a) * ss(1.2, .95, a); }
+        fl += 1.5 * bump(x, .0165, .0035) * bump(hy, -.0005, .004);   // (the inner corners)
+        fl += 1.25 * ss(.022, .011, x) * ss(.006, -.006, hy) * ss(-.051, -.043, hy) + 1.25 * ss(.014, .006, x) * bump(hy, .013, .006);   // (the nose; between the brows)
+        fl += .6 * bump(hy, -.0155, .006) * bump(x, .033, .012) + .8 * ss(.024, .034, x) * ss(.07, .058, x) * ss(-.064, -.048, hy) * ss(-.002, -.014, hy);   // (under the eyes; the cheeks)
+        fl += .7 * ss(.03, .02, x) * ss(-.062, -.046, hy) * ss(-.04, -.046, hy) * (1 - lip) + .5 * ss(.022, .012, x) * ss(-.112, -.1, hy) * ss(-.08, -.09, hy) + .25 * ss(.05, .06, x) * ss(-.01, .005, hy) * ss(.035, .02, hy);   // (round the mouth, the chin, the temples)
+        const ear = ss(.062, .068, x) * ss(-.05, -.04, hy) * ss(.025, .015, hy); fl += .75 * ear;
+        fl = mn(fl, 2.6) * (1 - .55 * dark); if (fl > 0) { r *= 1 + .06 * fl; g *= 1 - .07 * fl; b *= 1 - .05 * fl - .06 * ear * (1 - dark); }
+        // (and on a grown man the shadow of a shaven beard over the jaw, the chin and the upper lip: a little greyer and bluer, as on the scan)
+        const sh = fem ? 0 : ss(15, 24, f.age ?? 30) * ss(btop, btop - .012, hy) * (1 - lip) * .07 * (1 - .7 * dark); if (sh > 0) { r *= 1 - sh * 1.3; g *= 1 - sh; b *= 1 - sh * .4; }
         const ln = linesAt(x, hy, f, rim); if (ln > 0) { const k = .1 * ln; r *= 1 - k * .9; g *= 1 - k; b *= 1 - k * .95; }
         const bl = lumps(x * 55 + ph, hy * 55, 1.1) * .022, bl2 = lumps(x * 140 + 4, hy * 140 + ph, 2.3) * .012; r *= 1 + bl + bl2; g *= 1 + bl * .6 + bl2; b *= 1 + bl * .3 + bl2 * .8;
         const ue = bump(hy, -.0135, .0055) * bump(x, .034, .011) * (.05 + .05 * ss(30, 70, f.age ?? 30)); if (ue > 0) { r *= 1 - ue * .8; g *= 1 - ue; b *= 1 - ue * .7; }
