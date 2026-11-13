@@ -175,10 +175,10 @@ export class Floater {
   /** Call before world.step(dt). under: 0..1 of the points under water. */
   update(dt) {
     const b = this.body.body; if (!b) return this;
-    const m = b.mass(), p = b.translation(), q = b.rotation(), v = b.linvel(), g = this.pull * this.float * 2 / this.points.length;
+    const m = b.mass(), p = b.translation(), q = b.rotation(), v = b.linvel(), g = this.pull * this.float * 2 / this.points.length, at = this.body.world?.at || V(0, 0, 0);
     let n = 0;
     for (const lp of this.points) {
-      const o = rot(lp, q), wp = V(p.x + o.x, p.y + o.y, p.z + o.z), depth = this.water.height(wp.x, wp.z) - wp.y;
+      const o = rot(lp, q), wp = V(p.x + o.x, p.y + o.y, p.z + o.z), depth = this.water.height(wp.x + at.x, wp.z + at.z) - wp.y;   // (wp: where Rapier has it, about the world's own centre in it: physics3d.js centre())
       if (depth <= 0) continue; n++;
       const k = Math.min(1, depth / Math.max(.1, this.h));
       b.applyImpulseAtPoint({ x: 0, y: g * k * m * dt, z: 0 }, wp, true);

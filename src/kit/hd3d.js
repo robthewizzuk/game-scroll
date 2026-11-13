@@ -68,6 +68,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, screenHz, qualityVerdict } from './speed.js';
@@ -275,7 +276,14 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '' },
+  /**
+   * The world's centre moved along with the camera (origin.js), so far-off places don't shake: how far in metres
+   * the camera goes from it before it moves (0: never). originAt: { x, z } a centre given outright (tests, the frame lab).
+   * info.origin: [x, z] where the last frame's centre was, or null at the world's own.
+   */
+  get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
+  get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -793,7 +801,7 @@ function fogFrame(v) {
     m.shadow = L.castShadow && L.shadow?.map?.depthTexture || null; m.shadowM = L.shadow.matrix;
   } else { m.sunCol.setRGB(0, 0, 0); m.shadow = null; }
   // the nearest lit lamps (point and spot lights), up to 8
-  FOG_L.length = 0; const cp = v.cam.position;
+  FOG_L.length = 0; const cp = CW.setFromMatrixPosition(v.cam.matrixWorld);   // (where the frame's matrices put it, as the lamps are: origin.js)
   if (f.lamps !== false) v.scene.traverseVisible(o => { if ((o.isPointLight || o.isSpotLight) && o.intensity > 0) FOG_L.push(o); });
   if (FOG_L.length > 8) FOG_L.sort((a, b) => a.getWorldPosition(GV).distanceToSquared(cp) - b.getWorldPosition(GW).distanceToSquared(cp));
   const n = Math.min(8, FOG_L.length);
@@ -819,7 +827,7 @@ function traceLights(v, list) {
   }
   if (sun) { sun.getWorldPosition(m.sunDir); sun.target.getWorldPosition(GV); m.sunDir.sub(GV).normalize(); m.sunCol.copy(sun.color).multiplyScalar(sun.intensity); } else m.sunCol.setRGB(0, 0, 0);
   const f = v.scene.fog; if (f?.isFogExp2) { m.fogCol.copy(f.color); m.fogK = f.density; } else m.fogK = 0;
-  const cp = v.cam.position;
+  const cp = CW.setFromMatrixPosition(v.cam.matrixWorld);
   if (TR_L.length > 8) TR_L.sort((a, b) => a.getWorldPosition(GV).distanceToSquared(cp) - b.getWorldPosition(GW).distanceToSquared(cp));
   const n = Math.min(8, TR_L.length);
   while (m.lamps.length < n) m.lamps.push({ p: new Vector4(), c: new Vector4(), d: new Vector4(), k: new Vector4() });
@@ -1194,9 +1202,9 @@ function tileNoise(size, base, oct, seed) {
 }
 /** The kit's shared tiling noise texture (r, g, b, a: four kinds of smooth noise, 0..1). */
 // v.room(): a direction from the probe, moved to where it meets the room's walls from this point (box-projected)
-const ROOM_GLSL = `varying vec3 gsRW; uniform vec3 gsRoomAt, gsRoomSize;
-vec3 gsBox(vec3 d) { vec3 n = normalize(d), pos = step(0., n), safe = mix(min(n, vec3(-1e-5)), max(n, vec3(1e-5)), pos), e = gsRoomSize * .5;
-  vec3 t = (mix(-e, e, pos) + gsRoomAt - gsRW) / safe; return gsRW + n * min(min(t.x, t.y), t.z) - gsRoomAt; }
+const ROOM_GLSL = ORIGIN_GLSL + `varying vec3 gsRW; uniform vec3 gsRoomAt, gsRoomSize;
+vec3 gsBox(vec3 d) { vec3 n = normalize(d), pos = step(0., n), safe = mix(min(n, vec3(-1e-5)), max(n, vec3(1e-5)), pos), e = gsRoomSize * .5, at = gsRoomAt - gsOrigin;
+  vec3 t = (mix(-e, e, pos) + at - gsRW) / safe; return gsRW + n * min(min(t.x, t.y), t.z) - at; }
 `;
 // a box from a Box3, { min, max } or an Object3D
 function boxOf(b) {
@@ -1214,11 +1222,11 @@ function boxOf(b) {
 export function pulse(m, { at, radius, strength, color = [.15, .95, 1], width = 1.4, fill = .22 } = {}) {
   const col = Array.isArray(color) ? new Vector3(...color) : new Vector3(color.r, color.g, color.b);
   const spec = {
-    uniforms: { gsPulseAt: at || { value: new Vector3() }, gsPulseR: radius || { value: 0 }, gsPulseA: strength || { value: 0 }, gsPulseCol: { value: col }, gsPulseW: { value: width }, gsPulseFill: { value: fill } },
+    uniforms: { gsPulseAt: at || { value: new Vector3() }, gsPulseR: radius || { value: 0 }, gsPulseA: strength || { value: 0 }, gsPulseCol: { value: col }, gsPulseW: { value: width }, gsPulseFill: { value: fill }, gsOrigin: ORIGIN_U },
     vertexHead: 'varying vec3 gsPW;\n',
     vertex: [['#include <project_vertex>', 'after', '\n  gsPW = (modelMatrix * vec4(transformed, 1.)).xyz;\n#ifdef USE_INSTANCING\n  gsPW = (modelMatrix * instanceMatrix * vec4(transformed, 1.)).xyz;\n#endif\n']],
-    fragmentHead: 'varying vec3 gsPW; uniform vec3 gsPulseAt, gsPulseCol; uniform float gsPulseR, gsPulseA, gsPulseW, gsPulseFill;\n',
-    fragment: [['#include <emissivemap_fragment>', 'after', '\n  float gsPd = distance(gsPW, gsPulseAt); float gsPb = exp(-pow((gsPd - gsPulseR) / gsPulseW, 2.)) + gsPulseFill * step(gsPd, gsPulseR) * (1. - gsPd / max(gsPulseR, .01));\n  totalEmissiveRadiance += gsPulseCol * gsPb * gsPulseA;\n']],
+    fragmentHead: ORIGIN_GLSL + 'varying vec3 gsPW; uniform vec3 gsPulseAt, gsPulseCol; uniform float gsPulseR, gsPulseA, gsPulseW, gsPulseFill;\n',
+    fragment: [['#include <emissivemap_fragment>', 'after', '\n  float gsPd = distance(gsPW, gsPulseAt - gsOrigin); float gsPb = exp(-pow((gsPd - gsPulseR) / gsPulseW, 2.)) + gsPulseFill * step(gsPd, gsPulseR) * (1. - gsPd / max(gsPulseR, .01));\n  totalEmissiveRadiance += gsPulseCol * gsPb * gsPulseA;\n']],
   };
   lookPatch(m, 'pulse', spec);
   return m;
@@ -1249,12 +1257,13 @@ const AIR = {
   // surface's normal the cover is read; the cover picture (cover.js: the height of the highest thing over each spot) and where it lies
   // (its middle x, z, 1 / its width, how far from the middle it reaches: 0 with no cover)
   gsWx: { value: new Vector4() }, gsCover: { value: null }, gsCoverAt: { value: new Vector4() },
+  gsOrigin: ORIGIN_U,   // where the drawing's centre is in the world (origin.js): the clouds, mist patches and wet ground are where they are in the world
 };
-const AIR_GLSL = `
+const AIR_GLSL = ORIGIN_GLSL + `
 uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
 float gsInside(vec4 c){ vec3 p = c.xyz / c.w; vec2 e = min(p.xy, 1. - p.xy); return p.z > 0. && p.z < 1. ? smoothstep(0., gsCasc.z, min(e.x, e.y)) : 0.; }
 float gsShadeAt(vec3 wp){
-  vec2 c = wp.xz + gsSun.xz / max(gsSun.y, .15) * (gsCloud.z - wp.y);
+  vec2 c = wp.xz + gsOrigin.xz + gsSun.xz / max(gsSun.y, .15) * (gsCloud.z - wp.y);
   float n = texture2D(gsNoise, c / gsCloud.w + gsDrift).r;
   return 1. - gsCloud.y * smoothstep(1. - gsCloud.x, 1.12 - gsCloud.x * .6, n);
 }
@@ -1262,7 +1271,7 @@ vec3 gsAir(vec3 col, vec3 wp){
   vec3 rd = wp - cameraPosition; float t = length(rd); rd /= max(t, 1e-3);
   float haze = 1. - exp(-t * gsHaze);
   float k = rd.y * gsMist.y, fy = gsMist.x * exp(-gsMist.y * (cameraPosition.y - gsMist.z)) * (abs(k) < 1e-4 ? t : (1. - exp(-t * k)) / k);
-  float n = texture2D(gsNoise, wp.xz * .006 + gsDrift * 1.7).a;
+  float n = texture2D(gsNoise, (wp.xz + gsOrigin.xz) * .006 + gsDrift * 1.7).a;
   float mist = 1. - exp(-max(fy, 0.) * mix(1., .35 + n * 1.3, gsMist.w));
   float s = max(dot(rd, gsSun), 0.);
   return mix(col, mix(gsAirC, gsAirSun, pow(s, 6.) * .9), 1. - (1. - haze) * (1. - mist));
@@ -1276,13 +1285,14 @@ vec3 gsAir(vec3 col, vec3 wp){
 const AIR_WET = `#ifdef USE_FOG
   if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z > 0.) {
     mat3 gsVi = transpose(mat3(viewMatrix)); vec3 gn = gsVi * normal, gg = gsVi * nonPerturbedNormal; float gsOpen = 1.;
-    if (gsCoverAt.w > 0.) { vec2 gp = gsW.xz + gg.xz * gsWx.w, gd = abs(gp - gsCoverAt.xy);
+    vec2 gsT = gsW.xz + gsOrigin.xz;
+    if (gsCoverAt.w > 0.) { vec2 gp = gsT + gg.xz * gsWx.w, gd = abs(gp - gsCoverAt.xy);
       if (max(gd.x, gd.y) < gsCoverAt.w) gsOpen = smoothstep(-.7, -.25, gsW.y - texture2D(gsCover, gp * gsCoverAt.z).r); }
     float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y));
     roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb *= 1. - w * .3;
 #ifndef GS_NO_SETTLE
     if (gsWx.y + gsWx.z > 0.) {
-      vec4 gsN1 = texture2D(gsNoise, gsW.xz * .05); float gsN2 = texture2D(gsNoise, gsW.xz * .021).r * .4;
+      vec4 gsN1 = texture2D(gsNoise, gsT * .05); float gsN2 = texture2D(gsNoise, gsT * .021).r * .4;
       float pl = mix(.86, .55, gsWx.z), p = step(1e-6, gsWx.z) * smoothstep(pl, pl + .035, gsN1.b * .6 + gsN2) * smoothstep(.97, .995, gg.y) * gsOpen;
       float sn = gsN1.g * .6 + gsN2, lim = mix(.97, .55, gsWx.y);
       float s = step(1e-6, gsWx.y) * smoothstep(lim, lim + .14, gg.y + (sn - .5) * .22) * smoothstep(0., .3, gsWx.y * 1.2 - sn * .6) * gsOpen;
@@ -1689,7 +1699,7 @@ export class HDView {
     const b = boxOf(box), dims = b.getSize(new Vector3()), centre = b.getCenter(new Vector3());
     const spec = {
       size, far: far ?? Math.max(10, dims.length() * 2),
-      uniforms: { gsRoomAt: { value: centre }, gsRoomSize: { value: dims } },
+      uniforms: { gsRoomAt: { value: centre }, gsRoomSize: { value: dims }, gsOrigin: ORIGIN_U },   // (gsRW is where the drawing is, near its centre: origin.js)
       vertexHead: 'varying vec3 gsRW;\n',
       vertex: [['#include <project_vertex>', 'after', '\n  gsRW = (modelMatrix * vec4(transformed, 1.)).xyz;\n#ifdef USE_INSTANCING\n  gsRW = (modelMatrix * instanceMatrix * vec4(transformed, 1.)).xyz;\n#endif\n']],
       fragmentHead: ROOM_GLSL,
@@ -1868,6 +1878,11 @@ export class HDView {
     const k = G ? 'gpu' : 'gl', gi = this.gi;
     if (!(gi && (gi.dirty[k] || !gi.grids[k]?.parent)) && !this.rooms?.some(rm => rm.dirty[k])) return;   // nothing to bake this frame
     this.showHidden();   // (the bakes look from elsewhere, so everything is drawn)
+    // (three's bakes put their cameras where the probes and rooms are in the world's own numbers: drawn with the scene in those too)
+    const near = ORIGIN.x || ORIGIN.z; if (near) originOff(this);
+    try { this.bakeExtras1(G, r); } finally { if (near) originOn(this); }
+  }
+  bakeExtras1(G, r) {
     // light, not a picture (no tone mapping), with the sun's shadows in it as the frame will have them
     const tm = r.toneMapping, sh = r.shadowMap.enabled; r.toneMapping = 0; r.shadowMap.enabled = tier().shadow > 0;
     this.scene.updateMatrixWorld();
@@ -2343,7 +2358,7 @@ export class HDView {
     // with frames made in between, each one shown is a fraction of a real frame's move apart: blur that much
     if (mbm && how) mbm.mb.x /= steps;
     if (this.glare > 0 || (o.shaftsOn && this.shafts > 0)) {
-      const sd = this.sunDir(GV), cam = this.cam; GP.copy(cam.position).addScaledVector(sd, 1000).project(cam);
+      const sd = this.sunDir(GV), cam = this.cam; GP.setFromMatrixPosition(cam.matrixWorld).addScaledVector(sd, 1000).project(cam);
       cam.getWorldDirection(GW);
       if (GW.dot(sd) > 0 && Math.abs(GP.x) < 1.6 && Math.abs(GP.y) < 1.6) {
         const seen = Math.min(1, (1.6 - Math.max(Math.abs(GP.x), Math.abs(GP.y))) * 2);
@@ -2505,6 +2520,12 @@ export class HDView {
    * v.underCss is a CSS background for it. With HD.direct off (tests), the frame is copied into c.
    */
   render(c, w = this.W, h = this.H, baking = false) {
+    // (far from the world's centre: drawn with every place worked out from near the camera, origin.js)
+    const t0 = performance.now(), near = !baking && speed.offscreen ? false : originOn(this), t1 = performance.now();
+    try { this.draw3d(c, w, h, baking); } finally { const t2 = performance.now(); if (near) originOff(this); if (!baking) HD.info.originMs = t1 - t0 + performance.now() - t2; }
+  }
+  /** render()'s own work. */
+  draw3d(c, w, h, baking) {
     this.fit(w, h);
     const G = gpuFor(this), r = G ? G.r : renderer();
     // WebGPU's depth runs 0..1 and WebGL's -1..1, so the camera's projection differs. three switches it
@@ -2616,7 +2637,7 @@ export class HDView {
       if (shafts) P.shafts ||= new ShaftsPass();
       if (P.shafts) P.shafts.amount = 0;
       if (this.glare > 0 || shafts) {
-        const sd = this.sunDir(GV), cam = this.cam; GP.copy(cam.position).addScaledVector(sd, 1000).project(cam);
+        const sd = this.sunDir(GV), cam = this.cam; GP.setFromMatrixPosition(cam.matrixWorld).addScaledVector(sd, 1000).project(cam);
         cam.getWorldDirection(GW);
         if (GW.dot(sd) > 0 && Math.abs(GP.x) < 1.6 && Math.abs(GP.y) < 1.6) {
           const seen = Math.min(1, (1.6 - Math.max(Math.abs(GP.x), Math.abs(GP.y))) * 2);
@@ -2803,6 +2824,64 @@ function forPass(r, view, go) {
 // 4 x 4 stand-in, a canvas nothing has sized yet, a card's small picture. So before a view's first build or frame the grid is given
 // room for the most pixels a frame of this tier can have. (The kit's shadow maps keep away from it: KitLighting.)
 const gridAsked = new WeakMap();
+// The world's centre moved along with the camera (origin.js). While a view draws, the scene's matrixWorld is a
+// step back by the view's centre, so every world matrix on the chip is worked out from near the camera (in
+// JavaScript's 64-bit numbers, before it goes to the chip as 32-bit ones), and put back afterwards: nothing in the
+// game or the kits sees anything but the world's own numbers. Things whose world matrix nothing works out
+// (matrixWorldAutoUpdate off), and a light's target that isn't in the scene (three only reads its matrix, which
+// is whatever the last updateMatrixWorld() made it), are stepped back and forward by hand; such a target is held
+// under the scene for the frame, so anything that works its matrix out again then puts it near the centre too.
+const OP = new Vector3();
+function originOn(v) {
+  const at = v.origin ||= new Vector3(), cam = v.cam;
+  const p = !cam.parent || cam.parent === v.scene ? cam.position : cam.getWorldPosition(OP);
+  if (originFollow(at, p, ORIGIN_SET)) {
+    // a frame drawn about a new centre: the pictures kept from before (the upscaler's, motion blur's) were drawn about the
+    // old one, so they start again; shadow maps are worked out again by themselves (their lights' places changed)
+    v._cut = true; v.originMoves = (v.originMoves || 0) + 1;
+  }
+  ORIGIN.copy(at); HD.info.origin = at.x || at.z ? [at.x, at.z] : null;
+  if (!at.x && !at.z) return false;
+  const S = v.scene, orph = v._orphans ||= [], sky = v._skyLights ||= [], grids = v._grids ||= [];
+  orph.length = sky.length = grids.length = 0;
+  if (!cam.parent) { S.add(cam); v._camIn = true; }   // (a camera taken out of the scene, by scene.clear(): drawn about the same centre as the rest)
+  S.traverse(o => {
+    if (o === S) return;
+    if (o.isHemisphereLight) { sky.push(o); if (o.matrixWorldAutoUpdate) skyShift(o, at.x, at.z); return; }
+    // bounce light (v.bounce: three's LightProbeGrid): its box is kept from where it is, not from its matrices
+    if (o.isLightProbeGrid && o.boundingBox) { grids.push(o); const b = o.boundingBox; b.min.x -= at.x; b.max.x -= at.x; b.min.z -= at.z; b.max.z -= at.z; }
+    if (!o.matrixWorldAutoUpdate) { const m = o.matrixWorld.elements; m[12] -= at.x; m[14] -= at.z; }
+    const t = o.target; if (t?.isObject3D && !t.parent && o.isLight) orph.push(t);
+  });
+  v._worldAutoWas = S.matrixWorldAutoUpdate;
+  S.updateMatrix(); S.matrixWorld.makeTranslation(-at.x, 0, -at.z).multiply(S.matrix);
+  S.matrixWorldAutoUpdate = false; S.updateMatrixWorld(true);
+  for (const t of orph) { t.parent = S; const m = t.matrixWorld.elements; m[12] -= at.x; m[14] -= at.z; }
+  return true;
+}
+// A sky light (HemisphereLight) is a direction, not a place: three takes which way is up for it from where it is, as seen
+// from the centre, so it is drawn where it is in the world's own numbers (moved with the rest, a sky light 1 m up would be
+// 768 m off to one side and nearly level, and the ground under it went dark). It is moved the other way by as much while
+// the view draws (its parents are taken to be neither turned nor scaled: a sky light is the scene's own, or in a group)
+function skyShift(o, x, z) {
+  if (o.matrixAutoUpdate) { o.position.x += x; o.position.z += z; o.updateMatrix(); } else { const e = o.matrix.elements; e[12] += x; e[14] += z; }
+}
+function originOff(v) {
+  const at = v.origin, S = v.scene, x = at.x, z = at.z;
+  S.matrixWorldAutoUpdate = v._worldAutoWas; S.matrixWorld.copy(S.matrix);
+  S.traverse(o => {
+    if (o === S) return;
+    const m = o.matrixWorld.elements; m[12] += x; m[14] += z;
+    if (o.isCamera) o.matrixWorldInverse.copy(o.matrixWorld).invert();
+    else if (o.isSkinnedMesh && o.bindMode === 'attached') o.bindMatrixInverse.copy(o.matrixWorld).invert();
+  });
+  for (const t of v._orphans) { if (t.parent === S) { t.parent = null; const m = t.matrixWorld.elements; m[12] += x; m[14] += z; } }
+  for (const o of v._skyLights) { const m = o.matrixWorld.elements; m[12] -= x; m[14] -= z; if (o.matrixWorldAutoUpdate) skyShift(o, -x, -z); }   // (it was where it is all along)
+  for (const o of v._grids) { const b = o.boundingBox; b.min.x += x; b.max.x += x; b.min.z += z; b.max.z += z; }
+  if (v._camIn) { v._camIn = false; if (v.cam.parent === S) S.remove(v.cam); }
+  v._orphans.length = v._skyLights.length = v._grids.length = 0; ORIGIN.set(0, 0, 0);
+}
+
 function gridRoom(r, view) {
   const n = r.gsClustered && view?.scene?.isScene ? r.lighting.getNode(view.scene) : null;
   if (!n?.isClusteredLightsNode) return;
@@ -2824,7 +2903,7 @@ function hideSets(root) {
     o.visible = false;
   });
 }
-const NEAR_S = new Sphere(), NEAR_B = new Box3(), nearBusy = new WeakSet();
+const NEAR_S = new Sphere(), NEAR_B = new Box3(), nearBusy = new WeakSet(), CW = new Vector3();   // (CW: the camera where the frame's matrices put it)
 // within d of the camera: the mesh's sphere first (cheap), then its box (a wide floor's sphere reaches far above it)
 function closeTo(o, at, d) {
   const g = o.geometry;
@@ -2866,7 +2945,7 @@ function swapOne(o, scene, G, cam, seen, air, view) {
       o.userData.gsGlMat = gl;
       const near = tw.m.userData.gsNear;
       let use = tw.m;
-      if (near && cam && !o.isInstancedMesh && HD.closeUp !== false && closeTo(o, cam.position, tw.m.userData.gsNearDist)) {
+      if (near && cam && !o.isInstancedMesh && HD.closeUp !== false && closeTo(o, CW.setFromMatrixPosition(cam.matrixWorld), tw.m.userData.gsNearDist)) {
         const k = shaderKeyAs(o, near);   // (a shader for each kind of mesh the material is on)
         if (tw.built.has(k)) { use = near; seen?.add(k); }
         else if (!tw.building.has(k) && !nearBusy.has(G.r)) {
@@ -3115,7 +3194,7 @@ function autoLod(v, ph) {
     const lv = E.lv; if (!lv || !g.boundingSphere) return;
     const bs = g.boundingSphere, e = o.matrixWorld.elements, sc = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
     LOD_V.copy(bs.center).applyMatrix4(o.matrixWorld);
-    const d = Math.max(.01, LOD_V.distanceTo(cam.position) - bs.radius * sc), px = k * sc / d;
+    const d = Math.max(.01, LOD_V.distanceTo(CW.setFromMatrixPosition(cam.matrixWorld)) - bs.radius * sc), px = k * sc / d;
     let pick = null;
     for (let i = lv.length - 1; i > 0; i--) if (lv[i].err * px < LOD_PX) { pick = lv[i].g; break; }
     if (!pick) return;
@@ -3181,19 +3260,21 @@ function batchKey(o) {
   const g = o.geometry, e = o.matrixWorld.elements, cell = Math.floor(e[12] / BATCH_CELL) + ',' + Math.floor(e[14] / BATCH_CELL);   // (by area too, so off-screen groups are still skipped whole)
   return o.material.id + '|' + Object.keys(g.attributes).sort().map(k => k + g.attributes[k].itemSize).join(',') + (g.index ? '+i' : '') + '|' + (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0) + '|' + cell;
 }
-function sameMatrix(a, b) { for (let i = 0; i < 16; i++) if (a[i] !== b[i]) return false; return true; }
+// (kept in the scene's own numbers, so the drawing's centre moving along, origin.js, is not a piece moving: se is the scene's world matrix now)
+function sameMatrix(a, b, se) { for (let i = 0; i < 16; i++) { const t = i === 12 ? se[12] : i === 13 ? se[13] : i === 14 ? se[14] : 0; if (Math.abs(a[i] - t - b[i]) > 1e-7) return false; } return true; }
+function ownMatrix(out, el, se) { out.set(el); out[12] -= se[12]; out[13] -= se[13]; out[14] -= se[14]; return out; }
 function shownInScene(o, scene) { for (let x = o; x; x = x.parent) { if (x === scene) return true; if (!x.visible) return false; } return false; }
 function autoBatch(v, now) {
-  const B = v.batches ||= { list: [] };
+  const B = v.batches ||= { list: [] }, se = v.scene.matrixWorld.elements;
   if (HD.batch === false) { if (B.list.length) unbatchAll(v); return; }
   // every frame: a group with a piece the game changed goes back to drawing piece by piece
   for (let i = B.list.length - 1; i >= 0; i--) {
     const b = B.list[i];
     for (const [o, e] of b.items) {
       o.updateWorldMatrix(true, false);   // (moved in this frame's update: split before the frame is drawn)
-      if (o.material === b.mesh.material && o.geometry === e.g && sameMatrix(o.matrixWorld.elements, e.m) && shownInScene(o, v.scene)) continue;
+      if (o.material === b.mesh.material && o.geometry === e.g && sameMatrix(o.matrixWorld.elements, e.m, se) && shownInScene(o, v.scene)) continue;
       const sn = BATCH_SNAP.get(o); if (sn) { sn.left = (sn.left || 0) + 1; sn.n = sn.left > 1 ? -1e9 : -20; }   // (moves now and then: ~10 s before it tries again; twice: a mover, left be)
-      unbatch(B, b); break;
+      unbatch(B, b, se); break;
     }
   }
   // now and then: what has kept still for a while is merged (one group a time, to spread the work)
@@ -3202,8 +3283,8 @@ function autoBatch(v, now) {
   v.scene.traverseVisible(o => {
     if (!batchable(o)) return;
     const el = o.matrixWorld.elements; let s = BATCH_SNAP.get(o);
-    if (!s) { BATCH_SNAP.set(o, { m: Float64Array.from(el), n: 0 }); return; }
-    if (!sameMatrix(el, s.m)) { s.m.set(el); s.n = Math.min(s.n, 0); return; }
+    if (!s) { BATCH_SNAP.set(o, { m: ownMatrix(new Float64Array(16), el, se), n: 0 }); return; }
+    if (!sameMatrix(el, s.m, se)) { ownMatrix(s.m, el, se); s.n = Math.min(s.n, 0); return; }
     if (++s.n < BATCH_STILL) return;
     const k = batchKey(o); let a = groups.get(k); if (!a) groups.set(k, a = []); a.push(o);
   });
@@ -3213,24 +3294,26 @@ function makeBatch(v, B, list) {
   const parts = []; let verts = 0;
   for (const o of list) { const n = o.geometry.attributes.position.count; if (verts + n > BATCH_WORK) break; verts += n; parts.push(o); }   // (a little at a time: no hitch while it merges)
   if (parts.length < BATCH_MIN) return;
-  const geos = parts.map(o => { const g = o.geometry.clone(); g.applyMatrix4(o.matrixWorld); g.clearGroups(); g.morphAttributes = {}; return g; });
+  // (merged about the first piece, in the scene's own numbers: the frame's world matrices are a step back by the drawing's centre, origin.js)
+  const se = v.scene.matrixWorld.elements, e0 = parts[0].matrixWorld.elements, cx = e0[12] - se[12], cy = e0[13] - se[13], cz = e0[14] - se[14];
+  const geos = parts.map(o => { const g = o.geometry.clone(); g.applyMatrix4(o.matrixWorld); g.translate(-e0[12], -e0[13], -e0[14]); g.clearGroups(); g.morphAttributes = {}; return g; });
   let g; try { g = mergeGeometries(geos, false); } catch (e) { g = null; } for (const x of geos) x.dispose();
   if (!g) { for (const o of parts) BATCH_SNAP.get(o).n = -1e9; return; }   // (pieces that won't merge: left be)
   g.computeBoundingSphere(); g.computeBoundingBox();
   const o0 = parts[0], mesh = new Mesh(g, o0.material);
-  mesh.castShadow = o0.castShadow; mesh.receiveShadow = o0.receiveShadow; mesh.matrixAutoUpdate = false; mesh.raycast = NO_RAY;
+  mesh.castShadow = o0.castShadow; mesh.receiveShadow = o0.receiveShadow; mesh.position.set(cx, cy, cz); mesh.updateMatrix(); mesh.matrixAutoUpdate = false; mesh.raycast = NO_RAY;
   mesh.name = 'gs-batch'; mesh.userData.noBatch = mesh.userData.noLod = mesh.userData.noHold = true;
   const b = { mesh, items: new Map() };
-  for (const o of parts) { b.items.set(o, { g: o.geometry, m: Float64Array.from(o.matrixWorld.elements), mask: o.layers.mask }); o.layers.mask = BATCH_BIT; }   // off the camera's (and the shadow passes') layers, still in the scene
+  for (const o of parts) { b.items.set(o, { g: o.geometry, m: ownMatrix(new Float64Array(16), o.matrixWorld.elements, se), mask: o.layers.mask }); o.layers.mask = BATCH_BIT; }   // off the camera's (and the shadow passes') layers, still in the scene
   v.scene.add(mesh); B.list.push(b);
   HD.info.batched = (HD.info.batched || 0) + parts.length; HD.info.batches = (HD.info.batches || 0) + 1;
 }
-function unbatch(B, b) {
-  for (const [o, e] of b.items) { o.layers.mask = (o.layers.mask & ~BATCH_BIT) | e.mask; const sn = BATCH_SNAP.get(o); if (sn) { sn.m.set(o.matrixWorld.elements); sn.n = Math.min(sn.n, 0); } }
+function unbatch(B, b, se) {
+  for (const [o, e] of b.items) { o.layers.mask = (o.layers.mask & ~BATCH_BIT) | e.mask; const sn = BATCH_SNAP.get(o); if (sn) { ownMatrix(sn.m, o.matrixWorld.elements, se); sn.n = Math.min(sn.n, 0); } }
   HD.info.batched = Math.max(0, (HD.info.batched || 0) - b.items.size);
   b.mesh.removeFromParent(); b.mesh.geometry.dispose(); B.list.splice(B.list.indexOf(b), 1);
 }
-function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B.list[0]); }
+function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B.list[0], v.scene.matrixWorld.elements); }
 // Cluster detail (HD.detail, on by default; detail.js): a Nanite-style level of detail for the game's big
 // still meshes (HD.detailMin triangles or more: a hillside, a cliff, a cathedral made in code). Where
 // automatic LOD above swaps a whole mesh for a simpler copy, here the mesh is cut into clusters of a few
@@ -3353,7 +3436,10 @@ function autoDetail(v, now, quiet) {
     o.updateWorldMatrix(true, false);
     const grid = g.userData.gsGrid;   // (a relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix puts them back where the mesh is)
     if (grid) t.matrix.multiplyMatrices(o.matrixWorld, grid.matrix); else t.matrix.copy(o.matrixWorld);
-    t.matrixWorld.copy(t.matrix);
+    // (the twin sits right under the scene: its own matrix is where the mesh is in the world's numbers, and its world matrix the
+    // scene's times that, which while a view draws is a step back by the drawing's centre: origin.js)
+    { const te = t.matrix.elements, se = v.scene.matrixWorld.elements; te[12] -= se[12]; te[13] -= se[13]; te[14] -= se[14]; }
+    t.matrixWorld.multiplyMatrices(v.scene.matrixWorld, t.matrix);
     t.visible = shownInScene(o, v.scene);
     if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
     t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : e.relief ? rpx : null;

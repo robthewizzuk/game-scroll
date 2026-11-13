@@ -1,0 +1,116 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// The world's centre moving along with the camera (src/kit/origin.js) for scripts/detail-test.cjs --page origin:
+// each engine test scene (src/detail-scenes.js) is drawn at a few points of its flight about the world's own
+// centre, then with the drawing's centre moved far off (HD.originAt), and the two pictures must match. Moving
+// the centre changes no place in the game, only the numbers the chip works with, so anything that shows is a
+// part of the engine that mixed the world's numbers with the drawing's.
+//   ?gpu  ?scenes=valley,field  ?modes=on (a mode key each scene has; all: every one)  ?size=.35  ?at=768,-512 (the scenes are near the world's own centre, so a far one draws them in bigger numbers, as a far place would be about the world's)  ?times=3  ?settle=50
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const HD = window.__hd, W = +(Q.get('w') || 200), H = +(Q.get('h') || 300);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0;
+if (Q.has('set')) for (const kv of Q.get('set').split(',')) { const [k, v] = kv.split(':'); HD[k] = v === 'true' ? true : v === 'false' ? false : +v; }
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c);
+const x = c.getContext('2d', { willReadFrequently: true });
+const [ax, az] = (Q.get('at') || '768,-512').split(',').map(Number), HOME = { x: 0, z: 0 };   // (the world's own centre given outright: left to itself the centre stays where it was moved to until the camera goes HD.origin metres from it)
+const size = +(Q.get('size') || .35), times = +(Q.get('times') || 3), seconds = 30, settle = +(Q.get('settle') || 50);   // (settle: frames drawn at each point before a picture is kept: a frame ago's shadows, batches and the like take a while to come to rest)
+const want = Q.get('scenes') ? Q.get('scenes').split(',') : SCENES.map(s => s[0]);
+const checks = [], info = {}, out = {};
+let S = null;
+const draw = () => { S.v.render(x, W, H); x.getImageData(0, 0, 1, 1); return frame(); };
+const grab = () => x.getImageData(0, 0, W, H).data.slice();
+// how far apart two pictures are: the mean difference (0..255) and the share of pixels off by more than 40
+function apart(a, b) {
+  let sum = 0, big = 0; const n = a.length / 4;
+  for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 40) big++; }
+  return { mean: +(sum / n).toFixed(2), big: +(big / n * 100).toFixed(2) };
+}
+function picture(px, diffWith) {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H);
+  for (let i = 0; i < px.length; i += 4) {
+    if (diffWith) { const d = Math.min(255, 4 * Math.max(Math.abs(px[i] - diffWith[i]), Math.abs(px[i + 1] - diffWith[i + 1]), Math.abs(px[i + 2] - diffWith[i + 2]))); im.data[i] = d; im.data[i + 1] = d >> 1; im.data[i + 2] = 0; }
+    else { im.data[i] = px[i]; im.data[i + 1] = px[i + 1]; im.data[i + 2] = px[i + 2]; }
+    im.data[i + 3] = 255;
+  }
+  g.putImageData(im, 0, 0); return cv.toDataURL('image/png');
+}
+try {
+  for (const [key, , , make] of SCENES) {
+    if (!want.includes(key)) continue;
+    HD.originAt = null;
+    S = make({ gs, HD, size, gpu: GPU });
+    const keys = Q.get('modes') === 'all' ? S.modes.map(m => m.key) : [Q.get('modes') || (S.modes.some(o => o.key === 'on') ? 'on' : S.modes[S.modes.length - 1].key)];
+    for (const m of S.modes) {
+      await m.enter(draw);
+      if (!keys.includes(m.key)) continue;
+      const worst = { mean: 0, big: 0, base: 0 };
+      for (let i = 0; i < times; i++) {
+        const t = seconds * (i + .5) / times;
+        // (code time a frame both ways, over the last half of the frames drawn: what the matrices' step back and forward costs)
+        const cpu = async () => { let n = 0, ms = 0, om = 0; for (let k = 0; k < settle; k++) { await draw(); if (k >= settle / 2) { ms += (HD.info.cpu || 0) + (HD.info.originMs || 0); om += HD.info.originMs || 0; n++; } } return [ms / Math.max(1, n), om / Math.max(1, n)]; };
+        HD.originAt = HOME; S.path(t, S.v.cam);
+        const c0 = await cpu();
+        // (and until it is at rest: grass still being planted round the camera a little at each of the scene's steps changes the
+        // picture by itself, whichever centre it is drawn about; a step at the same time moves nothing else)
+        let a1 = grab(), a2 = a1;
+        for (let k = 0; k < 10; k++) { S.path(t, S.v.cam); for (let j = 0; j < 6; j++) await draw(); a2 = grab(); if (apart(a1, a2).mean < .02) break; a1 = a2; }
+        a1 = grab(); await draw(); a2 = grab();
+        HD.originAt = { x: ax, z: az }; S.path(t, S.v.cam);
+        const c1 = await cpu();
+        const b = grab();
+        const moved = HD.info.origin;
+        const base = apart(a1, a2), d = apart(a2, b);
+        info[`${key}/${m.key}@${t.toFixed(0)}`] = { base, moved: d, centre: moved, ms: [+c0[0].toFixed(2), +c1[0].toFixed(2)], originMs: +c1[1].toFixed(3), things: S.v.scene.children.length };
+        if (d.mean - base.mean > worst.mean - worst.base) Object.assign(worst, { mean: d.mean, big: d.big, base: base.mean, t, a: a2, b });
+      }
+      HD.originAt = null;
+      // the same picture both ways: no more apart than two frames in a row about the world's own centre, give or take
+      // (a few pixels fall a fraction differently about another centre, a dog's or a train's edge: a little either way; a part that mixes
+      // the two sets of numbers is off by hundreds of metres, which shows as a different picture: the sky light on its side darkened
+      // every lit thing by a mean of 1.2, and the valley's ground went missing; the hall's glowing ball, whose bloom spreads a
+      // pixel's edge over its neighbours, is off by a mean of .45 on WebGPU)
+      const ok = worst.mean <= worst.base * 1.5 + .6 && worst.big <= .1;
+      checks.push({ name: `${key} (${m.name}): the same picture with the drawing's centre moved ${ax}, ${az} m`, ok, note: `mean ${worst.mean} against ${worst.base} frame to frame; ${worst.big}% of pixels off by 40+` });
+      if (worst.a) { out[`${key}-${m.key}-world`] = picture(worst.a); out[`${key}-${m.key}-moved`] = picture(worst.b); out[`${key}-${m.key}-diff`] = picture(worst.b, worst.a); }
+    }
+    S.dispose(); S = null;
+  }
+  // what it is for: a person close up 20 km out, walked along with the camera a centimetre and a bit a frame. The two move
+  // together, so every frame should be the same picture; with the centre kept at the world's own (HD.origin = 0) the
+  // chip's seven digits put the bones a millimetre or two out from frame to frame, and the face shakes
+  if (Q.get('far') !== '0' && !Q.has('scenes')) {
+    const { human } = gs.models, spec = { seed: 7, strands: false };
+    await human.ready([spec]);
+    const v = new gs.hd.HDView({ bg: '#2a3040', amb: .7 }), who = human(spec), L = gs.hd.sun('#fff2d8', 2.5, 4, [-.4, 1, .6]);
+    v.scene.add(who, L, L.target); v.cam.fov = 30; v.cam.updateProjectionMatrix();
+    S = { v };
+    const walk = async (x0, z0, on) => {
+      HD.origin = on ? 1024 : 0; HD.originAt = null; const shots = [];
+      for (let i = 0; i < 10; i++) {
+        const x = x0 + i * .0137, z = z0 + i * .0091;
+        who.position.set(x, 0, z); v.cam.position.set(x + .15, 1.62, z + .7); v.cam.lookAt(x, 1.58, z); L.position.set(x - 4, 10, z + 6); L.target.position.set(x, 0, z);
+        for (let k = 0; k < 3; k++) await draw();
+        shots.push(grab());
+      }
+      let worst = { mean: 0, big: 0 }; for (let i = 1; i < shots.length; i++) { const d = apart(shots[i - 1], shots[i]); if (d.mean > worst.mean) worst = d; }
+      return { worst, last: shots[shots.length - 1], first: shots[0] };
+    };
+    const home = await walk(0, 0, true), off = await walk(20000, -12000, false), on = await walk(20000, -12000, true);
+    HD.origin = 1024;
+    info.far = { home: home.worst, off: off.worst, on: on.worst };
+    checks.push({ name: 'a person close up 20 km out walked along with the camera: every frame the same picture, as at the world\'s centre', ok: on.worst.mean <= home.worst.mean + .05 && on.worst.big <= home.worst.big + .05,
+      note: `frame to frame: mean ${on.worst.mean} (at the centre ${home.worst.mean}; with the centre left at the world's own, ${off.worst.mean}, ${off.worst.big}% of pixels off by 40+)` });
+    out['far-home'] = picture(home.last); out['far-off'] = picture(off.last); out['far-off-shake'] = picture(off.last, off.first); out['far-on'] = picture(on.last);
+    v.scene.clear(); v.release(); S = null;
+  }
+  window.result = { checks, info, out };
+} catch (e) { window.result = { error: (e && e.stack) || String(e) }; }
+</script>

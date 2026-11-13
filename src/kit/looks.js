@@ -22,6 +22,7 @@
 import { Color, DataTexture, Float32BufferAttribute, BufferGeometry, Mesh, MeshStandardMaterial, RepeatWrapping, LinearFilter, LinearMipmapLinearFilter, RGBAFormat, ShaderChunk, Vector2, Vector3, Vector4 } from 'three';
 import { noiseTex } from './hd3d.js';
 import { fbm, rng } from './math.js';
+import { ORIGIN_U, ORIGIN_GLSL } from './origin.js';
 
 const EFFECTS = new Map();   // name -> spec, for the WebGPU port and for tests
 const SPECS = new WeakMap();   // material -> { name: spec }: the WebGPU version reads each material's own settings
@@ -100,8 +101,9 @@ function spec(name, { uniforms, world = false, vertex = {}, fragment = {} }) {
     ...Object.entries(o.after || {}).map(([c, code]) => [AT(c), 'after', '\n' + sub(code)]),
     ...Object.entries(o.before || {}).map(([c, code]) => [AT(c), 'before', sub(code) + '\n']),
   ];
-  const v = edits(vertex), dec = world ? `varying vec3 ${wv};\n` : '';
-  if (world) v.push([AT('project_vertex'), 'after', `\n  ${wv} = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz);`]);
+  // (where it is in the world: the drawing's place plus its centre, which moves along with the camera far from the world's own: origin.js)
+  const v = edits(vertex), dec = world ? ORIGIN_GLSL + `varying vec3 ${wv};\n` : '';
+  if (world) { uniforms.gsOrigin = ORIGIN_U; v.push([AT('project_vertex'), 'after', `\n  ${wv} = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz) + gsOrigin;`]); }
   return { uniforms, vertexHead: dec + (vertex.head || '') + '\n', fragmentHead: dec + sub(fragment.head || '') + '\n', vertex: v, fragment: edits(fragment) };
 }
 
@@ -304,7 +306,7 @@ function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .01
     uniforms: U, world: true,
     vertex: {
       head: 'uniform float lkTime, lkWind; uniform vec2 lkSway, lkWindDir;',
-      after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz);
+      after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz) + gsOrigin;
     float hh = max(position.y - lkSway.y, 0.), ph = wp.x * .19 + wp.z * .23;
     vec3 sw = vec3(sin(lkTime * 1.7 + ph) + sin(lkTime * 3.1 + ph * 2.3) * .3, 0., cos(lkTime * 1.3 + ph * 1.4)) * lkWind * hh * lkSway.x;
     sw.xz += lkWindDir * lkWind * hh * lkSway.x * (1.2 + .6 * sin(lkTime * .9 + ph * .5));   // a lean downwind (none without a Wind)
@@ -315,7 +317,7 @@ function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .01
       replace: { normal_fragment_begin: ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', '') },
       before: {
         alphatest_fragment: '  { vec2 lq = vMapUv * lkAtlas; vec2 dx = dFdx(lq), dy = dFdy(lq); diffuseColor.a *= 1. + max(0., .5 * log2(max(dot(dx, dx), dot(dy, dy)))) * .35; }',
-        emissivemap_fragment: '  { vec3 vd = normalize(vGsWorld - cameraPosition); diffuseColor.rgb *= 1. + lkGlow * pow(max(dot(vd, lkSun), 0.), 4.); }',
+        emissivemap_fragment: '  { vec3 vd = normalize(vGsWorld - gsOrigin - cameraPosition); diffuseColor.rgb *= 1. + lkGlow * pow(max(dot(vd, lkSun), 0.), 4.); }',
       },
     },
   }));
@@ -336,13 +338,13 @@ function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .01
  * built when they are first drawn, so give it the field before then (make the Marks in make()).
  */
 function meadow(m, { reach = [12, 24], time = 0, bend = .2, dir = new Vector2(1, 0), part = null } = {}) {
-  const U = { lkTime: uni(time), lkBend: uni(bend), lkBendDir: uni(dir), lkMeadow: uni(new Vector2(...reach)), lkPart: uni(null), lkPartAt: uni(new Vector4()) };
+  const U = { lkTime: uni(time), lkBend: uni(bend), lkBendDir: uni(dir), lkMeadow: uni(new Vector2(...reach)), lkPart: uni(null), lkPartAt: uni(new Vector4()), gsOrigin: ORIGIN_U };
   lookPatch(m, 'meadow', spec('meadow', {
     uniforms: U,
     vertex: {
-      head: 'attribute vec4 lkRoot; uniform float lkTime, lkBend; uniform vec2 lkBendDir, lkMeadow;\n#ifdef LK_PART\nuniform sampler2D lkPart; uniform vec4 lkPartAt;\n#endif',
-      after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz), root = lkRoot.xyz;
-    float far = smoothstep(lkMeadow.x, lkMeadow.y, distance(root.xz, cameraPosition.xz));
+      head: ORIGIN_GLSL + 'attribute vec4 lkRoot; uniform float lkTime, lkBend; uniform vec2 lkBendDir, lkMeadow;\n#ifdef LK_PART\nuniform sampler2D lkPart; uniform vec4 lkPartAt;\n#endif',
+      after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz) + gsOrigin, root = lkRoot.xyz;
+    float far = smoothstep(lkMeadow.x, lkMeadow.y, distance(root.xz, cameraPosition.xz + gsOrigin.xz));
     vec3 q = root + (wp - root) * (1. - far); float hh = q.y - root.y, t = uv.y;
     float ph = dot(root.xz, lkBendDir) * .35 - lkTime * 2.2, gust = .55 + .3 * sin(ph) + .15 * sin(ph * 2.7 + root.z * .9);
     float b = lkBend * gust * t * hh, fl = hh * t * .05;
@@ -357,7 +359,7 @@ function meadow(m, { reach = [12, 24], time = 0, bend = .2, dir = new Vector2(1,
     }
 #endif
     q += vec3(lkBendDir.x * b + sin(lkTime * 3.1 + wp.x * 9.) * fl, -b * .35, lkBendDir.y * b + cos(lkTime * 2.6 + wp.z * 9.) * fl);
-    mvPosition = viewMatrix * vec4(q, 1.); gl_Position = projectionMatrix * mvPosition; }` },
+    mvPosition = viewMatrix * vec4(q - gsOrigin, 1.); gl_Position = projectionMatrix * mvPosition; }` },
     },
     fragment: { replace: { normal_fragment_begin: ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', '') } },
   }));

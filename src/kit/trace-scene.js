@@ -7,7 +7,12 @@
 // materials, lines and points. Those still show in reflections where they are on screen.
 // Needs nothing from the page beyond a 2D canvas for a texture's average colour (without one: white).
 // Kit use only.
+import { ORIGIN } from './origin.js';
 const BACK = 1, SETTLE = 8, SETTLE_OVER = 24, GLOWS = 127, OTHERS = 48;
+// A thing's matrix in the world's own numbers: while a view draws, matrixWorld is about the drawing's centre (origin.js),
+// and the copy is kept in the world's numbers so a move of that centre moves nothing in it (rays are sent with it added back)
+const OWN = new Float64Array(16);
+export function ownMatrix(e) { for (let i = 0; i < 16; i++) OWN[i] = e[i]; OWN[12] += ORIGIN.x; OWN[14] += ORIGIN.z; return OWN; }
 const mats = o => { const m = o.userData.gsGlMat || o.material; return Array.isArray(m) ? m : [m]; };
 const solid = m => !!m && m.visible !== false && !m.transparent && !(m.alphaTest > 0) && !m.alphaHash && m.side !== BACK && m.colorWrite !== false && !m.wireframe
   && (m.isMeshStandardMaterial || m.isMeshBasicMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshToonMaterial);
@@ -104,7 +109,7 @@ export class TraceLevel {
     scene.traverseVisible(o => {
       if (!o.isMesh) { if (o.isLight) lights.push(o); return; }
       if (!traceable(o, bits)) { if (o.userData.gsTraced) o.userData.gsTraced = false; if ((o.layers.mask & bits) && !o.userData.noTrace && !o.isDetailMesh) { other++; if (others.length < OTHERS) others.push(o); } return; }
-      const g = shapeOf(o), ver = g.attributes.position.version + (g.index ? g.index.version : 0), ms = mats(o), e = o.matrixWorld.elements;
+      const g = shapeOf(o), ver = g.attributes.position.version + (g.index ? g.index.version : 0), ms = mats(o), e = ownMatrix(o.matrixWorld.elements);
       let r = recs.get(o);
       if (!r) { const pin = !!o.userData.moves || gone.has(o); recs.set(o, r = { o, g, ver, ms, m: Float64Array.from(e), moving: pin, pin, still: 0, at: null, seen: n }); hit(r); }
       else {

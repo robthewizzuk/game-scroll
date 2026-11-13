@@ -5382,5 +5382,64 @@ console.log('physics ok');
   console.log('gs.regions: parts made over frames, waits, kept for later, freed short of memory, made at once in reset(), budgets, squares round the player, detail levels, land tiles that meet and stand solid ok');
 }
 
+// the world's centre moving along with the camera (src/kit/origin.js): the drawing's centre follows the camera in steps, and World3D keeps
+// its bodies in Rapier about a centre of its own that follows the view's, every place it gives and takes in the world's own numbers
+{
+  const THREE = await import('three');
+  const { follow, ORIGIN_SET } = await import('../src/kit/origin.js');
+  const at = new THREE.Vector3(), was = { ...ORIGIN_SET };
+  assert.ok(!follow(at, { x: 900, z: -1000 }) && !at.x && !at.z, 'the centre stays put until the camera is HD.origin metres from it');
+  assert.ok(follow(at, { x: 1100, z: -300 }) && at.x === 1024 && at.z === -256, 'then moves to the camera, in steps of 256 m ' + at.x + ' ' + at.z);
+  assert.ok(!follow(at, { x: 2000, z: 700 }) && at.x === 1024, 'and stays put again until the camera has gone as far again');
+  ORIGIN_SET.at = { x: 5, z: -6 }; follow(at, { x: 0, z: 0 }); assert.ok(at.x === 5 && at.z === -6, 'a centre given outright (tests)');
+  ORIGIN_SET.at = null; ORIGIN_SET.far = 0; follow(at, { x: 9e4, z: 0 }); assert.ok(!at.x && !at.z, 'HD.origin = 0: never moves');
+  Object.assign(ORIGIN_SET, was);
+
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  // a ball rolling down a slope and a person walking across it, for two and a half seconds: at the world's centre, 20 km out, and
+  // 20 km out with the world's centre there (shifted once on the way, too)
+  const run = (X0, Z0, centre, shift) => {
+    const w = new World3D({ gravity: -9.81 }); if (centre) w.centre(X0, Z0);
+    const scene = new THREE.Scene(), slope = new THREE.Mesh(new THREE.BoxGeometry(60, 1, 60)); slope.position.set(X0, -.5, Z0); slope.rotation.z = -.15; scene.add(slope); w.ground(slope);
+    const m = new THREE.Mesh(); m.position.set(X0 - 20, 4, Z0 + .3); scene.add(m); const b = w.ball(m, .5, { friction: .9 });
+    const g = new THREE.Group(); g.position.set(X0 + 10, 3, Z0 + 5); scene.add(g); const mv = w.mover(g);
+    for (let i = 0; i < 150; i++) { if (shift && i === 70) w.centre(X0 + shift[0], Z0 + shift[1]); mv.walk(-1.5, .5); w.step(1 / 60); }
+    const p = b.pos, f = mv.feet;
+    assert.ok(Math.abs(m.position.x - p.x) < 1e-9 && Math.abs(g.position.z - f.z) < 1e-9, 'meshes are where their bodies are, in the world\'s numbers');
+    return [p.x - X0, p.y, p.z - Z0, f.x - X0, f.y, f.z - Z0];
+  };
+  const off = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+  const home = run(0, 0, false), far = run(20000, -12000, false), kept = run(20000, -12000, true), shifted = run(20000, -12000, true, [256, -512]);
+  assert.ok(off(home, kept) < 1e-6, '20 km out with the world\'s centre there, the same run as at the centre ' + off(home, kept));
+  assert.ok(off(home, far) > 10 * off(home, shifted) && off(home, shifted) < .005, 'and shifting it on the way changes far less than leaving it (20 km out: ' + off(home, far).toFixed(4) + ' m, shifted: ' + off(home, shifted).toFixed(4) + ' m)');
+
+  // a shift leaves everything where it is: crates asleep in a stack stay asleep where they are, a lift goes where it was sent, a door
+  // stays on its hinge, a ray finds the same top at once (before the next step), near() finds the same things
+  const w = new World3D({ gravity: -9.81 }); w.floor(0);
+  const crates = [0, 1, 2].map(i => w.box(null, 1, 1, 1, { at: { x: 3, y: .5 + i * 1.001, z: -2 } }));
+  const lift = w.box(null, 2, .2, 2, { moving: true, at: { x: -4, y: .1, z: 1 } });
+  const door = w.box(null, 1, 2, .1, { at: { x: 8.5, y: 1.2, z: 0 }, gravity: 0 }); w.hinge(null, door, { x: 8, y: 1.2, z: 0 }, { x: 0, y: 1, z: 0 });
+  for (let i = 0; i < 240; i++) w.step(1 / 60);
+  const before = crates.map(c => c.pos), top0 = w.ray({ x: 3, y: 10, z: -2 }, { x: 0, y: -1, z: 0 }).point.y;
+  lift.place(-4, 2, 1); door.setSpin(0, 2, 0);
+  w.centre(1024, -768);
+  assert.ok(w.at.x === 1024 && w.at.z === -768, 'world.at');
+  assert.ok(Math.abs(w.ray({ x: 3, y: 10, z: -2 }, { x: 0, y: -1, z: 0 }).point.y - top0) < 1e-3, 'a ray finds the same top at once');
+  assert.ok(w.near({ x: 3, y: 1.5, z: -2 }, 1.2).filter(t => crates.includes(t)).length === 3, 'near() finds the same crates');
+  for (let i = 0; i < 60; i++) w.step(1 / 60);
+  assert.ok(crates.every(c => c.sleeping) && Math.max(...crates.map((c, i) => Math.hypot(c.pos.x - before[i].x, c.pos.y - before[i].y, c.pos.z - before[i].z))) < 1e-3, 'crates asleep in a stack stay asleep where they were');
+  assert.ok(Math.hypot(lift.pos.x + 4, lift.pos.y - 2, lift.pos.z - 1) < 1e-4, 'a lift goes where it was sent ' + JSON.stringify(lift.pos));
+  const d = door.pos; assert.ok(Math.abs(Math.hypot(d.x - 8, d.z) - .5) < .01 && Math.abs(d.y - 1.2) < .01, 'a door stays on its hinge ' + JSON.stringify(d));
+
+  // it follows the view its bodies are drawn in (HDView keeps its centre in v.origin; the scene names its view)
+  const scene = new THREE.Scene(), view = { origin: new THREE.Vector3() }; Object.defineProperty(scene, 'gsView', { value: view });
+  const fw = new World3D(); fw.floor(0); const box = new THREE.Mesh(); box.position.set(2048, 3, 512); scene.add(box); const fb = fw.box(box, 1, 1, 1);
+  fw.step(1 / 60); assert.ok(!fw.at.x && !fw.at.z, 'centre 0 while the view\'s is');
+  view.origin.set(2048, 0, 512); const y0 = box.position.y; fw.step(1 / 60);
+  assert.ok(fw.at.x === 2048 && fw.at.z === 512 && fw.recentred === 1 && Math.abs(box.position.x - 2048) < 1e-4 && box.position.y < y0 && Math.abs(fb.body.translation().x) < 1e-4, 'follows the view\'s centre: the box falls on where it was, kept near Rapier\'s own centre');
+  for (const x of [fw, w]) x.free();
+  console.log('floating origin: the centre moves in steps, physics far out runs as at the centre, a shift leaves bodies, lifts, hinges and rays be, and follows the view ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
