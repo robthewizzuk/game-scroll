@@ -742,10 +742,10 @@ async function tour(b) {
   check(M('faces', 'clean').build > 0 && M('faces', 'real').build > 0 && /^posed in [\d.]+ ms a frame$/.test(M('faces', 'real').tell || '') && /\n  = the real look against the clean look: /.test(sc.text),
     'the faces are drawn close up in the clean look and then the real one', JSON.stringify(sby.faces));
   // the street: the city as it was (windows painted on, boxes for cars and people), then with rooms behind its windows, real cars and sculpted people
-  const strt = /^the city's code [\d.]+ ms a frame · (\d+) cars drawn whole · ([\d,]+) people drawn in (\d+) draws$/.exec(M('street', 'new').tell || '');
-  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3] >= 1 && M('street', 'new').calls > M('street', 'old').calls && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
-    && /^\d+ buildings, \d+ cars, \d+ people$/.test(M('street', 'new').note || '') && /\n  = rooms behind the windows, real cars, sculpted people against windows painted on, boxes for cars and people: /.test(sc.text),
-    'the street is walked as the city was and then with rooms behind its windows, real cars and sculpted people', JSON.stringify(sby.street));
+  const strt = /^the city's code [\d.]+ ms a frame · (\d+) cars drawn whole · ([\d,]+) parked · ([\d,]+) people drawn in (\d+) draws$/.exec(M('street', 'new').tell || '');
+  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3].replace(/,/g, '') >= 1 && +strt[4] >= 1 && M('street', 'new').calls > M('street', 'old').calls && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
+    && /^\d+ buildings, \d+ cars, \d+ parked, \d+ people$/.test(M('street', 'new').note || '') && /\n  = rooms behind the windows, real and parked cars, sculpted people, the street dressed against windows painted on, boxes for cars and people: /.test(sc.text),
+    'the street is walked as the city was and then with rooms behind its windows, real and parked cars, sculpted people and the street dressed', JSON.stringify(sby.street));
   // the night: a wet street with every lamp a plain round light, then with the nearest lamps' shadows (from the atlas on WebGPU, where
   // slots are drawn again only when something they see moved: cars and people do here), shaped headlights and neon
   const litOf = m => { const x = /^([\d.]+) lights lit(?: · ([\d.]+) with a shadow, ([\d.]+) shadow slots drawn a frame)?$/.exec(M('night', m).tell || ''); return x ? [+x[1], x[2] == null ? null : +x[2], x[3] == null ? null : +x[3]] : [NaN, null, null]; };

@@ -58,6 +58,8 @@ Make the city once (in `make()` or the first `reset()`, like the view) and call 
 | `detail` | Metres within which awnings, cornices and fire escapes show (default 260). |
 | `rooms` | Rooms behind every window and shop front (default on): the glass is set back in the wall with its frame and bars, and past it a room of its own, with walls, a floor, a ceiling, something standing in it and curtains or blinds, dim by day and lit at night (the windows the facade lights, so a street is lit the same near and far). `false`: windows painted on, as before. |
 | `fleet` | The traffic as real cars (`gs.models.vehicle`, default on a Next Gen view): the nearest few drawn whole, wheels rolling and steering, bodies dipping as they brake, brake lamps; the rest as simpler copies in two draws a style. `false`: two boxes a car. |
+| `dress` | Street dressing and depth on the fronts (default on): stone ledges along each storey of the old blocks, fins between the glass towers' bays, balconies, sills, air-con boxes, shopfronts with pilasters and a fascia with each shop's sign (made-up names, lit at night), stair huts, vents and dishes on the roofs; kerb stones, drains, worn road paint, a name sign at each corner (made-up street names), bins, bollards round the squares, parking signs, wires across the old town's streets and along the suburb's poles. `false`: as before. |
+| `parked` | Parked cars along the kerbs where a road is wide enough for them, and on the suburb's drives (default on a Next Gen view): the city's three commonest styles, whole close by and simpler further off, each its own colour. They are solid: `city.collide()` pushes out of them and returns the car (`{ parked: true, ... }`); `city.parked` lists them. |
 | `crowd` | The pavements full of sculpted people (`gs.models.human` in a `gs.props.Crowd`, default on a Next Gen view): walking, running from a scare, waiting at the lights, lying where they were knocked. They are sculpted the first time a phone meets them (the card says "Loading…" a few seconds, once) and kept. `false`: figures of boxes. |
 
 Any style setting can be passed straight in too: `new City(v, { style: 'oldtown', floors: [2, 4], trees: 1 })`.
@@ -96,8 +98,12 @@ by name: `stone`, `brick`, `plaster`, `concrete`, `glass`, `dark`, `silver`, `ho
   hundred draw calls at most, and the ones off screen are skipped.
 - Blocks are built a few at a time, nearest first, in about 2.5 ms a frame; `city.warm()` builds the
   lot at once.
-- Awnings, cornices and fire escapes only show within `detail` metres.
-- Trees, lamps, traffic lights, benches and roof tanks are `gs.props`: culled, and simpler far away.
+- Awnings, cornices, fire escapes and the dressing on the fronts (ledges, fins, balconies, shop signs, kerbs,
+  corner name signs) only show within `detail` metres.
+- Trees, lamps, traffic lights, benches, roof tanks and huts, air-con boxes, bins, bollards, sign posts and
+  parked cars are `gs.props`: culled, and simpler far away (a parked car is whole within 12 m).
+- The signs are one picture made in code (`src/kit/city-dress.js`), and the dressing has random numbers of
+  its own, so a seed gives the same layout with it or without it.
 - Cars live within about 190 m of the player and people within 100 m (75 m for a crowd); ones that drift further away
   come back somewhere nearer and out of sight. How many follows the phone's speed.
 - Facade textures are made once and shared by every city (smaller on slower phones). Each building
