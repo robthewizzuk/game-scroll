@@ -122,7 +122,8 @@ export function movesFor(m, scale = 1) {
   if (m.gait === 'biped') {   // it stands as a person does: a person's poses, in step with its own height
     const hM = (m.H || 1) * scale, k = 1.8 / hM, f = Math.sqrt(hM / 1.8);
     const as = (name, more) => { const src = POSES[name]; return { cycle: p => { const s = src.cycle(p), j = { ...s.j }; sway(j, tail, p, .12, .7); if (more) more(j, p); return { j, drop: s.drop }; }, rate: src.rate * k }; };
-    for (const n of ['idle', 'walk', 'run', 'sprint', 'back', 'strafeL', 'strafeR', 'crouch', 'sneak', 'sit', 'jump', 'fall', 'land', 'wave']) P[n] = as(n);
+    for (const n of ['idle', 'walk', 'run', 'sprint', 'back', 'strafeL', 'strafeR', 'crouch', 'sneak', 'sit', 'jump', 'fall', 'wave']) P[n] = as(n);
+    P.land = as('land', j => { j.armL = [-1.2, 0, -.6]; j.armR = [-1.2, 0, .6]; });   // its long arms reach forward: hanging down, an ogre's knuckles went into the ground
     P.attack = cyc(p => { const k2 = mx(0, S(p * TAU)), j = { spine: [.15 * k2, -.45 * k2, 0], armR: [-1.7 * k2, -.2 * k2, .1], foreR: [-.9 + .8 * k2, 0, 0], armL: [-.3, 0, -.2], foreL: [-1.2, 0, 0], legL: [-.3 * k2, 0, 0], shinL: [.25 * k2, 0, 0] }; if (jaw) j[jaw] = [.5 * k2, 0, 0]; sway(j, tail, p, .15); return { j, drop: .03 * k2 }; }, 0, 1.3 * quick);
     P.dead = cyc(() => ({ j: { hips: [-1.45, 0, 0], spine: [.1, 0, 0], head: [.3, 0, .2], armL: [-.2, 0, -.6], armR: [-.3, 0, .5], foreL: [-.3, 0, 0], legL: [.25, 0, -.15], legR: [-.1, 0, .2], shinL: [.3, 0, 0], shinR: [.6, 0, 0], ...Object.fromEntries(tail.map(n => [n, [.2, 0, 0]])) }, drop: ((m.hipY || m.H * .45) - (m.W || .12) * 1.15) / m.H }));
     if (m.wings) {
