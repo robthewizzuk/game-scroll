@@ -74,6 +74,7 @@ import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
 import { SpreadFrame, SpreadNode, ownFrames } from './hd3d-gpu-spread.js';
+import { LensNode } from './hd3d-gpu-lens.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 // Ray traced reflections (hd3d-gpu-trace.js) load the first time a view wants them (something marked shiny on
 // one of the best phones), not with every 3D game: the part brings a tree builder and a simplifier with it.
@@ -1929,15 +1930,15 @@ export class GpuChain {
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
-  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${halfKey()}`;
+  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false) {
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
-    for (const k of ['spAO', 'spVol', 'spGI']) { this[k]?.dispose(); this[k] = null; }
+    for (const k of ['spAO', 'spVol', 'spGI', 'lensN']) { this[k]?.dispose(); this[k] = null; }
     this.spread = '';
     this.aoN = this.dnN = this.dnT = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
@@ -2067,6 +2068,9 @@ export class GpuChain {
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
       src = this.baseT; srcAo = float(1);   // (this full-size mix, which also lays the ambient occlusion on, counts as 'effects')
     }
+    // a camera like a real lens (v.lens, hd3d-gpu-lens.js): bokeh from the aperture and the focus (it lets the picture
+    // through while v.lens is null, as v.focus's blur below does while that is)
+    if (lensOn && aoOn) { this.lensN = new LensNode(src, srcAo, dT); src = this.lensN.getTextureNode(); srcAo = float(1); }
     // depth of field (v.focus; the views turn it on once they use it, so focusing doesn't rebuild the
     // chain): what's in focus stays, the rest is blurred by up to lens.w pixels, into a picture of its own
     if (dofOn) {
@@ -2227,7 +2231,7 @@ export class GpuChain {
     // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
     { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
     const fx = !this.clear && o.ao > 0;
-    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops);
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
     // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
     // again or the volumetric light's light moved, which change the picture though the camera didn't)
     if (this.spread) {
@@ -2265,6 +2269,7 @@ export class GpuChain {
       if (o.drops) { const D = this.D, v = o.drops.vecs; for (let i = 0; i < DROPS_N; i++) D.drops.array[i].copy(v[i]); D.dropN.value = o.drops.count; }
       if (o.flare) { const F = this.F, f = o.flare; F.tint.value.copy(f.tint); F.th.value = f.threshold; F.sp.value = f.spacing; F.fade.value = f.fade; F.k.value = f.strength; F.dk.value = f.dirt; F.dirt.value = f.dirtTex; }
       if (this.lutN) { this.lutN.lutNode.value = o.lut; this.lutN.size.value = o.lut.image.width; U.lutK.value = Math.min(1, o.lutK ?? 1); }
+      if (this.lensN) this.lensN.set(o.lensL, o.near, o.far, o.h);
       if (this.dofT) { this.dofT.setSize(o.w, o.h); const L = o.lens; U.lens.value.set(L ? L[0] : 0, L ? L[1] : 0, L ? L[2] : 0, L ? L[3] : 0); U.cn.value = o.near; U.cf.value = o.far; }
       const V = this.V, cam = this.cam;
       if (this.volT || this.mbT) { V.invProj.value.copy(cam.projectionMatrixInverse); V.camWorld.value.copy(cam.matrixWorld); }
@@ -2430,6 +2435,7 @@ export class GpuChain {
     try { r.setRenderTarget(null); this.showQ.render(r); } finally { r.toneMapping = tm; r.outputColorSpace = cs; }
   }
   dispose() {
+    this.lensN?.dispose(); this.lensN = null;
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = null; this.sched = null; this.lastColor = null;

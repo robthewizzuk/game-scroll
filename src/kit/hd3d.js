@@ -71,6 +71,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { lensFrame, afTake, AF_LOG } from './lens.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
@@ -780,28 +781,70 @@ class ShaftsPass extends Pass {
 // is the widest blur in pixels. A pass of its own, reading the depth picture the ambient occlusion
 // already draws (so high and ultra only, and no second scene draw). See-through things (leaf cards)
 // aren't in that picture: they take the depth of what's behind them.
-const DOF = `uniform sampler2D tDiffuse, tDepth; uniform vec2 px; uniform vec4 lens; uniform float cn, cf; varying vec2 vUv;
-  float dist(vec2 uv){ float d = texture2D(tDepth, uv).x; return d >= 1. ? 0. : cn * cf / (cf - d * (cf - cn)); }
-  float coc(float z){ return z <= 0. ? 0. : clamp((abs(z - lens.x) - lens.y) / max(lens.x * lens.z, 1e-3), 0., 1.); }
+// With v.lens (lens.js) the blur is a real lens's instead (phys: pixels of blur per dioptre, the focus in dioptres, the
+// widest blur, on), and the sky is as far as can be; WebGPU draws it with bokeh discs (hd3d-gpu-lens.js), this is the fallback.
+// A lens's blur can be 40 pixels across on a phone, where 16 taps of the sharp picture leave a bright lamp as a ring of
+// dots: so it reads a copy at half size whose smaller sizes (mipmaps) are made by the chip, each tap from the size
+// whose texels are as wide as the gaps between taps. That copy holds only what is itself out of focus (colour times
+// how soft it is, and how soft it is), so a sharp thing never bleeds into the blur round it.
+const DOF_PRE = `uniform sampler2D tDiffuse, tDepth; uniform vec4 phys; uniform float cn, cf; varying vec2 vUv;
+  void main(){ float d = texture2D(tDepth, vUv).x, z = d >= 1. ? 1e9 : cn * cf / (cf - d * (cf - cn));
+    float r = min(abs(phys.x * (phys.y - 1. / z)), phys.z), w = smoothstep(.5, 2.5, r);
+    gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb * w, w); }`;
+const DOF = `uniform sampler2D tDiffuse, tDepth, tPre; uniform vec2 px; uniform vec4 lens, phys; uniform float cn, cf; varying vec2 vUv;
+  float dist(vec2 uv){ float d = texture2D(tDepth, uv).x; return d >= 1. ? (phys.w > .5 ? 1e9 : 0.) : cn * cf / (cf - d * (cf - cn)); }
+  float coc(float z){ if (phys.w > .5) return clamp(abs(phys.x * (phys.y - 1. / z)) / phys.z, 0., 1.);
+    return z <= 0. ? 0. : clamp((abs(z - lens.x) - lens.y) / max(lens.x * lens.z, 1e-3), 0., 1.); }
   void main(){ vec3 base = texture2D(tDiffuse, vUv).rgb; float z = dist(vUv), c = coc(z);
     if (c * lens.w < .5) { gl_FragColor = vec4(base, 1.); return; }
+    if (phys.w > .5) {   // a lens: 24 taps of the half-size copy, at the size that fills the gaps between them
+      float R = c * lens.w, lod = max(0., log2(R * .36 * .5));
+      vec3 sum = base; float wsum = 1.;
+      for (int i = 1; i < 24; i++) { float r = sqrt(float(i) / 23.) * .82, a = float(i) * 2.39996;
+        vec2 o = vec2(cos(a), sin(a)) * r * R * px; float zs = dist(vUv + o);
+        float w = zs < z ? coc(zs) : 1.;   // a sharp thing in front doesn't smear over a soft background
+        vec4 s = textureLod(tPre, vUv + o, lod); sum += s.rgb * w; wsum += s.a * w; }
+      gl_FragColor = vec4(sum / wsum, 1.); return; }
     vec3 sum = base; float wsum = 1.;
     for (int i = 1; i < 16; i++) { float r = sqrt(float(i) / 15.), a = float(i) * 2.39996;
       vec2 o = vec2(cos(a), sin(a)) * r * c * lens.w * px; float zs = dist(vUv + o), cs = coc(zs);
       float w = zs > 0. && zs < z ? cs : 1.;   // a sharp thing in front doesn't smear over a soft background
       sum += texture2D(tDiffuse, vUv + o).rgb * w; wsum += w; }
     gl_FragColor = vec4(sum / wsum, 1.); }`;
+// v.lens's autofocus: the distance at nine points round the spot, as log2(metres) in two bytes, and the sky (lens.js afTake)
+const AF_FS = `uniform sampler2D tDepth; uniform float cn, cf; uniform vec4 af; varying vec2 vUv;
+  void main(){ float d = texture2D(tDepth, af.xy + (vUv - .5) * 2. * af.zw).x, z = cn * cf / (cf - min(d, .999999) * (cf - cn));
+    float n = clamp((log2(z) - (${AF_LOG[0]}.)) / ${AF_LOG[1]}., 0., 1.) * 65535., hi = floor(n / 256.);
+    gl_FragColor = vec4(hi / 255., (n - hi * 256.) / 255., d >= 1. ? 1. : 0., 1.); }`;
 class DofPass extends Pass {
   constructor() {
     super(); this.needsSwap = true;
-    this.mat = qmat(DOF, { tDiffuse: { value: null }, tDepth: { value: null }, px: { value: new Vector2() }, lens: { value: new Vector4() }, cn: { value: .1 }, cf: { value: 1000 } });
-    this.quad = new FullScreenQuad(this.mat);
+    this.mat = qmat(DOF, { tDiffuse: { value: null }, tDepth: { value: null }, tPre: { value: null }, px: { value: new Vector2() }, lens: { value: new Vector4() }, phys: { value: new Vector4() }, cn: { value: .1 }, cf: { value: 1000 } });
+    this.quad = new FullScreenQuad(this.mat); this.pre = null; this.preM = null;
+    this.view = null; this.af = null;   // (v.lens with focus 'auto': the view, and its lens numbers)
   }
   render(r, writeBuffer, readBuffer) {
     const u = this.mat.uniforms; u.tDiffuse.value = readBuffer.texture; u.px.value.set(1 / readBuffer.width, 1 / readBuffer.height);
+    const L = this.af;
+    if (L && this.view) this.view.lensRead(() => {
+      const M = this.afM ||= { rt: new WebGLRenderTarget(3, 3, { depthBuffer: false }), mat: qmat(AF_FS, { tDepth: { value: null }, cn: { value: .1 }, cf: { value: 1000 }, af: { value: new Vector4() } }), px: new Uint8Array(36) };
+      M.quad ||= new FullScreenQuad(M.mat);
+      const a = M.mat.uniforms; a.tDepth.value = u.tDepth.value; a.cn.value = u.cn.value; a.cf.value = u.cf.value;
+      a.af.value.set(L.spot[0], 1 - L.spot[1], .025 * readBuffer.height / Math.max(1, readBuffer.width), .025);
+      r.setRenderTarget(M.rt); M.quad.render(r);
+      return r.readRenderTargetPixelsAsync(M.rt, 0, 0, 3, 3, M.px);
+    });
+    if (u.phys.value.w > .5) {   // (a lens: the half-size copy of what is out of focus, its smaller sizes made as it is drawn)
+      const w = Math.max(1, readBuffer.width >> 1), h = Math.max(1, readBuffer.height >> 1);
+      if (this.pre?.width !== w || this.pre?.height !== h) { this.pre?.dispose(); this.pre = new WebGLRenderTarget(w, h, { type: HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: LinearMipmapLinearFilter, magFilter: LinearFilter }); }
+      const m = this.preM ||= qmat(DOF_PRE, { tDiffuse: { value: null }, tDepth: { value: null }, phys: { value: new Vector4() }, cn: { value: .1 }, cf: { value: 1000 } }), a = m.uniforms;
+      a.tDiffuse.value = readBuffer.texture; a.tDepth.value = u.tDepth.value; a.phys.value.copy(u.phys.value); a.cn.value = u.cn.value; a.cf.value = u.cf.value;
+      this.quad.material = m; r.setRenderTarget(this.pre); this.quad.render(r); this.quad.material = this.mat;
+      u.tPre.value = this.pre.texture;
+    } else u.tPre.value = null;
     r.setRenderTarget(this.renderToScreen ? null : writeBuffer); this.quad.render(r);
   }
-  dispose() { this.mat.dispose(); this.quad.dispose(); }
+  dispose() { this.mat.dispose(); this.quad.dispose(); this.pre?.dispose(); this.preM?.dispose(); if (this.afM) { this.afM.rt.dispose(); this.afM.mat.dispose(); this.afM.quad?.dispose(); } }
 }
 
 // Volumetric light (v.beams = { light, density, far, glow, strength }): light seen in the air, with the
@@ -959,7 +1002,7 @@ function blurFrame(v, cut) {
   cam.updateMatrixWorld(); m.cur.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
   m.prevVP.copy(m.has && !cut ? m.prev : m.cur); m.prev.copy(m.cur); m.has = true;
   if (!b) return null;
-  m.mb.set(Math.max(0, b.amount ?? .5), Math.max(0, b.max ?? .04), Math.max(0, b.sharp ?? 0), v.W / v.H);
+  m.mb.set(Math.max(0, v._ls?.mb ?? b.amount ?? .5), Math.max(0, b.max ?? .04), Math.max(0, b.sharp ?? 0), v.W / v.H);
   m.obj = b.objects !== false && !cut && m.had ? 1 : 0; m.had = true;   // (WebGPU: each thing's own move, not just the camera's)
   return m;
 }
@@ -1668,7 +1711,7 @@ export class HDView {
     this.drops = new LensDrops();   // rain on the lens (lens-drops.js): gs.sky.Weather lands drops while it rains; add() for a splash of your own
     this.lamps = []; this.tierSeen = -1; this.parts = []; this.reflectors = []; this.contacts = [];
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
-    this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.cascade = null; this.beams = null; this.motionBlur = null;
+    this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.lens = null; this.cascade = null; this.beams = null; this.motionBlur = null;
     this.upscaler = undefined;   // 'sgsr1' keeps this view on Snapdragon GSR 1 (lots of fast movers: SGSR 2 can leave a short soft trail)
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
@@ -2174,17 +2217,30 @@ export class HDView {
   }
   /** The auto exposure multiplier for this frame (1 without v.autoExposure; card pictures keep the settled one). */
   eyeAt(still) {
-    const o = this.autoExposure; if (!o) { this.eye = null; return 1; }
-    const eye = this.eye ||= new Eye(); if (o === true) this.autoExposure = {};
+    let o = this._ls?.ae || this.autoExposure; if (!o) { this.eye = null; return 1; }   // (v.lens with iso 'auto': the camera's own meter)
+    const eye = this.eye ||= new Eye(); if (o === true) o = this.autoExposure = {};
     const now = performance.now(), dt = Math.min(.1, (now - (eye.t || now)) / 1000); eye.t = now;   // real time: the same speed at any frame rate
-    return still ? 2 ** eye.e : eye.step(dt, this.autoExposure);
+    return still ? 2 ** eye.e : eye.step(dt, o);
+  }
+  // v.lens this frame (lens.js): the focus eased on, the exposure it adds; still: a card's picture (nothing moves on)
+  lensStep(still) {
+    const now = performance.now(), dt = still ? 0 : Math.min(.1, (now - (this._lensT || now)) / 1000);
+    if (!still) this._lensT = now;
+    return lensFrame(this, dt, !still && (lastView !== this || this._cut));
+  }
+  // the autofocus picture back now and then (read(): starts the reading; one at a time, every other frame)
+  lensRead(read) {
+    const S = this._ls; if (!S?.afWant || S.busy || ++S.n % 2) return;
+    S.busy = true;
+    let p; try { p = read(); } catch (e) { p = null; }
+    Promise.resolve(p).then(px => { if (px && this._ls === S) afTake(S, px); }, () => {}).finally(() => { S.busy = false; });
   }
   // after a frame: a new light meter reading now and then (r: the renderer, read(): starts the reading)
   eyeRead(read) {
     const eye = this.eye; if (!eye || !eye.want()) return;
     eye.busy = true;
     let p; try { p = read(); } catch (e) { p = null; }
-    Promise.resolve(p).then(px => { if (px) eye.take(px, this.autoExposure || {}); }, () => {}).finally(() => { eye.busy = false; });
+    Promise.resolve(p).then(px => { if (px) eye.take(px, this._ls?.ae || this.autoExposure || {}); }, () => {}).finally(() => { eye.busy = false; });
   }
   // v.flare as numbers: true or { strength, ghosts' threshold, spacing, fade, tint, dirt }
   flareSet() {
@@ -2407,7 +2463,8 @@ export class HDView {
     // the sun lights: cloud shadows and the near shadow cascade's share (hd3d-gpu.js gpuSunLight)
     const cs = this.cascade, casc = !!(cs?.near.visible && cs.near.castShadow && cs.near.parent);
     G.fx.setCascade(casc ? cs.near : null, cs?.fade ?? .06);
-    r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
+    const ls = this.lensStep(baking || off);   // (v.lens: a real lens's focus and exposure, lens.js)
+    r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off) * (ls ? ls.exp : 1);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (!baking && !off) this.t += 1 / 60;
     gpuSwap(this, G);
@@ -2486,6 +2543,8 @@ export class HDView {
     this._dofUsed ||= !!this.focus; this._shaftsUsed ||= this.shafts > 0;
     o.dofOn = this._dofUsed && T.ao > 0; o.shaftsOn = this._shaftsUsed && T.shadow > 0;
     if (o.dofOn && this.focus) { const f = this.focus; o.lens = [f.at ?? 50, f.range ?? 2, f.depth ?? .5, (f.blur ?? 6) * ph / 640]; }
+    // a camera like a real lens (v.lens; bokeh, focus pulls): in the chain from the first time the view uses it, high and ultra
+    this._lensUsed ||= !!this.lens; o.lensOn = this._lensUsed && T.ao > 0; o.lensL = o.lensOn ? ls : null;
     // live bounce light (v.liveBounce, WebGPU, high and ultra): 'screen' (three's SSGI) or 'voxel' (three's VXGI)
     const lb = this.liveBounce;
     if (lb && T.ao > 0) {
@@ -2595,6 +2654,7 @@ export class HDView {
     if (ch.sp && !baking && !off && HD.occlude !== false && HD.occludeDepth !== false && this.autoOcclude !== false && ch.occWarm !== ch.sp) { ch.occWarm = ch.sp; (ch.occM ||= G.fx.depthMeter(r)).warm(ch.sp.getTexture('depth')); }
     if (occJob && ch.sp && drawn) { occJob.pad = s2 || o.msaa ? 1 : 0; (ch.occM ||= G.fx.depthMeter(r)).read(ch.sp.getTexture('depth'), occJob, occBack); }
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
+    if (ls?.afWant && !baking && !off && ch.lensN?.on) this.lensRead(() => ch.lensN.readAF(r));   // (v.lens autofocus: the distance under the spot)
     const made = !!fg && !!shown;
     if (made) HD.fgTap?.(shown, r.domElement, 'frame');
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
@@ -2627,7 +2687,7 @@ export class HDView {
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
     // a change it can't see in the picture yet: the camera, the hurt flash, a finger or key in the last moment
-    if (!same || this.hurt !== S.hurt || now - (speed.inputAt || 0) < 300) { S.run = 0; S.hurt = this.hurt; return false; }
+    if (!same || this.hurt !== S.hurt || now - (speed.inputAt || 0) < 300 || this._ls?.moving) { S.run = 0; S.hurt = this.hurt; return false; }
     // a new answer from the picture check (a frame or two late): how many checks in a row saw nothing change
     if (st.seen !== S.seen) { S.seen = st.seen; S.run = st.changed() === 0 ? S.run + 1 : 0; }
     if (S.run < 3) return false;
@@ -2774,7 +2834,8 @@ export class HDView {
     this.holdNew(r, baking || off, now, this.clearBg ? null : cp.readBuffer);
     const pm = PROF.on ? mark() : -1;   // (the frame lab's CPU by part, prof.js)
     if (pm >= 0) enter('3D: detail'); detailShow(this); if (pm >= 0) leave(pm);
-    r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
+    const ls = this.lensStep(baking || off);   // (v.lens, lens.js)
+    r.toneMappingExposure = this.exposure * this.eyeAt(baking || off) * (ls ? ls.exp : 1);
     if (this.clearBg) { P.arRender.scene = this.scene; P.arRender.camera = this.cam; } else { P.render.scene = P.ao.scene = this.scene; P.render.camera = P.ao.camera = this.cam; }
     // reflections (ultra, and only if the game marked shiny surfaces): SSR draws the scene itself
     if (ssr) {
@@ -2818,8 +2879,13 @@ export class HDView {
     }
     // extra effects a game added (gs.fx3d: outline, glitch, trails, depth of field, pixelate) go between the scene and the final pass
     if (!this.clearBg) {
-      const dof = this.focus && T.ao > 0 && P.ao.depthTexture ? (P.dof ||= new DofPass()) : null;
-      if (dof) { const f = this.focus, u = dof.mat.uniforms; u.tDepth.value = P.ao.depthTexture; u.cn.value = this.cam.near; u.cf.value = this.cam.far; u.lens.value.set(f.at ?? 50, f.range ?? 2, f.depth ?? .5, (f.blur ?? 6) * ph / 640); }
+      const dof = (this.focus || ls) && T.ao > 0 && P.ao.depthTexture ? (P.dof ||= new DofPass()) : null;
+      if (dof) {
+        const u = dof.mat.uniforms; u.tDepth.value = P.ao.depthTexture; u.cn.value = this.cam.near; u.cf.value = this.cam.far;
+        // (v.lens: a real lens's blur, without WebGPU's bokeh discs; the autofocus read back as there)
+        if (ls) { const mx = Math.max(.5, ls.max * ph); u.lens.value.set(0, 0, 0, mx); u.phys.value.set(ls.K * ph, ls.D, mx, 1); dof.view = this; dof.af = ls.afWant && !baking && !off ? ls : null; }
+        else { const f = this.focus; u.lens.value.set(f.at ?? 50, f.range ?? 2, f.depth ?? .5, (f.blur ?? 6) * ph / 640); u.phys.value.w = 0; dof.af = null; }
+      }
       // volumetric light (v.beams) and motion blur (v.motionBlur): before and after the depth of field
       const bm = this.beams && T.ao > 0 && T.shadow > 0 && P.ao.depthTexture ? beamsFrame(this) : null;
       const beams = bm ? (P.beams ||= new BeamsPass()) : null; if (beams) beams.aim(bm, P.ao.depthTexture, this.cam);
@@ -3397,8 +3463,9 @@ class Eye {
   take(px, o) {
     let s = 0, w = 0;
     for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const i = (y * 16 + x) * 4, l = (px[i] + px[i + 1] / 255) / 255 * 20 - 14, k = x >= 4 && x < 12 && y >= 4 && y < 12 ? 2 : 1; s += l * k; w += k; }
-    const avg = s / w, key = o.key ? Math.log2(o.key) : (this.key ??= avg);   // no key: the game's look as it starts is the target
-    this.goal = Math.min(Math.log2(o.max ?? 2.5), Math.max(Math.log2(o.min ?? .4), (key - avg) * (o.amount ?? .7)));   // eyes don't fully make up the difference
+    const avg = this.avg = s / w, key = o.key ? Math.log2(o.key) : (this.key ??= avg), d = key - avg;   // no key: the game's look as it starts is the target
+    // eyes don't fully make up the difference (amount); a camera's meter (v.lens) does, but only part of it when it's dark (night: night stays night)
+    this.goal = Math.min(Math.log2(o.max ?? 2.5), Math.max(Math.log2(o.min ?? .4), (d > 0 ? d * (o.night ?? 1) : d) * (o.amount ?? .7)));
   }
   step(dt, o) { const up = this.goal > this.e, k = 1 - Math.exp(-dt * (up ? o.speed ?? 1.2 : o.darken ?? 3)); this.e += (this.goal - this.e) * k; return 2 ** this.e; }
   // read now and then (one read at a time)

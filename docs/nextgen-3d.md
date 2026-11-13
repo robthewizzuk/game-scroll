@@ -698,6 +698,32 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   `range`, stays sharp; things `depth` x `at` metres nearer or further are fully soft, up to `blur`
   pixels. Made for scopes and cutscene close-ups; `v.focus = null` turns it off. It reads the depth the
   ambient occlusion already draws, so it's on high and ultra only and costs one full-screen pass.
+- **A camera like a real lens** (`v.lens = { fstop, focal, focus, pull, blades, shutter, iso }`): depth of
+  field, focus pulls and exposure worked out as a real camera does, for cut scenes, scopes and photo modes.
+  `v.lens = null` goes back to `v.focus` and the game's own exposure.
+  - **Blur from the lens.** How soft a thing is comes from the f-stop (`fstop`, 2.8), the focal length and
+    the distance in focus, as on a full-frame camera: it grows with 1 / distance, so a long lens at f/1.8
+    melts the hills behind a face and a wide one at f/11 keeps the street sharp. `focal` (mm) sets the
+    camera's field of view to match; without it the focal length comes from the camera's own `fov`, so a
+    zoomed scope focuses like a long lens by itself. `max` is the widest blur (24 pixels of a 640-high
+    picture), `blur` scales it all (1).
+  - **Bokeh.** On WebGPU bright points out of focus (lamps, sparks, sun on water) open into discs of their
+    own, round or with `blades: 5..9` straight edges (`turn` in degrees, `bokeh` how bright, 1), drawn at
+    a quarter size; a sharp thing in front stays in front of them and a blurred one in front spills over
+    what is behind it. WebGL blurs the same amounts into soft round discs (no blades) from a half-size copy.
+  - **Focus.** `focus` is metres, a thing (an `Object3D`, followed as it moves), a point, or `'auto'`
+    (the default): the chip measures the distance under `spot` on the screen (`[.5, .5]`, from the top
+    left; the median of nine points). The focus eases there over `pull` seconds (0.5) the way a focus
+    puller turns the ring, never past it; `v.cut()` snaps it. `v.lens.at` is where it is focused now.
+  - **Exposure.** Without `iso` the lens leaves exposure alone. With `iso: 100` and a `shutter` time
+    (1/125), the picture is exposed by the three numbers as a camera's meter would: f/16 at 1/125 and
+    ISO 100 (the sunny sixteen rule) shows the lights as the game set them, and each stop more light
+    doubles it (`v.lens.stops` says how many). `iso: 'auto'` meters like a camera instead: down at
+    once when too bright, part of the way up in the dark (`night`, 0.5), so night stays night; `ev`
+    adds stops either way. `shutter` also sets motion blur's smear (`v.motionBlur` on) as film does.
+  - High and ultra, like `v.focus`; on WebGPU the discs cost about 0.5 to 1 ms while a lens is set, and
+    nothing without one. A `Cutscene` step can set it: `{ at: 5, lens: { fstop: 1.8, focus: kade, pull: .8 } }`,
+    then `v.lens = intro.lens` each frame.
 - **Volumetric light** (`v.beams = { light, density, far, glow, strength, steps }`): light seen in the
   air, cut into beams by shadows: sun through a slatted wall or trees, a lamp's cone in a dusty barn.
   `light` is a `sun()` or `spot()` (default `v.sun`); `density` is how dusty the air is per metre (0.02);
