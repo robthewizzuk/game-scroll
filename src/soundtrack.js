@@ -28,19 +28,34 @@ export function trackOf(def) {
 }
 
 let cur = null;   // the round's tune: { id, song, live, prog, score }
+let made = null;  // the next round's tune, made before the round starts (prepare)
+function tuneFor(def) {
+  const o = trackOf(def); if (!o) return null;
+  const song = music({ ...compose({ mood: o.mood, seed: o.seed, tempo: o.tempo, key: o.key, bars: o.bars }), set: o.set, voices: o.voices, vol: o.vol });
+  const c = { id: def.id, set: o.set, mood: o.mood, song, prog: 0, score: 0 };
+  // (follow() reads a Tiny Brain's mood to keep tension up; here that's how far the score is to the goal)
+  c.live = follow(song, { calm: .12, ease: .3, brain: { get mood() { return c.prog * 1.1; } } });
+  return c;
+}
 export const soundtrack = {
   /** The card on screen has a soundtrack: have its instruments in by the time Play is tapped. */
   ready(def) { const o = trackOf(def); if (o && o.set !== 'chip') warm(); },
+  /**
+   * A round is about to begin (a 3D game behind its loading screen): the tune is written and its instruments
+   * built now, without a sound, so start() only has to play it. Building them took the round's first frame.
+   */
+  prepare(def) {
+    if (made && made.id === def.id) return;
+    if (made) { try { made.song.stop(); } catch { /* gone */ } made = null; }
+    try { made = tuneFor(def); made?.song[Symbol.for('gs.sound.tune')]?.(); } catch (e) { console.warn('[soundtrack]', def.id, e); made = null; }
+  },
   /** A round began. */
   start(def) {
+    const ahead = made && made.id === def.id ? made : null; if (ahead) made = null;
     soundtrack.stop();
-    const o = trackOf(def); if (!o) return;
     try {
-      const song = music({ ...compose({ mood: o.mood, seed: o.seed, tempo: o.tempo, key: o.key, bars: o.bars }), set: o.set, voices: o.voices, vol: o.vol });
-      const c = { id: def.id, set: o.set, mood: o.mood, song, prog: 0, score: 0 };
-      // (follow() reads a Tiny Brain's mood to keep tension up; here that's how far the score is to the goal)
-      c.live = follow(song, { calm: .12, ease: .3, brain: { get mood() { return c.prog * 1.1; } } });
-      song.start(); cur = c;
+      const c = ahead || tuneFor(def); if (!c) return;
+      c.song.start(); cur = c;
     } catch (e) { console.warn('[soundtrack]', def.id, e); cur = null; }
   },
   /** Each frame of the round. */
@@ -55,7 +70,9 @@ export const soundtrack = {
   /** The player touched the game. */
   tap() { if (cur && cur.song.playing) cur.live.tap(); },
   /** The round ended, or the player left. */
-  stop() { if (cur) { try { cur.song.stop(); } catch { /* gone */ } cur = null; } },
+  stop() { for (const c of [cur, made]) if (c) try { c.song.stop(); } catch { /* gone */ } cur = made = null; },
+  /** For tests: the game whose tune is made and waiting for its round, or null. */
+  get ahead() { return made ? made.id : null; },
   /** For tests and the debug panel: what's playing. */
   get now() { return cur ? { id: cur.id, mood: cur.mood, set: cur.set, playing: cur.song.playing, level: cur.song.level, tension: cur.live.tension, speed: cur.live.speed, tuned: cur.song.tuned, pos: cur.song.pos } : null; },
 };

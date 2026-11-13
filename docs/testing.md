@@ -27,7 +27,8 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Feed swiping | `node scripts/feed-jank.cjs [swipes] [--filter nextgen]` (compare before and after, not with a phone) | about a minute |
 | Shared game links, or how the feed starts (`src/share.js`, `openShared` and `playNow` in `src/main.js`, the catalogue in `src/remote.js`) | `node scripts/share-link.mjs [id]`: opens the streamed web app from a shared link on quick, slow and stale connections (builds what it needs) | about 30 s |
 | A kit in `src/kit/` | `npm run kit-test`, then smoke the games that use it (`node scripts/pick-games.mjs` names the best few per style) | 3 s + games |
-| What the app does around a game (screen kept on, finer touch, even pixels and the LCD look, the one-line soundtrack, the phone-only save), the font library, and the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons) | `node scripts/app-test.cjs [awake\|touch\|pixels\|music\|saves\|fonts\|looks\|tour]` after a build (`npm run app-test` does both; `SHOTS=<folder>` saves a picture of every font and look) | about a minute |
+| How a 3D round starts: the loading screen after Play (`getReady` in `src/main.js`, `src/kit/getready.js`, what the 3D kit says it is still waiting for) | `node scripts/app-test.cjs ready` after a build, then `node scripts/round-start.cjs [id ...] [--webgpu]` (see "Play on a 3D game" below) | 1 min, then about 10 s a game |
+| What the app does around a game (screen kept on, finer touch, even pixels and the LCD look, the one-line soundtrack, the phone-only save), the font library, and the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons) | `node scripts/app-test.cjs [awake\|touch\|pixels\|music\|saves\|fonts\|looks\|tour\|loading\|ready]` after a build (`npm run app-test` does both; `SHOTS=<folder>` saves a picture of every font and look) | about a minute |
 | Sound (`src/sfx.js`, `src/kit/sound.js`, `acoustics.js`, `instruments.js`) | `npm run sound-test [sounds\|band\|clock\|level]`: renders the sound off screen and measures it (every ready-made sound is heard and none is too loud, the limiter holds, instrument sets are as loud as each other, the music clock keeps the beat through a frozen frame, a sound behind a wall comes out quieter and duller and a room rings by itself) | about 100 s |
 | A starter template (`scripts/templates/`) | `npm run new zz-try --style <style>`, then lint, types and smoke it like any game, and delete it | under 30 s |
 | The 3D look (hd3d, toon3d, post effects, a three.js update) | `node scripts/look-compare.cjs save base` **before** the change, `check base` after; add `--webgpu` to check the WebGPU path | about 16 s each |
@@ -40,8 +41,8 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Ground that takes marks (`src/kit/marks.js`: `gs.outdoors.Marks`; the meadow's `LK_PART` in `src/kit/looks.js` and `gpuLooks.meadow` in `src/kit/hd3d-gpu.js`) | `npm run kit-test` (a print's dent, rim and pictures; sheets that meet; tracks that join up; what is remembered; snow, mud and sand by the weather; filling, washing and blowing out; watched feet, paws, wheels and belts; the land's own triangles; grass that parts and mends), then `node scripts/marks.cjs film.png [views=mud,sand,grass,lawn,top,low,close,wide] [cols=6] [cell=420x300] [story=snow,fresh,rain,wet,dry] [secs=8] [hold=snow:.9] [who=people,dog,jeep,tank] [off] [cellsize=.025] [reach=10] [prof] [--webgpu]`: one story of weather along the film, a row a camera, over a field of sand, grass and bare earth with two people, a dog and a jeep going round it; it prints what `marks.update()` cost (`prof`: each part of it), how many marks are kept and how many tiles are drawn. `off` is the same film with no Marks, to compare. Film it on WebGL and with `--webgpu` | 55 s for the tests, then about 40 s a film |
 | Smoke and fire that flow (`src/kit/gas.js`, `src/kit/gas-gpu.js`: `gs.gas`; `gasStage` in `src/kit/hd3d-gpu-fx.js`) | `npm run kit-test` (smoke that climbs and goes round a ball, a closed room, solid things, wind, a fan, fire, a jet, an explosion, dust, resizing, the answers copied back, seeds), then `node scripts/gas.cjs film.png [acts=camp,room,blast,wind,ball,torch,dust] [cols=6] [cell=300x380] [cells=20000] [klass=top\|mid\|low] [--webgpu]`: a row for each thing smoke and fire do, a picture every so often along it, to judge by eye how it rises, curls, spreads and is lit; it prints what the gas ran on, how many cells it had and what `gas.update()` cost. Film it without `--webgpu` (the JavaScript version, soft puffs) and with (the lit volume: on a build machine's software chip, so keep `cells` small), one film at a time, and don't edit `src/` while one runs (the page reloads). Then `PICK=gpu-gas node scripts/look-compare.cjs save <dir> --webgpu` (the two versions cell for cell) | 1 min 10 s for the tests, then about 20 s an act |
 | Cliffs, caves and overhangs (`src/kit/land-rock.js`, `Land.rocks()` and its answers in `src/kit/outdoors.js`, the `rock` job in `src/kit/job-worker.js`) | `npm run kit-test` (the rock as numbers: pieces that meet, hidden rock left out, overhangs, the same seed the same rock; a cave's floor and roof, an arch, a hollow, rays, a walk in at a cave's mouth; then on a Land: the squares a cave takes, marks, physics, `flatten()`, `rocks(false)`), then `node scripts/rocks.cjs out.png [views=wide,cliff,mouth,inside,arch,under,edge,top] [cols=4] [cell=480x340] [off] [rockcell=.4] [seed=3] [snow] [time=15.5] [nomeadow] [flat] [look] [--webgpu]`: a picture from each camera of a valley with a cliff, a cave through a spur, an arch and a shelf of rock, people standing about for scale; it prints how many triangles the rock is, in how many pieces, and how long it took. `off` is the land as a height map alone, `flat` the bare shapes with no beds or joints, `snow` with snow lying (on the ledges, not in the cave), `look` with `looks.rock` over it. Take it on WebGL and with `--webgpu` and compare. A change to how long it takes: `node scripts/load-time.cjs <a game that uses it> --passes` says whether the numbers still go to a worker | 55 s for the tests, then about 30 s a sheet |
-| Fur and hair (`gs.models.fur`: `src/kit/models/fur.js`, and its use in `creature.js` and `human.js`) | `npm run kit-test` (the strand pictures, the shell: lengths, thin things, edges, a crown; the layers; thinning with distance; a cat, a horse's mane, a pig without) and `npm run kit-browser` (a furry cat and a bearded person drawn in a Next Gen view, a coat put away far off), then `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [fur=auto] [time] [--webgpu]` to look at it: a row can be a person (`person:` then a hair style and any of `f`, `beard`, `moustache`, `hat`, `grey`, `fair`, `red`, `black`), `time` prints how long a frame takes | 2 s for the tests' part, then about 3 s a row (10 s with `--webgpu`) |
-| People (`gs.models.human`: `src/kit/models/human*.js`, `field.js`; skin's light in `sss()` of `src/kit/hd3d-gpu.js`) | `npm run kit-test` (the skeleton, the sculpted pieces, the live face, strides, and for skin and eyes: how thin a sheet, a rim and a block measure, only the ears of a head thin, an eye's rings and cornea) and `npm run kit-browser` (no close-up triangle with its grain smeared, thin flesh at the ears only, the skin and eye materials), then `PICK=humans node scripts/look-compare.cjs check base` on WebGL and with `--webgpu`, and smoke a game with people in it (`long-shadow`). Look at a face close up on both backends before believing it: ears against the sun, the eye's highlight | 1 min + pictures |
+| Fur and hair (`gs.models.fur`: `src/kit/models/fur.js`, and its use in `creature.js` and `human.js`) | `npm run kit-test` (the strand pictures, the shell: lengths, thin things, edges, a crown; the layers; thinning with distance; a cat, a horse's mane, a pig without) and `npm run kit-browser` (a furry cat and a bearded person drawn in a Next Gen view, a coat put away far off), then `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [fur=auto] [time] [--webgpu]` to look at it: a row can be a person (`person:` then a hair style and any of `f`, `beard`, `moustache`, `hat`, `grey`, `fair`, `red`, `black`; a person row asks for strands on the hair of the head too, `combed` leaves it the combed shape people have unasked), `time` prints how long a frame takes | 2 s for the tests' part, then about 3 s a row (10 s with `--webgpu`) |
+| People (`gs.models.human`: `src/kit/models/human*.js`, `field.js`; skin's light in `sss()` of `src/kit/hd3d-gpu.js`) | `npm run kit-test` (the skeleton, the sculpted pieces, the live face, strides, and for skin and eyes: how thin a sheet, a rim and a block measure, only the ears of a head thin, an eye's rings and cornea) and `npm run kit-browser` (no close-up triangle with its grain smeared, thin flesh at the ears only, the skin and eye materials, the face's paint and the hair's combed strands made in code), then `PICK=humans node scripts/look-compare.cjs check base` on WebGL and with `--webgpu`, and smoke a game with people in it (`long-shadow`). Look at a face close up on both backends before believing it: ears against the sun, the eye's highlight | 1 min + pictures |
 | Vehicles made in code (`gs.models.vehicle`: `src/kit/models/vehicles.js`, `vehicle-*.js`) | `npm run kit-test` (the shape tools: skins closed and facing out, rounded corners, slots, belts, wheels; every plan's size, wheels and points; rolling, steering, a tank's tracks and turret, a train round a curve, a goods train's wagons, loads and colours, a fused train (`fuse: true`) and a working engine (`polished: false`), propellers; a car on `gs.physics3d` springs) and `npm run kit-browser` (all 31 with their recipe materials, a goods train with its boards and riveted plate, a car on springs, one drawn in a Next Gen view, the fused goods train drawing the same picture as the loose one), then `node scripts/vehicles.cjs sheet.png [show=car:saloon,car:jeep,tank,train:steam-van_6b3024-open_coal-guard] [views=front,side,back,top,move] [cell=360x230] [finish=worn] [wear=1] [lit] [seed=3] [time=15] [axles=3] [offroad] [colour=#a22] [detail=.5] [deflectors] [load=coal] [fuse] [dull] [zoom=2] [at=-3] [--webgpu]`: a row a vehicle, a column a camera (the last one caught moving: wheels steered, turret round, propellers a blur, a train on a curve), to look at (a train is its engine and wagons joined by `-`, a wagon's own colour and load after `_`; `zoom` and `at` come closer to a point along it; `fuse` is `fuse: true` and `dull` is `polished: false`); it prints each one's triangles, draws, size and how long it took to make. Look at it on WebGL and with `--webgpu` | about 20 s, then 1 s a vehicle (2 s with `--webgpu`) |
 | Next Gen / AR / Board / Console on WebGPU | `node scripts/gpu-games.cjs [id ...]` | about 25 s a game (Console: 12 s) |
 | Cluster detail (`src/kit/detail*.js`, `autoDetail` in hd3d.js) | `node scripts/detail-test.cjs` and again with `--webgpu` (`--shots dir` saves the pictures) | about 40 s each |
@@ -169,10 +170,12 @@ What it does (`src/tour.js`):
   game, problems first:
 
   ```
-  SLOW      canyon-ace (Canyon Ace) · Next Gen · loaded in 2.4 s · 47 of 60 fps (+60 made) · worst 1% 31 fps · longest 58 ms · slow 6% · freezes 0 · game code 4.1 ms · WebGPU, quality 2/1, full screen · 2 rounds, best 14 · phone warm
+  SLOW      canyon-ace (Canyon Ace) · Next Gen · loaded in 2.4 s · round ready in 0.9 s · 47 of 60 fps (+60 made) · worst 1% 31 fps · longest 58 ms · slow 6% · freezes 0 · game code 4.1 ms · WebGPU, quality 2/1, full screen · 2 rounds, best 14 · phone warm
   ```
 
-  `47 of 60 fps` is real frames drawn against the rate the game aims for on this phone, `+60 made`
+  `round ready in` is how long the loading screen was up between Play and the first round starting
+  (3D games only: see "Play on a 3D game" below), `47 of 60 fps` is real frames drawn against the rate
+  the game aims for on this phone, `+60 made`
   the frames frame generation adds, `worst 1%` the frame rate of the slowest hundredth of frames,
   `slow` the share of frames over one and a half times their budget, `freezes` frames of 70 ms or
   longer (those as a round started are counted apart: that is the level being built, not play), and
@@ -252,7 +255,10 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    ```
 
    (Those numbers are made up to show the shape: nobody has run it on a phone yet.) `chip` is the
-   graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps); `code` is
+   graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps), followed in
+   brackets by where it went, biggest first (`chip 15.2 ms (scene 6.1, upscale 3.4, AO 2.3, bloom 1.6,
+   shadows 1.2, to screen 0.6)`: the game's own things, the pass that makes the full-size picture, the soft
+   shading in corners, the glow, the shadow maps, the last pass onto the screen); `code` is
    the time the engine's code took to draw a frame; `ready in` is how long the system took to build
    what it needs.
 
@@ -312,6 +318,39 @@ of it was the game's own code (and kit work nobody keeps, such as a texture the 
 part is run again every pass, so a game with more than 30 ms of it is "made in one go" from there.
 The numbers move 10 to 20% between runs, and first-frame costs (shader builds, texture uploads,
 drawing) are not in them: `perf-bench.cjs` and `shader-hold.cjs` measure those.
+
+## Play on a 3D game: the loading screen before a round
+
+Play on a Next Gen, AR or Board game does not start the round at once. The app puts a loading screen
+over the card, runs the game's `reset()`, draws the round's first frames under the cover (`draw()`
+with no `update()`), runs the round's first `update()` there too, once, and starts the round when the
+3D kit has nothing left on its way (shaders being built, things hidden until theirs are; for up to 4 s
+also cluster detail, shaders built ahead and, on WebGPU, textures still being packed for the chip) and a few
+frames in a row came on time (`getReady` in `src/main.js`; `src/kit/getready.js` is what the app and
+the kits share). A card that has been through it once is quick the next time, so "Play again" usually
+shows no loading screen at all. A 2D game still starts the instant Play is pressed.
+
+In tests, `__gs.start()` starts the round this instant, as it always has, so every existing script
+times what it timed before. `__gs.play()` is the real tap: it goes through the loading screen.
+`__gs.active.starting` is set while a card gets ready (`phase`: `load`, `warm`, `hold`),
+`__gs.active.readyMs` is how long the last one took, and `__gs.waits()` is what the kits are still
+waiting for (`{ hard, soft, what }`).
+
+```bash
+npm run build:bundled
+node scripts/app-test.cjs ready                  # the rules: cover up at once, one reset, one hidden update, nothing hidden at the start
+node scripts/round-start.cjs                     # every Next Gen, AR and Board game: Play to the round, and its first frames
+node scripts/round-start.cjs parcel-dash --now   # the old way, to compare: the round starts on the tap
+node scripts/round-start.cjs --webgpu --jobs 3   # the WebGPU path, in software
+```
+
+`round-start.cjs` prints one line a game: how long it took to get ready, the frames drawn under the
+cover (the longest of them is the building that used to land in the round), and the round's first
+five frames beside its usual one. `HIDDEN n` means the round started with things still waiting for
+their shaders, `LONG` that its first frames were more than 2.2 times the usual one, `(later n)` only
+that something the game made mid-round was hidden for a moment while its shader built. With `--now`
+the same games show what the loading screen saves: Parcel Dash's first frame is about 2 s in software
+instead of a normal one.
 
 ## Pictures: proving a change doesn't change the look
 

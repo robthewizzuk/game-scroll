@@ -67,6 +67,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, frameGenSteady, fgSaving, screenHz, qualityVerdict } from './speed.js';
 
 export * as THREE from 'three';
@@ -134,21 +135,46 @@ function startGame(def) {
 // in it, and with two or three frames between reads the rest were dropped), so the passes are added up
 // here, both kinds, and divided by the frames drawn since: the GPU's time for a real frame and whatever
 // was made after it. (One read at a time: the answer comes back a frame or two later.)
-const GT = { n: 0, busy: false };
+// HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
+// shadow maps), ao, bloom, upscale (SGSR), effects (the other passes drawn into pictures of their own), show (the
+// last pass, onto the screen), compute }, in milliseconds a frame. three tells its inspector as each pass begins
+// (the name its time comes back under, what is drawn and into which picture), and partOf() files it.
+const GT = { n: 0, busy: false }, PARTS = new Map();
+function partOf(o, rt) {
+  if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
+  if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
+  const n = o?.material?.name || '';
+  return n === 'GTAO' ? 'ao' : n.startsWith('SGSR') ? 'upscale' : n === 'Shadow map copy' ? 'shadows' : rt ? 'effects' : 'show';
+}
+function gpuParts(r) {
+  const ins = r.inspector; if (!ins || ins.gsParts) return; ins.gsParts = true;
+  const was = ins.beginRender;
+  ins.beginRender = function (uid, scene, camera, rt) { if (PARTS.size > 4096) PARTS.clear(); PARTS.set(uid, partOf(scene, rt)); return was?.call(this, uid, scene, camera, rt); };
+}
 function gpuTime(r) {
   GT.n++;
   const be = r.backend;
-  if (GT.busy || !be?.trackTimestamp) return;
-  const n = GT.n; GT.n = 0; GT.busy = true;
+  if (!be?.trackTimestamp) return;
+  gpuParts(r);
+  if (GT.busy) return;
+  const n = GT.n, by = {}; GT.n = 0; GT.busy = true;
   // (a read that brought nothing new leaves three's list as it was: its frames list is a new one after each real read)
   const read = type => {
     const pool = be.timestampQueryPool?.[type], was = pool?.frames;
     if (!pool) return 0;
-    return r.resolveTimestampsAsync(type).then(() => { let s = 0; if (pool.frames !== was) for (const ms of pool.timestamps.values()) if (ms > 0 && ms < 1000) s += ms; return s; });
+    return r.resolveTimestampsAsync(type).then(() => {
+      let s = 0;
+      if (pool.frames !== was) for (const [uid, ms] of pool.timestamps) {
+        const part = type === 'compute' ? 'compute' : PARTS.get(uid) || 'effects'; PARTS.delete(uid);
+        if (ms > 0 && ms < 1000) { s += ms; by[part] = (by[part] || 0) + ms; }
+      }
+      return s;
+    });
   };
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
     if (!(draw > 0)) { GT.n += n; return; }   // nothing read: those frames count towards the next read
     const f = (draw + comp) / n; HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     if (f < 100) { Q.gsum += f; Q.gcnt++; }
   }, () => {}).finally(() => { GT.busy = false; });
 }
@@ -200,7 +226,7 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
-  info: { gpuMs: null, gpuCompute: 0, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '' },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -2334,7 +2360,7 @@ export class HDView {
   // Still frames: true when this refresh can show the last frame again instead of drawing (see drawGPU).
   stillSkip(ch, now) {
     const st = ch.still, S = this._still ||= { cam: new Float64Array(32), run: 0, seen: -1, skip: 0, hurt: 0 };
-    if (!st || HD.still === false || lastView !== this || this._cut || !ch.lastColor) { S.run = 0; return false; }
+    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for)
     const cam = this.cam; cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
@@ -2426,12 +2452,14 @@ export class HDView {
     // (crowds keep their members' numbers as the last frame drew them, for frame generation: gs.props.Crowd)
     { const posed = this.scene.userData.gsPosed; if (posed) for (const p of posed) p.frame(); }
     // (each is a whole frame of another card plus a copy: never while a round is played or the feed moves)
-    if (!baking && !off) { this.drawnAt = now; if (bakes.length && !speed.playing() && !speed.busy()) { const [v, bc] = bakes.shift(); if (bc.canvas.isConnected && host?.canvas !== bc.canvas) try { v.bake(bc, true); } catch (_) { /* best effort */ } } }   // (one a frame: several at once were one long stall)
+    if (!baking && !off) { this.drawnAt = now; liveView(this, now); if (bakes.length && !speed.playing() && !getready.warming && !speed.busy()) { const [v, bc] = bakes.shift(); if (bc.canvas.isConnected && host?.canvas !== bc.canvas) try { v.bake(bc, true); } catch (_) { /* best effort */ } } }   // (one a frame: several at once were one long stall)
     const direct = HD.direct && !baking && !off && !!c.canvas.parentNode && mount(r.domElement, c, this);
     if (!baking && !off) {
       if (Q.game !== speed.game) startGame(speed.game);
       // adaptive quality: first resolution, then tier (and frame rate)
-      const gap = now - (Q.lastT || now); Q.lastT = now; adapt(gap); applyTier();
+      // (a round getting ready behind the loading screen, getready.js: its frames build what the round needs and say
+      // nothing about how fast the phone draws, so none of them count; the measuring starts with the round)
+      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; else adapt(gap); applyTier();
     }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
@@ -2808,7 +2836,11 @@ function gpuSwap(v, G) {
     if (seeThrough3d(o)) G.fx.noAO(m);
     if (v._air && m.isMeshStandardMaterial && m.fog !== false) G.fx.gpuWet(m, o, AIR, noSettle(m, o), noiseTex(), !!v._air.world);
   };
+  // (the air is laid on every material here, as WebGL's frame does. A material made since the last frame got
+  // it whenever something next asked for all of them (a city building a block in its first update()), which
+  // marks it changed: three then built it again and it was hidden meanwhile, the van a round starts in)
   v.scene.traverse(o => {   // (every frame: no array is made per thing)
+    if (G && v._air && o.material) airOf(o);
     if (o.isMesh) {
       swapOne(o, v.scene, G, v.cam, seen, v._air, v);
       if (G) { const ms = o.material; if (Array.isArray(ms)) { for (let i = 0; i < ms.length; i++) look(o, ms[i]); } else look(o, ms); }
@@ -2865,6 +2897,27 @@ function bakeLater(view, c) {
   r.domElement.remove(); webgpu()?.r.domElement.remove();
   try { view.bake(c, true); } catch (_) { /* best effort */ }
 }
+// Getting a round ready (getready.js; the app draws the round's first frames under its loading screen): what
+// the views on the 3D canvas still have on their way. Hard: shaders being built in the background and the
+// things hidden until theirs are (holdNew), and on WebGPU every build still waiting its turn. Soft: cluster
+// detail not in yet (it only makes frames quicker, and comes in unseen), shaders a view is building ahead
+// for things it has not shown yet (view.shadersLeft, where a view has it, counts those too), and on WebGPU
+// textures still being packed into the chip's own formats (r.gsPacking: each upload can hold up a frame).
+const LIVE = new Set();   // the views drawn on the 3D canvas lately (a game can draw more than one)
+function liveView(v, now) { LIVE.add(v); if (LIVE.size > 1) for (const o of LIVE) if (now - o.drawnAt > 2000) LIVE.delete(o); }
+function stillComing() {
+  const now = performance.now(); let hard = 0, soft = 0, ahead = 0;
+  for (const v of LIVE) {
+    if (now - v.drawnAt > 1000) continue;
+    const here = (v.held?.size || 0) + (v.shJobs?.size || 0);
+    hard += here; if (v.shadersLeft > here) ahead++;
+    if (HD.detail !== false && v.detailPending()) soft++;
+  }
+  const G = webgpu(), packs = G?.r.gsPacking || 0;   // (textures still to pack: pack.js)
+  hard += G?.r.gsBuilding || 0;
+  return hard || soft || ahead || packs ? { hard, soft: soft + ahead + packs, what: hard || ahead ? 'Shaders' : soft ? 'Detail' : 'Textures' } : null;
+}
+waitsOn(stillComing);
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
@@ -3142,11 +3195,20 @@ function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.ma
 function autoDetail(v, now, quiet) {
   const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
   // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
-  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off.
+  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off. A step finer
+  // that went over is not tried again (D.bad: the scale that went over) until the view is a quarter lighter or
+  // the budget changes: a few surfaces seen whole jump between two levels, one over the budget and one well
+  // under, and the scale swung between them every frame, the surfaces changing with it.
   const budget = reliefBudget(), reliefOn = budget > 0;
   if (!quiet) {
     let drew = 0; for (const e of D.map.values()) if (e.relief && e.twin) drew += drawnTris(e.twin);
-    if (reliefOn && drew > budget * 1.1) D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); else if (D.rk > 1 && drew < budget * .7) D.rk = Math.max(1, D.rk / 1.1);
+    if (D.badB !== budget) { D.bad = 0; D.badB = budget; }
+    if (reliefOn && drew > budget * 1.1) { D.bad = D.rk; D.badDrew = -1; D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); }
+    else if (D.rk > 1 && drew < budget * .7) {
+      if (D.bad) { if (D.badDrew < 0) D.badDrew = drew; else if (!drew || drew < D.badDrew * .75) D.bad = 0; }
+      const next = Math.max(1, D.rk / 1.1);
+      if (next > D.bad) D.rk = next;
+    }
     HD.info.reliefTris = drew; HD.info.reliefPx = HD.reliefPx * D.rk;
     detailTick(); detailFrame(v.cam);
   }

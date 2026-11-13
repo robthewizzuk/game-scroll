@@ -475,3 +475,31 @@ html:has(body.fullscreen){background:#000}
 body:not(.fullscreen) .fs-pill{display:none}
 @media (prefers-reduced-motion:reduce){.fs-pill{transition:opacity .2s}}
 .slide.full .swipe-cue{display:none}
+
+/* The loading screen after Play (src/main.js getReady): its own solid layer over the card's screen, while the
+   round's first frames are drawn under it. The bar's sheen is moved by the browser, not the page's code, so
+   it keeps going while a frame is busy building. */
+.load-ov{cursor:default;backdrop-filter:none}
+.load-ov.gone{opacity:0;pointer-events:none}
+.modern .load-ov{background:#0b0a1a}
+.retro .load-ov{background:var(--lcd3)}
+.retro.console .load-ov{background:#0b0d14;color:#f2f4fa}
+.retro.nextgen .load-ov{background:linear-gradient(180deg,#070c18,#04070e)}
+.retro.board .load-ov{background:linear-gradient(180deg,#150d07,#0c0704)}
+.ov-bar{position:relative;width:min(62%,220px);height:4px;border-radius:999px;background:#ffffff1f;overflow:hidden}
+.ov-bar i{position:absolute;inset:0;border-radius:inherit;background:var(--accent);transform-origin:0 50%;transform:scaleX(0);transition:transform .25s ease-out}
+.ov-bar::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#0000,#ffffff99,#0000);transform:translateX(-100%);animation:ov-sheen 1.1s linear infinite}
+@keyframes ov-sheen{to{transform:translateX(100%)}}
+.ov-what{min-height:11px;font:500 11px/1 var(--f-body);letter-spacing:.06em;color:var(--muted)}
+.retro .ov-bar{height:6px;border-radius:0;background:var(--lcd2)}
+.retro .ov-bar i{background:var(--lcd0)}
+.retro .ov-bar::after{display:none}
+.retro .ov-what{font:400 8px/1 var(--f-pixel);color:var(--lcd1)}
+.retro.console .ov-bar,.retro.nextgen .ov-bar{height:3px;border-radius:999px;background:#ffffff1c}
+.retro.console .ov-bar::after,.retro.nextgen .ov-bar::after{display:block}
+.retro.console .ov-bar i{background:#f2f4fa}
+.retro.nextgen .ov-bar i{background:linear-gradient(90deg,#2a8cff,#7cc4ff);box-shadow:0 0 10px #2a8cff}
+.retro.ar .ov-bar i{background:linear-gradient(90deg,#19e3b1,#8affdc);box-shadow:0 0 10px #19e3b1}
+.retro.board .ov-bar i{background:linear-gradient(90deg,#d8b46a,#f0c878);box-shadow:0 0 10px #d8b46a88}
+.retro.console .ov-what,.retro.nextgen .ov-what{font:600 10px/1 var(--f-body);letter-spacing:.24em;text-transform:uppercase;color:#7f8ba3}
+@media (prefers-reduced-motion:reduce){.ov-bar::after{animation:none}.ov-bar i{transition:none}}

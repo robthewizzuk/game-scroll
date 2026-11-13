@@ -2209,7 +2209,7 @@ console.log('physics ok');
         }
         assert.ok(pairs > 100 && torn === 0, `points in the same place go with the same bones: ${torn} of ${pairs} pairs do not (${eg})`); }
       for (const n of ['waist', 'spine', 'collarL', 'collarR', 'toeL', 'toeR']) assert.ok(trunk[n] > .01, `the trunk's skin on ${n}: ${trunk[n]}`); assert.ok(Math.abs(trunk.collarL - trunk.collarR) < .004 && Math.abs(trunk.toeL - trunk.toeR) < .004, 'the same on both sides');
-      assert.ok(head.neck > .02 && head.head > .7 && head.spine > .03, 'a neck between the collar and the head: ' + JSON.stringify(head)); }
+      assert.ok(head.neck > .01 && head.head > .7 && head.spine > .03, 'a neck between the collar and the head: ' + JSON.stringify(head)); }   // (a share of all the head's points: fewer of them are the neck's now that the hair is a shape of its own with points of its own)
   }
   console.log('gs.models: the fuller skeleton (waist, neck, collar bones, forearm twist, toes, fingers; old joints turned as they were) ok');
 }
@@ -2427,7 +2427,7 @@ console.log('physics ok');
       assert.ok(worst < 2.5, `no edge of the skin is stretched far by it: ${worst.toFixed(2)} times at the most`); }
     // a blink: how much of the left eyeball shows from straight in front, open and with the lid turned as far as the head says it closes
     { const tris = []; for (let t = 0; t < I.length; t += 3) { if (slotOf(I[t]).startsWith('eye')) continue; const x = P[I[t] * 3], hy = P[I[t] * 3 + 1] - HC[1]; if (Math.abs(x - EYE[0]) < .03 && Math.abs(hy) < .03 && P[I[t] * 3 + 2] - HC[2] > .05) tris.push(I[t], I[t + 1], I[t + 2]); }
-      const st = .00025, GX = 140, GY = 80, x0 = EYE[0] - .0175, y0 = HC[1] - .01, R2 = .0122 * .0122;
+      const st = .00025, GX = 140, GY = 80, x0 = EYE[0] - .0175, y0 = HC[1] - .01, R2 = (.0122 * HH.ES) ** 2;
       const shows = T => { const Q = new Map(), q = i => Q.get(i) || Q.set(i, T ? posed(i, T) : [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]).get(i), cover = new Uint8Array(GX * GY); let open = 0;
         for (let t = 0; t < tris.length; t += 3) { const A = q(tris[t]), B = q(tris[t + 1]), C = q(tris[t + 2]), det = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1]); if (Math.abs(det) < 1e-14) continue;
           const g0 = Math.max(0, Math.ceil((Math.min(A[0], B[0], C[0]) - x0) / st)), g1 = Math.min(GX - 1, Math.floor((Math.max(A[0], B[0], C[0]) - x0) / st)), h0 = Math.max(0, Math.ceil((Math.min(A[1], B[1], C[1]) - y0) / st)), h1 = Math.min(GY - 1, Math.floor((Math.max(A[1], B[1], C[1]) - y0) / st));
@@ -2471,7 +2471,9 @@ console.log('physics ok');
     before(.08, .165, .3); run(p, .3); assert.ok(B.eyeL.rotation.y > .1 && B.eyeR.rotation.y > B.eyeL.rotation.y + .1, 'and follow it as it moves');
     f.look(null); run(p, 1); assert.ok(Math.abs(f.yaw) < .36 && f.target === null, 'look(null): they wander again'); }
   // by themselves the eyes keep to a spot in the world while the head turns, and jump on when it has turned too far
-  { const p = mk(), f = p.face, B = p.bones; let tries = 0; do { f.dartT = 0; run(p, .3); } while ((Math.abs(f.yaw) > .06 || f.glance) && ++tries < 200);
+  // (the eyes are put looking ahead and left to settle, with no jump due: waiting for a jump that happened to land ahead failed one run in
+  // sixty, when a glance aside was still easing back, or when the standing pose had come to where it turns the head against the body)
+  { const p = mk(), f = p.face, B = p.bones; run(p, .1); f.aim = new Vector3(0, 0, 1).transformDirection(B.head.matrixWorld); f.glance = false; f.dartT = 9; run(p, .2);
     f.dartT = 9; const g0 = gaze(B.eyeL)[0], h0 = gaze(B.head)[0], y0 = f.yaw; run(p, .3, () => { p.rotation.y += .4 * dt; }); const g1 = gaze(B.eyeL)[0], turned = gaze(B.head)[0] - h0;
     assert.ok(turned > .07 && Math.abs(g1 - g0) < .03 && Math.abs(y0 - f.yaw - turned) < .03, `the head turned ${turned.toFixed(2)} rad with the body: the eyes still look the same way (${(g1 - g0).toFixed(3)} off), turned ${(y0 - f.yaw).toFixed(2)} back in the head`);
     p.rotation.y += 1.2; run(p, .3); assert.ok(Math.abs(f.yaw) < .2, `turned far at a stroke, they jump to look ahead again: ${f.yaw.toFixed(2)}`);
@@ -2530,7 +2532,7 @@ console.log('physics ok');
     assert.ok(sum / edges < 40 && worst < 160, `no terraces: it changes by ${(sum / edges / 255).toFixed(2)} from one point to the next on average, ${(worst / 255).toFixed(2)} at the most`);
     for (const kind of ['hand', 'trunk']) { const q = HS.sculpt(jobs.find(j => j.kind === kind)); assert.ok(!q.thin, `a ${kind} has no thin flesh to measure`); } }
   // ---- the eyes: rings from the pupil out, a cornea a quarter of a millimetre proud with a real cornea's normals, colours in bands
-  { const r = .0122, c = [EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], bands = new Map(); let count = 0, proud = 0, out = 0, lean = 0, round = 0, mid = null;
+  { const r = .0122 * HH.ES, c = [EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], bands = new Map(); let count = 0, proud = 0, out = 0, lean = 0, round = 0, mid = null;
     for (let i = 0; i < n; i++) { const s = p.slots[p.slot[i]]; if (!s.startsWith('eye') || P[i * 3] < 0) continue; count++;
       const d = [P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]], l = Math.hypot(...d), an = Math.acos(Math.min(1, d[2] / l)), N = [p.N[i * 3] / 32767, p.N[i * 3 + 1] / 32767, p.N[i * 3 + 2] / 32767], na = Math.acos(Math.min(1, N[2]));
       bands.set(s, (bands.get(s) || 0) + 1); proud = Math.max(proud, l - r); if (l < r - 2e-6 || l > r + .00026) out++;
@@ -3181,6 +3183,27 @@ console.log('physics ok');
   assert.equal(games.resolveId('virtual:something-else'), null);
   assert.equal(bundledGames(true).load(games.resolveId('virtual:bundled-games')), 'export default [];\nexport const fresh = {};', 'the streamed app has no games built in');
   console.log('bundled games: a fresh copy of each game file can be loaded ok');
+}
+
+// ---- getting a round ready behind the loading screen (getready.js): what the kits still have on its way, and when the picture is steady
+{
+  const { getready, waitsOn, waiting, Steady } = await import('../src/kit/getready.js');
+  assert.equal(getready.warming, false, 'nothing is getting ready until the app says so');
+  const base = waiting();   // (the 3D kit asks too; with no view drawn it has nothing on its way)
+  assert.deepEqual(base, { hard: 0, soft: 0, what: '' });
+  const offs = [waitsOn(() => ({ hard: 2, soft: 0, what: 'Shaders' })), waitsOn(() => ({ hard: 0, soft: 1, what: 'Detail' })), waitsOn(() => { throw new Error('cannot say'); }), waitsOn(() => null), waitsOn(() => ({ hard: 0, soft: 0, what: 'Nothing' }))];
+  assert.deepEqual(waiting(), { hard: 2, soft: 1, what: 'Shaders' }, 'what every kit has on its way, added up; a kit that throws or has nothing is not waited for');
+  offs[0](); assert.deepEqual(waiting(), { hard: 0, soft: 1, what: 'Detail' }, 'a kit taken off is no longer asked, and the word is the first kit\'s that waits');
+  offs.forEach(f => f()); assert.deepEqual(waiting(), base);
+  const calm = (gaps, step) => { const s = new Steady(); let c = 0; for (const g of gaps) c = s.add(g, step); return c; };
+  assert.equal(calm([900, 16, 17, 16]), 3, 'the first gap holds the frame that did the building: it is left out');
+  assert.equal(calm([16, 16, 16, 16, 90, 16]), 1, 'a late frame starts the count again');
+  assert.equal(calm([33, 33, 70, 33], 33.3), 3, 'a 30 fps game: a gap of two frames is still on time');
+  assert.equal(calm([200, 200, 200, 200, 200]), 3, 'a phone (or a test machine) that can only draw five frames a second is steady at its own rate');
+  assert.equal(calm([230, 233, 33, 233, 233, 233]), 4, 'and one freak short gap does not make every gap after it look late');
+  assert.equal(calm([200, 200, 200, 200, 900, 200]), 1, 'but a gap far over its usual one is late there too');
+  { const s = new Steady(); s.add(16); s.add(16); assert.equal(s.add(0), 1); assert.equal(s.add(NaN), 1, 'no gap, no change'); }
+  console.log('getready: what the kits wait for is added up, and the picture is called steady by the gaps between its frames');
 }
 
 // ---- Classic Console 2.0 (toon3d.js): real toon shadows, the rim of light, retro looks, a jointed figure

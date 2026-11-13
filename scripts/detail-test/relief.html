@@ -118,6 +118,17 @@ try {
   // the game's meshes are as they were; taking a relief off puts the mesh back
   const S = R, v = S.v;
   v.cam.position.set(...CAMS.roof[0]); v.cam.lookAt(...CAMS.roof[1]); v.cam.updateMatrixWorld();
+  // what real surface detail may cost a frame is the quality tier's to say: over its triangles a frame, every surface is drawn more coarsely
+  {
+    await draw(S, 4); const full = HD.info.reliefTris, px0 = HD.info.reliefPx;
+    HD.reliefTris = Math.round(full * .4); await draw(S, 30);
+    // (and stays so: a few surfaces seen whole jump between two levels, and the scale must not swing between them every frame)
+    const seq = []; for (let i = 0; i < 12; i++) { await nextFrame(); await draw(S); seq.push([HD.info.reliefTris, HD.info.reliefPx]); }
+    const cut = Math.max(...seq.map(q => q[0])), px1 = seq[0][1], steady = seq.every(q => q[1] === px1);
+    check('over the tier\'s triangles a frame, the surfaces are drawn more coarsely, and stay so', full > 3000 && cut <= HD.reliefTris * 1.15 && px1 > px0 && steady, `${full} triangles within ${px0} pixels, then at most ${cut} for a budget of ${HD.reliefTris}, within ${[...new Set(seq.map(q => q[1].toFixed(1)))].join(' or ')} pixels`);
+    HD.reliefTris = null; await draw(S, 40);
+    check('and finely again when there is room', HD.info.reliefTris > full * .9 && HD.info.reliefPx === px0, `${HD.info.reliefTris} within ${HD.info.reliefPx}`);
+  }
   const ray = new T.Raycaster(new T.Vector3(-6, 12, 1.5), new T.Vector3(0, -1, 0)), hits = ray.intersectObjects(v.scene.children, true);
   check('a ray hits the game\'s own roof (two triangles a slope), never the relief', hits.length > 0 && hits[0].object === S.roofMesh && hits.every(h => !h.object.isDetailMesh), hits.map(h => h.object.isDetailMesh ? 'twin' : h.object.name || h.object.type).join(' '));
   const tw = v.details.map.get(S.trunk)?.twin; gs.models.relief(S.trunk, false); await draw(S, 2);

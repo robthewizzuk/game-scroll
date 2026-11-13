@@ -169,7 +169,8 @@ up a tier first.
   the camera still, moving, and with a thing moving, and almost no view reached it.)
 - WebGPU times each frame on the graphics chip where the phone allows it (`__hd.info.gpuMs`: every
   pass since the last real frame, the made frames and other compute work included, which
-  `__hd.info.gpuCompute` gives on its own). The quality steps use it: a frame slowed by the CPU
+  `__hd.info.gpuCompute` gives on its own; `__hd.info.gpuParts` says where it went, in milliseconds a
+  frame: `scene`, `shadows`, `ao`, `bloom`, `upscale`, `effects`, `show`, `compute`). The quality steps use it: a frame slowed by the CPU
   doesn't give up resolution (it wouldn't help), and a GPU with plenty of room gets sharpness back sooner.
 - Detailed meshes (3,000 triangles or more, skinned ones too) get simpler copies from meshoptimizer
   in the background, one mesh a frame, and each frame draws the simplest copy whose change would
@@ -439,6 +440,16 @@ export default {
 
 Check it with `node scripts/sweep.cjs my-game` (long random play at odd sizes) as well as the
 usual smoke and fold tests.
+
+**The loading screen after Play.** Play does not start a Next Gen, AR or Board round at once: the
+app puts a loading screen over the card, runs your `reset()`, draws the round's first frames under
+the cover, runs your first `update()` there once, and starts the round when the shaders for all of
+that are built and the frames come on time (usually well under a second; "Play again" mostly shows
+no loading screen at all). There is nothing to call. Two things follow for the game: make what the
+round needs in `reset()` or in the round's first `update()`, not a few frames later, or it is built
+in front of the player after all; and a sound or a spoken line started in the very first `update()`
+is heard a moment before the cover lifts, so start those from the first touch (`gs.rounds.Ready`)
+or a beat into the round.
 
 **Full screen.** Every Next Gen card has a full screen button on its bezel. In full screen the
 frame, caption and buttons go away and `maxW` / `maxH` no longer cap the size, so `resize(w, h)`
@@ -1189,8 +1200,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   animal standing, walking and running (add `like=dog,owl seed=3 cols=fly@.25:three`), to look them over.
 - **`fur(mesh, o)`**: fur or hair in layers, with no texture files: copies of the surface pushed out along
   its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
-  themselves (`creature.fur`; `fur: false` to leave it off), and people's hair, moustaches and beards are
-  strands (`human({ beard: 1 })`, `person.hair`; `strands: false` for the sculpted hair alone). Close up
+  themselves (`creature.fur`; `fur: false` to leave it off), and people's moustaches and beards are
+  strands (`human({ beard: 1 })`, `person.hair`; `strands: true` for the hair of the head too, which is a
+  clean combed shape otherwise; `strands: false` for none). Close up
   only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
   fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
   [Fur and hair](maker-kit.md#fur-and-hair).

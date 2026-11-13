@@ -124,7 +124,7 @@ function crowdGeo(g, seen = new Map()) {
   // send those points to the chip once between them, as the figure does
   const own = a => { let b = seen.get(a); if (!b) seen.set(a, b = sameList(a, seen)); return b; };
   const o = new InstancedBufferGeometry(); if (g.index) o.setIndex(own(g.index));
-  for (const k of ['position', 'normal', 'uv', 'color', 'tangent']) if (g.attributes[k]) o.setAttribute(k, own(g.attributes[k]));
+  for (const k of ['position', 'normal', 'uv', 'uv1', 'color', 'tangent']) if (g.attributes[k]) o.setAttribute(k, own(g.attributes[k]));
   // bone numbers and weights: eight bytes a point (sixteen for a figure of more than 256 bones), the weights adding up to one
   const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = si.count; let skin = seen.get(si);
   if (!skin) {
