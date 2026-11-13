@@ -1166,8 +1166,12 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   palm: a tall trunk, a skirt of dry leaves, round pleated fans), `banana` (paddle leaves torn along their
   veins), `fern` (`trunk: 3` for a tree fern), `taro` (elephant ears), `cypress` (a swamp cypress: flared
   foot, knees, feathery sprays and hanging moss), `reeds` (blades and cattails), `flowers` (`petals`: a colour
-  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf bounces, flutters and
-  leans downwind from where it grows, and `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
+  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf moves as a springy
+  rod held at its root: it turns about the root rather than sliding, so it keeps its length in a gale; long
+  palm fronds bob slowly and a fern's short leaves quickly, each at its own pitch; the wind bends a leaf by
+  as much as it lies across it (one pointing downwind streams lower, one into the wind is lifted and pressed
+  back), more as the square of the wind; and gusts roll downwind through a grove, reaching the next tree a
+  moment later (`looks.js` `frondSway` is the sum the shaders do). `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
   brushed aside by whoever the marks watch walking through. `group.userData.fronds` lists every leaf
   (`{ id, root, dir, len }`). Per kind: `lean`, `fronds`, `dead`, `fruit`, `skirt`, `trunk`, `branches`,
   `knees`, `moss`, `blades`, `cattails`, `stems`, `petals`, `pads`, `blooms`, `spread`.
