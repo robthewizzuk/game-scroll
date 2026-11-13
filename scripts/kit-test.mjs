@@ -2257,7 +2257,34 @@ console.log('physics ok');
     };
     const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
     const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
-    assert.equal(Object.keys(b.bones).length, 81, 'eighty-one bones: thirty-one (eight of them joints in between), fourteen to a hand and twenty-two in the face');
+    assert.equal(Object.keys(b.bones).length, 85, 'eighty-five bones: thirty-five (eight of them joints in between, two that breathe and two biceps), fourteen to a hand and twenty-two in the face');
+    {
+      // the biceps bulge as the elbow bends (more on a muscled arm), and nothing poses them
+      const { Bulge } = await import('../src/kit/poses.js'), m = skeleton({ look: 'real', seed: 7, muscle: .9 }), s = skeleton({ look: 'real', seed: 7, muscle: .1 });
+      for (const r of [m, s]) assert.ok(r.bones.bicepL instanceof Bulge && r.bones.bicepR instanceof Bulge && r.bones.bicepL.parent === r.bones.armL, 'a bicep on each upper arm');
+      const h0 = m.bones.bicepL.position.clone(); m.updateMatrixWorld(true); assert.ok(m.bones.bicepL.position.distanceTo(h0) < 1e-9, 'a straight arm: the bicep where it was made');
+      const bend = (r, a) => { r.bones.foreL.rotation.set(-a, 0, 0); r.bones.foreR.rotation.set(-a, 0, 0); r.updateMatrixWorld(true); return r.bones.bicepL.position.distanceTo(r.bones.bicepL.home); };
+      const half = bend(m, Math.PI / 4), full = bend(m, Math.PI / 2), deep = bend(m, 2.4), slight = bend(s, Math.PI / 2);
+      assert.ok(half > 0 && full > 1.8 * half && deep > full && full > .006 && full < .02, `a bent elbow swells the bicep, more the further it bends (${(half * 1e3).toFixed(1)}, ${(full * 1e3).toFixed(1)}, ${(deep * 1e3).toFixed(1)} mm)`);
+      assert.ok(slight < .6 * full, `less on a slight arm (${(slight * 1e3).toFixed(1)} mm)`);
+      assert.ok(m.bones.bicepR.position.distanceTo(m.bones.bicepR.home) > .006, 'both arms');
+      // breathing: the chest and belly rise and fall by themselves, about fifteen times a minute at rest; faster and deeper after running
+      const p = skeleton({ look: 'real', seed: 11 }), br = p.rig.breath, B2 = p.bones;
+      assert.ok(br && p.rig.breath === br, 'a person breathes');
+      const c0 = B2.chest.position.clone(), e0 = B2.belly.position.clone(), track = (secs, speed) => { let lo = 1, hi = -1, blo = 1, bhi = -1, ups = 0, was = 0; for (let t = 0; t < secs; t += 1 / 60) { br.step(1 / 60, speed); p.updateMatrixWorld(true); const z = B2.chest.position.z - c0.z, bz = B2.belly.position.z - e0.z; lo = Math.min(lo, z); hi = Math.max(hi, z); blo = Math.min(blo, bz); bhi = Math.max(bhi, bz); if (z > .5 * (hi + lo) && was <= .5 * (hi + lo)) ups++; was = z; } return { chest: hi - lo, belly: bhi - blo, ups }; };
+      const rest = track(16, 0);
+      assert.ok(rest.chest > .0008 && rest.chest < .005 && rest.belly > .001 && rest.belly < .006, `a breath at rest moves the chest ${(rest.chest * 1e3).toFixed(1)} mm and the belly ${(rest.belly * 1e3).toFixed(1)} mm`);
+      assert.ok(rest.ups >= 3 && rest.ups <= 5, `about fifteen breaths a minute at rest (${rest.ups} in 16 s)`);
+      track(20, 6); assert.ok(br.puff > .5, 'running leaves a person out of breath: ' + br.puff.toFixed(2));
+      const puffed = track(8, 0); assert.ok(puffed.chest > 1.3 * rest.chest && puffed.ups >= 3, `out of breath: deeper and faster (${(puffed.chest * 1e3).toFixed(1)} mm, ${puffed.ups} in 8 s)`);
+      track(60, 0); assert.ok(br.puff < .15, 'and back to rest within a minute: ' + br.puff.toFixed(2));
+      br.on = false; track(1, 0); assert.ok(B2.chest.position.distanceTo(c0) < 1e-4 + Math.abs(br.lag), 'a held breath is still');
+      br.on = true; br.step(1 / 60, 0, false); assert.ok(B2.chest.position.distanceTo(c0) < 1e-9 && B2.belly.position.distanceTo(e0) < 1e-9, 'further off it costs nothing: at rest');
+      // a heavy belly lags behind the hips as they drop, and settles
+      const f = skeleton({ look: 'real', seed: 11, weight: 1 }), fb = f.rig.breath; fb.on = false; f.updateMatrixWorld(true); fb.step(1 / 60, 0);
+      let most = 0; for (let k = 0; k < 60; k++) { f.bones.hips.position.y += k < 6 ? -.012 : k < 12 ? .012 : 0; f.updateMatrixWorld(true); fb.step(1 / 60, 0); most = Math.max(most, Math.abs(fb.lag)); }
+      assert.ok(most > .001 && Math.abs(fb.lag) < .0003, `a heavy belly swings ${(most * 1e3).toFixed(1)} mm behind a drop and settles (${(fb.lag * 1e3).toFixed(2)} mm left)`);
+    }
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
     const worst = {}, note = (k, v) => { worst[k] = Math.max(worst[k] || 0, v); };
@@ -2283,9 +2310,14 @@ console.log('physics ok');
       assert.ok(Math.abs(B.collarL.rotation.z - lift) < .02 && Math.abs(B.collarL.rotation.y + fwd) < .02 && Math.abs(B.collarR.rotation.z + lift) < .02 && Math.abs(B.collarR.rotation.y - fwd) < .02, `collar bones for an arm at ${arm}: ${B.collarL.rotation.z.toFixed(2)}, ${B.collarL.rotation.y.toFixed(2)}`);
       assert.ok(wp(B.armL).y - wp(a.bones.armL).y >= up - .005 && wq(B.armL).angleTo(wq(a.bones.armL)) < 1e-6 && wq(B.armR).angleTo(wq(a.bones.armR)) < 1e-6, 'the shoulder rises, the arm points where it did');
     }
-    // a joint in between (gs.poses Between) takes half its joint's turn, whoever turned it, and stays at the joint
+    // a joint in between (gs.poses Between) takes half its joint's turn, whoever turned it, and stays at the joint (an elbow's and a knee's
+    // bone move out to the point of the elbow and the kneecap as they close: all of out once folded right over)
     one({ foreL: [-1.2, 0, 0], shinR: [1, 0, 0], armL: [-.8, .3, .4], legR: [-.6, 0, 0] });
-    for (const [h, of] of [['elbowL', 'foreL'], ['kneeR', 'shinR'], ['shoulderL', 'armL'], ['hipR', 'legR']]) { const q = B[of].quaternion, half = new T.Quaternion().slerp(q, .5); assert.ok(B[h].quaternion.angleTo(half) < 1e-6 && wp(B[h]).distanceTo(wp(B[of])) < 1e-9, `${h} takes half of ${of}'s turn, at its place`); }
+    for (const [h, of] of [['elbowL', 'foreL'], ['kneeR', 'shinR'], ['shoulderL', 'armL'], ['hipR', 'legR']]) {
+      const q = B[of].quaternion, half = new T.Quaternion().slerp(q, .5), o = B[h].out, k = 1 - q.w * q.w, want = B[h].home.clone().add(o ? new T.Vector3(...o).multiplyScalar(k).applyQuaternion(half) : new T.Vector3());
+      assert.ok(B[h].quaternion.angleTo(half) < 1e-6 && B[h].position.distanceTo(want) < 1e-9 && wp(B[h]).distanceTo(wp(B[of])) < (o ? Math.hypot(...o) * k * 1.1 + 1e-9 : 1e-9), `${h} takes half of ${of}'s turn, at its place`);
+    }
+    assert.ok(B.elbowL.out && B.kneeR.out && B.elbowL.position.distanceTo(B.elbowL.home) > .003 && B.kneeR.position.distanceTo(B.kneeR.home) > .003, 'the point of a bent elbow and a bent knee stand out');
     B.foreL.quaternion.setFromEuler(new T.Euler(-2, 0, 0)); b.updateMatrixWorld(true); assert.ok(Math.abs(B.elbowL.quaternion.angleTo(new T.Quaternion()) - 1) < 1e-6, 'a joint turned by hand: half of it too');
     // the forearm's skin turns with the hand: seven tenths of the way at the wrist
     one({ handL: [0, .8, 0], handR: [.2, -.5, 0] }); assert.ok(Math.abs(B.twistL.rotation.y - .56) < 1e-6 && Math.abs(B.twistR.rotation.y + .35) < .01 && B.foreL.rotation.y === 0, 'the turn along the forearm: ' + B.twistL.rotation.y);

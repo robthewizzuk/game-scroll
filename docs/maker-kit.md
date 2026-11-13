@@ -1921,6 +1921,14 @@ it), `rig.follow.reset()` stills it for a new round. Your own thing that hangs (
 from, never into the body; for a thing you place yourself each frame pass `apply: false` and add the `x`, `z`
 (radians) and `y` (metres) it returns.
 
+**A living body** (`gs.models.human` people, by themselves): close up, the chest and the belly breathe, about fifteen
+times a minute at rest, a little more in than out, the belly more in a man and the chest a little more in a woman;
+after a run, faster and deeper, and back to rest over half a minute or so (`person.breath.puff`, 0..1, says how out of
+breath; set it for a winded person). `person.breath.on = false` holds the breath (a sniper before the shot, someone
+playing dead). A heavy belly lags a moment behind the hips in a stride or a landing and settles. A bicep swells as its
+elbow bends, more on a muscled arm, and shoulders, elbows, hips and knees keep their girth in a deep bend. With
+`look: 'real'` the body comes from the seed too, with `muscle` (0 slight .. 1 built) beside `age` and `weight`.
+
 **A live face** (`gs.models.human` people, by themselves): close up, a person blinks, and the eyes keep to a
 spot in the world while the head moves, as eyes do, and jump to a new one now and then or when the head has
 turned away from the old one. Nothing to call: the rig steps the face with the body. `person.face` takes what

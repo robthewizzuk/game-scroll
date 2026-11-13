@@ -1641,6 +1641,19 @@ export type FaceMove = 'browDownLeft' | 'browDownRight' | 'browInnerUp' | 'browO
  * the eyes, the upper lids, the brows, the jaw and the corners of the mouth. It blinks by itself, and its eyes keep to a spot in the world while the head
  * moves and jump to a new one now and then. The rig steps it with the body, close up only, so there is no update() to call.
  */
+/**
+ * A gs.models.human person breathing (person.breath): the front of the rib cage and the belly rise and fall about fifteen times a minute at rest,
+ * the belly more in a man and the chest a little more in a woman; faster and deeper after running, back to rest over half a minute or so; a heavy
+ * belly lags a moment behind the hips in a stride or a landing and settles. It runs by itself (the rig steps it); close up only.
+ */
+export interface BreathT {
+  /** false holds the breath (a held breath before a shot, a body on the ground); true breathes. */
+  on: boolean;
+  /** How out of breath, 0 at rest .. 1 after a sprint: it rises while running and falls back by itself; set it for a scene that wants a winded person. */
+  puff: number;
+  /** Back to rest, as made. */
+  still(): BreathT;
+}
 export interface LiveFaceT extends FaceT {
   set(name: LiveShape, amount?: number): LiveFaceT;
   /** The eyes onto a point in the world, or an Object3D (followed as it moves); null lets them wander again. Each eye turns by itself, as far as eyes do (about 30 degrees to either side): turn the head yourself for more. */
@@ -2622,6 +2635,8 @@ export interface RigT {
   fill(pose?: Record<string, number[]> | null): RigT;
   /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
   fine?: boolean;
+  /** A gs.models.human person's breathing and soft flesh (the same as person.breath); update() steps it. */
+  breath?: BreathT;
   /**
    * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
    * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really
@@ -2661,6 +2676,8 @@ export interface PosesPart {
   POSES: Record<string, Loose>;
   /** A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go with, so a bent limb keeps its girth. Kit use: gs.models.human() makes them; nothing poses them. of: the joint it follows; home: its place; out: where the outside of the bend is (metres), or null. */
   Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null };
+  /** A muscle that bulges (a person's biceps: bones.bicepL...): a bone that moves out from its place as another joint bends (of), by out (metres) at a right angle's bend times size, for the skin over it to swell. Kit use: gs.models.human() makes them; nothing poses them. */
+  Bulge: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null; size: number };
   /** Lifelike idle, walk, jog, run, sprint and sneak for a figure with feet and hands (heel strike, push off the toes, planted feet that don't slide): new Rig(parts, { poses: LIFELIKE, weight: 1 }). gs.models.human people move with it. */
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
@@ -3138,10 +3155,14 @@ export interface ModelsPart {
    * a real skin's colour, redder on the lids, nose, cheeks and ears; life-size eyes, a jaw as broad as a real one, the folds and
    * hollows of a real face pressed into its skin, its two sides not quite alike, quieter brows, lashes and lips, and skin that works out the light under it on WebGPU: a soft warm edge where it turns from the light, a two-lobe shine; skin with fine lines that come with age, freckles, moles and an oily T-zone; wet, deep eyes close up: an iris set back under a clear cornea, a film of tears, real lashes that blink with the lids; brows of single hairs, hair with a shine across its strands, a beard down to a real neckline that thins out at its edges, a moustache grown from the lip). A real person's face comes from seed (the same seed, the same face on every phone; with no skin, hair or iris
    * given, those come from the seed too), age (years, 16..95: older, the folds deepen, the lips thin, the lids hood and the hair greys) and weight (0 thin .. 1 heavy).
-   * Options: look, seed, age, weight, sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
+   * A real person's body comes from the same seed, age and weight, and muscle (0 slight .. 1 built): broader shoulders and thicker arms with muscle, a thicker waist and
+   * belly with weight and age, a woman's hips and bust from her weight, and a height a few centimetres either way (build and scale, when given, win).
+   * The body lives: biceps swell as an elbow bends (more on a muscled arm), elbows, shoulders, hips and knees keep their girth in a deep bend, and person.breath (a BreathT)
+   * breathes the chest and belly and lets a heavy belly settle behind a stride, by itself.
+   * Options: look, seed, age, weight, muscle, sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {
-    (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; sex?: 'm' | 'f'; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
+    (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
     /** Several people at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
     all(list: Loose[]): Loose[];
     /** Starts sculpting whatever these people still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
