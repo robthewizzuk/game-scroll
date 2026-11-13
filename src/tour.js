@@ -402,7 +402,7 @@ function showReport(text, driver) {
 export function openTour(driver) {
   if (running) return;
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
-  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5, 6, 7]]);   // (not games: the Next Gen engine's detail systems, off and on; src/detail-tour.js)
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', [1, 2, 3, 4, 5, 6, 7, 8]]);   // (not games: the Next Gen engine's detail systems, off and on; src/detail-tour.js)
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>
@@ -419,8 +419,8 @@ export function openTour(driver) {
   const picked = () => choice.find(([k]) => k === set.value)[2], scenes = () => set.value === SCENES;
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
-    // (eighteen runs where the forest flies four and the hall three, on WebGPU; each has a few seconds of getting ready before it)
-    est.textContent = scenes() ? `Seven scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((18 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
+    // (twenty-one runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
+    est.textContent = scenes() ? `Eight scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((21 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
       : `${picked().length} games, ${howLong(picked().length, +secs.value)}. Leave the phone on a table with the screen on; AR games may ask for the camera.`;
   };
   set.onchange = secs.onchange = paint; paint();
