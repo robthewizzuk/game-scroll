@@ -2772,7 +2772,8 @@ console.log('physics ok');
   // by themselves the eyes keep to a spot in the world while the head turns, and jump on when it has turned too far
   // (the eyes are put looking ahead and left to settle, with no jump due: waiting for a jump that happened to land ahead failed one run in
   // sixty, when a glance aside was still easing back, or when the standing pose had come to where it turns the head against the body)
-  { const p = mk(), f = p.face, B = p.bones; run(p, .1); f.aim = new Vector3(0, 0, 1).transformDirection(B.head.matrixWorld); f.glance = false; f.dartT = 9; run(p, .2);
+  // (the turn not led here: a turn the eyes and head go first into is lead.js's, checked with the steps)
+  { const p = mk(), f = p.face, B = p.bones; if (p.rig.lead) p.rig.lead.amount = 0; run(p, .1); f.aim = new Vector3(0, 0, 1).transformDirection(B.head.matrixWorld); f.glance = false; f.dartT = 9; run(p, .2);
     f.dartT = 9; const g0 = gaze(B.eyeL)[0], h0 = gaze(B.head)[0], y0 = f.yaw; run(p, .3, () => { p.rotation.y += .4 * dt; }); const g1 = gaze(B.eyeL)[0], turned = gaze(B.head)[0] - h0;
     assert.ok(turned > .07 && Math.abs(g1 - g0) < .03 && Math.abs(y0 - f.yaw - turned) < .03, `the head turned ${turned.toFixed(2)} rad with the body: the eyes still look the same way (${(g1 - g0).toFixed(3)} off), turned ${(y0 - f.yaw).toFixed(2)} back in the head`);
     p.rotation.y += 1.2; run(p, .3); assert.ok(Math.abs(f.yaw) < .2, `turned far at a stroke, they jump to look ahead again: ${f.yaw.toFixed(2)}`);
