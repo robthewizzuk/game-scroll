@@ -3,8 +3,11 @@
 // scripts/shader-hold.cjs: a new kind of thing appears mid-round. With v.holdNew (default) its shader is
 // built in the background: the frame it appears in doesn't stop for it, and it shows a frame or two later.
 // ?hold=0 builds it in the frame instead, for the comparison.
+// On WebGPU it also counts the pipelines made in the middle of a frame: none for the new thing once it shows, and none
+// for things that were in the scene from the start but not drawn (switched off, behind the camera), whose shaders
+// are built over the first frames (v.buildAhead).
 import gs, { loadParts } from '../../src/gamescroll.js';
-import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -13,9 +16,47 @@ const T = gs.THREE, HD = window.__hd, frame = () => new Promise(r => requestAnim
 HD.force = 2; HD.hold = Q.get('hold') !== '0';
 const v = new gs.hd.HDView({ bg: '#9ab4d0', amb: .3 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; document.body.append(c); const x = c.getContext('2d');
 v.cam.position.set(0, 3, 8); v.cam.lookAt(0, 1, 0);
-const sun = gs.hd.sun(); v.scene.add(sun, sun.target); v.sun = sun;
+const sun = gs.hd.sun(); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(T => sun.setTier(T));   // (as a game does: on high the sun's shadow map is 2048 texels, more cells than the picture has)
 const ground = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#6a7a58', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
-for (let i = 0; i < 6; i++) { v.render(x, 240, 320); await frame(); }
+// WebGPU: every pipeline the chip is asked for in the middle of a frame (createRenderPipeline: the frame waits for it;
+// the builds sent to the background ask with createRenderPipelineAsync), by the name of its material
+const G = GPU ? webgpu() : null, dev = G?.r.backend?.device, inFrame = [];
+if (dev) { const f = dev.createRenderPipeline.bind(dev); dev.createRenderPipeline = d => { inFrame.push(d.label || '?'); return f(d); }; }
+// ... and every shader whose text three wrote in the middle of a frame (its node builder: 10 to 30 ms of the frame's
+// own time for a big material). A build in the background writes it first, under a key the frame must find again.
+const built = [], ofScene = [], scenes = new Set([v.scene]); let drawing = false;   // (ofScene: written in a frame for the scenes' own things, not the views' full-screen passes; built: written outside one)
+if (G) {
+  const N = G.r._nodes, nf = N.getForRender.bind(N), kept = N.nodeBuilderCache;
+  N.getForRender = ro => { const n = kept.size, out = nf(ro); if (kept.size > n) { const name = ro.material?.name || ro.material?.type || '?'; if (!drawing) built.push(name); else if (scenes.has(ro.scene)) ofScene.push(name); } return out; };
+  const vr = gs.hd.HDView.prototype.render; gs.hd.HDView.prototype.render = function (...a) { drawing = true; try { return vr.apply(this, a); } finally { drawing = false; } };
+}
+// there from the start, but nothing a first frame draws: one switched off, one behind the camera
+const kind = (color, o) => new T.Mesh(new T.TorusKnotGeometry(.5, .16, 64, 12), new T.MeshPhysicalMaterial({ color, ...o }));
+const hidden = kind('#4c4', { clearcoat: 1, sheen: .5 }); hidden.name = 'hidden'; hidden.position.set(-2, 1, 0); hidden.visible = false; hidden.material.name = 'switched off';
+const behind = kind('#44c', { iridescence: 1, anisotropy: .5 }); behind.name = 'behind'; behind.position.set(0, 3, 16); behind.material.name = 'behind the camera';
+// a level's worth of still things that cast shadows (20,000 triangles and the kit keeps their shadows aside), and one that moves
+const level = new T.Mesh(new T.TorusKnotGeometry(.6, .2, 256, 48), gs.hd.pbr('#8a7a6a', { rough: .8 })); level.name = 'level'; level.material.name = 'level'; level.position.set(-3, 1, -2); level.castShadow = true;
+const mover = kind('#cc4', {}); mover.name = 'mover'; mover.material.name = 'mover'; mover.position.set(2, 1, 0); mover.castShadow = true;
+v.scene.add(hidden, behind, level, mover);
+// The first frame builds what is in view. The ones after it write no shader text for the scene's things. (Once the
+// level has stood still for 45 frames the kit draws the sun's shadow map itself, the still things kept aside. three's
+// clustered lights took that for a picture of the game: the lights' grid was made anew for the bigger map, which
+// gives the lights a new key, and every lit shader's text was written a second time in that frame, half a second
+// into the round: KitLighting in hd3d-gpu.js.)
+v.render(x, 240, 320); await frame(); ofScene.length = 0;
+for (let i = 0; i < 60; i++) { mover.rotation.y += .3; v.render(x, 240, 320); await frame(); }
+const earlyText = ofScene.slice();
+// the rest of the scene's shaders are built over the next frames (v.buildAhead)
+let aheadFrames = 0; for (; aheadFrames < 400 && (v.shadersLeft > 0 || (G && G.r.gsBuilding > 0)); aheadFrames++) { v.render(x, 240, 320); await frame(); }
+for (let i = 0; i < 3; i++) { v.render(x, 240, 320); await frame(); }
+const atStart = inFrame.length; let late = []; ofScene.length = 0;
+const timed = async n => { let worst = 0; for (let i = 0; i < n; i++) { const t = performance.now(); v.render(x, 240, 320); worst = Math.max(worst, performance.now() - t); await frame(); } return worst; };
+// the one switched off comes on; then the camera turns to the one behind it, and back
+hidden.visible = true; const shownMs = await timed(4), shownHeld = HD.info.held || 0;
+v.cam.lookAt(0, 3, 16); const turnedMs = await timed(4);
+v.cam.lookAt(0, 1, 0); await timed(2);
+late = inFrame.slice(atStart); inFrame.length = 0;
+const lateText = ofScene.slice(); ofScene.length = 0;
 // something new mid-round: a material and geometry kind the view hasn't drawn
 const m = new T.Mesh(new T.TorusKnotGeometry(.8, .25, 128, 24), new T.MeshPhysicalMaterial({ color: '#c44', clearcoat: 1, sheen: 1, iridescence: .8, transmission: .3, thickness: .5 }));
 m.position.set(0, 1.5, 0); m.castShadow = true; v.scene.add(m);
@@ -25,5 +66,22 @@ let shownAfter = 0; const t1 = performance.now();
 for (let i = 0; i < 400 && (HD.info.held || 0) > 0; i++) { await frame(); v.render(x, 240, 320); shownAfter++; }
 const waitMs = performance.now() - t1;
 const others = []; for (let i = 0; i < 5; i++) { await frame(); const t = performance.now(); v.render(x, 240, 320); others.push(performance.now() - t); }
-window.result = { backend: HD.info.backend, first, heldAtFirst, shownAfter, waitMs, after: Math.max(...others), stillHeld: HD.info.held || 0 };
+const newPipes = inFrame.slice(), newText = ofScene.slice(); inFrame.length = 0;
+// A second view, got ready before its first frame as the feed gets a card ready: getting ready writes its things'
+// shader text. (A build that failed without a word wrote none. The text is for the canvas, as the picture the game
+// will be drawn into is not known before its first frame, which builds what it needs.)
+const c2 = document.createElement('canvas'); c2.width = 480; c2.height = 640; const x2 = c2.getContext('2d');
+const v2 = new gs.hd.HDView({ bg: '#d0b49a', amb: .3 }); v2.cam.position.set(0, 3, 8); v2.cam.lookAt(0, 1, 0); scenes.add(v2.scene);
+const sun2 = gs.hd.sun(); v2.scene.add(sun2, sun2.target); v2.sun = sun2; v2.onTier(T => sun2.setTier(T));
+for (let i = 0; i < 3; i++) { const k = kind(['#c84', '#48c', '#8c4'][i], [{ clearcoat: 1 }, { sheen: 1 }, { iridescence: 1 }][i]); k.material.name = 'second view ' + i; k.position.set(i * 2 - 2, 1, 0); k.castShadow = true; v2.scene.add(k); }
+built.length = 0;
+await v2.prepare();
+const readyText = built.filter(n => n.startsWith('second view'));
+v2.render(x2, 480, 640); await frame(); ofScene.length = 0;
+for (let i = 0; i < 400 && (i < 8 || v2.shadersLeft > 0 || (G && G.r.gsBuilding > 0)); i++) { v2.scene.children[2].rotation.y += .3; v2.render(x2, 480, 640); await frame(); }
+const secondText = ofScene.slice();
+// (a shadow map's own shader for a new kind of caster is still made in the frame: told apart, not counted)
+const own = a => a.filter(l => !/Shadow|Depth/i.test(l));
+window.result = { backend: HD.info.backend, first, heldAtFirst, shownAfter, waitMs, after: Math.max(...others), stillHeld: HD.info.held || 0,
+  gpu: !!dev, aheadFrames, late: own(late), lateShadow: late.length - own(late).length, shownMs, shownHeld, turnedMs, newInFrame: own(newPipes), newShadow: newPipes.length - own(newPipes).length, lateText: own(lateText), newText: own(newText), secondText: own(secondText), readyText, earlyText: own(earlyText) };
 </script>

@@ -1761,6 +1761,18 @@ console.log('physics ok');
   console.log(`occlusion from depth, 60 random places: nothing seen is hidden; hides ${hid} where a fresh picture hides ${fresh} (` + Object.entries(kinds).map(([k, v]) => `${k} ${v[0]}/${v[1]}`).join(', ') + ') ok');
 }
 
+// occlusion's keep: it stays at work only where what it leaves out is worth more chip time than finding it costs
+{
+  const { occludePays } = await import('../src/kit/occlude.js');
+  // the Fold's town (2026-11-12): a quarter of its triangles left out, 1.28 ms of code, and no gain in frame rate
+  assert(!occludePays(55000, 6, 1.28), 'a town where it cut 55,000 triangles for 1.28 ms of code rests');
+  assert(!occludePays(0, 0, .3) && !occludePays(20000, 2, .5), 'next to nothing left out never pays');
+  assert(occludePays(600000, 150, .6), 'most of a heavy scene behind a wall pays');
+  assert(occludePays(0, 400, .5), 'hundreds of draws left out pay by themselves');
+  assert(!occludePays(600000, 150, 8), 'not when finding it took longer than drawing it');
+  console.log('occlusion\'s keep: rests in the Fold\'s town, stays where most of a scene is hidden ok');
+}
+
 // shadows in tiles: whatever moves, stops, comes, goes or slides, the map and the kept copy end up holding
 // exactly what a whole redraw would, for a small share of the drawing
 {
