@@ -816,6 +816,20 @@ try {
       const rb = coat(rbo), cb = coat(cbo), rm = coat(rmo), rbm = human(rbo).mesh.material[0];
       ok(real.mesh.material[6].anisotropy > 0 && !(M[6].anisotropy > 0) && !rb && !rm && cb && front(cb) < 1.545 && rbm.map !== rs.map,
         `real hair: a shine across the strands (anisotropy ${real.mesh.material[6].anisotropy}); a real beard and moustache single hairs over their own paint, no coat (${!rb && !rm}); the clean look's beard a coat down to ${((1.69 - (cb ? front(cb) : 0)) * 100).toFixed(1)} cm below the head's middle`);
+      // a face light (HDView.faceLight): one soft light beside the camera, made once, aimed between the eyes each frame wherever the camera
+      // goes, as bright on the face near or far; no shadow, no ray traced light, left out of WebGPU's clustered lamps (its skin takes no shine
+      // from it); null only dims it
+      { const fv = new gs.hd.HDView({ bg: '#404040', amb: .4 }), fc = document.createElement('canvas'); fc.width = 96; fc.height = 128; const fx = fc.getContext('2d');
+        fv.scene.add(real); real.position.set(0, 0, 0); const head = real.getObjectByName('head'), eyes = new gs.THREE.Vector3();
+        const L = fv.faceLight(real, { strength: .6 }), lit = [];
+        for (const [z, side] of [[1.2, 0], [3, 1.4]]) {
+          fv.cam.position.set(side, 1.65, z); fv.cam.lookAt(0, 1.6, 0); fv.render(fx, 96, 128);
+          head.localToWorld(eyes.set(0, .165, .09)); const d = L.position.distanceTo(eyes);
+          lit.push({ aim: L.target.position.distanceTo(eyes), near: L.position.distanceTo(fv.cam.position) < d, flux: L.intensity / (d * d), reach: L.distance > d });
+        }
+        const same = fv.faceLight(real) === L; fv.faceLight(null); const off = L.intensity === 0; fv.scene.remove(real);
+        ok(L.isSpotLight && !L.castShadow && L.userData.gsFill && L.userData.noTrace && same && off && lit.every(l => l.aim < 1e-6 && l.near && l.reach && Math.abs(l.flux - .6) < 1e-6),
+          `face light: one soft light beside the camera, aimed between the eyes (${lit.map(l => (l.aim * 1000).toFixed(2) + ' mm off').join(', ')}), as bright on the face near and far (${lit.map(l => l.flux.toFixed(2)).join(', ')}); kept, and dimmed by null (${off})`); }
       // seams and stitching (field.js lines, human-paint.js paintSeams): cloth and leather wear one small picture by the same second set of
       // coordinates, across a line and along it; some of every kind of cloth is near a seam or a row of stitching, and no close-up triangle
       // counts more stitches between its corners than its length can hold (where a count starts again, a corner has a twin)

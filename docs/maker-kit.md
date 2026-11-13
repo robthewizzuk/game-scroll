@@ -1936,7 +1936,9 @@ the eyes shut for a moment (`Reactions` does it at a blow). The eyes of someone 
 themselves (the head lying over, low down): `face.awake = true` keeps them open (the wounded), `false` closes
 them wherever he is, `null` is as made. The head has bones for all of it (`bones.eyeL`, `lidL`, `browL`,
 `browInL`, `cornerL` and their `R` twins, and `bones.jaw`), lips that part, and teeth and a tongue behind them.
-At the middle and far levels, and in a crowd, the face is still and costs nothing.
+At the middle and far levels, and in a crowd, the face is still and costs nothing. For a close-up or a cutscene,
+`view.faceLight(person)` (once, in `make()`) lights the face softly from beside the camera, as a film crew's fill
+does, with a small bright point in each eye; `{ strength: .5 }` sets how much, `view.faceLight(null)` dims it.
 
 **Missions** (`gs.missions`): write a mission as a script that reads like the plan:
 `Mission(function* (m) { m.objective('Reach the roof'); yield m.until(() => roof.has(me)); m.checkpoint();

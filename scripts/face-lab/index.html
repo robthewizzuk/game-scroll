@@ -72,6 +72,7 @@ try {
     const p = LAB[pick[r]].scan ? scan : human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
     if (Q.has('nowet') && p.wet) p.wet.visible = false;   // (&nowet: a real face's wet film over the eyes left out)
+    if (Q.has('facelight')) v.faceLight(p, { strength: +Q.get('facelight') || .5 });   // (&facelight=.5: a soft light beside the camera on the face, HDView.faceLight)
     p.rig.play?.(Q.get('pose') || 'idle'); for (let i = 0; i < 30; i++) p.rig.update(1 / 30);
     if (Q.has('expr')) for (const e of Q.get('expr').split(';')) { const [k, a] = e.split(':'); p.face?.set?.(k, +a); }
     if (Q.has('mouth')) p.face?.mouth?.(+Q.get('mouth'));
@@ -90,7 +91,7 @@ try {
       if (Q.has('time')) { const t1 = performance.now(); for (let i = 0; i < 10; i++) { v.t = 0; v.render(cx, cw, ch); } info.push(`  ${light}:${view} ${((performance.now() - t1) / 10).toFixed(1)} ms a frame`); }
       sx.font = '12px sans-serif'; sx.fillStyle = '#ddd'; sx.fillText(`${LAB[pick[r]].name} · ${light}`, px + 5, py + 13);
     }
-    v.scene.remove(p);
+    v.scene.remove(p); if (Q.has('facelight')) v.faceLight(null);
   }
   window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
 } catch (e) { window.result = { error: String(e && e.stack || e) }; }

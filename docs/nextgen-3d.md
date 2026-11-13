@@ -1252,6 +1252,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide.
+  For a close-up or a cutscene, `view.faceLight(person)` (once, in `make()`) adds a film crew's soft fill from
+  beside the camera: it lifts the shadow side of the face and puts a small bright point in each eye, aimed
+  between the eyes every frame wherever the camera and the person go, as bright near or far, and hardly
+  touches anything else. Options `{ strength: .5, colour, side: .4, up: .3 }`; `view.faceLight(other)` moves
+  it to someone else and `view.faceLight(null)` dims it (a light that comes or goes mid-round makes every lit
+  shader build again, so it stays made). On WebGPU skin takes no shine from it, as from a big soft light.
   Skin and eyes read as flesh close up, with nothing to set: the skin has pores and fine lines (the `skin`
   recipe, laid on so it never smears at a seam; cloth and leather the same), an ear against the sun glows
   red while the head beside it stays solid (WebGPU; WebGL has a soft warm rim), and each eye has an iris
