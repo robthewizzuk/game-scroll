@@ -129,10 +129,10 @@ game held up by the CPU above 60 fps (the graphics chip has room) goes straight 
 up a tier first.
 
 **Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
-(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, bounce light,
+(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, sun mask, bounce light,
 depth of field, motion blur, screen effects, upscale...). When a game is slow and the graphics chip is the
 reason, the effect that costs it most is drawn smaller first: ambient occlusion, bloom, reflections (screen
-space or traced), volumetric light and sun shafts each have three sizes (100%, 70%, 50% of the tier's). An
+space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's). An
 effect is only stepped while it takes at least an eighth of the chip's frame (and half a millisecond), so a
 cheap effect is never made worse for nothing; when none does, the resolution steps as before. Only the size
 of the effect's pictures changes, so no shader is built again mid-round. Where the chip doesn't say (WebGL,
@@ -604,6 +604,27 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   - Checked by `node scripts/detail-test.cjs --page traced --webgpu` and the kit test (the copy's lists
     are walked there the way the shader walks them, against three's own ray caster). On a phone: the
     **Hall** in the engine test scenes. Nobody has seen it on a phone yet.
+- **Finer sun shadows (WebGPU).** The sun's shadow map is tens of metres across, so a cup on a table,
+  fingers on a rail or a nose throws next to nothing in it, and past its box nothing throws a shadow at all.
+  On WebGPU a half-size *sun mask* is worked out once a frame after the scene is drawn, and the sun's light
+  reads it the next frame (moved on by the camera's move, and checked by distance so nothing smears):
+  - `v.contactShadows = true | false | { length: .3, thickness: .25, out: 40 }`: short rays towards the sun
+    through the depth picture, for small things close by (cups, hands, a face's nose and jaw). On by
+    itself at ultra; `length` is how far the rays go (metres), `out` how far off they fade.
+  - `v.farShadows = { size: 768, px: 512, tiles: 4, reach }` (or `true`): shadows past the sun map's box,
+    from a map of heights round the camera (the top of every shadow caster seen from above, drawn one
+    tile a frame as the camera moves on): far hills and towers shade the land. Off by itself: turn it on
+    for wide views (a hill top, a plane, a long road). `size` is the metres it covers, `reach` how far a
+    ray goes (half of `size` by itself).
+  - Crowds (`gs.props.Crowd`) do it by themselves: members with nobody of their own level within 15 m of
+    the camera leave the sun's shadow map and throw the shadow of a rounded post (an animal's lies along
+    it) instead, which costs no triangles: in the engine test scene below, the sun map drew up to six times fewer
+    triangles with the far people as capsules.
+  - `__hd.capsules = false` keeps crowds in the sun's map; `__hd.sunMask = false` turns the whole mask
+    off; `__hd.info.sunMask` says what the last frame's held (`{ contact, far, caps, full }`). Its
+    passes are timed as `sun mask`, and a slow game draws it smaller like the effects above.
+  - WebGL draws none of it: the sun's map alone, crowds in it as always. Checked by `node scripts/finer.cjs`
+    (see docs/testing.md); on a phone, the **Shade** engine test scene.
 - `const cs = v.contact({ y: 0, size: 8 })` lays soft contact shadows on a floor (medium tier and up),
   so things look like they're standing on it even where real shadows are off. In a big level, keep it
   under the action with `cs.at(x, z)`.
