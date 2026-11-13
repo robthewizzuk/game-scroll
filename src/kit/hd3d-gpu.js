@@ -26,6 +26,7 @@ import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
+import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
 import { eachShown, listPipeline } from './scene-list.js';
@@ -423,6 +424,25 @@ const live = o => uniform(o.value).onRenderUpdate(() => o.value);   // follows t
 // Frames drawn (GpuChain.draw counts them), and a { value } as it was at the frame before this one: for
 // motion that a shader makes itself (three only knows a mesh's matrices and bones from the frame before)
 const DRAWN = { n: 0 };
+// looks.js frondSway in TSL (the same sums): where a point of a leaf moves to in the wind, v its place less its leaf's root
+const tTurn = (v, k, th) => v.mul(cos(th)).add(cross(k, v).mul(sin(th))).add(k.mul(dot(k, v)).mul(cos(th).oneMinus()));
+function frondSway(v, a, id, len, t, wind, dir, sway, root) {
+  const { GUSTS, RUN, DAMP } = FROND, z2 = 2 * DAMP;
+  const w0 = sqrt(max(len, .15)).reciprocal().mul(6.28318 * 1.15).mul(fract(id.mul(.618)).mul(.2).add(.9)), dl = length(dir), lean = step(.5, dl);
+  const d = select(lean.greaterThan(.5), dir.div(max(dl, 1e-6)), vec2(.7071)), along = dot(root, d), across = root.y.mul(d.x).sub(root.x.mul(d.y));
+  let g = float(0), g2 = float(0);
+  for (const [f, share] of GUSTS) {
+    const w = 2 * Math.PI * f, r = w0.reciprocal().mul(w), q = r.mul(r).oneMinus(), H = sqrt(q.mul(q).add(r.mul(z2).mul(r.mul(z2)))).reciprocal();
+    const ph = t.mul(w).sub(along.mul(w / RUN)).add(across.mul(.3));
+    g = g.add(H.mul(cos(ph.sub(TSL.atan(r.mul(z2), q)))).mul(share)); g2 = g2.add(cos(ph).mul(share));
+  }
+  const ring = sin(w0.mul(t).sub(w0.mul(along).div(RUN)).add(id.mul(2.4))).mul(g2.mul(.45).add(.55)), k = wind.mul(sway);
+  const bend = clamp(k.mul(lean.mul(k.mul(4).add(1.1)).add(g.mul(.9))), -1.1, 1.1), flap = k.mul(1.6).mul(ring), aa = max(a, 1e-3), m = pow(aa.oneMinus(), 4).oneMinus().div(aa.mul(4)).oneMinus().div(.75);
+  const h = max(length(v.xz), 1e-6), vl = max(length(v), 1e-6), fl = tTurn(v, vec3(v.z.negate().div(h), 0, v.x.div(h)), flap.mul(m));
+  const c = vec3(v.y.mul(d.y), v.z.mul(d.x).sub(v.x.mul(d.y)), v.y.negate().mul(d.x)).div(vl), cs = length(c);
+  const o = select(cs.greaterThan(1e-6), tTurn(fl, c.div(max(cs, 1e-6)), bend.mul(m).mul(cs)), fl);
+  return o.sub(v).sub(vec3(0, k.mul(len).mul(a).mul(a).mul(.12).mul(sin(t.mul(8.7).add(id.mul(3.1)).add(a.mul(6)))), 0));
+}
 const lastFrame = o => {
   const obj = typeof o.value === 'object', prev = obj ? o.value.clone() : null, cur = obj ? o.value.clone() : null;
   let seen = -1, p = o.value, c = o.value;
@@ -623,17 +643,15 @@ export const gpuLooks = {
     m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(sway(lastFrame(u.lkTime), kWas, dWas))); return positionLocal.add(pushAt(sway(t, k, dir), wp)); })();
     seeThroughLeaf(m, o, u);
   },
-  // looks.js fronds(): long leaves from one point (palms, banana, fern, reeds, ivy, moss, weeds): the tip
-  // bounces, flutters and leans downwind most, read from the mesh's lkFrond (where the leaf starts, how far
-  // along) and lkFrondId (which leaf, how long); light through, outlines that hold up, both sides lit alike
+  // looks.js fronds(): long leaves from one point (palms, banana, fern, reeds, ivy, moss, weeds): each a springy
+  // rod turning about its root (looks.js frondSway: its own pitch, gusts rolling downwind, bent by the drag across
+  // it, bobbing), read from the mesh's lkFrond (where the leaf starts, how far along) and lkFrondId (which leaf, how
+  // long); light through, outlines that hold up, both sides lit alike
   fronds(m, s, o) {
     const u = s.uniforms, F = attribute('lkFrond', 'vec4'), FI = attribute('lkFrondId', 'vec2'), a = F.w, push = partPush(u);
-    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), ph = wp.x.mul(.11).add(wp.z.mul(.13)).add(FI.x.mul(1.93));
+    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), rw = modelWorldMatrix.mul(vec4(F.xyz, 1)).xyz.add(ORG), v = wp.sub(rw);
     const off = (t, wind, dir) => {
-      const k = wind.mul(live(u.lkSway)).mul(FI.y).mul(a).mul(a), lean = dir.mul(k).mul(sin(t.mul(.8).add(ph.mul(.4))).mul(.6).add(1.1));
-      const sx = sin(t.mul(1.3).add(ph)).add(sin(t.mul(2.9).add(ph.mul(1.7))).mul(.35)).mul(k).mul(.45), sz = cos(t.mul(1.1).add(ph.mul(1.3))).mul(k).mul(.45);
-      const sy = k.negate().mul(sin(t.mul(2.1).add(ph.mul(1.6))).mul(.5).add(sin(t.mul(8.7).add(ph.mul(3.1)).add(a.mul(6))).mul(.12))).sub(length(dir).mul(k).mul(.25));
-      let w = vec3(sx.add(lean.x), sy, sz.add(lean.y));
+      let w = frondSway(v, a, FI.x, FI.y, t, wind, dir, live(u.lkSway), rw.xz);
       if (push) w = w.add(push(wp, a.mul(FI.y), smoothstep(1.8, 2.6, positionGeometry.y).oneMinus()));   // (pushed by how far along its leaf, not above a passer-by's reach)
       return modelWorldMatrixInverse.mul(vec4(w, 0)).xyz;
     };

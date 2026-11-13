@@ -5563,6 +5563,28 @@ console.log('physics ok');
   }
 }
 
+// ---- fronds in the wind (looks.js frondSway: what the fronds look's shaders do, on WebGL and WebGPU alike): each leaf a springy rod
+// turning about its root, so it keeps its length; bent by the drag across it (a leaf across the wind swings downwind, one pointing
+// downwind streams lower, one into it is lifted and pressed back), more as the square of the wind; long leaves bob slower than short
+// ones, at their own pitch; gusts roll downwind, reaching a tree 8 m further on about 2 s later; with no wind's way there's no lean
+{
+  const { frondSway } = await import('../src/kit/looks.js');
+  const run = (v, o = {}) => { const { len = 3.1, id = 3, wind = .8, dir = [1, 0], root = [0, 0], secs = 30, a = 1 } = o, out = []; for (let t = 0; t < secs; t += 1 / 30) out.push(frondSway(v, a, id, len, t, wind, dir, .08, root, false)); return out; };
+  const mean = (x, e) => x.reduce((s, d) => s + d[e], 0) / x.length;
+  let kept = 0; for (const v of [[0, .4, 3], [3, -.6, .5], [-2, 1, -2]]) for (const d of run(v, { wind: 2 })) kept = Math.max(kept, Math.abs(Math.hypot(v[0] + d[0], v[1] + d[1], v[2] + d[2]) / Math.hypot(...v) - 1));
+  assert.ok(kept < 1e-9, 'a frond turns about its root: it keeps its length (' + kept.toExponential(1) + ')');
+  const across = mean(run([0, .4, 3]), 0), down = mean(run([3, .4, 0]), 1), into = mean(run([-3, .4, 0]), 1), lo = mean(run([0, .4, 3], { wind: .4 }), 0), hi = mean(run([0, .4, 3], { wind: 1.6 }), 0);
+  assert.ok(across > .1 && down < -.01 && into > .01 && hi > 4.5 * lo, `bent by the drag across it: across the wind ${across.toFixed(2)} m downwind, pointing downwind ${down.toFixed(3)} m lower, into it ${into.toFixed(3)} m higher; four times the wind leans it ${(hi / lo).toFixed(1)} times as far`);
+  const bobs = len => { let z = 0, last = 0; for (const d of run([0, 0, len], { len, id: 7 })) { if (last && Math.sign(d[1]) !== Math.sign(last)) z++; last = d[1]; } return z / 60; }, slow = bobs(3.1), quick = bobs(.6);
+  assert.ok(slow > .4 && slow < .9 && quick > 2 * slow, `a long frond bobs slower than a short one: ${slow.toFixed(2)} and ${quick.toFixed(2)} times a second`);
+  const sx = r => run([0, .4, 3], { root: r, secs: 60 }).map(d => d[0]), A = sx([0, 0]), B = sx([8, 0]); let best = -Infinity, lag = 0;
+  for (let l = -120; l <= 120; l++) { let c = 0; for (let i = 150; i < A.length - 150; i++) c += A[i] * B[i + l]; if (c > best) { best = c; lag = l / 30; } }
+  assert.ok(Math.abs(lag - 2) < .3, 'gusts roll downwind: a frond 8 m downwind sways the same ' + lag.toFixed(2) + ' s later');
+  const calm = run([0, .4, 3], { dir: [0, 0] }); let moved = 0; for (const d of calm) moved = Math.max(moved, Math.hypot(...d));
+  assert.ok(Math.abs(mean(calm, 0)) < .02 && moved > .05, 'with no way to the wind it moves (' + moved.toFixed(2) + ' m at most) but leans nowhere');
+  console.log('fronds in the wind: they keep their length, are bent by the drag across them, bob at their own pitch and feel gusts that roll downwind ok');
+}
+
 // ---- smaller meshes (src/kit/slim.js, slim-core.js): points kept in about half the bytes
 {
   const THREE = await import('three'), { mergeGeometries } = await import('three/examples/jsm/utils/BufferGeometryUtils.js');
