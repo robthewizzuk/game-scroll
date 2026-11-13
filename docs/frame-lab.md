@@ -91,7 +91,10 @@ report from a close that came while memory was short says "(memory was low)". Th
 
 ## Hitch causes
 
-Every stutter during play is checked for what happened since the picture before it:
+Every stutter during play is checked for what happened since the picture before it. So is every
+**freeze**: a gap of a quarter of a second or more between two pictures of play (up to 3 s, and not the app
+coming back to the front). The frame rate, lows and stutters leave gaps that long out (they look like a
+pause), so the recording's summary counts freezes on their own, with the worst.
 
 - shaders built (WebGL programs, WebGPU programs) and textures uploaded
 - a garbage collection (the JavaScript heap fell by 1.5 MB or more; the browser rounds the heap
@@ -100,7 +103,8 @@ Every stutter during play is checked for what happened since the picture before 
   whether it was layout
 - a quality tier, resolution step or effect size change, a fold or resize, the app coming back to the front,
   a card or round change, refreshes skipped
-- the game's own CPU time going over the beat, or GPU time going over it
+- the game's own CPU time going over the beat (and the CPU part that took most of it: the scene pass,
+  physics, the game's own code...), or GPU time going over it
 - if none of those: "no cause seen", which on a 3D game usually means the GPU, the driver or the
   system (another app, the phone's own work)
 
