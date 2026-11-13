@@ -6045,6 +6045,28 @@ console.log('physics ok');
   console.log('floating origin: the centre moves in steps, physics far out runs as at the centre, a shift leaves bodies, lifts, hinges and rays be, and follows the view ok');
 }
 
+// the physical sky's air on WebGPU (atmosphere.js, Hillaire's method): blue overhead at noon, a red low sun, the sky round a
+// setting sun warmer than away from it, more air further down, and the tables made once for the same settings
+{
+  const A = await import('../src/kit/atmosphere.js');
+  const t0 = performance.now(), L = A.luts(A.airOf({})), ms = performance.now() - t0;
+  assert.ok(A.luts(A.airOf({})) === L, 'the tables are made once for the same air');
+  const n = v => { const l = Math.hypot(...v); return { x: v[0] / l, y: v[1] / l, z: v[2] / l }; };
+  const noon = n([0, 1, .35]), low = n([1, .05, .35]);
+  const zen = A.skyLight(L, { x: 0, y: 1, z: 0 }, noon, .002);
+  assert.ok(zen[2] > zen[0] * 1.8 && zen[2] > zen[1], 'blue overhead at noon: ' + zen.map(v => v.toFixed(4)));
+  const sunHigh = A.transmittance(L, A.RG + .002, noon.y), sunLow = A.transmittance(L, A.RG + .002, low.y);
+  assert.ok(sunHigh[0] > .8 && sunHigh[2] > .6, 'the noon sun comes through nearly whole: ' + sunHigh.map(v => v.toFixed(3)));
+  assert.ok(sunLow[0] > sunLow[2] * 3, 'a low sun is red: ' + sunLow.map(v => v.toFixed(3)));
+  const toward = A.skyLight(L, n([1, .08, .3]), low, .002), away = A.skyLight(L, n([-1, .08, -.3]), low, .002);
+  assert.ok(toward[0] / toward[2] > away[0] / away[2] * 1.3 && toward[0] > away[0], 'the low sky towards a setting sun is warmer and brighter: ' + toward.map(v => v.toFixed(4)) + ' against ' + away.map(v => v.toFixed(4)));
+  const horiz = A.skyLight(L, n([0, .02, -1]), noon, .002);
+  assert.ok(horiz[0] / horiz[2] > zen[0] / zen[2], 'paler (less blue) at the horizon than overhead');
+  const up = A.transmittance(L, A.RG + 3, noon.y);
+  assert.ok(up[2] > sunHigh[2], 'less air in the way from 3 km up');
+  console.log(`physical sky (Hillaire): blue overhead, red low sun, warm towards a setting sun, tables in ${ms.toFixed(0)} ms ok`);
+}
+
 // night lights (lamps.js): the lamp pool, light shapes, shadow slots
 {
   const THREE = await import('three'), { LampPool, shapeAt, SHAPES, SLOTS, SLOT_DRAWS } = await import('../src/kit/lamps.js');

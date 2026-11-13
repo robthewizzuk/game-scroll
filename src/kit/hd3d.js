@@ -319,7 +319,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '' },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -387,6 +387,13 @@ export const HD = {
    * HD.info.spread says which are spread.
    */
   spread: true,
+  /**
+   * WebGPU: a gs.sky Sky's clouds marched through as real ones (high and ultra; hd3d-gpu-sky.js), shading the ground, the fog and
+   * the light beams. false: the painted layer, as on WebGL. HD.info.sky says what the sky drew ('air', 'clouds', 'air + clouds').
+   */
+  clouds: true,
+  /** WebGPU: a physical Sky's colours from Hillaire's air (atmosphere.js) in place of Preetham's sums, and the air's haze in the sky's colours. false: Preetham, as on WebGL. */
+  atmosphere: true,
   /** Tests: act as if the graphics chip had half precision (the build machine's WebGPU has none), drawing the same passes in full, so the switch, the rebuild and the frame lab's check can be tried. */
   halfPretend: false,
   /** Tests and the frame lab's A/B: how textures are read under SGSR 2 on WebGPU. null: the usual, as the screen's size would read them (hd3d-gpu.js sharpMips); false: as drawn, the small picture's mip level; a number: that many mip levels on top of the usual (negative: sharper). */
@@ -2570,6 +2577,11 @@ export class HDView {
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
+    // the sky's own pictures (a gs.sky Sky on WebGPU: its air, its clouds and their shadow, hd3d-gpu-sky.js), before the scene that shows them
+    const sky = this._sky?.dome.parent ? this._sky.gpu : null;
+    if (sky) { if (pm >= 0) enter('3D: sky'); sky.frame(r, this.cam, { w: pw, h: ph, cut: o.cut, bake: baking || off, tier: T, t: this.t, flags: HD }); if (pm >= 0) leave(pm); }
+    else { G.fx.SKY.on.value = 0; G.fx.SKY.shadeOn.value = 0; }
+    HD.info.sky = sky ? sky.info : '';
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
     try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }

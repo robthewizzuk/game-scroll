@@ -2273,7 +2273,7 @@ export interface Level3dPart { Level3D: new (text: string, o?: { size?: number; 
 
 export interface SkyPart {
   DAY: [number, { top: string; horizon: string; sun: string; sunI: number; amb: number }][];
-  Sky: new (view: Loose, o?: { time?: number; speed?: number; day?: SkyPart['DAY']; stars?: number; /** Colours from light scattering in air (Preetham). */ physical?: boolean | { haze?: number; blue?: number; mie?: number; glow?: number; bright?: number }; fog?: boolean; light?: boolean; sun?: Loose; hemi?: Loose; tilt?: number;
+  Sky: new (view: Loose, o?: { time?: number; speed?: number; day?: SkyPart['DAY']; stars?: number; /** Colours from light scattering in air (Preetham; on WebGPU Hillaire's, and with clouds those are marched through on high and ultra). */ physical?: boolean | { haze?: number; blue?: number; mie?: number; glow?: number; bright?: number }; fog?: boolean; light?: boolean; sun?: Loose; hemi?: Loose; tilt?: number;
     /** Cloud cover 0..1 (clouds lit by the sun; on a view with air() their shadows cross the ground). */ clouds?: number; cloudLight?: string; cloudDark?: string;
     /** 0..1: keeps the low sky round the sun clear of cloud. */ gap?: number;
     /** Next Gen: reflections and sky light come from this sky (redone as it changes). */ env?: boolean; sunSize?: number }) => {

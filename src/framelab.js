@@ -348,15 +348,19 @@ const PAIRS = {
   tier: { title: 'Low vs ultra tier', a: 'low', b: 'ultra', set: on => { HD.force = on ? 3 : 0; } },
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
 function halfCan() { return HD?.info.backend === 'webgpu' && !/no half/.test(HD.info.half || 'no half'); }
 // effects spread over frames (src/kit/hd3d-gpu-spread.js) can be compared: WebGPU, and something spread (or switched off now)
 function spreadCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.spread || HD.spread === false); }
+// the sky on WebGPU (src/kit/hd3d-gpu-sky.js) can be compared: WebGPU, and the air or the clouds drawn (or switched off now)
+function skyCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.sky || HD.clouds === false || HD.atmosphere === false); }
+function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD.info.sky || '') || HD.clouds === false); }
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -370,7 +374,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -487,11 +491,14 @@ async function runFG() {
 //   Half:   the kit's own WebGPU passes in full and in half precision (src/kit/half.js)
 //   Spread: ambient occlusion, volumetric light and bounce light with every sample every frame, and spread over frames
 //           (src/kit/hd3d-gpu-spread.js)
+//   Clouds: the sky's painted clouds, and real ones marched through with their shadow (src/kit/hd3d-gpu-sky.js)
 const CHECKS = {
   half: { title: 'Half precision check', name: 'Half check', key: 'half', off: 'full', on: 'half', can: halfCan, no: () => PAIRS.half.no, says: () => HD.info.half,
     note: 'in half: SGSR 2\'s upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare' },
   spread: { title: 'Spread check', name: 'Spread check', key: 'spread', off: 'every sample', on: 'spread', can: spreadCan, no: () => PAIRS.spread.no, says: () => 'spread: ' + (HD.info.spread || 'none'),
     note: 'spread over frames: ambient occlusion (a part of its directions a frame), volumetric light (a third of its steps) and bounce light (one slice at half size), the frames before filling in' },
+  clouds: { title: 'Clouds check', name: 'Clouds check', key: 'clouds', off: 'painted', on: 'marched', can: cloudsCan, no: () => 'Marched clouds need WebGPU, a tier with ambient occlusion (high or ultra) and a game whose sky has clouds, so there is nothing to compare.', says: () => 'sky: ' + (HD.info.sky || 'as before'),
+    note: 'marched: the clouds at a quarter of the pixels, filled in from the frames before, and their shadow a few times a second' },
 };
 async function runCheck(kind) {
   const C = CHECKS[kind], s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash(`${C.name} needs a Next Gen or AR game.`);
@@ -524,7 +531,7 @@ async function runCheck(kind) {
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -750,7 +757,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -772,6 +779,7 @@ function panel() {
       case 'fg': runFG(); break;
       case 'half': runHalf(); break;
       case 'spread': runSpread(); break;
+      case 'clouds': runClouds(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -869,7 +877,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)
