@@ -727,7 +727,7 @@ export function slab({ w = 8, d = 8, thick = .3, rim = .35, wood: colour = '#7a4
 }
 /** A flat picture lying on the board (labels, cards, tiles' faces): draw(ctx, px) paints a square canvas. Returns a Mesh w x d at y = lift. */
 export function decal(w, d, draw, { px = 256, lift = .012, rough = .7, glow = 0 } = {}) {
-  const cv = Object.assign(document.createElement('canvas'), { width: px, height: Math.max(8, Math.round(px * d / w)) }), ctx = cv.getContext('2d');
+  const cv = Object.assign(document.createElement('canvas'), { width: px, height: Math.max(8, Math.round(px * d / w)) }), ctx = cv.getContext('2d', { willReadFrequently: true });   // (painted in memory, so a redraw's upload is a copy, not a wait on the chip: hd3d.js surface())
   draw(ctx, cv.width, cv.height);
   const tex = new CanvasTexture(cv); tex.colorSpace = SRGBColorSpace; tex.anisotropy = 4;
   const m = pbr('#ffffff', { rough, transparent: true, alphaTest: .02 }); m.map = tex; if (glow) { m.emissive = new Color('#ffffff'); m.emissiveMap = tex; m.emissiveIntensity = glow; }

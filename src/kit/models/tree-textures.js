@@ -37,7 +37,7 @@ const leafShape = {
 export function getLeafTexture(type) {
   const k = leafShape[type] ? type : 'oak';
   if (made[k]) return made[k];
-  const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d');
+  const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d', { willReadFrequently: true });   // (painted in memory: hd3d.js surface())
   x.fillStyle = x.strokeStyle = '#e8f0e0';
   const veins = leafShape[k](x);
   // shading: lighter towards the edge, veins darker (drawn only where the leaf is)

@@ -8,7 +8,7 @@ let dot = null;
 function dotTexture() {
   if (dot) return dot;
   const c = document.createElement('canvas'); c.width = c.height = 64;
-  const g = c.getContext('2d'), grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  const g = c.getContext('2d', { willReadFrequently: true }), grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);   // (painted in memory: hd3d.js surface())
   grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(.4, 'rgba(255,255,255,.6)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
   return dot = new CanvasTexture(c);

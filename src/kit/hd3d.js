@@ -954,6 +954,13 @@ export function pbr(col = '#ffffff', { rough = .6, metal = 0, glow = 0, glowCol,
   }
   return m;
 }
+// Pictures the kit paints in code to put on things are painted in the phone's memory, not on the chip
+// (willReadFrequently keeps a canvas there). Handing a canvas painted on the chip to WebGPU makes the
+// main thread wait for the chip's process to finish its picture first, and that process is busy drawing
+// frames: on the test machine each 128 x 128 surface uploaded in the middle of a Long Shadow round held
+// the main thread for about a second (20 ms with nothing else drawing); from memory the same upload is a
+// copy of its pixels, a fifth of a millisecond. (The painting itself costs about the same either way.)
+const CPU = { willReadFrequently: true };
 /**
  * Make a tiling surface texture set in code (no image files). paint(g) draws three layers on
  * size x size canvases: g.col (colour), g.h (height: white = raised), g.r (roughness: white =
@@ -963,9 +970,10 @@ export function pbr(col = '#ffffff', { rough = .6, metal = 0, glow = 0, glowCol,
 export function surface(size, paint, { strength = 2.5, metal = false, worker = null } = {}) {
   // (worker, kit use: ['recipe', data], a job that paints the same layers as paint() off the main thread)
   const mk = () => { const c = document.createElement('canvas'); c.width = c.height = size; return c; };
-  const C = mk(), Hc = mk(), Rc = mk(), N = mk(), g = { col: C.getContext('2d'), h: Hc.getContext('2d', { willReadFrequently: true }), r: Rc.getContext('2d', { willReadFrequently: true }), size };
+  const C = mk(), Hc = mk(), Rc = mk(), N = mk(), g = { col: C.getContext('2d', CPU), h: Hc.getContext('2d', CPU), r: Rc.getContext('2d', CPU), size };
+  N.getContext('2d', CPU);
   g.h.fillStyle = '#808080'; g.h.fillRect(0, 0, size, size); g.r.fillStyle = '#999'; g.r.fillRect(0, 0, size, size);
-  const Mc = metal ? mk() : null; if (Mc) { g.m = Mc.getContext('2d'); g.m.fillStyle = '#000'; g.m.fillRect(0, 0, size, size); }   // (metal: white = metal; its blue is what three reads)
+  const Mc = metal ? mk() : null; if (Mc) { g.m = Mc.getContext('2d', CPU); g.m.fillStyle = '#000'; g.m.fillRect(0, 0, size, size); }   // (metal: white = metal; its blue is what three reads)
   const tx = (cv, srgb, pack = true) => { const t = new CanvasTexture(cv); t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = srgb ? SRGBColorSpace : NoColorSpace; t.anisotropy = 4; t.minFilter = LinearMipmapLinearFilter; if (pack) t.userData.gsPack = srgb ? 'srgb' : 'linear'; return t; };
   // core: what every copy of this set shares. nf (the normals as numbers) and rd (the roughness pixels)
   // are there once the number work is done; until then `wait` is its promise and `open` every texture
@@ -1012,7 +1020,7 @@ function bakeDone(core, r) {
 }
 // the roughness map's smaller copies (surface-math.js) as canvases, the way three takes mipmaps
 function mipCanvases(mips) {
-  return mips.map(d => { const s = Math.sqrt(d.length / 4), cv = document.createElement('canvas'); cv.width = cv.height = s; cv.getContext('2d').putImageData(new ImageData(d, s, s), 0, 0); return cv; });
+  return mips.map(d => { const s = Math.sqrt(d.length / 4), cv = document.createElement('canvas'); cv.width = cv.height = s; cv.getContext('2d', CPU).putImageData(new ImageData(d, s, s), 0, 0); return cv; });
 }
 // a set whose number work is in (done here and now if a worker still has it: detail() needs the numbers)
 function baked(set) { const core = set.core; if (core && !core.nf) bakeDone(core, null); return core; }
@@ -1026,7 +1034,7 @@ function baked(set) { const core = set.core; if (core && !core.nf) bakeDone(core
 export function detail(big, fine, { times = 4, strength = .7 } = {}) {
   const bc = baked(big), fc = baked(fine);
   const n = big.size, A = bc.nf, B = fc.nf, m = fine.size, out = new Float32Array(n * n * 3);
-  const c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d'), im = x.createImageData(n, n);
+  const c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d', CPU), im = x.createImageData(n, n);
   for (let y = 0; y < n; y++) for (let X = 0; X < n; X++) {
     const i = (y * n + X) * 3, fx = Math.floor(X * times * m / n) % m, fy = Math.floor(y * times * m / n) % m, j = (fy * m + fx) * 3;
     const bx = B[j] * strength, by = B[j + 1] * strength;
@@ -1054,7 +1062,7 @@ export function detail(big, fine, { times = 4, strength = .7 } = {}) {
 let DIRT = null;
 function lensDirt() {
   if (DIRT) return DIRT;
-  const n = 512, c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d');
+  const n = 512, c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d', CPU);
   let seed = 7; const R = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   x.fillStyle = '#000'; x.fillRect(0, 0, n, n); x.globalCompositeOperation = 'lighter';
   const blob = (px, py, r, a, tint) => { const g = x.createRadialGradient(px, py, 0, px, py, r); g.addColorStop(0, `rgba(${tint},${a})`); g.addColorStop(1, `rgba(${tint},0)`); x.fillStyle = g; x.fillRect(px - r, py - r, r * 2, r * 2); };
@@ -1469,7 +1477,7 @@ const DEFAULT_DECAL = (c, s) => { const g = c.createRadialGradient(s / 2, s / 2,
 function decalTex(paint, key) {
   if (!paint) return null;
   const k = key || paint; let t = decalTexs.get(k); if (t) return t;
-  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d'); paint(c, 128);
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d', CPU); paint(c, 128);
   t = new CanvasTexture(cv); t.colorSpace = key === '_soft' ? NoColorSpace : SRGBColorSpace; t.anisotropy = 4;
   if (decalTexs.size > 32) { const [k0, t0] = decalTexs.entries().next().value; t0.dispose(); decalTexs.delete(k0); }
   decalTexs.set(k, t); return t;
