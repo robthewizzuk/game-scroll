@@ -72,7 +72,7 @@ import { power } from './power.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
-import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, screenHz, qualityVerdict } from './speed.js';
+import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
 
 export * as THREE from 'three';
 
@@ -177,11 +177,17 @@ function startGame(def) {
 // HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
 // shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'bounce light', 'depth of field',
 // 'motion blur', 'screen effects' (gs.fx3d's), finish (under an upscaler: the small picture finished, with the
-// ambient occlusion and bloom laid on, graded and tone mapped), upscale (SGSR's own passes), effects (the other
-// passes drawn into pictures of their own), show (the last pass, onto the screen), compute }, in milliseconds a frame. three tells its
-// inspector as each pass begins (the name its time comes back under, what is drawn and into which picture),
-// and partOf() files it.
-const GT = { n: 0, busy: false }, PARTS = new Map();
+// ambient occlusion and bloom laid on, graded and tone mapped), upscale (SGSR's own passes), effects (the other passes
+// drawn into pictures of their own), show (the last pass, onto the screen), compute, fg (frame generation's, or with its parts on
+// (HD.fgParts: the phone test tour) 'fg:moving', 'fg:motion', 'fg:picture', 'fg:holes', 'fg:keep') }, in
+// milliseconds a frame. three tells its inspector as each pass begins (the name its time comes back under,
+// what is drawn and into which picture, the compute list sent), and partOf() files it.
+// Frame generation's share is split out: HD.info.gpuReal (a real frame's own), HD.info.fgGpu (the frames made
+// after it) and HD.info.madeMs (each made frame's, the pair's own work shared among them). A real frame's time
+// counts only from frames the chip was kept busy for (drawn every refresh, or with frames made between): a phone
+// clocks its chip down at half rate (a real frame took 11.8 ms at 60 against 6.2 at 120 on the Fold, 2026-11-13),
+// and frame generation's checks need the time it takes once it is busy again (speed.cost).
+const GT = { n: 0, busy: false, full: true }, PARTS = new Map();
 function partOf(o, rt) {
   if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
   if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
@@ -190,16 +196,18 @@ function partOf(o, rt) {
 }
 function gpuParts(r) {
   const ins = r.inspector; if (!ins || ins.gsParts) return; ins.gsParts = true;
-  const was = ins.beginRender;
+  const was = ins.beginRender, wasC = ins.beginCompute;
   ins.beginRender = function (uid, scene, camera, rt) { if (PARTS.size > 4096) PARTS.clear(); PARTS.set(uid, partOf(scene, rt)); return was?.call(this, uid, scene, camera, rt); };
+  ins.beginCompute = function (uid, nodes) { if (PARTS.size > 4096) PARTS.clear(); PARTS.set(uid, nodes?.gsPart || 'compute'); return wasC?.call(this, uid, nodes); };
 }
-function gpuTime(r) {
-  GT.n++;
+// full: this real frame kept the chip busy (drawn every refresh, or with frames made after it)
+function gpuTime(r, full = true) {
+  GT.n++; GT.full &&= full;
   const be = r.backend;
   if (!be?.trackTimestamp) return;
   gpuParts(r);
   if (GT.busy) return;
-  const n = GT.n, by = {}; GT.n = 0; GT.busy = true;
+  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}; GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true;
   // (a read that brought nothing new leaves three's list as it was: its frames list is a new one after each real read)
   const read = type => {
     const pool = be.timestampQueryPool?.[type], was = pool?.frames;
@@ -207,19 +215,25 @@ function gpuTime(r) {
     return r.resolveTimestampsAsync(type).then(() => {
       let s = 0;
       if (pool.frames !== was) for (const [uid, ms] of pool.timestamps) {
-        const part = type === 'compute' ? 'compute' : PARTS.get(uid) || 'effects'; PARTS.delete(uid);
+        const part = PARTS.get(uid) || (type === 'compute' ? 'compute' : 'effects'); PARTS.delete(uid);
         if (ms > 0 && ms < 1000) { s += ms; by[part] = (by[part] || 0) + ms; }
       }
       return s;
     });
   };
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
-    if (!(draw > 0)) { GT.n += n; return; }   // nothing read: those frames count towards the next read
+    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; return; }   // nothing read: those frames count towards the next read
     const f = (draw + comp) / n; HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    let fg = 0; for (const k in by) if (k === 'fg' || k.startsWith('fg:')) fg += by[k];
     for (const k in by) by[k] /= n; HD.info.gpuParts = by;
+    const real = f - fg / n; HD.info.gpuReal = real; HD.info.fgGpu = fg / n; HD.info.madeMs = made && fg > 0 ? fg / made : null;
     if (f < 100) { Q.gsum += f; Q.gcnt++; }
+    // what frame generation's checks go by (speed.js frameGenFits, GpuChain.late): eased, for the game being played
+    if (real > 0 && real < 100) chipCost(speed.game?.id, kept ? real : null, made && fg > 0 ? fg / made : null);
   }, () => {}).finally(() => { GT.busy = false; });
 }
+// a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
+const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
 function adapt(gap) {
   if (Q.force != null || !(gap > 0 && gap < 100)) return;
   const fps = Q.game ? fpsFor(Q.game) : 60, budget = 1000 / fps;
@@ -238,7 +252,8 @@ function adapt(gap) {
     Q.fast = 0; Q.easy = 0; if (++Q.slow < 2) return; Q.slow = 0; Q.ceilT = now;
     if (now - Q.upT < 20000) Q.hold = Math.min(HOLD_MAX, Q.hold * 2);   // the last climb didn't hold
     // (held up by the CPU above 60: fewer pixels wouldn't help and a lower tier costs the picture, so it's the frame rate that gives first)
-    if (fps > 60 && (Q.lvl >= 1 || cpuBound) && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
+    // (and before the picture loses sharpness when frames made between would take over at 60 and fit: frameGenCould)
+    if (fps > 60 && (Q.lvl >= 1 || cpuBound || frameGenCould(Q.game, 60)) && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
     else if (!cpuBound && fxDown(g)) { /* an effect drawn smaller first */ }
     else if (Q.lvl < LEVELS.length - 1 && !cpuBound) { Q.lvl++; Q.ceil = Q.lvl; }
     else if (Q.tier > 0) { if (Q.want == null) { Q.tierCeil = Q.tier - 1; Q.want = Q.tier - 1; } }
@@ -249,7 +264,8 @@ function adapt(gap) {
     else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
     else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP)) { Q.want = Q.tier + 1; Q.upT = now; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
-    else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
+    // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
+    else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
   } else { Q.slow = 0; Q.fast = 0; }
   if (Q.tier !== tier0 || Q.lvl !== lvl0 || Q.fxLast.length !== fx0) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, fx: fxSaved() });
 }
@@ -285,7 +301,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -344,6 +360,10 @@ export const HD = {
   grain: null,
   /** Tests and the frame lab's A/B: false draws SGSR 2 as Qualcomm's shader has it, without our changes (hd3d-gpu.js sgsr2Gpu, sgsr2.js), and on WebGPU with the tier's MSAA under it. */
   sgsrTune: true,
+  /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
+  half: true,
+  /** Tests: act as if the graphics chip had half precision (the build machine's WebGPU has none), drawing the same passes in full, so the switch, the rebuild and the frame lab's check can be tried. */
+  halfPretend: false,
   /** Tests and the frame lab's A/B: how textures are read under SGSR 2 on WebGPU. null: the usual, as the screen's size would read them (hd3d-gpu.js sharpMips); false: as drawn, the small picture's mip level; a number: that many mip levels on top of the usual (negative: sharper). */
   mipBias: null,
   /** Tests: draw the 3D at this fraction of the screen's size (null: the tier and frame rate decide). */
@@ -2337,6 +2357,7 @@ export class HDView {
     // multisampled colour, depth and motion pictures and their resolves
     if (s2 && HD.sgsrTune !== false) o.msaa = 0;
     o.s2Plain = HD.sgsrTune === false;
+    G.fx.HALF.on = HD.half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };
     // depth of field and sun shafts: in the chain from the first time the view uses them (high and ultra
@@ -2399,7 +2420,11 @@ export class HDView {
     if (how) {
       this.cam.updateMatrixWorld();
       const m = cameraMove(this.cam, this._fgCam); this._fgCam = m.last;
-      fg = { mode: how, reset: cut || m.jumped || now - (this._fgT || 0) > HD.fgGap, jd: [0, 0], jit: [0, 0], steps, hz: screenHz() }; this._fgT = now;
+      // pace: blend's, by the chip's times (speed.js frameGenPaceOf; HD.fgPace for tests); quick: the quick way for easy
+      // tiles (HD.fgQuick false: off, for the tour's run as before); parts: frame generation's chip time by step (the tour)
+      speed.outMpx = o.fw * o.fh / 1e6;
+      fg = { mode: how, pace: HD.fgPace || frameGenPaceOf(speed.game, steps), quick: HD.fgQuick !== false, parts: !!HD.fgParts, drop: HD.fgDrop !== false, cost: speed.cost,
+        reset: cut || m.jumped || now - (this._fgT || 0) > HD.fgGap, jd: [0, 0], jit: [0, 0], steps, hz: screenHz() }; this._fgT = now;
     } else this._fgCam = null;
     if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); }   // WebGPU pictures count rows from the top
     // SGSR 2 moves the camera by a fraction of a pixel each frame (its jitter) and three's motion picture
@@ -2422,6 +2447,7 @@ export class HDView {
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');
+    const drawAt = performance.now();
     try { shown = ch.render(o) || false; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
@@ -2437,19 +2463,23 @@ export class HDView {
     if (made) HD.fgTap?.(shown, r.domElement, 'frame');
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
     speed.between = made ? (last = true, now = null) => { const k = ch.between(last, now); if (k) HD.fgTap?.(k, r.domElement, 'between'); return k; } : null;
-    // the refreshes between kept not coming (the phone is too busy to draw them in time): blend puts the
-    // made frame on the real frame's refresh, so first try ahead (its work is spread over both); then stop for this game
-    // (not while it is forced on: a test, or the engine test scenes' frame generation runs, which time it as it is)
+    // the refreshes between kept not coming, or their frames were dropped as late (the phone is too busy to make
+    // them in time): blend's 'after' pace puts a made frame on the real frame's refresh, so first try 'first' (each
+    // refresh one frame's work); then stop for this game. (Not while it is forced on: a test, or the engine test
+    // scenes' frame generation runs, which time it as it is.)
     if (made && ch.fgWin.real >= 90 && !speed.forceFrameGen) {
-      const miss = ch.missRate(), id = speed.game?.id;
-      if (miss > .3 || (miss > .08 && how === 'blend' && !frameGenPace(id))) { if (!speed.shield) { frameGenFailed(id); console.info('Frame generation off for this game: the phone is too busy for the frames between'); } }
-      else if (miss > .08 && how === 'blend') console.info('Frame generation: ahead for this game, its refreshes were too full in blend');
+      const { miss, dropped } = ch.missRate(), id = speed.game?.id, after = how === 'blend' && fg.pace === 'after';
+      if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id)))) { if (!speed.shield) { frameGenFailed(id); console.info('Frame generation off for this game: the phone is too busy for the frames between'); } }
+      else if (miss > .08) console.info('Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full');
     }
+    if (made) ch.sent(drawAt, 1000 / screenHz());
     if (!baking && !off) {
-      gpuTime(r);
+      gpuTime(r, !!how || fpsFor(speed.game) >= screenHz() * .9);
       { const C = G.fx.SHADOW_COST; HD.info.shTris = (HD.info.shTris || 0) + C[0]; HD.info.shCalls = (HD.info.shCalls || 0) + C[1]; C[0] = C[1] = 0; }
       HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
-      HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0;
+      HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0; HD.info.fgPace = made && how === 'blend' ? fg.pace : null; HD.info.fgDrops = ch.drops || 0;
+      // (the phone test tour: the share of tiles that took the quick way, read back now and then)
+      if (made && HD.fgParts && (this._fgEasyN = (this._fgEasyN || 0) + 1) % 30 === 0) ch.fg.easyShare().then(v => { if (v != null) HD.info.fgEasy = v; }, () => {});
     }
     } finally { this.scene.matrixWorldAutoUpdate = worldAuto; }
   }
@@ -2689,7 +2719,7 @@ export class HDView {
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
     try { cp.render(); } finally { showAll(this); lodBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
-    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.refl = ssr ? 'screen' : ''; }
+    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.half = ''; HD.info.refl = ssr ? 'screen' : ''; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
     c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';

@@ -142,6 +142,19 @@ function phoneKind({ platform, model, builds = 0, d0 = 0, d1 = 0, crashes = 0 })
   return builds >= 12 && builds / (d1 - d0 + 1) >= 6 && crashes >= builds ? 'likely' : '';
 }
 
+// What kind of machine each phone model is (phoneKind), from everything it has reported: in one game
+// alone a robot looks like any other phone. It reads both tables whole, so the Worker keeps the answer
+// a while (phoneKinds) and hands it to perfReport, which would otherwise read them again for every page.
+const KINDS_SQL = `SELECT p.platform, p.model, p.builds, p.d0, p.d1, COALESCE(c.crashes, 0) crashes
+   FROM (SELECT platform, model, COUNT(DISTINCT app) builds, MIN(day) d0, MAX(day) d1 FROM perf WHERE day > ?1 GROUP BY platform, model) p
+   LEFT JOIN (SELECT platform, model, SUM(n) crashes FROM crashes WHERE day > ?1 AND kind = 'crash' GROUP BY platform, model) c
+     ON c.platform = p.platform AND c.model = p.model`;
+
+/** [{ platform, model, builds, d0, d1, crashes }] for every phone model that reported in the last PERF_DAYS days. */
+export async function phoneKinds(db, t = Date.now()) {
+  return (await db.prepare(KINDS_SQL).bind(day(t) - PERF_DAYS).all()).results;
+}
+
 /**
  * Everything the report page shows, for the last PERF_DAYS days. With a game id: that game alone,
  * with its history by phone, day and build (cheap: it reads only that game's rows).
@@ -156,11 +169,13 @@ function phoneKind({ platform, model, builds = 0, d0 = 0, d1 = 0, crashes = 0 })
  * A "build" is an app build together with the version of the game's file (ver), since a game can
  * change without the app changing. d0/d1 are day numbers and t0/t1 seconds since 1970 (0 where a
  * row is from before times were kept).
+ *
+ * kinds: phoneKinds() worked out a little earlier, if the caller keeps it; otherwise it is read here.
  */
-export async function perfReport(db, t = Date.now(), game = '') {
+export async function perfReport(db, t = Date.now(), game = '', kinds = null) {
   const since = day(t) - PERF_DAYS, one = game ? ' AND game = ?2' : '';
   const q = sql => game ? db.prepare(sql).bind(since, game) : db.prepare(sql).bind(since);
-  const [er, nw, kd, ph, gm] = await db.batch([
+  const [er, nw, ...rest] = await db.batch([
     // Crashes and script errors, per phone model and build (added up per error below).
     q(`SELECT kind, game, msg, place, platform, model, app, ver, SUM(n) n, MIN(day) d0, MAX(day) d1, MIN(NULLIF(first_at, 0)) t0, MAX(last_at) t1
        FROM crashes WHERE day > ?1${one} GROUP BY kind, game, msg, place, platform, model, app, ver ORDER BY d1 DESC, t1 DESC LIMIT 5000`),
@@ -178,12 +193,8 @@ export async function perfReport(db, t = Date.now(), game = '') {
        WHERE NOT EXISTS (SELECT 1 FROM ea x WHERE x.kind = e.kind AND x.game = e.game AND x.platform = e.platform AND x.model = e.model AND x.app = p.app AND x.ver = p.ver
                          AND (e.kind = 'crash' OR (x.msg = e.msg AND x.place = e.place)))
        GROUP BY e.kind, e.game, e.msg, e.place, e.platform, e.model`),
-    // What kind of machine each phone model is (phoneKind), from everything it has reported: in one
-    // game alone a robot looks like any other phone.
-    db.prepare(`SELECT p.platform, p.model, p.builds, p.d0, p.d1, COALESCE(c.crashes, 0) crashes
-       FROM (SELECT platform, model, COUNT(DISTINCT app) builds, MIN(day) d0, MAX(day) d1 FROM perf WHERE day > ?1 GROUP BY platform, model) p
-       LEFT JOIN (SELECT platform, model, SUM(n) crashes FROM crashes WHERE day > ?1 AND kind = 'crash' GROUP BY platform, model) c
-         ON c.platform = p.platform AND c.model = p.model`).bind(since),
+    // What kind of machine each phone model is (phoneKind), unless the caller has it already.
+    ...(kinds ? [] : [db.prepare(KINDS_SQL).bind(since)]),
     ...(game ? [
       // One game: every day and build it was played on, on every phone, newest first.
       q(`SELECT platform, model, form, app, ver, day, day d1, first_at t0, last_at t1, rounds, frames, ms, work_ms work, slow, hitches, worst_ms worst, heat_ms heat, warm_ms warm, hot_ms hot
@@ -203,11 +214,12 @@ export async function perfReport(db, t = Date.now(), game = '') {
     ]),
   ]);
 
+  const kd = kinds ? { results: kinds } : rest.shift(), [ph, gm] = rest;
   const run = a => parseInt(String(a.app).slice(4), 10) || 0;
   const later = (a, b) => (a.t1 || 0) - (b.t1 || 0) || a.d1 - b.d1 || run(a) - run(b);   // > 0: a was reported after b
   const history = game ? ph.results : [];
-  const kinds = new Map(kd.results.map(r => [pk(r), { kind: phoneKind(r), crashes: r.crashes }]));
-  const kindOf = p => kinds.get(pk(p)) || { kind: phoneKind(p), crashes: 0 };
+  const kindBy = new Map(kd.results.map(r => [pk(r), { kind: phoneKind(r), crashes: r.crashes }]));
+  const kindOf = p => kindBy.get(pk(p)) || { kind: phoneKind(p), crashes: 0 };
   const phones = game ? [] : ph.results.map(r => ({ ...r, ...kindOf(r) }));
   // The build each phone model ran most recently, to tell which errors are on it.
   const newest = new Map(phones.map(p => [pk(p), p]));
@@ -364,7 +376,7 @@ ${mine.map(r => {
 ${list.map(r => `<tr><td class=t>${dayText(r.day)}</td><td>${build(r.app, repo)}${file(r.ver, game)}</td><td class=t>${span(r)}</td>${cells(r)}</tr>`).join('')}</table></div></details>`; }).join('');
 
   return `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>Game Scroll performance${game ? ': ' + title(game) : ''}</title><meta name=robots content=noindex>
+<title>Game Scroll performance${game ? ': ' + title(game) : ''}</title><meta name=robots content="noindex, nofollow">
 <style>
 :root{color-scheme:light dark;--bg:#fff;--fg:#16181d;--mute:#667;--line:#dde;--bad:#c62828;--warn:#a15c00;--good:#2e7d32}
 @media (prefers-color-scheme:dark){:root{--bg:#0c0e12;--fg:#e8eaf0;--mute:#99a;--line:#2a2e38;--bad:#ff6b6b;--warn:#ffb74d;--good:#81c784}}

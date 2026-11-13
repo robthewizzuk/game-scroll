@@ -26,6 +26,8 @@ import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
 import { eachShown } from './scene-list.js';
+import { halfFn, halfWanted, halfKey } from './half.js';
+export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
 import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
@@ -83,7 +85,7 @@ import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyP
 // where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
 const ORG = uniform(ORIGIN);
 
-const LUM = vec3(.2126, .7152, .0722);
+const LUM_K = [.2126, .7152, .0722], LUM = vec3(...LUM_K);
 
 /** The studio reflections for this renderer (WebGL's can't be shared: it lives on the other GPU API). */
 // (three's WebGPU PMREMGenerator never updates its cube camera's projection after the first bake, so
@@ -1455,6 +1457,45 @@ function sgsr1Gpu(src) {
 //   thin things and edges. Anything that moves, a cut or a see-through thing starts from the usual again
 // (Tried and left out, each measured worse or no better: sharpening after the upscale, a colour box
 // from 9 pixels in place of 5, and a looser colour box at full size.)
+// SGSR 2's upscale maths, in half where the chip has it (half.js): Lanczos of the 5 nearest small pixels
+// (S2_TAPS, the shader's order), a colour box from their mean and spread, the history clamped to it, then
+// blended. so: this pixel's centre from the nearest small pixel's; hist: the history read at where this
+// pixel was; m: the motion's length in pixels, the depth clip, the history's weight where nothing moved, a
+// cut (1); see: how see-through (the new frame counts for at least this); tuned: our two changes (sgsr2Gpu).
+// Each step is the same as the TSL it was written from, in the same order (the build machine's pictures
+// came out the same); only the smallest number divided by is bigger in half (HEPS).
+const S2_TAPS = [[0, 1], [1, 0], [-1, 0], [0, 0], [0, -1]];
+const S2_UP = halfFn('gsS2Up', `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32) -> vec4<f32> {
+  let mlen = hf(min(m.x, 1e4)); let df = hf(m.y); let start = hf(m.z); let reset = hf(m.w);
+  let biasmax = hf(sr.x); let biasmin = max(hf(1.0), biasmax * hf(0.3) + hf(0.3));
+  let kb = mix(biasmax, biasmin, df * hf(0.25)) * hf(0.5); let kb2 = kb * kb;
+  let curve = mix(hf(-2.0), hf(-3.0), clamp(mlen * hf(0.02), hf(0.0), hf(1.0)));
+  let s = hf2(so);
+  var sw = hf(0.0); var scw = hf3(0.0); var bmin = hf3(c0); var bmax = hf3(c0); var sb = hf(0.0); var cen = hf3(0.0); var vr = hf3(0.0);
+${S2_TAPS.map(([x, y], i) => `  { let c = hf3(c${i}); let o = s + hf2(${x.toFixed(1)}, ${y.toFixed(1)}); let dd = dot(o, o); let y = clamp(dd * kb2, hf(0.0), hf(1.0)) - hf(1.0);
+    let w = (y * hf(0.75) + y * y) * (y * y); let bw = exp(dd * curve);
+    sw += w; scw += c * w; bmin = min(bmin, c); bmax = max(bmax, c); sb += bw; cen += c * bw; vr += c * c * bw; }`).join('\n')}
+  cen = cen / sb; vr = sqrt(abs(vr / sb - cen * cen));
+  let upc = clamp(scw / sw, bmin - hf(0.075), bmax + hf(0.075)); let upw = sw * hf(${1 / 3});
+  let hc = hf3(hist.rgb);
+  var held = hf(1.0);
+  if (tuned > 0.5) { held = min(clamp(hf(hist.a), hf(0.0), hf(1.0)) * hf(${(S2_HOLD - 1).toFixed(1)}) + hf(1.0), mix(hf(${S2_HOLD.toFixed(1)}), hf(1.0), clamp(mlen * hf(10.0), hf(0.0), hf(1.0)))); }
+  var base = held * (hf(1.0) - df);
+  base = min(base, mix(base, upw * hf(10.0), clamp(mlen * hf(10.0), hf(0.0), hf(1.0))));
+  base = min(base, mix(base, upw, clamp(mlen * hf(0.05), hf(0.0), hf(1.0))));
+  let boxsize = mix(hf(sr.y), hf(1.0), max(df, clamp(mlen * hf(0.05), hf(0.0), hf(1.0))));
+  let lo = max(bmin, cen - vr * boxsize); let hi = min(bmax, cen + vr * boxsize);
+  let clamped = clamp(hc, lo, hi);
+  let outside = any(lo > hc) || any(hc > hi);
+  let lerpC = clamp(select(hf(1.0), start, outside), hf(0.0), hf(1.0));
+  let h = mix(clamped, hc, lerpC);
+  let ba = mix(min(base, hf(0.1)), base, lerpC);
+  let own = upw / max(hf(HEPS), ba + upw);
+  let a = max(clamp(own + reset, hf(0.0), hf(1.0)), hf(see));
+  var settled = hf(1.0);
+  if (tuned > 0.5) { settled = select(clamp((held + upw - hf(1.0)) / hf(${(S2_HOLD - 1).toFixed(1)}), hf(0.0), hf(1.0)), hf(0.0), a > own + hf(1e-4)); }
+  return vec4<f32>(vec3<f32>(mix(h, upc, a)), f32(settled));
+}`);
 function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
     fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()) };
@@ -1493,49 +1534,19 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   let cur = 0, fresh = true;   // fresh: nothing drawn yet, so the first frame starts the history (as after a cut)
   const histT = texture(H2[1].texture), outT = texture(H2[0].texture);
   // upscale: Lanczos of the 5 nearest small pixels, a colour box, history clamped to it, then blended
+  const half = halfWanted();
   const upscale = Fn(() => {
     const H = screenUV, J = clamp(H.add(U.jit.div(U.rs)), 0, 1), IP = ivec2(J.mul(U.rs)), hi = ivec2(U.rs).sub(1);
     const mda = mdc.sample(J), M = mda.xy, df = mda.z, see = mo ? smoothstep(.1, .6, mda.w).mul(.9) : float(0);
     const prevUV = clamp(vec2(M.x.mul(-.5).add(H.x), M.y.mul(.5).add(H.y)), 0, 1);
-    const hist = tuned ? sharpAt(histT, prevUV) : histT.sample(prevUV), histC = hist.rgb;
-    const biasmax = U.sr.x, biasmin = max(float(1), biasmax.mul(.3).add(.3));
-    const kb = mix(biasmax, biasmin, df.mul(.25)).mul(.5), kb2 = kb.mul(kb);
-    const mlen = length(M.mul(U.os));
-    const curve = mix(float(-2), float(-3), clamp(mlen.mul(.02), 0, 1));
+    const hist = tuned ? sharpAt(histT, prevUV, half) : histT.sample(prevUV);
+    const mlen = length(M.mul(U.os)), start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
+    // where this pixel's centre falls among the small pixels (full precision: a place on the screen), the
+    // five nearest small pixels, and the rest of the pass's maths in half where the chip has it (S2_UP)
     const so = vec2(IP).add(.5).sub(U.jit).sub(H.mul(U.rs));
-    const lz = b => { const y = b.sub(1); return y.mul(.75).add(y.mul(y)).mul(y.mul(y)); };
-    const taps = [[0, 1], [1, 0], [-1, 0], [0, 0], [0, -1]].map(([x, y]) => {
-      const c = low.load(clamp(IP.add(ivec2(x, y)), ivec2(0, 0), hi)).rgb, o = so.add(vec2(x, y)), dd = dot(o, o);
-      return { c, w: lz(clamp(dd.mul(kb2), 0, 1)), bw: exp(dd.mul(curve)) };
-    });
-    let sw = taps[0].w, scw = taps[0].c.mul(taps[0].w), bmin = taps[0].c, bmax = taps[0].c, sb = taps[0].bw, cen = taps[0].c.mul(taps[0].bw), vr = taps[0].c.mul(taps[0].c).mul(taps[0].bw);
-    for (const t of taps.slice(1)) {
-      sw = sw.add(t.w); scw = scw.add(t.c.mul(t.w)); bmin = min(bmin, t.c); bmax = max(bmax, t.c);
-      sb = sb.add(t.bw); cen = cen.add(t.c.mul(t.bw)); vr = vr.add(t.c.mul(t.c).mul(t.bw));
-    }
-    cen = cen.div(sb); vr = abs(vr.div(sb).sub(cen.mul(cen))).sqrt();
-    const upc = clamp(scw.div(sw), bmin.sub(.075), bmax.add(.075)), upw = sw.mul(1 / 3);
-    // how much more the history counts for where the pixel has settled (its alpha: 0 the usual .. 1 S2_HOLD
-    // times); a pixel that moves (a tenth of a pixel is enough) is back to the usual
-    const held = tuned ? min(clamp(hist.a, 0, 1).mul(S2_HOLD - 1).add(1), mix(float(S2_HOLD), float(1), clamp(mlen.mul(10), 0, 1))) : float(1);
-    let base = held.mul(float(1).sub(df));
-    base = min(base, mix(base, upw.mul(10), clamp(mlen.mul(10), 0, 1)));
-    base = min(base, mix(base, upw, clamp(mlen.mul(.05), 0, 1)));
-    const boxsize = mix(U.sr.y, float(1), max(df, clamp(mlen.mul(.05), 0, 1)));
-    const lo = max(bmin, cen.sub(vr.mul(boxsize))), hiC = min(bmax, cen.add(vr.mul(boxsize)));
-    const clamped = clamp(histC, lo, hiC);
-    const start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
-    const outside = lo.x.greaterThan(histC.x).or(lo.y.greaterThan(histC.y)).or(lo.z.greaterThan(histC.z))
-      .or(histC.x.greaterThan(hiC.x)).or(histC.y.greaterThan(hiC.y)).or(histC.z.greaterThan(hiC.z));
-    const lerpC = clamp(select(outside, start, float(1)), 0, 1);
-    const h = mix(clamped, histC, lerpC);
-    const ba = mix(min(base, .1), base, lerpC);
-    const own = upw.div(max(1.192e-07, ba.add(upw)));
-    const a = max(clamp(own.add(U.reset), 0, 1), see);
-    // settles a little more each frame (by the new frame's weight, so only as fast as the picture gathers),
-    // and starts again where the new frame was put in over the history (a cut, see-through things)
-    const settled = tuned ? select(a.greaterThan(own.add(1e-4)), float(0), clamp(held.add(upw).sub(1).div(S2_HOLD - 1), 0, 1)) : float(1);
-    return vec4(mix(h, upc, a), settled);
+    const args = { so, hist, m: vec4(mlen, df, start, U.reset), sr: U.sr, see, tuned: float(tuned ? 1 : 0) };
+    S2_TAPS.forEach(([x, y], i) => { args['c' + i] = low.load(clamp(IP.add(ivec2(x, y)), ivec2(0, 0), hi)).rgb; });
+    return S2_UP(args, half);
   })();
   const upMat = new NodeMaterial(); upMat.fragmentNode = upscale; upMat.name = 'SGSR2';
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
@@ -1569,6 +1580,26 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
     dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); upMat.dispose(); cpMat.dispose(); },
   };
 }
+
+// The grade (v.grade: saturation, contrast round mid grey, shadow and highlight tints) and the sun's glare
+// (v.glare: a soft disc, a halo and two ghosts across the middle of the screen), in half where the chip has
+// it (half.js). The same steps as the TSL they were written from. In half a colour can be at most 65,504, and
+// contrast raises it to a power, so the grade works on the colour held to 180 (far past white: tone
+// mapping makes anything over about 20 white anyway); the picture itself and the glare added to it stay full.
+const GRADE = halfFn('gsGrade', `(col: vec3<f32>, sat: f32, con: f32, lo: vec3<f32>, hi: vec3<f32>, on: f32, uv: vec2<f32>, su: vec2<f32>, aspect: f32, seen: f32, sunCol: vec3<f32>, glare: f32) -> vec3<f32> {
+  var out = col;
+  if (on > 0.0) {
+    let c = hf3(min(col, vec3<f32>(180.0))); let l = dot(c, hf3(${LUM_K.join(', ')}));
+    var g = max(mix(hf3(l), c, hf(sat)), hf3(0.0));
+    g = pow(g / hf(0.18) + hf(1e-5), hf3(hf(con))) * hf(0.18);
+    g = g * mix(hf3(lo), hf3(hi), smoothstep(hf(0.15), hf(0.85), clamp(log2(l / hf(0.18) + hf(1e-4)) * hf(0.16) + hf(0.5), hf(0.0), hf(1.0))));
+    out = mix(col, vec3<f32>(g), on);
+  }
+  let asp = hf2(hf(aspect), hf(1.0)); let s = hf2(su); let u = hf2(uv); let q = (u - s) * asp;
+  let g1 = (u - (hf2(0.5) - (s - hf2(0.5)) * hf(0.55))) * asp; let g2 = (u - (hf2(0.5) - (s - hf2(0.5)) * hf(1.3))) * asp;
+  let gl = exp(dot(q, q) * hf(-14.0)) * hf(0.5) + exp(length(q) * hf(-6.0)) * hf(0.22) + smoothstep(hf(0.06), hf(0.045), length(g1)) * hf(0.05) + smoothstep(hf(0.1), hf(0.08), length(g2)) * hf(0.035);
+  return out + sunCol * f32(gl) * glare * seen;
+}`);
 
 // volumetric light's stand-in shadow map while the light has none (its numbers say so: never read)
 const NO_LUT = new Data3DTexture(new Uint8Array(32).fill(255), 2, 2, 2); NO_LUT.needsUpdate = true;
@@ -1605,14 +1636,15 @@ export class GpuChain {
     // last touches, so the refreshes in between can show made frames (framegen.js), a still scene can be
     // shown again without drawing it, and frame generation can come and go without rebuilding the chain.
     // fg: the generator; sched: where the refreshes since the newest real frame stand; fgWin: how often a
-    // refresh between real frames didn't come; still: the still-picture check
-    this.fg = null; this.sched = null; this.fgMode = null; this.fgWin = { real: 0, missed: 0 }; this.still = null; this.lastShown = null;
+    // refresh between real frames didn't come, and how many made frames were dropped as late; realDone: when the
+    // chip finishes the newest real frame (sent()); cost: the chip's time for a real and a made frame (hd3d.js); still: the still-picture check
+    this.fg = null; this.sched = null; this.fgMode = null; this.fgWin = { real: 0, missed: 0, made: 0, dropped: 0 }; this.realDone = null; this.cost = null; this.still = null; this.lastShown = null;
     this.warp = uniform(new Matrix3()); this.aim = null; this.aimBase = newPose(); this.aimAt = -1e9;
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
   build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}`;
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${halfKey()}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
@@ -1801,7 +1833,7 @@ export class GpuChain {
     }
     if (src !== colT || shaftsOn) lit = src.sample(screenUV).rgb.mul(srcAo).add(shafts);
     this.bloomN = bloomChain(src, srcAo); this.bloomK = uniform(.56);
-    const uv0 = screenUV, d = uv0.sub(.5), r2 = dot(d, d);
+    const uv0 = screenUV, d = uv0.sub(.5), r2 = dot(d, d), half = halfWanted();
     const graded = Fn(() => {
       const uv = uv0;
       // smooth: with FXAA on (below) no fringe; otherwise a touch of lens fringing at the edges
@@ -1815,21 +1847,11 @@ export class GpuChain {
         const fl = this.flareN.rgb, asp = U.aspect, du = uv.sub(.5).mul(vec2(min(asp, 1), min(float(1).div(asp), 1))).add(.5);
         col = col.add(fl.mul(F.k)).add(F.dirt.sample(du).rgb.mul(bl.add(fl)).mul(F.dk));
       }
-      // grade (v.grade): saturation, contrast round mid grey, shadow and highlight tints
-      const l = dot(col, LUM);
-      let g = max(mix(vec3(l), col, U.sat), vec3(0));
-      g = pow(g.div(.18).add(1e-5), vec3(U.con)).mul(.18);
-      g = g.mul(mix(U.lo, U.hi, smoothstep(.15, .85, clamp(log2(l.div(.18).add(1e-4)).mul(.16).add(.5), 0, 1))));
-      col = mix(col, g, U.gradeOn);
-      // sun glare (v.glare), only while the sun itself shows
+      // grade (v.grade) and sun glare (v.glare), only while the sun itself shows (how much: five reads round it)
       const su = U.sunUV, tap = o => colT.sample(su.add(o)).rgb;
       const s0 = tap(vec2(0, 0)).add(tap(vec2(.006, 0))).add(tap(vec2(-.006, 0))).add(tap(vec2(0, .008))).add(tap(vec2(0, -.008)));
       const seen = smoothstep(1.5, 6, dot(s0, LUM).mul(.2));
-      const asp = vec2(U.aspect, 1), q = uv.sub(su).mul(asp);
-      const g1 = uv.sub(float(.5).sub(su.sub(.5).mul(.55))).mul(asp), g2 = uv.sub(float(.5).sub(su.sub(.5).mul(1.3))).mul(asp);
-      const gl = exp(dot(q, q).mul(-14)).mul(.5).add(exp(length(q).mul(-6)).mul(.22))
-        .add(smoothstep(.06, .045, length(g1)).mul(.05)).add(smoothstep(.1, .08, length(g2)).mul(.035));
-      return col.add(U.sunCol.mul(gl).mul(U.glare).mul(seen));
+      return GRADE({ col, sat: U.sat, con: U.con, lo: U.lo, hi: U.hi, on: U.gradeOn, uv, su, aspect: U.aspect, seen, sunCol: U.sunCol, glare: U.glare }, half);
     })();
     // tone mapping (ACES, the renderer's exposure) and sRGB (named outright under SGSR 2 and 1: drawn outside the pipeline)
     let out = s2 || s1 ? renderOutput(vec4(graded, 1), TM, SRGBColorSpace) : renderOutput(vec4(graded, 1));
@@ -1934,13 +1956,19 @@ export class GpuChain {
 
   /* ---------- the game on screen: real frames, made frames, still frames ---------- */
   // Each real frame is drawn into a picture (SGSR 2's own, or one of ours) and shown by a copy that adds
-  // the last touches. With frame generation (o.fg: { mode, reset, jd, jit, steps, hz }), every refresh
-  // shows a moment on an even beat: t = 1 + (k - D) / gap, k refreshes after the newest real frame, which
-  // came gap refreshes after the last one. blend shows each moment D refreshes late, so every moment is
-  // between two real frames (D = 1 at twice the game's rate, 2 at three times...); ahead (D = 0) shows
-  // the newest real frame on its own refresh and guesses past it after. That covers two, three or four
-  // refreshes per real frame, and a screen that isn't a whole multiple (60 fps on 90 Hz: one or two).
-  // The refreshes between are the ones the feed skips (src/main.js, speed.between).
+  // the last touches. With frame generation (o.fg: { mode, pace, quick, parts, cost, reset, jd, jit, steps, hz }),
+  // every refresh shows a moment on an even beat: t = 1 + (k - D) / gap, k refreshes after the newest real
+  // frame, which came gap refreshes after the last one. blend shows each moment D refreshes late, so every
+  // moment is between two real frames; ahead (D = 0) shows the newest real frame on its own refresh and
+  // guesses past it after. That covers two, three or four refreshes per real frame, and a screen that isn't
+  // a whole multiple (60 fps on 90 Hz: one or two). The refreshes between are the ones the feed skips
+  // (src/main.js, speed.between).
+  // blend's pace: 'after' (D = 1 at twice the game's rate, 2 at three times...) makes a frame on the real
+  // frame's own refresh, so that refresh holds both (the least delay, for a phone with room for both);
+  // 'first' (D = the refreshes per real frame) shows the last real frame on that refresh and makes every
+  // frame on the refreshes between, so no refresh holds more than one frame's work, a refresh later. A
+  // refresh's picture reaches the screen only once all the work sent in it is done (one queue on the
+  // chip), so what counts is the work in each refresh, not in each pair.
   realFrame(o, f) {
     const r = this.r, sp = this.sp, fgo = o.mrt ? o.fg : null, cam = this.cam;
     if (!fgo && this.fg?.frames) { this.fg.reset(); this.sched = null; }
@@ -1970,7 +1998,7 @@ export class GpuChain {
     const fg = this.fg ||= new FrameGen(r);
     const mode = fgo.mode === 'ahead' ? 'ahead' : 'blend';
     if (fgo.reset || mode !== this.fgMode) { fg.reset(); this.sched = null; }
-    this.fgMode = mode;
+    this.fgMode = mode; fg.parts = !!fgo.parts; fg.U.quick.value = fgo.quick === false ? 0 : 1; this.cost = fgo.cost || null; this.drop = fgo.drop !== false;
     const vel = sp.getTexture('velocity');
     this.U.gk.value = vel.image.width / o.fw;
     // (the picture is tone mapped and in sRGB by now: in 0..1 unless the screen is HDR, where it goes past white)
@@ -1982,7 +2010,8 @@ export class GpuChain {
     let gap = S ? Math.round((o.now - S.at) / ms) : 0;
     if (!(gap >= 1 && gap <= 6)) gap = Math.max(1, Math.round(steps));
     if (S) { this.fgWin.real++; if (S.k < gap - 1) this.fgWin.missed++; }   // refreshes in that gap showed nothing new
-    this.sched = { at: o.now, ms, gap, k: 0, D: mode === 'blend' ? Math.max(1, Math.ceil(steps - .01) - 1) : 0 };
+    const n = Math.max(1, Math.ceil(steps - .01)), first = mode === 'blend' && fgo.pace === 'first';
+    this.sched = { at: o.now, ms, gap, k: 0, first, D: mode === 'ahead' ? 0 : first ? n : Math.max(1, n - 1) };
     this.owe = true;
     // fresh aim: where the input pointed the camera for this frame (a later change is the finger's own)
     const base = this.aim && fg.ready ? this.aim() : null; if (base) copyPose(base, this.aimBase);
@@ -1992,7 +2021,8 @@ export class GpuChain {
   showAt(k) {
     const S = this.sched, fg = this.fg, t = 1 + (k - S.D) / S.gap;
     if (!fg.ready || Math.abs(t - 1) < .02) { this.showFrame(this.lastColor, 1); return 'real'; }
-    if (t < .02) { this.showFrame(fg.prev, 0); return 'real'; }
+    // (first: the real frame's own refresh only ever shows the last real frame, even after a late one)
+    if (t < .02 || (S.first && k === 0)) { this.showFrame(fg.prev, 0); return 'real'; }
     if (t > 2.6) return false;   // too far past the newest to guess: the screen keeps what it has
     fg.make(t); this.showFrame(fg.output, t); return 'made';
   }
@@ -2005,14 +2035,43 @@ export class GpuChain {
   between(last = true, now = null) {
     const S = this.sched; if (!S || !this.fg) return false;
     S.k = refreshesSince(S, now);
+    // a made frame that can't be ready for the refresh after this one (the chip still on the real frame) is
+    // dropped: the screen keeps what it shows, and the next real frame isn't held up behind it
+    if (this.drop && this.dueMade(S) && this.late(now)) { this.fgWin.dropped++; this.drops = (this.drops || 0) + 1; return false; }
     const shown = this.showAt(S.k);
+    if (shown === 'made') this.fgWin.made++;
     if (last && this.owe) { this.fg.keep(); this.owe = false; }
     return shown;
   }
+  // the moment due at refresh S.k is one to make (not the newest or the last real frame, nor too far past to guess)
+  dueMade(S) { const t = 1 + (S.k - S.D) / S.gap; return this.fg.ready && Math.abs(t - 1) >= .02 && t >= .02 && t <= 2.6 && !(S.first && S.k === 0); }
+  /**
+   * Whether a frame made now would miss the next refresh: the chip hasn't finished the newest real frame (sent()),
+   * and by the chip's times (this.cost, ms: { real, made }) it won't be free in time to make one too. Without the
+   * chip's times (a phone that doesn't tell them) nothing is dropped: hd3d.js's miss check decides.
+   */
+  late(now) {
+    const d = this.realDone, c = this.cost;
+    if (!d || d.done || now == null || !(c?.real > 0) || !(c.made > 0)) return false;
+    const free = Math.max(now, d.sent, d.start + c.real);
+    return free + c.made > now + d.rf * .9;
+  }
+  /** After a real frame's work is all sent (drawGPU's end): start is when its drawing began, rf the screen's refresh in ms. */
+  sent(start, rf) {
+    const dev = this.r.backend?.device; if (!dev?.queue?.onSubmittedWorkDone || !this.sched) { this.realDone = null; return; }
+    const d = this.realDone = { start, sent: performance.now(), rf, done: false };
+    dev.queue.onSubmittedWorkDone().then(() => { d.done = true; }, () => { d.done = true; });
+  }
   /** Shows the last real frame again (a still scene that isn't drawn this refresh). */
   showLast() { if (!this.lastColor) return false; this.warp.value.identity(); this.show(this.lastColor); return true; }
-  /** How often, out of the last real frames, the refresh between them didn't come (0..1), then starts counting again. */
-  missRate() { const w = this.fgWin, m = w.real ? w.missed / w.real : 0; w.real = w.missed = 0; return m; }
+  /**
+   * Since it was last asked: miss, how often out of the real frames the refresh between them didn't come; dropped,
+   * the share of the frames due to be made that were dropped as late (both 0..1). Then starts counting again.
+   */
+  missRate() {
+    const w = this.fgWin, out = { miss: w.real ? w.missed / w.real : 0, dropped: w.made + w.dropped ? w.dropped / (w.made + w.dropped) : 0 };
+    w.real = w.missed = w.made = w.dropped = 0; return out;
+  }
   // a frame onto the screen; with fresh aim (this.aim: the camera's pose now, from the newest input), turned
   // from the camera it was made for (the moment t) to where the camera points now. Only while the input is
   // turning the camera between real frames (a finger looking round, the phone turning in AR): a turn the

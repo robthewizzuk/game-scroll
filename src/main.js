@@ -1110,7 +1110,7 @@ feedMenu.addEventListener('keydown',e=>{const i=feedOpts.indexOf(document.active
   else if(e.key==='Escape'||e.key==='Tab'){feedOpen(false);feedBtn.focus()}});
 document.addEventListener('pointerdown',e=>{if(!feedMenu.hidden&&!e.target.closest('.feedpick'))feedOpen(false)},true);
 
-function boot(){initWallet(GAMES);services.init(GAMES);booted=true;if(store.get('gs_lab',false)||/[?&]lab\b/.test(location.search))frameLab(true);playstats.load(true).then(()=>rerank(3));perf.load(true);
+function boot(){initWallet(GAMES);services.init(GAMES);booted=true;if(store.get('gs_lab',false)||/[?&]lab\b/.test(location.search))frameLab(true);playstats.load(true).then(()=>rerank(3));
   hearts.reconcile(GAMES.map(g=>g.id),id=>rating(id)>0||(rating(id)===0&&store.get('gs_like_'+id,false)));hearts.load(true);rebuild();onSharedGame(openShared);requestAnimationFrame(frame);if(document.fonts)document.fonts.ready.then(()=>slides.forEach(s=>s.dirty=true));
   // a font from the library (gs.fonts) that arrives after a waiting card was drawn: draw the cards again with it
   fontlib.whenFontArrives(()=>slides.forEach(s=>s.dirty=true))}

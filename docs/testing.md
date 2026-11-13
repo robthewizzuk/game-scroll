@@ -63,6 +63,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Shared code that is slow, makes garbage or stalls in many games (any of `src/kit`, `src/main.js`, `src/perf.js`...) | `node scripts/kit-hot.cjs --era 2d\|pocket\|console\|nextgen\|ar\|board\|3d\|all [--gpu] [--secs 5] [--jobs 3] [--json before.json]` (`--vs before.json` after): plays every game of a style under a CPU profile and an allocation sampler and adds up, over all of them, each engine function's own time, the time under it, the memory it allocates, and the long busy stretches with the function under them. A function a little slow in fifty games outranks one game's own slow code. Hitches are only worth reading with `--jobs 1` or 2: several browsers on four cores stall each other | 2D: about 15 min for the 86 phone games; Next Gen with `--gpu`: about 10 min |
 | What a 3D game asks of the chip in the middle of a round (shaders, pipelines, texture uploads) | `node scripts/round-probe.cjs [id ...] [--secs 15]`: starts each round the real way (Play, through the loading screen), plays it, and lists shader text written, pipelines made in a frame, textures uploaded and made, with the kit or game function that asked. WebGPU. No ids: every Next Gen game; name Console, AR and Board games to probe them too (a Console game is watched on its own renderer). An upload that takes long here is the main thread waiting on the chip's process | about a minute a game |
 | Loading (how long a game's making holds the main thread; `src/kit/slices.js`, `jobs.js`, the builders that pause) | `npm run kit-test` and `npm run kit-browser` (the workers' answers against the same work done on the spot), then `node scripts/load-time.cjs [id ...] --json before.json` before, `--vs before.json` after (see below) | about 5 s a game |
+| Half precision in the kit's own WebGPU passes (`src/kit/half.js` `halfFn`: SGSR 2's upscale and sharp reads, frame generation's sharp reads, smoke and fire, the grade) | `node scripts/half-check.mjs`: each half function compiled on its own by naga (the WebGPU shader checker Firefox uses), in half and in full; the build machine's WebGPU has no half precision, so this is the only compile the half versions get before a phone (needs `cargo install naga-cli`; that part skips without); then, in the test browser, the start-up check (`halfCheck`) that draws in full any function a phone's chip won't compile, with no error reported. Then the full-precision pictures: `node scripts/upscale-compare.cjs --webgpu --modes sgsr2` (scores as before), `node scripts/framegen-test.cjs --check`, `node scripts/look-compare.cjs check <main's save> --webgpu`, and `node scripts/framelab-test.cjs` for the switch | half a minute; then minutes each |
 | The frame lab (`src/framelab.js`), CPU by part (`src/kit/prof.js`), effects that step down by their cost (hd3d.js `FXS`, `pickEffect`) | `npm run kit-test` (time by part, the effect picked), then `node scripts/framelab-test.cjs [2d-id] [3d-id] [--shots dir] [--report file.html]` (also: the chip's time by effect, effects drawn smaller with no shader built, memory) | a second, then about 3 min |
 | The memory guard (`src/kit/memory.js`, `plugins/power-state`) | `npm run kit-test` (levels from the phone's readings and warnings, up at once and down after a calm spell), `node scripts/prune.cjs` (the feed keeps fewer cards while memory is short, and builds back up), `node scripts/app-test.cjs reports` (a crash report says "(memory was low)"). On a phone: the frame lab's memory line, and its api `memory(2)` | a second, about a minute, about a minute |
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
@@ -300,34 +301,44 @@ counts, the stage, and that the feed comes back as it was. A new detail system g
 ### Frame generation on a phone
 
 Under **Play**, **Frame generation** flies four of those scenes (the town, the square, the forest and the
-yard: houses and shadows, people, thin leaves, smoke and fire) with their system on, four ways each:
+yard: houses and shadows, people, thin leaves, smoke and fire) with their system on, five ways each:
 
 - as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone),
 - half the screen's rate drawn and nothing made,
-- half drawn with the refreshes between made by blending between the last two drawn frames,
+- half drawn with the refreshes between blended as before (each made frame on its real frame's refresh,
+  every tile the full way, none dropped: `HD.fgPace = 'after'`, `HD.fgQuick = false`, `HD.fgDrop = false`),
+- half drawn with the refreshes between blended as now (paced by the chip's times, easy tiles the quick
+  way, a made frame that would come late dropped),
 - half drawn with the refreshes between guessed ahead of the newest.
 
 Each run is paced the way the app paces a game (`src/main.js` `frame()`: a real frame on a steady beat,
 and `speed.between` on the refreshes between). Frame generation is forced on or off for the run whatever
 Settings say (`speed.forceFrameGen`), and the screen is asked for the rate a game drawn that way would get
-(`speed.standIn`). About 8 minutes at 20 seconds a run.
+(`speed.standIn`). Each step of a made frame is timed as a pass of its own (`HD.fgParts`), so the report
+says where a made frame's time goes. About 10 minutes at 20 seconds a run.
 
 ```
 SQUARE · crowds · 300 people and dogs walking, running and standing in a square · made in 0.4 s
   120 drawn, none made       112 pictures a second · worst 1% 71 · longest 25 ms · chip 8.1 ms a drawn frame (scene 4.2, …) · code 1.9 ms · 3D at 907 x 1434 · screen 120 Hz
   60 drawn, none made        60 pictures a second · … · screen 60 Hz
-  60 drawn, 60 blended       116 pictures a second (58 drawn) · … · chip 10.3 ms a drawn frame (…, compute 1.8) · …
+  60 + 60 blended before     92 pictures a second (50 drawn) · … · chip 13.8 ms a drawn frame (made frames 7.8, …) · a made frame 7.6 ms (picture 2.9, moving 2.2, …) · the made frame on the real one's refresh · …
+  60 drawn, 60 blended       116 pictures a second (58 drawn) · … · chip 10.3 ms a drawn frame (made frames 4.1, …) · a made frame 4.1 ms (…) · each frame on a refresh of its own · 81% of tiles the quick way · …
   60 drawn, 60 ahead         118 pictures a second (59 drawn) · …
-  = the frames made: 2.2 ms blended, 1.9 ms ahead of chip time for each drawn frame
+  = a made frame: 7.6 ms blended before, 4.1 ms blended, 4.0 ms ahead of chip time, against 6.0 ms for a drawn frame with the chip as busy
+  = 60 drawn, 60 blended against 60 + 60 blended before: 116 pictures a second against 92 · worst 1% 80 against 22 · a made frame 4.1 ms against 7.6
   = 60 drawn, 60 blended against 120 drawn, none made: 116 pictures a second against 112 · worst 1% 80 against 71 · 1.6 times less chip time a picture
 ```
 
 (Made-up numbers, to show the shape.) `pictures a second` counts the drawn and made frames that reached
 a refresh (a refresh that showed the same picture again isn't counted), with how many were drawn; worst
 1% and longest are of the gaps between those pictures. `chip` is the graphics chip's time for each drawn
-frame together with the frames made after it, so set against "none made" it is what the made frames
-cost; "chip time a picture" shares it among the pictures it gave. "the page got N refreshes a second"
-shows up when the phone held refreshes back because the chip was behind. On WebGL there is nothing to
+frame together with the frames made after it; "a made frame" is a made frame's own passes (moving: each
+pixel along its motion; motion: the optical flow and the tile sort, once a pair; picture: putting it
+together; holes: filling what was uncovered; keeping: the newest frame kept for the next pair). Don't
+take the difference from "none made" as the made frames' cost: a phone clocks its chip down at half
+rate, so frames drawn with none made take it longer (11.8 ms against 6.2 in the forest on the Fold).
+"chip time a picture" shares a drawn frame's time among the pictures it gave. "the page got N
+refreshes a second" shows up when the phone held refreshes back because the chip was behind. On WebGL there is nothing to
 time (frame generation is WebGPU only), and the report says so.
 
 In a test browser, `__gs.tour({ scenes: true, framegen: true, alternate: true, seconds, size, only })`

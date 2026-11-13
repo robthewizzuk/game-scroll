@@ -1,5 +1,5 @@
 // Checks the frame lab (src/framelab.js): turns it on, plays a 2D game and a Next Gen game (on WebGPU where
-// the test browser has it), records, runs A/B, Shimmer and FG check, folds and unfolds (Galaxy Z Fold 8
+// the test browser has it), records, runs A/B, Shimmer, FG check and Half check, folds and unfolds (Galaxy Z Fold 8
 // sizes) and makes the report. Fails on any page error or a tool that doesn't produce its result.
 //   npm run build:bundled && node scripts/framelab-test.cjs [--shots dir] [--report file.html] [2d-id] [3d-id]
 // Timings here are software 3D and mean nothing; this checks that the tools work, not how fast games are.
@@ -125,6 +125,20 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
     if (/made frames checked/.test(fg)) await shot('fg-check');
     await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); __hd.direct = false; __hd.scale = null; __hd.aim = true; });
   } else console.log('SKIP FG check (no WebGPU in this browser)');
+
+  if (gpu && info.backend === 'webgpu') {
+    // half precision (src/kit/half.js): this browser's WebGPU has none, so it says so; pretending it had (drawn in full)
+    // tries the switch, the chain built again each way and the Half check's report
+    const no = await p.evaluate(() => __hd.info.half);
+    check(/no half/.test(no), 'half precision: this chip has none and says so: ' + no);
+    await p.evaluate(() => { __hd.halfPretend = true; }); await play(800);
+    await p.evaluate(async () => (await __gs.lab(true)).half());
+    const hc = await p.evaluate(async () => { const L = await __gs.lab(true); const s = L.shots[L.shots.length - 1]; return { notes: s && s.kind === 'half' ? s.notes : [], half: __hd.half, info: __hd.info.half }; });
+    console.log('   Half check: ' + hc.notes.join(' | '));
+    check(/chip time a frame: full [\d.]+ ms, half [\d.]+ ms/.test(hc.notes[0] || '') && hc.notes.some(n => /^  \w[\w ]*: full/.test(n)) && hc.half === true && /^half/.test(hc.info), 'Half check times full and half by pass and puts the switch back');
+    if (hc.notes.length) await shot('half-check');
+    await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); __hd.halfPretend = false; });
+  }
 
   await p.evaluate(async () => (await __gs.lab(true)).rec(false));
   const sum3 = await p.evaluate(async () => (await __gs.lab(true)).summary());

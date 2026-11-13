@@ -15,13 +15,16 @@
 //    spent in another app is left out of the clock; a slow frame, however long, is a frame.
 //
 // Frame generation (runScenes({ framegen: true }); the tour's "Frame generation" choice) flies a few of the
-// scenes with their system on, four ways: as many frames drawn as this class of phone draws a Next Gen game
-// (every refresh on a top phone), half the screen's rate drawn and nothing made, and half drawn with the refreshes between made, blended and
-// then ahead. Each is paced as the app paces a game (src/main.js frame(): a real frame on a steady beat, and
+// scenes with their system on, five ways: as many frames drawn as this class of phone draws a Next Gen game
+// (every refresh on a top phone), half the screen's rate drawn and nothing made, and half drawn with the
+// refreshes between made: blended as before (the made frame on the real frame's refresh, every tile the full
+// way, none dropped), blended as now (paced by the chip's times, easy tiles the quick way, a late one dropped)
+// and ahead. Each is paced as the app paces a game (src/main.js frame(): a real frame on a steady beat, and
 // on the refreshes between, what speed.between shows), the screen is asked for the rate a game drawn that way
 // would get, and frame generation is forced on or off for the run whatever Settings say. The report counts
-// the pictures that reached a refresh, how many of them were drawn, and the chip's time for each drawn frame
-// with the frames made after it, so it says what a made frame costs and whether frame generation pays.
+// the pictures that reached a refresh, how many of them were drawn, the chip's time for each drawn frame
+// with the frames made after it, and each made frame's own time by step (HD.fgParts), so it says what a
+// made frame costs, where, and whether frame generation pays.
 import gs, { loadParts } from './gamescroll.js';
 import { ownedBy, release } from './kit/cleanup.js';
 import { power } from './kit/power.js';
@@ -38,16 +41,20 @@ const secs = ms => ms < 950 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)
 const TIER = ['low', 'medium', 'high', 'ultra'], STOP = {};   // STOP: thrown out of a build's wait when Stop is pressed
 // the scenes frame generation is flown through: houses and shadows, people walking, thin leaves, smoke and fire
 const FG_SCENES = ['town', 'square', 'forest', 'yard'];
-// frame generation's four runs, for a screen whose fastest rate is top (a stand-in game definition each: fps its beat)
+// frame generation's five runs, for a screen whose fastest rate is top (a stand-in game definition each: fps its
+// beat; hd: the 3D kit's switches for the run, put back after: 'before' is blend as it was before pacing by the
+// chip's times, the quick way for easy tiles and dropping late frames)
 function fgRuns(top) {
   const half = Math.round(top / 2), rest = top - half;
   return [
     { key: 'every', name: 'as many as it can', def: { frameGen: false } },   // (named by its beat once run: 120 drawn on a top phone's 120 Hz screen)
     { key: 'half', name: `${half} drawn, none made`, def: { fps: half, frameGen: false } },
+    { key: 'before', name: `${half} + ${rest} blended before`, def: { fps: half }, force: 'blend', hd: { fgPace: 'after', fgQuick: false, fgDrop: false } },
     { key: 'blend', name: `${half} drawn, ${rest} blended`, def: { fps: half }, force: 'blend' },
     { key: 'ahead', name: `${half} drawn, ${rest} ahead`, def: { fps: half }, force: 'ahead' },
   ];
 }
+const FG_HD = ['fgPace', 'fgQuick', 'fgDrop', 'fgParts'];
 
 /**
  * Runs the scenes. driver: the feed (src/main.js). Options: seconds (of flight for each run, 20), size
@@ -74,7 +81,8 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
     W = w; H = h; ctx.setTransform(k, 0, 0, k, 0, 0); sized = true;
   };
-  const was = { force: HD.force, fg: speed.forceFrameGen };
+  const was = { force: HD.force, fg: speed.forceFrameGen, hd: Object.fromEntries(FG_HD.map(k => [k, HD[k]])) };
+  const hdBack = () => { for (const k of FG_HD) HD[k] = was.hd[k]; };
   let S = null, hid = false;
   const hide = () => { if (document.visibilityState !== 'visible') hid = true; };   // the phone went to another app (see fly())
   const draw = () => { if (stopped()) throw STOP; if (!sized) fit(); S.v.render(ctx, W, H); return frame(); };
@@ -94,15 +102,16 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   };
   // one timed run along the path (pace: frame generation's runs, see beat())
   const fly = async (pace = null) => {
-    const dts = [], cpu = [], tris = [], calls = [], chip = [], by = {}, gaps = [], budget = 1000 / screenHz();
+    const dts = [], cpu = [], tris = [], calls = [], chip = [], by = {}, gaps = [], made = [], real = [], easy = [], paces = {}, budget = 1000 / screenHz();
     let last = 0, seen = null, away = 0, lastPic = 0, drawn = 0;
-    HD.info.gpuMs = null; hid = false;
+    HD.info.gpuMs = HD.info.madeMs = HD.info.fgEasy = null; hid = false;
+    const drops0 = HD.info.fgDrops || 0;
     const start = performance.now();
     for (;;) {
       const t = (performance.now() - start - away) / 1000;
       if (t >= seconds || stopped()) break;
-      let now, real = true, pic = true;
-      if (pace) ({ now, real, pic } = await beat(pace, t));
+      let now, isReal = true, pic = true;
+      if (pace) ({ now, real: isReal, pic } = await beat(pace, t));
       else { S.path(t, S.v.cam); now = await draw(); }
       const I = HD.info;
       if (last) {
@@ -113,7 +122,13 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
         if (hid || document.visibilityState !== 'visible') { away += dt; lastPic = 0; }
         else {
           dts.push(dt);
-          if (real) { drawn++; cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.gpuMs != null && I.gpuMs !== seen && t > .5) { chip.push(seen = I.gpuMs); for (const k in I.gpuParts || {}) by[k] = (by[k] || 0) + I.gpuParts[k]; } }
+          if (isReal) {
+            drawn++; cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.fgPace) paces[I.fgPace] = (paces[I.fgPace] || 0) + 1;
+            if (I.gpuMs != null && I.gpuMs !== seen && t > .5) {
+              chip.push(seen = I.gpuMs); for (const k in I.gpuParts || {}) by[k] = (by[k] || 0) + I.gpuParts[k];
+              if (I.gpuReal != null) real.push(I.gpuReal); if (I.madeMs != null) made.push(I.madeMs); if (I.fgEasy != null) easy.push(I.fgEasy);
+            }
+          }
           if (pic && lastPic) gaps.push(now - lastPic);
         }
       }
@@ -128,7 +143,11 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     // them back); the code's time is each drawn frame's
     if (pace) {
       const secs = dts.reduce((a, b) => a + b, 0) / 1000, p = summarise(gaps, [], budget);
-      Object.assign(res, { fps: p.fps, low: p.low, worst: p.worst, slow: p.slow, freezes: p.freezes, pictures: gaps.length, drawn, drawnFps: secs > 0 ? drawn / secs : 0, refreshes: secs > 0 ? dts.length / secs : 0, work: mean(cpu), hz: screenHz(), how: HD.info.framegen || false });
+      // (and a made frame's own chip time, a real frame's without the made ones, how blend was paced, how many made
+      // frames were dropped as late, and the share of tiles that took the quick way)
+      const pc = Object.entries(paces).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      Object.assign(res, { fps: p.fps, low: p.low, worst: p.worst, slow: p.slow, freezes: p.freezes, pictures: gaps.length, drawn, drawnFps: secs > 0 ? drawn / secs : 0, refreshes: secs > 0 ? dts.length / secs : 0, work: mean(cpu), hz: screenHz(), how: HD.info.framegen || false,
+        madeMs: made.length ? mean(made) : null, realMs: real.length ? mean(real) : null, pace: pc, dropped: (HD.info.fgDrops || 0) - drops0, easy: easy.length ? mean(easy) : null });
     }
     return res;
   };
@@ -152,13 +171,14 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
         const tb = performance.now();
         S = ownedBy(token, () => make({ gs, HD, size, gpu, top }));
         res.made = performance.now() - tb; res.holds = S.holds; res.pairs = fg ? null : S.pairs || null;
-        // frame generation's runs: the scene with its system on (its last mode), drawn as a game would be four ways
+        // frame generation's runs: the scene with its system on (its last mode), drawn as a game would be five ways
         let sys = null;
         const modes = fg ? fg.map(f => ({ key: f.key, name: f.name, enter: async d => {
           const e = sys ? {} : (sys = S.modes[S.modes.length - 1], await sys.enter(d) || {});
           // a game drawn this way: its beat, frame generation forced on or off, and the screen asked for its rate
           const def = { id: `engine-scene-${key}`, title: name, retro: true, era: 'nextgen', ...f.def };
           speed.game = speed.standIn = def; speed.forceFrameGen = f.force || null; speed.between = null;
+          hdBack(); Object.assign(HD, { fgParts: true }, f.hd || {});   // (each step of a made frame timed on its own)
           return { build: null, note: e.note, pace: { def, alternate: alternate && !!f.def.fps, n: 0, next: 0 }, name: () => f.key === 'every' ? `${Math.round(fpsFor(def))} drawn, none made` : f.name };
         } })) : S.modes;
         for (const m of modes) {
@@ -176,11 +196,11 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
           done++;
         }
       } catch (e) { if (e !== STOP) { res.error = String(e?.stack || e?.message || e).split('\n').slice(0, 2).join(' '); console.error('engine test scene', key, e); } }
-      finally { if (fg) { speed.game = speed.standIn = speed.between = null; speed.forceFrameGen = was.fg; } try { S?.dispose(); } catch (e) { console.warn('engine test scene', key, e); } release(token); S = null; done = first + runsOf(key); }
+      finally { if (fg) { speed.game = speed.standIn = speed.between = null; speed.forceFrameGen = was.fg; hdBack(); } try { S?.dispose(); } catch (e) { console.warn('engine test scene', key, e); } release(token); S = null; done = first + runsOf(key); }
       await new Promise(r => setTimeout(r, 300));   // a breath between scenes: the last one's memory is let go
     }
   } finally {
-    HD.force = was.force; if (framegen) { speed.game = speed.standIn = speed.between = null; speed.forceFrameGen = was.fg; } removeEventListener('resize', resized); document.removeEventListener('visibilitychange', hide); stage.remove(); document.body.classList.remove('touring'); driver.end();
+    HD.force = was.force; if (framegen) { speed.game = speed.standIn = speed.between = null; speed.forceFrameGen = was.fg; hdBack(); } removeEventListener('resize', resized); document.removeEventListener('visibilitychange', hide); stage.remove(); document.body.classList.remove('touring'); driver.end();
     out.stopped = stopped(); out.took = Math.round((Date.now() - t0) / 1000); out.powerAfter = powerNow();
   }
   out.text = scenesText(out);
@@ -190,7 +210,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
 // how two numbers stand to each other, in words: k times `up` when a is the bigger, `down` when b is, `same` within 5%
 const times = (a, b, up, down, same) => { if (!(a > 0 && b > 0)) return ''; const k = a / b, n = v => v.toFixed(v < 10 ? 1 : 0); return Math.abs(k - 1) < .05 ? same : k > 1 ? `${n(k)} times ${up}` : `${n(1 / k)} times ${down}`; };
 // the chip's time by pass, biggest first: " (scene 6.1, AO 2.3, upscale 1.6, bloom 1.4, shadows 1.2, rest 0.8)"
-const PASS = { scene: 'scene', shadows: 'shadows', ao: 'AO', bloom: 'bloom', finish: 'finishing', upscale: 'upscale', effects: 'effects', show: 'to screen', compute: 'compute' };
+const PASS = { scene: 'scene', shadows: 'shadows', ao: 'AO', bloom: 'bloom', finish: 'finishing', upscale: 'upscale', effects: 'effects', show: 'to screen', compute: 'compute', fg: 'made frames' };
 // The passes that do the same work in every run of a scene, whatever its system does: finishing the small picture, the
 // upscale, the bloom and the last pass onto the screen (a fixed number of pixels each). A phone's chip runs at very
 // different speeds from one run to the next (slower as it gets hot, and slower again while it waits on the code), and
@@ -203,6 +223,23 @@ export function chipWork(m) {
   if (m?.chip == null || !m.chipBy) return null;
   let s = 0; for (const k of STEADY) s += m.chipBy[k] || 0;
   return s > .2 ? m.chip / s : null;
+}
+// frame generation's steps (framegen.js make() with parts on): moving each pixel along its motion, the optical
+// flow and tile sort (once a pair), the picture put together, the holes filled, the newest frame kept for the next pair
+const FG_STEP = { 'fg:moving': 'moving', 'fg:motion': 'motion', 'fg:picture': 'picture', 'fg:holes': 'holes', 'fg:keep': 'keeping' };
+const isFg = k => k === 'fg' || k in FG_STEP;
+// frame generation's passes as one ('made frames'), for the chip's time by pass
+function fgFold(by) {
+  if (!by) return by;
+  const out = {}; for (const [k, v] of Object.entries(by)) { const at = isFg(k) ? 'fg' : k; out[at] = (out[at] || 0) + v; }
+  return out;
+}
+// a made frame's chip time and where it went: " · a made frame 7.3 ms (picture 2.5, moving 2.1, holes 1.5, motion 0.9, keeping 0.3)"
+function madeBy(m) {
+  if (m.madeMs == null) return '';
+  const by = m.chipBy || {}, steps = Object.entries(by).filter(([k]) => k in FG_STEP), sum = steps.reduce((a, [, v]) => a + v, 0), k = sum > 0 ? m.madeMs / sum : 0;
+  const list = steps.map(([n, v]) => [FG_STEP[n], v * k]).filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]);
+  return ` · a made frame ${m.madeMs.toFixed(1)} ms${list.length ? ` (${list.map(([n, v]) => `${n} ${v.toFixed(1)}`).join(', ')})` : ''}`;
 }
 function chipBy(by) {
   if (!by) return '';
@@ -222,18 +259,35 @@ function modeLine(m) {
 function fgLine(m) {
   const made = m.fps - m.drawnFps > .5;
   const parts = [`${Math.round(m.fps)} pictures a second${made ? ` (${Math.round(m.drawnFps)} drawn)` : ''}`, `worst 1% ${Math.round(m.low)}`, `longest ${Math.round(m.worst)} ms`,
-    m.chip != null ? `chip ${m.chip.toFixed(1)} ms a drawn frame${chipBy(m.chipBy)}` : 'chip time not told', `code ${m.work.toFixed(1)} ms`, `3D at ${m.rw} x ${m.rh}`, `screen ${m.hz} Hz`];
+    m.chip != null ? `chip ${m.chip.toFixed(1)} ms a drawn frame${chipBy(fgFold(m.chipBy))}${madeBy(m)}` : 'chip time not told'];
+  // how blend was paced: each made frame on a refresh of its own, or on the real frame's; made frames dropped as late; tiles the quick way
+  if (m.how === 'blend' && m.pace) parts.push(m.pace === 'first' ? 'each frame on a refresh of its own' : 'the made frame on the real one\'s refresh');
+  if (m.dropped > 0) parts.push(`${m.dropped} made frames dropped as late`);
+  if (m.easy != null) parts.push(`${Math.round(m.easy * 100)}% of tiles the quick way`);
+  parts.push(`code ${m.work.toFixed(1)} ms`, `3D at ${m.rw} x ${m.rh}`, `screen ${m.hz} Hz`);
   if (m.refreshes < m.hz * .9) parts.push(`the page got ${Math.round(m.refreshes)} refreshes a second`);
   if (m.heat) parts.push(m.heat > 1 ? 'phone hot' : 'phone warm');
   return `  ${m.name.padEnd(26)} ${parts.join(' · ')}`;
 }
 // what frame generation's runs say: what the made frames cost the chip, and whether they pay against drawing every frame
 // (chip time a picture: a drawn frame's time, with the frames made after it, shared by the pictures it gave)
+// (a made frame's time is its own passes' (made frames, by step), not the difference from the run with none made:
+// a phone clocks its chip down at half rate, so a frame drawn then takes it longer, 11.8 ms against 6.2 in the
+// forest on the Fold, 2026-11-13, and the difference came out far too small)
 function fgSay(s) {
   const of = k => s.modes.find(m => m.key === k && m.frames), half = of('half'), every = of('every'), lines = [];
   const perPic = m => m.chip != null && m.pictures ? m.chip * m.drawnFps / m.fps : null;
-  const costs = ['blend', 'ahead'].map(k => of(k)).filter(m => m && half?.chip != null && m.chip != null).map(m => `${(m.chip - half.chip).toFixed(1)} ms ${m.key === 'blend' ? 'blended' : 'ahead'}`);
-  if (costs.length) lines.push(`  = the frames made: ${costs.join(', ')} of chip time for each drawn frame`);
+  const name = m => m.key === 'before' ? 'blended before' : m.key === 'blend' ? 'blended' : 'ahead';
+  const costs = ['before', 'blend', 'ahead'].map(of).filter(m => m?.madeMs != null).map(m => `${m.madeMs.toFixed(1)} ms ${name(m)}`);
+  const realMs = (of('blend') || of('before') || of('ahead'))?.realMs;
+  if (costs.length) lines.push(`  = a made frame: ${costs.join(', ')} of chip time${realMs != null ? `, against ${realMs.toFixed(1)} ms for a drawn frame with the chip as busy` : ''}`);
+  // blend now against blend as it was
+  const b0 = of('before'), b1 = of('blend');
+  if (b0 && b1) {
+    const say = [`${Math.round(b1.fps)} pictures a second against ${Math.round(b0.fps)}`, `worst 1% ${Math.round(b1.low)} against ${Math.round(b0.low)}`];
+    if (b1.madeMs != null && b0.madeMs != null) say.push(`a made frame ${b1.madeMs.toFixed(1)} ms against ${b0.madeMs.toFixed(1)}`);
+    lines.push(`  = ${b1.name} against ${b0.name}: ${say.join(' · ')}`);
+  }
   // against drawing every frame; on a phone whose Next Gen games are drawn at half the screen's rate anyway, against none made
   const base = every && half && every.drawnFps < half.drawnFps * 1.2 ? half : every || half;
   for (const m of ['blend', 'ahead'].map(of).filter(Boolean)) {
@@ -278,7 +332,7 @@ export function scenesText(t) {
   if (t.note) lines.push(t.note);
   for (const s of t.scenes) lines.push(...sceneLines(s, hz));
   if (t.framegen) {
-    lines.push('\nEach scene is flown through with its system on, at a pinned quality, four ways: as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone); half the screen\'s rate drawn and nothing made; and half drawn with the refreshes between made, blended (between the last two drawn frames) and then ahead (guessed past the newest). Frame generation is forced on or off for each run whatever Settings say, and the screen is asked for the rate a game drawn that way would get. pictures a second: the drawn and made frames that reached a refresh (a refresh that showed the same picture again is not counted), with how many of them were drawn; worst 1% and longest are of the gaps between them. chip: the graphics chip\'s time for each drawn frame with the frames made after it, where the phone tells it, so set against "none made" it is what the made frames cost; chip time a picture shares it among the pictures it gave. "the page got": fewer refreshes than the screen\'s rate, where the phone held them back because the chip was behind.');
+    lines.push('\nEach scene is flown through with its system on, at a pinned quality, five ways: as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone); half the screen\'s rate drawn and nothing made; and half drawn with the refreshes between made: blended (between the last two drawn frames) as before (each made frame on its real frame\'s refresh, every part of the picture the full way, none dropped), blended as now (each frame on a refresh of its own unless the chip has room for both, easy parts of the picture the quick way, a made frame that would come late dropped) and ahead (guessed past the newest). Frame generation is forced on or off for each run whatever Settings say, and the screen is asked for the rate a game drawn that way would get. pictures a second: the drawn and made frames that reached a refresh (a refresh that showed the same picture again is not counted), with how many of them were drawn; worst 1% and longest are of the gaps between them. chip: the graphics chip\'s time for each drawn frame with the frames made after it, where the phone tells it; a made frame: its own chip time, and where it went (moving: each pixel along its motion; motion: the optical flow and which tiles are easy, once a pair; picture: putting it together; holes: filling what was uncovered; keeping: the newest frame kept for the next pair); chip time a picture shares a drawn frame\'s time among the pictures it gave. (A phone clocks its chip down at half rate, so frames drawn with none made take it longer.) "the page got": fewer refreshes than the screen\'s rate, where the phone held them back because the chip was behind.');
     return lines.join('\n');
   }
   lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');

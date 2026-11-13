@@ -111,13 +111,14 @@ Every stutter during play is checked for what happened since the picture before 
 | **● Rec** | Records up to 60 s of every refresh, hitch and phone reading. Tap again to stop. |
 | **Freeze** | Stops the game's clock but keeps drawing: the picture settles and nothing moves. |
 | **Tint** | Tints the card magenta on every made frame, so you see frame generation working. |
-| **A/B** | On a frozen frame, two pictures with one setting changed: SGSR off vs on, SGSR 1 vs 2, SGSR 2 as Qualcomm has it vs with our changes, textures as drawn vs sharpened under SGSR 2 (WebGPU), WebGL vs WebGPU, half vs full resolution, low vs ultra tier. Settings go back afterwards. |
+| **A/B** | On a frozen frame, two pictures with one setting changed: SGSR off vs on, SGSR 1 vs 2, SGSR 2 as Qualcomm has it vs with our changes, textures as drawn vs sharpened under SGSR 2 (WebGPU), WebGL vs WebGPU, half vs full resolution, low vs ultra tier, full vs half precision (the kit's own WebGPU passes in 16-bit numbers, on a chip that has them). Settings go back afterwards. |
 | **Shimmer** | On a frozen frame, 16 pictures in a row and a heat map of pixels that still change while nothing moves: shimmering edges, upscaler or anti-aliasing jitter. With SGSR 2 it then measures the same frame again as Qualcomm's shader has it, and the notes give both numbers. |
 | **FG check** | While you play a WebGPU game: grabs real, made, real frames and flags made pixels that match neither real frame nearby (ghosting, smears, holes behind moving things). Turns frame generation on for the check if it's off. |
+| **Half** | While you play a WebGPU game on a chip with half precision (`shader-f16`): the chip's own time a frame by pass with the kit's own passes in full precision, then in half, then both again (1 s to settle and 2.5 s of readings each; the chain is built again at each switch), and how much each pass saved. The passes in half: SGSR 2's upscale, the sharp picture reads in SGSR 2 and frame generation, smoke and fire, the grade and sun glare (`src/kit/half.js`). `HD.info.half` (in the report) says which precision is drawing and any function the chip would not compile in half. |
 | **Report** | Shares a self-contained HTML report (Android and iPhone share sheet; a download on the web). |
 | **Copy** | Puts a text summary on the clipboard, to paste into chat. |
 
-The **viewer** (after A/B, Shimmer or FG check) has Wipe (a slider between the two), Side by side
+The **viewer** (after A/B, Shimmer, FG check or Half) has Wipe (a slider between the two), Side by side
 (every picture shows the same part, for pixel peeping), Difference (four times the difference),
 Flip (tap to swap), Flags (the heat map over the picture, boxes where flagged pixels gather), and
 zoom 1x to 16x (or pinch, or the mouse wheel) with sharp pixels. Drag to move around.
@@ -134,7 +135,7 @@ One HTML file with everything in it, readable in any browser, phone or desktop:
 - the phone: CPU speed, heat, thermal headroom, battery and memory over time
 - frame times in screen refreshes (how many pictures took 1, 2, 3... refreshes)
 - every hitch and event with its causes, and the settings at the start and end
-- the pictures from A/B (with a wipe slider), Shimmer and FG check
+- the pictures from A/B (with a wipe slider), Shimmer and FG check, and the Half check's times
 
 To send one to Claude: Report, share it to yourself (Drive, email), and attach it in chat; or just
 Copy and paste the summary.
@@ -152,4 +153,4 @@ Timing comes from `requestAnimationFrame`, which on Android and iPhone runs on t
 browser doesn't say when a picture actually lit up, so a frame the compositor held back is not seen.
 
 `scripts/framelab-test.cjs` checks the lab itself in the test browser (2D and Next Gen, A/B, Shimmer,
-FG check, fold and unfold, effects drawn smaller, memory, the report).
+FG check, the Half check (the test browser has no half precision, so it pretends: `HD.halfPretend`), fold and unfold, effects drawn smaller, memory, the report).

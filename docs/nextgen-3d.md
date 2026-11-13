@@ -410,6 +410,8 @@ there only gets textures and the canvas's own shaders ready and the first frame 
 The shader-hold script fails on WebGPU if a pipeline or a shader's text is made in the middle of a frame
 for a thing switched on, turned to or added, or for anything at all after a view's first frame.
 `__hd.info` reports `{ calls, tris, cpu, shadows, upscaled, backend, framegen, refl }` for the last frame (`refl`: `'traced'`, `'screen'` or `''`, the reflections it drew). The 3D frame is rendered at the tier's pixel count (and lower while the phone struggles), then upscaled to the card's full resolution with **Snapdragon Game Super Resolution 2** (Qualcomm's temporal upscaler, `src/kit/sgsr2.js`): the camera is nudged by a fraction of a pixel each frame and each new small frame is blended into the full-size picture of the frames before, moved by the camera's own move. That gives a sharper, steadier picture than one frame can, and it also runs at full size as anti-aliasing (grass, leaves, wires and thin poles stop shimmering; FXAA is off then). Things that move fast across a still camera can leave a short soft trail (there are no per-object motion vectors), so a view can set `v.upscaler = 'sgsr1'` to use **SGSR 1** (`src/kit/sgsr.js`, one frame, edge-aware sharpening). AR views and frames with screen-space reflections use SGSR 1 too, and `HD.upscaler = 'sgsr1'` switches every view. `HD.upscale = false` shows the plain stretched picture for comparison, and `node scripts/upscale-compare.cjs` scores plain, SGSR 1 and SGSR 2 against a supersampled picture (`--webgpu` for the WebGPU path, which has its own TSL versions of both). SGSR 2 has two changes of ours to Qualcomm's upscale pass, on WebGPU (`hd3d-gpu.js` `sgsr2Gpu`) and on WebGL (`sgsr2.js`): the history is read sharply (Catmull-Rom) instead of bilinearly, which was softening it a little every frame the camera moved, and a pixel that stays put lets its history count for more (up to four times), so a still picture shimmers less. `__hd.sgsrTune = false` draws it as it was, and the comparison draws both and fails if ours comes out worse. On WebGPU, textures under SGSR 2 are read as the screen's size would read them, not as the small picture does (a mip bias of log2(drawn width / screen width), the value FSR 2 and DLSS ask for too): the small picture's mip level is too soft for the screen it is built up to, and the jitter and history settle the finer detail. WebGPU samplers have no bias, so each texture's node is given one through three.js's hook on the renderer's context (`hd3d-gpu.js` `sharpMips`), with no shader patched and nothing added to the cost of a texture read: every standard material's maps get it, and the kit's own shaders that read textures elsewhere (parallax, scattered and position-laid recipes) scale their gradients to match. On the comparison's textured scene the picture came out 8 to 9% closer to the true one at 1.5x and 10 to 11% at 1.8x, with a little more flicker when nothing moves; half a mip level sharper again was closer still with more shimmer, so it stops at the usual value. (Scaling every texture's uv gradients instead was 11 to 16% closer, but explicit gradients are a slower kind of texture read: 15 to 20% of a frame in the software renderer, not measured on a phone, so the bias it is. three has no hook for a bias, so it is handed to the texture's node for the one read three makes after asking for gradients; if a three.js update changes that, textures go back to being read as drawn and the comparison's textured runs fail.) `__hd.mipBias = false` reads textures as drawn (a number adds that many mip levels on top). WebGL keeps the textures as drawn: WebGL 2 has no sampler bias, and the only other way is patching three's shaders. The 2D HUD is always drawn at
+
+**Half precision (WebGPU).** On a graphics chip that has half precision (WebGPU's `shader-f16`: most phones' chips), the kit's own passes work their colour maths in 16-bit numbers, which take half the room in the chip's registers and run up to twice as fast on phone chips: SGSR 2's upscale, the sharp picture reads in SGSR 2's history and frame generation, smoke and fire (`gs.gas`), and the grade and sun glare. Places, depth, motion and texture positions stay in full precision. Qualcomm's own SGSR 2 shader works its upscale this way too (and the WebGL version, `sgsr2.js`, already did). three.js's shading language has only full-precision numbers, so these are WGSL functions in `src/kit/half.js` `halfFn`, written once: compiled with `f16` where the chip has it and with `f32` everywhere else (the build machine's WebGPU has none, so its pictures test the same maths in full). As WebGPU starts, each one is compiled on its own in half; one the chip won't compile is drawn in full and named in `HD.info.half` (`'half'`, `'half (but not: ...)'`, `'full (switched off)'`, `'full (no half on this chip)'`). `HD.half = false` draws everything in full (the frame lab's A/B and Half check switch it to compare pictures and the chip's time). Left in full on purpose: volumetric light (its march is mostly places in metres, which stay full anyway, and at the strongest `glow` the bright ring round a light came out 10% off in half), light shafts and frame generation's optical flow (reads, not maths: half saves nothing there), and three.js's own passes (AO, reflections, bloom: changing them means patching three's shaders). `node scripts/half-check.mjs` compiles every half function with naga in both precisions.
 full resolution on top. `v.onTier(T => ...)` lets a game react (for example `spotLight.setTier(T)`).
 
 Rules of thumb:
@@ -705,13 +707,30 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   second) gets frame generation at once for two seconds, so the refreshes it would miss show made
   frames instead of the same frame twice. It can't help a hitch that holds the whole app up (nothing
   is shown then), only a run of slow frames.
-- **Pacing per phone:** blend puts a made frame on the same refresh as the real frame's work. If the
-  refreshes in between keep coming late in blend, that game switches to ahead on that phone (the work
-  is spread over both refreshes; it's remembered with the game's settled frame rate); if they still
-  don't come, frame generation turns off for that game until the app restarts. A game that switched
-  itself to ahead only guesses one frame per real frame: with two or three to make (a game at 30 on a
-  120 Hz screen) they are blended again, because guesses that far past the newest frame smear a
-  running figure. Ahead picked in Settings, or by the game's own `frameGen: 'ahead'`, is kept.
+- **A refresh each:** a refresh's picture reaches the screen only once all the work sent in it is done
+  (the chip has one queue), so what counts is the work in each refresh, not in each pair. Blend has two
+  paces (`speed.js` `frameGenPaceOf`): **after** makes a frame on the real frame's own refresh (the least
+  delay, where the chip has room for both, by its timestamps), **first** shows the last real frame there
+  and makes every frame on a refresh of its own (a refresh later). Unknown times start on first. A made
+  frame that can't be ready for the next refresh (the chip is still on the real frame) is dropped, so it
+  never holds up the next real frame; a real frame is never dropped.
+- **Only where it fits:** Auto makes frames only where a real frame and a made frame each fit a refresh
+  by the chip's times (`frameGenFits`; 8.3 ms at 120 Hz), so it can't rescue a game whose real frames
+  take the chip longer than that; it helps one held back by the phone's processor, and saves power and
+  heat. Unknown times are tried. A game at 120 that slows down steps to 60 with frames made between
+  before its picture loses sharpness, where they'd fit (`frameGenCould`), and goes back to 120 only with
+  room in a refresh. The chip's times count only from frames that kept it busy: a phone clocks its chip
+  down at half rate (`speed.cost`).
+- **Pacing per phone:** if the refreshes in between keep coming late on after, that game switches to
+  first on that phone (remembered with the game's settled frame rate); if they still don't come, or most
+  made frames are dropped as late, frame generation turns off for that game until the app restarts. Ahead
+  only guesses one frame per real frame: with two or three to make (a game at 30 on a 120 Hz screen) they
+  are blended, because guesses that far past the newest frame smear a running figure, unless ahead is
+  picked in Settings or by the game's own `frameGen: 'ahead'`.
+- **Easy tiles the quick way:** once a pair, each 8 x 8 tile of the screen is sorted: where nothing is
+  see-through, nothing uncovers, the optical flow agrees with the game's motion and the newest frame
+  moved back along it matches the last one, the made frame is a plain read along the motion; the rest
+  take the full way. Made frames don't clear or copy the motion pictures (only the holes are filled).
 - **How:** blend (the default) makes the frames between the last two real frames and shows them
   before the newest, so each real frame shows a little later (half a frame at 60 on 120 Hz, about
   8 ms), with the fewest flaws. Ahead guesses past the newest, so nothing is delayed; edges round fast

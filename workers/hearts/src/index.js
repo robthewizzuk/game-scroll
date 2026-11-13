@@ -10,6 +10,7 @@
 //   POST /brain, GET /brain   Tiny Brains shared learning: everyone's average brain (see brains.js)
 //   POST /stats, GET /stats   anonymous play stats (see stats.js)
 //   POST /perf, GET /perf, GET /perf/report[?game=<id>]   anonymous frame timing and crash reports (see perf.js)
+//   GET  /robots.txt  keeps search engines off the API (the report pages link to a page per game)
 //   play.game-scroll.com/<id> the page a shared game link opens (see sharepage.js)
 //
 // No accounts: each install sends a random anonymous device id; (game, device) is unique, so a phone
@@ -22,7 +23,8 @@ import { verifyIntegrity } from './playintegrity.js';
 import { unb64, b64u } from './util.js';
 import { cleanBatch, saveBatch, totals, prune } from './stats.js';
 import { sharePage, shareGame, idFromPath } from './sharepage.js';
-import { cleanPerf, savePerf, perfTotals, perfReport, prunePerf, perfPage } from './perf.js';
+import { cleanPerf, savePerf, perfTotals, perfReport, prunePerf, perfPage, phoneKinds } from './perf.js';
+import { kept, left, forget } from './kept.js';
 import { cleanScore, cleanSecs, checkScore, saveScore, board, pruneScores } from './scores.js';
 import { cleanBrain, saveBrain, sharedBrain, pruneBrains, NAME_RE, SHAPE_RE } from './brains.js';
 
@@ -40,7 +42,12 @@ const COUNTS_TTL = 60;
 const DEVICE_RE = /^[A-Za-z0-9-]{16,64}$/;
 const GAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_BODY = { '/heart': 512, '/score': 512, '/brain': 4096, '/session': 24_000, '/stats': 8_000, '/perf': 12_000 };
-const STATS_TTL = 600, PERF_TTL = 300;
+// How long the expensive answers are kept (seconds), in D1 for every location (kept.js) and at each
+// location's edge. The app fetches play stats at most every 30 minutes; GET /perf is for the QA panel
+// only; the report pages are what someone checks after trying a build, so they stay fresh.
+const STATS_TTL = 1800, PERF_TTL = 1800, REPORT_TTL = 300, KINDS_TTL = 1800;
+/** A keep time, or the tests' STATS_TTL (0: keep nothing). */
+const keepFor = (env, ttl) => env.STATS_TTL !== undefined ? Math.min(ttl, Number(env.STATS_TTL)) : ttl;
 
 function cors(req) {
   const o = req.headers.get('Origin');
@@ -157,13 +164,16 @@ async function postStats(env, req) {
 }
 
 async function getStats(env, ctx, req) {
-  const ttl = env.STATS_TTL !== undefined ? Number(env.STATS_TTL) : STATS_TTL;   // tests set 0
+  const ttl = keepFor(env, STATS_TTL);
   const cache = caches.default, key = new Request(new URL('/stats', req.url).toString());
   let res = ttl > 0 ? await cache.match(key) : null;
   if (!res) {
-    res = new Response(JSON.stringify(await totals(env.DB)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${ttl}` } });
+    const { text, at } = await kept(env.DB, 'stats', ttl, async () => {
+      if (Math.random() < 0.05) ctx.waitUntil(prune(env.DB));   // now and then, drop days past the window
+      return JSON.stringify(await totals(env.DB));
+    });
+    res = new Response(text, { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${left(ttl, at)}` } });
     if (ttl > 0) ctx.waitUntil(cache.put(key, res.clone()));
-    if (Math.random() < 0.05) ctx.waitUntil(prune(env.DB));   // now and then, drop days past the window
   }
   const h = new Headers(res.headers);
   for (const [k, v] of Object.entries(cors(req))) h.set(k, v);
@@ -181,9 +191,9 @@ async function postPerf(env, req) {
   return json(req, { ok: true, games: batch.games.length, errors: batch.errors.length });
 }
 
-/** GET /perf (JSON) or /perf/report (a web page; ?game=<id> for one game's history), cached for a few minutes. */
+/** GET /perf (JSON, for the app's QA panel) or /perf/report (a web page; ?game=<id> for one game's history), kept a few minutes. */
 async function getPerf(env, ctx, req, page) {
-  const ttl = env.STATS_TTL !== undefined ? Number(env.STATS_TTL) : PERF_TTL;   // tests set 0
+  const ttl = keepFor(env, page ? REPORT_TTL : PERF_TTL);
   // One page per game in the catalogue and no other variants, so the cache (and the database behind it) can't be flooded with made-up addresses.
   const game = page ? new URL(req.url).searchParams.get('game') || '' : '';
   const titles = async () => (await gameIds(env)) || new Map();
@@ -192,14 +202,20 @@ async function getPerf(env, ctx, req, page) {
   let res = ttl > 0 ? await cache.match(key) : null;
   if (!res) {
     if (game && await limited(env.LIMIT_PAGES, 'pg:' + ip(req))) return new Response('Slow down.', { status: 429, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '60' } });
+    const { text, at } = await kept(env.DB, page ? 'report' + (game ? ':' + game : '') : 'perf', ttl, async () => {
+      if (Math.random() < 0.05) ctx.waitUntil(Promise.all([prunePerf(env.DB), forget(env.DB)]));
+      if (!page) return JSON.stringify(await perfTotals(env.DB));
+      // What kind of machine each phone is reads both tables whole: kept longer, and shared by every page.
+      const kinds = JSON.parse((await kept(env.DB, 'kinds', keepFor(env, KINDS_TTL), async () => JSON.stringify(await phoneKinds(env.DB)))).text);
+      return perfPage(await perfReport(env.DB, Date.now(), game, kinds), await titles(), env.REPO_URL);
+    });
     res = page
-      ? new Response(perfPage(await perfReport(env.DB, Date.now(), game), await titles(), env.REPO_URL), { headers: {
-          'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': `public, max-age=${ttl}`, 'X-Content-Type-Options': 'nosniff',
+      ? new Response(text, { headers: {
+          'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': `public, max-age=${left(ttl, at)}`, 'X-Content-Type-Options': 'nosniff',
           'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-          'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' } })
-      : new Response(JSON.stringify(await perfTotals(env.DB)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${ttl}` } });
+          'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow' } })
+      : new Response(text, { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${left(ttl, at)}` } });
     if (ttl > 0) ctx.waitUntil(cache.put(key, res.clone()));
-    if (Math.random() < 0.05) ctx.waitUntil(prunePerf(env.DB));
   }
   if (page) return res;
   const h = new Headers(res.headers);
@@ -343,6 +359,8 @@ export default {
       if (req.method === 'POST' && pathname === '/perf') return await postPerf(env, req);
       if (req.method === 'GET' && (pathname === '/perf' || pathname === '/perf/report')) return await getPerf(env, ctx, req, pathname === '/perf/report');
       if (req.method === 'GET' && pathname === '/') return json(req, { ok: true, service: 'game-scroll-api', enforce: env.ENFORCE === 'on' });
+      // Nothing here is for search engines, and a crawler walking the report's page per game read the database for each.
+      if (req.method === 'GET' && pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' } });
       return json(req, { error: 'not found' }, 404);
     } catch (e) {
       console.error(e);
