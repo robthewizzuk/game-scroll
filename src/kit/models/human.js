@@ -413,6 +413,7 @@ export function human(o = {}) {
       // (read back from the person's own lists, which are kept small, slim.js: the plain lists they were made from are let go)
       g.setAttribute('position', new BufferAttribute(lp, 3)); g.setAttribute('normal', new BufferAttribute(floatsOf(G.normal, off, p.n), 3));
       g.setAttribute('color', new BufferAttribute(floatsOf(G.color, off, p.n), 3)); g.setAttribute('uv', new BufferAttribute(floatsOf(G.uv, off, p.n), 2)); g.setAttribute('gsThin', new BufferAttribute(new Float32Array(p.n * 2), 2));
+      g.setAttribute('uv1', new BufferAttribute(floatsOf(G.uv1, off, p.n), 2));   // (where it is on the picture of seams: a pouch that comes loose keeps its stitching)
       g.setIndex(new BufferAttribute(p.I[1], 1)); g.computeBoundingBox();
       const c = g.boundingBox.getCenter(new Vector3()); g.translate(-c.x, -c.y, -c.z); g.computeBoundingSphere();
       g.userData = { at: [c.x, c.y, c.z], mat: M[CLASSES[count.indexOf(Math.max(...count))]] || M.far };
