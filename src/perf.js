@@ -172,6 +172,7 @@ export const perf = {
   get reportUrl() { return HEARTS_URL ? HEARTS_URL + '/perf/report' : ''; },
   info: () => ({ ...info, form: form() }),
 
+  /** Everyone's totals, for the QA panel only (it is the one place they show), at most every 30 minutes. */
   async load(force = false) {
     if (!HEARTS_URL || (!force && Date.now() - lastLoad < LOAD_MS)) return;
     lastLoad = Date.now();
@@ -219,7 +220,7 @@ if (typeof document !== 'undefined') {
   addEventListener('unhandledrejection', e => perf.error(e.reason ?? 'unhandled rejection'));
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { store.set(OPEN_KEY, null); clearTimeout(saveT); saveT = 0; store.set(PENDING_KEY, pending); store.set(LOCAL_KEY, local); perf.flush(true); }
-    else { lastFrame = 0; openMarker(); perf.load(); }
+    else { lastFrame = 0; openMarker(); }
   });
   addEventListener('pagehide', () => store.set(OPEN_KEY, null));
   // the marker says how short of memory the phone was, so a close it leaves behind can say so

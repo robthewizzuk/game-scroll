@@ -112,6 +112,7 @@ export function report(games, best) {
 
 /* ---------- panel ---------- */
 export function openPanel(games, best, onChange) {
+  perf.load();   // everyone's smoothness, fetched only here (the report copied below uses it once it is in)
   const el = document.createElement('dialog'); el.className = 'qa-panel';
   const rated = games.filter(g => rating(g.id)).length, played = games.filter(g => db[g.id]?.plays).length;
   const rows = [...games].sort((a, b) => rating(a.id) - rating(b.id) || a.title.localeCompare(b.title)).map(g => {

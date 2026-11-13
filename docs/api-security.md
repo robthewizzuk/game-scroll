@@ -23,6 +23,8 @@ game, can only connect to these two hosts, so a game can't send data anywhere el
 | Hearts without a pass: 10 a minute per address. With a pass: 60 a minute per device | `[[ratelimits]]` in `wrangler.toml` |
 | Challenges and passes: 10 a minute per address | `LIMIT_SESSION` |
 | Counts list cached 60 s at the edge, so D1 is read at most about once a minute per location | `counts()` |
+| Play stats and perf totals (30 min) and the crash report pages (5 min) are worked out once for every location and kept in D1 (`snapshots`), so another location reads one row, not the whole tables. `cd workers/hearts && node reads.mjs` measures rows read per request | `kept()` in `src/kept.js` |
+| Search engines are kept off the API (`/robots.txt`), since the report links to a page per game | `index.js` |
 
 ### Passes (app attestation)
 
