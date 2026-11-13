@@ -169,7 +169,8 @@ shows it and logs each change. Tests pin a step with `HD.fxStep('bloom', 2)`.
   - A map fitted to the view (`s.fit(...)`) whose box changes size, or whose light moves up or down,
     is drawn whole. So in tiles its box grows at once but shrinks only after a second and a half of
     being too big, and its height and depth keep 40 m to spare: looking round from one place keeps the
-    box it has. (Rob's Fold, mission 2 of Long Shadow: the shadow maps' worst frame was 18 ms; panning
+    box it has. A camera that zooms (its fov or zoom changes, or `around` is turned on or off: a scope
+    going up) is fitted at once, so the scope has sharp shadows straight away. (Rob's Fold, mission 2 of Long Shadow: the shadow maps' worst frame was 18 ms; panning
     round in the test browser drew the whole map 29 times in 60 frames before, 4 after.)
   - Switches: `__hd.shadowTiles = false` (the sun moves a shadow texel at a time and its map is drawn
     whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all).

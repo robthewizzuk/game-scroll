@@ -3733,7 +3733,8 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
 // whole map is drawn again, so in tiles the box grows at once but shrinks only once it has been too big
 // for SHRINK_HOLD fits in a row (frames: a second and a half at 60 fps), and the light's height and depth
 // grow with ROOM metres to spare: looking round from one place (what's in view nearer, then further, then
-// nearer again) keeps the box it has instead of drawing every shadow again every other frame.
+// nearer again) keeps the box it has instead of drawing every shadow again every other frame. A camera that
+// zooms (its fov or zoom changes, or around is turned on or off: a scope going up) is fitted at once.
 const SHRINK_HOLD = 90, ROOM = 40;
 const FX = new Vector3(), FY = new Vector3(), FZ = new Vector3(), FP = new Vector3(), FR = new Vector3(), UPV = new Vector3(0, 1, 0);
 const step4 = h => 2 ** (Math.ceil(Math.log2(Math.max(h, 1)) * 4) / 4);
@@ -3768,7 +3769,7 @@ function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tal
     }
   }
   if (!n) { const g = ground ? ground(o.x, o.z) ?? o.y : o.y; both(FP.set(o.x, g, o.z)); }
-  const msz = s.shadow.mapSize.x || 1024, tiles = HD.shadowTiles !== false, was = tiles ? s.gsFit ||= { hx: 0, hy: 0, cx: NaN, cy: NaN, top: NaN, depth: NaN, big: 0 } : null;
+  const msz = s.shadow.mapSize.x || 1024, tiles = HD.shadowTiles !== false, was = tiles ? s.gsFit ||= { hx: 0, hy: 0, cx: NaN, cy: NaN, top: NaN, depth: NaN, big: 0, lens: NaN, around: 0 } : null;
   // (in tiles, shadow-tiles.js: the box is a little bigger, so that its middle can go a tile at a time and
   // still cover what is seen, and it is kept while it is no more than a step too big, so a camera on
   // the edge of a step doesn't have every shadow drawn again each frame)
@@ -3783,7 +3784,9 @@ function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tal
     // ROOM * 2 too high or deep), and for SHRINK_HOLD fits when too big (what's in view may be further off again in a moment)
     const fits = was.hx >= hx && was.hy >= hy && was.top >= top && was.depth >= deep(was.top);
     const snug = fits && was.hx <= hx * 1.2 && was.hy <= hy * 1.2 && was.top <= top + ROOM * 2 && was.depth <= deep(was.top) + ROOM * 2;
-    if (fits && (snug || ++was.big < SHRINK_HOLD)) { hx = was.hx; hy = was.hy; top = was.top; depth = was.depth; if (snug) was.big = 0; }
+    const lens = cam.fov / (cam.zoom || 1), zoomed = Math.abs(lens - was.lens) > was.lens * .01 || around !== was.around;
+    was.lens = lens; was.around = around;
+    if (fits && !zoomed && (snug || ++was.big < SHRINK_HOLD)) { hx = was.hx; hy = was.hy; top = was.top; depth = was.depth; if (snug) was.big = 0; }
     else { top += ROOM; depth = deep(top) + ROOM; was.big = 0; }   // (grown, or shrunk at last: the box as needed, the light with room)
   }
   // too big to cover it all: keep the camera's end of it
