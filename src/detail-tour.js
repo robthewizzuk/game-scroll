@@ -54,7 +54,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   const draw = () => { if (stopped()) throw STOP; if (!sized) fit(); S.v.render(ctx, W, H); return frame(); };
   // one timed run along the path
   const fly = async () => {
-    const dts = [], cpu = [], tris = [], calls = [], chip = [], budget = 1000 / screenHz();
+    const dts = [], cpu = [], tris = [], calls = [], chip = [], by = {}, budget = 1000 / screenHz();
     let last = 0, seen = null, away = 0;
     HD.info.gpuMs = null;
     const start = performance.now();
@@ -66,12 +66,13 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
       if (last) {
         const dt = now - last;
         if (dt > 500 || document.visibilityState !== 'visible') away += dt;   // the phone went to another app: that gap is nobody's frame
-        else { dts.push(dt); cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.gpuMs != null && I.gpuMs !== seen && t > .5) chip.push(seen = I.gpuMs); }
+        else { dts.push(dt); cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.gpuMs != null && I.gpuMs !== seen && t > .5) { chip.push(seen = I.gpuMs); for (const k in I.gpuParts || {}) by[k] = (by[k] || 0) + I.gpuParts[k]; } }
       }
       last = now; onPlay?.({ played: t });
     }
     const I = HD.info;
-    return { ...summarise(dts, cpu, budget), chip: chip.length ? mean(chip) : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
+    for (const k in by) by[k] /= chip.length;
+    return { ...summarise(dts, cpu, budget), chip: chip.length ? mean(chip) : null, chipBy: chip.length ? by : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
   };
   try {
     HD.force = phoneClass() === 'low' ? 1 : 2; out.tier = HD.force;
@@ -116,8 +117,15 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
 /* ---------- the report ---------- */
 // how two numbers stand to each other, in words: k times `up` when a is the bigger, `down` when b is, `same` within 5%
 const times = (a, b, up, down, same) => { if (!(a > 0 && b > 0)) return ''; const k = a / b, n = v => v.toFixed(v < 10 ? 1 : 0); return Math.abs(k - 1) < .05 ? same : k > 1 ? `${n(k)} times ${up}` : `${n(1 / k)} times ${down}`; };
+// the chip's time by pass, biggest first: " (scene 6.1, AO 2.3, upscale 1.6, bloom 1.4, shadows 1.2, rest 0.8)"
+const PASS = { scene: 'scene', shadows: 'shadows', ao: 'AO', bloom: 'bloom', upscale: 'upscale', effects: 'effects', show: 'to screen', compute: 'compute' };
+function chipBy(by) {
+  if (!by) return '';
+  const all = Object.entries(by).filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]);
+  return all.length ? ` (${all.map(([k, v]) => `${PASS[k] || k} ${v.toFixed(1)}`).join(', ')})` : '';
+}
 function modeLine(m) {
-  const parts = [`${Math.round(m.fps)} fps`, `worst 1% ${Math.round(m.low)} fps`, `longest ${Math.round(m.worst)} ms`, m.chip != null ? `chip ${m.chip.toFixed(1)} ms` : 'chip time not told', `code ${m.work.toFixed(1)} ms`, m.uncounted ? `${num(m.calls)} draws (the chip picks the copies, so their triangles are not counted)` : `${num(m.tris)} triangles in ${num(m.calls)} draws`];
+  const parts = [`${Math.round(m.fps)} fps`, `worst 1% ${Math.round(m.low)} fps`, `longest ${Math.round(m.worst)} ms`, m.chip != null ? `chip ${m.chip.toFixed(1)} ms${chipBy(m.chipBy)}` : 'chip time not told', `code ${m.work.toFixed(1)} ms`, m.uncounted ? `${num(m.calls)} draws (the chip picks the copies, so their triangles are not counted)` : `${num(m.tris)} triangles in ${num(m.calls)} draws`];
   if (m.build != null) parts.push(`ready in ${secs(m.build)}`);
   if (m.note) parts.push(m.note);
   if (m.tell) parts.push(m.tell);
@@ -148,6 +156,6 @@ export function scenesText(t) {
   lines.push(m0 ? `PICTURE: ${m0.backend === 'webgpu' ? 'WebGPU' : 'WebGL' + (m0.why ? ` (${m0.why})` : '')} · quality ${TIER[t.tier] || t.tier}, pinned · 3D drawn at ${m0.rw} x ${m0.rh}, shown at ${m0.ow} x ${m0.oh}${m0.upscaled ? ` (${m0.upscaled === 'sgsr2' ? 'SGSR 2' : 'SGSR 1'})` : ''} · frame generation off · ${t.seconds} s a run${t.size !== 1 ? ` · scenes at ${t.size} of full size` : ''}`
     : 'PICTURE: no frames were timed');
   for (const s of t.scenes) lines.push(...sceneLines(s, hz));
-  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU). code: the time the engine\'s own code took to draw a frame. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
+  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, upscale the pass that makes the full-size picture, effects the other passes, to screen the last one. code: the time the engine\'s own code took to draw a frame. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
   return lines.join('\n');
 }

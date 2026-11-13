@@ -71,7 +71,7 @@ window.fly = async () => {
   window.long = long.filter(f => f.cpu > cm * 2.5 || f.in.length || f.after.length);
   const med = a => +[...a].sort((p, q) => p - q)[a.length >> 1].toFixed(2), mean = a => +(a.reduce((s, q) => s + q, 0) / a.length).toFixed(2);
   let objs = 0, vis = 0; S.v.scene.traverse(() => objs++); S.v.scene.traverseVisible(() => vis++);
-  return { backend: HD.info.backend, why: HD.info.webgl || '', cpuMed: med(cpu), cpuMean: mean(cpu), pathMed: med(path), frameMed: med(dts), tris: Math.round(mean(tris)), calls: Math.round(mean(calls)), objects: objs, visible: vis, tell: S.tell() || '', rw: HD.info.rw, rh: HD.info.rh,
+  return { backend: HD.info.backend, why: HD.info.webgl || '', cpuMed: med(cpu), cpuMean: mean(cpu), pathMed: med(path), frameMed: med(dts), tris: Math.round(mean(tris)), calls: Math.round(mean(calls)), objects: objs, visible: vis, tell: S.tell() || '', rw: HD.info.rw, rh: HD.info.rh, chip: HD.info.gpuMs == null ? null : +HD.info.gpuMs.toFixed(2), chipBy: HD.info.gpuParts && Object.fromEntries(Object.entries(HD.info.gpuParts).map(([k, v]) => [k, +v.toFixed(2)])),
     detail: DS.meshes || det.meshes.some(Boolean) ? Object.fromEntries(Object.entries(det).map(([k, a]) => [k, mean(a)])) : null };   // (cluster detail: meshes, clusters, runs (a drawIndexed each on WebGPU), triangles, picks made again and their milliseconds, a frame)
 };
 // What cluster detail would draw along the flight in a picture `height` pixels high, for each error in `pxs`

@@ -230,7 +230,10 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    ```
 
    (Those numbers are made up to show the shape: nobody has run it on a phone yet.) `chip` is the
-   graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps); `code` is
+   graphics chip's own time for a frame, where the phone tells it (WebGPU with timestamps), followed in
+   brackets by where it went, biggest first (`chip 15.2 ms (scene 6.1, upscale 3.4, AO 2.3, bloom 1.6,
+   shadows 1.2, to screen 0.6)`: the game's own things, the pass that makes the full-size picture, the soft
+   shading in corners, the glow, the shadow maps, the last pass onto the screen); `code` is
    the time the engine's code took to draw a frame; `ready in` is how long the system took to build
    what it needs.
 
