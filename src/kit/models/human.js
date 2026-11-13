@@ -12,7 +12,7 @@
 // each piece is saved on the phone, so the next launch has them at once. People in the same cut of
 // clothes share their pieces whatever their colours; twin() makes another of the very same person for free.
 // Kit use only: games reach it as gs.models.human.
-import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, RGBAFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
+import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, ES, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
@@ -480,6 +480,7 @@ export function human(o = {}) {
         }
         if (!pass) { root.rig.fill(); root.updateMatrixWorld(true); }
       }
+      for (const [sd, pt] of arms) closeOnThing(sd, thing, pt);   // (and the fingers round it)
       return root;
     };
     // hands and feet onto things in the world: the ball of each foot, the middle of a closed hand, each limb bent to reach
@@ -491,9 +492,11 @@ export function human(o = {}) {
      * it), a foot with the ball of the foot. Options: blend 0..1 how far each is carried there from its pose (a
      * number, or one a limb: { handL: .5 }), to ease a grip on and off; elbows, knees: { L, R } where each points,
      * in the chest's (hips') space; palms: { L, R } the way each palm faces, in the world (the forearm turns);
-     * level: 0..1 how flat each foot is held to the floor he stands on (a number, or { L, R }). After rig.update().
+     * level: 0..1 how flat each foot is held to the floor he stands on (a number, or { L, R }); round: the radius
+     * of the bar or rung a hand closes round, its point the bar's middle (metres, a number or { L, R }; hands: 'grip'
+     * close round 1.6 cm by themselves, 0 lays a hand open on it). After rig.update().
      */
-    root.touch = (pts, { blend = 1, elbows = {}, knees = {}, palms = {}, level = 0 } = {}) => {
+    root.touch = (pts, { blend = 1, elbows = {}, knees = {}, palms = {}, level = 0, round = HAND.grip ? .016 : 0 } = {}) => {
       root.updateMatrixWorld(true);
       for (const [name, sd, up, low, end, at, bend] of [['handL', 'L', B.armL, B.foreL, fist.L, B.spine, elbows.L || [.45, -.5, -.25]], ['handR', 'R', B.armR, B.foreR, fist.R, B.spine, elbows.R || [-.45, -.5, -.25]],
         ['footL', 'L', B.legL, B.shinL, ball.L, B.hips, knees.L || [.14, -.3, 1]], ['footR', 'R', B.legR, B.shinR, ball.R, B.hips, knees.R || [-.14, -.3, 1]]]) {
@@ -525,29 +528,111 @@ export function human(o = {}) {
         }
         if (hand) { root.rig.fill(); root.updateMatrixWorld(true); reach(up, low, tgt, { pole, end }); }   // (the shoulder has gone with the arm: once more from there)
         if (k < 1) { up.quaternion.slerpQuaternions(q0, q2.copy(up.quaternion), k); low.quaternion.slerpQuaternions(q1, q2.copy(low.quaternion), k); tip.quaternion.slerpQuaternions(q3, q2.copy(tip.quaternion), k); }
+        const rr = hand ? (typeof round === 'number' ? round : round[sd] ?? 0) : 0;
+        if (rr > 0) { root.updateMatrixWorld(true); closeRound(sd, tgt, rr, k); }   // (the fingers round the bar, as far as the hand has been carried there)
       }
       root.rig.fill();
       return root;
     };
     // the fingers: each joint's bone, the way it bends, and how far it is bent as sculpted
     const FB = {}; for (const sd of ['L', 'R']) FB[sd] = ['thumb', 'index', 'middle', 'ring', 'little'].map(f => [1, 2, 3].map(j => B[f + j + sd]).filter(Boolean));
-    const CURL = [1.5, 1.75, 1.1], THUMB = [.55, .85], was = HAND.grip ? .8 : .2, fq = new Quaternion();
+    // each finger's tip from its last joint, in that joint's own space (as sculpted: the other hand's in a mirror)
+    const TIP = {}; for (const sd of ['L', 'R']) TIP[sd] = ['thumb', 'index', 'middle', 'ring', 'little'].map(f => { const J = HAND[f], a = J[J.length - 2], b = J[J.length - 1]; return new Vector3((b[0] - a[0]) * (sd === 'L' ? 1 : -1), b[1] - a[1], b[2] - a[2]); });
+    const CURL = [1.5, 1.75, 1.1], THUMB = [.55, .85], was = HAND.grip ? .8 : .2;
+    // one finger bent to k (0 flat, 1 a fist; null as sculpted)
+    // one finger bent to k (0 flat, 1 a fist; null as sculpted), its last joint w further (a finger wrapped round something thick)
+    const bend = (sd, f, k, w = 0) => {
+      const m = sd === 'L' ? 1 : -1, list = FB[sd][f], last = list.length - 1;
+      list.forEach((bone, j) => {
+        const q = j === last ? k + w : k;
+        if (k == null) bone.quaternion.identity();
+        else if (f === 0) bone.quaternion.setFromAxisAngle(ax.set(HAND.turn[0], m * HAND.turn[1], m * HAND.turn[2]), (q - was) * THUMB[j]);   // (the other hand: the same turn in a mirror)
+        else bone.rotation.set(0, 0, -m * (CURL[j] * q - HAND.bend[j]));
+      });
+    };
+    // ---- hands that hold: a hand left to the engine (every hand, until a game sets its fingers itself) closes its fingers round what it
+    // holds, each until it meets it (hold(): the thing's own shape; touch() with round: a bar), lies relaxed when it holds nothing, a
+    // little more closed at a run, and eases from one to the other. Close up only (rig.fine), like the other small bones.
+    // a hand hanging at rest: the thumb and the index straightest, each finger after a little more curled. A hand sculpted closed (hands: 'grip')
+    // opens no further than OPEN: its fingertips are sculpted against the palm, and opened further the skin between them draws out into a thread
+    const OPEN = HAND.grip ? .3 : 0, RELAX = HAND.grip ? [.55, .3, .33, .38, .44] : [.16, .2, .28, .35, .42];
+    const five = () => [0, 0, 0, 0, 0], auto = { L: true, R: true }, curl = { L: RELAX.slice(), R: RELAX.slice() }, wrap = { L: five(), R: five() }, gripped = { L: -9, R: -9 };
+    const want = { L: five(), R: five() }, wantW = { L: five(), R: five() }, touched = { L: five(), R: five() }, touchedW = { L: five(), R: five() };   // (what the last grip asked for, and where each finger met it)
+    let frame = 0;
+    for (const sd of ['L', 'R']) curl[sd].forEach((k, f) => bend(sd, f, k));
+    root.rig.hands = { step(dt, speed = 0) {
+      frame++; const run = .22 * ss(2.2, 5, Math.abs(speed));
+      for (const sd of ['L', 'R']) {
+        if (!auto[sd]) continue;
+        const held = gripped[sd] >= frame - 2, c = curl[sd], w = wrap[sd], ease = (a, to) => a + (to - a) * (1 - Math.exp(-dt * (to > a ? 14 : 7)));   // (closing quicker than letting go)
+        for (let f = 0; f < 5; f++) { c[f] = ease(c[f], held ? want[sd][f] : RELAX[f] + run * (f ? 1 : .4)); w[f] = ease(w[f], held ? wantW[sd][f] : 0); bend(sd, f, c[f], w[f]); }
+      }
+    } };
+    // the distance from the segment p..q to the line through a along the unit direction d
+    const lineGap = (p, q, a, d) => {
+      const ux = q.x - p.x, uy = q.y - p.y, uz = q.z - p.z, wx = p.x - a.x, wy = p.y - a.y, wz = p.z - a.z, uu = ux * ux + uy * uy + uz * uz, ud = ux * d.x + uy * d.y + uz * d.z, uw = ux * wx + uy * wy + uz * wz, dw = d.x * wx + d.y * wy + d.z * wz, den = uu - ud * ud;
+      const t = den > 1e-12 ? Math.max(0, Math.min(1, (ud * dw - uw) / den)) : 0, s2 = ud * t + dw, ex = wx + ux * t - d.x * s2, ey = wy + uy * t - d.y * s2, ez = wz + uz * t - d.z * s2;
+      return Math.sqrt(ex * ex + ey * ey + ez * ez);
+    };
+    const fa = new Vector3(), fb = new Vector3(), fc = new Vector3(), axis = new Vector3();
+    /**
+     * Kit use: closes a hand's fingers round a bar through `at` (world) of radius r, across the palm (the way the fingers fold): each
+     * finger is bent until its last two lengths meet the bar's surface, and then, if the tip still stands off it (a thick bar), its last
+     * joint further until the tip meets it too; the thumb the same. k: how far the hand has been carried there.
+     */
+    const closeRound = (sd, at, r, k = 1) => {
+      if (!auto[sd]) return;
+      const t = .0085 * HAND.k * root.scale.y, out = want[sd], outW = wantW[sd], met = touched[sd], metW = touchedW[sd], warm = gripped[sd] >= frame - 2, hand = B['hand' + sd];
+      axis.set(0, 0, 1).transformDirection(hand.matrixWorld);   // (the fingers fold about the hand's own z)
+      for (let f = 0; f < 5; f++) {
+        const list = FB[sd][f], mid = list[list.length - 2], end = list[list.length - 1];
+        const meets = (q, w = 0, tip = false) => { bend(sd, f, q, w); list[0].updateMatrixWorld(true); mid.getWorldPosition(fa); end.getWorldPosition(fb); fc.copy(TIP[sd][f]).multiplyScalar(.85); end.localToWorld(fc); return (tip ? lineGap(fb, fc, at, axis) : Math.min(lineGap(fa, fb, at, axis), lineGap(fb, fc, at, axis))) < r + t; };
+        // (held last frame too: close to where it met it then, a few looks; else in steps from flat to a fist for the first that meets it;
+        // then finer between that and the step before)
+        let lo = -.1, hi = 1.15, n = 5, found = true;
+        if (warm && !meets(met[f] - .06) && meets(met[f] + .06)) { lo = met[f] - .06; hi = met[f] + .06; n = 3; }
+        else { for (let q = 0; q <= 1.15; q += .15) { if (meets(q)) { hi = q; break; } lo = q; } if (hi >= 1.15 && !meets(hi)) { n = 0; found = false; } }
+        for (let i = 0; i < n; i++) { const m = (lo + hi) / 2; if (meets(m)) hi = m; else lo = m; }
+        met[f] = lo;
+        // the last joint on round the bar until the tip meets it too (nothing more if it already does, or never would)
+        const k0 = Math.max(OPEN, lo); let wl = 0, wh = 1.2, wn = 4;
+        if (!found || meets(k0, 0, true)) wn = 0;
+        else if (warm && metW[f] > 0 && !meets(k0, metW[f] - .08, true) && meets(k0, metW[f] + .08, true)) { wl = metW[f] - .08; wh = metW[f] + .08; wn = 3; }
+        else { for (let w = .2; w < 1.3; w += .2) { if (meets(k0, w, true)) { wh = w; break; } wl = w; } if (wh >= 1.2 && !meets(k0, wh, true)) { wl = 0; wn = 0; } }
+        for (let i = 0; i < wn; i++) { const m = (wl + wh) / 2; if (meets(k0, m, true)) wh = m; else wl = m; }
+        metW[f] = wl; out[f] = RELAX[f] + (k0 - RELAX[f]) * k; outW[f] = wl * k;
+        bend(sd, f, curl[sd][f], wrap[sd][f]); list[0].updateMatrixWorld(true);
+      }
+      gripped[sd] = frame;
+    };
+    // round what hold() puts a hand on: how thick the thing is through the palm, read by two rays at the thing's own triangles (once for a
+    // hold, and again if the hand comes round it another way)
+    const ray = new Raycaster(), hits = [], seen = { L: null, R: null }, pn = new Vector3(), pp = new Vector3(), pc = new Vector3(), _q = new Quaternion();
+    const closeOnThing = (sd, thing, pt) => {
+      if (!auto[sd] || root.rig.fine === false) return;
+      const hand = B['hand' + sd]; palm[sd].getWorldPosition(pp); pn.set(sd === 'L' ? -1 : 1, 0, 0).transformDirection(hand.matrixWorld);   // (the way the palm faces)
+      let s0 = seen[sd]; const local = pn.clone().transformDirection(_m4.copy(thing.matrixWorld).invert());
+      if (!s0 || s0.thing !== thing || s0.pt[0] !== pt[0] || s0.pt[1] !== pt[1] || s0.pt[2] !== pt[2] || s0.n.dot(local) < .9) {
+        const sc = root.scale.y, side = (from, dir) => { ray.set(from, dir); ray.far = .2 * sc; hits.length = 0; ray.intersectObject(thing, true, hits); return hits.length ? hits[0].point.clone() : null; };
+        const far = side(fa.copy(pp).addScaledVector(pn, .1 * sc), fb.copy(pn).negate()), near = side(fa.copy(pp).addScaledVector(pn, -.1 * sc), pn);
+        let c, r;
+        if (far && near && far.distanceTo(near) > .006 * sc) { c = near.add(far).multiplyScalar(.5); r = Math.min(.06 * sc, far.distanceTo(c)); }
+        else { r = .02 * sc; c = pp.clone().addScaledVector(pn, r); }   // (nothing found: a bar of an ordinary grip's size)
+        seen[sd] = s0 = { thing, pt: pt.slice(), n: local, c: thing.worldToLocal(c), r: r / thing.getWorldScale(pc).x };
+      }
+      closeRound(sd, pc.copy(s0.c).applyMatrix4(thing.matrixWorld), s0.r * thing.getWorldScale(fc).x);
+    };
     /**
      * How far each hand's fingers are closed: fingers({ L: .5, R: 1 }): 0 flat, 1 a fist, null as sculpted (a little
      * curled; with hands: 'grip', closed round a stock). A number for the whole hand, or one a finger:
-     * [thumb, index, middle, ring, little]. They stay as set until set again (poses leave fingers alone).
+     * [thumb, index, middle, ring, little]. They stay as set until set again (poses leave fingers alone); 'auto'
+     * gives a hand back to the engine, which closes it round what it holds and lets it lie relaxed otherwise.
      */
     root.fingers = (o = {}) => {
       for (const sd of ['L', 'R']) {
-        if (!(sd in o)) continue; const v = o[sd], m = sd === 'L' ? 1 : -1;
-        FB[sd].forEach((list, f) => {
-          const c = v == null ? null : typeof v === 'number' ? v : v[f] ?? null, k = c == null ? null : Math.max(-.2, Math.min(1.2, c));
-          list.forEach((bone, j) => {
-            if (k == null) bone.quaternion.identity();
-            else if (f === 0) bone.quaternion.setFromAxisAngle(ax.set(HAND.turn[0], m * HAND.turn[1], m * HAND.turn[2]), (k - was) * THUMB[j]);   // (the other hand: the same turn in a mirror)
-            else bone.rotation.set(0, 0, -m * (CURL[j] * k - HAND.bend[j]));
-          });
-        });
+        if (!(sd in o)) continue; const v = o[sd];
+        auto[sd] = v === 'auto'; if (auto[sd]) continue;
+        for (let f = 0; f < 5; f++) { const c = v == null ? null : typeof v === 'number' ? v : v[f] ?? null; bend(sd, f, c == null ? null : Math.max(-.2, Math.min(1.2, c))); }
       }
       return root;
     };

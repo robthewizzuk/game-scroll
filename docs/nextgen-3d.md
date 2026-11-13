@@ -1149,7 +1149,7 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `rig.update()`), `person.touch({ handL, handR, footL, footR }, { palms, level, elbows, knees, blend })` puts
   hands and feet on points in the world (a rung, a bar, a ledge: the grip of a closed hand or the palm of an
   open one, and the ball of a foot, land on the point; `palms: { L: [x, y, z] }` is the way a palm faces,
-  `level` holds a sole flat, `blend` fades it in), and `person.gear.hat.visible = false` takes the hat off (also `gear.pack`, and your own
+  `level` holds a sole flat, `blend` fades it in, `round` is the radius of the bar a hand closes round), and `person.gear.hat.visible = false` takes the hat off (also `gear.pack`, and your own
   `gear: [{ name, bone, shapes, hide: true }]`); `person.gear.hat.loose()` is a loose copy of it (a plain
   mesh, its middle at its origin, `userData.at` where that sits on its bone) for the helmet that flies off.
   The skeleton has the joints poses turn (`hips`, `spine` (the rib cage), `head`, `armL`, `foreL`, `handL`,
@@ -1164,9 +1164,14 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   never names them. The arms are of one skin with the body, so no line shows where a sleeve is set in. So old
   poses, and whatever you parent to `bones.spine` or `bones.head`, work as before; after turning joints
   yourself call `person.rig.fill()`.
-  `person.fingers({ L: .5, R: [0, 1, 1, 1, 1] })` closes a hand (0 flat, 1 a fist, `null` as sculpted; a
-  number for the hand or one a finger, thumb first), and they stay as set. At the middle and far levels
-  the small bones (fingers, toes, forearm turn) stand still and cost nothing.
+  Hands look after their own fingers: a hand that holds nothing lies relaxed (each finger a little more
+  curled than the one before, a little more at a run), and one put on a thing by `hold()` or on a bar by
+  `touch()` closes each finger until it meets it, the tip wrapping on round a thick one, round the thing's own thickness (read off its triangles)
+  or the bar's `round` (hands: 'grip' close round 1.6 cm by themselves; 0 lays a hand open on it), easing on
+  and off. `person.fingers({ L: .5, R: [0, 1, 1, 1, 1] })` sets a hand yourself instead (0 flat, 1 a fist,
+  `null` as sculpted; a number for the hand or one a finger, thumb first): it stays as set until
+  `fingers({ R: 'auto' })` gives it back. At the middle and far levels the small bones (fingers, toes,
+  forearm turn) stand still and cost nothing.
   Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle`, `iris`, `lips`, `moustache`, `stubble`, `face`
   (`{ jaw, chin, brow, nose, lips, cheeks, eyes }`, 1 is average), `hands: 'grip'`, and `outfit: { top, legs,
   feet, hat, belt, webbing, gloves, pack, extras }` (every option is listed above `human` in
