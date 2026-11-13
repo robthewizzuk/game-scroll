@@ -351,6 +351,7 @@ export const HD = {
   /** Show the 3D canvas directly on the card (false: copy each frame into the card's canvas, as tests and screenshots need). */
   direct: typeof navigator === 'undefined' || !navigator.webdriver,
 };
+Object.defineProperty(HD, 'fxStep', { enumerable: false });   // (a test lever: left out of the read-only view games get)
 const tier = () => TIERS[HD.tier];
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
