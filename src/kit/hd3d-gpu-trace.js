@@ -30,7 +30,10 @@ import { BVH_STACK_DEPTH } from 'three-mesh-bvh/src/webgpu/tsl/constants.js';
 import { getShapecastFn } from 'three-mesh-bvh/src/webgpu/shapecastFns/getShapecastFn.js';
 import { getRaycastFirstHitFn } from 'three-mesh-bvh/src/webgpu/shapecastFns/getRaycastFirstHitFn.js';
 import { getRaycastAnyHitFn } from 'three-mesh-bvh/src/webgpu/shapecastFns/getRaycastAnyHitFn.js';
-import { TraceLevel, glowOf } from './trace-scene.js';
+import { TraceLevel, glowOf, ownMatrix } from './trace-scene.js';
+import { ORIGIN } from './origin.js';
+// the copy rays are sent through is in the world's own numbers (trace-scene.js ownMatrix); rays start where the drawing has them, about its centre
+const ORG = uniform(ORIGIN);
 import { buildBlock, traceReady, VERT, BLOCK_DEPTH } from './trace-build.js';
 import { runTrace, canRunTrace } from './jobs.js';
 
@@ -241,7 +244,7 @@ export class Tracer {
     let moved = this.moved; this.moved = false;
     const F = this.F.tf, U = this.A.tf.array;
     for (const it of this.inst) {
-      const o = it.o, e = o.matrixWorld.elements, vis = shown(o, this.scene) ? 1 : 0;
+      const o = it.o, e = ownMatrix(o.matrixWorld.elements), vis = shown(o, this.scene) ? 1 : 0;
       if (vis === it.vis && (!vis || same(it.m, e))) continue;
       it.m.set(e); moved = true;
       const at = it.slot * TF; M.fromArray(e); const det = M.determinant();
@@ -350,7 +353,7 @@ export function traceStage(ch, sp, colT, tr) {
     const metal = look.greaterThan(127.5), glow = look.sub(select(metal, float(128), float(0)));
     const lit = vec3(0).toVar();
     const ndl = max(dot(n, L.sunDir), 0);
-    If(ndl.mul(L.sunCol.r.add(L.sunCol.g).add(L.sunCol.b)).greaterThan(1e-3), () => { lit.addAssign(L.sunCol.mul(ndl.mul(S.clear(P.add(n.mul(.03)), L.sunDir, L.far)))); });
+    If(ndl.mul(L.sunCol.r.add(L.sunCol.g).add(L.sunCol.b)).greaterThan(1e-3), () => { lit.addAssign(L.sunCol.mul(ndl.mul(S.clear(P.add(n.mul(.03)).add(ORG), L.sunDir, L.far)))); });
     lit.addAssign(mix(L.ground, L.sky, n.y.mul(.5).add(.5)));
     Loop({ start: 0, end: LAMPS }, ({ i }) => {
       If(float(i).greaterThanEqual(L.nl), () => { Break(); });
@@ -372,7 +375,7 @@ export function traceStage(ch, sp, colT, tr) {
     return ch.trT = rtt(Fn(() => {
       const q = uv(), ndc = vec2(q.x.mul(2).sub(1), q.y.oneMinus().mul(2).sub(1)), a = U.invProj.mul(vec4(ndc, 0, 1)), b = U.invProj.mul(vec4(ndc, 1, 1));
       const rd = normalize(U.camWorld.mul(vec4(b.xyz.div(b.w).sub(a.xyz.div(a.w)), 0)).xyz).toVar(), ro = U.camPos;
-      const H = S.hit(ro, rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), out = vec3(.02, .04, .1).toVar();
+      const H = S.hit(ro.add(ORG), rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), out = vec3(.02, .04, .1).toVar();
       If(H.element(int(2)).w.greaterThan(.5), () => { out.assign(shade(ro.add(rd.mul(hn.w)), hn.xyz, hl.xyz, hl.w, rd)); });
       return vec4(out, 1);
     })(), 1, 1, HALF);
@@ -384,7 +387,7 @@ export function traceStage(ch, sp, colT, tr) {
       const vp = getViewPosition(q, dT.sample(q).r, U.invProj).toVar(), nv = normalize(nT.sample(q).xyz).toVar();
       const wp = U.camWorld.mul(vec4(vp, 1)).xyz.toVar(), nw = normalize(U.camWorld.mul(vec4(nv, 0)).xyz).toVar();
       const rd = normalize(reflect(normalize(wp.sub(U.camPos)), nw)).toVar(), lift = max(float(.004), length(vp).mul(.0025)), ro = wp.add(nw.mul(lift)).toVar();
-      const H = S.hit(ro, rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), did = H.element(int(2)).w.greaterThan(.5);
+      const H = S.hit(ro.add(ORG), rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), did = H.element(int(2)).w.greaterThan(.5);
       const t = select(did, hn.w, L.far).toVar(), col = vec3(0).toVar(), got = float(0).toVar();
       // what the level leaves out (people, copies, see-through things): where the ray crosses a box round some
       // of it, a short march over the screen, as screen-space reflections find things

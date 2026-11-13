@@ -2803,6 +2803,14 @@ if (!regions.has('fort')) drawLoading(regions.progress);
 - `ready` (every wanted part made, and the squares next to the player), `progress` (0..1), `info` (what
   is in, and this frame's building time), `clear()` (everything let go of, made again as wanted),
   `dispose()`.
+- **Far from the world's centre.** Nothing to do. A phone's graphics chip and the physics work in 32-bit
+  numbers (about seven digits), so 20 km out a place is kept to about 2 mm and a face close up shakes by a
+  few pixels. A Next Gen view draws about a centre that moves along with its camera (a floating origin):
+  it stays at 0, 0 until the camera is 1024 m from it, then moves to the camera in steps of 256 m. A
+  `World3D` keeps its bodies about the view's centre too (`world.at`; `world.centre(x, z)` for a world with
+  no view), and every place it gives or takes is in the world's own numbers. The kit's ground, rock, leaves,
+  clouds and wet ground keep their patterns where they are in the world. `__hd.origin = 0` (the frame lab)
+  keeps the centre at 0, 0.
 
 ## Buildings that come apart
 

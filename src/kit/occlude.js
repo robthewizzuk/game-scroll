@@ -18,6 +18,7 @@ import { LessDepth, LessEqualDepth, NormalBlending, Object3D, ShaderMaterial, We
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { Occlusion, pictureSize } from './occlusion.js';
 import { DETAIL, stats as detailStats } from './detail.js';
+import { ORIGIN } from './origin.js';
 
 /** The layer hidden things move to for the main draw: the view's camera does not draw it, shadow cameras do. */
 export const OCC_LAYER = 30, OCC_BIT = 1 << OCC_LAYER;
@@ -101,7 +102,7 @@ function boxUnder(b, bb, e) {
 // One thing's box into b. 1: known; 0: nobody knows where it draws; 2: it has nothing to draw.
 function boundsOf(o, b, kind) {
   const ub = o.userData.gsBounds;   // (a kit part that knows better: gs.fluid's box)
-  if (ub) { for (let i = 0; i < 6; i++) b[i] = ub[i]; padBox(b, .5); return 1; }
+  if (ub) { for (let i = 0; i < 6; i++) b[i] = ub[i] - (i % 3 === 0 ? ORIGIN.x : i % 3 === 2 ? ORIGIN.z : 0); padBox(b, .5); return 1; }   // (in the world's numbers: moved to near the drawing's centre, as the frame's matrices are: origin.js)
   const g = o.geometry; if (!g) return 2;
   if (o.isSkinnedMesh && o.skeleton) {
     // a posed body: round its bones, and as much again as a quarter of the body's own size for the flesh on them

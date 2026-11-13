@@ -99,7 +99,7 @@ export function rigDoll(world, root, { push, vel, drag = .05, spinDrag = .6, gro
     /** Hits one part (a name or a body) with a change of speed, at a world point if given (so it spins as well). */
     hit(part, x, y, z, at) {
       const b = typeof part === 'string' ? body[part] : part?.body ? part : body[Object.keys(parts).find(k => parts[k] === part)]; if (!b) return doll;
-      if (at) { const m = b.mass; b.body.applyImpulseAtPoint({ x: x * m, y: y * m, z: z * m }, { x: at.x, y: at.y, z: at.z }, true); } else b.push(x, y, z);
+      if (at) { const m = b.mass; b.body.applyImpulseAtPoint({ x: x * m, y: y * m, z: z * m }, world.inner(at), true); } else b.push(x, y, z);
       return doll;
     },
     /**

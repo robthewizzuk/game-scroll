@@ -24,6 +24,7 @@ import { tslOps } from './models/ops.js';
 import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
+import { ORIGIN } from './origin.js';
 import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
@@ -78,6 +79,8 @@ export function traceFits(r) {
 }
 import { S2_HOLD } from './sgsr2.js';
 import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
+// where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
+const ORG = uniform(ORIGIN);
 
 const LUM = vec3(.2126, .7152, .0722);
 
@@ -243,7 +246,7 @@ export function airNodes(AIR) {
     const k = rd.y.mul(U.mist.y);
     const span = select(abs(k).lessThan(1e-4), t, float(1).sub(exp(t.mul(k).negate())).div(k));
     const fy = U.mist.x.mul(exp(U.mist.y.mul(cameraPosition.y.sub(U.mist.z)).negate())).mul(span);
-    const n = texture(AIR.gsNoise.value, wp.xz.mul(.006).add(U.drift.mul(1.7))).a;
+    const n = texture(AIR.gsNoise.value, wp.xz.add(ORG.xz).mul(.006).add(U.drift.mul(1.7))).a;   // (patches where they are in the world: origin.js)
     const mist = float(1).sub(exp(max(fy, 0).mul(mix(float(1), n.mul(1.3).add(.35), U.patchy)).negate()));
     const s = max(dot(rd, U.sun), 0);
     const f = float(1).sub(float(1).sub(haze).mul(float(1).sub(mist)));
@@ -313,11 +316,11 @@ export const gpuLooks = {
   // hd3d.js v.room(): box-projected reflections
   room(m, s) {
     const g = s.gpu ||= { rt: new CubeRenderTarget(s.size, { type: HalfFloatType }) };
-    m.envNode = new BoxPMREM(g.rt.texture, live(s.uniforms.gsRoomAt), live(s.uniforms.gsRoomSize));
+    m.envNode = new BoxPMREM(g.rt.texture, live(s.uniforms.gsRoomAt).sub(ORG), live(s.uniforms.gsRoomSize));   // (the room's middle near the drawing's centre, as positionWorld is: origin.js)
   },
   // hd3d.js pulse(): a glowing ring at distance r from a point
   pulse(m, s) {
-    const u = s.uniforms, d = distance(positionWorld, live(u.gsPulseAt)), r = live(u.gsPulseR), w = float(u.gsPulseW.value);
+    const u = s.uniforms, d = distance(positionWorld, live(u.gsPulseAt).sub(ORG)), r = live(u.gsPulseR), w = float(u.gsPulseW.value);
     const band = exp(d.sub(r).div(w).pow(2).negate()).add(float(u.gsPulseFill.value).mul(select(d.lessThanEqual(r), float(1), float(0))).mul(float(1).sub(d.div(max(r, .01)))));
     m.emissiveNode = materialEmissive.add(vec3(u.gsPulseCol.value).mul(band).mul(live(u.gsPulseA)));
   },
@@ -344,7 +347,7 @@ export const gpuLooks = {
       return mix(mix(c, grass, float(1).sub(smoothstep(hw.add(.3), hw.add(1.7), edge)).mul(.85)), HG.rgb.mul(dt.r.mul(.8).add(.55)), hedge);
     };
     const G = Fn(() => {
-      const wp = positionWorld, mask = attribute('gsMask', 'vec4'), sc = L('lkScale'), det = u.lkDetail.value;
+      const wp = positionWorld.add(ORG), mask = attribute('gsMask', 'vec4'), sc = L('lkScale'), det = u.lkDetail.value;   // (where it is in the world: origin.js)
       const dt = texture(det, wp.xz.mul(sc.x)), dt2 = texture(det, wp.xz.mul(sc.y).add(.37)), nz = texture(u.lkNoise.value, wp.xz.mul(sc.z));
       const grass = mix(mix(gA, gB, smoothstep(.25, .75, nz.r)), L('lkDry'), smoothstep(.55, .85, nz.g).mul(.65)).mul(dt.r.mul(dt2.a.mul(.6).add(.7)).mul(.5).add(.74));
       const farm = mask.x.mul(smoothstep(.3, .5, nz.b.add(.25)));
@@ -373,7 +376,7 @@ export const gpuLooks = {
   hills(m, s, o) {
     const u = s.uniforms, sc = live(u.lkHillScale), N = u.lkNoise.value, W = live(u.lkWoods);
     afterColor(m, o, d => {
-      const wp = positionWorld, n = texture(N, wp.xz.mul(sc)), mm = texture(N, wp.xz.mul(sc.mul(5.8)).add(.31)), q = texture(N, wp.xz.mul(sc.mul(37)).add(.7));
+      const wp = positionWorld.add(ORG), n = texture(N, wp.xz.mul(sc)), mm = texture(N, wp.xz.mul(sc.mul(5.8)).add(.31)), q = texture(N, wp.xz.mul(sc.mul(37)).add(.7));
       const bare = smoothstep(.62, .85, d.b.div(max(d.r, 1e-3))), wood = smoothstep(W.sub(.05), W.add(.05), n.g.mul(.75).add(mm.r.mul(.4))).mul(bare.oneMinus());
       const c = mix(d.mul(mm.b.mul(.4).add(.78)), live(u.lkWood).mul(q.r.mul(.9).add(.55)), wood);
       return c.mul(float(1).sub(bare.mul(.35).mul(smoothstep(.4, .7, q.g))));
@@ -383,7 +386,7 @@ export const gpuLooks = {
   rock(m, s, o) {
     const u = s.uniforms, D = u.lkDetail.value, k = live(u.lkRockScale);
     afterColor(m, o, c0 => {
-      const wp = positionWorld, wn = normalWorld, w0 = pow(abs(wn), vec3(4)), w = w0.div(w0.x.add(w0.y).add(w0.z));
+      const wp = positionWorld.add(ORG), wn = normalWorld, w0 = pow(abs(wn), vec3(4)), w = w0.div(w0.x.add(w0.y).add(w0.z));
       const d = texture(D, wp.zy.mul(k)).mul(w.x).add(texture(D, wp.xz.mul(k)).mul(w.y)).add(texture(D, wp.xy.mul(k)).mul(w.z));
       const e = texture(D, wp.xz.mul(k.mul(.13)).add(.2));
       const c = c0.mul(d.b.mul(.3).add(d.g.mul(.4)).add(d.a.mul(.3)).mul(.5).add(.66)).mul(e.a.mul(.3).add(.85));
@@ -426,7 +429,7 @@ export const gpuLooks = {
   // outlines that hold up far away, and both sides lit alike
   leaves(m, s, o) {
     const u = s.uniforms, t = live(u.lkTime), sw = live(u.lkSway), dir = live(u.lkWindDir);
-    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz, hh = max(positionGeometry.y.sub(sw.y), 0), ph = wp.x.mul(.19).add(wp.z.mul(.23));
+    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), hh = max(positionGeometry.y.sub(sw.y), 0), ph = wp.x.mul(.19).add(wp.z.mul(.23));
     const k = live(u.lkWind).mul(hh).mul(sw.x), kWas = lastFrame(u.lkWind).mul(hh).mul(sw.x), dWas = lastFrame(u.lkWindDir);
     const sway = (t, k, dir) => {
       const swing = vec3(sin(t.mul(1.7).add(ph)).add(sin(t.mul(3.1).add(ph.mul(2.3))).mul(.3)), 0, cos(t.mul(1.3).add(ph.mul(1.4)))).mul(k);
@@ -448,7 +451,7 @@ export const gpuLooks = {
     // (the grass field is read only by blades that were given one before they were first drawn: looks.js meadow().part)
     const part = u.lkPart.value ? c => texture(u.lkPart.value, c).onRenderUpdate(() => u.lkPart.value || BLANK_PART()) : null, PA = part ? live(u.lkPartAt) : null;
     const moved = (p, time, bend, dir) => {
-      const far = smoothstep(K.x, K.y, distance(root.xz, cameraPosition.xz)), q = root.add(p.sub(root).mul(far.oneMinus())), hh = q.y.sub(root.y);
+      const far = smoothstep(K.x, K.y, distance(root.xz, cameraPosition.xz.add(ORG.xz))), q = root.add(p.sub(root).mul(far.oneMinus())), hh = q.y.sub(root.y);
       const ph = dot(root.xz, dir).mul(.35).sub(time.mul(2.2)), gust = sin(ph).mul(.3).add(sin(ph.mul(2.7).add(root.z.mul(.9))).mul(.15)).add(.55);
       let b = bend.mul(gust).mul(t).mul(hh), fl = hh.mul(t).mul(.05), at = q;
       if (part) {   // grass that parts (gs.outdoors.Marks): pushed over away from what passes, and lying flat where it was trodden
@@ -484,7 +487,7 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
     return;
   }
   const facing = m.userData.gsBothSides ? n => n : TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at; grass blades are lit alike on both, so snow lies on both)
-  const on = live(AIR.gsAirOn), wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld, gg = facing(normalWorldGeometry), flat = facing(normalViewGeometry);
+  const on = live(AIR.gsAirOn), wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld.add(ORG), gg = facing(normalWorldGeometry), flat = facing(normalViewGeometry);
   const gp = wp.xz.add(gg.xz.mul(wx.w)), gd = abs(gp.sub(at.xy));
   const top = texture(AIR.gsCover.value || blankCover(), gp.mul(at.z)).onRenderUpdate(() => AIR.gsCover.value || blankCover()).r;
   const open = mix(float(1), smoothstep(-.7, -.25, wp.y.sub(top)), step(max(gd.x, gd.y), at.w).mul(step(1e-6, at.w)));
@@ -905,7 +908,7 @@ function recipeTwin(gm) {
   const copy = () => { const m = new Cls(); for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k]; return m; };
   const rp = gm.map.repeat, solidK = R.solid ? (typeof R.solid === 'number' ? R.solid : 2) : 0, plain = !solidK && !R.scatter;
   const ax = abs(NW), useX = ax.x.greaterThan(ax.y).and(ax.x.greaterThan(ax.z)), useY = ax.y.greaterThan(ax.z);
-  const q = solidK ? select(useX, PW.zy, select(useY, PW.xz, PW.xy)).div(solidK) : uv().mul(vec2(rp.x, rp.y));   // where in the tiles
+  const PT = PW.add(ORG), q = solidK ? select(useX, PT.zy, select(useY, PT.xz, PT.xy)).div(solidK) : uv().mul(vec2(rp.x, rp.y));   // where in the tiles
   // far: the baked textures; scatter: four neighbouring tiles each moved by a random amount, blended
   const far = copy();
   const gx = dFdx(q).mul(MIP_K), gy = dFdy(q).mul(MIP_K), read = (t, qq) => texture(t, qq).grad(gx, gy);
@@ -989,7 +992,7 @@ export function froxels() {
     Loop({ start: 0, end: FZ }, ({ i }) => {
       const t0 = sliceAt(float(i)), t1 = sliceAt(float(i).add(1)), len = t1.sub(t0), p = U.cam.add(rd.mul(t0.add(t1).mul(.5))).toConst();
       // how thick the fog is here: thinning with height above its floor, and patchy, drifting with the wind
-      const n = mx_noise_float(p.mul(.12).add(U.drift)).mul(.5).add(.5);
+      const n = mx_noise_float(p.add(ORG).mul(.12).add(U.drift)).mul(.5).add(.5);
       const d = U.dens.x.mul(exp(max(p.y.sub(U.dens.y), 0).mul(U.dens.z).negate())).mul(mix(float(1), n.mul(1.8), U.dens.w)).toConst();
       // the sun, through its shadow map (read by texel: nearest is plenty at froxel size)
       const s4 = U.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
@@ -1046,7 +1049,7 @@ export function froxels() {
 export function gpuSunLight(l, AIR, noise) {
   const c = new Color(), col = uniform(c).onRenderUpdate(() => c.copy(l.color).multiplyScalar(l.intensity)), role = uniform(0);
   const wp = positionWorld, S = live(AIR.gsSun), CL = live(AIR.gsCloud), DR = live(AIR.gsDrift);
-  const cuv = wp.xz.add(S.xz.div(max(S.y, .15)).mul(CL.z.sub(wp.y)));
+  const cuv = wp.xz.add(ORG.xz).add(S.xz.div(max(S.y, .15)).mul(CL.z.sub(wp.y)));
   const n = texture(noise, cuv.div(max(CL.w, 1)).add(DR)).r;
   const shade = select(live(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());

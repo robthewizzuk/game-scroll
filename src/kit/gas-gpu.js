@@ -16,6 +16,7 @@ import {
   select, clamp, mix, smoothstep, textureStore, texture3D, uv, rtt, getViewPosition, interleavedGradientNoise, screenCoordinate,
 } from 'three/tsl';
 import { SOURCES, SOLIDS, SOLID, IGNITE, HEAT, BURNS_AT, FLAME, SMOKE_MAX, VMAX, SHARP, NEAR, GAS, emptyField } from './gas.js';
+import { ORIGIN } from './origin.js';
 
 const LK = 10, LSTEP = 1.5;   // the sun's light: this many looks through the smoke towards it, this many cells apart
 const SHADE = .55;            // smoke passes light on as well as stopping it: its own shadow is this much lighter than how much it hides
@@ -343,7 +344,8 @@ export function gasStage(s, src, U, keep, scaled, ch) {
     const bw = Math.max(8, Math.ceil(w / 2)), bh = Math.max(8, Math.ceil(h / 2)); if (bw !== hw || bh !== hh) { hw = bw; hh = bh; half.setSize(bw, bh); }
     Q.px.value.set(1 / bw, 1 / bh);
     const cam = ch.cam, L = F.light(), K = F.look;
-    D3.value = tw.densT; L3.value = tw.lightT; Q.lo.value.copy(tw.lo); Q.size.value.copy(tw.size); Q.lk.value.copy(tw.lk);
+    D3.value = tw.densT; L3.value = tw.lightT; Q.lo.value.copy(tw.lo).sub(ORIGIN); Q.size.value.copy(tw.size);   // (the box near the drawing's centre, as the camera is: origin.js)
+    Q.lk.value.copy(tw.lk);
     Q.invProj.value.copy(cam.projectionMatrixInverse); Q.camWorld.value.copy(cam.matrixWorld); cam.getWorldPosition(Q.cam.value);
     Q.sun.value.copy(L.dir); Q.sunCol.value.copy(L.sun); Q.skyCol.value.copy(L.sky); Q.c1.value.copy(K.colour); Q.c2.value.copy(K.colour2); Q.f0.value.copy(K.flame[0]); Q.f1.value.copy(K.flame[1]); Q.f2.value.copy(K.flame[2]);
     Q.k.value.set(K.thick, K.glow, F.sim.h, 1); Q.steps.value = F.steps || 48;

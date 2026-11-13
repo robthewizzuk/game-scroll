@@ -18,6 +18,11 @@
 //   const hit = phys.ray(from, dir, 50);                  // { thing, point, normal, distance, mesh } or null (mesh: the one hit, also inside a level made with ground())
 //
 // Like 2D physics the engine loads the first time a game needs it (the app waits for it).
+//
+// Far from the world's centre: Rapier works in 32-bit floats (about seven digits), so a body 20 km out is kept to
+// about 2 mm and a stack of crates there jitters. The world keeps its bodies in Rapier about a centre of its own
+// (world.at) that follows the view they are drawn in, which moves its own centre with the camera (src/kit/origin.js).
+// Every place you give it or get from it is in the world's own numbers, so nothing changes for a game.
 
 import { timed } from './prof.js';
 import { lazy } from './lazy.js';
@@ -47,7 +52,7 @@ class Body3 {
     this.world = world; this.body = body; this.collider = collider; this.kind = kind; this.mesh = mesh || null; this.tag = tag; this.dead = false;
     body.userData = this;
   }
-  get pos() { return this.body.translation(); }
+  get pos() { return this.world.outer(this.body.translation()); }
   get vel() { return this.body.linvel(); }
   get spin() { return this.body.angvel(); }
   get speed() { const v = this.body.linvel(); return Math.hypot(v.x, v.y, v.z); }
@@ -55,7 +60,7 @@ class Body3 {
   get sleeping() { return this.body.isSleeping(); }
   get mass() { return this.body.mass(); }
   place(x, y, z, quat) {
-    const p = typeof x === 'object' ? vec(x) : V(x, y, z), q = typeof x === 'object' ? y : quat;
+    const p = this.world.inner(typeof x === 'object' ? vec(x) : V(x, y, z)), q = typeof x === 'object' ? y : quat;
     if (this.body.isKinematic()) { this.body.setNextKinematicTranslation(p); if (q) this.body.setNextKinematicRotation(q); }
     else { this.body.setTranslation(p, true); if (q) this.body.setRotation(q, true); }
     return this;
@@ -74,8 +79,8 @@ class Body3 {
   remove() { this.world.remove(this); }
   sync() {
     if (!this.mesh) return;
-    const p = this.body.translation(), q = this.body.rotation();
-    this.mesh.position.set(p.x, p.y, p.z); this.mesh.quaternion.set(q.x, q.y, q.z, q.w);
+    const p = this.body.translation(), q = this.body.rotation(), o = this.world.at;
+    this.mesh.position.set(p.x + o.x, p.y, p.z + o.z); this.mesh.quaternion.set(q.x, q.y, q.z, q.w);
   }
 }
 
@@ -85,7 +90,8 @@ class Mover {
     this.world = world; this.mesh = mesh || null; this.radius = radius; this.height = height;
     const p = at ? vec(at) : mesh ? vec(mesh.position) : V();
     this.half = Math.max(0, height / 2 - radius);   // mesh and `at` are the feet; the body is the middle
-    this.body = world.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(p.x, p.y + height / 2, p.z));
+    const q = world.inner(p);
+    this.body = world.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(q.x, q.y + height / 2, q.z));
     this.collider = world.world.createCollider(R.ColliderDesc.capsule(this.half, radius), this.body);
     this.body.userData = this; this.tag = 'mover'; this.kind = 'mover'; this.dead = false;
     this.ctl = world.world.createCharacterController(.02);
@@ -97,15 +103,15 @@ class Mover {
     this.vx = 0; this.vy = 0; this.vz = 0; this.grounded = false; this.dx = 0; this.dz = 0;
     world.movers.push(this);
   }
-  get pos() { return this.body.translation(); }
+  get pos() { return this.world.outer(this.body.translation()); }
   /** Walks at (vx, vz) metres per second this frame (call every update; 0, 0 stands still). */
   walk(vx, vz) { this.vx = vx; this.vz = vz; return this; }
   /** Jumps at `speed` metres per second (only does anything on the ground unless force is true). */
   jump(speed = 7, force = false) { if (this.grounded || force) { this.vy = speed; this.grounded = false; } return this; }
   /** Feet position. */
-  get feet() { const p = this.body.translation(); return V(p.x, p.y - this.height / 2, p.z); }
+  get feet() { const p = this.body.translation(), o = this.world.at; return V(p.x + o.x, p.y - this.height / 2, p.z + o.z); }
   /** Moves it straight to (x, y, z), its feet. */
-  place(x, y, z) { const p = typeof x === 'object' ? vec(x) : V(x, y, z); p.y += this.height / 2; this.body.setTranslation(p, true); this.body.setNextKinematicTranslation(p); this.vy = 0; return this; }
+  place(x, y, z) { const p = this.world.inner(typeof x === 'object' ? vec(x) : V(x, y, z)); p.y += this.height / 2; this.body.setTranslation(p, true); this.body.setNextKinematicTranslation(p); this.vy = 0; return this; }
   move(dt) {
     this.vy += this.gravity * dt;
     if (this.grounded && this.vy < 0) this.vy = Math.max(this.vy, -2);
@@ -120,7 +126,7 @@ class Mover {
   }
   sync() {
     if (!this.mesh) return;
-    const p = this.body.translation(); this.mesh.position.set(p.x, p.y - this.height / 2, p.z);
+    const p = this.body.translation(), o = this.world.at; this.mesh.position.set(p.x + o.x, p.y - this.height / 2, p.z + o.z);
   }
   remove() { this.world.remove(this); }
 }
@@ -196,6 +202,49 @@ export class World3D {
     own(this);   // freed when the card leaves the feed (src/kit/cleanup.js)
     this.bodies = []; this.movers = []; this.hits = []; this.joints = []; this.vehicles = []; this.dolls = [];
     this.smooth = !!smooth && onBlend(this);
+    /** Where Rapier's own centre is in the world (x and z, metres; y is always 0): see centre(). */
+    this.at = V();
+  }
+  /** A place in the world's own numbers, as Rapier has it (about world.at). */
+  inner(p) { const o = this.at; return o.x || o.z ? V(p.x - o.x, p.y, p.z - o.z) : V(p.x, p.y, p.z); }
+  /** A place as Rapier has it, in the world's own numbers. */
+  outer(p) { const o = this.at; return o.x || o.z ? V(p.x + o.x, p.y, p.z + o.z) : p; }
+  /**
+   * Keeps the bodies in Rapier about (x, z) from now on: Rapier's numbers are 32-bit, so a body far from the world's
+   * centre is kept less finely than one near it (20 km out, to about 2 mm, and a stack there jitters). The world
+   * does this by itself, following the centre of the view its bodies are drawn in (gs.hd's HD.origin); a game with
+   * no view of its own can call it as its player goes far. Nothing moves in the world: every body, joint and ray
+   * stays where it was, in the world's own numbers.
+   */
+  centre(x, z) {
+    const o = this.at, dx = x - o.x, dz = z - o.z; if (!dx && !dz) return this;
+    const W = this.world, keep = [], asleep = [];
+    W.forEachRigidBody(b => {
+      if (b.isSleeping()) asleep.push(b);
+      const t = b.translation(), n = b.isKinematic() && b.nextTranslation();   // (where a lift was sent: read first, as setTranslation() sends it there too)
+      b.setTranslation(V(t.x - dx, t.y, t.z - dz), false);
+      if (n) keep.push([b, V(n.x - dx, n.y, n.z - dz)]);
+    });
+    o.x = x; o.z = z;
+    // Rapier finds things for rays and walking characters by boxes it only works out again as it steps: a step too short
+    // to move anything puts them where the bodies now are (a kinematic body is held where it is for it, not sent flying)
+    const ts = W.timestep; W.timestep = 1e-9; W.step(this.events); W.timestep = ts; this.events.drainCollisionEvents(() => {});
+    for (const [b, n] of keep) b.setNextKinematicTranslation(n);
+    for (const b of asleep) b.sleep();   // (that step wakes everything)
+    this.recentred = (this.recentred || 0) + 1;
+    return this;
+  }
+  // the view the bodies are drawn in (its scene is where a body's mesh is), whose centre the world follows
+  // (looked for now and then until found: a mesh is often added to the scene after its body is made)
+  follow() {
+    let v = this._view?.deref();
+    if (!v && (this._look = (this._look || 0) + 1) % 30 === 1) {
+      for (const t of this.movers.length ? [...this.movers, ...this.bodies] : this.bodies) {
+        let m = t.mesh; if (!m) continue; while (m.parent) m = m.parent;
+        if (m.gsView) { v = m.gsView; this._view = new WeakRef(v); break; }
+      }
+    }
+    const c = v?.origin; if (c && (c.x !== this.at.x || c.z !== this.at.z)) this.centre(c.x, c.z);
   }
   /** (Fixed tick, smooth) puts each mesh between where its body was before the last step and now. */
   blend(a) {
@@ -223,7 +272,7 @@ export class World3D {
   }
   make(mesh, desc, o, kind) {
     const D = o.fixed ? R.RigidBodyDesc.fixed() : o.moving ? R.RigidBodyDesc.kinematicPositionBased() : R.RigidBodyDesc.dynamic();
-    const p = o.at ? vec(o.at) : mesh ? vec(mesh.position) : V();
+    const p = this.inner(o.at ? vec(o.at) : mesh ? vec(mesh.position) : V());
     D.setTranslation(p.x, p.y, p.z).setLinearDamping(o.drag ?? 0).setAngularDamping(o.spinDrag ?? .05).setGravityScale(o.gravity ?? 1).setCcdEnabled(!!o.bullet);
     if (mesh?.quaternion) D.setRotation({ x: mesh.quaternion.x, y: mesh.quaternion.y, z: mesh.quaternion.z, w: mesh.quaternion.w });
     if (o.vel) { const v = vec(o.vel); D.setLinvel(v.x, v.y, v.z); }
@@ -258,9 +307,9 @@ export class World3D {
   /** Makes a mesh (and everything inside it) solid and fixed: the level, floors, walls, ramps. */
   ground(mesh, o = {}) {
     mesh.updateMatrixWorld?.(true);
-    const { vertices, indices, parts } = meshData(mesh, true);
+    const { vertices, indices, parts } = meshData(mesh, true, this.at);   // (its points about the world's centre in Rapier, so they keep their seven digits)
     if (!indices.length) return null;
-    const g = this.make(null, R.ColliderDesc.trimesh(vertices, indices), { ...o, fixed: true, at: V() }, 'ground');
+    const g = this.make(null, R.ColliderDesc.trimesh(vertices, indices), { ...o, fixed: true, at: V(this.at.x, 0, this.at.z) }, 'ground');
     g.parts = parts; return g;   // (where each of its meshes lies: ray() says which one it hit)
   }
   /**
@@ -282,8 +331,7 @@ export class World3D {
 
   /* joints: a or b null = the fixed world; points are world positions */
   local(t, p) {
-    const b = t ? t.body : null; p = vec(p);
-    if (!b) return p;
+    const b = t ? t.body : this.ground0(); p = this.inner(vec(p));
     const q = b.rotation(), c = b.translation(), d = V(p.x - c.x, p.y - c.y, p.z - c.z);
     return rotate(d, { x: -q.x, y: -q.y, z: -q.z, w: q.w });
   }
@@ -385,7 +433,7 @@ export class World3D {
   /** First thing along a ray from `from` in direction `dir` (needn't be normalised), up to max metres. */
   ray(from, dir, max = 100, filter = t => !t.collider.isSensor()) {
     const o = vec(from), d = vec(dir), l = Math.hypot(d.x, d.y, d.z) || 1, n = V(d.x / l, d.y / l, d.z / l);
-    const hit = this.world.castRayAndGetNormal(new R.Ray(o, n), max, true, undefined, undefined, undefined, undefined,
+    const hit = this.world.castRayAndGetNormal(new R.Ray(this.inner(o), n), max, true, undefined, undefined, undefined, undefined,
       c => { const t = c.parent()?.userData; return !!t && filter(t); });
     if (!hit) return null;
     const s = hit.timeOfImpact, thing = hit.collider.parent()?.userData || null, point = V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s);
@@ -393,7 +441,7 @@ export class World3D {
   }
   /** Every body within radius of a point. */
   near(p, radius) {
-    const out = new Set(), c = vec(p);
+    const out = new Set(), c = this.inner(vec(p));
     this.world.intersectionsWithShape(c, { x: 0, y: 0, z: 0, w: 1 }, new R.Ball(radius), col => { const t = col.parent()?.userData; if (t) out.add(t); return true; });
     return [...out];
   }
@@ -411,12 +459,13 @@ export class World3D {
 
   step(dt) {
     if (!(dt > 0)) return;
+    this.follow();
     dt = Math.min(dt, 1 / 15);
     const n = Math.max(1, Math.ceil(dt * 60 - .01)), h = dt / n;
     const before = new Map();
     if (this.hits.length) for (const t of this.bodies) if (!t.fixed) before.set(t, t.body.linvel());
     const started = [];
-    if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._was = pose(t.body, t._was);
+    if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._was = pose(t.body, this.at, t._was);
     this.world.timestep = h;
     for (let i = 0; i < n; i++) {
       for (const m of this.movers) m.move(h);
@@ -429,7 +478,7 @@ export class World3D {
     for (const d of this.dolls) d.sync();
     for (const m of this.movers) m.sync();
     for (const v of this.vehicles) v.sync();
-    if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._now = pose(t.body, t._now);
+    if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._now = pose(t.body, this.at, t._now);
     for (const [h1, h2] of started) {
       const c1 = this.world.getCollider(h1), c2 = this.world.getCollider(h2); if (!c1 || !c2) continue;
       const a = c1.parent()?.userData, b = c2.parent()?.userData; if (!a || !b || a.dead || b.dead) continue;
@@ -441,9 +490,9 @@ export class World3D {
   }
 }
 
-function pose(body, o = {}) {   // where a body is now, kept for smooth drawing between ticks
+function pose(body, at, o = {}) {   // where a body is now (in the world's own numbers), kept for smooth drawing between ticks
   const p = body.translation(), q = body.rotation();
-  o.x = p.x; o.y = p.y; o.z = p.z; o.qx = q.x; o.qy = q.y; o.qz = q.z; o.qw = q.w; return o;
+  o.x = p.x + at.x; o.y = p.y; o.z = p.z + at.z; o.qx = q.x; o.qy = q.y; o.qz = q.z; o.qw = q.w; return o;
 }
 
 function rotate(v, q) {   // v rotated by quaternion q
@@ -461,7 +510,7 @@ function meshAt(t, p) {
   for (const q of P) { const b = q.box; if (p.x < b[0] - e || p.y < b[1] - e || p.z < b[2] - e || p.x > b[3] + e || p.y > b[4] + e || p.z > b[5] + e) continue; const v = (b[3] - b[0] + e) * (b[4] - b[1] + e) * (b[5] - b[2] + e); if (v < least) { least = v; best = q.mesh; } }
   return best;
 }
-function meshData(root, world) {
+function meshData(root, world, off = null) {
   const verts = [], idx = [], parts = [];
   root.updateMatrixWorld?.(true);
   const inv = world ? null : root.matrixWorld?.clone?.().invert();
@@ -472,7 +521,7 @@ function meshData(root, world) {
     const e = m.elements, box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), X = e[0] * x + e[4] * y + e[8] * z + e[12], Y = e[1] * x + e[5] * y + e[9] * z + e[13], Z = e[2] * x + e[6] * y + e[10] * z + e[14];
-      verts.push(X, Y, Z);
+      verts.push(off ? X - off.x : X, Y, off ? Z - off.z : Z);
       if (X < box[0]) box[0] = X; if (Y < box[1]) box[1] = Y; if (Z < box[2]) box[2] = Z; if (X > box[3]) box[3] = X; if (Y > box[4]) box[4] = Y; if (Z > box[5]) box[5] = Z;
     }
     const index = o.geometry.index;
