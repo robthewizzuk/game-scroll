@@ -3324,6 +3324,111 @@ console.log('physics ok');
   console.log('gs.fluid: pools, taps, drains, a dam break, cups, a ball, blasts, ground, an open box, sideways gravity, resizing, copies back, seeds ok');
 }
 
+// gs.gas (smoke and fire that flow): the version phones without WebGPU run, which is also what the graphics
+// chip's version is held to, cell for cell (scripts/look-compare.cjs gpu-gas --webgpu)
+{
+  const F = await import('../src/kit/gas.js'), { Gas, GAS, KINDS, FLAME, WARM, HEAT_MAX, SMOKE_MAX, VMAX } = F, T3 = await import('three');
+  const view = () => ({ scene: new T3.Scene() });
+  const run = (g, secs, each) => { const n = Math.round(secs * 60); for (let i = 0; i < n; i++) { each?.(i); g.update(1 / 60); } return g; };
+  // where the smoke is: how much there is, and its middle (world units)
+  const where = g => { const S = g.sim, A = S.S; let n = 0, x = 0, y = 0, z = 0, top = 0; for (let c = 0; c < S.cells; c++) { const s = A[c * 4]; if (s <= 0) continue; const i = c % S.nx, j = ((c / S.nx) | 0) % S.ny, k = (c / (S.nx * S.ny)) | 0; n += s; x += (i + .5) * s; y += (j + .5) * s; z += (k + .5) * s; if (s > .03) top = Math.max(top, (j + 1) * S.h); } return { n: n * S.h ** 3, x: S.ox + x / n * S.h, y: S.oy + y / n * S.h, z: S.oz + z / n * S.h, top }; };
+  const sound = g => { const S = g.sim; for (let c = 0; c < S.cells * 4; c++) if (!(S.S[c] >= 0 && S.S[c] <= SMOKE_MAX + 1e-6 && Math.abs(S.U[c]) <= VMAX + 1e-6)) return false; return true; };
+  GAS.klass = 'low'; assert.equal(Gas.max(), 5000, 'a slow phone runs 5,000 cells'); GAS.klass = 'top'; assert.equal(Gas.max(), 12000, 'a fast one 12,000 (without WebGPU)');
+  const BOX = [-2, 0, -2, 2, 5, 2];
+  {
+    // smoke rises from where it is made, the warmer the faster, and stays in its box
+    const g = new Gas(view(), { box: BOX, kind: 'smoke' }), m = g.smoke({ x: 0, y: .3, z: 0, size: 1, heat: 1 }); run(g, 4);
+    const w = where(g), up = g.flowAt(0, 1, 0);
+    assert.ok(g.backend === 'cpu' && g.cells > 8000 && g.cells <= 12000 && Math.abs(g.cell - .2) < .06, `the smaller version: ${g.cells} cells of ${g.cell}`);
+    assert.ok(w.top > 2 && w.y > .8 && Math.abs(w.x) < .3 && Math.abs(w.z) < .3 && up.y > .5, `warm smoke climbs straight up: its top at ${w.top}, its middle at ${w.y}, going up at ${up.y}`);
+    assert.ok(g.smokeAt(0, .5, 0) > .5 && g.smokeAt(1.7, .3, 1.7) < .01 && g.smokeAt(0, 9, 0) === 0 && g.smokeIn() > 0 && g.smokeIn([-.5, 0, -.5, .5, 2, .5]) > g.smokeIn() * 3, 'smokeAt() and smokeIn() answer from the gas');
+    assert.ok(g.heatAt(0, .4, 0) > .2 && g.heatAt(0, .4, 0) <= WARM + 1e-6 && g.glow.power === 0, 'smoke is warm, never flame');
+    assert.ok(g.sees(-1.5, .5, 0, 1.5, .5, 0) < .5 && g.sees(-1.5, 4.5, 1.5, 1.5, 4.5, 1.5) > .98 && g.sees(-1.5, .5, 0, -1.2, .5, 0) > .98, 'sees(): thick smoke hides, clear air does not');
+    assert.ok(sound(g), 'every cell is a sound number');
+    const cool = run(new Gas(view(), { box: BOX, kind: 'smoke' }), 0); cool.smoke({ x: 0, y: .3, z: 0, size: 1, heat: .2 }); run(cool, 4);
+    assert.ok(where(cool).top < w.top - .5, `cooler smoke climbs slower: ${where(cool).top} against ${w.top}`);
+    // puffs: drawn in the view's scene, where the smoke is
+    const P = g.puffs; assert.ok(P.soft.parent?.isScene && P.soft.visible && P.shown > 50 && P.soft.geometry.drawRange.count === P.shown * 6 && !P.glow.visible, `soft puffs show the smoke: ${P.shown}`);
+    // switched off, the smoke thins away; clear() takes it at once and the maker stays
+    m.on = false; run(g, 8); assert.ok(where(g).n < w.n * .9 && g.smokeAt(0, .4, 0) < .1 && g.heatAt(0, .4, 0) < .05, `with its maker off the smoke thins and drifts off: ${where(g).n} left of ${w.n}`);
+    m.on = true; run(g, 1); g.clear(); assert.ok(g.smokeIn() === 0 && g.puffs.n === 0 && !P.soft.visible && g.makers.length === 1, 'clear() takes the gas away and keeps its makers');
+    run(g, 1); assert.ok(g.smokeIn() > 0, 'which carry on');
+    const hid = new Gas(view(), { box: BOX, draw: false }); hid.smoke({ y: .3 }); run(hid, 1); assert.ok(hid.smokeIn() > 0 && !hid.puffs.soft.visible, 'draw: false: the gas is there and nothing is drawn');
+  }
+  {
+    // a closed room fills from the ceiling down; an open box lets the smoke go
+    const mk = open => { const g = new Gas(view(), { box: [-2, 0, -2, 2, 2.4, 2], kind: 'smoke', open }); g.smoke({ x: 0, y: .3, z: 0, size: 1, rate: 1.5, heat: 1 }); return run(g, 12); };
+    const ring = (g, y) => (g.smokeAt(1.5, y, 0) + g.smokeAt(-1.5, y, 0) + g.smokeAt(0, y, 1.5) + g.smokeAt(0, y, -1.5)) / 4;
+    const shut = mk(false), open = mk(true), up = ring(shut, 2.25), low = ring(shut, .5);
+    assert.ok(up > .05 && up > low * 3, `in a closed room the smoke spreads out under the ceiling: ${up} up there, ${low} low down`);
+    assert.ok(ring(open, 2.25) < up * .2, `and from an open box it leaves: ${ring(open, 2.25)} there`);
+    assert.ok(sound(shut) && sound(open), 'sound numbers');
+  }
+  {
+    // solid things: no gas inside them, and the smoke goes round; a moving one pushes the gas; the world's own shape
+    const g = new Gas(view(), { box: BOX, kind: 'smoke' }); g.smoke({ x: 0, y: .3, z: 0, size: 1, heat: 1 }); const ball = g.ball({ x: 0, y: 2, z: 0, r: .4 }); run(g, 8);
+    const beside = Math.max(g.smokeAt(.7, 2, 0), g.smokeAt(-.7, 2, 0), g.smokeAt(0, 2, .7), g.smokeAt(0, 2, -.7)), above = Math.max(g.smokeAt(0, 3.3, 0), g.smokeAt(.4, 3.2, 0), g.smokeAt(-.4, 3.2, 0), g.smokeAt(0, 3.2, .4), g.smokeAt(0, 3.2, -.4));
+    assert.ok(g.smokeAt(0, 2, 0) === 0 && g.smokeAt(0, 1.35, 0) > .3 && beside > .1 && above > .1, `smoke comes up to a ball, goes round it and on up: ${beside} beside it, ${above} above`);
+    const f0 = g.flowAt(0, 2, 0); assert.ok(Math.hypot(f0.x, f0.y, f0.z) < 1e-6, 'nothing flows inside it');
+    ball.remove(); const bat = g.box({ x: -1.5, y: 1, z: 0, w: .4, h: 1.2, d: 1.5 }); run(g, 1, i => bat.set(-1.5 + i / 60 * 2.5, 1, 0));
+    assert.ok(g.flowAt(bat.x + .45, 1, 0).x > .8, `a box swept through the gas pushes it along: ${g.flowAt(bat.x + .45, 1, 0).x} units a second ahead of it`);
+    const w = new Gas(view(), { box: BOX, kind: 'smoke' }); w.ground((x, z) => x < 0 ? 1 : 0); w.solid((x, y, z) => y > 3 && x > .5); w.smoke({ x: 1, y: .3, z: 0, heat: 1 }); w.smoke({ x: -1, y: 1.3, z: 0, heat: 1 }); run(w, 5);
+    assert.ok(w.smokeAt(-1, .5, 0) === 0 && w.smokeAt(1.2, 4, 0) === 0 && w.smokeAt(-1, 1.6, 0) > .2 && w.smokeAt(1, 1.2, 0) > .05, 'ground() and solid(): no smoke in the ground or in a wall');
+    assert.ok(sound(g) && sound(w), 'sound numbers');
+  }
+  {
+    // the wind carries smoke off, and a fan blows it
+    const g = new Gas(view(), { box: [-3, 0, -2, 3, 4, 2], kind: 'smoke', wind: { x: 2 } }); g.smoke({ x: -2, y: 1, z: 0, heat: .3 }); run(g, 5);
+    const w = where(g); assert.ok(w.x > -1.2 && g.smokeAt(1.5, 1.4, 0) + g.smokeAt(1.5, 1.9, 0) + g.smokeAt(1.5, 1, 0) > .03 && g.smokeAt(-2.8, 1, 0) < .01 && g.flowAt(0, 3, 1).x > 1.2, `the wind carries smoke downwind: its middle at x ${w.x}`);
+    const f = new Gas(view(), { box: BOX }); f.fan({ x: 0, y: 2, z: 0, size: 1, dir: [0, 0, 1], speed: 4 }); run(f, 1);
+    assert.ok(f.flowAt(0, 2, 0).z > 2 && f.flowAt(0, 2, .8).z > .5, `a fan blows the gas: ${f.flowAt(0, 2, 0).z} units a second at it`);
+  }
+  {
+    // fire: fuel burns to heat and soot; flame where the fuel is, smoke above; its glow and its lamp
+    const g = new Gas(view(), { box: BOX, kind: 'fire', lamp: true }), fire = g.fire({ x: 0, y: .3, z: 0, size: 1 }); run(g, 3);
+    const gl = g.glow;
+    assert.ok(g.heatAt(0, .5, 0) > .9 && g.heatAt(0, .5, 0) <= HEAT_MAX && g.heatAt(1.5, .5, 0) < .05, `a fire is hot at its base: ${g.heatAt(0, .5, 0)}`);
+    assert.ok(gl.power > .5 && Math.abs(gl.x) < .4 && Math.abs(gl.z) < .4 && gl.y > .2 && gl.y < 2, `glow says where the fire is: ${JSON.stringify(gl)}`);
+    assert.ok(where(g).top > 3 && g.smokeAt(0, 2.5, 0) + g.smokeAt(.3, 3, 0) + g.smokeAt(-.3, 3, 0) > .05, 'and makes smoke that climbs');
+    assert.ok(g.lamp.isPointLight && g.lamp.parent?.isScene && g.lamp.intensity > 1 && Math.abs(g.lamp.position.x) < .5 && g.lamp.position.y > .1, `its lamp is lit at the fire: ${g.lamp.intensity}`);
+    assert.ok(g.puffs.glow.visible && g.puffs.glow.geometry.drawRange.count > 0, 'flame puffs glow');
+    let hi = 0; for (let y = .3; y < 5; y += .2) if (g.heatAt(0, y, 0) > FLAME) hi = y;
+    assert.ok(hi > .6 && hi < 3.2, `flames reach ${hi} up from a fire a unit wide`);
+    fire.on = false; run(g, 3); assert.ok(g.glow.power === 0 && g.heatAt(0, .5, 0) < FLAME && g.lamp.intensity < .05, 'put out, the flames die and the lamp goes dark');
+    assert.ok(sound(g), 'sound numbers');
+    // a blown fire: a jet
+    const j = new Gas(view(), { box: [-3, 0, -2, 3, 4, 2], kind: 'fire' }); j.fire({ x: -2, y: 1.5, z: 0, size: 1, dir: [1, 0, 0], speed: 8 }); run(j, 2);
+    assert.ok(j.flowAt(-1.3, 1.6, 0).x > 2 && j.glow.x > -1.9 && j.heatAt(-1.2, 1.7, 0) + j.heatAt(-1.2, 1.5, 0) + j.heatAt(-1.2, 1.9, 0) > FLAME, `a blown fire is a jet of flame: ${j.flowAt(-1.3, 1.6, 0).x} units a second`);
+  }
+  {
+    // an explosion: a ball of fire at once, the gas blasted outwards, then smoke that rolls up; a puff of dust just hangs and settles
+    const g = new Gas(view(), { box: [-3, 0, -3, 3, 6, 3], kind: 'fire' }); g.burst(0, 1, 0, { size: 2 }); run(g, 2 / 60);
+    assert.ok(g.heatAt(0, 1, 0) > 1 && g.glow.power > 3 && g.flowAt(1.2, 1, 0).x > .5 && g.flowAt(-1.2, 1, 0).x < -.5 && g.flowAt(0, 1, 1.2).z > .5, `a burst is fire at once and blasts the gas outwards: ${g.flowAt(1.2, 1, 0).x} units a second`);
+    const p0 = g.glow.power; run(g, 2.5); const w = where(g);
+    assert.ok(g.glow.power < p0 * .05 && w.y > 2 && w.n > .3, `the fireball burns out and its smoke rolls up: its middle at ${w.y}`);
+    const d = new Gas(view(), { box: BOX, kind: 'dust' }); d.puff(0, .4, 0, { size: 1.2 }); run(d, 2 / 60); const a = where(d); run(d, 2); const b = where(d);
+    assert.ok(a.n > .1 && d.glow.power === 0 && b.y < a.y + .1 && b.n < a.n && b.n > a.n * .2, `dust hangs low and settles: its middle from ${a.y} to ${b.y}`);
+    assert.ok(sound(g) && sound(d), 'sound numbers');
+  }
+  {
+    // the same gas at another size (the graphics chip handing over to this version), copies back from the chip, and the gas's own dice
+    const g = new Gas(view(), { box: BOX, kind: 'fire' }); g.fire({ x: 0, y: .3, z: 0 }); run(g, 3); const a = where(g), h0 = g.heatAt(0, .5, 0);
+    GAS.klass = 'low'; g.resize(false); GAS.klass = 'top'; const b = where(g);
+    assert.ok(g.cells <= 5000 && Math.abs(b.n / a.n - 1) < .15 && Math.abs(b.y - a.y) < .25 && Math.abs(g.heatAt(0, .5, 0) - h0) < .4, `resized to ${g.cells} cells it is the same gas: ${a.n} and ${b.n} of smoke`);
+    run(g, 1); assert.ok(sound(g) && g.glow.power > 0, 'which burns on');
+    const r = new Gas(view(), { box: BOX }); r.mode = 'gpu'; const fld = F.emptyField(r.sim); fld.S.fill(.5); fld.U.fill(0); for (let c = 0; c < fld.nx * fld.ny * fld.nz; c++) { fld.U[c * 4 + 1] = .1; fld.U[c * 4 + 3] = c === 0 ? .2 : 0; } r.read(fld);
+    assert.ok(Math.abs(r.smokeAt(0, 2, 0) - .5) < 1e-6 && Math.abs(r.flowAt(0, 2, 0).y - .1 * r.sim.kv) < 1e-6 && r.glow.power > 0 && r.glow.y < r.cell * 4, 'a copy back from the graphics chip answers the questions');
+    const mk = seed => { const q = new Gas(view(), { box: BOX, kind: 'fire', seed }); q.fire({ y: .3 }); q.burst(.5, 1, 0, { size: 1.2 }); run(q, .5); return q.sim.S.slice(); };
+    const A = mk(7), B = mk(7), C = mk(8); assert.ok(A.every((v, i) => v === B[i]) && A.some((v, i) => v !== C[i]), 'the same seed makes the same gas, cell for cell');
+    const n0 = g.view.sims.length; g.dispose(); assert.ok(g.view.sims.length === n0 - 1 && !g.puffs.soft.parent && !g.puffs.glow.parent, 'dispose()');
+  }
+  assert.deepEqual(Object.keys(KINDS), ['smoke', 'fire', 'steam', 'dust', 'toxic', 'magic'], 'the ready-made gases');
+  GAS.klass = null;
+  const { HIDDEN } = await import('../src/gamescroll.js');
+  assert.deepEqual(Object.keys(F).filter(k => !HIDDEN.gas.includes(k)).sort(), ['Gas', 'KINDS'], 'gs.gas is Gas and KINDS: the numbers and test switches stay off it');
+  console.log('gs.gas: smoke that climbs, a closed room, solid things, wind, a fan, fire, a jet, an explosion, dust, resizing, copies back, seeds ok');
+}
+
 // gs.vision: what the camera knows (vision-know.js): the 80 things, barcode kinds, seeds, the cut to a game's shape, what is in view
 {
   const K = await import('../src/kit/vision-know.js'), { existsSync, readFileSync } = await import('node:fs');
