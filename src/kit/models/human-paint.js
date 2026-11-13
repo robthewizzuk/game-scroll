@@ -117,6 +117,70 @@ export function paintDetail(o) {
 }
 
 /**
+ * The lines that come and go with a real face's expressions, at a point (as linesAt): how deep each kind is there (0..1), into out:
+ * [0] the rows across the forehead (brows raised), [1] the upright lines between the brows and the one across the root of the nose (a frown),
+ * with the little slanting lines down the sides of the nose (a nose screwed up), [2] crow's feet and the bunching under the lower lid (a smile,
+ * a squint), [3] the fold from the nose to the mouth, deepened (a smile, a sneer). Young skin folds too, only less deep; each wavers and
+ * breaks off, and no two faces have them the same (aseed). The rest of the time the skin is smooth there, but for the fine lines of age.
+ */
+export function wrinklesAt(x, hy, f, rim, out) {
+  const age = f.age ?? 30, deep = .55 + .45 * ss(18, 62, age), ph = (f.aseed || 0) * 3.7, NS = f.nose || 1, NW = f.noseW || 1, a = ss(24, 78, age);
+  out[0] = out[1] = out[2] = out[3] = 0;
+  // across the forehead: five rows from temple to temple, each arching a little over its brow, the middle three deepest
+  if (hy > .028 && hy < .084 && x < .06) for (let k = 0; k < 5; k++) {
+    const yk = .033 + .0098 * k + .0022 * bump(x, .031, .016) + .0014 * Math.sin(x * 70 + k * 1.9 + ph) + .0005 * lumps(x * 260 + k * 4.1, k * 2.7, ph), w = .0008 + .0004 * deep;
+    const v = bump(hy - yk, 0, w); if (v < .01) continue;
+    out[0] = mx(out[0], v * deep * (k > 0 && k < 4 ? 1 : .6) * ss(-.4, .25, lumps(x * 70 + k * 6.3 + ph, k * 1.9, 2.9)) * ss(.058 - .003 * k, .042 - .003 * k, x));
+  }
+  // between the brows: two upright lines each side, leaning out towards the top, the outer one shorter; one across the root of the nose
+  if (hy > -.004 && hy < .036 && x < .02) {
+    for (let k = 0; k < 2; k++) {
+      const xl = .0052 + .0035 * k + .0008 * Math.sin(ph + k) + (hy - .004) * (.16 + .08 * k), lo = .004 + .003 * k, hi = .03 - .006 * k;
+      out[1] = mx(out[1], deep * (1 - .35 * k) * bump(x - xl, 0, .0007 + .0002 * deep) * ss(lo, lo + .005, hy) * ss(hi, hi - .006, hy));
+    }
+    out[1] = mx(out[1], .75 * deep * bump(hy, .0005 + .0008 * Math.sin(x * 400 + ph), .0008) * ss(.011, .005, x));
+  }
+  // down the sides of the nose, below the inner corners of the eyes: two or three short slanting lines (a nose screwed up)
+  if (hy < .002 && hy > -.026 && x > .004 && x < .022) for (let k = 0; k < 3; k++) {
+    const x0 = .0062 + .0012 * k, y0 = -.003 - .0045 * k; seg(x, hy, x0, y0, x0 + .0075, y0 - .0085, S2);
+    out[1] = mx(out[1], .8 * deep * (1 - .25 * k) * bump(S2[0], 0, .0006 + .0002 * deep) * ss(0, .2, S2[1]) * ss(1, .6, S2[1]));
+  }
+  // crow's feet: five lines fanning out from the outer corner of each eye, longer than the fine ones of age; and two arcs under the lower lid
+  const ox = rim.cx + rim.w + .0012, oy = -.001;
+  if (x > ox - .003 && x < ox + .026 && abs(hy - oy) < .022) for (const [an, l] of [[-.78, .014], [-.42, .018], [-.1, .02], [.22, .017], [.55, .012]]) {
+    const ang = an + .1 * Math.sin(ph + an * 5), L = l * (.85 + .3 * deep), x0 = ox + .003 * Math.cos(ang), y0 = oy + .003 * Math.sin(ang);
+    seg(x, hy, x0, y0, ox + (.003 + L) * Math.cos(ang), oy + (.003 + L) * Math.sin(ang), S2);
+    out[2] = mx(out[2], deep * bump(S2[0], 0, .0006 + .0003 * deep) * ss(0, .12, S2[1]) * ss(1, .55, S2[1]) * ss(-.35, .25, lumps(S2[1] * 5 + an * 9, ph, 2.1)));
+  }
+  if (hy < -.006 && hy > -.026 && x > .016 && x < .056) for (let k = 0; k < 2; k++) {
+    const yk = -.0108 - .0034 * k + .005 * ((x - .035) / .016) ** 2; out[2] = mx(out[2], deep * (.75 - .25 * k) * bump(hy - yk, 0, .0007) * bump(x, .036, .012 + .003 * k));
+  }
+  // from the wing of the nose to beside the corner of the mouth: along the fold the face always has (human-head.js reliefOf), its crease
+  // deepened and run on a little further down
+  const wx = .0108 * NS * NW, wy = -.039;
+  if (hy < -.025 && hy > -.095 && x > .01 && x < .05) {
+    seg(x, hy, wx + .0068 * NS * NW, wy + .006, .0315 + .002 * a, -.08 - .004 * a, S2);
+    out[3] = deep * bump(S2[0], 0, .0012 + .0004 * deep) * ss(0, .1, S2[1]) * ss(1, .8, S2[1]);
+  }
+  return out;
+}
+/** A real face's picture of its lines that come with expressions (laid on as the paint is, FACE_WR: half as fine as the paint, as these are broader). */
+export const FACE_WR = { ...FACE_REAL, w: 128, h: 256 };
+/**
+ * The lines that come with a real face's expressions (o as for paintFace), a picture of four numbers a dot (wrinklesAt: forehead, frown, smiling
+ * eyes, nose to mouth), each how deep that kind of line is there. WebGPU sinks them into the skin by how far each expression shows
+ * (hd3d-gpu.js sss, from the live face's own four numbers: human-face.js). Returns its bytes (RGBA, w * h * 4, the bottom row first).
+ */
+export function paintWrinkles(o) {
+  const { w, h, x1, y0, y1 } = FACE_WR, f = o.face, rim = rimOf(f), px = new Uint8Array(w * h * 4), q = [0, 0, 0, 0];
+  for (let j = 1; j < h - 1; j++) {
+    const hy = y0 + (j + .5) / h * (y1 - y0);
+    for (let i = 0; i < w - 1; i++) { wrinklesAt((i + .5) / w * x1, hy, f, rim, q); const at = (j * w + i) * 4; for (let c = 0; c < 4; c++) px[at + c] = Math.round(255 * mn(1, q[c])); }
+  }
+  return px;   // (the edges, where everything off the face lands, stay smooth)
+}
+
+/**
  * Paints the picture for a look: { face (the spec's: eyes, lips, soft), fem, stubble (0..1), skin, brow, lips, lash, mouth (each [r, g, b]
  * as light, not sRGB) }. Returns its bytes (RGBA, w * h * 4, the bottom row first), to be read as sRGB.
  */

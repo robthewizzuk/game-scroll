@@ -6,6 +6,7 @@
 //   &who=0,3,7 (which of the twelve)   &cols=sun:face,overcast:face,lamp:face,indoor:face   light:view
 //   lights: sun (a clear day), overcast (soft and even), lamp (a street lamp at night), indoor (a window to one side), back (the sun behind)
 //   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
+//   light:view:expr: that column's face set (expr: smile, or smile+squint, or browInnerUp.7+frown: shapes or face-capture movements, each at 1 or the amount after it)
 //   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &nowet (a real face's wet film over the eyes left out)   &blinks (let them blink)
 //   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
 //   &ref (one more row: a reference head scan, ref/LeePerrySmith.glb from three.js's examples (CC BY 3.0, Lee Perry-Smith / Infinite Realities), drawn
@@ -36,7 +37,7 @@ try {
   const T = gs.THREE, human = gs.models.human, frame = () => new Promise(r => requestAnimationFrame(r));
   const pick = Q.has('who') ? Q.get('who').split(',').map(Number) : LAB.map((_, i) => i);
   if (Q.has('ref')) { LAB.push({ name: 'Scan (reference)', scan: true }); pick.push(LAB.length - 1); }
-  const cols = (Q.get('cols') || 'sun:face,overcast:face,lamp:face,indoor:face').split(',').map(c => { const [light, view = 'face'] = c.split(':'); return { light, view }; });
+  const cols = (Q.get('cols') || 'sun:face,overcast:face,lamp:face,indoor:face').split(',').map(c => { const [light, view = 'face', expr = ''] = c.split(':'); return { light, view, expr }; });
   const [cw, ch] = (Q.get('cell') || '300x360').split('x').map(Number);
   window.__hd.force = Q.has('tier') ? +Q.get('tier') : 3; window.__hd.upscale = false; window.__hd.hold = false;   // (a sheet wants every cell drawn, not a frame's wait for a new shader)
   const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .3, fov: 30 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
@@ -80,7 +81,10 @@ try {
     for (let i = 0; i < 20; i++) p.rig.update(1 / 30);
     info.push(`${LAB[pick[r]].name}: ${p.tris.join('/')} triangles`);
     for (let k = 0; k < cols.length; k++) {
-      const { light, view } = cols[k], d = VIEW[view] || VIEW.face, len = Math.hypot(d[0], d[1], d[2]), dist = d[3];
+      const { light, view, expr } = cols[k], d = VIEW[view] || VIEW.face;
+      if (p.face && cols.some(c => c.expr)) { const one = e => { const m = /^([a-zA-Z]+)([\d.]*)$/.exec(e); return [m[1], m[2] ? +m[2] : 1]; };
+        for (const c of cols) for (const e of c.expr.split(/[+ ]/).filter(Boolean)) p.face.set(one(e)[0], 0); for (const e of expr.split(/[+ ]/).filter(Boolean)) p.face.set(...one(e)); for (let i = 0; i < 30; i++) p.rig.update(1 / 30); }
+      const len = Math.hypot(d[0], d[1], d[2]), dist = d[3];
       p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); aim.y += view === 'body' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : view === 'mouth' ? .07 : view === 'eyes' ? .148 : .1;
       setLight(light, aim);
       v.cam.aspect = cw / ch; v.cam.near = dist * .05; v.cam.far = dist * 80; v.cam.updateProjectionMatrix();
@@ -89,7 +93,7 @@ try {
       for (let i = 0, nf = +(Q.get('frames') || 4); i < nf; i++) { v.t = 0; p.rig.update(1 / 60); v.render(cx, cw, ch); await frame(); }
       const [px, py] = at(r, k); sx.drawImage(cell, px, py + LABEL);
       if (Q.has('time')) { const t1 = performance.now(); for (let i = 0; i < 10; i++) { v.t = 0; v.render(cx, cw, ch); } info.push(`  ${light}:${view} ${((performance.now() - t1) / 10).toFixed(1)} ms a frame`); }
-      sx.font = '12px sans-serif'; sx.fillStyle = '#ddd'; sx.fillText(`${LAB[pick[r]].name} · ${light}`, px + 5, py + 13);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#ddd'; sx.fillText(`${LAB[pick[r]].name} · ${expr || light}`, px + 5, py + 13);
     }
     v.scene.remove(p); if (Q.has('facelight')) v.faceLight(null);
   }

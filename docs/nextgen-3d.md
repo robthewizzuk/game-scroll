@@ -1251,7 +1251,10 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   look=real` draws twelve people of different ages, builds and skin under four lights to judge them by.
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
-  `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide.
+  `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide. Besides the
+  expressions (`smile`, `angry`, `disgust`, `fear`...) it takes the 51 single movements face capture records,
+  by their ARKit names (`set('browInnerUp', .6)`, `human.moves`), and on a real face on WebGPU the lines that
+  come with an expression (forehead, frown, crow's feet, nose to mouth) come and go with it.
   For a close-up or a cutscene, `view.faceLight(person)` (once, in `make()`) adds a film crew's soft fill from
   beside the camera: it lifts the shadow side of the face and puts a small bright point in each eye, aimed
   between the eyes every frame wherever the camera and the person go, as bright near or far, and hardly

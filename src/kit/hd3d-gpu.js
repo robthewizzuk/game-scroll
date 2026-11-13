@@ -210,7 +210,10 @@ export const gpuMaterials = {
       const FD = S.skin && gm.userData.faceDetail;
       if (FD) {
         const D = texture(FD, uv(1)), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
-        m.normalNode = bumpN(D.r, float(.00016), pores);
+        // (and the lines that come with its expressions, faceWrinkles: four kinds, each sunk in as far as the person's live face shows it this
+        // frame, userData.gsWrinkle on the mesh, human-face.js; a face of the same look but another expression shares the material, not the frame)
+        const FW = gm.userData.faceWrinkles, wr = FW && uniform(new Vector4()).onObjectUpdate(({ object }) => object?.userData?.gsWrinkle ?? NO_WRINKLE);
+        m.normalNode = bumpN(FW ? D.r.sub(texture(FW, uv(1)).dot(wr).mul(2.6)) : D.r, float(.00016), pores);
         // (and rougher where the pores turn the surface faster than a pixel can show, Kaplanyan and Hoffman's specular antialiasing: a pore
         // a pixel or two across had each caught the light as a glint of its own, so a close face glittered like wet sand, darkest skin most)
         const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1)), ex = dFdx(normalView), ey = dFdy(normalView);
@@ -636,6 +639,7 @@ export function pcss(light) {
 // made for it), and the scene's grid only ever meets the game's own picture.
 // (and a light that a material treats as no other, HDView.faceLight's fill, is lit the usual way: a clustered lamp reaches the lighting
 // model as the cluster's node, not as itself)
+const NO_WRINKLE = new Vector4();   // (a face at rest, or a mesh with no live face)
 class KitClusteredLights extends ClusteredLightsNode { _isClusteredLight(l) { return !l.userData.gsFill && super._isClusteredLight(l); } }
 class KitLighting extends ClusteredLighting {
   constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }

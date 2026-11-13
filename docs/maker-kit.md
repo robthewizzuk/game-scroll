@@ -1927,15 +1927,24 @@ turned away from the old one. Nothing to call: the rig steps the face with the b
 `gs.characters.Face` takes: `face.say('Over here!')` speaks the line and moves the jaw and the lips to it,
 `face.mouth(level)` opens the mouth from your own source, `face.set('smile', 1)` eases an expression in (`open`,
 `wide`, `round`, `smile`, `frown`, `surprise`, `blink`, and on these people `squint`, `sad`, `angry`, `wince`,
-`winkL`, `winkR` too), `face.blink()` blinks now and `face.blinkEvery = 0` stops the blinks. And it looks:
+`winkL`, `winkR`, `disgust`, `fear`, `contempt` too), `face.blink()` blinks now and `face.blinkEvery = 0` stops the
+blinks. Under the expressions are the 51 single movements that face capture records, by their ARKit names
+(`browInnerUp`, `cheekSquintLeft`, `jawOpen`, `mouthSmileRight`, `noseSneerLeft`...; Left and Right are the person's
+own; the list is `gs.models.human.moves`), each set the same way, so a face can be posed by hand or played from a
+recording; they add to the expressions. Speech presses the lips together for m, b and p and tucks the lower lip under
+the teeth for f and v, and the nostrils widen a little on each breath (`face.breathe = false` stills them). On a real
+face (`look: 'real'`) the lines that come with an expression come and go with it on WebGPU: across the forehead with
+raised brows, between the brows in a frown, down the nose when it screws up, crow's feet in a smile, and the fold from
+the nose to the mouth deepens; young faces fold less deeply. And it looks:
 `face.look(point)` puts the eyes on a point in the world (`[x, y, z]` or `{ x, y, z }`) or on an `Object3D`,
 followed as it moves, each eye by itself, so they cross a little onto something close; `face.look(null)` lets
 them wander again. Eyes turn about 30 degrees to either side and less up and down, so turn the head yourself
 for more (`gs.characters.lookAt`); `face.yaw` and `face.pitch` say where they are turned. `face.wince()` screws
 the eyes shut for a moment (`Reactions` does it at a blow). The eyes of someone lying on the ground close by
 themselves (the head lying over, low down): `face.awake = true` keeps them open (the wounded), `false` closes
-them wherever he is, `null` is as made. The head has bones for all of it (`bones.eyeL`, `lidL`, `browL`,
-`browInL`, `cornerL` and their `R` twins, and `bones.jaw`), lips that part, and teeth and a tongue behind them.
+them wherever he is, `null` is as made. The head has bones for all of it (`bones.eyeL`, `lidL`, `lowLidL`, `browL`,
+`browInL`, `cheekL`, `noseL`, `cornerL`, `lipUpL`, `lipLowL` and their `R` twins, and `bones.jaw` and `chin`), lips that
+part, and teeth and a tongue behind them.
 At the middle and far levels, and in a crowd, the face is still and costs nothing. For a close-up or a cutscene,
 `view.faceLight(person)` (once, in `make()`) lights the face softly from beside the camera, as a film crew's fill
 does, with a small bright point in each eye; `{ strength: .5 }` sets how much, `view.faceLight(null)` dims it.

@@ -152,14 +152,20 @@ export function lidPlan(m, f) {
 }
 /**
  * The bones of a face f: [[name, parent, [x, y, z]]...] in the person's space. The eyes (each turns about its middle), the upper lids (in the same
- * place: a lid closes round the eyeball), the brows (one bone at the arch, one at the inner end), the corners of the mouth, the jaw (at its hinge).
+ * place: a lid closes round the eyeball), the brows (one bone at the arch, one at the inner end), the corners of the mouth, the jaw (at its hinge);
+ * and for the movements a face makes (human-face.js), the lower lids, the cheeks (the pad of fat over each cheekbone), the wings of the nose, each
+ * half of the upper lip and of the lower, and the chin (the lower lip's halves and the chin ride on the jaw).
  */
 export function faceBones(f) {
-  const half = mouthHalf(f), B = browOf(f.soft), out = [['jaw', 'head', Hd(0, JAW[0], JAW[1])]];
+  const half = mouthHalf(f), B = browOf(f.soft), L0 = lipLine(0, f), out = [['jaw', 'head', Hd(0, JAW[0], JAW[1])], ['chin', 'jaw', Hd(0, L0 - .033, .08)]];
   for (const [sd, s] of [['L', 1], ['R', -1]]) out.push(['eye' + sd, 'head', Hd(s * EYE[0], EYE[1], EYE[2])], ['lid' + sd, 'head', Hd(s * EYE[0], EYE[1], EYE[2])],
-    ['brow' + sd, 'head', Hd(s * B[1][0], B[1][1], B[1][2])], ['browIn' + sd, 'head', Hd(s * B[0][0], B[0][1], B[0][2])], ['corner' + sd, 'head', Hd(s * half, lipLine(half, f), .078)]);
+    ['brow' + sd, 'head', Hd(s * B[1][0], B[1][1], B[1][2])], ['browIn' + sd, 'head', Hd(s * B[0][0], B[0][1], B[0][2])], ['corner' + sd, 'head', Hd(s * half, lipLine(half, f), .078)],
+    ['lowLid' + sd, 'head', Hd(s * EYE[0], EYE[1] - .011, .078)], ['cheek' + sd, 'head', Hd(s * .041, -.024, .072)], ['nose' + sd, 'head', Hd(s * .014, -.042, .092)],
+    ['lipUp' + sd, 'head', Hd(s * half * .42, L0 + .007, .088)], ['lipLow' + sd, 'jaw', Hd(s * half * .42, L0 - .008, .086)]);
   return out;
 }
+/** The face's own bones by name, as faceBones(f) has them (the small bones a face moves on: close up only). */
+export const FACE_BONES = /^((eye|lid|brow|browIn|corner|lowLid|cheek|nose|lipUp|lipLow)[LR]|jaw|chin)$/;
 const NONE = []; let RIM = null, RIMO = '';
 /**
  * How much of the head's own weight a point of a face f gives to each of the face's bones: [[bone, share]...] (what is left stays the head's).
@@ -168,37 +174,65 @@ const NONE = []; let RIM = null, RIMO = '';
  * The upper lid closes round the eye. The skin along each brow goes with it, less a finger's width above and below. All below the line between the lips
  * goes with the jaw (the lower lip, the chin, less of the cheeks, nothing by the ears, where a jaw only turns); beside the mouth the step across the line
  * becomes a slope, so the cut closes at each corner. The corners take most of the skin about them, both lips' ends alike.
+ * For the face's movements: the lower lid's edge and the skin just under it; the pad over each cheekbone; the wings of the nose and the skin beside
+ * them; each lip from the line between them to the nose and to the crease above the chin, shared by its two halves in the middle and given over to
+ * the corners at its ends; and the chin. What goes with the jaw goes with the lower lip's halves and the chin as much (they ride on the jaw).
  */
 export function faceShare(x, y, z, f, side = 0, lids = null) {
-  const hy = y - HC[1], hz = z - HC[2], ax = abs(x), sd = x >= 0 ? 'L' : 'R';
+  const hy = y - HC[1], hz = z - HC[2], ax = abs(x), sd = x >= 0 ? 'L' : 'R', od = sd === 'L' ? 'R' : 'L';
   if (hy > .055 || hy < -.15 || ax > .08 || hz < -.04) return NONE;
-  const out = [];
+  if (hy > -.02 && hz < .045) return NONE;
+  const out = [], ES = esOf(f);
+  let lid = 0, low = 0;
   if (hy > -.02) {
-    if (hz < .045) return NONE;
-    let lid = 0;
-    if (hy < .02 * esOf(f) && hz > .058) { const key = f.eyes + ':' + esOf(f) + ':' + (f.tilt || 0) + ':' + !!f.real; if (RIMO !== key) { RIM = rimOf(f); RIMO = key; } lid = RIM.lid(ax, hy, lids && lids[sd]); if (lid > 0) out.push(['lid' + sd, lid]); }
+    if (hy < .02 * ES && hz > .058) {
+      const key = f.eyes + ':' + ES + ':' + (f.tilt || 0) + ':' + !!f.real; if (RIMO !== key) { RIM = rimOf(f); RIMO = key; } lid = RIM.lid(ax, hy, lids && lids[sd]); if (lid > 0) out.push(['lid' + sd, lid]);
+      // the lower lid: its edge and the skin a little way down from it, less toward the corners, where the lids meet and nothing moves
+      if (hy < .004 * ES) { const o = RIM.at(ax, hy, RO); if (o[2] >= o[1] && abs(o[0]) < 1) low = .9 * ss(-.0016, -.0004, o[2]) * ss(.009 * ES, .0015 * ES, o[2]) * ss(1, .55, abs(o[0])) * (1 - lid); if (low > 0) out.push(['lowLid' + sd, low]); }
+    }
     if (hy > .004) {
       const [b0, b1, b2] = browOf(f.soft), q = ax < b1[0] ? [b0, b1] : [b1, b2], t = mx(0, Math.min(1, (ax - q[0][0]) / (q[1][0] - q[0][0])));
       const k = ss(.017, .006, hyp(ax < b0[0] ? b0[0] - ax : ax > b2[0] ? ax - b2[0] : 0, hy - (q[0][1] + (q[1][1] - q[0][1]) * t))) * ss(.045, .06, hz) * (1 - lid);
       if (k > 0) {
         // (between the brows the skin is shared by both inner ends; the tail of a brow moves less than its arch)
         const inner = ss(b1[0] - .004, b0[0] + .002, ax), own = .5 + .5 * ss(0, .006, ax);
-        if (inner > 0) { out.push(['browIn' + sd, k * inner * own]); if (own < 1) out.push(['browIn' + (sd === 'L' ? 'R' : 'L'), k * inner * (1 - own)]); }
+        if (inner > 0) { out.push(['browIn' + sd, k * inner * own]); if (own < 1) out.push(['browIn' + od, k * inner * (1 - own)]); }
         if (inner < 1) out.push(['brow' + sd, k * (1 - inner) * (1 - .45 * ss(b1[0], b2[0], ax))]);
       }
     }
-    return out;
   }
-  const half = mouthHalf(f), e = ax / half, v = hy - lipLine(x, f);
-  const corner = hy > -.1 ? .85 * ss(.016, .004, hyp(ax - half, v)) * ss(.04, .06, hz) : 0;
-  // across the line: a step inside the mouth's length (h: 1), a slope beside it (h: 0) that is wider the further out
-  const h = ss(.9, .72, e), band = mx(.001, 1.4 * (ax - (half - .006))), up = .5 - .5 * h;
-  const across = side > 0 ? up : side < 0 ? 1 - up : v > 0 ? up * ss(band, 0, v) : 1 - up * ss(-band, 0, v);
-  const zb = -.035 + .055 * ss(-.067, -.12, hy), jaw = across * ss(zb, zb + .03, hz) * ss(-.025, -.05, hy) * (1 - corner);
-  if (corner > 0) out.push(['corner' + sd, corner]);
-  if (jaw > 0) out.push(['jaw', jaw]);
+  // the cheek's pad, under the lower lid's own skin and clear of the nose; the wing of the nose and the skin beside it
+  if (hy < .004 && hy > -.06 && hz > .045) {
+    // (none of it over the eyeball: skin that lies on the ball and rose with the cheek straight up rose into the ball, which showed through it)
+    const ch = .75 * ss(.027, .007, hyp(ax - .041, (hy + .024) * 1.25)) * ss(.05, .066, hz) * ss(.011, .019, ax) * ss(.017 * ES, .026 * ES, hyp(ax - EYE[0], hy - EYE[1])) * (1 - lid) * (1 - low);
+    if (ch > .002) out.push(['cheek' + sd, ch]);
+    const ns = .85 * ss(.011, .003, hyp(ax - .016, (hy + .043) * 1.15)) * ss(.06, .075, hz);
+    if (ns > .002) out.push(['nose' + sd, ns]);
+  }
+  if (hy <= -.02) {
+    const half = mouthHalf(f), e = ax / half, v = hy - lipLine(x, f);
+    const corner = hy > -.1 ? .85 * ss(.016, .004, hyp(ax - half, v)) * ss(.04, .06, hz) : 0;
+    // across the line: a step inside the mouth's length (h: 1), a slope beside it (h: 0) that is wider the further out
+    const h = ss(.9, .72, e), band = mx(.001, 1.4 * (ax - (half - .006))), up = .5 - .5 * h;
+    const across = side > 0 ? up : side < 0 ? 1 - up : v > 0 ? up * ss(band, 0, v) : 1 - up * ss(-band, 0, v);
+    const zb = -.035 + .055 * ss(-.067, -.12, hy), jaw = across * ss(zb, zb + .03, hz) * ss(-.025, -.05, hy) * (1 - corner);
+    if (corner > 0) out.push(['corner' + sd, corner]);
+    // the lips' halves: the upper lip from the line up to the nose, the lower down to the crease above the chin; shared in the middle
+    const own = .5 + .5 * ss(0, .007, ax), ends = ss(half * 1.1, half * .6, ax) * (1 - corner) * ss(.06, .075, hz), upper = side > 0 || (!side && v >= 0);
+    const lu = upper ? .9 * ss(.019, .009, v) * ends : 0, ll = !upper ? .9 * ss(-.018, -.009, v) * ends : 0;
+    if (lu > .002) { out.push(['lipUp' + sd, lu * own]); if (own < 1) out.push(['lipUp' + od, lu * (1 - own)]); }
+    // (what goes with the jaw: the lower lip's halves and the chin take theirs out of it, and carry the jaw's move with their own)
+    const cn = .8 * ss(.021, .007, hyp(x / 1.35, hy - lipLine(0, f) + .033)) * ss(.06, .075, hz) * (1 - ll);
+    let j = jaw;
+    if (ll > .002 && j > 0) { out.push(['lipLow' + sd, j * ll * own]); if (own < 1) out.push(['lipLow' + od, j * ll * (1 - own)]); j *= 1 - ll; }
+    if (cn > .002 && j > 0) { out.push(['chin', j * cn]); j *= 1 - cn; }
+    if (j > 0) out.push(['jaw', j]);
+  }
+  let sum = 0; for (const q of out) sum += q[1];
+  if (sum > 1) for (const q of out) q[1] /= sum;
   return out;
 }
+const RO = [0, 0, 0];
 
 /**
  * The skin parted along the line between the lips, so that a mouth can open. Every triangle of a head's mesh (m: field.js's, already thinned)
