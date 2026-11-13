@@ -988,6 +988,58 @@ function cars({ gs, size }) {
   };
 }
 
+/* ---------- ground: no repeats ---------- */
+// A drive down a made-up old town's streets (src/kit/ground-paint.js, ground-paint-gpu.js, city-walls.js). Off, the roads, pavements and
+// parks are tiled pictures that repeat every few metres and the walls are bare; on, the ground round the camera is painted from what
+// each piece of it is (patches, cracks and tar lines in the asphalt, slabs laid in a bond with a cracked one here and there, gum and
+// stains, oil under parked cars, skid marks before stop lines) into two pictures that follow the camera, a strip at a time, and the
+// ground reads them in place of its tiles; and the street walls wear posters, made-up tags, damp streaks and grime.
+function ground({ gs, size }) {
+  const { City } = gs.city, v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 700; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#fff1dc', 2.6, 60, [-.4, .8, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0012, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 11.5, speed: 0, stars: 0, sun, physical: true, fog: true, env: true });
+  const blocks = size < .3 ? 2 : Math.max(3, Math.round(5 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.2, Math.min(.6, size));
+  let city = null, mode = '';
+  const sum = { n: 0, ms: 0, t: 0, strips: 0, texels: 0 };
+  const enter = key => async draw => {
+    const t0 = performance.now(), opts = { seed: 11, blocks, style: 'oldtown', sky, traffic: busy, people: busy, crowd: false, sound: false, paint: key === 'on', walls: key === 'on' };
+    let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err;
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; Object.assign(sum, { n: 0, ms: 0, t: 0, strips: 0, texels: 0 });
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.parked.length)} parked cars${city.groundPaint ? `, ${num(city.groundPaint.stamps.length)} marks on the ground` : ''}` };
+  };
+  const ahead = new gs.THREE.Vector3();
+  return {
+    v, holds: `a drive at 9 metres a second down the streets of a made-up old town of ${blocks} blocks a side, at midday`,
+    modes: [
+      { key: 'off', name: 'tiled ground, bare walls', enter: enter('off') },
+      { key: 'on', name: 'the ground painted round the camera with no repeats, posters and stains on the walls', enter: enter('on') },
+    ],
+    // down the road beside the middle row of blocks, at a car's height, looking ahead and a little down
+    path(t, cam) {
+      if (!city) return;
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const P = city.plan, B = P.bounds, row = P.blocks.filter(k => k.j === Math.floor(P.nz / 2)), z = Math.min(...row.map(k => k.z0)) - 3.2;
+      const span = B.x1 - B.x0 - 30, x = B.x0 + 15 + (t * 9) % span;
+      cam.position.set(x, 1.3, z); ahead.set(x + 14, .2, z + .6 * Math.sin(t * .3)); cam.lookAt(ahead); cam.updateMatrixWorld();
+      sun.follow(x, 0, z); sky.update(dt);
+      const i0 = city.groundPaint?.info, s0 = i0 ? i0.strips : 0, x0 = i0 ? i0.texels : 0;
+      const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
+      if (i0) { sum.strips += i0.strips - s0; sum.texels += i0.texels - x0; }
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
+      return mode === 'off' ? ms : `${ms} · ${num(sum.strips)} strips painted, ${num(sum.texels / sum.n)} texels a frame · ${num(city.groundPaint.stamps.length)} marks · ${num(city.wallMarks || 0)} things on the walls`;
+    },
+    dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -1004,4 +1056,5 @@ export const SCENES = [
   ['street', 'Street', 'a city that holds up close: rooms behind the windows, real and parked cars, sculpted people, the street dressed', street],
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
   ['cars', 'Cars', 'cars up close: seats behind the glass, paint, dirt and rain, dents and broken glass', cars],
+  ['ground', 'Ground', 'ground and walls with no repeats: the ground painted round the camera, posters and stains on the walls', ground],
 ];
