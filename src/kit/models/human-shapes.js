@@ -72,7 +72,8 @@ const on = (base, s) => ({ lumpy: base.lumpy, folds: base.folds, foldMax: base.f
 function arm(a) {
   const { build: b, top } = a, LM = b.limbs, S = [], short = top.sleeves === 'short', e = easeOf(top.kind), rows = sleeveRows(LM, e), hem = rows.find(r => r[0] > 1.25);
   const sleeve = new Loft(short ? rows.filter(r => r[0] > 1.25).concat([[1.215, hem[1] + .003, hem[2] + .003, hem[3], .198, hem[5], hem[6] + .003, hem[7]]]) : rows);   // (a short one ends above the elbow, a little wider than the arm in it)
-  const elbow = (x, y, z) => { const th = Math.atan2(x - .2, z + .01), w = lumps(x * 11, y * 15, z * 11); return .0016 * bump(y, 1.17, .06) * sin(y * 190 + th * 2.4 + 3.6 * w) * (.65 + .35 * cos(th)) + .002 * bump(y, 1.39, .05) * sin(th * 6 + y * 30 + 3 * w); };
+  // (folds where the elbow bends: deepest in its crook, in front, and only a ripple over its point)
+  const elbow = (x, y, z) => { const th = Math.atan2(x - .2, z + .01), w = lumps(x * 11, y * 15, z * 11); return bump(y, 1.17, .06) * sin(y * 190 + th * 2.4 + 3.6 * w) * (.0007 + .0023 * ss(-.3, .8, cos(th))) + .002 * bump(y, 1.39, .05) * sin(th * 6 + y * 30 + 3 * w); };
   const SL = { loft: sleeve, slot: 'top', space: ARMSP, lumpy: [.06, .0018], folds: elbow, foldMax: .004, blend: 0 }, onA = s => on(SL, { space: ARMSP, ...s }); S.push(SL);
   S.push(onA({ ...capOf(LM, e), slot: 'top', blend: .014 }));
   if (short) S.push({ loft: sleeveRows(LM, -.0035).filter(r => r[0] < 1.3), slot: 'skin', space: ARMSP, blend: .006 });
@@ -124,7 +125,8 @@ function trunk(a) {
   if (!skirted && kind !== 'blouse') S.push({ band: torso, y: [1.0, 1.056], out: .0042, slot: 'legs', part: 'hips', edge: .0025, stitch: true });   // the waistband, over a shirt tucked in
   const fl = legs.kind === 'breeches' ? 1.16 : 1, tall = feet.kind === 'tall', gait = feet.kind === 'gaiters', tuck = tall || gait;
   const leg = new Loft(legRows(b, fl, lowRows(b, feet.kind)));
-  const knee = (x, y, z) => { const th = Math.atan2(abs(x) - .097, z), w = lumps(x * 9, y * 13, z * 9); return .0012 * bump(y, .535, .06) * sin(y * 170 + th * 2.2 + 3.6 * w) * (.6 - .4 * cos(th)) + (tuck ? .004 * bump(y, .49, .035) * sin(th * 7 + 3 * w) : .0028 * bump(y, .112, .024) * ss(-.3, .7, cos(th)) + .0012 * bump(y, .17, .05) * sin(y * 150 + th * 2.6 + 3.6 * w)); };
+  // (folds behind the knee, where it bends, and hardly any over the kneecap)
+  const knee = (x, y, z) => { const th = Math.atan2(abs(x) - .097, z), w = lumps(x * 9, y * 13, z * 9); return bump(y, .535, .06) * sin(y * 170 + th * 2.2 + 3.6 * w) * (.0003 + .0022 * ss(.3, -.8, cos(th))) + (tuck ? .004 * bump(y, .49, .035) * sin(th * 7 + 3 * w) : .0028 * bump(y, .112, .024) * ss(-.3, .7, cos(th)) + .0012 * bump(y, .17, .05) * sin(y * 150 + th * 2.6 + 3.6 * w)); };
   const LG = { loft: leg, slot: 'legs', part: 'leg', mirror: true, lumpy: [.07, .0022], folds: knee, blend: .018 }; S.push(LG);
   if (tuck) S.push({ ball: [.071 * LM, .038, .075 * LM], at: [.097, tall ? .491 : .374, -.012], slot: 'legs', part: 'leg', mirror: true, lumpy: [.03, .004], blend: .028 });   // the trouser leg bloused over the boot top (down to its rim, not over it)
   // boots or shoes
@@ -582,9 +584,12 @@ const whole = () => [['$', 1]];
 // the maker of a hat or pack by its kind: one from the list (and a function, checked before anything calls it), or null
 function listed(list, kind) { const f = list.get(kind); if (typeof f === 'function') return f; return null; }
 /** Sculpts one piece (a job from jobsFor). The slow part: a tenth of a second for a hand, a second or two for a trunk on a phone. */
+const CLOTH = [.12, .05, .0085];
 export function sculpt({ kind, a }) {
-  if (kind === 'trunk') { const S = trunk(a), p = finish(S, { cell: .006, bones: trunkBones(a), extra: S.extra }); p.hang = S.hang; return p; }
-  if (kind === 'arm') return finish(arm(a), { cell: .006, bones: armBones });
+  // (clothes are thinned close up as far as a millimetre and a bit of error lets them: what is finer than that, seams and stitching, the
+  // weave and the grain, is in pictures, so flat cloth is a few big triangles. Each level after it is about a quarter of the one before)
+  if (kind === 'trunk') { const S = trunk(a), p = finish(S, { cell: .006, bones: trunkBones(a), extra: S.extra, keep: CLOTH }); p.hang = S.hang; return p; }
+  if (kind === 'arm') return finish(arm(a), { cell: .006, bones: armBones, keep: CLOTH });
   if (kind === 'collar') return finish(collar(a), { cell: .003, bones: trunkBones(a), keep: [.15, .04, .01], err: [.001, .004, .02], blend: .004 });
   if (kind === 'hand') return finish(hand(a), { cell: .0032, bones: handBones(a), keep: [.2, .035, .006], err: [.0006, .004, .02], blend: .004 });
   if (kind === 'head') {
@@ -607,4 +612,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, collar, collarRows, turnOf, RIM, BODY_STAMP, arm, armBones, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, eyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, collar, collarRows, turnOf, RIM, BODY_STAMP, arm, armBones, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, eyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
