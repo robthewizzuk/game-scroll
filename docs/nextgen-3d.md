@@ -428,6 +428,16 @@ export default {
 Check it with `node scripts/sweep.cjs my-game` (long random play at odd sizes) as well as the
 usual smoke and fold tests.
 
+**The loading screen after Play.** Play does not start a Next Gen, AR or Board round at once: the
+app puts a loading screen over the card, runs your `reset()`, draws the round's first frames under
+the cover, runs your first `update()` there once, and starts the round when the shaders for all of
+that are built and the frames come on time (usually well under a second; "Play again" mostly shows
+no loading screen at all). There is nothing to call. Two things follow for the game: make what the
+round needs in `reset()` or in the round's first `update()`, not a few frames later, or it is built
+in front of the player after all; and a sound or a spoken line started in the very first `update()`
+is heard a moment before the cover lifts, so start those from the first touch (`gs.rounds.Ready`)
+or a beat into the round.
+
 **Full screen.** Every Next Gen card has a full screen button on its bezel. In full screen the
 frame, caption and buttons go away and `maxW` / `maxH` no longer cap the size, so `resize(w, h)`
 can hand you anything up to 2.4 : 1 either way (about 300 × 666 on a tall phone, 666 × 300 on its

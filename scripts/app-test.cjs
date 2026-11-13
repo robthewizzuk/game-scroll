@@ -2,9 +2,10 @@
 // round, finer touch, even pixels and the LCD look for pocket games, the one-line soundtrack, the bigger
 // save that stays on the phone, the font library, the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons),
 // the phone test tour (a bot that plays as a guest, the frame report, the plugin check, the engine test scenes), and loading a big
-// 3D game a little each frame (each pass on a fresh copy of the game's file), the fill-ins for old WebViews, and that a
-// test build sends no play stats or crash reports.
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading|oldweb|reports]   (SHOTS=<dir> saves a picture of every font and look)
+// 3D game a little each frame (each pass on a fresh copy of the game's file), getting a 3D round ready behind
+// a loading screen after Play (its first frames and its first update, before the round starts), the fill-ins for
+// old WebViews, and that a test build sends no play stats or crash reports.
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading|ready|oldweb|reports]   (SHOTS=<dir> saves a picture of every font and look)
 const { chromium } = require('playwright');
 
 let failed = 0;
@@ -792,6 +793,123 @@ async function loading(b) {
   await q.done();
 }
 
+/* ---------- Play on a 3D game: a loading screen, the round's first frames and first step under it, then the round ---------- */
+async function ready(b) {
+  console.log('\nGetting a round ready');
+  const p = await open(b);
+  // A made-up Next Gen game that counts what the app asks of it. Its reset() makes a thing the card has never
+  // drawn, and its first update() another (as plenty of real games do): both must be on the graphics chip
+  // before the round starts. how: 'score' scores in its first update, 'over' ends its round there.
+  const add = (id, how = '') => p.evaluate(async ([id, how]) => {
+    const gs = (await __gs.gs()).default, { HDView, pbr, sun, THREE } = gs.hd;
+    const N = window.__n = { resets: 0, updates: 0, draws: 0, log: [], dts: [] };
+    let v, light, made = [];
+    const def = { id, likes: 1, title: 'Ready test', tag: 'Next Gen · Test', retro: true, era: 'nextgen', pal: 'grape', w: 300, h: 300, goal: 50, hint: 'A test.', creator: 'Test', music: 'chase',
+      make: api => ({
+        reset() {
+          if (!v) { v = new HDView({ bg: '#101820' }); light = sun('#ffffff', 3, 10); v.scene.add(light, light.target); v.cam.position.set(0, 4, 7); v.cam.lookAt(0, 0, 0);
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), pbr('#405060', { rough: .6 })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; v.scene.add(floor); }
+          for (const m of made) v.scene.remove(m); made = []; N.resets++; N.first = true;
+          const m = new THREE.Mesh(new THREE.TorusKnotGeometry(.5, .18, 64, 12), pbr('#e06030', { rough: .3, metal: .6, clear: 1 })); m.position.set(-1.5, 1, 0); m.castShadow = true; v.scene.add(m); made.push(m);
+        },
+        update(dt) {
+          N.updates++; N.dts.push(dt); N.log.push('u:' + __gs.active?.state);
+          if (N.first) { N.first = false;
+            const m = new THREE.Mesh(new THREE.IcosahedronGeometry(.6, 2), pbr('#30c0e0', { glow: 2, rough: .2 })); m.position.set(1.5, 1, 0); m.castShadow = true; v.scene.add(m); made.push(m);
+            if (how === 'score') api.score(7); if (how === 'over') api.over(); }
+        },
+        draw(c) { N.draws++; N.log.push('d:' + __gs.active?.state); v.render(c, 300, 300); },   // (the card's first picture is drawn before it is the one on screen)
+      }) };
+    __gs.GAMES.push(def); __gs.only(id, true);
+    await new Promise(res => { const t = setInterval(() => { if (__gs.active && __gs.active.def.id === id && (!__gs.active.loading || __gs.active.failed)) { clearInterval(t); res(); } }, 50); });
+    await new Promise(res => setTimeout(res, 600));
+    if (__gs.active.failed) throw new Error('the test game did not load: ' + __gs.active.failed);
+  }, [id, how]);
+  const cover = () => p.evaluate(() => { const el = document.querySelector('#feed .slide .load-ov'); return !!el && !el.hidden && !el.classList.contains('gone'); });
+  // what the game was asked between Play and the round: watched every frame
+  const watch = how => p.evaluate(how => new Promise(res => {
+    const N = __n, s = __gs.active, at = { n0: { ...N }, t0: performance.now(), covered: 0, seen: [], began: 0 };
+    N.log = []; N.dts = [];
+    if (how === 'tap') document.querySelector('#feed .slide .overlay button.play').click(); else __gs[how]();
+    at.atOnce = { state: s.state, starting: !!s.starting, cover: !!document.querySelector('#feed .slide .load-ov:not([hidden])') };
+    const f = () => {
+      const el = document.querySelector('#feed .slide .load-ov'), up = !!el && !el.hidden && !el.classList.contains('gone');
+      if (s.starting) { if (up) at.covered++; at.seen.push(s.starting.phase); }
+      if (s.state !== 'ready' && !s.starting || performance.now() - at.t0 > 40000) {
+        res({ ...at, ms: Math.round(performance.now() - at.t0), state: s.state, readyMs: s.readyMs | 0, waits: __gs.waits(), score: s.score, badge: s.scoreEl.textContent, tune: __gs.soundtrack.now, ahead: __gs.soundtrack.ahead,
+          resets: N.resets - at.n0.resets, updates: N.updates, draws: N.draws - at.n0.draws, log: N.log.join(' '), dts: N.dts.slice(0, 3), n0: undefined, seen: [...new Set(at.seen)].join(' ') });
+        return;
+      }
+      requestAnimationFrame(f);
+    }; requestAnimationFrame(f);
+  }), how);
+  await add('zz-ready-a');
+  const u0 = await p.evaluate(() => __n.updates);
+  let r = await watch('tap');
+  check(u0 === 0 && r.atOnce.starting && r.atOnce.cover && r.atOnce.state === 'ready', 'Play on a Next Gen card puts its loading screen up at once, and the round has not started', JSON.stringify(r.atOnce));
+  const beforeRound = r.log.split(' ').filter(x => !x.endsWith(':playing'));
+  check(r.state === 'playing' && r.resets === 1 && r.seen.startsWith('load warm') && r.covered > 3 && r.readyMs > 0, 'the game is reset once, its frames are drawn under the loading screen, and then the round starts', JSON.stringify(r));
+  check(beforeRound.filter(x => x[0] === 'u').length === 1 && beforeRound.filter(x => x[0] === 'd').length >= 6 && beforeRound.findIndex(x => x[0] === 'u') >= 3 && beforeRound.at(-1)[0] === 'd',
+    'under it: frames with no update, then the round\'s first update once, then frames again', beforeRound.join(' '));
+  check(r.dts[0] > .005 && r.dts[0] < .04, 'that first update is one frame of the game\'s time', JSON.stringify(r.dts));
+  check(r.waits.hard === 0 && await p.evaluate(() => !(window.__hdView?.held?.size)), 'when the round starts nothing is still being built or hidden', JSON.stringify(r.waits));
+  check(r.tune && r.tune.id === 'zz-ready-a' && r.tune.playing && r.ahead === null, 'its soundtrack, made behind the loading screen, starts with the round', JSON.stringify([r.tune, r.ahead]));
+  await p.waitForTimeout(700);
+  check(!(await cover()) && await p.evaluate(() => __gs.active.state === 'playing' && __n.updates > 3), 'the loading screen is gone and the round runs');
+  // again: the card has been through it once
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(700);
+  const first = r; r = await watch('play');
+  check(r.state === 'playing' && r.resets === 1 && r.draws < first.draws && r.ms < first.ms + 400, 'Play again gets ready in fewer frames', JSON.stringify({ first: [first.draws, first.ms], again: [r.draws, r.ms] }));
+  // tests start a round this instant, as they always have
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(700);
+  r = await p.evaluate(() => { __gs.start(); return { state: __gs.active.state, starting: !!__gs.active.starting }; });
+  check(r.state === 'playing' && !r.starting, '__gs.start() still starts the round at once');
+  // what a round's first update asks for under the loading screen holds when the round is on
+  await add('zz-ready-score', 'score'); r = await watch('play');
+  check(r.state === 'playing' && r.score === 7 && r.badge === '7', 'a score from the round\'s first update is the round\'s score', JSON.stringify([r.state, r.score, r.badge]));
+  await add('zz-ready-over', 'over'); r = await watch('play'); await p.waitForTimeout(300);
+  check(await p.evaluate(() => __gs.active.state === 'over') && !(await cover()), 'and a round that ends in its first update is over as soon as it is on');
+  // leaving while it gets ready gives the start up; the game is put back to the start of a round
+  await add('zz-ready-left');
+  r = await p.evaluate(() => new Promise(res => {
+    const s = __gs.active; __gs.play();
+    const f = () => { if (s.starting && s.starting.stepped || !s.starting) { const stepped = !!s.starting, tune = __gs.soundtrack.ahead; __gs.left(s); res({ stepped, tune, starting: !!s.starting, state: s.state, resets: __n.resets, cover: !!s.el.querySelector('.load-ov:not([hidden])'), ov: !s.overlay.hidden, ahead: __gs.soundtrack.ahead, now: __gs.soundtrack.now }); } else requestAnimationFrame(f); };
+    requestAnimationFrame(f);
+  }));
+  await p.waitForTimeout(1200);
+  const after = await p.evaluate(() => ({ resets: __n.resets, state: __gs.active.state, updates: __n.updates }));
+  check(r.stepped && !r.starting && r.state === 'ready' && !r.cover && r.ov && after.resets === r.resets + 1 && after.state === 'ready' && after.updates === 1,
+    'a start given up after the round\'s first step: no round, the card as it was, and the game reset once the feed is still', JSON.stringify({ r, after }));
+  check(r.tune === 'zz-ready-left' && r.ahead === null && r.now === null, 'and the tune made for that round is let go', JSON.stringify([r.tune, r.ahead, r.now]));
+  await p.done();
+
+  // a 2D game starts the instant Play is pressed, with no loading screen
+  const q = await open(b);
+  await q.game(CASUAL);
+  r = await q.evaluate(() => { document.querySelector('#feed .slide .overlay button.play').click(); return { state: __gs.active.state, starting: !!__gs.active.starting, cover: !!document.querySelector('.load-ov') }; });
+  check(r.state === 'playing' && !r.starting && !r.cover, 'a 2D game starts the instant Play is pressed', JSON.stringify(r));
+  // Play pressed while a 3D game is still being made: it starts by itself once it is made
+  r = await q.evaluate(async () => {
+    __gs.only('tavern-dice', true); await new Promise(res => setTimeout(res, 60));
+    const s = __gs.active, early = s.loading; __gs.play();
+    const at = { early, starting: !!s.starting, cover: !!s.el.querySelector('.load-ov:not([hidden])'), state: s.state };
+    await new Promise(res => { const t0 = performance.now(), t = setInterval(() => { if (s.state === 'playing' || performance.now() - t0 > 120000) { clearInterval(t); res(); } }, 50); });
+    return { ...at, end: s.state, id: s.def.id, loading: s.loading, held: window.__hdView?.held?.size | 0, waits: __gs.waits() };
+  });
+  check(r.early && r.starting && r.cover && r.state === 'ready', 'Play on a Board game that is still loading puts the loading screen up', JSON.stringify(r));
+  check(r.end === 'playing' && !r.loading && !r.held && !r.waits.hard, 'and the round starts by itself once the game is made and ready', JSON.stringify(r));
+  // an AR game goes the same way
+  await q.game('bin-flick');
+  r = await q.evaluate(async () => {
+    const s = __gs.active; document.querySelector('#feed .slide .overlay button.play').click();
+    const at = { starting: !!s.starting, state: s.state };
+    await new Promise(res => { const t0 = performance.now(), t = setInterval(() => { if (s.state === 'playing' || performance.now() - t0 > 60000) { clearInterval(t); res(); } }, 50); });
+    return { ...at, end: s.state, readyMs: s.readyMs | 0 };
+  });
+  check(r.starting && r.state === 'ready' && r.end === 'playing' && r.readyMs > 0, 'an AR game gets ready behind its loading screen too', JSON.stringify(r));
+  await q.done();
+}
+
 /* ---------- old WebViews: the fill-ins for roundRect, Object.hasOwn and structuredClone ---------- */
 async function oldweb(b) {
   console.log('\nOld WebViews');
@@ -896,7 +1014,7 @@ async function reports(b) {
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading, oldweb, reports };
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading, ready, oldweb, reports };
   for (const [name, fn] of Object.entries(parts)) if (!only.length || only.includes(name)) await fn(b);
   await b.close(); server.httpServer.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall app checks passed'); process.exit(failed ? 1 : 0);

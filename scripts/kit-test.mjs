@@ -3183,6 +3183,27 @@ console.log('physics ok');
   console.log('bundled games: a fresh copy of each game file can be loaded ok');
 }
 
+// ---- getting a round ready behind the loading screen (getready.js): what the kits still have on its way, and when the picture is steady
+{
+  const { getready, waitsOn, waiting, Steady } = await import('../src/kit/getready.js');
+  assert.equal(getready.warming, false, 'nothing is getting ready until the app says so');
+  const base = waiting();   // (the 3D kit asks too; with no view drawn it has nothing on its way)
+  assert.deepEqual(base, { hard: 0, soft: 0, what: '' });
+  const offs = [waitsOn(() => ({ hard: 2, soft: 0, what: 'Shaders' })), waitsOn(() => ({ hard: 0, soft: 1, what: 'Detail' })), waitsOn(() => { throw new Error('cannot say'); }), waitsOn(() => null), waitsOn(() => ({ hard: 0, soft: 0, what: 'Nothing' }))];
+  assert.deepEqual(waiting(), { hard: 2, soft: 1, what: 'Shaders' }, 'what every kit has on its way, added up; a kit that throws or has nothing is not waited for');
+  offs[0](); assert.deepEqual(waiting(), { hard: 0, soft: 1, what: 'Detail' }, 'a kit taken off is no longer asked, and the word is the first kit\'s that waits');
+  offs.forEach(f => f()); assert.deepEqual(waiting(), base);
+  const calm = (gaps, step) => { const s = new Steady(); let c = 0; for (const g of gaps) c = s.add(g, step); return c; };
+  assert.equal(calm([900, 16, 17, 16]), 3, 'the first gap holds the frame that did the building: it is left out');
+  assert.equal(calm([16, 16, 16, 16, 90, 16]), 1, 'a late frame starts the count again');
+  assert.equal(calm([33, 33, 70, 33], 33.3), 3, 'a 30 fps game: a gap of two frames is still on time');
+  assert.equal(calm([200, 200, 200, 200, 200]), 3, 'a phone (or a test machine) that can only draw five frames a second is steady at its own rate');
+  assert.equal(calm([230, 233, 33, 233, 233, 233]), 4, 'and one freak short gap does not make every gap after it look late');
+  assert.equal(calm([200, 200, 200, 200, 900, 200]), 1, 'but a gap far over its usual one is late there too');
+  { const s = new Steady(); s.add(16); s.add(16); assert.equal(s.add(0), 1); assert.equal(s.add(NaN), 1, 'no gap, no change'); }
+  console.log('getready: what the kits wait for is added up, and the picture is called steady by the gaps between its frames');
+}
+
 // ---- Classic Console 2.0 (toon3d.js): real toon shadows, the rim of light, retro looks, a jointed figure
 {
   const T = await import('three');

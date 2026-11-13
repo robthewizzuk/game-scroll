@@ -26,6 +26,7 @@ import { stopAll, pauseAll, resumeAll, ownedBy, release } from './kit/cleanup.js
 import * as slices from './kit/slices.js';
 import { stats as jobStats } from './kit/jobs.js';
 import { tickRate, runTicks, beforeDraw, resetTicks } from './kit/tick.js';
+import { getready, waiting as kitsWaiting, Steady } from './kit/getready.js';
 // Things a game may leave running (music, the camera for face tracking, motion moves): stopped when a round ends or the player leaves.
 const stopKits=stopAll;   // every kit registers its own stop (src/kit/cleanup.js)
 import { remote } from './remote.js';
@@ -120,7 +121,7 @@ function bootGame(s,slice=true){
 // kit's builders may stop it; otherwise it runs to the end (work can still be left with the workers).
 function makeGame(s,make,fresh,slice){
   // (a game being played leaves a loading neighbour a smaller share of each frame)
-  if(slice)slices.begin(s,active&&active!==s&&active.state==='playing'?3:6,!fresh);else slices.forget(s);
+  if(slice)slices.begin(s,active&&active!==s&&(active.state==='playing'||active.starting)?3:6,!fresh);else slices.forget(s);
   try{
     // (a game made again after "Loading…" is a new game: tell it the size its card already has, as fit() told the first)
     ownedBy(s,()=>{s.game=make(s.api);s.game.reset();if(s.w&&(s.w!==s.def.w||s.h!==s.def.h)&&s.game.resize)s.game.resize(s.w,s.h)});
@@ -152,7 +153,7 @@ function holdGame(s,more){
   more.then(()=>{if(s.dropped||s.game!==stub)return;s.game=g;s.loading=false;loadDone(s);s.dirty=true;renderOverlay(s)});
 }
 function gameFault(s,e){console.error(s.def.id,e);perf.error(e,s.def.id);broken(s,'This game hit a problem.')}
-function broken(s,why){if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
+function broken(s,why){dropReady(s);if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
 // A new round: false (and the card shows the problem) if the game threw.
 function resetGame(s){resetTicks(s);try{ownedBy(s,()=>s.game.reset());return true}catch(e){gameFault(s,e);return false}}
 function makeSlide(def){
@@ -347,10 +348,20 @@ function funNote(s,what){
   if(what==='again'&&since<30000){s.funSent=true;sendFun(id,1)}
   else if(what==='left'&&since<4000){s.funSent=true;sendFun(id,-.5)}
 }
-function startGame(s){
+// Play. A 2D game that is made starts at once. A Next Gen, AR or Board game, and any game still being made,
+// goes through the gate below first (getReady). now: start this instant, as tests always have (__gs.start()).
+function startGame(s,now=false){
   if(active!==s)return;
   if(s.failed){bootGame(s);s.dirty=true;renderOverlay(s);return}   // the card's "Try again"
-  if(s.loading)return;
+  if(s.starting)return;   // (pressed again while it gets ready)
+  if(now&&s.loading)return;
+  if(!now&&(s.loading||usesHD(s.def))){getReady(s);return}
+  const items=prepRound(s);if(!items)return;
+  beginRound(s,items);
+  sfx(660,.08,'square',.04,300);
+}
+// A new round, up to and including the game's reset(): gives the boosts used on this run, or null if the game threw.
+function prepRound(s){
   if(s.state==='over')funNote(s,'again');s.funHeart=false;
   clearPause(s);
   // Boosts the player owns for this game are used up on this run; unlocks stay on.
@@ -359,17 +370,141 @@ function startGame(s){
   s.run={items:new Set(ready.map(it=>it.id))};
   s.won=false;s.paid=0;s.trophies=[];
   if(!guest)roundStarted(s.def.id);   // before reset(): a location game may ask where the player is there (a guest gets the stand-in place)
-  s.stale=false;if(!resetGame(s)){roundEnded(s.def.id);return}
+  const t0=performance.now();
+  s.stale=false;if(!resetGame(s)){roundEnded(s.def.id);return null}
+  s.resetMs=performance.now()-t0;   // (a long one: the loading screen goes up before it the next time)
+  s.score=0;s.scoreEl.textContent='0';
+  return ready;
+}
+// ...and the round itself: from here the game is updated and takes touches.
+function beginRound(s,ready){
   for(const it of ready)if(it.kind!=='unlock')progress.use(s.def.id,it);
-  if(!guest){progress.played(s.def.id);playstats.started(s.def.id)}perf.started(s.def.id);s.score=0;s.scoreEl.textContent='0';s.state='playing';s.newBest=false;s.startAt=Date.now();
+  if(!guest){progress.played(s.def.id);playstats.started(s.def.id)}perf.started(s.def.id);s.state='playing';s.newBest=false;s.startAt=Date.now();
   s.el.classList.add('playing');s.el.classList.remove('over');feed.classList.add('locked');s.startPerf=performance.now();renderOverlay(s);
-  sfx(660,.08,'square',.04,300);
   soundtrack.start(s.def);   // music: '<mood>' in the definition (src/soundtrack.js)
+}
+
+/* ---------- getting a round ready: the loading screen after Play ---------- */
+// A 3D round used to start the instant Play was pressed, and its first frames were the ones that built what
+// the round needs (shaders for what reset() had just made, their pictures sent to the graphics chip, shadow
+// maps): a frame ten times as long as the rest, or, where shaders build in the background, a level that
+// started half missing and filled in over the next second. Now Play on a Next Gen, AR or Board game:
+//   1. puts a loading screen over the card (and waits for the game itself, if it is still being made:
+//      pressing Play on a loading card used to do nothing);
+//   2. runs the game's reset(), a frame or two later so the cover is on the screen first;
+//   3. draws the round's own first frames under the cover: draw() without update(), on the canvas and in
+//      the pictures the round will use, so everything they need is built where nobody sees it. The kits say
+//      what is still on its way (src/kit/getready.js), and the gaps between the frames say when they have
+//      stopped being held up;
+//   4. runs the round's first update() there too, once, and draws until what that made is in as well
+//      (firstStep below);
+//   5. starts the round: it is one frame old, and the first touch is the first thing it hears.
+// A card that has been through this once is quick the next time ("Play again"), so its cover only goes up
+// if getting ready takes longer than a blink (GATE.show), unless its reset() is a long one. A cover that has
+// gone up stays a moment (GATE.hold), so it never flashes. Nothing waits for ever: GATE.most ends it, and
+// what only makes frames faster (cluster detail, textures packed for the chip) is waited for GATE.soft at most. Swiping to another game,
+// or the card failing, gives the start up (dropReady): nothing was spent and the card is ready again.
+// A game on any other style that is still being made when Play is pressed waits for it the same way, and
+// starts as soon as it is made.
+const GATE={show:150,hold:320,most:15000,soft:4000,slowReset:60};
+// how long a game took to get ready the last time on this phone: what its loading bar goes by
+const WARMS=store.get('gs_warms',{});
+const noteWarm=(id,ms)=>{WARMS[id]=Math.round(ms);const k=Object.keys(WARMS);if(k.length>400)delete WARMS[k[0]];store.set('gs_warms',WARMS)};
+function getReady(s){
+  const st=s.starting={at:performance.now(),phase:'load',was:!!s.loading,first:!s.warmed,shown:0,cover:null,coverAt:0,items:null,t:0,last:0,frames:0,steady:new Steady(),what:'',f:0};
+  // where the wait will be seen, the cover goes up now: a game not made yet, a card's first round, a long reset()
+  if(st.was||(usesHD(s.def)&&(st.first||s.resetMs>GATE.slowReset)))coverUp(s);
+  sfx(660,.08,'square',.04,300);
+}
+// each frame while a card gets ready (frame() below); step: the milliseconds a frame takes at the game's rate
+function readyStep(s,now,step){
+  const st=s.starting,hd=usesHD(s.def);
+  if(!st.cover&&now-st.at>GATE.show)coverUp(s);
+  if(st.phase==='load'){
+    if(s.loading){coverBar(s);return}
+    // (reset() a frame or two after the cover is on the screen: a long one would hold the very frame it was to show in)
+    if(st.cover&&++st.shown<3)return;
+    const items=prepRound(s);if(!items)return;   // (the game threw: its card says so, and broken() gave the start up)
+    st.items=items;if(s.state==='over'){s.state='ready';s.el.classList.remove('over')}
+    st.phase=hd?'warm':'hold';
+  }
+  if(st.phase==='warm'){
+    if(now-scrollAt<150){st.last=0;return}   // the feed is being swiped: these frames wait, like any 3D frame
+    const gap=st.last?now-st.last:0;st.last=now;
+    if(gap){st.t+=Math.min(gap,250);st.steady.add(gap,step)}   // (a longer gap: the app was away)
+    const w=kitsWaiting();st.what=w.what;
+    // a card's first round: five frames drawn and three gaps in a row on time; after that, two and one
+    // (and after the round's first step, below: one and one more)
+    const quick=st.stepped||!st.first;
+    let ok=st.t>GATE.most||st.frames>=(st.stepped?1:quick?2:5)&&st.steady.calm>=(quick?1:3)&&!w.hard&&(!w.soft||st.t>GATE.soft);
+    // what reset() made is in: now the round's first step, and the same again for what that made
+    if(ok&&!st.stepped){firstStep(s,step/1000);st.frames=0;st.steady.calm=0;ok=false}
+    if(ok)st.phase='hold';
+    else{st.frames++;s.dirty=true;coverBar(s);return}
+  }
+  // ready. A cover that is up stays its moment (the round's picture goes on being drawn under it)
+  if(st.cover&&now-st.coverAt<GATE.hold){if(hd)s.dirty=true;coverBar(s,1);return}
+  s.starting=null;s.readyMs=now-st.at;
+  if(hd&&st.first){s.warmed=true;noteWarm(s.def.id,st.t)}
+  coverDown(st,true);
+  beginRound(s,st.items);
+  if(st.won)win(s);if(st.ended)gameOver(s);   // (what the round's first step asked for, before there was a round to ask it of)
+}
+// The round's first update, under the cover. A round's first frame was always update() and then draw(), and
+// plenty of games make or show things in that first update (the pieces of the level, the city round the
+// van, a board's first move): frames drawn without it never meet them, and they were built in the round's
+// first frame after all. So the gate runs it once, for one frame of game time (one tick, for a game on a
+// fixed tick), and then draws on until that is in too. The round is one frame old when the cover lifts,
+// which is where it always was when its first picture reached the screen. What it started that can be
+// heard (a sound, a line of speech, its own music) is heard from here: a frame or two early as a rule.
+function firstStep(s,dt){
+  const st=s.starting,rate=tickRate(s.def);st.stepped=st.stepping=true;
+  try{runTicks(s,rate,rate?1/rate:dt,h=>s.game.update(h))}
+  catch(e){console.error(s.def.id,e);perf.error(e,s.def.id)}   // (the round starts, and ends on it, as it always did)
+  st.stepping=false;
+  soundtrack.prepare(s.def);   // its tune is written and its instruments built here too, not in the round's first frame
+}
+// the start is given up: the card is swiped away, dropped or broken while it was getting ready
+function dropReady(s){
+  const st=s.starting;if(!st)return;s.starting=null;
+  coverDown(st,false);
+  if(!st.items)return;
+  roundEnded(s.def.id);s.run=null;   // (reset() has run: the game sits at the start of a round, as a waiting card does)
+  // ...unless its first step has run too: what that started is stopped, and the game is reset once the feed is still
+  if(st.stepped){if(s===active)soundtrack.stop();stopKits();if(!s.dropped){s.stale=true;whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped&&!s.failed&&!s.starting){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}})}}
+  if(!s.failed&&!s.dropped)renderOverlay(s);
+}
+// The loading screen: its own layer over the card's screen (like the pause screen), solid, so nothing of the
+// frames drawn under it shows. Its bar's sheen is a CSS animation, which the browser keeps moving while the
+// page's own code is busy building.
+function coverUp(s){
+  const st=s.starting;if(!st||st.cover)return;
+  let el=s.screen.querySelector('.load-ov');
+  if(!el){el=document.createElement('div');el.className='overlay load-ov';el.onclick=e=>e.stopPropagation();s.screen.appendChild(el)}
+  clearTimeout(el._t);el.classList.remove('gone');
+  el.innerHTML=`<div class="ov-k">Loading</div><div class="ov-title">${s.def.title}</div><div class="ov-bar" role="progressbar" aria-label="Loading ${s.def.title}"><i></i></div><div class="ov-what"></div><div class="swipe-cue">Swipe up for the next game</div>`;
+  el.hidden=false;st.cover=el;st.coverAt=performance.now();st.bar=el.querySelector('.ov-bar i');st.note=el.querySelector('.ov-what');st.said='';coverBar(s);
+}
+function coverDown(st,fade){
+  const el=st.cover;if(!el)return;st.cover=null;
+  if(!fade){el.hidden=true;return}
+  el.classList.add('gone');el._t=setTimeout(()=>{el.hidden=true;el.classList.remove('gone')},280);   // (fades out over the round's first frames; touches already go through it)
+}
+// How far along: the making of the game (as the card's own bar counts it), then the round getting ready, by
+// how long that took this game the last time on this phone (the first time it eases along and never quite fills).
+function coverBar(s,full=0){
+  const st=s.starting;if(!st||!st.cover)return;
+  const of=WARMS[s.def.id],warm=st.phase==='load'?0:Math.min(.97,of>80?.9*st.t/of:1-Math.exp(-st.t/1200));
+  const f=full||(!usesHD(s.def)?loadFrac(s):st.was?(st.phase==='load'?.6*loadFrac(s):.6+.4*warm):warm);
+  if(f>st.f){st.f=f;st.bar.style.transform=`scaleX(${f.toFixed(3)})`}
+  const what=st.phase==='load'?(s.loading&&s.what)||'':st.what||'';
+  if(what!==st.said){st.said=what;st.note.textContent=what}
 }
 // A run counts as a win the first time its score reaches the game's goal (or the game calls
 // api.win()). It pays credits once per run and the game carries on.
 function win(s){
-  if(s.won||s.state!=='playing')return;
+  if(s.state!=='playing'){if(s.starting&&s.starting.stepping)s.starting.won=true;return}   // (asked for under the loading screen: once the round is on)
+  if(s.won)return;
   if(guest){s.won='yes';s.paid=0;return}
   const r=progress.win(s.def.id,s.def.reward);
   s.won=r.first?'first':'yes';s.paid=r.paid;
@@ -380,7 +515,8 @@ function awardTrophies(s){
   for(const t of checkTrophies()){toast(s.el,`🏆 ${t.name}`,'trophy');services.unlock(t.id);(s.trophies||=[]).push(t)}
 }
 function gameOver(s){
-  if(s.state!=='playing')return;clearPause(s);if(isFull(s))leaveFull();
+  if(s.state!=='playing'){if(s.starting&&s.starting.stepping)s.starting.ended=true;return}
+  clearPause(s);if(isFull(s))leaveFull();
   s.state='over';s.overAt=Date.now();s.funAt=s.overAt;s.funSent=false;soundtrack.stop();stopKits();roundEnded(s.def.id);if(!guest){logRound(s.def.id,s.overAt-s.startAt);playstats.round(s.def.id,s.overAt-s.startAt)}perf.ended();s.el.classList.remove('playing');s.el.classList.add('over');feed.classList.remove('locked');
   if(!guest&&progress.score(s.def.id,s.score))s.newBest=true;
   if(!guest){awardTrophies(s);services.reportRun(s.def)}
@@ -390,7 +526,7 @@ function gameOver(s){
 }
 // later: the card is being swiped away, so its game resets (which can rebuild a whole 3D level) once
 // the swipe has settled, not in the frame the swipe starts (Play resets it anyway if it comes first)
-function resetSlide(s,later=false){if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;s.scoreEl.textContent='0';
+function resetSlide(s,later=false){dropReady(s);if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;s.scoreEl.textContent='0';
   if(later){s.stale=true;renderOverlay(s);whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}});return}
   s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}
 function goPrev(s){
@@ -609,10 +745,10 @@ function topUpLater(wait=QUIET){
   // soon as the swipe has come to rest
   const ok=()=>ahead()<=1?!settling():calm();
   topT=setTimeout(()=>{
-    if(active&&active.state==='playing')return topUpLater(1000);           // mid-round: after it
+    if(active&&(active.state==='playing'||active.starting))return topUpLater(1000);   // mid-round, or a round getting ready: after it
     if(!ok())return topUpLater(100);                                        // still moving: wait for it to settle
     idleSlot(()=>{
-      if(!ok()||active&&active.state==='playing')return topUpLater(100);
+      if(!ok()||active&&(active.state==='playing'||active.starting))return topUpLater(100);
       const n=ahead();
       if(n<AHEAD)addStaged(ok,()=>{if(n+1<AHEAD)topUpLater(120)});
     });
@@ -665,7 +801,7 @@ function playNow(id,go=true){
   const g=GAMES.find(x=>x.id===id);if(!g)return;
   const def=playable(g);if(!def){remote.load(id).then(d=>{if(d)playNow(id,go)});return}
   const i=active?slides.indexOf(active):-1;
-  if(go){if(active&&active.state==='playing')resetSlide(active);feed.classList.remove('locked')}
+  if(go){if(active&&(active.state==='playing'||active.starting))resetSlide(active);feed.classList.remove('locked')}
   const s=makeSlide(def),next=slides[i+1];feedMsg(null);feed.insertBefore(s.el,next?next.el:null);slides.splice(i+1,0,s);fit(s);paint(s);io.observe(s.el);
   if(go)requestAnimationFrame(()=>{if(s.dropped)return;s.el.scrollIntoView({behavior:'auto'});setActive(s)});
 }
@@ -718,6 +854,7 @@ function setActive(s){
   // the card being left: a round in play ends now; a finished one (the game-over screen) is reset
   // once the swipe has settled, as resetting can rebuild a whole 3D level, which mid-swipe is a stutter
   const prev=active;
+  if(prev)dropReady(prev);   // (it was getting ready for a round: not now)
   if(prev&&prev.state==='over')funNote(prev,'left');
   if(prev&&prev.state==='playing')resetSlide(prev,true);
   else if(prev&&prev.state!=='ready')whenCalm(()=>{if(prev!==active&&prev.state!=='ready'&&!prev.dropped)resetSlide(prev)});
@@ -748,7 +885,7 @@ function pruneBehind(){
 }
 
 // A card leaves the feed for good: let the game tidy up, then free what its kits hold (physics worlds).
-function dropSlide(s){s.dropped=true;io.unobserve(s.el);try{s.game.dispose?.()}catch(_){}release(s);s.el.remove()}
+function dropSlide(s){s.dropped=true;dropReady(s);io.unobserve(s.el);try{s.game.dispose?.()}catch(_){}release(s);s.el.remove()}
 let built=0;
 function rebuild(){
   built++;slides.forEach(dropSlide);feed.innerHTML='';slides=[];active=null;lastId=null;queue=[];feed.scrollTop=0;addBatch();if(slides[0])setActive(slides[0]);
@@ -787,6 +924,7 @@ function hotSwap(d){
     const playing=s.state==='playing';let snap;
     if(playing&&s.game.snapshot)try{snap=s.game.snapshot()}catch(e){console.warn('[hot] snapshot',e)}
     if(s===active)stopKits();
+    dropReady(s);
     try{s.game.dispose?.()}catch(_){}release(s);
     KEPT.delete(g);s.def=g;s.w=g.w;s.h=g.h;bootGame(s,false);fit(s);
     if(playing&&snap!==undefined&&s.game.restore)try{ownedBy(s,()=>s.game.restore(snap))}catch(e){console.warn('[hot] restore',e)}
@@ -865,6 +1003,9 @@ function frame(now){
     // one broken game must never stop the loop (that froze every game): end its round instead
     try{
       let run=true;if(DBG&&DBG.on)({dt,run}=DBG.time(dt));if(LAB&&LAB.frozen)run=false;
+      // a card getting ready for its round (getReady above): its frames are drawn under the loading screen, and the kits are told so
+      if(s.starting)readyStep(s,now,step);
+      const warm=getready.warming=!!s.starting&&s.starting.phase!=='load'&&usesHD(s.def);
       const timed=s.state==='playing'&&!s.paused,t0=timed?performance.now():0;
       if(timed){if(run)runTicks(s,tickRate(s.def),dt,h=>{if(s.state==='playing'&&!s.paused)s.game.update(h)},DBG&&DBG.on?0:1/fps);if(!guest)gameRan(s.def.id);if(run)soundtrack.update(dt,s.score,s.def.goal)}else if(s.state==='over'&&s.game.fx)s.game.fx(dt);
       const t1=performance.now();
@@ -872,7 +1013,8 @@ function frame(now){
       // moves the shared 3D canvas onto it) waits until the swipe has settled
       // (nor does a finished one keep drawing its game-over scene while it's being swiped away: a whole
       // 3D frame each refresh, on the same graphics chip that's moving the feed)
-      const hold=usesHD(s.def)&&(s.state==='ready'&&s.dirty&&settling()||s.state==='over'&&performance.now()-scrollAt<150);
+      // (a round getting ready is drawn with a thumb resting on the screen too, just not while the feed moves)
+      const hold=usesHD(s.def)&&(warm?performance.now()-scrollAt<150:s.state==='ready'&&s.dirty&&settling()||s.state==='over'&&performance.now()-scrollAt<150);
       const painted=!hold&&(s.state!=='ready'||s.dirty||(DBG&&DBG.on));if(painted){paint(s);s.dirty=false}
       if(DBG&&DBG.on){DBG.after(s,timed?t1-t0:0,performance.now()-t1,now);if(s.off&&DBG.boxes&&s.game.debug)present(s,true)}
       if(LAB)LAB.tick(now,s,painted?'frame':'idle',timed?t1-t0:0,performance.now()-t1);
@@ -880,7 +1022,7 @@ function frame(now){
       if(timed&&s.state==='playing'&&!usesHD(s.def))lite2d(s,now,step);
       if(timed&&s.state==='playing')perf.frame(s.def.id,now,performance.now()-t0,1000/fps);else perf.gap();
     }catch(e){console.error(s.def.id,e);perf.error(e,s.def.id);s.dirty=false;if(s.state==='playing')try{gameOver(s)}catch(_){}}
-  }else if(LAB)LAB.tick(now,null,'idle');
+  }else{getready.warming=false;if(LAB)LAB.tick(now,null,'idle')}
 }
 
 /* keyboard (desktop preview) and game controllers (src/kit/gamepad.js turns pads into these keys) */
@@ -981,4 +1123,4 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
 
-if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active),brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

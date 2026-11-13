@@ -108,6 +108,9 @@ Next Gen and AR: frame generation makes the in-between frames on fast screens by
 `view.aimNow(cam => ...)` for a game turning its own camera from touch (gs.camera rigs already do).
 
 The app draws the start and game-over screens and the score. The game only draws play.
+On a Next Gen, AR or Board game, Play first shows a loading screen: the app runs `reset()`, draws the round's
+first frames and runs its first `update()` under it, and starts the round once the shaders for all of that are
+built. So make what a round needs in `reset()` or its first `update()`, not a few frames in.
 
 ## Styles
 

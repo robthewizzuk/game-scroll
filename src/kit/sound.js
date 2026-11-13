@@ -363,6 +363,10 @@ const VOICE = { lead: ['square', .028], bass: ['triangle', .07], pad: ['sine', .
 // tune stays on the beat, where a rhythm game's Beat expects it.
 const AHEAD = .45, TICK = 50, FIRST = .03;
 let toneRetry = 0;   // (a tune asks for Tone.js on its clock: after a failed load, not again for a few seconds)
+// The app only (src/soundtrack.js): song[TUNE]() builds a tune's instruments now, without a sound, so that its
+// start() has nothing left to make. A round's soundtrack is tuned like this behind the loading screen; a tune
+// that is never started must still be stopped, which lets them go. Not part of gs: games just start().
+const TUNE = Symbol.for('gs.sound.tune');
 /**
  * music({ tempo, lead, bass, pad, arp, drums, vol, swing, set, voices }): a looping tune. Each part is a
  * line of steps (eighth notes at the tempo): note names, '.' for a rest, '-' to hold the previous
@@ -381,7 +385,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   }
   const wantsTone = tracks.some(tr => tr.inst);
   let intensity = 0;
-  let timer = 0, step = 0, next = 0, rate = 1;
+  let timer = 0, step = 0, next = 0, rate = 1, ahead = false;   // (ahead: its instruments were built before start(), by the app: TUNE above)
   let gate = null, band = null, log = [];   // this run's output, its Tone instruments, and [step, time] of what's written
   const stepLen = () => 60 / tempo / 2 / rate;
   function noteLen(tr, i) { let n = 1; while (tr.steps[(i + n) % tr.steps.length] === '-' && n < tr.steps.length) n++; return n; }
@@ -431,8 +435,8 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   }
   const m = {
     get playing() { return !!timer; },
-    start() { if (timer) return m; close(); step = 0; next = 0; schedule(); timer = setInterval(schedule, TICK); playing.add(m); held.delete(m); return m; },
-    stop() { clearInterval(timer); timer = 0; close(); playing.delete(m); held.delete(m); return m; },
+    start() { if (timer) return m; if (ahead) ahead = false; else close(); step = 0; next = 0; schedule(); timer = setInterval(schedule, TICK); playing.add(m); held.delete(m); return m; },
+    stop() { clearInterval(timer); timer = 0; ahead = false; close(); playing.delete(m); held.delete(m); return m; },
     /** Holds the tune where it is (resume() carries on from the same step). The app does this on pause. */
     pause() {
       if (!timer) return m;
@@ -465,6 +469,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
     /** True once the set's instruments are in (a tune started before then plays in the chip sound until they are). */
     get tuned() { return !wantsTone || !!band; },
   };
+  Object.defineProperty(m, TUNE, { value() { if (timer || gate) return; const a = audio(); if (!a) return; open(a); tuneUp(); ahead = true; } });
   return m;
 }
 /**

@@ -66,6 +66,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, frameGenSteady, fgSaving, screenHz, qualityVerdict } from './speed.js';
 
 export * as THREE from 'three';
@@ -2325,7 +2326,7 @@ export class HDView {
   // Still frames: true when this refresh can show the last frame again instead of drawing (see drawGPU).
   stillSkip(ch, now) {
     const st = ch.still, S = this._still ||= { cam: new Float64Array(32), run: 0, seen: -1, skip: 0, hurt: 0 };
-    if (!st || HD.still === false || lastView !== this || this._cut || !ch.lastColor) { S.run = 0; return false; }
+    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for)
     const cam = this.cam; cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
@@ -2417,12 +2418,14 @@ export class HDView {
     // (crowds keep their members' numbers as the last frame drew them, for frame generation: gs.props.Crowd)
     { const posed = this.scene.userData.gsPosed; if (posed) for (const p of posed) p.frame(); }
     // (each is a whole frame of another card plus a copy: never while a round is played or the feed moves)
-    if (!baking && !off) { this.drawnAt = now; if (bakes.length && !speed.playing() && !speed.busy()) { const [v, bc] = bakes.shift(); if (bc.canvas.isConnected && host?.canvas !== bc.canvas) try { v.bake(bc, true); } catch (_) { /* best effort */ } } }   // (one a frame: several at once were one long stall)
+    if (!baking && !off) { this.drawnAt = now; liveView(this, now); if (bakes.length && !speed.playing() && !getready.warming && !speed.busy()) { const [v, bc] = bakes.shift(); if (bc.canvas.isConnected && host?.canvas !== bc.canvas) try { v.bake(bc, true); } catch (_) { /* best effort */ } } }   // (one a frame: several at once were one long stall)
     const direct = HD.direct && !baking && !off && !!c.canvas.parentNode && mount(r.domElement, c, this);
     if (!baking && !off) {
       if (Q.game !== speed.game) startGame(speed.game);
       // adaptive quality: first resolution, then tier (and frame rate)
-      const gap = now - (Q.lastT || now); Q.lastT = now; adapt(gap); applyTier();
+      // (a round getting ready behind the loading screen, getready.js: its frames build what the round needs and say
+      // nothing about how fast the phone draws, so none of them count; the measuring starts with the round)
+      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; else adapt(gap); applyTier();
     }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
@@ -2799,7 +2802,11 @@ function gpuSwap(v, G) {
     if (seeThrough3d(o)) G.fx.noAO(m);
     if (v._air && m.isMeshStandardMaterial && m.fog !== false) G.fx.gpuWet(m, o, AIR, noSettle(m, o), noiseTex(), !!v._air.world);
   };
+  // (the air is laid on every material here, as WebGL's frame does. A material made since the last frame got
+  // it whenever something next asked for all of them (a city building a block in its first update()), which
+  // marks it changed: three then built it again and it was hidden meanwhile, the van a round starts in)
   v.scene.traverse(o => {   // (every frame: no array is made per thing)
+    if (G && v._air && o.material) airOf(o);
     if (o.isMesh) {
       swapOne(o, v.scene, G, v.cam, seen, v._air, v);
       if (G) { const ms = o.material; if (Array.isArray(ms)) { for (let i = 0; i < ms.length; i++) look(o, ms[i]); } else look(o, ms); }
@@ -2856,6 +2863,27 @@ function bakeLater(view, c) {
   r.domElement.remove(); webgpu()?.r.domElement.remove();
   try { view.bake(c, true); } catch (_) { /* best effort */ }
 }
+// Getting a round ready (getready.js; the app draws the round's first frames under its loading screen): what
+// the views on the 3D canvas still have on their way. Hard: shaders being built in the background and the
+// things hidden until theirs are (holdNew), and on WebGPU every build still waiting its turn. Soft: cluster
+// detail not in yet (it only makes frames quicker, and comes in unseen), shaders a view is building ahead
+// for things it has not shown yet (view.shadersLeft, where a view has it, counts those too), and on WebGPU
+// textures still being packed into the chip's own formats (r.gsPacking: each upload can hold up a frame).
+const LIVE = new Set();   // the views drawn on the 3D canvas lately (a game can draw more than one)
+function liveView(v, now) { LIVE.add(v); if (LIVE.size > 1) for (const o of LIVE) if (now - o.drawnAt > 2000) LIVE.delete(o); }
+function stillComing() {
+  const now = performance.now(); let hard = 0, soft = 0, ahead = 0;
+  for (const v of LIVE) {
+    if (now - v.drawnAt > 1000) continue;
+    const here = (v.held?.size || 0) + (v.shJobs?.size || 0);
+    hard += here; if (v.shadersLeft > here) ahead++;
+    if (HD.detail !== false && v.detailPending()) soft++;
+  }
+  const G = webgpu(), packs = G?.r.gsPacking || 0;   // (textures still to pack: pack.js)
+  hard += G?.r.gsBuilding || 0;
+  return hard || soft || ahead || packs ? { hard, soft: soft + ahead + packs, what: hard || ahead ? 'Shaders' : soft ? 'Detail' : 'Textures' } : null;
+}
+waitsOn(stillComing);
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
