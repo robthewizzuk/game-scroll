@@ -2240,6 +2240,10 @@ console.log('physics ok');
     const tr = HS.sculpt(jobs[0]); assert.ok(!tr.slots.includes('trim'), 'and the trunk has none of it: ' + tr.slots);
     // and its arms, on the joints in between too: round each shoulder and elbow the skin goes with the joint that takes half the turn
     for (const n of ['armL', 'foreL', 'twistL', 'shoulderL', 'elbowL', 'armR', 'foreR', 'twistR', 'shoulderR', 'elbowR', 'hipL', 'kneeL', 'hipR', 'kneeR']) assert.ok(tr.names.includes(n), 'the trunk goes with ' + n + ': ' + tr.names);
+    // a tunic's skirt: what of it does not follow the thighs hangs from the belt on a bone of its own and swings (rig.hang), and only a skirt does
+    { let onHem = 0, most = 0; for (let i = 0; i < tr.n; i++) for (let k = 0; k < 4; k++) if (tr.names[tr.SI[i * 4 + k]] === 'hem' && tr.SW[i * 4 + k] > 0) { onHem++; most = Math.max(most, tr.SW[i * 4 + k] / 255); }
+      const plainTrunk = HS.sculpt(HS.jobsFor({ ...sp, top: { ...sp.top, kind: 'shirt' } })[0]);
+      assert.ok(tr.hang?.hem?.at?.[1] === 1 && onHem > 100 && most > .2 && most < .7 && !plainTrunk.hang?.hem && !plainTrunk.names.includes('hem'), `a tunic's skirt swings from the belt (${onHem} points, at most ${most.toFixed(2)} of each)`); }
     assert.ok(typeof HS.VERSION === 'string' && HS.VERSION.length > 4, 'the sculptor has a stamp for saved copies');
   }
   console.log('gs.models: sculpted people ok');
@@ -2271,8 +2275,8 @@ console.log('physics ok');
       // breathing: the chest and belly rise and fall by themselves, about fifteen times a minute at rest; faster and deeper after running
       const p = skeleton({ look: 'real', seed: 11 }), br = p.rig.breath, B2 = p.bones;
       assert.ok(br && p.rig.breath === br, 'a person breathes');
-      const c0 = B2.chest.position.clone(), e0 = B2.belly.position.clone(), track = (secs, speed) => { let lo = 1, hi = -1, blo = 1, bhi = -1, ups = 0, was = 0; for (let t = 0; t < secs; t += 1 / 60) { br.step(1 / 60, speed); p.updateMatrixWorld(true); const z = B2.chest.position.z - c0.z, bz = B2.belly.position.z - e0.z; lo = Math.min(lo, z); hi = Math.max(hi, z); blo = Math.min(blo, bz); bhi = Math.max(bhi, bz); if (z > .5 * (hi + lo) && was <= .5 * (hi + lo)) ups++; was = z; } return { chest: hi - lo, belly: bhi - blo, ups }; };
-      const rest = track(16, 0);
+      const c0 = B2.chest.position.clone(), e0 = B2.belly.position.clone(), track = (secs, speed) => { let lo = 1, hi = -1, blo = 1, bhi = -1, ups = 0, was = 1; for (let t = 0; t < secs; t += 1 / 60) { br.step(1 / 60, speed); p.updateMatrixWorld(true); const z = B2.chest.position.z - c0.z, bz = B2.belly.position.z - e0.z; lo = Math.min(lo, z); hi = Math.max(hi, z); blo = Math.min(blo, bz); bhi = Math.max(bhi, bz); if (z > lo + .7 * (hi - lo) && was) { ups++; was = 0; } else if (z < lo + .3 * (hi - lo)) was = 1; } return { chest: hi - lo, belly: bhi - blo, ups }; };   // (a breath counted as it rises past seven tenths, once it has been below three)
+      br.p = 0; const rest = track(16, 0);   // (from the start of a breath: the count doesn't hang on where in a breath it began)
       assert.ok(rest.chest > .0008 && rest.chest < .005 && rest.belly > .001 && rest.belly < .006, `a breath at rest moves the chest ${(rest.chest * 1e3).toFixed(1)} mm and the belly ${(rest.belly * 1e3).toFixed(1)} mm`);
       assert.ok(rest.ups >= 3 && rest.ups <= 5, `about fifteen breaths a minute at rest (${rest.ups} in 16 s)`);
       track(20, 6); assert.ok(br.puff > .5, 'running leaves a person out of breath: ' + br.puff.toFixed(2));
@@ -2284,6 +2288,63 @@ console.log('physics ok');
       const f = skeleton({ look: 'real', seed: 11, weight: 1 }), fb = f.rig.breath; fb.on = false; f.updateMatrixWorld(true); fb.step(1 / 60, 0);
       let most = 0; for (let k = 0; k < 60; k++) { f.bones.hips.position.y += k < 6 ? -.012 : k < 12 ? .012 : 0; f.updateMatrixWorld(true); fb.step(1 / 60, 0); most = Math.max(most, Math.abs(fb.lag)); }
       assert.ok(most > .001 && Math.abs(fb.lag) < .0003, `a heavy belly swings ${(most * 1e3).toFixed(1)} mm behind a drop and settles (${(fb.lag * 1e3).toFixed(2)} mm left)`);
+      // wet, mud, dust and snow (person.grime, drawn on WebGPU): mud climbs a step at a time in mud, wet dries and snow melts, mud and dust stay,
+      // and the elbows' and knees' bends are measured for the creases in the clothes there
+      const { Grime } = await import('../src/kit/models/human-life.js'), gq = skeleton({ look: 'real', seed: 4 }), gr = new Grime(gq.bones, [[.2, 1.16, 0], [-.2, 1.16, 0], [.1, .52, 0], [-.1, .52, 0]]);
+      let steps = 0; while (gr.mud < .5 && steps < 500) { gr.soil('mud', .03); steps++; }
+      assert.ok(steps > 12 && steps < 60, `mud halfway up the shins after ${steps} steps in mud`);
+      for (let k = 0; k < 400; k++) gr.soil('mud', .05); assert.ok(gr.mud > .9 && gr.mud <= 1, 'and no higher than mid-thigh: ' + gr.mud.toFixed(2));
+      gr.soil('snow', .05); gr.soil('sand'); assert.ok(gr.dust > 0 && gr.snow === 0, 'sand dusts; a step in snow leaves none on the shoulders');
+      gr.wet = 1; gr.snow = 1; for (let t = 0; t < 120; t += .5) gr.step(.5);
+      assert.ok(gr.wet > .4 && gr.wet < .6 && gr.snow < 1e-9 && gr.mud > .9 && gr.v.x === gr.wet && gr.v.y === gr.mud, `wet dries over minutes (${gr.wet.toFixed(2)} left after two), snow melts, mud stays`);
+      gq.bones.foreL.rotation.set(-Math.PI / 2, 0, 0); gq.bones.shinR.rotation.set(1, 0, 0); gr.step(0);
+      assert.ok(Math.abs(gr.bends[0].w - .5) < 1e-6 && gr.bends[1].w === 0 && Math.abs(gr.bends[3].w - Math.sin(.5) ** 2) < 1e-6 && gr.bends[0].x === .2 && gr.bends[2].y === .52, 'the bends of the elbows and knees, at their places as made');
+      gr.clean(); assert.ok(gr.v.length() === 0 && gr.mud === 0, 'clean() and dry');
+      // a person standing about (person.idle, human-idle.js): fidgets now and then while still and none on the move; the head comes round a
+      // moment after the eyes and the body after it for a thing far round; a glance and back; gestures that play through, hold and let go;
+      // a point that points; glances at a noise nearby and at a thing that hurries past
+      const { Idle } = await import('../src/kit/models/human-idle.js'), iq = skeleton({ look: 'real', seed: 5 }), IB = iq.bones;
+      const face = { target: null, look(t) { this.target = t || null; return this; } }; iq.face = face;
+      const id = iq.rig.idle = new Idle(iq, iq.rig); iq.updateMatrixWorld(true);
+      const run = (secs, speed = 0, each) => { for (let t = 0; t < secs - 1e-9; t += 1 / 60) { iq.rig.update(1 / 60, { speed }); iq.updateMatrixWorld(true); each?.(); } };
+      let seen = new Set(); run(80, 0, () => id.cur && seen.add(id.cur.name));
+      assert.ok(seen.size >= 3, 'standing still a minute or so, a few fidgets: ' + [...seen]);
+      run(3, 3); seen = new Set(); id.next = 0; run(10, 3, () => id.cur && seen.add(id.cur.name)); assert.ok(seen.size === 0, 'none on the move (once the one in hand has gone): ' + [...seen]);
+      id.every = 0; face.look(null); run(4);
+      face.look([3, 1.6, .3]);   // (to his left, nearly level: past what eyes reach)
+      run(.05); const early = id.hy; run(1); const late = id.hy;
+      assert.ok(early < .3 * late && late > .9 && late < 1.1 && Math.abs(id.sy) < .02, `the head comes round after the eyes (${early.toFixed(2)} after a twentieth of a second, ${late.toFixed(2)} after a second), the body stays (${id.sy.toFixed(3)})`);
+      face.look([-1, 1.6, -2]); run(1.5); assert.ok(id.hy < -.75 && id.sy < -.25, `for a thing far round behind, the body turns too (head ${id.hy.toFixed(2)}, body ${id.sy.toFixed(2)})`);
+      face.look(null); run(1.5); assert.ok(Math.abs(id.hy) < .02 && Math.abs(id.sy) < .02, 'and back as the eyes let go');
+      iq.rig.upper('aim'); face.look([3, 1.6, .3]); run(1.5); assert.ok(Math.abs(id.hy) < .1, 'aiming, the head is the aim\'s: ' + id.hy.toFixed(2)); iq.rig.upper(null); face.look(null); run(1);
+      id.notice([0, 1.6, 4], { hold: .5 }); assert.deepEqual(face.target, [0, 1.6, 4]); run(.6); assert.ok(face.target === null, 'a glance, and the eyes go back');
+      const mine = [1, 1.7, 5]; face.look(mine); id.notice([0, 1.6, 4], { hold: .3 }); run(.4); assert.equal(face.target, mine, 'to what the game had them on');
+      face.look(null); run(1);
+      // gestures
+      id.gesture('nod'); run(.5); assert.equal(id.doing, 'nod'); run(.5); assert.equal(id.doing, null, 'a nod plays through');
+      id.gesture('hips'); run(3); const fl = IB.foreL.rotation.x; assert.ok(id.doing === 'hips' && fl < -1.2, 'hands on the hips stay: ' + fl.toFixed(2));
+      id.gesture(null); run(1.5); assert.ok(id.doing === null && IB.foreL.rotation.x > -.6, 'until let go: ' + IB.foreL.rotation.x.toFixed(2));
+      assert.throws(() => id.gesture('dab'), /no gesture 'dab'/);
+      for (const at of [[-2, 2.2, 1.5], [0, 1.4, 3], [-3, 1, -.5]]) {
+        const tgt = new T.Vector3(...at); id.gesture('point', { at }); run(.8);
+        const sh = IB.armR.getWorldPosition(new T.Vector3()), dir = IB.foreR.getWorldPosition(new T.Vector3()).sub(sh).normalize(), want = tgt.clone().sub(sh).normalize();
+        assert.ok(dir.angleTo(want) < .3 && id.doing === 'point', `a point points (at ${at}): the upper arm ${(dir.angleTo(want) * 57.3).toFixed(0)} degrees off the way to it`);
+        run(2.5); assert.equal(id.doing, null, 'and comes down');
+      }
+      id.gesture('wave'); run(5); assert.equal(id.doing, 'wave', 'a wave goes on waving'); id.gesture(null); run(2.5); assert.equal(id.doing, null);
+      id.gesture('shrug', { hold: true }); run(3); assert.ok(id.doing === 'shrug' && IB.collarL.rotation.z > .1, 'a shrug held'); id.gesture(null); run(2);
+      // a noise within hearing (loud / 6 metres), not one further off; a thing that hurries past, not one standing
+      const { Noises } = await import('../src/kit/senses.js'), N = new Noises(); id.listen(N, { height: 1.2 });
+      N.make(40, 2, 60); run(.1); assert.equal(face.target, null, 'a noise too far off to hear');
+      N.make(4, 2, 60); run(.1); assert.deepEqual(face.target, [4, 1.2, 2], 'a noise nearby: a glance at it'); run(2.5); assert.equal(face.target, null);
+      const walker = new T.Object3D(); walker.position.set(-4, 0, 4); walker.updateMatrixWorld(true); id.watch(walker);
+      run(1); assert.equal(face.target, null, 'a thing standing still: no glance');
+      run(.5, 0, () => { walker.position.x += 3 / 60; walker.updateMatrixWorld(true); }); assert.equal(face.target, walker, 'a thing hurrying past: a glance at it');
+      id.stop(); assert.ok(id.doing === null && face.target === null && id.hy === 0, 'stop()');
+      // nobody fidgets down on the ground, nor shakes a hand out of a grip
+      id.every = 1.5; iq.rig.play('downed'); seen = new Set(); run(30, 0, () => id.cur && seen.add(id.cur.name)); assert.equal(seen.size, 0, 'down on the ground, still: ' + [...seen]);
+      iq.rig.play('idle'); seen = new Set(); run(90, 0, () => { id.handsBusy = 2; if (id.cur) seen.add(id.cur.name); }); assert.ok(seen.size >= 3 && !seen.has('hand'), 'holding something, no hand shaken out: ' + [...seen]);
+      id.stop(); iq.rig.play('idle', { fade: 0 });
     }
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
@@ -2530,8 +2591,9 @@ console.log('physics ok');
   // ---- things that hang: the trunk is sculpted with a bone for each thing on its belt, and says where each hangs from
   const sp = { build: { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: 1 }, top: { kind: 'tunic', pockets: 4, collar: null }, legs: { kind: 'trousers' }, feet: { kind: 'tall' }, belt: {}, web: { y: true, pouches: 2 }, extras: { bag: true, canteen: true, holster: true }, hat: null, pack: null, gear: [], face: {}, hands: 'grip' };
   const tr = HS.sculpt(HS.jobsFor(sp)[0]), share = {}; for (let i = 0; i < tr.n; i++) for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) { const n = tr.names[tr.SI[i * 4 + q]]; share[n] = (share[n] || 0) + 1; }
-  assert.deepEqual(Object.keys(tr.hang).sort(), ['bag', 'flask', 'holster']); for (const n in tr.hang) { const h = tr.hang[n]; assert.ok(share[n] > 40 && h.at[1] > .95 && h.at[1] < 1.12 && Math.abs(Math.hypot(h.away[0], h.away[2]) - 1) < 1e-9 && h.at[0] * h.away[0] + h.at[2] * h.away[2] > .1, `${n}: ${share[n]} points on a bone of its own, hung from the belt, and it knows which way is out`); }
-  assert.ok(!HS.sculpt(HS.jobsFor({ ...sp, extras: {} })[0]).names.some(n => tr.hang[n]), 'and a trunk with nothing on its belt has no such bones');
+  assert.deepEqual(Object.keys(tr.hang).sort(), ['bag', 'flask', 'hem', 'holster']); for (const n in tr.hang) { if (n === 'hem') continue; const h = tr.hang[n];   // (hem: the tunic's skirt, which swings all round: tested with the sculpted people)
+    assert.ok(share[n] > 40 && h.at[1] > .95 && h.at[1] < 1.12 && Math.abs(Math.hypot(h.away[0], h.away[2]) - 1) < 1e-9 && h.at[0] * h.away[0] + h.at[2] * h.away[2] > .1, `${n}: ${share[n]} points on a bone of its own, hung from the belt, and it knows which way is out`); }
+  assert.ok(!HS.sculpt(HS.jobsFor({ ...sp, extras: {} })[0]).names.some(n => tr.hang[n] && n !== 'hem'), 'and a trunk with nothing on its belt has no such bones (but the skirt of its tunic)');
   { const seen = new Map(), w = i => { const u = {}; for (let q = 0; q < 4; q++) if (tr.SW[i * 4 + q]) u[tr.names[tr.SI[i * 4 + q]]] = tr.SW[i * 4 + q] / 255; return u; }; let pairs = 0, torn = 0;
     for (let i = 0; i < tr.n; i++) { const k = [0, 1, 2].map(c => Math.round(tr.P[i * 3 + c] * 1e5)).join(), j = seen.get(k); if (j === undefined) { seen.set(k, i); continue; } const a = w(i), b = w(j); pairs++; if ([...new Set([...Object.keys(a), ...Object.keys(b)])].some(n => Math.abs((a[n] || 0) - (b[n] || 0)) > .01)) torn++; }
     assert.ok(pairs > 100 && torn === 0, `points in the same place still go with the same bones: ${torn} of ${pairs}`); }

@@ -2991,7 +2991,9 @@ function twinOf(gl, G, o, air) {
   if (tw?.r !== G.r) {
     gpuTwins.set(gl, tw = { r: G.r, m: G.fx.gpuMaterials[gl.userData.gsGpu](gl), built: new Set(), building: new Set() });
     // (with the air on they get wet in the rain as plain materials do: AIR_WET, before their shaders are built)
-    if (air && gl.isMeshStandardMaterial && gl.fog !== false) for (const t of [tw.m, tw.m.userData.gsNear]) if (t?.isMeshStandardNodeMaterial) G.fx.gpuWet(t, o, AIR, noSettle(gl, o), noiseTex(), !!air.world);
+    // (a person's skin and clothes: wet, muddy, dusty and snowy by person.grime as well as the weather, hd3d-gpu.js grime)
+    if (gl.userData.grime && tw.m.isMeshStandardNodeMaterial) G.fx.grime(tw.m, gl.userData.grime, o, AIR, gl.fog !== false ? air : null);
+    else if (air && gl.isMeshStandardMaterial && gl.fog !== false) for (const t of [tw.m, tw.m.userData.gsNear]) if (t?.isMeshStandardNodeMaterial) G.fx.gpuWet(t, o, AIR, noSettle(gl, o), noiseTex(), !!air.world);
   }
   return tw;
 }

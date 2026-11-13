@@ -1653,6 +1653,59 @@ export interface BreathT {
   puff: number;
   /** Back to rest, as made. */
   still(): BreathT;
+  /** One deep, slow breath now: a sigh (person.idle sighs now and then by itself). */
+  sigh(): BreathT;
+}
+/**
+ * How wet, muddy, dusty and snowy a gs.models.human person is (person.grime), drawn on WebGPU on their clothes and skin, on top of what the weather
+ * does under the open sky by itself. Rain soaks a person from the head and shoulders down (cloth much darker, leather a little darker and shiny,
+ * skin glistening) and wet dries over a few minutes; mud splashes up the boots and legs (gs.outdoors Marks: marks.watch(person) adds it a step at a
+ * time in mud, and sand dusts them); snow lies on what faces up and melts. Each 0..1.
+ */
+export interface GrimeT {
+  /** Soaked (1: fell in a river); dries by itself over a few minutes. */
+  wet: number;
+  /** How far up the legs the mud has splashed (1: to mid-thigh); stays until clean(). */
+  mud: number;
+  /** Dust over the lower body most; stays until clean(). */
+  dust: number;
+  /** Snow on the shoulders, the hat and the tops of the arms; melts over a couple of minutes. */
+  snow: number;
+  /** A step in something that marks (gs.outdoors Marks does it for a watched person): kind 'mud' | 'sand' | 'dust', depth of the print in metres. */
+  soil(kind: string, depth?: number): GrimeT;
+  /** Clean and dry. */
+  clean(): GrimeT;
+}
+/**
+ * A gs.models.human person standing about (person.idle), over the rig's own standing pose, close up, with nothing to call: now and then a fidget
+ * (the shoulders rolled, the neck stretched, a look down, a sigh, a swallow, a hand shaken out, a look about); where the eyes go (person.face.look)
+ * the head follows a moment later and, for a thing further round than a right angle, the body; glances at noises and at things that hurry past;
+ * and gestures by name.
+ */
+export interface IdleT {
+  /** false: no fidgets, glances or turning of the head by itself (gestures still play). */
+  on: boolean;
+  /** How much of a look the head and body take (1); 0 leaves the head to the game (the eyes still look). An upper-body pose (aim) takes it over by itself. */
+  turn: number;
+  /** Seconds between fidgets, about (6); 0 for none. */
+  every: number;
+  /** A fidget now: 'shoulders' | 'neck' | 'down' | 'sigh' | 'swallow' | 'hand' | 'look'; none: one chosen as by itself. */
+  fidget(name?: string): IdleT;
+  /** A glance at a point or an Object3D: the eyes at once, the head a moment after, held hold seconds (1.6), then back to what the eyes were on. */
+  notice(thing: [number, number, number] | { x: number; y: number; z: number } | Loose, o?: { hold?: number }): IdleT;
+  /** Glances at the fresh noises of a gs.senses Noises (its x, y are x, z here; heard within loud / 6 metres); height: the y they are at (1), or (x, z) => y. */
+  listen(noises: Loose, o?: { height?: number | ((x: number, z: number) => number) }): IdleT;
+  /** Glances at a thing that hurries past: within near metres (8), faster than fast metres a second (1.5). */
+  watch(thing: Loose, o?: { near?: number; fast?: number }): IdleT;
+  /**
+   * A gesture: 'nod' | 'shake' (the head) | 'shrug' | 'wave' | 'point' (at: where) | 'hips' (hands on the hips) | 'cross' (arms crossed); null ends a held one.
+   * hold: true stays at its fullest until gesture(null) or another (hips and cross always do; a wave goes on waving).
+   */
+  gesture(name: 'nod' | 'shake' | 'shrug' | 'wave' | 'point' | 'hips' | 'cross' | null, o?: { hold?: boolean; at?: [number, number, number] | Loose }): IdleT;
+  /** The gesture playing, or null. */
+  readonly doing: string | null;
+  /** Back to rest: no fidget, glance or gesture. */
+  stop(): IdleT;
 }
 export interface LiveFaceT extends FaceT {
   set(name: LiveShape, amount?: number): LiveFaceT;
@@ -2637,6 +2690,10 @@ export interface RigT {
   fine?: boolean;
   /** A gs.models.human person's breathing and soft flesh (the same as person.breath); update() steps it. */
   breath?: BreathT;
+  /** A gs.models.human person's wet, mud, dust and snow (the same as person.grime): drawn on WebGPU. */
+  grime?: GrimeT;
+  /** A gs.models.human person standing about: fidgets, the head after the eyes, glances, gestures (the same as person.idle). */
+  idle?: IdleT;
   /**
    * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
    * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really
@@ -3182,6 +3239,9 @@ export interface ModelsPart {
    * belly with weight and age, a woman's hips and bust from her weight, and a height a few centimetres either way (build and scale, when given, win).
    * The body lives: biceps swell as an elbow bends (more on a muscled arm), elbows, shoulders, hips and knees keep their girth in a deep bend, and person.breath (a BreathT)
    * breathes the chest and belly and lets a heavy belly settle behind a stride, by itself.
+   * Their clothes on WebGPU: each cloth woven its own way at the size of its threads (outfit.top.weave, outfit.legs.weave, outfit.hat.weave: 'plain' | 'twill' | 'denim' | 'knit' |
+   * 'canvas' | 'wool' | 'fine'; from the kind of garment when not given), leather with its grain, creases at the inside of an elbow and the back of a knee as far as it bends,
+   * and person.grime (a GrimeT): wet, muddy, dusty and snowy, by itself in the weather and in gs.outdoors Marks' mud, or set by the game.
    * Options: look, seed, age, weight, muscle, sex, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {

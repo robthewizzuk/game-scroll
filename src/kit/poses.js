@@ -433,6 +433,7 @@ export class Rig {
     if (this.weight) this.sway(dt, speed, turn, out);
     else if (turn) (out.spine ||= [0, 0, 0])[2] -= turn * .1;
     if (this.follow?.body) { if (this.near === false) this.follow.on = false; else this.follow.pose(dt, out); }   // follow-through: what the body carries goes on a moment and settles
+    if (this.idle) this.idle.pose(dt, out, speed, this.fine !== false, this.near !== false);   // a person standing about (gs.models.human's person.idle): fidgets close up, the head after the eyes, glances, gestures
     this.phase = last.phase;
     if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
     else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
@@ -453,6 +454,7 @@ export class Rig {
     }
     if (this.follow?.things.length) { if (this.fine === false) this.follow.still(); else this.follow.swing(dt); }   // (what hangs swings close up only)
     if (this.breath) this.breath.step(dt, speed, this.fine !== false);   // breathing and soft flesh (gs.models.human's chest and belly)
+    if (this.grime) this.grime.step(dt);   // how wet, muddy and dusty, and the bends its clothes crease at (gs.models.human's)
     if (this.face && this.fine !== false) this.face.step(dt, true);   // a live face (gs.models.human's): blinks, eyes, brows and mouth, close up only
     if (this.hands && this.fine !== false) this.hands.step(dt, speed);   // hands that hold (gs.models.human's): fingers round what they hold, relaxed otherwise, close up only
     return this;

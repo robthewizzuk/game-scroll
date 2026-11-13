@@ -1929,6 +1929,20 @@ playing dead). A heavy belly lags a moment behind the hips in a stride or a land
 elbow bends, more on a muscled arm, and shoulders, elbows, hips and knees keep their girth in a deep bend. With
 `look: 'real'` the body comes from the seed too, with `muscle` (0 slight .. 1 built) beside `age` and `weight`.
 
+**Clothes and dirt** (`gs.models.human` people on WebGPU): each cloth is woven at the size of its threads (twill
+trousers, a knitted T-shirt, denim, canvas webbing, a woollen coat with a soft sheen; `outfit.legs.weave: 'denim'` and
+so on), leather has its grain, and sleeves and trousers crease where the elbows and knees bend. `person.grime`
+(`wet`, `mud`, `dust`, `snow`, 0..1) shows on the clothes and the skin: rain soaks a person from the shoulders down
+under the open sky by itself, `gs.outdoors` Marks splashes mud up the legs of someone it watches, and you can set
+any of it (`person.grime.wet = 1` after a fall in a river; `grime.clean()`). Wet dries and snow melts by themselves.
+
+**Standing about** (`gs.models.human` people, by themselves, close up): a person fidgets now and then (shoulders
+rolled, the neck stretched, a look down, a sigh, a swallow, a hand shaken out, a look about), and the head follows
+the eyes a moment later (`person.face.look(point)`), the body too for something far round. A glance and back:
+`person.idle.notice(point)`; at noises and at things that hurry past: `idle.listen(noises)` (`gs.senses.Noises`),
+`idle.watch(thing)`. Gestures: `person.idle.gesture('nod')`, `'shake'`, `'shrug'`, `'wave'`, `'point'` (`{ at: [x, y, z] }`),
+`'hips'` and `'cross'` (held until `gesture(null)`). `idle.on = false` stops it; `idle.turn = 0` leaves the head to you.
+
 **A live face** (`gs.models.human` people, by themselves): close up, a person blinks, and the eyes keep to a
 spot in the world while the head moves, as eyes do, and jump to a new one now and then or when the head has
 turned away from the old one. Nothing to call: the rig steps the face with the body. `person.face` takes what
