@@ -61,7 +61,7 @@ export const stats = work.stats, navStats = maps.stats;
 /** Can work be handed to a worker here? (No: do it on the spot.) */
 export const canRun = work.canRun, canRunNav = maps.canRun;
 /**
- * Runs one job in a worker: kind is a job job-worker.js knows ('surface', 'recipe', 'sculpt'), data
+ * Runs one job in a worker: kind is a job job-worker.js knows ('surface', 'recipe', 'sculpt', 'rock'), data
  * what it needs (plain values and arrays), transfer the array buffers in data to hand over without a
  * copy (they are gone from here afterwards). A promise of the answer; it rejects when the job failed
  * or there are no workers, and the caller then does the work itself.

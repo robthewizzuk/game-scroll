@@ -13,6 +13,8 @@
 //            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
 //   yard     smoke and fire that flow (src/kit/gas.js, gs.gas): a camp fire under a beam, a smoking chimney, a burning drum and an explosion every
 //            seven seconds, in a wind that swings round: with no gas, as the smaller version (soft puffs), and on WebGPU as the gas on the graphics chip
+//   cliff    land with cliffs, caves and overhangs (src/kit/land-rock.js, gs.outdoors land.rocks()): a walk along the foot of a cliff, through a
+//            cave under a spur, out and under an arch: once on the height map alone (over the spur), then with the rock
 //   hall     ray traced reflections (src/kit/hd3d-gpu-trace.js, v.reflect() on WebGPU): a polished hall with no reflections, with reflections
 //            found on the screen, and with rays sent through a copy of the hall (banners and lanterns over the camera's head show only in those)
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
@@ -138,7 +140,7 @@ function forest({ gs, HD, size, gpu }) {
 }
 
 /* ---------- village: real surface detail ---------- */
-function village({ gs, size }) {
+function village({ gs, HD, size }) {
   const T = gs.THREE, n = Math.max(3, Math.round(12 * size)), { v, sun } = view(gs, 200, .003), step = 13, len = Math.ceil(n / 2) * step;
   const ground = new T.Mesh(new T.PlaneGeometry(len + 120, 160).rotateX(-Math.PI / 2), gs.hd.pbr('#7b7468', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
   const STYLES = ['brick', 'stone', 'timber'], houses = [];
@@ -150,6 +152,7 @@ function village({ gs, size }) {
   let flat = 0; for (const m of meshes) flat += trisOf(m.geometry);
   const got = () => meshes.filter(m => m.userData.relief === 'ready'), shown = () => [...(v.details?.map.values() || [])].filter(e => e.relief && e.twin && !(e.twin.layers.mask & HELD));
   let on = false;
+  const sum = { n: 0, tris: 0, px: 0, t: 0 };   // what the surfaces drew a frame and how finely, for tell(): counted from the start of the timed run
   return {
     v, holds: `${n} houses, ${num(flat)} triangles before their surfaces are built`,
     modes: [
@@ -164,8 +167,12 @@ function village({ gs, size }) {
     ],
     // a walk along the pavement and back, 2.5 metres a second and two from the house fronts (where a wall's
     // bricks are big enough in the picture to be worth their triangles), looking along the street and up at the roofs
-    path(t, cam) { const L = len + 20, u = (t * 2.5) % (2 * L), x = (u < L ? u : 2 * L - u) - L / 2, dir = u < L ? 1 : -1; cam.position.set(x, 1.7, -4.4); cam.lookAt(x + dir * 9, 2.4 + .8 * Math.sin(t * .7), -5.6 + 3 * Math.sin(t * .5)); sun.follow(x, 0, 0); },
-    tell() { return null; },
+    path(t, cam) {
+      if (t < sum.t) sum.n = sum.tris = sum.px = 0; else if (on) { sum.n++; sum.tris += HD.info.reliefTris || 0; sum.px += HD.info.reliefPx || 0; }
+      sum.t = t;
+      const L = len + 20, u = (t * 2.5) % (2 * L), x = (u < L ? u : 2 * L - u) - L / 2, dir = u < L ? 1 : -1; cam.position.set(x, 1.7, -4.4); cam.lookAt(x + dir * 9, 2.4 + .8 * Math.sin(t * .7), -5.6 + 3 * Math.sin(t * .5)); sun.follow(x, 0, 0);
+    },
+    tell() { return on && sum.n ? `the surfaces ${num(sum.tris / sum.n)} triangles a frame, within ${(sum.px / sum.n).toFixed(1)} pixels` : null; },
     dispose() { if (on) for (const h of houses) gs.models.relief(h, false); clear(v); },
   };
 }
@@ -234,7 +241,9 @@ function town({ gs, HD, size }) {
     tell() {
       if (!sum.n) return null;
       const shadows = `shadow maps ${num(sum.sh / Math.max(1, sum.shn))} triangles in ${num(sum.shd / Math.max(1, sum.shn))} draws a frame`;
-      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms · ${shadows}`;
+      // (what a game's view would do here by itself: it rests wherever what it leaves out is worth less than finding it costs)
+      const pays = HD.info.occPays, verdict = pays == null ? '' : pays ? ' (worth it here: a game keeps it on)' : ' (not worth it here: a game rests it)';
+      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms${verdict} · ${shadows}`;
     },
     dispose() { HD.occlude = was.on; HD.occludeSleep = was.sleep; HD.shadowTiles = was.tiles; clear(v); },
   };
@@ -273,7 +282,10 @@ function square({ gs, size }) {
     return performance.now() - t0;
   })();
   // (the first run waits for the sculpting and says how long it took)
-  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  // (the crowd's run has the skeleton people out of the scene, not just switched off: a game with a crowd has none, and
+  // the view walks everything in its scene each frame, hidden or not. Left in, 19,000 hidden parts cost the crowd's
+  // run most of its code time on the first phone to try it)
+  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
   const sum = { n: 0, ms: 0, sent: 0, draws: 0, t: 0 }, ahead = new T.Vector3();
   return {
     v, holds: `${num(N)} people and dogs walking, running and standing in a square`,
@@ -426,6 +438,70 @@ function yard({ gs, size, gpu }) {
   };
 }
 
+/* ---------- cliff: land with cliffs, caves and overhangs ---------- */
+function cliff({ gs, size }) {
+  const T = gs.THREE, { human } = gs.models, { Land, looks } = gs.outdoors, { v, sun } = view(gs, 320, .0015), amb = v.hemi.intensity;
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // a valley in the west, a plateau in the east, a cliff between them that wanders, and a spur that stands out of it
+  const lie = (x, z) => 16 * sm(-5, 5, x + 6 * Math.sin(z * .05) + 3 * Math.sin(z * .13 + 1) + 14 * Math.exp(-(((z - 10) / 9) ** 2)) - 4) + .8 * Math.sin(x * .07) * Math.cos(z * .06) + .3 * Math.sin(x * .19 + 2) * Math.sin(z * .23);
+  const land = new Land({ kind: lie, size: 160, segments: Math.max(32, Math.round(96 * Math.sqrt(size))), colours: [[-2, '#6f7d43'], [3, '#63783a'], [9, '#857f66'], [15, '#5f7436'], [19, '#6f7d43']] }); v.scene.add(land.object);
+  // the rock: beds and ledges where the land is steep, a cave under the spur from the valley on one side of it to
+  // the valley on the other, an arch on the valley floor and a shelf that stands out of the cliff
+  const ROCK = { seed: 3, cell: size >= .5 ? .4 : .8,
+    caves: [{ path: [[-3, lie(-3, -6) + 2.1, -5], [-4.5, lie(-3, -6) + 2.3, 10], [-3, lie(-3, 32) + 2.1, 31]], radius: 2.6 }],
+    shapes: [{ arch: [9, 5.5, 2.2, 3], at: [-22, lie(-22, 28) - .5, 28], turn: .5 }, { box: [8, 1.8, 6], at: [8.5, 10, -25], turn: .1 }] };
+  // the walk: a ring through the cave and under the arch, a point every quarter of a metre. How high each point
+  // is comes from the land as it is in this run (land.floor(): without the rock the walk goes over the spur).
+  const ring = new T.CatmullRomCurve3([[-12, -24], [-5, -14], [-3, -5], [-4.5, 10], [-3, 31], [-8, 38.5], [-18.2, 35], [-22, 28], [-25.8, 21], [-28, 8], [-23, -10]].map(([x, z]) => new T.Vector3(x, 0, z)), true, 'centripetal');
+  const LEN = ring.getLength(), NP = Math.round(LEN / .25), pts = ring.getSpacedPoints(NP).slice(0, NP), ys = new Float32Array(NP), sk = new Float32Array(NP), tmp = new Float32Array(NP), SPEED = 4;
+  const soften = (a, n) => { for (let pass = 0; pass < 2; pass++) { for (let i = 0; i < NP; i++) { let t = 0; for (let k = -n; k <= n; k++) t += a[(i + k + NP) % NP]; tmp[i] = t / (2 * n + 1); } a.set(tmp); } };
+  const lay = () => {
+    let y = land.height(pts[0].x, pts[0].z);
+    for (let i = 0; i < NP; i++) { ys[i] = y = land.floor(pts[i].x, y, pts[i].z); sk[i] = land.sky(pts[i].x, y + 1.7, pts[i].z); }
+    soften(ys, 3); soften(sk, 8);
+  };
+  // people standing about, for the size of things: at the cave's mouth, in it, under the arch, on the cliff top
+  const SPECS = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], SPOTS = [[-5.5, -9, 2, 2.4], [-3.6, 14, 2, 3], [-21, 26.5, 2, .4], [1.5, 6, 40, -1.9]];
+  const folk = []; let made = null, on = false, rockMs = 0;
+  const make = draw => made ||= (async () => {
+    const t0 = performance.now(); let done = false, err = null;
+    human.ready(SPECS).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+    const src = SPECS.map(o => human(o));
+    SPOTS.forEach(([x, z, , turn], i) => { const p = i < 2 ? src[i] : src[i % 2].twin(); p.position.set(x, 0, z); p.rotation.y = turn; v.scene.add(p); folk.push(p); });
+    return performance.now() - t0;
+  })();
+  const enter = key => async draw => {
+    const first = !made, build = await make(draw); on = key === 'on'; let ms = null;
+    land.meadow(false);
+    if (on) { const t0 = performance.now(), fresh = !rockMs; land.rocks(ROCK); looks.rock(land.rock.material, { mossy: 0 }); if (fresh) ms = rockMs = Math.max(1, performance.now() - t0); }
+    else land.rocks(false);
+    land.meadow({ reach: 14, gap: .34, height: .4, blades: 8 });   // (planted again: grass keeps off the rock)
+    lay(); SPOTS.forEach(([x, z, y], i) => { folk[i].position.y = land.floor(x, lie(x, z) < 6 ? lie(x, z) + y : y, z); folk[i].updateMatrixWorld(true); });
+    for (let i = 0; i < 4; i++) await draw();
+    return ms != null ? { build: ms + (first ? build : 0), note: `rock of ${num(land.rock.tris)} triangles made` + (first ? ', two people sculpted' : '') } : first ? { build, note: 'two people sculpted' } : null;
+  };
+  const at = (d, out) => { const f = ((d / LEN) % 1 + 1) % 1 * NP, i = Math.floor(f) % NP, j = (i + 1) % NP, u = f - Math.floor(f); out.set(pts[i].x + (pts[j].x - pts[i].x) * u, ys[i] + (ys[j] - ys[i]) * u, pts[i].z + (pts[j].z - pts[i].z) * u); return sk[i] + (sk[j] - sk[i]) * u; };
+  const eye = new T.Vector3(), ahead = new T.Vector3(); let last = 1e9;
+  return {
+    v, holds: 'a walk along the foot of a cliff, through a cave under a spur and under an arch, four people standing about',
+    modes: [
+      { key: 'off', name: 'the height map alone', enter: enter('off') },
+      { key: 'on', name: 'cliffs, a cave, an arch', enter: enter('on') },
+    ],
+    path(t, cam) {
+      const dt = t < last ? 0 : Math.min(1, t - last); last = t;
+      const light = at(t * SPEED, eye); at(t * SPEED + 5, ahead);
+      cam.position.set(eye.x, eye.y + 1.7, eye.z); cam.lookAt(ahead.x, ahead.y + 1.5, ahead.z); cam.updateMatrixWorld(); sun.follow(eye.x, eye.y, eye.z);
+      v.hemi.intensity = amb * (.3 + .7 * light);   // (a game dims its own fill light in a cave: land.sky() says by how much)
+      for (const p of folk) { p.rig.blend({ idle: 0, walk: 1.4 }, 0); p.rig.update(dt, { speed: 0 }); p.see(v.cam, 800); }
+      land.update(dt, cam);
+    },
+    tell() { return on && land.rock ? `rock of ${num(land.rock.tris)} triangles in ${num(land.rock.pieces)} pieces, its numbers worked out in ${num(land.rock.ms)} ms` : null; },
+    dispose() { land.meadow(false); land.rocks(false); for (const p of folk) p.removeFromParent(); v.hemi.intensity = amb; clear(v); },   // (the people's shapes are the kit's own: not freed here)
+  };
+}
+
 /* ---------- hall: ray traced reflections ---------- */
 function hall({ gs, HD, size, gpu, top = true }) {
   const T = gs.THREE, pbr = gs.hd.pbr, n = Math.max(3, Math.round(12 * size)), L = n * 7, { v, sun } = view(gs, 260, .001), was = { traced: HD.traced };
@@ -516,5 +592,6 @@ export const SCENES = [
   ['square', 'Square', 'crowds', square],
   ['field', 'Field', 'ground that takes marks', field],
   ['yard', 'Yard', 'smoke and fire that flow', yard],
+  ['cliff', 'Cliff', 'land with cliffs, caves and overhangs', cliff],
   ['hall', 'Hall', 'ray traced reflections', hall],
 ];
