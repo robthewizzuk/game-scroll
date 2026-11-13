@@ -466,13 +466,16 @@ function world() {
   // the river and the lake: dark water with ripples that catch the sky
   const waterMat = (col, rep) => {
     const n = tex.ripple.clone(); n.repeat.set(rep, rep); n.needsUpdate = true;
-    return new THREE.MeshStandardMaterial({ color: col, roughness: .14, metalness: 0, normalMap: n, normalScale: new THREE.Vector2(.6, .6), transparent: true, opacity: .96, envMapIntensity: .45 });
+    return new THREE.MeshStandardMaterial({ color: col, roughness: .14, metalness: 0, normalMap: n, normalScale: new THREE.Vector2(.6, .6), envMapIntensity: .45 });   // (solid: a reflection needs its depth)
   };
   const river = new Water({ level: -1.4, waves: .08, size: 640, segments: 40, material: waterMat('#1c2824', 70) });
   v.scene.add(river.mesh);
   const lake = new Water({ level: LAKE, waves: .1, size: 96, segments: 16, material: waterMat('#283639', 10) });
   lake.mesh.position.set(STREAMX, 0, -254); lake.mesh.scale.x = .72; v.scene.add(lake.mesh);   // (from the dam's face up the basin, no wider than the dam)
   const ripples = [river.mesh.material.normalMap, lake.mesh.material.normalMap];
+  // the river and the lake mirror the bridge, the mill and the village: ray traced on the best phones, from the picture
+  // itself on others, where the frame has room for it (the high picture and up; slower phones keep the sky's sheen)
+  v.reflect(river.mesh, lake.mesh);
 
   // ---- materials (built once)
   const VT = villageTextures(), { plaster, tiles, stone } = VT;
@@ -586,15 +589,15 @@ function world() {
     if (load === 'hay') K.straw.cyl(at(0, .9, 0), UP, .95, .55, .9, 10, WHITE, .7);
     if (load === 'barrels') for (const lx of [-.6, .6]) K.wood.cyl(at(lx, .84, 0), UP, .34, .34, .8, 10, C_('#8a6a48'), .6);
   };
-  cart(-31, -100, .5, 'hay'); cart(12, -112, 2.2, 'barrels'); cart(48, -92, -.4, null); cart(MILL.x - 9, MILL.z + 9, 1.2, 'barrels'); cart(-70, -96, 1.9, 'hay');
+  cart(-31, -103.5, .5, 'hay'); cart(12, -112, 2.2, 'barrels'); cart(48, -92, -.4, null); cart(MILL.x - 9, MILL.z + 9, 1.2, 'barrels'); cart(-70, -96, 1.9, 'hay');
   { const wy = ground(-6, -104), wp = new Vector3(-6, wy, -104); K.stone.cyl(wp, UP, 1.1, 1.1, .95, 14, C_('#cfc6b8'), .5); for (const sx of [-1, 1]) K.wood.box(-6 + sx * .95, wy, -104, .14, 2.4, .14, 0, BEAM, .5); K.roof.box(-6, wy + 2.35, -104, 2.4, .1, 1.5, 0, C_('#e8d0c0'), .38); }
-  for (const [x, z, n] of [[-36, -88, 3], [16, -98, 2], [31, -120, 4], [-48, -122, 2], [MILL.x + 5, MILL.z + 6, 3], [-8, -86, 2]]) for (let i = 0; i < n; i++) {
+  for (const [x, z, n] of [[-36, -88, 3], [16, -98, 2], [30.5, -120, 4], [-48, -122, 2], [MILL.x + 5, MILL.z + 6, 3], [-8, -86, 2]]) for (let i = 0; i < n; i++) {
     const bx = x + (i % 2) * .8, bz = z + Math.floor(i / 2) * .8, y = ground(bx, bz);
     if (HR() < .5) K.wood.cyl(new Vector3(bx, y, bz), UP, .32, .32, .85, 10, C_('#8a6a48'), .6); else K.wood.box(bx, y, bz, .7, .7, .7, HR() * 3, C_('#9a8264'), .7);
   }
   // round haystacks in the fields north of the river and by the road east
-  for (const [x, z] of [[-110, -40], [-104, -46], [-150, -20], [92, -110], [100, -104], [150, -112], [-160, 60], [-150, 70], [120, 60], [170, 30]]) {
-    const y = ground(x, z); if (Math.abs(z - RIVER(x)) < 20) continue;
+  for (const [x, z] of [[-110, -56], [-102, -60], [-150, -20], [92, -110], [100, -104], [150, -112], [-160, 60], [-150, 70], [120, 60], [170, 30]]) {
+    const y = ground(x, z); if (Math.abs(z - RIVER(x)) < 20 || Math.abs(z - RAILZ) < 8 || roadD(x, z) < 6) continue;   // (not by the river, on the line or in a road)
     K.straw.cyl(new Vector3(x, y - .1, z), UP, 1.9, 1.7, 1.6, 12, WHITE, .5).cyl(new Vector3(x, y + 1.5, z), UP, 1.7, 0, 1.5, 12, C_('#d8ccb0'), .5, false);
   }
   const millY = ground(MILL.x, MILL.z);
@@ -682,6 +685,12 @@ function world() {
   K.roof.spire(CHURCH.x, cy + 21.5, CHURCH.tz, 3.6, 7, 4, WHITE, .38, Math.PI / 4);
   WD.bell = mesh(new CylinderGeometry(.35, .8, 1.1, 12, 1, true), M.brass, CHURCH.x, cy + 20, CHURCH.tz);
   WD.churchTop = { x: CHURCH.x, y: cy + 17, z: CHURCH.tz };
+  // the bell ringer's lantern, on a chain from the roof at the south side of the belfry (lit at dusk, as the windows are): it lights
+  // whoever kneels at that parapet from above, so at dusk he is a man and not one more shadow in the dark under the roof
+  { const lx = CHURCH.x + .25, lz = CHURCH.tz + 1.75, ly = cy + 19.2, IRON = C_('#2b2622');
+    K.wood.box(lx, ly - .03, lz, .17, .03, .17, 0, IRON, .5); K.lit.box(lx, ly, lz, .14, .26, .14, 0, WHITE, 1); K.wood.box(lx, ly + .26, lz, .21, .05, .21, 0, IRON, .5);
+    K.wood.box(lx, ly + .31, lz, .025, cy + 20.9 - ly - .31, .025, 0, IRON, .5);
+    WD.winSpots.push(WD.belfryLamp = { x: lx, y: ly + .1, z: lz, col: '#ffb468', i: 7 }); }
 
   // the stone road bridge: a humped deck that meets the road at both banks, two river arches on a
   // pier with cutwaters, arch rings, a string course and parapets with coping
@@ -1153,6 +1162,57 @@ function rifleParts(fine, scope) {
   }
   return { wood: kw.geo(), steel: ks.geo(), bolt: kb.geo() };
 }
+// ---- the machine gun at the bridge nest, drawn in code: an air-cooled gun with a slotted jacket over its
+// barrel, a pistol grip and a wooden butt, on a tall tripod for a gunner on one knee, fed from a box of
+// belted rounds on the ground at its left. Its own space: the tripod's head (the pivot it turns on) at the
+// origin, the muzzle towards +z, the ground at y = -1. Returns { steel, wood, legs }: three geometries
+// (the gun and its belt turn on the head; the legs stay put).
+const MG = { bore: .075, grip: [0, -.035, -.19], stock: [0, .0, -.37], feed: [.12, .085, -.02], belt: [.25, -.32, .01], muzzle: [0, .075, .84], gunner: [.2, -1, -.52], loader: [.64, -1, -.24], relief: [.3, -1, -.66] };
+// the armoured car's gun on its post, this high over the road; its gunner stands in the turret (out to the waist) with his shoulder to it
+const CAR_HATCH = 1.58, CAR_GUN = 3;
+function mgParts(onCar = false) {
+  const ks = baker(), kw = baker(false, true), kl = baker(), Z = Math.PI / 2, S_ = '#2e3136', D_ = '#141518', B_ = '#3c4046', y = MG.bore;
+  const along = (r1, r2, len, z, col, x = 0, yy = y, n = 12) => ks.add(new CylinderGeometry(r1, r2, len, n), col, [x, yy, z], { r: [Z, 0, 0] });
+  // the receiver, its top cover and the cradle that sits it on the tripod's head
+  ks.add(rbox(.085, .13, .4, .012), S_, [0, y, -.06]).add(new BoxGeometry(.09, .03, .22), B_, [0, y + .075, -.02]).add(new BoxGeometry(.06, .07, .16), D_, [0, .0, 0]);
+  // the barrel's jacket, slotted for the air to cool it (dark rings), the barrel out of its end and a flash hider
+  along(.036, .036, .56, .42, S_, 0, y, 16); for (let i = 0; i < 7; i++) along(.0372, .0372, .02, .2 + i * .07, D_, 0, y, 16);
+  along(.013, .013, .1, .75, S_); along(.02, .03, .07, .82, D_);
+  // the sights: a post at the front of the jacket, a leaf on the cover
+  ks.add(new BoxGeometry(.006, .045, .012), S_, [0, y + .055, .66]).add(new BoxGeometry(.034, .036, .012), S_, [0, y + .105, -.1]);
+  // the pistol grip and its trigger guard, angled back; the feed tray on the left (+x) where the belt goes in
+  ks.add(new BoxGeometry(.032, .12, .046), D_, [0, -.03, -.19], { r: [-.28, 0, 0] }).add(new BoxGeometry(.018, .01, .075), S_, [0, .0, -.13]);
+  ks.add(new BoxGeometry(.075, .022, .085), B_, [.08, y + .03, -.02]);
+  // the belt: brass rounds in a cloth strip, out of the tray and down in a sag to the box (it turns with the gun); on the car the
+  // box hangs off the cradle on an arm, close under the tray
+  if (onCar) ks.add(rbox(.1, .15, .24, .01), '#4a5040', [.24, -.24, .01]).add(new BoxGeometry(.27, .015, .035), B_, [.165, 0, -.06]).add(new BoxGeometry(.012, .19, .035), B_, [.296, -.09, -.06]);
+  { const a = new Vector3(.12, y + .03, -.02), c = onCar ? new Vector3(.26, 0, .03) : new Vector3(.3, -.15, .04), b = onCar ? new Vector3(.24, -.165, .02) : new Vector3(.4, -.8, .06), p = new Vector3(), q = new Vector3(), n = onCar ? 6 : 12;
+    for (let i = 0; i < n; i++) {
+      const u0 = i / n, u1 = (i + 1) / n, at = u => p.set(0, 0, 0).addScaledVector(a, (1 - u) * (1 - u)).addScaledVector(c, 2 * u * (1 - u)).addScaledVector(b, u * u).clone();
+      const p0 = at(u0), p1 = at(u1); q.subVectors(p1, p0); const len = q.length(), mid = p0.add(p1).multiplyScalar(.5);
+      const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), q.normalize()));
+      ks.add(new BoxGeometry(.012, len * 1.05, .075), i % 2 ? '#a8823a' : '#9a7632', [mid.x, mid.y, mid.z], { r: [e.x, e.y, e.z] });
+    }
+  }
+  // the butt: walnut, from the back of the receiver to a steel plate that sits in his shoulder
+  kw.add(new BoxGeometry(.044, .1, .34), '#c89a68', [0, y - .03, -.43], { r: [-.06, 0, 0], uv: [1, 3] });
+  ks.add(new BoxGeometry(.05, .125, .012), B_, [0, y - .042, -.6], { r: [-.06, 0, 0] });
+  // the tripod: its head under the cradle, two legs splayed forward, one back between the gunner and his loader, each with a foot plate;
+  // and the box of rounds on the ground at the belt's end
+  const T_ = '#3a3f34', leg = (b, r = .016) => { const a = new Vector3(0, -.06, 0), d = new Vector3(...b).sub(a), len = d.length(), e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), d.normalize()));
+    kl.add(new CylinderGeometry(r, r * 1.2, len, 8), T_, [a.x + d.x * len / 2, a.y + d.y * len / 2, a.z + d.z * len / 2], { r: [e.x, e.y, e.z] }).add(new BoxGeometry(.07, .015, .09), T_, [b[0], -.993, b[2]]); };
+  kl.add(new CylinderGeometry(.048, .055, .08, 12), T_, [0, -.045, 0]);
+  leg([.4, -1, .38]); leg([-.4, -1, .38]); leg([.18, -1, -.5], .018);
+  kl.add(rbox(.13, .18, .28, .01), '#4a5040', [.4, -.91, .06]).add(new BoxGeometry(.135, .012, .1), '#33382c', [.4, -.815, .1]);
+  return { steel: ks.geo(), wood: kw.geo(), legs: onCar ? null : kl.geo() };
+}
+// the officer's field glasses: two short barrels on a hinge, eyecups at -z (their own space: the middle of the hinge at the origin)
+function binoGeo() {
+  const k = baker(), Z = Math.PI / 2, D_ = '#202220', E_ = '#0d0e0d';
+  for (const x of [-.033, .033]) k.add(new CylinderGeometry(.021, .024, .11, 12), D_, [x, 0, .0], { r: [Z, 0, 0] }).add(new CylinderGeometry(.016, .016, .018, 10), E_, [x, 0, -.064], { r: [Z, 0, 0] }).add(new CylinderGeometry(.02, .02, .004, 12), '#3a4a58', [x, 0, .056], { r: [Z, 0, 0] });
+  return k.add(new BoxGeometry(.04, .016, .05), D_, [0, .004, -.01]).geo();
+}
+const BINO = { at: [0, .165, .17], right: [-.056, -.01, .01], left: [.056, -.01, .01] };   // where they sit in his head's space (just before his eyes), where his hands go on them
 // a soldier's rifle (a Group: wood, steel, bolt), cheap to make more of
 function soldierRifle(scope) {
   const P = WD[scope ? 'scoped' : 'rifle'] ||= rifleParts(false, scope), g = new Group(), [wood, steel] = WD.rifleMats;
@@ -1538,7 +1598,7 @@ function make(api) {
     const look_ = o.look || 'grey', m = man(look_);
     const s = { get down() { return this.ko; }, get alive() { return !this.ko; }, kind: 'rifle', x: 0, y: 0, yaw: 0, hp: 1, maxHp: 1, ko: false, alert: false, route: null, ri: 0, wt: 0, speed: 0, path: null, pathTo: null, fireT: rnd(1, 3), order: { do: 'hold' }, tagged: false, look: look_, sus: 0, crouch: false, aimAt: null, vx: 0, vy: 0, ...o, m };
     m.userData.pack.visible = s.kind === 'radio' || s.look === 'ally';
-    m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer'; if (m.userData.handset) m.userData.handset.visible = false;
+    m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer'; if (m.userData.handset) m.userData.handset.visible = false; if (m.userData.binos) m.userData.binos.visible = false;
     m.rig.play('idle', { fade: 0 }); m.rig.upper(null); m.rig.layers[m.rig.layers.length - 1].phase = Math.random(); m.rig.sw = null;   // (each breathes and shifts his weight in his own time)
     m.rig.steps = s.kind !== 'cargun'; m.rig.follow?.reset();   // (the car's gunner rides: his feet go with the car; and nothing swings on from the round before)
     s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0); m.position.set(s.x, s.gy, s.y); m.rotation.set(0, s.yaw, 0);
@@ -1594,7 +1654,7 @@ function make(api) {
     s.pins = s.crouch || s.low ? null : feetNow(m, m.userData.pins ||= {});   // where his feet stand: they stay there while his legs give
     // (a man on a knee or ducked is already half way down: his fall starts there, not from standing)
     m.rig.play(pick, { fade: s.crouch ? .16 : .1, again: true, from: s.low ? .36 : s.crouch ? .3 : 0 }); m.rig.upper(null);
-    hands(m, EASY); if (m.userData.handset) m.userData.handset.visible = false;   // his hands go slack
+    hands(m, EASY); if (m.userData.handset) m.userData.handset.visible = false; if (m.userData.binos) m.userData.binos.visible = false;   // his hands go slack
     const g = (lx, lz) => { const [x, z] = at(lx, lz, .7); return groundAt(x, z); };
     s.tilt = s.deck == null ? [Math.atan2(g(0, -1) - g(0, 1), 1.4), Math.atan2(g(1, 0) - g(-1, 0), 1.4)] : null; s.fallT = 0; s.still = false; s.act = null; s.thud = false;
     if (s.hitAt) { jolt(s, s.hitAt); s.hitAt = null; } else s.joltT = 0;
@@ -1961,11 +2021,11 @@ function make(api) {
       setTimeout0(d / 600, () => { if (state === 'play' && !move) { snap(); nearMiss(from); haptic('medium'); } });
       farReport(from, d, 'cs'); return;
     }
-    const from = { x: s.x, y: s.gy + 1.45, z: s.y }, eye = WD.v.cam.position, toMe = target === 'me';
-    { // out along the aim to the muzzle, then the flash
+    const onGun = s.onGun === 'grips', from = onGun ? mgMuzzle(s.gunG) : { x: s.x, y: s.gy + 1.45, z: s.y }, eye = WD.v.cam.position, toMe = target === 'me';
+    { // out along the aim to the muzzle (a gun on its tripod: its own), then the flash
       const to = toMe ? eye : { x: target.x, y: target.gy + 1, z: target.y }, L = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z) || 1;
       const ux = (to.x - from.x) / L, uy = (to.y - from.y) / L, uz = (to.z - from.z) / L;
-      from.x += ux * .75; from.y += uy * .75; from.z += uz * .75; muzzle(from.x, from.y, from.z, ux, uy, uz, kind === 'mg' ? .8 : kind === 'cs' ? 1.2 : 1);
+      if (!onGun) { from.x += ux * .75; from.y += uy * .75; from.z += uz * .75; } muzzle(from.x, from.y, from.z, ux, uy, uz, kind === 'mg' ? .8 : kind === 'cs' ? 1.2 : 1);
     }
     const d = toMe ? Math.hypot(from.x - eye.x, from.z - eye.z) : Math.hypot(from.x - target.x, from.z - target.y);
     if (toMe) {
@@ -2378,9 +2438,13 @@ function make(api) {
     const hull = new Mesh(rbox(2.4, 1.4, 5, .2), body); hull.position.y = 1.2; g.add(hull);
     const turret = new Mesh(rbox(1.5, .7, 1.6, .2), body); turret.position.set(0, 2.2, -.3); g.add(turret);
     const barrel = new Mesh(new CylinderGeometry(.08, .08, 1.6, 8), M.iron); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 2.2, -1.6); g.add(barrel);
+    // the commander's gun, on a post in front of his hatch on the turret's left (the same gun as the bridge nest's, without its tripod)
+    const P = WD.mgCar ||= mgParts(true), [wood, steel] = WD.rifleMats, mg = new Group(); for (const [geo, mat] of [[P.steel, steel], [P.wood, wood]]) mg.add(new Mesh(geo, mat));
+    mg.position.set(-.25, CAR_GUN, -.72); mg.rotation.y = Math.PI; g.add(mg);
+    const post = new Mesh(new CylinderGeometry(.03, .04, CAR_GUN - .035 - 2.55, 8), steel); post.position.set(-.25, (CAR_GUN - .035 + 2.55) / 2, -.72); g.add(post);
     for (const [dx, dz] of [[-1.2, -1.6], [1.2, -1.6], [-1.2, 1.6], [1.2, 1.6]]) { const w = new Mesh(new CylinderGeometry(.55, .55, .4, 14), M.dark); w.rotation.z = Math.PI / 2; w.position.set(dx, .55, dz); g.add(w); }
     g.traverse(m => { if (m.isMesh) m.castShadow = true; }); g.visible = false; WD.v.scene.add(g);
-    temps.push(g); return { g, x: 240, z: -78, stopped: false, on: false, fireT: 3 };
+    temps.push(g); return { g, mg, x: 240, z: -78, stopped: false, on: false, fireT: 3 };
   }
 
   // ---- missions
@@ -2441,16 +2505,17 @@ function make(api) {
       setup() {
         const cy = WD.churchTop;
         cs = soldier({ kind: 'cs', look: 'rook', x: CHURCH.x, y: CHURCH.tz + 1.6, lift: cy.y - groundAt(CHURCH.x, CHURCH.tz + 1.6) + .2, yaw: 0, fixed: true, crouch: true, see: 0 });
-        mgNest = { x: BRIDGE.x - 2, z: -27 };
-        const g1 = soldier({ kind: 'mg', x: mgNest.x, y: mgNest.z, yaw: 0, fixed: true, crouch: true }), g2 = soldier({ kind: 'mg2', x: mgNest.x + 2, y: mgNest.z - 1.5, yaw: 0, fixed: true, crouch: true });
+        // the gun nest at the bridge's north end: the gun on its tripod in a ring of sandbags facing the bridge, the gunner on
+        // one knee at its grips and his loader at its left with the belt
+        mgNest = mgBuild(BRIDGE.x - 2.2, -26.5, 0);
+        const g1 = soldier({ kind: 'mg', fixed: true, crouch: true, gunG: mgNest.g }), g2 = soldier({ kind: 'mg2', fixed: true, crouch: true, gunG: mgNest.g });
+        mgPlace(g1, MG.gunner); mgPlace(g2, MG.loader, -1); g1.m.userData.rifle.visible = false;   // (the gunner's rifle stays behind: the gun is his)
         men.push(cs, g1, g2,
           soldier({ x: 22, y: -92, yaw: .3 }), soldier({ x: 56, y: -88, yaw: -.2 }), soldier({ x: -4, y: -70, yaw: 0, route: [[-4, -70, 4], [24, -56, 4]] }),
           soldier({ x: 30, y: -40, yaw: .1, route: [[30, -40, 3], [56, -42, 3]] }),
           soldier({ kind: 'officer', look: 'officer', x: -6, y: -98, yaw: 0, spotter: true }),
         );
         allies = ['Hale', 'Pike', 'Dunn'].map((name, i) => { const a = soldier({ look: 'ally', x: BRIDGE.x - 2 + i * 2, y: 44 + i * 3, yaw: Math.PI, fixed: true, ally: true, name }); a.hp = 100; a.leg = 0; return a; });
-        // the sandbag nest by the bridge
-        sandbags(mgNest.x + 1, mgNest.z + 2.2);
         tower = buildTower();
         drums = [0, 1, 2].map(i => {
           const b = boom.add({ x: tower.x - 1.2 + i * 1.1, y: tower.y, z: tower.z - 3.4, size: .5 });
@@ -2459,7 +2524,7 @@ function make(api) {
         });
         car = buildCar();
         // the car's hatch gunner: knock him out and it stops too
-        car.gunner = soldier({ kind: 'cargun', x: car.x, y: car.z, lift: 2.1, fixed: true });
+        car.gunner = soldier({ kind: 'cargun', x: car.x - .2, y: car.z + .45, deck: WD.land.height(car.x, car.z) + CAR_HATCH, fixed: true, onGun: 'grips', gunG: car.mg }); car.gunner.m.userData.rifle.visible = false;
         car.gunner.m.visible = false; men.push(car.gunner);
       },
       intro: () => [
@@ -2505,13 +2570,40 @@ function make(api) {
     },
   };
   let allyGo = 0, mgOn = false; const temps = [];
-  function sandbags(x, z) {
+  // a ring of sandbags round a gun on the tripod at x, z (its head), open behind; the gun's muzzle over the front of it
+  function sandbags(x, z, yaw) {
     if (!WD.bags) { WD.bags = new InstancedMesh(rbox(1.1, .45, .6, .2), WD.M.sand, 24); WD.bags.castShadow = WD.bags.receiveShadow = true; WD.v.scene.add(WD.bags); }
-    const o = new Object3D(); let i = 0; const y = groundAt(x, z);
-    for (let row = 0; row < 2; row++) for (let k = 0; k < 7; k++) { const a = -1.3 + k * .43; o.position.set(x + Math.sin(a) * 2.4, y + .22 + row * .42, z - Math.cos(a) * -2.4 * -1); o.rotation.set(0, a, 0); o.updateMatrix(); WD.bags.setMatrixAt(i++, o.matrix); }
+    const o = new Object3D(), R = 1.9, c = Math.cos(yaw), sn = Math.sin(yaw), cx = x + .2 * c - 1 * sn, cz = z - .2 * sn - 1 * c; let i = 0;   // (the ring's middle: a metre behind the head)
+    for (const [row, list] of [[0, [-1.35, -.81, -.27, .27, .81, 1.35]], [1, [-1.08, -.54, 0, .54, 1.08]]]) for (const a0 of list) {
+      const a = yaw + a0, bx = cx + Math.sin(a) * R, bz = cz + Math.cos(a) * R, y = groundAt(bx, bz);
+      o.position.set(bx, y + .22 + row * .42, bz); o.rotation.set(0, a + (row ? .04 : -.03), 0); o.updateMatrix(); WD.bags.setMatrixAt(i++, o.matrix);
+      // (each bag of the bottom row blocks rounds and feet: a box round it, as near as a square box comes)
+      if (!row) { const hx = Math.abs(Math.cos(a)) * .55 + Math.abs(Math.sin(a)) * .3, hz = Math.abs(Math.sin(a)) * .55 + Math.abs(Math.cos(a)) * .3; WD.solids.push({ x0: bx - hx, x1: bx + hx, y0: y, y1: y + .86, z0: bz - hz, z1: bz + hz, kind: 'low', temp: true }); }
+    }
     WD.bags.count = i; WD.bags.instanceMatrix.needsUpdate = true; WD.bags.visible = true;
-    WD.solids.push({ x0: x - 2.6, x1: x + 2.6, y0: y, y1: y + .85, z0: z - .5, z1: z + .6, kind: 'low', temp: true });
   }
+  // the bridge nest's gun: built at x, z (the tripod's head over it), facing yaw; mgNest is then { x, y, z, yaw, g (the gun, which turns), kick }
+  function mgBuild(x, z, yaw) {
+    const P = WD.mgParts ||= mgParts(), [wood, steel] = WD.rifleMats, y = groundAt(x, z) + 1, g = new Group();
+    for (const [geo, mat] of [[P.steel, steel], [P.wood, wood]]) { const q = new Mesh(geo, mat); q.castShadow = true; g.add(q); }
+    const legs = new Mesh(P.legs, steel); legs.castShadow = true;
+    for (const q of [g, legs]) { q.position.set(x, y, z); q.rotation.y = yaw; WD.v.scene.add(q); temps.push(q); }
+    sandbags(x, z, yaw);
+    return { x, y, z, yaw, g, kick: 0 };
+  }
+  // a man of the nest where he belongs to the gun: `at` in the gun's own space (MG), facing the way it points, turned by `turn`
+  function mgPlace(s, at, turn = 0) {
+    const n = mgNest, a = n.g.rotation.y, c = Math.cos(a), sn = Math.sin(a);
+    s.x = n.x + at[0] * c + at[2] * sn; s.y = n.z - at[0] * sn + at[2] * c; s.yaw = a + turn;
+  }
+  // the officer's field glasses up at his eyes, in both hands (after rig.update)
+  function binocs(s, m) {
+    const u = m.userData; let b = u.binos;
+    if (!b) { b = u.binos = new Mesh(WD.binoGeo ||= binoGeo(), WD.rifleMats[1]); b.castShadow = true; b.position.fromArray(BINO.at); m.bones.head.add(b); }
+    b.visible = true; m.hold(b, BINO.right, BINO.left, { right: [-.4, -.3, .1], left: [.4, -.3, .1] });
+  }
+  // where its muzzle is now (for the flash and the rounds)
+  function mgMuzzle(g = mgNest.g) { g.updateWorldMatrix(true, false); const p = new Vector3().fromArray(MG.muzzle).applyMatrix4(g.matrixWorld); return { x: p.x, y: p.y, z: p.z }; }
   function truckIn() {
     // four more come down the east road
     for (let i = 0; i < 4; i++) { const s = soldier({ x: 150 + i * 3, y: -72 - i, yaw: -Math.PI / 2 }); s.route = [[60 - i * 6, -86 + i * 2, 2]]; s.late = true; s.sus = .7; men.push(s); }
@@ -2672,19 +2764,31 @@ function make(api) {
         }
         if (s.hideT > 0) { stance = 'duck'; m.rig.upper(null); } else { stance = 'kneel'; m.rig.upper('aim'); }
       } else if (s.kind === 'mg' || s.kind === 'mg2') {
-        stance = 'kneel'; m.rig.upper(s.kind === 'mg' || men.find(o => o.kind === 'mg').ko ? 'aim' : null);
-        const gunner = s.kind === 'mg' || men.find(o => o.kind === 'mg')?.ko;
-        if (mgOn && gunner && (s.fireT -= dt) <= 0) {
+        // the gun nest: the gunner on one knee at the grips, his cheek to the butt; his loader beside the gun with the belt in his hands.
+        // With the gunner down, the loader shuffles across behind the gun and takes it.
+        const n = mgNest, gunner = s.kind === 'mg' || men.find(o => o.kind === 'mg')?.ko;
+        stance = 'kneel';
+        if (s.kind === 'mg2' && gunner) {
+          const c = Math.cos(n.g.rotation.y), sn = Math.sin(n.g.rotation.y), at = MG.relief, tx = n.x + at[0] * c + at[2] * sn, tz = n.z - at[0] * sn + at[2] * c, dx = tx - s.x, dz = tz - s.y, d = Math.hypot(dx, dz);
+          if (s.onGun !== 'grips' && d > .06) { const k = Math.min(1, 1.5 * dt / d); s.x += dx * k; s.y += dz * k; speed = 1.5; s.yaw = turnTo(s.yaw, n.g.rotation.y, dt * 3); s.onGun = null; }
+          else { if (s.onGun !== 'grips') { s.onGun = 'grips'; s.yaw = n.g.rotation.y; } n.g.rotation.y = s.yaw; mgPlace(s, at); }
+        } else if (s.kind === 'mg') { s.onGun = 'grips'; n.g.rotation.y = s.yaw; mgPlace(s, MG.gunner); }
+        else { s.onGun = 'belt'; mgPlace(s, MG.loader, -1); }
+        m.rig.upper(s.onGun === 'grips' ? 'shoulder' : s.onGun ? 'aim' : null);
+        if (mgOn && s.onGun === 'grips' && (s.fireT -= dt) <= 0) {
           s.fireT = rnd(.12, .2); s.burst = (s.burst || 0) + 1; if (s.burst > 8) { s.burst = 0; s.fireT = 1.4; }
           const tgt = alive(allies)[Math.floor(Math.random() * alive(allies).length)];
-          if (tgt) { s.yaw = turnTo(s.yaw, Math.atan2(tgt.x - s.x, tgt.y - s.y), dt * 3); enemyShot(s, tgt, 'mg'); }
+          // (he swings the gun onto them, as far as the sandbags let it go)
+          if (tgt) { s.yaw = n.yaw + clamp(angDiff(turnTo(s.yaw, Math.atan2(tgt.x - n.x, tgt.y - n.z), dt * 3), n.yaw), -.7, .7); enemyShot(s, tgt, 'mg'); n.kick = .022; }
           noise(.07, { vol: .08, from: 2000, to: 300 });
         }
-        // the loader takes over the gun: he shuffles across to it on his knees' height (beside the man who was on it, not on top of him)
-        if (s.kind === 'mg2' && men.find(o => o.kind === 'mg').ko) { const tx = mgNest.x + .85, tz = mgNest.z - .25, dx = tx - s.x, dz = tz - s.y, d = Math.hypot(dx, dz); if (d > .06) { const k = Math.min(1, 1.5 * dt / d); s.x += dx * k; s.y += dz * k; speed = 1.5; } }
+        // the gun jumps back on its tripod with each round and comes forward again
+        n.kick = Math.max(0, n.kick - dt * .3); n.g.position.set(n.x - Math.sin(n.g.rotation.y) * n.kick, n.y, n.z - Math.cos(n.g.rotation.y) * n.kick);
       } else if (s.kind === 'cargun') {
-        m.visible = !!car?.on; if (car) { s.x = car.x; s.y = car.z + .4; s.yaw = Math.PI / 2 + Math.PI; }
-        m.rig.upper('aim');
+        // he stands in the turret's hatch, out to the chest, behind his gun (the gun's MG.gunner spot, standing): the car has
+        // already rolled on this frame, so he and the gun he holds go together
+        m.visible = !!car?.on; if (car) { s.x = car.x - .2; s.y = car.z + .45; s.deck = WD.land.height(car.x, car.z) + CAR_HATCH; s.yaw = Math.PI / 2 + Math.PI; }
+        m.rig.upper('shoulder');   // (at his gun: hands on its grips, cheek to its butt)
       } else if (s.alert) {
         s.alertT += dt; s.thinkDt += dt; s.shaken = Math.max(0, (s.shaken || 0) - dt * .2);
         // nobody hides for good: a man the nest can't reach for a few seconds steps out to where it can, and shoots back from there
@@ -2758,12 +2862,14 @@ function make(api) {
       const far = (ed > 160 && !scoped) || (ed > 5 && ex * cfx + ey * cfy + ez * cfz < ed * coneCos);
       // a rifleman shoulders his rifle to aim (the gunners and the officer keep the plain pose: hands out to what they hold)
       const armed = IN_HANDS[s.kind] && m.userData.gun; if (armed && m.rig.topOn && m.rig.top === 'aim') m.rig.top = 'shoulder';
+      // (the officer carries no rifle: when he looks hard for you, it is through his field glasses)
+      if (s.kind === 'officer') { s.binos = !!(m.rig.topOn && m.rig.top === 'aim'); if (!s.binos && m.userData.binos) m.userData.binos.visible = false; }
       // (a rifleman's hands are set as he carries his rifle; the others': closed on a gun's grips or the handset, else open)
-      if (!armed) { const hold = m.rig.topOn && m.rig.top === 'aim' ? null : EASY; hands(m, hold, s.sending ? HELD : hold); }
+      if (!armed) { const hold = s.onGun || (m.rig.topOn && m.rig.top === 'aim') ? null : EASY; hands(m, hold, s.sending ? HELD : hold); }
       if (!far || (frame + (s.x | 0)) % 3 === 0) {
         const step = far ? dt * 3 : dt, turn = clamp(angDiff(s.yaw, s.yawWas ?? s.yaw) / step, -6, 6); s.yawWas = s.yaw;   // (he leans into his turns)
         m.rig.update(step, { speed: s.av, aim: s.alert ? -.05 : 0, turn });
-        if (m.visible) { m.see(WD.v.cam, 1000); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
+        if (m.visible) { m.see(WD.v.cam, 1000); if (s.onGun) { const k = s.onGun === 'grips'; m.hold(s.gunG || mgNest.g, k ? MG.grip : MG.belt, k ? MG.stock : MG.feed); } else if (s.binos) binocs(s, m); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
       }
       // through the scope his feet meet the slope he stands on (foot IK), for the few men in view
       if (scoped && !s.deck && plantN > 0 && watched(s)) { plantN--; m.rig.plant(WD.ground, m); }
@@ -3116,7 +3222,7 @@ function make(api) {
       audioDown(); theme?.stop();
       world(); layout();
       // (one sky and one weather for the world, which every card of this game shares: a second card used to add its own dome)
-      if (!WD.sky) { WD.sky = new Sky(WD.v, { time: MOODS.m1.time, tilt: MOODS.m1.tilt, stars: 300, sun: WD.sl, day: DAY_CLEAR, clouds: MOODS.m1.clouds, gap: MOODS.m1.gap, env: true, fog: false }); WD.rain = new Weather(WD.v, { kind: 'clear', amount: 0, wind: AIR, area: 40 }); if (WD.rain.rainMesh) { WD.rain.rainMesh.material.opacity = .3; WD.rain.rainMesh.material.color.set('#8c9cb0'); } }
+      if (!WD.sky) { WD.sky = new Sky(WD.v, { time: MOODS.m1.time, tilt: MOODS.m1.tilt, stars: 300, sun: WD.sl, day: DAY_CLEAR, clouds: MOODS.m1.clouds, gap: MOODS.m1.gap, env: true, fog: false }); WD.rain = new Weather(WD.v, { kind: 'clear', amount: 0, wind: AIR, area: 30, max: 2400 }); if (WD.rain.rainMesh) { WD.rain.rainMesh.material.opacity = .28; WD.rain.rainMesh.material.color.set('#9aa8b8'); } }
       sky = WD.sky; rain = WD.rain; rain.onFlash = far => { storm = 1.6; thunder(far); };
       fx.clear(); me.reset(); gun.ammo = gun.mag; gun.reloadLeft = 0; gun.reserve = Infinity; gun.shotsAtCs = 0;
       state = 'brief'; briefT = 0; t = 0; score = 0; heat = 0; located = false; alertedN = 0; frame = 0; markAt = -1; markV = null;
@@ -3206,14 +3312,15 @@ function make(api) {
       }
       // suspicious soldiers that are close to a found body or a near miss wake up
       for (const s of men) if (!s.ko && !s.alert && !s.fixed && s.sus >= 1) wakeUp(s);
+      // the armoured car rolls on before its men are placed (its gunner rides it with his hands on its gun)
+      if (car && car.on && !car.stopped) { car.x -= dt * 6; car.z = roadZ(car.x); car.g.position.set(car.x, WD.land.height(car.x, car.z), car.z); car.g.rotation.y = Math.PI / 2; }
       updateMortar(dt);
       updateMen(dt); updateAllies(dt); updateShots(dt); updateTracers(dt); spotLetters(dt); updateBirds(dt); chimneySmoke();
       if (car && car.on && !car.stopped) {
-        car.x -= dt * 6; car.z = roadZ(car.x); if (car.x < 30) { car.stopped = true; mission.fail('The armoured car reached the bridge.'); }
+        if (car.x < 30) { car.stopped = true; mission.fail('The armoured car reached the bridge.'); }
         if (car.gunner?.ko) { car.stopped = true; car.smoke = true; }
-        car.g.position.set(car.x, WD.land.height(car.x, car.z), car.z); car.g.rotation.y = Math.PI / 2;
         noise(.05, { vol: .015, from: 200, to: 120 });
-        if ((car.fireT -= dt) <= 0) { car.fireT = 1.4; const a = alive(allies || [])[0]; if (a) enemyShot({ x: car.x, y: car.z, gy: WD.land.height(car.x, car.z) + 1 }, a, 'mg'); }
+        if ((car.fireT -= dt) <= 0) { car.fireT = 1.4; const a = alive(allies || [])[0]; if (a) enemyShot(car.gunner, a, 'mg'); }
         for (const b of drums || []) if (!b.gone && Math.hypot(car.x - b.x, car.z - b.z) < 9) car.near = true;
       }
       if (car?.smoke) WD.smoke.emit({ x: car.x, y: WD.land.height(car.x, car.z) + 2.4, z: car.z, vx: rnd(-.3, .3), vy: 2, vz: rnd(-.3, .3), life: 3, size: 1.4, grow: 2, col: [.15, .14, .13], a: .7 });
@@ -3267,7 +3374,8 @@ function make(api) {
       // the operator's and the marksman's scope glints, nest markers
       if (cs && !cs.ko && !bulletCam && frame % 2 === 0) {   // (not in the bullet cam: in slow motion a glint hangs there, a huge blob up close)
         const aiming = cs.aimT > 0, fl = aiming ? 1.6 + Math.sin(t * 40) * .6 : 0, g = .5 + cs.see * 2.5 + fl * 2;
-        if (!(cs.hideT > 0)) { const e = WD.v.cam.position, dx = e.x - cs.x, dz = e.z - cs.y, l = Math.hypot(dx, dz) || 1; WD.sparks.emit({ x: cs.x + dx / l * .4, y: cs.gy + 1.15, z: cs.y + dz / l * .4, life: .1, size: .3 + cs.see * .6 + fl * .5, col: [g * 2, g * 2, g * 1.6] }); } }
+        // (off the front lens of his scope: small while he scans, growing as he settles on you, so it marks him without hiding his head)
+        if (!(cs.hideT > 0) && cs.m.userData.gun) { const e = WD.v.cam.position, q = cs.m.userData.gun.localToWorld(tmpB.set(0, .084, -.26)), dx = e.x - q.x, dy = e.y - q.y, dz = e.z - q.z, l = Math.hypot(dx, dy, dz) || 1; WD.sparks.emit({ x: q.x + dx / l * .08, y: q.y + dy / l * .08, z: q.z + dz / l * .08, life: .1, size: .09 + cs.see * .35 + fl * .5, col: [g * 2, g * 2, g * 1.6] }); } }
       if (spotting) for (const s of men) if (s.spotter && !s.ko && frame % 3 === 0) WD.sparks.emit({ x: s.x, y: s.gy + 1.6, z: s.y + .3, life: .1, size: .25, col: [2, 2, 1.6] });
       if (!move && nextNest() && (located || mission.time > 20) && frame % 4 === 0) { const n = NESTS[nextNest()], e = nestEye(n); WD.marks.emit({ x: e.x, y: e.y + 2.5, z: e.z, life: .2, size: 1.6, col: [3, 2.6, 1.2] }); }
       WD.marks.update(dtReal);
@@ -3337,7 +3445,9 @@ function make(api) {
         v.placeLamps(L, w.x, w.y + 1.5, w.z);
       } else if (winLit && frame % 5 === 0) {
         cam.getWorldDirection(tmpA); const d = clamp(tmpA.y < -.01 ? (cam.position.y - VILLAGE_Y) / -tmpA.y : 160, 6, 420) - 5;   // (a little short of it: the walls facing you first)
-        v.placeLamps(WD.winSpots, cam.position.x + tmpA.x * d, VILLAGE_Y + 2, cam.position.z + tmpA.z * d);
+        const b = WD.belfryLamp, bx = b.x - cam.position.x, by = b.y - cam.position.y, bz = b.z - cam.position.z;
+        if (bx * tmpA.x + by * tmpA.y + bz * tmpA.z > .994 * Math.hypot(bx, by, bz)) v.placeLamps(WD.winSpots, b.x, b.y, b.z);   // (looking at the belfry: its lantern lit first)
+        else v.placeLamps(WD.winSpots, cam.position.x + tmpA.x * d, VILLAGE_Y + 2, cam.position.z + tmpA.z * d);
       }
       camCut(v);
       fx.begin(c); v.render(c, W, H); fx.end(c, W, H);
