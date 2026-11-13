@@ -23,6 +23,12 @@
 // phone where blend's refreshes are too full for a game, that game switches itself to ahead, for as long
 // as there is one frame to make per real frame (two or three guesses in a row smear what moves).
 //
+// On a computer (the Mac and Windows app, src/desktop.js) the class comes from the graphics chip as a desktop
+// browser names it (classifyDesktop), the screen can run at up to 360 Hz, and Auto runs games at the screen's
+// own rate: 2D games always, 3D games on a 'top' computer (on a 'mid' one, the screen's rate divided down to
+// near 60). A 3D game that can't keep up steps down a whole number of refreshes at a time (144 -> 72 -> 48 ->
+// 36 on a 144 Hz screen), so its frames always land on refreshes.
+//
 // The screen's rate (src/kit/screenrate.js, Android): while a round is played the app asks the screen
 // for the rate that suits the game (screenWant): the fastest that's a whole number of refreshes per real
 // frame when frame generation fills in (so the phone can't drop the card to 60 Hz and turn it off), the
@@ -31,6 +37,7 @@ import { store } from '../util.js';
 import { gpuName } from './gpu.js';
 import { power } from './power.js';
 import { screen, askRate, pickRate } from './screenrate.js';
+import { desktop } from '../desktop.js';
 
 const PICK_KEY = 'gs_fps', SETTLE_KEY = 'gs_speed', FG_KEY = 'gs_fg', FG_HOW_KEY = 'gs_fg_how';
 const touchy = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
@@ -42,8 +49,28 @@ const chip = () => gpuName();
   try { const { Device } = await import('@capacitor/device'); model = String((await Device.getInfo()).model || ''); klass = null; } catch (_) { /* web */ }
 })();
 
-/** Sort a phone into 'top' | 'mid' | 'low' from its chip name, model, cores and memory. */
-export function classify(name = '', mdl = '', cores = 8, mem = 8, phone = true) {
+/**
+ * A computer's class from its graphics chip as a desktop browser names it ("ANGLE (Apple, ANGLE Metal Renderer:
+ * Apple M2 Pro, Unspecified Version)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0
+ * ps_5_0, D3D11)"): drawing in software 'low', a chip built into an Intel or AMD processor 'mid', the rest 'top'
+ * (Apple silicon, NVIDIA and AMD cards, Intel Arc cards, Snapdragon X). Unknown: 'top' (the 3D kit steps down
+ * within seconds if it has to). (The phone rule read every Mac as a mid-range iPhone: its chip says "Apple".)
+ */
+export function classifyDesktop(name = '') {
+  const n = name.toLowerCase();
+  if (/swiftshader|llvmpipe|softpipe|lavapipe|software|basic render/.test(n)) return 'low';
+  if (/apple m\d|nvidia|geforce|quadro|\brtx|radeon(\(tm\))? (rx|pro)|arc(\(tm\))? [ab]\d|adreno|qualcomm/.test(n)) return 'top';
+  if (/intel|radeon|vega|\bamd\b/.test(n)) return 'mid';
+  return 'top';
+}
+
+/** Sort a phone into 'top' | 'mid' | 'low' from its chip name, model, cores and memory (desk: a computer, classifyDesktop). */
+export function classify(name = '', mdl = '', cores = 8, mem = 8, phone = true, desk = false) {
+  if (desk) {
+    const k = classifyDesktop(name);
+    // (an older computer with four cores or less: one class lower, never below its chip's)
+    return k === 'top' && (cores && cores <= 4 || mem && mem <= 4) ? 'mid' : k;
+  }
   const n = name.toLowerCase();
   let k = null, m;
   if ((m = n.match(/adreno[^\d]*(\d{3})/))) { const v = +m[1]; k = v >= 730 ? 'top' : v >= 640 ? 'mid' : 'low'; }
@@ -59,9 +86,10 @@ export function classify(name = '', mdl = '', cores = 8, mem = 8, phone = true) 
 }
 /** This phone's class (cached once the model is known). */
 export function phoneClass() {
+  if (speed.klass) return speed.klass;   // (pinned: tests)
   if (klass) return klass;
-  const c = classify(chip(), model, navigator.hardwareConcurrency || 8, navigator.deviceMemory || 8, touchy);
-  if (model || !touchy) klass = c;   // on a phone, wait for the model before caching
+  const c = classify(chip(), model, navigator.hardwareConcurrency || 8, navigator.deviceMemory || 8, touchy, speed.desktop);
+  if (model || !touchy || speed.desktop) klass = c;   // on a phone, wait for the model before caching
   return c;
 }
 
@@ -70,17 +98,24 @@ export function phoneClass() {
 // (kept in fixed lists, so measuring every refresh makes no garbage)
 const GAPS = 40, gaps = new Float64Array(GAPS), sorted = new Float64Array(GAPS);
 let lastTick = 0, hz = 60, nGaps = 0, at = 0;
+// a computer's screens: the usual rates up to 360 Hz (a phone's: 60, 90, 120, 144)
+const DESK_HZ = [60, 75, 90, 100, 120, 144, 165, 180, 200, 240, 280, 300, 360];
+/** The screen's rate from a measured one (Hz): a phone's step, or (desk) the nearest usual computer screen's. */
+export function snapHz(f, desk = false) {
+  if (!desk) return f > 130 ? 144 : f > 100 ? 120 : f > 75 ? 90 : 60;
+  let best = 60; for (const r of DESK_HZ) if (Math.abs(r - f) < Math.abs(best - f)) best = r;
+  return best;
+}
 export function tick(now) {
   const g = now - lastTick; lastTick = now;
-  if (g > 4 && g < 40) { gaps[at] = g; at = (at + 1) % GAPS; if (nGaps < GAPS) nGaps++; }
+  if (g > (speed.desktop ? 2 : 4) && g < 40) { gaps[at] = g; at = (at + 1) % GAPS; if (nGaps < GAPS) nGaps++; }
   if (nGaps >= 20 && nGaps % 10 === 0) {
     const s = nGaps < GAPS ? sorted.subarray(0, nGaps) : sorted;
     s.set(nGaps < GAPS ? gaps.subarray(0, nGaps) : gaps); s.sort();
     // the screen's rate from the shorter gaps (a quarter in): a refresh the page didn't get, because the chip was
     // behind, only makes a gap longer. The middle gap read a 120 Hz screen as 60 whenever a busy chip held back
     // every other refresh, and the beat then stopped making frames between (the Fold's tour, 2026-11-13)
-    const f = 1000 / s[nGaps >> 2];
-    hz = f > 130 ? 144 : f > 100 ? 120 : f > 75 ? 90 : 60;
+    hz = snapHz(1000 / s[nGaps >> 2], speed.desktop);
   }
 }
 /** The screen's refresh rate in Hz (60 until measured). */
@@ -115,11 +150,25 @@ let pick = okPick(store.get(PICK_KEY, 'auto'));
 export const fpsPick = () => pick;
 export function setFpsPick(v) { pick = okPick(v); store.set(PICK_KEY, pick); }
 
+/** The screen's rate divided by a whole number, at least target (or the screen's rate if it is lower): 144 Hz near 60 is 72. */
+export const evenRate = (rate, target) => rate / Math.max(1, Math.floor(rate / target));
 /** What Auto would choose for this game on this phone, before any stepping down. */
 export function autoFps(def) {
   const k = phoneClass();
+  // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes)
+  if (speed.desktop) return !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
   if (is3D(def)) return k === 'top' ? 120 : k === 'mid' ? 60 : 30;
   return k === 'low' ? 60 : 120;
+}
+/** A computer's frame rate one step down from f: the next whole number of refreshes a frame (0: none left above 30). */
+export function rateBelow(rate, f) {
+  for (let n = 1; n < 64; n++) { const r = rate / n; if (r < f * .97) return r >= 29.5 ? r : 0; }
+  return 0;
+}
+/** And one step up (Infinity: already at the screen's rate). */
+export function rateAbove(rate, f) {
+  for (let n = Math.max(1, Math.floor(rate / f)); n >= 1; n--) { const r = rate / n; if (r > f * 1.03) return r; }
+  return Infinity;
 }
 // the frame rate this game was stepped down to (999: none); a step older than a day is let go here
 function heldFps(id) {
@@ -325,7 +374,8 @@ export function screenWish(def) { def ||= speed.standIn; askRate(def ? screenWan
 // inputAt: when a finger, key or pad last moved the game on screen (performance.now(), set by the feed).
 // shield: the stutter shield is on (frameLate()).
 // standIn: a game definition the engine test scenes stand in for while no round is played (the screen's rate is asked for as for it).
-export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, pace: null, standIn: null, inputAt: 0, cost: { id: null, real: null, made: null, nr: 0, nm: 0 }, outMpx: 0, busy: () => false, playing: () => false };
+// desktop: running in the Mac and Windows app (src/desktop.js; tests may set it). klass: a class pinned in place of this phone's (tests)
+export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, pace: null, standIn: null, inputAt: 0, cost: { id: null, real: null, made: null, nr: 0, nm: 0 }, outMpx: 0, busy: () => false, playing: () => false, desktop: !!desktop, klass: null };
 Object.defineProperty(speed, 'shield', { get: shieldOn });
 
 /** The 3D kit settled on a tier and frame rate for this game: start there next time. */
@@ -345,7 +395,7 @@ export function settledFor(id) {
 /** The 3D kit can't keep up: step this game's frame rate down one notch (120 -> 60 -> 30). False if it can't. */
 export function stepDown(def) {
   if (pick !== 'auto' || !def) return false;
-  const f = fpsFor(def), next = f > 60 ? 60 : f > 30 ? 30 : 0;
+  const f = fpsFor(def), next = speed.desktop ? rateBelow(hz, f) : f > 60 ? 60 : f > 30 ? 30 : 0;
   if (!next) return false;
   settle(def.id, { fps: next }); return true;
 }
@@ -353,7 +403,7 @@ export function stepDown(def) {
 export function stepUp(def) {
   if (pick !== 'auto' || !def) return false;
   const s = settled[def.id]; if (!s?.fps) return false;
-  const next = s.fps < 60 ? 60 : 120;
+  const next = speed.desktop ? rateAbove(hz, s.fps) : s.fps < 60 ? 60 : 120;
   if (next >= autoFps(def)) { settled[def.id] = { ...noFps(s), at: Date.now() }; store.set(SETTLE_KEY, settled); } else settle(def.id, { fps: next });
   return true;
 }

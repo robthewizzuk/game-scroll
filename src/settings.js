@@ -9,6 +9,9 @@ import { geoSettings } from './geo.js';
 import { hasWebGPU } from './kit/gpu.js';
 import { OPEN_SOURCE, OTHER_PARTS } from './licences.js';
 import { feedBrain, resetRecommendations } from './feedsignals.js';
+import { desktop } from './desktop.js';
+// (what Settings calls the thing the app runs on)
+const dev = desktop ? 'computer' : 'phone';
 
 const size = b => b < 1024 * 1024 ? `${Math.ceil(b / 1024)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
 
@@ -34,7 +37,7 @@ export function openSettings({ stream, cached, clear, arTest }) {
       </section>
       <section class="set-row">
         <h3>Frame rate</h3>
-        <p class="qa-help">Auto picks by phone: on this one ${Math.min(autoFps({ era: 'nextgen' }), screenHz())} fps for 3D games and ${Math.min(autoFps({}), screenHz())} fps for the rest (${{ top: 'a top-end', mid: 'a mid-range', low: 'an entry-level' }[phoneClass()]} phone with a ${screenHz()} Hz screen), and 3D games step down if the phone can't keep up. A lower rate saves battery and keeps the phone cooler.</p>
+        <p class="qa-help">Auto picks by ${dev}: on this one ${Math.round(Math.min(autoFps({ era: 'nextgen' }), screenHz()))} fps for 3D games and ${Math.round(Math.min(autoFps({}), screenHz()))} fps for the rest (${{ top: 'a top-end', mid: 'a mid-range', low: 'an entry-level' }[phoneClass()]} ${dev} with a ${screenHz()} Hz screen), and 3D games step down if the ${dev} can't keep up. A lower rate saves battery and keeps the ${dev} cooler.</p>
         <div class="qa-actions set-fps">${['auto', 120, 60, 30].map(v => `<button data-fps="${v}"${fpsPick() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}${v !== 'auto' && v > screenHz() ? ' disabled' : ''}>${v === 'auto' ? 'Auto' : v === 30 ? '30 · battery saver' : v}</button>`).join('')}</div>
       </section>
       ${webgpuHere ? `<section class="set-row">

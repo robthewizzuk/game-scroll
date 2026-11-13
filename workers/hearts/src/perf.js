@@ -24,7 +24,7 @@ export const PERF_DAYS = 14;
 const MAX_GAMES = 40, MAX_ERRORS = 10;
 const CAP = { r: 50, f: 200_000, ms: 3_600_000, w: 3_600_000, sl: 200_000, h: 50_000, x: 60_000 };
 const GAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/, VER_RE = /^[0-9a-f]{6,16}$/;
-const PLATFORMS = new Set(['ios', 'android', 'web']);
+const PLATFORMS = new Set(['ios', 'android', 'web', 'mac', 'windows']);   // (mac, windows: the desktop app)
 const FORMS = new Set(['phone', 'wide']);
 const ROBOT = '-robot';
 
@@ -138,6 +138,7 @@ const pk = r => r.platform + '|' + r.model;   // one kind of reporter: a phone m
 function phoneKind({ platform, model, builds = 0, d0 = 0, d1 = 0, crashes = 0 }) {
   if (String(platform).endsWith(ROBOT)) return 'robot';
   if (platform === 'web') return 'browser';
+  if (platform === 'mac' || platform === 'windows') return 'computer';
   if (/^sdk_|emulator|^generic|android sdk built/i.test(model)) return 'emulator';
   return builds >= 12 && builds / (d1 - d0 + 1) >= 6 && crashes >= builds ? 'likely' : '';
 }
@@ -313,7 +314,7 @@ function cells(c) {
     `<td class="n ${enough(c) ? cls : 'mute'}">${r.perMin.toFixed(1)}</td><td class=n>${c.worst} ms</td><td class=n>${pct(c.work, c.ms)}</td>${heat(c)}`;
 }
 const COUNT_HEADS = '<th class=n>Rounds</th><th class=n>Avg fps</th><th class=n>Slow</th><th class=n>Freezes</th><th class=n>Freezes/min</th><th class=n>Longest</th><th class=n>Busy</th><th class=n>Heat</th>';
-const KINDS = { browser: 'web browser', emulator: 'emulator (a test machine)', robot: 'test robot', likely: 'probably a test robot' };
+const KINDS = { browser: 'web browser', computer: 'computer (the Mac and Windows app)', emulator: 'emulator (a test machine)', robot: 'test robot', likely: 'probably a test robot' };
 
 /**
  * The report as a plain web page (no scripts), for reading on a computer or phone.
