@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>half precision fallback</title>
+<script type="module">
+// scripts/half-check.mjs: the start-up check (src/kit/half.js halfCheck) on this browser's WebGPU, which has no
+// half precision: it must say so, and when told the chip has it, find every half function refused and
+// put each in full precision, quietly (no error reported for the device).
+const out = {};
+try {
+  await import('/src/kit/hd3d-gpu.js');   // every pass that makes a half function
+  const H = await import('/src/kit/half.js');
+  const a = await navigator.gpu.requestAdapter(), d = await a.requestDevice();
+  let uncaptured = 0; d.addEventListener('uncapturederror', () => uncaptured++);
+  await H.halfCheck({ backend: { device: d } });
+  out.real = { chip: H.HALF.chip, failed: [...H.HALF.failed], info: H.halfInfo() };
+  const fake = new Proxy(d, { get: (t, k) => k === 'features' ? { has: f => f === 'shader-f16' || t.features.has(f) } : typeof t[k] === 'function' ? t[k].bind(t) : t[k] });
+  await H.halfCheck({ backend: { device: fake } });
+  await new Promise(r => setTimeout(r, 300));
+  out.fake = { chip: H.HALF.chip, failed: [...H.HALF.failed], info: H.halfInfo(), uncaptured, n: H.halfTexts().length };
+} catch (e) { out.error = String(e && e.stack || e); }
+window.result = out;
+</script>

@@ -57,6 +57,7 @@ import {
   textureStore, texture, If, select, clamp, abs, max, min, floor, dot, mix, length, floatBitsToUint, smoothstep,
   mrt, output, velocity, diffuseColor, cameraProjectionMatrix, cameraViewMatrix, Loop, atomicLoad,
 } from 'three/tsl';
+import { halfFn, halfWanted, halfKey } from './half.js';
 
 const EMPTY = 0xffffffff;
 const LUMA = vec4(.299, .587, .114, 0);
@@ -142,20 +143,25 @@ const warpUV = (u, Hm) => { const h = Hm.mul(vec3(ndcOf(u), 1)), z = max(h.z, 1e
 export { warpUV };
 
 /**
- * A picture read sharp between its pixels (TSL): a Catmull-Rom curve through the 4 x 4 pixels round uv, in
- * five linear samples (the corners left out), on the picture's own pixels (its size, read from it). A plain
+ * A picture read sharp between its pixels: a Catmull-Rom curve through the 4 x 4 pixels round uv, in five
+ * linear samples (the corners left out), on the picture's own pixels (its size, read from it). A plain
  * linear sample softens whatever it moves by a fraction of a pixel; this keeps it as sharp as it was drawn,
- * and on a pixel's centre gives that pixel back exactly. Never below 0.
+ * and on a pixel's centre gives that pixel back exactly. Never below 0. half: the curve's weights and the
+ * sum in half precision where the chip has it (half.js; the places it reads stay full: they are on the
+ * picture's pixels), as SGSR 2 and frame generation want.
  */
-export const sharpAt = (T, uv) => {
-  const ts = vec2(T.size(int(0))), P = uv.mul(ts), c = floor(P.sub(.5)).add(.5), f = P.sub(c), f2 = f.mul(f), f3 = f2.mul(f);
-  const w0 = f3.mul(-.5).add(f2).sub(f.mul(.5)), w1 = f3.mul(1.5).sub(f2.mul(2.5)).add(1), w2 = f3.mul(-1.5).add(f2.mul(2)).add(f.mul(.5)), w3 = f3.mul(.5).sub(f2.mul(.5));
-  const w12 = w1.add(w2), t12 = c.add(w2.div(w12)).div(ts), t0 = c.sub(1).div(ts), t3 = c.add(2).div(ts);
-  const at = (x, y) => T.sample(vec2(x, y)).level(0);
-  const a = w12.x.mul(w0.y), b = w0.x.mul(w12.y), m = w12.x.mul(w12.y), d = w3.x.mul(w12.y), e = w12.x.mul(w3.y);
-  const sum = at(t12.x, t0.y).mul(a).add(at(t0.x, t12.y).mul(b)).add(at(t12.x, t12.y).mul(m)).add(at(t3.x, t12.y).mul(d)).add(at(t12.x, t3.y).mul(e));
-  return max(sum.div(a.add(b).add(m).add(d).add(e)), vec4(0));
-};
+const SHARP = halfFn('gsSharpAt', `(T: texture_2d<f32>, S: sampler, uv: vec2<f32>) -> vec4<f32> {
+  let ts = vec2<f32>(textureDimensions(T, 0)); let P = uv * ts; let c = floor(P - 0.5) + 0.5;
+  let f = hf2(P - c); let f2 = f * f; let f3 = f2 * f;
+  let w0 = f3 * hf(-0.5) + f2 - f * hf(0.5); let w1 = f3 * hf(1.5) - f2 * hf(2.5) + hf(1.0);
+  let w2 = f3 * hf(-1.5) + f2 * hf(2.0) + f * hf(0.5); let w3 = f3 * hf(0.5) - f2 * hf(0.5);
+  let w12 = w1 + w2; let t12 = (c + vec2<f32>(w2 / w12)) / ts; let t0 = (c - 1.0) / ts; let t3 = (c + 2.0) / ts;
+  let a = w12.x * w0.y; let b = w0.x * w12.y; let m = w12.x * w12.y; let d = w3.x * w12.y; let e = w12.x * w3.y;
+  let sum = hf4(textureSampleLevel(T, S, vec2<f32>(t12.x, t0.y), 0.0)) * a + hf4(textureSampleLevel(T, S, vec2<f32>(t0.x, t12.y), 0.0)) * b
+    + hf4(textureSampleLevel(T, S, t12, 0.0)) * m + hf4(textureSampleLevel(T, S, vec2<f32>(t3.x, t12.y), 0.0)) * d + hf4(textureSampleLevel(T, S, vec2<f32>(t12.x, t3.y), 0.0)) * e;
+  return max(vec4<f32>(sum / (a + b + m + d + e)), vec4<f32>(0.0));
+}`);
+export const sharpAt = (T, uv, half = false) => SHARP({ T, S: T, uv }, half);
 
 /**
  * One view's frame generator. The pictures it is given are three.js textures: color is the finished
@@ -179,8 +185,9 @@ export class FrameGen {
 
   /* (re)makes the buffers and the compute passes for a size */
   build(rw, rh, ow, oh, handed = false, eight = false) {
-    const key = `${rw}x${rh}>${ow}x${oh}${handed ? ' handed' : ''}${eight ? ' 8' : ''}`;
+    const key = `${rw}x${rh}>${ow}x${oh}${handed ? ' handed' : ''}${eight ? ' 8' : ''} ${halfKey()}`;
     if (key === this.key) return;
+    const half = halfWanted();   // (half.js: the sharp reads' and the flow's maths in half where the chip has it)
     this.dispose(); this.key = key; this.frames = 0; this.ready = false;
     const n = rw * rh, on = ow * oh, U = this.U, upscaled = ow * oh > rw * rh * 1.1;
     const st = (w, h, type = HalfFloatType, filter = NearestFilter) => { const s = new StorageTexture(w, h); s.type = type; s.minFilter = s.magFilter = filter; return s; };
@@ -436,8 +443,8 @@ export class FrameGen {
       // a little blurrier than the real ones round it, which shows as a shimmer)
       // (only on a picture at the screen's size, as the app gives it: a smaller one is being magnified anyway)
       const sharpOn = U.sharp.greaterThan(.5).and(length(vec2(col.size(int(0))).sub(U.os)).lessThan(.5));
-      const cN = sharpOn.select(sharpAt(col, clamp(uN, 0, 1)), col.sample(clamp(uN, 0, 1)).level(0));
-      const cP = sharpOn.select(sharpAt(pcol, clamp(uP, 0, 1)), pcol.sample(clamp(uP, 0, 1)).level(0));
+      const cN = sharpOn.select(sharpAt(col, clamp(uN, 0, 1), half), col.sample(clamp(uN, 0, 1)).level(0));
+      const cP = sharpOn.select(sharpAt(pcol, clamp(uP, 0, 1), half), pcol.sample(clamp(uP, 0, 1)).level(0));
       const L = lin(z), tol = L.mul(U.tol);
       const inN = in01(uN), inP = in01(uP).and(U.interp.greaterThan(.5));
       // the newest frame's pixel there is a moving particle, but this one is the background behind it: not from there
