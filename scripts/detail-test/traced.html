@@ -1,0 +1,146 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Ray traced reflections (src/kit/hd3d-gpu-trace.js; v.reflect() on WebGPU), for
+// scripts/detail-test.cjs --page traced --webgpu. A polished floor and a chrome ball in a small yard:
+//   a red bar hangs above the top of the screen, so only its reflection in the floor is in the picture;
+//   a green wall stands behind the camera, so only the ball can show it;
+//   a cyan box above the screen is moved (a moving thing: its own block, placed each frame);
+//   two purple posts are copies (an instanced set), which the traced level leaves out: their
+//     reflections come from the screen;
+//   a lamp-lit yellow crate stands behind the tall blue box, hidden from the camera.
+// The yard is drawn three times: ray traced, with screen-space reflections (HD.traced = false, what
+// other phones get) and with no reflections. The traced picture must show the bar, the wall, the box
+// where it was moved to and the posts; the screen-space one can't show the bar or the wall.
+//   ?tier=2|3    ?w=360&h=480    ?hd=traceTris:2000   any engine test switch    ?big  a dense knot too (simplified to fit)
+//   ?bench (--bench): the engine test scenes' hall (src/detail-scenes.js) walked with no reflections, with screen-space
+//   ones and ray traced: triangles, draws and the engine's time a frame, and what the traced copy holds (&size=.3 &frames=24)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+const Q = new URLSearchParams(location.search);
+setGpuPick('webgpu');
+await loadParts();
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  if (!await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480);
+  const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+  HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false; HD.still = false; HD.occlude = false;
+  for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }
+
+  if (Q.has('bench')) {
+    const size = +(Q.get('size') || .3), frames = +(Q.get('frames') || 24), seconds = 20, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d'), S = SCENES.find(s => s[0] === 'hall')[3]({ gs, HD, size, gpu: true, top: true });
+    const draw = () => { S.v.render(x, W, H); return nextFrame(); };
+    info.hall = S.holds;
+    for (const m of S.modes) {
+      const t0 = performance.now(), e = await m.enter(draw) || {}, sum = { tris: 0, calls: 0, cpu: 0, ms: 0 };
+      for (let i = 0; i < 6; i++) { S.path(0, S.v.cam); await draw(); }
+      const ready = performance.now() - t0;
+      for (let f = 0; f < frames; f++) {
+        S.path(seconds * f / frames, S.v.cam); const t = performance.now(); await draw();
+        sum.tris += HD.info.tris; sum.calls += HD.info.calls; sum.cpu += HD.info.cpu; sum.ms += performance.now() - t;
+        if (f === Math.floor(frames / 3)) out['hall-' + m.key] = c.toDataURL(); if (f === Math.floor(frames * .7)) out['hall-' + m.key + '-2'] = c.toDataURL();
+      }
+      for (const k in sum) sum[k] = +(sum[k] / frames).toFixed(k === 'tris' || k === 'calls' ? 0 : 1);
+      info[m.key] = { name: m.name, ready: Math.round(ready), build: e.build == null ? null : Math.round(e.build), note: e.note || '', perFrame: sum, drew: HD.info.refl, tell: S.tell() || '' };
+    }
+    S.dispose(); S.v.free();
+    window.result = { out, info, checks };
+    throw new Error('bench done');
+  }
+
+  function yard(shiny) {
+    const v = new gs.hd.HDView({ bg: '#8fb0d8', env: .6, amb: .5 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    v.cam.fov = 60; v.cam.far = 200; v.cam.position.set(0, 2.2, 7); v.cam.lookAt(0, .6, 0); v.cam.updateProjectionMatrix();
+    const sun = gs.hd.sun('#fff2d8', 3, 20, [.5, 1, .9]);   // (from behind the camera: its glare on the floor is not in the picture) v.scene.add(sun, sun.target); v.sun = sun;
+    const add = (g, m, px, py, pz) => { const mesh = new T.Mesh(g, m); mesh.position.set(px, py, pz); mesh.castShadow = mesh.receiveShadow = true; v.scene.add(mesh); return mesh; };
+    const S = { v, c, x };
+    S.floor = add(new T.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), gs.hd.pbr('#8d949c', { rough: .05, metal: 1 }), 0, 0, 0); S.floor.castShadow = false;
+    S.ball = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8e8e8', { rough: .03, metal: 1 }), -2.2, .7, 2.2);
+    add(new T.BoxGeometry(1, 1, 1), gs.hd.pbr('#c0392b', { rough: .6 }), -1.2, .5, -.5);
+    add(new T.BoxGeometry(1, 2.4, 1), gs.hd.pbr('#2f62b0', { rough: .6 }), 1.6, 1.2, -.8);
+    add(new T.BoxGeometry(.8, .8, .8), gs.hd.pbr('#d8b020', { rough: .6 }), 1.6, .4, -2.6);   // behind the blue box
+    const glow = gs.hd.pbr('#208040', { rough: .5 }); glow.emissive = new T.Color('#30ff70'); glow.emissiveIntensity = 2;
+    S.orb = add(new T.SphereGeometry(.35, 24, 16), glow, .3, .35, 1.4);
+    // above the top of the screen
+    const bright = c => { const m = new T.MeshBasicMaterial({ color: c }); return m; };
+    S.bar = add(new T.BoxGeometry(2.4, .5, .5), bright('#ff2020'), 0, 7, -5); S.bar.castShadow = false;
+    S.mover = add(new T.BoxGeometry(.9, .9, .9), bright('#20e0ff'), -3, 6, -4); S.mover.castShadow = false; S.mover.userData.moves = true;
+    // behind the camera
+    S.wall = add(new T.BoxGeometry(30, 14, .5), bright('#20ff40'), 0, 7, 16); S.wall.castShadow = false;
+    // copies: the traced level leaves these out
+    const posts = new T.InstancedMesh(new T.CylinderGeometry(.14, .14, 1.6, 16), gs.hd.pbr('#a030d0', { rough: .5 }), 2), M = new T.Matrix4();
+    posts.setMatrixAt(0, M.makeTranslation(-.4, .8, 2.4)); posts.setMatrixAt(1, M.makeTranslation(.9, .8, 2.9)); posts.instanceMatrix.needsUpdate = true; posts.castShadow = true; v.scene.add(posts);
+    const lamp = new T.PointLight('#ffd080', 5, 10); lamp.position.set(1.6, 1.6, -2.4); v.scene.add(lamp);
+    if (Q.has('big')) add(new T.TorusKnotGeometry(.8, .28, 600, 60), gs.hd.pbr('#b08050', { rough: .5 }), 3.4, 1.4, 1);
+    if (shiny) v.reflect(S.floor, S.ball);
+    return S;
+  }
+  const draw = S => { S.v.t = 0; S.v.render(S.x, W, H); return S.x.getImageData(0, 0, W, H).data; };
+  // where a point in the world, or its image in the floor, lands on the picture
+  const at = (S, p, mirror) => { const q = new T.Vector3(p.x, mirror ? -p.y : p.y, p.z).project(S.v.cam); return [Math.round((q.x * .5 + .5) * W), Math.round((.5 - q.y * .5) * H)]; };
+  const px = (d, [x, y], r = 2) => { let a = [0, 0, 0], n = 0; for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= W || Y >= H) continue; const o = (Y * W + X) * 4; a[0] += d[o]; a[1] += d[o + 1]; a[2] += d[o + 2]; n++; } return a.map(v => Math.round(v / Math.max(1, n))); };
+  const shot = (S, name) => { out[name] = S.c.toDataURL(); };
+
+  // ----- ray traced -----
+  HD.traced = true;
+  let S = yard(true), d = null, t0 = performance.now(), frames = 0;
+  for (; frames < 400; frames++) { d = draw(S); const tr = HD.info.trace; if (tr && tr.builds >= 1 && tr.tris > 0 && !tr.busy && frames > 30) break; await nextFrame(); }
+  const tr = HD.info.trace;
+  info.traced = tr ? { ...tr, frames, ready: Math.round(performance.now() - t0) } : null;
+  check('the yard is drawn with ray traced reflections', !!tr && tr.tris > 0, tr ? `${tr.tris} triangles of ${tr.things} things, ${tr.movers} moving, built in ${tr.ms} ms` : 'no tracer');
+  if (tr) {
+    for (let i = 0; i < 3; i++) { d = draw(S); await nextFrame(); }
+    shot(S, 'traced');
+    // the traced copy itself
+    HD.traceShow = true; for (let i = 0; i < 3; i++) { draw(S); await nextFrame(); } shot(S, 'level'); HD.traceShow = false; for (let i = 0; i < 3; i++) { d = draw(S); await nextFrame(); }
+    // a few frames timed (the picture is the same each time)
+    { const t = performance.now(); for (let i = 0; i < 6; i++) draw(S); info.frame = { ms: +((performance.now() - t) / 6).toFixed(1), gpuMs: HD.info.gpuMs }; }
+    const bar = px(d, at(S, S.bar.position, true)), barOn = at(S, S.bar.position, false);
+    check('the bar above the screen is not in the picture itself', barOn[1] < 0, barOn.join(','));
+    check('the floor shows the bar above the screen', bar[0] > 110 && bar[0] > bar[1] * 1.8 && bar[0] > bar[2] * 1.8, bar.join(','));
+    const ball = px(d, at(S, S.ball.position, false), 3); info.ball = ball;
+    check('the ball shows the wall behind the camera', ball[1] > 110 && ball[1] > ball[0] + 30 && ball[1] > ball[2] + 30, ball.join(','));
+    const m1 = at(S, S.mover.position, true), was = px(d, m1);
+    check('the floor shows the box above the screen', was[2] > 110 && was[2] > was[0] * 1.8, was.join(','));
+    S.mover.position.set(1.4, 6.5, -4); S.mover.rotation.y = .6; let d2 = draw(S); await nextFrame(); d2 = draw(S);
+    const m2 = at(S, S.mover.position, true), now = px(d2, m2), left = px(d2, m1);
+    check('the box is moved: its reflection moves with it the same frame', now[2] > 110 && now[2] > now[0] * 1.8 && !(left[2] > 110 && left[2] > left[0] * 1.8), `there ${now.join(',')}, where it was ${left.join(',')}`);
+    shot(S, 'moved');
+    // the posts are copies: found on the screen
+    const post = px(d, at(S, new T.Vector3(-.4, .5, 2.4), true), 1);
+    check('the copies the level leaves out are reflected from the screen', tr.other > 0 && post[0] > post[1] * 1.25 && post[2] > post[1] * 1.25, `${post.join(',')}, ${tr.other} left out`);
+    // a lamp switched on: the glowing ball's light changes with no new build
+    const builds = tr.builds, orb = at(S, S.orb.position, true);
+    S.orb.material.emissive.set('#ff3030'); for (let i = 0; i < 3; i++) { d2 = draw(S); await nextFrame(); }
+    check('a glow that changes colour needs no new build', HD.info.trace.builds === builds, `${builds} then ${HD.info.trace.builds}`);
+    // a thing added: the level is made again in the background and the new thing is in it
+    const extra = new T.Mesh(new T.BoxGeometry(2.4, .5, .5), new T.MeshBasicMaterial({ color: '#ffe020' })); extra.position.set(0, 7.2, -9); S.v.scene.add(extra);
+    let k = 0; for (; k < 300; k++) { d2 = draw(S); if (HD.info.trace.builds > builds && !HD.info.trace.busy) break; await nextFrame(); }
+    for (let i = 0; i < 3; i++) { d2 = draw(S); await nextFrame(); }
+    const ex = px(d2, at(S, extra.position, true));
+    check('a thing added later is traced once the level is made again', HD.info.trace.builds > builds && ex[0] > 110 && ex[1] > 90 && ex[2] < ex[0] * .6, `${ex.join(',')} after ${k} frames`);
+    shot(S, 'added');
+    info.after = { ...HD.info.trace };
+  }
+  S.v.free();
+
+  // ----- screen-space (what the other phones get) -----
+  HD.traced = false;
+  S = yard(true); for (let i = 0; i < 12; i++) { d = draw(S); await nextFrame(); }
+  shot(S, 'screen');
+  { const t = performance.now(); for (let i = 0; i < 6; i++) draw(S); info.screenFrame = { ms: +((performance.now() - t) / 6).toFixed(1) }; }
+  const sBar = px(d, at(S, S.bar.position, true)), sBall = px(d, at(S, S.ball.position, false), 3);
+  check('screen-space reflections cannot show the bar or the wall (the fallback is the old way)', HD.info.trace == null && !(sBar[0] > 110 && sBar[0] > sBar[1] * 1.8) && !(sBall[1] > sBall[0] + 30), `bar ${sBar.join(',')}, ball ${sBall.join(',')}`);
+  S.v.free();
+
+  // ----- none -----
+  S = yard(false); for (let i = 0; i < 6; i++) { d = draw(S); await nextFrame(); }
+  shot(S, 'none'); S.v.free();
+  HD.traced = null;
+} catch (e) { if (e.message !== 'bench done') window.result = { error: String(e?.stack || e) }; throw e; }
+window.result = { out, info, checks };
+</script>
