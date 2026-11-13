@@ -113,6 +113,12 @@ class FleshModel extends PhysicalLightingModel {
   constructor(m, F) { super(m.useClearcoat, m.useSheen, m.useIridescence, m.useAnisotropy, m.useTransmission, m.useDispersion); this.F = F; }
   direct(input, builder) {
     const { lightDirection, lightColor, reflectedLight } = input, F = this.F;
+    if (input.lightNode?.light?.userData.gsFill) {   // (HDView.faceLight: a film crew's fill lights skin softly, as a big source does, and puts no shine
+      // of its own on it: a small light beside the camera glinted off every pore and made a hot spot on a forehead)
+      const nl = normalView.dot(lightDirection).add(.25).div(1.25).saturate();
+      reflectedLight.directDiffuse.addAssign(nl.mul(lightColor).mul(BRDF_Lambert({ diffuseColor: diffuseContribution })));
+      return;
+    }
     const on = normalView.dot(lightDirection).negate().toVar(), back = on.add(.3).div(1.3).saturate().mul(F.back);
     const through = positionViewDirection.dot(lightDirection.add(normalView.mul(F.distortion)).normalize().negate()).saturate().pow(F.power).mul(F.scale);
     const way = mix(float(1), F.open, smoothstep(.35, .85, on));
@@ -205,7 +211,14 @@ export const gpuMaterials = {
       if (FD) {
         const D = texture(FD, uv(1)), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
         m.normalNode = bumpN(D.r, float(.00016), pores);
-        m.roughnessNode = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1));
+        // (and rougher where the pores turn the surface faster than a pixel can show, Kaplanyan and Hoffman's specular antialiasing: a pore
+        // a pixel or two across had each caught the light as a glint of its own, so a close face glittered like wet sand, darkest skin most)
+        const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1)), ex = dFdx(normalView), ey = dFdy(normalView);
+        const spread = ex.dot(ex).add(ey.dot(ey)).mul(.5).min(.18).toVar();
+        m.roughnessNode = sqrt(r0.mul(r0).add(spread)).min(1);
+        // (and less of it where the skin is dry, and where the pores are too small to see: a pore's hollow shines little, so as they blur into
+        // the surface it is their average that shows, a duller sheen. Kept at full strength, a dark face read as plastic, one smooth sheen)
+        m.specularIntensityNode = D.g.mul(.4).add(.72).mul(float(1).sub(spread.div(.18).mul(.25)));
       }
       m.setupLightingModel = function () { return new FleshModel(this, F); };
       // what light comes through throws no shadow: an ear would shade its own far side, where the light comes out
@@ -621,8 +634,12 @@ export function pcss(light) {
 // text written until then was thrown away and written again in the next frames, the ones the background builds
 // were for. So a shadow map the kit draws has a lights node of its own (its materials use no lights: nothing is
 // made for it), and the scene's grid only ever meets the game's own picture.
+// (and a light that a material treats as no other, HDView.faceLight's fill, is lit the usual way: a clustered lamp reaches the lighting
+// model as the cluster's node, not as itself)
+class KitClusteredLights extends ClusteredLightsNode { _isClusteredLight(l) { return !l.userData.gsFill && super._isClusteredLight(l); } }
 class KitLighting extends ClusteredLighting {
   constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
+  createNode(lights = []) { return new KitClusteredLights(this.maxLights, this.tileSize, this.zSlices, this.maxLightsPerCluster).setLights(lights); }
   getNode(scene) {
     if (scene !== this.gsShadowOf) return super.getNode(scene);
     let n = this.gsShadowNodes.get(scene);

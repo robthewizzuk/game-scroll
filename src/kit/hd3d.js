@@ -2081,6 +2081,26 @@ export class HDView {
       l.intensity = (s.i ?? 6) * fl * fade; s.lit = fl;
     });
   }
+  /**
+   * A soft light on a person's face from beside the camera, as a film crew's fill or eye light, for close-ups and cutscenes: it lifts the
+   * shadow side of the face, puts a small bright point in each eye and falls off within a couple of steps, so it hardly touches anything
+   * else (one spot light, no shadow, aimed at the face every frame wherever the camera and the person go). On WebGPU it lights skin as a
+   * big soft source does, with no shine of its own on it. person: a gs.models.human (it
+   * finds the 'head' bone; anything else: its middle), null to let it go dark. o: { strength (.5: about half a sunny sky's fill), colour,
+   * side (where beside the camera, -1 left .. 1 right: .4), up (.3) }. Call it once in make(): the light is made then and stays (a light
+   * coming or going rebuilds every material's shader); null only dims it. Returns the light.
+   */
+  faceLight(person, o = {}) {
+    let F = this.faceLit;
+    if (!F) {
+      const L = new SpotLight(o.colour ?? '#fff3e6', 0, 3, .3, 1, 2); L.castShadow = false; L.name = 'face light'; L.userData.noTrace = true; L.userData.gsFill = true;
+      this.scene.add(L, L.target); F = this.faceLit = { light: L, person: null, head: null, strength: .5, side: .4, up: .3 };
+    }
+    if (o.colour) F.light.color.set(o.colour);
+    Object.assign(F, { person: person || null, head: person?.getObjectByName?.('head')?.isBone ? person.getObjectByName('head') : null, strength: o.strength ?? F.strength, side: o.side ?? F.side, up: o.up ?? F.up });
+    if (!person) F.light.intensity = 0;
+    return F.light;
+  }
   /** The auto exposure multiplier for this frame (1 without v.autoExposure; card pictures keep the settled one). */
   eyeAt(still) {
     const o = this.autoExposure; if (!o) { this.eye = null; return 1; }
@@ -2579,6 +2599,7 @@ export class HDView {
   /** render()'s own work. */
   draw3d(c, w, h, baking) {
     this.fit(w, h);
+    if (this.faceLit?.person) aimFaceLight(this);
     const G = gpuFor(this), r = G ? G.r : renderer();
     // WebGPU's depth runs 0..1 and WebGL's -1..1, so the camera's projection differs. three switches it
     // only when the camera's own setting disagrees, and the SGSR 2 jitter puts back the matrix it saved
@@ -3741,6 +3762,19 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
 const SHRINK_HOLD = 90, ROOM = 40;
 const FX = new Vector3(), FY = new Vector3(), FZ = new Vector3(), FP = new Vector3(), FR = new Vector3(), UPV = new Vector3(0, 1, 0);
 const step4 = h => 2 ** (Math.ceil(Math.log2(Math.max(h, 1)) * 4) / 4);
+// v.faceLight(): the spot placed beside the camera and aimed at the face (the head bone's point between the eyes, 16.5 cm up from where the
+// head turns and 9 cm forward), its cone a little wider than a head where it lands and its reach a little past it; brightness by distance,
+// so the face gets the same light near or far
+const _fa = new Vector3(), _fc = new Vector3(), _fr = new Vector3(), _fu = new Vector3();
+function aimFaceLight(v) {
+  const F = v.faceLit, L = F.light, cam = v.cam, p = F.person;
+  if (F.head) { F.head.updateWorldMatrix(true, false); F.head.localToWorld(_fa.set(0, .165, .09)); } else if (p.isObject3D) { p.updateWorldMatrix(true, false); _fa.setFromMatrixPosition(p.matrixWorld); } else return;
+  cam.getWorldPosition(_fc); const d = Math.max(.3, _fc.distanceTo(_fa));
+  _fr.setFromMatrixColumn(cam.matrixWorld, 0); _fu.setFromMatrixColumn(cam.matrixWorld, 1);
+  L.position.copy(_fc).addScaledVector(_fr, F.side * .45 * d).addScaledVector(_fu, F.up * .45 * d);
+  const dl = L.position.distanceTo(_fa); L.target.position.copy(_fa); L.target.updateMatrixWorld();
+  L.distance = dl * 1.8; L.angle = Math.min(1, Math.atan(.3 / dl)); L.intensity = F.strength * dl * dl;
+}
 function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tall = 20, margin = 3, rays = 5, max = 500, soft = 1, around = 0 } = {}) {
   const cam = view.cam, c = s.shadow.camera, d = s.dir, o = cam.position;
   cam.updateMatrixWorld();
