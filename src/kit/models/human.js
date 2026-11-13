@@ -17,8 +17,8 @@ import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, eyeOf, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { KIN } from './human-fit.js';
 import { gnmDraw, gnmMarks, gnmReady } from './human-gnm.js';
-// GNM faces (human({ gnm: true }), look 'real'): off unless asked for, until they have been seen to beat the sculpted ones beside real scans
-const GNM_ON = false;
+// GNM faces (look 'real'): every real face is one of GNM Head's, as they beat the sculpted ones beside real scans; gnm: false keeps the sculpted one
+const GNM_ON = true;
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
 import { Manner } from '../manner.js';

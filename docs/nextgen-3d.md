@@ -1354,11 +1354,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   'african' | 'east-asian' | 'european' | 'middle-eastern'`, or a mix such as `{ european: .6, 'east-asian': .4 }`,
   each fitted the same way to the heads of Google's GNM Head model (learned from many scans); with none given it
   comes from the seed and the skin, and `heritage: false` keeps the one scan's fit (a woman's face then takes half
-  of it). Being tried out, `gnm: true` goes further: the face itself is one of GNM Head's (its whole shape, its
-  eyes, nose and lips, learned from real scans, from the seed, sex and heritage), joined to our neck, hair and hats
-  and with our eyes, lids, lips that part, expressions and paint; it is off unless asked for until it has been seen
-  to beat the sculpted face. Its numbers (2.9 MB) load the first time one is made (the app shows "Loading…" as for
-  any sculpting); a tool that sculpts with `now: true` awaits `human.gnmReady()` first. It has life-size eyes, a jaw as broad as a real one, the
+  of it). And the face itself is one of GNM Head's (its whole shape, its eyes, nose and lips, learned from real
+  scans, from the seed, sex and heritage), joined to our neck, hair and hats and with our eyes, lids, lips that
+  part, expressions and paint; with age it sags as a real face does (jowls, thinner lips, the cheeks lower).
+  `gnm: false` keeps the older sculpted face, shaped by the fits above. Its numbers (2.9 MB) load the first time
+  one is made (the app shows "Loading…" as for any sculpting); a tool that sculpts with `now: true` awaits
+  `human.gnmReady()` first. It has life-size eyes, a jaw as broad as a real one, the
   folds of a real face pressed into its skin (from the nose to the mouth, under the eyes, under the lower lip,
   round the nose; with age the lines down from the mouth, hollow temples and cheeks, the cords of an old neck),
   its two sides not quite alike, and quieter brows, lashes and lips. Its skin works out the light under it

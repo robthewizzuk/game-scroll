@@ -15,7 +15,7 @@
 //   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &nowet (a real face's wet film over the eyes left out)   &blinks (let them blink)
 //   &taa (the smoothing over frames the games have, SGSR 2: fine hairs as they look in play; with &frames=16 or so to let it settle)
 //   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
-//   &gnmface (every real face a GNM face: human({ gnm: true }), its shape from GNM Head, human-gnm.js)
+//   &gnmface=off (every real face the older sculpted one: human({ gnm: false }); a real face is GNM Head's by default, human-gnm.js)
 //   &gnm=f-white-0,m-black-1 (more rows: GNM Head's heads, written by gnm-heads.py into ref/gnm/, in a plain skin of their group's tone)
 //   &ref (one more row: a reference head scan, ref/LeePerrySmith.glb from three.js's examples (CC BY 3.0, Lee Perry-Smith / Infinite Realities), drawn
 //   under the same lights to judge our faces' shapes and skin against a real one: fetch it into scripts/face-lab/ref/ yourself, it is never committed)

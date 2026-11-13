@@ -3011,7 +3011,9 @@ console.log('physics ok');
   const F = await import('../src/kit/models/field.js'), HH = await import('../src/kit/models/human-head.js'), { realFace } = await import('../src/kit/models/human.js'), { Color } = await import('three');
   const { HC, RELIEF, reliefOf } = HH, base = { jaw: 1, chin: 1, brow: .82, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 };
   // ---- the face from a seed: the same seed, the same face; age thins the lips, hoods the lids and greys the hair
-  { const a = realFace({ seed: 7, age: 25 }, false, base), b = realFace({ seed: 7, age: 25 }, false, base), c = realFace({ seed: 8, age: 25 }, false, base), old = realFace({ seed: 7, age: 75 }, false, base);
+  // (the sculpted face's measures: gnm: false; a real face is a GNM face unless the game says not)
+  assert.ok(realFace({ seed: 7 }, false, base).f.gnm && !realFace({ seed: 7, gnm: false }, false, base).f.gnm, 'a real face is a GNM face, the sculpted one with gnm: false');
+  { const a = realFace({ seed: 7, age: 25, gnm: false }, false, base), b = realFace({ seed: 7, age: 25, gnm: false }, false, base), c = realFace({ seed: 8, age: 25, gnm: false }, false, base), old = realFace({ seed: 7, age: 75, gnm: false }, false, base);
     assert.deepEqual(a, b, 'the same seed, the same face'); assert.notDeepEqual(a.f, c.f, 'another seed, another face');
     assert.ok(a.f.real === 1 && a.f.es === 1 && a.f.age === 25 && Object.values(a.f).every(v => typeof v !== 'number' || Math.round(v * 1e4) / 1e4 === v), 'life-size eyes, its age, every measure to four figures (the face names the saved shape)');
     assert.ok(old.f.lips < a.f.lips * .85 && old.f.lidFold > a.f.lidFold && old.f.eyes < a.f.eyes && old.f.ears > a.f.ears && old.f.nose > a.f.nose, `older: thinner lips (${a.f.lips} to ${old.f.lips}), lower lids, smaller eyes, bigger ears, a longer nose`);
