@@ -22,6 +22,7 @@ import { LiveFace } from './human-face.js';
 import { FACE, HAIR, SEAM, faceUV, paintFace, paintHair, paintSeams } from './human-paint.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
+import { sceneEdited } from '../scene-list.js';
 import { fur } from './fur.js';
 import { slimShared, floatsOf } from '../slim.js';
 
@@ -434,6 +435,7 @@ export function human(o = {}) {
     // what it did on fifteen bones (thirty people, posing and bones in JavaScript each frame, on a desktop core: .17 ms
     // on fifteen bones, .47 ms on these close up, .2 ms further off; hundreds are a crowd's work: gs.props.Crowd).
     const whole = bones.map((b, i) => { let k = b; while (FINE.test(k)) k = parent[k]; return k === b ? -1 : bones.indexOf(k); }), small = bones.filter((b, i) => whole[i] >= 0).map(b => B[b]);
+    const holds = b => { for (const c of b.children) if (!c.isBone || holds(c)) return true; return false; };
     const far = new Skeleton(bones.map((b, i) => B[whole[i] < 0 ? b : bones[whole[i]]]), bones.map((b, i) => skel.boneInverses[whole[i] < 0 ? i : whole[i]]));
     far.update = function () {
       const M = this.boneMatrices, inv = this.boneInverses, bs = this.bones;
@@ -450,7 +452,10 @@ export function human(o = {}) {
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
       lods[cur].visible = false; lods[v].visible = true;
-      if (!v !== !cur) for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
+      if (!v !== !cur) {
+        for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
+        if (small.some(holds)) sceneEdited(root);   // (something a game hung on a finger or the jaw: the scene's list has to know it went or came back)
+      }
       cur = v; root.rig.fine = !v; root.rig.near = v < 2;   // (and the rig leaves the forearm's turn and the toes alone meanwhile; at the far level it leaves the feet as posed too)
     } });
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */

@@ -210,11 +210,30 @@ console.log('physics ok');
 // walks find, through things added, taken out, moved to other parents, hidden and shown
 {
   const THREE = await import('three');
-  const { eachThing, eachShown, thingCount, sceneEdited, listStats } = await import('../src/kit/scene-list.js');
+  const { eachThing, eachShown, thingCount, sceneEdited, listStats, listPipeline } = await import('../src/kit/scene-list.js');
+  const { StandardDrawingPipeline } = await import('three/webgpu');
   let seed = 7; const R = () => (seed = (seed * 16807) % 2147483647) / 2147483647, pick = a => a[Math.floor(R() * a.length)];
   const S = new THREE.Scene(), geo = new THREE.BoxGeometry(), mat = new THREE.MeshBasicMaterial(), nodes = [S];
   const thing = o => o.isMesh || o.isLight || o.isPoints || o.isLine || o.isSprite || o.material !== undefined;
-  const make = () => { const k = R(); return k < .3 ? new THREE.Mesh(geo, mat) : k < .5 ? new THREE.Bone() : k < .6 ? new THREE.PointLight() : k < .7 ? new THREE.Points(geo, new THREE.PointsMaterial()) : new THREE.Group(); };
+  // (spread about in front of the camera and behind it, some on other layers, groups with an order of their own, a sprite, a
+  // mesh of two materials, one of them hidden: what three's walk does with each, the list's walk has to do too)
+  const mats = [mat, new THREE.MeshBasicMaterial({ visible: false })];
+  const make = () => {
+    const k = R(), o = k < .25 ? new THREE.Mesh(geo, mat) : k < .3 ? new THREE.Mesh(geo, mats) : k < .45 ? new THREE.Bone() : k < .52 ? new THREE.PointLight() : k < .6 ? new THREE.Points(geo, new THREE.PointsMaterial()) : k < .65 ? new THREE.Sprite() : new THREE.Group();
+    if (o.isMesh && Array.isArray(o.material)) { o.geometry = new THREE.BoxGeometry(); o.geometry.clearGroups(); o.geometry.addGroup(0, 18, 0); o.geometry.addGroup(18, 18, 1); }
+    o.position.set((R() - .5) * 40, (R() - .5) * 10, (R() - .5) * 40); if (R() < .15) o.layers.set(1 + (R() * 3 | 0)); if (o.isGroup && R() < .5) o.renderOrder = R() * 5 | 0;
+    return o;
+  };
+  // the draws three's own walk asks for, against the list's (scene-list.js listPipeline), for a camera that sees some layers
+  const ListPipeline = listPipeline({ StandardDrawingPipeline }), cam = new THREE.PerspectiveCamera(60, 1, .1, 30);
+  const drawn = P => { const L = []; P.project(S, cam, 0, { push: (o, g, m, ord, z, gr) => L.push([o, m, ord, Math.round(z * 1e4), gr]), pushLight: l => L.push([l]) }, null); return L; };
+  const pStd = new StandardDrawingPipeline(), pList = new ListPipeline(); pStd.renderer = pList.renderer = { sortObjects: true };
+  const sameDraws = step => {
+    cam.layers.mask = R() < .7 ? 1 : 1 | 2 << (R() * 3 | 0); cam.updateMatrixWorld(); S.updateMatrixWorld(true);
+    pStd.begin(cam, {}); pList.begin(cam, {});
+    const want = drawn(pStd), got = drawn(pList);
+    assert.ok(want.length === got.length && want.every((a, i) => a.length === got[i].length && a.every((v, j) => v === got[i][j])), `the list's walk draws what three's does, after step ${step}: ${got.length} draws and lights, three's ${want.length}`);
+  };
   const inside = (o, root) => { for (; o; o = o.parent) if (o === root) return true; return false; };
   const same = (step) => {
     for (const vis of [false, true]) {
@@ -231,8 +250,10 @@ console.log('physics ok');
     else if (k < .66) { const o = pick(live); if (o !== S && o.children.length) o.clear(); }
     else if (k < .7) { const o = pick(live); if (o.parent) { const p = o.parent, n = make(); p.children[p.children.indexOf(o)] = n; n.parent = p; o.parent = null; nodes.push(n); sceneEdited(p); } }   // (props.js perCopy)
     else { const o = pick(nodes); o.visible = !o.visible; }   // (hiding and showing is not an edit: asked at each walk)
-    same(step);
+    same(step); sameDraws(step);
   }
+  // a scene with a level of detail in it is drawn by three's own walk (it picks the level's child as it goes)
+  { const lod = new THREE.LOD(); lod.addLevel(new THREE.Mesh(geo, mat), 0); lod.addLevel(new THREE.Mesh(geo, mat), 10); S.add(lod); sameDraws('with a level of detail'); lod.removeFromParent(); sameDraws('without it'); }
   // a walk whose step changes the scene goes on through the list it began with; the next walk sees the change
   const extra = new THREE.Mesh(geo, mat); let seen = 0; eachThing(S, () => { seen++; if (!extra.parent) S.add(extra); });
   assert.ok(seen === thingCount(S) - 1, 'a walk that added a thing went on through its own list');
@@ -241,7 +262,7 @@ console.log('physics ok');
   const b0 = listStats.built, other = new THREE.Scene(); eachShown(S, () => {}); for (const o of nodes) o.visible = true; other.add(new THREE.Mesh(geo, mat)); eachShown(S, () => {}); eachThing(S, () => {});
   assert.equal(listStats.built, b0, 'the scene list was kept between walks with no change to the scene');
   S.add(new THREE.Group()); eachShown(S, () => {}); assert.equal(listStats.built, b0 + 1, 'and made again once after a change');
-  console.log(`scene list ok (${thingCount(S)} things after 400 changes)`);
+  console.log(`scene list ok (${thingCount(S)} things after 400 changes; three's walk for each render made over it draws the same)`);
 }
 // camera rigs and living characters (three.js maths only)
 {

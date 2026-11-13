@@ -200,8 +200,24 @@ function gpuParts(r) {
   ins.beginRender = function (uid, scene, camera, rt) { if (PARTS.size > 4096) PARTS.clear(); PARTS.set(uid, partOf(scene, rt)); return was?.call(this, uid, scene, camera, rt); };
   ins.beginCompute = function (uid, nodes) { if (PARTS.size > 4096) PARTS.clear(); PARTS.set(uid, nodes?.gsPart || 'compute'); return wasC?.call(this, uid, nodes); };
 }
+// The code's time in three's own renders, by part (prof.js, while the frame lab or the test scenes report is on): each
+// render three starts is a span, the scene's, a shadow map's or a pass's, of its own time without the renders it starts
+// (a scene's shadow maps are drawn from inside it), and so is each compute list sent. (Rob's Fold, 2026-11-13: the
+// square's 300 people of a skeleton each took 26 ms of the engine's code a frame, and nothing said where.)
+const CODE = { scene: '3D: scene pass', shadows: '3D: shadow maps' }, OPEN = [];
+function codeParts(r) {
+  const ins = r.inspector; if (!ins || ins.gsCode) return; ins.gsCode = true;
+  const b = ins.beginRender, f = ins.finishRender, bc = ins.beginCompute, fc = ins.finishCompute;
+  // (the depth to close back to is kept for each render, so PROF turned on or off half way through one closes nothing else)
+  const open = name => { if (OPEN.length > 64) OPEN.length = 0; OPEN.push(PROF.on ? mark() : -1); if (PROF.on) enter(name); }, shut = () => { const m = OPEN.pop(); if (m >= 0) leave(m); };
+  ins.beginRender = function (uid, scene, camera, rt) { open(CODE[partOf(scene, rt)] || '3D: passes'); return b.call(this, uid, scene, camera, rt); };
+  ins.finishRender = function (uid) { try { return f.call(this, uid); } finally { shut(); } };
+  ins.beginCompute = function (uid, nodes) { open('3D: compute'); return bc.call(this, uid, nodes); };
+  ins.finishCompute = function (uid) { try { return fc.call(this, uid); } finally { shut(); } };
+}
 // full: this real frame kept the chip busy (drawn every refresh, or with frames made after it)
 function gpuTime(r, full = true) {
+  codeParts(r);
   GT.n++; GT.full &&= full;
   const be = r.backend;
   if (!be?.trackTimestamp) return;
