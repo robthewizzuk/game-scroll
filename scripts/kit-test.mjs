@@ -1523,6 +1523,25 @@ console.log('physics ok');
   }
   console.log('city dressing: its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other ok');
 }
+// the city's cars up close (city-cars.js): seats behind see-through glass close by and none in the shapes further off, the
+// paint look on the cars drawn whole only, and the parked cars' glass drawn for those within the props' first distance
+{
+  const THREE = await import('three'), { carKit, Fleet, ParkedGlass } = await import('../src/kit/city-cars.js'), { vehicle } = await import('../src/kit/models/vehicles.js');
+  const { lookOf } = await import('../src/kit/models/vehicle-looks.js'), { looksOf } = await import('../src/kit/looks.js');
+  const tri = g => (g.index ? g.index.count : g.attributes.position.count) / 3, IN = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
+  const k = carKit('saloon'), v = vehicle('car', { style: 'saloon', seed: 3, colour: '#ffffff', finish: 'gloss' });
+  const inner = v.shell.children.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
+  assert.ok(inner > 1000 && k.glass && tri(k.whole) - tri(k.closed) === inner - tri(k.glass), 'a parked car close by has its inside (' + inner + ' triangles), further off dark glass and none');
+  const grp = new THREE.Group(), F = new Fleet(grp, ['saloon', 'hatch'], 4), list = [{ style: 0, x: 0, z: 3, heading: 0, v: 0, colour: '#aa2222' }, { style: 1, x: 200, z: 0, heading: 0, v: 0, colour: '#2244aa' }];
+  F.assign(list); F.focus = { x: 0, z: 0 }; F.draw(list, 0, 0);
+  const mats = F.close.get(list[0]).body.children.map(m => m.material);
+  assert.ok(F.close.size === 1 && mats.some(m => lookOf(m)?.gsCpA) && mats.some(m => m.transparent && lookOf(m)?.gsCgA.value.z > 0) && !looksOf(F.far[0].paint.material).length, 'a car drawn whole wears the paint look and see-through glass; far off, plain paint');
+  const pk = [{ style: 0, x: 4, y: 0, z: 0, heading: 0 }, { style: 0, x: 11, y: 0, z: 0, heading: 1 }, { style: 0, x: 30, y: 0, z: 0, heading: 0 }, { style: 1, x: 2, y: 0, z: 2, heading: 0 }];
+  const PG = new ParkedGlass(grp, ['saloon', 'hatch'], pk); PG.update(new THREE.Vector3(0, 1.6, 0));
+  assert.deepEqual(PG.meshes.map(m => m && m.count), [2, 1], 'the parked cars within 12 m have their glass');
+  F.dispose(); PG.dispose();
+  console.log('city cars up close: seats behind see-through glass close by, dark glass further off, the paint look on cars drawn whole, the parked cars\' glass ok');
+}
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
 {
@@ -5295,7 +5314,37 @@ console.log('physics ok');
     const pl = vehicle('plane'), blades = pl.parts.prop.children.find(m => m.name !== 'blur'), blur = pl.parts.prop.children.find(m => m.name === 'blur');
     assert.ok(blades.visible && !blur.visible && pl.gear > 1.5 && pl.sit > 0); for (let i = 0; i < 120; i++) pl.move(1 / 60, 50); assert.ok(!blades.visible && blur.visible && pl.parts.prop.rotation.z > 20 && pl.wheels[0].rotation.x === 0, 'a propeller spins up into a blur; wheels in the air keep still');
     const pb = vehicle('boat', { style: 'patrol' }); pb.move(.5, 6, { steer: 1 }); assert.ok(pb.parts.radar.rotation.y > 1 && pb.draft > 1 && pb.parts.gun && pb.aim(.2, .1).parts.turret.rotation.y === .2);
-    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, a goods train's wagons, loads and colours, a fused train in a third of the draws, propellers and radar ok`);
+    // cars up close: a closed car's inside behind see-through glass (none asked for: dark glass), the paint and glass looks
+    const { lookOf } = await import('../src/kit/models/vehicle-looks.js');
+    const slot = (car, n) => car.shell.children.find(m => m.name === n), IN = ['lining', 'liner', 'carpet', 'dash', 'dials', 'seat'];
+    const sal = vehicle('car', { style: 'saloon', seed: 3 }), shut = vehicle('car', { style: 'saloon', seed: 3, inside: false });
+    assert.ok(IN.every(n => slot(sal, n)) && slot(sal, 'glass').material.transparent && lookOf(slot(sal, 'glass').material).gsCgA.value.z > 0 && lookOf(slot(sal, 'paint').material)
+      && !IN.some(n => slot(shut, n)) && !slot(shut, 'glass').material.transparent && shut.tris < sal.tris && !slot(vehicle('car', { style: 'jeep' }), 'lining'),
+      'a closed car has seats, a dashboard and door cards behind see-through glass; inside: false, or an open car, has none');
+    // dirt and wet on the car's own materials (its twins keep theirs)
+    const dc = vehicle('car', { style: 'saloon', seed: 3 }), dPaint = slot(dc, 'paint'), dGlass = slot(dc, 'glass');
+    dc.dirt(.5).wet(1);
+    assert.ok(lookOf(dPaint.material).gsCpA.value.y === .5 && near(lookOf(dGlass.material).gsCgA.value.x, .375, 1e-9) && lookOf(dPaint.material).gsCpA.value.z === 1 && dPaint.material !== slot(dc.twin(), 'paint').material && lookOf(slot(sal, 'paint').material).gsCpA.value.y === 0,
+      'dirt and wet change this car only');
+    // a dent moves only what is near where it was hit, on a shape of its own, and scrapes the paint there
+    const hc = vehicle('car', { style: 'saloon', seed: 3 }), hold2 = new THREE.Scene(); hold2.add(hc);
+    const hp = slot(hc, 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
+    const what = hc.hit(at, { power: 1, dir: new THREE.Vector3(-1, 0, 0) }), after = hp.geometry.attributes.position.array;
+    let dMoved = 0, dFar = 0; for (let i = 0; i < after.length; i += 3) { const d = Math.hypot(after[i] - before[i], after[i + 1] - before[i + 1], after[i + 2] - before[i + 2]); if (d > 1e-6) { dMoved++; if (Math.hypot(before[i] - at.x, before[i + 1] - at.y, before[i + 2] - at.z) > .5 + 1e-6) dFar++; } }
+    assert.ok(hp.geometry !== shared0 && dMoved > 20 && dFar === 0 && hc.damage.dents === 1 && lookOf(hp.material).gsCpX.value[0].w > 0 && shared0.attributes.position.array.every((q, i) => q === before[i]),
+      'a dent: ' + dMoved + ' corners moved, all within its reach, on the car\'s own shape, a scrape in the paint');
+    // glass: a side window breaks (its bits fall and lie on the ground), the windscreen crazes, a lamp breaks and goes dark
+    const bits = () => hold2.children.find(o => o.name === 'glass bits');
+    assert.ok(what === 'window' && hc.damage.glass === 1 && bits()?.count > 10, 'a hard hit by a side window breaks it: ' + what);
+    for (let i = 0; i < 240; i++) hc.update(1 / 60);
+    const bm = new THREE.Matrix4(), bp = new THREE.Vector3(); let low = 0; for (let i = 0; i < bits().count; i++) { bits().getMatrixAt(i, bm); bp.setFromMatrixPosition(bm); if (bp.y < .05) low++; }
+    assert.ok(low === bits().count, 'the broken glass falls and lies on the road: ' + low + ' of ' + bits().count);
+    assert.equal(hc.smash(new THREE.Vector3(.2, hc.size.height * .82, -hc.size.length * .2), { power: .8 }), 'screen', 'the windscreen crazes');
+    const lampL = hc.points.lampL; lampL.updateMatrixWorld(true); const lw = lampL.getWorldPosition(new THREE.Vector3());
+    assert.ok(hc.hit(lw, { power: .6 }) === 'lamp' && hc.damage.lamps === 1, 'a knock on a head lamp breaks it');
+    hc.mend();
+    assert.ok(hp.geometry === shared0 && hc.damage.dents === 0 && hc.damage.glass === 0 && hc.damage.lamps === 0 && !bits() && slot(hc, 'glass').material === slot(sal, 'glass').material, 'mend(): the shared shapes and materials back, the bits gone');
+    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, a goods train's wagons, loads and colours, a fused train in a third of the draws, propellers and radar, and cars up close: seats behind see-through glass, dirt and wet, dents, glass that breaks and falls, lamps that break, mend() ok`);
   }
 }
 

@@ -26,6 +26,10 @@
 //   night    lamps with shadows (src/kit/lamps.js, lamps-gpu.js): a wet street at night with lamps on posts, cars with their headlights
 //            and people under the lamps, neon and a lit sign: once with every lamp a plain round light, then with the nearest lamps' shadows
 //            from one shared atlas, headlights in a dipped beam's shape, and neon tubes and the sign lighting the wet road from their length
+//   cars     cars up close (src/kit/models/vehicle-looks.js, vehicle-damage.js, the cabin in vehicle-shapes.js): a kerb of parked cars walked
+//            past at arm's length in a low sun, once as cars were (dark glass, nothing inside, plain paint), then with seats and dashboards
+//            behind see-through glass, flaked paint with road grime and rain beading, and one car hit: a dent, a side window that breaks
+//            and drops its glass on the road, a crazed windscreen and a broken lamp
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -919,6 +923,71 @@ function night({ gs, size }) {
 }
 
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
+/* ---------- cars: cars up close ---------- */
+// A kerb of parked cars of the closed styles, walked past on the pavement at arm's length in a low sun. Off, the cars as cars were (dark
+// glass with nothing behind it, the paint plain: their looks taken off); on, a closed car's seats, dashboard and door cards behind
+// see-through glass, paint with flakes, road grime and rain beading on some, and in the first half second one car hit: its door dented
+// with the paint scraped, a side window broken (its glass falls and lies on the road), the windscreen crazed and a head lamp broken.
+function cars({ gs, size }) {
+  const T = gs.THREE, hd = gs.hd, { vehicle } = gs.models;
+  const v = new hd.HDView({ bg: '#93a2bb', fog: .006, env: .6, amb: .45, fov: 60 });
+  v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+  const sun = hd.sun('#ffd2a0', 2.6, 24, [-.55, .42, .35]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  const STY = ['saloon', 'hatch', 'estate', 'van', 'sports', 'pickup'], n = Math.max(3, Math.round(8 * Math.min(1, size))), GAP = 6.2, LEN = n * GAP;
+  const mk = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  mk(new T.PlaneGeometry(14, LEN + 60).rotateX(-Math.PI / 2), hd.pbr('#3a3b3d', { rough: .82 }), 4, 0, LEN / 2);
+  mk(new T.BoxGeometry(4, .15, LEN + 60), hd.pbr('#8a857c', { rough: .85 }), -3.3, .075, LEN / 2);
+  mk(new T.BoxGeometry(1, 6, LEN + 60), hd.pbr('#7a5444', { rough: .9 }), -5.8, 3, LEN / 2);
+  // each car twice: as cars were (no inside, dark glass, its looks taken off) and as they are now
+  const bare = new Map(), plainOf = m => { let p = bare.get(m); if (!p) { const ud = m.userData; m.userData = {}; try { p = m.clone(); } finally { m.userData = ud; } bare.set(m, p); } return p; };
+  const row = Array.from({ length: n }, (_, i) => {
+    const style = STY[i % STY.length], seed = 11 + i * 7;
+    const old = vehicle('car', { style, seed, inside: false }), now = vehicle('car', { style, seed });
+    old.traverse(o => { if (o.isMesh && !o.isInstancedMesh) o.material = plainOf(o.material); });
+    for (const c of [old, now]) { c.position.set(0, 0, i * GAP + GAP / 2); v.scene.add(c); }
+    now.dirt(.08 + .5 * ((i * .37) % 1)); if (i % 3 === 1) now.wet(.8);
+    return { old, now };
+  });
+  const hit = row[Math.min(1, n - 1)].now;
+  let on = false, last = 0, struck = false;
+  const enter = key => async draw => {
+    on = key === 'new'; last = 0; struck = false;
+    for (const r of row) { r.old.visible = !on; r.now.visible = on; r.now.mend(); }
+    for (let i = 0; i < 4; i++) await draw();
+  };
+  const tris = c => { let t = 0; c.traverse(o => { if (o.isMesh && o.visible) { const g = o.geometry; t += ((g.index ? g.index.count : g.attributes.position.count) / 3) * (o.isInstancedMesh ? o.count : 1); } }); return t; };
+  const at = (x, y, z) => new T.Vector3(x, y, z).add(hit.position);
+  return {
+    v, holds: `${num(n)} parked cars (${STY.slice(0, Math.min(n, STY.length)).join(', ')}) at arm's length in a low sun`,
+    modes: [
+      { key: 'old', name: 'dark glass, plain paint', enter: enter('old') },
+      { key: 'new', name: 'seats behind the glass, flaked and dirty paint, dents and broken glass', enter: enter('new') },
+    ],
+    // along the pavement past the cars, looking in at them; the second car hit early on
+    path(t, cam) {
+      const dt = t > last ? Math.min(.1, t - last) : 0; last = t;
+      const z = (t * 1.3) % LEN;
+      cam.position.set(-2.5, 1.62 + .02 * Math.sin(t * 7.4), z); cam.lookAt(.2, .8, z + 3.2); cam.updateMatrixWorld();
+      sun.follow?.(0, 0, z);
+      if (on && !struck && t > .4) {
+        struck = true; const w = hit.size.width / 2, h = hit.size.height, L = hit.size.length;
+        hit.dent(at(-w, h * .4, 0), { power: 1.1, dir: new T.Vector3(1, 0, .15) });
+        hit.smash(at(-w + .05, h * .78, L * .08), { power: 1 });
+        hit.smash(at(-.25, h * .82, -L * .2), { power: .7 });
+        hit.updateMatrixWorld(true); hit.hit(hit.points.lampL.getWorldPosition(new T.Vector3()), { power: .6, dir: new T.Vector3(0, 0, 1) });
+      }
+      if (on) for (const r of row) r.now.update(dt);
+    },
+    tell() {
+      const list = row.map(r => on ? r.now : r.old), each = list.reduce((s, c) => s + tris(c), 0) / list.length, base = `${num(n)} cars of ${num(each)} triangles`;
+      if (!on) return base;
+      const d = hit.damage, s = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+      return `${base} · ${s(d.dents, 'dent')}, ${s(d.glass, 'pane')} broken, ${s(d.lamps, 'lamp')} broken`;
+    },
+    dispose() { for (const r of row) r.now.mend(); clear(v); },
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -934,4 +1003,5 @@ export const SCENES = [
   ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
   ['street', 'Street', 'a city that holds up close: rooms behind the windows, real and parked cars, sculpted people, the street dressed', street],
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
+  ['cars', 'Cars', 'cars up close: seats behind the glass, paint, dirt and rain, dents and broken glass', cars],
 ];

@@ -75,6 +75,7 @@ import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
 import { roomsLook } from './city-gpu.js';
+import { carPaintLook, carGlassLook } from './models/vehicle-gpu.js';
 import { SpreadFrame, SpreadNode, ownFrames } from './hd3d-gpu-spread.js';
 import { LensNode } from './hd3d-gpu-lens.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
@@ -514,6 +515,9 @@ export const gpuLooks = {
   crowd: (m, s, o) => crowdLook(m, s, o, afterColor),
   // gs.city's rooms behind every window (city-rooms.js, city-gpu.js)
   rooms: (m, s, o) => roomsLook(m, s, o, { afterColor, live }),
+  // gs.models.vehicle's paint and glass (vehicle-looks.js, models/vehicle-gpu.js)
+  carpaint: (m, s, o) => carPaintLook(m, s, o, { afterColor, live }),
+  carglass: (m, s, o) => carGlassLook(m, s, o, { afterColor, live }),
   // hd3d.js v.room(): box-projected reflections
   room(m, s) {
     const g = s.gpu ||= { rt: new CubeRenderTarget(s.size, { type: HalfFloatType }) };

@@ -3318,12 +3318,22 @@ update(dt) {
   `colour` and `trim` (its second colour: a coach's band, a wheelhouse, a stripe); `finish`: `'gloss'`,
   `'satin'`, `'matt'`, `'worn'` (paint rubbed through to the metal) or `'rusty'`, each kind starting with its
   own; `wear` (0..1 how aged, `false` for straight from the factory); `lit: true` (lamps that glow;
-  `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles). A
+  `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles);
+  a car's `inside: false` (no seats, dashboard or door cards, and dark glass in place of see-through glass:
+  about 9,000 triangles fewer), `seat` (their colour) and `flakes` (0..1, metal flakes in gloss paint). A
   train also takes `cars` (what the engine pulls, in order), `gauge` (metres between the rails, 1.435) and
   `deflectors: true` (a steam engine's smoke deflectors: a plate each side of its smokebox),
   `polished: false` (a working engine: its dome and boiler bands painted over and no bright wheel rims
   anywhere on the train) and `fuse: true` (a train that keeps to a straight line, in a third of the draws:
   below).
+- **Up close** (cars and trucks): `dirt(v)` (0..1: road grime low down and behind, dust on top, a film on
+  the glass with the wipers' fans clear), `wet(v)` (0..1 beading of its own on paint and glass: a car out of the wash or
+  the rain; while it rains the view's air beads it by itself), `dent(point, { power, dir })` (panels pushed in and crumpled, the paint scraped to primer and
+  metal), `smash(point, { power })` (a lamp breaks and goes dark; the windscreen crazes and stays; a side or
+  back window cracks from a soft knock or breaks, its glass falling and lying on the road: call
+  `update(dt)` each frame while it falls), `hit(point, { power, dir })` (a dent, then glass when hard
+  enough), `damage` (`{ dents, glass, lamps }`) and `mend()`. Each car changes its own materials and
+  shapes the first time; its twins keep the shared ones.
 - **`move(dt, speed, o)`** is the easy way to keep one alive each frame, whatever moves it: wheels and
   tracks roll for the speed (metres a second), the front wheels ease to `steer` (-1..1, + right; `lock`
   is how far they turn at 1, .55 radians), the body rolls outwards in a turn, squats as it pulls away and dips as it brakes, as a car on

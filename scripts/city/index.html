@@ -3,7 +3,7 @@
 // gs.city drawn to look over, for scripts/city.cjs: a column for each camera, a row for each time of day.
 //   ?views=street,close,shop,corner,high,far   &times=18.3,21.5   &cell=480x360   &seed=7   &style=downtown   &blocks=6
 //   &gpu (WebGPU)   &old (the city as it was before the close-up work: rooms: false, dress: false, fleet: false, crowd: false)
-//   &off=rooms,dress,fleet,crowd,parked (switch single parts off)   views also: up, parked, roofs   &frames=12
+//   &off=rooms,dress,fleet,crowd,parked (switch single parts off)   views also: up, parked, beside, roofs   &frames=12
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -45,6 +45,9 @@ try {
     up: () => { const o = bl.find(x => x.face === 0 && !x.shops && x.floors > 3) || front; return [[(o.x0 + o.x1) / 2 - 3, 1.7, o.z0 - 13], [(o.x0 + o.x1) / 2, 14, o.z0]]; },
     parked: () => { const c = (city.parked || []).slice().sort((p, q) => Math.hypot(p.x - b.x0, p.z - b.z0) - Math.hypot(q.x - b.x0, q.z - b.z0))[0]; if (!c) return VIEWS.street(); const fx = Math.sin(c.heading), fz = Math.cos(c.heading), sx = fz, sz = -fx, sd = Math.sign((b.x0 + b.x1) / 2 - c.x) * sx + Math.sign((b.z0 + b.z1) / 2 - c.z) * sz > 0 ? 1 : -1;
       return [[c.x + fx * 7 + sx * 2.6 * sd, 1.6, c.z + fz * 7 + sz * 2.6 * sd], [c.x - fx * 6, .6, c.z - fz * 6]]; },
+    // beside a parked car on the pavement, looking in at its seats
+    beside: () => { const c = (city.parked || []).slice().sort((p, q) => Math.hypot(p.x - b.x0, p.z - b.z0) - Math.hypot(q.x - b.x0, q.z - b.z0))[0]; if (!c) return VIEWS.street(); const fx = Math.sin(c.heading), fz = Math.cos(c.heading), sx = fz, sz = -fx, sd = Math.sign((b.x0 + b.x1) / 2 - c.x) * sx + Math.sign((b.z0 + b.z1) / 2 - c.z) * sz > 0 ? 1 : -1;
+      return [[c.x + fx * 2.2 + sx * 2.3 * sd, 1.65, c.z + fz * 2.2 + sz * 2.3 * sd], [c.x - fx * .3, .75, c.z - fz * .3]]; },
     roofs: () => { const o = bl.filter(x => x.roof !== 'gable').sort((p, q) => p.h - q.h)[0] || front; return [[o.x0 - 6, o.h + 9, o.z0 - 6], [(o.x0 + o.x1) / 2, o.h, (o.z0 + o.z1) / 2]]; },
   };
   const info = [`city made in ${made.toFixed(0)} ms (${P.buildings.length} buildings${city.parked?.length ? `, ${city.parked.length} parked cars` : ''})`];
