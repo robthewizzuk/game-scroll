@@ -132,7 +132,7 @@ function forest({ gs, HD, size, gpu }) {
 }
 
 /* ---------- village: real surface detail ---------- */
-function village({ gs, size }) {
+function village({ gs, HD, size }) {
   const T = gs.THREE, n = Math.max(3, Math.round(12 * size)), { v, sun } = view(gs, 200, .003), step = 13, len = Math.ceil(n / 2) * step;
   const ground = new T.Mesh(new T.PlaneGeometry(len + 120, 160).rotateX(-Math.PI / 2), gs.hd.pbr('#7b7468', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
   const STYLES = ['brick', 'stone', 'timber'], houses = [];
@@ -144,6 +144,7 @@ function village({ gs, size }) {
   let flat = 0; for (const m of meshes) flat += trisOf(m.geometry);
   const got = () => meshes.filter(m => m.userData.relief === 'ready'), shown = () => [...(v.details?.map.values() || [])].filter(e => e.relief && e.twin && !(e.twin.layers.mask & HELD));
   let on = false;
+  const sum = { n: 0, tris: 0, px: 0, t: 0 };   // what the surfaces drew a frame and how finely, for tell(): counted from the start of the timed run
   return {
     v, holds: `${n} houses, ${num(flat)} triangles before their surfaces are built`,
     modes: [
@@ -158,8 +159,12 @@ function village({ gs, size }) {
     ],
     // a walk along the pavement and back, 2.5 metres a second and two from the house fronts (where a wall's
     // bricks are big enough in the picture to be worth their triangles), looking along the street and up at the roofs
-    path(t, cam) { const L = len + 20, u = (t * 2.5) % (2 * L), x = (u < L ? u : 2 * L - u) - L / 2, dir = u < L ? 1 : -1; cam.position.set(x, 1.7, -4.4); cam.lookAt(x + dir * 9, 2.4 + .8 * Math.sin(t * .7), -5.6 + 3 * Math.sin(t * .5)); sun.follow(x, 0, 0); },
-    tell() { return null; },
+    path(t, cam) {
+      if (t < sum.t) sum.n = sum.tris = sum.px = 0; else if (on) { sum.n++; sum.tris += HD.info.reliefTris || 0; sum.px += HD.info.reliefPx || 0; }
+      sum.t = t;
+      const L = len + 20, u = (t * 2.5) % (2 * L), x = (u < L ? u : 2 * L - u) - L / 2, dir = u < L ? 1 : -1; cam.position.set(x, 1.7, -4.4); cam.lookAt(x + dir * 9, 2.4 + .8 * Math.sin(t * .7), -5.6 + 3 * Math.sin(t * .5)); sun.follow(x, 0, 0);
+    },
+    tell() { return on && sum.n ? `the surfaces ${num(sum.tris / sum.n)} triangles a frame, within ${(sum.px / sum.n).toFixed(1)} pixels` : null; },
     dispose() { if (on) for (const h of houses) gs.models.relief(h, false); clear(v); },
   };
 }
@@ -228,7 +233,9 @@ function town({ gs, HD, size }) {
     tell() {
       if (!sum.n) return null;
       const shadows = `shadow maps ${num(sum.sh / Math.max(1, sum.shn))} triangles in ${num(sum.shd / Math.max(1, sum.shn))} draws a frame`;
-      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms · ${shadows}`;
+      // (what a game's view would do here by itself: it rests wherever what it leaves out is worth less than finding it costs)
+      const pays = HD.info.occPays, verdict = pays == null ? '' : pays ? ' (worth it here: a game keeps it on)' : ' (not worth it here: a game rests it)';
+      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms${verdict} · ${shadows}`;
     },
     dispose() { HD.occlude = was.on; HD.occludeSleep = was.sleep; HD.shadowTiles = was.tiles; clear(v); },
   };
@@ -267,7 +274,10 @@ function square({ gs, size }) {
     return performance.now() - t0;
   })();
   // (the first run waits for the sculpting and says how long it took)
-  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  // (the crowd's run has the skeleton people out of the scene, not just switched off: a game with a crowd has none, and
+  // the view walks everything in its scene each frame, hidden or not. Left in, 19,000 hidden parts cost the crowd's
+  // run most of its code time on the first phone to try it)
+  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
   const sum = { n: 0, ms: 0, sent: 0, draws: 0, t: 0 }, ahead = new T.Vector3();
   return {
     v, holds: `${num(N)} people and dogs walking, running and standing in a square`,

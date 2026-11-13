@@ -1,0 +1,94 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// A probe for the engine test scenes (src/detail-scenes.js): one scene, one run, flown for a number of
+// frames while scripts/scene-probe.cjs takes a CPU profile, so the engine's own code time a frame can be
+// set out by function.
+//   ?gpu  ?scene=square  ?mode=on  ?size=1  ?frames=120  ?w=238&h=376  ?tier=2  ?set=detailPx:2,relief:false (HD settings)
+//   ?keys (with each shader's text made: the keys three keeps it under, to see why one was made twice)
+//   ?grid (each time three's clustered lights make their grid: for which picture, and called from where)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+import { stats as DS, DETAIL } from '../../src/kit/detail.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+window.__probeGpu = GPU ? webgpu() : null;
+const HD = window.__hd, W = +(Q.get('w') || 238), H = +(Q.get('h') || 376);
+const frame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2);
+if (Q.has('set')) for (const kv of Q.get('set').split(',')) { const [k, v] = kv.split(':'); HD[k] = v === 'true' ? true : v === 'false' ? false : +v; }
+const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c);
+const x = c.getContext('2d', { willReadFrequently: true });
+const key = Q.get('scene') || 'square', want = Q.get('mode') || 'on', size = +(Q.get('size') || 1), frames = +(Q.get('frames') || 120), seconds = +(Q.get('seconds') || 30);
+let S = null, mode = null;
+const draw = () => { S.v.render(x, W, H); x.getImageData(0, 0, 1, 1); return frame(); };   // (a pixel read holds the page back as a screen would: software WebGPU piles frames up otherwise)
+window.prep = async () => {
+  tap();
+  if (Q.has('grid') && GPU) {   // who makes the clustered lights' grid, for which picture, and from where (made twice for one scene: every lit shader's text is written again)
+    const CL = (await import('three/examples/jsm/tsl/lighting/ClusteredLightsNode.js')).default, mk = CL.prototype._create;
+    CL.prototype._create = function (n) { const r = this._renderer || window.__probeGpu.r, rt = r.getRenderTarget(); Error.stackTraceLimit = 40; console.log(`GRID node ${this.id} v${this.version} cells ${n} had ${this._lightIndexes ? this._lightIndexes.value.array.length / 4 : 0} target ${rt ? rt.width + 'x' + rt.height : 'canvas ' + r.domElement.width + 'x' + r.domElement.height}\n` + new Error().stack.split('\n').slice(2, 30).map(l => l.trim().replace(/\(?http:\/\/localhost:\d+\//, '(').replace(/\?[^:]*:/, ':')).join(' < ')); return mk.call(this, n); };
+  }
+  const t0 = performance.now();
+  S = SCENES.find(s => s[0] === key)[3]({ gs, HD, size, gpu: GPU });
+  const made = performance.now() - t0; let e = null;
+  for (const m of S.modes) { mode = m; e = await m.enter(draw) || {}; if (m.key === want) break; }
+  for (let i = 0; i < 45; i++) { S.path(seconds * i / 45, S.v.cam); await draw(); }
+  S.path(0, S.v.cam); for (let i = 0; i < 20; i++) await draw();
+  window.prepEvents = EV.list.filter(e => /near|compileAsync|\^ for/.test(e)); EV.list.length = 0;
+  return { made, holds: S.holds, mode: mode.name, build: e.build ?? null, note: e.note || '' };
+};
+// what the chip was asked to make in a frame (shaders, pipelines, textures): counted, so a long frame can say why
+const EV = { n: 0, list: [] }, note = (what, more = '') => { EV.n++; EV.list.push(what + (more ? ' ' + more : '')); };
+function tap() {
+  const G = GPU && window.__probeGpu, dev = G?.r.backend?.device; if (!dev || dev.__tapped) return; dev.__tapped = true;
+  for (const k of ['createShaderModule', 'createRenderPipeline', 'createRenderPipelineAsync', 'createComputePipeline', 'createComputePipelineAsync', 'createTexture', 'createBuffer']) {
+    const f = dev[k].bind(dev); dev[k] = (d, ...a) => { note(k, k === 'createTexture' ? `${d.size?.width ?? d.size?.[0]}x${d.size?.height ?? d.size?.[1]} ${d.format}` : k === 'createBuffer' ? String(d.size) : (d.label || '')); return f(d, ...a); };
+  }
+  const q = dev.queue, wt = q.writeTexture.bind(q); q.writeTexture = (dst, data, layout, size) => { const w = size.width ?? size[0], h = size.height ?? size[1]; if (w * h >= 65536) note('writeTexture', `${w}x${h}`); return wt(dst, data, layout, size); };
+  const about = (o, m) => `${o.name || o.type}#${o.id} mat=${m?.name || m?.type}#${m?.id} recv=${o.receiveShadow} cast=${o.castShadow} attrs=${Object.keys(o.geometry?.attributes || {}).join('+')}${o.geometry?.index ? '+i' : ''} parent=${o.parent?.name || o.parent?.type}`;
+  const ca = G.r.compileAsync.bind(G.r); G.r.compileAsync = (...a) => { const t0 = performance.now(); const p = ca(...a); note('compileAsync', `${(performance.now() - t0).toFixed(1)}ms sync ${a[0].isMesh ? about(a[0], a[0].material) : a[0].type}`); return p; };
+  // a shader's text made (three's node builder: main-thread work, a few milliseconds each), and for which thing
+  const N = G.r._nodes, nf = N?.getForRender?.bind(N), cache = N?.nodeBuilderCache;
+  if (nf && cache && typeof cache.size === 'number') N.getForRender = ro => { const n = cache.size, t0 = performance.now(), out = nf(ro); const ms = performance.now() - t0; if (cache.size > n || ms > 1) note(cache.size > n ? 'shader text' : 'shader text (this thing\'s own, not kept for others)', `${ms.toFixed(1)}ms ${about(ro.object, ro.material)} ctx=${ro.context?.stateKey}` + (Q.has('keys') ? ` keys: material ${ro.getMaterialCacheKey()} scene ${ro.getDynamicCacheKey()} lights ${ro.lightsNode?.getCacheKey?.(true)} (node ${ro.lightsNode?.id} v${ro.lightsNode?.version}: ${(ro.lightsNode?._lights || []).map(l => l.type.replace('Light', '') + l.id + (l.castShadow ? 's' : '')).join(' ')}) cam ${ro.camera?.type}#${ro.camera?.id} shadows ${G.r.shadowMap.enabled}/${G.r.shadowMap.type} env ${N.getEnvironmentNode?.(ro.scene)?.getCacheKey?.()} fog ${N.getFogNode?.(ro.scene)?.getCacheKey?.()} scene ${ro.scene?.type}#${ro.scene?.id}` : '')); return out; };
+  const P = G.r._pipelines, gf = P.getForRender.bind(P);
+  P.getForRender = (ro, promises = null) => { const n = EV.list.length, out = gf(ro, promises); if (EV.list.length > n && EV.list.slice(n).some(e => e.startsWith('createRenderPipeline '))) note('  ^ for', `${about(ro.object, ro.material)} ctx=${ro.context?.stateKey}`); return out; };
+}
+window.fly = async () => {
+  tap();
+  const cpu = [], tris = [], calls = [], dts = [], path = [], long = [], det = { meshes: [], clusters: [], draws: [], tris: [], picks: [], ms: [] }; let last = 0;
+  for (let i = 0; i < frames; i++) {
+    const t = seconds * i / frames, a = performance.now(); S.path(t, S.v.cam); path.push(performance.now() - a);
+    EV.n = 0; EV.list.length = 0; const t0 = performance.now();
+    const pr = draw(), render = performance.now() - t0, evs = EV.list.slice(); EV.list.length = 0;
+    const now = await pr; if (last) dts.push(now - last); last = now;
+    cpu.push(HD.info.cpu); tris.push(HD.info.tris); calls.push(HD.info.calls); for (const k in det) det[k].push(DS[k]);
+    long.push({ i, t: +t.toFixed(2), cpu: +HD.info.cpu.toFixed(1), render: +render.toFixed(1), tris: HD.info.tris, calls: HD.info.calls, in: evs, after: EV.list.slice() });
+  }
+  const cm = [...cpu].sort((p, q) => p - q)[cpu.length >> 1];
+  window.long = long.filter(f => f.cpu > cm * 2.5 || f.in.length || f.after.length);
+  const med = a => +[...a].sort((p, q) => p - q)[a.length >> 1].toFixed(2), mean = a => +(a.reduce((s, q) => s + q, 0) / a.length).toFixed(2);
+  let objs = 0, vis = 0; S.v.scene.traverse(() => objs++); S.v.scene.traverseVisible(() => vis++);
+  return { backend: HD.info.backend, why: HD.info.webgl || '', cpuMed: med(cpu), cpuMean: mean(cpu), pathMed: med(path), frameMed: med(dts), tris: Math.round(mean(tris)), calls: Math.round(mean(calls)), objects: objs, visible: vis, tell: S.tell() || '', rw: HD.info.rw, rh: HD.info.rh,
+    detail: DS.meshes || det.meshes.some(Boolean) ? Object.fromEntries(Object.entries(det).map(([k, a]) => [k, mean(a)])) : null };   // (cluster detail: meshes, clusters, runs (a drawIndexed each on WebGPU), triangles, picks made again and their milliseconds, a frame)
+};
+// What cluster detail would draw along the flight in a picture `height` pixels high, for each error in `pxs`
+// (pixels): triangles and runs a frame, worked out from the picks alone, so a phone's picture size costs nothing here.
+window.count = (pxs, height, n = 60) => {
+  const was = DETAIL.px, out = {};
+  for (const px of pxs) {
+    DETAIL.px = px; let tris = 0, runs = 0, most = 0;
+    for (let i = 0; i < n; i++) {
+      S.path(seconds * i / n, S.v.cam); S.v.cam.updateMatrixWorld(); S.v.cam.matrixWorldInverse.copy(S.v.cam.matrixWorld).invert();
+      let t = 0; S.v.scene.traverseVisible(o => { if (o.isDetailMesh) { const v = o._runs(S.v.cam, height, false); t += v.tris; runs += v.n; } });
+      tris += t; most = Math.max(most, t);
+    }
+    out[px] = { tris: Math.round(tris / n), most: Math.round(most), runs: Math.round(runs / n) };
+  }
+  DETAIL.px = was;
+  return out;
+};
+window.ready = true;
+</script>
