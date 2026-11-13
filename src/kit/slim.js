@@ -2,7 +2,7 @@
 // with nothing to see for it and no shader changed (the number work and why each choice is safe: slim-core.js).
 //
 // A dense model made in code (a person of fifty thousand points, a creature, a vehicle, a hillside, a wall
-// whose bricks are real triangles) spent 32 to 76 bytes a point as plain 32-bit floats. slim() rewrites,
+// whose bricks are real triangles) spent 32 to 84 bytes a point as plain 32-bit floats. slim() rewrites,
 // in place, the lists that hold far more precision than shows:
 //   normal      3 bytes (was 12)        colour     6 bytes, half floats (was 12)
 //   bones       8 bytes for four bone numbers and four weights (was 24 on WebGL, 32 on WebGPU)

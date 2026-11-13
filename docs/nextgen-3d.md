@@ -276,9 +276,10 @@ up a tier first.
   shells, crowds, a fused train, buildings, city blocks, real surface detail) keep what goes with each
   point in fewer bytes: normals in one byte a part (two on a fused train's paint, which is shiny enough
   to show the difference), colours as half floats, a point's bones and their weights in eight bytes
-  where they took twenty-four, how thin the flesh is in two, and a relief's points on a 16-bit grid. A
-  person's points go from 76 bytes each to 39 and a relief wall is about half the size, with pictures
-  that match to within a few pixels.
+  where they took twenty-four, and a relief's points on a 16-bit grid. A person's points go from 84
+  bytes each to 53 (how thin the flesh is and where it sits on the face's paint stay as floats), a
+  relief wall is about half the size, and Long Shadow's meshes go from 39.9 MB to 29.6 MB, with
+  pictures that match to within a few pixels.
   Places stay full floats everywhere but on a relief, so nothing moves. A game's own geometry is never
   touched. Reading a kit mesh's lists with `getX()` and the like gives the same numbers as before; code
   that reads `.array` straight off a person's or a creature's geometry now sees the small kinds.
