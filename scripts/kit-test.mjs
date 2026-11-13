@@ -6243,5 +6243,128 @@ console.log('physics ok');
   console.log('night lights: shapes, a pool that keeps its lights, spot lights on WebGL only when wanted, tubes and signs, shadow slots for the nearest, a few drawn a frame ok');
 }
 
+// Rapier through the engine: riders, karts and craft that are solid, a floor that is a true plane, grapples, shots,
+// lobs and barrels in a world, broken things that keep going, props, voxel blocks and cloth round bodies, cars that dent,
+// rivers that carry bodies; in 2D, walkers and cars moved through a world, tile maps made solid, soft things that stay out
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Kart, Car } = await import('../src/kit/vehicles.js'), { Hover } = await import('../src/kit/craft.js'), { Grapple } = await import('../src/kit/gadgets.js');
+  const { Shots, arc, Explosives } = await import('../src/kit/combat.js'), { shatter, slice } = await import('../src/kit/destruction.js');
+  const { Props } = await import('../src/kit/props.js'), { Voxels, BLOCKS } = await import('../src/kit/voxels.js'), { Cloth } = await import('../src/kit/cloth.js');
+  const { Streams } = await import('../src/kit/flow.js'), { Path } = await import('../src/kit/paths.js');
+  const t0 = performance.now(), run = (w, n, f) => { for (let i = 0; i < n; i++) { f?.(i); w.step(1 / 60); } };
+  // the floor is a plane: a walker goes the whole way and a rider sits on it, not in it
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0); const hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), r = w.rider({ box: [1.2, .6, 2], at: { x: 5, y: 0, z: 0 } });
+    run(w, 120, () => { hero.walk(0, -4); r.slide(0, -.005, -.1, 0, 1 / 60); });
+    assert.ok(Math.abs(hero.pos.z + 8) < .05, 'a walker on the floor goes the whole way: ' + hero.pos.z);
+    assert.ok(Math.abs(r.pos.z + 12) < .05 && Math.abs(r.body.translation().y - .32) < .01 && r.grounded, 'a rider slides along the floor at its height: ' + r.pos.z + ', ' + r.body.translation().y); }
+  // a kart: up a ramp, through a stack of crates, stopped by a wall, and onHit says so
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(4, .4, 6)); ramp.position.set(0, .4, -12); ramp.rotation.x = .25; w.ground(ramp);
+    const crates = [0, 1, 2].map(i => w.box(null, 1, 1, 1, { at: { x: 3, y: .5 + i * 1.02, z: -10 } }));
+    w.box(null, 8, 3, 1, { at: { x: -3, y: 1.5, z: -30 }, fixed: true, tag: 'wall' });
+    let walled = 0; w.onHit((a, b, sp) => { if ((a.tag === 'wall' || b.tag === 'wall') && sp > 3) walled++; });
+    const k = new Kart({ world: w, x: 0, z: 0 }), k2 = new Kart({ world: w, x: 3, z: 0 }); let top = 0;
+    run(w, 150, () => { k.update(1 / 60, { throttle: 1 }); k2.update(1 / 60, { throttle: 1 }); top = Math.max(top, k.y); });
+    assert.ok(top > .6, 'the kart drives up the ramp: ' + top);
+    assert.ok(crates[0].pos.z < -11, 'the kart shoves the crates out of its way: ' + crates[0].pos.z);
+    run(w, 150, () => { k.update(1 / 60, { throttle: 1 }); });
+    assert.ok(k.z > -29.6 && k.z < -27 && walled > 0, 'a wall stops it and onHit hears it: ' + k.z + ' ' + walled); }
+  // a hovercraft at a wall; a grapple pulls a crate in and pulls the hero to a heavy truck
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0); w.box(null, 1, 6, 10, { at: { x: 5, y: 3, z: 0 }, fixed: true });
+    const hv = new Hover({ world: w, at: { x: 0, y: 3, z: 0 } }); let crash = null;
+    run(w, 120, () => { hv.update(1 / 60, { x: 1 }); crash ||= hv.crash; });
+    assert.ok(hv.pos.x < 4.5 && hv.pos.x > 3 && crash, 'a drone stops at a wall and says it crashed: ' + hv.pos.x);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: -10 }, density: 20 }), hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), hook = new Grapple({ range: 20 }); run(w, 1);   // (rays see what was added once the world has stepped)
+    assert.ok(hook.fire({ x: 0, y: .5, z: 0 }, { x: 0, y: 0, z: -1 }, w, hero) && hook.thing === crate, 'a grapple hooks a crate in a world');
+    let v = { x: 0, y: 0, z: 0 }; run(w, 120, () => { v = hook.update(1 / 60, hero.pos, v, { reel: true }); hero.walk(v.x, v.z); v = { x: 0, y: 0, z: 0 }; });
+    assert.ok(crate.pos.z > -2, 'and pulls the light crate to the hero: ' + crate.pos.z); }
+  // shots shove what they hit and pass the shooter; a lob stops where it meets something; a knocked barrel goes off
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: -10 }, density: 20 }), hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), shots = new Shots({ push: 40 });
+    shots.add({ from: { x: 0, y: .8, z: 0 }, dir: { x: 0, y: 0, z: -1 }, speed: 60, range: 50 }, { not: hero }); let got = null;
+    run(w, 30, () => { got ||= shots.update(1 / 60, w)[0]; });
+    assert.ok(got?.hit.thing === crate && Math.abs(got.at.z + 9.5) < .05, 'a shot traced in the world hits the crate face');
+    run(w, 30); assert.ok(crate.pos.z < -10.2, 'and shoves it: ' + crate.pos.z);
+    const pts = arc({ x: 0, y: 1.5, z: 0 }, { x: 0, y: 3, z: -6 }, -9.8, { ground: w, not: hero }), end = pts[pts.length - 1];
+    assert.ok(end.hit && end.y < 1.1, 'a lob ends where it meets the world');
+    const w2 = new World3D({ gravity: -9.8 }); w2.floor(0);
+    const barrel = w2.box(null, .6, 1, .6, { at: { x: 0, y: .5, z: 0 }, density: 100 }), near = w2.box(null, 1, 1, 1, { at: { x: 3, y: .5, z: 0 }, density: 10 });
+    const ex = new Explosives({ world: w2, radius: 5 }); ex.add({ x: 0, y: .5, z: 0, body: barrel }); let booms = 0; ex.on('boom', () => booms++);
+    const rock = w2.box(null, .5, .5, .5, { at: { x: -6, y: .5, z: 0 }, density: 400 }); rock.push(14, 2, 0);
+    run(w2, 120, () => ex.update(1 / 60));
+    assert.ok(booms === 1 && near.pos.x > 6, 'a barrel knocked hard goes off and throws what is near it: ' + booms + ' ' + near.pos.x); }
+  // broken things keep going as they were; props, voxels, cloth, a car that dents, a river
+  { const scene = new THREE.Scene(), w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()); m.position.set(0, 3, 0); scene.add(m);
+    const b = w.box(m, 1, 1, 1); b.setVel(5, 0, 0); run(w, 5);
+    const ps = shatter(m, { pieces: 6, world: w, push: 0 }), moving = ps.filter(p => p.body && p.body.vel.x > 3).length;
+    assert.ok(b.dead && moving >= 4, 'a thrown crate that shatters gives up its body and its pieces carry on: ' + moving);
+    const melon = new THREE.Mesh(new THREE.SphereGeometry(.4, 12, 8), new THREE.MeshStandardMaterial()); melon.position.set(0, 2, 5); scene.add(melon);
+    const mb = w.ball(melon, .4); mb.setVel(0, 0, -4); run(w, 1);
+    const halves = slice(melon, melon.position, { x: 1, y: 0, z: 0 }, { world: w, apart: 2 });
+    assert.ok(mb.dead && halves.length === 2 && halves.every(h => h.body && h.body.vel.z < -3) && halves[0].body.vel.x * halves[1].body.vel.x < 0, 'slice with a world: two bodies going on, parted along the cut');
+    const props = new Props(scene); props.kind('tree', new THREE.CylinderGeometry(1.5, 1.5, 6, 8).translate(0, 3, 0), new THREE.MeshStandardMaterial());
+    const t1 = props.add('tree', 0, 0, -5); props.add('tree', 3, 0, -5, { scale: 2 }); const trunks = props.solid(w, 'tree', { shape: 'trunk' }); run(w, 1);
+    const hit = w.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 20);
+    assert.ok(hit?.thing === trunks && hit.part?.id === t1 && Math.abs(hit.point.z + 4.55) < .02 && !w.ray({ x: 1, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 3), 'a forest of props as trunks: rays find the copy, and pass beside it');
+    props.kind('crate', new THREE.BoxGeometry(1, 1, 1).translate(0, .5, 0), new THREE.MeshStandardMaterial());
+    for (let i = 0; i < 3; i++) props.add('crate', 8, i * 1.05 + 1, 8);
+    const loose = props.solid(w, 'crate', { loose: true }); run(w, 90);
+    const M = new THREE.Matrix4(), P = new THREE.Vector3(), ys = [...loose.keys()].map(id => { props.mesh('crate').getMatrixAt(id, M); return P.setFromMatrixPosition(M).y; }).sort((a, b) => a - b);
+    assert.ok(loose.size === 3 && ys.every((y, i) => Math.abs(y - i) < .05), 'loose props fall, stack and are drawn where their bodies are: ' + ys.map(y => y.toFixed(2)));
+    const vox = new Voxels({ size: [32, 16, 32], worker: false }); vox.fill(0, 0, 0, 31, 3, 31, BLOCKS.stone); vox.build();
+    const w3 = new World3D({ gravity: -9.8 }); vox.physics(w3); const c3 = w3.box(null, 1, 1, 1, { at: { x: 10, y: 8, z: 10 } }); run(w3, 90);
+    assert.ok(Math.abs(c3.pos.y - 4.5) < .05, 'a crate lands on voxel blocks: ' + c3.pos.y);
+    vox.fill(9, 0, 9, 11, 3, 11, 0); vox.build(); run(w3, 60);
+    assert.ok(c3.pos.y < 2, 'and falls into a pit dug under it: ' + c3.pos.y);
+    const pushed = [];
+    for (const world of [null, true]) {
+      const wc = new World3D({ gravity: -9.8 }); wc.floor(0); const ball = wc.ball(null, .5, { at: { x: 0, y: .5, z: -2 } }); ball.setVel(0, 0, 4);
+      const cloth = new Cloth(null, world ? { world: wc } : {}), cur = cloth.sheet({ cols: 11, rows: 10, place: (i, j) => [-1 + i / 10 * 2, 2 - j / 9 * 1.8, 0], pins: [0, 10, 5] });
+      let most = -9; run(wc, 150, () => { cloth.update(1 / 60); const k = cur.base + 7 * 11 + 5; most = Math.max(most, cloth.P[k * 3 + 2]); }); pushed.push(most);
+    }
+    assert.ok(pushed[1] > pushed[0] + .4, 'cloth with a world is pushed aside by a ball rolling through it: ' + pushed.map(x => x.toFixed(2)));
+    const car = new THREE.Group(), dents = []; car.position.set(0, 1, 30); car.hit = (p, o) => dents.push(o.power);
+    const v3 = w.vehicle(car, { at: { x: 0, y: 1, z: 30 } }); w.box(null, 6, 3, 1, { at: { x: 0, y: 1.5, z: 15 }, fixed: true });
+    run(w, 180, () => v3.drive(1, 0));
+    assert.ok(dents.length >= 1 && dents[0] > .5, 'a model car dents itself where it hits a wall: ' + dents);
+    const S = w.shapes([{ box: [1, 1, 1], at: { x: 20, y: .5, z: 0 }, part: 'a' }]); S.add({ ball: .5, at: { x: 22, y: .5, z: 0 }, part: 'b' }); run(w, 1);
+    assert.ok(w.ray({ x: 22, y: 5, z: 0 }, { x: 0, y: -1, z: 0 }, 10)?.part === 'b', 'shapes: a shape added later is found');
+    S.drop('b'); S.set('a', { x: 22, y: .5, z: 0 }); run(w, 1);
+    assert.ok(w.ray({ x: 22, y: 5, z: 0 }, { x: 0, y: -1, z: 0 }, 10)?.part === 'a', 'shapes: dropped and moved');
+    const water = new Streams({ space: '3d' }); water.river(new Path([{ x: -50, y: 0, z: 40 }, { x: 50, y: 0, z: 40 }]), { width: 10, speed: 3 });
+    const log = w.box(null, 1, .4, .4, { at: { x: -20, y: 1, z: 40 }, density: .5, gravity: 0 }); run(w, 120, () => water.carry(log, 1 / 60));   // (afloat: gs.craft's Floater would hold it up)
+    assert.ok(log.pos.x > -17, 'a river carries a loose body downstream: ' + log.pos.x); }
+  // 2D: a tile level made solid, a platformer and a top-down walker moved through a world, a car, jelly and water
+  { const { Physics } = await import('../src/kit/physics.js'), { TileMap } = await import('../src/kit/tiles.js'), { Platformer, TopDown } = await import('../src/kit/movers.js'), { Soft, Liquid } = await import('../src/kit/soft.js');
+    const map = TileMap.fromText(['....................', '....................', '...........#........', 'P....../####\\.......', '####################'], { size: 16 });
+    const p = new Physics({ gravity: 900 }), lvl = p.tiles(map), crate = p.box(200, 0, 14, 14);
+    assert.ok(lvl.rects.length <= 4 && lvl.ramps.length === 2, 'a tile map as a few merged boxes and two ramps: ' + lvl.rects.length);
+    const s0 = map.find('P')[0], hero = new Platformer({ x: s0.x, y: s0.y, w: 12, h: 14, run: 90 }); let onTop = false, blocked = 0;
+    for (let f = 0; f < 150; f++) { hero.update(1 / 60, p, { x: 1 }); p.step(1 / 60); if (hero.onGround && Math.abs(hero.y - 41) < 1) onTop = true; if (hero.hit.right) blocked++; }
+    assert.ok(onTop && blocked > 0 && hero.x < 171, 'a platformer walks up the slope onto the block and is stopped by the wall: ' + hero.x + ',' + hero.y);
+    assert.ok(Math.abs(crate.y - 57) < 1.5, 'a crate lands on the level: ' + crate.y);
+    const q = new Physics({ gravity: 0 }); q.walls(0, 0, 400, 400);
+    const box = q.box(200, 100, 20, 20, { drag: 2 }), td = new TopDown({ x: 200, y: 300, w: 16, h: 16, speed: 120 });
+    for (let f = 0; f < 350; f++) { td.update(1 / 60, q, { x: 0, y: -1 }); q.step(1 / 60); }
+    assert.ok(box.y < 11 && td.y < 30, 'a top-down walker shoves a crate to the wall: ' + box.y + ' ' + td.y);
+    const cone = q.circle(100, 100, 6, { density: .5, drag: 3 }), car = new Car({ x: 100, y: 300, angle: -Math.PI / 2, world: q, top: 200 }); let crashed = null;
+    for (let f = 0; f < 200; f++) { car.update(1 / 60, { throttle: 1 }); q.step(1 / 60); }
+    assert.ok(cone.y < 10 && car.y > 20 && car.speed < 60, 'a car shoves a cone to the wall and is held there: ' + cone.y + ' ' + car.y + ' ' + car.speed);
+    const r = new Physics({ gravity: 0 }); r.walls(0, 0, 400, 400); const car2 = new Car({ x: 200, y: 300, angle: -Math.PI / 2, world: r, top: 200 });
+    for (let f = 0; f < 120 && !crashed; f++) { car2.update(1 / 60, { throttle: 1 }); r.step(1 / 60); crashed = car2.crash; }
+    assert.ok(crashed && crashed.ny > .9 && car2.speed < 100, 'a car hits a wall hard, says so and bounces off');
+    const ph = new Physics({ gravity: 900, walls: [0, 0, 360, 640] }), ledge = ph.box(180, 400, 200, 20, { fixed: true });
+    const soft = new Soft({ world: ph, bounds: [0, 0, 360, 640] }), blob = soft.jelly(180, 200, 30, 16);
+    for (let f = 0; f < 120; f++) { soft.update(1 / 60); ph.step(1 / 60); }
+    assert.ok(Math.abs(soft.centre(blob).y - 360) < 12 && !blob.points.some(pt => ledge.contains(pt.x, pt.y)), 'jelly lands on a ledge in the world: ' + soft.centre(blob).y);
+    const L = new Liquid({ world: ph, bounds: [0, 0, 360, 640] }); L.pour(180, 300, 80, 25);
+    for (let f = 0; f < 60; f++) { L.update(1 / 60); ph.step(1 / 60); }
+    assert.ok(!L.list.some(d => ledge.contains(d.x, d.y)), 'water poured on it stays out of it'); }
+  console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

@@ -118,10 +118,11 @@ export class Physics {
     R = engine.get();
     this.R = R; this.scale = scale;
     const g = typeof gravity === 'number' ? { x: 0, y: gravity } : gravity;
+    this.gravity = { x: g.x || 0, y: g.y || 0 };
     this.world = new R.World({ x: (g.x || 0) / scale, y: (g.y || 0) / scale });
     this.events = new R.EventQueue(true);
     own(this);   // freed when the card leaves the feed (src/kit/cleanup.js)
-    this.things = []; this.joints = []; this.hits = []; this.time = 0;
+    this.things = []; this.joints = []; this.hits = []; this.time = 0; this.walkers = []; this.met = []; this.steps = 0;
     this.ground = this.world.createRigidBody(R.RigidBodyDesc.fixed());   // the world, for hinges "to nothing"
     if (walls) this.walls(...walls);
   }
@@ -130,6 +131,7 @@ export class Physics {
   free() {
     if (!this.world) return;
     try { this.events.free(); } catch (_) { /* already gone */ }
+    for (const w of this.walkers) try { this.world.removeCharacterController(w.ctl); } catch (_) { /* already gone */ }
     this.world.free(); this.world = null;
   }
   toWorld(v) { return v / this.scale; }
@@ -181,10 +183,164 @@ export class Physics {
     t.dead = true;
     for (const j of this.joints) if (j.a === t || j.b === t) j.dead = true;
     this.joints = this.joints.filter(j => !j.dead);
+    if (t.ctl) { try { this.world.removeCharacterController(t.ctl); } catch (_) { /* already gone */ } this.walkers = this.walkers.filter(x => x !== t); if (t.owner?.thing === t) t.owner.thing = null; }
     this.world.removeRigidBody(t.body);   // also removes its collider and joints
     this.things = this.things.filter(x => x !== t);
   }
   clear() { for (const t of [...this.things]) this.remove(t); }
+
+  /* ---------- things your code steers, and tile levels ---------- */
+  /**
+   * Moves a box your code steers (a gs.movers Platformer or TopDown, a gs.vehicles Car, or any { x, y, w, h }, or { x, y, r }
+   * for a round one) by dx, dy game units as far as the world lets it: it stops at walls and slides along them, walks up
+   * `step`s and slopes up to `slope` degrees, keeps to the ground going down (`snap`), and shoves loose things out of
+   * its way (mass: how hard, kg). It is solid itself, so things land on it and bounce off it, and onHit(box.thing, thing,
+   * speed) tells you what it ran into. With no gravity (a top-down game) there is no up: walls are walls all round.
+   * Returns { left, right, up, down, hits: [{ thing, nx, ny, x, y }] } as gs.tiles' TileMap.move does, so
+   * hero.update(dt, phys, input) just works. angle: turns it (a car from above). drop: falls through one-way tiles.
+   */
+  move(box, dx, dy, { step = null, slope = 50, snap = null, mass = 80, angle = null, drop = false } = {}) {
+    if (!this.steps) this.queries();   // (a world made this frame: what is in it is not yet where queries look)
+    const S = this.scale, side = this.gravity.y || this.gravity.x ? 1 : 0, w = box.thing && !box.thing.dead ? box.thing : this.walker(box, mass);
+    const size = box.r != null ? box.r * 2 : box.h ?? 16;
+    if (w.size !== size) this.walkerShape(w, box);
+    const c = w.ctl;
+    if (side && w.cfg !== `${step}|${slope}|${snap}`) {   // (a platformer: up is against gravity; steps, slopes and sticking to the ground)
+      w.cfg = `${step}|${slope}|${snap}`; const g = this.gravity, l = Math.hypot(g.x, g.y);
+      c.setUp({ x: -g.x / l, y: -g.y / l }); const st = (step ?? size * .35) / S, sn = (snap ?? size * .35) / S;
+      if (st > 0) c.enableAutostep(st, Math.min(st, 4 / S), false); else c.disableAutostep();
+      if (sn > 0) c.enableSnapToGround(sn); else c.disableSnapToGround();
+      c.setMaxSlopeClimbAngle(slope * Math.PI / 180); c.setMinSlopeSlideAngle(Math.PI / 2);
+    } else if (!side && w.cfg !== 'flat') { w.cfg = 'flat'; c.disableAutostep(); c.disableSnapToGround(); c.setMaxSlopeClimbAngle(0); c.setMinSlopeSlideAngle(Math.PI / 2); }
+    c.setCharacterMass(mass);
+    // where it is now: where your code says (it may have put it somewhere new itself), turned to angle
+    const t = w.body.translation(), from = w.to || t, bx = box.x / S, by = box.y / S;
+    if (Math.abs(from.x - bx) > 1e-4 || Math.abs(from.y - by) > 1e-4) { w.body.setTranslation({ x: bx, y: by }, true); w.from = { x: bx, y: by }; w.to = null; }
+    else if (from !== t) w.body.setTranslation(from, false);
+    if (angle != null) { w.body.setRotation(angle, false); w.angle = angle; }
+    const W = this.world, ts = W.timestep, dt = this.dt || 1 / 60; W.timestep = Math.max(1 / 240, Math.min(dt, 1 / 15));
+    const bottom = box.y + size / 2;
+    c.computeColliderMovement(w.collider, { x: dx / S, y: dy / S }, R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, col => {
+      const o = col.userData; if (!o?.oneWay) return true;   // (one-way tiles: only from above, and not when dropping through)
+      return !drop && dy >= 0 && bottom <= o.top + 1;
+    });
+    W.timestep = ts;
+    const m = c.computedMovement(), hit = { left: false, right: false, up: false, down: false, hits: [] };
+    box.x += m.x * S; box.y += m.y * S;
+    w.from = w.from || { x: bx, y: by }; w.to = { x: box.x / S, y: box.y / S };
+    const g = this.gravity, gl = Math.hypot(g.x, g.y) || 1, ux = -g.x / gl, uy = -g.y / gl;
+    for (let i = 0, n = c.numComputedCollisions(); i < n; i++) {
+      const k = c.computedCollision(i); if (!k) continue;
+      const thing = k.collider?.parent()?.userData || null, nx = k.normal1.x, ny = k.normal1.y, x = k.witness1.x * S, y = k.witness1.y * S;
+      hit.hits.push({ thing, nx, ny, x, y });
+      if (thing && !thing.fixed && !thing.body.isKinematic() && thing.mass < mass * 2) { if (thing !== w) this.meet(w, thing, (dx * -nx + dy * -ny) / dt, x, y); continue; }   // (something it shoves along: not a wall)
+      if (side) { const up = nx * ux + ny * uy; if (up > .6) hit.down = true; else if (up < -.6) hit.up = true; else if (nx * uy - ny * ux > 0) hit.right = true; else hit.left = true; }
+      else if (Math.abs(nx) > Math.abs(ny)) hit[nx > 0 ? 'left' : 'right'] = true; else hit[ny > 0 ? 'up' : 'down'] = true;
+      if (thing && thing !== w) this.meet(w, thing, (dx * -nx + dy * -ny) / dt, x, y);
+    }
+    if (side && c.computedGrounded()) hit.down = true;
+    if (side) box.onGround = hit.down;
+    box.hit = hit; return hit;
+  }
+  // the body of a box moved with move(): a kinematic shape and a character controller
+  walker(box, mass) {
+    const S = this.scale, body = this.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(box.x / S, box.y / S));
+    const w = new Thing(this, body, null, 'box', { w: box.w ?? (box.r ?? 8) * 2, h: box.h ?? (box.r ?? 8) * 2 }, box.tag ?? 'walker');
+    w.owner = box; w.ctl = this.world.createCharacterController(.5 / S); w.ctl.setApplyImpulsesToDynamicBodies(true); w.ctl.setCharacterMass(mass);
+    w.from = body.translation(); w.to = null; w.met = new Map();
+    this.walkerShape(w, box); box.thing = w; this.things.push(w); this.walkers.push(w);
+    return w;
+  }
+  walkerShape(w, box) {
+    const S = this.scale; if (w.collider) this.world.removeCollider(w.collider, false);
+    let d;
+    if (box.r != null) { d = R.ColliderDesc.ball(box.r / S); w.kind = 'circle'; w.r = box.r; }
+    else { const hw = (box.w ?? 16) / 2 / S, hh = (box.h ?? 16) / 2 / S, r = Math.min(hw, hh) * .25; d = R.ColliderDesc.roundCuboid(Math.max(.001, hw - r), Math.max(.001, hh - r), r); w.kind = 'box'; w.w = box.w ?? 16; w.h = box.h ?? 16; }   // (rounded corners: a sharp box catches on the joins of flat ground)
+    w.collider = this.world.createCollider(d.setFriction(.2).setActiveEvents(R.ActiveEvents.COLLISION_EVENTS), w.body);
+    w.size = box.r != null ? box.r * 2 : box.h ?? 16;
+  }
+  // a walker's own hits (it is kinematic, so Rapier reports none): one per thing it starts touching, as fast as it meant to go into it
+  meet(w, thing, speed, x, y) { const was = w.met.has(thing); w.met.set(thing, 0); if (!was) this.met.push([w, thing, Math.max(0, speed), x, y]); }
+  /** Takes a box moved with move() out of the world (its body goes). */
+  unmove(box) { const w = box.thing; if (w && !w.dead) { this.remove(w); } box.thing = null; return this; }
+  /**
+   * Makes a gs.tiles TileMap solid: walls as a few merged boxes, slopes as ramps, one-way tiles as ledges that
+   * things land on (move() boxes jump up through them, and drop through with drop: true). Crates, balls and
+   * ragdolls then land on your level; move() boxes walk it. Returns its thing (kind 'tiles'); after changing tiles
+   * (digging, building) call its rebuild().
+   */
+  tiles(map, { friction = .5, bounce = 0, tag = 'tiles' } = {}) {
+    const body = this.world.createRigidBody(R.RigidBodyDesc.fixed()), t = new Thing(this, body, null, 'tiles', { map, rects: [], ramps: [] }, tag), S = this.scale;
+    t.rebuild = () => {
+      for (const c of t.colliders || []) this.world.removeCollider(c, false);
+      t.colliders = []; t.rects = []; t.ramps = [];
+      const sz = map.size, add = (d, data = null) => { d.setFriction(friction).setRestitution(bounce).setActiveEvents(R.ActiveEvents.COLLISION_EVENTS); const c = this.world.createCollider(d, body); c.userData = data; t.colliders.push(c); return c; };
+      // walls: runs along each row, joined with the same run in the rows below
+      const open = new Map();
+      for (let ty = 0; ty <= map.rows; ty++) {
+        const runs = [];
+        if (ty < map.rows) for (let tx = 0; tx < map.cols; tx++) { if (!map.solid(tx, ty)) continue; let e = tx; while (e + 1 < map.cols && map.solid(e + 1, ty)) e++; runs.push([tx, e]); tx = e; }
+        const next = new Map();
+        for (const [a, b] of runs) { const k = a + ',' + b, r = open.get(k); if (r) { r.y1 = ty; open.delete(k); next.set(k, r); } else next.set(k, { x0: a, x1: b, y0: ty, y1: ty }); }
+        for (const r of open.values()) t.rects.push(r);
+        open.clear(); for (const [k, r] of next) open.set(k, r);
+      }
+      for (const r of t.rects) { const w = (r.x1 - r.x0 + 1) * sz, h = (r.y1 - r.y0 + 1) * sz; add(R.ColliderDesc.cuboid(w / 2 / S, h / 2 / S).setTranslation((r.x0 * sz + w / 2) / S, (r.y0 * sz + h / 2) / S)); }
+      for (let ty = 0; ty < map.rows; ty++) for (let tx = 0; tx < map.cols; tx++) {
+        const i = map.info(tx, ty), x = tx * sz, y = ty * sz;
+        if (i.slope) {   // '/' rises to the right, '\' to the left
+          const pts = i.slope > 0 ? [x, y + sz, x + sz, y + sz, x + sz, y] : [x, y, x + sz, y + sz, x, y + sz];
+          const d = R.ColliderDesc.convexHull(new Float32Array(pts.map(v => v / S))); if (d) { add(d); t.ramps.push(pts); }
+        } else if (i.oneWay) { const h = Math.max(2, sz * .15); add(R.ColliderDesc.cuboid(sz / 2 / S, h / 2 / S).setTranslation((x + sz / 2) / S, (y + h / 2) / S), { oneWay: true, top: y }); t.rects.push({ x0: tx, x1: tx, y0: ty, y1: ty, oneWay: true }); }
+      }
+      if (!t.colliders.length) add(R.ColliderDesc.ball(.001).setSensor(true).setTranslation(-1e4, -1e4));
+      t.collider = t.colliders[0];
+      return t;
+    };
+    t.rebuild(); this.things.push(t);
+    return t;
+  }
+  // a world not stepped yet: one tiny step so queries (move, rays) see what is in it
+  queries() {
+    const W = this.world, keep = [], asleep = [];
+    W.forEachRigidBody(b => { if (b.isSleeping()) asleep.push(b); const n = b.isKinematic() && b.nextTranslation(); if (n) keep.push([b, n]); });
+    const ts = W.timestep; W.timestep = 1e-9; W.step(this.events); W.timestep = ts; this.events.drainCollisionEvents(() => {});
+    for (const [b, n] of keep) b.setNextKinematicTranslation(n);
+    for (const b of asleep) b.sleep();
+    this.steps++;
+  }
+  /**
+   * The shapes near a box (x0, y0, x1, y1 game units), for things that aren't bodies (gs.soft's points, your own
+   * particles) to stay out of: pass to outOf().
+   */
+  near(x0, y0, x1, y1, pad = 4) {
+    const S = this.scale, out = [];
+    this.world.collidersWithAabbIntersectingAabb({ x: (x0 + x1) / 2 / S, y: (y0 + y1) / 2 / S }, { x: ((x1 - x0) / 2 + pad) / S, y: ((y1 - y0) / 2 + pad) / S }, c => {
+      if (c.isSensor()) return true;
+      const t = c.parent()?.userData, p = c.translation(), type = c.shapeType(), T = R.ShapeType;
+      const r = type === T.Ball ? c.radius() : type === T.Cuboid ? Math.hypot(c.halfExtents().x, c.halfExtents().y) : type === T.RoundCuboid ? Math.hypot(c.halfExtents().x, c.halfExtents().y) + c.roundRadius() : Infinity;
+      out.push({ c, thing: t, x: p.x * S, y: p.y * S, r: r * S }); return true;
+    });
+    return out;
+  }
+  /**
+   * Keeps a point of radius r out of the shapes from near(): returns null if it is clear, else { x, y (where it
+   * should be), nx, ny (the way out), depth, thing }.
+   */
+  outOf(x, y, r, shapes) {
+    const S = this.scale; let best = null;
+    for (const o of shapes) {
+      if (o.r !== Infinity && Math.hypot(x - o.x, y - o.y) > o.r + r) continue;
+      const q = o.c.projectPoint({ x: x / S, y: y / S }, true); if (!q) continue;
+      const px = q.point.x * S, py = q.point.y * S, dx = x - px, dy = y - py, d = Math.hypot(dx, dy);
+      if (q.isInside) {   // (inside: out the nearest way, which is past the surface point)
+        const sp = o.c.projectPoint({ x: x / S, y: y / S }, false); if (!sp) continue;
+        const sx = sp.point.x * S, sy = sp.point.y * S, ex = sx - x, ey = sy - y, e = Math.hypot(ex, ey) || 1e-6;
+        const depth = e + r; if (!best || depth > best.depth) best = { x: sx + ex / e * r, y: sy + ey / e * r, nx: ex / e, ny: ey / e, depth, thing: o.thing };
+      } else if (d < r) { const depth = r - d, nx = d > 1e-6 ? dx / d : 0, ny = d > 1e-6 ? dy / d : -1; if (!best || depth > best.depth) best = { x: px + nx * r, y: py + ny * r, nx, ny, depth, thing: o.thing }; }
+    }
+    return best;
+  }
 
   /* ---------- joining things ---------- */
   // a and b are things; null means the fixed world. Points are game positions.
@@ -317,18 +473,21 @@ export class Physics {
   /* ---------- asking about the world ---------- */
   /** The thing at a point, or null. */
   at(x, y, filter = () => true) {
+    if (!this.steps) this.queries();
     let hit = null;
     this.world.intersectionsWithPoint(this.v(x, y), c => { const t = c.parent()?.userData; if (t && t.kind !== 'line' && filter(t)) { hit = t; return false; } return true; });
     return hit;
   }
   /** Every thing overlapping the box [x, y, w, h]. */
   inBox(x, y, w, h) {
+    if (!this.steps) this.queries();
     const out = new Set(), s = this.scale;
     this.world.intersectionsWithShape({ x: (x + w / 2) / s, y: (y + h / 2) / s }, 0, new R.Cuboid(w / 2 / s, h / 2 / s), c => { const t = c.parent()?.userData; if (t) out.add(t); return true; });
     return [...out];
   }
   /** First thing a ray from (x1, y1) to (x2, y2) hits: { thing, x, y, nx, ny, distance } or null. Lasers, line of sight, aim guides. */
   ray(x1, y1, x2, y2, filter = t => !t.collider.isSensor()) {
+    if (!this.steps) this.queries();
     const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy); if (!len) return null;
     const hit = this.world.castRayAndGetNormal(new R.Ray(this.v(x1, y1), { x: dx / len, y: dy / len }), len / this.scale, true,
       undefined, undefined, undefined, undefined, c => { const t = c.parent()?.userData; return !!t && filter(t); });
@@ -362,14 +521,17 @@ export class Physics {
     if (this.hits.length) for (const t of this.things) if (!t.fixed) before.set(t, t.body.linvel());
     const started = [];
     if (tick.on) for (const t of this.things) if (!t.fixed) { const w = t._was || (t._was = {}); w.x = t.x; w.y = t.y; w.a = t.angle; }
-    this.world.timestep = h;
+    this.world.timestep = h; this.dt = dt; this.steps++;
     for (let i = 0; i < n; i++) {
       for (const t of this.things) if (t.fx || t.fy) { const m = t.body.mass(); t.body.applyImpulse({ x: t.fx / s * m * h, y: t.fy / s * m * h }, true); }
+      for (const w of this.walkers) if (w.to) { const a = w.from || w.to, k = (i + 1) / n; w.body.setNextKinematicTranslation({ x: a.x + (w.to.x - a.x) * k, y: a.y + (w.to.y - a.y) * k }); if (w.angle != null) w.body.setNextKinematicRotation(w.angle); }   // (a share of its move each small step: what it meets is pushed at its real speed)
       this.world.step(this.events);
       this.events.drainCollisionEvents((h1, h2, on) => { if (on) started.push([h1, h2]); });
     }
+    for (const w of this.walkers) { if (w.to) { w.from = w.to; w.to = null; } for (const [t, k] of w.met) if (k > 3) w.met.delete(t); else w.met.set(t, k + 1); }
     for (const t of this.things) t.fx = t.fy = 0;
     this.time += dt;
+    for (const [a, b, speed, x, y] of this.met.splice(0)) if (!a.dead && !b.dead) for (const fn of this.hits) fn(a, b, speed * s, x, y);
     for (const [h1, h2] of started) {
       const c1 = this.world.getCollider(h1), c2 = this.world.getCollider(h2); if (!c1 || !c2) continue;
       const a = c1.parent()?.userData, b = c2.parent()?.userData; if (!a || !b || a.dead || b.dead) continue;
@@ -392,6 +554,7 @@ export class Physics {
   path(c, t) {
     c.beginPath();
     if (t.kind === 'line') { t.points.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); if (t.loop) c.closePath(); return; }
+    if (t.kind === 'tiles') { const z = t.map.size; for (const r of t.rects) c.rect(r.x0 * z, r.y0 * z, (r.x1 - r.x0 + 1) * z, r.oneWay ? Math.max(2, z * .15) : (r.y1 - r.y0 + 1) * z); for (const p of t.ramps) { c.moveTo(p[0], p[1]); c.lineTo(p[2], p[3]); c.lineTo(p[4], p[5]); c.closePath(); } return; }
     const x = t.sx, y = t.sy, a = t.sangle, co = Math.cos(a), si = Math.sin(a), P = (px, py) => [x + px * co - py * si, y + px * si + py * co];
     if (t.kind === 'circle') { c.arc(x, y, t.r, 0, Math.PI * 2); return; }
     const pts = t.kind === 'box' ? [[-t.w / 2, -t.h / 2], [t.w / 2, -t.h / 2], [t.w / 2, t.h / 2], [-t.w / 2, t.h / 2]] : t.points;

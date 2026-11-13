@@ -1061,6 +1061,7 @@ export class City {
     if (!want.length) this.allBuilt = true;
     for (const c of this.chunks.values()) if (c.detail) c.detail.visible = Math.hypot(c.x - f.x, c.z - f.z) < this.detail;
     this.cars.update(dt, f, this.t); this.people.update(dt, f, this.t);
+    if (this.bodies) this.solidSync();   // (the bodies of the nearest cars and people, after city.solid(world))
     this.cars.draw(this.night, dt); this.people.draw(dt); this.signalTick();
     this.parkGlass?.update(this.view.cam.position);
     if (this.lampsOn && this.view.placeLamps && this.night > .05) {
@@ -1225,13 +1226,66 @@ export class City {
   }
   /** The building meshes built so far (for gs.camera's walls, or your own rays with three.js). */
   walls() { const out = []; for (const c of this.chunks.values()) if (c.group) for (const m of c.group.children) if (m.isMesh && m.userData.city && m.userData.city !== 'pave') out.push(m); return out; }
-  /** Makes the buildings and kerbs solid in a gs.physics3d World3D (boxes, cheap to collide with). */
-  solid(world) {
+  /**
+   * Makes the city solid in a gs.physics3d World3D: the buildings and kerbs (boxes, cheap to collide with), the street
+   * furniture (tree trunks, lamp posts, signals, bollards, benches, bins, roof tanks), the parked cars, and the traffic and
+   * people round the player (bodies that move with them, the nearest `cars` and `people`, refreshed in city.update()). A
+   * kart, a thrown crate or a ragdoll then meets them; a car hit hard stops for a moment (cars.bump) and a person hit falls
+   * over (people.knock) by themselves. Hits come back as usual from world.onHit: a body's .car or .person says which.
+   * Options: furniture, parked (true), cars (10), people (14), within (metres from the player; 70).
+   */
+  solid(world, { furniture = true, parked = true, cars = 10, people = 14, within = 70 } = {}) {
     const q = new Quads();
     for (const b of this.plan.buildings) for (const p of b.parts) q.box(p.x0, p.y0 - .2, p.z0, p.x1, p.y1, p.z1);
     for (const b of this.plan.blocks) q.box(b.x0, -.3, b.z0, b.x1, KERB, b.z1);
-    const m = new Mesh(q.geometry()); world.ground(m); world.floor?.(0);
+    const m = new Mesh(q.geometry()); world.ground(m, { sound: 'stone' }); world.floor?.(0);
+    if (!world.shapes) return this;   // (an older world: the buildings only)
+    if (furniture && this.props) {
+      const P = this.props, has = n => P.kinds.has(n) && P.count(n) > 0;
+      for (const [n, r] of [['tree', .22], ['pine', .25], ['lamp', .12], ['signal', .12], ['post', .06], ['bollard', .12], ['upole', .14], ['psign', .05], ['mast', .1]]) if (has(n)) P.solid(world, n, { shape: 'trunk', r, sound: n === 'tree' || n === 'pine' ? 'wood' : 'metal' });
+      for (const n of ['bench', 'hydrant', 'bin', 'tank', 'hvac', 'ac', 'hut']) if (has(n)) P.solid(world, n, { sound: n === 'bench' ? 'wood' : 'metal' });
+    }
+    if (parked && this.parked.length) world.shapes(this.parked.map(c => ({ box: [c.wid, 1.45, c.len], at: { x: c.x, y: (c.y || 0) + .75, z: c.z }, turn: c.heading, part: c })), { tag: 'parked car', sound: 'metal' });
+    const old = this.bodies, S = this.bodies = { world, within, cars: [], people: [], ncars: cars, npeople: people };
+    if (old?.world !== world) world.onHit((a, b, speed) => this.solidHit(a, b, speed));
+    for (const t of old?.world === world ? [...old.cars, ...old.people] : []) t.remove();
+    this.solidSync();
     return this;
+  }
+  // the bodies of the nearest cars and people follow them (a few of each, round the player)
+  solidSync() {
+    const S = this.bodies; if (!S || !S.world.world) return;
+    const W = S.world, f = this.focus || this.start || { x: 0, z: 0 }, far = { x: f.x, y: -500, z: f.z };
+    const fill = (pool, n, make) => { for (let i = 0; i < pool.length; i++) if (pool[i].dead) pool.splice(i--, 1); while (pool.length < n) pool.push(make()); };
+    fill(S.cars, S.ncars, () => { const b = W.box(null, 1.9, 1.45, 4.5, { moving: true, at: far, tag: 'car', sound: 'metal' }); b.car = null; return b; });
+    fill(S.people, S.npeople, () => { const b = W.capsule(null, .28, 1.7, { moving: true, at: far, tag: 'person', sound: 'body' }); b.person = null; return b; });
+    const near = (list, n, ok) => { const out = []; for (const c of list) { if (!ok(c)) continue; const d = Math.abs(c.x - f.x) + Math.abs(c.z - f.z); if (d < S.within * 1.4) out.push([d, c]); } return out.sort((a, b) => a[0] - b[0]).slice(0, n).map(x => x[1]); };
+    const go = (pool, want, put) => {
+      const keep = new Set(want), free = [];
+      for (const b of pool) if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b);
+      for (const who of keep) { const b = free.pop(); if (!b) break; b.who = who; put(b, who, true); }
+      for (const b of free) if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); }
+      for (const b of pool) if (b.who) put(b, b.who, false);
+    };
+    const qy = h => ({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) });
+    go(S.cars, near(this.cars.list, S.ncars, () => true), (b, c, jump) => {
+      const p = W.inner({ x: c.x, y: .75, z: c.z }), r = qy(c.heading);
+      if (jump) { b.collider.setHalfExtents({ x: c.wid / 2, y: .72, z: c.len / 2 }); b.car = c; b.body.setTranslation(p, false); b.body.setRotation(r, false); }
+      else { b.body.setNextKinematicTranslation(p); b.body.setNextKinematicRotation(r); }
+    });
+    go(S.people, near(this.people.list, S.npeople, q => q.down <= 0), (b, q, jump) => {
+      const y = (this.ground(q.x, q.z) || 0) + .85 * q.h, p = W.inner({ x: q.x, y, z: q.z });
+      if (jump) { b.person = q; b.body.setTranslation(p, false); } else b.body.setNextKinematicTranslation(p);
+    });
+  }
+  // something hit a car or a person of the city hard enough: the car stops a moment, the person falls over
+  solidHit(a, b, speed) {
+    for (const [me, it] of [[a, b], [b, a]]) {
+      if (it.tag === 'floor' || it.kind === 'ground') continue;
+      const heavy = it.kind === 'rider' || it.kind === 'mover' || it.tag === 'car' || (it.mass > 25 && !it.fixed);
+      if (me.car && heavy && speed > 3) this.cars.bump(me.car);
+      if (me.person && speed > 2 && it.tag !== 'person') { const q = me.person, o = it.pos || { x: q.x, z: q.z - 1 }; this.people.knock(q, q.x - o.x, q.z - o.z); }
+    }
   }
   /**
    * A quick top-down map on a 2D canvas: c, the box to draw in (x, y, w, h), at (the middle, in the
