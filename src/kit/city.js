@@ -929,10 +929,10 @@ export class City {
       view.reflect?.(water); this.water = water; this.quay = quay;
     }
     // the ground with no repeats: painted round the camera from what each piece is, read in place of the tiled pictures
-    this.ground = paint ? new GroundPaint(view) : null;
-    if (this.ground) {
-      this.ground.add(road, 'asphalt', { base: S.ground }); this.ground.add(ground, 'grass', { base: '#4f7a3a' });
-      if (this.quay) this.ground.add(this.quay, 'paving', { base: S.pavement });
+    this.groundPaint = paint ? new GroundPaint(view) : null;
+    if (this.groundPaint) {
+      this.groundPaint.add(road, 'asphalt', { base: S.ground }); this.groundPaint.add(ground, 'grass', { base: '#4f7a3a' });
+      if (this.quay) this.groundPaint.add(this.quay, 'paving', { base: S.pavement });
     }
     // chunks of 2 x 2 blocks, built a few at a time, nearest first
     const cs = P.nx * P.nz > 9 ? 2 : 1; this.chunks = new Map();
@@ -954,7 +954,7 @@ export class City {
     this.parked = this.dressing?.parked || []; this.pgrid = new Map();
     for (const c of this.parked) { const ax = Math.abs(Math.sin(c.heading)) > .5, hx = (ax ? c.len : c.wid) / 2, hz = (ax ? c.wid : c.len) / 2; Object.assign(c, { parked: true, x0: c.x - hx, x1: c.x + hx, z0: c.z - hz, z1: c.z + hz }); const k = Math.floor(c.x / 32) + ',' + Math.floor(c.z / 32); if (!this.pgrid.has(k)) this.pgrid.set(k, []); this.pgrid.get(k).push(c); }
     this.parkStyles = parkStyles;
-    if (this.ground) groundMarks(this.ground, P, this.parked, seed);
+    if (this.groundPaint) groundMarks(this.groundPaint, P, this.parked, seed);
     this.props = this.furnish();
     this.signals = this.makeSignals();
     this.cars = new Traffic(this, Math.round(70 * traffic * scale * Math.min(1.6, P.nx * P.nz / 36 + .4)));
@@ -1077,7 +1077,7 @@ export class City {
     const g = new Group(), d = new Group(); g.name = 'chunk ' + c.key;
     for (const [k, q] of bufs) if (!q.empty) {
       const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza'; m.receiveShadow = true; m.userData.city = k; g.add(m);
-      if (this.ground && GROUND_KIND[k]) { m.updateMatrixWorld(true); this.ground.add(m, GROUND_KIND[k], { base: k === 'grass' ? '#4f7a3a' : k === 'plaza' ? shade(S.pavement, .85) : S.pavement }); }   // (pavements first: a park or plaza is painted over its block)
+      if (this.groundPaint && GROUND_KIND[k]) { m.updateMatrixWorld(true); this.groundPaint.add(m, GROUND_KIND[k], { base: k === 'grass' ? '#4f7a3a' : k === 'plaza' ? shade(S.pavement, .85) : S.pavement }); }   // (pavements first: a park or plaza is painted over its block)
     }
     for (const [k, q] of det) if (!q.empty) { const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = true; m.receiveShadow = true; d.add(m); }
     if (this.opts.walls) {   // what the street walls wear: posters, tags, damp and grime (city-walls.js)
@@ -1115,7 +1115,7 @@ export class City {
       this.view.placeLamps(F?.close.size ? near.concat(F.headlamps(this.night, this._hl ||= [])) : near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f);
-    this.ground?.update(this.view.cam.position);
+    this.groundPaint?.update(this.view.cam.position);
     return this;
   }
   /** Cars brake for this (the player, a fallen tree...) for one frame: { x, z } and how wide it is (r). */
@@ -1318,7 +1318,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.ground?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.groundPaint?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
