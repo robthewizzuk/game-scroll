@@ -3,7 +3,8 @@
 // A sheet of gs.models.creature pictures for scripts/creatures.cjs: one row for each animal, one column
 // for each pose and view, so shapes, coats and gaits can be judged (and tuned) by eye.
 //   ?like=dog,cat (default: every animal)   &seed=3 (default: the animal as the book shows it)
-//   a row can be a person: like=person:short,person:long:f,person:bun:f:hat,person:bald:beard  (hair style, then f, hat, beard, moustache, grey, fair, red)
+//   a row can be a person: like=person:short,person:long:f,person:bun:f:hat,person:bald:beard  (hair style, then f, hat, beard, moustache, grey, fair, red;
+//   combed: the hair of the head as people have it unasked, a combed shape with strands on a beard alone)
 //   &cols=idle:three,walk@.1:side,walk@.6:side,run@.3:three   pose@phase:view (views: side, three, front, back, top)
 //   &cell=240x200   &gpu (WebGPU)   &lod=1   &bones (the skeleton drawn over it)   &size=.4 (every one this long, metres)
 //   &fur=0 (no fur)   &fur=auto (thinning with distance as in a game; otherwise every layer always)   &layers=12   &furlen=.04 (metres)
@@ -27,7 +28,7 @@ try {
   const sheet = document.createElement('canvas'); sheet.width = cw * cols.length; sheet.height = ch * likes.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
   const info = [], t0 = performance.now();
   const HAIRS = { grey: '#8a8a88', fair: '#c9a86a', red: '#8a3a1c', black: '#141210' };
-  const personOf = like => { const w = like.split(':').slice(1), o = { sex: w.includes('f') ? 'f' : 'm', hairStyle: ['short', 'long', 'bun', 'bald'].find(k => w.includes(k)) || 'short', strands: fur };
+  const personOf = like => { const w = like.split(':').slice(1), o = { sex: w.includes('f') ? 'f' : 'm', hairStyle: ['short', 'long', 'bun', 'bald'].find(k => w.includes(k)) || 'short', strands: w.includes('combed') && fur ? undefined : fur };
     for (const k in HAIRS) if (w.includes(k)) o.hair = HAIRS[k]; if (w.includes('beard')) o.beard = 1; if (w.includes('stubbly')) o.beard = .25; if (w.includes('moustache')) o.moustache = true; if (w.includes('hat')) o.outfit = { hat: { kind: 'cap' } }; return o; };
   const isPerson = like => like.startsWith('person');
   await Promise.all([creature.ready(likes.filter(l => !isPerson(l)).map(like => ({ like, seed, size }))), gs.models.human.ready(likes.filter(isPerson).map(personOf))]);

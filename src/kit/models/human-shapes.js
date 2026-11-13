@@ -6,9 +6,9 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
+import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, ES, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { row, easeOf, torsoOf, shoulderOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
+export { ss, bump, HC, EYE, ES, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 
@@ -340,7 +340,7 @@ const headBonesOf = (f, lids) => function headBones(x, y, z, s, side = 0) {
 // ball), but its normals are a real cornea's, a cap a millimetre high and more sharply curved than the ball: the wet highlight on it is
 // small and slides as the eye turns.
 function eyeball(c, r, n = 24) {
-  const rings = [[0, 0], [8, 0], [10.5, 1], [16, 2], [23, 3], [28, 4], [31, 5], [36, 6], [62, 6], [98, 7], [128, 7]], P = [], N = [], K = [], I = [], LIMB = 30 * PI / 180;
+  const rings = [[0, 0], [11, 0], [14, 1], [20, 2], [27, 3], [32, 4], [35, 5], [40, 6], [62, 6], [98, 7], [128, 7]], P = [], N = [], K = [], I = [], LIMB = 34 * PI / 180;
   for (const [deg, k] of rings) for (let i = 0; i < n; i++) {
     const a = deg * PI / 180, t = i / n * PI * 2, u = Math.min(1, a / LIMB), up = (1 - u * u) ** 2, slope = -4 * u * (1 - u * u) / LIMB;   // the cap's height (0..1) and how fast it falls
     const ex = sin(a) * cos(t), ey = sin(a) * sin(t), ez = cos(a), tx = cos(a) * cos(t), ty = cos(a) * sin(t), tz = -sin(a), rr = r + .00025 * up, q = .0011 * slope / r;
@@ -363,7 +363,7 @@ const HATS = new Map(Object.entries({
       { ball: [.076, .008, .04], at: Hd(0, .0385, .094), rot: [.22, 0, 0], clip: [[0, 0, 1], HC[2] + .07, .004], slot: 'helm', blend: .008 }];
     if (o.ridge) S.push({ ball: [.0048, .1312, .098], at: Hd(0, .012, -.016), clip: [[0, 1, 0], HC[1] + .09, .004], slot: 'helm', blend: .008 });   // the comb
     S.push({ ball: [.0905, .118, .1145], at: Hd(0, .008, -.011), cut: true, blend: .003 });   // hollow
-    if (o.strap) S.push({ taper: [Hd(.092, .004, -.012), Hd(.066, -.08, .02)], r: .0032, mirror: true, slot: 'strap', blend: .002 }, { taper: [Hd(.066, -.08, .02), Hd(0, -.1215, .056)], r: .0032, mirror: true, slot: 'strap', blend: .002 });
+    if (o.strap) S.push({ taper: [Hd(.092, .004, -.012), Hd(.0545, -.074, .018)], r: .0032, mirror: true, slot: 'strap', blend: .002 }, { taper: [Hd(.0545, -.074, .018), Hd(0, -.1105, .058)], r: .0032, mirror: true, slot: 'strap', blend: .002 });
     return { S, ghost: [dome] };
   },
   // a peaked cap: a band, a crown that stands up and out, a stiff peak
@@ -530,7 +530,7 @@ export function sculpt({ kind, a }) {
   if (kind === 'head') {
     // the eyes: each a ball of its own that turns on its own bone; the lips parted along the line between them, with teeth and the inside of the mouth behind
     const eye = { P: [], N: [], K: [], I: [], src: [], ao: .78 }, f = a.face;
-    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
+    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * ES), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
     const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],

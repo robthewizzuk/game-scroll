@@ -119,7 +119,7 @@ function crowdGeo(g) {
   // (the figure's own numbers, in lists of the crowd's own: freeing a shape frees its lists on the chip, and the figure may still be drawn)
   const own = a => a.isInterleavedBufferAttribute ? a.clone() : new BufferAttribute(a.array, a.itemSize, a.normalized);
   const o = new InstancedBufferGeometry(); if (g.index) o.setIndex(own(g.index));
-  for (const k of ['position', 'normal', 'uv', 'color', 'tangent']) if (g.attributes[k]) o.setAttribute(k, own(g.attributes[k]));
+  for (const k of ['position', 'normal', 'uv', 'uv1', 'color', 'tangent']) if (g.attributes[k]) o.setAttribute(k, own(g.attributes[k]));
   const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = si.count, a = new Float32Array(n * 8);
   for (let i = 0; i < n; i++) {
     const w = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)], sum = w[0] + w[1] + w[2] + w[3] || 1, o8 = i * 8;
