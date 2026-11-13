@@ -46,7 +46,9 @@ export function tone(f, { len = .1, wave = 'square', vol = .05, slide = 0, attac
   const a = audio(); if (!a) return;
   const hz = freq(f) * tune; if (!hz) return;
   try {
-    const { ctx } = a, t = when == null ? ctx.currentTime + at : Math.max(when, ctx.currentTime), o = ctx.createOscillator(), g = ctx.createGain(), v = Math.max(.0002, vol * level);
+    const { ctx } = a, t = when == null ? ctx.currentTime + at : Math.max(when, ctx.currentTime), v = Math.max(.0002, vol * level);
+    const vc = counted(bus) ? claim(ctx, t, len + .02, v * near, wave + Math.round(Math.log2(hz) * 24)) : null; if (vc === false) return;
+    const o = ctx.createOscillator(), g = ctx.createGain(); if (vc) vc.cut = cutter(ctx, g, o);
     o.type = wave; o.frequency.setValueAtTime(hz, t);
     if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, hz + slide * tune), t + len);
     if (wobble) { const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = wobble[0]; lg.gain.value = wobble[1] * tune; l.connect(lg); lg.connect(o.frequency); l.start(t); l.stop(t + len + .02); }
@@ -59,6 +61,48 @@ export function tone(f, { len = .1, wave = 'square', vol = .05, slide = 0, attac
 // While a ready-made sound plays with a little variation (see vary below), its notes are tuned and
 // levelled by these.
 let tune = 1, level = 1;
+
+/* ---------- the voice cap: only so many sounds at once ---------- */
+// However many sounds a game asks for at once, only so many play (32 voices, a voice being one tone or one
+// burst of noise; the music is never counted). Past that a new sound quieter than every one playing is left
+// out, and a louder one takes the place of the quietest (counting how far each has died away), which fades in
+// a few milliseconds. The same sound asked for many times at once (twenty coins picked up in one frame) plays
+// at most three times. Sounds at a point (Ears) count as loud as they are heard there. A phone keeps its time
+// for the game, and a pile of sounds stays a sound and not a roar.
+const CAP = 32, SAME = 3, SAME_T = .04;
+const cap = { max: CAP, live: [], same: new Map(), played: 0, left: 0, cut: 0 };
+let near = 1;   // (while set below 1 by Ears: how loud a sound at its point is heard, so a far one gives way first)
+const counted = bus => (bus || playBus) !== 'music';
+const loudNow = (v, now) => now <= v.t0 ? v.loud : v.loud * (.3 + .7 * Math.max(0, (v.end - now) / (v.end - v.t0)));
+function prune(now) { const L = cap.live; let j = 0; for (let i = 0; i < L.length; i++) if (L[i].end > now) L[j++] = L[i]; L.length = j; }
+// Is there room for a sound this loud? (Ears asks before it makes a panner for it.)
+function room(ctx, loud) {
+  const now = ctx.currentTime; prune(now);
+  if (cap.live.length < cap.max) return true;
+  for (const v of cap.live) if (loudNow(v, now) < loud) return true;
+  return false;
+}
+// A voice: false (left out), or its entry (give it a cut() to fade it if a louder one needs its place).
+function claim(ctx, t0, len, loud, key) {
+  const now = ctx.currentTime;
+  if (key != null) {
+    const k = Math.round(t0 * 50) + ':' + key, s = cap.same.get(k);
+    if (cap.same.size > 64) for (const [q, x] of cap.same) if (now - x.t > SAME_T) cap.same.delete(q);
+    if (s && now - s.t < SAME_T) { if (s.n >= SAME) { cap.left++; return false; } s.n++; } else cap.same.set(k, { t: now, n: 1 });
+  }
+  prune(now);
+  if (cap.live.length >= cap.max) {
+    let q = -1, ql = Infinity;
+    for (let i = 0; i < cap.live.length; i++) { const l = loudNow(cap.live[i], now); if (l < ql) { ql = l; q = i; } }
+    if (!(ql < loud)) { cap.left++; return false; }
+    const old = cap.live.splice(q, 1)[0]; cap.cut++; try { old.cut?.(); } catch { /* ended */ }
+  }
+  const v = { t0, end: t0 + len, loud, cut: null }; cap.live.push(v); cap.played++; return v;
+}
+// how to fade one voice out early (its gain, and the sources that feed it)
+const cutter = (ctx, g, ...src) => () => { const t = ctx.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, .004); for (const s of src) s.stop(t + .03); };
+/** Kit and tests: the voice cap now ({ max, playing, played, left, cut }: left out for want of room, cut for a louder one). */
+export function voiceCap() { const a = audio(); if (a) prune(a.ctx.currentTime); return { max: cap.max, playing: cap.live.length, played: cap.played, left: cap.left, cut: cap.cut }; }
 
 /* ---------- noise: explosions, hits, snares, wind ---------- */
 let noiseBuf = null;
@@ -78,7 +122,9 @@ export function noise(len = .25, { vol = .08, from = 3000, to = 300, filter = 'l
   if (sound.muted || !sound.volume) return;
   const a = audio(); if (!a) return;
   try {
-    const { ctx } = a, t = when == null ? ctx.currentTime + at : Math.max(when, ctx.currentTime), src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(), v = Math.max(.0002, vol * level);
+    const { ctx } = a, t = when == null ? ctx.currentTime + at : Math.max(when, ctx.currentTime), v = Math.max(.0002, vol * level);
+    const vc = counted(bus) ? claim(ctx, t, Math.max(len, attack + .01) + .02, v * near, filter + Math.round(Math.log2(Math.max(40, from)) * 12) + ':' + Math.round(Math.log2(Math.max(40, to)) * 12) + ':' + Math.round(len * 40)) : null; if (vc === false) return;
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); if (vc) vc.cut = cutter(ctx, g, src);
     src.buffer = noiseBuffer(ctx); src.loop = true;
     // The filter and the volume start out at their own values, not the browser's (350 Hz, full volume): a burst
     // timed ahead (at, when) can start one sample before the changes timed for the same moment, and that
@@ -320,7 +366,8 @@ function playZ(params, out) {
       if (zcache.size > 64) zcache.delete(zcache.keys().next().value);
       zcache.set(key, buf);
     }
-    const src = a.ctx.createBufferSource(), g = a.ctx.createGain();
+    const vc = counted() ? claim(a.ctx, a.ctx.currentTime, buf.duration + .02, .3 * (params[0] ?? 1) * near * .2, 'z' + key) : null; if (vc === false) return;
+    const src = a.ctx.createBufferSource(), g = a.ctx.createGain(); if (vc) vc.cut = cutter(a.ctx, g, src);
     src.buffer = buf; g.gain.value = .3; src.connect(g); g.connect(out || busIn(playBus)); src.start();
   } catch { /* audio unavailable */ }
 }
@@ -621,11 +668,12 @@ export class Ears {
    * A panner at p. With a level the sound is muffled by what stands between it and the ears; muffled: true
    * (behind a wall, as you say) or 0..1 says so yourself, false leaves it clear. Kit use; play sounds into it.
    */
-  node(p, { muffled, track = false } = {}) {
+  node(p, { muffled, track = false, len = .6 } = {}) {
     const a = audio(); if (!a) return null;
     try {
       const q = this.flat ? P3(p) : { x: p.x, y: p.y, z: p.z || 0 }, pn = a.ctx.createPanner();
-      pn.panningModel = this.hrtf ? 'HRTF' : 'equalpower'; pn.distanceModel = 'inverse'; pn.refDistance = this.ref; pn.maxDistance = this.max; pn.rolloffFactor = this.rolloff;
+      // (HRTF costs the phone far more than a plain left and right: eight at once, the rest plain)
+      pn.panningModel = this.hrtf && hrtfRoom(a.ctx, track ? Infinity : len, pn) ? 'HRTF' : 'equalpower'; pn.distanceModel = 'inverse'; pn.refDistance = this.ref; pn.maxDistance = this.max; pn.rolloffFactor = this.rolloff;
       if (pn.positionX) { pn.positionX.value = q.x; pn.positionY.value = q.y; pn.positionZ.value = q.z; } else pn.setPosition(q.x, q.y, q.z);
       const own = muffled === true || muffled === false || typeof muffled === 'number', k = muffled === true ? 1 : own ? +muffled : this.blocked(p);
       let end = pn;
@@ -639,17 +687,30 @@ export class Ears {
       end.connect(busIn('sfx')); return pn;
     } catch { return null; }
   }
+  /** Kit use: a panner made with node(p, { track: true }) is done with (its place among the HRTF ones is free again). */
+  release(n) { hrtfFree(n); const i = this.live.findIndex(h => h.node === n); if (i >= 0) this.live.splice(i, 1); }
   /** One note at a point (options as tone(), plus muffled: true for behind a wall where there is no level to say so). */
-  tone(f, p, o = {}) { const n = this.node(p, o); if (n) tone(f, { ...o, out: n }); return this; }
+  tone(f, p, o = {}) { this.at1(p, o.vol ?? .05, n => tone(f, { ...o, out: n }), { ...o, len: (o.len ?? .1) + (o.at || 0) }); return this; }
   /** A noise burst at a point (options as noise()). */
-  noise(len, p, o = {}) { const n = this.node(p, o); if (n) noise(len, { ...o, out: n }); return this; }
+  noise(len, p, o = {}) { this.at1(p, o.vol ?? .08, n => noise(len, { ...o, out: n }), { ...o, len: len + (o.at || 0) }); return this; }
   /** A ZzFX sound at a point. */
-  zzfx(p, ...params) { const n = this.node(p); if (n) playZ(params, n); return this; }
+  zzfx(p, ...params) { this.at1(p, .06, n => playZ(params, n), {}); return this; }
   /** A ready-made sound at a point: ears.play('boom', pos). Ready-made sounds are built from tone and noise, so they follow. */
   play(name, p, pitch = 1, o = {}) {
-    const n = this.node(p, o); if (!n || !sounds[name]) return this;
-    route = n; try { sounds[name](pitch); } finally { route = null; }   // its notes go into the panner
+    if (!sounds[name]) return this;
+    this.at1(p, .06, n => { route = n; try { sounds[name](pitch); } finally { route = null; } }, o);   // its notes go into the panner
     return this;
+  }
+  /**
+   * Kit use: plays what fn(node) plays into a panner at p, as loud as it is heard there for the voice cap (a far
+   * sound gives way first, and one with no room makes no panner). vol: about how loud it is where it is made.
+   */
+  at1(p, vol, fn, o = {}) {
+    const a = audio(); if (!a || sound.muted || !sound.volume) return false;
+    const k = Math.max(.001, Math.min(1, this.heard(p))); if (!room(a.ctx, vol * k)) { cap.left++; return false; }
+    const n = this.node(p, o); if (!n) return false;
+    near = k; try { fn(n); } finally { near = 1; }
+    return true;
   }
   /** A steady sound that follows something (engines, fires, a humming generator): returns { move(p), pitch(hz), volume(v), stop() }. */
   loop(p, wave = 'sawtooth', hz = 90, { vol = .03, muffled } = {}) {
@@ -667,7 +728,7 @@ export class Ears {
         hear() { const mf = n.gsMuffle; if (!mf) return; const k = self.blocked(at); if (Math.abs(k - mf.k) < .02) return; mf.k = k; const m = muffleOf(k), t = a.ctx.currentTime; mf.f.frequency.setTargetAtTime(m.hz, t, .07); mf.g.gain.setTargetAtTime(m.gain, t, .07); },
         /** 0..1: how muffled the level makes it now. */
         get muffled() { return n.gsMuffle?.k ?? 0; },
-        stop() { try { g.gain.setTargetAtTime(0, a.ctx.currentTime, .05); o.stop(a.ctx.currentTime + .2); } catch { /* stopped */ } loops.delete(h); const i = self.live.indexOf(h); if (i >= 0) self.live.splice(i, 1); },
+        stop() { try { g.gain.setTargetAtTime(0, a.ctx.currentTime, .05); o.stop(a.ctx.currentTime + .2); } catch { /* stopped */ } loops.delete(h); hrtfFree(n); const i = self.live.indexOf(h); if (i >= 0) self.live.splice(i, 1); },
       };
       loops.add(h); if (n.gsMuffle) this.live.push(h); return h;
     } catch { return dead; }
@@ -679,6 +740,14 @@ export class Ears {
 export const acoustics = { caster, blocked, muffleOf, Room };
 let route = null;   // while set, tone() and noise() play into this node (for Ears.play)
 const loops = new Set();
+// panners drawn with HRTF now: { end, pn } (a sound that goes on: end Infinity until it stops)
+const HRTF_MAX = 8, hrtf = [];
+function hrtfRoom(ctx, len, pn) {
+  const now = ctx.currentTime; let j = 0; for (let i = 0; i < hrtf.length; i++) if (hrtf[i].end > now) hrtf[j++] = hrtf[i]; hrtf.length = j;
+  if (hrtf.length >= HRTF_MAX) return false;
+  hrtf.push({ end: now + len + .1, pn }); return true;
+}
+function hrtfFree(pn) { const i = hrtf.findIndex(h => h.pn === pn); if (i >= 0) hrtf.splice(i, 1); }
 register('ears', { stop: () => { for (const h of [...loops]) h.stop(); const a = audio(); try { a?.ctx.listener.positionX?.setValueAtTime(0, a.ctx.currentTime); } catch { /* ok */ } } });
 
 /* ---------- mixer: channels, ducking, rooms, muffle ---------- */
@@ -687,6 +756,7 @@ register('ears', { stop: () => { for (const h of [...loops]) h.stop(); const a =
 // the player's volume. Change them any time; they all go back to normal when the round ends.
 //   mixer.volume('music', .4)              // a channel's level (0..1, fades over .1 s)
 //   mixer.duck('music', .3, .8)            // dip the music to 30% for .8 s (then back): big moments, lines
+//   mixer.voices(48)                       // how many sounds at once (32): past that the quietest give way
 //   mixer.room('cave')                     // echo for everything: 'none' | 'room' | 'hall' | 'cave' | 'pipe', or { echo, delay, reverb, size }
 //   mixer.muffle(.8)                       // 0..1 dull everything, like hearing it underwater or from inside a box
 //   mixer.channel('alarm').volume(.5)      // your own channel; play into it with tone(f, { bus: 'alarm' }) ...
@@ -720,6 +790,8 @@ function channelNode(name) {
 }
 /** The input of a channel (kit use: where tone(), noise() and zzfx() play into). */
 function busIn(name) { return channelNode(name || 'sfx') || audio()?.out; }
+/** Kit use (gs.sound.Foley's engines): a channel's input, to play a sound of your own making into. */
+export const kitBus = name => busIn(name);
 setSfxOut(() => busIn('sfx'));
 function setLevel(g, v, fade) { const t = g.context.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(v, t, Math.max(.005, fade / 3)); }
 // The place's own echo, set from the level by Ears (mixer.place): effects and voices only, never the music.
@@ -812,10 +884,17 @@ export const mixer = {
     m.muffle.frequency.setTargetAtTime(hz, m.ctx.currentTime, Math.max(.005, fade / 3));
     return mixer;
   },
+  /**
+   * How many sounds play at once (32; the music is never counted): past that a quieter new sound is left out and a
+   * louder one takes the quietest one's place. More for a game made of many small sounds that all matter (a
+   * rhythm game's own notes), fewer to keep a busy scene clear. Back to 32 when the round ends.
+   */
+  voices(n = CAP) { cap.max = Math.max(4, Math.min(128, n | 0 || CAP)); return mixer; },
   /** A channel of your own (or a built-in one) to set: mixer.channel('alarm').volume(.5). */
   channel(name) { return { volume: (v, f) => mixer.volume(name, v, f), duck: (...a) => mixer.duck(name, ...a) }; },
   /** Back to normal: every channel at full volume, no room, no muffle. The app does this between rounds. */
   reset() {
+    cap.max = CAP;
     if (!mix) return mixer;
     for (const g of mix.buses.values()) { g.level = 1; setLevel(g, 1, .05); }
     mixer.room('none'); mixer.muffle(0, .05); mixer.place(null, .05);

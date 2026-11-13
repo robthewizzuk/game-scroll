@@ -15,7 +15,7 @@
 //     phys.step(dt);                                      // moves everything and updates the meshes
 //   }
 //   phys.onHit((a, b, speed) => { if (speed > 4) gs.effects... });
-//   const hit = phys.ray(from, dir, 50);                  // { thing, point, normal, distance } or null
+//   const hit = phys.ray(from, dir, 50);                  // { thing, point, normal, distance, mesh } or null (mesh: the one hit, also inside a level made with ground())
 //
 // Like 2D physics the engine loads the first time a game needs it (the app waits for it).
 
@@ -234,13 +234,15 @@ export class World3D {
     if (o.group) { const bit = 1 << Math.max(0, Math.min(14, o.group)); desc.setCollisionGroups(((bit & ALL) << 16) | (ALL & ~bit)); }
     const collider = this.world.createCollider(desc, body);
     const b = new Body3(this, body, collider, kind, mesh, o.tag);
+    if (o.sound) b.sound = o.sound;
     this.bodies.push(b); b.sync();
     return b;
   }
   /**
    * Options for every body: bounce, friction, density, fixed, moving (you place() it: lifts, doors),
    * sensor (reports hits, doesn't push: pickups, goals), bullet (fast), noSpin, drag, gravity
-   * (multiplier), vel, group (1-14: same group never collide), at (start position if no mesh), tag.
+   * (multiplier), vel, group (1-14: same group never collide), at (start position if no mesh), tag, sound (what it
+   * is made of, for gs.sound.Foley: 'wood', 'metal', 'stone'...; else read from its mesh).
    */
   ball(mesh, r = .5, o = {}) { return this.make(mesh, R.ColliderDesc.ball(r), o, 'ball'); }
   /** A box of full size w × h × d. */
@@ -256,9 +258,10 @@ export class World3D {
   /** Makes a mesh (and everything inside it) solid and fixed: the level, floors, walls, ramps. */
   ground(mesh, o = {}) {
     mesh.updateMatrixWorld?.(true);
-    const { vertices, indices } = meshData(mesh, true);
+    const { vertices, indices, parts } = meshData(mesh, true);
     if (!indices.length) return null;
-    return this.make(null, R.ColliderDesc.trimesh(vertices, indices), { ...o, fixed: true, at: V() }, 'ground');
+    const g = this.make(null, R.ColliderDesc.trimesh(vertices, indices), { ...o, fixed: true, at: V() }, 'ground');
+    g.parts = parts; return g;   // (where each of its meshes lies: ray() says which one it hit)
   }
   /** A flat floor at height y (endless, invisible). */
   floor(y = 0, o = {}) { return this.make(null, R.ColliderDesc.cuboid(1000, .5, 1000), { ...o, fixed: true, at: V(0, y - .5, 0) }, 'floor'); }
@@ -375,8 +378,8 @@ export class World3D {
     const hit = this.world.castRayAndGetNormal(new R.Ray(o, n), max, true, undefined, undefined, undefined, undefined,
       c => { const t = c.parent()?.userData; return !!t && filter(t); });
     if (!hit) return null;
-    const s = hit.timeOfImpact;
-    return { thing: hit.collider.parent()?.userData || null, point: V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s), normal: V(hit.normal.x, hit.normal.y, hit.normal.z), distance: s };
+    const s = hit.timeOfImpact, thing = hit.collider.parent()?.userData || null, point = V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s);
+    return { thing, point, normal: V(hit.normal.x, hit.normal.y, hit.normal.z), distance: s, get mesh() { return meshAt(thing, point); } };
   }
   /** Every body within radius of a point. */
   near(p, radius) {
@@ -439,24 +442,35 @@ function rotate(v, q) {   // v rotated by quaternion q
 }
 
 // Every triangle of a mesh and its children, in world space (or the mesh's own space for hulls).
+// the mesh a ray hit: a level made solid with ground() keeps where each of its meshes lies, and the smallest that
+// holds the point is the one (Rapier's own triangle numbers are not those of the meshes)
+function meshAt(t, p) {
+  if (!t) return null;
+  const P = t.parts; if (!P) return t.mesh || null;
+  let best = null, least = Infinity; const e = .02;
+  for (const q of P) { const b = q.box; if (p.x < b[0] - e || p.y < b[1] - e || p.z < b[2] - e || p.x > b[3] + e || p.y > b[4] + e || p.z > b[5] + e) continue; const v = (b[3] - b[0] + e) * (b[4] - b[1] + e) * (b[5] - b[2] + e); if (v < least) { least = v; best = q.mesh; } }
+  return best;
+}
 function meshData(root, world) {
-  const verts = [], idx = [];
+  const verts = [], idx = [], parts = [];
   root.updateMatrixWorld?.(true);
   const inv = world ? null : root.matrixWorld?.clone?.().invert();
   root.traverse?.(o => {
     if (!o.isMesh || !o.geometry?.attributes?.position) return;
     const pos = o.geometry.attributes.position, base = verts.length / 3, m = o.matrixWorld.clone();
     if (inv) m.premultiply(inv);
-    const e = m.elements;
+    const e = m.elements, box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      verts.push(e[0] * x + e[4] * y + e[8] * z + e[12], e[1] * x + e[5] * y + e[9] * z + e[13], e[2] * x + e[6] * y + e[10] * z + e[14]);
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), X = e[0] * x + e[4] * y + e[8] * z + e[12], Y = e[1] * x + e[5] * y + e[9] * z + e[13], Z = e[2] * x + e[6] * y + e[10] * z + e[14];
+      verts.push(X, Y, Z);
+      if (X < box[0]) box[0] = X; if (Y < box[1]) box[1] = Y; if (Z < box[2]) box[2] = Z; if (X > box[3]) box[3] = X; if (Y > box[4]) box[4] = Y; if (Z > box[5]) box[5] = Z;
     }
     const index = o.geometry.index;
     if (index) for (let i = 0; i < index.count; i++) idx.push(base + index.getX(i));
     else for (let i = 0; i < pos.count; i++) idx.push(base + i);
+    parts.push({ box, mesh: o });
   });
-  return { vertices: new Float32Array(verts), indices: new Uint32Array(idx) };
+  return { vertices: new Float32Array(verts), indices: new Uint32Array(idx), parts };
 }
 
 // per-frame work, timed while the frame lab is open (prof.js)

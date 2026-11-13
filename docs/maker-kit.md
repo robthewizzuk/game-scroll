@@ -47,6 +47,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Is my game fast enough for phones? | `npm run budget my-game` | [Speed budget](#speed-budget) |
 | Match-3, 2048 sliding, flood fill on a grid | `gs.board` | [Game kits](#game-kits) |
 | Turn-based fights, items, XP and loot | `gs.battle` | [Game kits](#game-kits) |
+| Buffs, perks, poison over time, mana that refills, cooldowns with charges (real time) | `gs.stats` | [Game kits](#game-kits) |
 | Dungeons, caves, mazes, islands, tile patterns | `gs.gen` (rot.js, WaveFunctionCollapse) | [Game kits](#game-kits) |
 | Drag pieces into slots, reorder a list | `gs.drag` | [Game kits](#game-kits) |
 | Undo and redo moves | `gs.history` | [Game kits](#game-kits) |
@@ -87,6 +88,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Chapters, stars, collectibles, unlocks | `gs.campaign` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds placed in 3D, music that builds up | `gs.sound.Ears`, `music({ layers })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Sounds muffled by walls, each place with its own echo, by themselves | `new Ears({ level })` | [Action and adventure kits](#action-and-adventure-kits) |
+| Knocks by what things are made of, footsteps by what is underfoot, engines that rev through the gears, by themselves | `gs.sound.Foley` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
 | Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -1645,6 +1647,23 @@ regen, stun, sleep, shield, or your own). `battle.act(who, { move, item, target 
 `battle.over`, and events (`on('hit')`, `on('faint')`). `Bag` holds items and saves with `api.save()`;
 `xpFor`, `levelFor`, `gainXp` and `loot` cover levelling and drops.
 
+**Stats that change while you play** (`gs.stats`, real time; gs.battle's statuses count turns):
+`new Stats({ speed: 6, armour: 0, hp: { max: 100 }, mana: { max: 50, regen: 8, delay: 1 } }, { buffs: TABLE })`.
+A stat is (base + every add) x every mul, held to its `min` and `max` (`{ base, min, max }`); `get('speed')`.
+A pool (an object with `max`) is an amount that drains and refills: `change('hp', -12)`, `spend('mana', 10)`
+(false if short), `fill`, `empty`, `part('hp')` 0..1 for a bar; its max and regen are stats too
+(`'hp.max'`, `'mana.regen'`), so a buff can raise them, and a loss holds off regen for `delay` seconds.
+Buffs go on by name from the table or with a spec: `buff('haste')`, where `haste: { for: 4, mul: { speed: 1.5 } }`;
+with no `for` it is a perk, on until `remove()` (`perk(id)` makes any of them one). A spec can also have
+`add`, `tags` (`is('stunned')`), `drain: { hp: 3 }` a second (negative heals; with `every: 1` counted once a
+second, and `tick(stats, effect)` called), `stacks` and `stack` (putting it on again: `'refresh'` the time,
+`'extend'` it, `'stack'` a dose (each dose adds its own add, mul and drain), `'keep'`, `'strongest'`), `bad: true`
+(a debuff: `cleanse()` takes them all off) and `blocks: ['poison']` (immune while it's on; what it blocks comes
+off). `buffs` lists what is on with `left` and `part` for icons and rings. Cooldowns: `cool('dash', 2, { charges: 2, by: 'haste' })`,
+then `use('dash')` (false while waiting), `ready`, `left`, `charges`, `part('dash', 'cool')`, `hurry`. Events:
+`on('buff' | 'end' | 'tick' | 'change' | 'empty' | 'full' | 'ready' | 'blocked', fn)`. Call `update(dt)` each
+frame, make it in `reset()` (or `clear()` it there), and `pack()` / `unpack()` with `api.save()`.
+
 **Made levels** (`gs.gen`, rot.js and WaveFunctionCollapse, loaded on first use: call them in `make()` or
 `reset()`): `dungeon`, `cave`, `maze`, `islands`, `heightmap` and `pattern(sample)` (new maps that look
 like a small example). They give the same text `gs.tiles.TileMap.fromText()` reads, with `S` start and
@@ -1988,6 +2007,51 @@ update(dt) { ears.place(cam.position, forward); }
 ears.play('door', door.pos);                                 // dull if it is two rooms away
 if (ears.room.roof < .3) rain.set({ vol: .5 }, 1);           // the rain is louder out of doors
 ```
+**The sounds a world makes by itself** (`gs.sound.Foley`): with nothing more to call than
+`foley.update(dt)` each frame, things that knock into each other sound of what they are made of, people's
+feet sound of what they walk on, and engines rev with their speed through the gears. All made in code,
+and placed with the ears if you give it some.
+
+```js
+const { Ears, Foley } = gs.sound;
+ears = new Ears({ level: world });
+foley = new Foley({ ears, world, marks, weather });       // in make(); world: a gs.physics3d World3D
+foley.watch(person);                                        // a gs.models.human: a step where each foot comes down
+foley.watch(truck);                                         // a gs.models.vehicle: its engine, tyres and skids
+foley.watch(dog, { feet: 4, shoe: 'paw', weight: 30 });     // anything else: steps paced out along its way
+phys.box(crateMesh, 1, 1, 1, { sound: 'wood' });            // or read from the mesh: planks are wood, rust is metal
+update(dt) { phys.step(dt); person.move(dt, speed); foley.update(dt); }
+```
+
+- **Knocks**: two bodies of the world meeting at more than half a metre a second each sound of what they
+  are made of: the lighter fully, the heavier (or the floor) a little under it, louder the harder and
+  heavier, lower the bigger. Metal rings on, unless it landed on something soft; glass is bright; stone, dirt
+  and wood thud. A body's `sound` option says what it is; else its mesh (`userData.sound`, a `gs.models`
+  material or prop by its recipe, other materials by their names and how metallic they are). A heap
+  settling makes six knocks a frame at most, and each thing one every 70 ms.
+- **Steps**: a `gs.models.human` steps where each foot really comes down (its rig's own steps); anything
+  else (an Object3D, a World3D mover, `{ x, y, z }`) has steps paced out along its way, and a landing after a
+  fall. What is underfoot, the first that answers: your `ground(x, z, y)`, the weather's settled snow, the
+  marks' snow, mud, sand and grass, the body of the world below (its `sound`, or the mesh of the level it
+  hits: `World3D.ray()` now says which mesh, `hit.mesh`), dirt on a land, else stone (`under` changes that).
+  Puddles splash too. `shoe`: `'boot'` (a heel that clicks on hard floors), `'bare'`, `'paw'` or `'hoof'`;
+  `weight` in kg (heavier is louder and lower), and a run is louder than a walk.
+- **Engines**: a `gs.models.vehicle` gets the engine its kind and style has (a saloon's petrol, a sports
+  car's six, a lorry's diesel, a tank's tracks, a steam engine's chuffs and the rails' clack, an outboard,
+  a propeller, a jet that spools up): revs through the gears with its speed, louder and brighter under load,
+  tyres on what the road is, a squeal when it slides. A `World3D.vehicle()` and a `gs.vehicles` `Car` or `Kart`
+  too, from their own speed and throttle. `watch(v, { engine, top, throttle: () => 0..1, vol })` to choose.
+- By hand: `foley.hit(p, 'metal', { speed, size })`, `foley.step(p, 'gravel')`, `foley.surface(p)`.
+  `Foley.materials` and `Foley.engines` list the names; `Foley.materialOf(mesh)` is what it reads a mesh as.
+
+**Only so many sounds at once** (the voice cap): however many a game asks for, 32 play (a voice is one
+tone or one burst of noise; the music is never counted). Past that a new sound quieter than all of those
+playing is left out, and a louder one takes the place of the quietest, counting how far each has died away;
+sounds at a point count as loud as the ears hear them, so the far ones give way first. The same sound asked
+for many times at once (twenty coins picked up in one frame) plays three times, and only the eight
+nearest sounds at a point get HRTF (the costly kind of 3D sound); the rest are plain left and right.
+`mixer.voices(48)` for a game made of many small sounds that all matter; back to 32 when the round ends.
+
 `music({ ..., drums2, lead2, layers: { drums2: .3, lead2: .7 } })` builds up with `tune.intensity(x)`:
 quiet while sneaking, full when the fight starts.
 
@@ -2240,7 +2304,7 @@ finger lands the one-finger gesture is dropped, so a pinch never ends in a stray
 and Tone.js, `'voice'`, or your own with `tone(f, { bus: 'alarm' })`), then a shared room and muffle.
 `mixer.volume('music', .4)`, `mixer.duck('music', .3, .8)` (dip it for a big moment), `mixer.room('cave')`
 (`'room'`, `'hall'`, `'cave'`, `'pipe'` or `{ reverb, size, echo, delay }`) and `mixer.muffle(.8)` (underwater,
-stunned, inside a box). `mixer.place({ tail, wet, echo, delay })` is the echo of the place the listener
+stunned, inside a box), `mixer.voices(48)` (how many sounds at once: 32). `mixer.place({ tail, wet, echo, delay })` is the echo of the place the listener
 stands in, for effects and voices only: `new Ears({ level })` sets it from the level by itself, or set
 it for a place you know (`{ tail: 3.5, wet: .4 }` is a cathedral). It all goes back to normal when the round ends.
 

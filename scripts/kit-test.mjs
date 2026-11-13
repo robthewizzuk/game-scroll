@@ -5199,5 +5199,65 @@ console.log('physics ok');
   console.log('gs.hd effects that step down by their own cost ok');
 }
 
+// gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
+{
+  const { Stats } = await import('../src/kit/stats.js');
+  const BUFFS = {
+    haste: { for: 4, mul: { speed: 1.5 } },
+    poison: { for: 6, every: 1, drain: { hp: 3 }, bad: true, stacks: 3, stack: 'stack', tags: ['sick'] },
+    shield: { for: 5, add: { armour: 10 }, tags: ['shielded'], stack: 'extend' },
+    tough: { add: { 'hp.max': 25 } },
+    iron: { blocks: ['sick'] },
+    rush: { for: 2, mul: { quick: 2 } },
+    mend: { for: 3, drain: { hp: -10 } },
+  };
+  const h = new Stats({ speed: 6, armour: 0, crit: { base: .1, min: 0, max: .5 }, quick: 1, hp: { max: 100 }, mana: { max: 50, regen: 10, delay: 1 } }, { buffs: BUFFS });
+  const ev = []; for (const k of ['buff', 'end', 'tick', 'empty', 'full', 'ready', 'blocked']) h.on(k, (e, why) => ev.push(k + ':' + (e?.id || e?.by || e)));
+  assert.ok(h.get('speed') === 6 && h.get('hp') === 100 && h.max('hp') === 100 && h.part('hp') === 1, 'stats and pools start at their base and full');
+  h.buff('haste'); assert.equal(h.get('speed'), 9, 'a buff multiplies');
+  h.update(2); h.buff('haste'); assert.ok(Math.abs(h.buffs[0].left - 4) < 1e-9, 'put on again it starts its time again (refresh)');
+  h.update(4.01); assert.ok(h.get('speed') === 6 && !h.has('haste') && ev.includes('end:haste'), 'and runs out');
+  h.buff('shield'); h.update(3); h.buff('shield'); assert.ok(Math.abs(h.effects.get('shield').left - 7) < 1e-9 && h.is('shielded') && h.get('armour') === 10, 'extend adds the time; tags; add');
+  h.buff('crit-up', { add: { crit: 1 } }); assert.equal(h.get('crit'), .5, 'a stat is held to its max'); h.remove('crit-up');
+  h.perk('tough'); assert.ok(h.max('hp') === 125 && h.get('hp') === 100 && h.buffs.at(-1).perk, 'a perk raises a pool\'s max');
+  h.remove('tough'); h.fill('hp'); assert.equal(h.get('hp'), 100, 'and taken off the pool is held under the old max');
+  // poison: doses stack, each its own drain, ticking once a second
+  h.buff('poison'); h.buff('poison'); assert.equal(h.has('poison'), 2, 'two doses');
+  h.update(1); assert.equal(h.get('hp'), 94, 'two doses take 6 a second, ticking once a second');
+  h.buff('poison'); h.buff('poison'); assert.equal(h.has('poison'), 3, 'no more doses than its stacks');
+  h.update(1); assert.equal(h.get('hp'), 85, 'three doses: 9');
+  assert.ok(ev.filter(e => e === 'tick:poison').length === 2, 'a tick event each second');
+  assert.ok(h.buff('iron') && !h.has('poison') && ev.includes('end:poison'), 'a cure that makes you immune takes poison off as it goes on');
+  assert.ok(h.buff('poison') === null && ev.includes('blocked:poison'), 'and keeps it off');
+  h.remove('iron'); h.buff('poison'); assert.equal(h.cleanse(), 1, 'cleanse takes debuffs off'); assert.ok(h.has('shield'), 'and leaves buffs on');
+  // healing over time, empty and full
+  h.buff('mend'); h.update(1.5); assert.equal(h.get('hp'), 100, 'healing over time stops at the max');
+  assert.ok(ev.includes('full:hp'), 'full when it got there');
+  h.change('hp', -150); assert.ok(h.empty('hp') && h.get('hp') === 0 && ev.includes('empty:hp'), 'empty, and never below 0');
+  // mana: spend, a delay before regen, regen to full
+  h.fill('hp'); h.remove('mend');
+  assert.ok(h.spend('mana', 30) && !h.spend('mana', 30) && h.get('mana') === 20, 'spend only what is there');
+  h.update(.9); assert.equal(h.get('mana'), 20, 'no regen during the delay after spending');
+  h.update(.2); h.update(1); assert.ok(Math.abs(h.get('mana') - 31) < 1e-6, 'then 10 a second from the end of the delay: ' + h.get('mana'));
+  h.update(5); assert.equal(h.get('mana'), 50, 'up to its max');
+  // cooldowns with charges, sped up by a stat
+  h.cool('dash', 2, { charges: 2, by: 'quick' });
+  assert.ok(h.use('dash') && h.use('dash') && !h.use('dash') && h.charges('dash') === 0, 'two charges, then none');
+  h.update(1); assert.ok(Math.abs(h.left('dash') - 1) < 1e-9 && Math.abs(h.part('dash', 'cool') - .5) < 1e-9, 'half way to the next charge');
+  h.update(1.01); assert.ok(h.charges('dash') === 1 && ev.includes('ready:dash'), 'one back after 2 s');
+  h.buff('rush'); h.update(1.01); assert.equal(h.charges('dash'), 2, 'a stat that speeds it up (quick x2) halves the wait');
+  h.use('dash'); h.hurry('dash', 0, { all: true }); assert.equal(h.charges('dash'), 2, 'hurry all refills');
+  // saving
+  h.buff('poison'); h.change('hp', -40); h.use('dash'); h.setBase('speed', 7); h.perk('tough');
+  const saved = JSON.parse(JSON.stringify(h.pack()));
+  const h2 = new Stats({ speed: 6, armour: 0, crit: { base: .1, min: 0, max: .5 }, quick: 1, hp: { max: 100 }, mana: { max: 50, regen: 10, delay: 1 } }, { buffs: BUFFS });
+  h2.cool('dash', 2, { charges: 2, by: 'quick' }); h2.unpack(saved);
+  assert.ok(h2.get('speed') === 7 && h2.get('hp') === h.get('hp') && h2.has('poison') && h2.has('tough') && h2.buffs.find(b => b.id === 'tough').perk && h2.charges('dash') === 1 && h2.max('hp') === 125, 'pack and unpack keep bases, pools, what is on and cooldowns: ' + JSON.stringify(saved));
+  h.clear({ perks: true }); assert.ok(!h.has('poison') && h.has('tough') && h.full('hp') && h.charges('dash') === 2, 'clear keeps perks if asked');
+  assert.throws(() => h.buff('nope'), /no buff 'nope'/, 'an unknown buff says so');
+  assert.throws(() => new Stats({ hp: 'lots' }), /should be a number/, 'a bad stat says so');
+  console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
