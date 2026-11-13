@@ -2668,6 +2668,10 @@ update(dt) { camp.on = lit; gas.wind.x = 1.5; gas.update(dt);
   get through, a fire under half a unit wide hardly shows, and a thing thinner than a cell (a railing,
   a rope, a thin beam) may not be felt at all. `new Gas(view, { gpu: false, cells: 5000 })` runs what the slowest phones run, on any
   machine: play your game with it once. It burns the same way every time (`seed` changes its dice).
+- The two versions are the same kind of gas, not the same amount of it. In a coarse grid a plume climbs
+  more slowly and wider, so more smoke hangs in the box: a camp fire's box held up to nearly three times
+  the smoke in 11,000 cells that it held in 290,000, and most other things up to twice. Set what a game
+  decides by (`smokeAt(...) > .4`, `sees(...) < .3`) with room to spare, and play it on both.
 
 ## Buildings that come apart
 
