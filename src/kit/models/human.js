@@ -18,8 +18,8 @@ import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, m
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between } from '../poses.js';
 import { reach } from '../characters.js';
-import { LiveFace } from './human-face.js';
-import { FACE, FACE_REAL, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintHair, paintIris, paintSeams } from './human-paint.js';
+import { LiveFace, MOVES } from './human-face.js';
+import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams } from './human-paint.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { sceneEdited } from '../scene-list.js';
@@ -162,6 +162,10 @@ function skinOf(sp, pal, stubble) {
     const d = new DataTexture(paintDetail({ face: sp.face }), FACE_REAL.w, FACE_REAL.h, RGFormat, UnsignedByteType);
     d.channel = 1; d.wrapS = d.wrapT = ClampToEdgeWrapping; d.magFilter = LinearFilter; d.minFilter = LinearMipmapLinearFilter; d.generateMipmaps = true; d.needsUpdate = true; d.name = 'human:face-detail';
     m.userData.faceDetail = d;
+    // and the lines that come and go with its expressions: WebGPU sinks each kind in as far as the person's live face shows it (human-face.js)
+    const w = new DataTexture(paintWrinkles({ face: sp.face }), FACE_WR.w, FACE_WR.h, RGBAFormat, UnsignedByteType);
+    w.channel = 1; w.wrapS = w.wrapT = ClampToEdgeWrapping; w.magFilter = LinearFilter; w.minFilter = LinearMipmapLinearFilter; w.generateMipmaps = true; w.needsUpdate = true; w.name = 'human:face-wrinkles';
+    m.userData.faceWrinkles = w;
   }
   looks.set(key, m); return m;
 }
@@ -203,7 +207,7 @@ function mats() {
 
 // ================================================================= putting a person together
 const ARMB = /^(shoulder|arm|elbow|fore|twist|hand|(thumb|index|middle|ring|little)\d)[LR]$/;   // what sits in or out with the shoulders
-const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|(thumb|index|middle|ring|little)\d)[LR]|jaw)$/, _m4 = new Matrix4();   // the small bones, which only show close up (fingers, toes, the face's own)
+const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|lowLid|cheek|nose|lipUp|lipLow|(thumb|index|middle|ring|little)\d)[LR]|jaw|chin)$/, _m4 = new Matrix4();   // the small bones, which only show close up (fingers, toes, the face's own)
 /**
  * The skeleton a person of this build stands on: the bones' names, their parents and where each is (atOf), with
  * tree() to make them. Narrow or broad shoulders bring the arms (their bones, and all that rides them) in or out;
@@ -326,10 +330,10 @@ function eyeColours(pupil, iris) {
 // A real face's wet eyes, a mesh of their own over the eyes that adds only its shine (MATS.wet), so the eye shows through it: over each eye
 // the clear cornea, a cap over the iris more sharply curved than the ball (as eyeball() makes its normals: the wet highlight on it is small
 // and slides as the eye turns), running on into the film of tears over the white, on that eye's bone; and along each lower lid, where its edge
-// meets the eye, the line of tears that lies there, on the head's bone. bones: the skeleton's bone names (each point's bone by its place).
+// meets the eye, the line of tears that lies there, on that lower lid's bone. bones: the skeleton's bone names (each point's bone by its place).
 const wets = new Map();
 function wetOf(f, bones) {
-  const es = esOf(f), r = .0122 * es, key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('eyeL'), bones.indexOf('eyeR'), bones.indexOf('head')]);
+  const es = esOf(f), r = .0122 * es, key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('eyeL'), bones.indexOf('eyeR'), bones.indexOf('head'), bones.indexOf('lowLidL'), bones.indexOf('lowLidR')]);
   let g = wets.get(key); if (g) return g;
   const P = [], N = [], SI = [], I = [], LIMB = 34 * .86 * PI / 180, n = 36, rim = eyeRim(f.eyes, es, f.tilt || 0, !!f.real), e = [0, 0];
   const sin = Math.sin, cos = Math.cos;
@@ -342,7 +346,7 @@ function wetOf(f, bones) {
     }
     for (let q = 0; q < rings.length - 1; q++) for (let i = 0; i < n; i++) { const a = base + q * n + i, b = base + q * n + (i + 1) % n; I.push(a, b + n, b, a, a + n, b + n); }
     // the line of tears: a thin tube along the lower lid's edge, as far as the eye reaches under it
-    const hb = Math.max(0, bones.indexOf('head')), path = [];
+    const lb = bones.indexOf(s > 0 ? 'lowLidL' : 'lowLidR'), hb = lb >= 0 ? lb : Math.max(0, bones.indexOf('head')), path = [];   // (on the lower lid's bone: it rises with the lid in a smile)
     for (let k = 0; k <= 24; k++) {
       const t = -.8 + 1.65 * k / 24; rim.edge(t, false, e); const dx = e[0] - EYE[0], dy = e[1] - EYE[1], d2 = dx * dx + dy * dy; if (d2 > (.97 * r) ** 2) continue;
       const dz = Math.sqrt(r * r - d2), k2 = (r + .00012) / r; path.push([s * (EYE[0] + dx * k2), HC[1] + EYE[1] + dy * k2, HC[2] + EYE[2] + dz * k2, Math.sin(PI * k / 24) ** .5]);
@@ -614,6 +618,9 @@ export function human(o = {}) {
     root.rig = rigOf(B, scale, root);
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
     root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
+    // (a real face's eyeballs a hair smaller than the lids were sculpted round: the lower lid lies on the ball, and where it dipped a fraction
+    // of a millimetre into it the white showed through the lid's edge as the eye turned and the iris, set back in the ball, went by)
+    if (sp.face.real) root.face.eyeSize = .975;
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
@@ -827,6 +834,8 @@ human.all = list => {
 };
 /** Starts sculpting whatever these people still need and throws the app's "still loading" if anything does (so it can come first in make(), before anything costly is built); nothing otherwise. */
 human.need = list => { const miss = missing(list.filter(o => !o.now)); if (miss.length) throw new StillLoading('gs.models.human', Promise.all(miss.map(load))); };
+/** The 51 single movements a person's face can be set to (face.set(move, 0..1)): face capture's own, by ARKit's names. */
+human.moves = MOVES;
 /** For tools and tests: a promise that settles once human(options) for each of these would come straight back. */
 human.ready = list => Promise.all(missing([].concat(list)).map(load)).then(() => true);
 /** Forgets every saved sculpt (Settings › clear cache, tests). */

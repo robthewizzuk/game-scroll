@@ -2257,7 +2257,7 @@ console.log('physics ok');
     };
     const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
     const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
-    assert.equal(Object.keys(b.bones).length, 70, 'seventy bones: thirty-one (eight of them joints in between), fourteen to a hand and eleven in the face');
+    assert.equal(Object.keys(b.bones).length, 81, 'eighty-one bones: thirty-one (eight of them joints in between), fourteen to a hand and twenty-two in the face');
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');
     const worst = {}, note = (k, v) => { worst[k] = Math.max(worst[k] || 0, v); };
@@ -2535,8 +2535,8 @@ console.log('physics ok');
 // a look, an expression or a line of speech have them, and the rig steps it with the body
 {
   const F = await import('../src/kit/models/field.js'); await F.thinReady;
-  const HS = await import('../src/kit/models/human-shapes.js'), HH = await import('../src/kit/models/human-head.js'), { skeleton } = await import('../src/kit/models/human.js'), { LiveFace, LIVE_SHAPES } = await import('../src/kit/models/human-face.js'), { Vector3, Object3D } = await import('three');
-  const FACE = ['jaw', 'eyeL', 'eyeR', 'lidL', 'lidR', 'browL', 'browR', 'browInL', 'browInR', 'cornerL', 'cornerR'], dt = 1 / 60;
+  const HS = await import('../src/kit/models/human-shapes.js'), HH = await import('../src/kit/models/human-head.js'), { skeleton } = await import('../src/kit/models/human.js'), { LiveFace, LIVE_SHAPES, MOVES } = await import('../src/kit/models/human-face.js'), { Vector3, Object3D } = await import('three');
+  const FACE = ['jaw', 'chin', 'eyeL', 'eyeR', 'lidL', 'lidR', 'browL', 'browR', 'browInL', 'browInR', 'cornerL', 'cornerR', 'lowLidL', 'lowLidR', 'cheekL', 'cheekR', 'noseL', 'noseR', 'lipUpL', 'lipUpR', 'lipLowL', 'lipLowR'], dt = 1 / 60;
   // ---- the sculpted head
   {
     const face = { jaw: 1, chin: 1, brow: 1, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 }, { HC, EYE, MOUTH } = HH;
@@ -2559,10 +2559,21 @@ console.log('physics ok');
     const rotX = (c, an) => ([x, y, z]) => { const dy = y - c[1], dz = z - c[2], C = Math.cos(an), S = Math.sin(an); return [x, c[1] + dy * C - dz * S, c[2] + dy * S + dz * C]; };
     const posed = (i, T) => { const q = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], o = [0, 0, 0]; let ws = 0; for (let k = 0; k < 4; k++) { const w = p.SW[i * 4 + k]; if (!w) continue; const f = T[p.names[p.SI[i * 4 + k]]], r = f ? f(q) : q; o[0] += r[0] * w; o[1] += r[1] * w; o[2] += r[2] * w; ws += w; } return [o[0] / ws, o[1] / ws, o[2] / ws]; };
     // the jaw dropped: the lips part in the middle and stay closed at the corners, the upper lip stays where it is, and no skin is torn
-    { const T = { jaw: rotX(at.jaw, .1) }, gap = fr => { let best = null; for (const pr of pairs) { const e = Math.abs(P[pr[0] * 3]) / MOUTH.half; if (!best || Math.abs(e - fr) < Math.abs(Math.abs(P[best[0] * 3]) / MOUTH.half - fr)) best = pr; } const A = posed(best[0], T), B = posed(best[1], T), up = A[1] > B[1] ? best[0] : best[1], U = posed(up, T); return [Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]), Math.hypot(U[0] - P[up * 3], U[1] - P[up * 3 + 1], U[2] - P[up * 3 + 2])]; };
+    { const J = rotX(at.jaw, .1), T = { jaw: J, lipLowL: J, lipLowR: J, chin: J }, gap = fr => { let best = null; for (const pr of pairs) { const e = Math.abs(P[pr[0] * 3]) / MOUTH.half; if (!best || Math.abs(e - fr) < Math.abs(Math.abs(P[best[0] * 3]) / MOUTH.half - fr)) best = pr; } const A = posed(best[0], T), B = posed(best[1], T), up = A[1] > B[1] ? best[0] : best[1], U = posed(up, T); return [Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]), Math.hypot(U[0] - P[up * 3], U[1] - P[up * 3 + 1], U[2] - P[up * 3 + 2])]; };
       const mid = gap(0), end = gap(.95); assert.ok(mid[0] > .008 && mid[0] < .013 && mid[1] < 1e-4 && end[0] < 2e-4, `a jaw turned a tenth of a radian parts the lips ${(mid[0] * 1000).toFixed(1)} mm in the middle (the upper lip moves ${(mid[1] * 1000).toFixed(2)}) and ${(end[0] * 1000).toFixed(2)} at the corners`);
       let worst = 0; for (let t = 0; t < I.length; t += 3) { if (inside(I[t]) || inside(I[t + 1]) || inside(I[t + 2])) continue; const q = [0, 1, 2].map(k => posed(I[t + k], T)); for (let k = 0; k < 3; k++) { const a = I[t + k] * 3, b = I[t + (k + 1) % 3] * 3, l0 = Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]), A = q[k], B = q[(k + 1) % 3]; if (l0 > 1e-5) worst = Math.max(worst, Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) / l0); } }
       assert.ok(worst < 2.5, `no edge of the skin is stretched far by it: ${worst.toFixed(2)} times at the most`); }
+    // the face's movements at their most, posed by hand as the skin blends them (a smile with the cheeks and the lower lids up, a sneer, puffed
+    // cheeks, a kiss, the brows down and in, the lips rolled in): no edge of the skin stretched far or squashed flat
+    { const tr = (x, y, z) => q => [q[0] + x, q[1] + y, q[2] + z], both = (b, x, y, z) => ({ [b + 'L']: tr(x, y, z), [b + 'R']: tr(-x, y, z) });
+      const POSES = { smile: { ...both('corner', .0038, .0042, -.0022), ...both('cheek', .0006, .0042, .0012), ...both('lowLid', 0, .0021, .0013) },
+        sneer: { ...both('nose', .0006, .0025, -.0004), ...both('lipUp', 0, .0044, 0), ...both('cheek', 0, .001, 0) }, puff: both('cheek', .004, 0, .0035),
+        kiss: { ...both('corner', -.0057, 0, .0039), ...both('lipUp', -.0034, .001, .0055), ...both('lipLow', -.0034, -.001, .0055) },
+        brows: { ...both('browIn', -.0022, -.0032, 0), ...both('brow', 0, -.0013, 0) }, roll: { ...both('lipUp', 0, -.0012, -.002), ...both('lipLow', 0, .0015, -.0025) } };
+      const out = []; for (const [k, T] of Object.entries(POSES)) { let most = 0, least = 9;
+        for (let t = 0; t < I.length; t += 3) { if (inside(I[t]) || inside(I[t + 1]) || inside(I[t + 2])) continue; const q = [0, 1, 2].map(j => posed(I[t + j], T)); for (let j = 0; j < 3; j++) { const a = I[t + j] * 3, b = I[t + (j + 1) % 3] * 3, l0 = Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]), A = q[j], B = q[(j + 1) % 3]; if (l0 > 3e-4) { const r = Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) / l0; most = Math.max(most, r); least = Math.min(least, r); } } }
+        out.push(`${k} ${most.toFixed(2)}/${least.toFixed(2)}`); assert.ok(most < 2.5 && least > .3, `${k}: no edge of the skin stretched far or squashed flat (${most.toFixed(2)} times at the most, ${least.toFixed(2)} at the least)`); }
+      console.log('  face movements posed by hand, edges stretched (most/least): ' + out.join(', ')); }
     // a blink: how much of the left eyeball shows from straight in front, open and with the lid turned as far as the head says it closes
     { const tris = []; for (let t = 0; t < I.length; t += 3) { if (slotOf(I[t]).startsWith('eye')) continue; const x = P[I[t] * 3], hy = P[I[t] * 3 + 1] - HC[1]; if (Math.abs(x - EYE[0]) < .03 && Math.abs(hy) < .03 && P[I[t] * 3 + 2] - HC[2] > .05) tris.push(I[t], I[t + 1], I[t + 2]); }
       const st = .00025, GX = 140, GY = 80, x0 = EYE[0] - .0175, y0 = HC[1] - .01, R2 = (.0122 * HH.ES) ** 2;
@@ -2595,8 +2606,22 @@ console.log('physics ok');
     put('surprise'); assert.ok(B.browL.position.y > R.browL.y + .004 && B.browInR.position.y > R.browInR.y + .003 && B.lidL.rotation.x < -.05 && B.jaw.rotation.x > .01, 'surprise: brows up, eyes wide, the mouth a little open');
     put('angry'); assert.ok(B.browInL.position.y < R.browInL.y - .003 && B.browInL.position.x < R.browInL.x - .002 && B.browInR.position.x > R.browInR.x + .002, 'anger: the inner ends of the brows down and together');
     put('sad'); assert.ok(B.browInL.position.y > R.browInL.y + .003 && B.cornerL.position.y < R.cornerL.y - .002, 'sorrow: inner ends up, corners down');
-    put('squint'); assert.ok(B.lidL.rotation.x > .3 * f.lid && B.lidL.rotation.x < .6 * f.lid, 'a squint: lids part of the way');
+    put('squint'); assert.ok(B.lidL.rotation.x > .2 * f.lid && B.lidL.rotation.x < .5 * f.lid && B.lowLidL.position.y > R.lowLidL.y + .0015, 'a squint: the upper lids part of the way down, the lower ones up');
     put('blink', .5); assert.ok(Math.abs(B.lidL.rotation.x - .5 * f.lid) < .08, 'amounts between: half a blink');
+    put('disgust'); assert.ok(B.noseL.position.y > R.noseL.y + .002 && B.lipUpL.position.y > R.lipUpL.y + .002 && B.browInL.position.y < R.browInL.y - .001, 'disgust: the nose screwed up, the upper lip lifted, the brows down');
+    put('fear'); assert.ok(B.browInL.position.y > R.browInL.y + .003 && B.lidL.rotation.x < -.05 && B.cornerL.position.x > R.cornerL.x + .002, 'fear: the inner brows up, the eyes wide, the mouth stretched');
+    put('contempt'); assert.ok(B.cornerL.position.y > R.cornerL.y + .002 && Math.abs(B.cornerR.position.y - R.cornerR.y) < 5e-4, 'contempt: one corner up');
+    // every single movement moves the face (the eyes' looks turn the eyes), and those of one side that side's bones only
+    // (the eyes held on a point ahead, so that they don't wander and take the lids with them)
+    { const pose = () => { const d = {}; for (const k in R) { const b = B[k]; d[k] = [b.position.x, b.position.y, b.position.z, b.rotation.x, b.rotation.y]; } return d; }, still = [], wrong = [];
+      f.breathe = false; p.updateMatrixWorld(true); f.look(B.head.localToWorld(new Vector3(0, .165, 2))); put(null); const base = pose();
+      for (const mv of MOVES) { let b = base; if (mv === 'mouthClose') { put('jawOpen'); b = pose(); f.set('mouthClose', 1); run(p, .7); } else put(mv);   // (mouthClose closes the lips of an open jaw)
+        const d = pose(), any = Object.keys(d).filter(k => d[k].reduce((a, v, j) => a + Math.abs(v - b[k][j]) / (j < 3 ? 4e-4 : .01), 0) > 1 && !(k.startsWith('eye') && !mv.startsWith('eyeLook'))); if (!any.length) still.push(mv);
+        const side = /^mouth(Left|Right)$/.test(mv) ? null : mv.endsWith('Left') ? 'R' : mv.endsWith('Right') ? 'L' : null;   // (mouthLeft and mouthRight move the whole mouth)
+        if (side && any.some(k => k.endsWith(side) && !k.startsWith('eye'))) wrong.push(mv + ' (' + any.filter(k => k.endsWith(side) && !k.startsWith('eye')).join(' ') + ')'); }
+      assert.ok(MOVES.length === 51 && !still.length && !wrong.length, `all ${MOVES.length} movements move the face (${still.join(', ') || 'none still'}), each side's its own side (${wrong.join(', ') || 'none crossed'})`); f.look(null); }
+    put('smile'); const wr = p.mesh?.userData.gsWrinkle ?? f.wr; assert.ok(wr.z > .5 && wr.w > .9 && wr.x < .05, `a smile folds the skin at the eyes' corners and from the nose to the mouth, not the forehead (${wr.toArray().map(v => v.toFixed(2))})`);
+    put('surprise'); assert.ok(f.wr.x > .9 && f.wr.y < .05, 'surprise lines the forehead');
     put(null); assert.ok(Math.abs(B.jaw.rotation.x) < 1e-3 && B.cornerL.position.distanceTo(R.cornerL) < 1e-4 && B.browL.position.distanceTo(R.browL) < 1e-4, 'and back to rest');
     // eased, never snapped
     f.set('open', 1); p.rig.update(dt); assert.ok(B.jaw.rotation.x > 0 && B.jaw.rotation.x < .03, 'a shape is eased in'); }
@@ -2617,9 +2642,13 @@ console.log('physics ok');
     p.rotation.y += 1.2; run(p, .3); assert.ok(Math.abs(f.yaw) < .2, `turned far at a stroke, they jump to look ahead again: ${f.yaw.toFixed(2)}`);
     let jumps = 0, last = f.yaw; f.dartT = 0; run(p, 20, () => { if (Math.abs(f.yaw - last) > .02) jumps++; last = f.yaw; }); assert.ok(jumps >= 4, `standing, they dart to a new spot now and then: ${jumps} moves in 20 seconds`); }
   // the mouth: a level from the game, and a line of speech
-  { const p = mk(), f = p.face, B = p.bones; f.mouth(1); run(p, .3); const open = B.jaw.rotation.x; f.mouth(null); run(p, .3); assert.ok(open > .05 && Math.abs(B.jaw.rotation.x) < .003, `mouth(level) opens the jaw: ${open.toFixed(3)}`);
+  { const p = mk(), f = p.face, B = p.bones, R = f.rest; f.mouth(1); run(p, .3); const open = B.jaw.rotation.x; f.mouth(null); run(p, .3); assert.ok(open > .05 && Math.abs(B.jaw.rotation.x) < .003, `mouth(level) opens the jaw: ${open.toFixed(3)}`);
     f.say('Hello there, over here'); let most = 0, moves = 0, last = 0, t = 0; assert.equal(f.talking, true); while (f.talking && t < 6) { run(p, dt); t += dt; const j = B.jaw.rotation.x; most = Math.max(most, j); if (Math.abs(j - last) > .002) moves++; last = j; } run(p, .3);
-    assert.ok(t > .8 && t < 3 && most > .025 && most < .075 && moves > 15 && Math.abs(B.jaw.rotation.x) < .003, `a line of speech moves the jaw for ${t.toFixed(1)} s, ${most.toFixed(3)} rad at the most, and shuts it`); }
+    assert.ok(t > .8 && t < 3 && most > .025 && most < .075 && moves > 15 && Math.abs(B.jaw.rotation.x) < .003, `a line of speech moves the jaw for ${t.toFixed(1)} s, ${most.toFixed(3)} rad at the most, and shuts it`);
+    // m, b and p press the lips together; f and v tuck the lower lip in under the teeth
+    f.say('Mmm'); let press = 0; for (let i = 0; i < 12; i++) { run(p, dt); press = Math.max(press, R.lipUpL.y - B.lipUpL.position.y); } f.hush(); run(p, .3);
+    f.say('ffff'); let tuck = 0; for (let i = 0; i < 12; i++) { run(p, dt); tuck = Math.max(tuck, R.lipLowL.z - B.lipLowL.position.z); } f.hush(); run(p, .3);
+    assert.ok(press > .0004 && tuck > .001, `speech: lips pressed for m (${(press * 1000).toFixed(2)} mm), the lower lip tucked for f (${(tuck * 1000).toFixed(2)} mm)`); }
   // asleep when told so, and by itself when the head lies over and low (a body on the ground); bent over is not lying down
   { const p = mk(), f = p.face, B = p.bones, shut = () => B.lidL.rotation.x > f.lid * .95 && B.lidR.rotation.x > f.lid * .95;
     run(p, .5); assert.ok(!shut()); f.awake = false; run(p, .6); assert.ok(shut() && Math.abs(f.yaw) < .01, 'awake = false: eyes closed and still'); f.awake = null; run(p, .5); assert.ok(!shut(), 'and open again');
@@ -2730,7 +2759,14 @@ console.log('physics ok');
     const det = HP.paintDetail({ face: f(70) }), W = HP.FACE_REAL.w, H = HP.FACE_REAL.h; let low = 0, oily = 0; for (let i = 0; i < W * H; i++) { if (det[i * 2] < 200) low++; if (det[i * 2 + 1] > 128) oily++; }
     assert.ok(det.length === W * H * 2 && low > 200 && low < W * H * .05 && oily > W * H * .01 && oily < W * H * .2 && det[0] === 255 && det[(W - 1) * 2] === 255, `a picture of it: ${low} dots in a line, ${oily} oily, its edges plain`);
     const paint = o => HP.paintFace({ face: { ...f(30), ...o }, fem: true, skin: [.7, .5, .4], brow: [.1, .08, .06], lips: [.5, .25, .2], lash: [.05, .04, .03], mouth: [.1, .05, .05] }), a = paint({ freckles: 1 }), b = paint({ freckles: 0 }); let more = 0; for (let i = 0; i < a.length; i += 4) if (a[i + 1] < b[i + 1] - 8) more++;
-    assert.ok(more > 100 && more < a.length / 4 * .05, `freckles on fair skin that has them: ${more} dots darker`); }
+    assert.ok(more > 100 && more < a.length / 4 * .05, `freckles on fair skin that has them: ${more} dots darker`);
+    // the lines that come with expressions: each kind where it belongs on the face, at any age, deeper with it
+    const at = (age, c) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0, 0], where = [0, 0, 0]; let s = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { const v = HP.wrinklesAt(x, y, ff, rim, q)[c]; s += v; where[0] += v * x; where[1] += v * y; } return [s, where[0] / s, where[1] / s]; };
+    const fh = at(25, 0), gl = at(25, 1), cf = at(25, 2), nl = at(25, 3), old2 = at(70, 2);
+    assert.ok(fh[0] > 0 && fh[2] > .035 && fh[2] < .07 && gl[0] > 0 && gl[1] < .018 && gl[2] > -.02 && gl[2] < .03 && cf[0] > 0 && cf[1] > .04 && Math.abs(cf[2]) < .015 && nl[0] > 0 && nl[1] > .015 && nl[1] < .035 && nl[2] < -.04 && nl[2] > -.08 && old2[0] > cf[0] * 1.2,
+      `expression lines where they belong, at 25 too: the forehead (${(fh[2] * 1000).toFixed(0)} mm over the eyes), between the brows and down the nose (${(gl[1] * 1000).toFixed(0)} mm out), crow's feet (${(cf[1] * 1000).toFixed(0)} mm out), nose to mouth (${(nl[2] * 1000).toFixed(0)} mm down); deeper at 70 (${(old2[0] / cf[0]).toFixed(2)}x)`);
+    const wp = HP.paintWrinkles({ face: f(50) }), WW = HP.FACE_WR.w, WH = HP.FACE_WR.h, seen = [0, 0, 0, 0]; for (let i = 0; i < WW * WH; i++) for (let c = 0; c < 4; c++) if (wp[i * 4 + c] > 100) seen[c]++;
+    assert.ok(wp.length === WW * WH * 4 && seen.every(n => n > 20 && n < WW * WH * .08) && wp.slice(0, WW * 4).every(v => v === 0), `a picture of them, four kinds a dot (${seen.join(', ')} dots deep), its edges smooth`); }
   // ---- a real face's eyes (human-shapes.js realEyeball, human-head.js eyeParts): the iris a flat disc set back under where the cornea is, the
   // white shaded under the upper lid; lashes on both lids of both eyes (the upper ones longer, riding the upper lid, fewer with age) and a pink
   // mound in each inner corner, all in the close set of triangles only; the clean face has none of it

@@ -1628,7 +1628,14 @@ export interface FaceT {
   hush(): FaceT; mouth(level: number | null): FaceT; blink(): FaceT; update(dt: number): FaceT;
 }
 /** What a gs.models.human() person's face can be set to. */
-export type LiveShape = 'open' | 'wide' | 'round' | 'smile' | 'frown' | 'surprise' | 'blink' | 'squint' | 'sad' | 'angry' | 'wince' | 'winkL' | 'winkR';
+export type LiveShape = 'open' | 'wide' | 'round' | 'smile' | 'frown' | 'surprise' | 'blink' | 'squint' | 'sad' | 'angry' | 'wince' | 'winkL' | 'winkR' | 'disgust' | 'fear' | 'contempt' | FaceMove;
+/** The 51 single movements of a face that face capture records (ARKit's names, all but the tongue's; Left and Right are the person's own): face.set(move, 0..1) on a gs.models.human() person. */
+export type FaceMove = 'browDownLeft' | 'browDownRight' | 'browInnerUp' | 'browOuterUpLeft' | 'browOuterUpRight' | 'cheekPuff' | 'cheekSquintLeft' | 'cheekSquintRight'
+  | 'eyeBlinkLeft' | 'eyeBlinkRight' | 'eyeLookDownLeft' | 'eyeLookDownRight' | 'eyeLookInLeft' | 'eyeLookInRight' | 'eyeLookOutLeft' | 'eyeLookOutRight' | 'eyeLookUpLeft' | 'eyeLookUpRight'
+  | 'eyeSquintLeft' | 'eyeSquintRight' | 'eyeWideLeft' | 'eyeWideRight' | 'jawForward' | 'jawLeft' | 'jawOpen' | 'jawRight' | 'mouthClose' | 'mouthDimpleLeft' | 'mouthDimpleRight'
+  | 'mouthFrownLeft' | 'mouthFrownRight' | 'mouthFunnel' | 'mouthLeft' | 'mouthLowerDownLeft' | 'mouthLowerDownRight' | 'mouthPressLeft' | 'mouthPressRight' | 'mouthPucker' | 'mouthRight'
+  | 'mouthRollLower' | 'mouthRollUpper' | 'mouthShrugLower' | 'mouthShrugUpper' | 'mouthSmileLeft' | 'mouthSmileRight' | 'mouthStretchLeft' | 'mouthStretchRight'
+  | 'mouthUpperUpLeft' | 'mouthUpperUpRight' | 'noseSneerLeft' | 'noseSneerRight';
 /**
  * The face of a gs.models.human() person (person.face): what gs.characters.Face takes (set, say, mouth, blink, blinkEvery), on a sculpted head with bones for
  * the eyes, the upper lids, the brows, the jaw and the corners of the mouth. It blinks by itself, and its eyes keep to a spot in the world while the head
@@ -1644,6 +1651,8 @@ export interface LiveFaceT extends FaceT {
   awake: boolean | null;
   /** Where the eyes are turned, in the head's own terms (radians): yaw to the person's left, pitch down. */
   readonly yaw: number; readonly pitch: number;
+  /** The nostrils widen a little on each breath (true); false stills them. */
+  breathe: boolean;
 }
 /** Thousands of flockers: on the graphics chip (WebGPU compute) where the phone can, else the CPU. */
 export declare class Swarm {
@@ -3137,6 +3146,8 @@ export interface ModelsPart {
     all(list: Loose[]): Loose[];
     /** Starts sculpting whatever these people still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
     need(list: Loose[]): void;
+    /** The 51 single movements a person's face can be set to, face.set(move, 0..1): face capture's own, by ARKit's names. */
+    readonly moves: readonly FaceMove[];
     /** For tools and tests: resolves once human(options) for each of these would come straight back. */
     ready(list: Loose | Loose[]): Promise<boolean>;
     /** Forgets every saved sculpt. */
