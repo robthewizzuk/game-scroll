@@ -20,9 +20,16 @@
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 //   lineup   people that move (src/kit/stride.js, follow.js, human-face.js, human.js hands): eight people posed as drawn, then stepping, live faced and holding
 //   faces    people close up (gs.models.human look: 'real'): four faces in turn filling the screen, in the clean look and then the real one
+//   street   a city that holds up close (src/kit/city.js, city-rooms.js, city-cars.js, city-dress.js): a walk along a made-up downtown street
+//            at golden hour and then at night, once as the city was (windows painted on, cars and people of boxes), then with rooms behind
+//            every window, real cars and cars parked along the kerbs, sculpted people on the pavements and the street dressed
 //   night    lamps with shadows (src/kit/lamps.js, lamps-gpu.js): a wet street at night with lamps on posts, cars with their headlights
 //            and people under the lamps, neon and a lit sign: once with every lamp a plain round light, then with the nearest lamps' shadows
 //            from one shared atlas, headlights in a dipped beam's shape, and neon tubes and the sign lighting the wet road from their length
+//   cars     cars up close (src/kit/models/vehicle-looks.js, vehicle-damage.js, the cabin in vehicle-shapes.js): a kerb of parked cars walked
+//            past at arm's length in a low sun, once as cars were (dark glass, nothing inside, plain paint), then with seats and dashboards
+//            behind see-through glass, flaked paint with road grime and rain beading, and one car hit: a dent, a side window that breaks
+//            and drops its glass on the road, a crazed windscreen and a broken lamp
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -787,6 +794,55 @@ function faces({ gs, size }) {
   };
 }
 
+/* ---------- street: a city that holds up close ---------- */
+function street({ gs, size }) {
+  const { City } = gs.city, v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 900; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0012, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 17.2, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const blocks = size < .3 ? 2 : Math.max(3, Math.round(6 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.25, Math.min(1, size));   // (a test's small size: a city of 2 x 2 blocks)
+  const OLD = { rooms: false, fleet: false, crowd: false, dress: false, parked: false };
+  let city = null, mode = '', ready = false;
+  const sum = { n: 0, ms: 0, t: 0, hour: -1 };
+  const enter = key => async draw => {
+    const t0 = performance.now(), opts = { seed: 7, blocks, style: 'downtown', sky, traffic: busy, people: busy, sound: false, ...(key === 'old' ? OLD : {}) };
+    if (key !== 'old' && !ready) {   // (the people are sculpted the first time a phone meets them, and kept)
+      let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+      await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the city\'s people were not sculpted in time'); ready = true;
+    }
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; sum.n = sum.ms = 0; sum.t = 0; sum.hour = -1;
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.cars.list.length)} cars, ${num(city.parked.length)} parked, ${num(city.people.list.length)} people` };
+  };
+  const ahead = new gs.THREE.Vector3();
+  return {
+    v, holds: `a walk along a made-up downtown street of ${blocks} blocks a side, at golden hour and then (after ten seconds) at night`,
+    modes: [
+      { key: 'old', name: 'windows painted on, boxes for cars and people', enter: enter('old') },
+      { key: 'new', name: 'rooms behind the windows, real and parked cars, sculpted people, the street dressed', enter: enter('new') },
+    ],
+    // along the pavement past the shops of the middle block, 1.4 metres a second, looking down the street and across at the shop fronts
+    path(t, cam) {
+      if (!city) return;
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const hour = t < 10 ? 17.2 : 21.5; if (hour !== sum.hour) { sum.hour = hour; sky.time = hour; sky.update(0); v.cut?.(); }
+      const P = city.plan, b = P.blocks.find(k => k.kind === 'build' && k.i === Math.floor(P.nx / 2) && k.j === Math.floor(P.nz / 2)) || P.blocks[0];
+      const x = b.x0 + 3 + (t % 40) * 1.4, z = b.z0 + b.sw * .3;
+      cam.position.set(x, 1.65 + .025 * Math.sin(t * 7.5), z); ahead.set(x + 6, 1.5, z + 2.2 + 1.6 * Math.sin(t * .4)); cam.lookAt(ahead); cam.updateMatrixWorld();
+      sun.follow(x, 0, z); sky.update(dt);
+      const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`, C = city.cars.fleet, crowd = city.people.crowd;
+      return mode === 'old' ? ms : `${ms} · ${num(C ? C.close.size : 0)} cars drawn whole · ${num(city.parked.length)} parked · ${num(crowd ? crowd.info.drawn : 0)} people drawn in ${num(crowd ? crowd.info.draws : 0)} draws`;
+    },
+    dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
+  };
+}
+
 /* ---------- night: lamps with shadows ---------- */
 // A wet street at night, the kind of place a city game spends its nights in (src/kit/lamps.js, lamps-gpu.js): lamps on posts down both
 // pavements, cars driving through with their headlights on, people walking under the lamps, two neon tubes and a lit sign over a shop.
@@ -867,6 +923,71 @@ function night({ gs, size }) {
 }
 
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
+/* ---------- cars: cars up close ---------- */
+// A kerb of parked cars of the closed styles, walked past on the pavement at arm's length in a low sun. Off, the cars as cars were (dark
+// glass with nothing behind it, the paint plain: their looks taken off); on, a closed car's seats, dashboard and door cards behind
+// see-through glass, paint with flakes, road grime and rain beading on some, and in the first half second one car hit: its door dented
+// with the paint scraped, a side window broken (its glass falls and lies on the road), the windscreen crazed and a head lamp broken.
+function cars({ gs, size }) {
+  const T = gs.THREE, hd = gs.hd, { vehicle } = gs.models;
+  const v = new hd.HDView({ bg: '#93a2bb', fog: .006, env: .6, amb: .45, fov: 60 });
+  v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+  const sun = hd.sun('#ffd2a0', 2.6, 24, [-.55, .42, .35]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  const STY = ['saloon', 'hatch', 'estate', 'van', 'sports', 'pickup'], n = Math.max(3, Math.round(8 * Math.min(1, size))), GAP = 6.2, LEN = n * GAP;
+  const mk = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  mk(new T.PlaneGeometry(14, LEN + 60).rotateX(-Math.PI / 2), hd.pbr('#3a3b3d', { rough: .82 }), 4, 0, LEN / 2);
+  mk(new T.BoxGeometry(4, .15, LEN + 60), hd.pbr('#8a857c', { rough: .85 }), -3.3, .075, LEN / 2);
+  mk(new T.BoxGeometry(1, 6, LEN + 60), hd.pbr('#7a5444', { rough: .9 }), -5.8, 3, LEN / 2);
+  // each car twice: as cars were (no inside, dark glass, its looks taken off) and as they are now
+  const bare = new Map(), plainOf = m => { let p = bare.get(m); if (!p) { const ud = m.userData; m.userData = {}; try { p = m.clone(); } finally { m.userData = ud; } bare.set(m, p); } return p; };
+  const row = Array.from({ length: n }, (_, i) => {
+    const style = STY[i % STY.length], seed = 11 + i * 7;
+    const old = vehicle('car', { style, seed, inside: false }), now = vehicle('car', { style, seed });
+    old.traverse(o => { if (o.isMesh && !o.isInstancedMesh) o.material = plainOf(o.material); });
+    for (const c of [old, now]) { c.position.set(0, 0, i * GAP + GAP / 2); v.scene.add(c); }
+    now.dirt(.08 + .5 * ((i * .37) % 1)); if (i % 3 === 1) now.wet(.8);
+    return { old, now };
+  });
+  const hit = row[Math.min(1, n - 1)].now;
+  let on = false, last = 0, struck = false;
+  const enter = key => async draw => {
+    on = key === 'new'; last = 0; struck = false;
+    for (const r of row) { r.old.visible = !on; r.now.visible = on; r.now.mend(); }
+    for (let i = 0; i < 4; i++) await draw();
+  };
+  const tris = c => { let t = 0; c.traverse(o => { if (o.isMesh && o.visible) { const g = o.geometry; t += ((g.index ? g.index.count : g.attributes.position.count) / 3) * (o.isInstancedMesh ? o.count : 1); } }); return t; };
+  const at = (x, y, z) => new T.Vector3(x, y, z).add(hit.position);
+  return {
+    v, holds: `${num(n)} parked cars (${STY.slice(0, Math.min(n, STY.length)).join(', ')}) at arm's length in a low sun`,
+    modes: [
+      { key: 'old', name: 'dark glass, plain paint', enter: enter('old') },
+      { key: 'new', name: 'seats behind the glass, flaked and dirty paint, dents and broken glass', enter: enter('new') },
+    ],
+    // along the pavement past the cars, looking in at them; the second car hit early on
+    path(t, cam) {
+      const dt = t > last ? Math.min(.1, t - last) : 0; last = t;
+      const z = (t * 1.3) % LEN;
+      cam.position.set(-2.5, 1.62 + .02 * Math.sin(t * 7.4), z); cam.lookAt(.2, .8, z + 3.2); cam.updateMatrixWorld();
+      sun.follow?.(0, 0, z);
+      if (on && !struck && t > .4) {
+        struck = true; const w = hit.size.width / 2, h = hit.size.height, L = hit.size.length;
+        hit.dent(at(-w, h * .4, 0), { power: 1.1, dir: new T.Vector3(1, 0, .15) });
+        hit.smash(at(-w + .05, h * .78, L * .08), { power: 1 });
+        hit.smash(at(-.25, h * .82, -L * .2), { power: .7 });
+        hit.updateMatrixWorld(true); hit.hit(hit.points.lampL.getWorldPosition(new T.Vector3()), { power: .6, dir: new T.Vector3(0, 0, 1) });
+      }
+      if (on) for (const r of row) r.now.update(dt);
+    },
+    tell() {
+      const list = row.map(r => on ? r.now : r.old), each = list.reduce((s, c) => s + tris(c), 0) / list.length, base = `${num(n)} cars of ${num(each)} triangles`;
+      if (!on) return base;
+      const d = hit.damage, s = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+      return `${base} · ${s(d.dents, 'dent')}, ${s(d.glass, 'pane')} broken, ${s(d.lamps, 'lamp')} broken`;
+    },
+    dispose() { for (const r of row) r.now.mend(); clear(v); },
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -880,5 +1001,7 @@ export const SCENES = [
   ['parade', 'Parade', 'smaller meshes', parade],
   ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
   ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
+  ['street', 'Street', 'a city that holds up close: rooms behind the windows, real and parked cars, sculpted people, the street dressed', street],
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
+  ['cars', 'Cars', 'cars up close: seats behind the glass, paint, dirt and rain, dents and broken glass', cars],
 ];

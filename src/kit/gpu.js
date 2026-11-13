@@ -30,6 +30,12 @@ export function gpuName() {
   return chip;
 }
 
+/** A graphics chip's name without the browser's wrapping: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 ...)" is "NVIDIA GeForce RTX 4070". */
+export function chipLabel(name) {
+  const s = String(name || ''), m = /^ANGLE \([^,]*, (?:ANGLE Metal Renderer: )?(.+?)(?: \(0x[0-9a-f]+\))?(?: Direct3D1\d.*| OpenGL.*| vs_\d.*)?(?:, [^,]*)?\)$/i.exec(s);
+  return (m ? m[1] : s).trim().slice(0, 40);
+}
+
 let gpuAsked = null;
 /** Resolves true if this device offers WebGPU (asked once). */
 export function hasWebGPU() {

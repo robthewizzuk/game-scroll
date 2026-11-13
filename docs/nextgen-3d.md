@@ -157,6 +157,28 @@ full one held still, while moving and after a cut. `HD.spread = false` takes eve
 button times both on a phone. WebGL draws every sample every frame. `node scripts/detail-test.cjs --page spread
 --webgpu` checks it.
 
+**The sky as the big engines draw it** (WebGPU; `src/kit/atmosphere.js`, `src/kit/hd3d-gpu-sky.js`). A physical
+sky (`new Sky(v, { physical: true })`) is worked out from how sunlight scatters in real air, by Hillaire's method
+(as in Unreal): small tables of how much sun gets through the air and how much light it scatters, made once on
+the CPU (about 50 ms, again only when the sky's `physical` settings change), and a picture of the sky round the
+camera (192 x 108) made on the chip when the sun moves or the camera climbs. The dome reads that picture, so a
+sunset is orange round the sun and blue-grey away from it, and the air's haze (`v.air()`) takes the sky's own
+colour in each direction, with real air's blue over the far kilometres. Sky clouds (`clouds: 0..1`) on high and
+ultra are real ones: a layer from 1.5 to 4 km up, marched through a noise made in code (Perlin-Worley, as in
+Guerrilla's Nubis clouds), lit by the sun through themselves, with light scattered many times inside that makes
+their sunlit sides white and their edges glow towards the sun, and a sky light that is bluer on top. They are
+marched at a quarter of the picture's pixels with 16 steps (24 on ultra, 64 for a card's picture), a different
+way along each frame, and filled in from the frames before (moved with the camera's turn: the sky is far off, so
+walking doesn't move it). Their light is kept just under the bloom's threshold, as a camera keeps a white cloud
+just under white. Their shadows come from the same clouds: a picture of how much sun gets through, 6 km across
+round the camera, made again six times a second, which darkens the sun on the ground, in the froxel fog and in
+the volumetric light (on a view with air, as dark as its `cloudShade`, as the painted clouds' shadows were). `cover` is how much of the sky they hide, as before; `gap` still keeps the low sky round
+the sun clear, and `sky.flash` lights them. `HD.atmosphere = false` keeps the Preetham sky and `HD.clouds = false`
+the painted clouds (WebGL and the low and medium tiers always do); `HD.info.sky` says what is drawn (`'air +
+clouds'`). `node scripts/detail-test.cjs --page sky --webgpu` checks it: blue overhead at noon, a warm sunset,
+clouds that shade the field, settle when held still, keep their place as the camera turns, a card's picture with
+the same clouds, Long Shadow's morning and storm skies, and the switches off drawing as before.
+
 **Speed tricks that keep the picture the same:**
 
 - The 3D canvas is shown directly on the playing card, under the card's own canvas, which is cleared
@@ -617,7 +639,10 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   dry; puddles spread on flat ground and dry up; snow settles on ground and roofs and melts. It keeps a
   map of the highest solid thing over each half metre round the camera (rays into the level a few
   hundred a frame) and the air reads it, so it costs no extra pass and is the same on WebGL and WebGPU.
-  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. The full list is in
+  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. In the rain water runs down walls and
+  windows, beads sit on glass and car paint and rings open on the puddles (all in the same look); drops land
+  on the lens (`view.drops`; `lens: false` keeps it dry); and `weather.watch(car)` throws spray off its
+  tyres on a wet road. The full list is in
   [maker-kit.md](maker-kit.md#weather-that-changes-the-world); `node scripts/weather.cjs film.png` films it.
 - **Ground that takes marks** (`new gs.outdoors.Marks(v, { land, weather, mud, sand })`, then
   `marks.watch(person)` and `marks.update(dt)`): feet leave prints and wheels leave tracks in snow where
@@ -629,8 +654,9 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   [maker-kit.md](maker-kit.md#ground-that-takes-marks); `node scripts/marks.cjs film.png` films it.
 - **Cloth in the wind** (`new gs.outdoors.Cloth(v, { wind })`, then `cloth.flag()`, `banner()`, `awning()`,
   `line()` or `sheet()`, and `cloth.update(dt)`): flags that hang in still air and fly in a breeze with
-  ripples running downwind, banners, awnings and washing lines, and sheets that drape over solid balls
-  and capsules and grip them. On WebGPU the graphics chip steps every piece at once and the mesh reads
+  ripples running downwind, banners, awnings and washing lines, sheets that drape over solid balls
+  and capsules and grip them, and a skirt or a cape on a `gs.models.human` (`cloth.skirt({ on })`,
+  `cloth.cape({ on })`) that goes round their legs and body, swings at a walk and flies at a run. On WebGPU the graphics chip steps every piece at once and the mesh reads
   its places from there; elsewhere a coarser set runs on the CPU. The full list is in
   [maker-kit.md](maker-kit.md#cloth-in-the-wind); `node scripts/cloth.cjs film.png` films it.
 - **Cliffs, caves and overhangs** (`land.rocks({ caves, shapes })` on a `gs.outdoors` `Land`): real rock on
@@ -661,7 +687,8 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   edge), so it's never lit twice. High and ultra tiers only, with `v.air()` on; turn it off (`near: 0`)
   while a scope is up, where `around` already keeps the shadows sharp round the target.
 - **Physical sky** (`new Sky(v, { physical: true })`, or `{ haze, blue, mie, glow, bright }`): the sky's
-  colours come from how sunlight scatters in air (the Preetham model): deep blue overhead, pale at the
+  colours come from how sunlight scatters in air (the Preetham model; on WebGPU Hillaire's, with real
+  clouds: see "The sky as the big engines draw it" above): deep blue overhead, pale at the
   horizon, an orange sun as it sets. Clouds, reflections (`env`), the air's colours, fog and the sky
   light all follow it; the day keys then only set how strong the sun and fill are. `sky.physical` can be
   switched any time (a clear morning on one mission, a grey storm with the day keys' colours on the next).
@@ -671,6 +698,32 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   `range`, stays sharp; things `depth` x `at` metres nearer or further are fully soft, up to `blur`
   pixels. Made for scopes and cutscene close-ups; `v.focus = null` turns it off. It reads the depth the
   ambient occlusion already draws, so it's on high and ultra only and costs one full-screen pass.
+- **A camera like a real lens** (`v.lens = { fstop, focal, focus, pull, blades, shutter, iso }`): depth of
+  field, focus pulls and exposure worked out as a real camera does, for cut scenes, scopes and photo modes.
+  `v.lens = null` goes back to `v.focus` and the game's own exposure.
+  - **Blur from the lens.** How soft a thing is comes from the f-stop (`fstop`, 2.8), the focal length and
+    the distance in focus, as on a full-frame camera: it grows with 1 / distance, so a long lens at f/1.8
+    melts the hills behind a face and a wide one at f/11 keeps the street sharp. `focal` (mm) sets the
+    camera's field of view to match; without it the focal length comes from the camera's own `fov`, so a
+    zoomed scope focuses like a long lens by itself. `max` is the widest blur (24 pixels of a 640-high
+    picture), `blur` scales it all (1).
+  - **Bokeh.** On WebGPU bright points out of focus (lamps, sparks, sun on water) open into discs of their
+    own, round or with `blades: 5..9` straight edges (`turn` in degrees, `bokeh` how bright, 1), drawn at
+    a quarter size; a sharp thing in front stays in front of them and a blurred one in front spills over
+    what is behind it. WebGL blurs the same amounts into soft round discs (no blades) from a half-size copy.
+  - **Focus.** `focus` is metres, a thing (an `Object3D`, followed as it moves), a point, or `'auto'`
+    (the default): the chip measures the distance under `spot` on the screen (`[.5, .5]`, from the top
+    left; the median of nine points). The focus eases there over `pull` seconds (0.5) the way a focus
+    puller turns the ring, never past it; `v.cut()` snaps it. `v.lens.at` is where it is focused now.
+  - **Exposure.** Without `iso` the lens leaves exposure alone. With `iso: 100` and a `shutter` time
+    (1/125), the picture is exposed by the three numbers as a camera's meter would: f/16 at 1/125 and
+    ISO 100 (the sunny sixteen rule) shows the lights as the game set them, and each stop more light
+    doubles it (`v.lens.stops` says how many). `iso: 'auto'` meters like a camera instead: down at
+    once when too bright, part of the way up in the dark (`night`, 0.5), so night stays night; `ev`
+    adds stops either way. `shutter` also sets motion blur's smear (`v.motionBlur` on) as film does.
+  - High and ultra, like `v.focus`; on WebGPU the discs cost about 0.5 to 1 ms while a lens is set, and
+    nothing without one. A `Cutscene` step can set it: `{ at: 5, lens: { fstop: 1.8, focus: kade, pull: .8 } }`,
+    then `v.lens = intro.lens` each frame.
 - **Volumetric light** (`v.beams = { light, density, far, glow, strength, steps }`): light seen in the
   air, cut into beams by shadows: sun through a slatted wall or trees, a lamp's cone in a dusty barn.
   `light` is a `sun()` or `spot()` (default `v.sun`); `density` is how dusty the air is per metre (0.02);
@@ -1165,8 +1218,12 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   palm: a tall trunk, a skirt of dry leaves, round pleated fans), `banana` (paddle leaves torn along their
   veins), `fern` (`trunk: 3` for a tree fern), `taro` (elephant ears), `cypress` (a swamp cypress: flared
   foot, knees, feathery sprays and hanging moss), `reeds` (blades and cattails), `flowers` (`petals`: a colour
-  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf bounces, flutters and
-  leans downwind from where it grows, and `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
+  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf moves as a springy
+  rod held at its root: it turns about the root rather than sliding, so it keeps its length in a gale; long
+  palm fronds bob slowly and a fern's short leaves quickly, each at its own pitch; the wind bends a leaf by
+  as much as it lies across it (one pointing downwind streams lower, one into the wind is lifted and pressed
+  back), more as the square of the wind; and gusts roll downwind through a grove, reaching the next tree a
+  moment later (`looks.js` `frondSway` is the sum the shaders do). `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
   brushed aside by whoever the marks watch walking through. `group.userData.fronds` lists every leaf
   (`{ id, root, dir, len }`). Per kind: `lean`, `fronds`, `dead`, `fruit`, `skirt`, `trunk`, `branches`,
   `knees`, `moss`, `blades`, `cattails`, `stems`, `petals`, `pads`, `blooms`, `spread`.
@@ -1443,6 +1500,18 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   A train that only runs straight can be made with `fuse: true`: its cars' shells joined into one mesh a
   kind of surface and its wheels drawn as copies, a third of the draws for the same picture (`along()`
   then throws). `polished: false` is a working engine with nothing kept bright.
+  Cars hold up close: a closed car has its seats, dashboard, steering wheel and door cards behind see-through
+  glass (`inside: false` for dark glass and none, about 9,000 triangles fewer), gloss paint has metal flakes
+  in some colours (`flakes: 0..1`), and cars and trucks get dirty, wet and knocked about, each car on its own
+  materials (its twins keep theirs):
+  ```js
+  car.dirt(.4).wet(.6);   // road grime low down and behind, dust on top, a film the wipers cleared; wet: beading of its own (in the rain the air beads it by itself)
+  car.hit(point, { power: 1, dir });   // a dent (the paint scraped to primer and metal), then glass: a broken lamp, a crazed windscreen or a side window that breaks
+  car.update(dt);   // each frame while its broken glass falls to the road; car.damage says what it took, car.mend() puts it right
+  ```
+  The paint and glass are looks of their own (`src/kit/models/vehicle-looks.js`, and a twin for WebGPU in
+  `vehicle-gpu.js`); `node scripts/vehicles.cjs sheet.png show=car:saloon views=near,in,screen,dent dirt=.5 wet=1 hit`
+  draws them close up.
   Options, the parts and points of each kind, real springs (`car.chassis()` with `World3D.vehicle`), boats
   and planes on `gs.craft`, and what each costs: [Vehicles made in code](maker-kit.md#vehicles-made-in-code).
   `node scripts/vehicles.cjs sheet.png` draws them all from five sides, to look them over.

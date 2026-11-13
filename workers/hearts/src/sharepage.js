@@ -1,5 +1,5 @@
 // play.game-scroll.com/<game id>: the page a shared link opens.
-// On a phone with Game Scroll installed, "Open in Game Scroll" jumps straight to that game
+// On a phone or computer with Game Scroll installed, "Open in Game Scroll" jumps straight to that game
 // (gamescroll://game/<id>). The page also has link-preview tags so chats show the game's name.
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -13,7 +13,7 @@ export const shareGame = entry => entry && entry.id ? { ...(entry.meta || {}), i
 
 /**
  * Build the page. game: { id, title, hint, tag } (see shareGame) or null when unknown.
- * webUrl: where to play in a browser (the test site for now), or '' to leave that button out.
+ * webUrl: where to play in a browser, or '' to leave that button out (there is none since the test site went).
  * id: a well-formed game id to keep in the links when the catalogue couldn't be read, so the game
  *     can't be named here. The app then works out whether it exists.
  */

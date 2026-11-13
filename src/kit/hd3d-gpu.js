@@ -26,6 +26,9 @@ import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
+import { FROND } from './looks.js';
+import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
+export { SKY };
 import { eachShown, listPipeline } from './scene-list.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -33,6 +36,7 @@ import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
 import { lensflare } from 'three/examples/jsm/tsl/display/LensflareNode.js';
+import { dropsNode, DROPS_N } from './lens-drops.js';
 import { ssgi } from 'three/examples/jsm/tsl/display/SSGINode.js';
 import { vxgi } from 'three/examples/jsm/lighting/vxgi/VXGINode.js';
 import { LightProbeGrid } from 'three/examples/jsm/lighting/LightProbeGrid.js';
@@ -70,7 +74,10 @@ import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
+import { roomsLook } from './city-gpu.js';
+import { carPaintLook, carGlassLook } from './models/vehicle-gpu.js';
 import { SpreadFrame, SpreadNode, ownFrames } from './hd3d-gpu-spread.js';
+import { LensNode } from './hd3d-gpu-lens.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 // Ray traced reflections (hd3d-gpu-trace.js) load the first time a view wants them (something marked shiny on
 // one of the best phones), not with every 3D game: the part brings a tree builder and a simplifier with it.
@@ -327,6 +334,8 @@ export const gpuMaterials = {
   // disc, and drifting clouds lit from the sun's side
   skyDome(gm) {
     const u = gm.uniforms, L = k => live(u[k]), clouds = 'CLOUDS' in (gm.defines || {});
+    // (its GPU half: the air's picture (physical skies) and the clouds marched through, hd3d-gpu-sky.js; the view's drawGPU runs it)
+    const S = gm.userData.gsSky, SG = S ? (S.gpu ||= new SkyGpu(S, clouds ? u.noise.value : null)) : null;
     const m = new MeshBasicNodeMaterial({ side: BackSide, depthWrite: false, fog: false });
     m.name = 'sky';
     m.colorNode = Fn(() => {
@@ -344,6 +353,8 @@ export const gpuMaterials = {
         // soft knee (as sky.js): the glow round a low sun is bright, but no brighter than a painted sky's
         const l = max(c.r, max(c.g, c.b)), e = max(l.sub(1), 0);
         c.mulAssign(select(l.greaterThan(1), float(1).add(e.div(float(1).add(e.div(1.5)))).div(max(l, 1e-4)), float(1)));
+        // on WebGPU, Hillaire's air (hd3d-gpu-sky.js) in place of Preetham's sums: below the horizon, the horizon's own, darkened as before
+        if (SG) If(SG.atmOn.greaterThan(.5), () => { const a = SG.domeAir(normalize(vec3(d.x, max(d.y, 0), d.z)), sd); c.assign(knee(mix(a, a.mul(.55), clamp(h.negate().mul(3), 0, 1)))); });
       }).Else(() => {
         const c1 = mix(L('horizon'), L('top'), pow(max(h, 0), .55));
         c.assign(mix(c1, L('horizon').mul(.55), clamp(h.negate().mul(3), 0, 1)).add(sunCol.mul(pow(s, 24).mul(.35).add(pow(s, 90).mul(.4)))));
@@ -356,8 +367,15 @@ export const gpuMaterials = {
         const cv = cloud.x.mul(float(1).sub(cloud.y.mul(pow(max(dot(normalize(d.xz.add(1e-4)), normalize(sd.xz.add(1e-4))), 0), 3)).mul(float(1).sub(smoothstep(.02, .22, h)))));
         const cov = smoothstep(cv.oneMinus(), float(1.1).sub(cv.mul(.62)), n), dens = smoothstep(cv.oneMinus(), float(1.32).sub(cv.mul(.5)), n);
         const cc = mix(L('cloudLit'), L('cloudDark'), dens.mul(.9)).add(sunCol.mul(cov).mul(dens.oneMinus()).mul(pow(s, 5).mul(2.2).add(.18)));
-        const a = cov.mul(smoothstep(-.03, .1, h)).mul(step(-.03, h));
+        const a = cov.mul(smoothstep(-.03, .1, h)).mul(step(-.03, h)).mul(SG ? SG.volOn.oneMinus() : float(1));   // (none where the real clouds are drawn)
         c.assign(mix(c, cc.add(vec3(.75, .8, 1).mul(cloud.w)), a.mul(.97))); sun = sun.mul(a.oneMinus());
+        if (SG) {
+          // the clouds marched through (high and ultra): what they let through of the sky behind, and their own light; lightning lights them too
+          // (their light kept under the bloom's threshold, as a camera keeps a white cloud just under white: past it the bloom
+          // spreads a whole sunlit cloud over the sky as a veil)
+          const cl = SG.cloudTex.sample(screenUV), v = SG.volOn;
+          c.assign(mix(c, c.mul(cl.a).add(cloudKnee(cl.rgb)).add(vec3(.75, .8, 1).mul(cloud.w).mul(cl.a.oneMinus())), v)); sun = sun.mul(mix(float(1), cl.a, v));
+        }
       }
       return c.add(sunCol.mul(sun).mul(L('disc'))).add(vec3(.25, .27, .32).mul(cloud.w).mul(max(h, 0).mul(.6).add(.4)));
     })();
@@ -387,7 +405,13 @@ export function airNodes(AIR) {
     const mist = float(1).sub(exp(max(fy, 0).mul(mix(float(1), n.mul(1.3).add(.35), U.patchy)).negate()));
     const s = max(dot(rd, U.sun), 0);
     const f = float(1).sub(float(1).sub(haze).mul(float(1).sub(mist)));
-    return vec4(mix(output.rgb, mix(U.c, U.cs, pow(s, 6).mul(.9)), f), output.a);
+    // under a physical sky on WebGPU (hd3d-gpu-sky.js): the haze takes the low sky's own colour that way (orange towards a low sun,
+    // blue-grey away from it: air near the ground lit as the horizon is, whatever the angle it is seen at), and real air's
+    // extinction, bluest first, over the distance: the blue of far hills
+    const low = normalize(vec3(rd.x, length(rd.xz).mul(.03).add(.001), rd.z));
+    const paint = mix(U.c, U.cs, pow(s, 6).mul(.9)), air = mix(knee(skyAt(low, SKY.sun)), paint, SKY.night);
+    const fa = vec3(f).oneMinus().mul(exp(SKY.ext.mul(t).negate())).oneMinus();
+    return vec4(select(SKY.on.greaterThan(.5), mix(output.rgb, air, fa), mix(output.rgb, paint, f)), output.a);
   })();
   return { sync, node };
 }
@@ -402,6 +426,25 @@ const live = o => uniform(o.value).onRenderUpdate(() => o.value);   // follows t
 // Frames drawn (GpuChain.draw counts them), and a { value } as it was at the frame before this one: for
 // motion that a shader makes itself (three only knows a mesh's matrices and bones from the frame before)
 const DRAWN = { n: 0 };
+// looks.js frondSway in TSL (the same sums): where a point of a leaf moves to in the wind, v its place less its leaf's root
+const tTurn = (v, k, th) => v.mul(cos(th)).add(cross(k, v).mul(sin(th))).add(k.mul(dot(k, v)).mul(cos(th).oneMinus()));
+function frondSway(v, a, id, len, t, wind, dir, sway, root) {
+  const { GUSTS, RUN, DAMP } = FROND, z2 = 2 * DAMP;
+  const w0 = sqrt(max(len, .15)).reciprocal().mul(6.28318 * 1.15).mul(fract(id.mul(.618)).mul(.2).add(.9)), dl = length(dir), lean = step(.5, dl);
+  const d = select(lean.greaterThan(.5), dir.div(max(dl, 1e-6)), vec2(.7071)), along = dot(root, d), across = root.y.mul(d.x).sub(root.x.mul(d.y));
+  let g = float(0), g2 = float(0);
+  for (const [f, share] of GUSTS) {
+    const w = 2 * Math.PI * f, r = w0.reciprocal().mul(w), q = r.mul(r).oneMinus(), H = sqrt(q.mul(q).add(r.mul(z2).mul(r.mul(z2)))).reciprocal();
+    const ph = t.mul(w).sub(along.mul(w / RUN)).add(across.mul(.3));
+    g = g.add(H.mul(cos(ph.sub(TSL.atan(r.mul(z2), q)))).mul(share)); g2 = g2.add(cos(ph).mul(share));
+  }
+  const ring = sin(w0.mul(t).sub(w0.mul(along).div(RUN)).add(id.mul(2.4))).mul(g2.mul(.45).add(.55)), k = wind.mul(sway);
+  const bend = clamp(k.mul(lean.mul(k.mul(4).add(1.1)).add(g.mul(.9))), -1.1, 1.1), flap = k.mul(1.6).mul(ring), aa = max(a, 1e-3), m = pow(aa.oneMinus(), 4).oneMinus().div(aa.mul(4)).oneMinus().div(.75);
+  const h = max(length(v.xz), 1e-6), vl = max(length(v), 1e-6), fl = tTurn(v, vec3(v.z.negate().div(h), 0, v.x.div(h)), flap.mul(m));
+  const c = vec3(v.y.mul(d.y), v.z.mul(d.x).sub(v.x.mul(d.y)), v.y.negate().mul(d.x)).div(vl), cs = length(c);
+  const o = select(cs.greaterThan(1e-6), tTurn(fl, c.div(max(cs, 1e-6)), bend.mul(m).mul(cs)), fl);
+  return o.sub(v).sub(vec3(0, k.mul(len).mul(a).mul(a).mul(.12).mul(sin(t.mul(8.7).add(id.mul(3.1)).add(a.mul(6)))), 0));
+}
 const lastFrame = o => {
   const obj = typeof o.value === 'object', prev = obj ? o.value.clone() : null, cur = obj ? o.value.clone() : null;
   let seen = -1, p = o.value, c = o.value;
@@ -470,6 +513,11 @@ export const gpuLooks = {
   sdf: sdfLook,
   // gs.props.Crowd (crowd.js): members posed from their kind's texture of moves
   crowd: (m, s, o) => crowdLook(m, s, o, afterColor),
+  // gs.city's rooms behind every window (city-rooms.js, city-gpu.js)
+  rooms: (m, s, o) => roomsLook(m, s, o, { afterColor, live }),
+  // gs.models.vehicle's paint and glass (vehicle-looks.js, models/vehicle-gpu.js)
+  carpaint: (m, s, o) => carPaintLook(m, s, o, { afterColor, live }),
+  carglass: (m, s, o) => carGlassLook(m, s, o, { afterColor, live }),
   // hd3d.js v.room(): box-projected reflections
   room(m, s) {
     const g = s.gpu ||= { rt: new CubeRenderTarget(s.size, { type: HalfFloatType }) };
@@ -600,17 +648,15 @@ export const gpuLooks = {
     m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(sway(lastFrame(u.lkTime), kWas, dWas))); return positionLocal.add(pushAt(sway(t, k, dir), wp)); })();
     seeThroughLeaf(m, o, u);
   },
-  // looks.js fronds(): long leaves from one point (palms, banana, fern, reeds, ivy, moss, weeds): the tip
-  // bounces, flutters and leans downwind most, read from the mesh's lkFrond (where the leaf starts, how far
-  // along) and lkFrondId (which leaf, how long); light through, outlines that hold up, both sides lit alike
+  // looks.js fronds(): long leaves from one point (palms, banana, fern, reeds, ivy, moss, weeds): each a springy
+  // rod turning about its root (looks.js frondSway: its own pitch, gusts rolling downwind, bent by the drag across
+  // it, bobbing), read from the mesh's lkFrond (where the leaf starts, how far along) and lkFrondId (which leaf, how
+  // long); light through, outlines that hold up, both sides lit alike
   fronds(m, s, o) {
     const u = s.uniforms, F = attribute('lkFrond', 'vec4'), FI = attribute('lkFrondId', 'vec2'), a = F.w, push = partPush(u);
-    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), ph = wp.x.mul(.11).add(wp.z.mul(.13)).add(FI.x.mul(1.93));
+    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), rw = modelWorldMatrix.mul(vec4(F.xyz, 1)).xyz.add(ORG), v = wp.sub(rw);
     const off = (t, wind, dir) => {
-      const k = wind.mul(live(u.lkSway)).mul(FI.y).mul(a).mul(a), lean = dir.mul(k).mul(sin(t.mul(.8).add(ph.mul(.4))).mul(.6).add(1.1));
-      const sx = sin(t.mul(1.3).add(ph)).add(sin(t.mul(2.9).add(ph.mul(1.7))).mul(.35)).mul(k).mul(.45), sz = cos(t.mul(1.1).add(ph.mul(1.3))).mul(k).mul(.45);
-      const sy = k.negate().mul(sin(t.mul(2.1).add(ph.mul(1.6))).mul(.5).add(sin(t.mul(8.7).add(ph.mul(3.1)).add(a.mul(6))).mul(.12))).sub(length(dir).mul(k).mul(.25));
-      let w = vec3(sx.add(lean.x), sy, sz.add(lean.y));
+      let w = frondSway(v, a, FI.x, FI.y, t, wind, dir, live(u.lkSway), rw.xz);
       if (push) w = w.add(push(wp, a.mul(FI.y), smoothstep(1.8, 2.6, positionGeometry.y).oneMinus()));   // (pushed by how far along its leaf, not above a passer-by's reach)
       return modelWorldMatrixInverse.mul(vec4(w, 0)).xyz;
     };
@@ -662,9 +708,12 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
   }
   const facing = m.userData.gsBothSides ? n => n : TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at; grass blades are lit alike on both, so snow lies on both)
   const on = live(AIR.gsAirOn), flat = facing(normalViewGeometry), { wx, wp, gg, open } = openSky(AIR, facing);
-  const w = max(live(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
-  let rough = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
-  if (dry) { m.roughnessNode = rough; afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3)))); return; }
+  const w = max(live(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3)), r0 = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
+  const coat = m.isMeshPhysicalNodeMaterial && m.clearcoat > 0 ? min(TSL.materialClearcoat.mul(2), 1).mul(smoothstep(.35, .7, TSL.materialClearcoatRoughness).oneMinus()) : null;
+  const rw = runningWater(AIR, gg, wp, open.mul(on), r0, coat), runN = cameraViewMatrix.mul(vec4(rw.ga.mul(rw.out.x).add(rw.gd.mul(rw.out.y)), 0)).xyz;
+  const base = m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, wetN = base.add(runN).normalize();
+  let rough = mix(mix(r0, .12, w.mul(.8)), .03, rw.out.z);
+  if (dry) { m.roughnessNode = rough; afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))).mul(rw.out.w.oneMinus())); m.normalNode = wetN; return; }
   const n1 = texture(noise, wp.xz.mul(.05)), n2 = texture(noise, wp.xz.mul(.021)).r.mul(.4), pl = mix(float(.86), float(.55), wx.z);
   const p = smoothstep(pl, pl.add(.035), n1.b.mul(.6).add(n2)).mul(smoothstep(.97, .995, gg.y)).mul(open).mul(on).mul(step(1e-6, wx.z));
   const sn = n1.g.mul(.6).add(n2), lim = mix(float(.97), float(.55), wx.y);
@@ -672,8 +721,55 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
   rough = mix(mix(rough, .03, p), .85, s);
   m.roughnessNode = rough;
   m.metalnessNode = (m.metalnessNode ? float(m.metalnessNode) : TSL.materialMetalness).mul(s.oneMinus());
-  afterColor(m, o, c => mix(c.mul(float(1).sub(w.mul(.3))).mul(float(1).sub(p.mul(.3))), vec3(.86, .9, .96), s));
-  m.normalNode = mix(m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, flat, max(p.mul(.92), s.mul(.6))).normalize();
+  afterColor(m, o, c => mix(c.mul(float(1).sub(w.mul(.3))).mul(rw.out.w.oneMinus()).mul(float(1).sub(p.mul(.3))), vec3(.86, .9, .96), s));
+  const rr = puddleRings(AIR, wp, p);
+  m.normalNode = mix(wetN, flat, max(p.mul(.92), s.mul(.6))).normalize().add(cameraViewMatrix.mul(vec4(rr.x, 0, rr.y, 0)).xyz.mul(p.mul(.4))).normalize();
+}
+// Rain that runs (hd3d.js AIR_WET has the same sums): rivulets down walls and windows with drops sliding down them, beads on what is
+// smooth, more the longer it rains (r0: the material's own roughness; coat: a clear coat's say, or null). out: the tilt of the surface
+// along it (x level across, y up it), how glassy the water makes it, how much darker; ga, gd: those two ways, in the world. Worked out
+// only while it rains or is wet.
+function runningWater(AIR, gg, wp, open, r0, coat) {
+  const rain = live(AIR.gsRain), wx = live(AIR.gsWx);
+  const ga = select(abs(gg.y).greaterThan(.98), vec3(1, 0, 0), normalize(vec3(gg.z, 0, gg.x.negate()))), gd = TSL.cross(gg, ga);
+  const out = Fn(() => {
+    const r = vec4(0).toVar();
+    If(rain.x.add(wx.x).greaterThan(0), () => {
+      const gu = vec2(dot(wp, ga), dot(wp, gd)), steep = smoothstep(.45, .8, abs(gg.y)).oneMinus(), now = max(rain.x, wx.x.mul(.6)).mul(open);
+      let slick = smoothstep(.12, .45, r0).oneMinus(); if (coat) slick = max(slick, coat);
+      const q = gu.x.mul(mix(float(9), float(24), slick)), h = hash2(vec2(floor(q), 7));
+      const x = fract(q).sub(.5).add(h.sub(.5).mul(.35)).sub(sin(gu.y.mul(4.1).add(h.mul(31))).mul(.11).add(sin(gu.y.mul(10.3).add(h.mul(17))).mul(.05)).mul(slick.add(1)));
+      const wd = fract(h.mul(13)).mul(.06).add(.07).mul(slick.mul(-1.2).add(2.2)), ln = smoothstep(wd, wd.mul(.35), abs(x)).mul(step(h, wx.x.mul(.55).add(rain.x.mul(.2)).add(.25)));
+      const hd = fract(gu.y.mul(h.mul(.6).add(.5)).add(rain.y.mul(h.mul(.45).add(.3))).add(h.mul(9))), drip = smoothstep(0, .05, hd).mul(smoothstep(.3, .05, hd));
+      const run = ln.mul(steep).mul(now).mul(drip.mul(.5).add(.5));
+      let tilt = vec2(clamp(x.div(wd), -1, 1).mul(run).mul(-.5), 0), bead = float(0);
+      for (let k = 0; k < 2; k++) {   // beads in two layers of cells
+        const b = k === 0 ? gu.mul(42) : vec2(gu.x.mul(.8).sub(gu.y.mul(.6)), gu.x.mul(.6).add(gu.y.mul(.8))).add(3.7).mul(27), f = fract(b).sub(.5), c = floor(b).add(41.3 * k);
+        const hb = hash2(c), hb2 = hash2(c.add(17.31)), rb = pow(hash2(c.add(3.1)), 3).mul(.28).add(.1);
+        const d = f.sub(vec2(hb, hb2).sub(.5).mul(rb.mul(-2).add(1)).mul(.9)).div(rb), dd = dot(d, d), nr = smoothstep(.35, .9, length(fwidth(b))).oneMinus();
+        const on = step(hb2, wx.x.mul(.6).add(.2)).mul(smoothstep(.8, 1, dd).oneMinus()).mul(slick).mul(open).mul(step(1e-3, wx.x)).mul(smoothstep(-.35, -.1, gg.y));
+        tilt = tilt.add(d.mul(on).mul(nr).mul(.9)); bead = max(bead, on.mul(mix(float(.35), float(1), nr)));
+      }
+      r.assign(vec4(tilt, max(run, bead), run.mul(mix(float(.35), float(.15), slick))));
+    });
+    return r;
+  })();
+  return { out, ga, gd };
+}
+// rings spreading on the puddles (p) where drops land: two layers of drops, one a cell, a new one each beat (AIR_WET's sums)
+function puddleRings(AIR, wp, p) {
+  const rain = live(AIR.gsRain);
+  return Fn(() => {
+    const rr = vec2(0).toVar();
+    If(rain.x.mul(p).greaterThan(0), () => {
+      for (let k = 0; k < 2; k++) {
+        const q = wp.xz.mul(4.2).add(vec2(.37 * k, .71 * k)), c = floor(q).add(19.7 * k), f = fract(q).sub(.5), h = hash2(c);
+        const ph = fract(rain.y.mul(h.mul(.5).add(.9)).add(h.mul(13))), dv = f.sub(vec2(h, hash2(c.add(5.3))).sub(.5).mul(.4)), dl = length(dv).add(1e-4), xr = dl.sub(ph.mul(.45)).mul(22);
+        rr.addAssign(dv.div(dl).mul(sin(xr.mul(3.14159)).mul(smoothstep(0, 1.5, abs(xr)).oneMinus()).mul(ph.oneMinus().mul(ph.oneMinus())).mul(step(h, rain.x.mul(.85).add(.1)))));
+      }
+    });
+    return rr;
+  })();
 }
 // the weather's cover over this point (Weather's picture of the highest roof over each spot): 1 under the open sky, 0 under a roof
 function openSky(AIR, facing) {
@@ -1214,7 +1310,7 @@ export function froxels() {
       const s4 = U.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
       const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.lessThan(1));
       const sd = shT.load(ivec2(vec2(sc.x, sc.y.oneMinus()).mul(U.shSize))).x;
-      const lit = select(inside, step(sc.z, sd), float(1));
+      const lit = select(inside, step(sc.z, sd), float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir));   // (and under the clouds' shadow)
       const L = vec3(U.sunCol).mul(lit.mul(sunPh)).add(U.amb).toVar();
       // lamps: soft round falloff to their range, scattered evenly
       Loop({ start: 0, end: FLAMPS }, ({ i: j }) => {
@@ -1267,7 +1363,9 @@ export function gpuSunLight(l, AIR, noise) {
   const wp = positionWorld, S = live(AIR.gsSun), CL = live(AIR.gsCloud), DR = live(AIR.gsDrift);
   const cuv = wp.xz.add(ORG.xz).add(S.xz.div(max(S.y, .15)).mul(CL.z.sub(wp.y)));
   const n = texture(noise, cuv.div(max(CL.w, 1)).add(DR)).r;
-  const shade = select(live(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
+  // (the clouds marched through on WebGPU cast their own shadow, hd3d-gpu-sky.js; else the painted clouds' pattern on the air)
+  const flat = select(live(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
+  const shade = select(SKY.shadeOn.greaterThan(.5), cloudShadeAt(wp.add(ORG), S), flat);
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());
   const nearW = select(p.z.greaterThan(0).and(p.z.lessThan(1)), smoothstep(0, CASC.fade, min(e.x, e.y)), float(0));
   l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1))));
@@ -1823,6 +1921,7 @@ export class GpuChain {
     Object.assign(this, { r, scene, cam, clear, key: '' });
     this.pp = new RenderPipeline(r); this.pp.outputColorTransform = false;
     this.F = { tint: uniform(new Vector3(1, 1, 1)), th: uniform(.15), sp: uniform(.3), fade: uniform(20), k: uniform(1), dk: uniform(0), dirt: texture(new Texture()) };   // v.flare
+    this.D = { drops: uniformArray(Array.from({ length: DROPS_N }, () => new Vector4()), 'vec4'), dropN: uniform(0), aspect: null };   // v.drops (lens-drops.js)
     this.U = {
       giK: uniform(1), t: uniform(0), hurt: uniform(0), vig: uniform(.32), gradeOn: uniform(0), sat: uniform(1), con: uniform(1),
       lo: uniform(new Vector3(1, 1, 1)), hi: uniform(new Vector3(1, 1, 1)), glare: uniform(0), sunUV: uniform(new Vector2(.5, .5)),
@@ -1856,15 +1955,15 @@ export class GpuChain {
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
-  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${halfKey()}`;
+  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false) {
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
-    for (const k of ['spAO', 'spVol', 'spGI']) { this[k]?.dispose(); this[k] = null; }
+    for (const k of ['spAO', 'spVol', 'spGI', 'lensN']) { this[k]?.dispose(); this[k] = null; }
     this.spread = '';
     this.aoN = this.dnN = this.dnT = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
@@ -1974,7 +2073,7 @@ export class GpuChain {
           const sh = shT.sample(vec2(sc.x, sc.y.oneMinus())).compare(sc.z).r;
           const q0 = p.sub(V.lPos), dl = length(q0), qn = q0.div(max(dl, 1e-4));
           const cone = smoothstep(V.lt.y, V.lt.z, dot(qn, V.lDir)).div(dl.mul(dl).div(V.lt.w.mul(V.lt.w)).add(1));
-          const lit = select(inside.and(V.k.w.greaterThan(.5)), sh, float(1)).mul(select(spot, cone, float(1)));
+          const lit = select(inside.and(V.k.w.greaterThan(.5)), sh, float(1)).mul(select(spot, cone, cloudShadeAt(p.add(ORG), V.lDir.negate())));
           const c = dot(rd, select(spot, qn.negate(), V.lDir.negate()));
           sum.addAssign(lit.mul(g.mul(g).oneMinus()).div(pow(g.mul(g).add(1).sub(g.mul(2).mul(c)), 1.5)).mul(.25)); t.addAssign(dt);
         });
@@ -1994,6 +2093,9 @@ export class GpuChain {
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
       src = this.baseT; srcAo = float(1);   // (this full-size mix, which also lays the ambient occlusion on, counts as 'effects')
     }
+    // a camera like a real lens (v.lens, hd3d-gpu-lens.js): bokeh from the aperture and the focus (it lets the picture
+    // through while v.lens is null, as v.focus's blur below does while that is)
+    if (lensOn && aoOn) { this.lensN = new LensNode(src, srcAo, dT); src = this.lensN.getTextureNode(); srcAo = float(1); }
     // depth of field (v.focus; the views turn it on once they use it, so focusing doesn't rebuild the
     // chain): what's in focus stays, the rest is blurred by up to lens.w pixels, into a picture of its own
     if (dofOn) {
@@ -2088,6 +2190,8 @@ export class GpuChain {
         const fl = this.flareN.rgb, asp = U.aspect, du = uv.sub(.5).mul(vec2(min(asp, 1), min(float(1).div(asp), 1))).add(.5);
         col = col.add(fl.mul(F.k)).add(F.dirt.sample(du).rgb.mul(bl.add(fl)).mul(F.dk));
       }
+      // rain on the lens (v.drops: lens-drops.js; hd3d.js FINAL_EFFECTS drops)
+      if (dropsOn) col = dropsNode(col, uv, p => src.sample(p).rgb.mul(srcAo).add(this.bloomN.out.mul(this.bloomK)), { ...this.D, aspect: U.aspect });
       // grade (v.grade) and sun glare (v.glare), only while the sun itself shows (how much: five reads round it, made
       // only while there is glare: the same for every pixel, so the chip skips them all together)
       const su = U.sunUV, tap = o => colT.sample(su.add(o)).rgb, seen = float(0).toVar();
@@ -2152,7 +2256,7 @@ export class GpuChain {
     // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
     { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
     const fx = !this.clear && o.ao > 0;
-    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false);
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
     // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
     // again or the volumetric light's light moved, which change the picture though the camera didn't)
     if (this.spread) {
@@ -2187,8 +2291,10 @@ export class GpuChain {
       // (o.fxK: the effects hd3d.js's ladder draws smaller by their cost, FXS; only picture sizes change)
       const fk = o.fxK || NO_FXK, rs = o.refl ? o.refl.scale * fk.reflections : 0;
       fxFrame(this, o.w, o.h, k); if (o.refl) { reflFrame(this, o.w, o.h, rs * k); if (this.tracer) TR.traceFrame(this, o.w, o.h, rs); }
+      if (o.drops) { const D = this.D, v = o.drops.vecs; for (let i = 0; i < DROPS_N; i++) D.drops.array[i].copy(v[i]); D.dropN.value = o.drops.count; }
       if (o.flare) { const F = this.F, f = o.flare; F.tint.value.copy(f.tint); F.th.value = f.threshold; F.sp.value = f.spacing; F.fade.value = f.fade; F.k.value = f.strength; F.dk.value = f.dirt; F.dirt.value = f.dirtTex; }
       if (this.lutN) { this.lutN.lutNode.value = o.lut; this.lutN.size.value = o.lut.image.width; U.lutK.value = Math.min(1, o.lutK ?? 1); }
+      if (this.lensN) this.lensN.set(o.lensL, o.near, o.far, o.h);
       if (this.dofT) { this.dofT.setSize(o.w, o.h); const L = o.lens; U.lens.value.set(L ? L[0] : 0, L ? L[1] : 0, L ? L[2] : 0, L ? L[3] : 0); U.cn.value = o.near; U.cf.value = o.far; }
       const V = this.V, cam = this.cam;
       if (this.volT || this.mbT) { V.invProj.value.copy(cam.projectionMatrixInverse); V.camWorld.value.copy(cam.matrixWorld); }
@@ -2354,6 +2460,7 @@ export class GpuChain {
     try { r.setRenderTarget(null); this.showQ.render(r); } finally { r.toneMapping = tm; r.outputColorSpace = cs; }
   }
   dispose() {
+    this.lensN?.dispose(); this.lensN = null;
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = null; this.sched = null; this.lastColor = null;

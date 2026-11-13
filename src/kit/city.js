@@ -17,15 +17,19 @@
 //   city.route(a, b)          a driving route along the roads: { points, path (gs.paths Path), length }
 //   city.spot('door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', { near, min, max, rnd })
 //   city.buildingAt(x, z), city.ground(x, z), city.road(x, z) (the nearest lane: { x, z, heading })
-//   city.cars.list / near(p, r) / hit(p, r) / bump(car)       the traffic
+//   city.cars.list / near(p, r) / hit(p, r) / bump(car)       the traffic (city.parked: the parked cars)
 //   city.people.list / near(p, r) / hit(p, r) / scare(p, r) / knock(person, dx, dz)
 //   city.walls() (meshes for gs.camera's walls), city.solid(world3d) (buildings in gs.physics3d)
 //   city.plan (the layout as plain data, for a minimap of your own) and city.drawMap(c, ...)
 //
 // Phones: buildings are merged into a few meshes per chunk and built a few at a time, nearest first;
 // trees, lamps and roof things are gs.props (culled, simpler far away); cars and people are instanced
-// and only live within a radius of the player, and how many follows the phone's speed. Stock three.js
-// materials and canvas textures only, so it draws the same on WebGL and WebGPU.
+// and only live within a radius of the player, and how many follows the phone's speed. Canvas textures
+// and stock three.js materials, with one look of its own: the rooms behind the windows (city-rooms.js,
+// and city-gpu.js the same as WebGPU nodes), so it draws the same on WebGL and WebGPU. On a Next Gen view
+// the traffic is real cars (city-cars.js) and the people sculpted ones in a gs.props.Crowd. Close up the
+// streets are dressed and the fronts have depth (city-dress.js: ledges, balconies, shop signs, kerbs,
+// drains, corner name signs, wires), and on a Next Gen view cars are parked along the kerbs.
 //
 // The facade colours, window sizes and lit-window numbers, and the idea of streaming detail round the
 // player, come from Slop New York by Mr.doob (MIT, github.com/mrdoob/slop-newyork); the city here is
@@ -48,6 +52,11 @@ import { phoneClass } from './speed.js';
 import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
 import { pause, built } from './slices.js';
+import { rooms, ROOMS } from './city-rooms.js';
+import { Fleet, CITY_CARS, carKit, parkKinds, ParkedGlass } from './city-cars.js';
+import { DRESS_SHAPES, signAtlas, dressBuilding, dressBits, dressShops, dressPlan, kerbs, blades, wires, drain } from './city-dress.js';
+import { Crowd } from './crowd.js';
+import { human } from './models/human.js';
 
 /* ---------- looks ---------- */
 
@@ -319,15 +328,27 @@ function groundTex(kind, base) {
 }
 // a speck for compiling materials up front (the attributes chunk meshes have: position, normal, uv, colour)
 let warmGeo = null;
-const WARM_GEO = () => warmGeo ||= (() => { const q = new Quads(); q.box(0, 0, 0, .01, .01, .01, { r: 1, g: 1, b: 1 }, 1); return q.geometry(); })();
+const WARM_GEO = () => warmGeo ||= (() => { const q = new Quads(true); q.box(0, 0, 0, .01, .01, .01, { r: 1, g: 1, b: 1 }, 1); return q.geometry(); })();
 // the material a chunk mesh of kind k uses (k: 'f:<facade>', 'shop', 'roof', 'tiles', 'plain', 'metal', 'pave', 'plaza', 'grass')
-const chunkMat = (k, S) => k.startsWith('f:') ? facadeMat(k.slice(2)) : k === 'shop' ? shopMat() : k === 'roof' ? roofMat() : k === 'tiles' ? tileMat() : k === 'plain' ? plainMat() : k === 'metal' ? metalMat()
+const chunkMat = (k, S) => k.startsWith('f:') ? facadeMat(k.slice(2)) : k === 'shop' ? shopMat() : k === 'signs' ? signsMat() : k === 'roof' ? roofMat() : k === 'tiles' ? tileMat() : k === 'plain' ? plainMat() : k === 'metal' ? metalMat()
   : k === 'pave' ? pavingMat(S.pavement) : k === 'plaza' ? pavingMat(shade(S.pavement, .85)) : grassMat();
 function mat(key, make) { if (!MATS.has(key)) MATS.set(key, make()); return MATS.get(key); }
-const facadeMat = name => mat('f:' + name, () => { const T = facadeTex(name), F = FACADES[name];
-  return new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: 0, roughnessMap: T.rough, roughness: 1, metalness: F.metal || .05, vertexColors: name === 'house' }); });
-const shopMat = () => mat('shop', () => { const T = shopTex(); return new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: .25, roughnessMap: T.rough, roughness: 1, metalness: .1 }); });
+// the rooms behind each kind of facade (city-rooms.js): where the window is in a cell of the facade picture (as facadeTex
+// paints it), how deep its hole and its rooms are, how much of a room shows through the glass
+const ROOM_KINDS = {
+  punched: { win: [.24, .22, .76, .8], reveal: .22, depth: 4.6, see: .85, frame: .035 },
+  curtain: { win: [.04, .22, .96, .96], reveal: .05, depth: 7.5, see: .5, frame: .018 },
+  house: { win: [.3, .25, .7, .75], reveal: .14, depth: 4, see: .85, frame: .04 },
+  shed: { win: [.1, .68, .9, .9], reveal: .1, depth: 9, see: .6, frame: .02 },
+};
+const facadeMat = name => mat('f:' + name, () => { const T = facadeTex(name), F = FACADES[name], K = ROOM_KINDS[F.kind];
+  const m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: 0, roughnessMap: T.rough, roughness: 1, metalness: F.metal || .05, vertexColors: name === 'house' });
+  return rooms(m, { ...K, kind: F.kind, trim: F.kind === 'curtain' ? F.trim : shade(F.trim, .9), glass: shade(F.glass, .45), metal: F.kind === 'curtain' ? (F.metal || .5) * .6 : .05 }); });
+const shopMat = () => mat('shop', () => { const T = shopTex(), m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: .25, roughnessMap: T.rough, roughness: 1, metalness: .1 });
+  return rooms(m, { win: [.06, .02, .94, .68], cells: [4, 1], reveal: .12, depth: 5.5, kind: 'shop', see: 1, frame: .012, trim: '#26282a', glass: '#080a0c', metal: .05 }); });
 const plainMat = () => mat('plain', () => new MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: .85, metalness: 0 }));
+// shop signs and street names, all cut from one picture (city-dress.js); shop signs glow at night
+const signsMat = () => mat('signs', () => { const A = signAtlas(); return new MeshStandardMaterial({ map: A.map, emissiveMap: A.light, emissive: new Color('#ffffff'), emissiveIntensity: .15, roughness: .5, metalness: 0 }); });
 const metalMat = () => mat('metal', () => new MeshStandardMaterial({ color: '#2a2c2e', roughness: .55, metalness: .7 }));
 const roofMat = () => mat('roof', () => new MeshStandardMaterial({ map: groundTex('gravel', '#66625c'), roughness: .95 }));
 const tileMat = () => mat('tiles', () => new MeshStandardMaterial({ map: groundTex('tiles', '#8a4a3a'), roughness: .8, vertexColors: true }));
@@ -340,13 +361,17 @@ const waterMat = () => mat('water', () => new MeshStandardMaterial({ color: '#1b
 /* ---------- geometry made from many quads, one buffer per material ---------- */
 
 class Quads {
-  constructor() { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; }
+  // rooms: every quad also says which rooms are behind it (gsRoom: bay width and storey height in metres, the
+  // building's seed, 1 where a facade's windows open into rooms: city-rooms.js); room() sets it for the quads after
+  constructor(rooms = false) { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; this.r = rooms ? [] : null; this.rm = [0, 0, 0, 0]; }
+  room(w = 0, h = 0, seed = 0, on = 0) { this.rm = [w, h, seed, on]; return this; }
   // a, b, c, d: corners in order round the face (counter-clockwise seen from the front)
   quad(a, b, c, d, uv = [0, 0, 1, 0, 1, 1, 0, 1], col = null) {
     const k = this.p.length / 3;
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
     for (const q of [a, b, c, d]) { this.p.push(q[0], q[1], q[2]); this.n.push(nx, ny, nz); }
+    if (this.r) for (let j = 0; j < 4; j++) this.r.push(...this.rm);
     this.u.push(...uv);
     if (col) for (let j = 0; j < 4; j++) this.c.push(col.r, col.g, col.b);
     this.i.push(k, k + 1, k + 2, k, k + 2, k + 3);
@@ -355,6 +380,7 @@ class Quads {
     const k = this.p.length / 3, ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1;
     for (const q of [a, b, c]) { this.p.push(...q); this.n.push(nx / l, ny / l, nz / l); }
+    if (this.r) for (let j = 0; j < 3; j++) this.r.push(...this.rm);
     this.u.push(...uv); if (col) for (let j = 0; j < 3; j++) this.c.push(col.r, col.g, col.b);
     this.i.push(k, k + 1, k + 2);
   }
@@ -366,6 +392,10 @@ class Quads {
   top(x0, z0, x1, z1, y, uvScale = 0, col = null) {
     const s = uvScale; this.quad([x0, y, z1], [x1, y, z1], [x1, y, z0], [x0, y, z0], s ? [x0 / s, -z1 / s, x1 / s, -z1 / s, x1 / s, -z0 / s, x0 / s, -z0 / s] : undefined, col);
   }
+  // a downward face (an overhang's underside)
+  under(x0, z0, x1, z1, y, col = null) { this.quad([x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1], undefined, col); }
+  // a box with its underside too (for things hung on walls)
+  slab(x0, y0, z0, x1, y1, z1, col = null, under = true) { this.box(x0, y0, z0, x1, y1, z1, col); if (under) this.under(x0, z0, x1, z1, y0, col); }
   box(x0, y0, z0, x1, y1, z1, col = null, uvScale = 0) { this.walls(x0, z0, x1, z1, y0, y1, uvScale ? (s, L, a, b) => [0, a / uvScale, L / uvScale, a / uvScale, L / uvScale, b / uvScale, 0, b / uvScale] : null, col); this.top(x0, z0, x1, z1, y1, uvScale, col); }
   get empty() { return !this.i.length; }
   geometry() {
@@ -374,6 +404,7 @@ class Quads {
     g.setAttribute('normal', new BufferAttribute(new Float32Array(this.n), 3));
     g.setAttribute('uv', new BufferAttribute(new Float32Array(this.u), 2));
     if (this.c.length) g.setAttribute('color', new BufferAttribute(new Float32Array(this.c), 3));
+    if (this.r) g.setAttribute('gsRoom', new BufferAttribute(new Float32Array(this.r), 4));
     const n = this.p.length / 3; g.setIndex(new BufferAttribute(n > 65535 ? new Uint32Array(this.i) : new Uint16Array(this.i), 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
     return slim(g);   // (a big one: its normals and colours in fewer bytes, slim.js)
@@ -383,11 +414,12 @@ const C = hex => new Color(hex);
 
 // One building into the chunk's buffers (by material). d: the detail buffers (shops' awnings,
 // cornices, fire escapes), hidden far away.
-function buildBuilding(b, Q, D) {
+function buildBuilding(b, Q, D, { rooms = true, dress = false } = {}) {
   const F = FACADES[b.facade], fq = Q('f:' + b.facade), g0 = b.shops ? 4.6 : 0, base = KERB + g0;
-  const tint = b.colour ? C(b.colour) : null;
+  const tint = b.colour ? C(b.colour) : null, seed = b.id * 1.618 % 97;
   const facadeUV = (part, s, L, y0, y1) => {
     const n = Math.max(1, Math.round(L / F.win)), u0 = (b.u + s * 3) / CELLS, v0 = b.v / CELLS;
+    fq.room(L / n, F.floor, seed + s * 13, rooms ? 1 : 0);   // (the rooms behind this wall: its bay width, storey height, seed)
     return [u0, v0 + (y0 - base) / F.floor / CELLS, u0 + n / CELLS, v0 + (y0 - base) / F.floor / CELLS, u0 + n / CELLS, v0 + (y1 - base) / F.floor / CELLS, u0, v0 + (y1 - base) / F.floor / CELLS];
   };
   b.parts.forEach((p, k) => {
@@ -398,19 +430,20 @@ function buildBuilding(b, Q, D) {
   const p0 = b.parts[0], top = b.parts.at(-1);
   if (b.shops) {
     const sq = Q('shop'), u = (b.u % 4) / 4;
-    sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; });
+    sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); sq.room(L / n, g0, seed + s * 7 + 50, rooms ? 1 : 0); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; });
     // awnings over some shop fronts on the street side
     const R = rng(b.id * 131 + 5), dq = D('plain'), n = [[0, -1], [1, 0], [0, 1], [-1, 0]][b.face];
     const along = b.face % 2 === 0, len = along ? p0.x1 - p0.x0 : p0.z1 - p0.z0, bays = Math.max(1, Math.round(len / 5)), bw = len / bays;
     for (let i = 0; i < bays; i++) {
       if (R() > .45) continue;
       const col = C(R.pick(['#a83228', '#2a5a8a', '#2e6a44', '#c89a2a', '#5a3a6a', '#d8d0c0'])), a = (along ? p0.x0 : p0.z0) + i * bw + .3, c = a + bw - .6;
-      const fx = n[0] ? (n[0] > 0 ? p0.x1 : p0.x0) : 0, fz = n[1] ? (n[1] > 0 ? p0.z1 : p0.z0) : 0, y1 = base - .3, y0 = base - 1.3, out = 1.4;
+      const fx = n[0] ? (n[0] > 0 ? p0.x1 : p0.x0) : 0, fz = n[1] ? (n[1] > 0 ? p0.z1 : p0.z0) : 0, y1 = dress ? base - 1.12 : base - .3, y0 = y1 - 1, out = 1.4;   // (under the fascia when it has one)
       const P = (t, o, y) => along ? [t, y, fz + n[1] * o] : [fx + n[0] * o, y, t];
       const [q0, q1] = (b.face === 0 || b.face === 1) ? [c, a] : [a, c];
       dq.quad(P(q0, 0, y1), P(q1, 0, y1), P(q1, out, y0), P(q0, out, y0), undefined, col);
       dq.quad(P(q1, 0, y1), P(q0, 0, y1), P(q0, out, y0), P(q1, out, y0), undefined, col);   // and its underside
     }
+    if (dress) dressShops(b, D, base, g0);
   }
   // the roof: flat (gravel) or a pitched roof of tiles over the house
   if (b.roof === 'gable') {
@@ -443,7 +476,7 @@ function buildBuilding(b, Q, D) {
     const mq = D('metal'), n = [[0, -1], [1, 0], [0, 1], [-1, 0]][b.face], along = b.face % 2 === 0;
     const len = along ? p0.x1 - p0.x0 : p0.z1 - p0.z0, mid = along ? (p0.x0 + p0.x1) / 2 : (p0.z0 + p0.z1) / 2, half = Math.min(4, len / 2 - 1);
     const wall = n[0] ? (n[0] > 0 ? p0.x1 : p0.x0) : (n[1] > 0 ? p0.z1 : p0.z0), sgn = n[0] || n[1];
-    const box = (t0, t1, o0, o1, y0, y1) => { const a = wall + sgn * o0, c = wall + sgn * o1; along ? mq.box(t0, y0, Math.min(a, c), t1, y1, Math.max(a, c)) : mq.box(Math.min(a, c), y0, t0, Math.max(a, c), y1, t1); };
+    const box = (t0, t1, o0, o1, y0, y1) => { const a = wall + sgn * o0, c = wall + sgn * o1; along ? mq.box(t0, y0, Math.min(a, c), t1, y1, Math.max(a, c)) : mq.box(Math.min(a, c), y0, t0, Math.max(a, c), y1, t1); };   // (no undersides: from the street the landings read as grating)
     for (let f = 1; f < b.floors; f++) {
       const y = base + f * F.floor - .2;
       box(mid - half, mid + half, .02, 1.2, y, y + .08);              // the landing
@@ -452,12 +485,14 @@ function buildBuilding(b, Q, D) {
       box(mid - half + .6, mid - half + .7, .4, .9, y - F.floor + .3, y);   // the ladder down
     }
   }
+  if (dress) dressBuilding(b, F, D, base, CELLS);   // (ledges, fins, balconies, sills: city-dress.js)
 }
 
-// The road paint: centre lines, lane lines, kerb lines, zebra crossings and stop lines.
-function buildPaint(plan) {
-  const q = new Quads(), W = C('#e4e2da'), Y = C('#e0b22e'), y = .012, sideK = plan.side === 'left' ? -1 : 1;
-  const strip = (x0, z0, x1, z1, col) => q.top(Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1), y, 0, col);
+// The road paint: centre lines, lane lines, kerb lines, zebra crossings and stop lines (worn here and
+// there, and the drains in the gutters, when the city is dressed).
+function buildPaint(plan, dressing = null) {
+  const q = new Quads(), W = C('#e4e2da'), Y = C('#e0b22e'), y = .012, sideK = plan.side === 'left' ? -1 : 1, R = rng(plan.seed * 17 + 5), worn = new Color();
+  const strip = (x0, z0, x1, z1, col) => q.top(Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1), y, 0, dressing ? worn.copy(col).multiplyScalar(.62 + R() * .38) : col);
   const dashed = (alongX, c, a, b, w, col, on = 3, off = 6) => { for (let s = a + 1; s < b - 1; s += on + off) { const e = Math.min(b - 1, s + on); alongX ? strip(s, c - w / 2, e, c + w / 2, col) : strip(c - w / 2, s, c + w / 2, e, col); } };
   for (const e of plan.edges) {
     const A = plan.nodes[e.a], B = plan.nodes[e.b]; if (e.dx < 0 || e.dz < 0) continue;   // each road once
@@ -475,6 +510,7 @@ function buildPaint(plan) {
       alongX ? strip(sl, c + rz * o0, sl + dir * .45, c + rz * o1, W) : strip(c + rx * o0, sl, c + rx * o1, sl + dir * .45, W);
     }
   }
+  if (dressing) for (const d of dressing.drains) drain(q, d, y - .004);
   return q;
 }
 
@@ -501,6 +537,7 @@ const FURNITURE = {
   pine: [() => tree({ kind: 'pine', height: 7, leaves: '#3a6a3e', trunk: '#5a4632' }), [70, 160]],
   lamp: [SHAPES.lamp, [60]], lamphead: [SHAPES.lamphead, []], tank: [SHAPES.tank, [90]], hvac: [SHAPES.hvac, [90]],
   mast: [SHAPES.mast, []], bench: [SHAPES.bench, [50]], signal: [SHAPES.signal, [80]], hydrant: [SHAPES.hydrant, []],
+  ...DRESS_SHAPES,
 };
 const KEEP = [.45, .15], SHAPED = new Map();
 let canKeep = false; simplifyReady.then(() => { canKeep = true; });   // (before the simplifier is in, a "simpler" copy isn't: not one to keep)
@@ -527,10 +564,12 @@ class Traffic {
   constructor(city, count) {
     this.city = city; this.plan = city.plan; this.max = count; this.list = []; this.avoid = []; this.R = rng(city.seed * 13 + 1); this.radius = 190;
     const P = this.plan; this.sideK = P.side === 'left' ? -1 : 1;
+    // real cars (gs.models.vehicle, city-cars.js) on a Next Gen view; two boxes a car elsewhere
+    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, count) : null;
     const paint = mat('carpaint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .45 }));
     const lit = () => new MeshBasicMaterial({ vertexColors: false, toneMapped: false, color: '#ffffff' });
     this.meshes = {};
-    for (const [k, geo] of [['car', carGeo()], ['van', vanGeo()]]) {
+    for (const [k, geo] of this.fleet ? [] : [['car', carGeo()], ['van', vanGeo()]]) {
       const m = new InstancedMesh(geo, paint, Math.max(1, count)); m.count = 0; m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
       m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(Math.max(1, count) * 3), 3); this.meshes[k] = m; city.group.add(m);
     }
@@ -544,9 +583,10 @@ class Traffic {
   reset(focus) {
     this.list.length = 0; this.R = rng(this.city.seed * 13 + 1);
     for (let i = 0; i < this.max; i++) { const c = this.spawn(focus, 0); if (c) this.list.push(c); }
+    this.fleet?.assign(this.list);
     this.draw(0);
   }
-  spawn(focus, min) {
+  spawn(focus, min, keep = null) {
     const P = this.plan, R = this.R;
     for (let tries = 0; tries < 80; tries++) {
       const e = P.edges[R() * P.edges.length | 0], A = P.nodes[e.a], mx = A.x + e.dx * e.len / 2, mz = A.z + e.dz * e.len / 2, d = Math.hypot(mx - focus.x, mz - focus.z);
@@ -554,9 +594,12 @@ class Traffic {
       const [s0, s1] = this.ends(e); if (s1 - s0 < 14) continue;
       const k = R() * e.lanes | 0, s = s0 + 3 + R() * (s1 - s0 - 10);
       if (this.list.some(c => c.edge === e && c.lane === k && !c.turn && Math.abs(c.s - s) < 9)) continue;
-      const r = R(), kind = r < .14 ? 'van' : 'car', taxi = kind === 'car' && r > .82;
-      const car = { id: this.nextId = (this.nextId || 0) + 1, kind, taxi, colour: taxi ? '#f2c21b' : R.pick(CAR_COLOURS), edge: e, lane: k, s, v: e.speed * .6, vmax: e.speed * (.8 + R() * .3),
-        x: 0, z: 0, heading: 0, braking: false, turn: null, plan: null, blocked: 0, stun: 0, honked: 0 };
+      // (a car that comes back keeps its style, so it keeps its place among the copies: city-cars.js)
+      const F = this.fleet, r = R(), style = F ? keep?.style ?? F.pick(R) : 0, kit = F?.kits[style], kind = F ? (kit.style === 'van' ? 'van' : 'car') : keep?.kind ?? (r < .14 ? 'van' : 'car');
+      const taxi = F ? (kit.style === 'saloon' || kit.style === 'hatch') && r > .8 : kind === 'car' && r > .82;
+      const car = { id: this.nextId = (this.nextId || 0) + 1, kind, style, taxi, colour: taxi ? '#f2c21b' : R.pick(CAR_COLOURS), edge: e, lane: k, s, v: e.speed * .6, vmax: e.speed * (.8 + R() * .3),
+        len: kit ? kit.length : kind === 'van' ? 4.6 : CAR_LEN, wid: kit ? kit.width : kind === 'van' ? 1.9 : 1.84, x: 0, z: 0, heading: 0, braking: false, turn: null, plan: null, blocked: 0, stun: 0, honked: 0, odo: 0 };
+      if (keep) car.slot = keep.slot;
       this.place(car); return car;
     }
     return null;
@@ -586,20 +629,20 @@ class Traffic {
       if (!c.turn) {
         const e = c.edge, [, s1] = this.ends(e), b = c._b, i = c._i;
         const follow = gap => { target = Math.min(target, Math.max(0, (gap - 2) * 1.1)); };
-        if (i > 0) follow(b[i - 1].s - c.s - CAR_LEN);
-        else if (c.ahead && (c.ahead.turn || c.ahead.edge !== e)) follow(Math.hypot(c.ahead.x - c.x, c.ahead.z - c.z) - CAR_LEN - 1);
-        const stop = s1 - 3.6 - CAR_LEN / 2, toStop = stop - c.s;
+        if (i > 0) follow(b[i - 1].s - c.s - (b[i - 1].len + c.len) / 2);
+        else if (c.ahead && (c.ahead.turn || c.ahead.edge !== e)) follow(Math.hypot(c.ahead.x - c.x, c.ahead.z - c.z) - (c.ahead.len + c.len) / 2 - 1);
+        const stop = s1 - 3.6 - c.len / 2, toStop = stop - c.s;
         if (toStop < 40) {
           c.plan ||= this.choose(c);
           const st = city.signal(P.nodes[e.b], e.axis, t);
           if (st !== 'g' && toStop > -.5 && !(st === 'a' && toStop < c.v * c.v / 12 * .6)) follow(toStop + 2);
           // don't drive into the junction when the road out is backed up
           const nb = buckets.get(c.plan.e.id * 4 + c.plan.k), last = nb?.at(-1), [n0] = this.ends(c.plan.e);
-          if (last && last.s < n0 + CAR_LEN + 2.5 && toStop > -.5) follow(toStop + 2);
+          if (last && last.s < n0 + (last.len + c.len) / 2 + 2.5 && toStop > -.5) follow(toStop + 2);
         }
         for (const o of this.avoid) {
           const rx = o.x - c.x, rz = o.z - c.z, fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = Math.abs(rx * fz - rz * fx);
-          if (along > 0 && along < 24 && lat < 1.3 + o.r) { follow(along - CAR_LEN / 2 - o.r); blocked = true; }
+          if (along > 0 && along < 24 && lat < 1.3 + o.r) { follow(along - c.len / 2 - o.r); blocked = true; }
         }
       }
       c.blocked = blocked ? c.blocked + dt : 0;
@@ -629,12 +672,13 @@ class Traffic {
       }
       this.place(c);
       // gone too far from the player: comes back somewhere nearer, out of sight
-      if (Math.hypot(c.x - focus.x, c.z - focus.z) > this.radius + 20) { const n = this.spawn(focus, this.radius * .45); if (n) { Object.assign(c, n, { id: c.id, ahead: null }); for (const o of this.list) if (o.ahead === c) o.ahead = null; } }
+      if (Math.hypot(c.x - focus.x, c.z - focus.z) > this.radius + 20) { const n = this.spawn(focus, this.radius * .45, c); if (n) { Object.assign(c, n, { id: c.id, ahead: null }); for (const o of this.list) if (o.ahead === c) o.ahead = null; } }
     }
     this.avoid.length = 0;
     this.noise = noisy;
   }
-  draw(night) {
+  draw(night, dt = 0) {
+    if (this.fleet) return this.drawFleet(night, dt);
     // each car keeps its own slot (its place in the list) in both the car and the van mesh, drawn as
     // nothing in the one it isn't: three works out motion (frame generation, SGSR 2) from what each slot
     // held last frame, so packing the cars of a kind together gave every car after one that came back
@@ -654,14 +698,26 @@ class Traffic {
     // vans use the car's light spots (close enough at this size)
     this.head.material.color.set('#fff3d6').multiplyScalar(.35 + night * 3.2); this.tail.material.color.set('#ff2c1c').multiplyScalar(.5 + night * 1.6);
   }
+  // real cars (city-cars.js): the nearest few whole, the rest as copies; the lamp boxes stand in for the far ones' lamps
+  drawFleet(night, dt) {
+    const F = this.fleet, n = this.list.length; F.focus = this.city.focus || this.city.start; F.draw(this.list, night, dt);
+    this.list.forEach((c, i) => {
+      if (F.close.has(c)) { this.head.setMatrixAt(i, _none.makeScale(0, 0, 0).setPosition(c.x, 0, c.z)); this.tail.setMatrixAt(i, _none); return; }
+      const k = F.kits[c.style]; _q.setFromAxisAngle(_up, c.heading); _m.compose(_p.set(c.x, 0, c.z), _q, _s.set(1, k.lampY / .64, c.len / 4.53));
+      this.head.setMatrixAt(i, _m); this.tail.setMatrixAt(i, _m); this.tail.setColorAt(i, _c.setScalar(c.braking ? 2.4 : 1));
+    });
+    _s.set(1, 1, 1);
+    for (const m of [this.head, this.tail]) { m.count = n; sendUsed(m.instanceMatrix, n); sendUsed(m.instanceColor, n); }
+    this.head.material.color.set('#fff3d6').multiplyScalar(.35 + night * 3.2); this.tail.material.color.set('#ff2c1c').multiplyScalar(.5 + night * 1.6);
+  }
   near(p, r) { const pz = p.z ?? p.y; return this.list.filter(c => Math.hypot(c.x - p.x, c.z - pz) <= r).sort((a, b) => Math.hypot(a.x - p.x, a.z - pz) - Math.hypot(b.x - p.x, b.z - pz)); }
   /** The first car whose body overlaps a circle at p of radius r (or null). */
   hit(p, r = .5) {
     const pz = p.z ?? p.y;
     for (const c of this.list) {
       const rx = p.x - c.x, rz = pz - c.z; if (rx * rx + rz * rz > 16 + r * r * 4 + 8 * r) continue;
-      const fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = rx * fz - rz * fx, hl = c.kind === 'van' ? 2.4 : 2.2;
-      const dx = Math.max(Math.abs(lat) - .92, 0), dz = Math.max(Math.abs(along) - hl, 0);
+      const fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = rx * fz - rz * fx, hl = c.len / 2;
+      const dx = Math.max(Math.abs(lat) - c.wid / 2, 0), dz = Math.max(Math.abs(along) - hl, 0);
       if (dx * dx + dz * dz <= r * r) return c;
     }
     return null;
@@ -678,10 +734,24 @@ const torsoGeo = () => mergeGeometries([coloured(at(new BoxGeometry(.46, .62, .2
 const headGeo = () => coloured(at(new IcosahedronGeometry(.13, 1), 0, 1.66, 0), '#ffffff');
 const legGeo = () => coloured(at(new BoxGeometry(.16, .86, .18), 0, -.43, 0), '#ffffff');   // hangs from the hip, so it swings
 
+// the people of a city on a Next Gen view (a gs.props.Crowd of sculpted people; no strands: a crowd has none)
+const FOLK = [
+  { seed: 31, body: '#3d6fb6', legs: '#2a3242', strands: false },
+  { seed: 32, sex: 'f', hairStyle: 'long', body: '#c8483c', legs: '#30364a', strands: false },
+  { seed: 33, body: '#d8d2c2', legs: '#5a4a38', strands: false },
+  { seed: 34, sex: 'f', hairStyle: 'bun', body: '#2e5e48', legs: '#1d1d22', strands: false },
+  { seed: 35, body: '#2a2a30', legs: '#3a3a3a', strands: false },
+  { seed: 36, sex: 'f', hairStyle: 'short', body: '#e0b84a', legs: '#24324f', strands: false },
+];
 /** The people of a city: they walk round the pavements, wait for the green man and cross at the corners. */
 class People {
   constructor(city, count) {
     this.city = city; this.plan = city.plan; this.max = count; this.list = []; this.R = rng(city.seed * 17 + 3); this.radius = 100;
+    // sculpted people as one crowd on a Next Gen view (City option crowd); figures of boxes elsewhere
+    this.crowd = city.opts.crowd ? new Crowd(city.view, { of: FOLK.map(o => human(o)), moves: ['idle', 'walk', 'run', 'downed'], far: 140 }) : null;
+    this.members = []; this.spread = 50;
+    if (this.crowd) { this.radius = 75; this.spread = 32; }   // (more of them, closer round the player: busy pavements where you are)
+    if (this.crowd) return;
     const skin = mat('people', () => new MeshStandardMaterial({ vertexColors: true, roughness: .8 }));
     const n = Math.max(1, count), mk = (g, k) => { const m = new InstancedMesh(g, skin, n * k); m.count = 0; m.castShadow = true; m.frustumCulled = false; m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(n * k * 3), 3); city.group.add(m); return m; };
     this.torso = mk(torsoGeo(), 1); this.head = mk(headGeo(), 1); this.legs = mk(legGeo(), 2);
@@ -695,13 +765,17 @@ class People {
     out.x = a[0] + (c[0] - a[0]) * f; out.z = a[1] + (c[1] - a[1]) * f; out.seg = seg; out.toCorner = len - (s - base); out.L = L; out.cs = [0, w, w + d, 2 * w + d];
     return out;
   }
-  reset(focus) { this.list.length = 0; this.R = rng(this.city.seed * 17 + 3); for (let i = 0; i < this.max; i++) { const p = this.spawn(focus, 0); if (p) this.list.push(p); } this.draw(); }
-  spawn(focus, min) {
+  reset(focus) {
+    this.list.length = 0; this.R = rng(this.city.seed * 17 + 3); for (let i = 0; i < this.max; i++) { const p = this.spawn(focus, 0); if (p) this.list.push(p); }
+    if (this.crowd) { this.crowd.clear(); this.members = this.list.map(p => this.crowd.add({ x: p.x, y: KERB, z: p.z, kind: p.kind, move: 'walk', size: p.h })); }
+    this.draw();
+  }
+  spawn(focus, min, keep = null) {
     const R = this.R, B = this.plan.blocks;
     for (let tries = 0; tries < 80; tries++) {
       const b = B[R() * B.length | 0], s = R() * this.perim(b), p = this.at(b, s);
-      const d = Math.hypot(p.x - focus.x, p.z - focus.z); if (d > this.radius || d < min || (!min && R() > Math.exp(-d / 50))) continue;
-      return { id: this.nextId = (this.nextId || 0) + 1, block: b, s, dir: R() < .5 ? 1 : -1, side: (R() - .5) * 1.4, speed: 1.1 + R() * .5, x: p.x, z: p.z, heading: 0,
+      const d = Math.hypot(p.x - focus.x, p.z - focus.z); if (d > this.radius || d < min || (!min && R() > Math.exp(-d / this.spread))) continue;
+      return { id: this.nextId = (this.nextId || 0) + 1, block: b, s, dir: R() < .5 ? 1 : -1, side: (R() - .5) * 1.4, speed: 1.1 + R() * .5, x: p.x, z: p.z, heading: 0, kind: keep?.kind ?? (R() * FOLK.length | 0),
         shirt: R.pick(SHIRTS), pants: R.pick(PANTS), skin: R.pick(SKIN), h: .92 + R() * .16, phase: R() * 6, wait: 0, cross: null, panic: 0, down: 0, fall: 0, fx: 0, fz: 0 };
     }
     return null;
@@ -738,7 +812,7 @@ class People {
         p.heading = Math.atan2(nx - p.x, nz - p.z) || p.heading; p.x = nx; p.z = nz;
       }
       p.phase += v * dt * 4.4;
-      if (Math.hypot(p.x - focus.x, p.z - focus.z) > this.radius + 15) { const n = this.spawn(focus, this.radius * .5); if (n) Object.assign(p, n, { id: p.id }); }
+      if (Math.hypot(p.x - focus.x, p.z - focus.z) > this.radius + 15) { const n = this.spawn(focus, this.radius * .5, p); if (n) Object.assign(p, n, { id: p.id }); }
     }
   }
   // the zebra crossing straight on from this block's corner (0 NW, 1 NE, 2 SE, 3 SW) for someone walking
@@ -752,7 +826,11 @@ class People {
     const r = this.ring(b)[corner], r2 = this.ring(nb)[arrive], node = (b.i + (east ? 1 : 0)) * (P.nz + 1) + b.j + (south ? 1 : 0);
     return { node, axis: alongX ? 'x' : 'z', go: { ax: r[0], az: r[1], bx: r2[0], bz: r2[1], len: Math.hypot(r2[0] - r[0], r2[1] - r[1]), u: 0, to: nb, s: this.at(nb, 0).cs[arrive] } };
   }
-  draw() {
+  draw(dt = 0) {
+    if (this.crowd) {   // (a member stands on the kerb's top, or the road when crossing; it walks, runs from a scare, waits, or lies where it was knocked)
+      this.list.forEach((p, i) => { const m = this.members[i]; if (!m) return; m.x = p.x; m.z = p.z; m.y = p.cross ? 0 : KERB; m.turn = p.heading; m.size = p.h; m.move = p.down > 0 ? 'downed' : p.wait > 0 ? 'idle' : p.panic > 0 ? 'run' : 'walk'; });
+      this.crowd.update(dt); return;
+    }
     const T = this.torso, Hd = this.head, L = this.legs, e = this._e ||= new Object3D(), leg = this._leg ||= new Object3D();
     this.list.forEach((p, i) => {
       const bob = Math.abs(Math.sin(p.phase)) * .05 * (p.down > 0 ? 0 : 1), sc = p.h;
@@ -790,16 +868,21 @@ export class City {
    * night; sound: the city's hum, horns and birds; at: where the player starts (built first);
    * detail: metres within which awnings, cornices and fire escapes show.
    */
-  constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true, ...over } = {}) {
+  constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, ...over } = {}) {
     this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
+    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, style: typeof style === 'string' ? style : 'downtown' };
+    if (this.opts.crowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
     // What a city keeps from one making to the next comes first: its textures and materials, and the
     // street furniture's shapes. While a card loads, a pass of make() can be stopped between these and
     // the next pass has them already (slices.js); the rest is this city's own and is made in one go.
-    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop']); for (const b of P.buildings) kinds.add('f:' + b.facade);
+    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop', ...(dress ? ['signs'] : [])]); for (const b of P.buildings) kinds.add('f:' + b.facade);
     for (const k of kinds) chunkMat(k, S);
     groundTex('grass', '#4f7a3a'); asphaltMat(S.ground);
     for (const name in FURNITURE) shaped(name);
+    if (this.opts.fleet) for (const s of CITY_CARS[this.opts.style] || CITY_CARS.downtown) carKit(s);
+    const parkStyles = parked ? (CITY_CARS[this.opts.style] || CITY_CARS.downtown).slice(0, 3) : [], parkKits = parkStyles.map(carKit);   // (the three commonest styles park)
     if (occlude) view.occluders?.(this.occluders());   // what's behind the buildings isn't drawn (occlude: false to draw it all)
     this.group = new Group(); this.group.name = 'city'; view.scene.add(this.group);
     this.t = 0; this._night = -1; this.night = night;
@@ -818,7 +901,6 @@ export class City {
       const water = new Mesh(new PlaneGeometry(6000, 3000), waterMat()); water.rotation.x = -Math.PI / 2; water.position.set(0, -.6, B.z1 + 10 + 1500); this.group.add(water);
       view.reflect?.(water); this.water = water;
     }
-    const paint = new Mesh(buildPaint(P).geometry(), paintMat()); paint.receiveShadow = true; this.group.add(paint);
     // chunks of 2 x 2 blocks, built a few at a time, nearest first
     const cs = P.nx * P.nz > 9 ? 2 : 1; this.chunks = new Map();
     for (const b of P.blocks) {
@@ -830,10 +912,19 @@ export class City {
     // where buildings are, for collisions and rays: a grid of 32 m cells
     this.cell = 32; this.grid = new Map();
     for (const b of P.buildings) for (let gx = Math.floor(b.x0 / 32); gx <= Math.floor(b.x1 / 32); gx++) for (let gz = Math.floor(b.z0 / 32); gz <= Math.floor(b.z1 / 32); gz++) { const k = gx + ',' + gz; if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(b); }
+    // what the streets are dressed with, and what hangs on the buildings and stands on their roofs (city-dress.js)
+    this.dressing = dress ? dressPlan(P, seed, { kits: parkKits.length ? parkKits : null, buildingAt: (x, z) => this.buildingAt(x, z), style: this.opts.style, busy: TIER[phoneClass()] ?? .65 }) : null;
+    if (dress) for (const b of P.buildings) dressBits(b, FACADES[b.facade], KERB + (b.shops ? 4.6 : 0), CELLS, P.blocks[b.block]);
+    const paint = new Mesh(buildPaint(P, this.dressing).geometry(), paintMat()); paint.receiveShadow = true; this.group.add(paint);
+    if (this.dressing?.wires.length) { const q = new Quads(); wires(q, this.dressing.wires); const m = new Mesh(q.geometry(), plainMat()); m.name = 'city wires'; this.group.add(m); }
+    // parked cars: solid (collide()), in a grid of their own
+    this.parked = this.dressing?.parked || []; this.pgrid = new Map();
+    for (const c of this.parked) { const ax = Math.abs(Math.sin(c.heading)) > .5, hx = (ax ? c.len : c.wid) / 2, hz = (ax ? c.wid : c.len) / 2; Object.assign(c, { parked: true, x0: c.x - hx, x1: c.x + hx, z0: c.z - hz, z1: c.z + hz }); const k = Math.floor(c.x / 32) + ',' + Math.floor(c.z / 32); if (!this.pgrid.has(k)) this.pgrid.set(k, []); this.pgrid.get(k).push(c); }
+    this.parkStyles = parkStyles;
     this.props = this.furnish();
     this.signals = this.makeSignals();
     this.cars = new Traffic(this, Math.round(70 * traffic * scale * Math.min(1.6, P.nx * P.nz / 36 + .4)));
-    this.people = new People(this, Math.round(110 * people * scale));
+    this.people = new People(this, Math.round((this.opts.crowd ? 360 : 110) * people * scale));   // (a crowd costs a few draws however many: busier pavements)
     this.start = at || this.spot('pavement', { rnd: rng(seed + 9) }) || { x: 0, z: 0 };
     for (const c of [...this.chunks.values()].filter(c => Math.hypot(c.x - this.start.x, c.z - this.start.z) < 200)) this.build(c);
     // The far chunks are built as you get near them, and their materials (a facade first seen there)
@@ -845,6 +936,8 @@ export class City {
     this.ears = null; this.hum = null;
     this.applyNight(); this.reset();
   }
+  /** Resolves when everything a city is made from is in (the simplifier for far shapes): await City.ready() before a screenshot. */
+  static ready({ crowd = true, people = 1 } = {}) { return Promise.all([simplifyReady, crowd && people > 0 ? human.ready(FOLK) : null]); }
   /** Cars and people back to the start (call from your game's reset()). */
   reset(focus = this.start) { this.t = 0; this.cars.reset(focus); this.people.reset(focus); this.signalTick(); return this; }
 
@@ -865,10 +958,28 @@ export class City {
     for (const t of P.trees) props.add(t.kind === 'pine' ? 'pine' : 'tree', t.x, KERB, t.z, { rot: t.x * 1.7, scale: t.s });
     this.lampSpots = [];
     for (const l of P.lamps) { props.add('lamp', l.x, KERB, l.z, { rot: l.face }); props.add('lamphead', l.x, KERB, l.z, { rot: l.face }); this.lampSpots.push({ x: l.x + Math.cos(l.face) * 1.35, y: KERB + 5.6, z: l.z - Math.sin(l.face) * 1.35, col: '#ffd8a8', i: 0 }); }
-    for (const b of P.buildings) for (const bit of b.bits) props.add(bit.kind, bit.x, bit.y, bit.z, { rot: bit.x, scale: bit.s });
+    const Dr = this.dressing, count = {};
+    for (const b of P.buildings) for (const bit of b.bits) count[bit.kind] = (count[bit.kind] || 0) + 1;
+    if (Dr) for (const [name, list] of [['post', Dr.posts], ['bin', Dr.bins], ['bollard', Dr.bollards], ['psign', Dr.psigns], ['upole', Dr.poles]]) count[name] = list.length;
+    // the dressing's kinds, only where there are some (each kind is a draw or two)
+    for (const name of ['ac', 'hut', 'vent', 'dish', 'post', 'bin', 'bollard', 'psign', 'upole']) if (count[name]) furniture(props, name, pm, { capacity: count[name], shadows: name !== 'post' && name !== 'psign' });
+    for (const b of P.buildings) for (const bit of b.bits) props.add(bit.kind, bit.x, bit.y, bit.z, { rot: bit.rot ?? bit.x, scale: bit.s });
     for (const b of P.benches) props.add('bench', b.x, KERB, b.z, { rot: b.rot });
     const R = rng(this.seed * 3 + 11);
     for (const b of P.blocks) if (b.kind === 'build' && R() < .5) props.add('hydrant', b.x0 + 1.2, KERB, b.z0 + 2 + R() * (b.z1 - b.z0 - 4));
+    if (Dr) {
+      for (const p of Dr.posts) props.add('post', p.x, KERB, p.z);
+      for (const p of Dr.bins) props.add('bin', p.x, KERB, p.z, { rot: p.rot });
+      for (const p of Dr.bollards) props.add('bollard', p.x, KERB, p.z);
+      for (const p of Dr.psigns) props.add('psign', p.x, KERB, p.z, { rot: p.rot });
+      for (const p of Dr.poles) props.add('upole', p.x, KERB, p.z, { rot: p.rot });
+      // parked cars: each style a kind for its paint (coloured car by car) and one for the rest, and the glass of those close by (city-cars.js)
+      if (this.parked.length) {
+        const kinds = parkKinds(props, this.parkStyles, this.parked);
+        for (const c of this.parked) { const k = kinds[c.style], rot = c.heading + Math.PI; props.add(k.paint, c.x, c.y, c.z, { rot, color: c.colour }); props.add(k.rest, c.x, c.y, c.z, { rot }); }
+        this.parkGlass = new ParkedGlass(this.group, this.parkStyles, this.parked);
+      }
+    }
     props.done();
     return props;
   }
@@ -908,8 +1019,10 @@ export class City {
   }
   applyNight() {
     const k = Math.max(0, this._night);
+    ROOMS.gsRmLight.value.set(.11 * (1 - k) + .006, k);   // (rooms: daylight inside, lamps at night)
     for (const name of Object.keys(FACADES)) { const m = MATS.get('f:' + name); if (m) m.emissiveIntensity = k * 1.0; }
     const s = MATS.get('shop'); if (s) s.emissiveIntensity = .3 + k * 1.6;
+    const g = MATS.get('signs'); if (g) g.emissiveIntensity = .15 + k * 2.2;
     if (this.lampGlow) this.lampGlow.emissiveIntensity = k * 5;
   }
 
@@ -917,13 +1030,14 @@ export class City {
   build(c) {
     if (c.group) return;
     const P = this.plan, S = P.style, bufs = new Map(), det = new Map();
-    const Q = k => { if (!bufs.has(k)) bufs.set(k, new Quads()); return bufs.get(k); }, D = k => { if (!det.has(k)) det.set(k, new Quads()); return det.get(k); };
+    const Q = k => { if (!bufs.has(k)) bufs.set(k, new Quads(k.startsWith('f:') || k === 'shop')); return bufs.get(k); }, D = k => { if (!det.has(k)) det.set(k, new Quads()); return det.get(k); };
     for (const b of c.blocks) {
       Q('pave').box(b.x0, -.2, b.z0, b.x1, KERB, b.z1, null, 4);
       const inner = b.kind === 'park' || S.houses ? 'grass' : b.kind === 'plaza' ? 'plaza' : null;
       if (inner) Q(inner).top(b.x0 + b.sw, b.z0 + b.sw, b.x1 - b.sw, b.z1 - b.sw, KERB + .01, 4);
+      if (this.dressing) { kerbs(D('plain'), b); blades(D('signs'), this.dressing.blades[b.id]); }
     }
-    for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) buildBuilding(bl, Q, D);
+    for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) buildBuilding(bl, Q, D, this.opts);
     const matOf = k => chunkMat(k, S);
     const g = new Group(), d = new Group(); g.name = 'chunk ' + c.key;
     for (const [k, q] of bufs) if (!q.empty) { const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza'; m.receiveShadow = true; m.userData.city = k; g.add(m); }
@@ -947,12 +1061,14 @@ export class City {
     if (!want.length) this.allBuilt = true;
     for (const c of this.chunks.values()) if (c.detail) c.detail.visible = Math.hypot(c.x - f.x, c.z - f.z) < this.detail;
     this.cars.update(dt, f, this.t); this.people.update(dt, f, this.t);
-    this.cars.draw(this.night); this.people.draw(); this.signalTick();
+    this.cars.draw(this.night, dt); this.people.draw(dt); this.signalTick();
+    this.parkGlass?.update(this.view.cam.position);
     if (this.lampsOn && this.view.placeLamps && this.night > .05) {
       if (!this.view.lamps?.length) this.view.lampLights(26);
       const near = this.lampSpots.filter(s => Math.abs(s.x - f.x) < 70 && Math.abs(s.z - f.z) < 70);
       for (const s of near) s.i = this.night * 9;
-      this.view.placeLamps(near, f.x, 2, f.z, this.t);
+      const F = this.cars.fleet;   // (and the headlights of the cars drawn whole: dipped beams that cast shadows)
+      this.view.placeLamps(F?.close.size ? near.concat(F.headlamps(this.night, this._hl ||= [])) : near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f);
     return this;
@@ -996,8 +1112,9 @@ export class City {
     return 0;
   }
   /**
-   * Pushes a circle (p: { x, z } or a Vector3 using x and z; radius r) out of the buildings, at
-   * height y (things above a roof pass over it). Changes p; returns the building it touched, or null.
+   * Pushes a circle (p: { x, z } or a Vector3 using x and z; radius r) out of the buildings and the parked
+   * cars, at height y (things above a roof pass over it). Changes p; returns the building (or the parked car,
+   * { parked: true, x, z, ... }) it touched, or null.
    */
   collide(p, r = .4, y = 0) {
     const pz = p.z ?? p.y, key = p.z != null ? 'z' : 'y'; let hit = null, px = p.x, qz = pz;
@@ -1008,7 +1125,17 @@ export class City {
       if (d2 > 1e-9) { const d = Math.sqrt(d2); px = cx + dx / d * r; qz = cz + dz / d * r; }
       else { const o = [px - part.x0, part.x1 - px, qz - part.z0, part.z1 - qz], m = Math.min(...o), i = o.indexOf(m); if (i === 0) px = part.x0 - r; else if (i === 1) px = part.x1 + r; else if (i === 2) qz = part.z0 - r; else qz = part.z1 + r; }
       hit = b; moved = true;
-    } if (!moved) break; }
+    }
+    // and out of the parked cars
+    for (let gx = Math.floor((px - r - 3) / 32); gx <= Math.floor((px + r + 3) / 32); gx++) for (let gz = Math.floor((qz - r - 3) / 32); gz <= Math.floor((qz + r + 3) / 32); gz++) for (const c of this.pgrid.get(gx + ',' + gz) || []) {
+      if (y >= c.y + 1.5 || y < c.y - 1) continue;
+      const cx = Math.max(c.x0, Math.min(px, c.x1)), cz = Math.max(c.z0, Math.min(qz, c.z1)), dx = px - cx, dz = qz - cz, d2 = dx * dx + dz * dz;
+      if (d2 >= r * r) continue;
+      if (d2 > 1e-9) { const d = Math.sqrt(d2); px = cx + dx / d * r; qz = cz + dz / d * r; }
+      else { const o = [px - c.x0, c.x1 - px, qz - c.z0, c.z1 - qz], m = Math.min(...o), i = o.indexOf(m); if (i === 0) px = c.x0 - r; else if (i === 1) px = c.x1 + r; else if (i === 2) qz = c.z0 - r; else qz = c.z1 + r; }
+      hit = c; moved = true;
+    }
+    if (!moved) break; }
     p.x = px; p[key] = qz; return hit;
   }
   /** The first building along a ray (from and dir: { x, y, z }; dir need not be unit length): { point, normal, dist, building } or null. */
@@ -1146,7 +1273,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }

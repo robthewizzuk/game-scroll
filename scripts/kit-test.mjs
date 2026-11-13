@@ -1496,6 +1496,51 @@ console.log('physics ok');
   }
   assert.notEqual(JSON.stringify(layout({ seed: 1 }).buildings), JSON.stringify(layout({ seed: 2 }).buildings), 'another seed, another city');
   console.log('city: layouts for all styles are repeatable, tidy and joined up');
+  // the street dressing (city-dress.js): its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other
+  const { dressPlan } = await import('../src/kit/city-dress.js');
+  for (const style of Object.keys(STYLES)) {
+    const p = layout({ seed: 42, blocks: [5, 4], style }), before = JSON.stringify(p), kits = [{ length: 4.5, width: 1.8 }, { length: 4.9, width: 1.95 }, { length: 4.1, width: 1.75 }];
+    const at = (x, z) => p.buildings.find(b => x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) || null;
+    const D = dressPlan(p, 42, { kits, buildingAt: at, style });
+    assert.equal(JSON.stringify(p), before, style + ': dressing leaves the plan as it was');
+    assert.equal(JSON.stringify(D), JSON.stringify(dressPlan(p, 42, { kits, buildingAt: at, style })), style + ': same seed, same dressing');
+    assert.ok(D.posts.length === p.blocks.length && D.blades.length === p.blocks.length, style + ': a name sign at every block');
+    if (style !== 'suburb') assert.ok(D.parked.length > 10, style + ': cars parked (' + D.parked.length + ')');
+    for (const c of D.parked) {
+      const ax = Math.abs(Math.sin(c.heading)) > .5, hx = (ax ? c.len : c.wid) / 2, hz = (ax ? c.wid : c.len) / 2;
+      assert.ok(!p.buildings.some(b => c.x + hx > b.x0 && c.x - hx < b.x1 && c.z + hz > b.z0 && c.z - hz < b.z1), style + ': a parked car in a building');
+      for (const d of p.spots.door) assert.ok(Math.hypot(d.x - c.x, d.z - c.z) >= 5.6 || style === 'suburb', style + ': a car parked across a door');
+      if (c.y) continue;   // (on a drive)
+      // in the road: clear of the moving lanes (each lane's car is 1.9 wide) and of the junctions
+      const e = p.edges.find(e => (e.axis === 'x') === ax && Math.abs((ax ? p.nodes[e.a].z : p.nodes[e.a].x) - (ax ? c.z : c.x)) < e.width / 2);
+      assert.ok(e, style + ': a parked car beside no road');
+      const off = Math.abs((ax ? c.z - p.nodes[e.a].z : c.x - p.nodes[e.a].x)), outer = (e.lanes - .5) * 3.2 + .2 + .95;
+      assert.ok(off - c.wid / 2 > outer + .3 && off + c.wid / 2 < e.width / 2, style + ': a parked car in a lane or on the kerb');
+      assert.ok(!p.nodes.some(n => Math.abs(n.x - c.x) < n.hx + 6 && Math.abs(n.z - c.z) < n.hz + 6), style + ': a car parked at a junction');
+    }
+    for (let i = 0; i < D.parked.length; i++) for (let j = i + 1; j < D.parked.length; j++) assert.ok(Math.hypot(D.parked[i].x - D.parked[j].x, D.parked[i].z - D.parked[j].z) > 4, style + ': parked cars on top of each other');
+    if (style === 'oldtown' || style === 'suburb') assert.ok(D.wires.length > 0, style + ': wires');
+  }
+  console.log('city dressing: its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other ok');
+}
+// the city's cars up close (city-cars.js): seats behind see-through glass close by and none in the shapes further off, the
+// paint look on the cars drawn whole only, and the parked cars' glass drawn for those within the props' first distance
+{
+  const THREE = await import('three'), { carKit, Fleet, ParkedGlass } = await import('../src/kit/city-cars.js'), { vehicle } = await import('../src/kit/models/vehicles.js');
+  const { lookOf } = await import('../src/kit/models/vehicle-looks.js'), { looksOf } = await import('../src/kit/looks.js');
+  const tri = g => (g.index ? g.index.count : g.attributes.position.count) / 3, IN = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
+  const k = carKit('saloon'), v = vehicle('car', { style: 'saloon', seed: 3, colour: '#ffffff', finish: 'gloss' });
+  const inner = v.shell.children.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
+  assert.ok(inner > 1000 && k.glass && tri(k.whole) - tri(k.closed) === inner - tri(k.glass), 'a parked car close by has its inside (' + inner + ' triangles), further off dark glass and none');
+  const grp = new THREE.Group(), F = new Fleet(grp, ['saloon', 'hatch'], 4), list = [{ style: 0, x: 0, z: 3, heading: 0, v: 0, colour: '#aa2222' }, { style: 1, x: 200, z: 0, heading: 0, v: 0, colour: '#2244aa' }];
+  F.assign(list); F.focus = { x: 0, z: 0 }; F.draw(list, 0, 0);
+  const mats = F.close.get(list[0]).body.children.map(m => m.material);
+  assert.ok(F.close.size === 1 && mats.some(m => lookOf(m)?.gsCpA) && mats.some(m => m.transparent && lookOf(m)?.gsCgA.value.z > 0) && !looksOf(F.far[0].paint.material).length, 'a car drawn whole wears the paint look and see-through glass; far off, plain paint');
+  const pk = [{ style: 0, x: 4, y: 0, z: 0, heading: 0 }, { style: 0, x: 11, y: 0, z: 0, heading: 1 }, { style: 0, x: 30, y: 0, z: 0, heading: 0 }, { style: 1, x: 2, y: 0, z: 2, heading: 0 }];
+  const PG = new ParkedGlass(grp, ['saloon', 'hatch'], pk); PG.update(new THREE.Vector3(0, 1.6, 0));
+  assert.deepEqual(PG.meshes.map(m => m && m.count), [2, 1], 'the parked cars within 12 m have their glass');
+  F.dispose(); PG.dispose();
+  console.log('city cars up close: seats behind see-through glass close by, dark glass further off, the paint look on cars drawn whole, the parked cars\' glass ok');
 }
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
@@ -2053,6 +2098,41 @@ console.log('physics ok');
   sp.settledFor(stepped.id).fpsAt -= 25 * 3600 * 1000; sp.settle(stepped.id, { tier: 0 });
   assert.equal(sp.fpsFor(stepped), 60, 'a day after the step it is let go, though the tier changed since');
   assert.equal(sp.settledFor(stepped.id).tier, 0, 'and the rest is kept');
+  // a computer (the Mac and Windows app, src/desktop.js): its class from its graphics chip as a desktop browser names it,
+  // screens up to 360 Hz, Auto at the screen's own rate, and 3D games stepping down a whole number of refreshes at a time
+  const DESK = {
+    'ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)': 'top', 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)': 'top',
+    'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top', 'ANGLE (AMD, AMD Radeon RX 6800 XT (0x000073BF) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top',
+    'ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top', 'ANGLE (Qualcomm, Qualcomm(R) Adreno(TM) X1-85 GPU (0x36334330) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top',
+    'ANGLE (ATI Technologies Inc., AMD Radeon Pro 5500M OpenGL Engine, OpenGL 4.1)': 'top',
+    'ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid', 'ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics 655, OpenGL 4.1)': 'mid',
+    'ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid', 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid',
+    'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)': 'low', 'ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)': 'low', '': 'top',
+  };
+  for (const [n, k] of Object.entries(DESK)) assert.equal(sp.classifyDesktop(n), k, n || '(no name)');
+  assert.equal(sp.classify(Object.keys(DESK)[0], '', 8, 8, false, false), 'mid', 'the phone rule reads a Mac as a mid-range iPhone (why computers have their own)');
+  assert.equal(sp.classify(Object.keys(DESK)[2], '', 4, 8, false, true), 'mid', 'a computer with four cores or less: one class lower');
+  const { chipLabel } = await import('../src/kit/gpu.js');
+  assert.equal(chipLabel(Object.keys(DESK)[0]), 'Apple M2 Pro'); assert.equal(chipLabel(Object.keys(DESK)[2]), 'NVIDIA GeForce RTX 4070', 'the chip\'s name for the reports');
+  for (const [f, want] of [[146, 144], [166, 165], [238, 240], [74.4, 75], [61, 60], [118, 120], [355, 360]]) assert.equal(sp.snapHz(f, true), want, `a computer's ${f} Hz`);
+  assert.equal(sp.snapHz(238, false), 144, 'a phone keeps its own steps');
+  assert.equal(sp.evenRate(144, 60), 72, '144 Hz near 60: 72 (two refreshes a frame)'); assert.equal(sp.evenRate(60, 60), 60); assert.equal(sp.evenRate(165, 60), 82.5); assert.equal(sp.evenRate(144, 30), 36);
+  assert.equal(sp.rateBelow(144, 144), 72); assert.equal(sp.rateBelow(144, 72), 48); assert.equal(sp.rateBelow(240, 240), 120); assert.equal(sp.rateBelow(60, 60), 30);
+  assert.equal(sp.rateBelow(60, 30), 0, 'nothing below 30'); assert.equal(sp.rateAbove(144, 48), 72); assert.equal(sp.rateAbove(144, 72), 144); assert.equal(sp.rateAbove(144, 144), Infinity);
+  sp.speed.desktop = true; sp.speed.klass = 'top';
+  for (let i = 0, t = 9000; i < 60; i++) sp.tick(t += 1000 / 144);
+  assert.equal(sp.screenHz(), 144, 'a 144 Hz computer screen measures as 144');
+  const d2 = { id: 'kt-desk-2d' }, d3 = { id: 'kt-desk-3d', era: 'nextgen' };
+  assert.equal(sp.fpsFor(d2), 144, 'a 2D game runs at the computer screen\'s own rate (a phone stops at 120)');
+  assert.equal(sp.fpsFor(d3), 144, 'and a 3D game on a top computer');
+  assert.equal(sp.stepDown(d3), true); assert.equal(sp.fpsFor(d3), 72, 'stepping down: two refreshes a frame, not 60 on 144 Hz');
+  assert.equal(sp.stepDown(d3), true); assert.equal(sp.fpsFor(d3), 48, 'then three');
+  assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 72, 'and back up a refresh at a time');
+  assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 144, 'to the screen\'s rate');
+  sp.speed.klass = 'mid'; assert.equal(sp.fpsFor({ id: 'kt-desk-mid', era: 'nextgen' }), 72, 'a mid computer\'s 3D games: near 60 in whole refreshes');
+  sp.speed.desktop = false; sp.speed.klass = null;
+  for (let i = 0, t = 20000; i < 60; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'back on a phone\'s 120 Hz screen');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
   const B = 1000 / 60;
   assert.equal(sp.qualityVerdict(B * 1.3, 0, B), 'slow', 'a slow average steps down');
@@ -4797,6 +4877,56 @@ console.log('physics ok');
   }
 }
 
+// rain that runs (src/kit/lens-drops.js, src/kit/sky.js): drops on the lens, spray off tyres, the clock running water keeps
+{
+  const THREE = await import('three'), { Weather } = await import('../src/kit/sky.js'), { LensDrops, DROPS_N } = await import('../src/kit/lens-drops.js');
+  // the lens: drops land at the rate asked, fade in, the big ones run down, and they dry; never more than DROPS_N
+  {
+    const d = new LensDrops(); assert.ok(!d.on && d.count === 0, 'a dry lens, and its loop not built in');
+    d.update(1, 0); assert.ok(d.count === 0 && !d.on, 'nothing lands at a rate of 0');
+    d.update(.5, 4); assert.ok(d.count === 2 && d.on, 'two a second for half a second: ' + d.count);
+    const v0 = d.vecs[0]; assert.ok(v0.x >= 0 && v0.x <= 1 && v0.y >= 0 && v0.y <= 1 && v0.z > .015 && v0.z < .1 && v0.w > 0 && v0.w <= 1, 'x, y across and up the screen, its size, how much it shows');
+    d.clear(); d.add(.5, .8, .08); d.update(.01, 0); assert.ok(d.vecs[0].w < .2, 'it fades in as it lands'); d.update(.2, 0); assert.ok(d.vecs[0].w === 1 && d.vecs[0].y < .8, 'a big one runs down: ' + d.vecs[0].y.toFixed(3));
+    d.add(.2, .3, .02); d.update(.5, 0); const small = d.list.find(q => q.r === .02); assert.ok(small && small.y === .3 && d.vecs[1].z < .02, 'a small one sits, and shrinks as it dries');
+    for (let i = 0; i < 40; i++) d.add(); d.update(0, 0); assert.ok(d.count === DROPS_N, 'the oldest give way: ' + d.count);
+    for (let i = 0; i < 20; i++) d.update(1, 0); assert.ok(d.count === 0 && d.on, 'all dry again (the loop stays built)');
+  }
+  // the weather lands them while it rains and the camera looks out under the open sky; lens: false keeps it dry
+  const P = (x, y, z) => ({ x, y, z }), run = (w, secs) => { for (let i = 0; i < Math.round(secs * 60); i++) w.update(1 / 60); };
+  const view = (y = 1.6) => { const cam = new THREE.PerspectiveCamera(60, 1, .1, 100); cam.position.set(0, y, 0); cam.lookAt(0, y + 1, -1); cam.updateMatrixWorld(); return { cam, scene: new THREE.Scene(), hemi: null, _air: null, parts: [], drops: new LensDrops(), air() { return this._air ||= { wet: 0, world: null }; } }; };
+  const roof = (f, d, max) => (f.x > 20 && f.y >= 4 ? f.y - 4 : Infinity), ground = () => 0;   // (a tunnel's roof 4 m up, east of x = 20)
+  {
+    const v = view(), w = new Weather(v, { kind: 'clear', level: roof, ground });
+    assert.ok(w.lens === v.drops && v.drops.on, 'the lens is turned on when the weather is made (its shaders are built with the drops in)');
+    run(w, 1); assert.ok(v.drops.count === 0 && w.shown.rain === 0, 'no rain, no drops');
+    w.set('rain'); run(w, 1); assert.ok(v.drops.count >= 3 && w.shown.rain === 1 && w.shown.runT > .9 && w.shown.runT < 1.1, 'looking up into the rain: ' + v.drops.count + ' drops; the running water clock goes');
+    const before = w.shown.runT; v.drops.clear(); v.cam.position.set(30, 1.6, 0); v.cam.updateMatrixWorld(); w.cover.place(30, 1.6, 0); w.cover.update(true); run(w, 1); assert.ok(v.drops.count === 0 && w.shown.runT > before, 'none in the tunnel');
+    w.dispose(); assert.ok(v.drops.count === 0, 'dispose() wipes the lens');
+    const v2 = view(), w2 = new Weather(v2, { kind: 'rain', lens: false }); run(w2, 1); assert.ok(!v2.drops.on && v2.drops.count === 0, 'lens: false'); w2.dispose();
+  }
+  // spray off tyres: a car on a wet road throws mist and drops behind its wheels from about 4 m/s, more the faster; none on a
+  // dry road, none slow, none under a roof over the road (but its own body is no roof)
+  {
+    const v = view(), w = new Weather(v, { kind: 'rain', level: roof, ground, soak: 1 }), car = new THREE.Group();
+    const wheels = [[-.8, -1.3], [.8, -1.3], [-.8, 1.3], [.8, 1.3]].map(([x, z]) => { const q = new THREE.Object3D(); q.position.set(x, .33, z); q.radius = .33; car.add(q); return q; });
+    car.wheels = wheels; car.size = { length: 4, width: 1.8, height: 1.5 }; v.scene.add(car);
+    assert.ok(w.watch(car) === car && w.mist && w.flung && v.parts.includes(w.mist) && v.scene.children.includes(w.flung.mesh), 'watch(): the mist and the drops are made');
+    const drive = (secs, speed, x0 = -10) => { for (let i = 0; i < Math.round(secs * 60); i++) { car.position.set(x0 + speed * i / 60, 0, 0); car.rotation.y = -Math.PI / 2; car.updateMatrixWorld(true); w.update(1 / 60); } };
+    w.set('clear'); w.wet = 0; drive(1, 20); assert.ok(w.mist.list.length === 0 && w.flung.alive === 0, 'a dry road: no spray');
+    w.set('rain'); run(w, 2); assert.ok(w.wet === 1);
+    w.mist.clear(); drive(1, 2.5); assert.ok(w.mist.list.length === 0, 'slow: none');
+    drive(1, 20); const mist = w.mist.list.length, drops = w.flung.alive; assert.ok(mist > 30 && drops > 10, 'fast on a wet road: ' + mist + ' puffs of mist, ' + drops + ' drops');
+    const at = car.position.x; let behind = 0; for (const q of w.mist.list) if (q.x < at - .5) behind++; assert.ok(behind > mist * .8, 'left behind it: ' + behind + ' of ' + mist);
+    let low = 0; for (const q of w.mist.list) if (q.y < 2.2 && q.y >= 0) low++; assert.ok(low === mist, 'low over the road');
+    w.mist.clear(); w.watched[0].vx = 0; drive(1, 10); const half = w.mist.list.length; assert.ok(half > 0 && half < mist * .8, 'less at half the speed: ' + half);
+    w.mist.clear(); v.cam.position.set(40, 1.6, 0); v.cam.updateMatrixWorld(); w.cover.place(40, 1.6, 0); w.cover.update(true); drive(1.2, 20, 22); assert.ok(w.mist.list.length === 0, 'in the tunnel: a dry road');
+    w.unwatch(car); w.mist.clear(); v.cam.position.set(0, 1.6, 0); drive(1, 20); assert.ok(w.mist.list.length === 0 && w.watched.length === 0, 'unwatch()');
+    const boat = Object.assign(new THREE.Group(), { kind: 'boat' }); w.watch(boat); assert.ok(w.watched.length === 0, "a boat is the water's");
+    w.dispose(); assert.ok(!v.scene.children.includes(w.flung?.mesh) && w.mist === null && !v.parts.length, 'dispose()');
+    console.log('rain that runs: drops on the lens (land, run, dry; only under the open sky), spray off tyres (wet roads, by speed, behind the wheels, not in a tunnel) ok');
+  }
+}
+
 // ground that takes marks (src/kit/marks.js: gs.outdoors.Marks)
 {
   globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
@@ -5204,7 +5334,37 @@ console.log('physics ok');
     const pl = vehicle('plane'), blades = pl.parts.prop.children.find(m => m.name !== 'blur'), blur = pl.parts.prop.children.find(m => m.name === 'blur');
     assert.ok(blades.visible && !blur.visible && pl.gear > 1.5 && pl.sit > 0); for (let i = 0; i < 120; i++) pl.move(1 / 60, 50); assert.ok(!blades.visible && blur.visible && pl.parts.prop.rotation.z > 20 && pl.wheels[0].rotation.x === 0, 'a propeller spins up into a blur; wheels in the air keep still');
     const pb = vehicle('boat', { style: 'patrol' }); pb.move(.5, 6, { steer: 1 }); assert.ok(pb.parts.radar.rotation.y > 1 && pb.draft > 1 && pb.parts.gun && pb.aim(.2, .1).parts.turret.rotation.y === .2);
-    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, a goods train's wagons, loads and colours, a fused train in a third of the draws, propellers and radar ok`);
+    // cars up close: a closed car's inside behind see-through glass (none asked for: dark glass), the paint and glass looks
+    const { lookOf } = await import('../src/kit/models/vehicle-looks.js');
+    const slot = (car, n) => car.shell.children.find(m => m.name === n), IN = ['lining', 'liner', 'carpet', 'dash', 'dials', 'seat'];
+    const sal = vehicle('car', { style: 'saloon', seed: 3 }), shut = vehicle('car', { style: 'saloon', seed: 3, inside: false });
+    assert.ok(IN.every(n => slot(sal, n)) && slot(sal, 'glass').material.transparent && lookOf(slot(sal, 'glass').material).gsCgA.value.z > 0 && lookOf(slot(sal, 'paint').material)
+      && !IN.some(n => slot(shut, n)) && !slot(shut, 'glass').material.transparent && shut.tris < sal.tris && !slot(vehicle('car', { style: 'jeep' }), 'lining'),
+      'a closed car has seats, a dashboard and door cards behind see-through glass; inside: false, or an open car, has none');
+    // dirt and wet on the car's own materials (its twins keep theirs)
+    const dc = vehicle('car', { style: 'saloon', seed: 3 }), dPaint = slot(dc, 'paint'), dGlass = slot(dc, 'glass');
+    dc.dirt(.5).wet(1);
+    assert.ok(lookOf(dPaint.material).gsCpA.value.y === .5 && near(lookOf(dGlass.material).gsCgA.value.x, .375, 1e-9) && lookOf(dPaint.material).gsCpA.value.z === 1 && dPaint.material !== slot(dc.twin(), 'paint').material && lookOf(slot(sal, 'paint').material).gsCpA.value.y === 0,
+      'dirt and wet change this car only');
+    // a dent moves only what is near where it was hit, on a shape of its own, and scrapes the paint there
+    const hc = vehicle('car', { style: 'saloon', seed: 3 }), hold2 = new THREE.Scene(); hold2.add(hc);
+    const hp = slot(hc, 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
+    const what = hc.hit(at, { power: 1, dir: new THREE.Vector3(-1, 0, 0) }), after = hp.geometry.attributes.position.array;
+    let dMoved = 0, dFar = 0; for (let i = 0; i < after.length; i += 3) { const d = Math.hypot(after[i] - before[i], after[i + 1] - before[i + 1], after[i + 2] - before[i + 2]); if (d > 1e-6) { dMoved++; if (Math.hypot(before[i] - at.x, before[i + 1] - at.y, before[i + 2] - at.z) > .5 + 1e-6) dFar++; } }
+    assert.ok(hp.geometry !== shared0 && dMoved > 20 && dFar === 0 && hc.damage.dents === 1 && lookOf(hp.material).gsCpX.value[0].w > 0 && shared0.attributes.position.array.every((q, i) => q === before[i]),
+      'a dent: ' + dMoved + ' corners moved, all within its reach, on the car\'s own shape, a scrape in the paint');
+    // glass: a side window breaks (its bits fall and lie on the ground), the windscreen crazes, a lamp breaks and goes dark
+    const bits = () => hold2.children.find(o => o.name === 'glass bits');
+    assert.ok(what === 'window' && hc.damage.glass === 1 && bits()?.count > 10, 'a hard hit by a side window breaks it: ' + what);
+    for (let i = 0; i < 240; i++) hc.update(1 / 60);
+    const bm = new THREE.Matrix4(), bp = new THREE.Vector3(); let low = 0; for (let i = 0; i < bits().count; i++) { bits().getMatrixAt(i, bm); bp.setFromMatrixPosition(bm); if (bp.y < .05) low++; }
+    assert.ok(low === bits().count, 'the broken glass falls and lies on the road: ' + low + ' of ' + bits().count);
+    assert.equal(hc.smash(new THREE.Vector3(.2, hc.size.height * .82, -hc.size.length * .2), { power: .8 }), 'screen', 'the windscreen crazes');
+    const lampL = hc.points.lampL; lampL.updateMatrixWorld(true); const lw = lampL.getWorldPosition(new THREE.Vector3());
+    assert.ok(hc.hit(lw, { power: .6 }) === 'lamp' && hc.damage.lamps === 1, 'a knock on a head lamp breaks it');
+    hc.mend();
+    assert.ok(hp.geometry === shared0 && hc.damage.dents === 0 && hc.damage.glass === 0 && hc.damage.lamps === 0 && !bits() && slot(hc, 'glass').material === slot(sal, 'glass').material, 'mend(): the shared shapes and materials back, the bits gone');
+    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, a goods train's wagons, loads and colours, a fused train in a third of the draws, propellers and radar, and cars up close: seats behind see-through glass, dirt and wet, dents, glass that breaks and falls, lamps that break, mend() ok`);
   }
 }
 
@@ -5449,6 +5609,44 @@ console.log('physics ok');
     assert.ok(scene.children.includes(d.mesh) && v.sims.includes(d) && d.mesh.userData.noLod && d.mesh.geometry.attributes.position.count === d.N, 'on a view: its mesh in the scene, stepped with the view (the graphics chip takes over there)');
     d.dispose(); assert.ok(!scene.children.includes(d.mesh) && !v.sims.includes(d), 'dispose() takes it out');
   }
+  // worn: a skirt and a cape on people who walk, then run, round a ring. The body's rods follow its bones; the skirt is cut to fit round them and
+  // goes all round, its front stays in front (the legs carry it, they don't drag it round); it keeps its size, near enough at a sprint (a hem
+  // round both knees), with more small steps while the legs swing fast; nothing ends a frame inside a leg; a cape hangs behind at a walk and flies
+  // at a run; a person put somewhere else at once takes their clothes with them whole
+  {
+    const { skeleton } = await import('../src/kit/models/human.js'), STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, dt = 1 / 60;
+    const a = skeleton({}), b = skeleton({}); a.position.set(.9, 0, 0); b.position.set(-.9, 0, 0); for (const p of [a, b]) p.updateMatrixWorld(true);
+    const c = new Cloth(null, { wind: { x: 1, z: 0 }, ground: 0 }), sk = c.skirt({ on: a, length: .55 }), cp = c.cape({ on: b });
+    assert.ok(sk.loop && sk.cols >= 24 && sk.carry > 0 && cp.carry > 0 && c.bodies.length === 2 && c.solids.length === 2 * CLOTH.BODY.length, 'worn pieces bring their wearers\' bodies: ' + c.solids.length + ' rods');
+    { let along = 0; for (let k = 0; k < c.L.length; k += 4) if (c.L[k] >= sk.base && c.L[k] < sk.base + sk.cols * sk.rows && c.L[k + 3] === 0 && c.L[k + 2] > 0) along++; assert.equal(along, sk.cols * sk.rows + sk.cols * (sk.rows - 1), 'a skirt is a loop: its last column joined to its first all the way down'); }
+    const inRod = (k, s) => { const P = c.P, q = [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]], ab = [s.b[0] - s.a[0], s.b[1] - s.a[1], s.b[2] - s.a[2]], ap = [q[0] - s.a[0], q[1] - s.a[1], q[2] - s.a[2]], bb = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2, t = bb > 1e-12 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / bb)) : 0; return s.r0 + (s.rb0 - s.r0) * t - Math.hypot(ap[0] - ab[0] * t, ap[1] - ab[1] * t, ap[2] - ab[2] * t); };
+    const worn = k => c.pieces.find(p => k >= p.base && k < p.base + p.cols * p.rows), deepest = () => { let d = 0; for (const s of c.solids) for (let k = 0; k < c.N; k++) if (c.W[k] && !(s.arm && s.arm <= worn(k).skips)) d = Math.max(d, inRod(k, s)); return d; };
+    assert.ok(deepest() === 0 && c.bodies[0].solids.some(s => s.arm) && sk.skips === 2 && cp.skips === 0 && new Cloth(null).cape({ on: b, arms: 'upper' }).skips === 1, 'cut to fit: no point starts inside its wearer (a skirt goes by their arms: a hand at the side would only push it into the hips)');
+    const T = new THREE.Matrix4(), V3 = THREE.Vector3, local = (p, x) => new V3(...x).applyMatrix4(T.copy(p.matrixWorld).invert());
+    let ang = 0, front = 0, nf = 0, inside = 0, walkFoot = 0, runFoot = 0, nw = 0, nr = 0; const walkS = [], runS = [], capeS = [], capeR = [], walkN = [], runN = [], q = (x, f) => x.slice().sort((a, b) => a - b)[Math.floor(f * (x.length - 1))];
+    const stretchOf = pc => { let w = 1; for (let k = 0; k < c.L.length; k += 4) { if (!c.L[k + 2] || c.L[k + 3] || c.L[k] < pc.base || c.L[k] >= pc.base + pc.cols * pc.rows) continue; const a3 = c.L[k] * 3, b3 = c.L[k + 1] * 3; w = Math.max(w, Math.hypot(c.P[a3] - c.P[b3], c.P[a3 + 1] - c.P[b3 + 1], c.P[a3 + 2] - c.P[b3 + 2]) / c.L[k + 2]); } return w; };
+    for (let i = 0; i < 360; i++) {
+      const sp = i < 180 ? 1.4 : 4.5, w = sp / 4; ang += w * dt;
+      [a, b].forEach((p, k) => { const rr = 4 + (k ? -.9 : .9); p.position.set(Math.sin(ang) * rr, 0, Math.cos(ang) * rr - 4); p.rotation.y = ang + Math.PI / 2; p.rig.blend(STR, sp); p.updateMatrixWorld(true); p.rig.update(dt, { speed: sp, turn: w }); p.updateMatrixWorld(true); });
+      c.update(dt);
+      if (i > 60 && i < 180) { front += local(a, sk.at(0, sk.rows - 1)).z; nf++; walkFoot += local(b, cp.at(cp.cols >> 1, cp.rows - 1)).y; nw++; }
+      if (i > 270) { runFoot += local(b, cp.at(cp.cols >> 1, cp.rows - 1)).y; nr++; }
+      if (i > 60 && i < 180) { walkS.push(stretchOf(sk)); capeS.push(stretchOf(cp)); walkN.push(c.lastSteps); } if (i > 200) { runS.push(stretchOf(sk)); capeR.push(stretchOf(cp)); runN.push(c.lastSteps); }
+      inside = Math.max(inside, deepest());
+    }
+    const mean = x => x.reduce((a, b) => a + b) / x.length;
+    assert.ok(finite(c) && held(c) < .005 && q(walkS, .9) < 1.15 && q(runS, .5) < 1.15 && q(runS, .9) < 1.35, 'walking and running in them: everything stays a number, near its hold (a leg may push it a little past: ' + (held(c) * 1000).toFixed(1) + ' mm) and the skirt keeps its size (its worst link: ' + q(walkS, .9).toFixed(3) + ' at a walk nine frames in ten, ' + q(runS, .5).toFixed(3) + ' and ' + q(runS, .9).toFixed(3) + ' at a run)');
+    // (a cape's edge may catch over an elbow for a moment as the arm swings back, the cloth spanning it, then slide off)
+    assert.ok(q(capeS, .5) < 1.1 && q(capeS, .9) < 1.6 && q(capeR, .9) < 1.15, 'and the cape (' + q(capeS, .5).toFixed(3) + ' at a walk, ' + q(capeS, .9).toFixed(3) + ' caught on an elbow, ' + q(capeR, .9).toFixed(3) + ' at a run)');
+    assert.ok(mean(walkN) < 7 && mean(runN) > mean(walkN) + 2 && Math.max(...runN) <= 3 * CLOTH.STEPS, 'more small steps while the legs swing fast: ' + mean(walkN).toFixed(1) + ' a frame at a walk, ' + mean(runN).toFixed(1) + ' at a run');
+    assert.ok(front / nf > .12, 'the skirt\'s front stays in front of the legs: its hem ' + (front / nf).toFixed(2) + ' m ahead of the hips on average');
+    assert.ok(inside < .012, 'no point of it ends a frame inside a leg, the body or an arm it goes round (deepest ' + inside.toFixed(3) + ' m)');
+    assert.ok(walkFoot / nw < .75 && runFoot / nr > walkFoot / nw + .2, 'the cape hangs at a walk (its foot ' + (walkFoot / nw).toFixed(2) + ' m up) and flies out at a run (' + (runFoot / nr).toFixed(2) + ')');
+    a.position.x += 10; a.rotation.y += 2; a.updateMatrixWorld(true); c.update(dt);
+    const hip = a.bones.hips.getWorldPosition(new V3()); let far = 0; for (let k = sk.base; k < sk.base + sk.cols * sk.rows; k++) far = Math.max(far, Math.hypot(c.P[k * 3] - hip.x, c.P[k * 3 + 2] - hip.z));
+    assert.ok(far < .6 && finite(c), 'put 10 m away and turned at once, the skirt is still round them (' + far.toFixed(2) + ' m out at most)');
+    const n0 = c.solids.length; c.bodies[1].remove(); assert.ok(c.solids.length === n0 - CLOTH.BODY.length && c.bodies.length === 1, 'a body can be taken away');
+  }
   // what it costs: about a thousand points (a flag, two banners, an awning, a washing line) a frame here
   {
     const wind = new Wind({ x: 5, z: 2, gust: .4 }), c = new Cloth(null, { wind, ground: 0 });
@@ -5458,6 +5656,28 @@ console.log('physics ok');
     assert.ok(finite(c) && ms < 3, 'cloth.update() ' + ms.toFixed(3) + ' ms a frame for ' + c.N + ' points');
     console.log(`cloth in the wind: a flag hangs in still air and flies in a breeze, a gale doesn't tear it, banners, awnings and washing lines hang right, a sheet stays on a ball, pins ride things, pieces come and go ok (${ms.toFixed(3)} ms a frame for ${c.N} points; ${CLOTH.STEPS} small steps)`);
   }
+}
+
+// ---- fronds in the wind (looks.js frondSway: what the fronds look's shaders do, on WebGL and WebGPU alike): each leaf a springy rod
+// turning about its root, so it keeps its length; bent by the drag across it (a leaf across the wind swings downwind, one pointing
+// downwind streams lower, one into it is lifted and pressed back), more as the square of the wind; long leaves bob slower than short
+// ones, at their own pitch; gusts roll downwind, reaching a tree 8 m further on about 2 s later; with no wind's way there's no lean
+{
+  const { frondSway } = await import('../src/kit/looks.js');
+  const run = (v, o = {}) => { const { len = 3.1, id = 3, wind = .8, dir = [1, 0], root = [0, 0], secs = 30, a = 1 } = o, out = []; for (let t = 0; t < secs; t += 1 / 30) out.push(frondSway(v, a, id, len, t, wind, dir, .08, root, false)); return out; };
+  const mean = (x, e) => x.reduce((s, d) => s + d[e], 0) / x.length;
+  let kept = 0; for (const v of [[0, .4, 3], [3, -.6, .5], [-2, 1, -2]]) for (const d of run(v, { wind: 2 })) kept = Math.max(kept, Math.abs(Math.hypot(v[0] + d[0], v[1] + d[1], v[2] + d[2]) / Math.hypot(...v) - 1));
+  assert.ok(kept < 1e-9, 'a frond turns about its root: it keeps its length (' + kept.toExponential(1) + ')');
+  const across = mean(run([0, .4, 3]), 0), down = mean(run([3, .4, 0]), 1), into = mean(run([-3, .4, 0]), 1), lo = mean(run([0, .4, 3], { wind: .4 }), 0), hi = mean(run([0, .4, 3], { wind: 1.6 }), 0);
+  assert.ok(across > .1 && down < -.01 && into > .01 && hi > 4.5 * lo, `bent by the drag across it: across the wind ${across.toFixed(2)} m downwind, pointing downwind ${down.toFixed(3)} m lower, into it ${into.toFixed(3)} m higher; four times the wind leans it ${(hi / lo).toFixed(1)} times as far`);
+  const bobs = len => { let z = 0, last = 0; for (const d of run([0, 0, len], { len, id: 7 })) { if (last && Math.sign(d[1]) !== Math.sign(last)) z++; last = d[1]; } return z / 60; }, slow = bobs(3.1), quick = bobs(.6);
+  assert.ok(slow > .4 && slow < .9 && quick > 2 * slow, `a long frond bobs slower than a short one: ${slow.toFixed(2)} and ${quick.toFixed(2)} times a second`);
+  const sx = r => run([0, .4, 3], { root: r, secs: 60 }).map(d => d[0]), A = sx([0, 0]), B = sx([8, 0]); let best = -Infinity, lag = 0;
+  for (let l = -120; l <= 120; l++) { let c = 0; for (let i = 150; i < A.length - 150; i++) c += A[i] * B[i + l]; if (c > best) { best = c; lag = l / 30; } }
+  assert.ok(Math.abs(lag - 2) < .3, 'gusts roll downwind: a frond 8 m downwind sways the same ' + lag.toFixed(2) + ' s later');
+  const calm = run([0, .4, 3], { dir: [0, 0] }); let moved = 0; for (const d of calm) moved = Math.max(moved, Math.hypot(...d));
+  assert.ok(Math.abs(mean(calm, 0)) < .02 && moved > .05, 'with no way to the wind it moves (' + moved.toFixed(2) + ' m at most) but leans nowhere');
+  console.log('fronds in the wind: they keep their length, are bent by the drag across them, bob at their own pitch and feel gusts that roll downwind ok');
 }
 
 // ---- smaller meshes (src/kit/slim.js, slim-core.js): points kept in about half the bytes
@@ -5975,6 +6195,28 @@ console.log('physics ok');
   assert.ok(fw.at.x === 2048 && fw.at.z === 512 && fw.recentred === 1 && Math.abs(box.position.x - 2048) < 1e-4 && box.position.y < y0 && Math.abs(fb.body.translation().x) < 1e-4, 'follows the view\'s centre: the box falls on where it was, kept near Rapier\'s own centre');
   for (const x of [fw, w]) x.free();
   console.log('floating origin: the centre moves in steps, physics far out runs as at the centre, a shift leaves bodies, lifts, hinges and rays be, and follows the view ok');
+}
+
+// the physical sky's air on WebGPU (atmosphere.js, Hillaire's method): blue overhead at noon, a red low sun, the sky round a
+// setting sun warmer than away from it, more air further down, and the tables made once for the same settings
+{
+  const A = await import('../src/kit/atmosphere.js');
+  const t0 = performance.now(), L = A.luts(A.airOf({})), ms = performance.now() - t0;
+  assert.ok(A.luts(A.airOf({})) === L, 'the tables are made once for the same air');
+  const n = v => { const l = Math.hypot(...v); return { x: v[0] / l, y: v[1] / l, z: v[2] / l }; };
+  const noon = n([0, 1, .35]), low = n([1, .05, .35]);
+  const zen = A.skyLight(L, { x: 0, y: 1, z: 0 }, noon, .002);
+  assert.ok(zen[2] > zen[0] * 1.8 && zen[2] > zen[1], 'blue overhead at noon: ' + zen.map(v => v.toFixed(4)));
+  const sunHigh = A.transmittance(L, A.RG + .002, noon.y), sunLow = A.transmittance(L, A.RG + .002, low.y);
+  assert.ok(sunHigh[0] > .8 && sunHigh[2] > .6, 'the noon sun comes through nearly whole: ' + sunHigh.map(v => v.toFixed(3)));
+  assert.ok(sunLow[0] > sunLow[2] * 3, 'a low sun is red: ' + sunLow.map(v => v.toFixed(3)));
+  const toward = A.skyLight(L, n([1, .08, .3]), low, .002), away = A.skyLight(L, n([-1, .08, -.3]), low, .002);
+  assert.ok(toward[0] / toward[2] > away[0] / away[2] * 1.3 && toward[0] > away[0], 'the low sky towards a setting sun is warmer and brighter: ' + toward.map(v => v.toFixed(4)) + ' against ' + away.map(v => v.toFixed(4)));
+  const horiz = A.skyLight(L, n([0, .02, -1]), noon, .002);
+  assert.ok(horiz[0] / horiz[2] > zen[0] / zen[2], 'paler (less blue) at the horizon than overhead');
+  const up = A.transmittance(L, A.RG + 3, noon.y);
+  assert.ok(up[2] > sunHigh[2], 'less air in the way from 3 km up');
+  console.log(`physical sky (Hillaire): blue overhead, red low sun, warm towards a setting sun, tables in ${ms.toFixed(0)} ms ok`);
 }
 
 // night lights (lamps.js): the lamp pool, light shapes, shadow slots

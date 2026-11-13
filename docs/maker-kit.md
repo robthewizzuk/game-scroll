@@ -72,7 +72,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Footprints and tyre tracks in snow, mud and sand, grass that parts, a trail to follow | `gs.outdoors` `Marks` | [Ground that takes marks](#ground-that-takes-marks) |
 | Cliffs with ledges and overhangs, caves to walk through, arches, rock of your own shape | `gs.outdoors` `land.rocks()` | [Cliffs, caves and overhangs](#cliffs-caves-and-overhangs) |
-| Flags, banners, awnings and washing lines in the wind, a sheet thrown over something | `gs.outdoors` `Cloth` | [Cloth in the wind](#cloth-in-the-wind) |
+| Flags, banners, awnings and washing lines in the wind, a sheet thrown over something, a skirt or a cape that goes round a person's legs and flies as they run | `gs.outdoors` `Cloth` | [Cloth in the wind](#cloth-in-the-wind) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -3025,6 +3025,20 @@ weather.set('snow');                                    // it starts to settle; 
   lying there; `deep`, .25, when it has all settled) and `weather.cover.at(x, z)` (the height of the
   highest thing over a spot). Slipping, slower steps, footprints, splashing footsteps, the sound of rain
   on a roof overhead and who comes in out of the rain are yours, from these.
+- **Water that runs**: in the rain, steep walls and windows get rivulets running down them, and glass, car
+  paint (a clearcoat) and other smooth things get beads that sit on them; the smoother the surface, the
+  more it shows (on rough brick it is a faint sheen). Puddles get rings where the drops land. All of it is in
+  the same wet look, with no extra pass, on WebGL and WebGPU, and only where the sky can see.
+- **Rain on the lens** (`lens: true`, the default): while it rains and the camera looks out under the open
+  sky, drops land on the view's lens, more when it faces up or into the wind. Each bends what is behind it,
+  and the big ones run down before they dry. It is drawn in the final pass (16 drops at most). `lens: false`
+  keeps the lens dry; `view.drops.add(x, y, r)` is a splash of your own (from a wave, a puddle a car drove
+  through), `view.drops.clear()` wipes it.
+- **Spray off tyres**: `weather.watch(car)` (a `gs.models.vehicle`, a `World3D.vehicle()` made with its wheel
+  meshes, or any moving `Object3D` with `wheels: [[x, z], ...]`) throws a mist that hangs in the air behind
+  it and drops flung off the tread while the road is wet, from about 4 m/s and all of it by 25; the back
+  wheels throw most. Under a roof higher than the car (a tunnel, a bridge) the road stays dry. `amount`
+  sets how much, `weather.unwatch(car)` stops it.
 - `water` (one `gs.outdoors.Water`, or a list): the rain falls on it too (it sets `water.rain`), and its
   drops hop off the water's surface.
 - Nothing settles on water, on people and animals (skinned meshes), or on anything whose mesh or material
@@ -3041,7 +3055,8 @@ weather.set('snow');                                    // it starts to settle; 
 - Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth, and
   [`gs.outdoors.Marks`](#ground-that-takes-marks) presses prints into it),
   puddles do not seek out the hollows of the land (they lie on flat ground where the map of them says),
-  water does not run down walls or drip off eaves, and nothing piles up on things that move.
+  water runs down walls only as a look (it does not drip off eaves or gather at a wall's foot), and nothing
+  piles up on things that move.
 
 ## Ground that takes marks
 
@@ -3151,9 +3166,24 @@ update(dt) { wind.update(dt); cloth.update(dt); }        // after whatever its p
   mast) push cloth out, and it grips them, so a sheet thrown over something stays on it; `set()` moves
   one, `remove()` takes it away. `ground` (a height, or `(x, z) => height`) is what cloth lies on.
 - **Pins that move.** `piece.ride(object3D)` keeps its pins in their place on a moving thing (a flag
-  on a boat, a pennant on a lance, a cape's shoulders); `piece.move(dx, dy, dz)` moves them by hand.
+  on a boat, a pennant on a lance); `piece.move(dx, dy, dz)` moves them by hand. Put somewhere else at
+  once (half a metre or a fifth of a turn in a frame: a round starting, a cut), a piece goes with it
+  whole rather than being dragged there. `carry` (0..1) is how much of the air round what it rides goes
+  along with it.
   `piece.at(i, j)` is a point now (on the CPU), `piece.remove()` takes it away, `cloth.clear()` takes
   everything away (in `reset()`).
+- **Clothes people wear.** `cloth.skirt({ on: person, length, flare })` and `cloth.cape({ on: person,
+  length, width })` (a `gs.models.human`) ride the person and go round their body: `cloth.body(person)`,
+  which each adds, is rods on the trunk, the thighs, the seat, the shins and the arms that follow the bones
+  every frame, a little fuller than the clothes under them. A skirt is a loop cut to fit round the hips
+  (each column let out wherever it would be inside them, never narrower than the row above), goes by
+  the arms (a hand at the side would only push it into the hips; `arms: true` to have it go round them, or
+  `'upper'` for the upper arms alone) and keeps a little more than its share of the air the body carries,
+  so at a walk it swings round the legs and at a run it flies back. The legs carry it as they swing into
+  it (it grips each rod against that rod's own going, so a stride sweeps the cloth along rather than
+  sliding through it), and while limbs swing fast past the clothes the cloth takes more small steps that
+  frame (each a centimetre of the fastest limb, up to three times `steps`; `cloth.lastSteps`), so a run
+  costs about twice a walk. Worn pieces are at least 12 points a metre, as fine as a thigh is wide.
 - **How it works.** Every piece in a view is one set of points joined to their neighbours (along,
   across, corner to corner and two along), stepped four small steps a frame (`steps`) with XPBD
   (Macklin and others 2019), and each point is never further from its nearest pin or peg than it was
@@ -3169,9 +3199,12 @@ update(dt) { wind.update(dt); cloth.update(dt); }        // after whatever its p
   away a piece starts the chip's set again from where the CPU last had every piece.
 - Not there: cloth does not collide with itself (a sheet can pass through its own folds), does not
   tear, and the wind does not go round buildings (`open` shelters a piece). On WebGPU the points are not
-  read back, so `at()` gives where a piece was made: it is for looking at. Loose clothes on people
-  are not this yet. `node scripts/cloth.cjs film.png` films a flag, an awning, a banner, a washing line
-  and a sheet over a ball (`--webgpu` on the graphics chip).
+  read back, so `at()` gives where a piece was made: it is for looking at. A skirt can't hold back a
+  stride wider than its hem: at a sprint it rides up and its hem stretches a little; a cape's edge can
+  catch over an elbow for a moment as the arm swings back. Coats, sleeves and trousers are the person's
+  own sewn clothes, not cloth. `node scripts/cloth.cjs film.png` films a flag, an awning, a banner, a
+  washing line and a sheet over a ball, and `scene=people` two people walking and then running, one in
+  a skirt and one in a cape (`--webgpu` on the graphics chip).
 
 ## Cliffs, caves and overhangs
 
@@ -3285,12 +3318,22 @@ update(dt) {
   `colour` and `trim` (its second colour: a coach's band, a wheelhouse, a stripe); `finish`: `'gloss'`,
   `'satin'`, `'matt'`, `'worn'` (paint rubbed through to the metal) or `'rusty'`, each kind starting with its
   own; `wear` (0..1 how aged, `false` for straight from the factory); `lit: true` (lamps that glow;
-  `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles). A
+  `lights(on)` later); `detail: .5` (a car's or a lorry's shell and wheels a little coarser: about a fifth fewer triangles);
+  a car's `inside: false` (no seats, dashboard or door cards, and dark glass in place of see-through glass:
+  about 9,000 triangles fewer), `seat` (their colour) and `flakes` (0..1, metal flakes in gloss paint). A
   train also takes `cars` (what the engine pulls, in order), `gauge` (metres between the rails, 1.435) and
   `deflectors: true` (a steam engine's smoke deflectors: a plate each side of its smokebox),
   `polished: false` (a working engine: its dome and boiler bands painted over and no bright wheel rims
   anywhere on the train) and `fuse: true` (a train that keeps to a straight line, in a third of the draws:
   below).
+- **Up close** (cars and trucks): `dirt(v)` (0..1: road grime low down and behind, dust on top, a film on
+  the glass with the wipers' fans clear), `wet(v)` (0..1 beading of its own on paint and glass: a car out of the wash or
+  the rain; while it rains the view's air beads it by itself), `dent(point, { power, dir })` (panels pushed in and crumpled, the paint scraped to primer and
+  metal), `smash(point, { power })` (a lamp breaks and goes dark; the windscreen crazes and stays; a side or
+  back window cracks from a soft knock or breaks, its glass falling and lying on the road: call
+  `update(dt)` each frame while it falls), `hit(point, { power, dir })` (a dent, then glass when hard
+  enough), `damage` (`{ dents, glass, lamps }`) and `mend()`. Each car changes its own materials and
+  shapes the first time; its twins keep the shared ones.
 - **`move(dt, speed, o)`** is the easy way to keep one alive each frame, whatever moves it: wheels and
   tracks roll for the speed (metres a second), the front wheels ease to `steer` (-1..1, + right; `lock`
   is how far they turn at 1, .55 radians), the body rolls outwards in a turn, squats as it pulls away and dips as it brakes, as a car on

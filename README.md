@@ -28,9 +28,14 @@ Every push to `main` builds a debug APK (`.github/workflows/android-apk.yml`) an
 
 There is no paid Apple Developer account yet, so the `iOS IPA (unsigned)` workflow (`.github/workflows/ios-ipa.yml`) builds an unsigned `.ipa` that testers sideload with Sideloadly and a free Apple ID (reinstall every 7 days). Run it by hand from the Actions tab; it publishes to the "Latest iOS build" release. Install steps: [docs/ios-sideload.md](docs/ios-sideload.md).
 
-### Web version on GitHub Pages
+### Mac and Windows app
 
-Every push to `main` also builds the web app and publishes it to https://robthewizzuk.github.io/game-scroll/ (`.github/workflows/web-pages.yml`). One-time setup: Settings > Pages > Source: **GitHub Actions**. GitHub only serves Pages from a private repo on a paid plan (Pro); on the free plan the repo has to be public. Phone sensors that need a native plugin fall back to touch controls in the browser.
+The same app runs on Mac and Windows (`desktop/`, Electron, which carries the Chromium engine the Android app runs in, so WebGPU and the engine's tuning behave the same). Every push to `main` builds it (`.github/workflows/desktop.yml`) and publishes the "Latest Mac and Windows builds" release, with download links that never change:
+[Mac (Apple silicon)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-arm64.dmg) ·
+[Mac (Intel)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg) ·
+[Windows](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-x64.exe) ·
+[Windows on Snapdragon](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe).
+They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md). (The web version on GitHub Pages was taken down when the desktop app came in.)
 
 ## Website and store listings
 

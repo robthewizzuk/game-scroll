@@ -4,6 +4,7 @@
 // a washing line, and a ball the wind blows a sheet over; pictures every so often from two places. It prints how many points
 // there are, how long the steps take a frame here, and whether the graphics chip ran them.
 //   ?cols=5 &cell=320x240 &secs=4 &wind=5 &gpu (WebGPU) &eye=x,y,z&at=x,y,z (one view of your own)
+//   &scene=people: two people walking round, then running, one in a skirt and one in a cape (the camera goes with them)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -18,23 +19,43 @@ try {
   const sun = gs.hd.sun('#fff2d8', 1.4, 8, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
   const pbr = gs.hd.pbr, box = (w, h, d, c, x, y, z) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), pbr(c, { rough: .9 })); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
   box(40, .2, 40, '#7d8274', 0, -.1, 0);
+  const PEOPLE = Q.get('scene') === 'people', folk = [];
+  if (!PEOPLE) {
   box(.08, 6, .08, '#ccc', 0, 3, 0);                          // the flagpole
   box(6, 3.4, .3, '#b8a888', 4, 1.7, -3.15);                   // a wall with an awning
   box(2.4, .1, .1, '#555', -2.8, 3.2, -1);                     // the banner's rail
   box(.08, 2, .08, '#8a6a4a', -5, 1, 3); box(.08, 2, .08, '#8a6a4a', -1, 1, 3.6);   // the washing line's posts
+  }
   const wind = new gs.outdoors.Wind({ x: ws, z: ws * .35, gust: .4, gustSize: 20 }), cloth = new gs.outdoors.Cloth(v, { wind, ground: 0 });
+  if (PEOPLE) {
+    const looks = [{ seed: 3, build: 'medium', top: { kind: 'shirt' }, legs: { kind: 'trousers' } }, { seed: 11, build: 'medium' }];
+    await gs.models.human.ready(looks);
+    looks.forEach((o, k) => { const h = gs.models.human(o); h.position.set(k ? -.9 : .9, 0, 0); v.scene.add(h); h.updateMatrixWorld(true); folk.push(h); });
+    cloth.skirt({ on: folk[0], length: .55, colour: '#3f5a86' }); cloth.cape({ on: folk[1], colour: '#8a2232' });
+  } else {
   cloth.flag({ at: [0, 5.95, 0], size: [1.8, 1.2], colours: ['#c33', '#f4f0e6', '#2a5cb0'] });
   cloth.awning({ at: [4, 2.7, -3], width: 3, depth: 1.3, fall: .5, colours: ['#2a7a4a', '#eeeae0', '#2a7a4a', '#eeeae0', '#2a7a4a', '#eeeae0', '#2a7a4a'] });
   cloth.banner({ from: [-3.95, 3.15, -.95], to: [-1.65, 3.15, -.95], drop: 2.2, colour: '#7a2440', weight: .6 });   // (canvas, weighted at the foot)
   cloth.line({ from: [-5, 1.95, 3], to: [-1, 1.95, 3.6], items: 3 });
-  const ball = cloth.ball({ x: 2.5, y: .5, z: 2.5, r: .5 }); box(.6, .3, .6, '#e6dcc8', 4, .15, 2.2);   // (a box the sheet's colour, to tell its light from the sun's)
-  { const m = new T.Mesh(new T.SphereGeometry(.48, 24, 16), pbr('#a05a30', { rough: .6 })); m.position.set(2.5, .5, 2.5); m.castShadow = true; v.scene.add(m); }
-  cloth.sheet({ cols: Math.round(1.6 * cloth.fine), rows: Math.round(1.6 * cloth.fine), place: (i, j) => [2.5 - .8 + 1.6 * i / (Math.round(1.6 * cloth.fine) - 1), 1.3, 2.5 - .8 + 1.6 * j / (Math.round(1.6 * cloth.fine) - 1)], colour: '#e6dcc8', weight: .5, open: .25 });   // (a tarp in the lee of something)
-  const views = Q.get('eye') ? [[Q.get('eye').split(',').map(Number), (Q.get('at') || '0,2,0').split(',').map(Number)]] : [[[7, 4, 9], [1, 2.2, 0]], [[-9, 3.2, 7], [-2.5, 2, 1]]];
+  const ball = PEOPLE ? null : cloth.ball({ x: 2.5, y: .5, z: 2.5, r: .5 }); if (!PEOPLE) box(.6, .3, .6, '#e6dcc8', 4, .15, 2.2);   // (a box the sheet's colour, to tell its light from the sun's)
+  if (!PEOPLE) { const m = new T.Mesh(new T.SphereGeometry(.48, 24, 16), pbr('#a05a30', { rough: .6 })); m.position.set(2.5, .5, 2.5); m.castShadow = true; v.scene.add(m); }
+  }
+  if (!PEOPLE) cloth.sheet({ cols: Math.round(1.6 * cloth.fine), rows: Math.round(1.6 * cloth.fine), place: (i, j) => [2.5 - .8 + 1.6 * i / (Math.round(1.6 * cloth.fine) - 1), 1.3, 2.5 - .8 + 1.6 * j / (Math.round(1.6 * cloth.fine) - 1)], colour: '#e6dcc8', weight: .5, open: .25 });   // (a tarp in the lee of something)
+  // (the people go round a ring of 4 m: walking for the first half, running for the second; views from beside them and from behind)
+  const R = 4, STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }; let ang = 0;
+  const views = PEOPLE ? [[[0, 0, 0], [0, 0, 0]], [[0, 0, 0], [0, 0, 0]], [[0, 0, 0], [0, 0, 0]]] : Q.get('eye') ? [[Q.get('eye').split(',').map(Number), (Q.get('at') || '0,2,0').split(',').map(Number)]] : [[[7, 4, 9], [1, 2.2, 0]], [[-9, 3.2, 7], [-2.5, 2, 1]]];
   const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * views.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
   const dt = 1 / 60, N = Math.round(secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((i + 1) / cols * N) - 1);
   let cost = 0, cpuFrames = 0;
   for (let i = 0; i < N; i++) {
+    if (PEOPLE) {
+      const sp = i < N / 2 ? 1.4 : 4.5, w = sp / R; ang += w * dt;
+      folk.forEach((h, k) => { const rr = R + (k ? -.9 : .9); h.position.set(Math.sin(ang) * rr, 0, Math.cos(ang) * rr - R); h.rotation.y = ang + Math.PI / 2; h.rig.blend(STR, sp); h.updateMatrixWorld(true); h.rig.update(dt, { speed: sp, turn: w }); h.updateMatrixWorld(true); });
+      const mx = Math.sin(ang) * R, mz = Math.cos(ang) * R - R, fx = Math.cos(ang), fz = -Math.sin(ang);   // (fx, fz: the way they go)
+      views[0] = [[mx + Math.sin(ang) * 4.2 + fx * 1.2, 1.5, mz + Math.cos(ang) * 4.2 + fz * 1.2], [mx, .95, mz]];   // from outside the ring, beside them
+      views[1] = [[mx - fx * 3.6 + Math.sin(ang) * 1.2, 1.7, mz - fz * 3.6 + Math.cos(ang) * 1.2], [mx, 1, mz]];      // from behind
+      views[2] = [[mx + fx * 3.4 + Math.sin(ang) * .4, 1.3, mz + fz * 3.4 + Math.cos(ang) * .4], [mx, .95, mz]];      // from in front
+    }
     wind.update(dt); const t0 = performance.now(); cloth.update(dt); cost += performance.now() - t0;
     if (cloth.mode === 'cpu') cpuFrames++;
     const k = shots.indexOf(i);

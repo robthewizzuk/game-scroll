@@ -1,0 +1,108 @@
+{
+  "name": "game-scroll-desktop",
+  "productName": "Game Scroll",
+  "version": "1.0.0",
+  "description": "Game Scroll for Mac and Windows: scroll a feed of quick mini games",
+  "author": "Rob (https://github.com/robthewizzuk)",
+  "license": "PolyForm-Shield-1.0.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.1"
+  },
+  "build": {
+    "appId": "com.game_scroll.app",
+    "productName": "Game Scroll",
+    "copyright": "Copyright © 2026 Rob",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json",
+      {
+        "from": "../dist",
+        "to": "web",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "protocols": [
+      {
+        "name": "Game Scroll link",
+        "schemes": [
+          "gamescroll"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.games",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "darkModeSupport": true,
+      "target": [
+        {
+          "target": "dmg"
+        }
+      ],
+      "artifactName": "Game-Scroll-mac-${arch}.${ext}",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Some games use the camera (your face, hands or what you point it at). It stays on this Mac.",
+        "NSMicrophoneUsageDescription": "Some games listen (blow, clap, sing or speak). The sound stays on this Mac.",
+        "NSLocationWhenInUseUsageDescription": "A few games use roughly where you are. It stays on this Mac."
+      }
+    },
+    "dmg": {
+      "title": "Game Scroll",
+      "writeUpdateInfo": false
+    },
+    "win": {
+      "icon": "build/icon-win.png",
+      "target": [
+        {
+          "target": "nsis"
+        }
+      ],
+      "artifactName": "Game-Scroll-windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "shortcutName": "Game Scroll",
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": false
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.png",
+      "category": "Game"
+    },
+    "publish": null
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robthewizzuk/game-scroll.git"
+  }
+}

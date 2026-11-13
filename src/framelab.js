@@ -49,7 +49,7 @@ import { BUILD } from './perf.js';
 import { store } from './util.js';
 import { PROF, take } from './kit/prof.js';
 
-const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250;
+const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250, FREEZE_MAX = 3000;
 const is3D = d => d && (d.era === 'nextgen' || d.era === 'ar' || d.era === 'board');
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 const file = u => String(u || '').split(/[?#]/)[0].split('/').pop() || '';
@@ -57,7 +57,7 @@ const file = u => String(u || '').split(/[?#]/)[0].split('/').pop() || '';
 /* ---------- what each refresh showed ---------- */
 // kind: 0 nothing new, 1 a real frame, 2 a made frame (frame generation)
 const T = new Float64Array(N), K = new Uint8Array(N), PLAY = new Uint8Array(N), EXP = new Float32Array(N);
-let head = 0, count = 0, lastPresent = 0, lastTick = 0;
+let head = 0, count = 0, lastPresent = 0, lastPlay = false, lastTick = 0;
 const events = [];        // { t, k: 'S'|'X'|'G'|'L'|'Q'|'F'|'C'|'H', text, ms }
 const loafs = [];         // long animation frames from the browser
 let rec = null;           // recording: { t0, rows: {...columns}, events, samples, shots }
@@ -160,13 +160,16 @@ function tick(now, s, how, upd = 0, drw = 0) {
     if (k === 1) { R.upd.push(r2(upd)); R.drw.push(r2(drw)); R.cpu3d.push(HD && is3D(s?.def) ? r2(HD.info.cpu) : 0); R.fg.push(fg ? r2(HD.info.fgMs) : 0); R.gpu.push(HD?.info.gpuMs != null ? r2(HD.info.gpuMs) : null); R.ft.push(R.t.length - 1); if (playing) chipParts(); }
     if (now - rec.t0 > REC_MAX) stopRec();
   }
+  parts(k, upd, drw, playing);
   if (k) {
     const iv = lastPresent ? now - lastPresent : 0;
-    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw);
-    lastPresent = now; pend = [];
+    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw, k);
+    // a freeze: a quarter of a second or more between two pictures of play (not the app coming back to the front, not
+    // a pause). The frame rate, the lows and the stutters leave out gaps this long, so freezes are counted on their own.
+    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, upd, drw, k);
+    lastPresent = now; lastPlay = playing; pend = [];
     if (k === 1) { last.upd = last.upd * .9 + upd * .1; last.drw = last.drw * .9 + drw * .1; }
   }
-  parts(k, upd, drw, playing);
   if (tint && tintEl) paintTint(s, k, now);
   if (frozenWait && k) frozenWait();
   if (fgArm && k) fgArm(k, s);
@@ -183,12 +186,13 @@ function chipParts() {
 }
 // CPU by part (prof.js): what each part took since the last real frame, the game's own code being what is
 // left of update() and draw(). Live: a running average a frame; recorded: the sum and the worst frame.
-const SYS = new Map(), carry = {}; let carryIn = 0;
+const SYS = new Map(), carry = {}; let carryIn = 0, bigPart = null;   // (bigPart: the biggest part of the last real frame, [name, ms])
 const GAME = 'game\u2019s own code';
 function parts(k, upd, drw, playing) {
   carryIn += take(carry);
   if (k !== 1 || upd + drw <= 0) return;
   carry[GAME] = Math.max(0, upd + drw - carryIn);
+  bigPart = null; for (const n in carry) if (!bigPart || carry[n] > bigPart[1]) bigPart = [n, carry[n]];
   for (const [n, v] of SYS) if (!(n in carry)) SYS.set(n, v * .95);
   for (const n in carry) SYS.set(n, (SYS.get(n) ?? carry[n]) * .95 + carry[n] * .05);
   for (const [n, v] of SYS) if (v < .002 && !(n in carry)) SYS.delete(n);
@@ -203,12 +207,14 @@ function parts(k, upd, drw, playing) {
 function partsText(list, n = 7) {
   return list.filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${v.toFixed(v < 1 ? 2 : 1)}`).join(' · ');
 }
-function hitch(now, iv, exp, s, upd, drw) {
+function hitch(now, iv, exp, s, upd, drw, k) {
   const why = pend.slice();
   if (now - C.resizeAt < 600) why.push('fold / resize');
   if (now - C.hiddenAt < 1500) why.push('app came back to the front');
   const lf = loafAt(now - iv, now); if (lf) why.push(lf);
   if (upd + drw > exp) why.push(`game CPU over the beat (update ${r1(upd)} + draw ${r1(drw)} ms)`);
+  // (where that CPU time went, by part: the scene pass, physics, the game's own code...)
+  if (k === 1 && upd + drw > exp && bigPart && bigPart[1] > exp * .5) why.push(`most in ${bigPart[0]} (${r1(bigPart[1])} ms)`);
   // (the GPU's time is for a real frame and the frames made after it: with frame generation, that many refreshes)
   const gpu = HD?.info.gpuMs; if (gpu != null && gpu > exp * (HD.info.framegen ? HD.info.fgSteps || 2 : 1)) why.push(`GPU over the beat (${r1(gpu)} ms)`);
   if (!why.length) why.push(HD && is3D(s?.def) ? 'no cause seen (GPU / driver / system?)' : 'no cause seen (system?)');
@@ -348,15 +354,19 @@ const PAIRS = {
   tier: { title: 'Low vs ultra tier', a: 'low', b: 'ultra', set: on => { HD.force = on ? 3 : 0; } },
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
 function halfCan() { return HD?.info.backend === 'webgpu' && !/no half/.test(HD.info.half || 'no half'); }
 // effects spread over frames (src/kit/hd3d-gpu-spread.js) can be compared: WebGPU, and something spread (or switched off now)
 function spreadCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.spread || HD.spread === false); }
+// the sky on WebGPU (src/kit/hd3d-gpu-sky.js) can be compared: WebGPU, and the air or the clouds drawn (or switched off now)
+function skyCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.sky || HD.clouds === false || HD.atmosphere === false); }
+function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD.info.sky || '') || HD.clouds === false); }
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -370,7 +380,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -487,11 +497,14 @@ async function runFG() {
 //   Half:   the kit's own WebGPU passes in full and in half precision (src/kit/half.js)
 //   Spread: ambient occlusion, volumetric light and bounce light with every sample every frame, and spread over frames
 //           (src/kit/hd3d-gpu-spread.js)
+//   Clouds: the sky's painted clouds, and real ones marched through with their shadow (src/kit/hd3d-gpu-sky.js)
 const CHECKS = {
   half: { title: 'Half precision check', name: 'Half check', key: 'half', off: 'full', on: 'half', can: halfCan, no: () => PAIRS.half.no, says: () => HD.info.half,
     note: 'in half: SGSR 2\'s upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare' },
   spread: { title: 'Spread check', name: 'Spread check', key: 'spread', off: 'every sample', on: 'spread', can: spreadCan, no: () => PAIRS.spread.no, says: () => 'spread: ' + (HD.info.spread || 'none'),
     note: 'spread over frames: ambient occlusion (a part of its directions a frame), volumetric light (a third of its steps) and bounce light (one slice at half size), the frames before filling in' },
+  clouds: { title: 'Clouds check', name: 'Clouds check', key: 'clouds', off: 'painted', on: 'marched', can: cloudsCan, no: () => 'Marched clouds need WebGPU, a tier with ambient occlusion (high or ultra) and a game whose sky has clouds, so there is nothing to compare.', says: () => 'sky: ' + (HD.info.sky || 'as before'),
+    note: 'marched: the clouds at a quarter of the pixels, filled in from the frames before, and their shadow a few times a second' },
 };
 async function runCheck(kind) {
   const C = CHECKS[kind], s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash(`${C.name} needs a Next Gen or AR game.`);
@@ -524,7 +537,7 @@ async function runCheck(kind) {
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -615,14 +628,14 @@ function shrinkTo(src, w, h) { if (src.width === w && src.height === h) return s
 export function summary(R = lastRec) {
   if (!R) return 'Frame lab: nothing recorded yet (Rec, play, Rec again).';
   const m = measure(recRows(R), R.cfg[0]?.hz || 60), c = R.cfg[0] || {}, c1 = R.cfg[R.cfg.length - 1] || c, secs = ((R.t1 || performance.now()) - R.t0) / 1000;
-  const hit = R.events.filter(e => e.k === 'H'), groups = {};
+  const hit = R.events.filter(e => e.k === 'H'), groups = {}, fz = hit.filter(e => e.ms >= PAUSE_GAP);
   for (const h of hit) for (const why of h.text.split(', ')) { const k = why.replace(/\s*\([^)]*\d[^)]*\)/g, '').trim(); (groups[k] ||= { n: 0, worst: 0 }).n++; groups[k].worst = Math.max(groups[k].worst, h.ms); }
   const S = R.samples, s0 = S[0], s1 = S[S.length - 1];
   const lines = [
     `Frame lab · ${R.title || R.game} · ${phoneLabel()} · build ${BUILD} · ${secs.toFixed(0)} s · ${c.view} (${c.form})`,
     c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${c.upscaler} · frame gen ${c.fg || 'off'}${c.fx ? ` · effects smaller: ${c.fx}` : ''}${c1.tier !== c.tier || c1.rw !== c.rw || c1.fx !== c.fx ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}${c1.fx ? ` (smaller: ${c1.fx})` : ''}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
     `screen ${c.hz} Hz${c.rates ? ` (offers ${c.rates}, asked ${c.asked || 'none'})` : ''} · game ${c.fps} fps · phone class ${c.cls} · ${c.gpu || 'gpu ?'}`,
-    m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}` : 'not enough frames in play',
+    m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}${fz.length ? ` · ${fz.length} freeze${fz.length > 1 ? 's' : ''} of ${PAUSE_GAP} ms or more (worst ${Math.max(...fz.map(e => e.ms)).toFixed(0)} ms; not in the numbers before)` : ''}` : 'not enough frames in play',
     cpuLine(R),
     sysLine(R),
     chipLine(R),
@@ -750,7 +763,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -772,6 +785,7 @@ function panel() {
       case 'fg': runFG(); break;
       case 'half': runHalf(); break;
       case 'spread': runSpread(); break;
+      case 'clouds': runClouds(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -869,7 +883,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)

@@ -1,0 +1,108 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// The sky on WebGPU (src/kit/hd3d-gpu-sky.js, src/kit/atmosphere.js) for scripts/detail-test.cjs --page sky: a field with
+// posts and a far ridge under a physical Sky with clouds, at noon, late afternoon and sunset, drawn as before (Preetham
+// and the painted layer: HD.atmosphere and HD.clouds false) and as the big engines draw it (Hillaire's air, clouds marched
+// through). Checked: overhead is blue at noon and the low sky warmer towards a setting sun than away from it; there are
+// clouds, and their shadows fall on the ground in places; held still they settle (their noise filled in over frames);
+// turning the camera keeps them in place; the frame after a cut and a card's picture (a bake) have the same clouds;
+// the switches off, and WebGL, draw as before.
+//   ?gpu  ?w=240&h=320  ?frames=24 (frames drawn for each picture)  ?cover=.55
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320), FR = +(Q.get('frames') || 24), COVER = +(Q.get('cover') || .55);
+HD.force = 2; HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note });
+try {
+  const v = new gs.hd.HDView({ bg: '#8aa0b8', fog: 0, env: .4, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  v.cam.far = 4000; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#fff2e0', 2, 30, [.5, .8, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sky = new gs.sky.Sky(v, { time: 12, physical: true, clouds: COVER, stars: 0 }); v.air({ haze: .0006 });
+  const ground = new T.Mesh(new T.PlaneGeometry(3000, 3000), gs.hd.pbr('#6a7a4a', { rough: .95 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; v.scene.add(ground);
+  for (let i = 0; i < 12; i++) { const m = new T.Mesh(new T.BoxGeometry(.4, 2 + (i % 3), .4), gs.hd.pbr('#8a7a68', { rough: .8 })); m.position.set(-12 + i * 2.2, 1, -14 - (i % 4) * 3); m.castShadow = m.receiveShadow = true; v.scene.add(m); }
+  // a far ridge, a few hundred metres off: the haze's colour shows on it
+  const ridge = new T.Mesh(new T.CylinderGeometry(900, 1100, 120, 48, 1, true, -1.2, 2.4), gs.hd.pbr('#4a5a3a', { rough: 1, side: T.DoubleSide })); ridge.position.set(0, 40, 0); v.scene.add(ridge);
+  // (the sky's dome follows the camera in sky.update(), as a game calls it each frame)
+  const look = (yaw, pitch) => { v.cam.position.set(0, 1.7, 6); v.cam.rotation.set(pitch, yaw, 0, 'YXZ'); v.cam.updateMatrixWorld(); sky.update(0); };
+  const grab = () => x.getImageData(0, 0, W, H).data.slice();
+  const pic = px => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H); im.data.set(px); g.putImageData(im, 0, 0); return cv.toDataURL(); };
+  const draw = async (n = 1) => { for (let i = 0; i < n; i++) { v.render(x, W, H); await frame(); } x.getImageData(0, 0, 1, 1); };
+  // a region's mean colour (0..255), and how much its brightness varies (std)
+  const region = (px, x0, y0, x1, y1) => { let r = 0, g = 0, b = 0, n = 0, s = 0, s2 = 0; for (let y = Math.floor(y0 * H); y < y1 * H; y++) for (let xx = Math.floor(x0 * W); xx < x1 * W; xx++) { const i = (y * W + xx) * 4, l = .2126 * px[i] + .7152 * px[i + 1] + .0722 * px[i + 2]; r += px[i]; g += px[i + 1]; b += px[i + 2]; s += l; s2 += l * l; n++; } return { r: r / n, g: g / n, b: b / n, l: s / n, std: Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2)) }; };
+  const apart = (a, b) => { let sum = 0, big = 0; const n = a.length / 4; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 24) big++; } return { mean: +(sum / n).toFixed(2), big: +(big / n * 100).toFixed(2) }; };
+  const R = n => ({ r: +n.r.toFixed(1), g: +n.g.toFixed(1), b: +n.b.toFixed(1), l: +n.l.toFixed(1), std: +n.std.toFixed(1) });
+  async function shoot(name, time, yaw, pitch, n = FR) { sky.time = time; sky.update(0); look(yaw, pitch); v.cut(); await draw(n); const px = grab(); out[name] = pic(px); return px; }
+  const results = {};
+  for (const mode of ['before', 'now']) {
+    HD.atmosphere = HD.clouds = mode === 'now';
+    sky.clouds = COVER;
+    const R0 = results[mode] = {};
+    // noon looking up a little (sky above, field below), late afternoon, and sunset looking at the sun (in the east at 6 and west at 18: +x then -x)
+    R0.noon = await shoot(mode + '-noon', 12, Math.PI, .25); R0.info = HD.info.sky;
+    R0.after = await shoot(mode + '-afternoon', 16, Math.PI * .5, .12);
+    R0.sunset = await shoot(mode + '-sunset', 17.75, Math.PI * .5, .08);
+    R0.away = await shoot(mode + '-sunset-away', 17.75, -Math.PI * .5, .08);
+    sky.clouds = 0; R0.clear = await shoot(mode + '-noon-clear', 12, Math.PI, .25);
+    R0.sunsetClear = await shoot(mode + '-sunset-clear', 17.75, Math.PI * .5, .08); R0.awayClear = await shoot(mode + '-sunset-away-clear', 17.75, -Math.PI * .5, .08); sky.clouds = COVER;
+    // a morning as Long Shadow's first mission has it (thin haze, few clouds, a gap round the sun), and a storm with the day
+    // keys' colours and the game's own cloud colours (physical: false)
+    Object.assign(sky, { physical: { haze: 2.2, bright: .52 }, clouds: .3, gap: .55, tilt: -.3 }); R0.morning = await shoot(mode + '-morning', 8.4, -Math.PI * .5, .15);
+    Object.assign(sky, { physical: false, clouds: .86, gap: .4, tilt: .12, cloudLight: new T.Color('#8c8a8a'), cloudDark: new T.Color('#2a2e36') }); R0.storm = await shoot(mode + '-storm', 17.75, Math.PI * .5, .15);
+    Object.assign(sky, { physical: true, clouds: COVER, gap: 0, tilt: .35, cloudLight: null, cloudDark: null });
+  }
+  HD.atmosphere = HD.clouds = true;
+  info.backend = HD.info.backend; info.sky = results.now.info; 
+  const top = px => region(px, .3, .02, .7, .12), low = px => region(px, .1, .3, .9, .4), field = px => region(px, 0, .55, 1, 1);
+  info.noonTop = { before: R(top(results.before.clear)), now: R(top(results.now.clear)) };
+  info.sunsetLow = { toward: R(low(results.now.sunsetClear)), away: R(low(results.now.awayClear)) };
+  info.clouds = { clear: R(top(results.now.clear)), cloudy: R(top(results.now.noon)) };
+    if (HD.info.backend === 'webgpu') {
+    const nt = top(results.now.clear), st = low(results.now.sunsetClear), sa = low(results.now.awayClear);
+    check('the air is drawn (Hillaire) and the clouds marched', /air/.test(results.now.info) && /clouds/.test(results.now.info) && !results.before.info, `now: "${results.now.info}", before: "${results.before.info}"`);
+    check('overhead at noon is blue', nt.b > nt.r * 1.25 && nt.b > 90, JSON.stringify(R(nt)));
+    check('the low sky towards a setting sun is warmer than away from it', st.r / Math.max(1, st.b) > sa.r / Math.max(1, sa.b) * 1.2, `towards ${JSON.stringify(R(st))}, away ${JSON.stringify(R(sa))}`);
+    const cl = top(results.now.noon), cc = top(results.now.clear);
+    check('there are clouds: the sky varies where they are', cl.std > cc.std + 4, `std ${cl.std.toFixed(1)} with, ${cc.std.toFixed(1)} without`);
+    // the storm keeps the game's dark cloud colours: no lighter than the painted storm
+    const sb = top(results.before.storm), sn = top(results.now.storm); info.storm = { before: R(sb), now: R(sn) };
+    check('a storm with the game\'s cloud colours stays dark', sn.l < sb.l + 20, `top of the sky now ${JSON.stringify(R(sn))}, before ${JSON.stringify(R(sb))}`);
+    // the clouds' shadows on the ground: the sun on the field below the camera, at nine places 800 m apart, changes under
+    // the clouds (some of the places are in a cloud's shadow), and not without them
+    v.air({ haze: .0006, cloudShade: .9 });
+    const spots = async () => { const ls = []; for (let i = 0; i < 9; i++) { sky.time = 12; sky.update(0); v.cam.position.set(-800 + (i % 3) * 800, 1.7, -800 + Math.floor(i / 3) * 800); v.cam.rotation.set(-1.2, Math.PI, 0, 'YXZ'); v.cam.updateMatrixWorld(); sky.update(0); v.cut(); await draw(4); ls.push(region(grab(), 0, .3, 1, 1).l); } return ls; };
+    const sd = ls => { const m = ls.reduce((a, b) => a + b) / ls.length; return Math.sqrt(ls.reduce((a, b) => a + (b - m) ** 2, 0) / ls.length); };
+    sky.clouds = 0; const lo = await spots(); sky.clouds = COVER; const lc = await spots();
+    info.shade = { clear: lo.map(l => +l.toFixed(1)), cloudy: lc.map(l => +l.toFixed(1)) }; v.air({ haze: .0006, cloudShade: .45 });
+    check('the clouds shade the field (in places)', sd(lc) > sd(lo) + 3 && Math.min(...lc) < Math.min(...lo) - 5, `the field at nine places: ${lc.map(l => l.toFixed(0)).join(', ')} with clouds, ${lo.map(l => l.toFixed(0)).join(', ')} without`);
+    // held still: the march's noise is filled in over frames, so two frames late on barely differ (the clouds drift a little)
+    sky.time = 12; sky.update(0); look(Math.PI, .25); v.cut(); await draw(FR); const a = grab(); await draw(1); const b = grab();
+    const still = apart(a, b); info.still = still;
+    check('held still, the clouds settle (frame to frame)', still.mean < 1.2 && still.big < .5, `mean ${still.mean}/255, ${still.big}% off by more than 24`);
+    // turning: the clouds stay where they are in the sky (history moved with the turn), against the same view drawn fresh
+    look(Math.PI - .15, .25); await draw(1); look(Math.PI - .3, .25); await draw(1); look(Math.PI - .45, .25); await draw(8); const turned = grab();
+    look(Math.PI - .45, .25); v.cut(); await draw(FR); const fresh = grab(); const tv = apart(turned, fresh); info.turned = tv;
+    out['now-turned'] = pic(turned); out['now-turned-fresh'] = pic(fresh);
+    check('turning the camera keeps the clouds in place', tv.mean < 4 && tv.big < 3, `mean ${tv.mean}/255, ${tv.big}% off by more than 24`);
+    // one frame after a cut: noisier, but the same clouds
+    look(Math.PI, .25); v.cut(); await draw(1); const one = grab(), oc = apart(one, a); info.oneFrame = oc; out['now-one-frame'] = pic(one);
+    check('the first frame after a cut has the same clouds', oc.mean < 6, `mean ${oc.mean}/255 against settled`);
+    // a card's picture (a bake): marched whole in one go, more steps and no history, the same clouds as settled
+    look(Math.PI, .25); v.cut(); x.clearRect(0, 0, W, H); v.render(x, W, H, true); await frame();   // (a bake draws under what is on the card: cleared first, as a card is)
+    const baked = grab(), bc = apart(baked, a); info.baked = bc; info.bakedVsOne = apart(baked, one); out['now-baked'] = pic(baked);
+    check('a card\'s picture (a bake) has the same clouds in one go', bc.mean < 6, `mean ${bc.mean}/255 against settled`);
+    HD.atmosphere = HD.clouds = false; sky.update(0); look(Math.PI, .25); v.cut(); await draw(3); const off = grab();
+    check('HD.atmosphere and HD.clouds false draw as before', apart(off, results.before.noon).mean < 2, `mean ${apart(off, results.before.noon).mean}/255`);
+    HD.atmosphere = HD.clouds = true;
+  } else {
+    check('WebGL: the sky as before (nothing marched, no air picture)', !results.now.info && apart(results.now.noon, results.before.noon).mean < .5, `info "${results.now.info}", mean ${apart(results.now.noon, results.before.noon).mean}/255`);
+  }
+  window.result = { checks, info, out };
+} catch (e) { window.result = { error: (e && e.stack) || String(e) }; }
+</script>

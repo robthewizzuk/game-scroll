@@ -57,6 +57,7 @@ import { copyFrame, webgpu, setGpuPick, prepareGPU } from './gpu.js';
 import { packing } from './pack.js';
 import { SLIM, isSlim, meshBytes } from './slim.js';
 import { makeRenderer } from './renderer.js';
+import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
@@ -70,10 +71,12 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { lensFrame, afTake, AF_LOG } from './lens.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
+import { desktop } from '../desktop.js';
 
 export * as THREE from 'three';
 
@@ -101,10 +104,14 @@ export const TIERS = [
 ];
 // (relief: the triangles real surface detail may draw a frame, 0 = its meshes draw flat: see HD.reliefPx)
 // Where a phone starts: top phones (Fold 8, recent iPhone Pro) on high, others on high or medium.
-const START = { top: 2, mid: 2, low: 1 };
-// Play never climbs above high (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on ultra,
-// and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
-const CAP = 2;
+// Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
+// ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
+// A computer (the Mac and Windows app, src/desktop.js) doesn't heat up in a hand: a 'top' one starts on ultra,
+// any of them may climb to it, and each tier draws more of a big window's pixels before the upscaler fills in
+// the rest (ultra about a 2560 x 1440 window's worth, where a phone's is a little over a 1080p screen's).
+const START = desktop ? { top: 3, mid: 2, low: 1 } : { top: 2, mid: 2, low: 1 };
+const CAP = desktop ? 3 : 2;
+if (desktop) [.9e6, 1.5e6, 2.4e6, 3.7e6].forEach((px, i) => { TIERS[i].px = px; });
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -121,8 +128,9 @@ function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2
 // fps a struggling game first gives up a little resolution, then drops to 60 fps at full resolution
 // (keeping the picture); at the lowest tier and resolution it can drop to 30.
 const LEVELS = [1, .85, .7, .55];
-// Most pixels in the final picture once a game has stepped down (about a phone screen's worth; see draw()).
-const OUT_PX = 2.4e6;
+// Most pixels in the final picture once a game has stepped down (about a phone screen's worth, a 2560 x 1440
+// window's on a computer; see draw()).
+const OUT_PX = desktop ? 3.7e6 : 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
@@ -318,7 +326,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '' },
+  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -386,6 +394,13 @@ export const HD = {
    * HD.info.spread says which are spread.
    */
   spread: true,
+  /**
+   * WebGPU: a gs.sky Sky's clouds marched through as real ones (high and ultra; hd3d-gpu-sky.js), shading the ground, the fog and
+   * the light beams. false: the painted layer, as on WebGL. HD.info.sky says what the sky drew ('air', 'clouds', 'air + clouds').
+   */
+  clouds: true,
+  /** WebGPU: a physical Sky's colours from Hillaire's air (atmosphere.js) in place of Preetham's sums, and the air's haze in the sky's colours. false: Preetham, as on WebGL. */
+  atmosphere: true,
   /** Tests: act as if the graphics chip had half precision (the build machine's WebGPU has none), drawing the same passes in full, so the switch, the rebuild and the frame lab's check can be tried. */
   halfPretend: false,
   /** Tests and the frame lab's A/B: how textures are read under SGSR 2 on WebGPU. null: the usual, as the screen's size would read them (hd3d-gpu.js sharpMips); false: as drawn, the small picture's mip level; a number: that many mip levels on top of the usual (negative: sharper). */
@@ -564,7 +579,7 @@ export const FINAL_EFFECTS = [
   #ifdef FLARE
   uniform sampler2D tDirt; uniform float flareTh, flareSp, flareFade, flareK, dirtK; uniform vec3 flareTint;
   #endif
-  // (three.js adds its tone mapping and sRGB helpers to every ShaderMaterial drawn to the screen; when
+${DROPS_HEAD}  // (three.js adds its tone mapping and sRGB helpers to every ShaderMaterial drawn to the screen; when
   // SGSR upscales after this pass, it draws into a buffer and three leaves tone mapping out, so here it is)
   #ifndef TONE_MAPPING
 ${ShaderChunk.tonemapping_pars_fragment}
@@ -605,6 +620,7 @@ ${ShaderChunk.tonemapping_pars_fragment}
       col += fl * flareK + texture2D(tDirt, du).rgb * (texture2D(tBloom, vUv).rgb * bloom + fl) * dirtK; }
   #endif
 ` },
+  { name: 'drops', what: 'rain on the lens (v.drops: lens-drops.js; gs.sky.Weather lands them)', glsl: DROPS_GLSL },
   { name: 'grade', what: 'colour grade (v.grade)', glsl: `    // the game's colour grade (v.grade): saturation, contrast round mid grey, a tint for the shadows and one for the highlights
     if (gradeOn > .5) {
       float l = dot(col, vec3(.2126, .7152, .0722));
@@ -652,7 +668,8 @@ class FinalPass extends Pass {
     this.down = qmat(DOWN, { tDiffuse: { value: null }, px: { value: new Vector2() } });
     this.up = qmat(UP, { tDiffuse: { value: null }, px: { value: new Vector2() }, k: { value: 1 } }, { blending: ADD });
     this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
-      gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
+      gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) },
+      drops: { value: Array.from({ length: DROPS_N }, () => new Vector4()) }, dropN: { value: 0 } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
     this.quad = new FullScreenQuad(null); this.mips = []; this.scale = .5; this.w = 0; this.h = 0; this.fxaa = false; this.strength = .7;
   }
   setSize(w, h) {
@@ -678,6 +695,14 @@ class FinalPass extends Pass {
     if (on) { u.flareTh.value = f.threshold; u.flareSp.value = f.spacing; u.flareFade.value = f.fade; u.flareK.value = f.strength; u.dirtK.value = f.dirt; u.flareTint.value.copy(f.tint); u.tDirt.value = f.dirtTex; }
     if (on === ('FLARE' in this.final.defines)) return;
     if (on) this.final.defines.FLARE = ''; else delete this.final.defines.FLARE;
+    this.final.needsUpdate = true;
+  }
+  // v.drops: rain on the lens (null: none can land, and the loop is left out)
+  setDrops(d) {
+    const u = this.final.uniforms, on = !!d;
+    if (on) { u.drops.value = d.vecs; u.dropN.value = d.count; }
+    if (on === ('DROPS' in this.final.defines)) return;
+    if (on) this.final.defines.DROPS = ''; else delete this.final.defines.DROPS;
     this.final.needsUpdate = true;
   }
   setFxaa(on) { if (this.fxaa === on) return; this.fxaa = on; if (on) this.final.defines.FXAA = ''; else delete this.final.defines.FXAA; this.final.needsUpdate = true; }
@@ -762,28 +787,70 @@ class ShaftsPass extends Pass {
 // is the widest blur in pixels. A pass of its own, reading the depth picture the ambient occlusion
 // already draws (so high and ultra only, and no second scene draw). See-through things (leaf cards)
 // aren't in that picture: they take the depth of what's behind them.
-const DOF = `uniform sampler2D tDiffuse, tDepth; uniform vec2 px; uniform vec4 lens; uniform float cn, cf; varying vec2 vUv;
-  float dist(vec2 uv){ float d = texture2D(tDepth, uv).x; return d >= 1. ? 0. : cn * cf / (cf - d * (cf - cn)); }
-  float coc(float z){ return z <= 0. ? 0. : clamp((abs(z - lens.x) - lens.y) / max(lens.x * lens.z, 1e-3), 0., 1.); }
+// With v.lens (lens.js) the blur is a real lens's instead (phys: pixels of blur per dioptre, the focus in dioptres, the
+// widest blur, on), and the sky is as far as can be; WebGPU draws it with bokeh discs (hd3d-gpu-lens.js), this is the fallback.
+// A lens's blur can be 40 pixels across on a phone, where 16 taps of the sharp picture leave a bright lamp as a ring of
+// dots: so it reads a copy at half size whose smaller sizes (mipmaps) are made by the chip, each tap from the size
+// whose texels are as wide as the gaps between taps. That copy holds only what is itself out of focus (colour times
+// how soft it is, and how soft it is), so a sharp thing never bleeds into the blur round it.
+const DOF_PRE = `uniform sampler2D tDiffuse, tDepth; uniform vec4 phys; uniform float cn, cf; varying vec2 vUv;
+  void main(){ float d = texture2D(tDepth, vUv).x, z = d >= 1. ? 1e9 : cn * cf / (cf - d * (cf - cn));
+    float r = min(abs(phys.x * (phys.y - 1. / z)), phys.z), w = smoothstep(.5, 2.5, r);
+    gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb * w, w); }`;
+const DOF = `uniform sampler2D tDiffuse, tDepth, tPre; uniform vec2 px; uniform vec4 lens, phys; uniform float cn, cf; varying vec2 vUv;
+  float dist(vec2 uv){ float d = texture2D(tDepth, uv).x; return d >= 1. ? (phys.w > .5 ? 1e9 : 0.) : cn * cf / (cf - d * (cf - cn)); }
+  float coc(float z){ if (phys.w > .5) return clamp(abs(phys.x * (phys.y - 1. / z)) / phys.z, 0., 1.);
+    return z <= 0. ? 0. : clamp((abs(z - lens.x) - lens.y) / max(lens.x * lens.z, 1e-3), 0., 1.); }
   void main(){ vec3 base = texture2D(tDiffuse, vUv).rgb; float z = dist(vUv), c = coc(z);
     if (c * lens.w < .5) { gl_FragColor = vec4(base, 1.); return; }
+    if (phys.w > .5) {   // a lens: 24 taps of the half-size copy, at the size that fills the gaps between them
+      float R = c * lens.w, lod = max(0., log2(R * .36 * .5));
+      vec3 sum = base; float wsum = 1.;
+      for (int i = 1; i < 24; i++) { float r = sqrt(float(i) / 23.) * .82, a = float(i) * 2.39996;
+        vec2 o = vec2(cos(a), sin(a)) * r * R * px; float zs = dist(vUv + o);
+        float w = zs < z ? coc(zs) : 1.;   // a sharp thing in front doesn't smear over a soft background
+        vec4 s = textureLod(tPre, vUv + o, lod); sum += s.rgb * w; wsum += s.a * w; }
+      gl_FragColor = vec4(sum / wsum, 1.); return; }
     vec3 sum = base; float wsum = 1.;
     for (int i = 1; i < 16; i++) { float r = sqrt(float(i) / 15.), a = float(i) * 2.39996;
       vec2 o = vec2(cos(a), sin(a)) * r * c * lens.w * px; float zs = dist(vUv + o), cs = coc(zs);
       float w = zs > 0. && zs < z ? cs : 1.;   // a sharp thing in front doesn't smear over a soft background
       sum += texture2D(tDiffuse, vUv + o).rgb * w; wsum += w; }
     gl_FragColor = vec4(sum / wsum, 1.); }`;
+// v.lens's autofocus: the distance at nine points round the spot, as log2(metres) in two bytes, and the sky (lens.js afTake)
+const AF_FS = `uniform sampler2D tDepth; uniform float cn, cf; uniform vec4 af; varying vec2 vUv;
+  void main(){ float d = texture2D(tDepth, af.xy + (vUv - .5) * 2. * af.zw).x, z = cn * cf / (cf - min(d, .999999) * (cf - cn));
+    float n = clamp((log2(z) - (${AF_LOG[0]}.)) / ${AF_LOG[1]}., 0., 1.) * 65535., hi = floor(n / 256.);
+    gl_FragColor = vec4(hi / 255., (n - hi * 256.) / 255., d >= 1. ? 1. : 0., 1.); }`;
 class DofPass extends Pass {
   constructor() {
     super(); this.needsSwap = true;
-    this.mat = qmat(DOF, { tDiffuse: { value: null }, tDepth: { value: null }, px: { value: new Vector2() }, lens: { value: new Vector4() }, cn: { value: .1 }, cf: { value: 1000 } });
-    this.quad = new FullScreenQuad(this.mat);
+    this.mat = qmat(DOF, { tDiffuse: { value: null }, tDepth: { value: null }, tPre: { value: null }, px: { value: new Vector2() }, lens: { value: new Vector4() }, phys: { value: new Vector4() }, cn: { value: .1 }, cf: { value: 1000 } });
+    this.quad = new FullScreenQuad(this.mat); this.pre = null; this.preM = null;
+    this.view = null; this.af = null;   // (v.lens with focus 'auto': the view, and its lens numbers)
   }
   render(r, writeBuffer, readBuffer) {
     const u = this.mat.uniforms; u.tDiffuse.value = readBuffer.texture; u.px.value.set(1 / readBuffer.width, 1 / readBuffer.height);
+    const L = this.af;
+    if (L && this.view) this.view.lensRead(() => {
+      const M = this.afM ||= { rt: new WebGLRenderTarget(3, 3, { depthBuffer: false }), mat: qmat(AF_FS, { tDepth: { value: null }, cn: { value: .1 }, cf: { value: 1000 }, af: { value: new Vector4() } }), px: new Uint8Array(36) };
+      M.quad ||= new FullScreenQuad(M.mat);
+      const a = M.mat.uniforms; a.tDepth.value = u.tDepth.value; a.cn.value = u.cn.value; a.cf.value = u.cf.value;
+      a.af.value.set(L.spot[0], 1 - L.spot[1], .025 * readBuffer.height / Math.max(1, readBuffer.width), .025);
+      r.setRenderTarget(M.rt); M.quad.render(r);
+      return r.readRenderTargetPixelsAsync(M.rt, 0, 0, 3, 3, M.px);
+    });
+    if (u.phys.value.w > .5) {   // (a lens: the half-size copy of what is out of focus, its smaller sizes made as it is drawn)
+      const w = Math.max(1, readBuffer.width >> 1), h = Math.max(1, readBuffer.height >> 1);
+      if (this.pre?.width !== w || this.pre?.height !== h) { this.pre?.dispose(); this.pre = new WebGLRenderTarget(w, h, { type: HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: LinearMipmapLinearFilter, magFilter: LinearFilter }); }
+      const m = this.preM ||= qmat(DOF_PRE, { tDiffuse: { value: null }, tDepth: { value: null }, phys: { value: new Vector4() }, cn: { value: .1 }, cf: { value: 1000 } }), a = m.uniforms;
+      a.tDiffuse.value = readBuffer.texture; a.tDepth.value = u.tDepth.value; a.phys.value.copy(u.phys.value); a.cn.value = u.cn.value; a.cf.value = u.cf.value;
+      this.quad.material = m; r.setRenderTarget(this.pre); this.quad.render(r); this.quad.material = this.mat;
+      u.tPre.value = this.pre.texture;
+    } else u.tPre.value = null;
     r.setRenderTarget(this.renderToScreen ? null : writeBuffer); this.quad.render(r);
   }
-  dispose() { this.mat.dispose(); this.quad.dispose(); }
+  dispose() { this.mat.dispose(); this.quad.dispose(); this.pre?.dispose(); this.preM?.dispose(); if (this.afM) { this.afM.rt.dispose(); this.afM.mat.dispose(); this.afM.quad?.dispose(); } }
 }
 
 // Volumetric light (v.beams = { light, density, far, glow, strength }): light seen in the air, with the
@@ -941,7 +1008,7 @@ function blurFrame(v, cut) {
   cam.updateMatrixWorld(); m.cur.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
   m.prevVP.copy(m.has && !cut ? m.prev : m.cur); m.prev.copy(m.cur); m.has = true;
   if (!b) return null;
-  m.mb.set(Math.max(0, b.amount ?? .5), Math.max(0, b.max ?? .04), Math.max(0, b.sharp ?? 0), v.W / v.H);
+  m.mb.set(Math.max(0, v._ls?.mb ?? b.amount ?? .5), Math.max(0, b.max ?? .04), Math.max(0, b.sharp ?? 0), v.W / v.H);
   m.obj = b.objects !== false && !cut && m.had ? 1 : 0; m.had = true;   // (WebGPU: each thing's own move, not just the camera's)
   return m;
 }
@@ -1303,10 +1370,13 @@ const AIR = {
   // surface's normal the cover is read; the cover picture (cover.js: the height of the highest thing over each spot) and where it lies
   // (its middle x, z, 1 / its width, how far from the middle it reaches: 0 with no cover)
   gsWx: { value: new Vector4() }, gsCover: { value: null }, gsCoverAt: { value: new Vector4() },
+  // the rain as it falls (0..1) and the weather's own clock for running water, which runs while it rains and slows as it dries
+  gsRain: { value: new Vector4() },
   gsOrigin: ORIGIN_U,   // where the drawing's centre is in the world (origin.js): the clouds, mist patches and wet ground are where they are in the world
 };
 const AIR_GLSL = ORIGIN_GLSL + `
-uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
+uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt, gsRain; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
+float gsH12(vec2 p){ vec3 a = fract(p.xyx * .1031); a += dot(a, a.yzx + 33.33); return fract((a.x + a.y) * a.z); }
 float gsInside(vec4 c){ vec3 p = c.xyz / c.w; vec2 e = min(p.xy, 1. - p.xy); return p.z > 0. && p.z < 1. ? smoothstep(0., gsCasc.z, min(e.x, e.y)) : 0.; }
 float gsShadeAt(vec3 wp){
   vec2 c = wp.xz + gsOrigin.xz + gsSun.xz / max(gsSun.y, .15) * (gsCloud.z - wp.y);
@@ -1327,15 +1397,44 @@ vec3 gsAir(vec3 col, vec3 wp){
 // (gsWet: the game's own, everywhere. gsWx: the weather's, only on what the sky can see: wet, then puddles on
 // flat ground that spread as it goes on raining, then snow, on the flattest tops first and in patches, then on
 // everything that is not too steep. Not on what is marked GS_NO_SETTLE: water, and things that move about.
+// While it rains (gsRain) water runs: rivulets wander down walls and windows with drops sliding down them,
+// beads stand on smooth things (glass, paint, polished stone; more the longer it rains) and rings spread on
+// the puddles where drops land. All worked out where they are drawn, no pictures and no pass of their own.
 // hd3d-gpu.js gpuWet is the same sums as nodes.)
 const AIR_WET = `#ifdef USE_FOG
-  if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z > 0.) {
+  if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z + gsRain.x > 0.) {
     mat3 gsVi = transpose(mat3(viewMatrix)); vec3 gn = gsVi * normal, gg = gsVi * nonPerturbedNormal; float gsOpen = 1.;
     vec2 gsT = gsW.xz + gsOrigin.xz;
     if (gsCoverAt.w > 0.) { vec2 gp = gsT + gg.xz * gsWx.w, gd = abs(gp - gsCoverAt.xy);
       if (max(gd.x, gd.y) < gsCoverAt.w) gsOpen = smoothstep(-.7, -.25, gsW.y - texture2D(gsCover, gp * gsCoverAt.z).r); }
-    float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y));
+    float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y)), gsR0 = roughnessFactor;
     roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb *= 1. - w * .3;
+    if (gsRain.x + gsWx.x > 0.) {
+      // a frame along the surface: level across it (ga) and up it (gd), in metres
+      vec3 gP = gsW + gsOrigin, ga = abs(gg.y) > .98 ? vec3(1., 0., 0.) : normalize(vec3(gg.z, 0., -gg.x)), gd = cross(gg, ga);
+      vec2 gu = vec2(dot(gP, ga), dot(gP, gd)), tilt = vec2(0.);
+      float steep = 1. - smoothstep(.45, .8, abs(gg.y)), slick = 1. - smoothstep(.12, .45, gsR0), now = max(gsRain.x, gsWx.x * .6) * gsOpen, run = 0., bead = 0.;
+#ifdef USE_CLEARCOAT
+      slick = max(slick, min(1., clearcoat * 2.) * (1. - smoothstep(.35, .7, clearcoatRoughness)));   // (paint under a clear coat: the coat is what the water stands on)
+#endif
+      if (steep * now > 0.) {   // rivulets down walls and windows (finer on glass; wide wet streaks on brick and stone), some running, drops sliding down them
+        float q = gu.x * mix(9., 24., slick), h = gsH12(vec2(floor(q), 7.));
+        float x = fract(q) - .5 + (h - .5) * .35 - (sin(gu.y * 4.1 + h * 31.) * .11 + sin(gu.y * 10.3 + h * 17.) * .05) * (1. + slick);
+        float wd = (.07 + .06 * fract(h * 13.)) * (2.2 - 1.2 * slick), ln = smoothstep(wd, wd * .35, abs(x)) * step(h, .25 + .55 * gsWx.x + .2 * gsRain.x);
+        float hd = fract(gu.y * (.5 + h * .6) + gsRain.y * (.3 + h * .45) + h * 9.), drip = smoothstep(0., .05, hd) * smoothstep(.3, .05, hd);
+        run = ln * steep * now * (.5 + .5 * drip); tilt.x -= clamp(x / wd, -1., 1.) * run * .5;
+      }
+      if (slick * gsOpen > 0.) {   // beads on what is smooth, in two layers of cells: a dome each, mostly small, more as it goes on raining; far off, a fine sheen
+        for (int k = 0; k < 2; k++) {
+          vec2 b = k == 0 ? gu * 42. : (mat2(.8, .6, -.6, .8) * gu + 3.7) * 27., f = fract(b) - .5, c = floor(b) + float(k) * 41.3; float h = gsH12(c), h2 = gsH12(c + 17.31), r = .1 + .28 * pow(gsH12(c + 3.1), 3.);
+          vec2 d = (f - (vec2(h, h2) - .5) * (1. - 2. * r) * .9) / r; float dd = dot(d, d), nr = 1. - smoothstep(.35, .9, length(fwidth(b)));
+          float on = step(h2, .2 + .6 * gsWx.x) * (1. - smoothstep(.8, 1., dd)) * slick * gsOpen * step(1e-3, gsWx.x) * smoothstep(-.35, -.1, gg.y);   // (not under what faces down)
+          tilt += d * on * nr * .9; bead = max(bead, on * mix(.35, 1., nr));
+        }
+      }
+      normal = normalize(normal + mat3(viewMatrix) * (ga * tilt.x + gd * tilt.y));
+      roughnessFactor = mix(roughnessFactor, .03, max(run, bead)); diffuseColor.rgb *= 1. - run * mix(.35, .15, slick);
+    }
 #ifndef GS_NO_SETTLE
     if (gsWx.y + gsWx.z > 0.) {
       vec4 gsN1 = texture2D(gsNoise, gsT * .05); float gsN2 = texture2D(gsNoise, gsT * .021).r * .4;
@@ -1344,6 +1443,15 @@ const AIR_WET = `#ifdef USE_FOG
       float s = step(1e-6, gsWx.y) * smoothstep(lim, lim + .14, gg.y + (sn - .5) * .22) * smoothstep(0., .3, gsWx.y * 1.2 - sn * .6) * gsOpen;
       roughnessFactor = mix(mix(roughnessFactor, .03, p), .85, s); metalnessFactor *= 1. - s;
       diffuseColor.rgb = mix(diffuseColor.rgb * (1. - p * .3), vec3(.86, .9, .96), s); normal = normalize(mix(normal, nonPerturbedNormal, max(p * .92, s * .6)));
+      if (gsRain.x * p > 0.) {   // rings spreading on the puddles where drops land: two layers of drops, one a cell, a new one each beat
+        vec2 rr = vec2(0.);
+        for (int k = 0; k < 2; k++) {
+          vec2 q = gsT * 4.2 + float(k) * vec2(.37, .71), c = floor(q) + float(k) * 19.7, f = fract(q) - .5; float h = gsH12(c);
+          float ph = fract(gsRain.y * (.9 + h * .5) + h * 13.); vec2 dv = f - (vec2(h, gsH12(c + 5.3)) - .5) * .4; float dl = length(dv) + 1e-4, xr = (dl - ph * .45) * 22.;
+          rr += dv / dl * sin(xr * 3.14159) * (1. - smoothstep(0., 1.5, abs(xr))) * (1. - ph) * (1. - ph) * step(h, gsRain.x * .85 + .1);
+        }
+        normal = normalize(normal + mat3(viewMatrix) * vec3(rr.x, 0., rr.y) * .4 * p);
+      }
     }
 #endif
   }
@@ -1442,6 +1550,12 @@ export class Particles {
     }
     L.length = n; g.setDrawRange(0, n); this.n = n;
     for (const [a, k] of PART_ATTRS) { const at = g.attributes[a]; at.clearUpdateRanges(); at.addUpdateRange(0, Math.max(1, n * k)); at.needsUpdate = true; }
+  }
+  /** Takes them out of the view for good. */
+  dispose() {
+    this.pts.removeFromParent(); this.pts.geometry.dispose(); this.mat.dispose();
+    const tw = this.gpuTwin; if (tw) { tw.sprite.removeFromParent(); tw.sprite.geometry?.dispose(); this.gpuTwin = null; }
+    const i = this.view.parts.indexOf(this); if (i >= 0) this.view.parts.splice(i, 1);
   }
 }
 
@@ -1600,9 +1714,10 @@ export class HDView {
     this.envI = env; this.hemi = new HemisphereLight(sky, ground, amb); this.scene.add(this.hemi);
     this.cam = new PerspectiveCamera(fov, 1, .05, 120); this.scene.add(this.cam);
     this.hurt = 0; this.t = 0; this.W = 240; this.H = 320; this.exposure = 1; this.bloom = .7; this.tone = 'aces'; this.autoExposure = false; this.eye = null; this.lut = null; this.lutAmount = 1; this.oit = false; this.flare = null; this.fog3d = null; this.liveBounce = null;
+    this.drops = new LensDrops();   // rain on the lens (lens-drops.js): gs.sky.Weather lands drops while it rains; add() for a splash of your own
     this.lamps = []; this.tierSeen = -1; this.parts = []; this.reflectors = []; this.contacts = [];
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
-    this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.cascade = null; this.beams = null; this.motionBlur = null;
+    this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.lens = null; this.cascade = null; this.beams = null; this.motionBlur = null;
     this.upscaler = undefined;   // 'sgsr1' keeps this view on Snapdragon GSR 1 (lots of fast movers: SGSR 2 can leave a short soft trail)
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
@@ -2027,7 +2142,7 @@ export class HDView {
     const w = a.wind; U.gsDrift.value.set((w.x ?? w[0]) * this.t / a.cloudSize, (w.z ?? w[1]) * this.t / a.cloudSize);
     U.gsWet.value = a.wet; U.gsNoise.value = noiseTex();
     const wx = a.world, cv = wx?.cover?.ready !== undefined && wx.cover.ix === wx.cover.ix ? wx.cover : null;   // (a cover that has been placed)
-    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0);
+    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0); U.gsRain.value.set(wx?.rain ?? 0, wx?.runT ?? 0, 0, 0);
     if (cv) { U.gsCover.value = cv.texture; U.gsCoverAt.value.set(cv.cx, cv.cz, 1 / cv.span, cv.reach); } else U.gsCoverAt.value.w = 0;
     U.gsCasc.value.x = U.gsCasc.value.y = -1;
     const cs = this.cascade;
@@ -2108,17 +2223,30 @@ export class HDView {
   }
   /** The auto exposure multiplier for this frame (1 without v.autoExposure; card pictures keep the settled one). */
   eyeAt(still) {
-    const o = this.autoExposure; if (!o) { this.eye = null; return 1; }
-    const eye = this.eye ||= new Eye(); if (o === true) this.autoExposure = {};
+    let o = this._ls?.ae || this.autoExposure; if (!o) { this.eye = null; return 1; }   // (v.lens with iso 'auto': the camera's own meter)
+    const eye = this.eye ||= new Eye(); if (o === true) o = this.autoExposure = {};
     const now = performance.now(), dt = Math.min(.1, (now - (eye.t || now)) / 1000); eye.t = now;   // real time: the same speed at any frame rate
-    return still ? 2 ** eye.e : eye.step(dt, this.autoExposure);
+    return still ? 2 ** eye.e : eye.step(dt, o);
+  }
+  // v.lens this frame (lens.js): the focus eased on, the exposure it adds; still: a card's picture (nothing moves on)
+  lensStep(still) {
+    const now = performance.now(), dt = still ? 0 : Math.min(.1, (now - (this._lensT || now)) / 1000);
+    if (!still) this._lensT = now;
+    return lensFrame(this, dt, !still && (lastView !== this || this._cut));
+  }
+  // the autofocus picture back now and then (read(): starts the reading; one at a time, every other frame)
+  lensRead(read) {
+    const S = this._ls; if (!S?.afWant || S.busy || ++S.n % 2) return;
+    S.busy = true;
+    let p; try { p = read(); } catch (e) { p = null; }
+    Promise.resolve(p).then(px => { if (px && this._ls === S) afTake(S, px); }, () => {}).finally(() => { S.busy = false; });
   }
   // after a frame: a new light meter reading now and then (r: the renderer, read(): starts the reading)
   eyeRead(read) {
     const eye = this.eye; if (!eye || !eye.want()) return;
     eye.busy = true;
     let p; try { p = read(); } catch (e) { p = null; }
-    Promise.resolve(p).then(px => { if (px) eye.take(px, this.autoExposure || {}); }, () => {}).finally(() => { eye.busy = false; });
+    Promise.resolve(p).then(px => { if (px) eye.take(px, this._ls?.ae || this.autoExposure || {}); }, () => {}).finally(() => { eye.busy = false; });
   }
   // v.flare as numbers: true or { strength, ghosts' threshold, spacing, fade, tint, dirt }
   flareSet() {
@@ -2341,7 +2469,8 @@ export class HDView {
     // the sun lights: cloud shadows and the near shadow cascade's share (hd3d-gpu.js gpuSunLight)
     const cs = this.cascade, casc = !!(cs?.near.visible && cs.near.castShadow && cs.near.parent);
     G.fx.setCascade(casc ? cs.near : null, cs?.fade ?? .06);
-    r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
+    const ls = this.lensStep(baking || off);   // (v.lens: a real lens's focus and exposure, lens.js)
+    r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off) * (ls ? ls.exp : 1);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (!baking && !off) this.t += 1 / 60;
     gpuSwap(this, G);
@@ -2387,7 +2516,7 @@ export class HDView {
     // smoothing (FXAA) does the work, as on the tiers without MSAA; it had been left off as if MSAA were on, and its place taken by the lens
     // fringing, which turns a dark hair or a lash over skin or sky magenta and green, a pixel to each side)
     const ms = T.msaa >= 4 ? 4 : 0;
-    const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: ms, bloomScale: T.bloom * fxK('bloom'), smooth: !ms, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
+    const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: ms, bloomScale: T.bloom * fxK('bloom'), smooth: !ms, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, drops: this.drops.on ? this.drops : null, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
@@ -2420,6 +2549,8 @@ export class HDView {
     this._dofUsed ||= !!this.focus; this._shaftsUsed ||= this.shafts > 0;
     o.dofOn = this._dofUsed && T.ao > 0; o.shaftsOn = this._shaftsUsed && T.shadow > 0;
     if (o.dofOn && this.focus) { const f = this.focus; o.lens = [f.at ?? 50, f.range ?? 2, f.depth ?? .5, (f.blur ?? 6) * ph / 640]; }
+    // a camera like a real lens (v.lens; bokeh, focus pulls): in the chain from the first time the view uses it, high and ultra
+    this._lensUsed ||= !!this.lens; o.lensOn = this._lensUsed && T.ao > 0; o.lensL = o.lensOn ? ls : null;
     // live bounce light (v.liveBounce, WebGPU, high and ultra): 'screen' (three's SSGI) or 'voxel' (three's VXGI)
     const lb = this.liveBounce;
     if (lb && T.ao > 0) {
@@ -2511,6 +2642,11 @@ export class HDView {
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
+    // the sky's own pictures (a gs.sky Sky on WebGPU: its air, its clouds and their shadow, hd3d-gpu-sky.js), before the scene that shows them
+    const sky = this._sky?.dome.parent ? this._sky.gpu : null;
+    if (sky) { if (pm >= 0) enter('3D: sky'); sky.frame(r, this.cam, { w: pw, h: ph, cut: o.cut, bake: baking || off, tier: T, t: this.t, flags: HD }); if (pm >= 0) leave(pm); }
+    else { G.fx.SKY.on.value = 0; G.fx.SKY.shadeOn.value = 0; }
+    HD.info.sky = sky ? sky.info : '';
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
     try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
@@ -2524,6 +2660,7 @@ export class HDView {
     if (ch.sp && !baking && !off && HD.occlude !== false && HD.occludeDepth !== false && this.autoOcclude !== false && ch.occWarm !== ch.sp) { ch.occWarm = ch.sp; (ch.occM ||= G.fx.depthMeter(r)).warm(ch.sp.getTexture('depth')); }
     if (occJob && ch.sp && drawn) { occJob.pad = s2 || o.msaa ? 1 : 0; (ch.occM ||= G.fx.depthMeter(r)).read(ch.sp.getTexture('depth'), occJob, occBack); }
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
+    if (ls?.afWant && !baking && !off && ch.lensN?.on) this.lensRead(() => ch.lensN.readAF(r));   // (v.lens autofocus: the distance under the spot)
     const made = !!fg && !!shown;
     if (made) HD.fgTap?.(shown, r.domElement, 'frame');
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
@@ -2556,7 +2693,7 @@ export class HDView {
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
     // a change it can't see in the picture yet: the camera, the hurt flash, a finger or key in the last moment
-    if (!same || this.hurt !== S.hurt || now - (speed.inputAt || 0) < 300) { S.run = 0; S.hurt = this.hurt; return false; }
+    if (!same || this.hurt !== S.hurt || now - (speed.inputAt || 0) < 300 || this._ls?.moving) { S.run = 0; S.hurt = this.hurt; return false; }
     // a new answer from the picture check (a frame or two late): how many checks in a row saw nothing change
     if (st.seen !== S.seen) { S.seen = st.seen; S.run = st.changed() === 0 ? S.run + 1 : 0; }
     if (S.run < 3) return false;
@@ -2703,7 +2840,8 @@ export class HDView {
     this.holdNew(r, baking || off, now, this.clearBg ? null : cp.readBuffer);
     const pm = PROF.on ? mark() : -1;   // (the frame lab's CPU by part, prof.js)
     if (pm >= 0) enter('3D: detail'); detailShow(this); if (pm >= 0) leave(pm);
-    r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
+    const ls = this.lensStep(baking || off);   // (v.lens, lens.js)
+    r.toneMappingExposure = this.exposure * this.eyeAt(baking || off) * (ls ? ls.exp : 1);
     if (this.clearBg) { P.arRender.scene = this.scene; P.arRender.camera = this.cam; } else { P.render.scene = P.ao.scene = this.scene; P.render.camera = P.ao.camera = this.cam; }
     // reflections (ultra, and only if the game marked shiny surfaces): SSR draws the scene itself
     if (ssr) {
@@ -2726,7 +2864,7 @@ export class HDView {
       const F = P.final, aoK = T.ao * fxK('ao'), blK = T.bloom * fxK('bloom'); P.ao.enabled = T.ao > 0; if (T.ao > 0 && P.ao.scale !== aoK) { P.ao.scale = aoK; P.ao.setSize(P.ao.fw || pw, P.ao.fh || ph); }
       if (F.scale !== blK) { F.scale = blK; if (F.w) F.setSize(F.w, F.h); }   // (the effects ladder, FXS: the bloom's pictures smaller)
       if (!baking && !off) { fxOn = new Set(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
-      F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
+      F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.setDrops(this.drops.on ? this.drops : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
       const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035;
       const g = this.grade; u.gradeOn.value = g ? 1 : 0;
       if (g) { u.sat.value = g.saturation ?? 1; u.con.value = g.contrast ?? 1; toRGB(g.shadows, u.lo.value); toRGB(g.highlights, u.hi.value); }
@@ -2747,8 +2885,13 @@ export class HDView {
     }
     // extra effects a game added (gs.fx3d: outline, glitch, trails, depth of field, pixelate) go between the scene and the final pass
     if (!this.clearBg) {
-      const dof = this.focus && T.ao > 0 && P.ao.depthTexture ? (P.dof ||= new DofPass()) : null;
-      if (dof) { const f = this.focus, u = dof.mat.uniforms; u.tDepth.value = P.ao.depthTexture; u.cn.value = this.cam.near; u.cf.value = this.cam.far; u.lens.value.set(f.at ?? 50, f.range ?? 2, f.depth ?? .5, (f.blur ?? 6) * ph / 640); }
+      const dof = (this.focus || ls) && T.ao > 0 && P.ao.depthTexture ? (P.dof ||= new DofPass()) : null;
+      if (dof) {
+        const u = dof.mat.uniforms; u.tDepth.value = P.ao.depthTexture; u.cn.value = this.cam.near; u.cf.value = this.cam.far;
+        // (v.lens: a real lens's blur, without WebGPU's bokeh discs; the autofocus read back as there)
+        if (ls) { const mx = Math.max(.5, ls.max * ph); u.lens.value.set(0, 0, 0, mx); u.phys.value.set(ls.K * ph, ls.D, mx, 1); dof.view = this; dof.af = ls.afWant && !baking && !off ? ls : null; }
+        else { const f = this.focus; u.lens.value.set(f.at ?? 50, f.range ?? 2, f.depth ?? .5, (f.blur ?? 6) * ph / 640); u.phys.value.w = 0; dof.af = null; }
+      }
       // volumetric light (v.beams) and motion blur (v.motionBlur): before and after the depth of field
       const bm = this.beams && T.ao > 0 && T.shadow > 0 && P.ao.depthTexture ? beamsFrame(this) : null;
       const beams = bm ? (P.beams ||= new BeamsPass()) : null; if (beams) beams.aim(bm, P.ao.depthTexture, this.cam);
@@ -2805,6 +2948,8 @@ const REFL_FULL = { scale: 1 }, REFL_HALF = { scale: .5 };
 const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'fronds', 'meadow', 'room', 'flow', 'lava']);
 PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
+PORTED_LOOKS.add('rooms');   // gs.city's rooms behind the windows (city-rooms.js, city-gpu.js)
+PORTED_LOOKS.add('carpaint').add('carglass');   // gs.models.vehicle's paint and glass (models/vehicle-looks.js, models/vehicle-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)
@@ -3326,8 +3471,9 @@ class Eye {
   take(px, o) {
     let s = 0, w = 0;
     for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const i = (y * 16 + x) * 4, l = (px[i] + px[i + 1] / 255) / 255 * 20 - 14, k = x >= 4 && x < 12 && y >= 4 && y < 12 ? 2 : 1; s += l * k; w += k; }
-    const avg = s / w, key = o.key ? Math.log2(o.key) : (this.key ??= avg);   // no key: the game's look as it starts is the target
-    this.goal = Math.min(Math.log2(o.max ?? 2.5), Math.max(Math.log2(o.min ?? .4), (key - avg) * (o.amount ?? .7)));   // eyes don't fully make up the difference
+    const avg = this.avg = s / w, key = o.key ? Math.log2(o.key) : (this.key ??= avg), d = key - avg;   // no key: the game's look as it starts is the target
+    // eyes don't fully make up the difference (amount); a camera's meter (v.lens) does, but only part of it when it's dark (night: night stays night)
+    this.goal = Math.min(Math.log2(o.max ?? 2.5), Math.max(Math.log2(o.min ?? .4), (d > 0 ? d * (o.night ?? 1) : d) * (o.amount ?? .7)));
   }
   step(dt, o) { const up = this.goal > this.e, k = 1 - Math.exp(-dt * (up ? o.speed ?? 1.2 : o.darken ?? 3)); this.e += (this.goal - this.e) * k; return 2 ** this.e; }
   // read now and then (one read at a time)
@@ -3434,7 +3580,7 @@ function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B
 // alpha-tested, multi-material and moving-vertex meshes (leaves, grass, water), marked reflectors, and
 // mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
 const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6;
-const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock']);   // kit looks that leave the points where they are
+const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock', 'rooms']);   // kit looks that leave the points where they are
 const NO_DETAIL = new WeakSet();   // geometries that can't be clustered, aren't worth it, or keep changing
 let detailAsking = 0;
 const OBR = Object3D.prototype.onBeforeRender, OAR = Object3D.prototype.onAfterRender;

@@ -1456,7 +1456,7 @@ export interface ToonPart {
   figure(o?: { h?: number; body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string | null }): Loose & { rig: RigT };
 }
 /** An HDView's extras for the ray-traced look: v.reflect(...meshes) (reflections on shiny things; on the best phones they are ray traced on WebGPU, so a floor shows what is above the screen or behind the camera; mesh.userData.moves = true for a thing that will move, mesh.userData.noTrace = true keeps one out of reflections), v.contact({ y, size }) (soft contact shadows) (mesh.userData.noAO = true keeps a mesh out of ambient occlusion), v.faceLight(person | null, { strength, colour, side, up }) (a soft fill light on a person's face from beside the camera for close-ups: call it once in make(); another person moves it, null dims it; returns the light). */
-/** HDView extras: v.lampLights(range) once, then v.placeLamps(spots, x, y, z, t) each frame (the nearest of many lamps get real lights, the rest only glow; spots: [{ x, y, z, col, i, flick, reach, dir: [x, y, z] (a spot light shining that way), angle (its half width, radians), soft (0..1, its edge), shadow: true (it casts shadows: the nearest few by quality, from one shared atlas on WebGPU, redrawn only when something they see moves), shape: 'headlamp' | 'window' | 'blinds' | 'cage' | 'leaves' | 'grille' | 'stained' | 'bars' (a light shape drawn in code that it shines through), near (metres from the lamp its shadow starts), tube: [x, y, z] (a neon tube's far end), rect: { w, h, normal } (a lit sign's face) }]; v.lampShadows: { slots, drawn, waiting } last frame), v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.detail(meshes, { px } | false) (cluster detail, a Nanite-style level of detail: big still meshes of 20,000 triangles or more are drawn in clusters by themselves, each part only as finely as shows; this asks for it on smaller meshes from 2,000 triangles, sets how many pixels the simpler parts may be out by, or with false draws them whole; also mesh.userData.detail = true | px | false), occlusion culling by itself (what is fully hidden behind other things is left out of the frame, found from the last frame's own depth with nothing to list; mesh.userData.noOcclude = true always draws a mesh, v.autoOcclude = false stops it for the view; v.occluders(boxes | null, { max, w }) adds big solid boxes of your own { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), v.shadersLeft (how many things' shaders are still being built in the background: hidden things and what is behind the camera are built over a view's first frames), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off), far from the world's centre the view draws about a centre that moves along with its camera by itself, so places 20 km out don't shake (a floating origin: v.origin is where it is; __hd.origin is how far, 1024 m, the camera goes before it moves, 0 never; a gs.physics3d World3D follows it: world.at, world.centre(x, z) for a world with no view). */
+/** HDView extras: v.lampLights(range) once, then v.placeLamps(spots, x, y, z, t) each frame (the nearest of many lamps get real lights, the rest only glow; spots: [{ x, y, z, col, i, flick, reach, dir: [x, y, z] (a spot light shining that way), angle (its half width, radians), soft (0..1, its edge), shadow: true (it casts shadows: the nearest few by quality, from one shared atlas on WebGPU, redrawn only when something they see moves), shape: 'headlamp' | 'window' | 'blinds' | 'cage' | 'leaves' | 'grille' | 'stained' | 'bars' (a light shape drawn in code that it shines through), near (metres from the lamp its shadow starts), tube: [x, y, z] (a neon tube's far end), rect: { w, h, normal } (a lit sign's face) }]; v.lampShadows: { slots, drawn, waiting } last frame), v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.detail(meshes, { px } | false) (cluster detail, a Nanite-style level of detail: big still meshes of 20,000 triangles or more are drawn in clusters by themselves, each part only as finely as shows; this asks for it on smaller meshes from 2,000 triangles, sets how many pixels the simpler parts may be out by, or with false draws them whole; also mesh.userData.detail = true | px | false), occlusion culling by itself (what is fully hidden behind other things is left out of the frame, found from the last frame's own depth with nothing to list; mesh.userData.noOcclude = true always draws a mesh, v.autoOcclude = false stops it for the view; v.occluders(boxes | null, { max, w }) adds big solid boxes of your own { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.lens = Lens | null (a camera like a real lens: depth of field from the f-stop, focal length and focus, round or bladed bokeh discs on WebGPU, focus pulls and autofocus, exposure in stops from f-stop, shutter and ISO or iso 'auto'; v.lens.at is where it is focused now; high and ultra for the blur), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), v.shadersLeft (how many things' shaders are still being built in the background: hidden things and what is behind the camera are built over a view's first frames), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.drops (rain on the lens: drops that land on the camera's glass while it rains and it looks out under the open sky, each bending what is behind it, and the big ones running down; a gs.sky.Weather lands them by itself, its lens: false keeps the lens dry; v.drops.add(x, y, r) a splash of your own, x and y 0..1 across and up the screen, r a part of the screen's height; v.drops.clear() wipes the lens; v.drops.count), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off), far from the world's centre the view draws about a centre that moves along with its camera by itself, so places 20 km out don't shake (a floating origin: v.origin is where it is; __hd.origin is how far, 1024 m, the camera goes before it moves, 0 never; a gs.physics3d World3D follows it: world.at, world.centre(x, z) for a world with no view). */
 export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose; HDView: new (...a: Loose[]) => Loose; HD: Loose; TIERS: Loose; hasHD(): boolean; pbr: Loose; rbox: Loose; surface: Loose; speckle: Loose; /** pbr(col, { rough, metal, glow, clear, sheen, tex, depth (parallax occlusion on WebGPU, in texture widths, e.g. .05), sss: true | { colour, power, scale, distortion, ambient, attenuation, thin (light only where the mesh's gsThin attribute says it is thin and open behind), back }, aniso (brushed metal streaks 0..1), anisoDir (radians), film (soap bubble / oil rainbow 0..1), glass: true | { thickness, ior, tint, distance }, wet (rain-soaked 0..1, porosity) }) (sss: subsurface scattering, light glowing through skin, wax, leaves). */ /** detail(big, fine, { times, strength }): mix a fine surface() normal (repeated `times` over) into a big one, so close-ups keep grain. Give it sets without repeat. */ detail(big: Loose, fine: Loose, o?: { times?: number; strength?: number }): Loose; /** panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). */ panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose; /** neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a long highlight on a wet road). */ neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose; /** sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights from its face, in front only. */ sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: number }): Loose; /** lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. */ lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose; /** pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). */ pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose; Particles: Loose;
   /** Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). new GPUParticles(view, opts); p.emit(count, burst); p.update(dt). Looks only: positions can't be read back. */
   GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strength?: number; scale?: number; speed?: number } | null; wind?: Loose }) => {
@@ -1474,7 +1474,7 @@ export interface HdAir {
   haze: number; colour: Loose; sunColour: Loose | null; mist: number; mistFall: number; mistY: number; patchy: number;
   clouds: number; cloudShade: number; cloudHeight: number; cloudSize: number; wind: [number, number]; wet: number; sun: Loose | null;
   /** Set by a gs.sky.Weather that was given the level: what it has made wet and white, drawn only where the sky can see. */
-  world: { wet: number; snow: number; pools: number; cover: SkyCover | null } | null;
+  world: { wet: number; snow: number; pools: number; cover: SkyCover | null; /** How hard it rains now, and the clock water running down walls and glass keeps. */ rain?: number; runT?: number } | null;
 }
 /** v.grade: saturation and contrast (1 = no change), tints for the shadows and the highlights ('#rrggbb', a Color or [r, g, b]). */
 export interface HdGrade { saturation?: number; contrast?: number; shadows?: Loose; highlights?: Loose }
@@ -2273,7 +2273,7 @@ export interface Level3dPart { Level3D: new (text: string, o?: { size?: number; 
 
 export interface SkyPart {
   DAY: [number, { top: string; horizon: string; sun: string; sunI: number; amb: number }][];
-  Sky: new (view: Loose, o?: { time?: number; speed?: number; day?: SkyPart['DAY']; stars?: number; /** Colours from light scattering in air (Preetham). */ physical?: boolean | { haze?: number; blue?: number; mie?: number; glow?: number; bright?: number }; fog?: boolean; light?: boolean; sun?: Loose; hemi?: Loose; tilt?: number;
+  Sky: new (view: Loose, o?: { time?: number; speed?: number; day?: SkyPart['DAY']; stars?: number; /** Colours from light scattering in air (Preetham; on WebGPU Hillaire's, and with clouds those are marched through on high and ultra). */ physical?: boolean | { haze?: number; blue?: number; mie?: number; glow?: number; bright?: number }; fog?: boolean; light?: boolean; sun?: Loose; hemi?: Loose; tilt?: number;
     /** Cloud cover 0..1 (clouds lit by the sun; on a view with air() their shadows cross the ground). */ clouds?: number; cloudLight?: string; cloudDark?: string;
     /** 0..1: keeps the low sky round the sun clear of cloud. */ gap?: number;
     /** Next Gen: reflections and sky light come from this sky (redone as it changes). */ env?: boolean; sunSize?: number }) => {
@@ -2304,6 +2304,7 @@ export interface WeatherOptions {
   /** Seconds of full snow until it has all settled (40), and until it has melted once the snow stops (150; rain washes it away six times as fast). */ settle?: number; melt?: number;
   /** How deep settled snow lies, in metres (.25): what snowAt() answers with. */ deep?: number;
   /** How many drops hop off the ground near the camera at once in the rain (96; 0: none). */ hops?: number;
+  /** Rain lands on the lens of a Next Gen view (v.drops) while it rains and the camera looks out under the open sky, more facing up or into the wind (true; false keeps the lens dry). */ lens?: boolean;
 }
 export interface WeatherPart {
   kind: string; amount: number; wind: [number, number]; onFlash: ((far: number) => void) | null; readonly flashing: boolean;
@@ -2315,6 +2316,14 @@ export interface WeatherPart {
   /** Can the sky see this point (is nothing over it)? Always true with no level. */ open(p: Fx3dPos): boolean;
   /** How wet a spot is now, 0..1: 0 under a roof (slippery floors, footsteps that splash, a dog that shakes itself indoors). */ wetAt(p: Fx3dPos): number;
   /** How deep the snow lies at a spot, in metres: 0 under a roof (footprints, slower walking). */ snowAt(p: Fx3dPos): number;
+  /**
+   * From now on this vehicle throws spray off its tyres while the road under it is wet (Next Gen): a mist that hangs behind it and drops
+   * flung off the tread, from about 4 m/s and all of it by 25. A gs.models.vehicle (behind each wheel), a World3D.vehicle() made with its
+   * wheel meshes, or any Object3D that moves (wheels: where its tyres touch, [[x, z], ...] in its own frame, nose along -z; default its
+   * back corners). amount: how much (1). height: of the vehicle (metres; a roof higher than this over the road keeps the road dry). Returns the thing.
+   */
+  watch<T>(thing: T, o?: { amount?: number; height?: number; wheels?: number[][] }): T;
+  /** Stops watching a vehicle. */ unwatch(thing: Loose): WeatherPart;
 }
 /** What the sky can see, as numbers on a grid round the camera (weather.cover). */
 export interface SkyCover {
@@ -2382,11 +2391,24 @@ export interface MissionsPart {
   zone(at: P3 | { x: number; y: number; w: number; h: number }, r?: number | null): { has(p: P3): boolean; any(list: P3[]): boolean; count(list: P3[]): number };
   Mission: new (script: (m: Mission) => Generator<Loose, void, Loose>, o?: { save?: (d: Loose) => void; load?: () => Loose }) => Mission;
 }
-export interface CutsceneStep { at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number }
+/**
+ * A Next Gen view's lens (v.lens): a camera like a real one. fstop (2.8): the aperture; lower is a shallower focus. focal: the lens in mm
+ * on a full-frame camera (sets the camera's field of view; left out, it comes from the field of view, so a zoomed scope is a long lens).
+ * focus: metres, a thing or point (along the camera's look), or 'auto' (what is under spot, [x, y] 0..1 from the top left, [.5, .5]).
+ * pull (0.5): seconds a change of focus takes, eased; 0 snaps. blades: 0 round bokeh, 5 to 9 a bladed aperture's polygons, turned by
+ * turn degrees. bokeh (1): how strongly bright points out of focus show as discs (0 none). max (24): the widest blur in pixels of a
+ * 640-high picture. blur (1): scales the blur past what the lens says. sensor (24): the picture's height in mm. shutter: seconds (sets
+ * motion blur's smear when v.motionBlur is on). iso: a number with shutter for a manual exposure (f/16, 1/125 s and ISO 100 show the
+ * game's own look; each stop more light doubles it), or 'auto' for a camera's meter (towards mid grey, a night only part of the way:
+ * key, night (0.5), speed); left out, the lens leaves exposure alone. ev: exposure compensation in stops. Read back: at (metres in
+ * focus now), stops (the exposure it adds).
+ */
+export interface Lens { fstop?: number; focal?: number; focus?: number | 'auto' | P3 | Loose; spot?: [number, number]; pull?: number; blades?: number; turn?: number; bokeh?: number; max?: number; blur?: number; sensor?: number; shutter?: number; iso?: number | 'auto'; ev?: number; key?: number; night?: number; speed?: number; readonly at?: number; readonly stops?: number }
+export interface CutsceneStep { at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
 export interface CutscenePart {
   along(points: P3[], u: number): P3;
   Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & {
-    playing: boolean; done: boolean; bars: number; line: { text: string; who: string | null } | null; shot: { x: number; y: number; z: number; look: P3 } | null; readonly progress: number;
+    playing: boolean; done: boolean; bars: number; line: { text: string; who: string | null } | null; shot: { x: number; y: number; z: number; look: P3 } | null; readonly progress: number; /** the lens the last lens step set (for v.lens) */ lens: Lens | null;
     update(dt: number): Loose; skip(): Loose; reset(): Loose; drawBars(c: CanvasRenderingContext2D, w: number, h: number, colour?: string): void; drawLine(c: CanvasRenderingContext2D, w: number, h: number, o?: Loose): void;
   };
 }
@@ -2459,6 +2481,12 @@ export interface VehicleOptions {
   lit?: boolean;
   /** A car's or a truck's shell and wheels: 1, or .5 a little coarser (about a fifth fewer triangles). */
   detail?: number;
+  /** A closed car: false leaves out its inside (seats, dashboard, door cards, headliner, about 9,000 triangles) and gives it dark glass in place of see-through glass. */
+  inside?: boolean;
+  /** A car's seats' colour (one of five from its seed when none is given). */
+  seat?: string;
+  /** How much its gloss paint sparkles with metal flakes close up, 0..1 (some colours have them by their seed). */
+  flakes?: number;
   /** A truck: the colour of a 'canvas' tilt (a train: of the canvas over a wagon's load); 3 axles (2); tyres with lugs for mud. */
   canvas?: string; axles?: 2 | 3; offroad?: boolean;
   /**
@@ -2528,6 +2556,22 @@ export type VehicleT = Loose & {
   aim(turn?: number, lift?: number): VehicleT;
   /** Its lamps on or off. */
   lights(on?: boolean): VehicleT;
+  /** A car's and a truck's: how dirty, 0 clean .. 1 caked (road grime low down and behind, dust on top, a film on the glass the wipers cleared). With no number, how dirty it is. This car only (its twins keep theirs). */
+  dirt?(v?: number): VehicleT;
+  /** How wet of its own, 0..1: beading on its paint and glass (a car just out of the wash or the rain). In the rain the view's air beads it by itself (gs.sky.Weather), so this is for when the air is dry. */
+  wet?(v?: number | null): VehicleT;
+  /** A dent where it was hit (a point in the world): the panels pushed in (along `dir`, or toward its middle), crumpled, the paint scraped to primer and metal. power 0..1.5 sets its size; radius and depth (metres) to set them yourself. Dents add up. */
+  dent?(point: Loose, o?: { power?: number; dir?: Loose; radius?: number; depth?: number }): VehicleT;
+  /** Glass hit at a point: a lamp breaks and goes dark; the windscreen crazes and stays; a side or back window cracks from a soft hit (power under .45) or breaks, its bits falling and lying on the ground. Says which: 'lamp' | 'screen' | 'crack' | 'window', or null for no glass near. */
+  smash?(point: Loose, o?: { power?: number }): 'lamp' | 'screen' | 'crack' | 'window' | null;
+  /** A knock: dent(), then smash() as well when power is over .25. */
+  hit?(point: Loose, o?: { power?: number; dir?: Loose }): 'lamp' | 'screen' | 'crack' | 'window' | null;
+  /** Mended: its shapes and materials shared again, the broken glass gone (its dirt and wet stay). */
+  mend?(): VehicleT;
+  /** Each frame while glass is falling (the bits lie still once down). */
+  update?(dt: number): VehicleT;
+  /** What it has taken: dents, panes of glass broken or crazed, lamps broken. */
+  readonly damage?: { dents: number; glass: number; lamps: number };
   /** Another just like it, sharing its shapes and materials. */
   twin(): VehicleT;
 };
@@ -3127,10 +3171,17 @@ export interface WindPart {
   uniforms: { lkWind: { value: number }; lkWindDir: { value: Loose } };
   update(dt: number, at?: P3 | null): WindPart; at(x: number, z: number, out?: Loose): { x: number; z: number; speed: number; gust: number };
 }
-/** What every Cloth piece takes. colour, or colours: stripes (along it, or across: true, from the top down); weight: kilograms a square metre (.15 nylon, .4 canvas); open: how much of the wind reaches it (1; .3 in the lee of a wall; 0 indoors); stiff: 1 (2: a stiffer cloth). */
-export interface ClothPieceOptions { colour?: string; colours?: string[]; across?: boolean; weight?: number; open?: number; stiff?: number }
+/**
+ * What every Cloth piece takes. colour, or colours: stripes (along it, or across: true, from the top down); weight: kilograms a square metre (.15 nylon, .4 canvas);
+ * open: how much of the wind reaches it (1; .3 in the lee of a wall; 0 indoors); stiff: 1 (2: a stiffer cloth); carry: how much of the air round what it rides
+ * goes along with it (0; worn clothes .5 to .75: a cape at a walk hangs, at a run it flies); arms: which of people's arms it goes round (true; 'upper': the upper
+ * arms only; false: none, a skirt, which a hand at the side would only push into the hips).
+ */
+export interface ClothPieceOptions { colour?: string; colours?: string[]; across?: boolean; weight?: number; open?: number; stiff?: number; carry?: number; arms?: boolean | 'upper' }
 export interface ClothPiece {
-  readonly kind: 'flag' | 'banner' | 'awning' | 'rope' | 'sheet'; readonly cols: number; readonly rows: number; open: number; weight: number;
+  readonly kind: 'flag' | 'banner' | 'awning' | 'rope' | 'sheet' | 'skirt' | 'cape'; readonly cols: number; readonly rows: number; open: number; weight: number; carry: number;
+  /** Its last column joined to its first all the way down (a skirt). */
+  readonly loop: boolean;
   /** The wind on it now: x, y, z and its speed. */
   readonly wind: [number, number, number, number];
   /** The point at column i, row j now: [x, y, z]. */
@@ -3141,10 +3192,14 @@ export interface ClothPiece {
   move(dx: number, dy: number, dz: number): ClothPiece;
   remove(): void;
 }
-/** A solid the cloth goes round: set() moves it. */
-export interface ClothSolid { r: number; set(...to: Loose[]): ClothSolid; remove(): void }
+/** A solid the cloth goes round: set() moves it. r: its radius (rb: at its far end, a rod that narrows). */
+export interface ClothSolid { r: number; rb?: number; set(...to: Loose[]): ClothSolid; remove(): void }
+/** A person's body as solids (cloth.body): rods on their trunk, thighs, seat, shins and arms that follow their bones each frame. */
+export interface ClothBody { readonly on: Loose; readonly solids: ClothSolid[]; remove(): void }
 export interface ClothPart {
-  readonly mesh: Loose; readonly N: number; readonly fine: number; readonly pieces: ClothPiece[]; solids: ClothSolid[];
+  readonly mesh: Loose; readonly N: number; readonly fine: number; readonly pieces: ClothPiece[]; solids: ClothSolid[]; readonly bodies: ClothBody[];
+  /** The small steps it took last frame: more while limbs swing fast through clothes (a run), up to three times steps. */
+  readonly lastSteps: number;
   /** 'gpu' once the graphics chip runs it (WebGPU), else 'cpu'. */
   readonly mode: 'cpu' | 'gpu';
   wind: WindPart | { x?: number; y?: number; z?: number } | null; ground: number | ((x: number, z: number) => number) | null;
@@ -3160,9 +3215,19 @@ export interface ClothPart {
   sheet(o: ClothPieceOptions & { cols?: number; rows?: number; place: (i: number, j: number) => Arr3; pins?: number[] }): ClothPiece;
   /** A solid ball it drapes over and is pushed aside by: set(x, y, z) moves it. */
   ball(o?: { x?: number; y?: number; z?: number; r?: number }): ClothSolid;
-  /** A solid rod with round ends (a leg, a post): set(a, b) moves it. */
-  capsule(o?: { a?: Arr3; b?: Arr3; r?: number }): ClothSolid;
-  /** Takes every piece and solid away (reset()). */
+  /** A solid rod with round ends (a leg, a post): set(a, b) moves it; rb: its radius at b, if it narrows. */
+  capsule(o?: { a?: Arr3; b?: Arr3; r?: number; rb?: number }): ClothSolid;
+  /**
+   * A skirt (a kilt, a long coat's skirts) worn by on, a gs.models.human: it rides their hips, cut to fit round them, and goes round their legs (body()).
+   * length: metres down from the waist (.5); flare: how much wider round the hem than at the waist (.15); waist: its half widths across and front to back
+   * ([.2, .16]); at: the waist's height on them (1.02). Goes by their arms unless arms: true.
+   */
+  skirt(o: ClothPieceOptions & { on: Loose; length?: number; flare?: number; waist?: [number, number]; at?: number }): ClothPiece;
+  /** A cape worn by on, a gs.models.human: pinned across the back of their shoulders, hanging length (.95), width across (.46), from at (1.46); goes round their body and arms. */
+  cape(o: ClothPieceOptions & { on: Loose; length?: number; width?: number; at?: number }): ClothPiece;
+  /** A person's body as rods the cloth goes round (skirt() and cape() add it for whoever wears them): on, a gs.models.human or anything with bones named hips, spine, legL, shinL, footL, armL, foreL, handL... arms: false leaves the arms out. */
+  body(on: Loose, o?: { arms?: boolean }): ClothBody;
+  /** Takes every piece, solid and body away (reset()). */
   clear(): ClothPart;
   /** Each frame, after the wind and anything its pins ride have moved. */
   update(dt: number): ClothPart;
@@ -3204,7 +3269,7 @@ export interface OutdoorsPart {
   Marks: new (view: Loose | null, o?: MarksOptions) => MarksPart;
   /**
    * Cloth in the wind: flags, banners, awnings, washing lines and sheets of your own that sag, ripple, fly and snap, drape over solid balls and capsules
-   * and lie on the ground. All of a view's cloth is one set, run on the graphics chip on WebGPU (finer: 14 points a metre) and here elsewhere (7).
+   * and lie on the ground; and clothes people wear (skirt, cape) that go round their legs and body and fly as they run. All of a view's cloth is one set, run on the graphics chip on WebGPU (finer: 14 points a metre) and here elsewhere (7).
    * Make it and its pieces in make() (a piece added later starts as made); clear() in reset(); update(dt) each frame. wind: a gs.outdoors Wind (gusts
    * where each piece is) or { x, z } metres a second (3 along x without one); ground: a height or (x, z) => height; steps: small steps a frame (4).
    */
@@ -3235,8 +3300,12 @@ export interface CityBuilding {
   id: number; block: number; facade: string; floors: number; shops: boolean; face: 0 | 1 | 2 | 3; x0: number; x1: number; z0: number; z1: number; h: number;
   /** Its boxes, bottom up (towers step back as they rise). */
   parts: { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[];
-  roof: 'flat' | 'gable'; colour: string | null; door: CitySpot; fire?: boolean; bits: { kind: string; x: number; y: number; z: number; s: number }[];
+  roof: 'flat' | 'gable'; colour: string | null; door: CitySpot; fire?: boolean; bits: { kind: string; x: number; y: number; z: number; s: number; rot?: number }[];
+  /** The sides of it that face a street (0 north, 1 east, 2 south, 3 west; a corner building has two), when the city is dressed. */
+  streets?: number[];
 }
+/** A parked car (City option parked): where it is, which way it faces and its box. */
+export interface CityParkedCar { parked: true; x: number; y: number; z: number; heading: number; style: number; colour: string; len: number; wid: number; x0: number; x1: number; z0: number; z1: number }
 export interface CitySpot { x: number; y: number; z: number; nx?: number; nz?: number; building?: number; block?: number; heading?: number; lane?: number; edge?: Loose }
 export interface CityCar { id: number; kind: 'car' | 'van'; taxi: boolean; colour: string; x: number; z: number; heading: number; v: number; vmax: number; braking: boolean; stun: number; edge: Loose; lane: number }
 export interface CityPerson { id: number; x: number; z: number; heading: number; speed: number; panic: number; down: number; shirt: string; block: Loose }
@@ -3399,7 +3468,10 @@ export interface CityPart {
    * your reset() and update(dt, player) each frame. Cars brake for what you pass to avoid().
    */
   City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: 'right' | 'left';
-    traffic?: number; people?: number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number; [style: string]: Loose }) => CityWorld;
+    traffic?: number; people?: number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
+    /** Rooms behind every window (default true). */ rooms?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
+    /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
+    /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean; [style: string]: Loose }) => CityWorld;
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
@@ -3426,8 +3498,10 @@ export interface CityWorld {
   signalLeft(node: CityPlan['nodes'][number], axis: 'x' | 'z', t?: number): number;
   buildingAt(x: number, z: number): CityBuilding | null;
   ground(x: number, z: number): number;
-  /** Pushes a circle out of the buildings (changes p); the building touched, or null. */
-  collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | null;
+  /** Pushes a circle out of the buildings and parked cars (changes p); the building (or parked car) touched, or null. */
+  collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | CityParkedCar | null;
+  /** The parked cars (empty without the parked option). */
+  parked: CityParkedCar[];
   ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number): { point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number }; dist: number; building: CityBuilding } | null;
   /** The nearest point in a lane. */
   road(x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };

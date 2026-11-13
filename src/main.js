@@ -37,7 +37,7 @@ import { playstats } from './playstats.js';
 import { boards, rankHTML, openBoard } from './boards.js';
 import { perf } from './perf.js';
 import { onMemory, forceMemory, memory } from './kit/memory.js';
-import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish } from './kit/speed.js';
+import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish, phoneClass, autoFps } from './kit/speed.js';
 import { keepAwake, awake } from './kit/awake.js';
 import * as fontlib from './kit/fontlib.js';
 import * as pixelKit from './kit/pixel.js';
@@ -53,6 +53,9 @@ import { makeDebug } from './debug.js';
 import { show as showTweaks } from './kit/tweak.js';
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
+import { desktop } from './desktop.js';
+// (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
+const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
 import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
 
 /* ---------- catalogue ---------- */
@@ -156,7 +159,18 @@ function holdGame(s,more){
 function gameFault(s,e){console.error(s.def.id,e);perf.error(e,s.def.id);broken(s,'This game hit a problem.')}
 function broken(s,why){dropReady(s);if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
 // A new round: false (and the card shows the problem) if the game threw.
-function resetGame(s){resetTicks(s);try{ownedBy(s,()=>s.game.reset());return true}catch(e){gameFault(s,e);return false}}
+function resetGame(s){resetTicks(s);try{ownedBy(s,()=>s.game.reset());return true}catch(e){if(e&&e.kitLoading){resetLater(s,e);return false}gameFault(s,e);return false}}
+// reset() asked for a lazy part or a sculpt that isn't in yet (a mission's people, when the next round is another
+// mission's: Play again after mission 1): the card says "Loading…" until it is in, and the game is reset again, as
+// a card being made waits (makeGame). The game itself is kept: a stand-in draws the wait. Play's loading screen
+// (getReady) waits on the same, then starts the round; a card waiting in the feed is reset once it is in.
+function resetLater(s,e){
+  const g=s.game,stub=stubGame(s,'Loading…',e.what||'');
+  stub.dispose=()=>g.dispose?.();if(g.resize)stub.resize=(w,h)=>ownedBy(s,()=>g.resize(w,h));
+  s.loading=true;s.what=e.what||'';s.game=stub;
+  Promise.resolve(e.kitLoading).then(()=>{if(s.dropped||s.game!==stub)return;s.game=g;s.loading=false;s.dirty=true;if(!s.starting&&resetGame(s))renderOverlay(s)},
+    err=>{if(s.dropped||s.game!==stub)return;s.game=g;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
+}
 function makeSlide(def){
   const el=document.createElement('section');el.className='slide '+(def.retro?'retro':'modern')+(def.era==='console'?' console':def.era==='nextgen'?' console nextgen':def.era==='ar'?' console nextgen ar':def.era==='board'?' console nextgen board':'');
   if(def.retro){const p=PAL[def.pal||'moss'];p.forEach((c,i)=>el.style.setProperty('--lcd'+i,c));el.style.setProperty('--shell',SHELL[def.pal||'moss']);}el.setAttribute('aria-label',def.title);
@@ -281,7 +295,7 @@ const sensorNote=d=>{if(d.era==='board'&&d.ar!==false)return'<div class="ov-loc"
   return`<div class="ov-loc">${u.includes('camera')?'📷':u.includes('mic')?'🎤':u.includes('steps')?'👟':'📱'} Uses your ${w.length>1?w.slice(0,-1).join(', ')+' and '+w[w.length-1]:w[0]}${u.includes('camera')||u.includes('mic')?'. Nothing is recorded or leaves your phone':''}.</div>`};
 const locNote=d=>d.location?`<div class="ov-loc">📍 Uses your ${d.location==='precise'?'location to walk around':'rough area (about 1 km)'}. It stays on your phone, and you can say no.</div>`:'';
 function renderOverlay(s){
-  const d=s.def,cue='<div class="swipe-cue">Swipe up for the next game</div>';
+  const d=s.def,cue=`<div class="swipe-cue">${NEXT_CUE}</div>`;
   if(s.failed){s.overlay.innerHTML=`<div class="ov-k">Oops</div><div class="ov-title">${d.title}</div><div class="ov-hint">${s.failed}</div><button class="play">Try again</button>${cue}`;s.overlay.hidden=false;return}
   if(s.state==='ready'){
     if(d.uses?.includes('motion'))want('motion');
@@ -483,7 +497,7 @@ function coverUp(s){
   let el=s.screen.querySelector('.load-ov');
   if(!el){el=document.createElement('div');el.className='overlay load-ov';el.onclick=e=>e.stopPropagation();s.screen.appendChild(el)}
   clearTimeout(el._t);el.classList.remove('gone');
-  el.innerHTML=`<div class="ov-k">Loading</div><div class="ov-title">${s.def.title}</div><div class="ov-bar" role="progressbar" aria-label="Loading ${s.def.title}"><i></i></div><div class="ov-what"></div><div class="swipe-cue">Swipe up for the next game</div>`;
+  el.innerHTML=`<div class="ov-k">Loading</div><div class="ov-title">${s.def.title}</div><div class="ov-bar" role="progressbar" aria-label="Loading ${s.def.title}"><i></i></div><div class="ov-what"></div><div class="swipe-cue">${NEXT_CUE}</div>`;
   el.hidden=false;st.cover=el;st.coverAt=performance.now();st.bar=el.querySelector('.ov-bar i');st.note=el.querySelector('.ov-what');st.said='';coverBar(s);
 }
 function coverDown(st,fade){
@@ -1141,4 +1155,4 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
 
-if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

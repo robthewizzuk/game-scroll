@@ -38,7 +38,10 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
   await lab(); await p.evaluate(() => __gs.start());
   await p.evaluate(async () => (await __gs.lab(true)).rec(true));
   await play(3500);
+  // a freeze (the page held for 400 ms in play): counted on its own, as the frame rate leaves gaps that long out
+  await p.evaluate(() => { const t = performance.now(); while (performance.now() - t < 400); }); await p.waitForTimeout(400);
   const sum2 = await p.evaluate(async () => { const L = await __gs.lab(true); L.rec(false); return L.summary(); });
+  { const fz = /(\d+) freezes? of 250 ms or more \(worst (\d+) ms/.exec(sum2); check(fz && +fz[1] >= 1 && +fz[2] >= 300, `${id2d}: a 400 ms freeze in play is counted`); }
   console.log('   ' + sum2.split('\n').join('\n   '));
   check(/avg [\d.]+ fps/.test(sum2), `${id2d}: recording measures fps, lows and pacing`);
   check(await p.evaluate(() => /fps/.test(document.querySelector('.fl-sum').textContent)), `${id2d}: live numbers in the panel`);
@@ -148,6 +151,16 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
       if (sc.notes.length) await shot('spread-check');
       await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
     } else console.log('SKIP Spread check (nothing spread in this game at this tier: ' + JSON.stringify(spread) + ')');
+    // the sky's marched clouds (src/kit/hd3d-gpu-sky.js): the Clouds check times painted against marched and puts the switch back
+    const sky = await p.evaluate(() => __hd.info.sky);
+    if (/clouds/.test(sky || '')) {
+      await p.evaluate(async () => (await __gs.lab(true)).clouds());
+      const cc = await p.evaluate(async () => { const L = await __gs.lab(true); const s = L.shots[L.shots.length - 1]; return { notes: s && s.kind === 'clouds' ? s.notes : [], on: __hd.clouds }; });
+      console.log('   Clouds check: ' + cc.notes.join(' | '));
+      check(/chip time a frame: painted [\d.]+ ms, marched [\d.]+ ms/.test(cc.notes[0] || '') && cc.on === true, 'Clouds check times painted and marched clouds and puts the switch back');
+      if (cc.notes.length) await shot('clouds-check');
+      await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
+    } else console.log('SKIP Clouds check (no marched clouds in this game at this tier: ' + JSON.stringify(sky) + ')');
   }
 
   await p.evaluate(async () => (await __gs.lab(true)).rec(false));
