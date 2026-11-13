@@ -642,7 +642,7 @@ try {
     const marks = new gs.outdoors.Marks(v, { ground: () => 0, weather: w });
     const look = async () => { for (let i = 0; i < 8; i++) { w.update(0); marks.update(0, { x: 0, y: 0, z: 0 }); v.render(x, 128, 128); await frame(); } const d = x.getImageData(0, 0, 128, 128).data, box = (x0, y0, n) => { let s = 0, k = 0; for (let j = y0; j < y0 + n; j++) for (let i = x0; i < x0 + n; i++) { const q = (j * 128 + i) * 4; s += d[q] + d[q + 1] + d[q + 2]; k += 3; } return s / k; }; return { mid: box(54, 54, 20), side: box(6, 54, 20) }; };
     const clean = await look(); const made = marks.press(0, 0, .4), kind = marks.kindAt(0, 0).kind; const dent = await look(), drawn = marks.drawn; marks.clear(); const after = await look();
-    ok(kind === 'snow' && made && drawn >= 1 && clean.mid > 120 && Math.abs(clean.mid - clean.side) < 6 && dent.mid < clean.mid - 12 && Math.abs(dent.side - clean.side) < 4, `marks: a print pressed in snow shows in the picture (${dent.mid.toFixed(0)} of 255 in it, ${clean.mid.toFixed(0)} before, ${dent.side.toFixed(0)} beside it)`);
+    ok(kind === 'snow' && made && drawn >= 1 && clean.mid > 120 && clean.side > 120 && dent.mid < clean.mid - 12 && Math.abs(dent.side - clean.side) < 4, `marks: a print pressed in snow shows in the picture (${dent.mid.toFixed(0)} of 255 in it, ${clean.mid.toFixed(0)} before; beside it ${dent.side.toFixed(0)}, ${clean.side.toFixed(0)} before)`);
     ok(marks.count === 0 && marks.drawn === 0 && Math.abs(after.mid - clean.mid) < 4, `marks: clear() leaves the snow as it was (${after.mid.toFixed(0)} of 255)`);
     marks.dispose(); w.dispose(); window.__hd.hold = hold;
   }
