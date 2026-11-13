@@ -1213,14 +1213,21 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   several kinds, make them together and first: `const [a, b] = human.all([optsA, optsB])` (or
   `human.need([...])` before anything costly is built, then `human(opts)` wherever you like).
   **Two looks.** `look: 'clean'` (the default) is a simpler, friendlier face, the way a good character model
-  is. `look: 'real'` is a face as real as the kit makes it: life-size eyes, a jaw as broad as a real one, the
+  is. `look: 'real'` is a face as real as the kit makes it: a head the shape of a real one (fitted to a scan of a
+  real head by measurement: the sculpted head's skin is moved out or in, smoothly, by up to 1.5 cm, so it lies
+  within about a millimetre and a half of the scan's; a woman's face takes half of it; only those numbers are in
+  the kit, and the scan is credited under Settings › Licence), life-size eyes, a jaw as broad as a real one, the
   folds of a real face pressed into its skin (from the nose to the mouth, under the eyes, under the lower lip,
   round the nose; with age the lines down from the mouth, hollow temples and cheeks, the cords of an old neck),
   its two sides not quite alike, and quieter brows, lashes and lips. Its skin works out the light under it
   (WebGPU): where a face turns from the light, light reaches on round past the edge, red furthest, so the
   edge is soft and warm (more so on a nose or a chin than on a cheek); the pores shade the light that does not
   travel and the shine, not the red; and the shine is two lobes, a tight one off the skin's oil and a broad one
-  (WebGL keeps a soft rim standing for it). Dark skin reads brown, not orange. Its skin has the detail of a
+  (WebGL keeps a soft rim standing for it). Dark skin reads brown, not orange. Its colour is a real skin's: the
+  colour a game gives is taken as how the skin looks, so the face's own is drawn a little pinker, less strong
+  and not so pale, and it is redder where the scan's is (the lids, between the brows, the nose, under the eyes,
+  the cheeks, round the mouth, the ears), less so the darker the skin, with the shadow of a shaven beard on a
+  grown man; the lips are the scan's redder, darker colour. Its skin has the detail of a
   real one, made in code for each face: faint blotches of colour, freckles on fair skin that has them, a few
   moles, brown spots with age, and fine lines that come with age (across the forehead, between the brows,
   crow's feet, under the eyes, over the upper lip), shading in the paint on both renderers and bending the
@@ -1229,7 +1236,14 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   back under a clear cornea, so from one side it lies inside the eye; a film of tears over the whole eye and a
   line of tears along each lower lid add only their shine (the cornea's small sharp highlight slides as the eye
   turns); the white is shaded where the lids shade it; real lashes, a few hundred strands in clumps, curl from
-  the lids and blink with them; and the inner corner has its small pink mound. Close up only, on both renderers. A real face comes from `seed` (the same
+  the lids and blink with them; and the inner corner has its small pink mound. Close up only, on both renderers. Its
+  hair is real too: the brows are a few hundred single hairs lying along each brow (standing up at the inner end,
+  going with the brows when the face moves), the hair shines in a band across its strands as real hair does
+  (three's anisotropy), and a beard and a moustache are single hairs too, over the beard's colour painted under
+  them in fine strokes: a beard where a real one grows (up the cheek to the sideburn, down to a neckline above
+  the throat, fewer and shorter toward its edges), a moustache over the whole upper lip, down in the middle and
+  fanning out to the corners, hanging to a couple of millimetres above where the lips meet (no coat of fur:
+  `person.hair` is `null` for them). A real face comes from `seed` (the same
   seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png

@@ -2711,10 +2711,17 @@ console.log('physics ok');
   // ---- the head: a real jaw is broader than the clean face's narrowing V, and an uneven face's two halves differ
   { const box = [[-.1, HC[1] - .14, -.12], [.1, HC[1] + .02, .13]], meshOf = face => F.mesh(HH.head({ face, neck: 1, hair: 'bald' }), { cell: .004, ao: false, bounds: box });
     const jaw = m => { let w = 0; for (let i = 0; i < m.n; i++) { const y = m.P[i * 3 + 1] - HC[1], z = m.P[i * 3 + 2] - HC[2]; if (y > -.082 && y < -.072 && z > .0 && z < .03) w = Math.max(w, Math.abs(m.P[i * 3])); } return w; };
-    const halves = m => { let L = 0, R = 0; for (let i = 0; i < m.n; i++) { const x = m.P[i * 3], y = m.P[i * 3 + 1] - HC[1]; if (y < -.03 && y > -.11) { if (x > 0) L += x; else R -= x; } } return Math.abs(L - R) / (L + R); };
+    // (how far apart its two sides stand, in mm on average, seen from the front a millimetre at a time from the nose to the chin: a
+    // measure of where the surface is, not of how many points lie on each side, which any change to the face shifts by chance)
+    const halves = m => { const P = m.P, I = m.I, nx = 101, ny = 81, Z = new Float32Array(nx * ny).fill(-1), X = i => P[i] * 1000 + 50, Y = i => (P[i + 1] - HC[1] + .11) * 1000;
+      for (let t = 0; t < I.length; t += 3) { const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3, ax = X(a), ay = Y(a), bx = X(b), by = Y(b), cx = X(c), cy = Y(c), den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (Math.abs(den) < 1e-12) continue;
+        for (let j = Math.max(0, Math.ceil(Math.min(ay, by, cy))); j <= Math.min(ny - 1, Math.floor(Math.max(ay, by, cy))); j++) for (let i = Math.max(0, Math.ceil(Math.min(ax, bx, cx))); i <= Math.min(nx - 1, Math.floor(Math.max(ax, bx, cx))); i++) {
+          const u = ((by - cy) * (i - cx) + (cx - bx) * (j - cy)) / den, v = ((cy - ay) * (i - cx) + (ax - cx) * (j - cy)) / den, w = 1 - u - v; if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
+          const z = u * P[a + 2] + v * P[b + 2] + w * P[c + 2]; if (z > Z[j * nx + i]) Z[j * nx + i] = z; } }
+      let s = 0, k = 0; for (let j = 0; j < ny; j++) for (let i = 51; i < nx; i++) { const p = Z[j * nx + i], q = Z[j * nx + nx - 1 - i]; if (p > 0 && q > 0) { s += Math.abs(p - q); k++; } } return s / k * 1000; };
     const clean = meshOf(base), real = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: 0 }), uneven = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: .9, aseed: 3.3 });
     assert.ok(jaw(real) > jaw(clean) + .004, `a real jaw is broader: ${(jaw(clean) * 2000).toFixed(0)} mm across the clean face's, ${(jaw(real) * 2000).toFixed(0)} mm a real one's`);
-    assert.ok(halves(real) < .002 && halves(uneven) > halves(real) * 2, `an even face's halves alike (${halves(real).toFixed(4)}), an uneven one's not (${halves(uneven).toFixed(4)})`); }
+    assert.ok(halves(real) < .15 && halves(uneven) > halves(real) * 3, `an even face's halves alike (${halves(real).toFixed(2)} mm apart), an uneven one's not (${halves(uneven).toFixed(2)} mm)`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = age => { const ff = f(age), rim = HH.rimOf(ff); let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
@@ -2737,14 +2744,36 @@ console.log('physics ok');
     const strands = L.length / 12, caruncle = []; for (let i = 0; i < p.n; i++) if (name(p, i) === 'caruncle') caruncle.push(i);
     assert.ok(strands > 140 && Number.isInteger(strands) && lash(clean).length === 0 && L.every(i => !far.has(i)) && caruncle.length > 40 && caruncle.every(i => !far.has(i)), `lashes: ${strands} strands, a pink mound in each corner, close up only; none on the clean face`);
     // (upper lashes: their roots above the eye's middle, longer than the lower ones, going with the upper lid's bone)
-    let up = [0, 0], dn = [0, 0], lid = 0, lidOf = 0; const lidB = p.names.indexOf('lidL');
+    // (the middle half of them wholly: by the corners the lid's own edge moves less, and the lashes on it with it)
+    let up = [0, 0], dn = [0, 0], lid = 0, lidOf = 0; const lidB = p.names.indexOf('lidL'), rim = HH.rimOf(face), across = [0, 0, 0];
     for (let k = 0; k < L.length; k += 12) {
       const r = L[k], t = L[k + 9], len = Math.hypot(p.P[t * 3] - p.P[r * 3], p.P[t * 3 + 1] - p.P[r * 3 + 1], p.P[t * 3 + 2] - p.P[r * 3 + 2]), above = p.P[r * 3 + 1] > HC[1] + HH.EYE[1];
-      if (above) { up[0] += len; up[1]++; if (p.P[r * 3] > 0) { lidOf++; for (let q = 0; q < 4; q++) if (p.SI[r * 4 + q] === lidB && p.SW[r * 4 + q] > 128) { lid++; break; } } } else { dn[0] += len; dn[1]++; }
+      if (above) { up[0] += len; up[1]++; if (p.P[r * 3] > 0 && Math.abs(rim.at(p.P[r * 3], p.P[r * 3 + 1] - HC[1], across)[0]) < .5) { lidOf++; for (let q = 0; q < 4; q++) if (p.SI[r * 4 + q] === lidB && p.SW[r * 4 + q] > 128) { lid++; break; } } } else { dn[0] += len; dn[1]++; }
     }
-    assert.ok(up[1] > dn[1] * 2 && up[0] / up[1] > dn[0] / dn[1] * 2 && lid > lidOf * .8, `upper lashes ${(up[0] / up[1] * 1000).toFixed(1)} mm on average, lower ${(dn[0] / dn[1] * 1000).toFixed(1)} mm; ${lid} of ${lidOf} upper ones on the left go with its lid`);
-    const old = lash(S.sculpt({ kind: 'head', a: { ...a, face: { ...face, age: 78 } } })).length / 12; assert.ok(old < strands * .85, `fewer lashes with age: ${old} at 78`); }
-  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes and the inner corner close up) ok');
+    assert.ok(up[1] > dn[1] * 2 && up[0] / up[1] > dn[0] / dn[1] * 2 && lidOf > 30 && lid === lidOf, `upper lashes ${(up[0] / up[1] * 1000).toFixed(1)} mm on average, lower ${(dn[0] / dn[1] * 1000).toFixed(1)} mm; ${lid} of the ${lidOf} upper ones across the middle of the left eye go with its lid`);
+    const old = lash(S.sculpt({ kind: 'head', a: { ...a, face: { ...face, age: 78 } } })).length / 12; assert.ok(old < strands * .85, `fewer lashes with age: ${old} at 78`);
+    // (the brows: hairs one by one in each brow's band, close up only, lying on the skin (their roots no more than a millimetre off it, their
+    // tips no further out than 3 mm), going with the brow's bones; a moustache on a real face is grown, not sculpted: no lump of its own)
+    const bh = []; for (let i = 0; i < p.n; i++) if (name(p, i) === 'browhair') bh.push(i);
+    const browB = ['browL', 'browInL', 'browR', 'browInR'].map(b => p.names.indexOf(b)); let onBrow = 0, roots = 0, out = 0;
+    for (let k = 0; k < bh.length; k += 12) { const r = bh[k]; roots++; for (let q = 0; q < 4; q++) if (browB.includes(p.SI[r * 4 + q]) && p.SW[r * 4 + q] > 40) { onBrow++; break; } const tip = bh[k + 9]; out = Math.max(out, Math.hypot(p.P[tip * 3] - p.P[r * 3], p.P[tip * 3 + 1] - p.P[r * 3 + 1], p.P[tip * 3 + 2] - p.P[r * 3 + 2])); }
+    const ys = bh.map(i => p.P[i * 3 + 1] - HC[1]), xs = bh.map(i => Math.abs(p.P[i * 3]));
+    assert.ok(roots > 250 && bh.every(i => !far.has(i)) && onBrow > roots * .8 && out < .012 && Math.min(...ys) > .004 && Math.max(...ys) < .05 && Math.min(...xs) > .006 && Math.max(...xs) < .066 && !clean.slots.includes('browhair'),
+      `brows of single hairs: ${roots} of them, ${onBrow} going with the brows' bones, the longest ${(out * 1000).toFixed(1)} mm, close up only; none on the clean face`);
+    const mo = S.sculpt({ kind: 'head', a: { ...a, moustache: 1 } }), mc = S.sculpt({ kind: 'head', a: { ...a, face: base, moustache: 1 } });
+    assert.ok(!mo.slots.includes('brow') && mc.slots.includes('brow'), 'a real moustache is grown from the lip (human.js), the clean one sculpted');
+    // (a real moustache's and beard's single hairs, human-head.js eyeParts: the moustache's roots all on the skin of the upper lip, under the
+    // nose and over the red of the lip, hanging no lower than a couple of millimetres above where the lips meet; a beard's down the jaw and under
+    // the chin to a neckline above the throat, fewer at its edges than in the middle; close up only; none on a clean face or a bare one)
+    const hairs = q => { const r = []; for (let i = 0; i < q.n; i++) if (name(q, i) === 'beardhair') r.push(i); return r; }, mh = hairs(mo), bd = S.sculpt({ kind: 'head', a: { ...a, beard: .7 } }), bh2 = hairs(bd);
+    const at = (q, i) => [Math.abs(q.P[i * 3]), q.P[i * 3 + 1] - HC[1], q.P[i * 3 + 2] - HC[2]], mr = []; for (let k = 0; k < mh.length; k += 12) mr.push(at(mo, mh[k]));
+    const lowM = Math.min(...mh.map(i => at(mo, i)[1] - HH.lipLine(at(mo, i)[0], face))), mw = Math.max(...mr.map(r => r[0]));
+    assert.ok(mr.length > 400 && mr.every(r => r[1] < -.044 && r[1] > HH.lipLine(r[0], face)) && lowM > .0008 && mw < HH.mouthHalf(face) * 1.2 && (far2 => mh.every(i => !far2.has(i)))(new Set(mo.I[1])) && !hairs(p).length && !hairs(mc).length,
+      `a moustache of ${mr.length} single hairs over the upper lip (out to ${(mw * 1000).toFixed(1)} mm from the middle), hanging to ${(lowM * 1000).toFixed(1)} mm above where the lips meet; none on a bare face or a clean one`);
+    const br = []; for (let k = 0; k < bh2.length; k += 12) br.push(at(bd, bh2[k]));
+    const mid = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] < -.07 && r[1] > -.09).length, edge = br.filter(r => r[0] > .03 && r[0] < .05 && r[1] > -.04 && r[1] < -.02).length, lowB = Math.min(...br.map(r => r[1]));
+    assert.ok(br.length > 1500 && lowB > -.17 && lowB < -.12 && mid > edge * 2 && br.every(r => r[0] < .08), `a beard of ${br.length} single hairs, down to ${(-lowB * 100).toFixed(1)} cm below the head's middle, ${mid} on a patch of the jaw to ${edge} on as much of its edge up the cheek`); }
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)

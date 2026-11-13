@@ -237,6 +237,10 @@ const kindOf = s => Object.keys(KINDS).find(k => s[k] !== undefined);
  * folds (fn(x, y, z) => extra height, for wrinkles; foldMax: the most it adds, .006), shell (hollow, this
  * thick), clip ([[nx, ny, nz], offset, soft], or a list of them: only the part where n.p > offset is kept),
  * space ({ at, rot }: the shape, lumps and folds and all, is given in a space of its own, turned by rot about `at`),
+ * grow (fn(x, y, z) => metres, in the space the shapes are given in: the surface moved out that far, or in where it is less than 0,
+ * before it is meshed, so the grid follows it (a cut moves with it: what it carves shrinks where the surface grows out); for a change to a
+ * shape's whole form that is too big for folds, as a fit to a head scan:
+ * keep it smooth, changing by less than half as much as it is long across; growMax: the most it moves, .01),
  * stitch (a band, a patch or a field with an outline: true lays a line along its outline for a row of stitching, see
  * mesh()'s `lines`; 'seam' for a seam there instead), seams (false: no line of `lines` runs over its surface).
  * Thin slivers (a slit, a seam) measure best as boxes or rods: a very flat ball is only roughly measured.
@@ -269,8 +273,12 @@ export function ready(shapes, blend = .01) {
     if (flip) { const a = lo[0]; lo[0] = -hi[0]; hi[0] = -a; }
     // bl, bh: the box to test against (a mirrored shape's is its own side's, met with |x|)
     const bl = lo.slice(), bh = hi.slice(); if (mir) { bl[0] = mx(lo[0], 0); const m = mx(abs(lo[0]), abs(hi[0])); lo[0] = -m; hi[0] = m; }
-    const dd = wrap(d), m = c.m ? side(sp ? sp(c.m) : c.m) : null, along = c.m && c.along ? side(sp ? sp(c.along) : c.along) : null;
-    return { i, m, out: c.out || 0, d: dd, d0: wob ? wrap(f) : dd, lo, hi, bl, bh, wob, k: s.blend ?? blend, cut: !!s.cut, ghost: !!s.ghost, paint: !!s.paint, slot: s.slot ?? null, bone: s.bone ?? null, tag: s.tag ?? null, mirror: mir, flip, src: s, loft: c.loft || null, along, loop: c.loop || 0 };
+    // grow: the surface moved out (or in) by a smooth amount given where it is, its lumps and folds and all (outermost: in the shapes' own space)
+    // (a cut moves with the surface it is cut in: what it carves shrinks where that grows out, so the two together move by the same amount)
+    const gr = s.grow, grow = !gr ? g => g : s.cut ? g => (x, y, z) => g(x, y, z) + gr(x, y, z) : g => (x, y, z) => g(x, y, z) - gr(x, y, z);
+    if (gr) { const gm = s.growMax ?? .01; for (const b of [lo, hi, bl, bh]) for (let a = 0; a < 3; a++) b[a] += b === lo || b === bl ? -gm : gm; }
+    const dd = grow(wrap(d)), m = c.m ? side(sp ? sp(c.m) : c.m) : null, along = c.m && c.along ? side(sp ? sp(c.along) : c.along) : null;
+    return { i, m, out: c.out || 0, d: dd, d0: wob ? grow(wrap(f)) : dd, lo, hi, bl, bh, wob, k: s.blend ?? blend, cut: !!s.cut, ghost: !!s.ghost, paint: !!s.paint, slot: s.slot ?? null, bone: s.bone ?? null, tag: s.tag ?? null, mirror: mir, flip, src: s, loft: c.loft || null, along, loop: c.loop || 0 };
   });
 }
 // ---- a line on the surface made ready (mesh()'s `lines`): its measure is OFF outside its box, and a loop's count is a whole number of periods

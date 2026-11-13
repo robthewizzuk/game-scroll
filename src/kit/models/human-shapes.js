@@ -6,10 +6,10 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
+import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, mouthHalf, beardArea, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
 import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
+export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine, mouthHalf, beardArea };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 // how far the point of an elbow (behind the arm) and a kneecap (in front of the leg) stand out of a limb folded right over (metres)
@@ -667,7 +667,7 @@ export function jobsFor(sp) {
     extras: { bag: bit(ex.bag), canteen: bit(ex.canteen), holster: ex.holster === 'left' ? 'left' : bit(ex.holster) } });
   add('hand', { limbs: sp.build.limbs, grip: bit(sp.hands === 'grip'), gloves: bit(sp.gloves) });
   const hatA = hat && HATS.has(hat.kind) ? { kind: hat.kind, ridge: bit(hat.ridge !== false), strap: bit(hat.strap !== false) } : null;
-  add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', moustache: bit(sp.moustache), hat: hatA, foot: top.collar === false ? sp.build.shoulders : 0 });
+  add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', moustache: bit(sp.moustache), ...(sp.face.real && sp.beard ? { beard: sp.beard } : {}), hat: hatA, foot: top.collar === false ? sp.build.shoulders : 0 });
   if (hatA) add('hat', hatA);
   if (sp.pack && PACKS.has(sp.pack.kind)) add('pack', { kind: sp.pack.kind });
   for (const g of sp.gear) add('gear', { shapes: g.shapes, cell: g.cell || .004, keep: g.keep || [.3, .06, .012], err: g.err || null, blend: g.blend ?? .004 }, { g, local: !plain(g.shapes) });
@@ -693,7 +693,7 @@ export function sculpt({ kind, a }) {
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
     const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],
-      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); lids = lidPlan(r, f); r.extra = [inside, ...(f.real ? eyeParts(r, f) : [])].filter(Boolean); return r; } });
+      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); lids = lidPlan(r, f); r.extra = [inside, ...(f.real ? eyeParts(r, f, { moustache: a.moustache, beard: a.beard }) : [])].filter(Boolean); return r; } });
     p.lid = lids.turn;   // (how far the upper lids turn to close, for human-face.js)
     return p;
   }
