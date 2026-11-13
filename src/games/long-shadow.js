@@ -39,6 +39,7 @@ const { Group, Mesh, InstancedMesh, Object3D, Vector3, BoxGeometry, CylinderGeom
 
 let W = 300, H = 420;
 const TAU = Math.PI * 2;
+const mono = (size, weight = 700) => gs.fonts.font('Courier Prime', size, weight);   // the typewriter of the HUD and the papers (bundled: the same on every phone)
 const sm = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const lerp = (a, b, k) => a + (b - a) * k;
 const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -626,7 +627,42 @@ function world() {
     const tx = MILL.x + 7, tz = MILL.z + 1, SC = C_('#bdb6aa');
     K.stone.box(MILL.x + 8.5, millY - 1.5, tz, .7, 2.6, .9, 0, SC, .5);
     for (const [x, z, w, d] of [[tx - .95, tz, .3, 8], [tx + .95, tz, .3, 8], [tx, tz - 3.85, 1.6, .3], [tx, tz + 3.85, 1.6, .3]]) K.stone.box(x, millY - .15, z, w, .9, d, 0, SC, .5);
-    const wm = waterMat('#22302c', 2), pool = mesh(new PlaneGeometry(1.6, 7.4), wm, tx, millY + .62, tz); pool.rotation.x = -Math.PI / 2; pool.castShadow = false; ripples.push(wm.normalMap);
+    const wm = waterMat('#2a3b37', 2), pool = mesh(new PlaneGeometry(1.6, 7.4), wm, tx, millY + .62, tz); pool.rotation.x = -Math.PI / 2; pool.castShadow = false; ripples.push(wm.normalMap);
+  }
+  { // the mill race: a wooden flume on trestles brings water from the hillside behind the mill onto the top of the wheel
+    // (an overshot wheel). It pours over the paddles and down the wheel's front into the trough, white where it lands
+    // (WD.race: valley() throws up the spray). Streaks of foam run along the flume and down the falling sheet.
+    const wx = MILL.x + 7, wz = MILL.z + 1, wy = millY + 1.2, yb = millY + 4.86, z1 = wz - .35, BW = C_('#5a4636'), FW = 1;
+    let z0 = z1 - 6; while (z0 > z1 - 20 && ground(wx, z0) < yb - .4) z0 -= .5;
+    const L = z1 - z0, zc = (z0 + z1) / 2, ys = yb + .3;
+    K.wood.box(wx, yb, zc, FW + .16, .08, L, 0, BW, .7);
+    for (const sx of [-1, 1]) K.wood.box(wx + sx * (FW / 2 + .04), yb, zc, .08, .52, L, 0, BW, .7);
+    for (let z = z1 - .5; z > z0 + .6; z -= 2.6) { const g = ground(wx, z); if (g > yb - .3) continue; for (const sx of [-1, 1]) K.wood.box(wx + sx * .62, g - .25, z, .14, yb - g + .25, .14, 0, BW, .6); K.wood.box(wx, yb - .14, z, 1.42, .14, .16, 0, BW, .6); }
+    { const g = Math.min(ground(wx, z0), yb); K.stone.box(wx, g - .6, z0 - .45, 1.9, yb - g + 1.25, 1.1, 0, C_('#a9a296'), .5); }   // where it comes out of the hillside
+    // foam streaks (made here, no picture files): pale lines that come and go along the flow, and as alpha for the sheet
+    const SW = 32, SH = 128, R = rng(31), d = new Uint8Array(SW * SH * 4), col = Array.from({ length: SW }, () => [R(), R() * TAU, 1 + (R() * 3 | 0)]);
+    for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+      const [a, ph, f] = col[x], n = Math.max(0, Math.sin(y / SH * TAU * f + ph)) * (.35 + .65 * a), q = (y * SW + x) * 4, v = Math.round(255 * Math.min(1, .25 + n * .9));
+      d[q] = d[q + 1] = d[q + 2] = v; d[q + 3] = 255;
+    }
+    const foam = dataTex(d, SW, SH), foamFall = foam.clone(); foamFall.needsUpdate = true; foam.repeat.set(2, L / 1.5); foamFall.repeat.set(1.5, 3);
+    const flow = waterMat('#9fb8b4', 1); flow.map = foam; flow.normalMap.repeat.set(1, L / 2); flow.opacity = .94;
+    const surf = mesh(new PlaneGeometry(FW, L), flow, wx, ys, zc); surf.rotation.x = -Math.PI / 2; surf.castShadow = false;
+    // the falling sheet: from the flume's lip in a short arc onto the top of the wheel, then down its front at the paddles' tips
+    const pts = [], N = 26, th0 = .3, th1 = 1.74, r = 3.32, wa = { z: wz + r * Math.sin(th0), y: wy + r * Math.cos(th0) };
+    for (let i = 0; i <= 6; i++) { const k = i / 6, z = z1 + (wa.z - z1) * k, y = ys + (wa.y - ys) * k * k + .04 * Math.sin(Math.PI * k); pts.push([z, y]); }
+    for (let i = 1; i <= N; i++) { const th = th0 + (th1 - th0) * i / N; pts.push([wz + r * Math.sin(th), wy + r * Math.cos(th)]); }
+    const P = [], U = [], I = []; let run = 0;
+    for (let i = 0; i < pts.length; i++) {
+      if (i) run += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      const w = FW * (.86 + .1 * i / pts.length);
+      P.push(wx - w / 2, pts[i][1], pts[i][0], wx + w / 2, pts[i][1], pts[i][0]); U.push(0, run / 3, 1, run / 3);
+      if (i) { const a = (i - 1) * 2; I.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); sg.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); sg.setIndex(I); sg.computeVertexNormals();
+    const fallM = new THREE.MeshStandardMaterial({ color: '#dfeceb', map: foamFall, alphaMap: foamFall, transparent: true, opacity: .9, depthWrite: false, roughness: .25, side: THREE.DoubleSide });
+    const sheet = new Mesh(sg, fallM); sheet.castShadow = false; v.scene.add(sheet);
+    WD.race = { flow: [flow.map, flow.normalMap], fall: foamFall, x: wx, y: millY + .64, z: wz + r * Math.sin(th1), lip: { x: wx, y: ys, z: z1 }, acc: 0 };
   }
   const mast = mesh(new CylinderGeometry(.06, .08, 9, 6), M.iron, MILL.x - 4, millY + 12, MILL.z - 2); void mast;
   WD.flagA = flag(v, M, MILL.x + 4, millY + 8.4 + 3.4, MILL.z - 3);
@@ -638,6 +674,11 @@ function world() {
   mesh(rbox(5, 17, 5, .08), M.stone, CHURCH.x, cy + 8.5, CHURCH.tz); box(CHURCH.x, cy, CHURCH.tz, 5, 17, 5, 'stone');
   for (const [dx, dz] of [[-2.2, -2.2], [2.2, -2.2], [-2.2, 2.2], [2.2, 2.2]]) mesh(new BoxGeometry(.6, 4, .6), M.stone, CHURCH.x + dx, cy + 19, CHURCH.tz + dz);
   mesh(new BoxGeometry(5.4, .6, 5.4), M.stone, CHURCH.x, cy + 21.2, CHURCH.tz); box(CHURCH.x, cy + 20.9, CHURCH.tz, 5.4, .6, 5.4, 'stone');
+  // a parapet waist high round the belfry between the pillars: Rook kneels to aim over it and ducks down behind it
+  // (he used to drop out of sight by vanishing)
+  for (const [dx, dz, w, d] of [[0, -2.33, 3.8, .34], [0, 2.33, 3.8, .34], [-2.33, 0, .34, 3.8], [2.33, 0, .34, 3.8]]) {
+    mesh(new BoxGeometry(w, .95, d), M.stone, CHURCH.x + dx, cy + 17.475, CHURCH.tz + dz); box(CHURCH.x + dx, cy + 17, CHURCH.tz + dz, w, .95, d, 'low');
+  }
   K.roof.spire(CHURCH.x, cy + 21.5, CHURCH.tz, 3.6, 7, 4, WHITE, .38, Math.PI / 4);
   WD.bell = mesh(new CylinderGeometry(.35, .8, 1.1, 12, 1, true), M.brass, CHURCH.x, cy + 20, CHURCH.tz);
   WD.churchTop = { x: CHURCH.x, y: cy + 17, z: CHURCH.tz };
@@ -729,7 +770,14 @@ function world() {
     // (its rungs and rail ends are where his hands and feet go: MOVES has the numbers; the rails stand a
     // metre proud of the floor at the top, to hold as he steps in between them)
     const lx = ch.x + 2.2 + .18, r0 = chy + .3, LW = C_('#6a5444');
-    for (const sz of [-.26, .26]) K.wood.box(lx, chy - .2, ch.z + sz, .07, r0 + MOVES.RAIL - chy + .2, .07, 0, LW, .6);
+    // (the rails run straight up to the floor, then splay out round the man stepping off, as a walk-through ladder's do)
+    const fl = r0 + MOVES.FLOOR, F = MOVES.FLARE;
+    for (const sd of [-1, 1]) {
+      K.wood.box(lx, chy - .2, ch.z + sd * .26, .07, fl + .04 - chy + .2, .07, 0, LW, .6);
+      K.wood.box(lx, fl - .03, ch.z + sd * (.26 + F) / 2, .07, .07, F - .26 + .07, 0, LW, .6);
+      K.wood.box(lx, fl - .03, ch.z + sd * F, .07, MOVES.RAIL - MOVES.FLOOR + .03, .07, 0, LW, .6);
+      K.wood.box(lx - .17, r0 + MOVES.RAIL - .07, ch.z + sd * F, .4, .07, .07, 0, LW, .6);   // (bent over toward the floor at the top)
+    }
     for (let n = 0; n <= MOVES.TOP; n++) K.wood.box(lx, r0 + n * MOVES.GAP - .022, ch.z, .05, .045, .5, 0, LW, .6);
     WD.ladder = { lx, x: lx + MOVES.BACK, z: ch.z, cx: ch.x, y0: ground(lx + MOVES.BACK, ch.z), r0 };
     // the chapel's lamp, on a bracket beside the ladder's foot (lit at dusk, as the windows are)
@@ -741,9 +789,24 @@ function world() {
   gabled(ch.x, ch.z + 6.5, 10, 6, 5.5, Math.PI / 2, { kw: K.stone, wc: C_('#e6dfd2'), y0: chy, plinth: false, pitch: .5 }); box(ch.x, chy, ch.z + 6.5, 6, 6, 10, 'stone');   // (solid, like the tower: a round stops in it, and Wren and the camera go round it, not through)
   // the windmill on the ridge (M2's second nest) with turning sails
   const wm = { x: NESTS.mill2.x, z: NESTS.mill2.z + 3.4 }, wmy = ground(wm.x, wm.z) - .2;
-  mesh(new CylinderGeometry(2.4, 3.6, 10, 12), M.wall, wm.x, wmy + 5, wm.z);
+  { // the tower: a 24-sided shell narrowing upward, sunk below the lowest ground round it. Its doorway stands open
+    // on the south side, its sill level with the ground there (the ridge slopes), one side of the shell left out
+    // for it; inside, the dim lower room (the inside of the wall, boards, the ceiling) that Wren runs into
+    const RW = y => 3.6 - 1.2 * (y - wmy) / 10, seg = TAU / 24, DH = 2.15;
+    let low = wmy; for (let i = 0; i < 16; i++) { const a = i / 16 * TAU; low = Math.min(low, ground(wm.x + Math.sin(a) * 3.7, wm.z + Math.cos(a) * 3.7) - .35); }
+    const sill = ground(wm.x, wm.z + 3.5) + .04, top = sill + DH, band = (y0, y1, gap, caps, mat = M.wall, inset = 0) => mesh(new CylinderGeometry(RW(y1) - inset, RW(y0) - inset, y1 - y0, gap ? 23 : 24, 1, !caps, seg / 2, gap ? TAU - seg : TAU), mat, wm.x, (y0 + y1) / 2, wm.z);
+    band(low, sill, false, false); band(sill, top, true, false); band(top, wmy + 10, false, true);
+    const IN = pbr('#3a3026', { rough: 1, side: THREE.BackSide }), dz = wm.z + RW(sill) * Math.cos(seg / 2);
+    band(sill - .02, top + .02, false, false, IN, .42).castShadow = false;
+    mesh(new CylinderGeometry(RW(sill) - .4, RW(sill) - .4, .08, 24), M.dark, wm.x, sill - .04, wm.z).castShadow = false;   // the boards inside
+    for (const sd of [-1, 1]) { const j = mesh(new BoxGeometry(.15, DH + .14, .5), M.wood, wm.x + sd * .5, sill + DH / 2, dz - .22); j.rotation.x = -.12; }   // the frame, leaning in with the wall
+    // (the lintel, the step and the stairs go into the shared wood and stone meshes: no draws of their own)
+    K.wood.box(wm.x, top - .08, wm.z + RW(top) * Math.cos(seg / 2) - .22, 1.18, .2, .52, 0, C_('#6a5440'), .5);
+    K.stone.box(wm.x, sill - .13, dz - .05, 1.1, .14, .7, 0, C_('#a59d90'), .5);   // the step
+    for (let i = 0; i < 6; i++) { const a = -.9 - i * .17, r = RW(sill) - .75; K.wood.box(wm.x + Math.sin(a) * r, sill, wm.z + Math.cos(a) * r, .7, .22 + i * .3, .3, a + Math.PI / 2, C_('#3a3026'), .5); }   // stairs up round the wall
+    WD.millIn = { x: wm.x, z: dz, y: sill };
+  }
   K.roof.spire(wm.x, wmy + 9.9, wm.z, 2.8, 3, 12, WHITE, .38);
-  K.wood.box(wm.x, wmy, wm.z + 3.38, 1.1, 2.3, .3, 0, C_('#1a1410'), .6).box(wm.x - .62, wmy, wm.z + 3.4, .16, 2.45, .36, 0, C_('#6a5444'), .6).box(wm.x + .62, wmy, wm.z + 3.4, .16, 2.45, .36, 0, C_('#6a5444'), .6).box(wm.x, wmy + 2.35, wm.z + 3.42, 1.4, .18, .38, 0, C_('#6a5444'), .6);   // the door
   const sails = new Group(); sails.position.set(wm.x - 3.1, wmy + 9.6, wm.z); sails.rotation.y = Math.PI / 2;
   for (let i = 0; i < 4; i++) { const s = new Mesh(new BoxGeometry(1.4, 9, .1), M.cloth); s.position.y = 4.6; const arm = new Group(); arm.rotation.z = i * Math.PI / 2; arm.add(s); sails.add(arm); }
   const spin = new Group(); spin.add(...sails.children); sails.add(spin); WD.sails = spin;
@@ -752,10 +815,22 @@ function world() {
   { // the zip line from the ridge rocks down to the water tower: a pole and stays at the top, the cable (it
     // starts beside the nest, its bar where he can reach it from the ground, and clear of his line of sight)
     const eye = n => ({ x: n.x, y: land.height(n.x, n.z) + n.up + .5, z: n.z }), a = eye(NESTS.ridge), b = eye(NESTS.tower);
-    const A = new Vector3(a.x - 2.5, a.y + .45, a.z), B = new Vector3(b.x, b.y + 1.6, b.z), d = B.clone().sub(A), L = d.length();
+    // The cable ends on a pole at the tank's far rim; the trolley runs into a buffer over the middle of the tank,
+    // where he lets go and drops onto the lid (the ride is A to that stop, WD.zipB)
+    const A = new Vector3(a.x - 2.5, a.y + .45, a.z), top = ty + 13, hx = tw.x - A.x, hz = tw.z - A.z, hl = Math.hypot(hx, hz), ux = hx / hl, uz = hz / hl;
+    const post = { x: tw.x + ux * 2.4, z: tw.z + uz * 2.4 }, k = (hl - .25) / (hl + 2.4), B = new Vector3(post.x, A.y + (top + 2.28 - A.y) / k, post.z);
+    const stop = A.clone().lerp(B, k), d = B.clone().sub(A), L = d.length();
     const cable = mesh(new CylinderGeometry(.03, .03, L, 5, 1, true), M.iron, (A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2); cable.quaternion.setFromUnitVectors(UP, d.normalize()); cable.castShadow = false;
     K.wood.cyl(new Vector3(A.x - d.x * .6, ground(A.x - d.x * .6, A.z - d.z * .6) - .3, A.z - d.z * .6), UP, .13, .1, A.y - ground(A.x, A.z) + 1, 7, C_('#5a4636'), .5);
-    WD.zipA = A; WD.zipB = B;
+    { // the pole on the tank, held by two stays to the far rim, and the buffer the trolley runs into
+      const PW = C_('#5a4636'); K.wood.cyl(new Vector3(post.x, top - .05, post.z), UP, .11, .085, B.y - top + .4, 7, PW, .5);
+      for (const sd of [-1, 1]) {
+        const c = Math.cos(sd * 1.05), sn = Math.sin(sd * 1.05), rx = ux * c - uz * sn, rz = ux * sn + uz * c, R = new Vector3(tw.x + rx * 2.62, top + .02, tw.z + rz * 2.62), T = new Vector3(post.x, B.y + .15, post.z), sv = T.clone().sub(R);
+        const st = mesh(new CylinderGeometry(.012, .012, sv.length(), 4, 1, true), M.iron, (R.x + T.x) / 2, (R.y + T.y) / 2, (R.z + T.z) / 2); st.quaternion.setFromUnitVectors(UP, sv.normalize()); st.castShadow = false;
+      }
+      const bf = A.clone().lerp(B, k + .32 / L), buf = mesh(new CylinderGeometry(.09, .09, .26, 8), M.dark, bf.x, bf.y, bf.z); buf.quaternion.setFromUnitVectors(UP, d);
+    }
+    WD.zipA = A; WD.zipB = stop; WD.zipPost = { x: post.x, z: post.z, y: B.y + .4 };
     const tr = new Group(), blk = new Mesh(new BoxGeometry(.12, .16, .3), M.iron), wh = new Mesh(new CylinderGeometry(.07, .07, .05, 10), M.iron), bar = new Mesh(new CylinderGeometry(.018, .018, .5, 6), M.dark);
     wh.rotation.z = Math.PI / 2; wh.position.y = .04; blk.position.y = -.06; bar.rotation.z = Math.PI / 2; bar.position.y = -.2; tr.add(blk, wh, bar); tr.visible = false; v.scene.add(tr); WD.trolley = tr;
   }
@@ -825,6 +900,8 @@ function world() {
   WD.sparks = new Particles(v, { max: 300, additive: true });
   WD.trail = new Particles(v, { max: 260, additive: false, wind: AIR, blow: .4 });
   WD.smoke = new Particles(v, { max: 200, additive: false, wind: AIR, blow: .6 });
+  WD.steam = new Particles(v, { max: 420, additive: false, wind: AIR, blow: .5 });
+  WD.spray = new Particles(v, { max: 140, additive: false, wind: AIR, blow: .15 });   // the mill race's spray where it lands   // the engine's exhaust: a plume of its own, so the chimneys' smoke never starves it
   // the round, for its own camera: a pointed bullet with a boat tail and a crimp groove in a copper jacket, the
   // rifling's marks down its sides (so its spin shows), four times life size so it reads on a phone
   const bullet = (() => {
@@ -849,6 +926,16 @@ function world() {
     // (seen along its length the stock is all grazing angles, where any surface mirrors the sky: its wood is given less of that, and a little of its own colour back, or it reads as blue steel)
     for (const m of near) m.side = THREE.DoubleSide; near[1].roughness = .46; near[1].metalness = .75; gun.add(new Mesh(P.wood, near[0]), new Mesh(P.steel, near[1])); const bolt = new Group(); bolt.add(new Mesh(P.bolt, near[1])); bolt.position.set(0, .03, .05); gun.add(bolt); WD.bolt = bolt; }
   gun.scale.setScalar(1.5); gun.position.set(.27, -.3, -.56); gun.rotation.set(.05, .13, -.1); gun.traverse(m => { m.castShadow = false; m.userData.noAO = true; }); v.cam.add(gun); WD.gun = gun;
+  // what the rifle in your hands must not go into round the nests, besides walls (WD.solids) and the ground: the belfry's
+  // pillars and roof, the water tank and the zip line's pole, the windmill, the ridge's boulders and log
+  { const G = WD.gunSolids = [], c = NESTS.chapel, cy = ground(c.x, c.z) - .2, t = NESTS.tower, ty_ = ground(t.x, t.z), r = NESTS.ridge, ry_ = ground(r.x, r.z);
+    for (const [dx, dz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]]) G.push({ box: [c.x + dx - .27, cy + 10.9, c.z + dz - .27, c.x + dx + .27, cy + 13.7, c.z + dz + .27] });
+    G.push({ box: [c.x - 2.3, cy + 13.55, c.z - 2.3, c.x + 2.3, cy + 17.5, c.z + 2.3] });
+    G.push({ cyl: [t.x, t.z + 2.2, 2.72, 2.72, ty_ + 9.7, ty_ + 13.02] }, { cyl: [WD.zipPost.x, WD.zipPost.z, .14, .14, ty_ + 12.9, WD.zipPost.y] });
+    const wm = { x: NESTS.mill2.x, z: NESTS.mill2.z + 3.4 }, wy = ground(wm.x, wm.z) - .2;
+    G.push({ cyl: [wm.x, wm.z, 3.62, 2.42, wy - 1, wy + 10] }, { cyl: [wm.x, wm.z, 2.85, .2, wy + 9.9, wy + 12.9] });
+    for (const [dx, dz, sz] of [[-2.6, -2.2, 1.5], [2.4, -2.4, 1.3], [3.8, -.6, 1.1], [-3.9, -.4, 1.2], [4.6, 1.6, 1], [-4.4, 1.8, 1.3]]) G.push({ ball: [r.x + dx, ry_ - .2, r.z + dz, sz * .66] });
+    G.push({ box: [r.x - 1.65, ry_ - .3, r.z - 2.08, r.x + 1.65, ry_ + .26, r.z - 1.52] }); }
   // rifles dropped by men who are down
   WD.dropped = Array.from({ length: 6 }, () => { const g = soldierRifle(false); g.visible = false; v.scene.add(g); return g; }); WD.dropN = 0;
   // nest markers (a soft flare where you can move to)
@@ -1100,7 +1187,8 @@ const MOVES = (() => {
   // Up a ladder, hand over hand. One cycle is two rungs: each hand and foot holds its rung while he rises
   // past it, then goes up two. [when in the cycle it lets go, its rung at the bottom, how far out to the side]:
   // left hand, right foot, right hand, left foot, the way people climb.
-  const GAP = .32, SWING = .36, LEAD = .2, BACK = .3, LIMBS = { handL: [0, 6, .19], footR: [.08, 2, -.1], handR: [.5, 7, -.19], footL: [.58, 3, .1] };
+  // (above the top rung the rails splay out to FLARE each side, as a walk-through ladder's do: wide enough for his shoulders)
+  const GAP = .32, SWING = .36, LEAD = .2, BACK = .3, FLARE = .39, LIMBS = { handL: [0, 6, .19], footR: [.08, 2, -.1], handR: [.5, 7, -.19], footL: [.58, 3, .1] };
   // y: his feet line above the first rung (m). Gives where each hand and foot is in the ladder's own space
   // (x along the rungs, his left +; y up from the first rung; z out from the ladder), `at` for the body's pose
   // and `rise`, the surge as each leg pushes. Above rung `top` his hands take the rails, up to `rail`.
@@ -1109,7 +1197,7 @@ const MOVES = (() => {
     for (const k in LIMBS) {
       const [o, n0, x] = LIMBS[k], hand = k[0] === 'h', i = Math.floor(c - o), u = (c - o - i) / SWING, e = u < 1 ? sm(0, 1, u) : 1, nA = 2 * i + n0 - 2, n = nA + 2 * e;
       const cap = hand ? rail - .05 : 1e3, yA = Math.min(nA * GAP, cap), yB = Math.min((nA + 2) * GAP, cap), lift = u < 1 ? S(PI * u) * (yB - yA) / (2 * GAP) : 0, p = out[k] ||= { x: 0, y: 0, z: 0 };
-      p.rail = hand ? sm(top, top + 1, n) : 0; p.x = x * mix(1, 1.37, p.rail); p.y = mix(yA, yB, e) + (hand ? 0 : .03); p.z = lift * (hand ? .09 : .13); p.lift = lift;
+      p.rail = hand ? sm(top, top + 1, n) : 0; p.x = x * mix(1, FLARE / .19, p.rail); p.y = mix(yA, yB, e) + (hand ? 0 : .03); p.z = lift * (hand ? .09 : .13); p.lift = lift;
     }
     out.rise = .018 * S(2 * TAU * c + 1);
     return out;
@@ -1118,17 +1206,21 @@ const MOVES = (() => {
   // top two rungs when his feet line is at Y_END; then he pulls himself in between the rails and over the sill.
   const TOP = 33, FLOOR = 10.7, RAIL = 11.8, Y_END = ((TOP - 1) / 2 - LEAD) * 2 * GAP, OVER = 1.8;
   const track = pts => { const f = keys(pts.map(([t, v]) => [t, { v }])); return t => f(t).j.v; }, fy = n => n * GAP + .03 - FLOOR, E = ladder(Y_END, TOP, RAIL);
+  // He pushes down on the splayed rail tops and steps up onto the floor right foot first, his body leaning into
+  // the step; his shoulders pass between the rails, each hand lets go as it comes level with him (never bent
+  // back behind him), and he walks in upright, two more steps onto the floor.
   const over = {
-    root: track([[0, [0, Y_END - FLOOR, BACK]], [.3, [.02, Y_END - FLOOR + .1, BACK - .03]], [.85, [0, -.24, -.06]], [1.25, [0, -.12, -.52]], [OVER, [0, -.3, -.9]]]),
-    footR: track([[0, [-.1, fy(TOP - 1), 0]], [.22, [-.12, -.2, .14]], [.45, [-.13, .14, -.18]], [.6, [-.13, .015, -.4]]]),
-    footL: track([[0, [.1, fy(TOP), 0]], [.85, [.1, fy(TOP), 0]], [1.05, [.12, .17, -.38]], [1.25, [.11, .015, -.78]]]),
+    root: track([[0, [0, Y_END - FLOOR, BACK]], [.3, [.02, Y_END - FLOOR + .12, BACK - .04]], [.62, [0, -.2, .04]], [.9, [0, -.09, -.26]], [1.25, [0, -.03, -.58]], [OVER, [0, 0, -.92]]]),
+    footR: track([[0, [-.1, fy(TOP - 1), 0]], [.22, [-.12, -.2, .14]], [.45, [-.13, .14, -.18]], [.6, [-.13, .015, -.4]], [1.3, [-.13, .015, -.4]], [1.46, [-.12, .1, -.74]], [1.62, [-.11, .015, -1.06]]]),
+    footL: track([[0, [.1, fy(TOP), 0]], [.82, [.1, fy(TOP), 0]], [1, [.12, .2, -.36]], [1.2, [.11, .015, -.76]]]),
   };
   // t seconds into that: his feet line, hands and feet (x his left, y up from the floor he steps onto, z out
-  // from the ladder), how firmly his hands still hold the rails, and `at` for the body's pose (topout)
+  // from the ladder), how firmly each hand still holds its rail, and `at` for the body's pose (topout)
   function topOut(t, out = {}) {
     for (const k of ['root', 'footL', 'footR']) { const v = over[k](t), p = out[k] ||= { x: 0, y: 0, z: 0 }; p.x = v[0]; p.y = v[1]; p.z = v[2]; }
     for (const k of ['handL', 'handR']) { const p = out[k] ||= { x: 0, y: 0, z: 0 }; p.x = E[k].x; p.y = E[k].y - FLOOR; p.z = 0; }
-    out.grip = 1 - sm(.85, 1.15, t); out.at = Math.min(1, t / OVER); out.done = t >= OVER;
+    out.gripR = 1 - sm(.6, .84, t); out.gripL = 1 - sm(.7, .94, t); out.grip = Math.max(out.gripL, out.gripR);
+    out.at = Math.min(1, t / OVER); out.done = t >= OVER;
     return out;
   }
   // standing at ease as the kit's people do: the toes a little out, the arms hanging a little out from the shoulders, so the
@@ -1137,13 +1229,14 @@ const MOVES = (() => {
   const STAND = { hips: [0, 0, 0], spine: [.03, 0, 0], head: [0, 0, 0], armL: [0, 0, .06], foreL: [-.2, 0, 0], handL: [0, 0, 0], armR: [0, 0, -.06], foreR: [-.2, 0, 0], handR: [0, 0, 0], legL: [0, 0, 0], shinL: [.05, 0, 0], footL: [0, 0, 0], legR: [0, 0, 0], shinR: [.05, 0, 0], footR: [0, 0, 0] };
   const poses = {
     topout: [keys([
-      [0, { hips: [.06, 0, 0], spine: [.1, 0, 0], head: [-.42, 0, 0], armL: [-2.3, 0, -.1], foreL: [-.5, 0, 0], handL: [0, 0, 0], armR: [-2.3, 0, .1], foreR: [-.5, 0, 0], handR: [0, 0, 0], legL: [-.8, 0, 0], shinL: [1.1, 0, 0], footL: [.1, 0, 0], legR: [-.8, 0, 0], shinR: [1.1, 0, 0], footR: [.1, 0, 0] }],
-      [.17, { hips: [.1, .12, 0], spine: [.3, -.12, 0], head: [-.2, 0, 0] }],
-      [.33, { hips: [.2, .05, 0], spine: [.55, 0, 0], head: [-.05, 0, 0] }],
-      [.48, { hips: [.25, 0, 0], spine: [.62, 0, 0], head: [-.25, 0, 0], armL: [-1.2, 0, .05], foreL: [-.9, 0, 0], armR: [-1.2, 0, -.05], foreR: [-.9, 0, 0] }],
-      [.7, { hips: [.25, 0, 0], spine: [.5, 0, 0], head: [-.3, 0, 0], armL: [-.25, 0, .1], foreL: [-.9, 0, 0], armR: [-.25, 0, -.1], foreR: [-.9, 0, 0] }],
-      [1, { hips: [.2, 0, 0], spine: [.42, 0, 0], head: [-.28, .25, 0], armL: [-.1, 0, .12], foreL: [-1.1, 0, 0], armR: [-.1, 0, -.12], foreR: [-1.1, 0, 0] }],
-    ]), { time: OVER, once: true }],
+      [0, { hips: [.06, 0, 0], spine: [.12, 0, 0], head: [-.38, 0, 0], armL: [-2.2, 0, .2], foreL: [-.5, 0, 0], handL: [0, 0, 0], armR: [-2.2, 0, -.2], foreR: [-.5, 0, 0], handR: [0, 0, 0], legL: [-.8, 0, 0], shinL: [1.1, 0, 0], footL: [.1, 0, 0], legR: [-.8, 0, 0], shinR: [1.1, 0, 0], footR: [.1, 0, 0] }],
+      [.14, { hips: [.1, .1, 0], spine: [.24, -.08, 0], head: [-.18, 0, 0] }],
+      [.3, { hips: [.16, .04, 0], spine: [.32, 0, 0], head: [-.08, 0, 0], armL: [-.7, 0, .4], foreL: [-.6, 0, 0], armR: [-.7, 0, -.4], foreR: [-.6, 0, 0] }],
+      [.46, { hips: [.12, 0, 0], spine: [.24, 0, 0], head: [-.04, 0, 0], armL: [-.25, 0, .32], foreL: [-.5, 0, 0], armR: [-.25, 0, -.32], foreR: [-.5, 0, 0] }],
+      [.66, { hips: [.06, -.05, 0], spine: [.13, .04, 0], head: [0, 0, 0], armL: [.05, 0, .14], foreL: [-.4, 0, 0], armR: [-.12, 0, -.12], foreR: [-.35, 0, 0] }],
+      [.84, { hips: [.04, .05, 0], spine: [.08, -.04, 0], head: [.02, .15, 0], armL: [-.12, 0, .1], foreL: [-.35, 0, 0], armR: [.06, 0, -.1], foreR: [-.4, 0, 0] }],
+      [1, { hips: [.02, 0, 0], spine: [.05, 0, 0], head: [.04, .25, 0], armL: [.02, 0, .08], foreL: [-.3, 0, 0], armR: [.02, 0, -.08], foreR: [-.3, 0, 0] }],
+]), { time: OVER, once: true }],
     // A soldier knocked out, by where the round came from: thrown back off his feet; down on his knees and onto
     // his face; or spun and dropped on his side. He goes limp, hits the ground, settles. (His left is +x: an arm
     // or leg out to his left turns +z, to his right -z.)
@@ -1214,7 +1307,7 @@ const MOVES = (() => {
   // (the same to his left: left and right swapped, turned the other way)
   const flip = f => p => { const s = f(p), j = {}; for (const k in s.j) { const a = s.j[k], c = k[k.length - 1]; j[c === 'L' ? k.slice(0, -1) + 'R' : c === 'R' ? k.slice(0, -1) + 'L' : k] = [a[0], -a[1], -a[2]]; } return { j, drop: s.drop, shift: s.shift && [-s.shift[0], s.shift[1], s.shift[2]] }; };
   poses.fallLeft = [flip(poses.fallRight[0]), poses.fallRight[1]];
-  return { GAP, BACK, TOP, FLOOR, RAIL, Y_END, OVER, ladder, topOut, poses };
+  return { GAP, BACK, FLARE, TOP, FLOOR, RAIL, Y_END, OVER, ladder, topOut, poses };
 })();
 // ---- end moves
 const POOL = {};
@@ -1349,6 +1442,7 @@ const WIN_LIGHT = 6, VILLAGE_Y = 6, STAGE = [6, 1.3];
 
 // ------------------------------------------------------------------ the game
 function make(api) {
+  gs.fonts.use('Courier Prime');   // (the moves' caption: in before the first frame)
   const fx = new Juice();
   const camp = new Campaign(CHAPTERS).attach(api);
   const gun = new Gun({ damage: 100, rate: .95, mag: 5, reload: 2.6, spread: 0, bloom: 0, recoil: .03, sideways: .3, recover: 3, auto: false, range: 600, head: 2 });
@@ -1462,6 +1556,35 @@ function make(api) {
   // He goes down the way the round throws him: onto his knees and face when it comes from behind, back off his
   // feet when it meets him, onto his side from the side; never into a wall, and he ends lying along the slope.
   const FALLS = { fallFront: [0, 1], fallBack: [0, -1], fallLeft: [1, 0], fallRight: [-1, 0] };
+  // The blow itself: the part the round meets jerks the way it was going and swings back (springs on his joints, added
+  // over the fall as it starts, as gs.characters.Reactions does it): a head shot snaps the head and neck, one to the chest
+  // throws the trunk back or round and flings the arm on that side, one low takes that leg from under him.
+  const JOLT = { hips: [90, 11], spine: [120, 11], head: [150, 12], armL: [55, 7], armR: [55, 7], legL: [120, 13], legR: [120, 13], shinL: [130, 13], shinR: [130, 13] };
+  function jolt(s, h) {
+    const J = s.jolt ||= Object.fromEntries(Object.keys(JOLT).map(n => [n, { o: [0, 0, 0], v: [0, 0, 0] }])), a = s.yaw, c = Math.cos(a), sn = Math.sin(a);
+    for (const n in J) { J[n].o.fill(0); J[n].v.fill(0); }
+    const P = 2.2, k = 2.6, lx = (h.dx * c - h.dz * sn) * P, lz = (h.dx * sn + h.dz * c) * P, off = clamp((h.x - s.x) * c - (h.z - s.y) * sn, -.3, .3);
+    const kick = (n, x, y, z) => { const q = J[n].v; q[0] += x; q[1] += y; q[2] += z; };
+    if (h.part === 'head') { kick('head', lz * k * 2, -lz * off * k * 6, -lx * k * 2); kick('spine', lz * k * .8, 0, -lx * k * .8); kick('armL', -lz * k * .6, 0, lx * k * .6); kick('armR', -lz * k * .6, 0, lx * k * .6); }
+    else if (h.part === 'chest' || h.y - s.gy > .95) {
+      const arm = Math.abs(off) > .1 ? (off > 0 ? 'armL' : 'armR') : null;
+      kick('spine', lz * k * 1.5, -lz * off * k * 9, -lx * k * 1.5); kick('head', -lz * k * .9, 0, lx * k * .9); kick('hips', lz * k * .5, -lz * off * k * 3, -lx * k * .5);
+      kick('armL', -lz * k * 1.2, 0, -lx * k * 1.2 + k); kick('armR', -lz * k * 1.2, 0, -lx * k * 1.2 - k); if (arm) kick(arm, -lz * k * 1.6, 0, -lx * k * 1.6);
+    } else {
+      const sd = off >= 0 ? 'L' : 'R';
+      kick('shin' + sd, P * k * 1.6, 0, 0); kick('leg' + sd, -P * k * .8, 0, 0); kick('hips', lz * k * .6, 0, -lx * k * .6); kick('spine', -lz * k * .5, 0, lx * k * .5);
+    }
+    s.joltT = .9;
+  }
+  function joltTick(s, dt) {
+    if (!(s.joltT > 0)) return; s.joltT -= dt;
+    const P = s.m.rig.parts, n = Math.max(1, Math.ceil(dt / .01)), h = dt / n;
+    for (const name in s.jolt) {
+      const q = s.jolt[name], [K, C] = JOLT[name], o = q.o, v = q.v, part = P[name]; if (!part) continue;
+      for (let i = 0; i < n; i++) for (let a = 0; a < 3; a++) { v[a] += (-K * o[a] - C * v[a]) * h; o[a] = clamp(o[a] + v[a] * h, -1.1, 1.1); }
+      const r = part.rotation; r.x += name.startsWith('shin') ? Math.max(0, o[0]) : o[0]; r.y += o[1]; r.z += o[2];
+    }
+  }
   function fall(s, from) {
     const m = s.m, rel = from ? angDiff(Math.atan2(s.x - from.x, s.y - from.z), s.yaw) : rnd(-Math.PI, Math.PI), sy = Math.sin(s.yaw), cy = Math.cos(s.yaw);   // the way the round travels, against the way he faces
     const order = Math.abs(rel) < .8 ? ['fallFront', 'fallLeft', 'fallRight', 'fallBack'] : Math.abs(rel) > 2.3 ? ['fallBack', 'fallRight', 'fallLeft', 'fallFront'] : rel > 0 ? ['fallLeft', 'fallBack', 'fallFront', 'fallRight'] : ['fallRight', 'fallBack', 'fallFront', 'fallLeft'];
@@ -1474,11 +1597,12 @@ function make(api) {
     hands(m, EASY); if (m.userData.handset) m.userData.handset.visible = false;   // his hands go slack
     const g = (lx, lz) => { const [x, z] = at(lx, lz, .7); return groundAt(x, z); };
     s.tilt = s.deck == null ? [Math.atan2(g(0, -1) - g(0, 1), 1.4), Math.atan2(g(1, 0) - g(-1, 0), 1.4)] : null; s.fallT = 0; s.still = false; s.act = null; s.thud = false;
+    if (s.hitAt) { jolt(s, s.hitAt); s.hitAt = null; } else s.joltT = 0;
   }
   // a man who is down: his fall plays out, his body comes to lie along the ground, and then he is left be
   function lie(s, dt) {
     const m = s.m; if (s.still) return;
-    m.rig.update(dt, { speed: 0 });
+    m.rig.update(dt, { speed: 0 }); joltTick(s, dt);
     { const ph = m.rig.phase; if (ph < .7 && m.lod < 2) floorFeet(m, 1 - sm(.6, .7, ph), s.pins, 1 - sm(.3, .5, ph)); }
     if (s.tilt) { const k = sm(.3, .72, m.rig.phase); m.rotation.order = 'YXZ'; m.rotation.x = s.tilt[0] * k; m.rotation.z = s.tilt[1] * k; }
     if (!s.thud && m.rig.phase > .6) {   // he meets the ground: dust (mud in the rain) from under him
@@ -1534,7 +1658,7 @@ function make(api) {
     return out;
   }
   function putSphere(q, part, up) { part.getWorldPosition(tmpA); q[0] = tmpA.x; q[1] = tmpA.y + up; q[2] = tmpA.z; }
-  const SPH = [];
+  const SPH = [], PARTS = ['head', 'chest', 'hips'];
 
   // ---- the player's shots
   function fire() {
@@ -1575,7 +1699,26 @@ function make(api) {
     }
     boltT = 1.1;
   }
-  let boltT = 0, markAt = -1, markV = null;
+  let boltT = 0, markAt = -1, markV = null, gunLow = 0, lastDt = 1 / 60;
+  // How much of the rifle's barrel, held where it rests, would be inside something: 0 none .. 1 all of it.
+  // (Points along it from the receiver to the muzzle, tested against walls, the ground and WD.gunSolids.)
+  const GUN_REST = new THREE.Matrix4().compose(new Vector3(.27, -.3, -.56), new THREE.Quaternion().setFromEuler(new THREE.Euler(.05, .13, -.1)), new Vector3(1.5, 1.5, 1.5));
+  const GUN_PTS = [-.12, -.27, -.42, -.57, -.74].map(z => new Vector3(0, .03, z)), _gm = new THREE.Matrix4(), _gp = new Vector3();
+  function gunBlocked(cam) {
+    _gm.multiplyMatrices(cam.matrixWorld, GUN_REST);
+    for (let i = 0; i < GUN_PTS.length; i++) { _gp.copy(GUN_PTS[i]).applyMatrix4(_gm); if (inSomething(_gp)) return Math.min(1, (GUN_PTS.length - i) / GUN_PTS.length * 1.5); }
+    return 0;
+  }
+  function inSomething(p, m = .05) {
+    if (p.y < WD.land.height(p.x, p.z) + m) return true;
+    for (const b of WD.solids) if (p.y > b.y0 - m && p.y < b.y1 + m && p.x > b.x0 - m && p.x < b.x1 + m && p.z > b.z0 - m && p.z < b.z1 + m) return true;
+    for (const g of WD.gunSolids) {
+      if (g.box) { const b = g.box; if (p.x > b[0] - m && p.x < b[3] + m && p.y > b[1] - m && p.y < b[4] + m && p.z > b[2] - m && p.z < b[5] + m) return true; }
+      else if (g.cyl) { const [x, z, r0, r1, y0, y1] = g.cyl; if (p.y > y0 - m && p.y < y1 + m && Math.hypot(p.x - x, p.z - z) < r0 + (r1 - r0) * clamp((p.y - y0) / (y1 - y0), 0, 1) + m) return true; }
+      else { const [x, y, z, r] = g.ball; if (Math.hypot(p.x - x, p.y - y, p.z - z) < r + m) return true; }
+    }
+    return false;
+  }
   // the bolt throws the spent brass out to the right; it tinkles on the stone a moment later
   function ejectCase() {
     if (!scoped && !glass && WD.gun.visible) {
@@ -1635,9 +1778,11 @@ function make(api) {
       const sx = s.x + s.vx * ahead, sz = s.y + s.vy * ahead;
       const k = clamp(((sx - x0) * dx + (s.gy + 1 - y0) * dy + (sz - z0) * dz) / (L * L), 0, 1);
       if (Math.hypot(x0 + dx * k - sx, y0 + dy * k - s.gy - 1, z0 + dz * k - sz) > 2.2) continue;
+      let part = 0;
       for (const [cx, cy, cz, r, head] of hitSpheres(s, SPH)) {
         const ox = x0 - cx - s.vx * ahead, oy = y0 - cy, oz = z0 - cz - s.vy * ahead, bq = ox * dx + oy * dy + oz * dz, cq = ox * ox + oy * oy + oz * oz - r * r, a = L * L, disc = bq * bq - a * cq;
-        if (disc >= 0) take((-bq - Math.sqrt(disc)) / a, { s, head });
+        if (disc >= 0) take((-bq - Math.sqrt(disc)) / a, { s, head, part: PARTS[part] });
+        part++;
       }
     }
     for (const b of drums || []) { if (b.gone) continue; const ox = x0 - b.x, oy = y0 - b.y - .5, oz = z0 - b.z, bq = ox * dx + oy * dy + oz * dz, cq = ox * ox + oy * oy + oz * oz - .5, disc = bq * bq - L * L * cq; if (disc >= 0) take((-bq - Math.sqrt(disc)) / (L * L), { drum: b }); }
@@ -1714,6 +1859,7 @@ function make(api) {
     if (h.s) {
       { const sc = (h.d || 0) * (h.head ? 1.3 : 1) * (b.masked ? 1.1 : 1);   // the round's best shot, for the replay at the end
         if (!bestShot || sc > bestShot.sc) { const rel = Math.atan2(wind.z, wind.x) + Math.atan2(-(x - b.x0), -(z - b.z0)); bestShot = { sc, s: h.s, head: h.head, d: Math.round(h.d || 0), from: { x: b.x0, y: b.y0, z: b.z0 }, to: { x, y, z }, wind: Math.cos(rel) * Math.hypot(wind.x, wind.z), covered: b.masked }; } }
+      { const l = Math.hypot(b.vx, b.vz) || 1; h.s.hitAt = { x, y, z, dx: b.vx / l, dz: b.vz / l, part: h.part || (h.head ? 'head' : 'chest') }; }
       knockOut(h.s, h.head, h.d, viaCam, { x: b.x0, z: b.z0 });
       if (firstShotHit == null) firstShotHit = true;
       if (h.s === cs && gun.shotsAtCs === 1) cs.oneShot = true;
@@ -1796,12 +1942,15 @@ function make(api) {
   const ROOK_LINES = { dodged: ['Quick. You will not be twice.', 'You felt that one coming.'], moved: ['Not there any more, sniper.', 'Look again.'], hit: ['Got you.'] };
   function rookSay(k) { if (lineFx && !lineFx.enemy) return; const l = ROOK_LINES[k]; say(l[Math.floor(Math.random() * l.length)], ROOK, 2.2, true); }
   function rookHide(s, delay = 0) { s.aimT = 0; s.hideAt = t + delay; soon(delay, () => { if (!s.ko && !(s.hideT > 0)) { s.hideT = rnd(4, 6.5); s.see = Math.min(s.see, .3); } }); }
-  function rookAppear(s, eye) {
-    // a different arch: left or right of the bell, on the side that faces Wren
+  // a different arch: left or right of the bell, on the side that faces Wren (chosen as he ducks, reached as he comes up)
+  function rookSpot(s, eye) {
     const c = WD.churchTop, dx = eye.x - c.x, dz = eye.z - c.z, l = Math.hypot(dx, dz) || 1, fx_ = dx / l, fz = dz / l;
     s.arch = s.arch === 1 ? -1 : s.arch === -1 ? (Math.random() < .5 ? 1 : 0) : (Math.random() < .5 ? -1 : 1);
-    s.x = c.x + fx_ * 1.4 - fz * 1.3 * s.arch; s.y = c.z + fz * 1.4 + fx_ * 1.3 * s.arch;
-    s.lift = c.y - groundAt(s.x, s.y) + .2; s.see = .15; s.fireT = 1.5;
+    return { x: c.x + fx_ * 1.4 - fz * 1.3 * s.arch, z: c.z + fz * 1.4 + fx_ * 1.3 * s.arch };
+  }
+  function rookAppear(s, eye) {
+    const to = s.to || rookSpot(s, eye), c = WD.churchTop;
+    s.x = to.x; s.y = to.z; s.lift = c.y - groundAt(s.x, s.y) + .2; s.see = .15; s.fireT = 1.5;
     if (Math.random() < .5) rookSay('moved');
   }
   const enemyShot = (s, target, kind) => {
@@ -1923,7 +2072,7 @@ function make(api) {
     // flat out, slowing into the door or the foot of the ladder; then a walk in at the door, or onto the ladder,
     // the first stretch of the climb, (a cut) the last stretch and in over the sill
     const vEnd = climb ? .8 : 2.4, slow = Math.min(.7, len / RUN_V * .5), runT = Math.max(.6, (len - (RUN_V + vEnd) / 2 * slow) / RUN_V + slow);
-    const m = { to, kind: kind || 'run', climb, t: 0, start: pts[0], foot, pts, len, runT, slow, vEnd, mountT: climb ? .6 : 0, climbA: climb ? 2.3 : 0, climbB: climb ? 2.5 : 0, inT: climb ? MOVES.OVER : 1.1, side: Math.random() < .5 ? -1 : 1, fade: 1, yaw: null };
+    const m = { to, kind: kind || 'run', climb, t: 0, start: pts[0], foot, pts, len, runT, slow, vEnd, mountT: climb ? .6 : 0, climbA: climb ? 2.3 : 0, climbB: climb ? 2.5 : 0, inT: climb ? MOVES.OVER : 1.7, side: Math.random() < .5 ? -1 : 1, fade: 1, yaw: null };
     m.dur = runT + m.mountT + m.climbA + m.climbB + m.inT + (climb ? .05 : .25);
     return m;
   }
@@ -1990,9 +2139,9 @@ function make(api) {
       cam.p[0] = c0.x; cam.p[1] = c0.y + Math.sin(t * 10.3) * .012; cam.p[2] = c0.z;
       cam.l[0] = x + Math.sin(yawC) * 1.6; cam.l[1] = fig.y + 1.15 + Math.sin(t * 7.1) * .015; cam.l[2] = z + Math.cos(yawC) * 1.6; cam.fov = 60;
     } else if (!m.climb) {
-      // down to a walk, up to the door and into the dark
-      const k = clamp((t - m.runT) / m.inT, 0, 1), vIn = 1.3, x = f.x, z = f.z - (m.vEnd * k - (m.vEnd - vIn) * k * k / 2) * m.inT;
-      fig.x = x; fig.z = z; fig.y = groundAt(x, z); fig.yaw = Math.PI; fig.speed = lerp(m.vEnd, vIn, k);
+      // down to a walk, up the step and in through the open doorway, into the dim room at the tower's foot
+      const k = clamp((t - m.runT) / m.inT, 0, 1), vIn = 1.3, x = f.x, z = f.z - (m.vEnd * k - (m.vEnd - vIn) * k * k / 2) * m.inT, D = WD.millIn;
+      fig.x = x; fig.z = z; fig.y = D && z < D.z + .35 ? lerp(groundAt(x, z), D.y, sm(D.z + .35, D.z - .1, z)) : groundAt(x, z); fig.yaw = Math.PI; fig.speed = lerp(m.vEnd, vIn, k);
       cam.p[0] = x + 2.4 * m.side; cam.p[2] = f.z + 3.6 - k * .5; cam.p[1] = Math.max(fig.y + 1.45, groundAt(cam.p[0], cam.p[2]) + 1.3); cam.l[0] = x; cam.l[1] = fig.y + 1.2; cam.l[2] = z - 1.5; cam.fov = 56;
     } else {
       // the belfry ladder: hands and feet on the rungs, then the rails, then in over the sill
@@ -2023,7 +2172,7 @@ function make(api) {
         const O = m.O ||= {}; MOVES.topOut(a - m.climbA - m.climbB, O); put(O, fy);
         fig.x = L.lx + O.root.z; fig.y = fy + O.root.y; fig.z = L.z + O.root.x; fig.pose = 'topout'; fig.at = O.at; fig.fade = .12;
         palm(how.palms.L, 1, 1); palm(how.palms.R, -1, 1); how.level.L = how.level.R = 1;
-        b.handL = b.handR = O.grip; b.footL = b.footR = 1;
+        b.handL = O.gripL; b.handR = O.gripR; b.footL = b.footR = 1;
         // from inside the belfry: he comes in between the rails with the valley behind him
         cam.p[0] = L.cx - .9 + O.at * .25; cam.p[1] = fy + .95; cam.p[2] = L.z + 1.05; cam.l[0] = L.lx - .4; cam.l[1] = fy + 1; cam.l[2] = L.z; cam.fov = 56;
       }
@@ -2123,21 +2272,40 @@ function make(api) {
   // hidden, and comes out. (Kneeling his head is at 1.2 m, right down behind cover under 1 m.)
   function shootable(e, s) {
     const p = { x: s.x, y: s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44), z: s.y };
-    if (!clearLine(e, p)) return false;
+    return clearLine(e, p) && overLand(e, p);
+  }
+  // the line from e to p stays above the ground all the way (sampled every two metres)
+  function overLand(e, p) {
     const L = Math.hypot(p.x - e.x, p.z - e.z), n = Math.ceil(L / 2);
     for (let i = 1; i < n; i++) { const k = i / n; if (e.y + (p.y - e.y) * k < WD.land.height(e.x + (p.x - e.x) * k, e.z + (p.z - e.z) * k)) return false; }
     return true;
   }
-  // the nearest open ground, a few cells round him, that a shot from e reaches (standing), not right under the nest
+  // can the eye e make him out at all: his head or his chest in plain view (a wall, a house or a rise of the ground hides him from the glasses)
+  const _ins = { x: 0, y: 0, z: 0 };
+  function inSight(e, s) {
+    const top = s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44);
+    for (const y of [top, top - .42]) { _ins.x = s.x; _ins.y = y; _ins.z = s.y; if (clearLine(e, _ins) && overLand(e, _ins)) return true; }
+    return false;
+  }
+  // the nearest open ground that a shot from e reaches (standing), not right under the nest, by the way he would
+  // walk there: a flood over the open cells from where he stands (so it is one he can reach: never the other side
+  // of a river or a wall), out to about 110 m. Every cell close by is tried, further out every third.
+  const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
   function seenSpot(s, e) {
-    const c0 = Math.floor((s.x - GX0) / CELL), r0 = Math.floor((s.y - GZ0) / CELL), me = { gy: 0, crouch: false, x: 0, y: 0 }; let tries = 4;
-    for (let rad = 1; rad <= 8; rad++) for (let dr = -rad; dr <= rad; dr++) for (let dc = -rad; dc <= rad; dc++) {
-      if (Math.max(Math.abs(dc), Math.abs(dr)) !== rad || !WD.nav.open(c0 + dc, r0 + dr)) continue;
-      me.x = GX0 + (c0 + dc + .5) * CELL; me.y = GZ0 + (r0 + dr + .5) * CELL; me.gy = groundAt(me.x, me.y);
-      if (Math.hypot(me.x - e.x, me.y - e.z) > 30 && shootable(e, me)) {
-        // and one he can walk to (a few tries: the other side of a river or a wall doesn't count)
-        const a = openNear(s.x, s.y); if (!a || tries-- <= 0) return null;
-        if (WD.nav.path(a.x - GX0, a.z - GZ0, me.x - GX0, me.y - GZ0)) return { x: me.x, y: me.y };
+    const a = openNear(s.x, s.y); if (!a) return null;
+    const me = { gy: 0, crouch: false, x: 0, y: 0 }, c0 = Math.floor((a.x - GX0) / CELL), r0 = Math.floor((a.z - GZ0) / CELL), seen = new Set([r0 * GC + c0]), q = [c0, r0];
+    let checks = 200;
+    for (let i = 0, n = 0; i < q.length && n < 2600; i += 2, n++) {
+      const c = q[i], r = q[i + 1];
+      if (n > 0 && (n < 60 || n % 3 === 0)) {
+        me.x = GX0 + (c + .5) * CELL; me.y = GZ0 + (r + .5) * CELL; me.gy = groundAt(me.x, me.y);
+        if (Math.hypot(me.x - e.x, me.y - e.z) > 30 && shootable(e, me)) return { x: me.x, y: me.y };
+        if (--checks <= 0) return null;
+      }
+      for (const [dc, dr] of N8) {
+        const nc = c + dc, nr = r + dr, k = nr * GC + nc;
+        if (seen.has(k) || !WD.nav.open(nc, nr) || (dc && dr && (!WD.nav.open(c + dc, r) || !WD.nav.open(c, r + dr)))) continue;
+        seen.add(k); q.push(nc, nr);
       }
     }
     return null;
@@ -2371,7 +2539,7 @@ function make(api) {
       { at: 0, cam: [{ x: A.x - ux * 2 + sx * .3, y: A.y + .3, z: A.z - uz * 2 + sz * .3 }, { x: B.x - ux * 4.5 + sx * .3, y: B.y + .3, z: B.z - uz * 4.5 + sz * .3 }], time: T, ease: 'linear',
         look: tt => { const p = at(clamp(tt / T, 0, 1)); WD.bullet.position.set(p.x, p.y, p.z); WD.bullet.rotation.set(0, 0, 0); WD.bullet.lookAt(p.x + ux, p.y + uy, p.z + uz); WD.bullet.rotateX(Math.PI / 2); return { x: p.x + ux * 3, y: p.y + uy * 3, z: p.z + uz * 3 }; } },
       { at: .1, say: tag, who: 'BEST SHOT', time: T + 1.2 },
-      { at: T, do: () => { WD.bullet.visible = false; fall(r.s, A); for (let i = 0; i < 14; i++) WD.sparks.emit({ x: B.x, y: B.y, z: B.z, vx: rnd(-2.4, 2.4), vy: rnd(1, 3), vz: rnd(-2.4, 2.4), life: .8, size: .035, col: [2.2, 1.7, .5], drag: 1.5, grav: 6 }); } },
+      { at: T, do: () => { WD.bullet.visible = false; r.s.hitAt = { x: B.x, y: B.y, z: B.z, dx: ux / (Math.hypot(ux, uz) || 1), dz: uz / (Math.hypot(ux, uz) || 1), part: r.head ? 'head' : B.y - r.s.gy > .95 ? 'chest' : 'hips' }; fall(r.s, A); for (let i = 0; i < 14; i++) WD.sparks.emit({ x: B.x, y: B.y, z: B.z, vx: rnd(-2.4, 2.4), vy: rnd(1, 3), vz: rnd(-2.4, 2.4), life: .8, size: .035, col: [2.2, 1.7, .5], drag: 1.5, grav: 6 }); } },
       { at: T, cam: [{ ...hold, x: hold.x + (hold.x - r.s.x) * .15, z: hold.z + (hold.z - r.s.y) * .15 }, hold], look: { x: r.s.x, y: r.s.gy + .7, z: r.s.y }, time: 1.4, ease: 'out' },
     ];
   }
@@ -2484,8 +2652,12 @@ function make(api) {
         // scope or glasses then and his shot goes over), and after each shot, or a near miss of yours,
         // he ducks behind the bell and comes up in another arch
         if (s.hideT > 0) {
+          // down behind the parapet, he shuffles along it to the arch he will come up in
           s.hideT -= dt;
-          if (s.hideT <= 0) rookAppear(s, eye);
+          if (!s.to) s.to = rookSpot(s, eye);
+          const dx = s.to.x - s.x, dz = s.to.z - s.y, dl = Math.hypot(dx, dz), st = Math.min(dl, dt * .9);
+          if (dl > .01) { s.x += dx / dl * st; s.y += dz / dl * st; s.lift = WD.churchTop.y - groundAt(s.x, s.y) + .2; }
+          if (s.hideT <= 0) { rookAppear(s, eye); s.to = null; }
         } else {
           const lookAtMe = Math.atan2(eye.x - s.x, eye.z - s.y);
           s.yaw = turnTo(s.yaw, lookAtMe + Math.sin(t * .4) * .5 * (1 - s.see), dt * 1.5);
@@ -2498,7 +2670,7 @@ function make(api) {
             if (s.see >= 1 && (s.fireT -= dt) <= 0) { s.aimT = ROOK_AIM; s.fireT = 3.4; tone(1500, { len: .08, wave: 'sine', vol: .03 }); haptic('warning'); }
           }
         }
-        stance = 'kneel'; m.rig.upper('aim');
+        if (s.hideT > 0) { stance = 'duck'; m.rig.upper(null); } else { stance = 'kneel'; m.rig.upper('aim'); }
       } else if (s.kind === 'mg' || s.kind === 'mg2') {
         stance = 'kneel'; m.rig.upper(s.kind === 'mg' || men.find(o => o.kind === 'mg').ko ? 'aim' : null);
         const gunner = s.kind === 'mg' || men.find(o => o.kind === 'mg')?.ko;
@@ -2508,7 +2680,8 @@ function make(api) {
           if (tgt) { s.yaw = turnTo(s.yaw, Math.atan2(tgt.x - s.x, tgt.y - s.y), dt * 3); enemyShot(s, tgt, 'mg'); }
           noise(.07, { vol: .08, from: 2000, to: 300 });
         }
-        if (s.kind === 'mg2' && men.find(o => o.kind === 'mg').ko && !s.moved) { s.moved = true; s.x = mgNest.x; s.y = mgNest.z; }
+        // the loader takes over the gun: he shuffles across to it on his knees' height (beside the man who was on it, not on top of him)
+        if (s.kind === 'mg2' && men.find(o => o.kind === 'mg').ko) { const tx = mgNest.x + .85, tz = mgNest.z - .25, dx = tx - s.x, dz = tz - s.y, d = Math.hypot(dx, dz); if (d > .06) { const k = Math.min(1, 1.5 * dt / d); s.x += dx * k; s.y += dz * k; speed = 1.5; } }
       } else if (s.kind === 'cargun') {
         m.visible = !!car?.on; if (car) { s.x = car.x; s.y = car.z + .4; s.yaw = Math.PI / 2 + Math.PI; }
         m.rig.upper('aim');
@@ -2559,7 +2732,7 @@ function make(api) {
         }
         const wary = !s.fixed && (sn.mood === 'suspicious' || sn.mood === 'searching') && sn.lookAt;
         // a sentry standing where the nest can't reach him wanders out to where it can
-        if (!s.route && !s.fixed && hiddenFor(s, dt, true) > 5) { const p = seenSpot(s, nestEye(nest)); s.hidT = 0; if (p) s.route = [[p.x, p.y, 1e9]], s.ri = 0, s.wt = 0; }
+        if (!s.fixed && hiddenFor(s, dt, true) > (s.route ? 25 : 5)) { const p = seenSpot(s, nestEye(nest)); s.hidT = 0; if (p) s.route = [[p.x, p.y, 1e9]], s.ri = 0, s.wt = 0; }   // (one on a round he walks out of sight is given a while first)
         if (wary) s.yaw = turnTo(s.yaw, Math.atan2(sn.lookAt.x - s.x, sn.lookAt.y - s.y), dt * 2.5);   // stops and stares where the sound came from
         else if (s.route) {
           const r = s.route[s.ri % s.route.length];
@@ -2578,7 +2751,7 @@ function make(api) {
       s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0);
       m.position.set(s.x, s.gy, s.y); m.rotation.y = s.yaw;
       // indoors (through the mill's balcony door): out of sight and out of reach
-      s.inside = (s.kind === 'radio' && WD.millDoor && s.y < WD.millDoor.z - .05) || (s.kind === 'cs' && s.hideT > 0); m.visible = !s.inside;
+      s.inside = (s.kind === 'radio' && WD.millDoor && s.y < WD.millDoor.z - .05) || (s.kind === 'cs' && s.hideT > 0); m.visible = !s.inside || s.kind === 'cs';   // (Rook ducks behind the belfry's parapet: still there, out of reach)
       // far soldiers animate less often, and so do those the camera is not looking at (through the scope that is
       // nearly all of them: every pose every frame was most of a frame's work on a slower phone)
       const ex = s.x - eye.x, ey = s.gy + 1 - eye.y, ez = s.y - eye.z, ed = Math.hypot(ex, ey, ez);
@@ -2590,13 +2763,30 @@ function make(api) {
       if (!far || (frame + (s.x | 0)) % 3 === 0) {
         const step = far ? dt * 3 : dt, turn = clamp(angDiff(s.yaw, s.yawWas ?? s.yaw) / step, -6, 6); s.yawWas = s.yaw;   // (he leans into his turns)
         m.rig.update(step, { speed: s.av, aim: s.alert ? -.05 : 0, turn });
-        if (!s.inside) { m.see(WD.v.cam, 1000); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
+        if (m.visible) { m.see(WD.v.cam, 1000); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
       }
       // through the scope his feet meet the slope he stands on (foot IK), for the few men in view
       if (scoped && !s.deck && plantN > 0 && watched(s)) { plantN--; m.rig.plant(WD.ground, m); }
     }
+    spread(men, dt); if (allies) spread(allies, dt);
     bodies.update(dt, men.filter(s => !s.ko && !s.fixed));
     noises.update(dt);
+  }
+  // Two men never stand in one place: two sent to the same spot, or whose ways cross, ease apart to a shoulder's width (a man at a
+  // post, a gunner or the marksman, holds his ground and the other steps round him), and nobody stands on a man who is down.
+  function spread(list, dt) {
+    const R = .78, most = 1.6 * dt;
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i]; if (a.ko || a.deck != null || a.kind === 'cargun') continue;
+      for (let j = 0; j < list.length; j++) {
+        if (j === i) continue; const b = list[j]; if (b.deck != null || b.kind === 'cargun' || (j < i && !b.ko && !b.fixed)) continue;   // (each pair once, but a post or a body pushes every time)
+        let dx = a.x - b.x, dz = a.y - b.y, d = Math.hypot(dx, dz); const r = b.ko ? .62 : R; if (d >= r) continue;
+        if (d < 1e-3) { dx = Math.cos(i * 2.4); dz = Math.sin(i * 2.4); d = 1; }
+        const both = !b.ko && !b.fixed && !a.fixed, k = Math.min(r - d, most) / d * (both ? .5 : 1);
+        if (!a.fixed) { const x = a.x + dx * k, z = a.y + dz * k; if (!solidAt(x, z, WD.solids)) { a.x = x; a.y = z; } }
+        if (both) { const x = b.x - dx * k, z = b.y - dz * k; if (!solidAt(x, z, WD.solids)) { b.x = x; b.y = z; } }
+      }
+    }
   }
   let wrenT = null, wrenLight = .5;
   let frame = 0, spotting = false;
@@ -2856,6 +3046,17 @@ function make(api) {
     // frame after a cut). While a round flies with its camera, it is planted ahead where that camera will stop
     { const q = bulletCam && !(bulletCam.hold > 0) && bulletCam.t > .2 && bulletCam.pre; if (q) grassEye.position.set(q.x, q.y, q.z); WD.land.update(dt, q ? grassEye : WD.v.cam); }
     WD.wheel.rotation.x += dt * .5; WD.sails.rotation.z += dt * .35;
+    { // the mill race runs (its foam slides along) and throws up spray and a little mist where it lands in the trough
+      const r = WD.race; r.flow[0].offset.y = -t * .55; r.flow[1].offset.y = -t * .4; r.fall.offset.y = -t * 1.3;
+      r.acc += dt * 26;
+      while (r.acc >= 1) {
+        r.acc--;
+        WD.spray.emit({ x: r.x + rnd(-.42, .42), y: r.y + .05, z: r.z + rnd(-.25, .2), vx: rnd(-.5, .5), vy: rnd(1, 2.6), vz: rnd(-.3, 1.1), life: rnd(.45, .85), size: rnd(.07, .14), grow: 1.4, col: [.86, .9, .92], a: .6, drag: 1, grav: 7 });
+        if (Math.random() < .2) WD.spray.emit({ x: r.x + rnd(-.4, .4), y: r.y + .15, z: r.z + rnd(-.2, .4), vx: rnd(-.2, .2), vy: rnd(.15, .4), vz: rnd(0, .3), life: rnd(1.2, 2), size: .4, grow: 2.2, col: [.8, .84, .86], a: .16, drag: 1.5, fadeIn: true });
+        if (Math.random() < .25) WD.spray.emit({ x: r.lip.x + rnd(-.4, .4), y: r.lip.y - .05, z: r.lip.z + .05, vx: rnd(-.15, .15), vy: rnd(-.2, .3), vz: rnd(.8, 1.4), life: rnd(.5, .8), size: rnd(.05, .09), col: [.82, .88, .9], a: .55, drag: .3, grav: 9 });
+      }
+      WD.spray.update(dt);
+    }
     // wind gusts
     wind.x = wind.base + Math.sin(t * .23) * 1.2 + Math.sin(t * .71 + 2) * .5;
     AIR.x = wind.x; AIR.z = wind.z; AIR.update(dt, WD.v.cam.position);
@@ -2883,7 +3084,7 @@ function make(api) {
     // the first frame of the trip to the next nest (his way round the houses or down the line, his stride, his hands on the bar or a rung), Wren out of sight
     { const to = nextNest(); if (to) { const m = tripPlan(to); if (m.kind === 'zip') zip = zipLine(); wrenShow(tripAt(m, 0).fig, m.kind, dt).visible = false; WD.trolley.visible = false; zip = null; } }
     gun.update(dt); me.update(dt); updateMortar(dt); updateShots(dt); updateTracers(dt); spotLetters(dt); updateBirds(dt);
-    WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.trail.update(dt); WD.marks.update(dt); boom.update(dt);
+    WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.steam.update(dt); WD.trail.update(dt); WD.marks.update(dt); boom.update(dt);
     frame = 0;
   }
   const ZOOM_ARC = [-.62, .5];
@@ -2937,7 +3138,7 @@ function make(api) {
     },
     resize(w, h) { W = w; H = h; layout(); },
     update(dtReal) {
-      frame++;
+      frame++; lastDt = dtReal;
       fx.update(dtReal); breathT(dtReal); runLater(dtReal);
       if (state === 'brief') {
         briefT += dtReal; sky.update(dtReal); rain.update(dtReal);
@@ -2945,7 +3146,7 @@ function make(api) {
         theme ||= music({ ...compose({ mood: 'sad', seed: 'long-shadow' }), vol: .32 }); if (!theme.playing) theme.start();
         // the grass at the mission's first nest is planted while the file is read (a few tufts a frame), not when the camera cuts to it
         if (nest) { const e = nestEye(nest); grassEye.position.set(e.x, e.y, e.z); WD.land.update(dtReal, grassEye); }
-        WD.regions.update(dtReal); if (!built && WD.regions.has(sel)) begin(sel);   // (another mission picked: its own things are made a little each frame)
+        WD.regions.update(dtReal); if (!built && WD.regions.has(sel)) { begin(sel); state = 'brief'; }   // (another mission picked: its own things are made a little each frame; it waits for GO)
         return;
       }
       theme?.stop();
@@ -2962,7 +3163,7 @@ function make(api) {
       if (state === 'intro' || state === 'outro') {
         cut.update(dt); audioTick(dt);
         if (state === 'intro' && cut.done) { state = 'play'; meetMarr(); marrOnAir(); const s = cut.shot; if (s?.look) { const dx = s.look.x - s.x, dy = s.look.y - s.y, dz = s.look.z - s.z; look.yaw = Math.atan2(-dx, -dz); look.pitch = clamp(Math.atan2(dy, Math.hypot(dx, dz)), -.5, .35); } }
-        updateMen(dt); updateAllies(dt); WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.trail.update(dt);
+        updateMen(dt); updateAllies(dt); WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.steam.update(dt); WD.trail.update(dt);
         if (state === 'outro') { mission.update(dt); trainUpdate(dt); if (mid === 'm1' && train.final) rideTrain(dt); }
         if (outroDone && state === 'outro') finish(true);
         return;
@@ -3019,11 +3220,13 @@ function make(api) {
       boom.update(dt);
       for (const p of tower?.pieces || []) { const u = p.userData.v; if (!u) continue; u.y -= 15 * dt; p.position.x += u.x * dt; p.position.y += u.y * dt; p.position.z += u.z * dt; p.rotation.x += u.r * dt; const g = WD.land.height(p.position.x, p.position.z); if (p.position.y < g) { p.position.y = g; u.x *= .5; u.z *= .5; u.y = Math.abs(u.y) * .2; u.r *= .5; if (Math.abs(u.y) < .5) p.userData.v = null; } }
       for (const h of WD.helmets) if (h.life > 0) { h.life -= dt; h.vy -= 12 * dt; h.m.position.x += h.vx * dt; h.m.position.y += h.vy * dt; h.m.position.z += h.vz * dt; h.m.rotation.x += h.spin * dt; const g = WD.land.height(h.m.position.x, h.m.position.z); if (h.m.position.y < g + .07) { h.m.position.y = g + .07; h.vy = Math.abs(h.vy) * .35; h.vx *= .5; h.vz *= .5; h.spin *= .5; } if (h.life <= 0) h.m.visible = false; }
-      WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.trail.update(dt);
+      WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.steam.update(dt); WD.trail.update(dt);
       // tagging with the glasses
       if (glass) {
-        const eye = WD.v.cam.position; let best = null, bd = .05;
-        for (const s of men) { if (s.ko || s.tagged || s.inside) continue; const a = Math.abs(angDiff(look.yaw, Math.atan2(-(s.x - eye.x), -(s.y - eye.z)))), p = Math.abs(look.pitch - Math.atan2(s.gy + 1 - eye.y, Math.hypot(s.x - eye.x, s.y - eye.z))); const d = Math.hypot(a, p); if (d < bd) { bd = d; best = s; } }
+        // the man nearest the middle of the view that the glasses really show (not one behind a wall or over a rise)
+        const eye = WD.v.cam.position; let best = null, bd = .05; const near = [];
+        for (const s of men) { if (s.ko || s.tagged || s.inside) continue; const a = Math.abs(angDiff(look.yaw, Math.atan2(-(s.x - eye.x), -(s.y - eye.z)))), p = Math.abs(look.pitch - Math.atan2(s.gy + 1 - eye.y, Math.hypot(s.x - eye.x, s.y - eye.z))); const d = Math.hypot(a, p); if (d < bd) near.push([d, s]); }
+        if (near.length) { near.sort((a, b) => a[0] - b[0]); for (const [d, s] of near) if (inSight(eye, s)) { bd = d; best = s; break; } }
         if (best && best === tagT?.s) { tagT.t += dt; if (tagT.t > .45) { best.tagged = true; tagT = null; haptic('light'); tone(1200, { len: .05, wave: 'sine', vol: .04 }); score += 10; api.score(score); } }
         else tagT = best ? { s: best, t: 0 } : null;
       } else tagT = null;
@@ -3099,7 +3302,14 @@ function make(api) {
         cam.lookAt(e.x + d.x, y + d.y, e.z + d.z);
         gunVis = !scoped && !glass && state === 'play';
       }
-      WD.gun.visible = gunVis; if (gunVis) { WD.gun.position.y = -.3 - (boltT > 0 ? Math.sin(boltT * 3) * .03 : 0); WD.bolt.position.z = .05 + (boltT > .2 && boltT < .9 ? .06 : 0); }
+      WD.gun.visible = gunVis;
+      if (gunVis) {
+        // lowered out of the way (muzzle down, out of the bottom of the picture) while its barrel would be in something
+        cam.updateMatrixWorld(); const want = gunBlocked(cam); gunLow += (want - gunLow) * Math.min(1, lastDt * (want > gunLow ? 14 : 5));
+        const g = WD.gun, l = gunLow * gunLow * (3 - 2 * gunLow);
+        g.position.set(.27 - l * .06, -.3 - l * .42 - (boltT > 0 ? Math.sin(boltT * 3) * .03 : 0), -.56 + l * .2); g.rotation.set(.05 - l * .8, .13 + l * .2, -.1 - l * .3);
+        WD.bolt.position.z = .05 + (boltT > .2 && boltT < .9 ? .06 : 0);
+      } else gunLow = 0;
       const f = (state === 'play' && !move && !bulletCam) ? fovNow() : move ? (move.now || tripAt(move)).cam.fov ?? 62 : bulletCam && bulletCam.hold > 0 ? 46 : 62;
       if (Math.abs(cam.fov - f) > .01) { cam.fov = f; cam.updateProjectionMatrix(); }
       // trees keep their leaves further out through the scope
@@ -3225,16 +3435,23 @@ function make(api) {
     w.rig.play('ride', { fade: .2 }); w.rig.update(dt, { speed: 0 }); w.see(WD.v.cam, 1000); hands(w, EASY);
   }
   function trainUpdate(dt) {
+    if (!WD.train) return;   // (the train is mission 1's own: not made, or let go of, when mission 2 is played first; it used to throw here and break the game)
     if (!train.on) { train.next -= dt; if (train.next <= 0 && mid === 'm1') { train.on = true; train.x = -420; train.speed = 30; tone(520, { len: .9, wave: 'triangle', vol: .05 }); tone(620, { len: .9, wave: 'triangle', vol: .04, at: .1 }); } WD.train.visible = false; return; }
     WD.train.visible = true;
     if (train.final && qteKind !== 'train' && train.x > -150) train.speed = Math.max(4, train.speed - dt * 2);
     train.x += train.speed * dt;
-    // she chuffs: four beats of exhaust to each turn of the driving wheels (a steady plume at speed, single puffs at a crawl),
-    // and at a crawl steam blows from the cylinder cocks down by the front wheels
-    { const beat = Math.floor(train.x / (TAU * TRAIN.RD) * 4), slow = train.speed < 9;
-      if (beat !== train.beat && (slow || frame % 2 === 0)) { train.beat = beat; const pts = WD.rail.cars[0].points; pts.smoke.getWorldPosition(tmpA);   // (the chimney's top)
-        for (let i = 0; i < (slow ? 3 : 1); i++) WD.smoke.emit({ x: tmpA.x + rnd(-.1, .1), y: tmpA.y + .2, z: tmpA.z + rnd(-.1, .1), vx: -train.speed * .3 + rnd(-.3, .3), vy: slow ? rnd(4, 6) : 2.8, vz: rnd(-.3, .3), life: 3.5, size: slow ? 1 : 1.4, grow: 3, col: [.84, .82, .78], a: .55, drag: slow ? .9 : .4 });
-        if (slow && beat % 2 === 0) { pts.steam.getWorldPosition(tmpB); for (const sd of [-1, 1]) WD.smoke.emit({ x: tmpB.x, y: tmpB.y - .3, z: RAILZ + sd * (Math.abs(tmpB.z - RAILZ) + .2), vx: rnd(.2, 1), vy: rnd(.1, .5), vz: sd * rnd(1.5, 3), life: 1.3, size: .5, grow: 2.6, col: [.95, .95, .95], a: .4, drag: 1.6, fadeIn: true }); } } }
+    // she chuffs: four beats of exhaust to each turn of the driving wheels. At speed the beats run together into a plume that pours from
+    // the chimney and lies back over the train, white steam with the coal's grey through it, rolling and spreading as it thins; at a crawl
+    // each beat is a puff that shoots up on its own, and steam blows from the cylinder cocks down by the front wheels
+    { const beat = Math.floor(train.x / (TAU * TRAIN.RD) * 4), slow = train.speed < 9, pts = WD.rail.cars[0].points, k = clamp(train.speed / 30, 0, 1);
+      pts.smoke.getWorldPosition(tmpA);   // (the chimney's top: the train is placed in draw(), so this is where it stood a frame ago, as the puff left it)
+      tmpA.x += train.speed * dt;
+      const puff = (n, up, size, life) => { for (let i = 0; i < n; i++) { const grey = Math.random() < .3 ? rnd(.5, .66) : rnd(.86, .96);
+        WD.steam.emit({ x: tmpA.x + rnd(-.15, .15), y: tmpA.y + .1, z: tmpA.z + rnd(-.15, .15), vx: -train.speed * rnd(.12, .22) + rnd(-.4, .4), vy: up * rnd(.8, 1.2), vz: rnd(-.5, .5), life, size, grow: 4.2, col: [grey, grey * .99, grey * .96], a: .62, drag: .7, fadeIn: true, ease: 1.3 }); } };
+      if (!slow && frame % 2 === 0) puff(1, 3.4 + k, 1.1, 4.4);   // (the plume between the beats)
+      if (beat !== train.beat) { train.beat = beat;
+        if (slow) puff(3, rnd(5.5, 7), 1, 3.6); else if (frame % 2 === 1) puff(1, 5, 1.3, 4);
+        if (slow && beat % 2 === 0) { pts.steam.getWorldPosition(tmpB); for (const sd of [-1, 1]) WD.steam.emit({ x: tmpB.x, y: tmpB.y - .3, z: RAILZ + sd * (Math.abs(tmpB.z - RAILZ) + .2), vx: rnd(.2, 1), vy: rnd(.1, .5), vz: sd * rnd(1.5, 3), life: 1.5, size: .55, grow: 2.8, col: [.95, .95, .95], a: .5, drag: 1.6, fadeIn: true }); } } }
     if (masked() && frame % 20 === 0) noise(.4, { vol: .05 * clamp(1 - Math.abs(train.x) / 220, .1, 1), from: 400, to: 200 });
     if (train.x > 420) { train.on = false; train.next = 34; }
   }
@@ -3301,7 +3518,7 @@ function make(api) {
     if (cut && (state === 'intro' || state === 'outro')) { cut.drawBars(c, W, H, '#0b0b0a'); radioLine(c, cut.line, brass); if (state === 'intro') { c.fillStyle = '#ffffff88'; c.font = '600 10px Rubik, sans-serif'; c.textAlign = 'right'; c.fillText('TAP TO SKIP', W - 12, H - 10); } return; }
     if (move) {
       const bar = H * .07; c.fillStyle = '#0b0b0a'; c.fillRect(0, 0, W, bar); c.fillRect(0, H - bar, W, bar);
-      c.fillStyle = brass; c.font = '700 9px "Courier New", monospace'; c.textAlign = 'left'; c.fillText((move.kind === 'zip' ? 'ON THE LINE ▸ ' : move.kind === 'climb' ? 'UP THE BELFRY ▸ ' : 'MOVING ▸ ') + NESTS[move.to].name.toUpperCase(), 12, H - bar / 2 + 3);
+      c.fillStyle = brass; c.font = mono(9, 700); c.textAlign = 'left'; c.fillText((move.kind === 'zip' ? 'ON THE LINE ▸ ' : move.kind === 'climb' ? 'UP THE BELFRY ▸ ' : 'MOVING ▸ ') + NESTS[move.to].name.toUpperCase(), 12, H - bar / 2 + 3);
       c.fillStyle = '#ffffff88'; c.font = '600 10px Rubik, sans-serif'; c.textAlign = 'right'; c.fillText('TAP TO SKIP', W - 12, H - bar / 2 + 3);
       radioTop(c, lineFx, brass, bar + 6, false);
       const fd = move.kind === 'zip' ? move.fade : Math.max(clamp(1 - move.t / .3, 0, 1), clamp((move.t - move.dur + .35) / .35, 0, 1));
@@ -3309,7 +3526,7 @@ function make(api) {
       return;
     }
     if (arrivedT > 0) { c.save(); c.globalAlpha = arrivedT * 2; c.fillStyle = '#0b0b0a'; c.fillRect(0, 0, W, H); c.restore(); }
-    if (bulletCam) { c.fillStyle = '#0006'; c.fillRect(0, 0, W, H * .06); c.fillRect(0, H * .94, W, H * .06); const b = bulletCam.b; const d = Math.hypot(b.x - bulletCam.from.x, b.z - bulletCam.from.z); c.font = '700 13px "Courier New", monospace'; c.fillStyle = brass; c.textAlign = 'center'; c.fillText(Math.round(d) + ' m', W / 2, H * .94 - 8); koPops(c); return; }
+    if (bulletCam) { c.fillStyle = '#0006'; c.fillRect(0, 0, W, H * .06); c.fillRect(0, H * .94, W, H * .06); const b = bulletCam.b; const d = Math.hypot(b.x - bulletCam.from.x, b.z - bulletCam.from.z); c.font = mono(13, 700); c.fillStyle = brass; c.textAlign = 'center'; c.fillText(Math.round(d) + ' m', W / 2, H * .94 - 8); koPops(c); return; }
     const sc = scoped, gl = glass;
     // tags above soldiers, KO pops
     tags(c, brass, red);
@@ -3348,7 +3565,7 @@ function make(api) {
     const w = Math.min(W - 20, 360), x = W / 2 - w / 2, accent = l.enemy ? '#d26450' : brass;
     c.save(); c.font = '500 11px Rubik, sans-serif';
     const who = l.who ? (l.who.split('·')[0].replace(/^CAPT\. |^SGT\. /, '').trim() + ': ') : '';
-    c.font = '700 9px "Courier New", monospace'; const ww = who ? c.measureText(who).width + 4 : 0; c.font = '500 11px Rubik, sans-serif';
+    c.font = mono(9, 700); const ww = who ? c.measureText(who).width + 4 : 0; c.font = '500 11px Rubik, sans-serif';
     let lines = wrap(c, l.text, w - 18 - ww);
     const most = tight ? 1 : 2;
     if (lines.length > most) { lines = lines.slice(0, most); let last = lines[most - 1]; while (last.length > 3 && c.measureText(last + '…').width > w - 18 - ww) last = last.slice(0, -1); lines[most - 1] = last + '…'; }
@@ -3356,7 +3573,7 @@ function make(api) {
     c.globalAlpha = l.hint ? .85 : fade;
     c.fillStyle = l.hint ? '#12110e99' : '#12110ecc'; roundRect(c, x, y, w, hh, 5); c.fill();
     c.fillStyle = accent; c.fillRect(x, y, 3, hh);
-    if (who) { c.font = '700 9px "Courier New", monospace'; c.fillStyle = accent; c.textAlign = 'left'; c.fillText(who, x + 9, y + 13); }
+    if (who) { c.font = mono(9, 700); c.fillStyle = accent; c.textAlign = 'left'; c.fillText(who, x + 9, y + 13); }
     c.font = l.hint ? 'italic 500 11px Rubik, sans-serif' : '500 11px Rubik, sans-serif'; c.fillStyle = '#f2ead6'; c.textAlign = 'left';
     lines.forEach((s_, i) => c.fillText(s_, x + 9 + ww, y + 13 + i * 13));
     c.restore();
@@ -3372,7 +3589,7 @@ function make(api) {
     const accent = l.enemy ? '#d26450' : brass;
     c.fillStyle = accent; c.fillRect(W / 2 - w / 2, y - hh, 3, hh);
     let yy = y - hh + 14;
-    if (l.who) { c.font = '700 9px "Courier New", monospace'; c.fillStyle = accent; c.textAlign = 'left'; c.fillText('◉ ' + l.who, W / 2 - w / 2 + 12, yy); yy += 14; c.font = '500 12px Rubik, sans-serif'; }
+    if (l.who) { c.font = mono(9, 700); c.fillStyle = accent; c.textAlign = 'left'; c.fillText('◉ ' + l.who, W / 2 - w / 2 + 12, yy); yy += 14; c.font = '500 12px Rubik, sans-serif'; }
     c.fillStyle = '#f2ead6'; c.textAlign = 'left'; for (const s of lines) { c.fillText(s, W / 2 - w / 2 + 12, yy); yy += 14; }
     c.restore();
   }
@@ -3387,7 +3604,7 @@ function make(api) {
     c.translate(10, top); c.rotate(-.015);
     c.fillStyle = paper; c.shadowColor = '#0006'; c.shadowBlur = 6; c.fillRect(0, 0, w, h); c.shadowBlur = 0;
     c.fillStyle = red; c.fillRect(0, 0, 3, h);
-    c.fillStyle = '#8a7f66'; c.font = '700 8px "Courier New", monospace'; c.fillText('ORDERS · ' + fmtT(mission.time), 9, 11);
+    c.fillStyle = '#8a7f66'; c.font = mono(8, 700); c.fillText('ORDERS · ' + fmtT(mission.time), 9, 11);
     c.fillStyle = ink; c.font = '600 11px Rubik, sans-serif'; lines.forEach((s, i) => c.fillText(s, 9, 24 + i * 13));
     if (op?.sending && !op.ko) { const k = clamp(op.send / 60, 0, 1); c.fillStyle = '#0002'; c.fillRect(9, h - 5, w - 18, 3); c.fillStyle = red; c.fillRect(9, h - 5, (w - 18) * k, 3); }
     c.restore();
@@ -3408,7 +3625,7 @@ function make(api) {
     const rel = Math.atan2(wind.z, wind.x) + look.yaw, cross = Math.cos(rel) * Math.hypot(wind.x, wind.z);
     c.translate(x + w / 2, y + 18);
     const n = Math.min(3, Math.round(Math.abs(cross) / 1.5));
-    c.fillStyle = brass; c.font = '700 8px "Courier New", monospace'; c.textAlign = 'center';
+    c.fillStyle = brass; c.font = mono(8, 700); c.textAlign = 'center';
     for (let i = 0; i < 3; i++) { c.globalAlpha = i < n ? 1 : .2; const ox = (i - 1) * 9 * Math.sign(cross || 1); c.beginPath(); c.moveTo(ox + 4 * Math.sign(cross || 1), 0); c.lineTo(ox - 3 * Math.sign(cross || 1), -6); c.lineTo(ox - 3 * Math.sign(cross || 1), 6); c.closePath(); c.fill(); }
     c.globalAlpha = 1; c.fillText('WIND ' + Math.abs(cross).toFixed(1), 0, 20);
     c.restore();
@@ -3420,7 +3637,7 @@ function make(api) {
     const k = clamp(heat, 0, 1);
     const g = c.createLinearGradient(x, 0, x + w, 0); g.addColorStop(0, '#7c8a45'); g.addColorStop(.6, '#d0a040'); g.addColorStop(1, red);
     c.fillStyle = g; roundRect(c, x, y, Math.max(6, w * k), 10, 5); c.fill();
-    c.fillStyle = '#f2ead6'; c.font = '700 8px "Courier New", monospace'; c.textAlign = 'center';
+    c.fillStyle = '#f2ead6'; c.font = mono(8, 700); c.textAlign = 'center';
     c.fillText(located ? 'THEY KNOW WHERE YOU ARE' : masked() ? (train.on ? '♪ TRAIN COVERS SHOTS' : bell.ring > 0 ? '♪ BELL COVERS SHOTS' : '♪ THUNDER COVERS SHOTS') : heat > .5 ? 'THEY ARE LISTENING' : 'UNHEARD', W / 2, y + 8);
     if (masked()) { c.strokeStyle = '#9fd070'; c.lineWidth = 1.5; roundRect(c, x - 4, y - 3, w + 8, 16, 8); c.stroke(); }
     c.restore();
@@ -3476,7 +3693,7 @@ function make(api) {
     c.strokeStyle = '#0d0d0c'; c.fillStyle = '#0d0d0c'; c.lineWidth = 1.2;
     c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx - 6, cy); c.moveTo(cx + 6, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy - 6); c.stroke();
     c.lineWidth = 3; c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx - R * .55, cy); c.moveTo(cx + R * .55, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy + R); c.lineTo(cx, cy + R * .62); c.stroke();
-    c.lineWidth = 1.2; c.font = '700 8px "Courier New", monospace'; c.textAlign = 'left';
+    c.lineWidth = 1.2; c.font = mono(8, 700); c.textAlign = 'left';
     for (const d of [200, 300, 400]) { const yy = cy + holdAt(d) * px; if (yy > cy + R * .6) break; c.beginPath(); c.moveTo(cx - 6, yy - 3); c.lineTo(cx, yy); c.lineTo(cx + 6, yy - 3); c.stroke(); c.fillText(String(d / 100), cx + 8, yy + 3); }
     c.beginPath(); c.moveTo(cx, cy + 6); c.lineTo(cx, cy + R * .62); c.stroke();
     for (let i = 1; i <= 4; i++) for (const s of [-1, 1]) { c.beginPath(); c.arc(cx + s * i * .0015 * px, cy, 1.4, 0, TAU); c.fill(); }
@@ -3488,24 +3705,24 @@ function make(api) {
       c.strokeStyle = '#0d0d0c'; c.lineWidth = 3; c.beginPath(); c.arc(mk[0], mk[1], 4, 0, TAU); c.stroke();
       c.strokeStyle = '#ff3b22'; c.lineWidth = 1.6; c.beginPath(); c.arc(mk[0], mk[1], 4, 0, TAU); c.stroke();
       if (mk[3]) { c.fillStyle = '#ff3b22'; c.beginPath(); c.arc(mk[0], mk[1], 1.6, 0, TAU); c.fill(); }
-      c.fillStyle = '#f2ead6'; c.textAlign = 'center'; c.font = '700 9px "Courier New", monospace'; c.fillText(Math.round(mk[2]) + ' m', cx, cy + R * .78);
+      c.fillStyle = '#f2ead6'; c.textAlign = 'center'; c.font = mono(9, 700); c.fillText(Math.round(mk[2]) + ' m', cx, cy + R * .78);
     }
     // a tagged man in view: who he is (the range is under the reticle)
     const tg = nearTagged();
     if (tg && tg.s.kind !== 'rifle') {
-      c.fillStyle = '#f2ead6'; c.textAlign = 'center'; c.font = '700 9px "Courier New", monospace';
+      c.fillStyle = '#f2ead6'; c.textAlign = 'center'; c.font = mono(9, 700);
       c.fillText({ radio: 'OPERATOR', officer: 'OFFICER', cs: 'MARKSMAN', mg: 'MACHINE GUN' }[tg.s.kind] || '', cx, cy - R * .8);
     }
     // zoom (a slider along the right of the ring) and breath on the ring
-    c.fillStyle = brass; c.font = '700 10px "Courier New", monospace'; c.textAlign = 'center'; c.fillText(zoom.toFixed(0) + '×', cx, cy + R + 14 > H - 8 ? cy + R - 10 : cy + R + 14);
+    c.fillStyle = brass; c.font = mono(10, 700); c.textAlign = 'center'; c.fillText(zoom.toFixed(0) + '×', cx, cy + R + 14 > H - 8 ? cy + R - 10 : cy + R + 14);
     { const zr = R - 9, [a0, a1] = ZOOM_ARC; c.strokeStyle = '#f2ead633'; c.lineWidth = 4; c.lineCap = 'round'; c.beginPath(); c.arc(cx, cy, zr, a0, a1); c.stroke();
       for (let z = 3; z <= 12; z += 3) { const a = zoomAngle(z); c.fillStyle = '#f2ead688'; c.beginPath(); c.arc(cx + Math.cos(a) * zr, cy + Math.sin(a) * zr, 1.6, 0, TAU); c.fill(); }
       const a = zoomAngle(zoom); c.fillStyle = brass; c.beginPath(); c.arc(cx + Math.cos(a) * zr, cy + Math.sin(a) * zr, ptrZoom ? 7 : 5, 0, TAU); c.fill(); c.lineCap = 'butt'; }
     c.strokeStyle = gasp > 0 ? red : '#bfe0ff'; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, R + 6, Math.PI * .75, Math.PI * .75 + Math.PI * .5 * breath.v); c.stroke();
     // rounds as brass cartridges along the lower ring
     for (let i = 0; i < gun.mag; i++) { const a = Math.PI * .35 - i * .09, x = cx + Math.cos(a) * (R - 14), y = cy + Math.sin(a) * (R - 14); c.fillStyle = i < gun.ammo ? brass : '#ffffff22'; c.beginPath(); c.ellipse(x, y, 2.4, 5, a, 0, TAU); c.fill(); }
-    if (gun.reloading) { c.fillStyle = '#f2ead6'; c.font = '700 9px "Courier New", monospace'; c.fillText('RELOADING', cx, cy + R * .4); }
-    else if (boltT > 0) { c.fillStyle = '#f2ead699'; c.font = '700 8px "Courier New", monospace'; c.fillText('BOLT', cx, cy + R * .4); }
+    if (gun.reloading) { c.fillStyle = '#f2ead6'; c.font = mono(9, 700); c.fillText('RELOADING', cx, cy + R * .4); }
+    else if (boltT > 0) { c.fillStyle = '#f2ead699'; c.font = mono(8, 700); c.fillText('BOLT', cx, cy + R * .4); }
     c.restore();
   }
   // the zoom slider's arc on the scope ring: 12x at the top end, 3x at the bottom
@@ -3526,7 +3743,7 @@ function make(api) {
     c.strokeStyle = '#ffffff55'; c.lineWidth = 1; c.beginPath(); c.moveTo(W / 2 - r * 1.3, cy); c.lineTo(W / 2 + r * 1.3, cy); c.stroke();
     for (let i = -5; i <= 5; i++) { c.beginPath(); c.moveTo(W / 2 + i * r * .2, cy - (i % 5 ? 3 : 7)); c.lineTo(W / 2 + i * r * .2, cy); c.stroke(); }
     if (tagT) { c.strokeStyle = brass; c.lineWidth = 3; c.beginPath(); c.arc(W / 2, cy, 16, -Math.PI / 2, -Math.PI / 2 + TAU * clamp(tagT.t / .45, 0, 1)); c.stroke(); }
-    c.fillStyle = brass; c.font = '700 9px "Courier New", monospace'; c.textAlign = 'center'; c.fillText('HOLD ON A SOLDIER TO TAG', W / 2, cy + r + 16);
+    c.fillStyle = brass; c.font = mono(9, 700); c.textAlign = 'center'; c.fillText('HOLD ON A SOLDIER TO TAG', W / 2, cy + r + 16);
     c.restore();
   }
   function tags(c, brass, red) {
@@ -3545,7 +3762,7 @@ function make(api) {
       if (l) { l.n++; l.alert ||= q.s.alert; } else labels.push({ x: q.x, y: q.y, d: q.d, n: 1, alert: q.s.alert });
     }
     if (scoped) return;
-    c.font = '700 7px "Courier New", monospace'; c.textAlign = 'center'; c.lineWidth = 2.5; c.strokeStyle = '#0b0b0a99'; c.lineJoin = 'round';
+    c.font = mono(7, 700); c.textAlign = 'center'; c.lineWidth = 2.5; c.strokeStyle = '#0b0b0a99'; c.lineJoin = 'round';
     for (const l of labels) { const txt = Math.round(l.d) + 'm' + (l.n > 1 ? ' ×' + l.n : ''); c.strokeText(txt, l.x, l.y - 9); c.fillStyle = l.alert ? red : brass; c.fillText(txt, l.x, l.y - 9); }
   }
   // what a soldier's senses are up to, over his head: a "?" that fills as he grows sure something's
@@ -3572,7 +3789,7 @@ function make(api) {
       const a = clamp(2.2 - k.t, 0, 1), yy = y - 20 - k.t * 10;
       c.save(); c.globalAlpha = a; c.textAlign = 'center';
       c.font = '800 16px Rubik, sans-serif'; c.fillStyle = '#ffe9a8'; c.strokeStyle = '#000a'; c.lineWidth = 3; c.strokeText('KO +' + k.pts, x, yy); c.fillText('KO +' + k.pts, x, yy);
-      c.font = '700 8px "Courier New", monospace'; c.fillStyle = '#f2ead6'; c.fillText(k.tags.join(' · '), x, yy + 12);
+      c.font = mono(8, 700); c.fillStyle = '#f2ead6'; c.fillText(k.tags.join(' · '), x, yy + 12);
       c.restore();
     }
   }
@@ -3588,7 +3805,7 @@ function make(api) {
     };
     const ready = !gun.reloading && boltT <= 0 && gun.ammo > 0;
     disc(BTN.fire, 'FIRE', ready, gun.reloading ? gun.reloading : null);
-    if (!scoped) { c.font = '700 8px "Courier New", monospace'; c.textAlign = 'center'; c.fillStyle = brass; c.fillText('●'.repeat(gun.ammo) + '○'.repeat(gun.mag - gun.ammo), BTN.fire.x, BTN.fire.y + BTN.fire.r + 12); }
+    if (!scoped) { c.font = mono(8, 700); c.textAlign = 'center'; c.fillStyle = brass; c.fillText('●'.repeat(gun.ammo) + '○'.repeat(gun.mag - gun.ammo), BTN.fire.x, BTN.fire.y + BTN.fire.r + 12); }
     disc(BTN.scope, scoped ? 'BACK' : 'SCOPE', scoped);
     if (scoped) disc(BTN.left, 'BREATH', breath.held && breath.v > 0, breath.v);
     else disc(BTN.left, glass ? 'BACK' : 'GLASS', glass);
@@ -3597,7 +3814,7 @@ function make(api) {
       const b = BTN.move, hot = located || mortar;
       c.save(); c.fillStyle = hot ? red : '#12110ecc'; roundRect(c, b.x, b.y, b.w, b.h, 6); c.fill();
       if (hot && Math.floor(t * 3) % 2) { c.strokeStyle = '#f2ead6'; c.lineWidth = 2; c.stroke(); }
-      c.fillStyle = '#f2ead6'; c.font = '700 9px "Courier New", monospace'; c.textAlign = 'center'; c.fillText('MOVE ▸ ' + NESTS[nn].name.toUpperCase(), b.x + b.w / 2, b.y + 15, b.w - 8);
+      c.fillStyle = '#f2ead6'; c.font = mono(9, 700); c.textAlign = 'center'; c.fillText('MOVE ▸ ' + NESTS[nn].name.toUpperCase(), b.x + b.w / 2, b.y + 15, b.w - 8);
       c.restore();
     }
   }
@@ -3610,7 +3827,7 @@ function make(api) {
     const label = p.kind === 'tap' ? 'TAP' : p.kind === 'hold' ? 'HOLD' : p.kind === 'mash' ? 'TAP!' : p.dir === 'up' ? '▲ SWIPE' : p.dir === 'down' ? '▼ SWIPE' : 'SWIPE';
     c.fillText(label, x, y + 4);
     if (p.kind === 'hold') { c.strokeStyle = '#9fd070'; c.lineWidth = 4; c.beginPath(); c.arc(x, y, 24, -Math.PI / 2, -Math.PI / 2 + TAU * clamp(p.held / p.hold, 0, 1)); c.stroke(); }
-    c.font = '700 9px "Courier New", monospace'; c.fillStyle = brass; c.fillText('JUMP FOR THE TRAIN', x, y - 52 - 40 * k);
+    c.font = mono(9, 700); c.fillStyle = brass; c.fillText('JUMP FOR THE TRAIN', x, y - 52 - 40 * k);
     c.restore();
   }
   function dossier(c, ink, paper, brass, red) {
@@ -3621,32 +3838,33 @@ function make(api) {
     c.fillStyle = '#5b4a30'; roundRect(c, x - 4, y - 4, w + 8, fh + 8, 8); c.fill();
     c.fillStyle = paper; roundRect(c, x, y, w, fh, 6); c.fill();
     c.fillStyle = red; c.font = '800 22px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText('LONG SHADOW', x + 14, y + 32);
-    c.fillStyle = '#8a7f66'; c.font = '700 9px "Courier New", monospace'; c.fillText('FIELD FILE · CODENAME WREN · ASHVALE 1944', x + 14, y + 46, w - 28);
+    c.fillStyle = '#8a7f66'; c.font = mono(9, 700); c.fillText('FIELD FILE · CODENAME WREN · ASHVALE 1944', x + 14, y + 46, w - 28);
     let yy = y + 60; briefRows = [];
     for (const m of camp.missions) {
       const on = m.id === sel, open = camp.open(m.id), st = camp.starList(m.id);
       c.fillStyle = on ? '#d9cba6' : '#0000'; c.fillRect(x + 8, yy, w - 16, H < 380 ? 31 : 34);
       c.fillStyle = open ? ink : '#8a7f66'; c.font = '700 13px Rubik, sans-serif'; c.fillText((camp.missions.indexOf(m) + 1) + ' · ' + m.name, x + 16, yy + 15);
       c.font = '700 12px Rubik, sans-serif'; c.fillStyle = brass; c.textAlign = 'right'; c.fillText(st.map(s => s ? '★' : '☆').join(''), x + w - 16, yy + 15); c.textAlign = 'left';
-      c.fillStyle = '#8a7f66'; c.font = '600 9px "Courier New", monospace'; c.fillText(open ? (camp.done(m.id) ? 'DONE' : 'READY') : 'LOCKED: FINISH THE ONE ABOVE', x + 16, yy + 28);
+      c.fillStyle = '#8a7f66'; c.font = mono(9, 600); c.fillText(open ? (camp.done(m.id) ? 'DONE' : 'READY') : 'LOCKED: FINISH THE ONE ABOVE', x + 16, yy + 28);
       if (open) { c.textAlign = 'right'; c.fillText('✉ ' + camp.collected(m.id) + '/3 LETTERS', x + w - 16, yy + 28); c.textAlign = 'left'; }
       briefRows.push({ x: x + 8, y: yy, w: w - 16, h: 34, id: m.id });
       yy += H < 380 ? 33 : 38;
     }
     const short = H < 380;
-    if (short) { c.fillStyle = '#8a7f66'; c.font = '700 10px Rubik, sans-serif'; c.fillText(SEALED.map(([n, name]) => n + ' · ' + name).join('   '), x + 16, yy + 12, w - 32); c.fillStyle = red; c.font = '700 8px "Courier New", monospace'; c.fillText('SEALED · COMING SOON', x + 16, yy + 23); yy += 30; }
-    else for (const [n, name] of SEALED) { c.fillStyle = '#8a7f66'; c.font = '700 12px Rubik, sans-serif'; c.fillText(n + ' · ' + name, x + 16, yy + 14); c.font = '700 8px "Courier New", monospace'; c.fillStyle = red; c.textAlign = 'right'; c.fillText('SEALED · COMING SOON', x + w - 16, yy + 14); c.textAlign = 'left'; yy += 22; }
+    if (short) { c.fillStyle = '#8a7f66'; c.font = '700 10px Rubik, sans-serif'; c.fillText(SEALED.map(([n, name]) => n + ' · ' + name).join('   '), x + 16, yy + 12, w - 32); c.fillStyle = red; c.font = mono(8, 700); c.fillText('SEALED · COMING SOON', x + 16, yy + 23); yy += 30; }
+    else for (const [n, name] of SEALED) { c.fillStyle = '#8a7f66'; c.font = '700 12px Rubik, sans-serif'; c.fillText(n + ' · ' + name, x + 16, yy + 14); c.font = mono(8, 700); c.fillStyle = red; c.textAlign = 'right'; c.fillText('SEALED · COMING SOON', x + w - 16, yy + 14); c.textAlign = 'left'; yy += 22; }
     yy += 6;
     const textW = short ? w - 160 : w - 32;
     c.fillStyle = ink; c.font = '500 11px Rubik, sans-serif'; for (const s of wrap(c, BRIEF[sel], textW)) { c.fillText(s, x + 16, yy + 10); yy += 14; }
-    const gx = short ? x + w - 76 : W / 2, gy = short ? Math.min(yy - 10, H - 40) : Math.min(H - 54, yy + 40); briefGo = { x: gx, y: gy, r: 28 };
+    // GO keeps its place whatever the brief says (a longer brief used to push it down onto the tilt switch): beside the brief on a
+    // short screen, else at the foot of the file, right of the tilt switch on the same line
+    const gx = short ? x + w - 76 : x + w - 74, gy = short ? Math.min(yy - 10, H - 40) : y + fh - 26; briefGo = { x: gx - 62, y: gy - 24, w: 124, h: 48 };
     // tilt aim: off unless you want it (the phone's turn fine-tunes the aim through the glass)
     { const tx = x + 12, ty = y + fh - 28, tw = 116; tiltBtn = { x: tx, y: ty - 4, w: tw, h: 26 };
       c.fillStyle = tiltAim ? '#2f3a26' : '#d9cba6'; roundRect(c, tx, ty, tw, 18, 9); c.fill();
-      c.fillStyle = tiltAim ? '#e8f0c8' : '#5b4a30'; c.font = '700 9px "Courier New", monospace'; c.textAlign = 'center'; c.fillText('TILT AIM · ' + (tiltAim ? 'ON' : 'OFF'), tx + tw / 2, ty + 12); c.textAlign = 'left'; }
+      c.fillStyle = tiltAim ? '#e8f0c8' : '#5b4a30'; c.font = mono(9, 700); c.textAlign = 'center'; c.fillText('TILT AIM · ' + (tiltAim ? 'ON' : 'OFF'), tx + tw / 2, ty + 12); c.textAlign = 'left'; }
     c.translate(gx, gy); c.rotate(-.08); c.strokeStyle = red; c.lineWidth = 3; c.strokeRect(-56, -18, 112, 36); c.fillStyle = red; c.font = '800 18px Rubik, sans-serif'; c.textAlign = 'center'; if (WD.regions.has(sel)) c.fillText('GO', 0, 7); else { c.font = '800 12px Rubik, sans-serif'; c.fillText('LOADING', 0, 0); c.fillRect(-40 + 64 * (briefT * .7 % 1), 7, 16, 3); }   // (the mission's own things, being made)
     c.restore();
-    briefGo.r = 56;
   }
 }
 
