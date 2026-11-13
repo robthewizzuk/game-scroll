@@ -63,6 +63,19 @@ import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
+// Ray traced reflections (hd3d-gpu-trace.js) load the first time a view wants them (something marked shiny on
+// one of the best phones), not with every 3D game: the part brings a tree builder and a simplifier with it.
+let TR = null, trLoad = null, trTries = 0;
+/** The ray tracing part once it has loaded ({ Tracer, ... }; null until then: asking starts the load, twice at most). */
+export function traceKit() {
+  if (!TR && !trLoad && trTries < 2) { trTries++; trLoad = import('./hd3d-gpu-trace.js').then(m => { TR = m; }, e => { trLoad = null; console.warn('[gs] ray traced reflections did not load: ' + (e?.message || e)); }); }
+  return TR;
+}
+/** Can this chip trace? (The four lists a ray reads have to be reachable where pixels are drawn.) */
+export function traceFits(r) {
+  const l = r.backend?.device?.limits; if (!l) return false;
+  return Math.min(l.maxStorageBuffersInFragmentStage ?? l.maxStorageBuffersPerShaderStage ?? 0, l.maxStorageBuffersPerShaderStage ?? 0) >= 4;
+}
 import { S2_HOLD } from './sgsr2.js';
 import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
 
@@ -543,7 +556,26 @@ export function pcss(light) {
     return lit;
   });
 }
-export function manyLights(r) { r.lighting = new ClusteredLighting(256, 32, 24, 32); r.gsClustered = true; }
+// three's clustered lighting keeps one lights node for a scene and fits its grid of cells to the picture of each
+// render of that scene that is not inside another one. A shadow map the kit draws itself (shadowOps draw, before
+// the frame: three draws its own from inside it) is such a render, so the scene's grid was fitted to the shadow
+// map and back again every frame. A map with more cells than the picture had room for (the sun's 2048 map, on
+// any phone) made the grid's lists of lamps anew, which gives the scene's lights a new key: every lit shader's
+// text written until then was thrown away and written again in the next frames, the ones the background builds
+// were for. So a shadow map the kit draws has a lights node of its own (its materials use no lights: nothing is
+// made for it), and the scene's grid only ever meets the game's own picture.
+class KitLighting extends ClusteredLighting {
+  constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
+  getNode(scene) {
+    if (scene !== this.gsShadowOf) return super.getNode(scene);
+    let n = this.gsShadowNodes.get(scene);
+    if (!n) { n = this.createNode(); this.gsShadowNodes.set(scene, n); this._track?.(n); }
+    return n;
+  }
+  /** go(), with every render of scene inside it taken for a shadow map's. */
+  shadowDraw(scene, go) { const was = this.gsShadowOf; this.gsShadowOf = scene; try { return go(); } finally { this.gsShadowOf = was; } }
+}
+export function manyLights(r) { r.lighting = new KitLighting(256, 32, 24, 32); r.gsClustered = true; }
 /* ---------- sharper textures under SGSR 2 ---------- */
 // A scene drawn smaller than the screen reads its textures for the small picture: a mip level too soft
 // for the screen SGSR 2 builds it up to. The usual answer (FSR 2 and DLSS ask for it too) is a mip bias
@@ -703,11 +735,15 @@ export function shadowOps(r) {
         c.setViewOffset(N, N, x, y, w, h); map.viewport.set(x, y, w, h); map.scissor.set(x, y, w, h); map.scissorTest = true;
       }
       c.layers.mask = mask; node.gsKeep = keep || !!q; node.gsPart = !!q;
-      try { node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera }); }
+      const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
       finally { c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
     },
     copy(l, from, to, qs, px) { if (qs) (blit ||= shadowBlit(r)).copy(from.depthTexture, to, qs, px); else r.copyTextureToTexture(from.depthTexture, to.depthTexture); },
     shift(l, from, to, dx, dy, dz) { (blit ||= shadowBlit(r)).shift(from.depthTexture, to, dx, dy, dz); },
+    // the copies' shaders, built when the kept copy is made (a frame that is building shaders anyway) and not in
+    // the frame the sun first steps a tile, which stopped for the three of them
+    warm(l, map, cache) { (blit ||= shadowBlit(r)).warm(map, cache); },
     make(l) {
       const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
@@ -724,8 +760,9 @@ function shadowBlit(r) {
   const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64;
   const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
   const mesh = new Mesh(geo, null), cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); mesh.frustumCulled = false;
-  const finish = m => { m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
+  const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
   let far = null;
+  const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
   const matFor = tex => {
     let m = mats.get(tex); if (m) return m;
     m = new NodeMaterial(); const dT = texture(tex);
@@ -756,7 +793,13 @@ function shadowBlit(r) {
   return {
     copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; quads(qs, px, to.width); run(matFor(tex), to); },
     shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to); },
-    wipe(to, q, px) { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } ALL2[0] = q; quads(ALL2, px, to.width); run(far, to); },
+    wipe(to, q, px) { ALL2[0] = q; quads(ALL2, px, to.width); run(farMat(), to); },
+    // each of the three drawn once with a rectangle of no size: nothing is written, the shaders and pipelines are made
+    warm(map, cache) {
+      if (warmed.get(cache) === map) return; warmed.set(cache, map);
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1; quads(NONE, 1, map.width);
+      run(matFor(map.depthTexture), cache); run(matFor(cache.depthTexture), map); run(farMat(), map);
+    },
   };
 }
 const ALL2 = [null];
@@ -1458,7 +1501,7 @@ export class GpuChain {
     this.fg = null; this.sched = null; this.fgMode = null; this.fgWin = { real: 0, missed: 0 }; this.still = null; this.lastShown = null;
     this.warp = uniform(new Matrix3()); this.aim = null; this.aimBase = newPose(); this.aimAt = -1e9;
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
-    this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false;
+    this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
   build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false) {
     const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}`;
@@ -1469,7 +1512,7 @@ export class GpuChain {
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
     this.aoN = this.dnN = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
-    fxDispose(this); reflDispose(this);
+    fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     // v.oit: three's weighted blended order-independent transparency (McGuire and Bavoil) in place of the plain
     // scene pass: see-through things blend right whatever order they're drawn in (glass behind glass, smoke in water)
     const sp = this.sp = (oitOn ? oitPass : pass)(this.scene, this.cam, { samples: msaa || 0 });
@@ -1492,7 +1535,9 @@ export class GpuChain {
     // (live bounce light, v.liveBounce: each pixel's own surface colour too, which the bounced light tints)
     const nrm = aoOn ? { normal: normalOut(false), ...(giOn ? { diffuse: surface(vec4(diffuseColor.rgb, 1)) } : {}) } : {};
     // reflections (v.reflect()): one more picture, of which pixels are shiny things and how rough
-    const reflOn = aoOn && this.reflOn && fit >= (giOn ? 2 : 1); if (reflOn) nrm.gsRefl = surface(reflMRT());
+    // (ray traced, hd3d-gpu-trace.js: each pixel's own mirror colour and smoothness, and whether the traced level holds the thing)
+    const reflOn = aoOn && this.reflOn && fit >= (giOn ? 2 : 1), tr = reflOn ? this.tracer : null;
+    if (reflOn) nrm.gsRefl = tr ? new PerMaterial(m => drawnOver(m) ? vec4(0) : TR.tracedMRT(m)) : surface(reflMRT());
     // (motion blur alone: velocity for each thing's own move; see-through things leave the motion behind them, as frameGenMRT's do)
     const pics = mrtOn ? frameGenMRT(nrm) : mbOn ? ownBlend(mrt({ output, velocity: new PerMaterial(m => seeThrough(m) ? vec4(0) : vec4(velocity, 0, 1)), ...nrm }), ['velocity']) : aoOn ? mrt({ output, ...nrm }) : null;
     if (pics) sp.setMRT(ownBlend(pics, Object.keys(nrm)));
@@ -1524,7 +1569,7 @@ export class GpuChain {
     }
     // reflections: three's screen-space reflections on the things the game marked, added to the scene's colour
     // (after the bounce light, before the ambient occlusion and everything else the chain does to the picture)
-    if (reflOn) colT = reflStage(this, sp, colT);
+    if (reflOn) colT = tr ? TR.traceStage(this, sp, colT, tr) : reflStage(this, sp, colT);
     let lit = colT.rgb, aoF = float(1);
     if (aoOn) {
       this.aoN = ao(sp.getTextureNode('depth'), sp.getTextureNode('normal'), this.cam);
@@ -1695,6 +1740,28 @@ export class GpuChain {
     if (s1) this.s1 = sgsr1Gpu(fin);
     this.pp.outputNode = s1 ? this.s1.node : fin; this.pp.needsUpdate = true;
   }
+  // What a shader built in the background is built for: a small picture laid out as the scene pass's own (how many
+  // pictures, their formats, samples a pixel, a depth picture) and what the pass writes into them. three keeps a
+  // material's shader and its pipeline by that layout, not by the picture itself: built for anything else (the screen,
+  // as it used to be), the pass found neither and built both in the frame the thing first drew, which is the long
+  // frame the build was sent to the background to avoid. (Not the pass's own picture: it is still being read.)
+  // null until the pass has been built.
+  buildFor() {
+    const sp = this.sp, rt = sp?.renderTarget; if (!rt) return null;
+    let sig = rt.samples + '|' + rt.depthBuffer + '|' + rt.stencilBuffer + '|' + (rt.depthTexture ? rt.depthTexture.format + ':' + rt.depthTexture.type : '');
+    for (const t of rt.textures) sig += '|' + t.format + ':' + t.type + ':' + t.colorSpace;
+    const b = this._bf;
+    if (b?.sig !== sig) {
+      // (made afresh, not rt.clone(): a copy's pictures share the pass's own image sizes, and sizing the copy shrank the pass's)
+      b?.rt.dispose();
+      const c = new RenderTarget(4, 4, { count: rt.textures.length, samples: rt.samples, depthBuffer: rt.depthBuffer, stencilBuffer: rt.stencilBuffer });
+      rt.textures.forEach((t, i) => { const q = c.textures[i]; q.format = t.format; q.type = t.type; q.colorSpace = t.colorSpace; q.name = t.name; q.generateMipmaps = false; });
+      if (rt.depthTexture) { const d = new DepthTexture(4, 4, rt.depthTexture.type); d.format = rt.depthTexture.format; c.depthTexture = d; }
+      this._bf = { sig, rt: c, mrt: null };
+    }
+    this._bf.mrt = sp.getMRT?.() ?? null;
+    return this._bf;
+  }
   /** Sets the numbers from the view and tier, then draws. o: { ao (AO resolution, 0 = off), msaa, bloomScale, smooth, bloom, t, hurt, grade, glare, sunUV, sunCol, aspect,
    *  fg (frame generation: { mode: 'blend' | 'ahead', reset, jd: SGSR 2's jitter change in NDC }) }. With fg, returns what it showed ('real' | 'made'). */
   render(o) {
@@ -1706,7 +1773,8 @@ export class GpuChain {
     DRAWN.n++;
     if (o.gi) { this.giRes = o.gi.res; this.giBox = o.gi.box; }
     // gs.fx3d's screen effects and reflections have a key of their own: the chain is built again when it changes
-    { const xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? '|refl' : ''); this.reflOn = !!o.refl; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
+    // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
+    { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
     this.build(!this.clear && o.ao > 0, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, !this.clear && o.ao > 0 && o.gi ? o.gi.kind : false);
     if (this.s1) this.s1.size(o.w, o.h);
     // the passes size themselves from the canvas: upscaled, the canvas is the screen's size, so scale them down
@@ -1724,7 +1792,7 @@ export class GpuChain {
       if (o.gi) { U.giK.value = o.gi.strength; if (o.gi.rebuild && this.giN?.volume) this.giN.needsUpdate = true; }
       U.glare.value = o.glare; U.sunUV.value.set(o.sunUV.x, 1 - o.sunUV.y); U.sunCol.value.copy(o.sunCol); U.aspect.value = o.aspect;
       U.px.value.set(1 / o.w, 1 / o.h);
-      fxFrame(this, o.w, o.h, k); if (o.refl) reflFrame(this, o.w, o.h, o.refl.scale * k);
+      fxFrame(this, o.w, o.h, k); if (o.refl) { reflFrame(this, o.w, o.h, o.refl.scale * k); if (this.tracer) TR.traceFrame(this, o.w, o.h, o.refl.scale); }
       if (o.flare) { const F = this.F, f = o.flare; F.tint.value.copy(f.tint); F.th.value = f.threshold; F.sp.value = f.spacing; F.fade.value = f.fade; F.k.value = f.strength; F.dk.value = f.dirt; F.dirt.value = f.dirtTex; }
       if (this.lutN) { this.lutN.lutNode.value = o.lut; this.lutN.size.value = o.lut.image.width; U.lutK.value = Math.min(1, o.lutK ?? 1); }
       if (this.dofT) { this.dofT.setSize(o.w, o.h); const L = o.lens; U.lens.value.set(L ? L[0] : 0, L ? L[1] : 0, L ? L[2] : 0, L ? L[3] : 0); U.cn.value = o.near; U.cf.value = o.far; }
@@ -1742,6 +1810,11 @@ export class GpuChain {
       if (this.shM) { const bw = Math.max(8, Math.round(o.w / 4)), bh = Math.max(8, Math.round(o.h / 4)); this.shM.setSize(bw, bh); this.shB.setSize(bw, bh); U.shaft.value = o.shaft || 0; if (o.shaftCol) U.shaftTint.value.copy(o.shaftCol);
         const t = Math.max(1.1, o.shaftAt ?? 1.1), lit = t > 1.1; U.shThr.value = t; U.shHi.value = lit ? t * 1.2 : t * 2.2; U.shCap.value = lit ? t * 1.2 : 1e9; U.shGain.value = 1.1 / t; }
     }
+    // (ray traced reflections: the first frames with new lists on the chip are a trial; a chip that won't take them goes back to screen-space ones)
+    if (this.tracer?.trial > 0) return this.tracer.tried(() => this.present(o, f, live));
+    return this.present(o, f, live);
+  }
+  present(o, f, live) {
     if (live) return this.realFrame(o, f);
     if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
@@ -1851,8 +1924,9 @@ export class GpuChain {
   }
   dispose() {
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
-    fxDispose(this); reflDispose(this);
+    fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = null; this.sched = null; this.lastColor = null;
+    this._bf?.rt.dispose(); this._bf = null;
   }
 }
 const AIM_POSE = newPose(), AIM_HOLD = 150;   // fresh aim: the pose a frame was made for; ms the input counts as turning the camera after it last did

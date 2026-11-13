@@ -1761,6 +1761,18 @@ console.log('physics ok');
   console.log(`occlusion from depth, 60 random places: nothing seen is hidden; hides ${hid} where a fresh picture hides ${fresh} (` + Object.entries(kinds).map(([k, v]) => `${k} ${v[0]}/${v[1]}`).join(', ') + ') ok');
 }
 
+// occlusion's keep: it stays at work only where what it leaves out is worth more chip time than finding it costs
+{
+  const { occludePays } = await import('../src/kit/occlude.js');
+  // the Fold's town (2026-11-12): a quarter of its triangles left out, 1.28 ms of code, and no gain in frame rate
+  assert(!occludePays(55000, 6, 1.28), 'a town where it cut 55,000 triangles for 1.28 ms of code rests');
+  assert(!occludePays(0, 0, .3) && !occludePays(20000, 2, .5), 'next to nothing left out never pays');
+  assert(occludePays(600000, 150, .6), 'most of a heavy scene behind a wall pays');
+  assert(occludePays(0, 400, .5), 'hundreds of draws left out pay by themselves');
+  assert(!occludePays(600000, 150, 8), 'not when finding it took longer than drawing it');
+  console.log('occlusion\'s keep: rests in the Fold\'s town, stays where most of a scene is hidden ok');
+}
+
 // shadows in tiles: whatever moves, stops, comes, goes or slides, the map and the kept copy end up holding
 // exactly what a whole redraw would, for a small share of the drawing
 {
@@ -4427,6 +4439,99 @@ console.log('physics ok');
   }
 }
 
+// land with cliffs, caves and overhangs (src/kit/land-rock.js: gs.outdoors land.rocks())
+{
+  globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
+  const THREE = await import('three'), { Marks, Land } = await import('../src/kit/outdoors.js'), R = await import('../src/kit/land-rock.js'), { caster, blocked } = await import('../src/kit/acoustics.js');
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, near = (a, b, e = 1e-3) => Math.abs(a - b) < e, within = (v, lo, hi) => v >= lo && v <= hi;
+  // a valley in the west (0 m), a plateau in the east (10 m), a cliff between them; a cave from the foot of the
+  // cliff in under the plateau, a block of rock and an arch on the valley floor, a hollow in the plateau
+  const lie = (x, z) => 10 * sm(-3, 3, x + 2 * Math.sin(z * .1)), S = 64, n = 40, w = n + 1, Z = new Float32Array(w * w);
+  for (let r = 0; r <= n; r++) for (let c = 0; c <= n; c++) Z[r * w + c] = lie(-S / 2 + c * S / n, -S / 2 + r * S / n);
+  const grid = { z: Z, size: S, segments: n, cut: true };
+  const O = { cell: .5, seed: 5, cliffs: true, caves: [{ path: [[-6, 2.2, 0], [12, 2.5, 0]], radius: 2.4 }], shapes: [{ box: [4, 3, 4], at: [-20, 1, -20] }, { arch: [6, 4, 1.5, 2], at: [-20, 0, 15] }, { ball: 3, at: [20, 10, 20], cut: true }] };
+  // the land as the rock sees it: the height map's own triangles
+  { const G = R.ground(grid), H = {}; assert.ok(G.at(-10, 5, H).h === 0 && near(G.at(0, 0, H).h, 5, .01) && G.at(0, 0, H).ny < .6 && G.at(20, 0, H).ny === 1, 'the ground under the rock is the height map'); }
+  // the numbers: triangles in pieces, the land's squares a cave took, and for each column the heights that are solid
+  const t0 = performance.now(), A = R.rockArrays(grid, O), ms = performance.now() - t0;
+  assert.ok(within(A.stats.tris, 6000, 40000) && A.stats.hidden > A.stats.tris && A.pieces.filter(p => p.I.length).length >= 8 && A.cell === .5 && A.side === 16 && A.nch === 4, 'rock in pieces, most of it left out where it lies hidden under the land: ' + JSON.stringify(A.stats));
+  assert.ok(within(A.holes.length, 8, 90) && [...A.holes].every(q => { const x = -S / 2 + (q % n + .5) * S / n, z = -S / 2 + (Math.floor(q / n) + .5) * S / n; return (Math.abs(z) < 5 && within(x, -9, 3)) || Math.hypot(x - 20, z - 20) < 5.5; }), 'the land\'s squares are left out where the cave comes out of the cliff and where the hollow is: ' + A.holes.length);
+  let flip = 0, tris = 0, down = 0, bad = 0;
+  for (const p of A.pieces) {
+    for (const a of [p.P, p.N, p.C]) for (let i = 0; i < a.length; i++) if (!(a[i] === a[i])) bad++;
+    for (let i = 0; i < p.N.length; i += 3) { if (!near(Math.hypot(p.N[i], p.N[i + 1], p.N[i + 2]), 1, 1e-3)) bad++; if (p.N[i + 1] < -.5) down++; }
+    for (let i = 0; i < p.C.length; i++) if (!(p.C[i] >= 0 && p.C[i] <= 1.2)) bad++;
+    for (let t = 0; t < p.I.length; t += 3) {
+      const a = p.I[t] * 3, b = p.I[t + 1] * 3, c = p.I[t + 2] * 3, P = p.P, N = p.N, ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+      if ((uy * vz - uz * vy) * (N[a] + N[b] + N[c]) + (uz * vx - ux * vz) * (N[a + 1] + N[b + 1] + N[c + 1]) + (ux * vy - uy * vx) * (N[a + 2] + N[b + 2] + N[c + 2]) < 0) flip++; tris++;
+    }
+  }
+  assert.ok(bad === 0 && tris === A.stats.tris && flip < tris * .012, 'every number is one, normals are a unit long, triangles face the way their normals do: ' + flip + ' of ' + tris + ' do not');
+  assert.ok(down > 250, 'rock that faces down: overhangs, the cave\'s roof, the arch\'s underside: ' + down + ' points');
+  // pieces meet: the edge of one piece ends on points its neighbour has too
+  { const key = (P, i) => Math.round(P[i * 3] * 1000) + ',' + Math.round(P[i * 3 + 1] * 1000) + ',' + Math.round(P[i * 3 + 2] * 1000), seen = new Map(); let met = 0, edges = 0, odd = 0;
+    for (const p of A.pieces) for (let i = 0; i < p.P.length / 3; i++) { const k = key(p.P, i); seen.set(k, (seen.get(k) || 0) + 1); }
+    for (const p of A.pieces) { const E = new Map(); for (let t = 0; t < p.I.length; t += 3) for (let e = 0; e < 3; e++) { const a = p.I[t + e], b = p.I[t + (e + 1) % 3], k = a < b ? a + '_' + b : b + '_' + a; E.set(k, (E.get(k) || 0) + 1); }
+      for (const [k, c] of E) { edges++; if (c > 2) odd++; if (c === 1) { const [a, b] = k.split('_').map(Number); if (seen.get(key(p.P, a)) > 1 && seen.get(key(p.P, b)) > 1) met++; } } }
+    assert.ok(met > 300 && odd < edges * .004, 'pieces meet along their edges: ' + met + ' edges (and ' + odd + ' of ' + edges + ' edges have more than two triangles: where two sheets of rock touch)'); }
+  // the same asking gives the same rock, another seed another
+  { const B = R.rockArrays(grid, O), C = R.rockArrays(grid, { ...O, seed: 6 }); assert.ok(A.pieces.every((p, i) => p.P.length === B.pieces[i].P.length && p.P.every((v, j) => v === B.pieces[i].P[j]) && p.I.every((v, j) => v === B.pieces[i].I[j])), 'the same seed: the same rock'); assert.ok(C.stats.tris !== A.stats.tris, 'another seed: another rock'); }
+  { const F = R.rockArrays({ z: new Float32Array(w * w), size: S, segments: n, cut: true }, { cell: .5, seed: 5, cliffs: true, caves: [], shapes: [] }); assert.ok(F.stats.tris === 0 && F.holes.length === 0 && F.pieces.every(p => !p.spans.length), 'flat land with nothing asked of it has no rock'); }
+  // what is solid where: the top, what you stand on, what is over you
+  const M = new R.RockMap(A, grid, O);
+  assert.ok(M.top(-25, 0) === 0 && M.floor(-25, 0, 0) === 0 && M.roof(-25, 1, 0) === Infinity && M.sky(-25, 1, 0) === 1 && !M.changed(-25, 0) && M.inside(-25, -1, 0) && !M.inside(-25, 1, 0) && M.top(25, -10) === 10, 'plain ground is the land itself');
+  assert.ok(M.top(6, 0) === 10 && within(M.floor(6, 1, 0), 0, .9) && within(M.roof(6, 2, 0), 3.8, 5) && !M.inside(6, 2, 0) && M.inside(6, 2, 3.5) && M.inside(6, 7, 0), 'in the cave: a floor under you, a roof over you, the plateau on top: floor ' + M.floor(6, 1, 0).toFixed(2) + ', roof ' + M.roof(6, 2, 0).toFixed(2));
+  assert.ok(M.sky(6, 2, 0) < .6 && M.sky(11, 2, 0) < M.sky(6, 2, 0) && M.sky(11, 2, 0) > .1 && M.sky(-7, 1, 0) === 1, 'less daylight the deeper in: ' + M.sky(6, 2, 0).toFixed(2) + ', ' + M.sky(11, 2, 0).toFixed(2));
+  assert.ok(within(M.top(-20, -20), 1.8, 3.2) && M.floor(-20, 4, -20) === M.top(-20, -20) && M.top(-16.5, -20) === 0, 'a block of rock stands on the valley floor: ' + M.top(-20, -20).toFixed(2));
+  assert.ok(near(M.floor(-20, 0, 15), 0, .02) && within(M.roof(-20, 1, 15), 2.5, 4.2) && within(M.top(-20, 15), 4, 5.8) && M.floor(-20, 6, 15) === M.top(-20, 15) && M.sky(-20, 1, 15) === .7 && M.inside(-20, M.top(-20, 15) - .4, 15), 'an arch: ground under it, its underside over you, its top to stand on: ' + M.roof(-20, 1, 15).toFixed(2) + ' ' + M.top(-20, 15).toFixed(2));
+  assert.ok(within(M.top(20, 20), 6.2, 8) && M.top(20, 28) === 10, 'a hollow in the plateau: ' + M.top(20, 20).toFixed(2));
+  { let multi = 0; for (const p of A.pieces) for (const o of p.off) if (o >= 0 && p.spans[o + 2] === p.spans[o + 2]) multi++; assert.ok(multi > 150, 'columns with more than one solid stretch (what a height map cannot hold): ' + multi); }
+  // rays
+  const D = { x: 0, y: -1, z: 0 }, U = { x: 0, y: 1, z: 0 }, E = { x: 1, y: 0, z: 0 };
+  assert.ok(near(M.ray({ x: 25, y: 30, z: -10 }, D, 50), 20, .01) && M.ray({ x: 25, y: 30, z: -10 }, D, 10) === Infinity && M.ray({ x: 25, y: 30, z: -10 }, U, 50) === Infinity && M.ray({ x: 6, y: 7, z: 0 }, E, 60) === 0, 'straight down to the plateau, and nothing above');
+  assert.ok(within(M.ray({ x: -12, y: 2, z: 0 }, E, 60), 24, 28) && within(M.ray({ x: 6, y: 2, z: 0 }, { x: 0, y: 0, z: 1 }, 60), 1.4, 3) && within(M.ray({ x: 6, y: 2, z: 0 }, U, 60), 1.4, 3) && within(M.ray({ x: -20, y: 5, z: 12 }, E, 60), 14, 21), 'a ray goes down the cave to its end, and stops at its wall, its roof and the cliff');
+  // a walk in at the mouth: no step up or down on the way
+  { let y = 0, big = 0, py = 0; for (let x = -14; x <= 11; x += .05) { y = M.floor(x, y, 0); big = Math.max(big, Math.abs(y - py)); py = y; } assert.ok(within(y, 0, .9) && big < .15, 'walking in at the cave\'s mouth: the biggest step ' + big.toFixed(3) + ' m'); }
+  const t1 = performance.now(); let sum = 0; for (let i = 0; i < 100000; i++) sum += M.floor(-8 + (i % 400) * .04, 2, -10 + ((i / 400) | 0) * .08); const ns = (performance.now() - t1) / 100000 * 1e6;
+  assert.ok(ms < 4000 && ns < 3000 && sum === sum, 'the rock made in ' + ms.toFixed(0) + ' ms, floor() ' + ns.toFixed(0) + ' ns');
+
+  // on a Land: land.rocks()
+  const land = new Land({ kind: lie, size: S, segments: n, colours: [[0, '#587a34'], [10, '#7a7a5a']] }), i0 = land.mesh.geometry.index.count;
+  assert.ok(land.floor(6, 1, 0) === land.height(6, 0) && land.roof(6, 20, 0) === Infinity && land.sky(6, 1, 0) === 1 && !land.rocky(6, 0) && near(land.ray({ x: 25, y: 30, z: -10 }, D, 50).distance, 20, .01) && land.ray({ x: 25, y: 30, z: -10 }, U, 50) === null, 'a land with no rock answers as a height map');
+  const group = land.rocks(O), K = land.rock;
+  assert.ok(group.parent === land.object && group.children.length === K.pieces && K.pieces >= 8 && group.children.every(m => m.isMesh && m.castShadow && m.receiveShadow && m.material === K.material) && K.material.isMeshStandardMaterial && K.material.vertexColors && K.material.onBeforeCompile === THREE.Material.prototype.onBeforeCompile, 'the rock is meshes with one stock material: the same on WebGL and WebGPU');
+  assert.ok(K.holes.length > 8 && land.mesh.geometry.index.count === i0 - K.holes.length * 6, 'the land\'s own squares are left out where a cave comes through');
+  { land.object.updateMatrixWorld(true); const m = group.children[0], P = m.geometry.attributes.position.array, p = new THREE.Vector3(P[0], P[1], P[2]).applyMatrix4(m.matrixWorld); assert.ok(near(p.x, P[0], 1e-4) && near(p.y, P[1], 1e-4) && near(p.z, P[2], 1e-4), 'the rock is in the world\'s own metres'); }
+  assert.ok(land.height(6, 0) === 10 && within(land.floor(6, 1, 0), 0, .9) && within(land.roof(6, 2, 0), 3.8, 5) && land.sky(6, 2, 0) < .6 && within(land.height(-20, -20), 1.8, 3.2) && land.rocky(-20, -20) && !land.rocky(-25, 0) && !land.rocky(6, 0) && land.height(-25, 0) === land.height0(-25, 0), 'land.height() is the top of the rock, land.floor() what you stand on');
+  { let n2 = 0; for (const q of K.holes) { const x = -S / 2 + (q % n + .5) * S / n, z = -S / 2 + (Math.floor(q / n) + .5) * S / n; if (land.rocky(x, z)) n2++; } assert.ok(n2 > K.holes.length * .6, 'where the ground was taken away counts as rock: ' + n2 + ' of ' + K.holes.length); }
+  { const cast = caster(land); assert.ok(near(cast({ x: 6, y: 30, z: 0 }, D, 100), 20, .01) && within(cast({ x: 6, y: 2, z: 0 }, U, 100), 1.4, 3) && cast({ x: -25, y: 2, z: 0 }, U, 100) === Infinity, 'a Land answers rays as a level does (for the weather and for sound)');
+    assert.ok(blocked(cast, { x: 8, y: 2, z: 0 }, { x: -12, y: 2, z: 0 }) === 0 && blocked(cast, { x: 8, y: 2, z: 0 }, { x: 8, y: 11.6, z: 0 }) > .9 && blocked(cast, { x: -20, y: 1.6, z: 5 }, { x: -12, y: 1.6, z: -5 }) === 0, 'a sound in the cave is heard out of its mouth, and not through the rock over it'); }
+  { const t2 = performance.now(), tris0 = K.tris; land.rocks(O); assert.ok(performance.now() - t2 < 120 && land.rock.tris === tris0 && land.object.children.filter(c => c.name === 'rocks').length === 1, 'asked again for the same rock: kept, not made again'); }
+  // marks: none on rock, none from a walker in the cave, prints from one in the valley
+  {
+    const v = { cam: { position: new THREE.Vector3(-22, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, _air: null, air() { return this._air ||= { wet: 0, world: null }; } }, m = new Marks(v, { land, sand: () => 1, grass: false });
+    assert.ok(m.kindAt(-25, 0).kind === 'sand' && m.kindAt(-20, -20).kind === null && m.step(-20, -20) === null && m.count === 0, 'rock takes no marks');
+    const a = { position: { x: 4, y: land.floor(4, 1, 0), z: 0 } }; m.watch(a);
+    for (let i = 0; i < 180; i++) { a.position.x += 1.4 / 60; a.position.y = land.floor(a.position.x, a.position.y, 0); m.update(1 / 60); }
+    assert.ok(m.count === 0 && a.position.y < 1 && land.height(a.position.x, 0) === 10, 'a walker in the cave leaves no prints on the ground above');
+    const b = { position: { x: -26, y: 0, z: 0 } }; m.watch(b);
+    for (let i = 0; i < 180; i++) { b.position.x += 1.4 / 60; m.update(1 / 60); }
+    assert.ok(m.count >= 4 && m.drawn >= 1, 'a walker in the valley does: ' + m.count); m.dispose();
+  }
+  // solid: things rest on the cave's floor and on the plateau over it
+  {
+    const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+    const world = new World3D({ gravity: -20 }); land.solid(world);
+    const drop = (x, y, z) => { const b = new THREE.Mesh(new THREE.SphereGeometry(.3)); b.position.set(x, y, z); world.ball(b, .3, { at: [x, y, z] }); return b; }, inCave = drop(8, 2.5, 0), onTop = drop(25, 12, -10), onBlock = drop(-20, 5, -20);
+    for (let i = 0; i < 180; i++) world.step(1 / 60);
+    assert.ok(within(inCave.position.y - land.floor(inCave.position.x, inCave.position.y, inCave.position.z), .2, .45) && inCave.position.y < 2 && near(onTop.position.y, 10.3, .05) && onBlock.position.y > 1.5, 'a ball rests on the cave\'s floor, another on the plateau: ' + inCave.position.y.toFixed(2) + ' ' + onTop.position.y.toFixed(2) + ' ' + onBlock.position.y.toFixed(2));
+  }
+  // the land reshaped: the rock is made again on it; taken away: a height map again
+  land.flatten(25, -10, 4, 12); assert.ok(land.rock && land.rock !== K && near(land.height(25, -10), 12, .01) && land.rock.tris > 0, 'flatten() makes the rock again');
+  land.rocks(false); assert.ok(land.rock === null && land.mesh.geometry.index.count === i0 && !land.object.children.some(c => c.name === 'rocks') && land.height(6, 0) === land.height0(6, 0) && land.floor(6, 1, 0) === 10, 'rocks(false) takes it away');
+  console.log(`land with cliffs, caves and overhangs: rock in pieces that meet, hidden rock left out, overhangs, a cave with a floor and a roof, an arch, a hollow, rays, a walk in at the mouth, marks, physics, flatten() ok (${A.stats.tris} triangles in ${ms.toFixed(0)} ms, floor() ${ns.toFixed(0)} ns)`);
+}
+
 // vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
 {
   const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
@@ -4764,6 +4869,146 @@ console.log('physics ok');
     assert.ok(f2.lod === 2 && !f2.bones.foreL.parent.children.includes(f2.bones.foreL) && f0.lod === 0, 'and it is handed back at the level it was given'); c0.dispose(); c2.dispose(); }
   crowd.dispose(); assert.ok(scene.children.length === 0 && scene.userData.gsPosed.size === 0, 'dispose takes it out of the scene');
   console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
+}
+
+// ray traced reflections (trace-build.js, trace-scene.js, hd3d-gpu-trace.js): the copy of a level that rays are
+// sent through on the graphics chip. Its lists are walked here the way the shader walks them (three-mesh-bvh's
+// packed nodes: a tree over the blocks, then a block's own tree in its own space), and every ray has to find
+// what three's own ray caster finds in the real scene.
+{
+  const THREE = await import('three');
+  const { buildBlock, traceReady, packLook, VERT, NODE_BYTES, BLOCK_DEPTH } = await import('../src/kit/trace-build.js');
+  const { traceable, colourOf, glowOf, metalOf } = await import('../src/kit/trace-scene.js');
+  const { Tracer } = await import('../src/kit/hd3d-gpu-trace.js');
+  await traceReady;
+  assert.equal(NODE_BYTES, 64, 'a packed node is 64 bytes');
+  // a corner's look: colour in 5-6-5 (kept as square roots), a place in the glow table, polished metal or not
+  { const un = v => { const w = Math.floor(v / 65536), c = v - w * 65536; return { rgb: [(c & 31) / 31, ((c >> 5) & 63) / 63, ((c >> 11) & 31) / 31].map(x => x * x), glow: w & 127, metal: w >= 128 }; };
+    const a = un(packLook(.5, .25, .04, 93, true)), b = un(packLook(2, -1, 0));
+    assert.ok(Math.abs(a.rgb[0] - .5) < .03 && Math.abs(a.rgb[1] - .25) < .012 && Math.abs(a.rgb[2] - .04) < .012 && a.glow === 93 && a.metal, 'a look packs a colour, a glow and metal: ' + JSON.stringify(a));
+    assert.ok(b.rgb[0] === 1 && b.rgb[1] === 0 && b.glow === 0 && !b.metal && Number.isInteger(packLook(.3, .6, .9, 127, true)) && packLook(1, 1, 1, 127, true) < 2 ** 24, 'out of range colours are held in, and the number is one a float keeps exactly'); }
+  const shape = g => ({ pos: g.attributes.position.array, nrm: g.attributes.normal?.array || null, col: null, idx: g.index ? g.index.array : null });
+  const item = (shape, m = null, o = {}) => ({ shape, m, rgb: [1, 1, 1], glow: 0, metal: false, tint: false, ...o });
+  assert.deepEqual(buildBlock({ shapes: [], items: [] }), { tris: 0, was: 0, left: [] }, 'nothing in, an empty block out');
+  // a block under its budget is the meshes themselves, each where it stands
+  { const ball = new THREE.SphereGeometry(1, 24, 16), M = new THREE.Matrix4().compose(new THREE.Vector3(5, 2, -3), new THREE.Quaternion().setFromEuler(new THREE.Euler(.4, 1.1, -.3)), new THREE.Vector3(2, .5, 1));
+    const b = buildBlock({ shapes: [shape(ball)], items: [item(0), item(0, Float32Array.from(M.elements))], budget: 1e5 }), full = ball.index.count / 3;
+    assert.ok(b.tris === full * 2 && b.was === full * 2 && b.index.length === b.tris * 3 && b.attrs.length === b.verts * VERT && b.nodes.length % 16 === 0 && b.depth <= BLOCK_DEPTH && !b.left.length, 'two balls whole: ' + b.tris + ' triangles, ' + b.nodes.length / 16 + ' nodes, ' + b.depth + ' deep');
+    assert.ok(Math.abs(b.box[0] + 1) < 1e-4 && b.box[3] > 6 && b.box[3] < 7.1 && b.box[4] > 2.4 && b.box[4] < 3.2, 'its box holds both: ' + Array.from(b.box).map(v => v.toFixed(2)));
+    // a squashed, turned ball's corners still face away from its middle (normals go by the inverse transpose)
+    let bad = 0, n = 0; const inv = M.clone().invert(), p = new THREE.Vector3();
+    for (let v = 0; v < b.verts; v++) { const w = v * VERT; if (b.attrs[w] > 2.5) { n++; p.set(b.attrs[w], b.attrs[w + 1], b.attrs[w + 2]).applyMatrix4(inv); const nx = b.attrs[w + 4], ny = b.attrs[w + 5], nz = b.attrs[w + 6], q = new THREE.Vector3(p.x, p.y, p.z).transformDirection(new THREE.Matrix4().copy(inv).transpose());
+      if (Math.abs(Math.hypot(nx, ny, nz) - 1) > 1e-4 || nx * q.x + ny * q.y + nz * q.z < .98) bad++; } }
+    assert.ok(n > 100 && bad === 0, 'a squashed ball\'s normals stand off its faces (' + bad + ' of ' + n + ' wrong)'); }
+  // over its budget: the big pieces are simplified to fit; with a great many small ones, the smallest are left out
+  { const ball = new THREE.SphereGeometry(1, 140, 70), full = ball.index.count / 3;
+    const b = buildBlock({ shapes: [shape(ball)], items: [item(0)], budget: 5000 });
+    assert.ok(b.was === full && b.tris <= 5000 * 1.25 && b.tris > 2500 && b.depth <= BLOCK_DEPTH, 'a ball of ' + full + ' triangles simplified to ' + b.tris);
+    const small = new THREE.BoxGeometry(1, 1, 1), items = [], S = k => Float32Array.from(new THREE.Matrix4().makeScale(k, k, k).setPosition(k * 3, 0, 0).elements);
+    for (let i = 0; i < 100; i++) items.push(item(0, S(1 + i)));
+    const c = buildBlock({ shapes: [shape(small)], items, budget: 600 });
+    assert.ok(c.tris <= 600 * 1.25 && c.left.length === 100 - c.tris / 12 && c.left.every(k => k < 100 - c.tris / 12), 'a hundred boxes into room for fifty: the ' + c.left.length + ' smallest are left out'); }
+  // what goes in, and how a material is kept
+  { const g = new THREE.BoxGeometry(1, 1, 1), std = o => new THREE.MeshStandardMaterial(o), mesh = (m, f) => { const o = new THREE.Mesh(g, m); f?.(o); return o; };
+    assert.ok(traceable(mesh(std({}))) && traceable(mesh(new THREE.MeshBasicMaterial())), 'a solid mesh goes in');
+    assert.ok(!traceable(mesh(std({ transparent: true }))) && !traceable(mesh(std({ alphaTest: .5 }))) && !traceable(mesh(std({ side: THREE.BackSide }))) && !traceable(mesh(std({}), o => { o.userData.noTrace = true; })) && !traceable(mesh(std({}), o => { o.userData.decal = true; }))
+      && !traceable(new THREE.InstancedMesh(g, std({}), 3)) && !traceable(new THREE.SkinnedMesh(g, std({}))) && !traceable(mesh(std({}), o => o.layers.set(5))) && !traceable(new THREE.Points(g)), 'see-through things, copies, skinned things, marked things and other layers do not');
+    const red = std({ color: 0xff0000 }), gold = std({ color: 0xffcc00, metalness: 1 }), halfMetal = std({ color: 0xffffff, metalness: .4 }), lit = std({ emissive: 0x00ff00, emissiveIntensity: 3 }), flat = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+    assert.deepEqual([colourOf(red), metalOf(red), glowOf(red)], [[1, 0, 0], false, null], 'a painted thing keeps its colour');
+    assert.ok(metalOf(gold) && colourOf(gold)[0] === 1 && colourOf(gold)[2] === 0 && !metalOf(halfMetal) && Math.abs(colourOf(halfMetal)[0] - .6) < 1e-6, 'polished metal keeps its colour for its reflections; part metal is that much darker');
+    assert.deepEqual([glowOf(lit), colourOf(flat), glowOf(flat)], [[0, 3, 0], [0, 0, 0], [0, 0, 1]], 'a glow is its colour times its strength; an unlit material is all glow');
+    const tex = new THREE.DataTexture(new Uint8Array([255, 0, 0, 255, 0, 0, 0, 255]), 2, 1); tex.needsUpdate = true;
+    assert.deepEqual(colourOf(std({ map: tex })), [.5, 0, 0], 'a texture counts by its average colour'); }
+
+  // the whole level, as the tracer keeps it on the chip's lists
+  const { rng } = await import('../src/kit/math.js');
+  const scene = new THREE.Scene(), R = rng(11), std = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, side: THREE.DoubleSide, ...o });
+  const put = (g, m, p, r = [0, 0, 0], sc = [1, 1, 1], ud = null) => { const o = new THREE.Mesh(g, m); o.position.set(...p); o.rotation.set(...r); o.scale.set(...sc); if (ud) Object.assign(o.userData, ud); scene.add(o); return o; };
+  const boxG = new THREE.BoxGeometry(1, 1, 1), ballG = new THREE.SphereGeometry(1, 32, 16), quadG = new THREE.PlaneGeometry(2, 2), blue = std(0x2040ff);
+  const floor = put(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), std(0x808080), [0, 0, 0]);
+  const crate = put(boxG, std(0xff0000), [-3, 1, 2], [.2, .7, 0], [2, 2, 1]), ball = put(ballG, std(0x00ff00), [2, 1.5, -1], [0, 0, 0], [1.5, 1.5, 1.5]);
+  const lift = put(boxG, std(0xffff00), [4, 3, 3], [.5, .2, .9], [1, 3, .5], { moves: true });
+  const m1 = put(ballG, blue, [-5, 4, -4], [0, 0, 0], [.7, .7, .7], { moves: true }), m2 = put(ballG, blue, [0, 5, 4], [1, 0, 0], [.5, 1.2, .5], { moves: true });
+  const card = put(quadG, std(0xff00ff), [-1, 3.2, -5], [-1.2, .4, 0], [1, 1, 1], { moves: true });   // (two triangles: its block's tree is one leaf)
+  const copies = new THREE.InstancedMesh(boxG, std(0xffffff), 4); scene.add(copies);
+  const glass = put(boxG, std(0xffffff, { transparent: true, opacity: .4 }), [6, 1, -6]), unseen = put(boxG, std(0xffffff), [0, 1, 8]); unseen.visible = false;
+  const lamp = new THREE.PointLight(0xffffff, 3); scene.add(lamp);
+  scene.updateMatrixWorld();
+  const tr = new Tracer(null, scene, { budget: 1e5 }), lights = [];
+  const frame = () => tr.frame(performance.now() + 1e6, list => { lights.length = 0; lights.push(...list); return null; });
+  const settle = async () => { for (let i = 0; i < 400; i++) { frame(); if (tr.info.builds && !tr.info.busy) break; await new Promise(r => setTimeout(r, 5)); } frame(); };
+  assert.ok(frame() && tr.ready && tr.info.lists === 1, 'the lists are made on the first frame, before the blocks are built');
+  await settle();
+  const held = [floor, crate, ball, lift, m1, m2, card], full = held.reduce((n, o) => n + o.geometry.index.count / 3, 0) - ballG.index.count / 3;   // (the two blue balls share one block)
+  assert.deepEqual([tr.info.things, tr.info.movers, tr.info.other, tr.info.left, tr.info.tris, tr.info.was], [7, 4, 2, 0, full, full], 'seven things, four of them moving, the copies and the glass left to the screen');
+  assert.ok(held.every(o => o.userData.gsTraced === true) && !copies.userData.gsTraced && !glass.userData.gsTraced && !unseen.userData.gsTraced && lights.length === 1 && lights[0] === lamp, 'each mesh says whether the level holds it; the scene\'s lights are handed on');
+  assert.ok(tr.shapes.size === 3 && tr.inst.length === 4, 'a block for each moving shape: two balls share one');
+  // the shader's walk, here: the tree over the blocks, then into a block's own space and its own tree
+  const walk = (ro, rd) => {
+    const N = tr.A.nodes.array, F = tr.F.nodes, I = tr.A.index.array, A = tr.F.attrs, TU = tr.A.tf.array, TF = tr.F.tf;
+    let best = Infinity, at = -1;
+    const box = (w, o, d) => { let t0 = 0, t1 = best; for (let a = 0; a < 3; a++) { const lo = (F[w + a] - o[a]) / d[a], hi = (F[w + 3 + a] - o[a]) / d[a]; t0 = Math.max(t0, Math.min(lo, hi)); t1 = Math.min(t1, Math.max(lo, hi)); } return t0 <= t1; };
+    const tri = (i, o, d, slot) => {
+      const a = I[i * 3] * VERT, b = I[i * 3 + 1] * VERT, c = I[i * 3 + 2] * VERT, e1 = [A[b] - A[a], A[b + 1] - A[a + 1], A[b + 2] - A[a + 2]], e2 = [A[c] - A[a], A[c + 1] - A[a + 1], A[c + 2] - A[a + 2]];
+      const px = d[1] * e2[2] - d[2] * e2[1], py = d[2] * e2[0] - d[0] * e2[2], pz = d[0] * e2[1] - d[1] * e2[0], det = e1[0] * px + e1[1] * py + e1[2] * pz; if (Math.abs(det) < 1e-12) return;
+      const tx = o[0] - A[a], ty = o[1] - A[a + 1], tz = o[2] - A[a + 2], u = (tx * px + ty * py + tz * pz) / det; if (u < 0 || u > 1) return;
+      const qx = ty * e1[2] - tz * e1[1], qy = tz * e1[0] - tx * e1[2], qz = tx * e1[1] - ty * e1[0], v = (d[0] * qx + d[1] * qy + d[2] * qz) / det; if (v < 0 || u + v > 1) return;
+      const t = (e2[0] * qx + e2[1] * qy + e2[2] * qz) / det; if (t > 1e-6 && t < best) { best = t; at = slot; }
+    };
+    const block = (root, o, d, slot) => { const st = [root]; while (st.length) { const n = st.pop(), w = n * 16, x = N[w + 13]; if (x >>> 16 === 0xFFFF) { for (let i = N[w + 12]; i < N[w + 12] + (x & 0xFFFF); i++) tri(i, o, d, slot); continue; } if (box(w, o, d)) st.push(n + 1); if (box(w + 6, o, d)) st.push(n + N[w + 12]); } };
+    const st = [0];
+    while (st.length) {
+      const n = st.pop(), w = n * 16, x = N[w + 13];
+      if (x >>> 24 === 0xFF) { const slot = x & 0xFFFFFF, t = slot * 36; if (!TU[t + 32]) continue; const m = TF.subarray(t + 16, t + 32);
+        block(N[w + 12], [m[0] * ro[0] + m[4] * ro[1] + m[8] * ro[2] + m[12], m[1] * ro[0] + m[5] * ro[1] + m[9] * ro[2] + m[13], m[2] * ro[0] + m[6] * ro[1] + m[10] * ro[2] + m[14]], [m[0] * rd[0] + m[4] * rd[1] + m[8] * rd[2], m[1] * rd[0] + m[5] * rd[1] + m[9] * rd[2], m[2] * rd[0] + m[6] * rd[1] + m[10] * rd[2]], slot); continue; }
+      if (box(w, ro, rd)) st.push(n + 1); if (box(w + 6, ro, rd)) st.push(n + N[w + 12]);
+    }
+    return { dist: best, slot: at };
+  };
+  const caster = new THREE.Raycaster(), o3 = new THREE.Vector3(), d3 = new THREE.Vector3();
+  const rays = (list, n = 400) => {
+    let worst = 0, hits = 0, moved = 0, wrong = 0;
+    for (let i = 0; i < n; i++) {
+      o3.set(R() * 30 - 15, 1 + R() * 14, R() * 30 - 15); d3.set(R() * 14 - 7, R() * 5, R() * 14 - 7).sub(o3).normalize();
+      caster.set(o3, d3); const real = caster.intersectObjects(list, false)[0], got = walk([o3.x, o3.y, o3.z], [d3.x, d3.y, d3.z]);
+      if (!real !== !(got.dist < Infinity)) { wrong++; continue; }
+      if (real) { hits++; if (got.slot > 0) moved++; worst = Math.max(worst, Math.abs(real.distance - got.dist)); }
+    }
+    return { worst, hits, moved, wrong };
+  };
+  let seen = rays(held);
+  assert.ok(seen.wrong === 0 && seen.worst < 2e-3 && seen.hits > 300 && seen.moved > 20, 'every ray finds what the real scene\'s ray caster finds: ' + JSON.stringify(seen));
+  // things moved, turned and hidden: the same frame, with no new blocks
+  { const builds = tr.info.builds, lists = tr.info.lists;
+    lift.position.set(-2, 4, -2); lift.rotation.set(1.3, .1, .4); m1.scale.setScalar(2.2); card.position.y = 1.4; m2.visible = false; scene.updateMatrixWorld(); frame();
+    seen = rays(held.filter(o => o !== m2));
+    assert.ok(seen.wrong === 0 && seen.worst < 2e-3 && seen.moved > 20 && tr.info.builds === builds && tr.info.lists === lists, 'moved, turned, grown and hidden things are where they now are, with nothing built again: ' + JSON.stringify(seen));
+    m2.visible = true; scene.updateMatrixWorld(); frame(); seen = rays(held);
+    assert.ok(seen.wrong === 0 && seen.worst < 2e-3, 'and back when shown again'); }
+  // a still thing that starts to move becomes a moving one; a thing added is in once the blocks are made again
+  { const builds = tr.info.builds; crate.position.x = -6; const post = put(boxG, std(0x00ffff), [7, 2, 0], [0, .5, 0], [.5, 4, .5]); scene.updateMatrixWorld();
+    for (let i = 0; i < 400 && !(tr.info.builds > builds && !tr.info.busy && tr.info.things === 8); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); held.push(post); seen = rays(held);
+    assert.ok(tr.info.builds > builds && tr.info.movers === 5 && post.userData.gsTraced === true && seen.wrong === 0 && seen.worst < 2e-3, 'a crate pushed along joins the moving things and a new post is traced: ' + JSON.stringify({ ...tr.info, ...seen }));
+    // a still thing taken out is gone once the blocks are made again, and one hidden and shown again comes back as a moving thing (so next time it goes at once)
+    const b2 = tr.info.builds; ball.visible = false; scene.updateMatrixWorld();
+    for (let i = 0; i < 400 && !(tr.info.builds > b2 && !tr.info.busy && tr.info.things === 7); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); seen = rays(held.filter(o => o !== ball));
+    assert.ok(seen.wrong === 0 && ball.userData.gsTraced === false, 'a still thing hidden is out of the level once it is made again');
+    const b3 = tr.info.builds; ball.visible = true; scene.updateMatrixWorld();
+    for (let i = 0; i < 400 && !(tr.info.builds > b3 && !tr.info.busy && tr.info.things === 8); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); seen = rays(held);
+    assert.ok(seen.wrong === 0 && tr.info.movers === 6 && ball.userData.gsTraced === true, 'shown again, it is back as a moving thing: ' + JSON.stringify({ ...tr.info, ...seen }));
+    const b4 = tr.info.builds; ball.visible = false; scene.updateMatrixWorld(); frame(); seen = rays(held.filter(o => o !== ball));
+    assert.ok(seen.wrong === 0 && tr.info.builds === b4, 'and hidden a second time it is gone the same frame'); ball.visible = true; }
+  // a level that outgrows its room on the chip is given bigger lists (the chain's shaders are then made again: info.lists)
+  { const lists = tr.info.lists, builds = tr.info.builds; for (let i = 0; i < 6; i++) held.push(put(new THREE.SphereGeometry(1, 96, 64), std(0x996633), [i * 3 - 8, 9, -8])); scene.updateMatrixWorld();
+    for (let i = 0; i < 600 && !(tr.info.builds > builds && !tr.info.busy && tr.info.things === 14); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); seen = rays(held);
+    assert.ok(tr.info.lists > lists && seen.wrong === 0 && seen.worst < 2e-3 && tr.info.tris > 70000 && tr.info.mb > 1, 'six big balls more: bigger lists, and every ray still right: ' + JSON.stringify({ ...tr.info, ...seen })); }
+  tr.dispose(); assert.ok(held.every(o => o.userData.gsTraced === false) && !tr.ready, 'dispose lets go of the lists, and no mesh says it is traced');
+  assert.equal(tr.frame(0, () => null), false, 'a tracer that failed or was let go draws nothing more');
+  console.log('gs.hd ray traced reflections: blocks, looks, what goes in, and the level\'s lists walked as the shader walks them ok');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

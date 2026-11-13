@@ -12,7 +12,7 @@
 //  - copies (gs.props): a set is asked about copy by copy when small, in cells of a grid when big;
 //  - the meter (WebGL here, hd3d-gpu.js depthMeter on WebGPU): the chip boils the frame's depth down to
 //    the small picture and it is read back without waiting for it;
-//  - sleep: a view where hiding saves next to nothing stops doing any of this, and looks again later.
+//  - sleep: a view where hiding saves less than it costs stops doing any of this, and looks again later.
 // Kit use only.
 import { LessDepth, LessEqualDepth, NormalBlending, Object3D, ShaderMaterial, WebGLRenderTarget, NearestFilter, Vector2 } from 'three';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
@@ -30,6 +30,17 @@ const SOFT_SPEED = 1.5, SWAY_PAD = .5;
 // WAKE: a view with fewer triangles and draws than this is never tried; NO_PICTURE: frames, and milliseconds,
 // with no depth picture back from the chip before it gives up for a long while
 const TRIAL = 45, NAP = 90, NAP_MAX = 600, WORTH_TRIS = 2000, WORTH_SHARE = .02, WAKE_TRIS = 20000, WAKE_CALLS = 120, NO_PICTURE = 40, NO_PICTURE_MS = 1000;
+// What hiding is worth against what it costs, in milliseconds a frame. On a Galaxy Z Fold 8 (2026-11-12, the
+// engine test scenes' town) it left out a quarter of the town's triangles, 27,739 a frame in 21 draws, for
+// 1.28 ms of its own code, and neither the chip's time nor the frame rate got any better: a phone's chip is
+// held up by pixels far more than by triangles, and a thing behind a house costs it no pixels either way.
+// TRI_MS: what a triangle left out saves the chip (the same phone took 6.9 ms less for 740,000 fewer triangles
+// through cluster detail, and 2.1 ms less for 255,000 fewer in its shadow maps); DRAW_MS: what a draw left out
+// saves the code; METER_MS: what boiling the frame's depth down and reading it back costs the chip; PAY: how
+// much more than its cost it must save before it is kept on.
+const TRI_MS = 9e-6, DRAW_MS = .012, METER_MS = .4, PAY = 1.25;
+/** Does hiding pay? tris, draws: what it left out a frame; ms: what its own code took a frame. */
+export function occludePays(tris, draws, ms) { return tris * TRI_MS + draws * DRAW_MS > (ms + METER_MS) * PAY; }
 // PER_COPY: an instanced mesh of up to this many copies is checked copy by copy when it changes, and
 // MOVED_MAX: more copies than this moving at once count as the whole of it; CELL_COPIES: a gs.props set of
 // more copies than this is asked about in cells
@@ -223,7 +234,7 @@ function trackSet(set, r, oc, kind, fresh) {
 
 /* ---------- a frame ---------- */
 const trisOf = o => { if (o.isDetailMesh) return o._last?.tris || 0; const g = o.geometry; if (!g) return 0; const n = g.index ? g.index.count : g.attributes.position?.count || 0, dr = g.drawRange; return Math.min(n, dr.count === Infinity ? n : dr.count) / 3 * (o.isInstancedMesh ? o.count : 1); };
-function newState() { return { recs: new Map(), list: [], hide: [], sets: [], f: 0, gen: 0, awake: false, nap: 0, napLen: NAP, n: 0, saved: 0, blind: 0, blindT: 0, ms: 0, hidden: 0, tris: 0, copies: 0, soft: false, softB: new Float64Array(SOFT_MAX * 6), softN: 0, softAll: false }; }
+function newState() { return { recs: new Map(), list: [], hide: [], sets: [], f: 0, gen: 0, awake: false, nap: 0, napLen: NAP, n: 0, saved: 0, draws: 0, cost: 0, pays: null, blind: 0, blindT: 0, ms: 0, hidden: 0, tris: 0, copies: 0, soft: false, softB: new Float64Array(SOFT_MAX * 6), softN: 0, softAll: false }; }
 // a thing that sways in its shader: its box is where the picture is less sure (k0: what it was taken for when its box was made)
 function swaying(A, r, f, k0) {
   if (r.sf === f) return; r.sf = f;
@@ -239,7 +250,7 @@ function drop(view, A) {
   A.recs.clear(); A.list.length = A.hide.length = A.sets.length = 0;
 }
 function sleep(view, A, oc, len) {
-  A.awake = false; A.nap = len; A.gen++; A.n = A.saved = A.blind = 0;
+  A.awake = false; A.nap = len; A.gen++; A.n = A.saved = A.draws = A.cost = A.blind = 0;
   oc?.forget();
   if (!oc?.boxes.length) drop(view, A);
 }
@@ -255,6 +266,7 @@ function sleep(view, A, oc, len) {
 export function occludeFrame(view, cam, o) {
   const A = view.occAuto ||= newState(), t0 = performance.now(), job = occludeWork(view, cam, o, A);
   A.ms = performance.now() - t0;
+  if (A.awake) A.cost += A.ms;
   return job;
 }
 function occludeWork(view, cam, o, A) {
@@ -262,11 +274,11 @@ function occludeWork(view, cam, o, A) {
   let oc = view.occlusion;
   const listed = !!oc?.boxes.length;
   if (!o.on || !(cam.layers.mask & 1)) { if (A.awake) sleep(view, A, oc, 0); if (A.recs.size) drop(view, A); DETAIL.occ = null; return null; }
-  if (o.other && A.awake) { oc?.forget(); if (!listed) drop(view, A); A.gen++; A.n = A.saved = A.blind = 0; }   // (what it knew is from before the other view drew)
+  if (o.other && A.awake) { oc?.forget(); if (!listed) drop(view, A); A.gen++; A.n = A.saved = A.draws = A.cost = A.blind = 0; }   // (what it knew is from before the other view drew)
   // awake or asleep: tried when the view is big enough for hiding to be worth a millisecond, slept when it was not
   if (!o.depth) { if (A.awake) sleep(view, A, oc, 0); }
   else if (!A.awake) {
-    if (o.sleep === false || (A.nap-- <= 0 && (o.tris >= WAKE_TRIS || o.calls >= WAKE_CALLS))) { A.awake = true; A.n = A.saved = A.blind = 0; } else if (A.nap < 0) A.nap = 30;
+    if (o.sleep === false || (A.nap-- <= 0 && (o.tris >= WAKE_TRIS || o.calls >= WAKE_CALLS))) { A.awake = true; A.n = A.saved = A.draws = A.cost = A.blind = 0; } else if (A.nap < 0) A.nap = 30;
   }
   if (!A.awake && !listed) { if (A.recs.size) drop(view, A); DETAIL.occ = null; return null; }
   oc = view.occlusion ||= new Occlusion();
@@ -307,11 +319,11 @@ function occludeWork(view, cam, o, A) {
   A.hidden = hide.length; A.tris = tris; A.copies = copies;
   DETAIL.occ = oc;
   if (!A.awake) return null;
-  // is it paying? (what it hid of meshes, of copies and inside cluster detail's meshes, a frame)
-  if (oc.stats.depth) { A.n++; A.saved += tris + copies + (detailStats.hid || 0); A.blind = 0; } else if (++A.blind === 1) A.blindT = performance.now(); else if (A.blind > NO_PICTURE && o.sleep !== false && performance.now() - A.blindT > NO_PICTURE_MS) { sleep(view, A, oc, NAP_MAX); if (!listed) { DETAIL.occ = null; hide.length = 0; } return null; }
+  // is it paying? (what it hid of meshes, of copies and inside cluster detail's meshes, a frame, against what finding that cost)
+  if (oc.stats.depth) { A.n++; A.saved += tris + copies + (detailStats.hid || 0); A.draws += hide.length; A.blind = 0; } else if (++A.blind === 1) A.blindT = performance.now(); else if (A.blind > NO_PICTURE && o.sleep !== false && performance.now() - A.blindT > NO_PICTURE_MS) { sleep(view, A, oc, NAP_MAX); if (!listed) { DETAIL.occ = null; hide.length = 0; } return null; }
   if (A.n >= TRIAL) {
-    const mean = A.saved / A.n; A.n = A.saved = 0;
-    if (o.sleep !== false && mean < Math.max(WORTH_TRIS, WORTH_SHARE * (o.tris || 0))) { const len = A.napLen; A.napLen = Math.min(NAP_MAX, Math.round(len * 2.5)); sleep(view, A, oc, len); if (!listed) { DETAIL.occ = null; hide.length = 0; } return null; }
+    const mean = A.saved / A.n, pays = A.pays = mean >= Math.max(WORTH_TRIS, WORTH_SHARE * (o.tris || 0)) && occludePays(mean, A.draws / A.n, A.cost / A.n); A.n = A.saved = A.draws = A.cost = 0;
+    if (o.sleep !== false && !pays) { const len = A.napLen; A.napLen = Math.min(NAP_MAX, Math.round(len * 2.5)); sleep(view, A, oc, len); if (!listed) { DETAIL.occ = null; hide.length = 0; } return null; }
     A.napLen = NAP;
   }
   const [w, h] = pictureSize(o.W / o.H, o.texels || 2400);
@@ -335,7 +347,7 @@ export function copiesHidden(view, set) {
   return C.fn ||= i => copyHidden(C, i);
 }
 /** A depth picture back from the chip (job: what occludeFrame() gave). */
-export function depthBack(job, px, flip) { if (job.A.gen === job.gen && job.A.awake) { job.tag.pad = job.pad | 0; job.oc.depth(px, job.w, job.h, job.tag, flip); } }
+export function depthBack(job, px, flip) { const A = job.A; if (A.gen === job.gen && A.awake) { const t0 = performance.now(); job.tag.pad = job.pad | 0; job.oc.depth(px, job.w, job.h, job.tag, flip); A.cost += performance.now() - t0; } }
 /** The view stops drawing (or its things go to another view): nothing stays hidden or watched. */
 export function occludeDrop(view) { showAll(view); const A = view.occAuto; if (A) { drop(view, A); A.awake = false; A.gen++; A.nap = 0; } view.occlusion?.forget(); }
 
