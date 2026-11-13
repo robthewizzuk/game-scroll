@@ -72,6 +72,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
 import { lensFrame, afTake, AF_LOG } from './lens.js';
+import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadingCount } from './lod-fade.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
@@ -319,6 +320,10 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
+  /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
+  get lodFade() { return FADE.on; }, set lodFade(on) { FADE.on = on !== false; },
+  /** How long one fade takes (seconds). */
+  get lodFadeTime() { return FADE.s; }, set lodFadeTime(s) { FADE.s = Math.max(.01, +s || .4); },
   /**
    * The world's centre moved along with the camera (origin.js), so far-off places don't shake: how far in metres
    * the camera goes from it before it moves (0: never). originAt: { x, z } a centre given outright (tests, the frame lab).
@@ -1933,6 +1938,7 @@ export class HDView {
    */
   holdNew(r, skip, now, rt = null, mrt = null) {   // rt, mrt: the picture the scene is drawn into (shaders are built for it)
     const held = this.held ||= new Map(), seen = this.shSeen ||= new Set(), jobs = this.shJobs ||= new Map();
+    this._holdRT = rt;   // (and the fades' twins, on WebGL: fadeReady)
     // the ones whose shaders are ready (or waited long enough) come back. A thing something else draws in the
     // place of (a cluster twin: its mesh, detailShow) waits for its build however long that takes (j.keep): on
     // WebGPU three leaves a thing out of the frame while its pipeline is being made, so a twin let go early drew
@@ -2508,7 +2514,8 @@ export class HDView {
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
-    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null);   // (the sets gpuSwap's walk found)
+    const fr = baking || off ? null : fadeReady(this, G, r, 'copy');   // (copies changing level fade: lod-fade.js)
+    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null, fr);   // (the sets gpuSwap's walk found)
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
     if (pm >= 0) leave(pm);
@@ -2649,7 +2656,8 @@ export class HDView {
     HD.info.sky = sky ? sky.info : '';
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
-    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
     if (pm >= 0) leave(pm);
@@ -2688,7 +2696,7 @@ export class HDView {
   // Still frames: true when this refresh can show the last frame again instead of drawing (see drawGPU).
   stillSkip(ch, now) {
     const st = ch.still, S = this._still ||= { cam: new Float64Array(32), run: 0, seen: -1, skip: 0, hurt: 0 };
-    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for)
+    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor || FADING.size) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for; nor while a detail level fades)
     const cam = this.cam; cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
@@ -2927,7 +2935,8 @@ export class HDView {
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
-    try { cp.render(); } finally { showAll(this); lodBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
+    fadeOn(this, null, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
+    try { cp.render(); } finally { showAll(this); lodBack(this); fadeBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
     if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.half = ''; HD.info.refl = ssr ? 'screen' : ''; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
@@ -3456,6 +3465,90 @@ function lodBack(v) {
   list.length = 0;
 }
 const LOD_V = new Vector3();
+// Detail levels that fade into each other (lod-fade.js). Each frame, just before the scene is drawn: the people
+// and animals changing level are moved along their fades, and every mesh drawn dithered this frame (theirs, and
+// the lists of gs.props copies changing level) has its material(s) swapped for the dithered twins, put back as
+// soon as the frame is drawn (fadeBack), so nothing else (the walks over the scene, holdNew, the games) ever sees
+// a twin. A twin's shader is built in the background the first time it is wanted (fadeReady), one build at a
+// time for each renderer, and marked built for the view as holdNew's are; until then a change waits a moment
+// (lod-fade.js FADE.wait), then pops.
+const FADE_LIST = [], FADE_GPU = { object: new WeakMap(), copy: new WeakMap() }, fadeBusy = new WeakSet();
+function fadeTwinsOf(o, G, per) {
+  if (!G) return per === 'object' ? glTwins(o) : null;
+  return twinList(o, FADE_GPU[per], m => G.fx.fadeTwin(m, per, G.r));
+}
+function fadeReady(v, G, r, per) {
+  const seen = v.shSeen ||= new Set(), jobs = v.fadeJobs ||= new Set();
+  // one build at a time for each renderer, in the background: o as it will be drawn (with mats, its twins, if given;
+  // shown, on the camera's layer, and an empty list of copies given one), into the picture the scene is drawn into
+  const build = (o, k, mats) => {
+    if (jobs.has(k) || fadeBusy.has(r) || v.shJobs?.has(k)) return;   // (v.shJobs: holdNew is building it)
+    jobs.add(k); fadeBusy.add(r);
+    let fin = false;
+    const done = ok => { if (fin) return; fin = true; if (ok) seen.add(k); jobs.delete(k); fadeBusy.delete(r); clearTimeout(cap); }, cap = setTimeout(() => done(false), 4000);
+    const swap = go => { const keep = o.material, n = o.count; if (mats) o.material = mats; if (o.isInstancedMesh && !o.count) o.count = 1; try { return inReach(o, go); } finally { o.material = keep; if (o.isInstancedMesh) o.count = n; } };
+    const forPic = go => { const rt0 = r.getRenderTarget(); try { r.setRenderTarget(v._holdRT ?? null); return go(); } finally { r.setRenderTarget(rt0); } };
+    try {
+      const p = G ? compileGPU(r, o, v.cam, v.scene, swap, v) : Promise.resolve(swap(() => forPic(() => r.compileAsync(o, v.cam, v.scene))));
+      p.then(() => done(true), () => done(false));
+    } catch (e) { done(false); }
+  };
+  return o => {
+    if (HD.hold === false) return true;   // (holding off: built in the frame, as holdNew's are)
+    // a person's level coming in is drawn with its own shader once the fade ends: built too (on WebGL nothing else
+    // builds a hidden thing's ahead), and while holdNew has it back for that build, it waits
+    if (per === 'object' && !o.userData.noHold) {
+      if (!(o.layers.mask & 1)) return false;
+      const kb = shaderKey(o);
+      if (!seen.has(kb)) { build(o, kb, null); return false; }
+    }
+    const tw = fadeTwinsOf(o, G, per);
+    if (!tw || (Array.isArray(tw) && tw.some(t => !t))) return false;
+    const k = shaderKeyAs(o, tw);
+    if (seen.has(k)) return true;
+    build(o, k, tw);
+    return false;
+  };
+}
+const NOT_NOW = () => false;
+function fadeOn(v, G, r, smooth, still) {
+  const keep = v._fadeKeep ||= []; keep.length = 0;
+  const ready = still ? NOT_NOW : fadeReady(v, G, r, 'object');
+  fadeStep(v.scene, ready, smooth, FADE_LIST);
+  if (!still && !fadeBusy.has(r) && !getready.warming) fadeAhead(v, r, ready);   // (not under a loading screen: it waits for no more than it did)
+  for (let i = 0; i < FADE_LIST.length; i += 3) {
+    const o = FADE_LIST[i], val = FADE_LIST[i + 1], casts = FADE_LIST[i + 2];
+    keep.push(o, o.material, o.visible, o.castShadow, o.onBeforeRender);
+    if (!val) { o.visible = false; continue; }   // (a level waiting for its twins' shaders: not shown yet)
+    o.material = fadeTwinsOf(o, G, 'object');
+    if (!G) { hookGL(o); if (!casts) o.castShadow = false; }   // (WebGL: the value goes in before each draw; the shadow from one level at a time)
+  }
+  if (G) for (const s of v.sets || []) {
+    const f = s.userData.gpuTwin?.fades?.(); if (!f) continue;
+    for (const m of f) if (m.visible) { const tw = fadeTwinsOf(m, G, 'copy'); keep.push(m, m.material, m.visible, m.castShadow, m.onBeforeRender); if (tw && !(Array.isArray(tw) && tw.some(t => !t))) m.material = tw; else m.visible = false; }
+  }
+  HD.info.fading = fadingCount();
+}
+// The twins of the people and animals on screen, built ahead in the background (one at a time, as the frames go),
+// so that their first change of level fades too rather than waiting for its shaders and popping
+function fadeAhead(v, r, ready) {
+  const ok = v._fadeOk ||= new WeakMap(), n = FADE.n;
+  fadeAheadList((root, parts) => {
+    if (ok.get(root) > n - 120) return true;   // (all built: looked at again now and then)
+    let all = true;
+    for (const p of parts) p?.traverse(m => { if (all !== null && m.isMesh && m.material && !ready(m)) all = fadeBusy.has(r) ? null : false; });
+    if (all) ok.set(root, n);
+    return all !== null;   // (a build started: the rest when it is done)
+  });
+}
+function fadeBack(v) {
+  const keep = v._fadeKeep; if (!keep?.length) return;
+  for (let i = keep.length - 5; i >= 0; i -= 5) {
+    const o = keep[i]; o.material = keep[i + 1]; o.visible = keep[i + 2]; o.castShadow = keep[i + 3];
+    if (o.onBeforeRender !== keep[i + 4]) { if (Object.hasOwn(o, 'onBeforeRender') && keep[i + 4] === Object.getPrototypeOf(o).onBeforeRender) delete o.onBeforeRender; else o.onBeforeRender = keep[i + 4]; }
+  }
+  keep.length = 0;
+}
 // Auto exposure (v.autoExposure): the eye adapting, as every big engine does. A light meter reads the
 // scene's brightness every few frames (a 16 x 16 grid of log brightness, read back without waiting:
 // readRenderTargetPixelsAsync), and the exposure drifts towards the one that puts the average at

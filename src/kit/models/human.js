@@ -28,6 +28,7 @@ import { stripsOn, easeEdge } from './human-hair.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { sceneEdited } from '../scene-list.js';
+import { fadeable, fadeLevels } from '../lod-fade.js';
 import { fur } from './fur.js';
 import { slimShared, floatsOf } from '../slim.js';
 
@@ -785,16 +786,24 @@ export function human(o = {}) {
     // (a real face's eyeballs a hair smaller than the lids were sculpted round: the lower lid lies on the ball, and where it dipped a fraction
     // of a millimetre into it the white showed through the lid's edge as the eye turned and the iris, set back in the ball, went by)
     if (sp.face.real) root.face.eyeSize = .975;
-    let cur = 0;
-    Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
-      v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
-      lods[cur].visible = false; lods[v].visible = true; if (wet) wet.visible = !v; if (occ) occ.visible = !v; for (const c of strips) c.visible = !v;
-      if (!v !== !cur) {
-        for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
+    let cur = 0, posed = 0;
+    // what is shown at a level: close up the wet eyes, the lids' shadow and the hair strips go with the body
+    const parts = L => L ? [lods[L]] : [lods[0], wet, occ, ...strips].filter(Boolean);
+    // the bones and the rig for a level (while a fade runs, for the finer of the two drawn)
+    const posedAs = L => {
+      if (!L !== !posed) {
+        for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (L) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
         if (small.some(holds)) sceneEdited(root);   // (something a game hung on a finger or the jaw: the scene's list has to know it went or came back)
       }
-      cur = v; root.rig.fine = !v; root.rig.near = v < 2;   // (and the rig leaves the forearm's turn and the toes alone meanwhile; at the far level it leaves the feet as posed too)
+      posed = L; root.rig.fine = !L; root.rig.near = L < 2;   // (and the rig leaves the forearm's turn and the toes alone meanwhile; at the far level it leaves the feet as posed too)
+    };
+    Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
+      v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
+      const from = cur; cur = v;
+      // (seen on screen: both levels drawn for a moment, each dithered, rather than a pop: lod-fade.js)
+      if (fadeLevels(root, parts(from), parts(v), () => posedAs(cur))) posedAs(Math.min(from, v, posed));
     } });
+    fadeable(root, () => [...lods, wet, occ, ...strips]);
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */
     const wp = new Vector3();
     root.see = (cam, screenH = 800) => {
