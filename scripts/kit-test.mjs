@@ -6679,5 +6679,25 @@ console.log('physics ok');
   console.log('finer sun shadows: people and animals as capsules, their shadows behind them and none beside or on themselves, a grid of the squares they fall across, the map of heights\' tiles ok');
 }
 
+// light from effects (lamps.js): flashes go before the lamps round them, a pool for flashes alone keeps to one light on WebGL, and what is lit lights particles
+{
+  const THREE = await import('three'), { LampPool, lampLightAt } = await import('../src/kit/lamps.js');
+  const view = () => ({ scene: new THREE.Scene(), lamps: [] }), T = { lights: 4, shadow: 1024 };
+  const v = view(), P = new LampPool(v, 10), row = [0, 2, 4, 6, 8, 10].map(x => ({ x, y: 4, z: 0, i: 10 })), flash = { x: 15, y: 1, z: 0, i: 50, reach: 8, rank: .05, col: '#ff8000' };
+  P.place([...row, flash], 0, 2, 0, 0, T, 2, false, false);
+  assert.ok(P.used.get(flash)?.intensity === 50 && !P.used.get(row[3]) && P.used.get(row[2]), 'WebGL: a flash 15 m off takes one of the four lights before a lamp 6 m off');
+  assert.ok(P.lit.n === 4 && [...Array(P.lit.n)].some((_, i) => P.lit.a[i * 8] === 15), 'the lit list holds what was lit, the flash too');
+  const out = lampLightAt(P.lit, 15, 1.5, 0, []), none = lampLightAt(P.lit, 15, 1.5, 9, []), weak = lampLightAt(P.lit, 15, 1.5, 4, []);
+  assert.ok(out[0] > out[2] && out[0] > 5 && none.every(c => c === 0) && weak[0] > 0 && weak[0] < out[0] / 4, 'its light on a point: its colour, strongest near it, none past its reach');
+  assert.ok(lampLightAt(null, 0, 0, 0, [1, 1, 1]).every(c => c === 0), 'no lights, no light');
+  // (a pool made for flashes alone, HDView.wantFlashes: one light on WebGL, so a game with no lamps pays for one, not four)
+  const v2 = view(), P2 = new LampPool(v2, 7); P2.only = 1;
+  P2.place([flash, { ...flash, x: 16 }], 15, 1, 0, 0, T, 2, false, false);
+  assert.ok(P2.points.length === 1 && v2.lamps.length === 1, 'WebGL: a pool for flashes alone keeps to one light');
+  P2.place([flash, { ...flash, x: 16 }], 15, 1, 0, 0, T, 2, true, true);
+  assert.ok(v2.lamps.filter(l => l.intensity > 0).length === 2, 'WebGPU: every flash is lit (clustered lights)');
+  console.log('light from effects: flashes before the lamps round them, one light for flashes alone on WebGL, their light on particles ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

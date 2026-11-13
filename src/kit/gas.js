@@ -536,7 +536,7 @@ export class Gas {
     this.load = 0; this.jacobi = b.jacobi; this.march = b.march;   // (load: 0 the chip has room .. 1 it is over the game's frame: see JACOBI_LOW)
     this.puffs = new Puffs(this, b.puffs);
     this.glowAt = { x: 0, y: 0, z: 0, power: 0, stamp: -1 };
-    if (view) { (view.sims ||= []).push(this); const sc = view.scene || view; sc.add?.(this.puffs.soft); sc.add?.(this.puffs.glow); }
+    if (view) { (view.sims ||= []).push(this); const sc = view.scene || view; sc.add?.(this.puffs.soft); sc.add?.(this.puffs.glow); view.wantFlashes?.(); }
     if (o.lamp) { const l = o.lamp === true ? {} : o.lamp; this.lamp = new PointLight(this.look.flame[1], 0, l.distance ?? 10, 1.6); this.lampK = l.strength ?? 1; (view?.scene || view)?.add?.(this.lamp); }
     own(this);   // what it holds on the graphics chip is freed when the card leaves the feed (src/kit/cleanup.js)
   }
@@ -568,7 +568,12 @@ export class Gas {
    * smoke it throws, .6), force (how hard it blasts the gas outwards, 1), tint. With no fire and no force it
    * is a puff (see puff()).
    */
-  burst(x, y, z, { size = 1, fire = 1, smoke = .6, force = 1, tint = 0, heat = null } = {}) { this.queue.push({ x, y, z, size, fire, smoke, force, tint, heat }); return this; }
+  burst(x, y, z, { size = 1, fire = 1, smoke = .6, force = 1, tint = 0, heat = null } = {}) {
+    this.queue.push({ x, y, z, size, fire, smoke, force, tint, heat });
+    // (a fiery one lights what is round it for a moment: a Next Gen view's flashes)
+    if (fire > 0 && this.view?.flash) this.view.flash(x, y, z, { col: this.look.flame[1], i: 60 * size * Math.min(2, fire), reach: 10 * size, life: .5 });
+    return this;
+  }
   /** A cloud of smoke at x, y, z all at once (dust kicked up, a smoke bomb): size, amount (1), heat (0: it hangs), tint. */
   puff(x, y, z, { size = 1, amount = 1, heat = 0, tint = 0 } = {}) { return this.burst(x, y, z, { size, fire: 0, smoke: amount, force: 0, tint, heat }); }
   /** Takes all the smoke, heat and movement away (fires and smoke makers stay). */

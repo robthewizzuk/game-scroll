@@ -77,7 +77,7 @@ import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLights
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
 import { sunMaskAt, sunMask } from './sunmask-gpu.js';
-export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo } from './sunmask-gpu.js';
+export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo, sunGas, gasSunAt } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';

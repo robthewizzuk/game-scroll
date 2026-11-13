@@ -67,6 +67,23 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
   (each frame for a screen that plays). A car's headlights: two spots at its nose each frame with `dir` along the car,
   `shape: 'headlamp'`, `shadow: true`, `reach: 25`, `i: 45`. `v.lampShadows` says what the lamps'
   shadows did last frame (`slots`, `drawn`, `waiting`).
+- **Light from effects** (flashes): `v.flash(x, y, z, { col, i, reach, life })` (or `v.flash(point, o)`)
+  lights what is round a muzzle flash, an explosion or a spark for `life` seconds (.2), fading out;
+  `keep: true` makes one that stays until `f.stop()` (a fire, a flare), `flicker: 0..1` makes it waver,
+  `f.at(x, y, z)` moves it. Flashes go in with the lamps, before the lamps round them: on WebGPU
+  among the clustered lights, so many at once are cheap; on WebGL they take one of the pool's few
+  lights, or (a game with no lamps) one light of their own. `gs.fx3d.Particles3D`'s `fire` (a wavering
+  light that follows it), `boom` and `sparks`, `GPUParticles` bursts with `flash: true` (or
+  `{ i, reach, life, col }`) and `gs.gas` explosions (`burst`) make theirs by themselves; for your own
+  muzzle flashes call `v.flash` on each shot. A kit that makes flashes calls `v.wantFlashes()` when it
+  is made; call it in `make()` yourself if your game makes its own, so WebGL's light is there from the
+  start (a light added later rebuilds every shader once). Soft particles (smoke, dust, snow: the soft
+  dots of `Particles3D` and `Particles` with `additive: false`) take the light of the lamps and flashes
+  near them, worked out for each one, so smoke under a street lamp glows with its colour and an
+  explosion lights its own smoke. `v.lightAt(x, y, z)` gives that light ([r, g, b]) for things you light
+  yourself. On WebGPU, `gs.gas` smoke also shades the ground and things under it from the sun (the sun
+  mask, below) and the froxel fog's sunlight through it. `__hd.effectLights = false` turns all of this
+  off (the Embers engine test scene compares the two).
 - **Post-processing**, one shared chain: HDR render with MSAA (or a light FXAA on lower tiers), ground-truth ambient occlusion
   (GTAO), bloom (anything brighter than about 1 glows: emissive above 1, particle colours above
   1), ACES filmic tone mapping, and a colour grade (vignette, film grain, slight lens fringing at
@@ -692,8 +709,10 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
     the camera leave the sun's shadow map and throw the shadow of a rounded post (an animal's lies along
     it) instead, which costs no triangles: in the engine test scene below, the sun map drew up to six times fewer
     triangles with the far people as capsules.
+  - `gs.gas` smoke (on the graphics chip) shades what is under it from the sun: a point looks up how
+    much sun the gas's own light volume says gets through, where its way to the sun enters the gas.
   - `__hd.capsules = false` keeps crowds in the sun's map; `__hd.sunMask = false` turns the whole mask
-    off; `__hd.info.sunMask` says what the last frame's held (`{ contact, far, caps, full }`). Its
+    off; `__hd.info.sunMask` says what the last frame's held (`{ contact, far, caps, full, smoke }`). Its
     passes are timed as `sun mask`, and a slow game draws it smaller like the effects above.
   - WebGL draws none of it: the sun's map alone, crowds in it as always. Checked by `node scripts/finer.cjs`
     (see docs/testing.md); on a phone, the **Shade** engine test scene.
