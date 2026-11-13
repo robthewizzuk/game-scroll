@@ -14,6 +14,7 @@
 //   node scripts/detail-test.cjs --page origin [--webgpu] [--shots dir]      the world's centre moving with the camera (src/kit/origin.js): each engine test scene drawn about the world's own centre and about one far off, which must match
 //   node scripts/detail-test.cjs --page spread --webgpu [--shots dir]        heavy effects spread over frames (HD.spread): a room with ambient occlusion, volumetric light and bounce light, every sample against spread, held still, moving, a crate sliding and after cuts
 //   node scripts/detail-test.cjs --page sky [--webgpu] [--shots dir]         the sky on WebGPU (HD.atmosphere, HD.clouds): Hillaire's air and marched clouds against the sky before, at noon, late afternoon and sunset; cloud shadows, settling, turning, cuts
+//   node scripts/detail-test.cjs --page lens [--webgpu] [--shots dir]        a camera like a real lens (v.lens): blur from the f-stop against the circle of confusion, bokeh discs and blades, near spill, autofocus, pulls, exposure in stops
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
