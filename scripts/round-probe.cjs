@@ -5,7 +5,7 @@
 // that did such work and what it was for.
 //   node scripts/round-probe.cjs [ids...] [--secs 15] [--jobs 2] [--json out.json] [--quiet] [--console text]
 //   --console text: also print the page's console lines that start with text (a console.log of your own while you look)
-//   no ids: every Next Gen game. WebGPU only (the WebGL renderer is the kit's own, out of reach here).
+//   no ids: every Next Gen game (Console games too: name them). WebGPU only (the WebGL renderer is the kit's own, out of reach here).
 // It runs the dev server, so the stacks name the kit's and the game's functions. The software renderer says
 // nothing about how long the chip takes: read counts and main-thread time. An upload that takes long here is
 // the main thread waiting on the chip's process: a canvas drawn on the chip has to be fetched from it.
@@ -85,8 +85,10 @@ const TAP = async () => {
   const undo = [];
   const wrap = (o, k, fn) => { if (!o || typeof o[k] !== 'function') return; const f = o[k]; o[k] = function (...a) { return fn.call(this, f, a); }; undo.push(() => { o[k] = f; }); };
   const label = ro => { const o = ro?.object, m = ro?.material || o?.material, g = o?.geometry; return o ? `${o.name || o.type}${o.isInstancedMesh ? '(x' + o.count + ')' : ''} ${m?.name || m?.type || ''}${g ? ' ' + (g.type || '') : ''} in ${o.parent?.name || o.parent?.type || '-'}${ro.scene?.name?.startsWith?.('Shadow') || ro.camera?.isOrthographicCamera && ro.context?.depthTexture && !ro.context?.textures?.length ? ' [shadow]' : ''} ctx=${ro.context?.stateKey || ''}` : ''; };
-  // the shared WebGPU renderer (the WebGL one is the kit's own: not reachable from here)
+  // the shared WebGPU renderer (the WebGL one is the kit's own: not reachable from here); a Console game draws
+  // with a renderer of its own on the same device (gpu.js consoleGPU), whose shader text and render objects are its own
   let r = view && (view._gpuChain?.r || view._gpuBakeChain?.r) || null;
+  if (__gs.active?.def?.era === 'console') r = (await import('/src/kit/gpu.js')).consoleGPU()?.r || r;
   if (!r && window.__gpu) r = (await window.__gpu.ready())?.r || null;
   const totals = { text: 0, textMs: 0, pipe: 0, module: 0, compute: 0, upload: 0, uploadBytes: 0, uploadMs: 0, texMade: 0, bufMade: 0, bufBytes: 0, writeBytes: 0 };
   if (r && r.backend?.device) {
