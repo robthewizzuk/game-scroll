@@ -198,7 +198,7 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
-  info: { gpuMs: null, gpuCompute: 0, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0 },
+  info: { gpuMs: null, gpuCompute: 0, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -226,6 +226,14 @@ export const HD = {
    * which is what it should hold already, so a kept copy that has gone wrong shows in the picture.
    */
   shadowCache: true, shadowTiles: true, shadowCheck: false,
+  /**
+   * Ray traced reflections (v.reflect() on WebGPU; hd3d-gpu-trace.js). traced: null traces on the best phones
+   * (speed.js's 'top' class) on high and ultra, true wherever the chip can (tests), false never: screen-space
+   * reflections then, as on every other phone. traceTris: triangles the traced copy of the level's still things
+   * may hold (bigger meshes are simplified to fit). HD.info.trace says what it holds while it draws.
+   * traceShow (tests): true draws the traced copy itself, lit as reflections light it, in place of the picture.
+   */
+  traced: null, traceTris: 3e5, traceShow: false,
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -698,6 +706,36 @@ function fogFrame(v) {
   while (m.lamps.length < n) m.lamps.push({ p: new Vector4(), c: new Vector4() });
   m.lamps.length = n;
   for (let i = 0; i < n; i++) { const o = FOG_L[i]; o.getWorldPosition(GV); m.lamps[i].p.set(GV.x, GV.y, GV.z, o.distance || 10); FOG_C.copy(o.color).multiplyScalar(o.intensity * (f.strength ?? 1)); m.lamps[i].c.set(FOG_C.r, FOG_C.g, FOG_C.b, 0); }
+  return m;
+}
+// ray traced reflections (hd3d-gpu-trace.js): what lights a spot a ray hit that the camera can't see. The sun,
+// the sky's light, the nearest lamps (point and spot lights, up to 8) and the scene's fog
+const TR_L = [], seenIn = (o, scene) => { for (let p = o; p; p = p.parent) { if (!p.visible) return false; if (p === scene) return true; } return false; };
+function traceLights(v, list) {
+  const m = v._trl ||= { far: 120, sunDir: new Vector3(0, 1, 0), sunCol: new Color(), sky: new Color(), ground: new Color(), envI: 1, fogCol: new Color(), fogK: 0, lamps: [] };
+  m.far = Math.min(v.cam.far, 500); m.envI = v.scene.environmentIntensity ?? 1;
+  let sun = v.sun?.isDirectionalLight && v.sun.visible && v.sun.intensity > 0 ? v.sun : null;
+  m.sky.setRGB(0, 0, 0); m.ground.setRGB(0, 0, 0); TR_L.length = 0;
+  for (const o of list) {
+    if (!(o.intensity > 0) || !seenIn(o, v.scene)) continue;
+    if (o.isPointLight || o.isSpotLight) TR_L.push(o);
+    else if (o.isHemisphereLight) { m.sky.r += o.color.r * o.intensity; m.sky.g += o.color.g * o.intensity; m.sky.b += o.color.b * o.intensity; m.ground.r += o.groundColor.r * o.intensity; m.ground.g += o.groundColor.g * o.intensity; m.ground.b += o.groundColor.b * o.intensity; }
+    else if (o.isAmbientLight) { FOG_C.copy(o.color).multiplyScalar(o.intensity); m.sky.add(FOG_C); m.ground.add(FOG_C); }
+    else if (o.isDirectionalLight && !sun && o.name !== 'sun-near') sun = o;
+  }
+  if (sun) { sun.getWorldPosition(m.sunDir); sun.target.getWorldPosition(GV); m.sunDir.sub(GV).normalize(); m.sunCol.copy(sun.color).multiplyScalar(sun.intensity); } else m.sunCol.setRGB(0, 0, 0);
+  const f = v.scene.fog; if (f?.isFogExp2) { m.fogCol.copy(f.color); m.fogK = f.density; } else m.fogK = 0;
+  const cp = v.cam.position;
+  if (TR_L.length > 8) TR_L.sort((a, b) => a.getWorldPosition(GV).distanceToSquared(cp) - b.getWorldPosition(GW).distanceToSquared(cp));
+  const n = Math.min(8, TR_L.length);
+  while (m.lamps.length < n) m.lamps.push({ p: new Vector4(), c: new Vector4(), d: new Vector4(), k: new Vector4() });
+  m.lamps.length = n;
+  for (let i = 0; i < n; i++) {
+    const o = TR_L[i], l = m.lamps[i]; o.getWorldPosition(GV); l.p.set(GV.x, GV.y, GV.z, o.distance || 0);
+    l.c.set(o.color.r * o.intensity, o.color.g * o.intensity, o.color.b * o.intensity, o.decay ?? 2);
+    if (o.isSpotLight) { o.target.getWorldPosition(GW).sub(GV).normalize(); l.d.set(GW.x, GW.y, GW.z, 0); l.k.set(Math.cos(o.angle), Math.cos(o.angle * (1 - (o.penumbra || 0))), 1, 0); }
+    else { l.d.set(0, -1, 0, 0); l.k.set(-1, 1, 0, 0); }
+  }
   return m;
 }
 class BeamsPass extends Pass {
@@ -1411,7 +1449,7 @@ export class HDView {
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
   /** Called when the card leaves the feed (cleanup.js): lets go of what this view holds on the graphics chip for cluster detail. */
-  free() { detailDropAll(this); }
+  free() { detailDropAll(this); this._tracer?.dispose(); this._tracer = null; }
   /**
    * Outdoor air for every lit material in the scene: haze (how thick the air is: .001 is about 1 km of
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
@@ -1793,10 +1831,18 @@ export class HDView {
     }
   }
   /**
-   * Marks shiny surfaces (a wet floor, a polished wall, a car) for screen-space reflections. They
-   * show on top-end phones (the ultra tier); elsewhere the surfaces keep their usual look.
+   * Marks shiny surfaces (a wet floor, a polished wall, a car) for reflections of what is around them.
+   * On WebGPU on the best phones they are ray traced (high and ultra): the surface shows what is behind
+   * the camera, off the screen's edge and hidden behind other things too. Other phones on WebGPU (high
+   * and ultra) and WebGL (ultra) reflect what is on screen; elsewhere the surfaces keep their usual look.
+   * Give a thing `userData.moves = true` if it moves from the start (it is then never taken for part of
+   * the still level), `userData.noTrace = true` to keep it out of traced reflections.
    */
-  reflect(...meshes) { for (const m of meshes.flat()) if (m && !this.reflectors.includes(m)) { this.reflectors.push(m); m.userData.gsReflect = true; } return this; }
+  reflect(...meshes) {
+    for (const m of meshes.flat()) if (m && !this.reflectors.includes(m)) { this.reflectors.push(m); m.userData.gsReflect = true; }
+    if (this.reflectors.length && HD.traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
+    return this;
+  }
   /**
    * Soft contact shadows on a floor: the dark, blurry patch right under things that makes them sit
    * on the ground. y: the floor height; size: metres across; follow it with cs.at(x, z). Medium tier
@@ -2094,7 +2140,19 @@ export class HDView {
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
     o.fx = this.extras?.length ? this.extras : null;
-    o.refl = this.reflectors.length && T.ao > 0 && !this.clearBg ? (T.ssr ? REFL_FULL : REFL_HALF) : null;
+    // (ray traced where the phone and the chip can, at half size: hd3d-gpu-trace.js; a tracer that has stopped leaves the screen-space ones)
+    const wantRefl = this.reflectors.length && T.ao > 0 && !this.clearBg;
+    let tr = null;
+    // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
+    const TK = wantRefl && HD.traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
+    if (TK) {
+      if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) fn(e.o, e.twin); } }); }
+      this._tracer.show = !!HD.traceShow;
+      if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) tr = this._tracer;
+    } else if (this._tracer) { this._tracer.dispose(); this._tracer = null; }
+    if (tr) (this._traceRefl ||= { scale: .5, traced: null }).traced = tr;
+    o.refl = wantRefl ? (tr ? this._traceRefl : T.ssr ? REFL_FULL : REFL_HALF) : null;
+    HD.info.trace = tr ? tr.info : null; HD.info.refl = o.refl ? (tr ? 'traced' : 'screen') : '';
     // SGSR 2 smooths every edge from its history (also at full size, where it is the anti-aliasing), and the
     // picture measured the same with MSAA under it as without: so the scene is drawn without, which saves the
     // multisampled colour, depth and motion pictures and their resolves
@@ -2424,7 +2482,7 @@ export class HDView {
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     try { cp.render(); } finally { showAll(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); }
-    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; }
+    if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.refl = ssr ? 'screen' : ''; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
     c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';

@@ -128,6 +128,7 @@
     "speech-audio": "file:plugins/speech-audio",
     "suncalc": "2.1.1",
     "three": "^0.187.0",
+    "three-mesh-bvh": "0.9.18",
     "three-subdivide": "^1.1.5",
     "three.terrain.js": "3.1.1",
     "tonal": "6.5.1",

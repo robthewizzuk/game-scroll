@@ -4503,5 +4503,145 @@ console.log('physics ok');
   console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
 }
 
+// ray traced reflections (trace-build.js, trace-scene.js, hd3d-gpu-trace.js): the copy of a level that rays are
+// sent through on the graphics chip. Its lists are walked here the way the shader walks them (three-mesh-bvh's
+// packed nodes: a tree over the blocks, then a block's own tree in its own space), and every ray has to find
+// what three's own ray caster finds in the real scene.
+{
+  const THREE = await import('three');
+  const { buildBlock, traceReady, packLook, VERT, NODE_BYTES, BLOCK_DEPTH } = await import('../src/kit/trace-build.js');
+  const { traceable, colourOf, glowOf, metalOf } = await import('../src/kit/trace-scene.js');
+  const { Tracer } = await import('../src/kit/hd3d-gpu-trace.js');
+  await traceReady;
+  assert.equal(NODE_BYTES, 64, 'a packed node is 64 bytes');
+  // a corner's look: colour in 5-6-5 (kept as square roots), a place in the glow table, polished metal or not
+  { const un = v => { const w = Math.floor(v / 65536), c = v - w * 65536; return { rgb: [(c & 31) / 31, ((c >> 5) & 63) / 63, ((c >> 11) & 31) / 31].map(x => x * x), glow: w & 127, metal: w >= 128 }; };
+    const a = un(packLook(.5, .25, .04, 93, true)), b = un(packLook(2, -1, 0));
+    assert.ok(Math.abs(a.rgb[0] - .5) < .03 && Math.abs(a.rgb[1] - .25) < .012 && Math.abs(a.rgb[2] - .04) < .012 && a.glow === 93 && a.metal, 'a look packs a colour, a glow and metal: ' + JSON.stringify(a));
+    assert.ok(b.rgb[0] === 1 && b.rgb[1] === 0 && b.glow === 0 && !b.metal && Number.isInteger(packLook(.3, .6, .9, 127, true)) && packLook(1, 1, 1, 127, true) < 2 ** 24, 'out of range colours are held in, and the number is one a float keeps exactly'); }
+  const shape = g => ({ pos: g.attributes.position.array, nrm: g.attributes.normal?.array || null, col: null, idx: g.index ? g.index.array : null });
+  const item = (shape, m = null, o = {}) => ({ shape, m, rgb: [1, 1, 1], glow: 0, metal: false, tint: false, ...o });
+  assert.deepEqual(buildBlock({ shapes: [], items: [] }), { tris: 0, was: 0, left: [] }, 'nothing in, an empty block out');
+  // a block under its budget is the meshes themselves, each where it stands
+  { const ball = new THREE.SphereGeometry(1, 24, 16), M = new THREE.Matrix4().compose(new THREE.Vector3(5, 2, -3), new THREE.Quaternion().setFromEuler(new THREE.Euler(.4, 1.1, -.3)), new THREE.Vector3(2, .5, 1));
+    const b = buildBlock({ shapes: [shape(ball)], items: [item(0), item(0, Float32Array.from(M.elements))], budget: 1e5 }), full = ball.index.count / 3;
+    assert.ok(b.tris === full * 2 && b.was === full * 2 && b.index.length === b.tris * 3 && b.attrs.length === b.verts * VERT && b.nodes.length % 16 === 0 && b.depth <= BLOCK_DEPTH && !b.left.length, 'two balls whole: ' + b.tris + ' triangles, ' + b.nodes.length / 16 + ' nodes, ' + b.depth + ' deep');
+    assert.ok(Math.abs(b.box[0] + 1) < 1e-4 && b.box[3] > 6 && b.box[3] < 7.1 && b.box[4] > 2.4 && b.box[4] < 3.2, 'its box holds both: ' + Array.from(b.box).map(v => v.toFixed(2)));
+    // a squashed, turned ball's corners still face away from its middle (normals go by the inverse transpose)
+    let bad = 0, n = 0; const inv = M.clone().invert(), p = new THREE.Vector3();
+    for (let v = 0; v < b.verts; v++) { const w = v * VERT; if (b.attrs[w] > 2.5) { n++; p.set(b.attrs[w], b.attrs[w + 1], b.attrs[w + 2]).applyMatrix4(inv); const nx = b.attrs[w + 4], ny = b.attrs[w + 5], nz = b.attrs[w + 6], q = new THREE.Vector3(p.x, p.y, p.z).transformDirection(new THREE.Matrix4().copy(inv).transpose());
+      if (Math.abs(Math.hypot(nx, ny, nz) - 1) > 1e-4 || nx * q.x + ny * q.y + nz * q.z < .98) bad++; } }
+    assert.ok(n > 100 && bad === 0, 'a squashed ball\'s normals stand off its faces (' + bad + ' of ' + n + ' wrong)'); }
+  // over its budget: the big pieces are simplified to fit; with a great many small ones, the smallest are left out
+  { const ball = new THREE.SphereGeometry(1, 140, 70), full = ball.index.count / 3;
+    const b = buildBlock({ shapes: [shape(ball)], items: [item(0)], budget: 5000 });
+    assert.ok(b.was === full && b.tris <= 5000 * 1.25 && b.tris > 2500 && b.depth <= BLOCK_DEPTH, 'a ball of ' + full + ' triangles simplified to ' + b.tris);
+    const small = new THREE.BoxGeometry(1, 1, 1), items = [], S = k => Float32Array.from(new THREE.Matrix4().makeScale(k, k, k).setPosition(k * 3, 0, 0).elements);
+    for (let i = 0; i < 100; i++) items.push(item(0, S(1 + i)));
+    const c = buildBlock({ shapes: [shape(small)], items, budget: 600 });
+    assert.ok(c.tris <= 600 * 1.25 && c.left.length === 100 - c.tris / 12 && c.left.every(k => k < 100 - c.tris / 12), 'a hundred boxes into room for fifty: the ' + c.left.length + ' smallest are left out'); }
+  // what goes in, and how a material is kept
+  { const g = new THREE.BoxGeometry(1, 1, 1), std = o => new THREE.MeshStandardMaterial(o), mesh = (m, f) => { const o = new THREE.Mesh(g, m); f?.(o); return o; };
+    assert.ok(traceable(mesh(std({}))) && traceable(mesh(new THREE.MeshBasicMaterial())), 'a solid mesh goes in');
+    assert.ok(!traceable(mesh(std({ transparent: true }))) && !traceable(mesh(std({ alphaTest: .5 }))) && !traceable(mesh(std({ side: THREE.BackSide }))) && !traceable(mesh(std({}), o => { o.userData.noTrace = true; })) && !traceable(mesh(std({}), o => { o.userData.decal = true; }))
+      && !traceable(new THREE.InstancedMesh(g, std({}), 3)) && !traceable(new THREE.SkinnedMesh(g, std({}))) && !traceable(mesh(std({}), o => o.layers.set(5))) && !traceable(new THREE.Points(g)), 'see-through things, copies, skinned things, marked things and other layers do not');
+    const red = std({ color: 0xff0000 }), gold = std({ color: 0xffcc00, metalness: 1 }), halfMetal = std({ color: 0xffffff, metalness: .4 }), lit = std({ emissive: 0x00ff00, emissiveIntensity: 3 }), flat = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+    assert.deepEqual([colourOf(red), metalOf(red), glowOf(red)], [[1, 0, 0], false, null], 'a painted thing keeps its colour');
+    assert.ok(metalOf(gold) && colourOf(gold)[0] === 1 && colourOf(gold)[2] === 0 && !metalOf(halfMetal) && Math.abs(colourOf(halfMetal)[0] - .6) < 1e-6, 'polished metal keeps its colour for its reflections; part metal is that much darker');
+    assert.deepEqual([glowOf(lit), colourOf(flat), glowOf(flat)], [[0, 3, 0], [0, 0, 0], [0, 0, 1]], 'a glow is its colour times its strength; an unlit material is all glow');
+    const tex = new THREE.DataTexture(new Uint8Array([255, 0, 0, 255, 0, 0, 0, 255]), 2, 1); tex.needsUpdate = true;
+    assert.deepEqual(colourOf(std({ map: tex })), [.5, 0, 0], 'a texture counts by its average colour'); }
+
+  // the whole level, as the tracer keeps it on the chip's lists
+  const { rng } = await import('../src/kit/math.js');
+  const scene = new THREE.Scene(), R = rng(11), std = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, side: THREE.DoubleSide, ...o });
+  const put = (g, m, p, r = [0, 0, 0], sc = [1, 1, 1], ud = null) => { const o = new THREE.Mesh(g, m); o.position.set(...p); o.rotation.set(...r); o.scale.set(...sc); if (ud) Object.assign(o.userData, ud); scene.add(o); return o; };
+  const boxG = new THREE.BoxGeometry(1, 1, 1), ballG = new THREE.SphereGeometry(1, 32, 16), quadG = new THREE.PlaneGeometry(2, 2), blue = std(0x2040ff);
+  const floor = put(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), std(0x808080), [0, 0, 0]);
+  const crate = put(boxG, std(0xff0000), [-3, 1, 2], [.2, .7, 0], [2, 2, 1]), ball = put(ballG, std(0x00ff00), [2, 1.5, -1], [0, 0, 0], [1.5, 1.5, 1.5]);
+  const lift = put(boxG, std(0xffff00), [4, 3, 3], [.5, .2, .9], [1, 3, .5], { moves: true });
+  const m1 = put(ballG, blue, [-5, 4, -4], [0, 0, 0], [.7, .7, .7], { moves: true }), m2 = put(ballG, blue, [0, 5, 4], [1, 0, 0], [.5, 1.2, .5], { moves: true });
+  const card = put(quadG, std(0xff00ff), [-1, 3.2, -5], [-1.2, .4, 0], [1, 1, 1], { moves: true });   // (two triangles: its block's tree is one leaf)
+  const copies = new THREE.InstancedMesh(boxG, std(0xffffff), 4); scene.add(copies);
+  const glass = put(boxG, std(0xffffff, { transparent: true, opacity: .4 }), [6, 1, -6]), unseen = put(boxG, std(0xffffff), [0, 1, 8]); unseen.visible = false;
+  const lamp = new THREE.PointLight(0xffffff, 3); scene.add(lamp);
+  scene.updateMatrixWorld();
+  const tr = new Tracer(null, scene, { budget: 1e5 }), lights = [];
+  const frame = () => tr.frame(performance.now() + 1e6, list => { lights.length = 0; lights.push(...list); return null; });
+  const settle = async () => { for (let i = 0; i < 400; i++) { frame(); if (tr.info.builds && !tr.info.busy) break; await new Promise(r => setTimeout(r, 5)); } frame(); };
+  assert.ok(frame() && tr.ready && tr.info.lists === 1, 'the lists are made on the first frame, before the blocks are built');
+  await settle();
+  const held = [floor, crate, ball, lift, m1, m2, card], full = held.reduce((n, o) => n + o.geometry.index.count / 3, 0) - ballG.index.count / 3;   // (the two blue balls share one block)
+  assert.deepEqual([tr.info.things, tr.info.movers, tr.info.other, tr.info.left, tr.info.tris, tr.info.was], [7, 4, 2, 0, full, full], 'seven things, four of them moving, the copies and the glass left to the screen');
+  assert.ok(held.every(o => o.userData.gsTraced === true) && !copies.userData.gsTraced && !glass.userData.gsTraced && !unseen.userData.gsTraced && lights.length === 1 && lights[0] === lamp, 'each mesh says whether the level holds it; the scene\'s lights are handed on');
+  assert.ok(tr.shapes.size === 3 && tr.inst.length === 4, 'a block for each moving shape: two balls share one');
+  // the shader's walk, here: the tree over the blocks, then into a block's own space and its own tree
+  const walk = (ro, rd) => {
+    const N = tr.A.nodes.array, F = tr.F.nodes, I = tr.A.index.array, A = tr.F.attrs, TU = tr.A.tf.array, TF = tr.F.tf;
+    let best = Infinity, at = -1;
+    const box = (w, o, d) => { let t0 = 0, t1 = best; for (let a = 0; a < 3; a++) { const lo = (F[w + a] - o[a]) / d[a], hi = (F[w + 3 + a] - o[a]) / d[a]; t0 = Math.max(t0, Math.min(lo, hi)); t1 = Math.min(t1, Math.max(lo, hi)); } return t0 <= t1; };
+    const tri = (i, o, d, slot) => {
+      const a = I[i * 3] * VERT, b = I[i * 3 + 1] * VERT, c = I[i * 3 + 2] * VERT, e1 = [A[b] - A[a], A[b + 1] - A[a + 1], A[b + 2] - A[a + 2]], e2 = [A[c] - A[a], A[c + 1] - A[a + 1], A[c + 2] - A[a + 2]];
+      const px = d[1] * e2[2] - d[2] * e2[1], py = d[2] * e2[0] - d[0] * e2[2], pz = d[0] * e2[1] - d[1] * e2[0], det = e1[0] * px + e1[1] * py + e1[2] * pz; if (Math.abs(det) < 1e-12) return;
+      const tx = o[0] - A[a], ty = o[1] - A[a + 1], tz = o[2] - A[a + 2], u = (tx * px + ty * py + tz * pz) / det; if (u < 0 || u > 1) return;
+      const qx = ty * e1[2] - tz * e1[1], qy = tz * e1[0] - tx * e1[2], qz = tx * e1[1] - ty * e1[0], v = (d[0] * qx + d[1] * qy + d[2] * qz) / det; if (v < 0 || u + v > 1) return;
+      const t = (e2[0] * qx + e2[1] * qy + e2[2] * qz) / det; if (t > 1e-6 && t < best) { best = t; at = slot; }
+    };
+    const block = (root, o, d, slot) => { const st = [root]; while (st.length) { const n = st.pop(), w = n * 16, x = N[w + 13]; if (x >>> 16 === 0xFFFF) { for (let i = N[w + 12]; i < N[w + 12] + (x & 0xFFFF); i++) tri(i, o, d, slot); continue; } if (box(w, o, d)) st.push(n + 1); if (box(w + 6, o, d)) st.push(n + N[w + 12]); } };
+    const st = [0];
+    while (st.length) {
+      const n = st.pop(), w = n * 16, x = N[w + 13];
+      if (x >>> 24 === 0xFF) { const slot = x & 0xFFFFFF, t = slot * 36; if (!TU[t + 32]) continue; const m = TF.subarray(t + 16, t + 32);
+        block(N[w + 12], [m[0] * ro[0] + m[4] * ro[1] + m[8] * ro[2] + m[12], m[1] * ro[0] + m[5] * ro[1] + m[9] * ro[2] + m[13], m[2] * ro[0] + m[6] * ro[1] + m[10] * ro[2] + m[14]], [m[0] * rd[0] + m[4] * rd[1] + m[8] * rd[2], m[1] * rd[0] + m[5] * rd[1] + m[9] * rd[2], m[2] * rd[0] + m[6] * rd[1] + m[10] * rd[2]], slot); continue; }
+      if (box(w, ro, rd)) st.push(n + 1); if (box(w + 6, ro, rd)) st.push(n + N[w + 12]);
+    }
+    return { dist: best, slot: at };
+  };
+  const caster = new THREE.Raycaster(), o3 = new THREE.Vector3(), d3 = new THREE.Vector3();
+  const rays = (list, n = 400) => {
+    let worst = 0, hits = 0, moved = 0, wrong = 0;
+    for (let i = 0; i < n; i++) {
+      o3.set(R() * 30 - 15, 1 + R() * 14, R() * 30 - 15); d3.set(R() * 14 - 7, R() * 5, R() * 14 - 7).sub(o3).normalize();
+      caster.set(o3, d3); const real = caster.intersectObjects(list, false)[0], got = walk([o3.x, o3.y, o3.z], [d3.x, d3.y, d3.z]);
+      if (!real !== !(got.dist < Infinity)) { wrong++; continue; }
+      if (real) { hits++; if (got.slot > 0) moved++; worst = Math.max(worst, Math.abs(real.distance - got.dist)); }
+    }
+    return { worst, hits, moved, wrong };
+  };
+  let seen = rays(held);
+  assert.ok(seen.wrong === 0 && seen.worst < 2e-3 && seen.hits > 300 && seen.moved > 20, 'every ray finds what the real scene\'s ray caster finds: ' + JSON.stringify(seen));
+  // things moved, turned and hidden: the same frame, with no new blocks
+  { const builds = tr.info.builds, lists = tr.info.lists;
+    lift.position.set(-2, 4, -2); lift.rotation.set(1.3, .1, .4); m1.scale.setScalar(2.2); card.position.y = 1.4; m2.visible = false; scene.updateMatrixWorld(); frame();
+    seen = rays(held.filter(o => o !== m2));
+    assert.ok(seen.wrong === 0 && seen.worst < 2e-3 && seen.moved > 20 && tr.info.builds === builds && tr.info.lists === lists, 'moved, turned, grown and hidden things are where they now are, with nothing built again: ' + JSON.stringify(seen));
+    m2.visible = true; scene.updateMatrixWorld(); frame(); seen = rays(held);
+    assert.ok(seen.wrong === 0 && seen.worst < 2e-3, 'and back when shown again'); }
+  // a still thing that starts to move becomes a moving one; a thing added is in once the blocks are made again
+  { const builds = tr.info.builds; crate.position.x = -6; const post = put(boxG, std(0x00ffff), [7, 2, 0], [0, .5, 0], [.5, 4, .5]); scene.updateMatrixWorld();
+    for (let i = 0; i < 400 && !(tr.info.builds > builds && !tr.info.busy && tr.info.things === 8); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); held.push(post); seen = rays(held);
+    assert.ok(tr.info.builds > builds && tr.info.movers === 5 && post.userData.gsTraced === true && seen.wrong === 0 && seen.worst < 2e-3, 'a crate pushed along joins the moving things and a new post is traced: ' + JSON.stringify({ ...tr.info, ...seen }));
+    // a still thing taken out is gone once the blocks are made again, and one hidden and shown again comes back as a moving thing (so next time it goes at once)
+    const b2 = tr.info.builds; ball.visible = false; scene.updateMatrixWorld();
+    for (let i = 0; i < 400 && !(tr.info.builds > b2 && !tr.info.busy && tr.info.things === 7); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); seen = rays(held.filter(o => o !== ball));
+    assert.ok(seen.wrong === 0 && ball.userData.gsTraced === false, 'a still thing hidden is out of the level once it is made again');
+    const b3 = tr.info.builds; ball.visible = true; scene.updateMatrixWorld();
+    for (let i = 0; i < 400 && !(tr.info.builds > b3 && !tr.info.busy && tr.info.things === 8); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); seen = rays(held);
+    assert.ok(seen.wrong === 0 && tr.info.movers === 6 && ball.userData.gsTraced === true, 'shown again, it is back as a moving thing: ' + JSON.stringify({ ...tr.info, ...seen }));
+    const b4 = tr.info.builds; ball.visible = false; scene.updateMatrixWorld(); frame(); seen = rays(held.filter(o => o !== ball));
+    assert.ok(seen.wrong === 0 && tr.info.builds === b4, 'and hidden a second time it is gone the same frame'); ball.visible = true; }
+  // a level that outgrows its room on the chip is given bigger lists (the chain's shaders are then made again: info.lists)
+  { const lists = tr.info.lists, builds = tr.info.builds; for (let i = 0; i < 6; i++) held.push(put(new THREE.SphereGeometry(1, 96, 64), std(0x996633), [i * 3 - 8, 9, -8])); scene.updateMatrixWorld();
+    for (let i = 0; i < 600 && !(tr.info.builds > builds && !tr.info.busy && tr.info.things === 14); i++) { frame(); await new Promise(r => setTimeout(r, 5)); }
+    frame(); seen = rays(held);
+    assert.ok(tr.info.lists > lists && seen.wrong === 0 && seen.worst < 2e-3 && tr.info.tris > 70000 && tr.info.mb > 1, 'six big balls more: bigger lists, and every ray still right: ' + JSON.stringify({ ...tr.info, ...seen })); }
+  tr.dispose(); assert.ok(held.every(o => o.userData.gsTraced === false) && !tr.ready, 'dispose lets go of the lists, and no mesh says it is traced');
+  assert.equal(tr.frame(0, () => null), false, 'a tracer that failed or was let go draws nothing more');
+  console.log('gs.hd ray traced reflections: blocks, looks, what goes in, and the level\'s lists walked as the shader walks them ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

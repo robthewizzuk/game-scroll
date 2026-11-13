@@ -1,6 +1,6 @@
 // Engine test scenes, for the phone test tour (src/tour.js; QA panel › Phone test tour › Engine test
 // scenes). The Next Gen engine's detail systems (cluster detail, detail for copies, real surface detail,
-// hiding what is behind other things, shadows in tiles, crowds) are checked on a build machine's software renderer, which can count triangles and compare pictures but
+// hiding what is behind other things, shadows in tiles, crowds, ray traced reflections) are checked on a build machine's software renderer, which can count triangles and compare pictures but
 // says nothing about a phone's graphics chip. This flies through a heavy scene for each (src/detail-scenes.js)
 // with the system off and then on, on the phone in your hand, and gives one report to copy.
 //
@@ -77,7 +77,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     HD.force = phoneClass() === 'low' ? 1 : 2; out.tier = HD.force;
     document.body.classList.add('touring'); addEventListener('resize', resized);
     driver.begin(guestApi); driver.clear();
-    const gpu = !!webgpu(), runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
+    const gpu = !!webgpu(), top = phoneClass() === 'top', runsOf = key => key === 'forest' && gpu ? 4 : key === 'town' || (key === 'hall' && gpu) ? 3 : 2, runs = list.reduce((n, s) => n + runsOf(s[0]), 0);
     let done = 0;
     for (const [key, name, what, make] of list) {
       if (stopped()) break;
@@ -87,7 +87,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
       try {
         say('', 'making the scene'); await frame(); await frame();   // (the bar says so before the long step)
         const tb = performance.now();
-        S = ownedBy(token, () => make({ gs, HD, size, gpu }));
+        S = ownedBy(token, () => make({ gs, HD, size, gpu, top }));
         res.made = performance.now() - tb; res.holds = S.holds; res.pairs = S.pairs || null;
         for (const m of S.modes) {
           if (stopped()) break;
