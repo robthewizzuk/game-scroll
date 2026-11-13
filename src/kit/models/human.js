@@ -186,7 +186,7 @@ function mats() {
   // a real face's hair: the same, with a shine stretched across the strands as off real hair (Kajiya and Kay's band round the head): three's own
   // anisotropy, rougher along the picture's u, which runs round the head, so the highlight is a band across the strands and narrow along them
   // (less of the sky in it than the shine off the sun or a lamp: under a grey sky dark hair had turned silver)
-  MATS.hairReal = pbr('#ffffff', { rough: .5, vertexColors: true, aniso: .8 }); MATS.hairReal.envMapIntensity = .3;
+  MATS.hairReal = pbr('#ffffff', { rough: .52, vertexColors: true, aniso: .7 }); Object.assign(MATS.hairReal, { envMapIntensity: .25, specularIntensity: .55 });
   Object.assign(MATS.hairReal, { map: MATS.hair.map, normalMap: MATS.hair.normalMap }); MATS.hairReal.normalScale.set(.6, .6); MATS.hairReal.color.copy(MATS.hair.color);
   // cloth and leather: their seams and rows of stitching in a small picture made in code (human-paint.js), laid on by the lines the
   // sculpting runs along them (the second set of UVs: how far from the line, how far along it). It takes the place of the recipe's own
