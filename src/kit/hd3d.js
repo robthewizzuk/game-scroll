@@ -2861,7 +2861,7 @@ const REFL_FULL = { scale: 1 }, REFL_HALF = { scale: .5 };
 // contact shadows, reflections, sun shafts, light probes, a sky's own reflections, cloud shadows and
 // rain on the air, and any material with its own shader (ShaderMaterial or a shader patch that isn't
 // one of the kit's ported look effects). docs/webgpu-move.md lists what's left to port.
-const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'fronds', 'meadow', 'room', 'flow', 'lava']);
+const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves', 'fronds', 'meadow', 'room', 'flow', 'lava', 'sea']);
 PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
@@ -3152,7 +3152,7 @@ function gpuSwap(v, G) {
   const look = (o, m) => {
     if (!m || gpuLooked.has(m) || m.isNodeMaterial) return;
     gpuLooked.add(m);
-    for (const n of looksOf(m)) G.fx.gpuLooks[n]?.(m, lookSpec(m, n), o);
+    for (const n of looksOf(m)) G.fx.gpuLooks[n]?.(m, lookSpec(m, n), o, tier());
     if (seeThrough3d(o)) G.fx.noAO(m);
     if (v._air && m.isMeshStandardMaterial && m.fog !== false) G.fx.gpuWet(m, o, AIR, noSettle(m, o), noiseTex(), !!v._air.world);
   };

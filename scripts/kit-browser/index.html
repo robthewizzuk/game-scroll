@@ -531,6 +531,44 @@ try {
     g.dispose(); ok(!g.gpu, 'swarm: dispose');
   }
 }
+{
+  // gs.outdoors.Sea (sea.js): a beach with the sea drawn beyond it, blue over the water and sand on the beach
+  const T3 = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), cv = document.createElement('canvas'); cv.width = 160; cv.height = 120; const x = cv.getContext('2d', { willReadFrequently: true });
+  const bed = (px, z) => z < 0 ? Math.min(2, -z * .045) : -z * .045;
+  const v = new gs.hd.HDView({ bg: '#a8c0d8', fog: 0 }), land = new gs.outdoors.Land({ kind: bed, size: 160, segments: 80, low: -10, high: 4, material: gs.models.material('sand') });
+  const sun = gs.hd.sun('#fff2e0', 2.2, 40, [.4, .7, .6]); v.scene.add(sun, sun.target); v.sun = sun; const sky = new gs.sky.Sky(v, { time: 15, env: true });   // (lit as a game would: the studio's lamps would shine off the water)
+  v.scene.add(land.object); const sea = new gs.outdoors.Sea({ wind: 7, bed, view: v, size: 120, segments: 60, far: 800 }); v.scene.add(sea.mesh);
+  v.cam.position.set(0, 3, -12); v.cam.lookAt(0, 0, 30); v.cam.updateMatrixWorld();
+  for (let i = 0; i < 4; i++) { sea.update(1 / 30, v.cam.position); v.render(x, 160, 120); await frame(); }
+  const d = x.getImageData(0, 0, 160, 120).data, at = (px, py) => [d[(py * 160 + px) * 4], d[(py * 160 + px) * 4 + 1], d[(py * 160 + px) * 4 + 2]];
+  const mean = (y0, y1) => { const m = [0, 0, 0]; let n = 0; for (let py = y0; py <= y1; py++) for (let px = 40; px < 120; px += 4) { const p = at(px, py); for (let q = 0; q < 3; q++) m[q] += p[q]; n++; } return m.map(c => Math.round(c / n)); };
+  const water = mean(58, 64), sand = mean(110, 118);
+  ok(water[2] > water[0] + 10 && sand[0] > sand[2], `sea: blue water beyond the beach (${water}) and sand in front (${sand}) (${v.onGpu ? 'WebGPU' : 'WebGL'})`);
+  sea.dispose(); sky.dispose?.(); ok(!sea.mesh.parent && !v.sims.includes(sea), 'sea: dispose');
+  // its fine waves on WebGPU (sea-gpu.js): the FFT on the graphics chip gives what a direct sum over its spectrum does
+  const ad = navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
+  if (!ad) ok(true, 'sea: no WebGPU here, so its fine waves are the WebGL look\'s');
+  else {
+    const { WebGPURenderer } = await import('three/webgpu'), { SeaFFT } = await import('/src/kit/sea-gpu.js');
+    const r = new WebGPURenderer(); await r.init();
+    const f = new SeaFFT({ n: 32, tile: 48, wind: 7, dir: .4 }), t = 3.7; f.step(r, t);
+    const [Sb, Kb, A] = f.buffers, got = new Float32Array(await r.getArrayBufferAsync(A.value)), S = Sb.value.array, K = Kb.value.array, N = f.n, L = f.tile;
+    let worst = 0, big = 0;
+    for (const [px, py] of [[0, 0], [3, 7], [17, 2], [31, 31], [12, 25]]) {
+      let h = 0, sx = 0, sz = 0, kk = 0;
+      for (let c = 0; c < N * N; c++) {
+        const kx = K[c * 4], kz = K[c * 4 + 1], k = K[c * 4 + 2], w = K[c * 4 + 3], ce = Math.cos(w * t), se = Math.sin(w * t);
+        const re = S[c * 4] * ce - S[c * 4 + 1] * se + S[c * 4 + 2] * ce + S[c * 4 + 3] * se, im = S[c * 4] * se + S[c * 4 + 1] * ce - S[c * 4 + 2] * se + S[c * 4 + 3] * ce;
+        const ph = kx * px * L / N + kz * py * L / N, er = re * Math.cos(ph) - im * Math.sin(ph), ei = re * Math.sin(ph) + im * Math.cos(ph);
+        h += er; sx -= ei * kx; sz -= ei * kz; kk += er * k * k;
+      }
+      const sg = (px + py) % 2 ? -1 : 1, i = (py * N + px) * 4, want = [h, sx, sz, kk];
+      for (let q = 0; q < 4; q++) { worst = Math.max(worst, Math.abs(want[q] - got[i + q] * sg)); big = Math.max(big, Math.abs(want[q])); }
+    }
+    ok(big > .01 && worst < big * .002, `sea: the fine waves' FFT on the graphics chip matches a direct sum (${worst.toExponential(1)} off ${big.toFixed(3)})`);
+    f.dispose(); r.dispose();
+  }
+}
 // loading without holding the feed still (src/kit/slices.js, jobs.js): the number work a loading card
 // leaves with background workers gives the same pixels and meshes as doing it here
 {

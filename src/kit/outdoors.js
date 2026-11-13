@@ -29,6 +29,7 @@ import { bakeRenderer as renderer } from './hd3d.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 export { looks, groundDetail, horizon } from './looks.js';
 export { Water } from './water.js';
+export { Sea } from './sea.js';
 export { Marks } from './marks.js';
 export { Cloth } from './cloth.js';
 import { looks as LOOKS } from './looks.js';
