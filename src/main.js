@@ -181,7 +181,7 @@ function makeSlide(def){
   // a pocket game draws on its own small canvas, one canvas pixel per game pixel; present() copies that up to the card
   if(isPixel(def)){s.out=s.ctx;s.lcd=lcdOf(def);s.off=document.createElement('canvas');s.off.width=def.w;s.off.height=def.h;s.ctx=s.off.getContext('2d',s.lcd&&s.lcd.ghost?{willReadFrequently:true}:undefined)}
   s.api={
-    score:n=>{s.score=n;s.scoreEl.textContent=n;if(def.goal&&n>=def.goal)win(s)},
+    score:n=>{s.score=n;badge(s,n);if(def.goal&&n>=def.goal)win(s)},
     over:()=>gameOver(s),
     win:()=>win(s),                                     // for games with a natural win (cleared the board, etc.)
     has:id=>!!(s.run&&s.run.items.has(id)),             // is this shop item active for the current run?
@@ -373,7 +373,7 @@ function prepRound(s){
   const t0=performance.now();
   s.stale=false;if(!resetGame(s)){roundEnded(s.def.id);return null}
   s.resetMs=performance.now()-t0;   // (a long one: the loading screen goes up before it the next time)
-  s.score=0;s.scoreEl.textContent='0';
+  s.score=0;badge(s,0);
   return ready;
 }
 // ...and the round itself: from here the game is updated and takes touches.
@@ -526,7 +526,7 @@ function gameOver(s){
 }
 // later: the card is being swiped away, so its game resets (which can rebuild a whole 3D level) once
 // the swipe has settled, not in the frame the swipe starts (Play resets it anyway if it comes first)
-function resetSlide(s,later=false){dropReady(s);if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;s.scoreEl.textContent='0';
+function resetSlide(s,later=false){dropReady(s);if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;badge(s,0);
   if(later){s.stale=true;renderOverlay(s);whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}});return}
   s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}
 function goPrev(s){
@@ -634,6 +634,9 @@ history.onChange((id,w)=>{if(w&&!rerankDue){rerankDue=true;whenCalm(()=>{rerankD
 // speed.offscreen tells the 3D kits this card isn't the one being played: draw it without taking the shared
 // 3D canvas or the frame-rate tuning away from the card on screen (src/kit/hd3d.js).
 const usesHD=d=>d.era==='nextgen'||d.era==='ar'||d.era==='board';
+// The score badge's text, changed only when the score shown changes: some games tell the app their score
+// every frame, and new text in the page makes the phone lay the page out again (a layout each frame for nothing)
+function badge(s,n){const t=''+n;if(s.badgeText!==t){s.badgeText=t;s.scoreEl.textContent=t}}
 // The score badge's box in the game's own units, roomy enough for a 4-digit score, so a game can keep
 // its HUD out from under it: { x, y, w, h, bottom }. Measured from the page (it moves with the style,
 // the screen size and folding), kept for a quarter second, with a guess when the card isn't laid out.
@@ -928,7 +931,7 @@ function hotSwap(d){
     try{s.game.dispose?.()}catch(_){}release(s);
     KEPT.delete(g);s.def=g;s.w=g.w;s.h=g.h;bootGame(s,false);fit(s);
     if(playing&&snap!==undefined&&s.game.restore)try{ownedBy(s,()=>s.game.restore(snap))}catch(e){console.warn('[hot] restore',e)}
-    else if(playing){s.score=0;s.scoreEl.textContent='0'}
+    else if(playing){s.score=0;badge(s,0)}
     else if(s.state==='over'){s.state='ready';s.el.classList.remove('over');renderOverlay(s)}
     s.dirty=true;toast(s.el,'♻ '+g.title,'');
   }
