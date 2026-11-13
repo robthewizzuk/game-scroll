@@ -330,24 +330,44 @@ function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .01
  * to its tip (1); the tufts' lkRoot attribute says where each one grows (world metres: the mesh sits at
  * the origin). o: reach: [full size until, gone by] metres from the camera; time, bend (how far a tip
  * leans, in blade heights) and dir (which way: a Vector2) are set each frame by land.update().
+ * Grass that parts: the returned part(field) gives the blades a gs.outdoors.Marks grass field to read (one
+ * small picture: which way the grass at each spot is pushed over, and how trodden down it is), so they lean
+ * away from whoever walks through and lie flat where they were walked on. On WebGPU the blades' shader is
+ * built when they are first drawn, so give it the field before then (make the Marks in make()).
  */
-function meadow(m, { reach = [12, 24], time = 0, bend = .2, dir = new Vector2(1, 0) } = {}) {
-  const U = { lkTime: uni(time), lkBend: uni(bend), lkBendDir: uni(dir), lkMeadow: uni(new Vector2(...reach)) };
+function meadow(m, { reach = [12, 24], time = 0, bend = .2, dir = new Vector2(1, 0), part = null } = {}) {
+  const U = { lkTime: uni(time), lkBend: uni(bend), lkBendDir: uni(dir), lkMeadow: uni(new Vector2(...reach)), lkPart: uni(null), lkPartAt: uni(new Vector4()) };
   lookPatch(m, 'meadow', spec('meadow', {
     uniforms: U,
     vertex: {
-      head: 'attribute vec4 lkRoot; uniform float lkTime, lkBend; uniform vec2 lkBendDir, lkMeadow;',
+      head: 'attribute vec4 lkRoot; uniform float lkTime, lkBend; uniform vec2 lkBendDir, lkMeadow;\n#ifdef LK_PART\nuniform sampler2D lkPart; uniform vec4 lkPartAt;\n#endif',
       after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz), root = lkRoot.xyz;
     float far = smoothstep(lkMeadow.x, lkMeadow.y, distance(root.xz, cameraPosition.xz));
     vec3 q = root + (wp - root) * (1. - far); float hh = q.y - root.y, t = uv.y;
     float ph = dot(root.xz, lkBendDir) * .35 - lkTime * 2.2, gust = .55 + .3 * sin(ph) + .15 * sin(ph * 2.7 + root.z * .9);
     float b = lkBend * gust * t * hh, fl = hh * t * .05;
+#ifdef LK_PART
+    // grass that parts (gs.outdoors.Marks): pushed over away from what passes, and lying flat where it was trodden
+    { vec2 pd = abs(root.xz - lkPartAt.xy); vec4 pk = texture2D(lkPart, root.xz * lkPartAt.z) * step(max(pd.x, pd.y), lkPartAt.w);
+      vec2 ln = (pk.rg * 2. - 1.00392) * step(.5, pk.a); float lm = min(1., length(ln)), dn = min(.92, lm * .62 + pk.b * .9);
+      q.xz += ln * 1.1 * hh + (q.xz - root.xz) * pk.b * 1.5; q.y -= hh * dn; b *= 1. - dn; fl *= 1. - dn;
+#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
+      vColor.rgb *= 1. + pk.b * vec3(.34, .3, .12);   // (grass lying flat shows its pale side: a trodden lane reads from above)
+#endif
+    }
+#endif
     q += vec3(lkBendDir.x * b + sin(lkTime * 3.1 + wp.x * 9.) * fl, -b * .35, lkBendDir.y * b + cos(lkTime * 2.6 + wp.z * 9.) * fl);
     mvPosition = viewMatrix * vec4(q, 1.); gl_Position = projectionMatrix * mvPosition; }` },
     },
     fragment: { replace: { normal_fragment_begin: ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', '') } },
   }));
-  return { uniforms: U };
+  // the grass field of a gs.outdoors.Marks (null: none): the picture, and where its square lies (a Vector4 the Marks keeps up to date)
+  const give = field => {
+    U.lkPart.value = field ? field.texture : null; if (field) U.lkPartAt.value = field.where;
+    const had = !!m.defines && 'LK_PART' in m.defines; if (!!field !== had) { m.defines ||= {}; if (field) m.defines.LK_PART = ''; else delete m.defines.LK_PART; m.needsUpdate = true; }
+  };
+  if (part) give(part);
+  return { uniforms: U, part: give };
 }
 
 /**

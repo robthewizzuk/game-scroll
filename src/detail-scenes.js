@@ -9,6 +9,8 @@
 //   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
 //            and shadows in tiles (src/kit/shadow-tiles.js): the same walk once more with the sun's shadow map drawn whole, as it used to be
 //   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
+//   field    ground that takes marks (src/kit/marks.js, gs.outdoors.Marks): people, a dog, a jeep and a tank going round a field of sand, grass
+//            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -300,6 +302,74 @@ function square({ gs, size }) {
   };
 }
 
+/* ---------- field: ground that takes marks ---------- */
+function field({ gs, size }) {
+  const T = gs.THREE, { human, creature, vehicle } = gs.models, { Land, Marks, Wind } = gs.outdoors, N = Math.max(2, Math.round(8 * size)), { v, sun } = view(gs, 260, .002);
+  // gentle ground: sand to the west, bare earth to the east, grass between them
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const lie = (x, z) => .25 * Math.sin(x * .21 + 1) * Math.sin(z * .17) + .06 * Math.sin(x * .8) * Math.cos(z * .7);
+  const sand = (x, z) => 1 - sm(-5, -3.6, x + .8 * Math.sin(z * .5)), mud = (x, z) => sm(3.6, 5, x + .8 * Math.sin(z * .45 + 2)), grass = (x, z) => (1 - sand(x, z)) * (1 - mud(x, z));
+  const land = new Land({ kind: lie, size: 120, segments: Math.max(24, Math.round(120 * Math.sqrt(size))), material: new T.MeshStandardMaterial({ color: '#ffffff', roughness: .95, vertexColors: true }) }); v.scene.add(land.object);
+  { const g = land.mesh.geometry, n = g.attributes.position.count, w = land.segments + 1, s = land.size / land.segments, col = new Float32Array(n * 3), cs = new T.Color('#cdb684'), cm = new T.Color('#4a3d2e'), cg = new T.Color('#55662f'), c = new T.Color();
+    for (let i = 0; i < n; i++) { const x = -land.size / 2 + (i % w) * s, z = -land.size / 2 + Math.floor(i / w) * s; c.copy(cg).lerp(cs, sand(x, z)).lerp(cm, mud(x, z)); col.set([c.r, c.g, c.b], i * 3); }
+    g.setAttribute('color', new T.BufferAttribute(col, 3)); }
+  const wind = new Wind({ x: 2.2, z: .8 }); land.wind = wind;
+  // (no roofs here: the weather lies on everything, and keeps no map of what the sky can see)
+  const weather = new gs.sky.Weather(v, { kind: 'clear', level: true, wind });
+  const marks = new Marks(v, { land, weather, sand, mud, grass, wind });
+  land.meadow({ reach: 14, gap: .32, height: .4, blades: 8, where: grass });
+  // who goes round it, each on a ring of its own, so that a run by the clock sees the same field whatever its frame rate
+  const SPECS = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], DOG = { like: 'dog', fur: false };
+  const who = [], ring = (thing, r, sp, a0, dir, o = {}) => { who.push({ thing, r, sp, a0, dir, ...o }); v.scene.add(thing); marks.watch(thing, o.watch || {}); return thing; };
+  ring(vehicle('car', { style: 'jeep', seed: 4 }), 12.5, 4, 3.6, 1, { car: true });
+  if (size >= .5) ring(vehicle('tank', { seed: 2 }), 15.5, 2.4, 1, -1, { car: true });
+  const place = (w, t, dt) => {
+    const a = w.a0 + w.dir * w.sp * t / w.r, x = w.r * Math.cos(a), z = w.r * Math.sin(a), vx = -Math.sin(a) * w.dir, vz = Math.cos(a) * w.dir, th = w.thing;
+    th.position.set(x, land.height(x, z), z); th.rotation.y = Math.atan2(vx, vz) + (w.car ? Math.PI : 0);
+    if (w.human) { th.rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, w.sp); th.rig.update(dt, { speed: w.sp }); th.see(v.cam, 800); }
+    else if (w.dog) th.move(dt, w.sp, {});
+    else th.move(dt, w.sp, { steer: -w.dir * .3 });
+    th.updateMatrixWorld(true);
+  };
+  // the people are sculpted the first time a phone meets them (kept on it afterwards)
+  let made = null, on = false;
+  const make = draw => made ||= (async () => {
+    const t0 = performance.now(); let done = false, err = null;
+    Promise.all([human.ready(SPECS), creature.ready([DOG])]).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+    const src = [human(SPECS[0]), human(SPECS[1])];
+    for (let i = 0; i < N; i++) ring(i < 2 ? src[i] : src[i % 2].twin(), 9.5 - i * .9, 1.3 + (i % 3) * .12, i * 2.4, i % 2 ? -1 : 1, { human: true });
+    ring(creature(DOG), 5.2, 2.4, .5, 1, { dog: true, watch: { feet: 4, size: .075, shape: 'paw', gap: .16, long: .5, pace: .42, press: .6, radius: .25 } });
+    return performance.now() - t0;
+  })();
+  const enter = key => async draw => { const first = !made, build = await make(draw); on = key === 'on'; marks.clear(); sum.t = 1e9; for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  const sum = { n: 0, ms: 0, t: 1e9 }, lead = new T.Vector3(), ahead = new T.Vector3();
+  return {
+    v, holds: `${num(N)} people, a dog${size >= .5 ? ', a jeep and a tank' : ' and a jeep'} going round a field of sand, grass and bare earth, in snow, then on wet earth, then dry`,
+    modes: [
+      { key: 'off', name: 'ground that takes no marks', enter: enter('off') },
+      { key: 'on', name: 'prints, tracks, parted grass', enter: enter('on') },
+    ],
+    // The weather goes round every 18 seconds: snow lying, a thaw to wet earth, drying out, snow again. The
+    // camera walks behind the first of the people, looking down at the ground ahead of them.
+    path(t, cam) {
+      const back = t < sum.t, dt = back ? 0 : Math.min(1, t - sum.t), c = t % 18;
+      if (back) { sum.n = sum.ms = 0; marks.clear(); }
+      sum.t = t;
+      weather.snow = 1 - sm(5, 6.5, c) + sm(16.5, 18, c); weather.wet = sm(5, 6.5, c) - sm(11, 12.5, c); weather.pools = .5 * weather.wet;
+      for (const w of who) place(w, t, dt);
+      const w0 = who.find(w => w.human) || who[0], a = w0.a0 + w0.dir * w0.sp * t / w0.r, hx = -Math.sin(a) * w0.dir, hz = Math.cos(a) * w0.dir;
+      lead.copy(w0.thing.position); cam.position.set(lead.x - hx * 3.2 - hz * 1.1, lead.y + 1.7, lead.z - hz * 3.2 + hx * 1.1); ahead.set(lead.x + hx * 1.6, lead.y + .3, lead.z + hz * 1.6); cam.lookAt(ahead);
+      cam.updateMatrixWorld(); sun.follow(cam.position.x, 0, cam.position.z);
+      wind.update(dt); weather.update(dt);
+      if (on) { const t0 = performance.now(); marks.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++; }
+      land.update(dt, cam);
+    },
+    tell() { return on && sum.n ? `${num(marks.count)} marks kept, ${num(marks.drawn)} tiles of them drawn, made in ${(sum.ms / sum.n).toFixed(2)} ms a frame` : null; },
+    dispose() { marks.dispose(); weather.dispose(); land.meadow(false); for (const w of who) w.thing.removeFromParent(); clear(v); },   // (the people's and vehicles' shapes are the kit's own: not freed here)
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu })]. */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -307,4 +377,5 @@ export const SCENES = [
   ['village', 'Village', 'real surface detail', village],
   ['town', 'Town', 'hiding what is behind other things, and shadows in tiles', town],
   ['square', 'Square', 'crowds', square],
+  ['field', 'Field', 'ground that takes marks', field],
 ];
