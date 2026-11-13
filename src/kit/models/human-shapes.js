@@ -6,10 +6,10 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, ES, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
+import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
 import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
-export { ss, bump, HC, EYE, ES, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
+export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
 // how far the point of an elbow (behind the arm) and a kneecap (in front of the leg) stand out of a limb folded right over (metres)
@@ -439,8 +439,9 @@ const headBonesOf = (f, lids) => function headBones(x, y, z, s, side = 0) {
 // The cornea: over the iris the ball stands a quarter of a millimetre proud (no more: the lids' edges pass a fifth of a millimetre over the
 // ball), but its normals are a real cornea's, a cap a millimetre high and more sharply curved than the ball: the wet highlight on it is
 // small and slides as the eye turns.
-function eyeball(c, r, n = 24) {
-  const rings = [[0, 0], [11, 0], [14, 1], [20, 2], [27, 3], [32, 4], [35, 5], [40, 6], [62, 6], [98, 7], [128, 7]], P = [], N = [], K = [], I = [], LIMB = 34 * PI / 180;
+function eyeball(c, r, n = 24, iris = 1) {
+  // (iris: the iris's size against the clean face's, which is a little bigger than life: a real eye's is about .86 of it, 12 mm across)
+  const rings = [[0, 0], [11, 0], [14, 1], [20, 2], [27, 3], [32, 4], [35, 5], [40, 6], [62, 6], [98, 7], [128, 7]].map(([d, k]) => [d < 40 ? d * iris : d, k]), P = [], N = [], K = [], I = [], LIMB = 34 * iris * PI / 180;
   for (const [deg, k] of rings) for (let i = 0; i < n; i++) {
     const a = deg * PI / 180, t = i / n * PI * 2, u = Math.min(1, a / LIMB), up = (1 - u * u) ** 2, slope = -4 * u * (1 - u * u) / LIMB;   // the cap's height (0..1) and how fast it falls
     const ex = sin(a) * cos(t), ey = sin(a) * sin(t), ez = cos(a), tx = cos(a) * cos(t), ty = cos(a) * sin(t), tz = -sin(a), rr = r + .00025 * up, q = .0011 * slope / r;
@@ -666,7 +667,7 @@ export function sculpt({ kind, a }) {
   if (kind === 'head') {
     // the eyes: each a ball of its own that turns on its own bone; the lips parted along the line between them, with teeth and the inside of the mouth behind
     const eye = { P: [], N: [], K: [], I: [], src: [], ao: .78 }, f = a.face;
-    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * ES), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
+    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f), 24, f.real ? .86 : 1), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
     const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],

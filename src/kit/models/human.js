@@ -14,7 +14,7 @@
 // Kit use only: games reach it as gs.models.human.
 import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, ES, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between } from '../poses.js';
 import { reach } from '../characters.js';
@@ -216,13 +216,52 @@ export function skeleton(o = {}) {
 }
 const DETAIL = [.5, .75, 1, 1];   // see(): how tall a person counts as, by quality tier
 const DEF = { skin: '#d9ab86', hair: '#3b2a1a', eyes: '#141416', iris: '#5a7a9a', lips: '#a8665c' };
+// ---- looks: 'clean' (a simpler, friendlier face, the kit's people as they always were) or 'real' (a face as real as the kit can make it:
+// life-size eyes, a real jaw, the folds and hollows of a real face, its age and weight, and from a seed a face of its own). Each person's own option.
+const LOOKS = ['clean', 'real'];
+const LOOK = 'clean';   // (each person's own: one game setting it for all would carry over into the next game in the feed)
+// a seeded random number (0..1) maker: the same seed, the same person on every phone
+const rngOf = seed => { let h = 2166136261 >>> 0; for (const c of String(seed)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); let a = h >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+// skin from very fair to very dark (each a little warmer or cooler), hair and eyes as they come with it
+const SKINS = ['#f3d6c4', '#ecc6a8', '#e2b496', '#d4a07c', '#c48c64', '#ac7450', '#8e5a3a', '#6e4429', '#55321e', '#3c2216'];
+const HAIRS = { dark: ['#141210', '#1e1712', '#2a1c12', '#3b2a1a'], light: ['#141210', '#2a1c12', '#3b2a1a', '#5a3c22', '#6a4a2c', '#8a6a42', '#b89a68', '#7a3418'] };
+const IRISES = { dark: ['#2a1810', '#3a2416', '#2e1c10', '#4a3020'], light: ['#3a2416', '#4a3020', '#5a7a9a', '#4a6a3a', '#6a8090', '#5a4028', '#7a8ea0'] };
+/**
+ * A real face's measures, and its colouring where the game gave none: from the seed (or the game's own face), with its age and weight
+ * worked into them (older: thinner lips, a longer nose, bigger ears, lids that hang lower and open less).
+ */
+export function realFace(o, fem, base) {
+  const r = rngOf(o.seed ?? JSON.stringify([o.sex, o.skin, o.hair, o.age])), g = (k = 1) => (r() + r() + r() - 1.5) * k * 1.15, has = o.seed != null;
+  const age = Math.max(16, Math.min(95, o.age ?? (has ? Math.round(20 + 45 * r()) : 30))), a = ss(24, 78, age), fat = Math.max(0, Math.min(1, o.weight ?? (has ? .5 + g(.17) : .5)));
+  const vary = (v, k) => has ? v * (1 + g(k)) : v;
+  const f = {
+    ...base, real: 1, es: 1, age, fat, jaw: vary(base.jaw, .06), chin: vary(base.chin, .07), brow: vary(base.brow, .1), nose: vary(base.nose, .06) * (1 + .05 * a), lips: vary(base.lips * 1.12, .1) * (1 - .22 * a),
+    cheeks: has ? base.cheeks + g(.25) : base.cheeks, eyes: vary(base.eyes * (fem ? .97 : 1), .04) * (1 - .07 * a), noseW: vary(1, .08), bridge: vary(1, .12), tip: has ? Math.max(-1, Math.min(1, g(.6))) : 0,
+    tilt: has ? g(.045) : 0, lidFold: Math.max(0, Math.min(1, (has ? .3 + g(.28) : .3) + .3 * a)), faceW: vary(1, .035), ears: vary(1, .07) * (1 + .08 * a), asym: has ? .3 + .6 * r() : .3, aseed: has ? Math.floor(r() * 1e3) / 1e2 : 0,
+    ...(o.face || {}),
+  };
+  for (const k in f) if (typeof f[k] === 'number' && k !== 'age') f[k] = Math.round(f[k] * 1e4) / 1e4;   // (a few figures: the face names the saved shape)
+  const tone = o.skin ? null : has ? Math.min(SKINS.length - 1.001, r() * SKINS.length) : null;
+  const dark = tone != null ? tone > 5.5 : o.skin ? new Color(o.skin).getHSL({}).l < .38 : false, pickOf = l => l[Math.floor(r() * l.length)];
+  const skin = tone == null ? null : '#' + new Color(SKINS[Math.floor(tone)]).lerp(new Color(SKINS[Math.ceil(tone)]), tone % 1).getHexString();
+  let hair = o.hair === undefined && has ? pickOf(dark ? HAIRS.dark : HAIRS.light) : undefined;
+  const grey = ss(38, 72, age) * (.55 + .45 * r());
+  if (hair && grey > 0) hair = '#' + new Color(hair).lerp(new Color('#b8b6b0'), grey).getHexString();
+  return { f, skin, hair, iris: o.iris === undefined && has ? pickOf(dark ? IRISES.dark : IRISES.light) : null };
+}
 function specOf(o) {
-  const fem = o.sex === 'f' || o.sex === 'female', g = o.girth ?? 1;
+  const fem = o.sex === 'f' || o.sex === 'female', g = o.girth ?? 1, real = (LOOKS.includes(o.look) ? o.look : LOOK) === 'real';
   const build = { shoulders: fem ? .9 : 1, chest: (fem ? .92 : 1) * g, waist: (fem ? .87 : 1) * g, hips: (fem ? 1.04 : 1) * g ** .5, limbs: fem ? .88 : 1, bust: fem ? 1 : 0, neck: fem ? .8 : .92, ...(o.build || {}) };
   const of = o.outfit || {}, top = { kind: 'shirt', colour: o.body ?? '#3a6ea5', sleeves: o.sleeves ?? 'long', pockets: 0, buttons: null, collar: undefined, ...(of.top || {}) };
   if (top.kind === 'tunic') { top.pockets ??= 4; } if (top.collar === undefined) top.collar = top.kind === 'shirt' ? false : null;
   const legs = { kind: 'trousers', colour: o.legs ?? '#2b2b38', ...(of.legs || {}) }, feet = { kind: 'shoes', colour: o.shoes ?? '#1a1a1a', ...(of.feet || {}) };
-  const face = { jaw: o.jaw ?? (fem ? .94 : 1), chin: fem ? .9 : 1, brow: fem ? .62 : .82, nose: o.nose ?? (fem ? .86 : 1), lips: fem ? 1.12 : 1, cheeks: 1, eyes: fem ? 1.08 : 1, soft: fem ? 1 : 0, ...(o.face || {}) };
+  let face = { jaw: o.jaw ?? (fem ? .94 : 1), chin: fem ? .9 : 1, brow: fem ? .62 : .82, nose: o.nose ?? (fem ? .86 : 1), lips: fem ? 1.12 : 1, cheeks: 1, eyes: fem ? 1.08 : 1, soft: fem ? 1 : 0, ...(o.face || {}) };
+  let seeded = null;
+  if (real) {
+    // a real neck is fuller than the clean one's (and a heavy person's fuller still)
+    seeded = realFace(o, fem, face); face = seeded.f; if (!o.build?.neck) build.neck = (fem ? .87 : 1.02) * (1 + .1 * (face.fat - .5) * 2);
+    o = { ...o, skin: o.skin ?? seeded.skin ?? undefined, hair: o.hair === undefined ? seeded.hair ?? undefined : o.hair, iris: o.iris ?? seeded.iris ?? undefined };
+  }
   const hat = of.hat ? { kind: 'helmet', ...of.hat } : null;
   return { build, top, legs, feet, face, hat, belt: of.belt || null, web: of.webbing || null, extras: of.extras || {}, pack: of.pack || null, gear: o.gear || [], hands: o.hands || 'open', gloves: of.gloves || null,
     hair: o.hair === null ? null : o.hair ?? DEF.hair, hairStyle: o.hairStyle || 'short', moustache: !!o.moustache, beard: o.beard === true ? .6 : Math.max(0, Math.min(1.5, +o.beard || 0)), fem, o };
@@ -330,7 +369,7 @@ export function human(o = {}) {
         // by the ear (a beard's line runs from the corner of the mouth up across the cheek). It shows at a few paces, where the dots don't
         if (stub && name !== 'brow') { const top = -.042 + .045 * ss(.035, .07, abs(x)), sh = ss(top, top - .016, hy) * ss(-.045, -.01, hz) * ss(-.165, -.125, hy) * stub; col.r *= 1 - sh * .38; col.g *= 1 - sh * .33; col.b *= 1 - sh * .24; }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
-        const so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), EYE[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
+        const ES = esOf(sp.face), so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), EYE[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
         faceUV(x, y, z, uv1); TU[j * 4 + 2] = uv1[0]; TU[j * 4 + 3] = uv1[1];   // where it is on the face's paint
       }
       // a man's short back and sides: clipped close over the ears and at the nape, the skin showing through, so lighter there than on top
@@ -667,4 +706,5 @@ human.need = list => { const miss = missing(list.filter(o => !o.now)); if (miss.
 /** For tools and tests: a promise that settles once human(options) for each of these would come straight back. */
 human.ready = list => Promise.all(missing([].concat(list)).map(load)).then(() => true);
 /** Forgets every saved sculpt (Settings › clear cache, tests). */
+/** The look people are made in when they don't say: 'clean' (as made, a simpler, friendlier face) or 'real' (see human()'s look). */
 human.clear = async () => { made.clear(); const db = await open(); if (db) await tx(db, 'readwrite', (s, w) => { s.clear(); w.clear(); }); };

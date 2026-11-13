@@ -6,7 +6,7 @@
 // The shapes it paints are the ones the sculpting carves (human-head.js: eyeRim, browOf, mouthAt), so the colour lies where the
 // shape is, and it rides the skin as the face moves. No three.js: plain numbers in, bytes out. Kit use only.
 import { lumps } from './field.js';
-import { HC, EYE, ES, eyeRim, browOf, mouthAt, lipLine, ss, bump } from './human-head.js';
+import { HC, EYE, esOf, rimOf, browOf, mouthAt, lipLine, ss, bump } from './human-head.js';
 
 const abs = Math.abs, mx = Math.max, mn = Math.min;
 /**
@@ -32,11 +32,11 @@ const enc = v => { if (v <= 0) return 0; if (v >= 1) return 255; const b = ENC[(
  * with more of an arch to its edge). A band along the round through the three points, blunt at its inner end and running to a point at its
  * tail, made of hairs: they stand up at the inner end and lie along the brow towards the tail, and the band's edges are their ends.
  */
-export function browAt(x, hy, B, fem) {
+export function browAt(x, hy, B, fem, real = false) {
   const [b0, b1, b2] = B, x0 = b0[0], x1 = b1[0], x2 = b2[0]; if (x < x0 - .004 || x > x2 + .003) return 0;
   // the middle line: the round through the three points
   const yc = b0[1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + b1[1] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2)) + b2[1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1)), dy = hy - yc;
-  const t = (x - x0) / (x2 - x0), full = fem ? .0019 : .0027, half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t);
+  const t = (x - x0) / (x2 - x0), full = (fem ? .0019 : .0027) * (real ? .85 : 1), half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t);
   if (abs(dy) > half * 1.6 + .0006) return 0;
   // the hairs: lines that lean out along the brow, more upright by the nose; each a little longer or shorter, darker or lighter than the next
   const lean = 1.5 - 1.25 * ss(0, .8, t), q = (x - dy / lean) * 3100, hair = lumps(q, 3.7, fem ? 9.1 : 2.3), fine = lumps(q * 2.3 + 11, 1.9, 5.5);
@@ -52,22 +52,23 @@ export function paintFace(o) {
   const { w, h, x1, y0, y1, plain } = FACE, f = o.face, fem = !!o.fem, px = new Uint8Array(w * h * 4), S = o.skin;
   // each colour as a share of the skin's (what the skin's colour has to be multiplied by to become it), no lighter than the picture can say
   const of = c => [0, 1, 2].map(i => mn(1 / plain, c[i] / mx(1e-4, S[i]))), BR = of(o.brow), LP = of(o.lips), LA = of(o.lash), MO = of(o.mouth);
-  const B = browOf(f.soft), rim = eyeRim(f.eyes), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
-  const stub = o.stubble || 0, P = enc(plain); let r, g, b;
+  const B = browOf(f.soft), rim = rimOf(f), ES = esOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
+  const stub = o.stubble || 0, P = enc(plain), R = !!f.real; let r, g, b;
+  // (a real face's paint is quieter: finer brows with skin between the hairs, a thinner line along the lashes, lips nearer the skin's own colour)
   const put = (C, k) => { r += (C[0] - r) * k; g += (C[1] - g) * k; b += (C[2] - b) * k; };
   for (let j = 0; j < h; j++) {
     const hy = y0 + (j + .5) / h * (y1 - y0);
     for (let i = 0; i < w; i++) {
       const x = (i + .5) / w * x1; let lip = 0; r = g = b = 1;
       // ---- brows
-      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem); if (k > 0) put(BR, k * (fem ? .95 : .98)); }
+      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .8 : .86) * (.8 + .2 * lumps(x * 5200, hy * 900, 1.3)) : fem ? .95 : .98)); }
       // ---- the lids: the lashes' line along the upper one (thicker towards its outer end, its edge the lashes' own ends), a fainter one under
       // the eye, a soft shade over the upper lid; inside the opening the upper lid's edge is dark, the lower one's pale, the corner by the nose pink
       if (abs(hy - EYE[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {
         const q = rim(x, hy), d = q[0], up = q[1], a = (x - ex0) / exw, pink = d < .0004 ? ss(.0098 * ES, .0118 * ES, EYE[0] - x) : 0;
         if (up) {
-          const wl = (fem ? .0021 : .0016) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
-          const line = d <= 0 ? 1 : ss(wl + .0003, wl - .0001, d), shade = ss(.0062, .001, d) * ss(-.1, .25, a) * ss(1.25, .9, a) * (fem ? .2 : .14);
+          const wl = (fem ? .0021 : .0016) * (R ? .72 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
+          const line = d <= 0 ? 1 : ss(wl + .0003, wl - .0001, d), shade = ss(.0062, .001, d) * ss(-.1, .25, a) * ss(1.25, .9, a) * (fem ? .2 : .14) * (R ? .6 : 1);
           put(LA, mx(line * (fem ? .96 : .92), shade) * (1 - pink));
         } else {
           const line = d <= 0 ? ss(-.0009, -.0001, d) * .2 : ss(.0007, .0001, d) * ss(.15, .5, a) * (fem ? .45 : .28);
@@ -81,10 +82,10 @@ export function paintFace(o) {
       if (hy < -.045 && hy > -.092 && x < .034) {
         const m = mouthAt(x, hy, f, m3), line = m[2]; lip = m[1];
         if (lip > 0) {
-          const v = hy - lipLine(x, f), k = ss(0, .55, lip) * (fem ? .92 : .86), sh = v > 0 ? .9 : 1 + .1 * bump(v, -.0042 * f.lips, .0022) * bump(x, 0, .012);
+          const v = hy - lipLine(x, f), k = ss(0, .55, lip) * (R ? (fem ? .74 : .5) : fem ? .92 : .86), sh = v > 0 ? .9 : 1 + .1 * bump(v, -.0042 * f.lips, .0022) * bump(x, 0, .012);
           put([LP[0] * sh, LP[1] * sh, LP[2] * sh], k);
         }
-        if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58)));
+        if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58) * (R ? .8 : 1)));
       }
       // ---- stubble: fine dots of shadow over the jaw, the chin and the upper lip (the points carry its even shade)
       // (over the same ground as the points' shadow: up the cheek towards the sideburn; each dot the end of a hair, darker than the shade)

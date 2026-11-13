@@ -2677,6 +2677,41 @@ console.log('physics ok');
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 
+// the real look (human.js look: 'real', realFace; human-head.js reliefOf and a real face's head): a face from a seed with its age and
+// weight in it, the folds and hollows of a real face pressed into its skin, a jaw as broad as a real one, and two sides not quite alike
+{
+  const F = await import('../src/kit/models/field.js'), HH = await import('../src/kit/models/human-head.js'), { realFace } = await import('../src/kit/models/human.js'), { Color } = await import('three');
+  const { HC, RELIEF, reliefOf } = HH, base = { jaw: 1, chin: 1, brow: .82, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 };
+  // ---- the face from a seed: the same seed, the same face; age thins the lips, hoods the lids and greys the hair
+  { const a = realFace({ seed: 7, age: 25 }, false, base), b = realFace({ seed: 7, age: 25 }, false, base), c = realFace({ seed: 8, age: 25 }, false, base), old = realFace({ seed: 7, age: 75 }, false, base);
+    assert.deepEqual(a, b, 'the same seed, the same face'); assert.notDeepEqual(a.f, c.f, 'another seed, another face');
+    assert.ok(a.f.real === 1 && a.f.es === 1 && a.f.age === 25 && Object.values(a.f).every(v => typeof v !== 'number' || Math.round(v * 1e4) / 1e4 === v), 'life-size eyes, its age, every measure to four figures (the face names the saved shape)');
+    assert.ok(old.f.lips < a.f.lips * .85 && old.f.lidFold > a.f.lidFold && old.f.eyes < a.f.eyes && old.f.ears > a.f.ears && old.f.nose > a.f.nose, `older: thinner lips (${a.f.lips} to ${old.f.lips}), lower lids, smaller eyes, bigger ears, a longer nose`);
+    const lum = h => new Color(h).getHSL({}).l; assert.ok(a.skin && a.hair && a.iris && lum(old.hair) > lum(a.hair), `a skin, hair and eyes from the seed, the hair greying with age (${a.hair} to ${old.hair})`);
+    const given = realFace({ seed: 7, skin: '#5c3a26', hair: null, iris: '#123456' }, false, base); assert.ok(given.skin === null && given.hair === undefined && given.iris === null, 'what the game gave is its own: no skin, hair or eyes picked for it');
+    const plain = realFace({}, false, base); assert.ok(plain.f.age === 30 && plain.f.fat === .5 && plain.f.asym === .3 && plain.skin === null, 'no seed: an average face of thirty'); }
+  // ---- the folds: nothing far from the face, never more than RELIEF, deeper with age, both sides alike unless the face is uneven
+  { const young = reliefOf({ age: 25, fat: .5 }), old = reliefOf({ age: 75, fat: .5 }), uneven = reliefOf({ age: 40, fat: .5, asym: .9, aseed: 3.3 });
+    let deep = [0, 0], most = 0, odd = 0, oddEye = 0;
+    for (let x = -.07; x <= .07; x += .0025) for (let y = -.15; y <= .06; y += .0025) for (let z = -.02; z <= .11; z += .0025) {
+      const Y = HC[1] + y, Z = HC[2] + z, h0 = young(x, Y, Z), h1 = old(x, Y, Z); most = Math.max(most, Math.abs(h0), Math.abs(h1), Math.abs(uneven(x, Y, Z)));
+      deep[0] = Math.min(deep[0], h0); deep[1] = Math.min(deep[1], h1);
+      assert.ok(young(-x, Y, Z) === h0, 'an even face: its folds the same both sides');
+      const d = Math.abs(uneven(x, Y, Z) - uneven(-x, Y, Z)); if (Math.hypot(Math.abs(x) - HH.EYE[0], y - HH.EYE[1], z - HH.EYE[2]) < .016) oddEye = Math.max(oddEye, d); else odd = Math.max(odd, d);
+    }
+    assert.ok(young(.2, HC[1], HC[2]) === 0 && young(0, HC[1] + .3, HC[2]) === 0 && most <= RELIEF, `nothing far from the face; at most ${(most * 1000).toFixed(2)} mm (RELIEF ${RELIEF * 1000} mm)`);
+    assert.ok(deep[1] < deep[0] * 2 && deep[0] < -.0003, `deeper with age: ${(deep[0] * 1000).toFixed(2)} mm at 25, ${(deep[1] * 1000).toFixed(2)} mm at 75`);
+    assert.ok(odd > .0004 && oddEye === 0, `an uneven face: up to ${(odd * 1000).toFixed(2)} mm between its two sides, and none round the eyes`); }
+  // ---- the head: a real jaw is broader than the clean face's narrowing V, and an uneven face's two halves differ
+  { const box = [[-.1, HC[1] - .14, -.12], [.1, HC[1] + .02, .13]], meshOf = face => F.mesh(HH.head({ face, neck: 1, hair: 'bald' }), { cell: .004, ao: false, bounds: box });
+    const jaw = m => { let w = 0; for (let i = 0; i < m.n; i++) { const y = m.P[i * 3 + 1] - HC[1], z = m.P[i * 3 + 2] - HC[2]; if (y > -.082 && y < -.072 && z > .0 && z < .03) w = Math.max(w, Math.abs(m.P[i * 3])); } return w; };
+    const halves = m => { let L = 0, R = 0; for (let i = 0; i < m.n; i++) { const x = m.P[i * 3], y = m.P[i * 3 + 1] - HC[1]; if (y < -.03 && y > -.11) { if (x > 0) L += x; else R -= x; } } return Math.abs(L - R) / (L + R); };
+    const clean = meshOf(base), real = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: 0 }), uneven = meshOf({ ...base, real: 1, es: 1, age: 40, fat: .5, asym: .9, aseed: 3.3 });
+    assert.ok(jaw(real) > jaw(clean) + .004, `a real jaw is broader: ${(jaw(clean) * 2000).toFixed(0)} mm across the clean face's, ${(jaw(real) * 2000).toFixed(0)} mm a real one's`);
+    assert.ok(halves(real) < .002 && halves(uneven) > halves(real) * 2, `an even face's halves alike (${halves(real).toFixed(4)}), an uneven one's not (${halves(uneven).toFixed(4)})`); }
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw) ok');
+}
+
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)
 {
   const CS = await import('../src/kit/models/creature-shapes.js'), MV = await import('../src/kit/models/creature-moves.js'), { Rig } = await import('../src/kit/poses.js'), THREE = await import('three');
