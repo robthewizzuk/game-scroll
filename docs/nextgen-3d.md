@@ -40,7 +40,26 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
   (the real sun is 0.5; 2 to 4 reads as a soft, hazy day). Call it when you make the sun.
 - **Lamp light pool** (`v.lampLights(range)` then `v.placeLamps(spots, x, y, z, t)` each frame):
   a level can have dozens of lamps; the nearest few get real point lights (with flicker) and the
-  rest only glow. Light count stays fixed, so shaders never recompile mid-game.
+  rest only glow. Light count stays fixed, so shaders never recompile mid-game. A spot is
+  `{ x, y, z, col, i, flick }` and, for any lamp:
+  - `reach` (metres it lights), `dir: [x, y, z]` (a spot light shining that way), `angle` (its half
+    width in radians), `soft` (0..1, how soft its edge).
+  - `shadow: true`: it casts shadows. The nearest few by quality (4, 8 or 16 on WebGPU) get a square
+    of one shared shadow picture, drawn again only when the lamp or something it sees moves, and at
+    most a few a frame, so a street of lamps with cars passing under them costs a few small shadow
+    maps a frame. WebGL phones get one to four real spot lights with shadows. `near` (metres) is where
+    its shadow starts: a headlight's past its own car's nose.
+  - `shape`: a light shape it shines through, drawn in code (no picture files): `'headlamp'` (a dipped
+    beam's sharp top edge), `'window'` (a frame's bars), `'blinds'`, `'cage'` (a lamp's wire cage),
+    `'leaves'` (dappled light under a tree), `'grille'`, `'stained'` (coloured panes), `'bars'`.
+  - `tube: [x, y, z]` (a neon tube from the spot to there) and `rect: { w, h, normal }` (a lit sign's
+    face): on WebGPU they light from their nearest point, and their highlight on a wet or shiny floor is
+    their whole length and face, as a real tube's is; WebGL lights them from their middle.
+  `gs.hd.neon(points, { colour, i, reach })` and `gs.hd.sign(w, h, paint, { colour, i, reach })` make
+  the glowing tube and sign to go with them: pass `n.spots()` / `s.spots()` to `placeLamps` with the
+  rest. A car's headlights: two spots at its nose each frame with `dir` along the car,
+  `shape: 'headlamp'`, `shadow: true`, `reach: 25`, `i: 45`. `v.lampShadows` says what the lamps'
+  shadows did last frame (`slots`, `drawn`, `waiting`).
 - **Post-processing**, one shared chain: HDR render with MSAA (or a light FXAA on lower tiers), ground-truth ambient occlusion
   (GTAO), bloom (anything brighter than about 1 glows: emissive above 1, particle colours above
   1), ACES filmic tone mapping, and a colour grade (vignette, film grain, slight lens fringing at
@@ -630,6 +649,12 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   (the same on WebGL and WebGPU, nothing where the ground is unmarked), and every mark is remembered,
   so `marks.trail()` can be followed. The full list is in
   [maker-kit.md](maker-kit.md#ground-that-takes-marks); `node scripts/marks.cjs film.png` films it.
+- **Cloth in the wind** (`new gs.outdoors.Cloth(v, { wind })`, then `cloth.flag()`, `banner()`, `awning()`,
+  `line()` or `sheet()`, and `cloth.update(dt)`): flags that hang in still air and fly in a breeze with
+  ripples running downwind, banners, awnings and washing lines, and sheets that drape over solid balls
+  and capsules and grip them. On WebGPU the graphics chip steps every piece at once and the mesh reads
+  its places from there; elsewhere a coarser set runs on the CPU. The full list is in
+  [maker-kit.md](maker-kit.md#cloth-in-the-wind); `node scripts/cloth.cjs film.png` films it.
 - **Cliffs, caves and overhangs** (`land.rocks({ caves, shapes })` on a `gs.outdoors` `Land`): real rock on
   the height map that can fold over itself. Cliffs with beds, ledges and lips that overhang come by
   themselves where the land is steep; `caves: [{ path, radius }]` cuts tunnels you can walk through (the
@@ -1104,8 +1129,8 @@ const barrel = gs.models.prop('barrel', { seed: 2 }); barrel.position.set(1, 0, 
 wear(wall, { moss: .7 });                                                    // moss on the top
 ```
 
-- **`material(name, o)`**: 18 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
-  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`
+- **`material(name, o)`**: 19 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
+  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`, `palm`
   (`gs.models.materials` lists them; `skin` is pores and fine lines, a tile to 16 mm at 64 repeats a metre:
   what the kit's people wear). Change the recipe's colours (`colour`, `dark`, `mortar`, `gap`, `rust`,
   `under`, `vein`, `grout`...), `seed` for another pattern, `repeat: [u, v]`, `size` (texture pixels, 256).
@@ -1158,6 +1183,32 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   the same kind), `leaves` and `bark` (colours), `wind` (.6, or a `gs.outdoors` Wind). About 20 to 80 ms each;
   the same options again give a copy sharing shapes and materials, so make a few kinds and place copies (or
   hand them to `gs.props` for instancing and far-off impostors).
+  The same call grows plants EZ-Tree can't, each by rules of its own: `palm` (a ringed trunk that leans out
+  and curves up, arching fronds, two or three dead ones hanging brown, nuts under the crown), `fan` (a fan
+  palm: a tall trunk, a skirt of dry leaves, round pleated fans), `banana` (paddle leaves torn along their
+  veins), `fern` (`trunk: 3` for a tree fern), `taro` (elephant ears), `cypress` (a swamp cypress: flared
+  foot, knees, feathery sprays and hanging moss), `reeds` (blades and cattails), `flowers` (`petals`: a colour
+  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf bounces, flutters and
+  leans downwind from where it grows, and `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
+  brushed aside by whoever the marks watch walking through. `group.userData.fronds` lists every leaf
+  (`{ id, root, dir, len }`). Per kind: `lean`, `fronds`, `dead`, `fruit`, `skirt`, `trunk`, `branches`,
+  `knees`, `moss`, `blades`, `cattails`, `stems`, `petals`, `pads`, `blooms`, `spread`.
+- **`ivy(targets, o)`**: ivy grown over meshes as they stand (a wall, a house, a stump): vines start at the
+  foot of steep faces (or `from: [[x, y, z]]`) and climb, keeping to the surface, branching out sideways,
+  going over edges and hanging where there is nothing to hold, with clusters of leaves facing out. `roots`
+  (8), `length` (metres each climbs: 5), `size` (a leaf: .13), `density`, `up`, `leaves`, `stem`, `seed`,
+  `wind`, `bend`. A Group in world metres; 30 to 150 ms, kept for the same walls and options, so grow it while
+  loading.
+- **`weeds(o)`**: weeds where nobody weeds, in one draw: along cracks and kerbs (`lines`), at the foot of
+  walls (`walls: mesh`) and at `spots`, each tuft turned and sized its own way. `ground(x, z)`, `gap`,
+  `height`, `colours`, `seed`, `wind`, `bend`, `max`.
+
+```js
+const palm = gs.models.tree('palm', { height: 8, wind, seed: 2 });
+const ferns = [1, 2, 3].map(seed => gs.models.tree('fern', { seed, wind, bend: marks }));
+house.add(gs.models.ivy(walls, { roots: 10, length: 6 }));
+v.scene.add(gs.models.weeds({ lines: [[[-4, 0], [0, .4], [4, .1]]], walls: kerb, wind }));
+```
 - **`building(o)`**: a building to walk up to, from a small shape grammar: the block is split into floors,
   each wall into bays, and each bay into a real window opening (reveal, frame, sill, glass set back) or the
   door, with a string course, cornice, and a flat roof with a parapet or a gable roof. `style` (`brick`,

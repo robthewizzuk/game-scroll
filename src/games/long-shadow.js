@@ -104,6 +104,9 @@ const HOUSES = [
   [28, -152, 8, 8, 5, 1], [-100, -120, 8, 7, 5, 0],
 ];
 const CHURCH = { x: -15, z: -122, tz: -108 };
+// Sgt. Rook in the belfry: the step he kneels up on to aim (his eyes half a metre over the parapet), and how high his feet are over
+// the belfry floor up on it and down behind the parapet (ducking, all of him under its top)
+const ROOK_STEP = .35, ROOK_UP = .3, ROOK_DOWN = -.08;
 const MILL = { x: 70, z: -21 };
 // the stone bridge: deck from bank to bank (heights from the land at each end, with a hump), two arches over the river
 const BRIDGE = { x: 40, z0: -24, z1: 23, hump: 1.1, arches: [{ c: -4.2, hw: 6.4, spring: -1.8, rise: 4.3 }, { c: 9.3, hw: 5.2, spring: -1.8, rise: 3.9 }], pier: { z: 3.15, y0: -1.8, h: 2.3 } };
@@ -682,6 +685,9 @@ function world() {
   for (const [dx, dz, w, d] of [[0, -2.33, 3.8, .34], [0, 2.33, 3.8, .34], [-2.33, 0, .34, 3.8], [2.33, 0, .34, 3.8]]) {
     mesh(new BoxGeometry(w, .95, d), M.stone, CHURCH.x + dx, cy + 17.475, CHURCH.tz + dz); box(CHURCH.x + dx, cy + 17, CHURCH.tz + dz, w, .95, d, 'low');
   }
+  // a stone step round the inside of the parapet (the bell ringer's walk): Rook kneels up on it to aim over the parapet, his head
+  // and shoulders above it, and steps down off it to duck right out of sight
+  for (const [dx, dz, w, d] of [[0, -1.63, 4.32, 1.06], [0, 1.63, 4.32, 1.06], [-1.63, 0, 1.06, 2.2], [1.63, 0, 1.06, 2.2]]) mesh(new BoxGeometry(w, ROOK_STEP, d), M.stone, CHURCH.x + dx, cy + 17 + ROOK_STEP / 2, CHURCH.tz + dz);
   K.roof.spire(CHURCH.x, cy + 21.5, CHURCH.tz, 3.6, 7, 4, WHITE, .38, Math.PI / 4);
   WD.bell = mesh(new CylinderGeometry(.35, .8, 1.1, 12, 1, true), M.brass, CHURCH.x, cy + 20, CHURCH.tz);
   WD.churchTop = { x: CHURCH.x, y: cy + 17, z: CHURCH.tz };
@@ -2009,8 +2015,8 @@ function make(api) {
     return { x: c.x + fx_ * 1.4 - fz * 1.3 * s.arch, z: c.z + fz * 1.4 + fx_ * 1.3 * s.arch };
   }
   function rookAppear(s, eye) {
-    const to = s.to || rookSpot(s, eye), c = WD.churchTop;
-    s.x = to.x; s.y = to.z; s.lift = c.y - groundAt(s.x, s.y) + .2; s.see = .15; s.fireT = 1.5;
+    const to = s.to || rookSpot(s, eye);
+    s.x = to.x; s.y = to.z; s.see = .15; s.fireT = 1.5;
     if (Math.random() < .5) rookSay('moved');
   }
   const enemyShot = (s, target, kind) => {
@@ -2504,7 +2510,7 @@ function make(api) {
       nests: ['chapel', 'mill2'], weather: 'rain',
       setup() {
         const cy = WD.churchTop;
-        cs = soldier({ kind: 'cs', look: 'rook', x: CHURCH.x, y: CHURCH.tz + 1.6, lift: cy.y - groundAt(CHURCH.x, CHURCH.tz + 1.6) + .2, yaw: 0, fixed: true, crouch: true, see: 0 });
+        cs = soldier({ kind: 'cs', look: 'rook', x: CHURCH.x, y: CHURCH.tz + 1.6, lift: cy.y - groundAt(CHURCH.x, CHURCH.tz + 1.6) + ROOK_UP, yaw: 0, fixed: true, crouch: true, see: 0 });
         // the gun nest at the bridge's north end: the gun on its tripod in a ring of sandbags facing the bridge, the gunner on
         // one knee at its grips and his loader at its left with the belt
         mgNest = mgBuild(BRIDGE.x - 2.2, -26.5, 0);
@@ -2748,7 +2754,7 @@ function make(api) {
           s.hideT -= dt;
           if (!s.to) s.to = rookSpot(s, eye);
           const dx = s.to.x - s.x, dz = s.to.z - s.y, dl = Math.hypot(dx, dz), st = Math.min(dl, dt * .9);
-          if (dl > .01) { s.x += dx / dl * st; s.y += dz / dl * st; s.lift = WD.churchTop.y - groundAt(s.x, s.y) + .2; }
+          if (dl > .01) { s.x += dx / dl * st; s.y += dz / dl * st; }
           if (s.hideT <= 0) { rookAppear(s, eye); s.to = null; }
         } else {
           const lookAtMe = Math.atan2(eye.x - s.x, eye.z - s.y);
@@ -2763,6 +2769,8 @@ function make(api) {
           }
         }
         if (s.hideT > 0) { stance = 'duck'; m.rig.upper(null); } else { stance = 'kneel'; m.rig.upper('aim'); }
+        // up onto the step to aim, down off it to duck (eased, as he rises and drops)
+        { const want = WD.churchTop.y - groundAt(s.x, s.y) + (s.hideT > 0 ? ROOK_DOWN : ROOK_UP); s.lift += (want - s.lift) * Math.min(1, dt * 7); }
       } else if (s.kind === 'mg' || s.kind === 'mg2') {
         // the gun nest: the gunner on one knee at the grips, his cheek to the butt; his loader beside the gun with the belt in his hands.
         // With the gunner down, the loader shuffles across behind the gun and takes it.
@@ -2871,8 +2879,10 @@ function make(api) {
         m.rig.update(step, { speed: s.av, aim: s.alert ? -.05 : 0, turn });
         if (m.visible) { m.see(WD.v.cam, 1000); if (s.onGun) { const k = s.onGun === 'grips'; m.hold(s.gunG || mgNest.g, k ? MG.grip : MG.belt, k ? MG.stock : MG.feed); } else if (s.binos) binocs(s, m); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
       }
-      // through the scope his feet meet the slope he stands on (foot IK), for the few men in view
-      if (scoped && !s.deck && plantN > 0 && watched(s)) { plantN--; m.rig.plant(WD.ground, m); }
+      // through the scope his feet meet the slope he stands on (foot IK), for the few men in view on the land (not a man
+      // up on something, as Rook on the belfry floor: his feet reached for the ground 17 m below, and his hips sank the
+      // most the planting allows, 45 cm, which took him down behind the parapet out of sight and out of reach)
+      if (scoped && !s.deck && !s.lift && plantN > 0 && watched(s)) { plantN--; m.rig.plant(WD.ground, m); }
     }
     spread(men, dt); if (allies) spread(allies, dt);
     bodies.update(dt, men.filter(s => !s.ko && !s.fixed));

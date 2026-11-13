@@ -1,0 +1,92 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Night lights (lamps.js), for scripts/lights.cjs: a picture of each scene, to judge by eye that lamps cast their
+// shadows, light shapes fall where they should and neon and signs light the ground, and the numbers of what the
+// lamps' shadows cost.
+//   ?acts=street,car,room,neon,shapes (default: all)   &cell=360x480   &gpu (WebGPU)   &tier=2   &frames=6   &move (things move: slots drawn again)
+//   &solo=sign|tubes (the neon act: only the sign's light, or only the tubes')
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, hd = gs.hd, frame = () => new Promise(r => requestAnimationFrame(r));
+  const mk = (mat, geo, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; return m; };
+  const road = () => hd.pbr('#2a2b2e', { rough: .32, wet: .8 }), wall = () => hd.pbr('#8a8378', { rough: .9 }), brick = () => hd.pbr('#7a4a3a', { rough: .85 }), red = () => hd.pbr('#a83228', { rough: .5 }), grey = () => hd.pbr('#9a9a9a', { rough: .6 });
+  const person = (x, z, h = 1.75) => { const g = new T.Group(); g.add(mk(grey(), new T.CapsuleGeometry(.22, h - .5, 4, 10), 0, h / 2, 0), mk(grey(), new T.SphereGeometry(.13, 12, 8), 0, h + .02, 0)); g.position.set(x, 0, z); return g; };
+  const post = (x, z, face) => { const g = new T.Group(), m = hd.pbr('#30343a', { rough: .5, metal: .6 }); g.add(mk(m, new T.CylinderGeometry(.07, .1, 5.8, 8), 0, 2.9, 0), mk(m, new T.BoxGeometry(1.4, .08, .08), .7 * face, 5.8, 0)); g.position.set(x, 0, z); return g; };
+  // each act: the camera, what is made, and the lamp spots
+  const ACTS = {
+    // a street at night: lamps on posts, each with a shadow; people, a bench and a bin under them
+    street: { eye: [5.5, 3.2, 13], aim: [0, 1, -2],
+      make: (S) => {
+        const out = [mk(hd.pbr('#77736b', { rough: .8 }), new T.PlaneGeometry(40, 60).rotateX(-Math.PI / 2), 0, 0, 0), mk(brick(), new T.BoxGeometry(40, 9, .5), 0, 4.5, -7)];
+        S.lamps = [];
+        for (const [x, z] of [[-6, -3], [2, -3], [10, -3], [-2, 4], [6, 4]]) { out.push(post(x, z, 1)); S.lamps.push({ x: x + 1.35, y: 5.65, z, col: '#ffcf8a', i: 22, reach: 14, shadow: true }); }
+        S.people = [person(3.2, -1.5), person(0, 1), person(7.6, 2.4, 1.6)]; out.push(...S.people);
+        out.push(mk(hd.pbr('#5a3a22', { rough: .8 }), new T.BoxGeometry(1.8, .45, .5), 4.6, .45, -4.5), mk(grey(), new T.CylinderGeometry(.3, .26, .9, 12), -.8, .45, -4.6));
+        return out;
+      },
+      tick: (S, t) => { if (S.move) { S.people[0].position.x = 3.2 + Math.sin(t * 1.3) * 1.4; S.people[1].position.z = 1 + Math.sin(t * .9) * 1.2; } } },
+    // a car's headlights at night (a dipped beam's shape, with its shadow) on a wall, and someone in the beam
+    car: { eye: [-4.5, 3.2, 6.5], aim: [3, .4, -.5],
+      make: (S) => {
+        const car = new T.Group(); car.add(mk(red(), new T.BoxGeometry(1.9, .7, 4.2), 0, .6, 0), mk(hd.pbr('#202428', { rough: .2 }), new T.BoxGeometry(1.7, .55, 2.1), 0, 1.2, .3)); car.position.set(-3, 0, 0); car.rotation.y = -Math.PI / 2;
+        S.lamps = [{ x: -.8, y: .7, z: 0, dir: [1, -.06, 0], angle: .55, soft: .3, shape: 'headlamp', col: '#fff3dc', i: 60, reach: 26, shadow: true }];
+        return [mk(road(), new T.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), 0, 0, 0), mk(wall(), new T.BoxGeometry(.5, 6, 20), 7, 3, 0), car, person(3.2, .3), mk(grey(), new T.BoxGeometry(.6, 1, .6), 5, .5, -1.4)];
+      } },
+    // moonlight and a lamp through a window and a blind into a dark room
+    room: { eye: [0, 2.2, 6.5], aim: [0, .6, -1],
+      make: (S) => {
+        S.lamps = [{ x: -3.5, y: 4, z: -1.2, dir: [1, -.85, .25], angle: .5, soft: .15, shape: 'window', col: '#bcd0ff', i: 40, reach: 14, shadow: true },
+          { x: 3.6, y: 3.6, z: -1.6, dir: [-1, -.9, .3], angle: .45, soft: .15, shape: 'blinds', col: '#ffd7a0', i: 36, reach: 14 }];
+        return [mk(hd.pbr('#6b5a48', { rough: .7 }), new T.PlaneGeometry(14, 14).rotateX(-Math.PI / 2), 0, 0, 0), mk(wall(), new T.BoxGeometry(14, 5, .3), 0, 2.5, -4), mk(hd.pbr('#4a3a2a', { rough: .7 }), new T.BoxGeometry(1.4, .8, .8), .4, .4, -.6), mk(grey(), new T.SphereGeometry(.35, 16, 12), -.8, .35, .8)];
+      } },
+    // neon over a wet street: tubes and a sign, and their light on the ground
+    neon: { eye: [0, 1.9, 8], aim: [0, 1.2, -2],
+      make: (S) => {
+        const n1 = hd.neon([[-3, 3.2, -3.7], [-1, 3.2, -3.7], [-1, 2.2, -3.7]], { colour: '#ff2f7a', i: 6, reach: 9 });
+        const n2 = hd.neon([[1, 2.4, -3.7], [3.5, 3.6, -3.7]], { colour: '#2fd3ff', i: 6, reach: 9 });
+        const sg = hd.sign(2.2, .8, (c, w, h) => { c.fillStyle = '#ffb347'; c.font = `bold ${h * .6}px sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('OPEN', w / 2, h / 2); }, { colour: '#ffb347', i: 4, reach: 8 });
+        sg.position.set(0, 1.6, -3.7);
+        const solo = Q.get('solo');   // (sign or tubes: only those lights)
+        S.spots = () => [...(solo === 'sign' ? [] : [...n1.spots(), ...n2.spots()]), ...(solo === 'tubes' ? [] : sg.spots())];
+        return [mk(road(), new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), 0, 0, 0), mk(brick(), new T.BoxGeometry(12, 6, .4), 0, 3, -4), n1, n2, sg, person(-1.4, -1.2)];
+      } },
+    // every light shape, a lamp each, on a wall
+    shapes: { eye: [0, 2.6, 10.5], aim: [0, 2.6, -3],
+      make: (S) => {
+        const names = ['headlamp', 'window', 'blinds', 'cage', 'leaves', 'grille', 'stained', 'bars'];
+        S.lamps = names.map((n, k) => ({ x: (k % 4 - 1.5) * 2.4, y: k < 4 ? 3.9 : 1.4, z: 1, dir: [0, 0, -1], angle: .32, soft: .1, shape: n, col: '#fff', i: 30, reach: 10 }));
+        return [mk(wall(), new T.BoxGeometry(14, 6, .3), 0, 3, -3), mk(road(), new T.PlaneGeometry(20, 20).rotateX(-Math.PI / 2), 0, 0, 0)];
+      } },
+  };
+  const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(','), [cw, ch] = (Q.get('cell') || '360x480').split('x').map(Number), frames = +(Q.get('frames') || 6);
+  window.__hd.force = +(Q.get('tier') || 2); window.__hd.upscale = false; window.__hd.hold = false; window.__hd.grain = 0;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * acts.length; sheet.height = ch; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [];
+  for (let k = 0; k < acts.length; k++) {
+    const A = ACTS[acts[k]]; if (!A) throw new Error('no act ' + acts[k]);
+    const v = new hd.HDView({ bg: '#05070c', fog: 0, env: .05, sky: '#1a2236', ground: '#0a0a0a', amb: .06, fov: 55 }).lampLights(12);
+    const S = { move: Q.has('move') };
+    for (const m of A.make(S)) v.scene.add(m);
+    v.bloom = .5;
+    let ms = 0, drawn = 0, slots = 0, waiting = 0;
+    for (let f = 0; f < frames; f++) {
+      const t = f / 30; A.tick?.(S, t);
+      v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...A.eye); v.cam.lookAt(...A.aim);
+      const spots = S.spots ? S.spots() : S.lamps;
+      v.placeLamps(spots, A.eye[0], A.eye[1], A.eye[2], t);
+      const c0 = performance.now(); v.render(cx, cw, ch); ms += performance.now() - c0; await frame();
+      const st = v.lampShadows; if (st) { drawn += st.drawn; slots = st.slots; waiting = st.waiting; }
+    }
+    sx.drawImage(cell, k * cw, 0);
+    sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(`${acts[k]} (${window.__hd.info.backend})`, k * cw + 6, 16);
+    info.push(`${acts[k]}: ${window.__hd.info.backend}, lamps ${v.lamps.filter(l => l.intensity > 0).length} lit of ${v.lamps.length}; shadow slots ${slots}, slots drawn ${drawn} in ${frames} frames, waiting ${waiting}; render ${(ms / frames).toFixed(1)} ms a frame (this machine's software chip); draws ${window.__hd.info.calls}, triangles ${window.__hd.info.tris}`);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

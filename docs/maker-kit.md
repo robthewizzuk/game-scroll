@@ -72,6 +72,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Footprints and tyre tracks in snow, mud and sand, grass that parts, a trail to follow | `gs.outdoors` `Marks` | [Ground that takes marks](#ground-that-takes-marks) |
 | Cliffs with ledges and overhangs, caves to walk through, arches, rock of your own shape | `gs.outdoors` `land.rocks()` | [Cliffs, caves and overhangs](#cliffs-caves-and-overhangs) |
+| Flags, banners, awnings and washing lines in the wind, a sheet thrown over something | `gs.outdoors` `Cloth` | [Cloth in the wind](#cloth-in-the-wind) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -90,7 +91,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Sounds muffled by walls, each place with its own echo, by themselves | `new Ears({ level })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Knocks by what things are made of, footsteps by what is underfoot, engines that rev through the gears, by themselves | `gs.sound.Foley` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
-| Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
+| Materials, props, sculpted shapes, trees and plants (palms, ferns, swamp plants, ivy over walls, weeds in cracks), buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Water you can disturb: rings, splashes and spray, wakes and foam behind boats and swimmers, rain on it, foam at the shore, the view from under it | `gs.outdoors.Water` | [Water you can disturb](#water-you-can-disturb) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
@@ -3112,6 +3113,65 @@ update(dt) {
   deep drifts you wade through and ruts a wheel sinks into are not here), marks do not show beyond
   `reach`, `land.grass()` (the far grass) does not part, things do not get muddy or snowy from
   walking in it, and rock (`land.rocks()`) takes no marks: not on it, and not in a cave under it.
+
+## Cloth in the wind
+
+`const { Cloth, Wind } = gs.outdoors;` (3D; the look is Next Gen.) Flags, banners,
+awnings and washing lines that sag under their own weight, fly out in a breeze with ripples running
+along them, snap in a gale and hang still when the wind drops; and sheets of your own that drape over
+things:
+
+```js
+make():   wind = new Wind({ x: 5, z: 2, gust: .4 });
+          cloth = new Cloth(view, { wind, ground: 0 });
+          cloth.flag({ at: [0, 6, 0], size: [1.8, 1.2], colours: ['#c33', '#f4f0e6', '#2a5cb0'] }).ride(boat.mast);
+          cloth.awning({ at: [4, 2.7, -3], width: 3, depth: 1.3, colours: ['#2a7a4a', '#eeeae0'] });
+          cloth.banner({ from: [-4, 3.2, -1], to: [-1.6, 3.2, -1], drop: 2.2, colour: '#7a2440', weight: .6 });
+          cloth.line({ from: [-5, 1.95, 3], to: [-1, 1.95, 3.6], items: 3 });
+          cloth.ball({ x: 2.5, y: .5, z: 2.5, r: .5 });     // something round it drapes over
+update(dt) { wind.update(dt); cloth.update(dt); }        // after whatever its pins ride has moved
+```
+
+- **The pieces.** `flag({ at, size: [across, down], dir })` is pinned along its edge on the pole;
+  `banner({ from, to, drop })` all along its rail; `awning({ at, width, depth, fall, dir, valance })` at the
+  wall and along its front bar, sagging between, with a strip that hangs and flaps from the front;
+  `line({ from, to, sag, items })` is a cord between two posts that gives under the washing pegged on it
+  (`items`: how many, or `[{ at: 0..1, size: [w, h], colour }]`; it gives back `[line, ...things]`);
+  `sheet({ cols, rows, place: (i, j) => [x, y, z], pins })` is any cloth of your own. Each takes `colour`
+  or `colours` (stripes from the pole out, or `across: true` from the top down), `weight` (kilograms a
+  square metre: .15 nylon, .4 canvas), `open` (how much of the wind reaches it: 1, .3 in the lee of a
+  wall, 0 indoors) and `stiff` (1; 2 is a stiffer cloth).
+- **The wind.** A `gs.outdoors.Wind` gusts each piece where it is; `{ x, z }` is a steady one (3 m/s along
+  x without either). Each part of a cloth is pushed by how square the wind meets it, as air does a sail,
+  and dragged along by the wind that runs over it, so a flag flies out and a banner side on to the wind
+  billows; on top of that a sideways wobble runs downwind along the cloth at about two thirds of the
+  wind's speed, so its ripples travel from the pole to the fly end. In still air a flag falls in and
+  hangs by the pole: cloth hardly stretches but shears and folds easily.
+- **Solid things.** `cloth.ball({ x, y, z, r })` and `cloth.capsule({ a, b, r })` (a leg, a post, a
+  mast) push cloth out, and it grips them, so a sheet thrown over something stays on it; `set()` moves
+  one, `remove()` takes it away. `ground` (a height, or `(x, z) => height`) is what cloth lies on.
+- **Pins that move.** `piece.ride(object3D)` keeps its pins in their place on a moving thing (a flag
+  on a boat, a pennant on a lance, a cape's shoulders); `piece.move(dx, dy, dz)` moves them by hand.
+  `piece.at(i, j)` is a point now (on the CPU), `piece.remove()` takes it away, `cloth.clear()` takes
+  everything away (in `reset()`).
+- **How it works.** Every piece in a view is one set of points joined to their neighbours (along,
+  across, corner to corner and two along), stepped four small steps a frame (`steps`) with XPBD
+  (Macklin and others 2019), and each point is never further from its nearest pin or peg than it was
+  made (long-range attachments, Kim and others 2012), so a hanging cloth never stretches however few
+  the steps. On WebGPU the graphics chip runs it all, finer (`fine`: 14 points a metre), as a few
+  compute passes a step in which each point moves by its own links (no two passes write one point),
+  and the mesh reads its places straight from there; elsewhere the same steps run here at 7 points a
+  metre. `cloth.mode` says which.
+- **What it costs.** Measured on the test machine (not yet on a phone): about a thousand points (a
+  flag, two banners, an awning and a washing line) take .8 to 1 ms a frame on the CPU; on WebGPU
+  3,400 points take .2 to .3 ms of the CPU's time a frame to send to the chip.
+- **Make the pieces in `make()`.** One added later starts as it was made; on WebGPU adding or taking
+  away a piece starts the chip's set again from where the CPU last had every piece.
+- Not there: cloth does not collide with itself (a sheet can pass through its own folds), does not
+  tear, and the wind does not go round buildings (`open` shelters a piece). On WebGPU the points are not
+  read back, so `at()` gives where a piece was made: it is for looking at. Loose clothes on people
+  are not this yet. `node scripts/cloth.cjs film.png` films a flag, an awning, a banner, a washing line
+  and a sheet over a ball (`--webgpu` on the graphics chip).
 
 ## Cliffs, caves and overhangs
 
