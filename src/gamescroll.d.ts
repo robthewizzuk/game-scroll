@@ -3127,10 +3127,17 @@ export interface WindPart {
   uniforms: { lkWind: { value: number }; lkWindDir: { value: Loose } };
   update(dt: number, at?: P3 | null): WindPart; at(x: number, z: number, out?: Loose): { x: number; z: number; speed: number; gust: number };
 }
-/** What every Cloth piece takes. colour, or colours: stripes (along it, or across: true, from the top down); weight: kilograms a square metre (.15 nylon, .4 canvas); open: how much of the wind reaches it (1; .3 in the lee of a wall; 0 indoors); stiff: 1 (2: a stiffer cloth). */
-export interface ClothPieceOptions { colour?: string; colours?: string[]; across?: boolean; weight?: number; open?: number; stiff?: number }
+/**
+ * What every Cloth piece takes. colour, or colours: stripes (along it, or across: true, from the top down); weight: kilograms a square metre (.15 nylon, .4 canvas);
+ * open: how much of the wind reaches it (1; .3 in the lee of a wall; 0 indoors); stiff: 1 (2: a stiffer cloth); carry: how much of the air round what it rides
+ * goes along with it (0; worn clothes .5 to .75: a cape at a walk hangs, at a run it flies); arms: which of people's arms it goes round (true; 'upper': the upper
+ * arms only; false: none, a skirt, which a hand at the side would only push into the hips).
+ */
+export interface ClothPieceOptions { colour?: string; colours?: string[]; across?: boolean; weight?: number; open?: number; stiff?: number; carry?: number; arms?: boolean | 'upper' }
 export interface ClothPiece {
-  readonly kind: 'flag' | 'banner' | 'awning' | 'rope' | 'sheet'; readonly cols: number; readonly rows: number; open: number; weight: number;
+  readonly kind: 'flag' | 'banner' | 'awning' | 'rope' | 'sheet' | 'skirt' | 'cape'; readonly cols: number; readonly rows: number; open: number; weight: number; carry: number;
+  /** Its last column joined to its first all the way down (a skirt). */
+  readonly loop: boolean;
   /** The wind on it now: x, y, z and its speed. */
   readonly wind: [number, number, number, number];
   /** The point at column i, row j now: [x, y, z]. */
@@ -3141,10 +3148,14 @@ export interface ClothPiece {
   move(dx: number, dy: number, dz: number): ClothPiece;
   remove(): void;
 }
-/** A solid the cloth goes round: set() moves it. */
-export interface ClothSolid { r: number; set(...to: Loose[]): ClothSolid; remove(): void }
+/** A solid the cloth goes round: set() moves it. r: its radius (rb: at its far end, a rod that narrows). */
+export interface ClothSolid { r: number; rb?: number; set(...to: Loose[]): ClothSolid; remove(): void }
+/** A person's body as solids (cloth.body): rods on their trunk, thighs, seat, shins and arms that follow their bones each frame. */
+export interface ClothBody { readonly on: Loose; readonly solids: ClothSolid[]; remove(): void }
 export interface ClothPart {
-  readonly mesh: Loose; readonly N: number; readonly fine: number; readonly pieces: ClothPiece[]; solids: ClothSolid[];
+  readonly mesh: Loose; readonly N: number; readonly fine: number; readonly pieces: ClothPiece[]; solids: ClothSolid[]; readonly bodies: ClothBody[];
+  /** The small steps it took last frame: more while limbs swing fast through clothes (a run), up to three times steps. */
+  readonly lastSteps: number;
   /** 'gpu' once the graphics chip runs it (WebGPU), else 'cpu'. */
   readonly mode: 'cpu' | 'gpu';
   wind: WindPart | { x?: number; y?: number; z?: number } | null; ground: number | ((x: number, z: number) => number) | null;
@@ -3160,9 +3171,19 @@ export interface ClothPart {
   sheet(o: ClothPieceOptions & { cols?: number; rows?: number; place: (i: number, j: number) => Arr3; pins?: number[] }): ClothPiece;
   /** A solid ball it drapes over and is pushed aside by: set(x, y, z) moves it. */
   ball(o?: { x?: number; y?: number; z?: number; r?: number }): ClothSolid;
-  /** A solid rod with round ends (a leg, a post): set(a, b) moves it. */
-  capsule(o?: { a?: Arr3; b?: Arr3; r?: number }): ClothSolid;
-  /** Takes every piece and solid away (reset()). */
+  /** A solid rod with round ends (a leg, a post): set(a, b) moves it; rb: its radius at b, if it narrows. */
+  capsule(o?: { a?: Arr3; b?: Arr3; r?: number; rb?: number }): ClothSolid;
+  /**
+   * A skirt (a kilt, a long coat's skirts) worn by on, a gs.models.human: it rides their hips, cut to fit round them, and goes round their legs (body()).
+   * length: metres down from the waist (.5); flare: how much wider round the hem than at the waist (.15); waist: its half widths across and front to back
+   * ([.2, .16]); at: the waist's height on them (1.02). Goes by their arms unless arms: true.
+   */
+  skirt(o: ClothPieceOptions & { on: Loose; length?: number; flare?: number; waist?: [number, number]; at?: number }): ClothPiece;
+  /** A cape worn by on, a gs.models.human: pinned across the back of their shoulders, hanging length (.95), width across (.46), from at (1.46); goes round their body and arms. */
+  cape(o: ClothPieceOptions & { on: Loose; length?: number; width?: number; at?: number }): ClothPiece;
+  /** A person's body as rods the cloth goes round (skirt() and cape() add it for whoever wears them): on, a gs.models.human or anything with bones named hips, spine, legL, shinL, footL, armL, foreL, handL... arms: false leaves the arms out. */
+  body(on: Loose, o?: { arms?: boolean }): ClothBody;
+  /** Takes every piece, solid and body away (reset()). */
   clear(): ClothPart;
   /** Each frame, after the wind and anything its pins ride have moved. */
   update(dt: number): ClothPart;
@@ -3204,7 +3225,7 @@ export interface OutdoorsPart {
   Marks: new (view: Loose | null, o?: MarksOptions) => MarksPart;
   /**
    * Cloth in the wind: flags, banners, awnings, washing lines and sheets of your own that sag, ripple, fly and snap, drape over solid balls and capsules
-   * and lie on the ground. All of a view's cloth is one set, run on the graphics chip on WebGPU (finer: 14 points a metre) and here elsewhere (7).
+   * and lie on the ground; and clothes people wear (skirt, cape) that go round their legs and body and fly as they run. All of a view's cloth is one set, run on the graphics chip on WebGPU (finer: 14 points a metre) and here elsewhere (7).
    * Make it and its pieces in make() (a piece added later starts as made); clear() in reset(); update(dt) each frame. wind: a gs.outdoors Wind (gusts
    * where each piece is) or { x, z } metres a second (3 along x without one); ground: a height or (x, z) => height; steps: small steps a frame (4).
    */
