@@ -244,7 +244,7 @@ function fgSay(s) {
   }
   return lines;
 }
-function sceneLines(s, hz) {
+export function sceneLines(s, hz) {
   const lines = [`\n${s.name.toUpperCase()} · ${s.what}${s.holds ? ' · ' + s.holds : ''}${s.made != null ? ` · made in ${secs(s.made)}` : ''}`];
   if (s.error) lines.push(`  ERROR     ${s.error}`);
   if (s.modes.some(m => m.pictures != null)) {
