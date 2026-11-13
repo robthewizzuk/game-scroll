@@ -799,8 +799,8 @@ try {
       // softer rim on WebGL; a face from the seed, so another seed is another sculpt and another painted face
       const ro = { ...opts, look: 'real' }, ro2 = { ...opts, look: 'real', seed: 4 }; await human.ready([ro, ro2]);
       const real = human(ro), rs = real.mesh.material[0], other2 = human(ro2).mesh.material[0];
-      ok(rs.userData.sss?.skin === true && rs.userData.sss.thin === true && rs.name === 'human:skin:real' && rs.sheen < M[0].sheen && M[0].userData.sss.skin === false && rs.map !== M[0].map && other2.map !== rs.map && real.mesh.geometry !== plain.mesh.geometry,
-        `real look: its own skin (light under it, a rim of ${rs.sheen.toFixed(2)} where the clean look's is ${M[0].sheen.toFixed(2)}), its own sculpt and paint, another seed another face`);
+      ok(rs.userData.sss?.skin === true && rs.userData.sss.thin === true && rs.name === 'human:skin:real' && rs.sheen < M[0].sheen && M[0].userData.sss.skin === false && rs.map !== M[0].map && other2.map !== rs.map && real.mesh.geometry !== plain.mesh.geometry && rs.userData.faceDetail?.isDataTexture && rs.userData.faceDetail.channel === 1 && !M[0].userData.faceDetail,
+        `real look: its own skin (light under it, a rim of ${rs.sheen.toFixed(2)} where the clean look's is ${M[0].sheen.toFixed(2)}), its own sculpt and paint and a picture of its fine lines and oil, another seed another face`);
       // seams and stitching (field.js lines, human-paint.js paintSeams): cloth and leather wear one small picture by the same second set of
       // coordinates, across a line and along it; some of every kind of cloth is near a seam or a row of stitching, and no close-up triangle
       // counts more stitches between its corners than its length can hold (where a count starts again, a corner has a twin)

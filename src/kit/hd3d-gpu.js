@@ -134,8 +134,8 @@ class FleshModel extends PhysicalLightingModel {
     const d = nl.add(w).div(w.add(1)).saturate(), lit = pow(d, w.add(1));   // (lit side as Lambert's; the reach past the edge in a tail, red's longest)
     const H = L.add(positionViewDirection).normalize(), fr = F_Schlick({ f0: specularColor, f90: specularF90, dotVH: positionViewDirection.dot(H).saturate() });
     reflectedLight.directDiffuse.addAssign(lit.mul(lightColor).mul(BRDF_Lambert({ diffuseColor: diffuseContribution })).mul(fr.oneMinus()));
-    const spec = BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(.78) }).mul(.82)
-      .add(BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(1.35).min(1) }).mul(.18));
+    const spec = BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(.92) }).mul(.8)
+      .add(BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(1.4).min(1) }).mul(.2));
     reflectedLight.directSpecular.addAssign(ld.saturate().mul(lightColor).mul(spec).mul(this.multiScatteringCompensation));
   }
 }
@@ -198,7 +198,15 @@ export const gpuMaterials = {
     if (S.thin) {   // (the soft tinted rim stays, as on WebGL: it stands for the light that scatters about under the skin, which this does not do;
       // real skin (S.skin) works that light out itself, FleshModel.skin(), and has no rim)
       const at = attribute('gsThin', 'vec2'), F = { ...S, colour: uniform(S.colour), thin: at.x, open: at.y, wrap: float(S.skin === true ? 1 : S.skin || 0) };
-      if (S.skin) m.sheen = 0;
+      if (S.skin) { m.sheen = 0; m.ior = 1.4; }   // (skin reflects a little less than glass or plastic: 2.8% straight on)
+      // a real face's fine lines bend the light (a picture of how high the skin is, on the face's own UVs: human-paint.js paintDetail),
+      // over the pores' own normals; and its oily parts (the middle of the forehead, the nose, the chin, the lips) shine more
+      const FD = S.skin && gm.userData.faceDetail;
+      if (FD) {
+        const D = texture(FD, uv(1)), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
+        m.normalNode = bumpN(D.r, float(.00016), pores);
+        m.roughnessNode = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1));
+      }
       m.setupLightingModel = function () { return new FleshModel(this, F); };
       // what light comes through throws no shadow: an ear would shade its own far side, where the light comes out
       // (a face turned from the light is tested against itself in the shadow map, and the map's own grain shows)

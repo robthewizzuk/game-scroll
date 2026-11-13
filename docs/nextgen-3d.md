@@ -1214,7 +1214,11 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   (WebGPU): where a face turns from the light, light reaches on round past the edge, red furthest, so the
   edge is soft and warm (more so on a nose or a chin than on a cheek); the pores shade the light that does not
   travel and the shine, not the red; and the shine is two lobes, a tight one off the skin's oil and a broad one
-  (WebGL keeps a soft rim standing for it). Dark skin reads brown, not orange. A real face comes from `seed` (the same
+  (WebGL keeps a soft rim standing for it). Dark skin reads brown, not orange. Its skin has the detail of a
+  real one, made in code for each face: faint blotches of colour, freckles on fair skin that has them, a few
+  moles, brown spots with age, and fine lines that come with age (across the forehead, between the brows,
+  crow's feet, under the eyes, over the upper lip), shading in the paint on both renderers and bending the
+  light on WebGPU, where the middle of the face (forehead, nose, chin) and the lips shine a little more. A real face comes from `seed` (the same
   seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png

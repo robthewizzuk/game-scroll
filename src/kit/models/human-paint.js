@@ -15,9 +15,11 @@ const abs = Math.abs, mx = Math.max, mn = Math.min;
  * plain: the value that leaves the skin as it is (under 1, so paint can lighten as well as darken: the material's colour is 1 / plain).
  */
 export const FACE = { w: 256, h: 512, x1: .08, y0: -.125, y1: .045, z0: .048, plain: .8 };
-/** Where a point of the head (the person's space) is on the picture: out = [u, v]. Whatever is not the front of the face lands on the picture's edge, which is plain. */
-export function faceUV(x, y, z, out) {
-  const u = (abs(x) + 6 * mx(0, FACE.z0 - (z - HC[2]))) / FACE.x1, v = (y - HC[1] - FACE.y0) / (FACE.y1 - FACE.y0);
+/** A real face's picture (f.real) reaches higher, to take in the lines across the forehead (its rows a little taller: .4 mm). */
+export const FACE_REAL = { ...FACE, y1: .085 };
+/** Where a point of the head (the person's space) is on the picture (L: FACE, or FACE_REAL for a real face): out = [u, v]. Whatever is not the front of the face lands on the picture's edge, which is plain. */
+export function faceUV(x, y, z, out, L = FACE) {
+  const u = (abs(x) + 6 * mx(0, L.z0 - (z - HC[2]))) / L.x1, v = (y - HC[1] - L.y0) / (L.y1 - L.y0);
   out[0] = u < 0 ? 0 : u > 1 ? 1 : u; out[1] = v < 0 ? 0 : v > 1 ? 1 : v; return out;
 }
 // sRGB bytes from light (the picture is read as sRGB). Looked up: a power for every dot was most of the time a picture took. ENC is
@@ -44,16 +46,91 @@ export function browAt(x, hy, B, fem, real = false) {
   return k * (.95 + .05 * fine) * ss(1.06, .97, t);
 }
 
+// a hash of whole numbers, 0..1 (the same on every phone)
+const hash = (a, b, c) => { let q = (a * 374761393 + b * 668265263 + c * 2147483647) | 0; q = (q ^ (q >>> 13)) * 1274126177 | 0; return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
+// how far a point is from a line from (x0, y0) to (x1, y1), and how far along it (0..1): out
+const seg = (x, y, x0, y0, x1, y1, out) => {
+  const ex = x1 - x0, ey = y1 - y0, t = mx(0, mn(1, ((x - x0) * ex + (y - y0) * ey) / (ex * ex + ey * ey)));
+  out[0] = Math.hypot(x - x0 - ex * t, y - y0 - ey * t); out[1] = t; return out;
+};
+const S2 = [0, 0];
+/**
+ * The fine lines of a real face f ({ age, soft, lips, aseed }) at a point (x from the middle, hy from the eyes; rim: rimOf(f)): how deep a
+ * line is there, 0..1 (a full one about a fifth of a millimetre). They come with age, each kind in its own time: across the forehead from
+ * the late twenties, between the brows from the late thirties (less on a woman), crow's feet fanning from the outer corner of each eye
+ * from the mid thirties, under the lower lids from forty, and the fine upright lines over the upper lip from fifty. Each wavers and
+ * breaks off here and there, and no two faces have them the same (aseed).
+ */
+export function linesAt(x, hy, f, rim) {
+  const age = f.age ?? 30, fem = (f.soft || 0) > .5, ph = (f.aseed || 0) * 3.7; let d = 0;
+  // across the forehead: four rows over the brows, the middle two deepest
+  const af = ss(27, 62, age);
+  if (af > 0 && hy > .03 && hy < .08 && x < .05) for (let k = 0; k < 4; k++) {
+    const yk = .036 + .0095 * k + .0013 * Math.sin(x * 95 + k * 1.7 + ph) + .0005 * lumps(x * 300 + k * 5.3, k * 3.1, ph), w = .0006 + .00025 * af;
+    const v = bump(hy - yk, 0, w); if (v < .01) continue;
+    d = mx(d, v * af * (k === 1 || k === 2 ? 1 : .7) * ss(-.25, .35, lumps(x * 80 + k * 7.1 + ph, k * 2.3, 1.7)) * ss(.046 + .002 * k, .03, x));
+  }
+  // between the brows: one upright line each side, leaning out towards the top
+  const ag = ss(37, 72, age) * (fem ? .5 : 1);
+  if (ag > 0 && hy > .008 && hy < .034 && x < .016) { const x0 = .0062 + .0012 * Math.sin(ph), xl = x0 + (hy - .008) * .14; d = mx(d, ag * .8 * bump(x - xl, 0, .0006) * ss(.008, .013, hy) * ss(.034, .026, hy)); }
+  // crow's feet: four lines fanning out from the outer corner of the eye, the lowest running down over the cheekbone
+  const ac = ss(33, 66, age), ox = rim.cx + rim.w + .0015, oy = -.0008;
+  if (ac > 0 && x > ox - .002 && x < ox + .02 && abs(hy - oy) < .016) for (const [a, l] of [[-.6, .011], [-.22, .013], [.14, .012], [.5, .009]]) {
+    const ang = a + .08 * Math.sin(ph + a * 5), L = l * (.8 + .4 * ac), x0 = ox + .0035 * Math.cos(ang), y0 = oy + .0035 * Math.sin(ang);
+    seg(x, hy, x0, y0, ox + (.0035 + L) * Math.cos(ang), oy + (.0035 + L) * Math.sin(ang), S2);
+    d = mx(d, ac * .75 * bump(S2[0], 0, .00055 + .00025 * ac) * ss(0, .15, S2[1]) * ss(1, .5, S2[1]) * ss(-.3, .3, lumps(S2[1] * 6 + a * 9, ph, 1.3)));
+  }
+  // under the lower lids: two fine arcs, lower and longer the older
+  const au = ss(40, 76, age);
+  if (au > 0 && hy < -.008 && hy > -.026 && x > .018 && x < .054) for (let k = 0; k < 2; k++) {
+    const yk = -.0118 - .0032 * k - .0015 * au + .0048 * ((x - .034) / .016) ** 2; d = mx(d, au * (.6 - .2 * k) * bump(hy - yk, 0, .0005) * bump(x, .034, .011 + .003 * k));
+  }
+  // over the upper lip: fine upright lines from its edge towards the nose
+  const al = ss(50, 82, age) * (fem ? 1 : .55);
+  if (al > 0 && x < .02 && hy > -.064 && hy < -.045) {
+    const top = lipLine(x, f) + .0078 * (f.lips || 1) * (1 - .6 * ss(.008, .02, x)), i = Math.floor(x / .0034), xi = (i + .5 + .5 * (hash(i, 7, ph | 0) - .5)) * .0034, len = .004 + .004 * hash(i, 9, ph | 0);
+    d = mx(d, al * .5 * hash(i, 5, ph | 0) * bump(x - xi, 0, .0004) * ss(top, top + .001, hy) * ss(top + len, top + len * .5, hy));
+  }
+  return mn(1, d);
+}
+/** How oily a real face's skin is at a point (0..1): the middle of the forehead, down the nose, the chin, and the lips. */
+export function oilAt(x, hy, lip) {
+  return mx(.85 * ss(.034, .014, x) * ss(.015, .032, hy), .9 * ss(.017, .008, x) * ss(-.052, -.042, hy) * ss(.03, .016, hy), .6 * ss(.016, .006, x) * ss(-.098, -.108, hy), .7 * lip);
+}
+/**
+ * The fine detail of a real face (o as for paintFace) as a picture of two numbers a dot, laid on as the paint is (FACE_REAL): how high the skin
+ * is there (1 its own surface, lower in a line: linesAt), and how oily (oilAt). WebGPU bends the light by the first and makes the skin
+ * shinier by the second (hd3d-gpu.js sss twin); WebGL shows the lines in the paint alone. Returns its bytes (RG, w * h * 2, the bottom row first).
+ */
+export function paintDetail(o) {
+  const { w, h, x1, y0, y1 } = FACE_REAL, f = o.face, rim = rimOf(f), px = new Uint8Array(w * h * 2), m3 = [0, 0, 0];
+  for (let j = 0; j < h; j++) {
+    const hy = y0 + (j + .5) / h * (y1 - y0);
+    for (let i = 0; i < w; i++) {
+      const x = (i + .5) / w * x1, lip = hy < -.045 && hy > -.092 && x < .034 ? mouthAt(x, hy, f, m3)[1] : 0, at = (j * w + i) * 2;
+      px[at] = Math.round(255 * (1 - linesAt(x, hy, f, rim))); px[at + 1] = Math.round(255 * oilAt(x, hy, lip));
+    }
+  }
+  for (let i = 0; i < w; i++) { px[i * 2] = px[((h - 1) * w + i) * 2] = 255; px[i * 2 + 1] = px[((h - 1) * w + i) * 2 + 1] = 0; }   // (the edges, where everything off the face lands: plain)
+  for (let j = 0; j < h; j++) { px[(j * w + w - 1) * 2] = 255; px[(j * w + w - 1) * 2 + 1] = 0; }
+  return px;
+}
+
 /**
  * Paints the picture for a look: { face (the spec's: eyes, lips, soft), fem, stubble (0..1), skin, brow, lips, lash, mouth (each [r, g, b]
  * as light, not sRGB) }. Returns its bytes (RGBA, w * h * 4, the bottom row first), to be read as sRGB.
  */
 export function paintFace(o) {
-  const { w, h, x1, y0, y1, plain } = FACE, f = o.face, fem = !!o.fem, px = new Uint8Array(w * h * 4), S = o.skin;
+  const { w, h, x1, y0, y1, plain } = o.face.real ? FACE_REAL : FACE, f = o.face, fem = !!o.fem, px = new Uint8Array(w * h * 4), S = o.skin;
   // each colour as a share of the skin's (what the skin's colour has to be multiplied by to become it), no lighter than the picture can say
   const of = c => [0, 1, 2].map(i => mn(1 / plain, c[i] / mx(1e-4, S[i]))), BR = of(o.brow), LP = of(o.lips), LA = of(o.lash), MO = of(o.mouth);
   const B = browOf(f.soft), rim = rimOf(f), ES = esOf(f), ex0 = rim.cx - rim.w, exw = 2 * rim.w, m3 = [0, 0, 0];
   const stub = o.stubble || 0, P = enc(plain), R = !!f.real; let r, g, b;
+  // (a real face's skin is never one colour: faint blotches of warmer and cooler, freckles on fair skin that has them (f.freckles), a few
+  // moles, brown spots with age, a little shadow of colour under the eyes, and its fine lines (linesAt) a shade darker in their depths)
+  const ph = (f.aseed || 0) * 3.7, seed = Math.floor((f.aseed || 0) * 100), lum = .3 * S[0] + .59 * S[1] + .11 * S[2], fair = ss(.18, .5, lum), dark = 1 - ss(.04, .16, lum);
+  const frk = R ? (f.freckles || 0) * fair : 0, spots = R ? ss(55, 82, f.age ?? 30) * (1 - .6 * dark) : 0;
+  const moles = R ? Array.from({ length: Math.floor(hash(seed, 3, 1) * 3.6) }, (_, k) => [.012 + .055 * hash(seed, k, 11), -.1 + .12 * hash(seed, k, 12), .0006 + .0006 * hash(seed, k, 13)]) : [];
   // (a real face's paint is quieter: finer brows with skin between the hairs, a thinner line along the lashes, lips nearer the skin's own colour)
   const put = (C, k) => { r += (C[0] - r) * k; g += (C[1] - g) * k; b += (C[2] - b) * k; };
   for (let j = 0; j < h; j++) {
@@ -92,6 +169,22 @@ export function paintFace(o) {
       const btop = -.042 + .045 * ss(.035, .07, x);
       if (stub > 0 && hy < btop) {
         const k = ss(btop, btop - .014, hy) * (1 - lip) * mn(1, stub * 1.4) * mx(0, lumps(x * 3300, hy * 3300, 3.3)) * .55; if (k > 0) { r *= 1 - k; g *= 1 - k * .92; b *= 1 - k * .8; }
+      }
+      if (R) {
+        const ln = linesAt(x, hy, f, rim); if (ln > 0) { const k = .1 * ln; r *= 1 - k * .9; g *= 1 - k; b *= 1 - k * .95; }
+        const bl = lumps(x * 55 + ph, hy * 55, 1.1) * .022, bl2 = lumps(x * 140 + 4, hy * 140 + ph, 2.3) * .012; r *= 1 + bl + bl2; g *= 1 + bl * .6 + bl2; b *= 1 + bl * .3 + bl2 * .8;
+        const ue = bump(hy, -.0135, .0055) * bump(x, .034, .011) * (.05 + .05 * ss(30, 70, f.age ?? 30)); if (ue > 0) { r *= 1 - ue * .8; g *= 1 - ue; b *= 1 - ue * .7; }
+        if (frk > 0) {   // freckles: on the cheeks and over the nose most, a few on the forehead
+          const zone = mx(bump(hy, -.022, .016) * ss(.07, .05, x), .5 * ss(.05, .025, hy) * ss(.035, .055, hy) * ss(.05, .03, x)), C = .0021, ci = Math.floor(x / C), cj = Math.floor(hy / C) + 400, h1 = hash(ci, cj, seed);
+          if (h1 < frk * zone * .8) { const fx = (ci + .2 + .6 * hash(ci, cj, seed + 1)) * C, fy = (cj - 400 + .2 + .6 * hash(ci, cj, seed + 2)) * C, rr = .00028 + .00038 * hash(ci, cj, seed + 3), k = ss(rr, rr * .45, Math.hypot(x - fx, hy - fy)) * (.1 + .1 * hash(ci, cj, seed + 4));
+            if (k > 0) { r *= 1 - k * .7; g *= 1 - k; b *= 1 - k * 1.25; } }
+        }
+        if (spots > 0) {   // brown spots with age: soft, a few millimetres across, on the forehead, the temples and the cheeks
+          const C = .011, ci = Math.floor(x / C), cj = Math.floor(hy / C) + 40, h1 = hash(ci, cj, seed + 7);
+          if (h1 < .4 * spots && (hy > .015 || x > .035)) { const fx = (ci + .25 + .5 * hash(ci, cj, seed + 8)) * C, fy = (cj - 40 + .25 + .5 * hash(ci, cj, seed + 9)) * C, rr = .0018 + .0024 * hash(ci, cj, seed + 10), k = ss(rr, rr * .3, Math.hypot(x - fx, hy - fy)) * .07 * spots;
+            if (k > 0) { r *= 1 - k * .6; g *= 1 - k; b *= 1 - k * 1.4; } }
+        }
+        for (const [mx0, my0, mr] of moles) { const d = Math.hypot(x - mx0, hy - my0); if (d < mr * 1.5) { const k = ss(mr, mr * .5, d) * .42; r *= 1 - k * .8; g *= 1 - k; b *= 1 - k * 1.1; } }
       }
       const at = (j * w + i) * 4; px[at + 3] = 255;
       if (r === 1 && g === 1 && b === 1) px[at] = px[at + 1] = px[at + 2] = P;   // (most of a face is its skin's own colour)
