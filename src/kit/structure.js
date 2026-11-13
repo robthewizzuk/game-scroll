@@ -17,6 +17,7 @@
 // and break up where they land. Either way the small rubble is cheap: boxes drawn as copies, not bodies.
 // The look is the game's: `broke` lists what happened each frame (where, how big, how fast) for your dust,
 // sound and shake. Kit use only: games reach it as gs.destruction.Structure.
+import { timed } from './prof.js';
 import { Group, Mesh, BufferGeometry, BufferAttribute, BoxGeometry, InstancedMesh, InstancedBufferAttribute, DynamicDrawUsage, Matrix4, Quaternion, Vector3, Euler } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { buildingPieces } from './models/buildings.js';
@@ -543,3 +544,6 @@ export class Structure {
     for (const m of this.meshes) m.geometry.dispose();   // (its own triangle lists; the points are shared with other copies)
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Structure.prototype, 'update', 'breaking buildings');

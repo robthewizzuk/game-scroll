@@ -57,7 +57,13 @@ export function judgeExit(x, was, web) {
   const note = String(x.what || '').replace(/[^\x20-\x7e]/g, '').split(/[:;({]/)[0].replace(/\d+/g, '#').trim().slice(0, 40);
   return {
     game: mine ? was.game || '' : '', ver: mine ? was.ver || '' : '',
-    msg: `App closed ${!front ? 'in the background' : mine && was.playing ? 'while playing' : 'while open'}: ${reason}`,
+    msg: `App closed ${!front ? 'in the background' : mine && was.playing ? 'while playing' : 'while open'}: ${reason}${mine ? memoryNote(was) : ''}`,
     place: note ? 'android: ' + note : '', at: Math.floor(x.at / 1000),
   };
+}
+
+/** ' (memory was low)' when the memory guard (src/kit/memory.js) had seen the phone short of memory, else ''. */
+export function memoryNote(was) {
+  const l = was?.mem | 0;
+  return l > 0 ? ` (memory was ${['', 'tight', 'low', 'critical'][Math.min(3, l)]})` : '';
 }

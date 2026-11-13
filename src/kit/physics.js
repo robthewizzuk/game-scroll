@@ -20,6 +20,7 @@
 // engine is there too (phys.R, phys.world) for anything the helpers don't cover; it works in metres,
 // so use phys.toWorld(x) / phys.toGame(m) to convert.
 
+import { timed } from './prof.js';
 import { lazy } from './lazy.js';
 import { wasmSimd } from './simd.js';
 import { own } from './cleanup.js';
@@ -413,3 +414,6 @@ export class Physics {
     c.restore();
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Physics.prototype, 'step', 'physics 2D');

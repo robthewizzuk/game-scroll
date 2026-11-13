@@ -22,6 +22,7 @@
 //
 // Sizes are metres; y is up. Keep segments modest on phones (64-128 a side).
 
+import { timed } from './prof.js';
 import { BufferAttribute, BufferGeometry, Color, DataTexture, Group, InstancedBufferAttribute, InstancedMesh, LinearFilter, RGBAFormat, ConeGeometry, CylinderGeometry, DodecahedronGeometry, DoubleSide, Float32BufferAttribute, IcosahedronGeometry, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, OrthographicCamera, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, Vector4, WebGLRenderTarget } from 'three';
 import { fbm } from './math.js';
 import { bakeRenderer as renderer } from './hd3d.js';
@@ -571,3 +572,8 @@ export function rock({ size = 1, colour = '#8a8a80', seed = 1 } = {}) {
   g.translate(0, size * .25, 0); g.computeVertexNormals(); return tint(g, colour);
 }
 
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Land.prototype, 'update', 'land and grass');
+timed(Wind.prototype, 'update', 'land and grass');
+timed(River.prototype, 'update', 'water');
+timed(FloodWater.prototype, 'update', 'water');

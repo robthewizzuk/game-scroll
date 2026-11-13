@@ -27,6 +27,7 @@
 //
 // The kit gives the table, the camera, AR, picking, moves, dice, a few pieces and sounds. The rules,
 // the board's look and the HUD are the game's.
+import { timed } from './prof.js';
 import { CanvasTexture, CircleGeometry, Color, CylinderGeometry, DoubleSide, ExtrudeGeometry, Group, IcosahedronGeometry, LatheGeometry, Matrix4, Mesh, MeshBasicMaterial, Plane, PlaneGeometry, Quaternion, Ray, Raycaster, ShadowMaterial, Shape, SphereGeometry, SRGBColorSpace, TorusGeometry, Vector2, Vector3, BackSide, BoxGeometry } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { HDView, Particles, pbr, rbox, surface, speckle, spot } from './hd3d.js';
@@ -822,3 +823,6 @@ export function fuse(group) {
 /** Board-game colours that sit well together: four player colours and two "sides". */
 export const COLOURS = Object.freeze({ players: Object.freeze(['#e0483a', '#3a8fe0', '#f0b429', '#3fb56b', '#a05ad6', '#e87a2a']), light: '#efe6d2', dark: '#2a2d36' });
 export { shade, EASE };
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Table.prototype, 'update', 'board');

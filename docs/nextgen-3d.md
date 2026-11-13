@@ -78,7 +78,9 @@ Play never climbs above **high**: on ultra the Fold 8 got hot and throttled with
 3D game, and then stuttered (frame lab reports, 2026-11-10). Ultra is still there for `HD.force = 3`
 (tests, screenshots, the frame lab's A/B). While the phone is warm or hot (`src/kit/power.js`), and for
 a minute after it cools, games also draw one tier lower from the next round (a tier change rebuilds
-shaders, so not mid-round) and drop to the first resolution step at once.
+shaders, so not mid-round) and drop to the first resolution step at once. The same happens while the
+phone is short of memory (the memory guard, `src/kit/memory.js`: low or critical; critical takes the
+second resolution step), since a lower tier and a smaller picture keep fewer and smaller render targets.
 
 The feed loop skips screen refreshes to hold a game at its rate (a 60 fps game on a 120 Hz screen
 draws every other refresh), which saves battery and heat. Settings has Auto / 120 / 60 / 30
@@ -98,6 +100,20 @@ a game down (a warm phone, a low battery, a busy spell while it loaded) has pass
 is quick where climbing back is slow, so after a day the game starts from the phone's class again. A
 game held up by the CPU above 60 fps (the graphics chip has room) goes straight to 60 instead of giving
 up a tier first.
+
+**Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
+(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, bounce light,
+depth of field, motion blur, screen effects, upscale...). When a game is slow and the graphics chip is the
+reason, the effect that costs it most is drawn smaller first: ambient occlusion, bloom, reflections (screen
+space or traced), volumetric light and sun shafts each have three sizes (100%, 70%, 50% of the tier's). An
+effect is only stepped while it takes at least an eighth of the chip's frame (and half a millisecond), so a
+cheap effect is never made worse for nothing; when none does, the resolution steps as before. Only the size
+of the effect's pictures changes, so no shader is built again mid-round. Where the chip doesn't say (WebGL,
+phones without timestamps) each effect in use gives one step, sun shafts first and ambient occlusion last,
+before the resolution. Climbing back is the other way round: once the resolution is full again, the effect
+stepped down last comes back first, and not within 30 s of a slow spell. Steps are remembered with the
+game's tier and resolution. `HD.fx` says what is drawn smaller now (`{ ao: .5, bloom: .7 }`); the frame lab
+shows it and logs each change. Tests pin a step with `HD.fxStep('bloom', 2)`.
 
 **Speed tricks that keep the picture the same:**
 

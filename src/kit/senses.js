@@ -20,6 +20,7 @@
 // The guard needs x, y and facing (radians). In 3D games pass x and z as x and y. The player needs
 // x and y (and can set hidden: true in a locker or bush). Senses.alertAll(guards, x, y, radius)
 // tells nearby guards when one raises the alarm.
+import { timed } from './prof.js';
 
 export class Senses {
   constructor({ range = 120, fov = 90, near = 20, hearing = 1, spotTime = .9, memory = 4, searchTime = 6, calmDown = 3 } = {}) {
@@ -82,3 +83,7 @@ export class Noises {
   update(dt) { for (const n of this.list) n.age += dt; this.list = this.list.filter(n => n.age < .5); return this; }
   clear() { this.list = []; return this; }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Senses.prototype, 'update', 'senses');
+timed(Noises.prototype, 'update', 'senses');

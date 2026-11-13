@@ -19,6 +19,7 @@
 //
 // Like 2D physics the engine loads the first time a game needs it (the app waits for it).
 
+import { timed } from './prof.js';
 import { lazy } from './lazy.js';
 import { wasmSimd } from './simd.js';
 import { Box3, Matrix4, Vector3 as V3, Quaternion } from 'three';
@@ -457,3 +458,6 @@ function meshData(root, world) {
   });
   return { vertices: new Float32Array(verts), indices: new Uint32Array(idx) };
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(World3D.prototype, 'step', 'physics 3D');

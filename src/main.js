@@ -36,6 +36,7 @@ import { hearts } from './hearts.js';
 import { playstats } from './playstats.js';
 import { boards, rankHTML, openBoard } from './boards.js';
 import { perf } from './perf.js';
+import { onMemory, forceMemory, memory } from './kit/memory.js';
 import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish } from './kit/speed.js';
 import { keepAwake, awake } from './kit/awake.js';
 import * as fontlib from './kit/fontlib.js';
@@ -701,7 +702,9 @@ function paint(s){
   // (Next Gen and AR cards painted off screen draw no 3D then: hd3d.js paints their picture in once the feed is still)
 }
 // Always keep AHEAD games downloaded and ready below the one you're on, so swiping never waits.
-const AHEAD=5;
+// When the phone runs short of memory (src/kit/memory.js) the feed keeps fewer cards ready below and
+// behind (feedWindow), as each holds a canvas and a whole game.
+let AHEAD=5;
 // The fresh catalogue arrived after the feed started from the saved one. New games join this cycle.
 // Games whose category changed leave the queue, and the slides waiting below you, of a tab they no longer
 // belong to, and slides waiting below you are rebuilt with any changed details.
@@ -872,7 +875,19 @@ function setActive(s){
 // them: every card holds a canvas and a whole game, so a long session would keep using more memory
 // until the phone closes the app. Older cards are dropped a few at a time, once the feed has
 // settled, and the scroll position is corrected in the same frame so nothing on screen moves.
-const BEHIND=8,PRUNE_BATCH=4;
+let BEHIND=8,PRUNE_BATCH=4;
+// memory level (0 fine .. 3 critical) -> [cards ready below, cards kept behind, drop behind in batches of]
+const WINDOW=[[5,8,4],[4,4,2],[2,2,1],[1,1,1]];
+function feedWindow(level,was){
+  [AHEAD,BEHIND,PRUNE_BATCH]=WINDOW[level]||WINDOW[0];
+  if(level<=was)return topUpLater();   // easing off: build back up when calm
+  // short of memory: let go of the cards furthest below now (their games go back to the front of the
+  // queue, to come again), and of the ones behind once the feed is still
+  const i=active?slides.indexOf(active):0,extra=slides.slice(i+1+Math.max(1,AHEAD));
+  for(const s of extra.reverse()){slides.splice(slides.indexOf(s),1);dropSlide(s);queue.unshift(GAMES.find(g=>g.id===s.def.id)||s.def)}
+  schedulePrune(0);
+}
+onMemory(feedWindow);
 let pruneT=0,touches=0;
 addEventListener('pointerdown',()=>{touches++;touchAt=performance.now()},true);
 for(const ev of ['pointerup','pointercancel'])addEventListener(ev,()=>{touches=Math.max(0,touches-1);touchAt=performance.now()},true);
@@ -1126,4 +1141,4 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
 
-if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

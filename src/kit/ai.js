@@ -24,6 +24,7 @@
 //
 // The whole Yuka library is there as gs.ai.YUKA for anything else (fuzzy logic, goals, vision, nav meshes).
 
+import { timed } from './prof.js';
 import * as YUKA from 'yuka';
 export { YUKA };
 export { Swarm } from './swarm.js';
@@ -210,3 +211,7 @@ export class Brain {
   is(name) { return this.state === name; }
   update(dt) { this.time += dt; this.states[this.state]?.update?.(dt); return this; }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Crowd.prototype, 'update', 'AI');
+timed(Brain.prototype, 'update', 'AI');

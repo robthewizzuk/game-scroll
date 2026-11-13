@@ -40,6 +40,7 @@
 //
 // Runs on the phone's CPU in plain JavaScript (a decision takes microseconds).
 
+import { timed } from './prof.js';
 import { rng } from './math.js';
 import { phoneClass } from './speed.js';
 import { currentOwner } from './cleanup.js';
@@ -972,3 +973,8 @@ function sample(p, r, temp) {
 }
 function gauss(r) { let u = 0, v = 0; while (!u) u = r(); v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 function hashName(s) { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Brain.prototype, 'act', 'Tiny Brains');
+timed(Imagine.prototype, 'think', 'Tiny Brains');
+timed(Shadow.prototype, 'act', 'Tiny Brains');

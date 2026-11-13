@@ -15,6 +15,7 @@
 //   draw: for (const s of soft.sticks) line(s.a, s.b); or flag.at(c, r), blob.points
 //
 // 3D cloth: soft = new Soft({ gravity: { x: 0, y: -9.8, z: 0 }, dims: 3 }); cloth(..., { plane: 'xy' }); soft.toGeometry(flag, mesh.geometry).
+import { timed } from './prof.js';
 
 export class Soft {
   /**
@@ -230,3 +231,7 @@ export class Liquid {
     }
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Soft.prototype, 'update', 'soft things');
+timed(Liquid.prototype, 'update', 'soft things');

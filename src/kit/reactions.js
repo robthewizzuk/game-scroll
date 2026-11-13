@@ -19,6 +19,7 @@
 // between the feet the body only sways; outside them a foot steps to it, as people do; out of a step's
 // reach, or with no ground to step on, the body falls. Kit use: games reach it through gs.characters.
 
+import { timed } from './prof.js';
 import { Quaternion, Vector3 } from 'three';
 import { reach } from './characters.js';
 import { keys } from './poses.js';
@@ -512,3 +513,6 @@ export class Reactions {
     return this;
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Reactions.prototype, 'update', 'reactions');

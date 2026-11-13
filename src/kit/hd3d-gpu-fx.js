@@ -107,7 +107,7 @@ const STAGE = {
  * effects move pixels about.
  */
 export function fxStages(ch, src, ao, U) {
-  const keep = fn => { const t = rtt(fn, 1, 1, HALF); ch.fxR.push(t); return t; };
+  const keep = fn => { const t = rtt(fn, 1, 1, HALF); t.renderTarget.gsPart = 'screen effects'; ch.fxR.push(t); return t; };
   // (three's nodes size themselves from the canvas: scaled down with the scene when it's drawn small and upscaled)
   const scaled = n => { const set = n.setSize.bind(n); n.setSize = (w, h) => set(Math.max(1, Math.round(w * ch.fxK)), Math.max(1, Math.round(h * ch.fxK))); ch.fxN.push(n); return n; };
   if (ao) { const S = src; src = keep(Fn(() => vec4(S.sample(uv()).rgb.mul(ao), 1))()); }
@@ -139,7 +139,9 @@ export function reflStage(ch, sp, colT) {
   const n = ch.ssrN = ssr(C, sp.getTextureNode('depth'), sp.getTextureNode('normal'), { metalnessNode: R.r, roughnessNode: R.g, camera: ch.cam });
   n.maxDistance.value = 8; n.thickness.value = .05; n.intensity.value = .55; n.quality.value = .5;
   const hit = n.getTextureNode();
-  return ch.ssrT = rtt(Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(), 1, 1, HALF);
+  ch.ssrT = rtt(Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(), 1, 1, HALF);
+  ch.ssrT.renderTarget.gsPart = 'reflections';   // (hd3d.js gpuTime: the chip's time by pass; three's own SSR passes are found by name)
+  return ch.ssrT;
 }
 export function reflFrame(ch, w, h, scale) {
   if (!ch.ssrT) return;

@@ -263,7 +263,7 @@ Object.defineProperty(speed, 'shield', { get: shieldOn });
 export function settle(id, o) {
   if (!id) return;
   const was = settled[id] || {}, now = { ...was, ...o };
-  if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgHow === now.fgHow) return;
+  if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgHow === now.fgHow && JSON.stringify(was.fx || null) === JSON.stringify(now.fx || null)) return;
   now.at = Date.now(); settled[id] = now; store.set(SETTLE_KEY, settled);
 }
 /** Where this game settled, if that was within the last day (older: forgotten here, so the game starts from the phone's class again). */
