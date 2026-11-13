@@ -141,5 +141,15 @@ export const RECIPES = {
       return { col: O.mulc(k.colour, O.add(.92, O.mul(n, .08))), rough: O.sub(.6, O.mul(sparkle, .5)), metal: 0, h: O.add(.4, O.mul(n, .3)) };
     },
   },
+  // skin seen close (a tile is 16 mm on a person): the net of fine furrows that cuts it into little plots half a millimetre
+  // across, a wider net over that, pores in some of the plots, and a slow unevenness under it all
+  skin: {
+    P: 4, look: { colour: '#d9ab86' },
+    f(O, p, k) {
+      const c = O.cells(O.scale(p, 7), 28, 3, .95), line = O.sub(1, O.smooth(0, .12, c.e)), big = O.cells(O.scale(p, 2.5), 10, 5, .9), fold = O.sub(1, O.smooth(0, .07, big.e));
+      const pore = O.mul(O.smooth(.26, .1, c.d), O.step(.66, c.id)), n = O.fbm(O.scale(p, 1), 4, 3, 1), dip = O.clamp(O.add(O.add(O.mul(line, .45), O.mul(fold, .35)), O.mul(pore, .6)));
+      return { col: O.mulc(k.colour, O.sub(O.add(.97, O.mul(n, .04)), O.mul(dip, .07))), rough: O.add(.48, O.add(O.mul(dip, .16), O.mul(n, .06))), metal: 0, h: O.clamp(O.sub(O.add(.7, O.mul(n, .1)), O.mul(dip, .55))) };
+    },
+  },
 };
 export const NAMES = Object.keys(RECIPES);

@@ -9,7 +9,7 @@
 //   POST /score, GET /board   leaderboards, all time and today, with quick fairness checks (see scores.js)
 //   POST /brain, GET /brain   Tiny Brains shared learning: everyone's average brain (see brains.js)
 //   POST /stats, GET /stats   anonymous play stats (see stats.js)
-//   POST /perf, GET /perf, GET /perf/report   anonymous frame timing and crash reports (see perf.js)
+//   POST /perf, GET /perf, GET /perf/report[?game=<id>]   anonymous frame timing and crash reports (see perf.js)
 //   play.game-scroll.com/<id> the page a shared game link opens (see sharepage.js)
 //
 // No accounts: each install sends a random anonymous device id; (game, device) is unique, so a phone
@@ -22,7 +22,7 @@ import { verifyIntegrity } from './playintegrity.js';
 import { unb64, b64u } from './util.js';
 import { cleanBatch, saveBatch, totals, prune } from './stats.js';
 import { sharePage, shareGame, idFromPath } from './sharepage.js';
-import { cleanPerf, savePerf, perfTotals, prunePerf, perfPage } from './perf.js';
+import { cleanPerf, savePerf, perfTotals, perfReport, prunePerf, perfPage } from './perf.js';
 import { cleanScore, cleanSecs, checkScore, saveScore, board, pruneScores } from './scores.js';
 import { cleanBrain, saveBrain, sharedBrain, pruneBrains, NAME_RE, SHAPE_RE } from './brains.js';
 
@@ -181,19 +181,23 @@ async function postPerf(env, req) {
   return json(req, { ok: true, games: batch.games.length, errors: batch.errors.length });
 }
 
-/** GET /perf (JSON) or /perf/report (a web page), cached for a few minutes. */
+/** GET /perf (JSON) or /perf/report (a web page; ?game=<id> for one game's history), cached for a few minutes. */
 async function getPerf(env, ctx, req, page) {
   const ttl = env.STATS_TTL !== undefined ? Number(env.STATS_TTL) : PERF_TTL;   // tests set 0
-  const cache = caches.default, key = new Request(new URL(page ? '/perf/report' : '/perf', req.url).toString());
+  // One page per game in the catalogue and no other variants, so the cache (and the database behind it) can't be flooded with made-up addresses.
+  const game = page ? new URL(req.url).searchParams.get('game') || '' : '';
+  const titles = async () => (await gameIds(env)) || new Map();
+  if (game && (!GAME_RE.test(game) || ((await titles()).size && !(await titles()).has(game)))) return new Response('No such game.', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' } });
+  const cache = caches.default, key = new Request(new URL(page ? '/perf/report' + (game ? '?game=' + game : '') : '/perf', req.url).toString());
   let res = ttl > 0 ? await cache.match(key) : null;
   if (!res) {
-    const t = await perfTotals(env.DB);
+    if (game && await limited(env.LIMIT_PAGES, 'pg:' + ip(req))) return new Response('Slow down.', { status: 429, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '60' } });
     res = page
-      ? new Response(perfPage(t, (await gameIds(env)) || new Map()), { headers: {
+      ? new Response(perfPage(await perfReport(env.DB, Date.now(), game), await titles(), env.REPO_URL), { headers: {
           'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': `public, max-age=${ttl}`, 'X-Content-Type-Options': 'nosniff',
           'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
           'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' } })
-      : new Response(JSON.stringify(t), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${ttl}` } });
+      : new Response(JSON.stringify(await perfTotals(env.DB)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${ttl}` } });
     if (ttl > 0) ctx.waitUntil(cache.put(key, res.clone()));
     if (Math.random() < 0.05) ctx.waitUntil(prunePerf(env.DB));
   }
