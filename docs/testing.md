@@ -27,7 +27,8 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Feed swiping | `node scripts/feed-jank.cjs [swipes] [--filter nextgen]` (compare before and after, not with a phone) | about a minute |
 | Shared game links, or how the feed starts (`src/share.js`, `openShared` and `playNow` in `src/main.js`, the catalogue in `src/remote.js`) | `node scripts/share-link.mjs [id]`: opens the streamed web app from a shared link on quick, slow and stale connections (builds what it needs) | about 30 s |
 | A kit in `src/kit/` | `npm run kit-test`, then smoke the games that use it (`node scripts/pick-games.mjs` names the best few per style) | 3 s + games |
-| What the app does around a game (screen kept on, finer touch, even pixels and the LCD look, the one-line soundtrack, the phone-only save), the font library, and the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons) | `node scripts/app-test.cjs [awake\|touch\|pixels\|music\|saves\|fonts\|looks\|tour]` after a build (`npm run app-test` does both; `SHOTS=<folder>` saves a picture of every font and look) | about a minute |
+| How a 3D round starts: the loading screen after Play (`getReady` in `src/main.js`, `src/kit/getready.js`, what the 3D kit says it is still waiting for) | `node scripts/app-test.cjs ready` after a build, then `node scripts/round-start.cjs [id ...] [--webgpu]` (see "Play on a 3D game" below) | 1 min, then about 10 s a game |
+| What the app does around a game (screen kept on, finer touch, even pixels and the LCD look, the one-line soundtrack, the phone-only save), the font library, and the 2D looks (materials, slabs, water, stickers, sketch pen, ink, icons) | `node scripts/app-test.cjs [awake\|touch\|pixels\|music\|saves\|fonts\|looks\|tour\|loading\|ready]` after a build (`npm run app-test` does both; `SHOTS=<folder>` saves a picture of every font and look) | about a minute |
 | Sound (`src/sfx.js`, `src/kit/sound.js`, `acoustics.js`, `instruments.js`) | `npm run sound-test [sounds\|band\|clock\|level]`: renders the sound off screen and measures it (every ready-made sound is heard and none is too loud, the limiter holds, instrument sets are as loud as each other, the music clock keeps the beat through a frozen frame, a sound behind a wall comes out quieter and duller and a room rings by itself) | about 100 s |
 | A starter template (`scripts/templates/`) | `npm run new zz-try --style <style>`, then lint, types and smoke it like any game, and delete it | under 30 s |
 | The 3D look (hd3d, toon3d, post effects, a three.js update) | `node scripts/look-compare.cjs save base` **before** the change, `check base` after; add `--webgpu` to check the WebGPU path | about 16 s each |
@@ -164,10 +165,12 @@ What it does (`src/tour.js`):
   game, problems first:
 
   ```
-  SLOW      canyon-ace (Canyon Ace) · Next Gen · loaded in 2.4 s · 47 of 60 fps (+60 made) · worst 1% 31 fps · longest 58 ms · slow 6% · freezes 0 · game code 4.1 ms · WebGPU, quality 2/1, full screen · 2 rounds, best 14 · phone warm
+  SLOW      canyon-ace (Canyon Ace) · Next Gen · loaded in 2.4 s · round ready in 0.9 s · 47 of 60 fps (+60 made) · worst 1% 31 fps · longest 58 ms · slow 6% · freezes 0 · game code 4.1 ms · WebGPU, quality 2/1, full screen · 2 rounds, best 14 · phone warm
   ```
 
-  `47 of 60 fps` is real frames drawn against the rate the game aims for on this phone, `+60 made`
+  `round ready in` is how long the loading screen was up between Play and the first round starting
+  (3D games only: see "Play on a 3D game" below), `47 of 60 fps` is real frames drawn against the rate
+  the game aims for on this phone, `+60 made`
   the frames frame generation adds, `worst 1%` the frame rate of the slowest hundredth of frames,
   `slow` the share of frames over one and a half times their budget, `freezes` frames of 70 ms or
   longer (those as a round started are counted apart: that is the level being built, not play), and
@@ -289,6 +292,38 @@ of it was the game's own code (and kit work nobody keeps, such as a texture the 
 part is run again every pass, so a game with more than 30 ms of it is "made in one go" from there.
 The numbers move 10 to 20% between runs, and first-frame costs (shader builds, texture uploads,
 drawing) are not in them: `perf-bench.cjs` and `shader-hold.cjs` measure those.
+
+## Play on a 3D game: the loading screen before a round
+
+Play on a Next Gen, AR or Board game does not start the round at once. The app puts a loading screen
+over the card, runs the game's `reset()`, draws the round's first frames under the cover (`draw()`
+with no `update()`), runs the round's first `update()` there too, once, and starts the round when the
+3D kit has nothing left on its way (shaders being built, things hidden until theirs are) and a few
+frames in a row came on time (`getReady` in `src/main.js`; `src/kit/getready.js` is what the app and
+the kits share). A card that has been through it once is quick the next time, so "Play again" usually
+shows no loading screen at all. A 2D game still starts the instant Play is pressed.
+
+In tests, `__gs.start()` starts the round this instant, as it always has, so every existing script
+times what it timed before. `__gs.play()` is the real tap: it goes through the loading screen.
+`__gs.active.starting` is set while a card gets ready (`phase`: `load`, `warm`, `hold`),
+`__gs.active.readyMs` is how long the last one took, and `__gs.waits()` is what the kits are still
+waiting for (`{ hard, soft, what }`).
+
+```bash
+npm run build:bundled
+node scripts/app-test.cjs ready                  # the rules: cover up at once, one reset, one hidden update, nothing hidden at the start
+node scripts/round-start.cjs                     # every Next Gen, AR and Board game: Play to the round, and its first frames
+node scripts/round-start.cjs parcel-dash --now   # the old way, to compare: the round starts on the tap
+node scripts/round-start.cjs --webgpu --jobs 3   # the WebGPU path, in software
+```
+
+`round-start.cjs` prints one line a game: how long it took to get ready, the frames drawn under the
+cover (the longest of them is the building that used to land in the round), and the round's first
+five frames beside its usual one. `HIDDEN n` means the round started with things still waiting for
+their shaders, `LONG` that its first frames were more than 2.2 times the usual one, `(later n)` only
+that something the game made mid-round was hidden for a moment while its shader built. With `--now`
+the same games show what the loading screen saves: Parcel Dash's first frame is about 2 s in software
+instead of a normal one.
 
 ## Pictures: proving a change doesn't change the look
 

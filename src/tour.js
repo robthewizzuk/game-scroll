@@ -271,6 +271,7 @@ async function tourGame(driver, g, o, live) {
       if (s.paused) { collecting = false; if (document.visibilityState === 'visible') driver.resume(); continue; }   // the phone went to another app: carry on when it's back
       if (s.state === 'playing') {
         collecting = true; overSince = 0; res.played += dt; res.score = Math.max(res.score, s.score || 0);
+        if (res.readyMs == null && s.readyMs) res.readyMs = s.readyMs;   // a 3D game's first round: Play to the round starting, behind its loading screen
         if (wantFull && !entered) { entered = true; if (driver.full(true)) res.full = true; }   // (a round's end leaves full screen, so each round goes in again)
         bot.step(res.played / 1000);
         live?.({ id: g.id, played: res.played / 1000 });
@@ -341,6 +342,7 @@ function gameLine(r) {
   const head = `${r.verdict.padEnd(9)} ${r.id} (${r.title})${r.style ? ' · ' + r.style : ''}`;
   if (!r.loaded) return `${head} · ${r.note || 'did not load'}`;
   const parts = [`loaded in ${(r.loadMs / 1000).toFixed(1)} s`];
+  if (r.readyMs) parts.push(`round ready in ${(r.readyMs / 1000).toFixed(1)} s`);
   if (r.frames) {
     parts.push(`${Math.round(r.fps)} of ${r.target} fps${r.made ? ` (+${r.made} made)` : ''}`, `worst 1% ${Math.round(r.low)} fps`, `longest ${Math.round(r.worst)} ms`,
       `slow ${pct(r.slow)}`, `freezes ${r.freezes}${r.early ? ` (${r.early} as a round started)` : ''}`, `game code ${r.work.toFixed(1)} ms`);
