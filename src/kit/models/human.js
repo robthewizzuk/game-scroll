@@ -326,11 +326,16 @@ export function human(o = {}) {
         if (face) col.copy(skinC);   // lips and the lids' edges are in the face's paint (human-paint.js, with the brows), whatever the points were sculpted as
         const red = bump(hy, -.03, .024) * bump(abs(x), .04, .024) * ss(.0, .05, hz) * .045 + bump(hy, -.034, .012) * bump(x, 0, .012) * .07 + ss(.07, .078, abs(x)) * .1;   // cheeks, nose, ears
         col.r *= 1 + red * .35; col.g *= 1 - red * .5; col.b *= 1 - red * .55;
-        if (stub && name !== 'brow') { const sh = ss(-.04, -.062, hy) * ss(-.03, .01, hz) * ss(-.165, -.12, hy) * stub; col.r *= 1 - sh * .2; col.g *= 1 - sh * .15; col.b *= 1 - sh * .08; }
+        // the shadow of a beard under the skin, cool and grey: the upper lip, the chin and under it, the jaw, and up the cheek to the sideburn
+        // by the ear (a beard's line runs from the corner of the mouth up across the cheek). It shows at a few paces, where the dots don't
+        if (stub && name !== 'brow') { const top = -.042 + .045 * ss(.035, .07, abs(x)), sh = ss(top, top - .016, hy) * ss(-.045, -.01, hz) * ss(-.165, -.125, hy) * stub; col.r *= 1 - sh * .38; col.g *= 1 - sh * .33; col.b *= 1 - sh * .24; }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
         const so = bump(hy, .004 * ES, .014 * ES) * bump(abs(x), EYE[0], .017 * ES) * (hz > .05 ? .07 : 0); col.multiplyScalar(1 - so);   // the eye sockets a little darker
         faceUV(x, y, z, uv1); TU[j * 4 + 2] = uv1[0]; TU[j * 4 + 3] = uv1[1];   // where it is on the face's paint
       }
+      // a man's short back and sides: clipped close over the ears and at the nape, the skin showing through, so lighter there than on top
+      // (and never one flat colour). One dark block down to the hairline read as a cap of paint
+      if (s.k === HAIRK && p === headP && !sp.fem) { const hy = y - HC[1], clip = ss(.035, -.03, hy) * (.3 + .1 * ss(-.02, -.06, z - HC[2])); col.lerp(skinC, clip); col.multiplyScalar(.94 + .08 * lumps(x * 60, y * 60, z * 60)); }
       // the iris: fine streaks out from the pupil (each sliver of it a little lighter or darker than the next)
       if (s.a === 'eyes' && p === headP) { const b = +p.slots[p.slot[i]][3]; if (b >= 1 && b <= 3) col.multiplyScalar(1 + .14 * lumps(Math.round(Math.atan2(y - HC[1] - EYE[1], abs(x) - EYE[0]) / (PI * 2) * 24) * 7.31 + (x > 0 ? 3 : 11), b * .37, 2.9)); }
       // creases in soft shadow (warmer on skin: light soaks through it). On a face only what is tight stays dark (a nostril, the folds of an
