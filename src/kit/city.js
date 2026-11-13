@@ -1067,7 +1067,8 @@ export class City {
       if (!this.view.lamps?.length) this.view.lampLights(26);
       const near = this.lampSpots.filter(s => Math.abs(s.x - f.x) < 70 && Math.abs(s.z - f.z) < 70);
       for (const s of near) s.i = this.night * 9;
-      this.view.placeLamps(near, f.x, 2, f.z, this.t);
+      const F = this.cars.fleet;   // (and the headlights of the cars drawn whole: dipped beams that cast shadows)
+      this.view.placeLamps(F?.close.size ? near.concat(F.headlamps(this.night, this._hl ||= [])) : near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f);
     return this;

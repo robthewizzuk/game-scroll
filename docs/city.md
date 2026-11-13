@@ -52,7 +52,7 @@ Make the city once (in `make()` or the first `reset()`, like the view) and call 
 | `traffic`, `people` | How busy, 1 = normal. Scaled down on slower phones by itself. |
 | `night` | 0 (day) to 1 (night): windows, shop signs, street lamps and car lights. |
 | `sky` | A `gs.sky` Sky: the city follows its `night`. |
-| `lamps` | Real lights from the nearest street lamps at night (default on). |
+| `lamps` | Real lights from the nearest street lamps at night (default on); on a Next Gen view the cars drawn whole light the road ahead with dipped headlights that cast shadows. |
 | `sound` | The city's hum, horns from cars stuck behind you, birds in the parks, a far siren (default on). |
 | `at` | Where the player starts (that part is built first). |
 | `detail` | Metres within which awnings, cornices and fire escapes show (default 260). |

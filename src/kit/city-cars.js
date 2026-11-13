@@ -314,6 +314,22 @@ export class Fleet {
     r.wheels.instanceMatrix.needsUpdate = true;
     if (r.tail) r.tail.material = lampMat(c.braking ? 'brake' : 'tail');
   }
+  /**
+   * The headlights of the cars drawn whole, as spots for view.placeLamps (src/kit/lamps.js): a dipped beam's shape,
+   * with shadows for the nearest. night 0..1 sets how bright. The same objects each frame (out is filled anew).
+   */
+  headlamps(night, out = []) {
+    out.length = 0; const pool = this._hl ||= []; let n = 0;
+    for (const c of this.close.keys()) {
+      const k = this.kitOf(c), sh = Math.sin(c.heading), ch = Math.cos(c.heading), f = k.length / 2 + .05, s = k.width * .36;   // (its nose along (sin, cos) of its heading)
+      for (const side of [-1, 1]) {
+        const p = pool[n++] ||= { x: 0, y: 0, z: 0, dir: [0, -.05, 0], angle: .5, soft: .35, shape: 'headlamp', shadow: true, near: .3, col: '#fff3dc', i: 0, reach: 26 };
+        p.x = c.x + sh * f - ch * s * side; p.y = k.lampY; p.z = c.z + ch * f + sh * s * side; p.dir[0] = sh; p.dir[2] = ch; p.i = 30 * night;
+        out.push(p);
+      }
+    }
+    return out;
+  }
   /** The style's measures (length, width, lampY) of a car. */
   measure(c) { return this.kitOf(c); }
   dispose() { for (const c of [...this.close.keys()]) this.drop(c); this.group.removeFromParent(); for (const F of this.far) { F.paint.dispose(); F.rest.dispose(); } }
