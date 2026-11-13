@@ -87,8 +87,10 @@ export function paintFace(o) {
         if (line > .02) put(MO, mn(1, line * (fem ? .62 : .58)));
       }
       // ---- stubble: fine dots of shadow over the jaw, the chin and the upper lip (the points carry its even shade)
-      if (stub > 0 && hy < -.04) {
-        const k = ss(-.04, -.058, hy) * (1 - lip) * stub * mx(0, lumps(x * 3300, hy * 3300, 3.3)) * .3; if (k > 0) { r *= 1 - k; g *= 1 - k * .9; b *= 1 - k * .75; }
+      // (over the same ground as the points' shadow: up the cheek towards the sideburn; each dot the end of a hair, darker than the shade)
+      const btop = -.042 + .045 * ss(.035, .07, x);
+      if (stub > 0 && hy < btop) {
+        const k = ss(btop, btop - .014, hy) * (1 - lip) * mn(1, stub * 1.4) * mx(0, lumps(x * 3300, hy * 3300, 3.3)) * .55; if (k > 0) { r *= 1 - k; g *= 1 - k * .92; b *= 1 - k * .8; }
       }
       const at = (j * w + i) * 4; px[at + 3] = 255;
       if (r === 1 && g === 1 && b === 1) px[at] = px[at + 1] = px[at + 2] = P;   // (most of a face is its skin's own colour)
