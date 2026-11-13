@@ -332,6 +332,10 @@ shows it and logs each change. Tests pin a step with `HD.fxStep('bloom', 2)`.
   in the way .. 1 clear). Light then comes through only where it is thin and has somewhere to come from
   (`back: .8` is how strongly), and the thin parts are left out of the shadow map, which is too coarse
   to tell an ear from the head a centimetre behind it. `gs.models.human` measures this by itself.
+  With `thin` and `skin: true` (a real face: `gs.models.human` with `look: 'real'`) the light under the skin
+  is worked out too, on WebGPU: soft and warm where the surface turns from the light (how fast it turns is
+  read from the screen), pores and fine lines shading only the light that does not travel, and a two-lobe
+  shine; `skin: .5` is half as much reach.
 - Richer materials on `pbr()` (three.js's MeshPhysicalMaterial, the same on WebGL and WebGPU):
   `aniso: .9` (and `anisoDir` in radians) stretches highlights along brushed or turned metal, hair and
   satin; `film: 1` is a thin rainbow film (soap bubbles, oil, beetle shells, lens coatings);
@@ -1206,7 +1210,11 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   is. `look: 'real'` is a face as real as the kit makes it: life-size eyes, a jaw as broad as a real one, the
   folds of a real face pressed into its skin (from the nose to the mouth, under the eyes, under the lower lip,
   round the nose; with age the lines down from the mouth, hollow temples and cheeks, the cords of an old neck),
-  its two sides not quite alike, and quieter brows, lashes and lips. A real face comes from `seed` (the same
+  its two sides not quite alike, and quieter brows, lashes and lips. Its skin works out the light under it
+  (WebGPU): where a face turns from the light, light reaches on round past the edge, red furthest, so the
+  edge is soft and warm (more so on a nose or a chin than on a cheek); the pores shade the light that does not
+  travel and the shine, not the red; and the shine is two lobes, a tight one off the skin's oil and a broad one
+  (WebGL keeps a soft rim standing for it). Dark skin reads brown, not orange. A real face comes from `seed` (the same
   seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png

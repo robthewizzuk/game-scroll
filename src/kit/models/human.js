@@ -140,7 +140,13 @@ const missing = list => { const out = new Map(); for (const o of list) for (cons
 let MATS = null;
 // skin: pores and fine lines (the 'skin' recipe, a tile every 16 mm), and light through the ears (sss.thin: see `gsThin` below)
 // (the pores are faint: any stronger and where a cheek turns from the sun they speckle it dark, like dirt)
-const skinMat = () => { const m = material('skin', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true, sss: { colour: '#e0603c', scale: .5, thin: true } }); m.normalScale.set(.25, .25); m.name = 'human:skin'; return m; };
+// (a real face's skin, real: works out the light under it on WebGPU (hd3d-gpu.js FleshModel.skin), soft and warm where it turns from the light;
+// WebGL keeps a softer rim, nearer the skin's own colour, standing for it)
+const skinMat = (real = false) => {
+  const m = material('skin', { colour: '#ffffff', repeat: [1, 1], closeUp: false, vertexColors: true, sss: { colour: '#e0603c', scale: .5, thin: true, skin: real } }); m.normalScale.set(.25, .25); m.name = real ? 'human:skin:real' : 'human:skin';
+  if (real) { m.sheen = .3; m.sheenColor.set('#d08068'); }
+  return m;
+};
 // A face's paint (human-paint.js): brows, the lashes' lines and lips in a small picture made in code, laid over the skin's own colour by the
 // head's second set of UVs. One skin material for each look (people who look alike share it); its pores stay the recipe's.
 const looks = new Map();
@@ -150,7 +156,7 @@ function skinOf(sp, pal, stubble) {
   const t = new DataTexture(paintFace({ face: sp.face, fem: sp.fem, stubble, skin: lin(pal.skin), brow: lin(pal.brow), lips: lin(pal.lips), lash: lin(pal.lash), mouth: lin(pal.mouth) }), FACE.w, FACE.h, RGBAFormat, UnsignedByteType);
   t.colorSpace = SRGBColorSpace; t.channel = 1; t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
   // (the soft red rim that stands for light under the skin follows the paint too: none of it on a brow or a lash)
-  m = skinMat(); m.map = t; m.color.setScalar(1 / FACE.plain); m.sheenColorMap = t; m.sheen /= FACE.plain;
+  m = skinMat(!!sp.face.real); m.map = t; m.color.setScalar(1 / FACE.plain); m.sheenColorMap = t; m.sheen /= FACE.plain;
   looks.set(key, m); return m;
 }
 function mats() {

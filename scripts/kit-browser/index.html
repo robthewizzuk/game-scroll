@@ -795,6 +795,12 @@ try {
       const hm = M[6].map, other = man.mesh.material[0], same = human({ ...opts }).mesh.material[0];   // (fair hair, so fair brows: another picture; the same look: the same one)
       ok(fp?.isDataTexture && fp.channel === 1 && fw * fh >= 256 * 256 && FU?.count === n && FU.data === TH.data && dark > fw * fh * .004 && light > fw * fh * .7 && M[0].sheenColorMap === fp && other.map?.isDataTexture && other.map !== fp && same === M[0] && hm?.isDataTexture && M[6].normalMap?.isDataTexture && hm.image.width * hm.image.height <= 4096,
         `paint: a face painted in code on the skin (${fw} x ${fh}: ${(dark / (fw * fh) * 100).toFixed(1)}% of it brow, lash and lid line, ${(light / (fw * fh) * 100).toFixed(0)}% left to the skin's own colour; a fair-haired man's is another picture, the same look shares one), combed strands on the hair (${hm?.image.width} x ${hm?.image.height})`);
+      // the real look (look: 'real'): its own skin, which works out the light under it on WebGPU (hd3d-gpu.js FleshModel.skin) and keeps a
+      // softer rim on WebGL; a face from the seed, so another seed is another sculpt and another painted face
+      const ro = { ...opts, look: 'real' }, ro2 = { ...opts, look: 'real', seed: 4 }; await human.ready([ro, ro2]);
+      const real = human(ro), rs = real.mesh.material[0], other2 = human(ro2).mesh.material[0];
+      ok(rs.userData.sss?.skin === true && rs.userData.sss.thin === true && rs.name === 'human:skin:real' && rs.sheen < M[0].sheen && M[0].userData.sss.skin === false && rs.map !== M[0].map && other2.map !== rs.map && real.mesh.geometry !== plain.mesh.geometry,
+        `real look: its own skin (light under it, a rim of ${rs.sheen.toFixed(2)} where the clean look's is ${M[0].sheen.toFixed(2)}), its own sculpt and paint, another seed another face`);
       // seams and stitching (field.js lines, human-paint.js paintSeams): cloth and leather wear one small picture by the same second set of
       // coordinates, across a line and along it; some of every kind of cloth is near a seam or a row of stitching, and no close-up triangle
       // counts more stitches between its corners than its length can hold (where a count starts again, a corner has a twin)

@@ -400,7 +400,7 @@ export function reliefOf(f) {
     if (hz > .04 && hy < -.07 && hy > -.11) {
       // the groove under the lower lip (curving up at its ends), and with age the lines down from the corners of the mouth
       const yc = MOUTH.y - .0168 + .009 * (ax / .022) ** 2; h -= DM * bump(hy, yc, .0028) * ss(.026, .016, ax);
-      if (a > 0) { seg(ax, hy, .0262, -.072, .031, -.099); if (o[0] < .014) { const g = ss(0, .15, o[1]) * ss(1, .75, o[1]); h -= .0011 * a * bump(o[0], 0, .0028) * g; if (o[2] > 0) h += .0012 * (a + .5 * heavy) * bump(o[0], .0065, .0055) * ss(.3, .7, o[1]); } }
+      if (a > 0) { seg(ax, hy, .0262, -.072, .031, -.099); if (o[0] < .014) { const g = ss(0, .15, o[1]) * ss(1, .75, o[1]); h -= .0011 * a * bump(o[0], 0, .0028) * g; if (o[2] > 0) h += .0007 * (a + .5 * heavy) * bump(o[0], .0065, .0055) * ss(.3, .7, o[1]); } }
     }
     // hollows: the temples, and under the cheekbones (thin and old faces)
     if (ax > .04) {
@@ -433,7 +433,7 @@ export function head(a, ghosts = []) {
   const A = s => S.push({ slot: 'skin', ...s, ...(relief && !s.cut ? { folds: relief, foldMax: RELIEF } : {}) });
   // (a real face's width: wider or narrower below the brow, fuller low down when heavy, and with age the flesh of the jaw hanging a little at its corners)
   // (and the jaw as broad as a real one: the clean face's narrows to a V, and its cheeks, standing out over that, cast a shelf of shade in a high sun)
-  const row = real ? (y, w, ...r) => slice0(y, w * (y < .03 ? FW : 1) * (1 + .06 * fp * ss(-.035, -.085, y)) + .011 * (1 - .3 * so) * bump(y, -.08, .024) * ss(-.108, -.096, y) + .0009 * age * bump(y, -.086, .016) + .0014 * mx(0, fp) * bump(y, -.095, .02), ...r) : slice0;
+  const row = real ? (y, w, ...r) => slice0(y, w * (y < .03 ? FW : 1) * (1 + .06 * fp * ss(-.035, -.085, y)) + .008 * (1 - .3 * so) * bump(y, -.085, .022) * ss(-.108, -.096, y) + .0009 * age * bump(y, -.086, .016) + .0014 * mx(0, fp) * bump(y, -.095, .02), ...r) : slice0;
   // ---- the mass of it: the face in slices from under the chin to the forehead, widest at the cheekbones, the jaw's
   // corners under the ears (each slice ends at the back of the jaw: behind it is the neck), and the skull, a ball over
   // and behind it (the slices end inside the ball: the top of the forehead and the crown are the ball's own round)
