@@ -1653,6 +1653,8 @@ export interface BreathT {
   puff: number;
   /** Back to rest, as made. */
   still(): BreathT;
+  /** One deep, slow breath now: a sigh (person.idle sighs now and then by itself). */
+  sigh(): BreathT;
 }
 /**
  * How wet, muddy, dusty and snowy a gs.models.human person is (person.grime), drawn on WebGPU on their clothes and skin, on top of what the weather
@@ -1673,6 +1675,37 @@ export interface GrimeT {
   soil(kind: string, depth?: number): GrimeT;
   /** Clean and dry. */
   clean(): GrimeT;
+}
+/**
+ * A gs.models.human person standing about (person.idle), over the rig's own standing pose, close up, with nothing to call: now and then a fidget
+ * (the shoulders rolled, the neck stretched, a look down, a sigh, a swallow, a hand shaken out, a look about); where the eyes go (person.face.look)
+ * the head follows a moment later and, for a thing further round than a right angle, the body; glances at noises and at things that hurry past;
+ * and gestures by name.
+ */
+export interface IdleT {
+  /** false: no fidgets, glances or turning of the head by itself (gestures still play). */
+  on: boolean;
+  /** How much of a look the head and body take (1); 0 leaves the head to the game (the eyes still look). An upper-body pose (aim) takes it over by itself. */
+  turn: number;
+  /** Seconds between fidgets, about (6); 0 for none. */
+  every: number;
+  /** A fidget now: 'shoulders' | 'neck' | 'down' | 'sigh' | 'swallow' | 'hand' | 'look'; none: one chosen as by itself. */
+  fidget(name?: string): IdleT;
+  /** A glance at a point or an Object3D: the eyes at once, the head a moment after, held hold seconds (1.6), then back to what the eyes were on. */
+  notice(thing: [number, number, number] | { x: number; y: number; z: number } | Loose, o?: { hold?: number }): IdleT;
+  /** Glances at the fresh noises of a gs.senses Noises (its x, y are x, z here; heard within loud / 6 metres); height: the y they are at (1), or (x, z) => y. */
+  listen(noises: Loose, o?: { height?: number | ((x: number, z: number) => number) }): IdleT;
+  /** Glances at a thing that hurries past: within near metres (8), faster than fast metres a second (1.5). */
+  watch(thing: Loose, o?: { near?: number; fast?: number }): IdleT;
+  /**
+   * A gesture: 'nod' | 'shake' (the head) | 'shrug' | 'wave' | 'point' (at: where) | 'hips' (hands on the hips) | 'cross' (arms crossed); null ends a held one.
+   * hold: true stays at its fullest until gesture(null) or another (hips and cross always do; a wave goes on waving).
+   */
+  gesture(name: 'nod' | 'shake' | 'shrug' | 'wave' | 'point' | 'hips' | 'cross' | null, o?: { hold?: boolean; at?: [number, number, number] | Loose }): IdleT;
+  /** The gesture playing, or null. */
+  readonly doing: string | null;
+  /** Back to rest: no fidget, glance or gesture. */
+  stop(): IdleT;
 }
 export interface LiveFaceT extends FaceT {
   set(name: LiveShape, amount?: number): LiveFaceT;
@@ -2659,6 +2692,8 @@ export interface RigT {
   breath?: BreathT;
   /** A gs.models.human person's wet, mud, dust and snow (the same as person.grime): drawn on WebGPU. */
   grime?: GrimeT;
+  /** A gs.models.human person standing about: fidgets, the head after the eyes, glances, gestures (the same as person.idle). */
+  idle?: IdleT;
   /**
    * Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy,
    * and your own added with { ground: true }) a foot stays where it was put down while the body goes on over it, footfalls follow the way the body really

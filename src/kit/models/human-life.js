@@ -21,7 +21,12 @@ export class Breath {
     this.p = Math.random(); this.rate = .25;
     // (how much of each breath shows in front: the belly more in a man, the chest a little more in a woman; a heavy belly moves more and lags more)
     this.cw = fem ? 1.15 : .8; this.bw = (fem ? .85 : 1.15) * (1 + .5 * Math.max(0, fat - .5)); this.soft = .2 + .8 * Math.max(0, fat - .35) / .65;
-    this.v = 0; this.lag = 0; this.y0 = null;
+    this.v = 0; this.lag = 0; this.y0 = null; this.sighing = 0; this.sk = 1;
+  }
+  /** One deep, slow breath now, a sigh (person.idle sighs now and then by itself). */
+  sigh() {   // (from where the breath is: the same height on the way in, so the chest doesn't jump, and in from there deeper)
+    const p = this.p, b = p < .4 ? .5 - .5 * Math.cos(Math.PI * p / .4) : .5 + .5 * Math.cos(Math.PI * (p - .4) / .6);
+    this.p = .4 * Math.acos(1 - 2 * b) / Math.PI; this.sighing = 1; return this;
   }
   step(dt, speed = 0, near = true) {
     if (!this.chest || !this.belly || dt <= 0) return this;
@@ -30,8 +35,9 @@ export class Breath {
     this.puff += (want - this.puff) * (1 - Math.exp(-dt * (want > this.puff ? .5 : .07)));
     if (!near) { this.chest.position.copy(this.c0); this.belly.position.copy(this.b0); return this; }
     // the breath: 15 a minute at rest to about 40, deeper the more out of breath; in over 40% of it, out over the rest
-    this.rate += ((.25 + .42 * this.puff) - this.rate) * (1 - Math.exp(-dt * 2)); this.p = (this.p + dt * this.rate) % 1;
-    const p = this.p, b = this.on ? (p < .4 ? .5 - .5 * Math.cos(Math.PI * p / .4) : .5 + .5 * Math.cos(Math.PI * (p - .4) / .6)) : 0, deep = .55 + .9 * this.puff;
+    this.rate += ((.25 + .42 * this.puff) - this.rate) * (1 - Math.exp(-dt * 2));
+    { const q = this.p + dt * this.rate * (this.sighing ? .55 : 1); if (q >= 1) this.sighing = 0; this.p = q % 1; }   // (a sigh: one breath at half the pace, and deeper)
+    const p = this.p, b = this.on ? (p < .4 ? .5 - .5 * Math.cos(Math.PI * p / .4) : .5 + .5 * Math.cos(Math.PI * (p - .4) / .6)) : 0, deep = (.55 + .9 * this.puff) * (this.sk += ((this.sighing ? 2.3 : 1) - this.sk) * (1 - Math.exp(-dt * 2.5)));
     // a heavy belly lags behind the hips as they rise and fall (a spring, well damped: it settles within half a second)
     // (the hips' height as last drawn: how fast they rose or fell, and the change in that, pushes the belly the other way)
     const hy = this.hips.matrixWorld.elements[13];
@@ -45,7 +51,7 @@ export class Breath {
     return this;
   }
   /** Back to rest (as made). */
-  still() { if (this.chest) { this.chest.position.copy(this.c0); this.belly.position.copy(this.b0); } this.v = this.lag = 0; this.y0 = null; return this; }
+  still() { if (this.chest) { this.chest.position.copy(this.c0); this.belly.position.copy(this.b0); } this.v = this.lag = 0; this.y0 = null; this.sighing = 0; this.sk = 1; return this; }
 }
 
 // How wet, muddy, dusty and snowy a person is (person.grime), for the WebGPU look of their clothes and skin (hd3d-gpu.js grime): their own,

@@ -2300,6 +2300,51 @@ console.log('physics ok');
       gq.bones.foreL.rotation.set(-Math.PI / 2, 0, 0); gq.bones.shinR.rotation.set(1, 0, 0); gr.step(0);
       assert.ok(Math.abs(gr.bends[0].w - .5) < 1e-6 && gr.bends[1].w === 0 && Math.abs(gr.bends[3].w - Math.sin(.5) ** 2) < 1e-6 && gr.bends[0].x === .2 && gr.bends[2].y === .52, 'the bends of the elbows and knees, at their places as made');
       gr.clean(); assert.ok(gr.v.length() === 0 && gr.mud === 0, 'clean() and dry');
+      // a person standing about (person.idle, human-idle.js): fidgets now and then while still and none on the move; the head comes round a
+      // moment after the eyes and the body after it for a thing far round; a glance and back; gestures that play through, hold and let go;
+      // a point that points; glances at a noise nearby and at a thing that hurries past
+      const { Idle } = await import('../src/kit/models/human-idle.js'), iq = skeleton({ look: 'real', seed: 5 }), IB = iq.bones;
+      const face = { target: null, look(t) { this.target = t || null; return this; } }; iq.face = face;
+      const id = iq.rig.idle = new Idle(iq, iq.rig); iq.updateMatrixWorld(true);
+      const run = (secs, speed = 0, each) => { for (let t = 0; t < secs - 1e-9; t += 1 / 60) { iq.rig.update(1 / 60, { speed }); iq.updateMatrixWorld(true); each?.(); } };
+      let seen = new Set(); run(80, 0, () => id.cur && seen.add(id.cur.name));
+      assert.ok(seen.size >= 3, 'standing still a minute or so, a few fidgets: ' + [...seen]);
+      run(3, 3); seen = new Set(); id.next = 0; run(10, 3, () => id.cur && seen.add(id.cur.name)); assert.ok(seen.size === 0, 'none on the move (once the one in hand has gone): ' + [...seen]);
+      id.every = 0; face.look(null); run(4);
+      face.look([3, 1.6, .3]);   // (to his left, nearly level: past what eyes reach)
+      run(.05); const early = id.hy; run(1); const late = id.hy;
+      assert.ok(early < .3 * late && late > .9 && late < 1.1 && Math.abs(id.sy) < .02, `the head comes round after the eyes (${early.toFixed(2)} after a twentieth of a second, ${late.toFixed(2)} after a second), the body stays (${id.sy.toFixed(3)})`);
+      face.look([-1, 1.6, -2]); run(1.5); assert.ok(id.hy < -.75 && id.sy < -.25, `for a thing far round behind, the body turns too (head ${id.hy.toFixed(2)}, body ${id.sy.toFixed(2)})`);
+      face.look(null); run(1.5); assert.ok(Math.abs(id.hy) < .02 && Math.abs(id.sy) < .02, 'and back as the eyes let go');
+      iq.rig.upper('aim'); face.look([3, 1.6, .3]); run(1.5); assert.ok(Math.abs(id.hy) < .1, 'aiming, the head is the aim\'s: ' + id.hy.toFixed(2)); iq.rig.upper(null); face.look(null); run(1);
+      id.notice([0, 1.6, 4], { hold: .5 }); assert.deepEqual(face.target, [0, 1.6, 4]); run(.6); assert.ok(face.target === null, 'a glance, and the eyes go back');
+      const mine = [1, 1.7, 5]; face.look(mine); id.notice([0, 1.6, 4], { hold: .3 }); run(.4); assert.equal(face.target, mine, 'to what the game had them on');
+      face.look(null); run(1);
+      // gestures
+      id.gesture('nod'); run(.5); assert.equal(id.doing, 'nod'); run(.5); assert.equal(id.doing, null, 'a nod plays through');
+      id.gesture('hips'); run(3); const fl = IB.foreL.rotation.x; assert.ok(id.doing === 'hips' && fl < -1.2, 'hands on the hips stay: ' + fl.toFixed(2));
+      id.gesture(null); run(1.5); assert.ok(id.doing === null && IB.foreL.rotation.x > -.6, 'until let go: ' + IB.foreL.rotation.x.toFixed(2));
+      assert.throws(() => id.gesture('dab'), /no gesture 'dab'/);
+      for (const at of [[-2, 2.2, 1.5], [0, 1.4, 3], [-3, 1, -.5]]) {
+        const tgt = new T.Vector3(...at); id.gesture('point', { at }); run(.8);
+        const sh = IB.armR.getWorldPosition(new T.Vector3()), dir = IB.foreR.getWorldPosition(new T.Vector3()).sub(sh).normalize(), want = tgt.clone().sub(sh).normalize();
+        assert.ok(dir.angleTo(want) < .3 && id.doing === 'point', `a point points (at ${at}): the upper arm ${(dir.angleTo(want) * 57.3).toFixed(0)} degrees off the way to it`);
+        run(2.5); assert.equal(id.doing, null, 'and comes down');
+      }
+      id.gesture('wave'); run(5); assert.equal(id.doing, 'wave', 'a wave goes on waving'); id.gesture(null); run(2.5); assert.equal(id.doing, null);
+      id.gesture('shrug', { hold: true }); run(3); assert.ok(id.doing === 'shrug' && IB.collarL.rotation.z > .1, 'a shrug held'); id.gesture(null); run(2);
+      // a noise within hearing (loud / 6 metres), not one further off; a thing that hurries past, not one standing
+      const { Noises } = await import('../src/kit/senses.js'), N = new Noises(); id.listen(N, { height: 1.2 });
+      N.make(40, 2, 60); run(.1); assert.equal(face.target, null, 'a noise too far off to hear');
+      N.make(4, 2, 60); run(.1); assert.deepEqual(face.target, [4, 1.2, 2], 'a noise nearby: a glance at it'); run(2.5); assert.equal(face.target, null);
+      const walker = new T.Object3D(); walker.position.set(-4, 0, 4); walker.updateMatrixWorld(true); id.watch(walker);
+      run(1); assert.equal(face.target, null, 'a thing standing still: no glance');
+      run(.5, 0, () => { walker.position.x += 3 / 60; walker.updateMatrixWorld(true); }); assert.equal(face.target, walker, 'a thing hurrying past: a glance at it');
+      id.stop(); assert.ok(id.doing === null && face.target === null && id.hy === 0, 'stop()');
+      // nobody fidgets down on the ground, nor shakes a hand out of a grip
+      id.every = 1.5; iq.rig.play('downed'); seen = new Set(); run(30, 0, () => id.cur && seen.add(id.cur.name)); assert.equal(seen.size, 0, 'down on the ground, still: ' + [...seen]);
+      iq.rig.play('idle'); seen = new Set(); run(90, 0, () => { id.handsBusy = 2; if (id.cur) seen.add(id.cur.name); }); assert.ok(seen.size >= 3 && !seen.has('hand'), 'holding something, no hand shaken out: ' + [...seen]);
+      id.stop(); iq.rig.play('idle', { fade: 0 });
     }
     for (const n of OLD) assert.ok(wp(a.bones[n]).distanceTo(wp(b.bones[n])) < 1e-9, n + ' is where it was, standing');
     assert.deepEqual([...b.rig.base.keys()].filter(k => !OLD.includes(k)).sort(), ['collarL', 'collarR', 'neck', 'toeL', 'toeR', 'twistL', 'twistR', 'waist'], 'the joints in between are the rig\'s (the fingers are not: fingers() sets them)');

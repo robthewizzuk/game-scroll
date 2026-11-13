@@ -1266,6 +1266,14 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   soaks a person from the shoulders down by itself under the open sky (with a `gs.sky.Weather`), `marks.watch(person)`
   splashes mud up the boots and trousers a step at a time in mud and dusts them in sand, and a game sets any of it
   (`grime.wet = 1` after a fall in a river). Wet dries over a few minutes and snow melts; `grime.clean()`.
+  Standing about, a person is never still (`person.idle`, close up, nothing to call): now and then a fidget
+  (shoulders rolled, the neck stretched, a look down, a sigh, a swallow, a hand shaken out, a look about), and
+  where the eyes go (`person.face.look(point)`) the head follows a moment later, and the body too for a thing
+  further round than a right angle. `idle.notice(point)` is a glance and back; `idle.listen(noises)` (a
+  `gs.senses.Noises`) and `idle.watch(thing)` glance at a noise nearby and at something that hurries past.
+  Gestures by name: `idle.gesture('nod' | 'shake' | 'shrug' | 'wave' | 'point' | 'hips' | 'cross', { at, hold })`
+  (`point` at a place; `hips`, hands on the hips, and `cross`, arms crossed, hold until `gesture(null)`).
+  `idle.on = false` for none of it, `idle.turn = 0` to keep the head the game's.
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide. Besides the
