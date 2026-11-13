@@ -29,6 +29,9 @@ import { Bone, BoxGeometry, CapsuleGeometry, Group, Mesh, MeshStandardMaterial, 
 import { reach } from './characters.js';
 import { Stride } from './stride.js';
 import { Follow } from './follow.js';
+import { Lead } from './lead.js';
+// the manner of the person whose poses are being mixed (manner.js): how their walk swings its arms and hips, read by gait() below
+let MAN = null;
 export { person, Face, shapes, visemes, FACE_SHAPES } from './skin.js';
 
 const JOINTS = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR'];
@@ -196,19 +199,22 @@ function gait(g) {
   });
   const thigh = leg(0), knee = leg(1), foot = table(footW);
   // the toes lie flat while the heel comes up off them, and straighten once the foot is in the air
-  const toe = table(p => Math.min(1.1, Math.max(0, footW(p))) * (p < stance ? 1 : 1 - sstep(0, .3, (p - stance) / (1 - stance))));
+  const toes = table(p => Math.min(1.1, Math.max(0, footW(p))) * (p < stance ? 1 : 1 - sstep(0, .3, (p - stance) / (1 - stance))));
   return p => {
-    const a = p * TAU, c = Math.cos(a), hy = -yaw * c, hz = list * S(a + .6), pr = p + .5;
+    // (a person's own walk: how much the arms swing, each side's, how far the hips turn and sway and the shoulders against them, the rise
+    // and fall, the arms out and bent, the toes out and the feet apart: manner.js)
+    const M = MAN?.g, kA = M ? M.arm : 1, kH = M ? M.hips : 1, kT = M ? M.twist : 1, kB = M ? M.bob : 1, aO = M ? M.out : 0, eB = M ? M.elbow : 0, toe = M ? M.toe : 0, wd = M ? M.wide : 0, aL = M ? M.armL * kA : 1, aR = M ? M.armR * kA : 1;
+    const a = p * TAU, c = Math.cos(a), hy = -yaw * kH * c, hz = list * kH * S(a + .6), pr = p + .5;
     const tl = thigh(p), tr = thigh(pr), kl = knee(p), kr = knee(pr), sw = Math.cos(a + .25);   // the arms trail the legs a touch
     return { j: {
       hips: [crouch, hy, hz],
-      spine: [lean, -hy * (1 + twist), -hz * .8],
-      head: [-(lean + crouch) * head + nod * S(a * 2), hy * twist * .8, -hz * .2],
-      legL: [tl - crouch, -hy, -hz], shinL: [kl, 0, 0], footL: [Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0], toeL: [-toe(p), 0, 0],
-      legR: [tr - crouch, -hy, -hz], shinR: [kr, 0, 0], footR: [Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0], toeR: [-toe(pr), 0, 0],
-      armL: [armMid + arm * sw, -armIn, armOut], foreL: [-(elbow - elbowSwing * sw), -wrist * .5, 0], handL: [-.12, -wrist * .5, 0],
-      armR: [armMid - arm * sw, armIn, -armOut], foreR: [-(elbow + elbowSwing * sw), wrist * .5, 0], handR: [-.12, wrist * .5, 0],
-    }, drop: drop + bob * Math.cos(2 * a - bobAt), shift: side ? [side * S(a + .6), 0, 0] : undefined };
+      spine: [lean, -hy * (1 + twist * kT), -hz * .8],
+      head: [-(lean + crouch) * head + nod * S(a * 2), hy * twist * kT * .8, -hz * .2],
+      legL: [tl - crouch, -hy + toe, -hz + wd], shinL: [kl, 0, 0], footL: [Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0], toeL: [-toes(p), 0, 0],
+      legR: [tr - crouch, -hy - toe, -hz - wd], shinR: [kr, 0, 0], footR: [Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0], toeR: [-toes(pr), 0, 0],
+      armL: [armMid + arm * aL * sw, -armIn, armOut + aO], foreL: [-(elbow + eB - elbowSwing * aL * sw), -wrist * .5, 0], handL: [-.12, -wrist * .5, 0],
+      armR: [armMid - arm * aR * sw, armIn, -armOut - aO], foreR: [-(elbow + eB + elbowSwing * aR * sw), wrist * .5, 0], handR: [-.12, wrist * .5, 0],
+    }, drop: drop + bob * kB * Math.cos(2 * a - bobAt), shift: side ? [side * kH * S(a + .6), 0, 0] : undefined };
   };
 }
 // standing easy: breathing, the weight on one leg and then the other, a look about
@@ -267,10 +273,12 @@ const grounded = (d, w, phase) => { if (!d?.ground || w <= 0) return; const G = 
  * foot touches down (left, right).
  * momentum: true: a new move begins at once and takes up what the body was doing, where other rigs cross-fade
  * (carried(), below). follow: true (with body): what the body carries goes on a moment and settles when the
- * game starts, stops, turns or drops it (follow.js); rig.follow.amount = 0 turns that off.
+ * game starts, stops, turns or drops it (follow.js); rig.follow.amount = 0 turns that off. lead (as follow unless
+ * given): the eyes and the head go first into a turn (lead.js); rig.lead.amount = 0 turns that off. rig.manner
+ * (gs.models.human sets it): a walk of one's own, moods, no two steps alike, footfalls felt, slopes (manner.js).
  */
 export class Rig {
-  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false } = {}) {
+  constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false, lead = follow } = {}) {
     this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses }; this.weight = weight; this.size = size; this.done = false;
     this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
     // a full skeleton: the joints in between, which fill() works out (the waist under the rib cage, the neck under the head, each a
@@ -287,6 +295,9 @@ export class Rig {
     this.stride = body ? new Stride(this, body) : null; this.steps = true;
     this.momentum = momentum; this.mom = null; this.cutT = null;
     this.follow = body && follow ? new Follow(this, body) : null;
+    this.lead = body && lead ? new Lead(this, body) : null;
+    /** A walk of one's own (manner.js; gs.models.human makes one), or null. */
+    this.manner = null;
   }
   /**
    * Blends to a pose by name. at: where in the pose (0..1) it stands, for a pose the game drives itself
@@ -357,42 +368,60 @@ export class Rig {
   plant(ground, body, { most = .45 } = {}) {
     const P = this.parts; if (!P.hips || !P.legL || !P.shinL || !P.legR || !P.shinR) return this;
     body.updateMatrixWorld(true);
-    const legs = [[P.legL, P.shinL, this.feet?.[0]], [P.legR, P.shinR, this.feet?.[1]]];
+    const legs = [[P.legL, P.shinL, this.feet?.[0]], [P.legR, P.shinR, this.feet?.[1]]], st = this.stride?.on && this.stride.a > .5 ? this.stride.feet : null;
+    const base = body.getWorldPosition(new Vector3()).y, sc = body.getWorldScale(new Vector3()).y, fs = this.feet?.[0]?.parent ? 1 : 0;
+    // what each foot stands on: a foot with a sole (gs.models.human's) on its heel or the ball of its foot, as it stands (the point kept on
+    // the ground while it is down: stride.js), else the lower of the two; a plain figure's on its ankle
+    const sole = (e, i, f) => { const h = e.localToWorld(new Vector3(0, -LEG[3], -LEG[4])), b = e.localToWorld(new Vector3(0, -LEG[3], LEG[5])); return f?.down ? (f.on ? b : h) : b.y < h.y ? b : h; };
     const tip = (shin, end) => end ? end.getWorldPosition(new Vector3()) : shin.localToWorld(new Vector3(0, -(shin.userData.ikLength ?? .43), 0));
-    const base = body.getWorldPosition(new Vector3()).y, sc = body.getWorldScale(new Vector3()).y;
-    const off = legs.map(([, s, e]) => { const t = tip(s, e); return Math.max(-most * sc, Math.min(most * sc, (ground(t.x, t.z) ?? base) - base)); });
+    const off = legs.map(([, s, e], i) => { const t = e && fs ? sole(e, i, st?.[i]) : tip(s, e); return Math.max(-most * sc, Math.min(most * sc, (ground(t.x, t.z) ?? base) - base)); });
     const drop = Math.max(0, -Math.min(off[0], off[1]));
     this.plantDrop = (this.plantDrop ?? drop) + (drop - (this.plantDrop ?? drop)) * Math.min(1, (this.lastDt || .016) * 14);
     const ps = P.hips.parent.getWorldScale(new Vector3()).y || 1;
     P.hips.position.y -= this.plantDrop / ps; P.hips.updateMatrixWorld(true);
     const fwd = new Vector3(0, 0, 1).transformDirection(body.matrixWorld);
     legs.forEach(([l, s, e], i) => {
-      const t = tip(s, e).add(new Vector3(0, off[i] + this.plantDrop, 0)), knee = s.getWorldPosition(new Vector3()).addScaledVector(fwd, 1);
-      reach(l, s, t, { pole: knee, end: e, length: e ? undefined : s.userData.ikLength ?? .43 });
+      const knee = s.getWorldPosition(new Vector3()).addScaledVector(fwd, 1);
+      if (!e || !fs) { const t = tip(s, e).add(new Vector3(0, off[i] + this.plantDrop, 0)); reach(l, s, t, { pole: knee, end: e, length: e ? undefined : s.userData.ikLength ?? .43 }); return; }
+      // on a slope the foot lies along the ground (as far as an ankle tilts): turned about the point it stands on, which stays where it is
+      // on the ground, and the leg bent to the ankle where that puts it (it was put down level, and slid as the leg bent to it)
+      const c = sole(e, i, st?.[i]), a = e.getWorldPosition(new Vector3()), q = e.getWorldQuaternion(new Quaternion()), lift = c.y + this.plantDrop - base;
+      const g0 = ground(c.x, c.z) ?? base, h = .06 * sc, sl = (d0, d1) => Math.abs(d0) < Math.abs(d1) ? d0 : Math.abs(d1) < Math.abs(d0) ? d1 : d0;   // (the gentler side's slope: no tilt over the edge of a step)
+      const gx = sl(((ground(c.x + h, c.z) ?? g0) - g0) / h, (g0 - (ground(c.x - h, c.z) ?? g0)) / h), gz = sl(((ground(c.x, c.z + h) ?? g0) - g0) / h, (g0 - (ground(c.x, c.z - h) ?? g0)) / h);
+      const n = new Vector3(-gx, 1, -gz).normalize(), k = Math.max(0, Math.min(1, 1 - lift / (.08 * sc))), R = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), n);
+      const ang = 2 * Math.acos(Math.min(1, R.w)); if (ang > .45) R.slerp(new Quaternion(), 1 - .45 / ang); R.slerp(new Quaternion(), 1 - k);
+      const c2 = c.clone().add(new Vector3(0, off[i] + this.plantDrop, 0)), t = a.sub(c).applyQuaternion(R).add(c2);
+      reach(l, s, t, { pole: knee, end: e });
+      s.updateWorldMatrix(true, false); e.quaternion.copy(s.getWorldQuaternion(new Quaternion()).invert().multiply(R.multiply(q))); e.updateMatrixWorld(true);
     });
     return this;
   }
   sample(name, phase) { const def = this.poses[name]; if (!def) return { j: {}, drop: 0 }; return def.cycle(phase); }
-  /** speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer. */
-  update(dt, { speed = 0, aim = 0, turn = 0 } = {}) {
+  /**
+   * speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer; turn: how fast
+   * the body turns (rad/s, to its left +; the body banks into it); toward: where the person means to go next, a point { x, z }
+   * or a heading (radians, as rotation.y), so the eyes and head turn there first (lead.js; read from the body's own turning without it).
+   */
+  update(dt, { speed = 0, aim = 0, turn = 0, toward = null } = {}) {
     this.lastDt = dt;
     // a blend space: its walks and runs share one phase. The stride of a mix is the mix of the strides, and a pose that
     // stands still has none: mixed with standing, a walk takes shorter steps at its own beat (its feet slid when it
     // took longer ones more slowly, as the mix of the rates had it). Poses that go by the clock keep their own time
     // in the mix (blendClock), so standing easy does not hurry a walk along, nor a walk it.
+    const man = this.manner; if (man) man.begin(dt, speed); const pace = man ? man.pace : 1, wp = man ? p => man.warp(p) : p => p;   // (a person's own: strides quicker or slower, and with a limp less time on the leg that hurts)
     const inst = this.momentum;   // with momentum a new move begins at once, and what the body was doing is carried over into it (carried(), below)
     this.blendK = inst ? (this.blendOn ? 1 : 0) : Math.max(0, Math.min(1, (this.blendK || 0) + (this.blendOn ? 1 : -1) * dt / Math.max(.01, this.fade)));
     if (this.blendK > 0 && this.bw) {
       let len = 0, timed = 0, tw = 0;
       for (const n in this.bw) { const def = this.poses[n], w = this.bw[n]; if (!def) continue; if (def.rate) len += w / def.rate; else { timed += (def.time ? 1 / def.time : def.per ?? TIMED[n] ?? .2) * w; tw += w; } }
-      const beat = len > 0 ? Math.max(-2.6, Math.min(2.6, speed / (len * this.size))) : 0;   // (strides a second: never faster than legs go)
+      const beat = len > 0 ? Math.max(-2.6, Math.min(2.6, speed / (len * this.size) * pace)) : 0;   // (strides a second: never faster than legs go)
       this.blendClock = ((this.blendClock ?? this.blendPhase ?? 0) + (tw > 0 ? timed / tw : 0) * dt) % 1;
       this.blendPhase = len > 0 ? ((((this.blendPhase ?? 0) + beat * dt) % 1) + 1) % 1 : this.blendClock;
     } else if (!this.blendOn) this.blendPhase = this.blendClock = null;
     // advance phases: cycles by distance, still poses by time
     for (const l of this.layers) {
       const def = this.poses[l.name]; if (!def || l.pin) continue;
-      const step = def.rate ? speed * def.rate / this.size * dt : def.time ? dt / def.time : (def.per ?? TIMED[l.name] ?? .2) * dt;
+      const step = def.rate ? speed * def.rate / this.size * pace * dt : def.time ? dt / def.time : (def.per ?? TIMED[l.name] ?? .2) * dt;
       l.phase = def.once ? Math.min(1, l.phase + step) : (l.phase + step) % 1;
     }
     const k = !inst && this.fadeT > 0 ? Math.min(1, dt / this.fadeT) : 1;
@@ -402,27 +431,31 @@ export class Rig {
     this.layers = this.layers.filter((l, i) => l.w > .001 || i === this.layers.length - 1);
     this.topW += ((this.topOn ? 1 : 0) - this.topW) * Math.min(1, dt / Math.max(.01, this.fade));
     // mix the layers
-    const out = {}, shift = [0, 0, 0]; let drop = 0;
+    const out = {}, shift = [0, 0, 0]; let drop = 0, gw = 0, gph = null, gb = 0;
+    MAN = man;
     for (const l of this.layers) {
-      const s = this.sample(l.name, l.phase); drop += (s.drop || 0) * l.w;
+      const rated = this.poses[l.name]?.rate; if (rated && !l.pin) { gw += l.w; if (l.w > gb) { gb = l.w; gph = l.phase; } }
+      const s = this.sample(l.name, rated && !l.pin ? wp(l.phase) : l.phase); drop += (s.drop || 0) * l.w;
       if (s.shift) { shift[0] += s.shift[0] * l.w; shift[1] += s.shift[1] * l.w; shift[2] += s.shift[2] * l.w; }
       for (const j in s.j) { const a = s.j[j], o = out[j] ||= [0, 0, 0]; o[0] += a[0] * l.w; o[1] += a[1] * l.w; o[2] += a[2] * l.w; }
     }
     if (this.blendK > 0 && this.bw) {   // over the layers, the blend space by how far it has faded in
-      const k2 = this.blendK, mixd = {}; let bd = 0;
+      const k2 = this.blendK, mixd = {}; let bd = 0, bg = 0;
       const bs = [0, 0, 0];
       for (const n in this.bw) {
-        const w = this.bw[n], s = this.sample(n, (this.poses[n]?.rate ? this.blendPhase : this.blendClock) ?? 0); bd += (s.drop || 0) * w;
+        const w = this.bw[n], rated = this.poses[n]?.rate, s = this.sample(n, (rated ? wp(this.blendPhase ?? 0) : this.blendClock) ?? 0); bd += (s.drop || 0) * w; if (rated) bg += w;
         if (s.shift) { bs[0] += s.shift[0] * w; bs[1] += s.shift[1] * w; bs[2] += s.shift[2] * w; }
         for (const j in s.j) { const a = s.j[j], o = mixd[j] ||= [0, 0, 0]; o[0] += a[0] * w; o[1] += a[1] * w; o[2] += a[2] * w; }
       }
       for (const j of this.base.keys()) { const a = mixd[j]; if (!a && !out[j]) continue; const o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += ((a ? a[i] : 0) - o[i]) * k2; }
       drop += (bd - drop) * k2; for (let i = 0; i < 3; i++) shift[i] += (bs[i] - shift[i]) * k2;
+      gw += (bg - gw) * k2; if (bg > 0 && k2 >= .5) gph = this.blendPhase;
       if (this.blendOn && k2 >= 1) {   // the layers underneath: just its strongest pose, in step with it (what a later play() fades from)
         let top = 'idle', tw = -1; for (const n in this.bw) if (this.bw[n] > tw) { tw = this.bw[n]; top = n; }
         const l = this.layers[0], ph = (this.poses[top]?.rate ? this.blendPhase : this.blendClock) ?? 0; if (this.layers.length !== 1 || l.name !== top) this.layers = [{ name: top, w: 1, phase: ph }]; else l.phase = ph;
       }
     }
+    MAN = null;
     if (inst) drop = this.carried(dt, out, drop, shift); else this.cutT = null;
     if (this.top && this.topW > .001) {
       const s = this.sample(this.top, this.phase), tw = inst ? this.topW * this.topW * (3 - 2 * this.topW) : this.topW;   // (with momentum it comes in and goes out gently; topW itself still counts evenly, for a game that reads it)
@@ -430,10 +463,12 @@ export class Rig {
       if (this.top === 'aim') { (out.armR ||= [0, 0, 0])[0] -= aim * tw; (out.armL ||= [0, 0, 0])[0] -= aim * tw; (out.head ||= [0, 0, 0])[0] -= aim * .5 * tw; }
       if (!this.topOn && this.topW < .01) this.top = null;
     }
+    if (man) drop += man.pose(dt, out, speed, gph, gw);   // a person's own bearing and mood, a footfall felt, the slope
     if (this.weight) this.sway(dt, speed, turn, out);
     else if (turn) (out.spine ||= [0, 0, 0])[2] -= turn * .1;
     if (this.follow?.body) { if (this.near === false) this.follow.on = false; else this.follow.pose(dt, out); }   // follow-through: what the body carries goes on a moment and settles
     if (this.idle) this.idle.pose(dt, out, speed, this.fine !== false, this.near !== false);   // a person standing about (gs.models.human's person.idle): fidgets close up, the head after the eyes, glances, gestures
+    if (this.lead) this.lead.pose(dt, out, toward);   // the eyes and the head go first into a turn
     this.phase = last.phase;
     if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
     else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
@@ -447,9 +482,9 @@ export class Rig {
       if (!this.steps || this.near === false) this.stride.off();
       else {
         const k2 = this.blendK > 0 && this.bw ? this.blendK : 0, G = GROUND; G.g = G.gw = G.st = G.len = G.ph = G.best = 0;
-        for (const l of this.layers) if (!l.pin) grounded(this.poses[l.name], l.w * (1 - k2), l.phase);
-        if (k2) for (const n in this.bw) grounded(this.poses[n], this.bw[n] * k2, this.blendPhase ?? 0);
-        this.stride.apply(dt, speed, G.g, G.gw, G.gw ? G.st / G.gw : 1, G.ph, G.len > 0 ? Math.min(2.6, Math.abs(speed) / (G.len * this.size)) : 0);
+        for (const l of this.layers) if (!l.pin) grounded(this.poses[l.name], l.w * (1 - k2), this.poses[l.name]?.rate ? wp(l.phase) : l.phase);
+        if (k2) for (const n in this.bw) grounded(this.poses[n], this.bw[n] * k2, wp(this.blendPhase ?? 0));
+        this.stride.apply(dt, speed, G.g, G.gw, G.gw ? G.st / G.gw : 1, G.ph, G.len > 0 ? Math.min(2.6, Math.abs(speed) / (G.len * this.size) * pace) : 0);
       }
     }
     if (this.follow?.things.length) { if (this.fine === false) this.follow.still(); else this.follow.swing(dt); }   // (what hangs swings close up only)

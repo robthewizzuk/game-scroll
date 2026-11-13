@@ -55,6 +55,8 @@ export class LiveFace extends Face {
     /** true: awake whatever; false: eyes closed and still; null (as made): awake unless the head lies over, low down (a body on the ground). */
     this.awake = null;
     this.target = null; this.aim = null; this.dartT = 0; this.glance = false; this.eye = [0, 0, 0, 0];
+    /** Kit use: how far ahead of the head the eyes look into a turn (radians, to the person's left +; gs.poses lead.js sets it each frame). */
+    this.lead = 0;
     /** Where the eyes are turned, in the head's own terms (radians): yaw to the person's left, pitch down. */
     this.yaw = 0; this.pitch = 0;
     this.shut = 0; this.lie = 0; this.wn = 0; this.winceT = 0; this.winceA = 0; this.since = 9; this.rigged = false; this.val = LIVE_SHAPES.map(() => 0);
@@ -118,11 +120,12 @@ export class LiveFace extends Face {
       let d = _v.subVectors(_t, R.eyeL); yl = Math.atan2(d.x, Math.max(1e-4, d.z)); pl = Math.atan2(-d.y, Math.hypot(d.x, Math.max(1e-4, d.z)));
       d = _v.subVectors(_t, R.eyeR); yr = Math.atan2(d.x, Math.max(1e-4, d.z)); pr = Math.atan2(-d.y, Math.hypot(d.x, Math.max(1e-4, d.z)));
     } else {
-      this.dartT -= dt; let y = 0, p = 0, off = true;
-      if (this.aim) { const d = _v.copy(this.aim).transformDirection(_inv); y = Math.atan2(d.x, d.z); p = Math.atan2(-d.y, Math.hypot(d.x, d.z)); off = d.z < 0 || Math.abs(y) > .3 || p > .26 || p < -.22; }
-      if (off || this.dartT <= 0) {
-        const glance = !off && !this.glance && Math.random() < .22;   // a glance aside, and back soon after
-        const ny = off && this.aim ? -Math.sign(y) * rnd(.02, .1) : glance ? (Math.random() < .5 ? -1 : 1) * rnd(.14, .3) : bell() * .06, np = glance ? bell() * .05 : .02 + bell() * .035;
+      this.dartT -= dt; let y = 0, p = 0, off = true; const ld = this.lead || 0;   // (ld: into a turn the eyes look about a spot that far round)
+      if (this.aim) { const d = _v.copy(this.aim).transformDirection(_inv); y = Math.atan2(d.x, d.z); p = Math.atan2(-d.y, Math.hypot(d.x, d.z)); off = d.z < 0 || Math.abs(y - ld) > .3 || p > .26 || p < -.22; }
+      const flick = !off && Math.abs(ld) > .06 && Math.abs(y - ld) > .1;   // a turn begun: the eyes go first, in one jump, to where it is going
+      if (off || flick || this.dartT <= 0) {
+        const glance = !off && !flick && !this.glance && Math.abs(ld) < .1 && Math.random() < .22;   // a glance aside, and back soon after
+        const ny = ld + (flick ? Math.sign(ld) * rnd(0, .04) : off && this.aim ? -Math.sign(y - ld) * rnd(.02, .1) : glance ? (Math.random() < .5 ? -1 : 1) * rnd(.14, .3) : bell() * .06), np = glance ? bell() * .05 : .02 + bell() * .035;
         if (Math.abs(ny - y) + Math.abs(np - p) > .22 && this.blinkEvery > 0 && this.since > 1.2 && Math.random() < .5) { this.blink(); this.blinkT = Math.max(this.blinkT, this.blinkEvery * .4); }   // (eyes often blink as they jump far)
         this.aim = (this.aim || new Vector3()).set(Math.sin(ny) * Math.cos(np), -Math.sin(np), Math.cos(ny) * Math.cos(np)).transformDirection(B.head.matrixWorld);
         this.glance = glance; this.dartT = glance ? rnd(.35, .9) : rnd(.6, 3.2); y = ny; p = np;

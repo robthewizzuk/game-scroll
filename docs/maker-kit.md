@@ -1906,6 +1906,38 @@ touches the ground, for a footstep sound. It stands down by itself for a walk on
 a person carried along faster than a slow walk, a far-off person and one that `Reactions` has off its balance;
 `rig.steps = false` leaves every pose as drawn (a person riding on something slow).
 
+Starts, stops and turns are stepped as a person keeps their balance. Setting off, the foot that bears less of the
+weight steps first (turning as it sets off, the one on the side it turns to). Stopping, the body is a weight on legs:
+from how fast it is slowing the rig works out where it will come to rest, puts the braking foot down there and
+brings the other up square beside it, in two steps (a person stopped dead reaches a little further ahead, a runner
+takes more braking steps), with no shuffling of the feet after. Round a bend each foot comes down already turned
+into it, so the feet are not wrung round under the body. `rig.stride.plan = false` keeps the walk's own footfalls.
+
+**The eyes and the head go first** (`gs.models.human` people, by themselves): a person who turns looks where they
+are turning before they get there: the eyes flick round, the head follows a moment later, then the rib cage, and
+the hips and feet come last. Round a curve the gaze goes about to where the person will be in half a second, and
+never past where a turn that is slowing down will end. Tell the rig where the person means to go and the gaze goes
+there before the body has begun to turn: `rig.update(dt, { speed, toward: { x, z } })` (a point in the world) or
+`toward: heading` (radians, as `rotation.y`), from the stick, the next point on a path, a door to run for. Nothing
+while aiming, off balance or far off; little while the face is set on something (`person.face.look(...)`).
+`rig.lead.amount = 0` turns it off (2 makes it plainer).
+
+**A walk of one's own** (`gs.models.human` people, by themselves): no two people walk alike, and nobody takes the
+same step twice. Each person's walk comes from their body: an older person takes shorter, quicker steps, swings the
+arms and hips less, leans and looks down a little more and stands wider with the toes out; a heavy person walks wider
+and rolls more from side to side with the arms held out; a muscled one carries the arms out and a little bent. The
+seed gives the rest of a person's own way of walking (how far the arms swing, one more than the other, how far the
+hips turn, how upright, a habit of the head), the same on every phone, and each `twin()` walks a little differently.
+From stride to stride the time a stride takes, the arms' swing, how wide the feet go and the lean wander a little,
+as they do in a person (slowly, not at random from one step to the next). Each footfall is felt: the hips give, the
+rib cage dips and the head nods after it, the elbows bounce, more at a run and in a heavy person. Slopes are read
+from how the body rises or falls as you move it: uphill the person leans in and takes shorter, quicker steps swinging
+the arms, downhill leans back with the knees bent and the arms out; with `rig.plant(ground, person)` the feet lie
+along the slope and keep the point they stand on. A mood: `person.rig.manner.mood = 'tired'` (`brisk`, `tired`,
+`wary`, `proud`, `sad`, `limp`; `manner.side = 'L'` for the leg that hurts; or a mix, `{ tired: .5, limp: 1 }`;
+`null` for none), eased in over a second. A mood changes how a person walks at the speed you give, so slow a tired or
+limping person yourself. `rig.manner.amount = 0` leaves the walk as drawn.
+
 **Momentum and follow-through** (`gs.models.human` people, by themselves): a body has weight. A new move begins
 at once and takes up what the body was doing: how far each joint was from where the new move has it, and how
 fast it was turning, die away smoothly in about the fade you ask for (`rig.play(name, { fade })`), so a limb in
