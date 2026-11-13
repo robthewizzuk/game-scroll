@@ -136,7 +136,9 @@ export class Board {
     for (let t = 0; t < tries; t++) {
       const g = this.matches({ min });
       if (!g.length) { if (this.hint({ min }) || t > tries / 2) return this; this.shuffle(); continue; }
-      for (const grp of g) { const c = grp.cells[0]; const p = this.fillFn?.(c.col, c.row, this); if (p) { p.x = c.col; p.y = c.row; this.put(c.col, c.row, p); } }
+      // (a piece of another kind, in a cell of the match chosen at random: a fill that comes round in a cycle gave each match its own kind
+      // back every time, or put back one that had just been taken away, and about one start in 400 ended with matches still on the board)
+      for (const grp of g) { const c = grp.cells[Math.floor(this.rng() * grp.cells.length)], was = this.get(c.col, c.row); let p = this.fillFn?.(c.col, c.row, this); for (let k = 0; k < 8 && p && this.same(p, was); k++) p = this.fillFn(c.col, c.row, this); if (p) { p.x = c.col; p.y = c.row; this.put(c.col, c.row, p); } }
     }
     return this;
   }
