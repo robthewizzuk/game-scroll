@@ -2511,7 +2511,49 @@ console.log('physics ok');
       assert.ok(r.close > .13, `turned 4 rad/s on the spot: the feet ${(r.close * 100).toFixed(0)} cm apart at the closest (24 standing)`);
     }
   }
-  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance; kneeling, changes of stance, quick turns) ok');
+  // starts, stops and turns by balance (rig.stride.plan): setting off, the foot on the side the body turns to goes first (the other would
+  // cross in front of it); a stop is made in two steps, the braking foot where it will stand and the other brought up square beside it (the
+  // walk ended with a foot in the air, put down as drawn, and the feet were shuffled up for most of a second after); and round a tight bend
+  // each foot comes down already turned into it
+  {
+    const { Matrix4 } = await import('three'), inv = new Matrix4();
+    const walk = (secs, fn, plan) => {
+      const p = skeleton({}), st = { x: 0, z: 0, yaw: 0, speed: 0 }, R = { first: -1, lands: [], dy: 0, n: 0, p }; p.rig.stride.plan = plan;
+      for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+        const t = i * dt; fn(st, t); go(st, st.speed);
+        if (st.speed > .15) p.rig.blend(STR, st.speed); else p.rig.play('idle', { fade: .22 }); p.position.set(st.x, 0, st.z); p.rotation.y = st.yaw; p.rig.update(dt, { speed: st.speed }); p.updateMatrixWorld(true);
+        p.rig.stride.feet.forEach((f, k) => { if (R.first < 0 && !f.down) R.first = k; if (f.landed) { R.lands.push(t); if (st.speed > .5) { R.dy += f.dyaw; R.n++; } } });
+      }
+      inv.copy(p.matrixWorld).invert(); const a = p.bones.footL.getWorldPosition(new Vector3()).applyMatrix4(inv), b = p.bones.footR.getWorldPosition(new Vector3()).applyMatrix4(inv);
+      R.apart = Math.abs(a.z - b.z); return R;
+    };
+    for (const turn of [1, -1]) { const r = walk(1.5, (st, t) => { st.speed = t > .5 ? 1.3 : 0; if (t > .35) st.yaw += turn * 1.2 * dt; }, true); assert.equal(r.first, turn > 0 ? 0 : 1, `setting off as it turns ${turn > 0 ? 'left' : 'right'}, the foot on that side goes first`); }
+    const stop = (dec, plan) => walk(4, (st, t) => { st.speed = t < 1.6 ? 1.3 : Math.max(0, st.speed - dec * dt); }, plan);
+    for (const dec of [3, 8]) {
+      const [off, on] = [false, true].map(pl => stop(dec, pl)), last = r => r.lands.filter(t => t > 1.6).pop() - 1.6, n = r => r.lands.filter(t => t > 1.6).length;
+      assert.ok(last(on) < .95 && last(on) <= last(off) + .06 && n(on) <= 4, `a stop at ${dec} m/s²: the last footfall ${last(on).toFixed(2)} s after it is asked for (${last(off).toFixed(2)} as the walk ended), ${n(on)} steps`);
+      assert.ok(on.apart < .07, `and it stands square: the feet ${(on.apart * 100).toFixed(0)} cm apart front to back`);
+    }
+    const bend = pl => walk(5, (st, t) => { st.speed = 1.3; st.yaw += 1.3 / .8 * dt; }, pl), [b0, b1] = [bend(false), bend(true)];
+    assert.ok(b1.dy / b1.n > .06 && Math.abs(b0.dy / b0.n) < .03, `round a bend each foot comes down turned ${(b1.dy / b1.n * 57.3).toFixed(0)} degrees into it (${(b0.dy / b0.n * 57.3).toFixed(0)} as drawn)`);
+  }
+  // the eyes and the head go first into a turn (lead.js): round a bend the head is turned into it (follow-through left it behind), and told where
+  // the person means to go, the eyes and then the head go there before the body has begun to turn
+  {
+    const yawOf = (o, w) => { o.getWorldDirection(w); return Math.atan2(w.x, w.z); }, d = new Vector3(), wrap = a => a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI;
+    const look = (amount, fn) => {
+      const p = skeleton({}), st = { x: 0, z: 0, yaw: 0, speed: 1.3 }; p.rig.lead.amount = amount; let head = 0, n = 0, eyes = 0;
+      for (let i = 0; i < 240; i++) { const o = fn(st, i * dt); go(st, st.speed); p.rig.blend(STR, st.speed); p.position.set(st.x, 0, st.z); p.rotation.y = st.yaw; p.rig.update(dt, { speed: st.speed, toward: o }); p.updateMatrixWorld(true);
+        if (i > 120) { const hb = p.bones.head; hb.updateWorldMatrix(true, false); d.set(0, 0, 1).transformDirection(hb.matrixWorld); head += wrap(Math.atan2(d.x, d.z) - st.yaw); eyes += p.face.lead; n++; } }
+      return { head: head / n, eyes: eyes / n };
+    };
+    const bend = st => { st.yaw += 1.6 * dt; return null; }, [a, b] = [look(0, bend), look(1, bend)];
+    assert.ok(b.head > .12 && b.head > a.head + .1 && b.eyes > .02, `round a bend the head looks ${(b.head * 57.3).toFixed(0)} degrees into it (${(a.head * 57.3).toFixed(0)} without), the eyes ${(b.eyes * 57.3).toFixed(0)} further`);
+    const meant = look(1, (st, t) => ({ x: st.x + 5, z: st.z + 1 }));
+    assert.ok(meant.head > .3, `told where it means to go (to its left), the head goes ${(meant.head * 57.3).toFixed(0)} degrees that way before the body turns`);
+    const p = skeleton({}); p.rig.blend(STR, 1.3); for (let i = 0; i < 60; i++) { p.position.z = i * 1.3 * dt; p.rig.update(dt, { speed: 1.3 }); } assert.ok(Math.abs(p.rig.lead.head) < 1e-3 && Math.abs(p.face.lead) < 1e-3, 'going straight it does nothing');
+  }
+  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance; kneeling, changes of stance, quick turns; starts, stops in two steps, feet turned into a bend; the eyes and head lead turns) ok');
 }
 
 // momentum between moves (Rig.carried) and follow-through (follow.js): a person's rig takes a new move up with the speed the body had, and
@@ -2730,7 +2772,8 @@ console.log('physics ok');
   // by themselves the eyes keep to a spot in the world while the head turns, and jump on when it has turned too far
   // (the eyes are put looking ahead and left to settle, with no jump due: waiting for a jump that happened to land ahead failed one run in
   // sixty, when a glance aside was still easing back, or when the standing pose had come to where it turns the head against the body)
-  { const p = mk(), f = p.face, B = p.bones; run(p, .1); f.aim = new Vector3(0, 0, 1).transformDirection(B.head.matrixWorld); f.glance = false; f.dartT = 9; run(p, .2);
+  // (the turn not led here: a turn the eyes and head go first into is lead.js's, checked with the steps)
+  { const p = mk(), f = p.face, B = p.bones; if (p.rig.lead) p.rig.lead.amount = 0; run(p, .1); f.aim = new Vector3(0, 0, 1).transformDirection(B.head.matrixWorld); f.glance = false; f.dartT = 9; run(p, .2);
     f.dartT = 9; const g0 = gaze(B.eyeL)[0], h0 = gaze(B.head)[0], y0 = f.yaw; run(p, .3, () => { p.rotation.y += .4 * dt; }); const g1 = gaze(B.eyeL)[0], turned = gaze(B.head)[0] - h0;
     assert.ok(turned > .07 && Math.abs(g1 - g0) < .03 && Math.abs(y0 - f.yaw - turned) < .03, `the head turned ${turned.toFixed(2)} rad with the body: the eyes still look the same way (${(g1 - g0).toFixed(3)} off), turned ${(y0 - f.yaw).toFixed(2)} back in the head`);
     p.rotation.y += 1.2; run(p, .3); assert.ok(Math.abs(f.yaw) < .2, `turned far at a stroke, they jump to look ahead again: ${f.yaw.toFixed(2)}`);
