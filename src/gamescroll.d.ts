@@ -2680,7 +2680,51 @@ export interface LandPart {
   /** The meadow rings on this land (each an instanced mesh). */
   meadows: Loose[];
   scatter(props: Loose, name: string, count: number, o?: { above?: number; below?: number; steep?: number; keepOut?: (x: number, z: number) => boolean; inset?: number; [k: string]: Loose }): number[];
+  /**
+   * Rock on the land: cliffs with ledges and overhangs where it is steep, caves cut through it, and rock of your own shape (arches, blocks) melted into it.
+   * A height map has one height for each spot; this is real rock that folds over itself. Call it once the land has its shape and colours (after flatten()
+   * and paint()), before meadow(), scatter() and solid(), in make(). Afterwards height() is the top of whatever is highest and floor() what a thing stands on.
+   * Returns the group of rock meshes (on the land already); rocks(false) takes it away. docs/maker-kit.md "Cliffs, caves and overhangs".
+   */
+  rocks(o?: false | LandRocks): Loose;
+  /** What land.rocks() made: its group and material (one stock material for all the rock: give it a look with gs.outdoors.looks.rock), how many triangles in how many pieces, and how long the number work took. null with no rock. */
+  rock: { group: Loose; material: Loose; tris: number; pieces: number; ms: number; holes: Uint32Array; [k: string]: Loose } | null;
+  /** What a thing at height y stands on at x, z: the highest ground or rock at or under y + reach (.6): a cave's floor, a ledge, the ground under an overhang. Feed it the thing's own last height each frame. Without rocks: height(x, z). */
+  floor(x: number, y: number, z: number, reach?: number): number;
+  /** The underside of what is over a point (Infinity: open sky). */
+  roof(x: number, y: number, z: number): number;
+  /** Does rock show at x, z, or has a cave taken the ground away there? (Grass and scattered things keep off it; marks are not taken there.) */
+  rocky(x: number, z: number): boolean;
+  /** How much daylight reaches a point: 1 in the open, .7 under an overhang, down to .1 deep in a cave (dim your fill light by it). */
+  sky(x: number, y: number, z: number): number;
+  /** Metres from `from` along the unit direction `dir` to the ground or the rock: { distance }, or null within max (100). So a Land can be the `level` of a gs.sound Ears or a gs.sky Weather. */
+  ray(from: P3, dir: P3, max?: number): { distance: number } | null;
+  /** The height map's own height at x, z, whatever rock stands there. */
+  height0(x: number, z: number): number;
   update(dt: number, camera?: Loose): LandPart; dispose(): void;
+}
+/** What land.rocks() is asked for. */
+export interface LandRocks {
+  /**
+   * Cliffs where the land is steep (true by default; false: none). steep: how steep the land must be, as land.slope() (.42); depth: how far the rock stands
+   * out, x (1); beds: metres thick the layers of stone (1.8); ledge: metres a hard bed stands out past a soft one (1.1); lip: metres a bed leans out towards
+   * its top, which is what overhangs (.7); rough (.45); cracks: the joints that run down the face (.5); area: [x0, z0, x1, z1] only here.
+   */
+  cliffs?: boolean | { steep?: number; depth?: number; beds?: number; ledge?: number; lip?: number; rough?: number; cracks?: number; area?: [number, number, number, number] };
+  /** Tunnels: each along a path of [x, y, z, radius?] points (radius 2.5 m, rough .35). Open wherever the path comes out of the ground: the land's own squares are left out there. */
+  caves?: { path: number[][]; radius?: number; rough?: number }[];
+  /**
+   * Rock of your own shape melted into the land: a box [wide, high, deep], a ball (radius), an arch [span, rise, thick, deep] or a tube along a path, at
+   * [x, y, z] (its middle; an arch's feet), turned by `turn` radians. blend: metres over which it melts into what it touches (.6); rough (.3).
+   * cut: true takes the shape out instead: a hollow, a notch, a pit.
+   */
+  shapes?: { box?: [number, number, number]; ball?: number; arch?: [number, number, number, number]; path?: number[][]; radius?: number; at?: [number, number, number]; turn?: number; round?: number; rough?: number; blend?: number; cut?: boolean }[];
+  /** Metres a cell of the rock (.4: halve it and there are four times the triangles and the work; .6 to .8 for slower phones or far rock). */ cell?: number;
+  seed?: number;
+  /** rock and dark: the stone's two tints (beds differ between them); top: flat tops and where rock meets the ground (default: the land's own colour there); floor: a cave's. */
+  colours?: { rock?: string; dark?: string; top?: string; floor?: string };
+  /** Your own material for the rock instead of the plain one (the rock has positions, normals and vertex colours: no uvs). */
+  material?: Loose;
 }
 export interface MarksOptions {
   /** The gs.outdoors Land it lies on (its sheets follow the land's own triangles, and its meadows part); or ground: (x, z) => height for ground of your own; neither: flat at y = 0. */

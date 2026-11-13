@@ -4437,6 +4437,99 @@ console.log('physics ok');
   }
 }
 
+// land with cliffs, caves and overhangs (src/kit/land-rock.js: gs.outdoors land.rocks())
+{
+  globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
+  const THREE = await import('three'), { Marks, Land } = await import('../src/kit/outdoors.js'), R = await import('../src/kit/land-rock.js'), { caster, blocked } = await import('../src/kit/acoustics.js');
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, near = (a, b, e = 1e-3) => Math.abs(a - b) < e, within = (v, lo, hi) => v >= lo && v <= hi;
+  // a valley in the west (0 m), a plateau in the east (10 m), a cliff between them; a cave from the foot of the
+  // cliff in under the plateau, a block of rock and an arch on the valley floor, a hollow in the plateau
+  const lie = (x, z) => 10 * sm(-3, 3, x + 2 * Math.sin(z * .1)), S = 64, n = 40, w = n + 1, Z = new Float32Array(w * w);
+  for (let r = 0; r <= n; r++) for (let c = 0; c <= n; c++) Z[r * w + c] = lie(-S / 2 + c * S / n, -S / 2 + r * S / n);
+  const grid = { z: Z, size: S, segments: n, cut: true };
+  const O = { cell: .5, seed: 5, cliffs: true, caves: [{ path: [[-6, 2.2, 0], [12, 2.5, 0]], radius: 2.4 }], shapes: [{ box: [4, 3, 4], at: [-20, 1, -20] }, { arch: [6, 4, 1.5, 2], at: [-20, 0, 15] }, { ball: 3, at: [20, 10, 20], cut: true }] };
+  // the land as the rock sees it: the height map's own triangles
+  { const G = R.ground(grid), H = {}; assert.ok(G.at(-10, 5, H).h === 0 && near(G.at(0, 0, H).h, 5, .01) && G.at(0, 0, H).ny < .6 && G.at(20, 0, H).ny === 1, 'the ground under the rock is the height map'); }
+  // the numbers: triangles in pieces, the land's squares a cave took, and for each column the heights that are solid
+  const t0 = performance.now(), A = R.rockArrays(grid, O), ms = performance.now() - t0;
+  assert.ok(within(A.stats.tris, 6000, 40000) && A.stats.hidden > A.stats.tris && A.pieces.filter(p => p.I.length).length >= 8 && A.cell === .5 && A.side === 16 && A.nch === 4, 'rock in pieces, most of it left out where it lies hidden under the land: ' + JSON.stringify(A.stats));
+  assert.ok(within(A.holes.length, 8, 90) && [...A.holes].every(q => { const x = -S / 2 + (q % n + .5) * S / n, z = -S / 2 + (Math.floor(q / n) + .5) * S / n; return (Math.abs(z) < 5 && within(x, -9, 3)) || Math.hypot(x - 20, z - 20) < 5.5; }), 'the land\'s squares are left out where the cave comes out of the cliff and where the hollow is: ' + A.holes.length);
+  let flip = 0, tris = 0, down = 0, bad = 0;
+  for (const p of A.pieces) {
+    for (const a of [p.P, p.N, p.C]) for (let i = 0; i < a.length; i++) if (!(a[i] === a[i])) bad++;
+    for (let i = 0; i < p.N.length; i += 3) { if (!near(Math.hypot(p.N[i], p.N[i + 1], p.N[i + 2]), 1, 1e-3)) bad++; if (p.N[i + 1] < -.5) down++; }
+    for (let i = 0; i < p.C.length; i++) if (!(p.C[i] >= 0 && p.C[i] <= 1.2)) bad++;
+    for (let t = 0; t < p.I.length; t += 3) {
+      const a = p.I[t] * 3, b = p.I[t + 1] * 3, c = p.I[t + 2] * 3, P = p.P, N = p.N, ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+      if ((uy * vz - uz * vy) * (N[a] + N[b] + N[c]) + (uz * vx - ux * vz) * (N[a + 1] + N[b + 1] + N[c + 1]) + (ux * vy - uy * vx) * (N[a + 2] + N[b + 2] + N[c + 2]) < 0) flip++; tris++;
+    }
+  }
+  assert.ok(bad === 0 && tris === A.stats.tris && flip < tris * .012, 'every number is one, normals are a unit long, triangles face the way their normals do: ' + flip + ' of ' + tris + ' do not');
+  assert.ok(down > 250, 'rock that faces down: overhangs, the cave\'s roof, the arch\'s underside: ' + down + ' points');
+  // pieces meet: the edge of one piece ends on points its neighbour has too
+  { const key = (P, i) => Math.round(P[i * 3] * 1000) + ',' + Math.round(P[i * 3 + 1] * 1000) + ',' + Math.round(P[i * 3 + 2] * 1000), seen = new Map(); let met = 0, edges = 0, odd = 0;
+    for (const p of A.pieces) for (let i = 0; i < p.P.length / 3; i++) { const k = key(p.P, i); seen.set(k, (seen.get(k) || 0) + 1); }
+    for (const p of A.pieces) { const E = new Map(); for (let t = 0; t < p.I.length; t += 3) for (let e = 0; e < 3; e++) { const a = p.I[t + e], b = p.I[t + (e + 1) % 3], k = a < b ? a + '_' + b : b + '_' + a; E.set(k, (E.get(k) || 0) + 1); }
+      for (const [k, c] of E) { edges++; if (c > 2) odd++; if (c === 1) { const [a, b] = k.split('_').map(Number); if (seen.get(key(p.P, a)) > 1 && seen.get(key(p.P, b)) > 1) met++; } } }
+    assert.ok(met > 300 && odd < edges * .004, 'pieces meet along their edges: ' + met + ' edges (and ' + odd + ' of ' + edges + ' edges have more than two triangles: where two sheets of rock touch)'); }
+  // the same asking gives the same rock, another seed another
+  { const B = R.rockArrays(grid, O), C = R.rockArrays(grid, { ...O, seed: 6 }); assert.ok(A.pieces.every((p, i) => p.P.length === B.pieces[i].P.length && p.P.every((v, j) => v === B.pieces[i].P[j]) && p.I.every((v, j) => v === B.pieces[i].I[j])), 'the same seed: the same rock'); assert.ok(C.stats.tris !== A.stats.tris, 'another seed: another rock'); }
+  { const F = R.rockArrays({ z: new Float32Array(w * w), size: S, segments: n, cut: true }, { cell: .5, seed: 5, cliffs: true, caves: [], shapes: [] }); assert.ok(F.stats.tris === 0 && F.holes.length === 0 && F.pieces.every(p => !p.spans.length), 'flat land with nothing asked of it has no rock'); }
+  // what is solid where: the top, what you stand on, what is over you
+  const M = new R.RockMap(A, grid, O);
+  assert.ok(M.top(-25, 0) === 0 && M.floor(-25, 0, 0) === 0 && M.roof(-25, 1, 0) === Infinity && M.sky(-25, 1, 0) === 1 && !M.changed(-25, 0) && M.inside(-25, -1, 0) && !M.inside(-25, 1, 0) && M.top(25, -10) === 10, 'plain ground is the land itself');
+  assert.ok(M.top(6, 0) === 10 && within(M.floor(6, 1, 0), 0, .9) && within(M.roof(6, 2, 0), 3.8, 5) && !M.inside(6, 2, 0) && M.inside(6, 2, 3.5) && M.inside(6, 7, 0), 'in the cave: a floor under you, a roof over you, the plateau on top: floor ' + M.floor(6, 1, 0).toFixed(2) + ', roof ' + M.roof(6, 2, 0).toFixed(2));
+  assert.ok(M.sky(6, 2, 0) < .6 && M.sky(11, 2, 0) < M.sky(6, 2, 0) && M.sky(11, 2, 0) > .1 && M.sky(-7, 1, 0) === 1, 'less daylight the deeper in: ' + M.sky(6, 2, 0).toFixed(2) + ', ' + M.sky(11, 2, 0).toFixed(2));
+  assert.ok(within(M.top(-20, -20), 1.8, 3.2) && M.floor(-20, 4, -20) === M.top(-20, -20) && M.top(-16.5, -20) === 0, 'a block of rock stands on the valley floor: ' + M.top(-20, -20).toFixed(2));
+  assert.ok(near(M.floor(-20, 0, 15), 0, .02) && within(M.roof(-20, 1, 15), 2.5, 4.2) && within(M.top(-20, 15), 4, 5.8) && M.floor(-20, 6, 15) === M.top(-20, 15) && M.sky(-20, 1, 15) === .7 && M.inside(-20, M.top(-20, 15) - .4, 15), 'an arch: ground under it, its underside over you, its top to stand on: ' + M.roof(-20, 1, 15).toFixed(2) + ' ' + M.top(-20, 15).toFixed(2));
+  assert.ok(within(M.top(20, 20), 6.2, 8) && M.top(20, 28) === 10, 'a hollow in the plateau: ' + M.top(20, 20).toFixed(2));
+  { let multi = 0; for (const p of A.pieces) for (const o of p.off) if (o >= 0 && p.spans[o + 2] === p.spans[o + 2]) multi++; assert.ok(multi > 150, 'columns with more than one solid stretch (what a height map cannot hold): ' + multi); }
+  // rays
+  const D = { x: 0, y: -1, z: 0 }, U = { x: 0, y: 1, z: 0 }, E = { x: 1, y: 0, z: 0 };
+  assert.ok(near(M.ray({ x: 25, y: 30, z: -10 }, D, 50), 20, .01) && M.ray({ x: 25, y: 30, z: -10 }, D, 10) === Infinity && M.ray({ x: 25, y: 30, z: -10 }, U, 50) === Infinity && M.ray({ x: 6, y: 7, z: 0 }, E, 60) === 0, 'straight down to the plateau, and nothing above');
+  assert.ok(within(M.ray({ x: -12, y: 2, z: 0 }, E, 60), 24, 28) && within(M.ray({ x: 6, y: 2, z: 0 }, { x: 0, y: 0, z: 1 }, 60), 1.4, 3) && within(M.ray({ x: 6, y: 2, z: 0 }, U, 60), 1.4, 3) && within(M.ray({ x: -20, y: 5, z: 12 }, E, 60), 14, 21), 'a ray goes down the cave to its end, and stops at its wall, its roof and the cliff');
+  // a walk in at the mouth: no step up or down on the way
+  { let y = 0, big = 0, py = 0; for (let x = -14; x <= 11; x += .05) { y = M.floor(x, y, 0); big = Math.max(big, Math.abs(y - py)); py = y; } assert.ok(within(y, 0, .9) && big < .15, 'walking in at the cave\'s mouth: the biggest step ' + big.toFixed(3) + ' m'); }
+  const t1 = performance.now(); let sum = 0; for (let i = 0; i < 100000; i++) sum += M.floor(-8 + (i % 400) * .04, 2, -10 + ((i / 400) | 0) * .08); const ns = (performance.now() - t1) / 100000 * 1e6;
+  assert.ok(ms < 4000 && ns < 3000 && sum === sum, 'the rock made in ' + ms.toFixed(0) + ' ms, floor() ' + ns.toFixed(0) + ' ns');
+
+  // on a Land: land.rocks()
+  const land = new Land({ kind: lie, size: S, segments: n, colours: [[0, '#587a34'], [10, '#7a7a5a']] }), i0 = land.mesh.geometry.index.count;
+  assert.ok(land.floor(6, 1, 0) === land.height(6, 0) && land.roof(6, 20, 0) === Infinity && land.sky(6, 1, 0) === 1 && !land.rocky(6, 0) && near(land.ray({ x: 25, y: 30, z: -10 }, D, 50).distance, 20, .01) && land.ray({ x: 25, y: 30, z: -10 }, U, 50) === null, 'a land with no rock answers as a height map');
+  const group = land.rocks(O), K = land.rock;
+  assert.ok(group.parent === land.object && group.children.length === K.pieces && K.pieces >= 8 && group.children.every(m => m.isMesh && m.castShadow && m.receiveShadow && m.material === K.material) && K.material.isMeshStandardMaterial && K.material.vertexColors && K.material.onBeforeCompile === THREE.Material.prototype.onBeforeCompile, 'the rock is meshes with one stock material: the same on WebGL and WebGPU');
+  assert.ok(K.holes.length > 8 && land.mesh.geometry.index.count === i0 - K.holes.length * 6, 'the land\'s own squares are left out where a cave comes through');
+  { land.object.updateMatrixWorld(true); const m = group.children[0], P = m.geometry.attributes.position.array, p = new THREE.Vector3(P[0], P[1], P[2]).applyMatrix4(m.matrixWorld); assert.ok(near(p.x, P[0], 1e-4) && near(p.y, P[1], 1e-4) && near(p.z, P[2], 1e-4), 'the rock is in the world\'s own metres'); }
+  assert.ok(land.height(6, 0) === 10 && within(land.floor(6, 1, 0), 0, .9) && within(land.roof(6, 2, 0), 3.8, 5) && land.sky(6, 2, 0) < .6 && within(land.height(-20, -20), 1.8, 3.2) && land.rocky(-20, -20) && !land.rocky(-25, 0) && !land.rocky(6, 0) && land.height(-25, 0) === land.height0(-25, 0), 'land.height() is the top of the rock, land.floor() what you stand on');
+  { let n2 = 0; for (const q of K.holes) { const x = -S / 2 + (q % n + .5) * S / n, z = -S / 2 + (Math.floor(q / n) + .5) * S / n; if (land.rocky(x, z)) n2++; } assert.ok(n2 > K.holes.length * .6, 'where the ground was taken away counts as rock: ' + n2 + ' of ' + K.holes.length); }
+  { const cast = caster(land); assert.ok(near(cast({ x: 6, y: 30, z: 0 }, D, 100), 20, .01) && within(cast({ x: 6, y: 2, z: 0 }, U, 100), 1.4, 3) && cast({ x: -25, y: 2, z: 0 }, U, 100) === Infinity, 'a Land answers rays as a level does (for the weather and for sound)');
+    assert.ok(blocked(cast, { x: 8, y: 2, z: 0 }, { x: -12, y: 2, z: 0 }) === 0 && blocked(cast, { x: 8, y: 2, z: 0 }, { x: 8, y: 11.6, z: 0 }) > .9 && blocked(cast, { x: -20, y: 1.6, z: 5 }, { x: -12, y: 1.6, z: -5 }) === 0, 'a sound in the cave is heard out of its mouth, and not through the rock over it'); }
+  { const t2 = performance.now(), tris0 = K.tris; land.rocks(O); assert.ok(performance.now() - t2 < 120 && land.rock.tris === tris0 && land.object.children.filter(c => c.name === 'rocks').length === 1, 'asked again for the same rock: kept, not made again'); }
+  // marks: none on rock, none from a walker in the cave, prints from one in the valley
+  {
+    const v = { cam: { position: new THREE.Vector3(-22, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, _air: null, air() { return this._air ||= { wet: 0, world: null }; } }, m = new Marks(v, { land, sand: () => 1, grass: false });
+    assert.ok(m.kindAt(-25, 0).kind === 'sand' && m.kindAt(-20, -20).kind === null && m.step(-20, -20) === null && m.count === 0, 'rock takes no marks');
+    const a = { position: { x: 4, y: land.floor(4, 1, 0), z: 0 } }; m.watch(a);
+    for (let i = 0; i < 180; i++) { a.position.x += 1.4 / 60; a.position.y = land.floor(a.position.x, a.position.y, 0); m.update(1 / 60); }
+    assert.ok(m.count === 0 && a.position.y < 1 && land.height(a.position.x, 0) === 10, 'a walker in the cave leaves no prints on the ground above');
+    const b = { position: { x: -26, y: 0, z: 0 } }; m.watch(b);
+    for (let i = 0; i < 180; i++) { b.position.x += 1.4 / 60; m.update(1 / 60); }
+    assert.ok(m.count >= 4 && m.drawn >= 1, 'a walker in the valley does: ' + m.count); m.dispose();
+  }
+  // solid: things rest on the cave's floor and on the plateau over it
+  {
+    const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+    const world = new World3D({ gravity: -20 }); land.solid(world);
+    const drop = (x, y, z) => { const b = new THREE.Mesh(new THREE.SphereGeometry(.3)); b.position.set(x, y, z); world.ball(b, .3, { at: [x, y, z] }); return b; }, inCave = drop(8, 2.5, 0), onTop = drop(25, 12, -10), onBlock = drop(-20, 5, -20);
+    for (let i = 0; i < 180; i++) world.step(1 / 60);
+    assert.ok(within(inCave.position.y - land.floor(inCave.position.x, inCave.position.y, inCave.position.z), .2, .45) && inCave.position.y < 2 && near(onTop.position.y, 10.3, .05) && onBlock.position.y > 1.5, 'a ball rests on the cave\'s floor, another on the plateau: ' + inCave.position.y.toFixed(2) + ' ' + onTop.position.y.toFixed(2) + ' ' + onBlock.position.y.toFixed(2));
+  }
+  // the land reshaped: the rock is made again on it; taken away: a height map again
+  land.flatten(25, -10, 4, 12); assert.ok(land.rock && land.rock !== K && near(land.height(25, -10), 12, .01) && land.rock.tris > 0, 'flatten() makes the rock again');
+  land.rocks(false); assert.ok(land.rock === null && land.mesh.geometry.index.count === i0 && !land.object.children.some(c => c.name === 'rocks') && land.height(6, 0) === land.height0(6, 0) && land.floor(6, 1, 0) === 10, 'rocks(false) takes it away');
+  console.log(`land with cliffs, caves and overhangs: rock in pieces that meet, hidden rock left out, overhangs, a cave with a floor and a roof, an arch, a hollow, rays, a walk in at the mouth, marks, physics, flatten() ok (${A.stats.tris} triangles in ${ms.toFixed(0)} ms, floor() ${ns.toFixed(0)} ns)`);
+}
+
 // vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
 {
   const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
