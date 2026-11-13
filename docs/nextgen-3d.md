@@ -1059,8 +1059,8 @@ const barrel = gs.models.prop('barrel', { seed: 2 }); barrel.position.set(1, 0, 
 wear(wall, { moss: .7 });                                                    // moss on the top
 ```
 
-- **`material(name, o)`**: 18 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
-  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`
+- **`material(name, o)`**: 19 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
+  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`, `palm`
   (`gs.models.materials` lists them; `skin` is pores and fine lines, a tile to 16 mm at 64 repeats a metre:
   what the kit's people wear). Change the recipe's colours (`colour`, `dark`, `mortar`, `gap`, `rust`,
   `under`, `vein`, `grout`...), `seed` for another pattern, `repeat: [u, v]`, `size` (texture pixels, 256).
@@ -1113,6 +1113,32 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   the same kind), `leaves` and `bark` (colours), `wind` (.6, or a `gs.outdoors` Wind). About 20 to 80 ms each;
   the same options again give a copy sharing shapes and materials, so make a few kinds and place copies (or
   hand them to `gs.props` for instancing and far-off impostors).
+  The same call grows plants EZ-Tree can't, each by rules of its own: `palm` (a ringed trunk that leans out
+  and curves up, arching fronds, two or three dead ones hanging brown, nuts under the crown), `fan` (a fan
+  palm: a tall trunk, a skirt of dry leaves, round pleated fans), `banana` (paddle leaves torn along their
+  veins), `fern` (`trunk: 3` for a tree fern), `taro` (elephant ears), `cypress` (a swamp cypress: flared
+  foot, knees, feathery sprays and hanging moss), `reeds` (blades and cattails), `flowers` (`petals`: a colour
+  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf bounces, flutters and
+  leans downwind from where it grows, and `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
+  brushed aside by whoever the marks watch walking through. `group.userData.fronds` lists every leaf
+  (`{ id, root, dir, len }`). Per kind: `lean`, `fronds`, `dead`, `fruit`, `skirt`, `trunk`, `branches`,
+  `knees`, `moss`, `blades`, `cattails`, `stems`, `petals`, `pads`, `blooms`, `spread`.
+- **`ivy(targets, o)`**: ivy grown over meshes as they stand (a wall, a house, a stump): vines start at the
+  foot of steep faces (or `from: [[x, y, z]]`) and climb, keeping to the surface, branching out sideways,
+  going over edges and hanging where there is nothing to hold, with clusters of leaves facing out. `roots`
+  (8), `length` (metres each climbs: 5), `size` (a leaf: .13), `density`, `up`, `leaves`, `stem`, `seed`,
+  `wind`, `bend`. A Group in world metres; 30 to 150 ms, kept for the same walls and options, so grow it while
+  loading.
+- **`weeds(o)`**: weeds where nobody weeds, in one draw: along cracks and kerbs (`lines`), at the foot of
+  walls (`walls: mesh`) and at `spots`, each tuft turned and sized its own way. `ground(x, z)`, `gap`,
+  `height`, `colours`, `seed`, `wind`, `bend`, `max`.
+
+```js
+const palm = gs.models.tree('palm', { height: 8, wind, seed: 2 });
+const ferns = [1, 2, 3].map(seed => gs.models.tree('fern', { seed, wind, bend: marks }));
+house.add(gs.models.ivy(walls, { roots: 10, length: 6 }));
+v.scene.add(gs.models.weeds({ lines: [[[-4, 0], [0, .4], [4, .1]]], walls: kerb, wind }));
+```
 - **`building(o)`**: a building to walk up to, from a small shape grammar: the block is split into floors,
   each wall into bays, and each bay into a real window opening (reveal, frame, sill, glass set back) or the
   door, with a string course, cornice, and a flat roof with a parapet or a gable roof. `style` (`brick`,

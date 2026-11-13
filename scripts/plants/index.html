@@ -1,0 +1,77 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A sheet of gs.models' plants for scripts/plants.cjs: a row for each plant (and for ivy on a house, weeds in
+// cracks and at a wall's foot, a bush and ferns being walked through), a column for each view, so their shapes,
+// leaves and sway can be judged and tuned by eye. It notes each one's triangles and how long it took to grow.
+//   ?kinds=palm,fan,banana,fern,treefern,taro,cypress,reeds,flowers,lily,ivy,weeds,bend   &views=far,near,up   &cell=260x260
+//   &seed=1   &walk=0 (bend: nobody brushes past)   &wind=1 (a gs.outdoors Wind's speed in m/s x 3; 0: none)   &t=2 (seconds of sway before each picture)   &gpu (WebGPU)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const ALL = ['palm', 'fan', 'banana', 'fern', 'treefern', 'taro', 'cypress', 'reeds', 'flowers', 'lily', 'ivy', 'weeds', 'bend'];
+  const kinds = (Q.get('kinds') || ALL.join(',')).split(','), views = (Q.get('views') || 'far,near,up').split(','), [cw, ch] = (Q.get('cell') || '260x260').split('x').map(Number);
+  const seed = +(Q.get('seed') || 1), windK = +(Q.get('wind') ?? 1), secs = +(Q.get('t') || 2);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;   // (a sheet: nothing waits, hidden, for its shader)
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * kinds.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [];
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .6, amb: .55 });
+  const sun = gs.hd.sun('#fff2d8', 2.4, 30, [.5, .8, -.6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sky = new gs.sky.Sky(v, { time: 15, env: true, clouds: .2 }); v.air({ haze: .0006 });
+  const wind = windK > 0 ? new gs.outdoors.Wind({ x: windK * 3, z: windK * 1.2, gust: .4 }) : null;
+  const ground = new T.Mesh(new T.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), gs.hd.pbr('#8a7a5a', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
+  const water = new T.Mesh(new T.CircleGeometry(4, 32).rotateX(-Math.PI / 2), gs.hd.pbr('#2c4a4a', { rough: .08, metal: .1 })); water.position.y = .01; water.userData.noSettle = true;
+  for (let r = 0; r < kinds.length; r++) {
+    const k = kinds[r], world = new T.Group(); v.scene.add(world); let marks = null, walker = null, aim = [0, 4, 0], size = 10, tris = 0;
+    const t0 = performance.now();
+    if (k === 'ivy') {
+      const house = new T.Mesh(new T.BoxGeometry(6, 4.5, 5).translate(0, 2.25, 0), gs.models.material('brick', { repeat: [3, 2] })); house.castShadow = house.receiveShadow = true; world.add(house); house.updateMatrixWorld();
+      const iv = gs.models.ivy(house, { seed, length: 6, roots: 12, wind }); world.add(iv); info.push(`ivy: ${JSON.stringify(iv.userData.ivy)}`); aim = [0, 2.2, 0]; size = 9;
+      iv.traverse(o => { if (o.isMesh) tris += o.geometry.index.count / 3; });
+    } else if (k === 'weeds') {
+      const wall = new T.Mesh(new T.BoxGeometry(8, 1.2, .3).translate(0, .6, -1.2), gs.models.material('stone', { repeat: [4, 1] })); wall.castShadow = wall.receiveShadow = true; world.add(wall); wall.updateMatrixWorld();
+      const cracks = [[[-4, .3], [-2, .1], [0, .5], [1.5, .2], [4, .6]], [[-1, -.4], [-.4, 1.4], [.3, 2.6]]];
+      const wd = gs.models.weeds({ walls: wall, lines: cracks, seed, wind }); world.add(wd); info.push(`weeds: ${wd.userData.weeds}`); aim = [0, .3, 0]; size = 4; tris = wd.geometry.index.count / 3 * wd.count;
+    } else if (k === 'bend') {
+      marks = new gs.outdoors.Marks(v, { ground: () => 0, reach: 10 });
+      walker = new T.Mesh(new T.CapsuleGeometry(.25, 1.2, 4, 10).translate(0, .85, 0), gs.hd.pbr('#3a5a8a', { rough: .7 })); walker.castShadow = true; world.add(walker); walker.position.set(-3, 0, -.55);
+      if (Q.get('walk') !== '0') marks.watch(walker, { radius: .7 });   // (&walk=0: the same with nobody brushing past, to compare)
+      for (const [kind, x, z] of [['bush', -1, .3], ['bush', 1.4, -.2], ['fern', .2, -.9], ['fern', 2.6, .5], ['taro', -2.4, -.6]]) { const p = gs.models.tree(kind, { seed, wind, bend: marks }); p.position.set(x, 0, z); world.add(p); }
+      aim = [0, .7, 0]; size = 5;
+    } else {
+      const kind = k === 'treefern' ? 'fern' : k, p = gs.models.tree(kind, { seed, wind, ...(k === 'treefern' ? { trunk: 3, height: 4.6 } : {}) });
+      world.add(p); if (kind === 'lily') { world.add(water); p.position.y = water.position.y; }   // (a lily's foot is the water's top)
+      const bb = new T.Box3().setFromObject(p), c = bb.getCenter(new T.Vector3()), sz = bb.getSize(new T.Vector3());
+      aim = [c.x, c.y, c.z]; size = Math.max(sz.x, sz.y, sz.z, .6);
+      p.traverse(o => { if (o.isMesh) tris += o.geometry.index.count / 3; });
+      info.push(`${k}: ${Math.round(tris)} triangles, ${p.userData.fronds?.length ?? 0} leaves listed, grown in ${(performance.now() - t0).toFixed(0)} ms (height ${sz.y.toFixed(1)} m)`);
+    }
+    if (k === 'ivy' || k === 'weeds') info.push(`${k}: ${Math.round(tris)} triangles, ${(performance.now() - t0).toFixed(0)} ms`);
+    for (let c = 0; c < views.length; c++) {
+      const view = views[c], d = size * (view === 'near' ? .75 : 1.55);
+      const eye = view === 'up' ? [aim[0] + size * .25, .4, aim[2] + size * .3] : view === 'top' ? [aim[0], aim[1] + size * 1.6, aim[2] + .01] : [aim[0] + d * .7, aim[1] + d * (view === 'near' ? .1 : .25), aim[2] + d * .75];
+      const look = view === 'up' ? [aim[0], aim[1] * 1.6 + 1, aim[2]] : aim;
+      v.cam.fov = 50; v.cam.aspect = cw / ch; v.cam.near = .05; v.cam.far = 500; v.cam.updateProjectionMatrix(); v.cam.position.set(...eye); v.cam.lookAt(...look); v.cam.updateMatrixWorld();
+      sun.follow(aim[0], 0, aim[2]);
+      // sway (and, for 'bend', someone walking through) for a while before the picture
+      const steps = Math.round(secs * 30);
+      for (let i = 0; i < steps; i++) {
+        const dt = 1 / 30; wind?.update(dt, v.cam.position); sky.update(dt);
+        if (walker) { walker.position.x = -3 + 6 * (c + (i + 1) / steps) / views.length; marks.update(dt, v.cam.position); }
+        v.t = (v.t || 0) + dt;
+      }
+      v.cut?.();
+      for (let n = 0; n < (c ? 2 : 6); n++) { v.render(cx, cw, ch); await frame(); }
+      sx.drawImage(cell, c * cw, r * ch);
+      sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${k} · ${view}`, c * cw + 4, r * ch + 12);
+    }
+    marks?.dispose?.(); v.scene.remove(world);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

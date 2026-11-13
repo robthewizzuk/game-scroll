@@ -357,6 +357,26 @@ export function bakeRoom(r, scene, s) {
   try { cc.update(r, scene); } finally { cc.removeFromParent(); }
   g.rt.texture.needsPMREMUpdate = true;
 }
+// leaves and fronds: alpha that thins less in the mips (outlines that hold up far away), light through towards
+// the sun, both sides lit alike (looks.js leaves / fronds fragment)
+function seeThroughLeaf(m, o, u) {
+  const lq = uv().mul(live(u.lkAtlas)), dx = dFdx(lq), dy = dFdy(lq);
+  m.opacityNode = (m.opacityNode ? float(m.opacityNode) : materialOpacity).mul(float(1).add(max(0, log2(max(dot(dx, dx), dot(dy, dy))).mul(.5)).mul(.35)));
+  afterColor(m, o, c => c.mul(float(1).add(live(u.lkGlow).mul(pow(max(dot(normalize(positionWorld.sub(cameraPosition)), live(u.lkSun)), 0), 4)))));
+  if (!m.normalMap) m.normalNode = normalViewGeometry;
+}
+// looks.js PART_GLSL: a leaf brushed aside by what walks through a gs.outdoors.Marks grass field, more the higher it
+// is on its plant: (world point, height) => a world offset. Only for a material given the field before it was first drawn.
+function partPush(u) {
+  if (!u.lkPart?.value) return null;
+  return (wp, h, cap = null) => {
+    const PA = live(u.lkPartAt), K = live(u.lkPartK), pd = abs(wp.xz.sub(PA.xy));
+    const pk = texture(u.lkPart.value, wp.xz.mul(PA.z)).onRenderUpdate(() => u.lkPart.value || BLANK_PART()).mul(step(max(pd.x, pd.y), PA.w));
+    let up = smoothstep(0, K.y, h).mul(K.x); if (cap) up = up.mul(cap);
+    const ln = pk.rg.mul(2).sub(1.00392).mul(step(.5, pk.a));
+    return vec3(ln.x.mul(up), length(ln).mul(up).mul(-.35), ln.y.mul(up));
+  };
+}
 export const gpuLooks = {
   // gs.fx3d's 3D text (text3d.js): distance-field letters
   sdf: sdfLook,
@@ -485,13 +505,30 @@ export const gpuLooks = {
       const lean = dir.mul(k).mul(sin(t.mul(.9).add(ph.mul(.5))).mul(.6).add(1.2));
       return modelWorldMatrixInverse.mul(vec4(swing.add(vec3(lean.x, 0, lean.y)), 0)).xyz;
     };
+    // brushed aside by what walks through (looks.js PART_GLSL; only when given a Marks grass field before first drawn)
+    const push = partPush(u), pushAt = push ? (sw, wp) => sw.add(modelWorldMatrixInverse.mul(vec4(push(wp, positionGeometry.y), 0)).xyz) : sw => sw;
     // the leaves where they swayed to last frame as well, for the motion three works out (frame generation,
     // SGSR 2): without it every leaf seemed to move by its whole sway each frame, and broke up in made frames
-    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(sway(lastFrame(u.lkTime), kWas, dWas))); return positionLocal.add(sway(t, k, dir)); })();
-    const lq = uv().mul(live(u.lkAtlas)), dx = dFdx(lq), dy = dFdy(lq);
-    m.opacityNode = (m.opacityNode ? float(m.opacityNode) : materialOpacity).mul(float(1).add(max(0, log2(max(dot(dx, dx), dot(dy, dy))).mul(.5)).mul(.35)));
-    afterColor(m, o, c => c.mul(float(1).add(live(u.lkGlow).mul(pow(max(dot(normalize(positionWorld.sub(cameraPosition)), live(u.lkSun)), 0), 4)))));
-    if (!m.normalMap) m.normalNode = normalViewGeometry;
+    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(sway(lastFrame(u.lkTime), kWas, dWas))); return positionLocal.add(pushAt(sway(t, k, dir), wp)); })();
+    seeThroughLeaf(m, o, u);
+  },
+  // looks.js fronds(): long leaves from one point (palms, banana, fern, reeds, ivy, moss, weeds): the tip
+  // bounces, flutters and leans downwind most, read from the mesh's lkFrond (where the leaf starts, how far
+  // along) and lkFrondId (which leaf, how long); light through, outlines that hold up, both sides lit alike
+  fronds(m, s, o) {
+    const u = s.uniforms, F = attribute('lkFrond', 'vec4'), FI = attribute('lkFrondId', 'vec2'), a = F.w, push = partPush(u);
+    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), ph = wp.x.mul(.11).add(wp.z.mul(.13)).add(FI.x.mul(1.93));
+    const off = (t, wind, dir) => {
+      const k = wind.mul(live(u.lkSway)).mul(FI.y).mul(a).mul(a), lean = dir.mul(k).mul(sin(t.mul(.8).add(ph.mul(.4))).mul(.6).add(1.1));
+      const sx = sin(t.mul(1.3).add(ph)).add(sin(t.mul(2.9).add(ph.mul(1.7))).mul(.35)).mul(k).mul(.45), sz = cos(t.mul(1.1).add(ph.mul(1.3))).mul(k).mul(.45);
+      const sy = k.negate().mul(sin(t.mul(2.1).add(ph.mul(1.6))).mul(.5).add(sin(t.mul(8.7).add(ph.mul(3.1)).add(a.mul(6))).mul(.12))).sub(length(dir).mul(k).mul(.25));
+      let w = vec3(sx.add(lean.x), sy, sz.add(lean.y));
+      if (push) w = w.add(push(wp, a.mul(FI.y), smoothstep(1.8, 2.6, positionGeometry.y).oneMinus()));   // (pushed by how far along its leaf, not above a passer-by's reach)
+      return modelWorldMatrixInverse.mul(vec4(w, 0)).xyz;
+    };
+    // (where the leaf was last frame as well, for the motion three works out: see leaves)
+    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(off(lastFrame(u.lkTime), lastFrame(u.lkWind), lastFrame(u.lkWindDir)))); return positionLocal.add(off(live(u.lkTime), live(u.lkWind), live(u.lkWindDir))); })();
+    seeThroughLeaf(m, o, u);
   },
   // looks.js meadow(): the blades of land.meadow(): each tuft shrinks into the ground towards the edge of the
   // patch that travels with the camera, bends downwind in rolling gusts, and is lit alike on both sides
