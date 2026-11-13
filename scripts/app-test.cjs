@@ -637,7 +637,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 4 && sheet.opts[3] === 'Engine test scenes (7)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 4 && sheet.opts[3] === 'Engine test scenes (9)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -654,7 +654,7 @@ async function tour(b) {
   // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^Seven scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  check(/^Nine scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
 
@@ -676,8 +676,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 7 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field and a parade, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 9 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff and a parade, each with its system off and then on', JSON.stringify(sc.scenes));
   check(M('valley', 'on').tris < M('valley', 'off').tris * .8 && /^\d+ mesh(es)? drawn in clusters$/.test(M('valley', 'on').note) && +M('valley', 'on').note.split(' ')[0] >= 1 && /tables [\d.]+ MB/.test(M('valley', 'on').tell),
     'the valley draws fewer triangles through cluster detail, once its clusters are built', JSON.stringify(sby.valley));
   check(M('forest', 'on').tris < M('forest', 'off').tris * .8 && /simpler levels of a fir/.test(M('forest', 'on').note), 'the forest draws fewer triangles with detail levels for its copies', JSON.stringify(sby.forest));
@@ -695,6 +695,14 @@ async function tour(b) {
   const kept = /^(\d+) marks kept, (\d+) tiles of them drawn, made in [\d.]+ ms a frame$/.exec(M('field', 'on').tell || '');
   check(kept && +kept[1] >= 6 && +kept[2] >= 2 && M('field', 'on').calls > M('field', 'off').calls && !M('field', 'off').tell && /\nFIELD · ground that takes marks · 2 people, a dog and a jeep going round a field of sand, grass and bare earth, in snow, then on wet earth, then dry · made in /.test(sc.text) && /\n  = prints, tracks, parted grass against ground that takes no marks: /.test(sc.text),
     'the field\'s people, dog and jeep leave prints and tracks, drawn on sheets of their own', JSON.stringify(sby.field));
+  // the yard: a camp fire, a chimney and a burning drum, once with no gas and once with the smaller version of it (and, on WebGPU, as the gas on the graphics chip)
+  const gasOf = /^([\d,]+) cells of (\d+) cm in JavaScript, ([\d,]+) puffs drawn, [\d.]+ ms of the kit's code a frame$/.exec(M('yard', 'puffs').tell || '');
+  check(gasOf && +gasOf[1].replace(/,/g, '') >= 1000 && +gasOf[3].replace(/,/g, '') >= 10 && M('yard', 'puffs').calls > M('yard', 'none').calls && !M('yard', 'none').tell && /\nYARD · smoke and fire that flow · a camp fire under a beam, /.test(sc.text) && /\n  = the smaller version \(soft puffs\) against no smoke or fire: /.test(sc.text),
+    'the yard\'s fires and chimney make flames and smoke, drawn as soft puffs that ride the flow', JSON.stringify(sby.yard));
+  // the cliff: the same walk on the height map alone, then with rock on it (cliffs with ledges, a cave through the spur, an arch)
+  const rock = /^rock of ([\d,]+) triangles in (\d+) pieces, its numbers worked out in [\d,]+ ms$/.exec(M('cliff', 'on').tell || '');
+  check(rock && +rock[1].replace(/,/g, '') > 3000 && +rock[2] >= 4 && M('cliff', 'on').tris > M('cliff', 'off').tris && M('cliff', 'on').calls > M('cliff', 'off').calls && !M('cliff', 'off').tell && /^rock of [\d,]+ triangles made/.test(M('cliff', 'on').note) && M('cliff', 'on').build > 0 && /\nCLIFF · land with cliffs, caves and overhangs · a walk along the foot of a cliff, through a cave under a spur and under an arch, four people standing about · made in /.test(sc.text) && /\n  = cliffs, a cave, an arch against the height map alone: /.test(sc.text),
+    'the cliff\'s rock is made and drawn: cliffs, a cave and an arch on the land', JSON.stringify(sby.cliff));
   // the parade: two people, a dog, a horse and a goods train, their points as plain floats and then kept small (src/kit/slim.js)
   const mbOf = m => { const x = /^([\d,]+) points: ([\d.]+) MB in memory, ([\d.]+) MB on the graphics chip$/.exec(M('parade', m).tell || ''); return x ? [+x[1].replace(/,/g, ''), +x[2], +x[3]] : [NaN, NaN, NaN]; };
   check(mbOf('on')[0] === mbOf('off')[0] && mbOf('on')[1] < mbOf('off')[1] * .75 && mbOf('on')[2] < mbOf('off')[2] * .75 && Math.abs(M('parade', 'on').tris - M('parade', 'off').tris) < M('parade', 'off').tris * .02 && M('parade', 'off').build > 0 && /\n  = kept small against plain floats: /.test(sc.text),
@@ -709,15 +717,29 @@ async function tour(b) {
     && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
-  // one scene alone, on a bigger screen: in a picture that small a brick's depth is under a pixel, and a surface is then drawn as flat as before
+  // one scene alone, on a bigger screen: in a picture that small a brick's depth is under a pixel, and a surface is then drawn as flat as before.
+  // Each of its timed frames is held up for over half a second, which is what a slow build machine's are at this size. They are frames
+  // all the same: they used to be taken for the phone having gone to another app, the run's clock stood still, and this step ran for
+  // nine minutes or for ever. (A timed run that has not ended in a minute is stopped here, and fails the checks below.)
+  // And once, in the first run, the phone does go to another app for a second and a half while a frame is waited for.
   await q.setViewportSize({ width: 720, height: 960 }); await q.waitForTimeout(400);
   const one = await q.evaluate(async () => {
-    const res = await __gs.tour({ scenes: true, seconds: 1.5, size: .1, only: ['village'] });
-    await new Promise(r => setTimeout(r, 400));
-    return { n: res.scenes.length, error: res.scenes[0].error, modes: res.scenes[0].modes.map(m => ({ key: m.key, tris: Math.round(m.tris), build: m.build == null ? null : Math.round(m.build), shown: m.ow + ' x ' + m.oh })), active: __gs.active?.def.id };
+    const signal = {}, plays = []; let guard = 0;
+    const hold = ms => { const end = performance.now() + ms; while (performance.now() < end); };
+    const away = () => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); hold(1500); delete document.visibilityState; document.dispatchEvent(new Event('visibilitychange')); };
+    const res = await __gs.tour({ scenes: true, seconds: 4, size: .1, only: ['village'], signal,
+      onStep(s) { clearTimeout(guard); if (s.what === '0 s') { plays.push(0); guard = setTimeout(() => { signal.stop = true; }, 60000); } },
+      onPlay() { hold(520); if (++plays[plays.length - 1] === 1 && plays.length === 1) setTimeout(away); } });
+    clearTimeout(guard); await new Promise(r => setTimeout(r, 400));
+    return { n: res.scenes.length, stopped: res.stopped, error: res.scenes[0].error, plays, modes: res.scenes[0].modes.map(m => ({ key: m.key, tris: Math.round(m.tris), build: m.build == null ? null : Math.round(m.build), shown: m.ow + ' x ' + m.oh, frames: m.frames, longest: Math.round(m.worst) })), active: __gs.active?.def.id };
   });
   check(one.n === 1 && !one.error && one.modes[1]?.tris > one.modes[0]?.tris * 1.5 && one.modes[1].build < 8000 && one.active === 'bunker-breakout',
     'one scene can be run alone; close to, the village draws more triangles for its surfaces, which were kept from the first run', JSON.stringify(one));
+  check(!one.stopped && one.modes.length === 2 && one.modes.every(m => m.frames >= 1 && m.longest > 500),
+    'a frame that takes over half a second is timed as a frame, and the run still ends by the clock', JSON.stringify(one));
+  // (a run times every frame after its first: one fewer where the phone was away)
+  check(one.modes[0]?.frames === one.plays[0] - 2 && one.modes[1]?.frames === one.plays[1] - 1,
+    'time spent in another app in the middle of a run is nobody\'s frame', JSON.stringify(one));
   if (process.env.SHOTS) require('fs').writeFileSync(process.env.SHOTS + '/scenes-report.txt', sc.text);
   await q.done();
 }

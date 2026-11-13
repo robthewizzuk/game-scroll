@@ -11,6 +11,10 @@
 //   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
 //   field    ground that takes marks (src/kit/marks.js, gs.outdoors.Marks): people, a dog, a jeep and a tank going round a field of sand, grass
 //            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
+//   yard     smoke and fire that flow (src/kit/gas.js, gs.gas): a camp fire under a beam, a smoking chimney, a burning drum and an explosion every
+//            seven seconds, in a wind that swings round: with no gas, as the smaller version (soft puffs), and on WebGPU as the gas on the graphics chip
+//   cliff    land with cliffs, caves and overhangs (src/kit/land-rock.js, gs.outdoors land.rocks()): a walk along the foot of a cliff, through a
+//            cave under a spur, out and under an arch: once on the height map alone (over the spur), then with the rock
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
@@ -135,7 +139,7 @@ function forest({ gs, HD, size, gpu }) {
 }
 
 /* ---------- village: real surface detail ---------- */
-function village({ gs, size }) {
+function village({ gs, HD, size }) {
   const T = gs.THREE, n = Math.max(3, Math.round(12 * size)), { v, sun } = view(gs, 200, .003), step = 13, len = Math.ceil(n / 2) * step;
   const ground = new T.Mesh(new T.PlaneGeometry(len + 120, 160).rotateX(-Math.PI / 2), gs.hd.pbr('#7b7468', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
   const STYLES = ['brick', 'stone', 'timber'], houses = [];
@@ -147,6 +151,7 @@ function village({ gs, size }) {
   let flat = 0; for (const m of meshes) flat += trisOf(m.geometry);
   const got = () => meshes.filter(m => m.userData.relief === 'ready'), shown = () => [...(v.details?.map.values() || [])].filter(e => e.relief && e.twin && !(e.twin.layers.mask & HELD));
   let on = false;
+  const sum = { n: 0, tris: 0, px: 0, t: 0 };   // what the surfaces drew a frame and how finely, for tell(): counted from the start of the timed run
   return {
     v, holds: `${n} houses, ${num(flat)} triangles before their surfaces are built`,
     modes: [
@@ -161,8 +166,12 @@ function village({ gs, size }) {
     ],
     // a walk along the pavement and back, 2.5 metres a second and two from the house fronts (where a wall's
     // bricks are big enough in the picture to be worth their triangles), looking along the street and up at the roofs
-    path(t, cam) { const L = len + 20, u = (t * 2.5) % (2 * L), x = (u < L ? u : 2 * L - u) - L / 2, dir = u < L ? 1 : -1; cam.position.set(x, 1.7, -4.4); cam.lookAt(x + dir * 9, 2.4 + .8 * Math.sin(t * .7), -5.6 + 3 * Math.sin(t * .5)); sun.follow(x, 0, 0); },
-    tell() { return null; },
+    path(t, cam) {
+      if (t < sum.t) sum.n = sum.tris = sum.px = 0; else if (on) { sum.n++; sum.tris += HD.info.reliefTris || 0; sum.px += HD.info.reliefPx || 0; }
+      sum.t = t;
+      const L = len + 20, u = (t * 2.5) % (2 * L), x = (u < L ? u : 2 * L - u) - L / 2, dir = u < L ? 1 : -1; cam.position.set(x, 1.7, -4.4); cam.lookAt(x + dir * 9, 2.4 + .8 * Math.sin(t * .7), -5.6 + 3 * Math.sin(t * .5)); sun.follow(x, 0, 0);
+    },
+    tell() { return on && sum.n ? `the surfaces ${num(sum.tris / sum.n)} triangles a frame, within ${(sum.px / sum.n).toFixed(1)} pixels` : null; },
     dispose() { if (on) for (const h of houses) gs.models.relief(h, false); clear(v); },
   };
 }
@@ -231,7 +240,9 @@ function town({ gs, HD, size }) {
     tell() {
       if (!sum.n) return null;
       const shadows = `shadow maps ${num(sum.sh / Math.max(1, sum.shn))} triangles in ${num(sum.shd / Math.max(1, sum.shn))} draws a frame`;
-      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms · ${shadows}`;
+      // (what a game's view would do here by itself: it rests wherever what it leaves out is worth less than finding it costs)
+      const pays = HD.info.occPays, verdict = pays == null ? '' : pays ? ' (worth it here: a game keeps it on)' : ' (not worth it here: a game rests it)';
+      return HD.occlude === false ? shadows : `${num(sum.hid / sum.n)} things of ${num(sum.tris / sum.n)} triangles left out a frame, found in ${(sum.ms / sum.n).toFixed(2)} ms${verdict} · ${shadows}`;
     },
     dispose() { HD.occlude = was.on; HD.occludeSleep = was.sleep; HD.shadowTiles = was.tiles; clear(v); },
   };
@@ -270,7 +281,10 @@ function square({ gs, size }) {
     return performance.now() - t0;
   })();
   // (the first run waits for the sculpting and says how long it took)
-  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  // (the crowd's run has the skeleton people out of the scene, not just switched off: a game with a crowd has none, and
+  // the view walks everything in its scene each frame, hidden or not. Left in, 19,000 hidden parts cost the crowd's
+  // run most of its code time on the first phone to try it)
+  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
   const sum = { n: 0, ms: 0, sent: 0, draws: 0, t: 0 }, ahead = new T.Vector3();
   return {
     v, holds: `${num(N)} people and dogs walking, running and standing in a square`,
@@ -371,6 +385,122 @@ function field({ gs, size }) {
   };
 }
 
+/* ---------- yard: smoke and fire that flow ---------- */
+function yard({ gs, size, gpu }) {
+  const T = gs.THREE, { Gas } = gs.gas, { v, sun } = view(gs, 140, .004);
+  const stone = gs.hd.pbr('#8d8a84', { rough: .9 }), wood = gs.hd.pbr('#5a3a22', { rough: .85 }), iron = gs.hd.pbr('#3a3d42', { rough: .55, metal: .6 }), brick = gs.hd.pbr('#8a4a3a', { rough: .9 });
+  const add = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  const ground = add(new T.PlaneGeometry(90, 90).rotateX(-Math.PI / 2), gs.hd.pbr('#6f6a5e', { rough: .95 }), 0, 0, 0); ground.castShadow = false;
+  // a yard with walls on two sides: a camp fire under a beam on two posts, a chimney, a burning drum
+  add(new T.BoxGeometry(12, 3.4, .4), stone, 0, 1.7, -4.4); add(new T.BoxGeometry(.4, 3.4, 9), stone, -5.4, 1.7, 0);
+  add(new T.CylinderGeometry(.09, .09, 1.3, 8).rotateZ(1.2), wood, -1.6, .15, .4); add(new T.CylinderGeometry(.09, .09, 1.3, 8).rotateZ(-1.2).rotateY(1), wood, -1.6, .15, .4);
+  add(new T.BoxGeometry(2.4, .4, .6), wood, -1.6, 2.5, .4); add(new T.BoxGeometry(.16, 2.4, .16), wood, -2.7, 1.2, .4); add(new T.BoxGeometry(.16, 2.4, .16), wood, -.5, 1.2, .4);
+  add(new T.BoxGeometry(.7, 2.4, .7), brick, 2.4, 1.2, -1.8); add(new T.CylinderGeometry(.32, .32, .9, 16), iron, 1.6, .45, 1.6);
+  // the gas of the run that is on: none, the smaller version (soft puffs, in JavaScript), or the gas on the graphics chip
+  const BOX = [-4.2, 0, -3.4, 4.2, 6.2, 3.2], k = Math.min(1, Math.max(.12, size));
+  let gas = null;
+  const set = key => {
+    gas?.dispose(); gas = null; if (key === 'none') return;
+    gas = new Gas(v, { box: BOX, kind: 'fire', lamp: true, gpu: key === 'chip', cells: size >= 1 ? undefined : Math.round((key === 'chip' ? Gas.max() : 12000 * 2.5) * k) });
+    gas.fire({ x: -1.6, y: .25, z: .4, size: 1.1 }); gas.box({ x: -1.6, y: 2.5, z: .4, w: 2.4, h: .4, d: .6 });   // (its flames and smoke go round the beam)
+    gas.smoke({ x: 2.4, y: 2.6, z: -1.8, size: .9, rate: 1.6, heat: .8, tint: .5 });
+    gas.fire({ x: 1.6, y: 1, z: 1.6, size: .6, power: .8 }); gas.tube({ x: 1.6, y: .45, z: 1.6, r: .32, h: .9 });
+  };
+  const sum = { n: 0, ms: 0, t: 1e9, next: 3 };
+  const enter = key => async draw => { set(key); sum.t = 1e9; for (let i = 0; i < 6; i++) await draw(); };
+  return {
+    v, holds: 'a camp fire under a beam, a chimney smoking in a wind that swings round, a burning drum and an explosion every seven seconds',
+    modes: [
+      { key: 'none', name: 'no smoke or fire', enter: enter('none') },
+      { key: 'puffs', name: 'the smaller version', enter: enter('puffs') },
+      ...(gpu ? [{ key: 'chip', name: 'on the graphics chip', enter: enter('chip') }] : []),
+    ],
+    pairs: gpu ? [['none', 'puffs', 'the smaller version (soft puffs) against no smoke or fire'], ['none', 'chip', 'the gas on the graphics chip against no smoke or fire'], ['puffs', 'chip', 'on the graphics chip against the smaller version']]
+      : [['none', 'puffs', 'the smaller version (soft puffs) against no smoke or fire']],
+    // the camera swings round the open side of the yard; the gas takes its steps by the clock, so every run sees the same fire
+    path(t, cam) {
+      const back = t < sum.t, dt = back ? 0 : Math.min(.1, t - sum.t), a = .9 + .7 * Math.sin(t * .25);
+      if (back) { sum.n = sum.ms = 0; sum.next = 3; gas?.clear(); }
+      sum.t = t;
+      cam.position.set(Math.sin(a) * 8, 2.1 + .4 * Math.sin(t * .3), Math.cos(a) * 8); cam.lookAt(-.2, 2, -.2); cam.updateMatrixWorld(); sun.follow(0, 0, 0);
+      if (!gas) return;
+      gas.wind.x = .9 * Math.sin(t * .35); gas.wind.z = .3 * Math.cos(t * .23);
+      if (t >= sum.next) { sum.next += 7; gas.burst(.3, .8, -1.2, { size: 1.8 }); }
+      const t0 = performance.now(); gas.update(dt); sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!gas || !sum.n) return null;
+      const cells = `${num(gas.cells)} cells of ${Math.round(gas.cell * 100)} cm`, ms = `${(sum.ms / sum.n).toFixed(2)} ms of the kit's code a frame`;
+      return gas.backend === 'gpu' ? `${cells} on the graphics chip, ${ms}` : `${cells} in JavaScript, ${num(gas.puffs.shown || 0)} puffs drawn, ${ms}`;
+    },
+    dispose() { gas?.dispose(); gas = null; clear(v); },
+  };
+}
+
+/* ---------- cliff: land with cliffs, caves and overhangs ---------- */
+function cliff({ gs, size }) {
+  const T = gs.THREE, { human } = gs.models, { Land, looks } = gs.outdoors, { v, sun } = view(gs, 320, .0015), amb = v.hemi.intensity;
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // a valley in the west, a plateau in the east, a cliff between them that wanders, and a spur that stands out of it
+  const lie = (x, z) => 16 * sm(-5, 5, x + 6 * Math.sin(z * .05) + 3 * Math.sin(z * .13 + 1) + 14 * Math.exp(-(((z - 10) / 9) ** 2)) - 4) + .8 * Math.sin(x * .07) * Math.cos(z * .06) + .3 * Math.sin(x * .19 + 2) * Math.sin(z * .23);
+  const land = new Land({ kind: lie, size: 160, segments: Math.max(32, Math.round(96 * Math.sqrt(size))), colours: [[-2, '#6f7d43'], [3, '#63783a'], [9, '#857f66'], [15, '#5f7436'], [19, '#6f7d43']] }); v.scene.add(land.object);
+  // the rock: beds and ledges where the land is steep, a cave under the spur from the valley on one side of it to
+  // the valley on the other, an arch on the valley floor and a shelf that stands out of the cliff
+  const ROCK = { seed: 3, cell: size >= .5 ? .4 : .8,
+    caves: [{ path: [[-3, lie(-3, -6) + 2.1, -5], [-4.5, lie(-3, -6) + 2.3, 10], [-3, lie(-3, 32) + 2.1, 31]], radius: 2.6 }],
+    shapes: [{ arch: [9, 5.5, 2.2, 3], at: [-22, lie(-22, 28) - .5, 28], turn: .5 }, { box: [8, 1.8, 6], at: [8.5, 10, -25], turn: .1 }] };
+  // the walk: a ring through the cave and under the arch, a point every quarter of a metre. How high each point
+  // is comes from the land as it is in this run (land.floor(): without the rock the walk goes over the spur).
+  const ring = new T.CatmullRomCurve3([[-12, -24], [-5, -14], [-3, -5], [-4.5, 10], [-3, 31], [-8, 38.5], [-18.2, 35], [-22, 28], [-25.8, 21], [-28, 8], [-23, -10]].map(([x, z]) => new T.Vector3(x, 0, z)), true, 'centripetal');
+  const LEN = ring.getLength(), NP = Math.round(LEN / .25), pts = ring.getSpacedPoints(NP).slice(0, NP), ys = new Float32Array(NP), sk = new Float32Array(NP), tmp = new Float32Array(NP), SPEED = 4;
+  const soften = (a, n) => { for (let pass = 0; pass < 2; pass++) { for (let i = 0; i < NP; i++) { let t = 0; for (let k = -n; k <= n; k++) t += a[(i + k + NP) % NP]; tmp[i] = t / (2 * n + 1); } a.set(tmp); } };
+  const lay = () => {
+    let y = land.height(pts[0].x, pts[0].z);
+    for (let i = 0; i < NP; i++) { ys[i] = y = land.floor(pts[i].x, y, pts[i].z); sk[i] = land.sky(pts[i].x, y + 1.7, pts[i].z); }
+    soften(ys, 3); soften(sk, 8);
+  };
+  // people standing about, for the size of things: at the cave's mouth, in it, under the arch, on the cliff top
+  const SPECS = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], SPOTS = [[-5.5, -9, 2, 2.4], [-3.6, 14, 2, 3], [-21, 26.5, 2, .4], [1.5, 6, 40, -1.9]];
+  const folk = []; let made = null, on = false, rockMs = 0;
+  const make = draw => made ||= (async () => {
+    const t0 = performance.now(); let done = false, err = null;
+    human.ready(SPECS).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+    const src = SPECS.map(o => human(o));
+    SPOTS.forEach(([x, z, , turn], i) => { const p = i < 2 ? src[i] : src[i % 2].twin(); p.position.set(x, 0, z); p.rotation.y = turn; v.scene.add(p); folk.push(p); });
+    return performance.now() - t0;
+  })();
+  const enter = key => async draw => {
+    const first = !made, build = await make(draw); on = key === 'on'; let ms = null;
+    land.meadow(false);
+    if (on) { const t0 = performance.now(), fresh = !rockMs; land.rocks(ROCK); looks.rock(land.rock.material, { mossy: 0 }); if (fresh) ms = rockMs = Math.max(1, performance.now() - t0); }
+    else land.rocks(false);
+    land.meadow({ reach: 14, gap: .34, height: .4, blades: 8 });   // (planted again: grass keeps off the rock)
+    lay(); SPOTS.forEach(([x, z, y], i) => { folk[i].position.y = land.floor(x, lie(x, z) < 6 ? lie(x, z) + y : y, z); folk[i].updateMatrixWorld(true); });
+    for (let i = 0; i < 4; i++) await draw();
+    return ms != null ? { build: ms + (first ? build : 0), note: `rock of ${num(land.rock.tris)} triangles made` + (first ? ', two people sculpted' : '') } : first ? { build, note: 'two people sculpted' } : null;
+  };
+  const at = (d, out) => { const f = ((d / LEN) % 1 + 1) % 1 * NP, i = Math.floor(f) % NP, j = (i + 1) % NP, u = f - Math.floor(f); out.set(pts[i].x + (pts[j].x - pts[i].x) * u, ys[i] + (ys[j] - ys[i]) * u, pts[i].z + (pts[j].z - pts[i].z) * u); return sk[i] + (sk[j] - sk[i]) * u; };
+  const eye = new T.Vector3(), ahead = new T.Vector3(); let last = 1e9;
+  return {
+    v, holds: 'a walk along the foot of a cliff, through a cave under a spur and under an arch, four people standing about',
+    modes: [
+      { key: 'off', name: 'the height map alone', enter: enter('off') },
+      { key: 'on', name: 'cliffs, a cave, an arch', enter: enter('on') },
+    ],
+    path(t, cam) {
+      const dt = t < last ? 0 : Math.min(1, t - last); last = t;
+      const light = at(t * SPEED, eye); at(t * SPEED + 5, ahead);
+      cam.position.set(eye.x, eye.y + 1.7, eye.z); cam.lookAt(ahead.x, ahead.y + 1.5, ahead.z); cam.updateMatrixWorld(); sun.follow(eye.x, eye.y, eye.z);
+      v.hemi.intensity = amb * (.3 + .7 * light);   // (a game dims its own fill light in a cave: land.sky() says by how much)
+      for (const p of folk) { p.rig.blend({ idle: 0, walk: 1.4 }, 0); p.rig.update(dt, { speed: 0 }); p.see(v.cam, 800); }
+      land.update(dt, cam);
+    },
+    tell() { return on && land.rock ? `rock of ${num(land.rock.tris)} triangles in ${num(land.rock.pieces)} pieces, its numbers worked out in ${num(land.rock.ms)} ms` : null; },
+    dispose() { land.meadow(false); land.rocks(false); for (const p of folk) p.removeFromParent(); v.hemi.intensity = amb; clear(v); },   // (the people's shapes are the kit's own: not freed here)
+  };
+}
+
 /* ---------- parade: smaller meshes ---------- */
 function parade({ gs, HD, size }) {
   const T = gs.THREE, { human, creature, vehicle } = gs.models, N = Math.max(2, Math.round(8 * size)), { v, sun } = view(gs, 200, .002);
@@ -432,5 +562,7 @@ export const SCENES = [
   ['town', 'Town', 'hiding what is behind other things, and shadows in tiles', town],
   ['square', 'Square', 'crowds', square],
   ['field', 'Field', 'ground that takes marks', field],
+  ['yard', 'Yard', 'smoke and fire that flow', yard],
+  ['cliff', 'Cliff', 'land with cliffs, caves and overhangs', cliff],
   ['parade', 'Parade', 'smaller meshes', parade],
 ];

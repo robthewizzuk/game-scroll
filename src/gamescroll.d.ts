@@ -1083,6 +1083,97 @@ export interface FluidPart {
   };
   KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>;
 }
+/** A solid thing in the gas (gas.ball, gas.box, gas.tube). */
+export interface GasSolid {
+  x: number; y: number; z: number;
+  /** Puts it somewhere (and turns it: a three.js Quaternion). Call it each frame for a thing that moves: the gas feels how fast it goes. */
+  set(x: number, y: number, z: number, turn?: Loose): this;
+  remove(): void;
+}
+export interface GasSolidOpts { x?: number; y?: number; z?: number; turn?: Loose; follow?: Loose }
+/** A fire that keeps burning (gas.fire): change any of these while it burns. dir and speed: a blown fire (a torch, a jet). */
+export interface GasFire { x: number; y: number; z: number; size: number; power: number; dir: [number, number, number]; speed: number | null; tint: number; on: boolean; remove(): void }
+/** Smoke that keeps coming (gas.smoke): change any of these any time. heat 0..1: 0 hangs where it is, 1 climbs fast. */
+export interface GasSmoke { x: number; y: number; z: number; size: number; rate: number; heat: number; dir: [number, number, number]; speed: number; tint: number; on: boolean; remove(): void }
+/** A fan (gas.fan): the gas in a ball `size` wide is pushed along dir at speed. */
+export interface GasFan { x: number; y: number; z: number; size: number; dir: [number, number, number]; speed: number; on: boolean; remove(): void }
+export type GasKind = 'smoke' | 'fire' | 'steam' | 'dust' | 'toxic' | 'magic';
+/** A kind of gas's numbers and colours (gs.gas.KINDS); any of them can be given to new Gas() as your own. */
+export interface GasLook {
+  /** The smoke's colour, and a second one a source's `tint` (0..1) blends towards. */
+  colour?: string; colour2?: string;
+  /** Three colours, from a flame's cool edge to its core. */
+  flame?: [string, string, string];
+  /** How hard heat rises, and how hard the smoke itself sinks (units a second squared). */
+  lift?: number; weight?: number;
+  /** The share of smoke lost a second, and of heat. */
+  fade?: number; cool?: number;
+  /** How much a unit of smoke hides in a unit of length. */
+  thick?: number;
+  /** Smoke made by burnt fuel; the share of fuel burnt a second (less: taller flames); how lively the swirls are (0..1); how bright flame is. */
+  soot?: number; burn?: number; curl?: number; glow?: number;
+}
+export interface GasT {
+  /** 'gpu' when the gas runs on the graphics chip (WebGPU) and is drawn as a lit volume, else 'cpu' (far fewer cells, drawn as soft puffs). */
+  readonly backend: 'gpu' | 'cpu';
+  /** How many cells the gas has, and how wide one is (world units). */
+  readonly cells: number; readonly cell: number;
+  /** The wind, in units a second. Change it any time. */
+  wind: { x: number; y: number; z: number };
+  /** The kind's numbers (see GasLook). Change them any time. */
+  lift: number; weight: number; fade: number; cool: number; soot: number; burn: number; curl: number;
+  /** false: nothing is drawn (ask it questions and draw your own). */
+  draws: boolean;
+  /** The light that follows the fire (with lamp: true): a three.js PointLight. */
+  readonly lamp?: Loose;
+  /** A fire that keeps burning at x, y, z: size (how wide its base is), power (how fierce). Returns it: change it any time. */
+  fire(o?: Partial<Omit<GasFire, 'remove'>>): GasFire;
+  /** Smoke that keeps coming from x, y, z. Returns it: change it any time. */
+  smoke(o?: Partial<Omit<GasSmoke, 'remove'>>): GasSmoke;
+  /** A fan (or someone blowing). Returns it: change it any time. */
+  fan(o?: Partial<Omit<GasFan, 'remove'>>): GasFan;
+  /** An explosion `size` units wide: fire (how much of it burns; 0: none), smoke, force (how hard it blasts the gas outwards), tint. */
+  burst(x: number, y: number, z: number, o?: { size?: number; fire?: number; smoke?: number; force?: number; tint?: number }): this;
+  /** A cloud of smoke all at once (dust kicked up, a smoke bomb): heat 0..1 (0: it hangs). */
+  puff(x: number, y: number, z: number, o?: { size?: number; amount?: number; heat?: number; tint?: number }): this;
+  /** Takes all the smoke, heat and movement away (fires, smoke makers and solids stay). */
+  clear(): this;
+  /** A solid ball the gas goes round. follow: a three.js object it keeps to. */
+  ball(o?: GasSolidOpts & { r?: number }): GasSolid;
+  /** A solid box. */
+  box(o?: GasSolidOpts & { w?: number; h?: number; d?: number }): GasSolid;
+  /** A solid post standing on its end. */
+  tube(o?: GasSolidOpts & { r?: number; h?: number }): GasSolid;
+  /** The ground under the gas: (x, z) => y. Call it again when the ground changes; null takes it away. */
+  ground(fn: ((x: number, z: number) => number) | null): this;
+  /** The still parts of your world: (x, y, z) => true where it is solid (walls, a doorway's frame, a chimney). Call it again when the world changes. */
+  solid(fn: ((x: number, y: number, z: number) => boolean) | null): this;
+  update(dt: number): this;
+  /** How thick the smoke is at a place: 0 clear air, about 1 thick smoke. */
+  smokeAt(x: number, y: number, z: number): number;
+  /** How hot the gas is at a place: 0 cool, up to .4 warm smoke, over .45 flame, 1 and more the heart of a fire. */
+  heatAt(x: number, y: number, z: number): number;
+  /** Which way and how fast the gas moves at a place (units a second). */
+  flowAt(x: number, y: number, z: number, out?: { x: number; y: number; z: number }): { x: number; y: number; z: number };
+  /** How much can be seen through the smoke from one point to another: 1 clear, 0 nothing. */
+  sees(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number;
+  /** How smoky a box of the world is, [x0, y0, z0, x1, y1, z1] (the whole gas if you don't say). */
+  smokeIn(box?: readonly number[]): number;
+  /** Where the gas's fire is and how much of it there is (power 0: nothing burning). For a light of your own. */
+  readonly glow: { x: number; y: number; z: number; power: number };
+  dispose(): void;
+}
+export interface GasPart {
+  /** Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. */
+  Gas: (new (view: Loose, o?: GasLook & {
+    box?: [number, number, number, number, number, number]; open?: boolean; kind?: GasKind; wind?: { x?: number; y?: number; z?: number };
+    cells?: number; size?: number; lamp?: boolean | { strength?: number; distance?: number }; draw?: boolean; seed?: number; gpu?: boolean;
+  }) => GasT) & {
+    /** The most cells this phone runs well (on the graphics chip where it can). */
+    max(): number;
+  };
+  KINDS: Readonly<Record<GasKind, GasLook>>;
+}
 export interface TickPart {
   /** Ticks per second for the game being played; 0 when it runs one update per frame. */
   readonly rate: number; readonly on: boolean; readonly dt: number;
@@ -1255,7 +1346,7 @@ export interface ToonPart {
   figure(o?: { h?: number; body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string | null }): Loose & { rig: RigT };
 }
 /** An HDView's extras for the ray-traced look: v.reflect(...meshes) (reflections on top-end phones), v.contact({ y, size }) (soft contact shadows) (mesh.userData.noAO = true keeps a mesh out of ambient occlusion). */
-/** HDView extras: v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.detail(meshes, { px } | false) (cluster detail, a Nanite-style level of detail: big still meshes of 20,000 triangles or more are drawn in clusters by themselves, each part only as finely as shows; this asks for it on smaller meshes from 2,000 triangles, sets how many pixels the simpler parts may be out by, or with false draws them whole; also mesh.userData.detail = true | px | false), occlusion culling by itself (what is fully hidden behind other things is left out of the frame, found from the last frame's own depth with nothing to list; mesh.userData.noOcclude = true always draws a mesh, v.autoOcclude = false stops it for the view; v.occluders(boxes | null, { max, w }) adds big solid boxes of your own { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off). */
+/** HDView extras: v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.detail(meshes, { px } | false) (cluster detail, a Nanite-style level of detail: big still meshes of 20,000 triangles or more are drawn in clusters by themselves, each part only as finely as shows; this asks for it on smaller meshes from 2,000 triangles, sets how many pixels the simpler parts may be out by, or with false draws them whole; also mesh.userData.detail = true | px | false), occlusion culling by itself (what is fully hidden behind other things is left out of the frame, found from the last frame's own depth with nothing to list; mesh.userData.noOcclude = true always draws a mesh, v.autoOcclude = false stops it for the view; v.occluders(boxes | null, { max, w }) adds big solid boxes of your own { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), v.shadersLeft (how many things' shaders are still being built in the background: hidden things and what is behind the camera are built over a view's first frames), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off). */
 export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose; HDView: new (...a: Loose[]) => Loose; HD: Loose; TIERS: Loose; hasHD(): boolean; pbr: Loose; rbox: Loose; surface: Loose; speckle: Loose; /** pbr(col, { rough, metal, glow, clear, sheen, tex, depth (parallax occlusion on WebGPU, in texture widths, e.g. .05), sss: true | { colour, power, scale, distortion, ambient, attenuation, thin (light only where the mesh's gsThin attribute says it is thin and open behind), back }, aniso (brushed metal streaks 0..1), anisoDir (radians), film (soap bubble / oil rainbow 0..1), glass: true | { thickness, ior, tint, distance }, wet (rain-soaked 0..1, porosity) }) (sss: subsurface scattering, light glowing through skin, wax, leaves). */ /** detail(big, fine, { times, strength }): mix a fine surface() normal (repeated `times` over) into a big one, so close-ups keep grain. Give it sets without repeat. */ detail(big: Loose, fine: Loose, o?: { times?: number; strength?: number }): Loose; /** panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). */ panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose; /** lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. */ lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose; /** pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). */ pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose; Particles: Loose;
   /** Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). new GPUParticles(view, opts); p.emit(count, burst); p.update(dt). Looks only: positions can't be read back. */
   GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strength?: number; scale?: number; speed?: number } | null; wind?: Loose }) => {
@@ -2589,7 +2680,51 @@ export interface LandPart {
   /** The meadow rings on this land (each an instanced mesh). */
   meadows: Loose[];
   scatter(props: Loose, name: string, count: number, o?: { above?: number; below?: number; steep?: number; keepOut?: (x: number, z: number) => boolean; inset?: number; [k: string]: Loose }): number[];
+  /**
+   * Rock on the land: cliffs with ledges and overhangs where it is steep, caves cut through it, and rock of your own shape (arches, blocks) melted into it.
+   * A height map has one height for each spot; this is real rock that folds over itself. Call it once the land has its shape and colours (after flatten()
+   * and paint()), before meadow(), scatter() and solid(), in make(). Afterwards height() is the top of whatever is highest and floor() what a thing stands on.
+   * Returns the group of rock meshes (on the land already); rocks(false) takes it away. docs/maker-kit.md "Cliffs, caves and overhangs".
+   */
+  rocks(o?: false | LandRocks): Loose;
+  /** What land.rocks() made: its group and material (one stock material for all the rock: give it a look with gs.outdoors.looks.rock), how many triangles in how many pieces, and how long the number work took. null with no rock. */
+  rock: { group: Loose; material: Loose; tris: number; pieces: number; ms: number; holes: Uint32Array; [k: string]: Loose } | null;
+  /** What a thing at height y stands on at x, z: the highest ground or rock at or under y + reach (.6): a cave's floor, a ledge, the ground under an overhang. Feed it the thing's own last height each frame. Without rocks: height(x, z). */
+  floor(x: number, y: number, z: number, reach?: number): number;
+  /** The underside of what is over a point (Infinity: open sky). */
+  roof(x: number, y: number, z: number): number;
+  /** Does rock show at x, z, or has a cave taken the ground away there? (Grass and scattered things keep off it; marks are not taken there.) */
+  rocky(x: number, z: number): boolean;
+  /** How much daylight reaches a point: 1 in the open, .7 under an overhang, down to .1 deep in a cave (dim your fill light by it). */
+  sky(x: number, y: number, z: number): number;
+  /** Metres from `from` along the unit direction `dir` to the ground or the rock: { distance }, or null within max (100). So a Land can be the `level` of a gs.sound Ears or a gs.sky Weather. */
+  ray(from: P3, dir: P3, max?: number): { distance: number } | null;
+  /** The height map's own height at x, z, whatever rock stands there. */
+  height0(x: number, z: number): number;
   update(dt: number, camera?: Loose): LandPart; dispose(): void;
+}
+/** What land.rocks() is asked for. */
+export interface LandRocks {
+  /**
+   * Cliffs where the land is steep (true by default; false: none). steep: how steep the land must be, as land.slope() (.42); depth: how far the rock stands
+   * out, x (1); beds: metres thick the layers of stone (1.8); ledge: metres a hard bed stands out past a soft one (1.1); lip: metres a bed leans out towards
+   * its top, which is what overhangs (.7); rough (.45); cracks: the joints that run down the face (.5); area: [x0, z0, x1, z1] only here.
+   */
+  cliffs?: boolean | { steep?: number; depth?: number; beds?: number; ledge?: number; lip?: number; rough?: number; cracks?: number; area?: [number, number, number, number] };
+  /** Tunnels: each along a path of [x, y, z, radius?] points (radius 2.5 m, rough .35). Open wherever the path comes out of the ground: the land's own squares are left out there. */
+  caves?: { path: number[][]; radius?: number; rough?: number }[];
+  /**
+   * Rock of your own shape melted into the land: a box [wide, high, deep], a ball (radius), an arch [span, rise, thick, deep] or a tube along a path, at
+   * [x, y, z] (its middle; an arch's feet), turned by `turn` radians. blend: metres over which it melts into what it touches (.6); rough (.3).
+   * cut: true takes the shape out instead: a hollow, a notch, a pit.
+   */
+  shapes?: { box?: [number, number, number]; ball?: number; arch?: [number, number, number, number]; path?: number[][]; radius?: number; at?: [number, number, number]; turn?: number; round?: number; rough?: number; blend?: number; cut?: boolean }[];
+  /** Metres a cell of the rock (.4: halve it and there are four times the triangles and the work; .6 to .8 for slower phones or far rock). */ cell?: number;
+  seed?: number;
+  /** rock and dark: the stone's two tints (beds differ between them); top: flat tops and where rock meets the ground (default: the land's own colour there); floor: a cave's. */
+  colours?: { rock?: string; dark?: string; top?: string; floor?: string };
+  /** Your own material for the rock instead of the plain one (the rock has positions, normals and vertex colours: no uvs). */
+  material?: Loose;
 }
 export interface MarksOptions {
   /** The gs.outdoors Land it lies on (its sheets follow the land's own triangles, and its meadows part); or ground: (x, z) => height for ground of your own; neither: flat at y = 0. */
@@ -3122,7 +3257,7 @@ export interface GS {
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;

@@ -476,6 +476,40 @@ try {
   cf.dispose(); window.__fluid.klass = null;
 }
 {
+  // gs.gas (Smoke and fire that flow): in a Next Gen view and in a Console view, burning, drawn and asked
+  // (kit-test.mjs has the gas's rules; look-compare.cjs gpu-gas --webgpu holds the graphics chip's version to the JavaScript one)
+  const { Gas } = gs.gas, frame = () => new Promise(r => requestAnimationFrame(r));
+  ok(Object.keys(gs.gas).sort().join() === 'Gas,KINDS' && Object.isFrozen(gs.gas.KINDS.fire) && window.__gas && Gas.max() >= 5000, 'gs.gas: Gas and KINDS, test switches under automation only (' + Gas.max() + ' cells here)');
+  const share = (d, test) => { let n = 0; for (let i = 0; i < d.length; i += 4) if (test(d[i], d[i + 1], d[i + 2])) n++; return n / (d.length / 4); };
+  const flame = (r, g, b) => r > 170 && r > b * 1.5, pale = (r, g, b) => r > 75 && g > 75 && b > 75 && r < 235 && Math.abs(r - b) < 45;
+  const hv = new gs.hd.HDView({ bg: '#18222e', amb: .5 }), hc = document.createElement('canvas'); hc.width = 160; hc.height = 200; const hx = hc.getContext('2d');
+  hv.cam.position.set(0, 1.9, 5.6); hv.cam.lookAt(0, 1.7, 0); hv.cam.updateMatrixWorld();
+  const sl = gs.hd.sun('#fff', 2.5, 12, [-.4, 1, .4]); hv.scene.add(sl, sl.target); hv.sun = sl;
+  window.__gas.klass = 'top';   // (the same cells on every machine)
+  const g = new Gas(hv, { box: [-2.5, 0, -2, 2.5, 5, 2], kind: 'fire', lamp: true, cells: 9000 });
+  hv.render(hx, 160, 200); const d0 = hx.getImageData(0, 0, 160, 200).data, fire0 = share(d0, flame), smoke0 = share(d0, pale);
+  const camp = g.fire({ x: -1, y: .2, z: 0, size: 1 }), stack = g.smoke({ x: 1.2, y: .3, z: 0, size: .8, rate: 1.5, heat: .8, tint: 1 });
+  for (let i = 0; i < 150; i++) { g.update(1 / 60); hv.render(hx, 160, 200); if (i % 6 === 0) await frame(); }
+  for (let i = 0; i < 4; i++) { g.update(0); hv.render(hx, 160, 200); await frame(); }
+  const d1 = hx.getImageData(0, 0, 160, 200).data, fire1 = share(d1, flame), smoke1 = share(d1, pale), glow = g.glow;
+  ok(fire0 < .002 && smoke0 < .002 && fire1 > .005 && smoke1 > .02, `gas: drawn in a Next Gen view (${(fire1 * 100).toFixed(1)}% of the picture is flame and ${(smoke1 * 100).toFixed(1)}% pale smoke, ${(fire0 * 100).toFixed(1)}% and ${(smoke0 * 100).toFixed(1)}% before; runs on the ${g.backend === 'gpu' ? 'graphics chip' : 'CPU'}, ${g.cells} cells of ${Math.round(g.cell * 100)} cm)`);
+  const over = g.smokeAt(1.2, .8, 0), through = g.sees(1.2, .7, -1.5, 1.2, .7, 1.5);
+  ok(over > .3 && g.smokeAt(-2.2, 4, 1.6) < .02 && glow.power > .1 && Math.abs(glow.x + 1) < .5 && glow.y > .2 && glow.y < 2.2 && g.lamp.intensity > .5 && through < .8 && g.sees(-2.3, 4, -1.5, -2.3, 4, 1.5) > .97,
+    `gas: the answers say where the smoke and the fire are (smoke over its maker ${over.toFixed(2)}, fire of ${glow.power.toFixed(2)} at ${glow.x.toFixed(2)}, ${glow.y.toFixed(2)}, its lamp at ${g.lamp.intensity.toFixed(1)}, ${(through * 100).toFixed(0)}% seen through the plume)`);
+  g.clear(); camp.remove(); stack.remove(); for (let i = 0; i < 8; i++) { g.update(1 / 30); hv.render(hx, 160, 200); await frame(); }   // (a few frames: the view's picture is built up over them)
+  const d2 = hx.getImageData(0, 0, 160, 200).data;
+  ok(share(d2, flame) < .002 && share(d2, pale) < .002 && g.smokeIn() === 0, 'gas: clear() takes the smoke and fire away');
+  const lamp = g.lamp; g.dispose(); ok(!hv.sims.includes(g) && !g.puffs.soft.parent && !lamp.parent, 'gas: dispose() takes it out of the view');
+  // a Console view runs the smaller version, drawn as puffs in its scene
+  const cv = new gs.toon.View({ bg: '#18222e' }), cc = document.createElement('canvas'); cc.width = 192; cc.height = 160; const cx2 = cc.getContext('2d'); cv.board(192, 160, .9);
+  const cg = new Gas(cv, { box: [-40, 0, -40, 40, 60, 40], kind: 'smoke', lift: 300 }); cg.smoke({ x: 0, y: 6, z: 0, size: 50, rate: 2, heat: 1, speed: 12 });
+  cv.render(cx2, 192, 160); const c0 = share(cx2.getImageData(0, 0, 192, 160).data, pale);
+  for (let i = 0; i < 90; i++) { cg.update(1 / 60); cv.render(cx2, 192, 160); if (i % 6 === 0) await frame(); }
+  const c1 = share(cx2.getImageData(0, 0, 192, 160).data, pale);
+  ok(cg.backend === 'cpu' && c0 < .002 && c1 > .02 && cg.smokeAt(0, 12, 0) > .1, `gas: smoke in a Console view, in its own units (${(c1 * 100).toFixed(1)}% of the picture, ${cg.cells} cells; ${cg.smokeAt(0, 12, 0).toFixed(2)} over its maker)`);
+  cg.dispose(); window.__gas.klass = null;
+}
+{
   // Swarm: the WebGPU compute version matches the CPU one (where this browser has WebGPU)
   const { Swarm } = gs.ai, mk = gpu => new Swarm({ count: 1200, w: 400, h: 400, speed: 60, seed: 9, gpu });
   const c = mk(false), g = mk(true);

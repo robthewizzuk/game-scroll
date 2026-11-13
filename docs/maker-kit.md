@@ -70,6 +70,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Time of day, rain, snow, lightning | `gs.sky` | [Game kits](#game-kits) |
 | Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Footprints and tyre tracks in snow, mud and sand, grass that parts, a trail to follow | `gs.outdoors` `Marks` | [Ground that takes marks](#ground-that-takes-marks) |
+| Cliffs with ledges and overhangs, caves to walk through, arches, rock of your own shape | `gs.outdoors` `land.rocks()` | [Cliffs, caves and overhangs](#cliffs-caves-and-overhangs) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
 | Enemies that take cover, flank and call out | `gs.tactics` | [Action and adventure kits](#action-and-adventure-kits) |
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -112,6 +113,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Walk to play, lift the phone, a dark room, a hand over the phone | `gs.device.steps()`, `pressure()`, `light()`, `near()` | [Steps, air pressure, light, proximity](#steps-air-pressure-light-proximity) |
 | Block worlds to dig, build and craft in | `gs.voxels` | [Voxel worlds](#voxel-worlds) |
 | Liquid you can pour, splash and fill things with, in 3D | `gs.fluid` | [Real 3D liquids](#real-3d-liquids) |
+| Smoke and fire that rise, curl, fill a room and go round things, in 3D | `gs.gas` | [Smoke and fire that flow](#smoke-and-fire-that-flow) |
 | Night in the game when it is night outside; the real moon; plug in to charge; headphones in | `gs.real` (SunCalc) | [The real world: sun, moon, battery, headphones](#the-real-world-sun-moon-battery-headphones) |
 
 ## What `gs` has, and what it doesn't
@@ -122,7 +124,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 `replay`, `look2d`, `brains`, `tweak`, `board`, `battle`, `gen`, `drag`, `idle`, `party`, `rhythm`,
 `strokes`, `vehicles`, `paths`, `bones`, `level3d`, `sky`, `camera`, `nav3d`, `characters`, the action kits (`combat`,
 `tactics`, `climb`, `poses`, `missions`, `cutscene`, `prompts`, `destruction`, `stealth`, `gadgets`,
-`campaign`, `arena`, `props`), `outdoors`, `craft`, `soft`, `cards`, `dice`, `words`, `ui`, `solve`, `tick`, `voxels`, `fluid`, `toon` (Classic
+`campaign`, `arena`, `props`), `outdoors`, `craft`, `soft`, `cards`, `dice`, `words`, `ui`, `solve`, `tick`, `voxels`, `fluid`, `gas`, `toon` (Classic
 Console 3D), `hd` (Next Gen 3D), `ar`, `fx3d`, `vision`, `geo`, `real`, `fonts`, `sketch`, `icons` and `THREE`.
 It is the only thing a game may import (`src/game-modules.js`); `npm run games` refuses anything
 else and the PR check flags it.
@@ -2061,7 +2063,8 @@ makes terrain (`hills`, `mountains`, `rolling`, `islands`, `bumps`, `dunes`, `cr
 the ground is, `flatten()` makes a pad for a village or a landing strip, `paint([[0, '#dc9'], [3, '#4a3']])`
 colours it by height in your palette, `solid(world)` makes it solid in `gs.physics3d`, `grass()` scatters
 blades that sway (only near the camera), and `scatter(props, 'tree', 300, { above: 1, steep: .3 })` puts
-`gs.props` things on suitable ground. For a camera down in the grass (a sniper's nest, a crawl, a close-up), `land.meadow({ reach: 22, gap: .55 })`
+`gs.props` things on suitable ground. `land.rocks({ caves, shapes })` puts real rock on it (cliffs that overhang, caves, arches: see
+[Cliffs, caves and overhangs](#cliffs-caves-and-overhangs)). For a camera down in the grass (a sniper's nest, a crawl, a close-up), `land.meadow({ reach: 22, gap: .55 })`
 keeps a square of thick tufts round the camera wherever it goes: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `tree({ kind: 'pine' | 'round' | 'palm' | 'bush' })` and `rock()`
 make simple shapes to scatter. Next Gen worlds can paint it instead with `looks.ground` (fields, hedges, lanes, mud, puddles), ring it with far hills (`horizon(land)`) and give rocks and leaves their looks: see [Next Gen outdoor looks](nextgen-3d.md#outdoor-looks-ground-hills-rock-leaves-water-and-lava). `River(stream)` and `FloodWater(flood)` draw `gs.flow` rivers, waterfalls, lava and floods (see Flowing liquids). `Water({ level, waves })` is a sea of rolling waves you can ask about
 anywhere (`height(x, z)`, `normal`, `depth(p)`); call `update(dt, camera.position)` each frame. It can be disturbed too (rings, splashes, wakes,
@@ -2604,6 +2607,74 @@ update(dt) { tap.on = pressed; ball.set(px, py, pz); fluid.update(dt);
   slowest phones run, on any machine: play your game with it once. It pours and fills the same way
   every time (`seed` changes its dice), so a level that works once keeps working.
 
+## Smoke and fire that flow
+
+`gs.gas.Gas` (3D): a gas simulation in a box of your world. Smoke rises, curls, spreads under a ceiling,
+pours round solid things and is carried off by the wind; fire burns its fuel into heat and soot, and an
+explosion throws a fireball that rolls up into a mushroom. On phones with WebGPU the whole gas runs on
+the graphics chip (80,000 to 300,000 cells) and is drawn as a lit volume; everywhere else the same maths
+runs in a much coarser grid (5,000 to 12,000 cells), drawn as soft puffs that ride the flow. The game
+code is the same for both. (`gs.fx3d.Particles3D` makes puffs that go their own way; this is for smoke
+and fire that have to behave: fill a corridor, pour out of a window, be blown aside.)
+
+```js
+const { Gas } = gs.gas;
+function setup() {                                                          // once, with the scene
+  gas = new Gas(view, { box: [-4, 0, -4, 4, 6, 4], kind: 'fire' });         // where the smoke can go
+  camp = gas.fire({ x: 0, y: .2, z: 0, size: 1 });                          // a fire that keeps burning
+  rock = gas.ball({ x: 0, y: 2.5, z: 0, r: .8 });                           // the smoke goes round it
+}
+reset() { gas.clear(); }                                                    // each round: clear air
+update(dt) { camp.on = lit; gas.wind.x = 1.5; gas.update(dt);
+             if (gas.smokeAt(px, py + 1.6, pz) > .4) cough(); }
+```
+
+- Everything is in your world's units: places, sizes and speeds (units a second).
+- `new Gas(view, { box, kind, open, wind, cells, size, lamp, draw, seed })`: `box` is
+  `[x0, y0, z0, x1, y1, z1]`, where the gas can go: a floor, and open air on every other side (smoke that
+  leaves is gone). `open: false`: walls and a ceiling too, a room that fills with smoke. `kind`:
+  `'smoke'`, `'fire'`, `'steam'`, `'dust'`, `'toxic'` (heavy: it creeps along the floor) or `'magic'`
+  (`gs.gas.KINDS`), and any of a kind's numbers and colours as your own: `colour`, `colour2` (a source's
+  `tint` 0..1 blends towards it), `flame` (three colours, edge to core), `lift` (how hard heat rises),
+  `weight` (how hard the smoke itself sinks), `fade` and `cool` (the share of smoke and of heat lost a
+  second), `thick` (how much it hides), `soot`, `burn` (less: taller flames), `curl` (how lively the
+  swirls are, 0..1), `glow`. `wind: { x, y, z }`: change `gas.wind` any time. `lamp: true` (or
+  `{ strength, distance }`): a light that follows the fire and flickers with it. `draw: false`: nothing
+  is drawn (ask it questions and draw your own). The kit picks how many cells the phone can run
+  (`Gas.max()`; `gas.cells`, and `gas.cell` is one cell's width); `cells` asks for fewer.
+- Putting gas in: `gas.fire({ x, y, z, size, power })` is a fire that keeps burning (`size`: how wide
+  its base is; a fire 1 wide burns a little under 2 high), and with `dir` and `speed` a blown one (a
+  torch, a jet). `gas.smoke({ x, y, z, size, rate, heat, dir, speed, tint })` is smoke that keeps
+  coming (`heat` 0 hangs where it is, .5 drifts up, 1 climbs fast). `gas.fan({ x, y, z, size, dir, speed })`
+  pushes the gas (a fan, someone blowing). Each returns the thing: change its fields
+  or `on` any time, `remove()` takes it away. `gas.burst(x, y, z, { size, fire, smoke, force })` is an
+  explosion; `gas.puff(x, y, z, { size, amount, heat })` a cloud all at once (dust kicked up, a smoke
+  bomb). Up to 16 at work in one step.
+- Solid things: `gas.ball({ x, y, z, r })`, `gas.box({ w, h, d, turn })`, `gas.tube({ r, h, turn })` (up
+  to 8). Move one with `thing.set(x, y, z, turn)` each frame, or pass `follow: mesh`: the gas is pushed
+  by how fast it moves (swing a door through smoke). For the still parts of the world,
+  `gas.solid((x, y, z) => true where it is solid)` (walls, a doorway, a chimney) and
+  `gas.ground((x, z) => y)`: call them again when the world changes. You draw the things; the gas only
+  needs their shapes.
+- Questions: `gas.smokeAt(x, y, z)` (0 clear air, about 1 thick smoke), `gas.heatAt(x, y, z)` (up to .4
+  warm smoke, over .45 flame, 1 and more the heart of a fire), `gas.flowAt(x, y, z)` (which way and how
+  fast it moves), `gas.sees(ax, ay, az, bx, by, bz)` (how much can be seen through the smoke between two
+  points, 1..0: can the guard see you?), `gas.smokeIn(box)` (how smoky a room is), `gas.glow`
+  (`{ x, y, z, power }`: where its fire is and how much of it, for a light of your own),
+  `gas.backend` (`'gpu'` or `'cpu'`). On WebGPU the answers are a few frames old and four cells coarse.
+- Make the gas once, with the scene, and `clear()` it in `reset()`. Keep the box no bigger than the
+  smoke needs: the cells get bigger with the box. View: an `HDView` (Next Gen, Board) for the WebGPU
+  version; in a Console or AR view it runs the smaller one.
+- Build for the smaller version. Without WebGPU a cell is about three times as wide (30 to 45 cm in a
+  box 8 by 6 by 8), so a doorway, a chimney or a gap has to be at least three cells wide for smoke to
+  get through, a fire under half a unit wide hardly shows, and a thing thinner than a cell (a railing,
+  a rope, a thin beam) may not be felt at all. `new Gas(view, { gpu: false, cells: 5000 })` runs what the slowest phones run, on any
+  machine: play your game with it once. It burns the same way every time (`seed` changes its dice).
+- The two versions are the same kind of gas, not the same amount of it. In a coarse grid a plume climbs
+  more slowly and wider, so more smoke hangs in the box: a camp fire's box held up to nearly three times
+  the smoke in 11,000 cells that it held in 290,000, and most other things up to twice. Set what a game
+  decides by (`smokeAt(...) > .4`, `sees(...) < .3`) with room to spare, and play it on both.
+
 ## Buildings that come apart
 
 `const { Structure } = gs.destruction;` (Next Gen.) A `gs.models.building()` made of pieces: each half of
@@ -2836,8 +2907,82 @@ update(dt) {
   field if they were given it before they were first drawn.
 - Not there: the ground itself does not move (a print is at most 5 cm deep, drawn on a sheet, so
   deep drifts you wade through and ruts a wheel sinks into are not here), marks do not show beyond
-  `reach`, `land.grass()` (the far grass) does not part, and things do not get muddy or snowy from
-  walking in it.
+  `reach`, `land.grass()` (the far grass) does not part, things do not get muddy or snowy from
+  walking in it, and rock (`land.rocks()`) takes no marks: not on it, and not in a cave under it.
+
+## Cliffs, caves and overhangs
+
+`land.rocks(o)`, on a `gs.outdoors` `Land`. (3D; the look is Next Gen.) A height map has one height for
+each spot, so it cannot fold over itself. This puts real rock on it that can: cliffs with ledges and
+overhangs wherever the land is steep, caves to walk through, arches, and rock of your own shape.
+
+```js
+make():   land = new Land({ kind: (x, z) => myHeight(x, z), size: 160, colours });
+          land.rocks({
+            seed: 3,
+            caves: [{ path: [[-3, 2.3, -5], [-4.5, 2.5, 10], [-3, 2.3, 31]], radius: 2.6 }],   // a tunnel under a spur: points [x, y, z]
+            shapes: [{ arch: [9, 5.5, 2.2, 3], at: [-22, 0, 28], turn: .5 },                  // [span, rise, thick, deep], standing on `at`
+                     { box: [8, 1.8, 6], at: [8.5, 10, -25] }],                               // a shelf that sticks out of the cliff
+          });
+          gs.outdoors.looks.rock(land.rock.material, { mossy: 0 });   // if you like: grit and cracks over its colours
+          land.meadow({ reach: 16 }); land.solid(world);              // after the rock: grass keeps off it, physics takes it
+          weather = new Weather(view, { ground: (x, z) => land.height(x, z) });   // snow on the ledges, none in the cave
+update(dt) {
+  player.y = land.floor(player.x, player.y, player.z);                // what it stands on: the cave's floor, not the hill over it
+  view.hemi.intensity = fill * land.sky(cam.x, cam.y, cam.z);         // your fill light, dimmer in a cave
+}
+```
+
+- **Cliffs** come by themselves wherever the land is steeper than `steep` (.42, as `land.slope()` counts
+  it): the stone lies in beds (`beds`: 1.8 m thick), hard beds stand out past soft ones as ledges
+  (`ledge`: 1.1 m), each bed leans out towards its top, which is what overhangs (`lip`: .7 m), and joints
+  run down the face (`cracks`). `cliffs: { steep, depth, beds, ledge, lip, rough, cracks, area: [x0, z0,
+  x1, z1] }` changes them, `cliffs: false` leaves them out. The top of a cliff is level with the ground
+  behind it, and flat ledges take the land's own colour, so grass seems to grow on them.
+- **Caves** are tunnels along a path of `[x, y, z, radius?]` points (`radius`: 2.5 m; a cave is a little
+  lower than it is wide, so its floor is about .85 of the radius under the path). Wherever the path comes
+  out of the ground the cave is open: the land's own squares are left out there, and a low rim of rock
+  covers their edge. Run the path a few metres out past the hillside at each mouth.
+- **Shapes** are rock of your own, melted into the land and into each other over `blend` metres (.6):
+  `box: [wide, high, deep]`, `ball: radius`, `arch: [span, rise, thick, deep]` or a tube along a `path`,
+  at `at: [x, y, z]` (a box's or ball's middle; where an arch stands), turned by `turn`. They get the same
+  beds, lumps and joints as the cliffs. `cut: true` takes the shape out instead: a hollow, a pit, a notch
+  in a cliff.
+- **Asking about it.** `land.height(x, z)` is now the top of whatever is highest (so everything that
+  already asks the land, like the weather, sees the rock). `land.floor(x, y, z)` is what a thing at height
+  `y` stands on: the highest ground or rock at or under `y + .6`, so give it the thing's own last height
+  and it follows a cave's floor in and out, steps up a ledge, and stays under an overhang.
+  `land.roof(x, y, z)` is the underside of what is over a point (`Infinity` under open sky),
+  `land.rocky(x, z)` whether rock shows there (or a cave has taken the ground away), `land.sky(x, y, z)`
+  how much daylight reaches a point (1 in the open, .7 under an overhang, down to .1 deep in a cave), and
+  `land.ray(from, dir, max)` how far it is to the ground or the rock (`{ distance }` or `null`).
+- **What works with it.** A `Weather` given `ground: (x, z) => land.height(x, z)` (or `level: land`) lets
+  snow lie on ledges and cliff tops and keeps caves and the ground under overhangs dry.
+  `new gs.sound.Ears({ level: land })` muffles sounds behind rock and gives a cave its echo.
+  `land.solid(world)` makes the rock solid with the land. `land.meadow()`, `land.grass()` and
+  `land.scatter()` keep off it (call them after `rocks()`). `gs.outdoors.Marks` takes no marks on rock,
+  and something walking in a cave leaves none on the hill above.
+- **How it is made, and what it costs.** The rock is a second surface, made from a density (how far in
+  or out of stone a point is) with surface nets, in pieces 13 m across that are culled one by one. Where
+  no rock stands out it lies just under the ground and is not drawn, so rock comes out of the land along
+  a line with nothing to stitch. It is drawn with one stock material and a colour at every point (beds of
+  two tints, streaks, darker in creases and down caves): no shader patch, so WebGL and WebGPU draw the
+  same thing. The valley used for testing (160 m, a cliff 16 m high, a 36 m cave, an arch and a shelf) is
+  82,000 triangles in 30 pieces and 2 MB; its numbers take .8 seconds on a desktop (not yet measured on
+  a phone), in a background worker while the card says Loading, and are kept, so Play again does not make
+  them again. `cell: .6` (metres a cell; the default is .4) is 36,000 triangles in .3 seconds, `cell: .8`
+  19,000 in .2, with rounder ledges. Asking `height()` or `floor()` near rock costs about a quarter of a
+  microsecond.
+- `colours: { rock, dark, top, floor }` are the stone's two tints, the colour of flat tops and of where
+  rock meets the ground (the land's own colour there, if you give none) and of a cave's floor.
+  `material` is your own for the rock instead; `land.rock.material` is the one it made, and
+  `land.rock.group` its meshes.
+- Make it in `make()`, once the land has its shape and colours (after `flatten()` and `paint()`). The
+  same land and the same asking always give the same rock. `land.rocks(false)` takes it away.
+- Not there: the rock cannot be dug or broken while playing (it is made once: `gs.voxels` is for ground
+  that changes, `gs.destruction` for things that come apart); it has no uvs, so a texture of your own
+  has to be mapped by position, as `looks.rock` does; it is drawn as finely far away as close to; and
+  nobody climbs it by themselves (`gs.climb` is yours to place).
 
 ## Vehicles made in code
 

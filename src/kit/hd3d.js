@@ -60,7 +60,7 @@ import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.mo
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
-import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats } from './detail.js';
+import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
@@ -88,11 +88,12 @@ export function rbox(w, h, d, r = Math.min(w, h, d) * .2) {
 // bloom: bloom resolution scale. 2x MSAA (not 4x) costs phone GPUs far less memory traffic, and the
 // time saved goes into more pixels.
 export const TIERS = [
-  { name: 'low', px: .5e6, shadow: 0, lights: 2, ao: 0, msaa: 0, bloom: .5, ssr: false, contact: 0 },
-  { name: 'medium', px: .85e6, shadow: 512, lights: 3, ao: 0, msaa: 0, bloom: .5, ssr: false, contact: 128 },
-  { name: 'high', px: 1.3e6, shadow: 1024, lights: 4, ao: .5, msaa: 2, bloom: .5, ssr: false, contact: 256 },
-  { name: 'ultra', px: 2e6, shadow: 1024, lights: 4, ao: 1, msaa: 2, bloom: .5, ssr: true, contact: 256 },
+  { name: 'low', px: .5e6, shadow: 0, lights: 2, ao: 0, msaa: 0, bloom: .5, ssr: false, contact: 0, relief: 0 },
+  { name: 'medium', px: .85e6, shadow: 512, lights: 3, ao: 0, msaa: 0, bloom: .5, ssr: false, contact: 128, relief: 60000 },
+  { name: 'high', px: 1.3e6, shadow: 1024, lights: 4, ao: .5, msaa: 2, bloom: .5, ssr: false, contact: 256, relief: 150000 },
+  { name: 'ultra', px: 2e6, shadow: 1024, lights: 4, ao: 1, msaa: 2, bloom: .5, ssr: true, contact: 256, relief: 300000 },
 ];
+// (relief: the triangles real surface detail may draw a frame, 0 = its meshes draw flat: see HD.reliefPx)
 // Where a phone starts: top phones (Fold 8, recent iPhone Pro) on high, others on high or medium.
 const START = { top: 2, mid: 2, low: 1 };
 // Play never climbs above high (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on ultra,
@@ -214,14 +215,21 @@ export const HD = {
   meshBytes(root) { return meshBytes(root, this.info.backend === 'webgpu'); },
   /** Cluster detail for big still meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is taken; detailPx: pixels its simpler parts may be out by. */
   detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
-  /** Real surface detail (gs.models.relief): false draws those meshes flat, as they were. */
-  relief: true,
+  /**
+   * Real surface detail (gs.models.relief): false draws those meshes flat, as they were. reliefPx: pixels its
+   * simpler parts may be out by (2.5: the bumps' light and shade still come from the material's own picture,
+   * so the triangles only have to carry the depth at edges and glancing angles; at 1, as it was at first, a
+   * Galaxy Z Fold 8 drew 327,000 triangles for a row of houses and ran 1.7 times slower than with flat walls).
+   * reliefTris: the most triangles it may draw a frame (null: by quality, TIERS' relief; 0 on low, where its
+   * meshes draw flat): over that, everything is drawn a little coarser until it fits.
+   */
+  relief: true, reliefPx: 2.5, reliefTris: null,
   /** Detail levels for copies (gs.props kinds and perCopy sets with none of their own; autoCopies below): false draws every copy whole. */
   copies: true,
   /**
    * Occlusion culling (occlude.js): what is fully hidden behind other things is not drawn. occlude: false draws it all.
    * occludeDepth: what hides things is found from the last frame's own depth, with nothing listed (false: only the boxes
-   * a game lists with v.occluders). occludeSleep: a view where it saves next to nothing stops for a while (false: never,
+   * a game lists with v.occluders). occludeSleep: a view where it saves less than finding it costs stops for a while (false: never,
    * and small views are tried too: tests). occludeTexels: the size of the depth picture it reads back, texels in all (more hides a
    * little more of what is small and far, for more work each frame: 6000 costs about twice as much). occludeShow:
    * tests, true works out what is hidden and draws it all the same (the picture to compare a frame with).
@@ -364,6 +372,7 @@ function shadowTiles(l, ops) {
     cache = sh.gsCache ||= ops.make(l);
     ops.draw(l, SH_STILL_BIT, false);
     ops.copy(l, sh.map, cache);
+    ops.warm?.(l, sh.map, cache);
     ops.draw(l, SH_MOVE_BIT, true);
     I.shTiles = (I.shTiles || 0) + st.T * st.T; I.shWhole = (I.shWhole || 0) + 1;
   } else {
@@ -1596,7 +1605,7 @@ export class HDView {
     const D = this.details;
     if (D) for (const e of D.map.values()) if (!e.twin || (e.twin.layers.mask & HOLD_BIT)) return true;
     let more = false;
-    this.scene.traverseVisible(o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (HD.relief !== false && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
+    this.scene.traverseVisible(o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (reliefBudget() > 0 && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
     return more;
   }
   /**
@@ -1625,14 +1634,19 @@ export class HDView {
    * frame or two while three builds it on the driver's own threads (compileAsync: WebGPU's
    * createRenderPipelineAsync, WebGL's KHR_parallel_shader_compile), instead of the whole frame stopping
    * while it builds. What's there on the view's first frame, or when precompile() finishes, never
-   * waits. It waits at most HD.holdMs (500 ms), then draws anyway. userData.noHold draws a mesh at
+   * waits. It waits at most HD.holdMs (500 ms), then draws anyway (a cluster twin waits for its shader
+   * however long it takes: its mesh draws meanwhile). userData.noHold draws a mesh at
    * once; HD.hold = false turns it all off.
    */
   holdNew(r, skip, now, rt = null, mrt = null) {   // rt, mrt: the picture the scene is drawn into (shaders are built for it)
     const held = this.held ||= new Map(), seen = this.shSeen ||= new Set(), jobs = this.shJobs ||= new Map();
-    // the ones whose shaders are ready (or waited long enough) come back
-    for (const [o, j] of held) if (j.done || now - j.t0 > HD.holdMs || skip || HD.hold === false) { o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); held.delete(o); }
-    for (const [k, j] of jobs) if (j.done || now - j.t0 > HD.holdMs) { seen.add(k); jobs.delete(k); }
+    // the ones whose shaders are ready (or waited long enough) come back. A thing something else draws in the
+    // place of (a cluster twin: its mesh, detailShow) waits for its build however long that takes (j.keep): on
+    // WebGPU three leaves a thing out of the frame while its pipeline is being made, so a twin let go early drew
+    // nothing, and its mesh was hidden for it by then
+    const late = j => !j.keep && now - j.t0 > HD.holdMs;
+    for (const [o, j] of held) if (j.done || late(j) || skip || HD.hold === false) { o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); held.delete(o); }
+    for (const [k, j] of jobs) if (j.done || late(j)) { seen.add(k); jobs.delete(k); }
     if (skip || HD.hold === false) return;
     // the first frame, and after warm() or precompile() (which built the hidden things' shaders too), are where
     // the waiting starts from: what's there now draws at once
@@ -1656,12 +1670,53 @@ export class HDView {
           const rt0 = r.getRenderTarget(), m0 = r.getMRT?.(), lm = o.layers.mask;
           try { o.layers.mask = lm | 1; r.setRenderTarget(rt); r.setMRT?.(mrt); return go(); } finally { o.layers.mask = lm; r.setRenderTarget(rt0); r.setMRT?.(m0 ?? null); }
         };
-        try { (r.isWebGPURenderer ? compileGPU(r, o, this.cam, this.scene, forPicture) : Promise.resolve(forPicture(() => r.compileAsync(o, this.cam, this.scene)))).then(fin, fin); } catch (_) { fin(); }
+        // (WebGPU: the picture is the scene pass's own layout, set when the build's turn comes: compileGPU)
+        const onLayer = go => inReach(o, go);
+        try { (r.isWebGPURenderer ? compileGPU(r, o, this.cam, this.scene, onLayer, this) : Promise.resolve(forPicture(() => r.compileAsync(o, this.cam, this.scene)))).then(fin, fin); } catch (_) { fin(); }
       }
-      if (!j.done) { held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
+      if (!j.done) { if (o.isDetailMesh) j.keep = true; held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
     });
     HD.info.held = held.size;
   }
+  /**
+   * The rest of the scene's shaders, built in the background (WebGPU): everything in the scene the frames so
+   * far have not drawn (hidden things, what is behind the camera) is built for the picture the scene is drawn
+   * into, one kind of thing at a time, a few milliseconds a frame, so that turning round, or a thing switched
+   * on mid-round, does not stop a frame while its shader builds. Listed on the view's first frame, after
+   * warm() or precompile(), and when the picture's layout changes (another quality tier, the upscaler coming
+   * on: three keeps shaders by it). all: the whole list now, however long it takes (precompile); gives a
+   * promise then. v.shadersLeft: how many things are still to look at.
+   */
+  buildAhead(r, ch, all = false) {
+    const A = this.shAhead ||= { key: null, r: null, list: [], done: new Set(), busy: false, spent: 0, all: null, n: 0 };
+    A.spent = 0;
+    if (A.key !== ch.key || A.r !== r || this.aheadAgain) {
+      A.key = ch.key; A.r = r; this.aheadAgain = false; A.done.clear(); A.list.length = 0;
+      this.scene.traverse(o => { if (aheadFits(o)) A.list.push(o); });
+      A.list.reverse();   // (taken from the end: in the scene's order)
+    }
+    if (all && !A.all) { let ok; A.all = new Promise(res => { ok = res; }); A.all.ok = ok; }
+    const fin = () => { A.busy = false; if (!A.list.length && A.all) { const p = A.all; A.all = null; p.ok(); } };
+    const seen = this.shSeen ||= new Set(), key = A.key;
+    const step = () => {
+      for (;;) {
+        if (A.key !== key || A.r !== r || !A.list.length || (!A.all && A.spent > AHEAD_MS)) return fin();   // (the rest next frame)
+        const o = A.list.pop();
+        if (!aheadFits(o) || !inScene(o, this.scene)) continue;
+        const k = shaderKey(o) + (o.receiveShadow ? '+r' : '');
+        if (A.done.has(k)) continue;
+        A.done.add(k); A.n++;
+        const timed = go => { const t = performance.now(); try { return inReach(o, go); } finally { A.spent += performance.now() - t; } };
+        const next = () => { seen.add(shaderKey(o)); step(); };
+        compileGPU(r, o, this.cam, this.scene, timed, this).then(next, step);
+        return;
+      }
+    };
+    if (!A.busy) { A.busy = true; step(); }
+    return A.all || Promise.resolve();
+  }
+  /** Things whose shaders are still being built or still to look at (held back, close-up, and the rest of the scene). */
+  get shadersLeft() { return (this.held?.size || 0) + (this.shJobs?.size || 0) + (this.shAhead ? this.shAhead.list.length + (this.shAhead.busy ? 1 : 0) : 0); }
   // Occlusion culling for this frame (occlude.js): works out what is hidden behind other things, from the last
   // frame's own depth (depth: this frame may use it) or the boxes the game listed. Nothing is hidden yet:
   // hideNow() does that round the main draw alone, so that everything else that looks at the scene (shadows,
@@ -1669,7 +1724,7 @@ export class HDView {
   occludeStep(depth, pw, ph) {
     const I = HD.info, cam = this.cam;
     const job = occludeFrame(this, cam, { world: false, on: HD.occlude !== false, depth: depth && HD.occludeDepth !== false && this.autoOcclude !== false && !!cam.isPerspectiveCamera, other: lastView !== this, W: pw, H: ph, tris: this.drew?.[0] || 0, calls: this.drew?.[1] || 0, sleep: HD.occludeSleep, texels: HD.occludeTexels });
-    const A = this.occAuto; I.occluded = A.hidden; I.occTris = A.tris; I.occAwake = A.awake; I.occMs = A.ms;
+    const A = this.occAuto; I.occluded = A.hidden; I.occTris = A.tris; I.occAwake = A.awake; I.occMs = A.ms; I.occPays = A.pays;
     return job;
   }
   showHidden() { showAll(this); }
@@ -1885,7 +1940,7 @@ export class HDView {
   // view that had just come to fit WebGPU swapped its WebGPU materials in, and WebGL then drew them)
   warmOn(G, extra = []) {
     this.holdBase = 'all';   // (what it builds never waits: holdNew)
-    if (G) { gpuSwap(this, G); this.warmed = true; try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ } this.scene.environment = this.envFor(G); compileGPU(G.r, this.scene, this.cam).catch(() => {}); return; }
+    if (G) { gpuSwap(this, G); this.warmed = true; try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ } this.scene.environment = this.envFor(G); this.aheadAgain = true; compileGPU(G.r, this.scene, this.cam, null, null, this).catch(buildFailed); return; }   // (hidden things: buildAhead, from the next frame)
     const r = renderer(); if (!r) return; this.warmed = true; gpuSwap(this, null);
     const hidden = [], tmp = [];
     this.scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
@@ -1918,7 +1973,11 @@ export class HDView {
     const G = gpuFor(this);
     if (G) {
       gpuSwap(this, G); this.scene.environment = this.envFor(G); this.warmed = true;
-      return compileGPU(G.r, this.scene, this.cam).catch(() => {}).then(() => { this.ready = true; this.holdBase = 'all'; });
+      // (the hidden things too, before it says it is ready, once the view has drawn a frame of the game: before that the
+      // picture its shaders are for is not known, and they are built over the first frames instead, buildAhead)
+      const ch = this._gpuChain?.r === G.r && this._gpuChain.sp ? this._gpuChain : null;
+      this.aheadAgain = true;
+      return compileGPU(G.r, this.scene, this.cam, null, null, this).catch(buildFailed).then(() => ch && this._gpuChain === ch ? this.buildAhead(G.r, ch, true) : null).catch(() => {}).then(() => { this.ready = true; this.holdBase = 'all'; });
     }
     const r = renderer(); if (!r) return Promise.resolve();
     gpuSwap(this, null);
@@ -2071,15 +2130,11 @@ export class HDView {
     // the sun lights: cloud shadows and the near shadow cascade's share (hd3d-gpu.js gpuSunLight)
     const cs = this.cascade, casc = !!(cs?.near.visible && cs.near.castShadow && cs.near.parent);
     G.fx.setCascade(casc ? cs.near : null, cs?.fade ?? .06);
-    this.scene.traverse(l => {
-      if (!l.isDirectionalLight) return;
-      let role = sunRoles.get(l); if (!role) sunRoles.set(l, role = G.fx.gpuSunLight(l, AIR, noiseTex()));
-      role.value = casc ? (l === cs.near ? 1 : l === cs.far ? 2 : 0) : 0;
-    });
     r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (!baking && !off) this.t += 1 / 60;
     gpuSwap(this, G);
+    for (const l of this.suns) sunRoles.get(l).value = casc ? (l === cs.near ? 1 : l === cs.far ? 2 : 0) : 0;   // (the suns gpuSwap's walk found)
     if (this.gi || this.rooms?.length) this.bakeExtras(G, r);
     if (this.probes.length > 1) this.blendProbes();
     // (built for the screen, not the chain's own picture: a pipeline built for that picture also bound it to read, which WebGPU refuses)
@@ -2088,7 +2143,13 @@ export class HDView {
     // SGSR 2: the scene at pw x ph (ph the passes' own rounding of the canvas height), upscaled to the canvas
     const pw = up ? up.pw : r.domElement.width, ph = up ? Math.max(1, Math.floor(up.fh * (pw + .5) / up.fw)) : r.domElement.height;
     // what is hidden behind other things this frame (a card's picture is drawn whole)
-    this.scene.updateMatrixWorld();   // (once, for what follows: what is hidden, the shadow maps)
+    // World matrices once, for all that follows: what is hidden, the shadow maps, the picture. three works every
+    // one of them out again for each thing it draws the scene into (every shadow map, every part of a map drawn
+    // in tiles, the contact shadows, the picture) unless told the scene's are up to date, which they are from
+    // here to the end of the frame: nothing below moves anything (the lights' shadow cameras see to themselves).
+    this.scene.updateMatrixWorld();
+    const worldAuto = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;
+    try {
     const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !r.reversedDepthBuffer, pw, ph);
     if (HD.occludeShow) DETAIL.occ = null;
     const shc = this.shadowCams ||= []; shc.length = 0;
@@ -2096,7 +2157,7 @@ export class HDView {
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
-    this.scene.traverse(o => { if (o.isInstancedMesh2 && o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null); });
+    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null);   // (the sets gpuSwap's walk found)
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
     const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao, msaa: T.msaa, bloomScale: T.bloom, smooth: !T.msaa, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
@@ -2155,7 +2216,7 @@ export class HDView {
         sh.needsUpdate = false;
       }
     }
-    if (!this.warmed && !off) { this.warmed = true; compileGPU(r, this.scene, this.cam).catch(() => {}); }
+    if (!this.warmed && !off) { this.warmed = true; this.aheadAgain = true; }   // (what this frame does not draw is built over the next ones: buildAhead)
     // an instanced mesh made with room for none (an empty list in a game) has a zero-size buffer that WebGPU
     // won't bind; it draws nothing anyway, so it sits this frame out
     const empty = []; this.scene.traverseVisible(o => { if (o.isInstancedMesh && (!o.count || !o.instanceMatrix.count)) empty.push(o); });
@@ -2165,11 +2226,11 @@ export class HDView {
     // jumping): the frames either side of one don't belong together.
     let fg = null;
     if (how) {
-      this.scene.updateMatrixWorld(); this.cam.updateMatrixWorld();
+      this.cam.updateMatrixWorld();
       const m = cameraMove(this.cam, this._fgCam); this._fgCam = m.last;
       fg = { mode: how, reset: cut || m.jumped || now - (this._fgT || 0) > HD.fgGap, jd: [0, 0], jit: [0, 0], steps, hz: screenHz() }; this._fgT = now;
     } else this._fgCam = null;
-    if (s2) { o.s2 = GS2 ||= new SgsrFrame(); this.scene.updateMatrixWorld(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); }   // WebGPU pictures count rows from the top
+    if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); }   // WebGPU pictures count rows from the top
     // SGSR 2 moves the camera by a fraction of a pixel each frame (its jitter) and three's motion picture
     // includes the change: SGSR 2 and frame generation take it back out (in NDC: x right, y up, so rows down are minus)
     if (s2) {
@@ -2187,6 +2248,7 @@ export class HDView {
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     try { shown = ch.render(o) || false; } finally { showAll(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; }
+    if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
     const drawn = ch.occAt !== r.info.frame; ch.occAt = r.info.frame;
@@ -2209,6 +2271,7 @@ export class HDView {
       HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
       HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0;
     }
+    } finally { this.scene.matrixWorldAutoUpdate = worldAuto; }
   }
   // Still frames: true when this refresh can show the last frame again instead of drawing (see drawGPU).
   stillSkip(ch, now) {
@@ -2340,6 +2403,7 @@ export class HDView {
     const s2 = s2on && !G ? (P.sgsr2 ||= new SGSR2()) : null;
     const ow = up || s2on ? fw : pw, oh = up || s2on ? fh : ph;
     const cv = r.domElement; if (cv.width !== ow || cv.height !== oh) r.setSize(ow, oh, false);
+    gridRoom(r, this);   // (before this view's first picture of any size: a small one for its card would set the lights' room)
     if (!baking && !off) speed.gpu = !!G;   // (frame generation needs the game on screen drawn with WebGPU)
     autoDetail(this, now, !!(baking || off));
     autoCopies(this, ph, now, !!(baking || off));
@@ -2507,10 +2571,77 @@ const GPU_CULL_MIN = 2000;   // copies in one gs.props set before the chip picks
 // a fresh set of render states, and builds still waiting make pipelines for a depth picture that has
 // gone ("Async render pipeline creation failed"). A build waits its turn, so `around` (optional) sets
 // up what it needs when it starts (which picture, which material) and puts it back: around(go) => go().
-function compileGPU(r, o, cam, scene, around = null) {
-  const go = () => { hideSets(o); return r.compileAsync(o, cam, scene); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
+// A build of one thing's shaders takes the thing as three would draw it when the build's turn comes: one that
+// is hidden, off the camera's layer or out of its view by then is left out, the build ends at once with
+// nothing made, and the thing was marked as built: its shader was then made in the frame it first drew
+// (a wall behind the player is as near as one in front, so this was the usual case for close-up shaders).
+// So while three takes it (the part of the build inside the call) the thing is shown, on the camera's layer
+// and not left out for being out of view.
+function inReach(o, go) {
+  const lm = o.layers.mask, vis = o.visible, cull = o.frustumCulled;
+  try { o.layers.mask = lm | 1; o.visible = true; o.frustumCulled = false; return go(); } finally { o.layers.mask = lm; o.visible = vis; o.frustumCulled = cull; }
+}
+// view: the view the build is for. Its shaders are built for the picture its scene is drawn into (GpuChain.buildFor),
+// as that stands when the build's turn comes.
+// r.gsBuilding: builds waiting their turn or running on this renderer (a loading screen waits for none).
+// (said, not swallowed: a build that fails leaves its shaders to be made in the frames, which looks like nothing but a stutter)
+const buildFailed = e => { console.warn('3D: a background shader build failed', e); };
+function compileGPU(r, o, cam, scene, around = null, view = null) {
+  const go = () => { hideSets(o); return forPass(r, view, () => r.compileAsync(o, cam, scene)); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
+  const done = () => { r.gsBuilding--; };
+  r.gsBuilding = (r.gsBuilding || 0) + 1; p.then(done, done);
   r.gsCompiling = p.catch(() => {});
   return p;
+}
+// The rest of a scene's shaders (v.buildAhead): what a frame has not drawn yet. A thing three would not build
+// as the scene stands is one that is hidden (a muzzle flash, the next room), behind the camera or out of its
+// view, and each of those used to build its shader in the frame it first showed. AHEAD_MS: the time a frame
+// gives to starting such builds (making a shader's text is work on the main thread; the pipeline is the driver's).
+const AHEAD_MS = 3;
+function aheadFits(o) {
+  if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || !o.geometry) return false;
+  if (o.isInstancedMesh2 || o._parentLOD || o.userData.gsTwin?.isInstancedMesh2) return false;   // (sets of copies are their library's to draw: gpuSwap, hideSets)
+  if (o.isInstancedMesh && (!o.count || !o.instanceMatrix?.count)) return false;   // (room for none: a buffer of no size, which WebGPU won't bind)
+  const lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);
+  return lm === 1 || lm === 0;   // (0: held back or hidden for this frame alone; the batch layer and a game's own layers are never drawn by the view's camera as they are)
+}
+// Runs a build (go: r.compileAsync) with the renderer set to the view's scene pass's layout, and sets it back.
+// three's build goes on after its call returns, a thing at a time. For each thing it sets the renderer to
+// the picture and outputs (MRT) the build began with, and afterwards "back" to those same two, taking it
+// that its caller keeps them set until the whole build is done. Ours can't: frames are drawn meanwhile.
+// Left so, the next frame drew the screen's picture into the stand-in with the pass's outputs (and with the
+// pass's own picture in the stand-in's place, into the picture it was reading, which WebGPU refuses: why
+// builds used to be made for the screen). So each thing's note of what to go back to is set here, as three
+// writes it, to what the renderer had before the build.
+function forPass(r, view, go) {
+  const make = r._createObjectPipeline, pic = view?._gpuChain?.r === r && typeof make === 'function' && '_compilationPromises' in r ? view._gpuChain.buildFor() : null;
+  gridRoom(r, view);
+  if (!pic) return go();
+  const rt0 = r.getRenderTarget(), m0 = r.getMRT();
+  r._createObjectPipeline = function (...a) {
+    const list = this._compilationPromises, n = list ? list.length : 0;
+    make.apply(this, a);
+    if (list) for (let i = n; i < list.length; i++) { const st = list[i].precompilationState; if (st) { st.outputRenderTarget = rt0; st.outputMRT = m0; } }
+  };
+  try { r.setRenderTarget(pic.rt); r.setMRT(pic.mrt); return go(); }
+  finally { delete r._createObjectPipeline; r.setRenderTarget(rt0); r.setMRT(m0); }
+}
+// three's clustered lights (hd3d-gpu.js manyLights) keep, for each cell of a grid laid over the picture, a list
+// of the lamps that reach it, and the room for those lists is made for the first picture the grid meets, with
+// half as much again to spare. A picture that needs more makes the lists anew, which gives the scene's lights
+// a new key: every lit shader's text written until then is thrown away and written again in the frames (10 to
+// 28 ms each on the build machine, for a village of houses). The first picture is often a small one: a build's
+// 4 x 4 stand-in, a canvas nothing has sized yet, a card's small picture; and frame generation, once it is
+// steady, draws the game with FG_PX times the pixels. So before a view's first build or frame the grid is given
+// room for the most pixels a frame of this tier can have. (The kit's shadow maps keep away from it: KitLighting.)
+const gridAsked = new WeakMap();
+function gridRoom(r, view) {
+  const n = r.gsClustered && view?.scene?.isScene ? r.lighting.getNode(view.scene) : null;
+  if (!n?.isClusteredLightsNode) return;
+  const cv = r.domElement, px = HD.scale != null ? Math.max(cv.width * cv.height, 16384) : tier().px * FG_PX;
+  if ((gridAsked.get(n) || 0) >= px) return;
+  gridAsked.set(n, px);
+  const side = Math.ceil(Math.sqrt(px)); n.setSize(side, side);
 }
 // A set of copies (gs.props) is WebGL's to draw, through its library's own hooks: on WebGPU its plain twins
 // draw (gpuSwap). One made since the view's last frame (a game building its level between two frames, a card
@@ -2544,9 +2675,11 @@ function twinOf(gl, G, o, air) {
   }
   return tw;
 }
-function swapTwins(scene, G, cam = null, seen = null, air = null) {   // (air: the view's air settings, if it has the air on)
-  scene.traverse(o => {
-    if (!o.isMesh) return;
+function swapTwins(scene, G, cam = null, seen = null, air = null, view = null) {   // (air: the view's air settings, if it has the air on; view: whose pass close-up shaders are built for)
+  scene.traverse(o => { if (o.isMesh) swapOne(o, scene, G, cam, seen, air, view); });
+}
+function swapOne(o, scene, G, cam, seen, air, view) {
+  {
     const gl = o.userData.gsGlMat || o.material;
     if (Array.isArray(gl)) {
       // a mesh in several materials (a sculpted person: skin, eyes, cloth, leather...): each drawn as its own twin where it has one
@@ -2573,16 +2706,19 @@ function swapTwins(scene, G, cam = null, seen = null, air = null) {   // (air: t
           // phone's frame) while they all compile; a build that never settles frees the queue after 4 s
           tw.building.add(k); nearBusy.add(G.r);
           const done = () => { nearBusy.delete(G.r); clearTimeout(cap); }, cap = setTimeout(done, 4000);
-          const withNear = go => { const keep = o.material; o.material = near; try { return go(); } finally { o.material = keep; } };
-          compileGPU(G.r, o, cam, scene, withNear).then(() => { tw.built.add(k); done(); }, done);   // (a build that fails: it stays far)
+          const withNear = go => { const keep = o.material; o.material = near; try { return inReach(o, go); } finally { o.material = keep; } };
+          compileGPU(G.r, o, cam, scene, withNear, view).then(() => { tw.built.add(k); done(); }, done);   // (a build that fails: it stays far)
         }
       }
       o.material = use;
     } else if (o.userData.gsGlMat) { o.material = gl; delete o.userData.gsGlMat; }
-  });
+  }
 }
+// One walk over everything in the scene, hidden things too, does all of this for each thing (each used to be a
+// walk of its own, six a frame on WebGPU with the two in drawGPU that now read v.suns and v.sets: a scene
+// that keeps thousands of things switched off, a pool, the other half of a level, paid for them all six times).
 function gpuSwap(v, G) {
-  swapTwins(v.scene, G, v.cam, G ? v.shSeen ||= new Set() : null, v._air);
+  const seen = G ? v.shSeen ||= new Set() : null, props = v.sets ||= [], suns = v.suns ||= []; props.length = suns.length = 0;
   if (AREA_LTC && G && !AREA_GPU) { G.fx.areaLTC(AREA_LTC); AREA_GPU = true; }   // area lights' tables for WebGPU (panel)
   // shadow maps: each renderer keeps its own. WebGL drew into WebGPU's map when it found one on the light
   // (and the other way round), which made WebGPU remake it in the middle of a frame that still used it:
@@ -2590,9 +2726,11 @@ function gpuSwap(v, G) {
   // skeletons: WebGL pads a skeleton's bone matrices out to a square texture (15 bones: 16 matrices),
   // which overflows the bone buffer WebGPU made for the real count. Back on WebGPU they're cut back to
   // the bones (WebGL pads them again when it next needs its texture)
-  v.scene.traverse(o => {
+  const lightOrBones = o => {
     const sk = G && o.isSkinnedMesh && o.skeleton;
     if (sk?.boneTexture) { const n = sk.bones.length * 16; sk.boneTexture.dispose(); sk.boneTexture = null; if (sk.boneMatrices.length !== n) sk.boneMatrices = sk.boneMatrices.slice(0, n); }
+    // the sun lights' part in cloud shadows and the near shadow cascade (hd3d-gpu.js gpuSunLight; drawGPU sets which part each frame), there before their shaders are built
+    if (o.isDirectionalLight) { suns.push(o); if (G && !sunRoles.has(o)) sunRoles.set(o, G.fx.gpuSunLight(o, AIR, noiseTex())); }
     const sh = o.isLight && o.shadow;
     // (each spot and sun light gets a shadow node the still/moving split can drive, before its shaders are built)
     if (G && sh && o.gsSoft && o.isDirectionalLight && !sh.filterNode) sh.filterNode = G.fx.pcss(o);   // (sun().softShadows)
@@ -2601,7 +2739,7 @@ function gpuSwap(v, G) {
     if (sh.gsCache && !!G !== !sh.gsCache.isWebGLRenderTarget) { sh.gsCache.dispose(); sh.gsCache = null; }   // (a copy belongs to the renderer that made it)
     if (G) { if (sh.map.isWebGLRenderTarget) { sh.map.dispose(); sh.map = sh.gpuMap || null; sh.needsUpdate = true; } }
     else if (!sh.map.isWebGLRenderTarget) { sh.gpuMap = sh.map; sh.map = null; sh.needsUpdate = true; }
-  });
+  };
   // materials with a named look that has a WebGPU version (PORTED_LOOKS): set its nodes before
   // three first turns the material into a node material (it copies them over); with the air on, lit
   // standard materials also get wet in the rain (AIR_WET)
@@ -2612,14 +2750,16 @@ function gpuSwap(v, G) {
     if (seeThrough3d(o)) G.fx.noAO(m);
     if (v._air && m.isMeshStandardMaterial && m.fog !== false) G.fx.gpuWet(m, o, AIR, noSettle(m, o), noiseTex(), !!v._air.world);
   };
-  if (G) v.scene.traverse(o => {   // (every frame: no array is made per thing)
-    if (!o.isMesh) return;
-    const ms = o.material;
-    if (Array.isArray(ms)) { for (let i = 0; i < ms.length; i++) look(o, ms[i]); } else look(o, ms);
+  v.scene.traverse(o => {   // (every frame: no array is made per thing)
+    if (o.isMesh) {
+      swapOne(o, v.scene, G, v.cam, seen, v._air, v);
+      if (G) { const ms = o.material; if (Array.isArray(ms)) { for (let i = 0; i < ms.length; i++) look(o, ms[i]); } else look(o, ms); }
+    }
+    if (o.isLight || o.isSkinnedMesh) lightOrBones(o);
+    if (o.isInstancedMesh2 && !o._parentLOD) props.push(o);
   });
   // gs.props (InstancedMesh2): plain instanced twins on WebGPU (hd3d-gpu.js gpuProps)
   // (listed first: adding and removing the twins while walking the scene skipped things and threw)
-  const props = []; v.scene.traverse(o => { if (o.isInstancedMesh2 && !o._parentLOD) props.push(o); });
   for (const o of props) {
     const ud = o.userData;
     if (G) {
@@ -2928,6 +3068,8 @@ function reliefMaterial(m) {
 // scale, so the twin is lit and shadowed exactly as its mesh would be.
 function gridNormals(t, scale) { const nm = t.normalMatrix, get = nm.getNormalMatrix; nm.getNormalMatrix = function (m) { get.call(this, m); return this.multiplyScalar(scale); }; }
 const reliefReady = (o, R) => R?.state === 'ready' && (o.userData.gsLod?.base || o.geometry) === R.base && R.base.attributes.position.version === R.ver;
+// the triangles real surface detail may draw a frame (0: its meshes draw flat)
+const reliefBudget = () => (HD.relief === false ? 0 : Math.max(0, HD.reliefTris ?? tier().relief ?? 150000));
 function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
 function detailDrop(v, e, never = false) {
   const o = e.o, D = v.details;
@@ -2940,8 +3082,17 @@ function detailDrop(v, e, never = false) {
 function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.map.values()]) detailDrop(v, e); }
 // before the frame's other housekeeping: new big meshes are found and asked for, twins are made and follow their meshes
 function autoDetail(v, now, quiet) {
-  const D = v.details ||= { map: new Map(), t: 0 };
-  if (!quiet) { detailTick(); detailFrame(v.cam); }
+  const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
+  // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
+  // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off.
+  const budget = reliefBudget(), reliefOn = budget > 0;
+  if (!quiet) {
+    let drew = 0; for (const e of D.map.values()) if (e.relief && e.twin) drew += drawnTris(e.twin);
+    if (reliefOn && drew > budget * 1.1) D.rk = Math.min(8, D.rk * Math.min(2, drew / budget)); else if (D.rk > 1 && drew < budget * .7) D.rk = Math.max(1, D.rk / 1.1);
+    HD.info.reliefTris = drew; HD.info.reliefPx = HD.reliefPx * D.rk;
+    detailTick(); detailFrame(v.cam);
+  }
+  const rpx = HD.reliefPx * D.rk;
   if (HD.detail === false) { if (D.map.size) detailDropAll(v); return; }
   for (const e of D.map.values()) {
     const o = e.o, g = e.g, base = e.base, tw = e.twin, m0 = o.userData.gsGlMat || o.material, m = e.relief && m0 ? reliefMaterial(m0) : m0;
@@ -2949,13 +3100,13 @@ function autoDetail(v, now, quiet) {
     const changed = detailVersion(base) !== e.ver, R = reliefOf(o);
     const ud0 = o.userData, lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);   // (1: drawing as itself; BATCH_BIT: its twin is; anything else: the game moved it to a layer of its own)
     if (changed || e.failed || (o.geometry !== base && ud0.gsLod?.base !== base) || ud0.detail === false || ud0.gsReflect || !detailMaterial(m0) || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || !o.frustumCulled || o.onBeforeRender !== OBR || !inScene(o, v.scene)) { detailDrop(v, e, changed || e.failed); continue; }
-    if (e.relief ? R !== e.relief || HD.relief === false : R?.state === 'ready' && HD.relief !== false) { detailDrop(v, e); D.t = 0; continue; }   // (its relief was taken off or turned off, or has just arrived: looked at again below)
+    if (e.relief ? R !== e.relief || !reliefOn : R?.state === 'ready' && reliefOn) { detailDrop(v, e); D.t = 0; continue; }   // (its relief was taken off or turned off, or has just arrived: looked at again below)
     if (!tw) {
       if (!e.cl) continue;   // still being built
       if (!e.relief && e.cl.coarseTris > e.cl.fullTris * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
       if (o.geometry !== base) o.geometry = base;
       o.userData.gsLod = null;
-      const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : null });
+      const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : e.relief ? rpx : null });
       t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
       if (g.userData.gsGrid) gridNormals(t, g.userData.gsGrid.scale);
       // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
@@ -2968,7 +3119,7 @@ function autoDetail(v, now, quiet) {
     t.matrixWorld.copy(t.matrix);
     t.visible = shownInScene(o, v.scene);
     if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
-    t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : null;
+    t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : e.relief ? rpx : null;
     // (once it has drawn it is never hidden for a shader again: its mesh would have to stand in with a shader of its own to build, and for a moment neither drew)
     td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold || e.shown;
   }
@@ -2977,7 +3128,7 @@ function autoDetail(v, now, quiet) {
   v.scene.traverseVisible(o => {
     if (D.map.has(o)) return;
     const R = o.isMesh ? reliefOf(o) : undefined;
-    if (R && HD.relief !== false && reliefReady(o, R)) { if (detailFits(o)) D.map.set(o, { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), cl: R.clusters, twin: null, failed: false, gone: false, relief: R, shown: false }); return; }
+    if (R && reliefOn && reliefReady(o, R)) { if (detailFits(o)) D.map.set(o, { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), cl: R.clusters, twin: null, failed: false, gone: false, relief: R, shown: false }); return; }
     if (!detailable(o)) return;
     const g = o.userData.gsLod?.base || o.geometry;
     let cl = null; try { cl = clustersNow(g); } catch (e) { NO_DETAIL.add(g); return; }

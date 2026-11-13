@@ -278,6 +278,8 @@ export class DetailMesh extends BatchedMesh {
 }
 /** A new frame (the view calls it once before drawing): each mesh is counted once in stats. */
 export function tick() { FRAME++; }
+/** Triangles the view's own picture drew of this mesh in the frame just drawn (asked before tick()). */
+export const drawnTris = m => (m._frame === FRAME && m._counted ? m._counted.was[2] : 0);
 
 /* ---------- building: in a worker, kept by the mesh's content ---------- */
 // A build is found again by what the mesh is (its numbers), not which object it is, so a level made

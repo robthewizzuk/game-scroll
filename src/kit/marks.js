@@ -72,7 +72,7 @@ const TREADS = {
 // point between grid lines lies on one of them (land.height() blends the four corners instead, which can sit
 // a few centimetres above or below the triangles: enough to bury a sheet that lies on them).
 function surfaceOf(land) {
-  const g = land.mesh.geometry, n = land.segments, w = n + 1, S = land.size, s = S / n, I = g.index?.array;
+  const g = land.mesh.geometry, n = land.segments, w = n + 1, S = land.size, s = S / n, I = (land.rock?.index0 || g.index)?.array;   // (with land.rocks(), the squares as they were before a cave took some away)
   const cut = I && I[0] === 0 && I[1] === w && I[2] === 1 && I[3] === w && I[4] === w + 1 && I[5] === 1;   // (a three.js plane: each square cut from its far left corner to its near right one)
   return (x, z, out) => {
     const fc = (x + S / 2) / s, fr = (z + S / 2) / s, c = clamp(Math.floor(fc), 0, n - 1), r = clamp(Math.floor(fr), 0, n - 1), u = clamp(fc - c, 0, 1), v = clamp(fr - r, 0, 1);
@@ -227,6 +227,7 @@ export class Marks {
    */
   kindAt(x, z, out = {}) {
     const W = this.weather, y = this.surface(x, z, SURF).y; out.kind = null; out.soft = 0; out.depth = 0; out.y = y;
+    if (this.land?.rock && this.land.rocky(x, z)) return out;   // (rock: firm, and the sheets lie on the land's own squares, which the rock covers or a cave has taken away)
     P3.x = x; P3.y = y + .05; P3.z = z;
     if (W && W.snow >= .4) { const lies = W.snowAt(P3); if (lies > .012) { out.kind = 'snow'; out.soft = Math.min(1, lies / .06); out.depth = Math.min(.05, lies * .7); return out; } }
     const wet = W ? W.wetAt(P3) : 0;
@@ -339,7 +340,7 @@ export class Marks {
     if (d > 1e-4) { const k = w.aimed ? Math.min(1, d * 6) : 1; w.aimed = true; w.hx += (dx / d - w.hx) * k; w.hz += (dz / d - w.hz) * k; const l = Math.hypot(w.hx, w.hz) || 1; w.hx /= l; w.hz /= l; }
     const sc = thing.isObject3D ? Math.hypot(thing.matrixWorld.elements[4], thing.matrixWorld.elements[5], thing.matrixWorld.elements[6]) || 1 : 1;
     const high = thing.isObject3D || (thing.position || thing.pos || thing).y !== undefined;   // (does it say how high it is?)
-    const down = o.grounded ? !!o.grounded() : !high || y - this.surface(x, z, SURF).y < (o.height ?? 0) + .3;
+    const up = high ? y - this.surface(x, z, SURF).y : 0, down = o.grounded ? !!o.grounded() : up < (o.height ?? 0) + .3 && up > -.6;   // (well under the surface: in a cave or under an overhang of land.rocks(), where the ground above is not the ground it stands on)
     // the grass round it
     const rad = o.radius ?? (w.wheels || w.belts ? Math.max(.8, (thing.size?.width ?? 1.8) * .55) : .38 * sc);
     if (this.grass && rad > 0 && down) {
@@ -354,7 +355,7 @@ export class Marks {
     if (w.wheels) {
       for (let i = 0; i < w.wheels.length; i++) {
         const wh = w.wheels[i], q = wh.getWorldPosition(w.q ||= new Vector3()), k = w.id + ':' + i, r = (wh.radius || .35) * sc;
-        if (o.grounded ? !down : q.y - r - this.surface(q.x, q.z, SURF).y > .12) { this.lift(k); continue; }
+        if (o.grounded ? !down : !down || q.y - r - this.surface(q.x, q.z, SURF).y > .12) { this.lift(k); continue; }
         this.roll(k, q.x, q.z, { width: (o.width ?? wh.width ?? .22) * sc, tread: o.tread ?? 'tyre', press: o.press ?? 1.3, by: w.by });
       }
       return;
