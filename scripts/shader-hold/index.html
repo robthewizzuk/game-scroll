@@ -5,9 +5,11 @@
 // ?hold=0 builds it in the frame instead, for the comparison.
 // On WebGPU it also counts the pipelines made in the middle of a frame: none for the new thing once it shows, and none
 // for things that were in the scene from the start but not drawn (switched off, behind the camera), whose shaders
-// are built over the first frames (v.buildAhead).
+// are built over the first frames (v.buildAhead); and no pipeline refused after a thing's shape was freed while its
+// shader was still being built (gpu.js freeUnbuilt).
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
+import * as TSL from 'three/tsl';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -22,12 +24,23 @@ const ground = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.
 // the builds sent to the background ask with createRenderPipelineAsync), by the name of its material
 const G = GPU ? webgpu() : null, dev = G?.r.backend?.device, inFrame = [];
 if (dev) { const f = dev.createRenderPipeline.bind(dev); dev.createRenderPipeline = d => { inFrame.push(d.label || '?'); return f(d); }; }
+// ... and every pipeline the chip refused, made in a frame or in the background (by its material's name)
+const refused = [];
+if (dev) {
+  const fa = dev.createRenderPipelineAsync.bind(dev); dev.createRenderPipelineAsync = d => fa(d).catch(e => { refused.push(d.label || '?'); throw e; });
+  dev.addEventListener('uncapturederror', e => refused.push(String(e.error?.message || e).split('\n')[0].slice(0, 120)));
+}
 // ... and every shader whose text three wrote in the middle of a frame (its node builder: 10 to 30 ms of the frame's
 // own time for a big material). A build in the background writes it first, under a key the frame must find again.
 const built = [], ofScene = [], scenes = new Set([v.scene]); let drawing = false;   // (ofScene: written in a frame for the scenes' own things, not the views' full-screen passes; built: written outside one)
 if (G) {
   const N = G.r._nodes, nf = N.getForRender.bind(N), kept = N.nodeBuilderCache;
-  N.getForRender = ro => { const n = kept.size, out = nf(ro); if (kept.size > n) { const name = ro.material?.name || ro.material?.type || '?'; if (!drawing) built.push(name); else if (scenes.has(ro.scene)) ofScene.push(name); } return out; };
+  // (a build in the background writes its text a stage at a time, letting frames be drawn in between: it is passed on as it came)
+  N.getForRender = (ro, ...a) => {
+    const name = ro.material?.name || ro.material?.type || '?', inFrame = drawing, own = scenes.has(ro.scene), key = N.getForRenderCacheKey(ro), had = kept.has(key);
+    const note = () => { if (had || !kept.has(key)) return; if (!inFrame) built.push(name); else if (own) ofScene.push(name); };
+    const out = nf(ro, ...a); if (out?.then) out.then(note, () => {}); else note(); return out;
+  };
   const vr = gs.hd.HDView.prototype.render; gs.hd.HDView.prototype.render = function (...a) { drawing = true; try { return vr.apply(this, a); } finally { drawing = false; } };
 }
 // there from the start, but nothing a first frame draws: one switched off, one behind the camera
@@ -80,8 +93,30 @@ const readyText = built.filter(n => n.startsWith('second view'));
 v2.render(x2, 480, 640); await frame(); ofScene.length = 0;
 for (let i = 0; i < 400 && (i < 8 || v2.shadersLeft > 0 || (G && G.r.gsBuilding > 0)); i++) { v2.scene.children[2].rotation.y += .3; v2.render(x2, 480, 640); await frame(); }
 const secondText = ofScene.slice();
+// A thing taken away again while its shader is still being built in the background, and its shape freed (a part
+// of a level let go of, a shot gone before it showed). three built that shader there and then, between frames, for
+// the screen and not the picture the scene is drawn into, and kept it under the key the next thing of that look is
+// built by: that one got a pipeline the chip refused (one output for a picture of two), and was never drawn.
+// (looks of their own, and big ones whose shaders take three more than one go to write, as a person's skin and clothes
+// do: so the shape can be freed in the middle of one. Made on the chip's own terms here, as the kit's own are)
+const looks = G ? [0, 1, 2].map(i => {
+  const k = new G.W.MeshStandardNodeMaterial({ roughness: .5 });
+  k.colorNode = TSL.Fn(() => { const n = TSL.float(0).toVar(); for (let j = 0; j < 1500; j++) n.addAssign(TSL.sin(TSL.positionLocal.x.mul(j * .37 + i).add(TSL.positionLocal.y.mul(j * .11 + .5 * i)))); return TSL.vec3(n.mul(.002).add(.4), .5, .3 + .2 * i); })();
+  k.name = 'freed while building ' + i; return k;
+}) : [];
+let freedWhileBuilding = 0;
+if (G) {
+  const shape = () => new T.TorusKnotGeometry(.7, .2, 96, 16), place = (k, i) => { k.position.set(i * 1.6 - 1.6, 1.5, 1); return k; };
+  const geo = shape(), gone = looks.map((k, i) => place(new T.Mesh(geo, k), i));
+  v.scene.add(...gone); v.render(x, 240, 320); v.scene.remove(...gone);
+  for (const t2 = performance.now(); G && G.r.gsBuilding > 0 && performance.now() - t2 < 30000; freedWhileBuilding++) { geo.dispose(); await new Promise(r => setTimeout(r, 0)); }
+  const again = shape(); v.scene.add(...looks.map((k, i) => place(new T.Mesh(again, k), i)));
+  for (let i = 0; i < 400 && (i < 8 || (HD.info.held || 0) > 0 || (G && G.r.gsBuilding > 0)); i++) { v.render(x, 240, 320); await frame(); }
+}
+for (let i = 0; i < 4; i++) { v.render(x, 240, 320); await frame(); }
+await new Promise(r => setTimeout(r, 200));
 // (a shadow map's own shader for a new kind of caster is still made in the frame: told apart, not counted)
 const own = a => a.filter(l => !/Shadow|Depth/i.test(l));
 window.result = { backend: HD.info.backend, first, heldAtFirst, shownAfter, waitMs, after: Math.max(...others), stillHeld: HD.info.held || 0,
-  gpu: !!dev, aheadFrames, late: own(late), lateShadow: late.length - own(late).length, shownMs, shownHeld, turnedMs, newInFrame: own(newPipes), newShadow: newPipes.length - own(newPipes).length, lateText: own(lateText), newText: own(newText), secondText: own(secondText), readyText, earlyText: own(earlyText) };
+  gpu: !!dev, aheadFrames, late: own(late), lateShadow: late.length - own(late).length, shownMs, shownHeld, turnedMs, newInFrame: own(newPipes), newShadow: newPipes.length - own(newPipes).length, lateText: own(lateText), newText: own(newText), secondText: own(secondText), readyText, earlyText: own(earlyText), refused, freedWhileBuilding };
 </script>
