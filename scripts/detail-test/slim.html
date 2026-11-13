@@ -1,0 +1,143 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Smaller meshes (src/kit/slim.js), for scripts/detail-test.cjs --page slim.
+// The dense things the kit makes are built twice, once with their points as plain floats (HD.slim = false)
+// and once kept small (normals in bytes, colours as half floats, bone numbers and weights in eight bytes,
+// a relief's places on a 16-bit grid), and drawn from the same cameras: two people close up and a face, a
+// furred dog, a fused goods train, a brick house with real surface detail, and a crowd. The pictures must
+// match, and the bytes each keeps (in JavaScript and on the chip) are counted.
+//   ?gpu  WebGPU    ?tier=2    ?w=640&h=360    ?cams=face,people
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { reliefOf } from '../../src/kit/relief.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 640), H = +(Q.get('h') || 360), { Crowd } = gs.props, { human, creature, vehicle, building, relief } = gs.models;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.hold = false;
+HD.pack = false;   // (WebGPU: a texture draws plain and then swaps to its packed copy a moment later, which would be a difference between the two passes that is not theirs)
+const out = {}, info = {}, pix = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+const CAMS = {
+  face: [[-1.08, 1.66, .62], [-1.2, 1.63, 0]], people: [[-.5, 1.25, 3.6], [-.5, .9, 0]], dog: [[1.55, .62, 1.25], [.75, .34, 0]],
+  train: [[5, 2.6, 3.5], [1, 1.6, -7]], wall: [[-7.2, 1.5, 3.4], [-9.5, 1.4, 1.2]], crowd: [[22, 4.5, 15], [22, .8, 0]],
+};
+try {
+  const SPECS = [{ seed: 1 }, { sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a' }], DOG = { like: 'dog', seed: 3 };
+  await Promise.all([human.ready(SPECS), creature.ready([DOG])]);
+  const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); f.face?.still?.(); };
+  // the bytes a thing's geometries keep: each list once, in JavaScript and (worked out from what three.js sends) on the chip
+  const bytesOf = root => {
+    const seen = new Set(); let js = 0, chip = 0, points = 0; const kinds = {};
+    root.traverse(o => {
+      const g = o.geometry; if (!g?.attributes) return;
+      const all = [...Object.entries(g.attributes), ...(g.index ? [['index', g.index]] : [])];
+      for (const [name, a] of all) {
+        const key = a.isInterleavedBufferAttribute ? a.data : a, arr = a.isInterleavedBufferAttribute ? a.data.array : a.array;
+        kinds[name] ||= arr.constructor.name.replace('Array', '') + 'x' + a.itemSize + (a.normalized ? 'n' : '');   // (as the first geometry keeps it: the body, before its hair or coat)
+        if (seen.has(key)) continue; seen.add(key);
+        const b = arr.byteLength; js += b;
+        let c = b;
+        if (GPU && !a.isInterleavedBufferAttribute) { let per = arr.BYTES_PER_ELEMENT; const fl = arr instanceof Float32Array || (typeof Float16Array !== 'undefined' && arr instanceof Float16Array); if (!a.normalized && per < 4 && !fl && name !== 'index') per = 4; let st = per * a.itemSize; if (a.itemSize > 1 && st % 4) st = Math.ceil(st / 4) * 4; c = a.count * st; }
+        chip += c; if (name === 'position') points += a.count;
+      }
+    });
+    return { js, chip, points, kinds };
+  };
+  function stage() {
+    const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, amb: .42 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+    const sun = gs.hd.sun('#fff2d8', 2.7, 30, [-.45, 1, .5]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(300, 300).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8a66', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    v.cam.fov = 40; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix();
+    return { v, c, x, sun };
+  }
+  const shot = async (S, most = 60) => {
+    let last = null, same = 0;
+    for (let i = 0; i < most && same < 2; i++) {
+      S.v.t = 0; S.v.render(S.x, W, H); await nextFrame();
+      const d = S.x.getImageData(0, 0, W, H).data; same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d;
+    }
+    return last;
+  };
+  const twins = S => [...(S.v.details?.map.values() || [])].filter(e => e.relief && e.twin && !(e.twin.layers.mask & (1 << 29)));
+  const made = {};
+  for (const mode of ['plain', 'small']) {
+    HD.slim = Q.get('both') ? Q.get('both') === 'small' : mode === 'small';   // (?both=plain or ?both=small: the same twice, to see what differs from one run to the next whatever is kept small)
+    const S = stage(), m = made[mode] = { S };
+    // two people and a dog, close
+    const a = human(SPECS[0]), b = human(SPECS[1]), dog = creature(DOG);
+    a.position.set(-1.2, 0, 0); a.rotation.y = .25; a.lod = 0; pin(a, 'idle', .3);
+    b.position.set(-.1, 0, .1); b.rotation.y = -.5; b.lod = 0; pin(b, 'walk', .2);
+    dog.position.set(.8, 0, 0); dog.rotation.y = 1.1; dog.lod = 0; pin(dog, 'walk', .4);
+    S.v.scene.add(a, b, dog);
+    // a goods train whose cars are one mesh a material
+    const train = vehicle('train', { style: 'steam', seed: 2, fuse: true, cars: ['van', { style: 'open', load: 'coal' }, 'guard'] });
+    train.position.set(1, 0, -7); train.rotation.y = Math.PI / 2; S.v.scene.add(train);
+    // a brick house whose walls have real surface detail
+    const house = building({ style: 'brick', w: 6, d: 5, floors: 2, seed: 3 }); house.position.set(-11, 0, 0); S.v.scene.add(house);
+    const wall = house.children.find(q => q.name === 'wall'); relief(wall, { depth: .012 });
+    // a crowd of the same people
+    const src = [human({ ...SPECS[0], strands: false }), human({ ...SPECS[1], strands: false }), creature({ ...DOG, fur: false })];
+    const crowd = new Crowd(S.v, { of: src, moves: ['idle', 'walk', 'run'] }), R = gs.math.rng(7);
+    for (let i = 0; i < 36; i++) crowd.add({ x: 22 + (R() - .5) * 16, z: (R() - .5) * 12, turn: R() * 6.28, kind: i % 3, move: i % 4 ? 'walk' : 'idle', size: .95 + R() * .1 });
+    crowd.update(0);
+    Object.assign(m, { a, b, dog, train, house, wall, crowd, src });
+    await relief.ready(S.v.scene);
+    for (let i = 0; i < 400 && twins(S).length < 1; i++) { S.v.t = 0; S.v.render(S.x, W, H); await new Promise(r => setTimeout(r, 30)); }
+    // (each camera is looked through once before any picture is taken, so what the view makes in the background for what a
+    // camera sees, simpler copies of big meshes, hair in layers, a shader, has arrived in both passes)
+    for (const [at, to] of Object.values(CAMS)) { S.v.cam.position.set(...at); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld(); S.v.cut?.(); for (let i = 0; i < 10; i++) { S.v.t = 0; S.v.render(S.x, W, H); await new Promise(r => setTimeout(r, 30)); } }
+    for (const [name, [at, to]] of Object.entries(CAMS)) {
+      if (Q.get('cams') && !Q.get('cams').split(',').includes(name)) continue;
+      S.v.cam.position.set(...at); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld(); S.v.cut?.();
+      pix[mode + '-' + name] = await shot(S); out[mode + '-' + name] = S.c.toDataURL();
+    }
+    const rg = reliefOf(wall)?.geometry;
+    m.bytes = {
+      person: bytesOf(a), woman: bytesOf(b), dog: bytesOf(dog), train: bytesOf(train),
+      relief: rg ? bytesOf({ traverse: f => f({ geometry: rg }) }) : null,
+      crowd: bytesOf({ traverse: f => { for (const k of crowd.kinds) for (const l of k.levels) f({ geometry: l.geo }); } }),
+    };
+    m.twin = twins(S)[0]?.twin || null; m.grid = rg?.userData.gsGrid || null;
+  }
+  HD.slim = true;
+  const mb = n => +(n / 1048576).toFixed(3), P = made.plain.bytes, Sm = made.small.bytes;
+  for (const k of Object.keys(P)) if (P[k] && Sm[k]) info[k] = { points: Sm[k].points, plainMB: mb(P[k].js), smallMB: mb(Sm[k].js), of: Math.round(Sm[k].js / P[k].js * 100) + '%', chipPlainMB: mb(P[k].chip), chipSmallMB: mb(Sm[k].chip), chipOf: Math.round(Sm[k].chip / P[k].chip * 100) + '%', lists: Object.entries(Sm[k].kinds).map(([n, t]) => n + ' ' + t).join(', ') };
+  info.kept = HD.slimmed;
+  // the pictures
+  for (const name of Object.keys(CAMS)) {
+    const p = pix['plain-' + name], s = pix['small-' + name]; if (!p || !s) continue;
+    let sum = 0; for (let i = 0; i < p.length; i += 4) sum += Math.max(Math.abs(p[i] - s[i]), Math.abs(p[i + 1] - s[i + 1]), Math.abs(p[i + 2] - s[i + 2]));
+    const off = differ(p, s, 12), any = differ(p, s, 3), mean = sum / (p.length / 4);
+    info['picture-' + name] = { mean: +mean.toFixed(3), offBy12: off, offBy3: any };
+    // (the wall's relief is a hundred thousand points, each moved to a grid a quarter of a millimetre fine: the lines of mortar move a fraction of a pixel)
+    const real = name === 'wall';
+    check(`${name}: the same picture with points kept small`, off <= W * H * (real ? .004 : .001) && mean < (real ? .8 : .25), `${off} of ${W * H} pixels differ by more than 12 of 255 (${any} by more than 3); mean ${mean.toFixed(3)}`);
+  }
+  // how each is kept
+  const ka = Sm.person.kinds, kp = P.person.kinds, half = typeof Float16Array !== 'undefined';
+  check('a person: normals in bytes, colours as half floats, bone numbers and weights in eight bytes, places as they were', ka.normal === 'Int8x3n' && (!half || ka.color === 'Float16x3') && ka.skinIndex === 'Uint8x4' && ka.skinWeight === 'Uint8x4n' && ka.position === 'Float32x3' && kp.normal === 'Float32x3', Object.entries(ka).map(([n, t]) => n + ' ' + t).join(', '));
+  check('a person keeps about half the bytes a point', Sm.person.js < P.person.js * .72 && Sm.person.chip < P.person.chip * .72, `${info.person.plainMB} MB to ${info.person.smallMB} MB (${info.person.of}); on the chip ${info.person.chipPlainMB} to ${info.person.chipSmallMB} (${info.person.chipOf})`);
+  check('a furred dog, its coat and all, is smaller', Sm.dog.js < P.dog.js * .8, `${info.dog.plainMB} MB to ${info.dog.smallMB} MB (${info.dog.of})`);
+  check('a fused train is smaller', Sm.train.js < P.train.js * .85, `${info.train.plainMB} MB to ${info.train.smallMB} MB (${info.train.of}): ${info.train.lists}`);
+  if (Sm.relief) check('real surface detail keeps its places on a 16-bit grid and its normals in bytes', made.small.grid && Sm.relief.kinds.position === 'Int16x3n' && Sm.relief.kinds.normal === 'Int8x3n' && Sm.relief.js < P.relief.js * .75, `${info.relief.plainMB} MB to ${info.relief.smallMB} MB (${info.relief.of}); steps of ${made.small.grid ? (made.small.grid.step * 1000).toFixed(3) : '?'} mm`);
+  check('a crowd keeps its bones in eight bytes a point', Sm.crowd.kinds.gsSkinI === 'Uint8x4' && Sm.crowd.kinds.gsSkinW === 'Uint8x4n' && Sm.crowd.js < P.crowd.js, `${info.crowd.plainMB} MB to ${info.crowd.smallMB} MB (${info.crowd.of})`);
+  check('the view counts what it keeps small', info.kept.meshes > 0 && info.kept.nowMB < info.kept.wasMB * .6, JSON.stringify(info.kept));
+  // a ray still finds a person and the game's own wall; a person's box is as it was
+  {
+    const S = made.small.S, ray = new T.Raycaster(new T.Vector3(-1.2, 1.2, 5), new T.Vector3(0, 0, -1)), hit = ray.intersectObject(made.small.a, true)[0];
+    const ray0 = new T.Raycaster(new T.Vector3(-1.2, 1.2, 5), new T.Vector3(0, 0, -1)), hit0 = ray0.intersectObject(made.plain.a, true)[0];
+    check('a ray hits a person where it did', hit && hit0 && Math.abs(hit.distance - hit0.distance) < 1e-4, hit && hit0 ? `${hit.distance.toFixed(5)} and ${hit0.distance.toFixed(5)}` : 'missed');
+    const b1 = new T.Box3().setFromObject(made.small.dog, true), b0 = new T.Box3().setFromObject(made.plain.dog, true);
+    check('a creature is the size it was', b1.min.distanceTo(b0.min) < 1e-4 && b1.max.distanceTo(b0.max) < 1e-4);
+    S.v.cam.position.set(...CAMS.wall[0]); S.v.cam.lookAt(...CAMS.wall[1]); S.v.cam.updateMatrixWorld();
+    const wr = new T.Raycaster(); wr.setFromCamera(new T.Vector2(0, 0), S.v.cam); const wh = wr.intersectObjects(S.v.scene.children, true)[0];
+    check('a ray at the wall hits the game\'s own mesh, never its relief', wh && wh.object === made.small.wall, wh ? wh.object.name || wh.object.type : 'missed');
+  }
+  window.made = made;
+  window.result = { out, info, checks };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

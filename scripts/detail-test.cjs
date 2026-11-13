@@ -8,6 +8,7 @@
 //   node scripts/detail-test.cjs --page copies --bench [--webgpu] --q "forest=20000"   a forest flown over with levels off and on (&cpucull: WebGPU without GPU culling, as under frame generation)
 //   node scripts/detail-test.cjs --page crowd [--webgpu] [--shots dir]       crowds (gs.props.Crowd): people and a dog posed by their own skeletons against the same as members of a crowd, then a field of 300
 //   node scripts/detail-test.cjs --page crowd --bench [--webgpu] --q "n=300"   300 with a skeleton each against 300 in a crowd: draws, triangles, posing and drawing time a frame
+//   node scripts/detail-test.cjs --page slim [--webgpu] [--shots dir]        smaller meshes (src/kit/slim.js): people, a furred dog, a fused train, a relief wall and a crowd as plain floats against kept small
 //   node scripts/detail-test.cjs --page traced --webgpu [--shots dir]        ray traced reflections (v.reflect() on WebGPU): a floor and a chrome ball that show what is above the screen and behind the camera, a moved thing, copies found on the screen, against screen-space reflections
 //   node scripts/detail-test.cjs --page traced --bench --webgpu --q "size=.3"   the engine test scenes' hall with no reflections, screen-space ones and ray traced: what each draws, and what the traced copy holds
 const { chromium } = require('playwright');

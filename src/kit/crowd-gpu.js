@@ -7,12 +7,12 @@ import { Fn, If, attribute, textureLoad, ivec2, int, vec3, vec4, dot, cos, sin, 
 
 /** m: a crowd level's material (still a classic one); s: its look ({ uniforms: { gsBake } }); o: the mesh; afterColor: hd3d-gpu.js's. */
 export function crowdLook(m, s, o, afterColor) {
-  const bake = s.uniforms.gsBake.value, I = attribute('gsSkinI', 'vec4'), W = attribute('gsSkinW', 'vec4');
+  const bake = s.uniforms.gsBake.value, I = attribute('gsSkinI', 'uvec4'), W = attribute('gsSkinW', 'vec4');   // (whole bone numbers and weights in bytes: crowd.js crowdGeo)
   // P (and the directions N, T) through a member's pose: cr is its rows (x, y), how far between them (z) and its size (w)
   const posed = (cr, P, N, T) => {
     const p = vec3(0).toVar(), n = N && vec3(0).toVar(), t = T && vec3(0).toVar(), v = vec4(P, 1);
     const bone = (i, w, row, k) => {
-      const x = int(i.add(.5)).mul(3), y = int(row.add(.5)), ww = w.mul(k);
+      const x = int(i).mul(3), y = int(row.add(.5)), ww = w.mul(k);
       const a = textureLoad(bake, ivec2(x, y)), b = textureLoad(bake, ivec2(x.add(1), y)), c = textureLoad(bake, ivec2(x.add(2), y));
       p.addAssign(vec3(dot(a, v), dot(b, v), dot(c, v)).mul(ww));
       if (n) n.addAssign(vec3(dot(a.xyz, N), dot(b.xyz, N), dot(c.xyz, N)).mul(ww));

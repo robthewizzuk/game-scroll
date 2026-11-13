@@ -31,6 +31,8 @@ import { BufferAttribute, Color, DataTexture, DynamicDrawUsage, FloatType, Frust
 import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { HD } from './hd3d.js';
+import { sameList } from './slim.js';
+import { skin8 } from './slim-core.js';
 
 const CYCLE = 32, FPS = 24, FADE = .25, STRIDE = 20;   // rows a stride cycle, rows a second for moves by the clock, seconds a blend takes, numbers a member
 const FINE = .15, KEEP = 1.4, NOMINAL = 800;            // triangles a member wants for each pixel of its height, squared (of a screen 800 high: triangles about two pixels across); a level is kept until one 1.4 times as fine would do
@@ -115,20 +117,22 @@ function bake(src, moves) {
 }
 // A shape for the crowd: the figure's own points, with its bones and weights as plain numbers a vertex
 // (the same on both backends), no blend shapes, and room for the members' numbers.
-function crowdGeo(g) {
-  // (the figure's own numbers, in lists of the crowd's own: freeing a shape frees its lists on the chip, and the figure may still be drawn)
-  const own = a => a.isInterleavedBufferAttribute ? a.clone() : new BufferAttribute(a.array, a.itemSize, a.normalized);
+function crowdGeo(g, seen = new Map()) {
+  // (the figure's own numbers, in lists of the crowd's own, each kept the way the figure keeps it, slim.js: freeing a
+  // shape frees its lists on the chip, and the figure may still be drawn)
+  // seen: the lists already made for this kind, so a figure's levels of detail, which are other triangles of the same points,
+  // send those points to the chip once between them, as the figure does
+  const own = a => { let b = seen.get(a); if (!b) seen.set(a, b = sameList(a, seen)); return b; };
   const o = new InstancedBufferGeometry(); if (g.index) o.setIndex(own(g.index));
   for (const k of ['position', 'normal', 'uv', 'uv1', 'color', 'tangent']) if (g.attributes[k]) o.setAttribute(k, own(g.attributes[k]));
-  const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = si.count, a = new Float32Array(n * 8);
-  for (let i = 0; i < n; i++) {
-    const w = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)], sum = w[0] + w[1] + w[2] + w[3] || 1, o8 = i * 8;
-    a[o8] = si.getX(i); a[o8 + 1] = si.getY(i); a[o8 + 2] = si.getZ(i); a[o8 + 3] = si.getW(i);
-    for (let j = 0; j < 4; j++) a[o8 + 4 + j] = w[j] / sum;
-    if (!(w[0] > 0)) { a[o8 + 4] = 1; a[o8 + 5] = a[o8 + 6] = a[o8 + 7] = 0; }   // (a point no bone holds follows its first)
+  // bone numbers and weights: eight bytes a point (sixteen for a figure of more than 256 bones), the weights adding up to one
+  const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = si.count; let skin = seen.get(si);
+  if (!skin) {
+    const I = new Float32Array(n * 4), Wt = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) { const q = i * 4; I[q] = si.getX(i); I[q + 1] = si.getY(i); I[q + 2] = si.getZ(i); I[q + 3] = si.getW(i); Wt[q] = sw.getX(i); Wt[q + 1] = sw.getY(i); Wt[q + 2] = sw.getZ(i); Wt[q + 3] = sw.getW(i); }
+    seen.set(si, skin = new InterleavedBuffer(skin8(I, Wt, n).array, 8));   // (one list for both: WebGPU takes eight lists a shape at most)
   }
-  const skin = new InterleavedBuffer(a, 8);   // (one list for both: WebGPU takes eight lists a shape at most)
-  o.setAttribute('gsSkinI', new InterleavedBufferAttribute(skin, 4, 0)); o.setAttribute('gsSkinW', new InterleavedBufferAttribute(skin, 4, 4));
+  o.setAttribute('gsSkinI', new InterleavedBufferAttribute(skin, 4, 0, false)); o.setAttribute('gsSkinW', new InterleavedBufferAttribute(skin, 4, 4, true));
   for (const gr of g.groups) o.addGroup(gr.start, gr.count, gr.materialIndex);
   o.instanceCount = 0; o.boundingSphere = new Sphere(new Vector3(), 1e-3);
   return o;
@@ -209,7 +213,7 @@ export class Crowd {
     this.kinds = baked.map(b => {
       // its shapes, finest first: the figure's own levels of detail, with more made between any two of them over four times apart
       // in triangles, and after its last down to about 500 (a figure's own coarsest is made for a squad, not for hundreds a few pixels tall)
-      const own = b.meshes.map((m, i) => ({ geo: crowdGeo(m.geometry), material: m.material, own: i })), shapes = [];
+      const seen = new Map(), own = b.meshes.map((m, i) => ({ geo: crowdGeo(m.geometry, seen), material: m.material, own: i })), shapes = [];
       own.forEach((o, i) => {
         shapes.push(o);
         const next = own[i + 1], t = trisOf(o.geo), to = next ? trisOf(next.geo) : t > LAST * 2 ? LAST : 0; let from = o, tt = t;
