@@ -1040,6 +1040,54 @@ function ground({ gs, size }) {
   };
 }
 
+/* ---------- skyline: the city to the horizon ---------- */
+// The view from the tallest roof of a made-up downtown (src/kit/city-far.js), turning slowly round as dusk turns to night. Off, the
+// city stops at its last street and grass runs to the sky; on, a made-up city goes on past it as stand-ins in its own colours (blocks
+// of 90 m, then 180 m, then 360 m, thinning out into the country by 6 km), their windows lit at night, their street lights one batch
+// of dots, and land with hills round it all out to 10 km.
+function skyline({ gs, size }) {
+  const { City } = gs.city, v = new gs.hd.HDView({ bg: '#8a98b0', fog: .00012, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 10800; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .00025, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 19.4, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const blocks = size < .3 ? 2 : Math.max(3, Math.round(5 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.2, Math.min(.6, size));
+  let city = null, mode = '', roof = null;
+  const sum = { n: 0, ms: 0, t: 0 };
+  const enter = key => async draw => {
+    const t0 = performance.now(), opts = { seed: 5, blocks, style: 'downtown', sky, traffic: busy, people: busy, crowd: false, sound: false, far: key === 'on' };
+    let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err;
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; Object.assign(sum, { n: 0, ms: 0, t: 0 });
+    const o = city.plan.buildings.slice().sort((p, q) => q.h - p.h)[0]; roof = { x: (o.x0 + o.x1) / 2, z: (o.z0 + o.z1) / 2, y: o.h + 2.5 };
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    const F = city.far;
+    return { build, note: `${num(city.plan.buildings.length)} buildings${F ? `, ${num(F.count)} stand-ins past them, ${num(F.lampCount)} far lamps` : ''}` };
+  };
+  return {
+    v, holds: `the view from the tallest roof of a made-up downtown of ${blocks} blocks a side, turning slowly round as dusk turns to night`,
+    modes: [
+      { key: 'off', name: 'the city alone', enter: enter('off') },
+      { key: 'on', name: 'the city to the horizon: stand-ins, far lights and hills', enter: enter('on') },
+    ],
+    path(t, cam) {
+      if (!city) return;
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const a = t * .16;
+      cam.position.set(roof.x, roof.y, roof.z); cam.lookAt(roof.x + Math.cos(a) * 100, roof.y - 9, roof.z + Math.sin(a) * 100); cam.updateMatrixWorld();
+      sun.follow(roof.x, 0, roof.z); sky.time = 19.4 + Math.min(2, t * .1); sky.update(dt);
+      const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`, F = city.far;
+      return mode === 'off' || !F ? ms : `${ms} · ${num(F.count)} stand-ins, ${num(F.lampCount)} far lamps, ${num(F.triangles)} triangles in ${F.draws} draws`;
+    },
+    dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -1057,4 +1105,5 @@ export const SCENES = [
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
   ['cars', 'Cars', 'cars up close: seats behind the glass, paint, dirt and rain, dents and broken glass', cars],
   ['ground', 'Ground', 'ground and walls with no repeats: the ground painted round the camera, posters and stains on the walls', ground],
+  ['skyline', 'Skyline', 'the city to the horizon: stand-ins past the streets, far lights, hills', skyline],
 ];

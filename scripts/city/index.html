@@ -4,6 +4,7 @@
 //   ?views=street,close,shop,corner,high,far   &times=18.3,21.5   &cell=480x360   &seed=7   &style=downtown   &blocks=6
 //   &gpu (WebGPU)   &old (the city as it was before the close-up work: rooms: false, dress: false, fleet: false, crowd: false)
 //   &off=rooms,dress,fleet,crowd,parked (switch single parts off)   views also: up, parked, beside, roofs   &frames=12
+//   &horizon=6000 (City option far: the city to the horizon; views skyline, outskirts, edge)   &fog=.0022 &haze=.0012 (the air)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -16,14 +17,15 @@ try {
   window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
   const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
   const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * times.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
-  const v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  const v = new gs.hd.HDView({ bg: '#8a98b0', fog: +(Q.get('fog') ?? .0022), env: .5, amb: .5, fov: 60 });
   v.cam.near = .2; v.cam.far = +(Q.get('far') || 1500); v.cam.updateProjectionMatrix();
   const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
-  v.air({ haze: .0012, colour: '#9aa6bc' });
+  v.air({ haze: +(Q.get('haze') ?? .0012), colour: '#9aa6bc' });
   const sky = new gs.sky.Sky(v, { time: times[0], speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
   const off = new Set((Q.get('off') || '').split(',').filter(Boolean)); if (Q.has('old')) for (const k of ['rooms', 'dress', 'fleet', 'crowd', 'parked']) off.add(k);
   const opts = { seed: +(Q.get('seed') || 7), blocks: +(Q.get('blocks') || 6), style: Q.get('style') || 'downtown', sky };
   for (const k of off) opts[k] = false;
+  if (Q.has('horizon')) opts.far = +Q.get('horizon') || true;
   await gs.city.City.ready?.(opts);   // (the far shapes' simplifier, and the people sculpted: not counted)
   const t0 = performance.now();
   const city = new gs.city.City(v, opts), made = performance.now() - t0;
@@ -48,6 +50,10 @@ try {
     across: () => { const o = P.buildings.filter(x => x.face === 0 && !x.shops).sort((p, q) => (q.x1 - q.x0) - (p.x1 - p.x0))[0] || front, m = (o.x0 + o.x1) / 2; return [[m, 1.7, o.z0 - 10], [m, 1.6, o.z0]]; },
     high: () => [[b.x0 - 30, 45, b.z0 - 60], [b.x0 + 40, 10, b.z0 + 60]],
     far: () => [[P.bounds.x0 - 20, 90, P.bounds.z0 - 20], [0, 20, 0]],
+    // the city to the horizon: from the tallest roof looking out past the edge; high over the outskirts; at the edge at eye height
+    skyline: () => { const B = P.bounds, o = P.buildings.slice().sort((p, q) => q.h - p.h)[0], mx = (o.x0 + o.x1) / 2, mz = (o.z0 + o.z1) / 2; return [[mx, o.h + 3, mz], [mx + (B.x0 - mx) * 3, o.h * .4, mz + (B.z0 - mz) * 3]]; },
+    outskirts: () => { const B = P.bounds; return [[B.x0 - 200, 260, B.z0 - 200], [B.x0 - 1500, 0, B.z0 - 1500]]; },
+    edge: () => { const B = P.bounds; return [[(B.x0 + B.x1) / 2, 1.7, B.z0 - 30], [(B.x0 + B.x1) / 2 + 30, 6, B.z0 - 600]]; },
     // looking up a front from across the street; along a row of parked cars; over the roofs nearby
     up: () => { const o = bl.find(x => x.face === 0 && !x.shops && x.floors > 3) || front; return [[(o.x0 + o.x1) / 2 - 3, 1.7, o.z0 - 13], [(o.x0 + o.x1) / 2, 14, o.z0]]; },
     parked: () => { const c = (city.parked || []).slice().sort((p, q) => Math.hypot(p.x - b.x0, p.z - b.z0) - Math.hypot(q.x - b.x0, q.z - b.z0))[0]; if (!c) return VIEWS.street(); const fx = Math.sin(c.heading), fz = Math.cos(c.heading), sx = fz, sz = -fx, sd = Math.sign((b.x0 + b.x1) / 2 - c.x) * sx + Math.sign((b.z0 + b.z1) / 2 - c.z) * sz > 0 ? 1 : -1;
@@ -58,6 +64,7 @@ try {
     roofs: () => { const o = bl.filter(x => x.roof !== 'gable').sort((p, q) => p.h - q.h)[0] || front; return [[o.x0 - 6, o.h + 9, o.z0 - 6], [(o.x0 + o.x1) / 2, o.h, (o.z0 + o.z1) / 2]]; },
   };
   const info = [`city made in ${made.toFixed(0)} ms (${P.buildings.length} buildings${city.parked?.length ? `, ${city.parked.length} parked cars` : ''})`];
+  if (city.far) info.push(`to the horizon: ${city.far.count} stand-ins, ${city.far.lampCount} far lamps, ${city.far.triangles} triangles, camera sees ${Math.round(v.cam.far)} m`);
   for (let r = 0; r < times.length; r++) {
     sky.time = times[r]; sky.update(0);
     for (let c = 0; c < views.length; c++) {

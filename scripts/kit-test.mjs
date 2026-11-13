@@ -1557,6 +1557,33 @@ console.log('physics ok');
   }
   console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
 }
+// the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
+// further out, land from where the city's ground ends, the camera made to see it, lit windows at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Skyline } = await import('../src/kit/city-far.js');
+  for (const style of ['downtown', 'harbour']) {
+    const p = layout({ seed: 3, blocks: [4, 4], style }), B = p.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
+    const make = () => { const cam = new THREE.PerspectiveCamera(60, 1, .2, 900), v = { scene: new THREE.Scene(), cam }; return [v, new Skyline(v, p, { seed: 3, colours: ['#a45a45', '#d8cdb8'], water: !!p.water })]; };
+    const [v, s] = make(), [, s2] = make(), pos = m => Array.from(m.geometry.attributes.position.array);
+    assert.equal(JSON.stringify(s.meshes.map(pos)), JSON.stringify(s2.meshes.map(pos)), style + ': the same seed, the same skyline');
+    assert.ok(s.count > 200 && s.meshes.length >= 6 && s.meshes.length <= 8, style + ': stand-ins in slices round the city (' + s.count + ' in ' + s.meshes.length + ')');
+    let wet = 0, inner = 0, coarse = 0;
+    for (const m of s.meshes) { const P = m.geometry.attributes.position.array;
+      for (let i = 0; i < P.length; i += 60) {   // (a box: 20 corners, its first wall's first corner at x0, z1 and the second wall's at x1)
+        const x0 = P[i], z1 = P[i + 2], x1 = P[i + 3], d = Math.hypot(x0 - cx, z1 - cz);
+        if (x0 > B.x0 - 60 && x0 < B.x1 + 60 && z1 > B.z0 - 60 && z1 < B.z1 + 60) inner++;
+        if (p.water && x0 > B.x0 - 40 && x1 < B.x1 + 40 && z1 > B.z1 && z1 < B.z1 + 3010) wet++;
+        if (d < 1200 && x1 - x0 > 90) coarse++;
+      } }
+    assert.ok(!inner && !wet && !coarse, style + ': none on the city\'s own ground, the water, or wider than its block near by (' + [inner, wet, coarse] + ')');
+    const L = s.land.geometry.attributes.position.array; let near = Infinity; for (let i = 0; i < L.length; i += 3) near = Math.min(near, Math.max(Math.abs(L[i] - cx) - (B.x1 - B.x0) / 2, Math.abs(L[i + 2] - cz) - (B.z1 - B.z0) / 2));
+    assert.ok(near > (p.water ? 2900 : 3030) && near < 3050, style + ': the land starts where the city\'s ground ends (' + near.toFixed(0) + ' m out)');
+    assert.ok(v.cam.far >= 10000 && s.triangles === s.count * 10 + s.pads.geometry.index.count / 3 + s.land.geometry.index.count / 3, style + ': the camera sees it, ten triangles a stand-in');
+    s.update(1); assert.ok(s.mat.emissiveIntensity > 1, 'its windows light at night'); s.update(0); assert.equal(s.mat.emissiveIntensity, 0, 'and not by day');
+    s.dispose(); s2.dispose(); assert.ok(!v.scene.children.includes(s.group), 'disposed: gone from the scene');
+  }
+  console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {

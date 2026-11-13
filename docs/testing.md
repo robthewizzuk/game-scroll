@@ -220,7 +220,7 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
    for each run and press **Start**.
-2. Sixteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+2. Seventeen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
    and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
    **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
    with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses
@@ -289,7 +289,12 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    tiles, with posters, made-up tags, damp streaks and grime on the street walls (`src/kit/city-walls.js`); the
    second run says how many strips were painted, how many texels a frame on average and how many things the
    walls wear.
-   About 17 minutes at 20 seconds a run on WebGPU (33 runs), longer the
+   And the **skyline**: the view from the tallest roof of a made-up downtown, turning slowly round as dusk turns to
+   night, once with the city stopping at its last street, then going on to the horizon (`src/kit/city-far.js`): a
+   made-up city of stand-ins in its own colours (blocks of 90 m, then 180 m, then 360 m, thinning out into the
+   country by 6 km) with its windows lit at night, its street lights one batch of dots and land with hills out to
+   10 km; the second run says how many stand-ins and far lamps there are and how many triangles in how many draws.
+   About 18 minutes at 20 seconds a run on WebGPU (35 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
