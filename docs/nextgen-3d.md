@@ -1202,6 +1202,15 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   each piece is saved on the phone for next time. So make people in `make()` or `reset()`; when there are
   several kinds, make them together and first: `const [a, b] = human.all([optsA, optsB])` (or
   `human.need([...])` before anything costly is built, then `human(opts)` wherever you like).
+  **Two looks.** `look: 'clean'` (the default) is a simpler, friendlier face, the way a good character model
+  is. `look: 'real'` is a face as real as the kit makes it: life-size eyes, a jaw as broad as a real one, the
+  folds of a real face pressed into its skin (from the nose to the mouth, under the eyes, under the lower lip,
+  round the nose; with age the lines down from the mouth, hollow temples and cheeks, the cords of an old neck),
+  its two sides not quite alike, and quieter brows, lashes and lips. A real face comes from `seed` (the same
+  seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
+  `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
+  .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png
+  look=real` draws twelve people of different ages, builds and skin under four lights to judge them by.
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide.

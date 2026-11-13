@@ -655,7 +655,7 @@ async function tour(b) {
   // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^Eleven scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  check(/^Twelve scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   await p.selectOption('.tour-set', 'framegen');
   const sheet3 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display), name: document.querySelector('.tour-set option[value="framegen"]')?.textContent }));
   check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
@@ -681,8 +681,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 11 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade and a line-up, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 12 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up and faces close up, each with its system off and then on', JSON.stringify(sc.scenes));
   // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
   check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
     && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
@@ -726,6 +726,9 @@ async function tour(b) {
   const posedOf = m => { const x = /^posed in ([\d.]+) ms a frame(?: · ([\d,]+) steps taken)?$/.exec(M('lineup', m).tell || ''); return x ? [+x[1], x[2] ? +x[2].replace(/,/g, '') : null] : [NaN, null]; };
   check(posedOf('off')[0] >= 0 && posedOf('off')[1] === null && posedOf('on')[0] >= 0 && posedOf('on')[1] > 0 && M('lineup', 'off').build > 0 && /\n  = steps, weight, a live face and hands against posed as drawn: /.test(sc.text),
     'the line-up\'s people are posed as drawn and then take steps of their own', JSON.stringify(sby.lineup));
+  // the faces: people close up, each look sculpted the first time it is met, the real one set against the clean one
+  check(M('faces', 'clean').build > 0 && M('faces', 'real').build > 0 && /^posed in [\d.]+ ms a frame$/.test(M('faces', 'real').tell || '') && /\n  = the real look against the clean look: /.test(sc.text),
+    'the faces are drawn close up in the clean look and then the real one', JSON.stringify(sby.faces));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
   check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),

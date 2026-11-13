@@ -18,6 +18,8 @@
 //   hall     ray traced reflections (src/kit/hd3d-gpu-trace.js, v.reflect() on WebGPU): a polished hall with no reflections, with reflections
 //            found on the screen, and with rays sent through a copy of the hall (banners and lanterns over the camera's head show only in those)
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
+//   lineup   people that move (src/kit/stride.js, follow.js, human-face.js, human.js hands): eight people posed as drawn, then stepping, live faced and holding
+//   faces    people close up (gs.models.human look: 'real'): four faces in turn filling the screen, in the clean look and then the real one
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -730,6 +732,58 @@ function lineup({ gs, size }) {
   };
 }
 
+/* ---------- faces: people close up ---------- */
+// Where people cost most and are looked at hardest: a face filling the screen. Four people (a young woman, an older heavy man, a
+// young man with dark skin, a woman of fifty), each in turn close up as the camera drifts round them in a low sun, their eyes
+// on it; once in the clean look and then in the real one (gs.models.human look: 'real').
+function faces({ gs, size }) {
+  const T = gs.THREE, { human } = gs.models, v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, amb: .35, fov: 30 });
+  // (a sun for close faces: its shadow map a few metres across, so a nose's shadow is a nose's; a game's sun for a whole level is far coarser)
+  const sun = gs.hd.sun('#fff2d8', 2.4, 3, [.55, .8, .7]); sun.softShadows(1); v.scene.add(sun, sun.target); v.sun = sun;
+  const ground = new T.Mesh(new T.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), gs.hd.pbr('#6f7466', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  const WHO = [{ seed: 61, sex: 'f', age: 26, weight: .4, hairStyle: 'long' }, { seed: 62, age: 66, weight: .75 }, { seed: 63, age: 31, skin: '#5c3a26', hair: '#141210' }, { seed: 64, sex: 'f', age: 52, hairStyle: 'bun' }];
+  const N = Math.max(2, Math.round(WHO.length * Math.min(1, size))), GAP = 1.4, specs = look => WHO.slice(0, N).map(w => ({ ...w, look }));
+  const line = new T.Group(); v.scene.add(line);
+  const made = new Set(); let who = [], mode = '';
+  const sum = { n: 0, ms: 0, t: 0 };
+  const enter = look => async draw => {
+    let build = null;
+    if (!made.has(look)) {
+      const t0 = performance.now(); let done = false, err = null;
+      human.ready(specs(look)).then(() => { done = true; }, e => { err = e; done = true; });
+      await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the faces were not sculpted in time');
+      made.add(look); build = performance.now() - t0;
+    }
+    line.clear(); mode = look; sum.n = sum.ms = 0; sum.t = 0;
+    who = specs(look).map((s, i) => { const f = human(s); f.position.set((i - (N - 1) / 2) * GAP, 0, 0); f.rig.play('idle', { fade: 0 }); line.add(f); return f; });
+    for (let i = 0; i < 4; i++) await draw();
+    return build != null ? { build, note: `${num(N)} faces sculpted` } : null;
+  };
+  const at = new T.Vector3();
+  return {
+    v, holds: `${num(N)} people (young and old, a man and a woman, fair and dark), each close up in turn, a face filling the screen`,
+    modes: [
+      { key: 'clean', name: 'the clean look', enter: enter('clean') },
+      { key: 'real', name: 'the real look', enter: enter('real') },
+    ],
+    // six seconds a face: the camera half a metre off, drifting from one side of it round to the other and a little up and down
+    path(t, cam) {
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const i = Math.floor(t / 6) % N, f = who[i]; if (!f) return;
+      const t0 = performance.now();
+      for (const g of who) { g.rig.update(dt); g.see?.(cam, 800); }
+      sum.ms += performance.now() - t0; sum.n++;
+      f.bones.head.getWorldPosition(at); at.y += .1;
+      const u = (t % 6) / 6, a = -.9 + 1.8 * u, d = .55;
+      cam.position.set(at.x + Math.sin(a) * d, at.y + .05 + .04 * Math.sin(t * .7), at.z + Math.cos(a) * d); cam.lookAt(at); cam.updateMatrixWorld();
+      if (u < .02) v.cut?.();
+      f.face?.look(cam.position); sun.follow(at.x, at.y, at.z);
+    },
+    tell() { return sum.n ? `posed in ${(sum.ms / sum.n).toFixed(2)} ms a frame` : null; },
+    dispose() { line.removeFromParent(); clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -743,4 +797,5 @@ export const SCENES = [
   ['hall', 'Hall', 'ray traced reflections', hall],
   ['parade', 'Parade', 'smaller meshes', parade],
   ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
+  ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
 ];
