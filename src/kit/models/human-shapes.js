@@ -6,7 +6,7 @@
 // Kit use only: games reach it as gs.models.human.
 import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinReady } from './field.js';
 export { thinReady };
-import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, lipLine, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
+import { head as headOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
 import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
 export { ss, bump, HC, EYE, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine };
@@ -450,6 +450,28 @@ function eyeball(c, r, n = 24, iris = 1) {
   for (let q = 0; q < rings.length - 1; q++) for (let i = 0; i < n; i++) { const a = q * n + i, b = q * n + (i + 1) % n, d = a + n, e = b + n; I.push(a, e, b, a, d, e); }
   return { P, N, K, I };
 }
+// A real face's eye. Its iris is a flat disc (a little domed, as the lens behind it pushes it) at the foot of the cornea, a millimetre and a
+// half behind where the ball's round would be: seen from one side it lies back in the eye, under the clear cap that stands over it (that cap,
+// the wet film over the white and the line of tears along the lower lid are another mesh: human.js, wetOf). The white is the ball's own round
+// with no shine of its own (the film has it), and it is shaded where the lids shade it, its top most: the upper lid follows the eye as it looks
+// up and down (human-face.js), so the shade goes with the eye; and the white a little greyer than the clean eye's. More rings and slices
+// than eyeball(): it is seen this close.
+function realEyeball(c, r, n = 36) {
+  const LIMB = 27.5 * PI / 180, zp = r * cos(LIMB), dome = .00025, rho = r * sin(LIMB), P = [], N = [], K = [], I = [], ao = [];
+  const rings = [[0, 0], [9.5, 0], [12, 1], [17, 2], [23, 3], [26, 3], [27.5, 4], [29.5, 5], [33, 6], [40, 6], [50, 6], [62, 6], [76, 7], [98, 7], [128, 7]];
+  for (const [deg, k] of rings) for (let i = 0; i < n; i++) {
+    const a = deg * PI / 180, t = i / n * PI * 2, ex = sin(a) * cos(t), ey = sin(a) * sin(t), ez = cos(a);
+    if (a <= LIMB + 1e-6) {   // the iris: on its plane, domed; its normal leans out from the middle as the dome falls
+      const q = r * sin(a) / rho, h = dome * (1 - q * q), sl = 2 * dome * q / rho, nl = Math.hypot(sl, 1);
+      P.push(c[0] + ex * r, c[1] + ey * r, c[2] + zp + h); N.push(cos(t) * sl / nl, sin(t) * sl / nl, 1 / nl);
+    } else { P.push(c[0] + ex * r, c[1] + ey * r, c[2] + ez * r); N.push(ex, ey, ez); }
+    K.push(k);
+    // (the shade of the lids: the upper one's deep along the top of what shows, the lower one's lighter, and a little towards each corner)
+    ao.push(.8 * (k >= 5 ? .84 : 1) * (1 - .5 * ss(.1, .4, ey)) * (1 - .16 * ss(-.18, -.42, ey)) * (1 - .14 * ss(.55, .85, abs(ex))));
+  }
+  for (let q = 0; q < rings.length - 1; q++) for (let i = 0; i < n; i++) { const a = q * n + i, b = q * n + (i + 1) % n, d = a + n, e = b + n; I.push(a, e, b, a, d, e); }
+  return { P, N, K, I, ao };
+}
 
 // ---- hats (their own bone, so one can fly off): shapes in the head's space, and what they shade
 // (hats and packs are lists looked up by kind, never an object's own names: a kind comes from a game, and reaches the sculptor as text)
@@ -530,7 +552,7 @@ const fake = i => [((i * 53) % 7) / 6, ((i * 29) % 5) / 4, ((i * 17) % 3) / 2];
  */
 export function finish(shapes, { cell, bones, keep = [.3, .07, .012], err = [.0012, .006, .03], reach = .09, blend = .008, extra = null, after = null, flesh = null, creases = null }) {
   let m = meshOf(shapes, { cell, blend, reach, keep: keep[0], error: err[0], lines: shapes.lines || null, period: SEAM.L, detail: creases }); const X = [].concat(extra || []), solid = m.at;
-  if (after) { m = after(m); if (m.extra) X.push(m.extra); }
+  if (after) { m = after(m); if (m.extra) X.push(...[].concat(m.extra)); }
   let { P, N, I } = m; const n0 = m.n, slots = [], names = [], side = m.side;
   let slot = new Uint8Array(n0), ao = m.ao, SI = new Uint8Array(n0 * 4), SW = new Float32Array(n0 * 4);
   const idOf = (list, v) => { let i = list.indexOf(v); if (i < 0) { i = list.length; list.push(v); } return i; };
@@ -666,12 +688,12 @@ export function sculpt({ kind, a }) {
   if (kind === 'hand') return finish(hand(a), { cell: .0032, bones: handBones(a), keep: [.2, .035, .006], err: [.0006, .004, .02], blend: .004 });
   if (kind === 'head') {
     // the eyes: each a ball of its own that turns on its own bone; the lips parted along the line between them, with teeth and the inside of the mouth behind
-    const eye = { P: [], N: [], K: [], I: [], src: [], ao: .78 }, f = a.face;
-    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f), 24, f.real ? .86 : 1), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
+    const eye = { P: [], N: [], K: [], I: [], src: [], ao: a.face.real ? [] : .78 }, f = a.face;
+    for (const [s, sd] of [[1, 'L'], [-1, 'R']]) { const e = f.real ? realEyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f)) : eyeball(Hd(s * EYE[0], EYE[1], EYE[2]), .0122 * esOf(f), 24, 1), base = eye.P.length / 3, on = { bone: 'eye' + sd }; eye.P.push(...e.P); eye.N.push(...e.N); eye.K.push(...e.K.map(k => 'eye' + k)); eye.I.push(...e.I.map(i => i + base)); if (e.ao) eye.ao.push(...e.ao); for (let i = 0; i < e.K.length; i++) eye.src.push(on); }
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
     const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],
-      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); if (inside) r.extra = inside; lids = lidPlan(r, f); return r; } });
+      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); lids = lidPlan(r, f); r.extra = [inside, ...(f.real ? eyeParts(r, f) : [])].filter(Boolean); return r; } });
     p.lid = lids.turn;   // (how far the upper lids turn to close, for human-face.js)
     return p;
   }
@@ -684,4 +706,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, trunkCreases, crook, ham, lap, RIPPLE, BONES, BETWEEN, OUT, collar, collarRows, turnOf, RIM, BODY_STAMP, sleeves, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, eyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, trunkCreases, crook, ham, lap, RIPPLE, BONES, BETWEEN, OUT, collar, collarRows, turnOf, RIM, BODY_STAMP, sleeves, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, eyeball, realEyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));

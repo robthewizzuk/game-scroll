@@ -12,14 +12,14 @@
 // each piece is saved on the phone, so the next launch has them at once. People in the same cut of
 // clothes share their pieces whatever their colours; twin() makes another of the very same person for free.
 // Kit use only: games reach it as gs.models.human.
-import { Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
+import { AdditiveBlending, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
-import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
+import { BONES, PARENT, AT, BETWEEN, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between } from '../poses.js';
 import { reach } from '../characters.js';
 import { LiveFace } from './human-face.js';
-import { FACE, FACE_REAL, HAIR, SEAM, faceUV, paintFace, paintDetail, paintHair, paintSeams } from './human-paint.js';
+import { FACE, FACE_REAL, HAIR, IRIS, SEAM, faceUV, paintFace, paintDetail, paintHair, paintIris, paintSeams } from './human-paint.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { sceneEdited } from '../scene-list.js';
@@ -29,9 +29,9 @@ import { slimShared, floatsOf } from '../slim.js';
 const PI = Math.PI, abs = Math.abs;
 
 // ---- which material each kind of surface is drawn with (a maker's own slots say theirs: { colour, as })
-const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
+const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
   belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
-const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
+const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair', 'lash'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
 
 // ---- the grain's seams, worked out once for a piece and kept with it (and with its mirrored and turned copies, made once too)
 // The grain of skin, cloth and leather is laid on by the way each point faces (0 from above, 1 from the side, 2 from the front).
@@ -39,7 +39,7 @@ const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair'];  
 // have it smeared right across it (a whole tile and more in a few millimetres: a line of blank triangles along every seam). Such
 // a triangle takes the way it faces itself and the size of what it is made of, and a corner laid on otherwise gets a twin laid on
 // that way: the same point in everything else, numbered after the piece's own points. Only what has a grain.
-const LEATHER = CLASSES.indexOf('leather'), HAIRK = CLASSES.indexOf('hair'), GRAIN = CLASSES.map(c => c === 'skin' || c === 'cloth' || c === 'leather'), TILES = k => k === LEATHER ? 60 : 64;   // (tiles a metre)
+const LEATHER = CLASSES.indexOf('leather'), HAIRK = CLASSES.indexOf('hair'), EYESK = CLASSES.indexOf('eyes'), GRAIN = CLASSES.map(c => c === 'skin' || c === 'cloth' || c === 'leather'), TILES = k => k === LEATHER ? 60 : 64;   // (tiles a metre)
 const seamsOf = new WeakMap(), copies = new WeakMap();
 const copyOf = (p, tag, make) => { let c = copies.get(p); if (!c) copies.set(p, c = {}); return c[tag] ||= make(); };
 /** ks: the class (CLASSES) of each of the piece's slots. Returns { lay (a point), I (the close level's triangles, twins in), n, src, way, size (a twin) }. */
@@ -174,6 +174,12 @@ function mats() {
     far: pbr('#ffffff', { rough: .8, vertexColors: true }),
   };
   MATS.eyes.clearcoatRoughness = .04;   // (wet: a small sharp highlight over a softer iris)
+  // a real face's eyes: the iris's fine work in a picture made in code (human-paint.js) over its colours, and no shine of their own: a film
+  // over them has it (wetOf), drawn adding its light only, so the eye shows through it
+  { const t = new DataTexture(paintIris(), IRIS.w, IRIS.w, RGBAFormat, UnsignedByteType); t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; t.name = 'human:iris';
+    MATS.eyesReal = pbr('#ffffff', { rough: .5, vertexColors: true }); MATS.eyesReal.map = t; MATS.eyesReal.color.setScalar(1 / IRIS.plain); }
+  MATS.lash = pbr('#ffffff', { rough: .8, vertexColors: true }); MATS.lash.envMapIntensity = .3;   // (a real face's lashes: thin and dark, so a shine on them would be all reflection, and it came out pink, the skin's)
+  MATS.wet = pbr('#000000', { rough: .05 }); Object.assign(MATS.wet, { transparent: true, depthWrite: false, blending: AdditiveBlending });
   // hair: combed strands in a small picture made in code (human-paint.js), over the hair's own colour and its sculpted locks
   { const { colour, normal } = paintHair(), tex = (px, srgb) => { const t = new DataTexture(px, HAIR.w, HAIR.h, RGBAFormat, UnsignedByteType); if (srgb) t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = RepeatWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t; };
     MATS.hair.map = tex(colour, true); MATS.hair.normalMap = tex(normal, false); MATS.hair.normalScale.set(.6, .6); MATS.hair.color.setScalar(1 / HAIR.plain); }
@@ -283,10 +289,51 @@ function eyeColours(pupil, iris) {
   const p = new Color(pupil), i = new Color(iris), w = new Color('#d2ccc3');
   return [p, i.clone().lerp(new Color('#d6b47c'), .12).multiplyScalar(.56), i.clone().multiplyScalar(.44), i.clone().multiplyScalar(.3), i.clone().multiplyScalar(.12).lerp(new Color('#1a1512'), .6), w.clone().lerp(new Color('#8f98a2'), .3), w, w.clone().lerp(new Color('#c9a096'), .4)];
 }
+// A real face's wet eyes, a mesh of their own over the eyes that adds only its shine (MATS.wet), so the eye shows through it: over each eye
+// the clear cornea, a cap over the iris more sharply curved than the ball (as eyeball() makes its normals: the wet highlight on it is small
+// and slides as the eye turns), running on into the film of tears over the white, on that eye's bone; and along each lower lid, where its edge
+// meets the eye, the line of tears that lies there, on the head's bone. bones: the skeleton's bone names (each point's bone by its place).
+const wets = new Map();
+function wetOf(f, bones) {
+  const es = esOf(f), r = .0122 * es, key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('eyeL'), bones.indexOf('eyeR'), bones.indexOf('head')]);
+  let g = wets.get(key); if (g) return g;
+  const P = [], N = [], SI = [], I = [], LIMB = 34 * .86 * PI / 180, n = 36, rim = eyeRim(f.eyes, es, f.tilt || 0), e = [0, 0];
+  const sin = Math.sin, cos = Math.cos;
+  for (const [s, bone] of [[1, 'eyeL'], [-1, 'eyeR']]) {
+    const c = [s * EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], bi = Math.max(0, bones.indexOf(bone)), base = P.length / 3, rings = [0, 5, 10, 15, 20, 24, 27, 29.24, 32, 38, 46, 56, 68, 82, 100];
+    for (const deg of rings) for (let i = 0; i < n; i++) {
+      const a = deg * PI / 180, t = i / n * PI * 2, u = Math.min(1, a / LIMB), up = (1 - u * u) ** 2, slope = -4 * u * (1 - u * u) / LIMB, rr = r + .00025 * up + .00005, q = .0011 * slope / r;
+      const ex = sin(a) * cos(t), ey = sin(a) * sin(t), ez = cos(a), nx = ex - q * cos(a) * cos(t), ny = ey - q * cos(a) * sin(t), nz = ez + q * sin(a), nl = Math.hypot(nx, ny, nz);
+      P.push(c[0] + ex * rr, c[1] + ey * rr, c[2] + ez * rr); N.push(nx / nl, ny / nl, nz / nl); SI.push(bi);
+    }
+    for (let q = 0; q < rings.length - 1; q++) for (let i = 0; i < n; i++) { const a = base + q * n + i, b = base + q * n + (i + 1) % n; I.push(a, b + n, b, a, a + n, b + n); }
+    // the line of tears: a thin tube along the lower lid's edge, as far as the eye reaches under it
+    const hb = Math.max(0, bones.indexOf('head')), path = [];
+    for (let k = 0; k <= 24; k++) {
+      const t = -.8 + 1.65 * k / 24; rim.edge(t, false, e); const dx = e[0] - EYE[0], dy = e[1] - EYE[1], d2 = dx * dx + dy * dy; if (d2 > (.97 * r) ** 2) continue;
+      const dz = Math.sqrt(r * r - d2), k2 = (r + .00012) / r; path.push([s * (EYE[0] + dx * k2), HC[1] + EYE[1] + dy * k2, HC[2] + EYE[2] + dz * k2, Math.sin(PI * k / 24) ** .5]);
+    }
+    const b0 = P.length / 3;
+    for (let k = 0; k < path.length; k++) {
+      const p = path[k], p0 = path[Math.max(0, k - 1)], p1 = path[Math.min(path.length - 1, k + 1)], T = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], tl = Math.hypot(...T) || 1; T[0] /= tl; T[1] /= tl; T[2] /= tl;
+      const R = [p[0] - c[0], p[1] - c[1], p[2] - c[2]], rl = Math.hypot(...R); R[0] /= rl; R[1] /= rl; R[2] /= rl;   // (round the tube: out from the eye, and across)
+      const B = [T[1] * R[2] - T[2] * R[1], T[2] * R[0] - T[0] * R[2], T[0] * R[1] - T[1] * R[0]], tr = .00026 * es * p[3];
+      for (let v = 0; v < 4; v++) { const an = v * PI / 2, nx = R[0] * cos(an) + B[0] * sin(an), ny = R[1] * cos(an) + B[1] * sin(an), nz = R[2] * cos(an) + B[2] * sin(an); P.push(p[0] + tr * nx, p[1] + tr * ny, p[2] + tr * nz); N.push(nx, ny, nz); SI.push(hb); }
+    }
+    for (let k = 0; k < path.length - 1; k++) for (let v = 0; v < 4; v++) { const a = b0 + k * 4 + v, b = b0 + k * 4 + (v + 1) % 4; I.push(a, b, b + 4, a, b + 4, a + 4); }
+  }
+  g = new BufferGeometry(); const m = P.length / 3, W = new Float32Array(m * 4), J = new Uint16Array(m * 4); for (let i = 0; i < m; i++) { J[i * 4] = SI[i]; W[i * 4] = 1; }
+  g.setAttribute('position', new BufferAttribute(new Float32Array(P), 3)); g.setAttribute('normal', new BufferAttribute(new Float32Array(N), 3));
+  g.setAttribute('skinIndex', new BufferAttribute(J, 4)); g.setAttribute('skinWeight', new BufferAttribute(W, 4)); g.setIndex(I);
+  g.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3); wets.set(key, g); return g;
+}
+// a real face's lashes: darker and greyer than the hair (near black for dark or red hair), lighter only for fair or grey hair
+const lashColour = hair => { const h = { h: 0, s: 0, l: 0 }; new Color(hair || '#3b2a1a').getHSL(h); return '#' + new Color('#120e0c').lerp(new Color('#6a625a'), ss(.3, .7, h.l)).getHexString(); };
 // the colour of each slot for this person
 function palette(sp) {
   const { top, legs, feet, hat, belt, web, o } = sp, c = v => v, ex = sp.extras;
   return {
+    lashes: lashColour(sp.hair), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
     teeth: '#d6cdbb', tongue: '#7d3f3c', skin: o.skin ?? DEF.skin, lid: o.skin ?? DEF.skin, lash: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#1c120c'), sp.fem ? .94 : .86).getHexString(), lips: sp.fem ? o.lips ?? DEF.lips : '#' + new Color(o.skin ?? DEF.skin).lerp(new Color(o.lips ?? DEF.lips), .62).getHexString(), mouth: '#2e1512', hair: sp.hair || '#3b2a1a', brow: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), glove: sp.gloves?.colour ?? '#4a3d2c',
     top: top.colour, trim: top.collar || top.cuffs || top.strapColour || top.colour, tab: top.tabs || top.colour, band: top.band || '#d9c25a', hatband: hat?.band ?? hat?.colour ?? '#4b5249', button: top.buttons || '#8a8270',
     legs: legs.colour, boots: feet.colour, sole: '#16120e', kit: feet.gaiter || ex.bag || ex.kit || '#6e6a4c', strap: web?.colour ?? belt?.colour ?? '#2b2723', pouch: web?.pouchColour ?? web?.colour ?? belt?.colour ?? '#2b2723',
@@ -387,7 +434,7 @@ export function human(o = {}) {
       // (and never one flat colour). One dark block down to the hairline read as a cap of paint
       if (s.k === HAIRK && p === headP && !sp.fem) { const hy = y - HC[1], clip = ss(.035, -.03, hy) * (.3 + .1 * ss(-.02, -.06, z - HC[2])); col.lerp(skinC, clip); col.multiplyScalar(.94 + .08 * lumps(x * 60, y * 60, z * 60)); }
       // the iris: fine streaks out from the pupil (each sliver of it a little lighter or darker than the next)
-      if (s.a === 'eyes' && p === headP) { const b = +p.slots[p.slot[i]][3]; if (b >= 1 && b <= 3) col.multiplyScalar(1 + .14 * lumps(Math.round(Math.atan2(y - HC[1] - EYE[1], abs(x) - EYE[0]) / (PI * 2) * 24) * 7.31 + (x > 0 ? 3 : 11), b * .37, 2.9)); }
+      if (s.a === 'eyes' && p === headP && !sp.face.real) { const b = +p.slots[p.slot[i]][3]; if (b >= 1 && b <= 3) col.multiplyScalar(1 + .14 * lumps(Math.round(Math.atan2(y - HC[1] - EYE[1], abs(x) - EYE[0]) / (PI * 2) * 24) * 7.31 + (x > 0 ? 3 : 11), b * .37, 2.9)); }
       // creases in soft shadow (warmer on skin: light soaks through it). On a face only what is tight stays dark (a nostril, the folds of an
       // ear, under the jaw): the broad soft shadow of an ear or of hair beside a cheek lay on it like a smudge
       const k = s.a === 'eyes' ? ao : .28 + .72 * (s.a === 'skin' && p === headP ? ao + (1 - ao) * .65 * ss(.35, .75, ao) : ao);
@@ -396,6 +443,14 @@ export function human(o = {}) {
       const lk = LAY[i], sc = TILES(s.k); U[j * 2] = (lk === 1 ? z : x) * sc; U[j * 2 + 1] = (lk ? y : z) * sc;
       // (hair: its strands are laid round the head from the crown, so they run out from it on top and down the sides and the back, the same either side)
       if (s.k === HAIRK && p === headP) { U[j * 2] = Math.atan2(abs(x), z - HC[2] + .0125) / PI * HAIR.round / 2; U[j * 2 + 1] = y * 16; }
+      // (a real face's eyes: where each point is on the iris's picture, seen from in front, each eye's turned its own way; the white, and the
+      // pink in the corner, on the plain ring round it)
+      if (s.k === EYESK && sp.face.real && p === headP) {
+        const ri = .0122 * esOf(sp.face) * Math.sin(27.5 * PI / 180) / IRIS.edge, lx = (abs(x) - EYE[0]) / ri, ly = (y - HC[1] - EYE[1]) / ri, an = (sp.face.aseed || 0) * 2.1 + (x > 0 ? 0 : 2.4), ca = Math.cos(an), sa = Math.sin(an);
+        let u = ca * lx - sa * ly, v = sa * lx + ca * ly; const rr = Math.hypot(u, v), out = z - HC[2] < EYE[2] + .0122 * esOf(sp.face) * Math.cos(27.6 * PI / 180) || rr > IRIS.edge;
+        if (out) { const k = 1.01 / Math.max(1e-6, rr); u *= k; v *= k; if (!(rr > 0)) u = 1.01; }
+        U[j * 2] = .5 + .5 * u; U[j * 2 + 1] = .5 + .5 * v;
+      }
       const ws = p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3] || 1;
       for (let q = 0; q < 4; q++) { SI[j * 4 + q] = bi[p.SI[i * 4 + q]]; SW[j * 4 + q] = p.SW[i * 4 + q] / ws; }
     }
@@ -412,7 +467,7 @@ export function human(o = {}) {
   const tu = new InterleavedBuffer(TU, 4);
   const attrs = { position: new BufferAttribute(P, 3), normal: new BufferAttribute(N, 3), color: new BufferAttribute(C, 3), uv: new BufferAttribute(U, 2), skinIndex: new BufferAttribute(SI, 4), skinWeight: new BufferAttribute(SW, 4), gsThin: new InterleavedBufferAttribute(tu, 2, 0), uv1: new InterleavedBufferAttribute(tu, 2, 2) };
   // each level: its triangles in groups by material (close: all six; middle: skin and the rest; far: one)
-  const matsFor = [[skin, M.eyes, M.cloth, M.leather, M.hard, M.steel, M.hair], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
+  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, M.hair, M.lash], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
   const geos = [0, 1, 2].map(L => {
     const by = matsFor[L].map(() => []);
     pieces.forEach((p, pi) => { const I = L ? p.I[L] : seam[pi].I, off = offs[pi]; for (let t = 0; t < I.length; t += 3) { const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, k = cls[b] === cls[c] ? cls[b] : cls[a]; by[groupOf[L](k)].push(a, b, c); } });
@@ -479,6 +534,7 @@ export function human(o = {}) {
   };
 
   const sh = o.shadows !== false, scale = (o.scale ?? 1) * (sp.fem ? .945 : 1), tris = geos.map(g => g.index.count / 3);
+  const wetGeo = headP && sp.face.real ? wetOf(sp.face, bones) : null;
   const stand = () => {
     const B = tree(), root = new Group();
     root.add(B.hips); B.armL.rotation.z = ARM; B.armR.rotation.z = -ARM; root.updateMatrixWorld(true);   // bound with the arms out, as sculpted
@@ -498,15 +554,18 @@ export function human(o = {}) {
       if (this.boneTexture !== null) this.boneTexture.needsUpdate = true;
     };
     const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(L ? far : skel, new Matrix4()); m.visible = L === 0; return m; });
+    // (a real face's wet eyes: their own see-through mesh on the same bones, close up only)
+    const wet = wetGeo ? new SkinnedMesh(wetGeo, M.wet) : null;
+    if (wet) { wet.name = 'human:wet'; wet.castShadow = wet.receiveShadow = false; wet.userData.noAO = true; wet.frustumCulled = true; wet.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(wet); wet.bind(skel, new Matrix4()); }
     root.scale.setScalar(scale);
-    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B;
+    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet;
     root.rig = rigOf(B, scale, root);
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
     root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
-      lods[cur].visible = false; lods[v].visible = true;
+      lods[cur].visible = false; lods[v].visible = true; if (wet) wet.visible = !v;
       if (!v !== !cur) {
         for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
         if (small.some(holds)) sceneEdited(root);   // (something a game hung on a finger or the jaw: the scene's list has to know it went or came back)

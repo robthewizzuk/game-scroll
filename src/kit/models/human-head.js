@@ -70,6 +70,8 @@ export function eyeRim(open, es = ES, tilt = 0) {
   };
   // (for lidPlan: how far across the opening a point is, -1 at the inner corner .. 1 at the outer; how far outside the upper edge, and the lower)
   rim.at = (x, hy, out) => { const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx; out[0] = u / w; out[1] = hyp(u, v - c1) - R1; out[2] = hyp(u, v - c2) - R2; return out; };
+  // (a point on the upper lid's edge (upper) or the lower's, t: -1 at the inner corner .. 1 at the outer: [x, y from the eyes])
+  rim.edge = (t, upper, out) => { const u = t * w, v = upper ? c1 + Math.sqrt(R1 * R1 - u * u) : c2 - Math.sqrt(R2 * R2 - u * u); out[0] = cx + ct * u - st * v; out[1] = EYE[1] + st * u + ct * v; return out; };
   rim.w = w; rim.cx = cx; return rim;
 }
 /** The outline of a face's left eye opening (eyeRim) as that face has it: its size, how open, how tilted. */
@@ -288,6 +290,84 @@ export function mouthInside(m, f) {
     const a = rows[r][j], b = rows[r + 1][j], c = rows[r + 1][j + 1], d = rows[r][j + 1]; tri(a, b, c, 0, dy, dy ? 0 : 1); tri(a, c, d, 0, dy, dy ? 0 : 1);
   }
   return { P, N, K, I, src, ao, close: true };
+}
+
+/**
+ * A real face's eyes close up, as parts joined onto the head's mesh (m: field.js's, its lips parted; the close set of triangles only):
+ * - the lashes: each a thin strand of three sides from the front edge of a lid (found on the mesh), in clumps of two or three as lashes lie.
+ *   The upper ones are longer in the middle and towards the outer corner, short by the nose; they reach forward and curl up and out, and ride
+ *   the upper lid as it does (each goes with the skin at its root). The lower ones are fewer, shorter and point down. Fewer and shorter with
+ *   age, a little longer on a woman.
+ * - in the inner corner of each eye, the small pink mound there (the caruncle).
+ * The lash lines painted along the lids (human-paint.js) are their roots. f: the face. Returns a list of parts.
+ */
+export function eyeParts(m, f) {
+  const rim = rimOf(f), es = esOf(f), so = f.soft || 0, age = mx(0, Math.min(1, ((f.age ?? 30) - 30) / 50)), MP = m.P, o = [0, 0, 0], e = [0, 0];
+  let seed = Math.floor((f.aseed || 0) * 977) + 13; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  // the head's points round the eyes (of the left one: x is mirrored), to find each lid's front edge on
+  const near = []; for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1], hz = MP[i * 3 + 2] - HC[2]; if (abs(hy - EYE[1]) < .013 * es && abs(ax - EYE[0]) < .022 * es && hz > EYE[2] - .004) near.push(i); }
+  // the frontmost point of the skin within reach of (x, y from the eyes) on the left side, that is on the lid asked for (upper: 1, lower: 2,
+  // inside the opening: 0); its z (from the head's middle), or NaN
+  const front = (x, hy, which, reach) => {
+    let best = NaN;
+    for (const i of near) {
+      const ax = abs(MP[i * 3]), py = MP[i * 3 + 1] - HC[1], dz = MP[i * 3 + 2] - HC[2]; if ((ax - x) ** 2 + (py - hy) ** 2 > reach * reach) continue;
+      rim.at(ax, py, o); const ok = which === 0 ? mx(o[1], o[2]) < -.0004 : which === 1 ? o[1] > -.0002 && o[1] < .0007 && o[1] >= o[2] : o[2] > -.0002 && o[2] < .0007 && o[2] > o[1];
+      if (ok && !(dz <= best)) best = dz;
+    }
+    return best;
+  };
+  const parts = [];
+  for (const s of [1, -1]) {
+    const P = [], N = [], K = [], I = [], src = [], ao = [];
+    // a strand: from root r (metres, the person's space), its way d and the way it curls c (unit), length L, curl k, thickness at the root r0
+    const strand = (r, d, c, L, k, r0, like) => {
+      const T = [0, 0, 0], S = [0, 0, 0], B = [0, 0, 0], base = P.length / 3;
+      for (const t of [0, .3, .65, 1]) {
+        for (let q = 0; q < 3; q++) T[q] = d[q] + 2 * k * t * c[q]; let l = hyp(T[0], T[1], T[2]); for (let q = 0; q < 3; q++) T[q] /= l;
+        const ref = abs(T[1]) < .9 ? [0, 1, 0] : [1, 0, 0]; S[0] = T[1] * ref[2] - T[2] * ref[1]; S[1] = T[2] * ref[0] - T[0] * ref[2]; S[2] = T[0] * ref[1] - T[1] * ref[0]; l = hyp(S[0], S[1], S[2]); for (let q = 0; q < 3; q++) S[q] /= l;
+        B[0] = T[1] * S[2] - T[2] * S[1]; B[1] = T[2] * S[0] - T[0] * S[2]; B[2] = T[0] * S[1] - T[1] * S[0];
+        const rr = r0 * (1 - .85 * t);
+        for (let v = 0; v < 3; v++) {
+          const an = v * PI * 2 / 3, nx = S[0] * cos(an) + B[0] * sin(an), ny = S[1] * cos(an) + B[1] * sin(an), nz = S[2] * cos(an) + B[2] * sin(an);
+          P.push(r[0] + L * (t * d[0] + k * t * t * c[0]) + rr * nx, r[1] + L * (t * d[1] + k * t * t * c[1]) + rr * ny, r[2] + L * (t * d[2] + k * t * t * c[2]) + rr * nz);
+          N.push(nx, ny, nz); K.push('lashes'); src.push(like); ao.push(.5 + .5 * t);
+        }
+      }
+      for (let j = 0; j < 3; j++) for (let v = 0; v < 3; v++) { const a = base + j * 3 + v, b = base + j * 3 + (v + 1) % 3; I.push(a, b, b + 3, a, b + 3, a + 3); }
+    };
+    const unit = v => { const l = hyp(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
+    for (const upper of [true, false]) {
+      const n = Math.round((upper ? 84 : 16) * (1 - .3 * age)), t0 = upper ? -.9 : -.5, t1 = upper ? .97 : .9;
+      // (each clump's own way, which its three or so lashes lean towards, and each lash a little its own way and length)
+      const clump = []; for (let c = 0; c <= n / 3.2 + 1; c++) clump.push([(rnd() - .5) * .34, (rnd() - .5) * .3]);
+      for (let i = 0; i < n; i++) {
+        const t = t0 + (t1 - t0) * (i + .8 * rnd()) / n, c0 = clump[Math.floor(i / 3.2)], cl = [c0[0] + (rnd() - .5) * .08, c0[1] + (rnd() - .5) * .08];
+        rim.edge(t, upper, e); const z = front(e[0], e[1], upper ? 1 : 2, .0012 * es); if (!(z === z)) continue;
+        const root = [s * e[0], HC[1] + e[1], HC[2] + z - .00015], like = { like: [root[0], root[1], root[2], 0] };
+        if (upper) {
+          const bell = ss(-1, -.25, t) * ss(1.05, .55, t), L = es * (.0032 + .0042 * bell) * (1 + .12 * so) * (1 - .25 * age) * (.7 + .5 * rnd());
+          strand(root, unit([s * (.1 + .45 * t + cl[0]), -.38 + cl[1], 1]), unit([0, 1, -.3]), L, .95, .00012 * es, like);
+        } else {
+          const bell = ss(-.6, 0, t) * ss(1, .6, t), L = es * (.0009 + .0011 * bell) * (1 + .1 * so) * (1 - .25 * age) * (.7 + .5 * rnd());
+          strand(root, unit([s * (.1 + .3 * t + cl[0]), -.7 + cl[1], 1]), [0, -1, 0], L, .3, .000045 * es, like);
+        }
+      }
+    }
+    // the caruncle: a small pink mound in the inner corner, between the lids' edges, lying on the round of the eye (which turns under it)
+    { const t = -.76, a = rim.edge(t, true, [0, 0]), b = rim.edge(t, false, [0, 0]), x = (a[0] + b[0]) / 2, hy = (a[1] + b[1]) / 2, r = .0122 * es, d2 = (x - EYE[0]) ** 2 + (hy - EYE[1]) ** 2;
+      if (d2 < r * r) {
+        const c = [s * x, HC[1] + hy, HC[2] + EYE[2] + Math.sqrt(r * r - d2) + .0001], R = [.001 * es, .0014 * es, .0007 * es], like = { like: [c[0], c[1], c[2], 0] }, base = P.length / 3, U = 8, V = 6;
+        for (let j = 0; j <= V; j++) for (let i = 0; i < U; i++) {
+          const th = j / V * PI, ph = i / U * PI * 2, nx = sin(th) * cos(ph), ny = cos(th), nz = sin(th) * sin(ph), nn = hyp(nx / R[0], ny / R[1], nz / R[2]);
+          P.push(c[0] + R[0] * nx, c[1] + R[1] * ny, c[2] + R[2] * nz); N.push(nx / R[0] / nn, ny / R[1] / nn, nz / R[2] / nn); K.push('caruncle'); src.push(like); ao.push(.6 + .3 * mx(0, nz));
+        }
+        for (let j = 0; j < V; j++) for (let i = 0; i < U; i++) { const a0 = base + j * U + i, b0 = base + j * U + (i + 1) % U; I.push(a0, b0, b0 + U, a0, b0 + U, a0 + U); }
+      }
+    }
+    parts.push({ P, N, K, I, src, ao, close: true });
+  }
+  return parts;
 }
 
 // the edge of the hair: how high it is (from the eyes) at each angle round the head (degrees from straight ahead): level across
@@ -522,4 +602,4 @@ export function head(a, ghosts = []) {
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = [slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = [slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
