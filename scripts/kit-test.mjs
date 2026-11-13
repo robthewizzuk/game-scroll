@@ -2275,8 +2275,8 @@ console.log('physics ok');
       // breathing: the chest and belly rise and fall by themselves, about fifteen times a minute at rest; faster and deeper after running
       const p = skeleton({ look: 'real', seed: 11 }), br = p.rig.breath, B2 = p.bones;
       assert.ok(br && p.rig.breath === br, 'a person breathes');
-      const c0 = B2.chest.position.clone(), e0 = B2.belly.position.clone(), track = (secs, speed) => { let lo = 1, hi = -1, blo = 1, bhi = -1, ups = 0, was = 0; for (let t = 0; t < secs; t += 1 / 60) { br.step(1 / 60, speed); p.updateMatrixWorld(true); const z = B2.chest.position.z - c0.z, bz = B2.belly.position.z - e0.z; lo = Math.min(lo, z); hi = Math.max(hi, z); blo = Math.min(blo, bz); bhi = Math.max(bhi, bz); if (z > .5 * (hi + lo) && was <= .5 * (hi + lo)) ups++; was = z; } return { chest: hi - lo, belly: bhi - blo, ups }; };
-      const rest = track(16, 0);
+      const c0 = B2.chest.position.clone(), e0 = B2.belly.position.clone(), track = (secs, speed) => { let lo = 1, hi = -1, blo = 1, bhi = -1, ups = 0, was = 1; for (let t = 0; t < secs; t += 1 / 60) { br.step(1 / 60, speed); p.updateMatrixWorld(true); const z = B2.chest.position.z - c0.z, bz = B2.belly.position.z - e0.z; lo = Math.min(lo, z); hi = Math.max(hi, z); blo = Math.min(blo, bz); bhi = Math.max(bhi, bz); if (z > lo + .7 * (hi - lo) && was) { ups++; was = 0; } else if (z < lo + .3 * (hi - lo)) was = 1; } return { chest: hi - lo, belly: bhi - blo, ups }; };   // (a breath counted as it rises past seven tenths, once it has been below three)
+      br.p = 0; const rest = track(16, 0);   // (from the start of a breath: the count doesn't hang on where in a breath it began)
       assert.ok(rest.chest > .0008 && rest.chest < .005 && rest.belly > .001 && rest.belly < .006, `a breath at rest moves the chest ${(rest.chest * 1e3).toFixed(1)} mm and the belly ${(rest.belly * 1e3).toFixed(1)} mm`);
       assert.ok(rest.ups >= 3 && rest.ups <= 5, `about fifteen breaths a minute at rest (${rest.ups} in 16 s)`);
       track(20, 6); assert.ok(br.puff > .5, 'running leaves a person out of breath: ' + br.puff.toFixed(2));
