@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -668,12 +668,23 @@ export function eyeMeter(r) {
 // (occlusion.js depth() says how). job: what occludeFrame() gave, with pad (pixels a block is widened by
 // all round: 1 when the frame is drawn a fraction of a pixel off or with several samples a pixel);
 // done(job, px): called when the picture is back, top row first.
+// Its shader is one per renderer for each kind of depth picture (three writes another for a multisampled
+// one), shared by every chain the renderer has: a chain made again (another quality tier, the upscaler
+// coming on) gives the meter a new depth picture of the same kind, and the meter only points at it. Each
+// kind's shader and pipeline are made in the frame a chain first has its depth picture (warm), which is
+// under the loading screen when a round starts: made in the frame occlusion first woke (often a few
+// seconds into a round), they held that frame 1 to 43 ms on the test machine writing the shader, and the
+// pipeline was made on the spot. (Built in the background with compileAsync instead, three keyed that
+// build differently from the meter's own draws, another lights node among other things, and made it again.)
+const METER = new WeakMap();
+const depthKind = (r, tex) => { let n = 1; try { n = r.backend.utils.getTextureSampleData(tex).primarySamples; } catch (e) { /* three's own default */ } return `${tex.type}|${tex.format}|${tex.minFilter}|${tex.magFilter}|${n}`; };
 export function depthMeter(r) {
-  const U = { blk: uniform(new Vector2(1, 1)), pk: uniform(new Vector2()), size: uniform(new Vector2(1, 1)), pad: uniform(0) };
-  let mat = null, quad = null, rt = null, of = null, flying = 0; const pool = [], pix = [];
-  const build = tex => {
-    mat?.dispose(); mat = new NodeMaterial(); of = tex;
-    const dT = texture(tex);
+  const S = METER.get(r) || (METER.set(r, { U: { blk: uniform(new Vector2(1, 1)), pk: uniform(new Vector2()), size: uniform(new Vector2(1, 1)), pad: uniform(0) }, kinds: new Map() }), METER.get(r));
+  const U = S.U;
+  let rt = null, flying = 0; const pool = [], pix = [];
+  const make = tex => {
+    const mat = new NodeMaterial(), dT = texture(tex);
+    mat.name = 'Depth meter';
     mat.fragmentNode = Fn(() => {
       const t = floor(screenCoordinate.xy), pad = int(U.pad), top = ivec2(U.size).sub(1);
       const lo = max(ivec2(floor(t.mul(U.blk))).sub(pad), ivec2(0)).toVar(), hi = min(ivec2(TSL.ceil(t.add(1).mul(U.blk))).sub(1).add(pad), top).toVar();
@@ -688,17 +699,36 @@ export function depthMeter(r) {
       const b0 = floor(q.div(65536)).toVar(), rem = q.sub(b0.mul(65536)).toVar(), b1 = floor(rem.div(256)).toVar();
       return vec4(b0, b1, rem.sub(b1.mul(256)), a).div(255);
     })();
-    quad = new QuadMesh(mat);
+    return { mat, dT, quad: new QuadMesh(mat) };
+  };
+  // the shader for this kind of depth picture, pointed at tex (made the first time: warm)
+  const kindOf = tex => {
+    const k = depthKind(r, tex); let K = S.kinds.get(k);
+    if (!K) S.kinds.set(k, K = make(tex));
+    if (K.dT.value !== tex) K.dT.value = tex;
+    return K;
   };
   return {
+    /**
+     * Makes the shader and pipeline for this kind of depth picture, if they aren't made, by drawing the meter
+     * once into a picture of 4 x 4 (the same kind of picture as its own, so three keeps the same build for it).
+     * Called in the frame a chain is made, which builds the chain's own shaders anyway.
+     */
+    warm(tex) {
+      if (!tex || !r.backend?.device || r.reversedDepthBuffer) return;
+      const k = depthKind(r, tex); if (S.kinds.has(k)) return;
+      const K = kindOf(tex), at = S.at ||= new RenderTarget(4, 4, { depthBuffer: false });
+      U.blk.value.set(1, 1); U.size.value.set(1, 1); U.pk.value.set(1, 1); U.pad.value = 0;
+      const was = r.getRenderTarget(); r.setRenderTarget(at); try { K.quad.render(r); } finally { r.setRenderTarget(was); }
+    },
     /** Takes the picture of the depth just drawn (tex: the scene pass's depth texture). False when it could not. */
     read(tex, job, done) {
       const device = r.backend?.device; if (!tex || !device || flying >= 2 || r.reversedDepthBuffer) return false;
-      if (tex !== of) build(tex);
+      const K = kindOf(tex);
       const { w, h } = job;
       if (!rt || rt.width !== w || rt.height !== h) { rt?.dispose(); rt = new RenderTarget(w, h, { depthBuffer: false }); }
       U.blk.value.set(job.tag.W / w, job.tag.H / h); U.size.value.set(job.tag.W, job.tag.H); U.pk.value.set(job.tag.p10, job.tag.p14); U.pad.value = job.pad | 0;
-      const was = r.getRenderTarget(); r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
+      const was = r.getRenderTarget(); r.setRenderTarget(rt); K.quad.render(r); r.setRenderTarget(was);
       const gpuTex = r.backend.get(rt.texture)?.texture; if (!gpuTex) return false;
       // (three's own read makes a buffer on the chip for every read: these are kept and used again)
       const row = w * 4, bpr = Math.ceil(row / 256) * 256, size = bpr * h;
@@ -714,7 +744,8 @@ export function depthMeter(r) {
       }, () => { try { buf.destroy(); } catch (e) { /* gone with its device */ } }).finally(() => { flying--; });
       return true;
     },
-    dispose() { mat?.dispose(); rt?.dispose(); for (const b of pool) b.destroy(); pool.length = 0; },
+    // (the shaders stay with the renderer, for the chains that come after this one)
+    dispose() { rt?.dispose(); for (const b of pool) b.destroy(); pool.length = 0; },
   };
 }
 // The still/moving shadow split on WebGPU (hd3d.js shadowLights): the light gets three's own shadow
@@ -744,6 +775,7 @@ export const SHADOW_COST = [0, 0];
 // What hd3d.js shadowSplit and shadowTiles ask of a backend (the WebGL ones are in splitShadowsGL). A part
 // of a map is [x, y, w, h] in tiles of px texels, x to the light's right and y up: the light's camera looks
 // at that part alone (a view offset), so only what is in it is drawn, into that part of the map.
+const aheadDone = new WeakSet();
 export function shadowOps(r) {
   let blit = null;
   const ops = {
@@ -765,6 +797,11 @@ export function shadowOps(r) {
     // the copies' shaders, built when the kept copy is made (a frame that is building shaders anyway) and not in
     // the frame the sun first steps a tile, which stopped for the three of them
     warm(l, map, cache) { (blit ||= shadowBlit(r)).warm(map, cache); },
+    // ...and before that, the first frames a sun that could go into tiles has its map (under the loading screen
+    // when a round starts), on stand-ins of 4 x 4 of the same kinds as its map and its kept copy: a sun went into
+    // tiles once enough still things were in its view, often seconds into a round, and that frame made the
+    // three pipelines then and there. The real copies then take over those materials (shadowBlit matFor).
+    ahead(l) { const map = l.shadow.map; if (map && !aheadDone.has(map)) { aheadDone.add(map); (blit ||= shadowBlit(r)).ahead(map); } },
     make(l) {
       const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
@@ -784,16 +821,23 @@ function shadowBlit(r) {
   const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
   let far = null;
   const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
-  const matFor = tex => {
+  // materials made ahead for stand-ins (ahead), by the kind of depth picture they read: a real picture of that
+  // kind takes one over (pointed at it) and its shader and pipeline are already made
+  const spares = new Map(), kindOf = t => `${t.type}|${t.format}|${t.compareFunction}|${t.minFilter}|${t.magFilter}`;
+  const matFor = (tex, spare = false) => {
     let m = mats.get(tex); if (m) return m;
-    m = new NodeMaterial(); const dT = texture(tex);
+    const sp = !spare && spares.get(kindOf(tex))?.pop();
+    if (sp) { sp.gsSrc.value = tex; mats.set(tex, sp); return sp; }
+    m = new NodeMaterial(); const dT = texture(tex); m.gsSrc = dT;
     m.depthNode = Fn(() => {
       const p = ivec2(floor(screenCoordinate.xy)).add(ivec2(U.off)).toVar(), top = int(U.top);
       const inside = p.x.greaterThanEqual(0).and(p.x.lessThanEqual(top)).and(p.y.greaterThanEqual(0)).and(p.y.lessThanEqual(top));
       const d = dT.load(clamp(p, ivec2(0), ivec2(top))).r.toVar(), moved = d.add(U.dz);
       return select(inside.and(d.lessThan(1)).and(moved.greaterThanEqual(0)).and(moved.lessThan(1)), moved, float(1));
     })();
-    mats.set(tex, finish(m)); return m;
+    finish(m);
+    if (spare) { const k = kindOf(tex); (spares.get(k) || spares.set(k, []).get(k)).push(m); } else mats.set(tex, m);
+    return m;
   };
   // the rectangles (texels, y up) as triangles in clip space
   const quads = (qs, px, N) => {
@@ -820,6 +864,25 @@ function shadowBlit(r) {
       if (warmed.get(cache) === map) return; warmed.set(cache, map);
       U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1; quads(NONE, 1, map.width);
       run(matFor(map.depthTexture), cache); run(matFor(cache.depthTexture), map); run(farMat(), map);
+    },
+    // the same three on stand-ins like a sun's map and the copy its tiles would keep (shadowOps make), kept for
+    // the real ones (their pictures stay, 4 x 4: three keeps a pipeline while what was drawn with it is there).
+    // The map's depth is read with either filter: three sets it again each time it builds a shader that takes
+    // the shadow (ShadowNode setupShadow: linear for PCF where the chip compares, else nearest), and a
+    // material made for the other one is a shader of its own.
+    ahead(map) {
+      const d = map.depthTexture; if (!d) return;
+      const like = f => {
+        const t = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples });
+        t.texture.type = map.texture.type; t.texture.format = map.texture.format;
+        const z = t.depthTexture = new DepthTexture(4, 4, d.type); z.format = d.format; z.compareFunction = d.compareFunction; z.minFilter = z.magFilter = f;
+        r.initRenderTarget(t); return t;
+      };
+      const lin = like(LinearFilter), near = like(NearestFilter);
+      const copy = new RenderTarget(4, 4, { depthBuffer: true }); copy.depthTexture = new DepthTexture(4, 4); r.initRenderTarget(copy);   // (as shadowOps make)
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3; quads(NONE, 1, 4);
+      run(matFor(lin.depthTexture, true), copy); run(matFor(near.depthTexture, true), copy); run(matFor(copy.depthTexture, true), lin); run(farMat(), lin);
+      (this.stand ||= []).push(lin, near, copy);
     },
   };
 }

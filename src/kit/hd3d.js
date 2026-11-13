@@ -2361,6 +2361,8 @@ export class HDView {
       if (this.shadowLights(lastView !== this || baking || off, true) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
       for (const l of this.shL) {
         const sh = l.shadow;
+        // (a sun that could go into tiles: the shaders its tiles' copies need are made now, not in the frame it goes in: hd3d-gpu.js shadowOps ahead)
+        if (sh.gsTiles && sh.map && sh.shadowNode?.gsSplit && sh.shadowNode.shadowMap === sh.map && !baking && !off) (G.shOps ||= G.fx.shadowOps(r)).ahead(l);
         if (!sh.needsUpdate || !sh.map || sh.gsPlan?.mode === 'full' || !sh.gsPlan || !sh.shadowNode?.gsSplit || sh.shadowNode.shadowMap !== sh.map) continue;
         const ops = G.shOps ||= G.fx.shadowOps(r); ops.scene = this.scene; ops.camera = this.cam;
         shadowSplit(l, ops);
@@ -2410,6 +2412,8 @@ export class HDView {
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
     const drawn = ch.occAt !== r.info.frame; ch.occAt = r.info.frame;
+    // (the meter's shader is made the first frame the chain has its depth picture, whether or not occlusion is awake yet: hd3d-gpu.js depthMeter)
+    if (ch.sp && !baking && !off && HD.occlude !== false && HD.occludeDepth !== false && this.autoOcclude !== false && ch.occWarm !== ch.sp) { ch.occWarm = ch.sp; (ch.occM ||= G.fx.depthMeter(r)).warm(ch.sp.getTexture('depth')); }
     if (occJob && ch.sp && drawn) { occJob.pad = s2 || o.msaa ? 1 : 0; (ch.occM ||= G.fx.depthMeter(r)).read(ch.sp.getTexture('depth'), occJob, occBack); }
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
     const made = !!fg && !!shown;
