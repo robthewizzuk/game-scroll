@@ -6469,6 +6469,8 @@ console.log('physics ok');
   assert.ok(has(sq(list[0][0], list[0][2]), 0) && has(sq(list[0][0] - L[0], list[0][2] - L[2]), 0), 'a capsule sits in its own square and in the squares its shadow falls across');
   let most = 0; for (let s = 0; s < GRID * GRID; s++) most = Math.max(most, grid.slice(s * 8, s * 8 + 8).filter(Boolean).length);
   assert.ok(most <= PER && binCapsules([], L, caps, grid).n === 0 && grid.every(v => v === 0), 'no square holds more than PER; none at all leaves the grid empty');
+  const far = binCapsules([man], L, caps, grid, 40, { x: 2048, y: 0, z: -1024 });
+  assert.ok(caps[0] === 2 - 2048 && caps[2] === 3 + 1024 && far.x0 < 2 - 2048 && far.z0 < 3 + 1024, 'far from the world\'s centre: in the drawing\'s space, about the centre the frame is drawn round (origin.js)');
   // the map of heights: tiles in a ring round the camera; only the tiles that come in are drawn first, then each again in turn
   const H = new HeightTiles(512, 512, 4), came = H.at(10, 10), s0 = H.slot(0, 0), s4 = H.slot(4, 0);
   assert.ok(came.length === 16 && !H.ready && s0.sx === s4.sx && s0.sy === s4.sy && s4.x0 === 512, 'sixteen tiles at first; a place\'s tile always sits at the same spot of the picture');

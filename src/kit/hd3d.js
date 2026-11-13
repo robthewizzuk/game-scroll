@@ -2580,7 +2580,7 @@ export class HDView {
     sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
     const L = (this._sunL ||= new Vector3()).setFromMatrixPosition(sun.matrixWorld).sub(SM_P.setFromMatrixPosition(sun.target.matrixWorld)).normalize();
     let caps = null;
-    if (list.length) { list.sort((a, b) => a[7] - b[7]); const { caps: cA, grid } = G.fx.sunCaps(); caps = binCapsules(list, [L.x, L.y, L.z], cA, grid); }
+    if (list.length) { list.sort((a, b) => a[7] - b[7]); const { caps: cA, grid } = G.fx.sunCaps(); caps = binCapsules(list, [L.x, L.y, L.z], cA, grid, 40, ORIGIN); }
     G.fx.sunMaskOn(!cut && G.fx.sunMaskOwner() === this);
     HD.info.sunMask = { contact: !!contact, far, caps: caps?.n || 0, full: caps?.full || 0 };
     const reach = typeof this.farShadows === 'object' && this.farShadows.reach;

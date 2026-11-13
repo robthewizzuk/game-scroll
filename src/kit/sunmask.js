@@ -17,16 +17,19 @@ export const CAPS = 256, GRID = 48, PER = 8;
  * middle line and the radius), nearest the camera first (only the first CAPS count); L: the way to the sun, length 1;
  * caps: Float32Array(CAPS * 8) filled with them (two RGBA texels each: a.xyz r, b.xyz 0); grid: Float32Array(GRID *
  * GRID * 8) filled with each square's capsules (index + 1, 0 for none; two RGBA texels a square, rows along z);
- * reach: the longest shadow in metres (a low sun). Returns the grid's corner and square size, and how many capsules
- * there are and how many were left out of a full square.
+ * reach: the longest shadow in metres (a low sun); at: the drawing's centre (origin.js: the capsules are in the world,
+ * the frame is drawn about it), or null. Returns the grid's corner and square size, and how many capsules there are
+ * and how many were left out of a full square.
  */
-export function binCapsules(list, L, caps, grid, reach = 40) {
+export function binCapsules(list, L, caps, grid, reach = 40, at = null) {
   const n = Math.min(CAPS, list.length), ly = Math.max(.05, L[1]), out = { n, x0: 0, z0: 0, cell: 1, full: 0 };
   grid.fill(0); if (!n) return out;
+  const ox = at ? at.x : 0, oy = at ? at.y : 0, oz = at ? at.z : 0;
   const fp = new Float32Array(n * 4);   // each shadow's box on the ground: x0, z0, x1, z1
   let X0 = Infinity, Z0 = Infinity, X1 = -Infinity, Z1 = -Infinity;
   for (let i = 0; i < n; i++) {
-    const c = list[i], r = c[6], y0 = Math.min(c[1], c[4]) - r, o = i * 8;
+    const w = list[i], r = w[6], o = i * 8;
+    const c = [w[0] - ox, w[1] - oy, w[2] - oz, w[3] - ox, w[4] - oy, w[5] - oz], y0 = Math.min(c[1], c[4]) - r;
     caps[o] = c[0]; caps[o + 1] = c[1]; caps[o + 2] = c[2]; caps[o + 3] = r; caps[o + 4] = c[3]; caps[o + 5] = c[4]; caps[o + 6] = c[5]; caps[o + 7] = 0;
     // its ends, and where their shadows meet the ground under it (no further than reach)
     const ka = Math.min(reach, (c[1] - y0) / ly), kb = Math.min(reach, (c[4] - y0) / ly), pen = r + .035 * Math.max(ka, kb) + .1;

@@ -14,6 +14,7 @@
 import { RenderTarget, HalfFloatType, FloatType, RGFormat, RedFormat, RGBAFormat, NearestFilter, DataTexture, NodeMaterial, QuadMesh, Mesh, PlaneGeometry, OrthographicCamera, Matrix4, Vector2, Vector3, Vector4, RendererUtils, DoubleSide, AlwaysDepth, NoBlending } from 'three/webgpu';
 import { Fn, Loop, If, Break, float, int, vec2, vec4, ivec2, uniform, renderGroup, texture, uv, positionWorld, positionGeometry, select, smoothstep, clamp, min, max, abs, dot, length, mix, fract, floor, pow, getViewPosition, interleavedGradientNoise, screenCoordinate } from 'three/tsl';
 import { CAPS, GRID, HeightTiles } from './sunmask.js';
+import { ORIGIN } from './origin.js';
 
 const NOTHING_V = -10000;
 const STEPS = 12, FAR_STEPS = 24, MS = 768;   // (the mask's picture is MS x MS, the mask drawn into a corner of it: see MASK)
@@ -46,7 +47,7 @@ for (const t of [capT, gridT]) { t.minFilter = t.magFilter = NearestFilter; t.ge
 capT.name = 'sun mask capsules'; gridT.name = 'sun mask capsule grid';
 // the map of heights (red: the height of the top of what's there; very low where nothing is)
 // (made when a view first wants far shadows, let go when none does: the mask's own material is made again for it)
-const HT = { rt: null, tiles: null, cam: new OrthographicCamera(), mat: null, wipe: null, rev: null, drawn: 0, none: new DataTexture(new Float32Array([NOTHING_V, 0, 0, 0]), 1, 1, RGBAFormat, FloatType) };
+const HT = { at: new Vector3(), rt: null, tiles: null, cam: new OrthographicCamera(), mat: null, wipe: null, rev: null, drawn: 0, none: new DataTexture(new Float32Array([NOTHING_V, 0, 0, 0]), 1, 1, RGBAFormat, FloatType) };
 HT.none.needsUpdate = true;
 const NOTHING = NOTHING_V;
 let state;   // (the renderer's state while a pass of ours draws)
@@ -215,6 +216,8 @@ export function farTiles(r, scene, x, y, z, mask, o = {}) {
     if (HT.rt?.width !== px) { HT.rt?.dispose(); HT.rt = new RenderTarget(px, px, { type: HalfFloatType, format: RedFormat, depthBuffer: true }); HT.rt.texture.name = 'sun mask heights'; HT.rt.gsPart = 'sun mask'; }
   }
   heightMaterials(rev);
+  // (the tiles are kept by where they are in the drawing's space: when the drawing's centre moves, every one is drawn again)
+  if (!HT.at.equals(ORIGIN)) { HT.tiles.reset(); HT.at.copy(ORIGIN); }
   const T = HT.tiles, came = T.at(x, z), top = y + (o.above ?? 400), deep = o.depth ?? 1200;
   state = RendererUtils.resetRendererAndSceneState(r, scene, state);
   r.autoClear = false;
