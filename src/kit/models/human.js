@@ -29,7 +29,7 @@ import { slimShared, floatsOf } from '../slim.js';
 const PI = Math.PI, abs = Math.abs;
 
 // ---- which material each kind of surface is drawn with (a maker's own slots say theirs: { colour, as })
-const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
+const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', browhair: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
   belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
 const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair', 'lash'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
 
@@ -183,6 +183,11 @@ function mats() {
   // hair: combed strands in a small picture made in code (human-paint.js), over the hair's own colour and its sculpted locks
   { const { colour, normal } = paintHair(), tex = (px, srgb) => { const t = new DataTexture(px, HAIR.w, HAIR.h, RGBAFormat, UnsignedByteType); if (srgb) t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = RepeatWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t; };
     MATS.hair.map = tex(colour, true); MATS.hair.normalMap = tex(normal, false); MATS.hair.normalScale.set(.6, .6); MATS.hair.color.setScalar(1 / HAIR.plain); }
+  // a real face's hair: the same, with a shine stretched across the strands as off real hair (Kajiya and Kay's band round the head): three's own
+  // anisotropy, rougher along the picture's u, which runs round the head, so the highlight is a band across the strands and narrow along them
+  // (less of the sky in it than the shine off the sun or a lamp: under a grey sky dark hair had turned silver)
+  MATS.hairReal = pbr('#ffffff', { rough: .5, vertexColors: true, aniso: .8 }); MATS.hairReal.envMapIntensity = .3;
+  Object.assign(MATS.hairReal, { map: MATS.hair.map, normalMap: MATS.hair.normalMap }); MATS.hairReal.normalScale.set(.6, .6); MATS.hairReal.color.copy(MATS.hair.color);
   // cloth and leather: their seams and rows of stitching in a small picture made in code (human-paint.js), laid on by the lines the
   // sculpting runs along them (the second set of UVs: how far from the line, how far along it). It takes the place of the recipe's own
   // colour picture there (the grain's bumps stay)
@@ -333,7 +338,7 @@ const lashColour = hair => { const h = { h: 0, s: 0, l: 0 }; new Color(hair || '
 function palette(sp) {
   const { top, legs, feet, hat, belt, web, o } = sp, c = v => v, ex = sp.extras;
   return {
-    lashes: lashColour(sp.hair), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
+    lashes: lashColour(sp.hair), browhair: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
     teeth: '#d6cdbb', tongue: '#7d3f3c', skin: o.skin ?? DEF.skin, lid: o.skin ?? DEF.skin, lash: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#1c120c'), sp.fem ? .94 : .86).getHexString(), lips: sp.fem ? o.lips ?? DEF.lips : '#' + new Color(o.skin ?? DEF.skin).lerp(new Color(o.lips ?? DEF.lips), .62).getHexString(), mouth: '#2e1512', hair: sp.hair || '#3b2a1a', brow: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), glove: sp.gloves?.colour ?? '#4a3d2c',
     top: top.colour, trim: top.collar || top.cuffs || top.strapColour || top.colour, tab: top.tabs || top.colour, band: top.band || '#d9c25a', hatband: hat?.band ?? hat?.colour ?? '#4b5249', button: top.buttons || '#8a8270',
     legs: legs.colour, boots: feet.colour, sole: '#16120e', kit: feet.gaiter || ex.bag || ex.kit || '#6e6a4c', strap: web?.colour ?? belt?.colour ?? '#2b2723', pouch: web?.pouchColour ?? web?.colour ?? belt?.colour ?? '#2b2723',
@@ -467,7 +472,7 @@ export function human(o = {}) {
   const tu = new InterleavedBuffer(TU, 4);
   const attrs = { position: new BufferAttribute(P, 3), normal: new BufferAttribute(N, 3), color: new BufferAttribute(C, 3), uv: new BufferAttribute(U, 2), skinIndex: new BufferAttribute(SI, 4), skinWeight: new BufferAttribute(SW, 4), gsThin: new InterleavedBufferAttribute(tu, 2, 0), uv1: new InterleavedBufferAttribute(tu, 2, 2) };
   // each level: its triangles in groups by material (close: all six; middle: skin and the rest; far: one)
-  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, M.hair, M.lash], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
+  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, sp.face.real ? M.hairReal : M.hair, M.lash], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
   const geos = [0, 1, 2].map(L => {
     const by = matsFor[L].map(() => []);
     pieces.forEach((p, pi) => { const I = L ? p.I[L] : seam[pi].I, off = offs[pi]; for (let t = 0; t < I.length; t += 3) { const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, k = cls[b] === cls[c] ? cls[b] : cls[a]; by[groupOf[L](k)].push(a, b, c); } });
@@ -483,19 +488,48 @@ export function human(o = {}) {
   // (the hair of the head is a clean sculpted shape by itself: it wears strands too only when asked, strands: true or { ... })
   const so = o.strands === false ? null : typeof o.strands === 'object' && o.strands ? o.strands : {}, onHead = !!o.strands && !!sp.hair && sp.hairStyle !== 'bald'; let hairGeo = null;
   if (so && headP && (so.layers ?? fur.layers()) > 0 && (onHead || sp.beard || sp.moustache)) {
-    const off = offs[pieces.indexOf(headP)], grow = new Float32Array(n), HAIR = CLASSES.indexOf('hair'), hc = new Color(pal.hair), fl = sp.face.lips, sf = sp.face.soft;
+    const off = offs[pieces.indexOf(headP)], grow = new Float32Array(n), HAIR = CLASSES.indexOf('hair'), hc = new Color(pal.hair), fl = sp.face.lips, sf = sp.face.soft, real = !!sp.face.real;
     // (under a hat the hair stays as it is sculpted, cropped close: there is little of it to see)
-    const long = sp.hat ? 0 : sp.hairStyle === 'long' ? 1.5 : sp.hairStyle === 'bun' ? .75 : 1; let cols = null;
+    const long = sp.hat ? 0 : sp.hairStyle === 'long' ? 1.5 : sp.hairStyle === 'bun' ? .75 : 1; let cols = null, cover = null;
     for (let i = 0; i < headP.n; i++) {
       const j = off + i, name = headP.slots[headP.slot[i]];
       if (cls[j] === HAIR) { if (onHead) grow[j] = long; continue; }
       const x = headP.P[i * 3], hy = headP.P[i * 3 + 1] - HC[1], hz = headP.P[i * 3 + 2] - HC[2];
       if (name === 'brow') { if (hy < 0) grow[j] = .45; continue; }   // (a moustache; the brows stay painted)
-      if (!sp.beard || (name !== 'skin' && name !== 'lips')) continue;
+      if (!(real ? sp.beard || sp.moustache : sp.beard) || (name !== 'skin' && name !== 'lips')) continue;
       // a beard: where stubble is painted (the jaw, the chin, the upper lip, under the chin), but not on the lips
       const lip = Math.min(Math.hypot(x / (.0228 - .0035 * sf), (hy - MOUTH.y - .005) / (.0048 * fl)), Math.hypot(x / (.0195 - .002 * sf), (hy - MOUTH.y + .0058) / (.0062 * fl)));
+      if (real) {
+        // a real face's: its edges where a real beard's are, each a little ragged (more and fewer strands, not a line). The cheek line runs from
+        // beside the nose down past the corner of the mouth and up across the cheek to the sideburn by the ear; the neckline from under the
+        // jaw's corner to the throat, a finger above the Adam's apple (in side view a line from 4 cm behind the head's middle and 8.5 cm down
+        // to 3.5 cm in front and 13 cm down); none behind the front of the ear. A moustache by itself: the upper lip, its ends past the corners
+        const ax = abs(x), e = .003 * lumps(x * 260, hy * 260 + 3.1, hz * 260) + .0013 * lumps(x * 800 + 5.3, hy * 800, hz * 800 + 1.7);
+        const top = -.0485 - .0055 * ss(.012, .03, ax) + .034 * ss(.035, .075, ax) + .014 * ss(.068, .078, ax) + e, dn = ((hz + .04) * .045 + (hy + .085) * .075) / .0875 + .6 * e;
+        // (over the upper lip a moustache comes down to the lip's edge, over the groove in the middle too)
+        const ang = Math.atan2(ax, hz) * 180 / PI, back = 80 + 8 * ss(-.045, -.075, hy), lipOff = hy > MOUTH.y ? ss(1, 1.2, lip) : ss(1.25, 2, lip);
+        const kb = sp.beard ? ss(top, top - .012, hy) * ss(-.002, .006, dn) * ss(back, back - 8, ang) * lipOff : 0;
+        const km = sp.moustache ? ss(top, top - .004, hy) * ss(.031, .024, ax - .2 * e) * ss(MOUTH.y - .005, MOUTH.y + .002, hy) * lipOff : 0;
+        const k = Math.max(kb, km); if (k <= .02) continue;
+        grow[j] = Math.max(kb * sp.beard * 1.7 * (.45 + .55 * kb), km * Math.max(1.15, (sp.beard || 0) * 1.7) * (.5 + .5 * km));
+        (cover ||= new Float32Array(n).fill(1))[j] = Math.pow(k, .7);
+        cols ||= C.slice(); const a = (.28 + .72 * headP.ao[i] / 255) * (.75 + .25 * k); cols[j * 3] = hc.r * a; cols[j * 3 + 1] = hc.g * a; cols[j * 3 + 2] = hc.b * a;
+        continue;
+      }
       const k = ss(-.04, -.062, hy) * ss(-.03, .01, hz) * ss(-.165, -.12, hy) * ss(1.25, 2, lip);
       if (k > .02) { grow[j] = k * sp.beard * 1.7; cols ||= C.slice(); const a = (.28 + .72 * headP.ao[i] / 255) * (.75 + .25 * k); cols[j * 3] = hc.r * a; cols[j * 3 + 1] = hc.g * a; cols[j * 3 + 2] = hc.b * a; }
+    }
+    // (a real face's hairline: the strands thin out over its last centimetre or so, shorter and fewer and raggedly, not ending in a cliff at
+    // the edge of a triangle; rings of points in from the edge of the hair)
+    if (real && onHead) {
+      const I1 = headP.I[so.from ?? 1], ring = new Uint8Array(n).fill(255);
+      for (let t = 0; t < I1.length; t += 3) { const v = [I1[t] + off, I1[t + 1] + off, I1[t + 2] + off], h = v.map(q => cls[q] === HAIR); if (h.some(Boolean) && !h.every(Boolean)) v.forEach((q, i) => { if (h[i]) ring[q] = 0; }); }
+      for (let r = 0; r < 2; r++) for (let t = 0; t < I1.length; t += 3) { const v = [I1[t] + off, I1[t + 1] + off, I1[t + 2] + off]; if (v.some(q => ring[q] === r)) v.forEach(q => { if (cls[q] === HAIR && ring[q] > r + 1) ring[q] = r + 1; }); }
+      for (let i = 0; i < headP.n; i++) {
+        const j = off + i; if (ring[j] > 2) continue;
+        const f = Math.max(.08, Math.min(1, [.3, .62, .86][ring[j]] * (1 + .35 * lumps(headP.P[i * 3] * 300, headP.P[i * 3 + 1] * 300, headP.P[i * 3 + 2] * 300))));
+        grow[j] *= f; (cover ||= new Float32Array(n).fill(1))[j] = f;
+      }
     }
     // the hair on the middle level's triangles (strands hide what a finer surface under them would add); a beard and a
     // moustache on the finest (the face under them is the finest, and would show through a coarser coat)
@@ -505,7 +539,7 @@ export function human(o = {}) {
       if (face ? !onHair && grow[a] + grow[b] + grow[c] > 0 : onHair && onHead) idx.push(a, b, c);
     }
     hairGeo = fur.shell(geos[0], {
-      index: idx, where: grow, colors: cols, length: so.length ?? .012, tile: so.tile ?? .06, thin: 0, ease: .25,
+      index: idx, where: grow, colors: cols, cover, length: so.length ?? .012, tile: so.tile ?? .06, thin: 0, ease: .25,
       uv: { centre: HC, crown: sp.hairStyle === 'bun' ? [HC[0], HC[1] + .03, HC[2] - .112] : [HC[0], HC[1] + .1, HC[2] - .045], droop: sp.hairStyle === 'long' ? .8 : .35 },
     });
     if (!hairGeo.userData.fur.tris) hairGeo = null;

@@ -321,7 +321,7 @@ export function eyeParts(m, f) {
   for (const s of [1, -1]) {
     const P = [], N = [], K = [], I = [], src = [], ao = [];
     // a strand: from root r (metres, the person's space), its way d and the way it curls c (unit), length L, curl k, thickness at the root r0
-    const strand = (r, d, c, L, k, r0, like) => {
+    const strand = (r, d, c, L, k, r0, like, slot = 'lashes', shade = 1) => {
       const T = [0, 0, 0], S = [0, 0, 0], B = [0, 0, 0], base = P.length / 3;
       for (const t of [0, .3, .65, 1]) {
         for (let q = 0; q < 3; q++) T[q] = d[q] + 2 * k * t * c[q]; let l = hyp(T[0], T[1], T[2]); for (let q = 0; q < 3; q++) T[q] /= l;
@@ -331,7 +331,7 @@ export function eyeParts(m, f) {
         for (let v = 0; v < 3; v++) {
           const an = v * PI * 2 / 3, nx = S[0] * cos(an) + B[0] * sin(an), ny = S[1] * cos(an) + B[1] * sin(an), nz = S[2] * cos(an) + B[2] * sin(an);
           P.push(r[0] + L * (t * d[0] + k * t * t * c[0]) + rr * nx, r[1] + L * (t * d[1] + k * t * t * c[1]) + rr * ny, r[2] + L * (t * d[2] + k * t * t * c[2]) + rr * nz);
-          N.push(nx, ny, nz); K.push('lashes'); src.push(like); ao.push(.5 + .5 * t);
+          N.push(nx, ny, nz); K.push(slot); src.push(like); ao.push((.5 + .5 * t) * shade);
         }
       }
       for (let j = 0; j < 3; j++) for (let v = 0; v < 3; v++) { const a = base + j * 3 + v, b = base + j * 3 + (v + 1) % 3; I.push(a, b, b + 3, a, b + 3, a + 3); }
@@ -352,6 +352,27 @@ export function eyeParts(m, f) {
           const bell = ss(-.6, 0, t) * ss(1, .6, t), L = es * (.0009 + .0011 * bell) * (1 + .1 * so) * (1 - .25 * age) * (.7 + .5 * rnd());
           strand(root, unit([s * (.1 + .3 * t + cl[0]), -.7 + cl[1], 1]), [0, -1, 0], L, .3, .000045 * es, like);
         }
+      }
+    }
+    // the brow: its hairs one by one in the brow's band (as the paint's, human-paint.js browAt), close over the skin: standing up
+    // at the inner end, lying out along the brow toward its tail, the last few turning down; longest over the arch. The paint
+    // keeps a fainter brow under them, the skin's own colour where the hairs are few
+    { const B = browOf(so), fem = so > .5, x0 = B[0][0], x1 = B[1][0], x2 = B[2][0], full = (fem ? .0019 : .0027) * .85, nb = Math.round((fem ? 150 : 200) * (1 - .2 * age));
+      const yc = x => B[0][1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + B[1][1] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2)) + B[2][1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1));
+      const skin = []; for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1]; if (ax > x0 - .008 && ax < x2 + .006 && hy > .006 && hy < .045 && MP[i * 3 + 2] - HC[2] > .03 && m.N[i * 3 + 2] > .2) skin.push(i); }
+      for (let i = 0, tries = 0; i < nb && tries < nb * 20; tries++) {
+        const t = rnd() * 1.06 - .04, x = x0 + (x2 - x0) * t, half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t), dy = (rnd() * 2 - 1) * half * 1.15, hy = yc(x) + dy;
+        if (!(half > 0) || rnd() > ss(1.2, .6, abs(dy) / half) * ss(1.06, .95, t)) continue;
+        // (the skin there: its depth and the way it faces, from the head's points round it, the nearer the more)
+        let w = 0, z = 0; const n = [0, 0, 0];
+        for (const j of skin) { const d2 = (abs(MP[j * 3]) - x) ** 2 + (MP[j * 3 + 1] - HC[1] - hy) ** 2; if (d2 > 6.25e-6) continue; const q = 1 / (d2 + 1e-7); w += q; z += q * (MP[j * 3 + 2] - HC[2]); n[0] += q * m.N[j * 3] * (MP[j * 3] < 0 ? -1 : 1); n[1] += q * m.N[j * 3 + 1]; n[2] += q * m.N[j * 3 + 2]; }
+        if (!w) continue; i++;
+        const nn = unit(n), root = [s * x, HC[1] + hy, HC[2] + z / w - nn[2] * .00015], like = { like: [root[0], root[1], root[2], 0] }, N3 = [s * nn[0], nn[1], nn[2]];
+        // (the way it lies, on the brow's face: up at the inner end, out along it over the arch, down a little at the tail; each its own a little)
+        const way = [s * (.25 + 1.1 * ss(0, .4, t)), 1.05 - 1.05 * ss(.05, .55, t) - .35 * ss(.65, 1, t) + (rnd() - .5) * .35 - dy / half * .15, 0], along = way[0] * N3[0] + way[1] * N3[1];
+        const d = unit([way[0] - along * N3[0] + .32 * N3[0], way[1] - along * N3[1] + .32 * N3[1], -along * N3[2] + .32 * N3[2]]);
+        const L = (.0042 + .0034 * ss(0, .35, t) * ss(1, .6, t)) * (fem ? .8 : 1) * (.75 + .5 * rnd());
+        strand(root, d, [-N3[0], -N3[1], -N3[2]], L, .3, .00008 * (fem ? .85 : 1), like, 'browhair', .8 + .35 * rnd());
       }
     }
     // the caruncle: a small pink mound in the inner corner, between the lids' edges, lying on the round of the eye (which turns under it)
@@ -596,7 +617,7 @@ export function head(a, ghosts = []) {
     if (hs === 'bun') S.push({ ball: .034, at: Hd(0, .034, -.108), slot: 'hair', lumpy: [.011, .0022], blend: .012 });
   }
   // (the brows are in the face's paint: human-paint.js) a moustache stands a little proud
-  if (a.moustache) S.push({ ball: [.0175, .0045, .0055], at: Hd(.0102, MOUTH.y + .012, .0872), rot: [0, .3, -.18], mirror: true, slot: 'brow', lumpy: [.004, .001], blend: .002 });
+  if (a.moustache && !a.face?.real) S.push({ ball: [.0175, .0045, .0055], at: Hd(.0102, MOUTH.y + .012, .0872), rot: [0, .3, -.18], mirror: true, slot: 'brow', lumpy: [.004, .001], blend: .002 });
   // the hat stands over the face: a brim's shadow on the brow
   for (const g of ghosts) S.push({ ...g, ghost: true, slot: null });
   return S;

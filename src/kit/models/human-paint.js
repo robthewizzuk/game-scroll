@@ -131,7 +131,7 @@ export function paintFace(o) {
   const ph = (f.aseed || 0) * 3.7, seed = Math.floor((f.aseed || 0) * 100), lum = .3 * S[0] + .59 * S[1] + .11 * S[2], fair = ss(.18, .5, lum), dark = 1 - ss(.04, .16, lum);
   const frk = R ? (f.freckles || 0) * fair : 0, spots = R ? ss(55, 82, f.age ?? 30) * (1 - .6 * dark) : 0;
   const moles = R ? Array.from({ length: Math.floor(hash(seed, 3, 1) * 3.6) }, (_, k) => [.012 + .055 * hash(seed, k, 11), -.1 + .12 * hash(seed, k, 12), .0006 + .0006 * hash(seed, k, 13)]) : [];
-  // (a real face's paint is quieter: finer brows with skin between the hairs, a thin even line along the lashes (their roots: the lashes are
+  // (a real face's paint is quieter: finer, fainter brows with skin between the hairs (the hairs over them are strands), a thin even line along the lashes (their roots: the lashes are
   // strands, human-head.js eyeParts), lips nearer the skin's own colour)
   const put = (C, k) => { r += (C[0] - r) * k; g += (C[1] - g) * k; b += (C[2] - b) * k; };
   for (let j = 0; j < h; j++) {
@@ -139,7 +139,7 @@ export function paintFace(o) {
     for (let i = 0; i < w; i++) {
       const x = (i + .5) / w * x1; let lip = 0; r = g = b = 1;
       // ---- brows
-      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .8 : .86) * (.8 + .2 * lumps(x * 5200, hy * 900, 1.3)) : fem ? .95 : .98)); }
+      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .55 : .6) * (.8 + .2 * lumps(x * 5200, hy * 900, 1.3)) : fem ? .95 : .98)); }
       // ---- the lids: the lashes' line along the upper one (thicker towards its outer end, its edge the lashes' own ends), a fainter one under
       // the eye, a soft shade over the upper lid; inside the opening the upper lid's edge is dark, the lower one's pale, the corner by the nose pink
       if (abs(hy - EYE[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {

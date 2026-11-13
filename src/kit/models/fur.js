@@ -131,10 +131,11 @@ function shell(geo, o = {}) {
   for (const name in own) g.setAttribute(name, own[name]);
   // each point's colour, and in its alpha how thick the coat is there: the picture's strands are that much lower, so
   // toward where none grow a coat thins out strand by strand instead of ending at a triangle's edge
-  const ca = geo.attributes.color, co = o.colors, full = base * .12, Cc = new Float32Array(m * 4);
+  // (cover: how thick it is besides, 0..1 a point: a beard thinning out toward its edges strand by strand however long it is there)
+  const ca = geo.attributes.color, co = o.colors, cv = o.cover, full = base * .12, Cc = new Float32Array(m * 4);
   for (let i = 0; i < m; i++) {
     const v = src[i], k = mn(1, len[v] / full);
-    Cc[i * 4] = co ? co[v * 3] : ca ? ca.getX(v) : 1; Cc[i * 4 + 1] = co ? co[v * 3 + 1] : ca ? ca.getY(v) : 1; Cc[i * 4 + 2] = co ? co[v * 3 + 2] : ca ? ca.getZ(v) : 1; Cc[i * 4 + 3] = k * k * (3 - 2 * k);
+    Cc[i * 4] = co ? co[v * 3] : ca ? ca.getX(v) : 1; Cc[i * 4 + 1] = co ? co[v * 3 + 1] : ca ? ca.getY(v) : 1; Cc[i * 4 + 2] = co ? co[v * 3 + 2] : ca ? ca.getZ(v) : 1; Cc[i * 4 + 3] = k * k * (3 - 2 * k) * (cv ? mx(0, mn(1, cv[v])) : 1);
   }
   g.setAttribute('color', new BufferAttribute(Cc, 4));
   g.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
@@ -164,10 +165,11 @@ function shell(geo, o = {}) {
 // ================================================================= the layers' materials (shared by every coat of one kind)
 const MATS = new Map();
 function layer(o, i, L) {
-  const key = [o.kind, o.seed, L, i, o.rough, o.root, o.tip, o.colour].join('|'); let m = MATS.get(key);
+  const key = [o.kind, o.seed, L, i, o.rough, o.root, o.tip, o.colour, o.aniso].join('|'); let m = MATS.get(key);
   if (!m) {
     const t = i / L;
-    m = pbr(o.colour, { rough: o.rough, vertexColors: true, map: strands(o.kind, o.seed), alphaTest: (i - .5) / L });
+    // (aniso: a shine stretched across the strands, as off real hair: three's own anisotropy, along the picture's u, which runs across them)
+    m = pbr(o.colour, { rough: o.rough, vertexColors: true, map: strands(o.kind, o.seed), alphaTest: (i - .5) / L, aniso: o.aniso || 0 });
     m.color.multiplyScalar(o.root + (o.tip - o.root) * Math.pow(t, .8));   // (dark at the roots, where little light gets in)
     m.name = `fur:${o.kind}:${i}/${L}`; MATS.set(key, m);
   }
@@ -192,8 +194,9 @@ const layersHere = () => LAYERS[HD.tier] ?? 7;
  * (how dark the roots and how light the tips: .65, 1.5), colour (a tint over the vertex colours), seed (which
  * picture of strands), auto (false: don't thin out with distance), size (how big
  * the furry thing is, mesh units, for that: twice its bounding sphere's radius otherwise), colors (the strands'
- * colours where they differ from the mesh's: a Float32Array, three a point), shell (another coat's `shell`, to
- * share its geometry: twins).
+ * colours where they differ from the mesh's: a Float32Array, three a point), cover (how thick the coat is at each point
+ * besides its length, 0..1: a Float32Array), aniso (0..1: a shine stretched across the strands, as off hair), shell
+ * (another coat's `shell`, to share its geometry: twins).
  * Returns the coat: shells (its meshes, outermost first, children of the mesh), layers, shell, tris (drawn at
  * full), length and lean (set them any time: a cat's fur standing up, a coat flattened by wind or water), level
  * (0, .5 or 1: how much of it is showing), see(camera, screenHeight) (sets level for a camera, as auto does),
@@ -204,7 +207,7 @@ export function fur(mesh, o = {}) {
   const L = mx(0, Math.round(o.layers ?? layersHere()));
   if (!L) return { shells: [], layers: 0, shell: null, tris: 0, length: 1, lean: o.lean ?? .5, level: 0, see: () => 0, dispose() {} };   // (a phone that draws no fur: the mesh as it was)
   const g = o.shell || shell(mesh.geometry, o), skinned = !!mesh.isSkinnedMesh && !!mesh.skeleton;
-  const look = { kind: o.kind === 'hair' ? 'hair' : 'fur', seed: o.seed ?? 1, rough: o.rough ?? .86, root: o.root ?? .65, tip: o.tip ?? 1.5, colour: o.colour ?? o.color ?? '#ffffff' };
+  const look = { kind: o.kind === 'hair' ? 'hair' : 'fur', seed: o.seed ?? 1, rough: o.rough ?? .86, root: o.root ?? .65, tip: o.tip ?? 1.5, colour: o.colour ?? o.color ?? '#ffffff', aniso: o.aniso || 0 };
   const shells = [], info = g.userData.fur;
   for (let i = L; i >= 1; i--) {   // the outermost first: what it covers of the ones below is then not drawn at all
     const mat = layer(look, i, L), m = skinned ? new SkinnedMesh(g, mat) : new Mesh(g, mat);

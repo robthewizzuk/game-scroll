@@ -808,6 +808,16 @@ try {
       ok(re !== M[1] && re.map?.isDataTexture && re.map.image.width >= 128 && !re.clearcoat && M[1].clearcoat === 1 && wet?.isSkinnedMesh && wet.material.transparent && wet.material.blending === gs.THREE.AdditiveBlending && !wet.material.depthWrite && !wet.castShadow && wg.index.count > 3000
         && ['eyeL', 'eyeR', 'head'].every(b => wb.has(b)) && atLod(0) && !atLod(1) && plain.wet === null && wet.parent === real && human(ro).wet.geometry === wg,
         `real eyes: an iris painted in code (${re.map?.image.width} x ${re.map?.image.width}) and a wet film over them (${wg?.index.count / 3} triangles, on ${[...(wb || [])].join(', ')}) close up only; none on the clean look`);
+      // a real face's hair (human.js): a shine across the strands (three's anisotropy); a beard where a real one grows, down to a neckline above
+      // the throat (the clean look's runs on down the neck), thinning out strand by strand toward its edges; a moustache grown on the upper lip.
+      // (the head's middle is 1.69 up and .008 forward, human-head.js HC; the line between the lips 6.55 cm below it)
+      const rbo = { ...ro, beard: .6 }, rmo = { ...ro, beard: 0, moustache: true }, cbo = { ...opts, beard: .6 }; await human.ready([rbo, rmo, cbo]);
+      const coat = o => human(o).hair?.shell, front = g => { const P = g.attributes.position; let lo = 9; for (let i = 0; i < P.count; i++) if (P.getZ(i) > .028) lo = Math.min(lo, P.getY(i)); return lo; };
+      const rb = coat(rbo), cb = coat(cbo), rm = coat(rmo), soft = g => { const A = g.attributes.color; let s = 0; for (let i = 0; i < A.count; i++) if (A.getW(i) > .05 && A.getW(i) < .9) s++; return s / A.count; };
+      const box = g => { const P = g.attributes.position, A = g.attributes.color, b = [9, -9, 0]; for (let i = 0; i < P.count; i++) if (A.getW(i) > .05) { b[0] = Math.min(b[0], P.getY(i)); b[1] = Math.max(b[1], P.getY(i)); b[2] = Math.max(b[2], Math.abs(P.getX(i))); } return b; };
+      const lip = g => { const [lo, hi, w] = box(g); return w < .045 && lo > 1.69 - .08 && hi < 1.69 - .038 && g.attributes.position.count > 30; };   // (where it has strands: the chin is 9 cm and more below the middle, the nose 4.5 cm and less)
+      ok(real.mesh.material[6].anisotropy > 0 && !(M[6].anisotropy > 0) && rb && cb && front(rb) > 1.548 && front(cb) < 1.545 && soft(rb) > .03 && rm && lip(rm),
+        `real hair: a shine across the strands (anisotropy ${real.mesh.material[6].anisotropy}); a real beard down to ${((1.69 - front(rb)) * 100).toFixed(1)} cm below the head's middle at the front (the clean look's ${((1.69 - (cb ? front(cb) : 0)) * 100).toFixed(1)} cm), ${(soft(rb) * 100).toFixed(0)}% of it thinning out; a real moustache on the upper lip only (${rm?.attributes.position.count} points, ${rm ? box(rm).map(v => (v * 100).toFixed(1)).join(', ') : ''} cm: lowest, highest, widest)`);
       // seams and stitching (field.js lines, human-paint.js paintSeams): cloth and leather wear one small picture by the same second set of
       // coordinates, across a line and along it; some of every kind of cloth is near a seam or a row of stitching, and no close-up triangle
       // counts more stitches between its corners than its length can hold (where a count starts again, a corner has a twin)

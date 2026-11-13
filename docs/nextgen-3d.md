@@ -1223,7 +1223,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   back under a clear cornea, so from one side it lies inside the eye; a film of tears over the whole eye and a
   line of tears along each lower lid add only their shine (the cornea's small sharp highlight slides as the eye
   turns); the white is shaded where the lids shade it; real lashes, a few hundred strands in clumps, curl from
-  the lids and blink with them; and the inner corner has its small pink mound. Close up only, on both renderers. A real face comes from `seed` (the same
+  the lids and blink with them; and the inner corner has its small pink mound. Close up only, on both renderers. Its
+  hair is real too: the brows are a few hundred single hairs lying along each brow (standing up at the inner end,
+  going with the brows when the face moves), the hair shines in a band across its strands as real hair does
+  (three's anisotropy), a beard grows where a real one does (up the cheek to the sideburn, down to a neckline
+  above the throat, thinning out toward its edges strand by strand) and a moustache is grown from the upper lip,
+  not sculpted on. A real face comes from `seed` (the same
   seed, the same face on every phone; with no `skin`, `hair` or `iris` given, those come from the seed too),
   `age` (years: older, the folds deepen, the lips thin, the lids hood and the hair greys) and `weight` (0 thin
   .. 1 heavy): `human({ look: 'real', seed: 12, age: 63, weight: .8 })`. `node scripts/face-lab.cjs out.png

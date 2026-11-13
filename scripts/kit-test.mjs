@@ -2737,8 +2737,18 @@ console.log('physics ok');
       if (above) { up[0] += len; up[1]++; if (p.P[r * 3] > 0) { lidOf++; for (let q = 0; q < 4; q++) if (p.SI[r * 4 + q] === lidB && p.SW[r * 4 + q] > 128) { lid++; break; } } } else { dn[0] += len; dn[1]++; }
     }
     assert.ok(up[1] > dn[1] * 2 && up[0] / up[1] > dn[0] / dn[1] * 2 && lid > lidOf * .8, `upper lashes ${(up[0] / up[1] * 1000).toFixed(1)} mm on average, lower ${(dn[0] / dn[1] * 1000).toFixed(1)} mm; ${lid} of ${lidOf} upper ones on the left go with its lid`);
-    const old = lash(S.sculpt({ kind: 'head', a: { ...a, face: { ...face, age: 78 } } })).length / 12; assert.ok(old < strands * .85, `fewer lashes with age: ${old} at 78`); }
-  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes and the inner corner close up) ok');
+    const old = lash(S.sculpt({ kind: 'head', a: { ...a, face: { ...face, age: 78 } } })).length / 12; assert.ok(old < strands * .85, `fewer lashes with age: ${old} at 78`);
+    // (the brows: hairs one by one in each brow's band, close up only, lying on the skin (their roots no more than a millimetre off it, their
+    // tips no further out than 3 mm), going with the brow's bones; a moustache on a real face is grown, not sculpted: no lump of its own)
+    const bh = []; for (let i = 0; i < p.n; i++) if (name(p, i) === 'browhair') bh.push(i);
+    const browB = ['browL', 'browInL', 'browR', 'browInR'].map(b => p.names.indexOf(b)); let onBrow = 0, roots = 0, out = 0;
+    for (let k = 0; k < bh.length; k += 12) { const r = bh[k]; roots++; for (let q = 0; q < 4; q++) if (browB.includes(p.SI[r * 4 + q]) && p.SW[r * 4 + q] > 40) { onBrow++; break; } const tip = bh[k + 9]; out = Math.max(out, Math.hypot(p.P[tip * 3] - p.P[r * 3], p.P[tip * 3 + 1] - p.P[r * 3 + 1], p.P[tip * 3 + 2] - p.P[r * 3 + 2])); }
+    const ys = bh.map(i => p.P[i * 3 + 1] - HC[1]), xs = bh.map(i => Math.abs(p.P[i * 3]));
+    assert.ok(roots > 250 && bh.every(i => !far.has(i)) && onBrow > roots * .8 && out < .012 && Math.min(...ys) > .004 && Math.max(...ys) < .05 && Math.min(...xs) > .006 && Math.max(...xs) < .066 && !clean.slots.includes('browhair'),
+      `brows of single hairs: ${roots} of them, ${onBrow} going with the brows' bones, the longest ${(out * 1000).toFixed(1)} mm, close up only; none on the clean face`);
+    const mo = S.sculpt({ kind: 'head', a: { ...a, moustache: 1 } }), mc = S.sculpt({ kind: 'head', a: { ...a, face: base, moustache: 1 } });
+    assert.ok(!mo.slots.includes('brow') && mc.slots.includes('brow'), 'a real moustache is grown from the lip (human.js), the clean one sculpted'); }
+  console.log('gs.models: the real look (a face from a seed, older and greyer with age; folds deeper with age, both sides alike unless uneven, none round the eyes; a broader jaw; fine lines with age, oil, freckles; a flat iris set back, a shaded white, lashes, brows of single hairs and the inner corner close up) ok');
 }
 
 // gs.models.creature: animals and monsters from a seed (the choosing, the bones, the sculpt, the gaits)

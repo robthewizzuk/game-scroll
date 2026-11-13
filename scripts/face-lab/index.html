@@ -8,7 +8,7 @@
 //   views: face (three quarters, close), eyes (the eyes and the lids, closest), nose (closer still: the nose and the mouth), front, side, bust (head and shoulders), body (the whole person)
 //   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &nowet (a real face's wet film over the eyes left out)   &blinks (let them blink)
 //   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
-//   &wrap=4 (cells to a row of the sheet: people run on across rows)   &look=clean|real (every person drawn in that look)   &pose=idle   &mouth=.5 (open it)   &expr=smile:1 (a face shape set)
+//   &strands (strands on the hair too; &strands=off: none, not even on a beard)   &wrap=4 (cells to a row of the sheet: people run on across rows)   &look=clean|real (every person drawn in that look)   &pose=idle   &mouth=.5 (open it)   &expr=smile:1 (a face shape set)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -60,7 +60,7 @@ try {
   sheet.width = cw * WRAP; sheet.height = (ch + LABEL) * Math.ceil(cells / WRAP); const sx = sheet.getContext('2d'); document.body.append(sheet);
   sx.fillStyle = '#1c1c1e'; sx.fillRect(0, 0, sheet.width, sheet.height);
   const info = [], t0 = performance.now();
-  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (o.hairStyle === 'bald') o.hair = null; return o; };
+  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; return o; };
   await human.ready(pick.map(optsOf));
   info.push('sculpted ' + pick.length + ' in ' + Math.round(performance.now() - t0) + ' ms');
   const VIEW = { eyes: [.3, .04, 1, .17], nose: [.5, .02, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.1] };
