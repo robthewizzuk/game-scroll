@@ -1213,6 +1213,65 @@ export interface GasT {
   readonly glow: { x: number; y: number; z: number; power: number };
   dispose(): void;
 }
+/** What a part's make(r) is handed (gs.regions). */
+export interface RegionBuilder {
+  /** The part's name (a named part). */
+  readonly name?: string;
+  /** A square's number, its corner in metres, its size, how many squares out it is, its detail level, and a seed for the same look every time. */
+  readonly cx: number; readonly cz: number; readonly x0: number; readonly z0: number; readonly size: number; readonly ring: number; readonly level: number; readonly seed: number;
+  /** Adds obj to parent (the scene by default), at { x, y, z } if given: it is this part's own. (What make() adds straight to the scene is its own too.) */
+  add<T = Loose>(obj: T, at?: { x?: number; y?: number; z?: number } | null, parent?: Loose): T;
+  /** Something to free with this part: anything with dispose(), stop() or remove() (a sound loop, a crowd), or a function. */
+  keep<T = Loose>(thing: T): T;
+  /** fn() runs when this part is let go of. */
+  on(fn: () => void): this;
+  /** yield r.wait(promise): the part goes on once it settles (human.ready(looks), say), with its answer. */
+  wait(promise: Loose): Loose;
+  [k: string]: Loose;
+}
+export type RegionMake = (r: RegionBuilder) => void | Iterator<Loose, void, Loose>;
+export interface RegionLayer {
+  /** How many squares are made now. */
+  readonly count: number;
+  /** For land(): the ground's height at x, z, and the material every tile shares. */
+  height?: (x: number, z: number) => number;
+  material?: Loose;
+  clear(): void;
+}
+export interface RegionsT {
+  /** A named part (a level, a district, the inside of a house): make(r) builds it, all at once or as a generator function that yields between pieces. */
+  part(name: string, make: RegionMake): this;
+  /** These parts are wanted, and no others. Inside make() or reset() they are made at once (under the loading screen); later, a little each frame. */
+  want(...names: (string | string[])[]): this;
+  /** Is this part made? has(x, z): is the square under x, z made in every layer? */
+  has(name: string): boolean;
+  has(x: number, z: number): boolean;
+  /** Every wanted part made, and the squares round the player. */
+  readonly ready: boolean;
+  /** 0..1: how much of what is wanted is made. */
+  readonly progress: number;
+  /** Squares round the player: make(r) builds one (r.cx, r.cz, r.x0, r.z0, r.size, r.seed). level(ring) gives a detail level by distance: a square whose level changes is made again. */
+  cells(o: { size?: number; reach?: number; make: RegionMake; level?: (ring: number) => number; seed?: number }): RegionLayer;
+  /** Ground in tiles from height(x, z): finer close by, solid in the regions' world within `solid` squares, skirts so tiles meet. colour(x, y, z, slope) paints it. */
+  land(o: { height: (x: number, z: number) => number; size?: number; reach?: number; segments?: number; solid?: number; material?: Loose;
+    colour?: (x: number, y: number, z: number, slope: number) => string | Loose; skirt?: number; shadows?: boolean; seed?: number }): RegionLayer & { height: (x: number, z: number) => number };
+  /** Each frame: builds a little of what is wanted (budget ms) and lets go of what is behind. at: where the player is (the camera if left out). */
+  update(dt?: number, at?: { x: number; y?: number; z?: number } | null): this;
+  /** Lets go of every part and square (they're made again as they're wanted). */
+  clear(): this;
+  dispose(): void;
+  /** What is in now: parts made, squares made, how many are being made, and this frame's building time in ms. */
+  readonly info: { parts: string[]; cells: number; making: number; ms: number; made: number; dropped: number };
+  budget: number;
+}
+export interface RegionsPart {
+  /**
+   * A big world in parts that are made as they're wanted and let go of behind: named parts (levels made only when
+   * picked), squares round the player, land in tiles. world: a gs.physics3d.World3D the parts make bodies in.
+   * budget: ms of a frame to build in. keep: named parts no longer wanted to keep for later while memory is fine.
+   */
+  Regions: new (view: Loose, o?: { world?: Loose; budget?: number; keep?: number }) => RegionsT;
+}
 export interface GasPart {
   /** Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. */
   Gas: (new (view: Loose, o?: GasLook & {
@@ -3346,7 +3405,7 @@ export interface GS {
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;
