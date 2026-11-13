@@ -156,7 +156,18 @@ function holdGame(s,more){
 function gameFault(s,e){console.error(s.def.id,e);perf.error(e,s.def.id);broken(s,'This game hit a problem.')}
 function broken(s,why){dropReady(s);if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
 // A new round: false (and the card shows the problem) if the game threw.
-function resetGame(s){resetTicks(s);try{ownedBy(s,()=>s.game.reset());return true}catch(e){gameFault(s,e);return false}}
+function resetGame(s){resetTicks(s);try{ownedBy(s,()=>s.game.reset());return true}catch(e){if(e&&e.kitLoading){resetLater(s,e);return false}gameFault(s,e);return false}}
+// reset() asked for a lazy part or a sculpt that isn't in yet (a mission's people, when the next round is another
+// mission's: Play again after mission 1): the card says "Loading…" until it is in, and the game is reset again, as
+// a card being made waits (makeGame). The game itself is kept: a stand-in draws the wait. Play's loading screen
+// (getReady) waits on the same, then starts the round; a card waiting in the feed is reset once it is in.
+function resetLater(s,e){
+  const g=s.game,stub=stubGame(s,'Loading…',e.what||'');
+  stub.dispose=()=>g.dispose?.();if(g.resize)stub.resize=(w,h)=>ownedBy(s,()=>g.resize(w,h));
+  s.loading=true;s.what=e.what||'';s.game=stub;
+  Promise.resolve(e.kitLoading).then(()=>{if(s.dropped||s.game!==stub)return;s.game=g;s.loading=false;s.dirty=true;if(!s.starting&&resetGame(s))renderOverlay(s)},
+    err=>{if(s.dropped||s.game!==stub)return;s.game=g;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
+}
 function makeSlide(def){
   const el=document.createElement('section');el.className='slide '+(def.retro?'retro':'modern')+(def.era==='console'?' console':def.era==='nextgen'?' console nextgen':def.era==='ar'?' console nextgen ar':def.era==='board'?' console nextgen board':'');
   if(def.retro){const p=PAL[def.pal||'moss'];p.forEach((c,i)=>el.style.setProperty('--lcd'+i,c));el.style.setProperty('--shell',SHELL[def.pal||'moss']);}el.setAttribute('aria-label',def.title);
