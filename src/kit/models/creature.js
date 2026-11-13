@@ -19,6 +19,7 @@ import { Rig } from '../poses.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { fur } from './fur.js';
+import { slimShared } from '../slim.js';
 
 const PI = Math.PI, abs = Math.abs;
 
@@ -185,6 +186,7 @@ export function creature(o = {}) {
     g.setIndex(new BufferAttribute(n > 65535 ? all : new Uint16Array(all), 1));
     g.boundingSphere = new Sphere(mid.clone(), rad * 1.15); return g;
   });
+  slimShared(geos);   // (normals, colours and bone weights in fewer bytes: slim.js)
 
   const sh = o.shadows !== false, scale = plan.size / (meta.span || 1), tris = geos.map(g => g.index.count / 3), mv = movesFor(meta, scale);
 

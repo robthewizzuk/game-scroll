@@ -774,7 +774,8 @@ try {
     // a person's skin and eyes (human.js): the grain of skin, cloth and leather is laid on every close-up triangle one way and at one
     // size (a corner laid on otherwise has a twin), so it is nowhere drawn out further than it lies; thin flesh at the ears and nowhere else;
     // and the paint of a head (human-paint.js): brows, lashes and lips in a picture of the face on the skin, combed strands in one on the hair
-    { const g = plain.mesh.geometry, P = g.attributes.position.array, U = g.attributes.uv.array, TH = g.attributes.gsThin, FU = g.attributes.uv1, I = g.index.array, M = plain.mesh.material, n = P.length / 3;
+    { const { floatsOf } = await import('/src/kit/slim.js');   // (a person's lists may be kept small, slim.js: read them as numbers)
+      const g = plain.mesh.geometry, P = floatsOf(g.attributes.position), U = floatsOf(g.attributes.uv), TH = g.attributes.gsThin, FU = g.attributes.uv1, I = g.index.array, M = plain.mesh.material, n = P.length / 3;
       const grain = new Uint8Array(I.length); for (const q of g.groups) if (M[q.materialIndex].normalMap && q.materialIndex !== 6) grain.fill(1, q.start, q.start + q.count);   // (skin, cloth and leather: what has a grain; hair's strands are laid round the head and run together at the crown)
       let smeared = 0, grained = 0; for (let t = 0; t < I.length; t += 3) if (grain[t]) { grained++; for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3], d = Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]), du = Math.hypot(U[a * 2] - U[b * 2], U[a * 2 + 1] - U[b * 2 + 1]); if (du > d * 64 + 1e-3) { smeared++; break; } } }
       plain.updateMatrixWorld(true); const hy = plain.bones.head.getWorldPosition(new T.Vector3()).y / plain.scale.y; let thin = 0, off = 0;

@@ -9,6 +9,7 @@
 import { pause, built, loading } from '../slices.js';
 import { Group, Mesh, Shape, ExtrudeGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { slim } from '../slim.js';
 import { Build, boxUV, rngOf } from './props.js';
 import { material } from './materials.js';
 import { wear } from './wear.js';
@@ -203,6 +204,7 @@ function make(st, { w, d, floors, roof, fh, bay, win, lit, colour, door, seed, w
     const mat = own?.[slot] || (slot === 'glass' ? glass() : slot === 'lit' ? litGlass() : matOf(specs[slot], slot === 'wall' ? colour : null));
     const m = new Mesh(g, mat);
     if (wr !== false && (slot === 'wall' || slot === 'trim' || slot === 'roof')) wear(m, { seed, split: false, edges: .4, dirt: .5, ground: 1.2, ...wr });
+    if (!cut) slim(m.geometry);   // (a big wall or roof: normals and colours in fewer bytes, slim.js; a building that comes apart keeps plain lists to be cut from)
     out.push({ slot, geo: m.geometry, mat: m.material, shadow: slot !== 'lit' && slot !== 'glass' });
   }
   if (!cut) return out;
