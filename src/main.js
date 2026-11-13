@@ -37,7 +37,7 @@ import { playstats } from './playstats.js';
 import { boards, rankHTML, openBoard } from './boards.js';
 import { perf } from './perf.js';
 import { onMemory, forceMemory, memory } from './kit/memory.js';
-import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish } from './kit/speed.js';
+import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish, phoneClass, autoFps } from './kit/speed.js';
 import { keepAwake, awake } from './kit/awake.js';
 import * as fontlib from './kit/fontlib.js';
 import * as pixelKit from './kit/pixel.js';
@@ -53,6 +53,9 @@ import { makeDebug } from './debug.js';
 import { show as showTweaks } from './kit/tweak.js';
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
+import { desktop } from './desktop.js';
+// (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
+const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
 import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
 
 /* ---------- catalogue ---------- */
@@ -281,7 +284,7 @@ const sensorNote=d=>{if(d.era==='board'&&d.ar!==false)return'<div class="ov-loc"
   return`<div class="ov-loc">${u.includes('camera')?'📷':u.includes('mic')?'🎤':u.includes('steps')?'👟':'📱'} Uses your ${w.length>1?w.slice(0,-1).join(', ')+' and '+w[w.length-1]:w[0]}${u.includes('camera')||u.includes('mic')?'. Nothing is recorded or leaves your phone':''}.</div>`};
 const locNote=d=>d.location?`<div class="ov-loc">📍 Uses your ${d.location==='precise'?'location to walk around':'rough area (about 1 km)'}. It stays on your phone, and you can say no.</div>`:'';
 function renderOverlay(s){
-  const d=s.def,cue='<div class="swipe-cue">Swipe up for the next game</div>';
+  const d=s.def,cue=`<div class="swipe-cue">${NEXT_CUE}</div>`;
   if(s.failed){s.overlay.innerHTML=`<div class="ov-k">Oops</div><div class="ov-title">${d.title}</div><div class="ov-hint">${s.failed}</div><button class="play">Try again</button>${cue}`;s.overlay.hidden=false;return}
   if(s.state==='ready'){
     if(d.uses?.includes('motion'))want('motion');
@@ -483,7 +486,7 @@ function coverUp(s){
   let el=s.screen.querySelector('.load-ov');
   if(!el){el=document.createElement('div');el.className='overlay load-ov';el.onclick=e=>e.stopPropagation();s.screen.appendChild(el)}
   clearTimeout(el._t);el.classList.remove('gone');
-  el.innerHTML=`<div class="ov-k">Loading</div><div class="ov-title">${s.def.title}</div><div class="ov-bar" role="progressbar" aria-label="Loading ${s.def.title}"><i></i></div><div class="ov-what"></div><div class="swipe-cue">Swipe up for the next game</div>`;
+  el.innerHTML=`<div class="ov-k">Loading</div><div class="ov-title">${s.def.title}</div><div class="ov-bar" role="progressbar" aria-label="Loading ${s.def.title}"><i></i></div><div class="ov-what"></div><div class="swipe-cue">${NEXT_CUE}</div>`;
   el.hidden=false;st.cover=el;st.coverAt=performance.now();st.bar=el.querySelector('.ov-bar i');st.note=el.querySelector('.ov-what');st.said='';coverBar(s);
 }
 function coverDown(st,fade){
@@ -1141,4 +1144,4 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
 
-if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

@@ -1,0 +1,177 @@
+# Builds Game Scroll for Mac and Windows (desktop/, Electron; guide docs/desktop.md) and checks each one opens,
+# streams its games and draws.
+# Every push to main replaces the "Latest Mac and Windows builds" release (tag desktop-latest), so the
+# download links never change:
+#   https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-arm64.dmg    (Apple silicon)
+#   https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg      (Intel Macs)
+#   https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-x64.exe
+#   https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe (Snapdragon laptops)
+# The builds aren't signed yet (no paid Apple or Windows certificate), so each computer asks once before
+# opening one: docs/desktop.md says how. Games stream in as on the phones, so a game change needs no new build;
+# changes to games alone, the docs, the website and the Workers skip this. Pull requests run it when they
+# touch the desktop app itself.
+name: Mac and Windows app
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['src/games/**', 'docs/**', '**/*.md', 'site/**', 'workers/**', 'store/**', 'android/**', 'ios/**', '.github/ISSUE_TEMPLATE/**']
+  pull_request:
+    paths: ['desktop/**', 'src/desktop.js', 'src/kit/speed.js', 'scripts/desktop-test.cjs', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Electron and its builder keep their downloads here, so a run can reuse the last one's
+  ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-cache/builder
+
+jobs:
+  # The web app, built once (the same files go into both apps), and the desktop checks on Linux
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build the web app (streams its games, as the phone apps do)
+        run: npm run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-web
+          path: dist
+          retention-days: 3
+
+      - name: Install the desktop app's tools
+        run: npm ci --prefix desktop
+
+      - name: Install Playwright
+        run: |
+          npm i --no-save "playwright@$(npm view playwright version)"
+          npx playwright install-deps chromium
+
+      - name: Desktop checks (the app's address, links, speed class, a 2D and a Next Gen game)
+        run: |
+          npm run build:bundled
+          xvfb-run -a node scripts/desktop-test.cjs
+
+  build:
+    needs: web
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: mac, runner: macos-26, flags: '--mac dmg', archs: 'arm64 x64', test: 'desktop/release/mac-arm64/Game Scroll.app/Contents/MacOS/Game Scroll', files: 'desktop/release/*.dmg' }
+          - { os: windows, runner: windows-2025, flags: '--win nsis', archs: 'x64 arm64', test: 'desktop/release/win-unpacked/Game Scroll.exe', files: 'desktop/release/*.exe' }
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-web
+          path: dist
+
+      - uses: actions/cache@v6
+        with:
+          path: .electron-cache
+          key: electron-${{ matrix.os }}-${{ hashFiles('desktop/package-lock.json') }}
+
+      - name: Install the desktop app's tools
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'   # (the builder fetches the Electron it packs, for each kind of chip)
+        run: npm ci --prefix desktop
+
+      - name: Build
+        working-directory: desktop
+        run: |
+          for a in ${{ matrix.archs }}; do
+            npx electron-builder ${{ matrix.flags }} --$a --publish never -c.extraMetadata.version="1.0.$GITHUB_RUN_NUMBER"
+          done
+          ls -l release
+
+      - name: Install Playwright (the check drives the built app)
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm i --prefix "$RUNNER_TEMP/pw" --no-save "playwright@$(npm view playwright version)"
+
+      - name: The built app opens, streams its games and draws
+        env:
+          NODE_PATH: ${{ runner.temp }}/pw/node_modules
+        run: node scripts/desktop-test.cjs --app "${{ matrix.test }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: game-scroll-${{ matrix.os }}
+          path: ${{ matrix.files }}
+          retention-days: 14
+
+  # Only this job can write to the repository, and only for pushes to main.
+  release:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: game-scroll-*
+          merge-multiple: true
+          path: out
+
+      - name: Publish as the latest Mac and Windows builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l out
+          cat > notes.md <<EOF
+          Game Scroll for Mac and Windows, built from ${GITHUB_SHA::7} on $(date -u '+%d %b %Y %H:%M') UTC (build 1.0.${GITHUB_RUN_NUMBER}).
+
+          - **Mac with Apple silicon (M1 and later):** Game-Scroll-mac-arm64.dmg
+          - **Intel Mac:** Game-Scroll-mac-x64.dmg
+          - **Windows:** Game-Scroll-windows-x64.exe (Snapdragon laptops: Game-Scroll-windows-arm64.exe)
+
+          These builds aren't signed yet, so the computer asks once:
+          - **Mac:** open the .dmg and drag Game Scroll to Applications. Open it; when macOS says it can't check it, open System Settings › Privacy & Security, scroll down and click **Open Anyway** next to Game Scroll, then confirm.
+          - **Windows:** run the .exe; when "Windows protected your PC" shows, click **More info**, then **Run anyway**.
+
+          Your saves stay when you install a newer build over this one.
+          EOF
+          gh release delete desktop-latest --cleanup-tag --yes || true
+          gh release create desktop-latest out/*.dmg out/*.exe \
+            --target "$GITHUB_SHA" \
+            --title "Latest Mac and Windows builds (#${GITHUB_RUN_NUMBER})" \
+            --notes-file notes.md \
+            --latest=false

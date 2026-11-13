@@ -2,12 +2,13 @@
 //
 // A shared link looks like https://play.game-scroll.com/<game id>. That page (served by the API
 // Worker, workers/hearts/src/sharepage.js) has an "Open in Game Scroll" button that opens
-// gamescroll://game/<id>, which the app catches here and jumps to that game. On the web test site
-// the page links to ?g=<id> instead. What the feed then does is openShared in src/main.js (the shared
+// gamescroll://game/<id>, which the app catches here and jumps to that game (the phone apps, and the Mac
+// and Windows app: src/desktop.js). ?g=<id> on the app's own address opens one too (the tests). What the feed then does is openShared in src/main.js (the shared
 // game goes first; a game that has been taken down gets a note); scripts/share-link.mjs checks it.
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import { App } from '@capacitor/app';
+import { desktop } from './desktop.js';
 
 export const SHARE_BASE = String(import.meta.env.VITE_SHARE_URL || 'https://play.game-scroll.com').replace(/\/+$/, '');
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -52,6 +53,8 @@ export function onSharedGame(open) {
     // Drop ?g= so a reload doesn't jump back to that game.
     const u = new URL(location.href); u.searchParams.delete('g'); history.replaceState(null, '', u.pathname + u.search + u.hash);
   }
+  // the Mac and Windows app: the link it was opened with, and any that come while it runs
+  if (desktop) desktop.onOpenUrl(url => { const id = linkedGame(url); if (id) open(id); });
   if (!Capacitor.isNativePlatform()) return;
   App.getLaunchUrl().then(r => { const id = r && r.url && linkedGame(r.url); if (id) open(id); }).catch(() => {});
   App.addListener('appUrlOpen', e => { const id = linkedGame(e.url); if (id) open(id); });

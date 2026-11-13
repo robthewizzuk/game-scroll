@@ -74,6 +74,7 @@ import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } fro
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
+import { desktop } from '../desktop.js';
 
 export * as THREE from 'three';
 
@@ -101,10 +102,14 @@ export const TIERS = [
 ];
 // (relief: the triangles real surface detail may draw a frame, 0 = its meshes draw flat: see HD.reliefPx)
 // Where a phone starts: top phones (Fold 8, recent iPhone Pro) on high, others on high or medium.
-const START = { top: 2, mid: 2, low: 1 };
-// Play never climbs above high (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on ultra,
-// and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
-const CAP = 2;
+// Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
+// ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
+// A computer (the Mac and Windows app, src/desktop.js) doesn't heat up in a hand: a 'top' one starts on ultra,
+// any of them may climb to it, and each tier draws more of a big window's pixels before the upscaler fills in
+// the rest (ultra about a 2560 x 1440 window's worth, where a phone's is a little over a 1080p screen's).
+const START = desktop ? { top: 3, mid: 2, low: 1 } : { top: 2, mid: 2, low: 1 };
+const CAP = desktop ? 3 : 2;
+if (desktop) [.9e6, 1.5e6, 2.4e6, 3.7e6].forEach((px, i) => { TIERS[i].px = px; });
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -121,8 +126,9 @@ function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2
 // fps a struggling game first gives up a little resolution, then drops to 60 fps at full resolution
 // (keeping the picture); at the lowest tier and resolution it can drop to 30.
 const LEVELS = [1, .85, .7, .55];
-// Most pixels in the final picture once a game has stepped down (about a phone screen's worth; see draw()).
-const OUT_PX = 2.4e6;
+// Most pixels in the final picture once a game has stepped down (about a phone screen's worth, a 2560 x 1440
+// window's on a computer; see draw()).
+const OUT_PX = desktop ? 3.7e6 : 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;

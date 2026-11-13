@@ -2053,6 +2053,41 @@ console.log('physics ok');
   sp.settledFor(stepped.id).fpsAt -= 25 * 3600 * 1000; sp.settle(stepped.id, { tier: 0 });
   assert.equal(sp.fpsFor(stepped), 60, 'a day after the step it is let go, though the tier changed since');
   assert.equal(sp.settledFor(stepped.id).tier, 0, 'and the rest is kept');
+  // a computer (the Mac and Windows app, src/desktop.js): its class from its graphics chip as a desktop browser names it,
+  // screens up to 360 Hz, Auto at the screen's own rate, and 3D games stepping down a whole number of refreshes at a time
+  const DESK = {
+    'ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)': 'top', 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)': 'top',
+    'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top', 'ANGLE (AMD, AMD Radeon RX 6800 XT (0x000073BF) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top',
+    'ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top', 'ANGLE (Qualcomm, Qualcomm(R) Adreno(TM) X1-85 GPU (0x36334330) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'top',
+    'ANGLE (ATI Technologies Inc., AMD Radeon Pro 5500M OpenGL Engine, OpenGL 4.1)': 'top',
+    'ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid', 'ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics 655, OpenGL 4.1)': 'mid',
+    'ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid', 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11)': 'mid',
+    'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)': 'low', 'ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)': 'low', '': 'top',
+  };
+  for (const [n, k] of Object.entries(DESK)) assert.equal(sp.classifyDesktop(n), k, n || '(no name)');
+  assert.equal(sp.classify(Object.keys(DESK)[0], '', 8, 8, false, false), 'mid', 'the phone rule reads a Mac as a mid-range iPhone (why computers have their own)');
+  assert.equal(sp.classify(Object.keys(DESK)[2], '', 4, 8, false, true), 'mid', 'a computer with four cores or less: one class lower');
+  const { chipLabel } = await import('../src/kit/gpu.js');
+  assert.equal(chipLabel(Object.keys(DESK)[0]), 'Apple M2 Pro'); assert.equal(chipLabel(Object.keys(DESK)[2]), 'NVIDIA GeForce RTX 4070', 'the chip\'s name for the reports');
+  for (const [f, want] of [[146, 144], [166, 165], [238, 240], [74.4, 75], [61, 60], [118, 120], [355, 360]]) assert.equal(sp.snapHz(f, true), want, `a computer's ${f} Hz`);
+  assert.equal(sp.snapHz(238, false), 144, 'a phone keeps its own steps');
+  assert.equal(sp.evenRate(144, 60), 72, '144 Hz near 60: 72 (two refreshes a frame)'); assert.equal(sp.evenRate(60, 60), 60); assert.equal(sp.evenRate(165, 60), 82.5); assert.equal(sp.evenRate(144, 30), 36);
+  assert.equal(sp.rateBelow(144, 144), 72); assert.equal(sp.rateBelow(144, 72), 48); assert.equal(sp.rateBelow(240, 240), 120); assert.equal(sp.rateBelow(60, 60), 30);
+  assert.equal(sp.rateBelow(60, 30), 0, 'nothing below 30'); assert.equal(sp.rateAbove(144, 48), 72); assert.equal(sp.rateAbove(144, 72), 144); assert.equal(sp.rateAbove(144, 144), Infinity);
+  sp.speed.desktop = true; sp.speed.klass = 'top';
+  for (let i = 0, t = 9000; i < 60; i++) sp.tick(t += 1000 / 144);
+  assert.equal(sp.screenHz(), 144, 'a 144 Hz computer screen measures as 144');
+  const d2 = { id: 'kt-desk-2d' }, d3 = { id: 'kt-desk-3d', era: 'nextgen' };
+  assert.equal(sp.fpsFor(d2), 144, 'a 2D game runs at the computer screen\'s own rate (a phone stops at 120)');
+  assert.equal(sp.fpsFor(d3), 144, 'and a 3D game on a top computer');
+  assert.equal(sp.stepDown(d3), true); assert.equal(sp.fpsFor(d3), 72, 'stepping down: two refreshes a frame, not 60 on 144 Hz');
+  assert.equal(sp.stepDown(d3), true); assert.equal(sp.fpsFor(d3), 48, 'then three');
+  assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 72, 'and back up a refresh at a time');
+  assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 144, 'to the screen\'s rate');
+  sp.speed.klass = 'mid'; assert.equal(sp.fpsFor({ id: 'kt-desk-mid', era: 'nextgen' }), 72, 'a mid computer\'s 3D games: near 60 in whole refreshes');
+  sp.speed.desktop = false; sp.speed.klass = null;
+  for (let i = 0, t = 20000; i < 60; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'back on a phone\'s 120 Hz screen');
   // automatic 3D quality: Rob's Fold reports (2026-11-10) averaged 57 fps at 60 but dropped a frame 3 times a second
   const B = 1000 / 60;
   assert.equal(sp.qualityVerdict(B * 1.3, 0, B), 'slow', 'a slow average steps down');
