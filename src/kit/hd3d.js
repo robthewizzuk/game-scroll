@@ -32,7 +32,7 @@ import {
   WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry, LinearFilter, AdditiveBlending as ADD,
   OrthographicCamera, PlaneGeometry, MeshBasicMaterial, MeshDepthMaterial, Group, Vector4, DataTexture, RGBAFormat, ShaderChunk,
   LightProbe, CubeCamera, WebGLCubeRenderTarget, Euler, Matrix4, Quaternion, DepthTexture, WebGLCoordinateSystem, Box3, Sphere, UnsignedIntType,
-  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2,
+  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
@@ -60,6 +60,7 @@ import { makeRenderer } from './renderer.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
+import { LampPool } from './lamps.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
@@ -2058,36 +2059,33 @@ export class HDView {
    */
   contact(o = {}) { const cs = new ContactShadows(o); this.scene.add(cs.group); this.contacts.push(cs); return cs; }
   /**
-   * A pool of real point lights placed each frame at the nearest of many lamp spots (the far ones
-   * only glow). Call v.lampLights(maxDistance) once, then v.placeLamps(spots, x, y, z) per frame
-   * with spots = [{ x, y, z, col, i, flick }].
+   * A pool of real lights placed each frame at the nearest of many lamp spots (the far ones only glow). Call
+   * v.lampLights(maxDistance) once, then v.placeLamps(spots, x, y, z) per frame with spots = [{ x, y, z, col, i,
+   * flick }] and, for any of them: reach (metres it lights, else maxDistance), dir ([x, y, z]: a spot light shining
+   * that way), angle (its half width, radians), soft (0..1, its edge), shadow (true: it casts shadows, the nearest by
+   * quality), shape (a light shape it shines through: 'headlamp', 'window', 'blinds', 'cage', 'leaves', 'grille',
+   * 'stained', 'bars'), near (metres from the lamp its shadow starts: past a car's own nose for its headlights; .1),
+   * tube ([x, y, z]: a neon tube from x, y, z to there) or rect ({ w, h, normal }: a glowing sign). lamps.js says how;
+   * neon() and sign() make tubes and signs with their spots.
    */
   lampLights(dist = 7) {
     this.lampDist = dist;
-    for (let i = 0; i < 4; i++) { const l = new PointLight('#ffd8a0', 0, dist, 1.6); this.scene.add(l); this.lamps.push(l); }
+    const P = this.lampPool ||= new LampPool(this, dist); P.dist = dist;
+    for (let i = 0; i < 4; i++) { const l = new PointLight('#ffd8a0', 0, dist, 1.6); this.scene.add(l); this.lamps.push(l); P.adopt(l); }
     return this;
   }
   placeLamps(spots, x, y, z, t = 0) {
     // on WebGPU, clustered lighting (hd3d-gpu.js manyLights) lights 8 times as many of the nearest lamps
-    // for about the same cost; the pool grows as needed (its extra lights stay off on WebGL)
-    const many = HD.manyLights !== false && !!gpuFor(this)?.r.gsClustered;
-    const n = Math.min(tier().lights * (many ? 8 : 1), many ? spots.length : 4);
-    while (this.lamps.length < n) { const l = new PointLight('#ffd8a0', 0, this.lampDist ?? 7, 1.6); this.scene.add(l); this.lamps.push(l); }
-    const near = spots.map(s => [s, (s.x - x) ** 2 + (s.z - z) ** 2 + (s.y - y) ** 2]).sort((a, b) => a[1] - b[1]);
-    // A light switching on or off changes how many lights every material is built for, so three.js
-    // rebuilds all their shaders: a stutter each time a lamp came into or left range. So the pooled
+    // for about the same cost; the pool grows as needed (WebGL keeps its few, and a few spot lights with shadows)
+    const G = gpuFor(this), many = HD.manyLights !== false && !!G?.r.gsClustered;
+    const P = this.lampPool ||= new LampPool(this, this.lampDist ?? 7);
+    // A light switching on or off changes how many lights every material is built for on WebGL, so three.js
+    // rebuilds all their shaders: a stutter each time a lamp came into or left range. So there the pooled
     // lights stay switched on (the tier sets how many) and a spare one just goes dark.
-    this.lamps.forEach((l, i) => {
-      const s = near[i]?.[0]; l.visible = i < n;
-      if (!l.visible) return;
-      if (!s) { l.intensity = 0; return; }
-      l.position.set(s.x, s.y, s.z); l.color.set(s.col || '#ffd8a0');
-      const fl = s.flick ? (Math.sin(t * 31 + s.x * 7) > .6 || Math.sin(t * 3.1 + s.z) > .95 ? .25 : 1) : 1;
-      // fade the furthest light in/out so swapping which lamps are lit never pops
-      const fade = i === n - 1 && near[n] ? Math.min(1, (near[n][1] - near[i][1]) * .6) : 1;
-      l.intensity = (s.i ?? 6) * fl * fade; s.lit = fl;
-    });
+    P.place(spots, x, y, z, t, tier(), HD.tier, many, !!G);
   }
+  /** What the lamps' shadows did last frame (WebGPU): slots with a lamp, slots drawn, slots waiting their turn. */
+  get lampShadows() { return this.lampPool?.stats || null; }
   /**
    * A soft light on a person's face from beside the camera, as a film crew's fill or eye light, for close-ups and cutscenes: it lifts the
    * shadow side of the face, puts a small bright point in each eye and falls off within a couple of steps, so it hardly touches anything
@@ -2226,6 +2224,8 @@ export class HDView {
     if (this.shAll) { force = true; this.shAll = false; }   // (shadowsDirty(): the kept copies of still things too)
     const L = this.shL ||= [], keys = this.shK ||= new Map(), TL = this.shT ||= []; L.length = 0;
     eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow) L.push(o); });
+    // (WebGPU: the lamps' shadow slots, each a spot light outside the scene that stands in for its lamp: lamps.js)
+    if (gpu && this.lampPool) for (const p of this.lampPool.proxies()) L.push(p);
     const n = L.length; if (!n) return false;
     if (SH_H.length < n * 5) SH_H = new Float64Array(n * 10);
     const H = SH_H; H.fill(0, 0, n * 5);   // per light: [own, still sum, moving sum, still triangles, moving triangles]
@@ -2280,6 +2280,7 @@ export class HDView {
       for (let i = 0; i < n; i++) {
         const l = L[i];
         if (ball) {
+          if (l.gsProxy && l.gsAt.distanceToSquared(SH_S.center) > (l.distance + SH_S.radius) ** 2) continue;   // (a lamp's slot: out of its reach, a quick no)
           const sees = l.isPointLight ? SH_P.setFromMatrixPosition(l.matrixWorld).distanceTo(SH_S.center) < SH_S.radius + (l.distance || l.shadow.camera.far) : l.shadow._frustum.intersectsSphere(SH_S);
           if (!sees) continue;
         }
@@ -2368,6 +2369,13 @@ export class HDView {
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
     if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
+    // the lamps' shadow slots (lamps.js): handed out now the lamps' matrices are this frame's, and their atlas made
+    const LP = this.lampPool;
+    if (LP?.gpu) {
+      LP.prepare(T, HD.tier);
+      const at = G.fx.lampAtlas(r, LP.cols, LP.rows, LP.slotPx, LP); LP.atlasGen = G.fx.lampAtlasInfo().gen;
+      for (const p of LP.proxies()) { p.shadow.map = at; shc.push(p.shadow.camera); }
+    }
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
@@ -2453,6 +2461,13 @@ export class HDView {
         shadowSplit(l, ops);
         sh.needsUpdate = false;
       }
+      if (pm >= 0) leave(pm);
+    }
+    // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
+    if (LP?.gpu) {
+      if (pm >= 0) enter('3D: lamp shadows');
+      const mask = this.cam.layers.mask;
+      LP.finish(T.shadow > 0 ? HD.tier : 0, s => G.fx.drawSlot(r, this.scene, s, mask));
       if (pm >= 0) leave(pm);
     }
     if (!this.warmed && !off) { this.warmed = true; this.aheadAgain = true; }   // (what this frame does not draw is built over the next ones: buildAhead)
@@ -3882,6 +3897,51 @@ export function spot(col = '#fff2e0', i = 30, dist = 16, angle = .5) {
   return s;
 }
 
+/**
+ * A neon tube along points ([[x, y, z], ...] or Vector3s, a straight run between each): a glowing tube (it blooms) and
+ * the lamp spots that light the world from it (tube lights: on WebGPU a wet road under it shows a long streak of its
+ * colour). colour, thick (tube radius, m), glow (how bright the tube itself looks), i (light strength), reach (metres
+ * it lights), lights (how many tube lights stand for it: its longest runs). Add the group to the scene; pass
+ * n.spots() to v.placeLamps each frame (they follow the group wherever it is moved).
+ */
+export function neon(points, { colour = '#ff3d8b', thick = .025, glow = 5, i = 3, reach = 6, lights = 3 } = {}) {
+  const P = points.map(p => p.isVector3 ? p.clone() : new Vector3(p[0], p[1], p[2]));
+  const g = new Group(), m = new MeshStandardMaterial({ color: '#000', emissive: new Color(colour), emissiveIntensity: glow, roughness: .3 }); g.name = 'neon';
+  for (let k = 1; k < P.length; k++) {
+    const a = P[k - 1], b = P[k], len = a.distanceTo(b); if (len < 1e-4) continue;
+    const t = new Mesh(new CylinderGeometry(thick, thick, len + thick, 8, 1), m); t.position.copy(a).add(b).multiplyScalar(.5);
+    t.quaternion.setFromUnitVectors(UPV, FR.subVectors(b, a).normalize()); t.castShadow = false; t.userData.noContact = true; t.userData.noLod = true; g.add(t);
+  }
+  // the lights: the longest runs, each its own tube
+  const runs = []; for (let k = 1; k < P.length; k++) runs.push([k, P[k - 1].distanceTo(P[k])]);
+  runs.sort((a, b) => b[1] - a[1]); runs.length = Math.min(runs.length, Math.max(1, lights));
+  const out = runs.map(([k]) => ({ a: P[k - 1], b: P[k], s: { x: 0, y: 0, z: 0, tube: [0, 0, 0], col: colour, i, reach } }));
+  const A = new Vector3(), B = new Vector3();
+  g.spots = (list = []) => { g.updateWorldMatrix(true, false); for (const o of out) { A.copy(o.a).applyMatrix4(g.matrixWorld); B.copy(o.b).applyMatrix4(g.matrixWorld); o.s.x = A.x; o.s.y = A.y; o.s.z = A.z; o.s.tube[0] = B.x; o.s.tube[1] = B.y; o.s.tube[2] = B.z; list.push(o.s); } return list; };
+  g.material = m;
+  return g;
+}
+/**
+ * A glowing sign, w x h metres, facing +z (turn the group to aim it): paint(ctx, pw, ph) draws its face in a canvas
+ * (text, a shape; what is bright glows), and it lights what is in front of it as a sign does (a rect light on WebGPU,
+ * a lamp at its middle on WebGL). colour: its light's colour (the face's own colours glow as they are); glow, i,
+ * reach, px (the canvas's pixels a metre). Pass s.spots() to v.placeLamps each frame.
+ */
+export function sign(w, h, paint, { colour = '#ffd9a0', glow = 3, i = 4, reach = 7, px = 128 } = {}) {
+  const cv = document.createElement('canvas'); cv.width = Math.max(8, Math.round(w * px)); cv.height = Math.max(8, Math.round(h * px));
+  const c = cv.getContext('2d'); c.fillStyle = '#000'; c.fillRect(0, 0, cv.width, cv.height); paint?.(c, cv.width, cv.height);
+  const tex = new CanvasTexture(cv); tex.colorSpace = SRGBColorSpace;
+  const m = new MeshStandardMaterial({ color: '#111', emissive: '#fff', emissiveMap: tex, emissiveIntensity: glow, roughness: .4 });
+  const g = new Group(), face = new Mesh(new PlaneGeometry(w, h), m); face.userData.noContact = true; face.userData.noLod = true; g.add(face); g.name = 'sign';
+  const s = { x: 0, y: 0, z: 0, col: colour, i, reach, rect: { w, h, normal: [0, 0, 1] } }, A = new Vector3(), N = new Vector3();
+  g.spots = (list = []) => {
+    g.updateWorldMatrix(true, false); A.setFromMatrixPosition(g.matrixWorld); N.set(0, 0, 1).transformDirection(g.matrixWorld);
+    // (WebGL lights a sign from a lamp at its middle: a little in front, so the wall it hangs on is lit too)
+    s.x = A.x + N.x * .05; s.y = A.y + N.y * .05; s.z = A.z + N.z * .05; s.rect.normal[0] = N.x; s.rect.normal[1] = N.y; s.rect.normal[2] = N.z; list.push(s); return list;
+  };
+  g.material = m; g.texture = tex;
+  return g;
+}
 
 /* ---------- contact shadows ---------- */
 // The soft shadow right under things, made the usual way: render what's above the floor from below

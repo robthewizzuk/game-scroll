@@ -5342,6 +5342,80 @@ console.log('physics ok');
   console.log(`crowds: rows that are the figures' own poses (${worst.toExponential(1)} off at most), levels made between and after a figure's own, who is sent and how finely, strides, blends, a move that plays once, rays, growing ok`);
 }
 
+// ---- cloth in the wind (src/kit/cloth.js: gs.outdoors.Cloth), the smaller version that runs here (the graphics chip's: scripts/cloth.cjs --webgpu)
+{
+  const THREE = await import('three'), { Cloth, Wind } = await import('../src/kit/outdoors.js'), { CLOTH } = await import('../src/kit/cloth.js');
+  const run = (c, secs, w = null) => { for (let i = 0; i < Math.round(secs * 60); i++) { w?.update(1 / 60); c.update(1 / 60); } };
+  const finite = c => c.P.every(Number.isFinite) && c.V.every(Number.isFinite);
+  // the worst a link along the weave (the ones that never give) is stretched past its length, and the worst a point is further from its hold than it was made
+  const stretch = c => { let s = 1; for (let k = 0; k < c.L.length; k += 4) { if (!c.L[k + 2] || c.L[k + 3]) continue; const a = c.L[k] * 3, b = c.L[k + 1] * 3; s = Math.max(s, Math.hypot(c.P[a] - c.P[b], c.P[a + 1] - c.P[b + 1], c.P[a + 2] - c.P[b + 2]) / c.L[k + 2]); } return s; };
+  const held = c => { let s = 0; for (let k = 0; k < c.N; k++) { const t = c.TT[k]; if (t < 0) continue; s = Math.max(s, Math.hypot(c.P[k * 3] - c.P[t * 3], c.P[k * 3 + 1] - c.P[t * 3 + 1], c.P[k * 3 + 2] - c.P[t * 3 + 2]) - c.TR[k]); } return s; };
+  // a flag: in still air it falls in and hangs by the pole (cloth shears and folds easily); in a breeze it flies out downwind, its ripples running along it
+  {
+    const still = new Cloth(null, { wind: { x: 0, z: 0 } }), f = still.flag({ at: [0, 6, 0], size: [1.8, 1.2] });
+    assert.ok(still.fine === 7 && still.mode === 'cpu' && f.cols === 14 && f.rows === 9, 'seven points a metre here');
+    run(still, 3); const c0 = f.at(f.cols - 1, 0);
+    assert.ok(finite(still) && c0[0] < 1 && c0[1] < 5, 'in still air the flag hangs: its free top corner ' + c0.map(x => x.toFixed(2)));
+    for (let j = 0; j < f.rows; j++) { const p = f.at(0, j); assert.ok(p[0] === 0 && p[2] === 0 && Math.abs(p[1] - (6 - 1.2 * j / (f.rows - 1))) < 1e-5, 'its edge on the pole stays put'); }
+    const windy = new Cloth(null, { wind: { x: 0, z: 5 } }), g = windy.flag({ at: [0, 6, 0], size: [1.8, 1.2] });
+    let z = 0, y = 0, n = 0, moved = 0, last = null; run(windy, 2);
+    for (let i = 0; i < 120; i++) { windy.update(1 / 60); const p = g.at(g.cols - 1, g.rows >> 1); z += p[2]; y += p[1]; n++; if (last) moved += Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]); last = p; }
+    assert.ok(finite(windy) && z / n > 1.1 && y / n > 4.6, 'in a breeze of 5 m/s it flies out downwind: its fly end ' + (z / n).toFixed(2) + ' m out, at ' + (y / n).toFixed(2));
+    assert.ok(moved > 1, 'and never quite still: its fly end went ' + moved.toFixed(2) + ' m in two seconds');
+    assert.ok(stretch(windy) < 1.15 && held(windy) < 1e-4, 'and keeps its size: stretched ' + stretch(windy).toFixed(3));
+  }
+  // a gale doesn't blow it apart; a gust from a gs.outdoors Wind reaches each piece where it is; open: .3 feels a third of it
+  {
+    const wind = new Wind({ x: 18, z: 6, gust: .6 }), c = new Cloth(null, { wind }), f = c.flag({ at: [0, 6, 0], size: [2.4, 1.6] }), b = c.banner({ from: [3, 4, 0], to: [6, 4, 0], drop: 2.5, open: .3 });
+    run(c, 6, wind); assert.ok(finite(c) && stretch(c) < 1.3 && held(c) < 1e-4, 'a gale of 18 m/s: everything stays a number, nothing stretches far (' + stretch(c).toFixed(3) + ')');
+    assert.ok(Math.abs(b.wind[0] - .3 * f.wind[0] / f.open) < 6 && b.open === .3 && f.open === 1 && b.wind[3] > 0, 'a piece in the lee feels its share of the wind');
+  }
+  // a banner hangs from its rail; an awning holds at the wall and its front bar, sags between and its valance hangs; a washing line gives under its load
+  {
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, ground: 0 }), b = c.banner({ from: [0, 3, 0], to: [2, 3, 0], drop: 2 });
+    const a = c.awning({ at: [5, 2.5, 0], width: 2, depth: 1.2, fall: .4 }), line = c.line({ from: [10, 2, 0], to: [14, 2, 0], sag: .1, items: 3 });
+    run(c, 3);
+    for (let i = 0; i < b.cols; i++) { const p = b.at(i, 0), q = b.at(i, b.rows - 1); assert.ok(p[1] === 3 && Math.abs(q[1] - 1) < .06 && Math.abs(q[2]) < .05, 'a banner hangs straight down from its rail'); }
+    const wall = a.at(a.cols >> 1, 0), mid = a.at(a.cols >> 1, 3), bar = a.at(a.cols >> 1, Math.round((a.rows - 1) * .7)), foot = a.at(a.cols >> 1, a.rows - 1);
+    assert.ok(wall[2] === 0 && Math.abs(mid[1] - (2.5 - .4 * mid[2] / 1.2)) < .1 && foot[1] < bar[1] + .01 && foot[1] > 1.6, 'an awning: wall row held, the cover between, the valance hanging at the front');
+    const rope = line[0], low = Math.min(...Array.from({ length: rope.cols }, (_, i) => rope.at(i, 0)[1]));
+    assert.ok(low < 1.9 && low > 1.6 && line.length === 4 && line.slice(1).every(s => s.at(0, 0)[1] > s.at(0, s.rows - 1)[1] + .4), 'the line sags under its washing (' + low.toFixed(2) + ') and each thing hangs from it');
+    assert.ok(finite(c) && held(c) < 1e-4 && c.pieces.length === 6 && c.N === b.cols * b.rows + a.cols * a.rows + line.reduce((n, p) => n + p.cols * p.rows, 0), 'six pieces in one set of points');
+  }
+  // a sheet dropped over a ball drapes on it and stays (it grips), and lies on the ground rather than going through it
+  {
+    const c = new Cloth(null, { wind: { x: 2, z: 0 }, ground: 0 }), n = 12, s = c.sheet({ cols: n, rows: n, place: (i, j) => [-.8 + 1.6 * i / (n - 1), 1.3, -.8 + 1.6 * j / (n - 1)], open: .3, weight: .5 }), ball = c.ball({ x: 0, y: .5, z: 0, r: .5 });
+    run(c, 4); const mid = s.at(n >> 1, n >> 1); let low = Infinity; for (let k = 0; k < c.N; k++) low = Math.min(low, c.P[k * 3 + 1]);
+    assert.ok(finite(c) && Math.abs(mid[0]) < .15 && Math.abs(mid[2]) < .15 && mid[1] > .98 && mid[1] < 1.1, 'the sheet stays on the ball: its middle at ' + mid.map(x => x.toFixed(2)));
+    assert.ok(low >= .01 - 1e-6, 'nothing below the ground');
+    for (let k = 0; k < c.N; k++) assert.ok(Math.hypot(c.P[k * 3], c.P[k * 3 + 1] - .5, c.P[k * 3 + 2]) > .5, 'no point inside the ball');
+    ball.set(3, .5, 0); run(c, .2); assert.ok(c.solids.length === 1); ball.remove?.(); c.solids = c.solids.filter(q => q !== ball);
+    const leg = c.capsule({ a: [0, 0, 0], b: [0, 1, 0], r: .2 }); run(c, .5); assert.ok(c.solids.length === 1 && finite(c), 'a capsule too (a leg, a post)'); c.clear(); c.update(1 / 60); assert.ok(c.N === 0 && c.pieces.length === 0, 'clear() takes every piece away');
+  }
+  // pins can ride a moving thing, or be moved by hand; a piece taken away goes from the set
+  {
+    const c = new Cloth(null, { wind: { x: 4, z: 0 } }), mast = new THREE.Object3D(), f = c.flag({ at: [0, 4, 0], size: [1, .6] }).ride(mast), b = c.banner({ from: [5, 3, 0], to: [6, 3, 0], drop: 1 });
+    run(c, .5); mast.position.set(3, 0, -2); mast.rotation.y = .5; mast.updateMatrixWorld(true); run(c, 1);
+    const top = f.at(0, 0), want = new THREE.Vector3(0, 4, 0).applyMatrix4(mast.matrixWorld);
+    assert.ok(Math.hypot(top[0] - want.x, top[1] - want.y, top[2] - want.z) < 1e-4 && finite(c), 'a flag on a moving mast goes with it');
+    b.move(0, .5, 0); run(c, .2); assert.ok(Math.abs(b.at(0, 0)[1] - 3.5) < 1e-5, 'move() moves its pins');
+    const keep = f.at(f.cols - 1, f.rows - 1), more = c.flag({ at: [9, 3, 0] }); c.build(); assert.ok(f.at(f.cols - 1, f.rows - 1).every((x, i) => x === keep[i]) && more.at(0, 0)[0] === 9, 'a piece added later leaves the others where they were'); more.remove();
+    c.update(1 / 60); const N0 = c.N, v0 = c.version; b.remove(); c.update(1 / 60); assert.ok(c.N === N0 - b.cols * b.rows && c.pieces.length === 1 && c.version === v0 + 1, 'remove() takes it out of the set');
+    const scene = new THREE.Scene(), v = { scene }, d = new Cloth(v); d.flag(); d.update(1 / 60);
+    assert.ok(scene.children.includes(d.mesh) && v.sims.includes(d) && d.mesh.userData.noLod && d.mesh.geometry.attributes.position.count === d.N, 'on a view: its mesh in the scene, stepped with the view (the graphics chip takes over there)');
+    d.dispose(); assert.ok(!scene.children.includes(d.mesh) && !v.sims.includes(d), 'dispose() takes it out');
+  }
+  // what it costs: about a thousand points (a flag, two banners, an awning, a washing line) a frame here
+  {
+    const wind = new Wind({ x: 5, z: 2, gust: .4 }), c = new Cloth(null, { wind, ground: 0 });
+    c.flag({ at: [0, 6, 0], size: [1.8, 1.2] }); c.banner({ from: [3, 4, 0], to: [5, 4, 0], drop: 2.2 }); c.banner({ from: [6, 4, 0], to: [8, 4, 0], drop: 2.2 });
+    c.awning({ at: [10, 2.6, 0], width: 3, depth: 1.3 }); c.line({ from: [-5, 2, 3], to: [-1, 2, 3.6], items: 4 });
+    run(c, 1, wind); const t0 = performance.now(); run(c, 4, wind); const ms = (performance.now() - t0) / 240;
+    assert.ok(finite(c) && ms < 3, 'cloth.update() ' + ms.toFixed(3) + ' ms a frame for ' + c.N + ' points');
+    console.log(`cloth in the wind: a flag hangs in still air and flies in a breeze, a gale doesn't tear it, banners, awnings and washing lines hang right, a sheet stays on a ball, pins ride things, pieces come and go ok (${ms.toFixed(3)} ms a frame for ${c.N} points; ${CLOTH.STEPS} small steps)`);
+  }
+}
+
 // ---- smaller meshes (src/kit/slim.js, slim-core.js): points kept in about half the bytes
 {
   const THREE = await import('three'), { mergeGeometries } = await import('three/examples/jsm/utils/BufferGeometryUtils.js');
@@ -5857,6 +5931,50 @@ console.log('physics ok');
   assert.ok(fw.at.x === 2048 && fw.at.z === 512 && fw.recentred === 1 && Math.abs(box.position.x - 2048) < 1e-4 && box.position.y < y0 && Math.abs(fb.body.translation().x) < 1e-4, 'follows the view\'s centre: the box falls on where it was, kept near Rapier\'s own centre');
   for (const x of [fw, w]) x.free();
   console.log('floating origin: the centre moves in steps, physics far out runs as at the centre, a shift leaves bodies, lifts, hinges and rays be, and follows the view ok');
+}
+
+// night lights (lamps.js): the lamp pool, light shapes, shadow slots
+{
+  const THREE = await import('three'), { LampPool, shapeAt, SHAPES, SLOTS, SLOT_DRAWS } = await import('../src/kit/lamps.js');
+  // the shapes: colours 0..1; a headlight's beam is dark above its cut-off and bright under it; a window's bars are dark, its panes light
+  for (let i = 0; i < SHAPES.length; i++) for (let k = 0; k < 64; k++) { const c = shapeAt(i, (k % 8 + .5) / 8, (Math.floor(k / 8) + .5) / 8); assert.ok(c.length === 3 && c.every(x => x >= 0 && x <= (i === 0 ? 2 : 1)), `shape ${SHAPES[i]} gives colours 0..1 (the headlamp's hot spot up to 2)`); }
+  assert.ok(shapeAt(0, .35, .3)[0] < .1 && shapeAt(0, .35, .62)[0] > .5, 'a headlight is dark above its cut-off and bright under it');
+  assert.ok(shapeAt(1, .5, .3)[0] < .1 && shapeAt(1, .3, .3)[0] > .9, 'a window\'s bars are dark and its panes light');
+  const view = () => ({ scene: new THREE.Scene(), lamps: [] }), T = { lights: 4, shadow: 1024 };
+  // WebGL: round lamps only make no spot lights (each would rebuild every shader); a lamp with a dir or a shadow makes them, once
+  const v1 = view(), P1 = new LampPool(v1, 10), row = [0, 10, 20, 30, 40].map(x => ({ x, y: 5, z: 0 }));
+  P1.place(row, 0, 0, 0, 0, T, 2, false, false);
+  assert.ok(P1.cones.length === 0 && P1.points.length === 4, 'WebGL: round lamps make four round lights and no spot lights');
+  const kept = P1.used.get(row[1]); P1.place(row, 6, 0, 0, 0, T, 2, false, false);
+  assert.ok(P1.used.get(row[1]) === kept, 'a lamp keeps its light while it stays among the nearest');
+  const lit = [{ ...row[0], dir: [1, 0, 0], shadow: true }, ...row.slice(1)];
+  P1.place(lit, 0, 0, 0, 0, T, 2, false, false); const n1 = v1.lamps.length;
+  assert.ok(P1.cones.length === 2 && P1.used.get(lit[0]).isSpotLight && P1.used.get(lit[0]).castShadow, 'WebGL: a shadowed lamp with a dir gets a spot light with a shadow');
+  P1.place(lit, 30, 0, 0, 0, T, 2, false, false); P1.place(row, 0, 0, 0, 0, T, 2, false, false);
+  assert.ok(v1.lamps.length === n1 && v1.lamps.every(l => l.visible), 'WebGL: the pool never shrinks and its lights stay switched on');
+  // WebGPU: every lamp near enough is lit; a spot, a tube and a sign get what the lights node reads
+  const v2 = view(), P2 = new LampPool(v2, 10), spots = [
+    ...Array.from({ length: 12 }, (_, i) => ({ x: i * 3, y: 5, z: 0, shadow: true })),
+    { x: 0, y: 1, z: 2, dir: [0, 0, -1], shape: 'headlamp', shadow: true, reach: 20 },
+    { x: -2, y: 3, z: 0, tube: [2, 3, 0] }, { x: 0, y: 2, z: -1, rect: { w: 2, h: 1, normal: [0, 0, 1] } }];
+  P2.place(spots, 0, 2, 0, 0, T, 2, true, true);
+  const L = s => P2.used.get(s).userData.gsLamp, [car, tube, sign] = spots.slice(12);
+  assert.ok(spots.every(s => P2.used.get(s)?.intensity > 0), 'WebGPU: all 15 lamps are lit');
+  assert.ok(P2.used.get(car).isSpotLight && L(car).shape === 0 && L(car).want && !P2.used.get(car).castShadow, 'a headlight: a spot light with its shape, wanting a shadow from the atlas (not three\'s own)');
+  assert.ok(L(tube).kind === 1 && Math.abs(L(tube).ha - 2) < 1e-6 && Math.abs(L(tube).a.x - 1) < 1e-6 && !L(tube).want, 'a tube: its half length and its way');
+  assert.ok(L(sign).kind === 2 && L(sign).ha === 1 && L(sign).hb === .5 && Math.abs(L(sign).a.clone().cross(L(sign).b).z - 1) < 1e-6, 'a sign: its half width and height, facing its normal');
+  // the scene's world matrices, as drawing works them out, then the slots: the nearest shadowed lamps, a few drawn a frame
+  v2.scene.updateMatrixWorld(true); P2.prepare(T, 2);
+  const slotted = P2.slots.filter(s => s.light);
+  assert.ok(P2.slots.length === SLOTS[2] && slotted.length === SLOTS[2] && slotted.every(s => s.light.userData.gsLamp.near <= Math.min(...spots.filter(x => x.shadow).map(x => L(x).near).sort((a, b) => a - b).slice(SLOTS[2] - 1, SLOTS[2]))), 'the nearest lamps that want a shadow get the slots');
+  let drawn = 0; P2.finish(2, () => drawn++);
+  assert.ok(drawn === SLOT_DRAWS[2] && P2.stats.waiting === SLOTS[2] - SLOT_DRAWS[2], 'only a few slots are drawn a frame, the rest wait their turn');
+  for (let f = 0; f < 3; f++) { P2.prepare(T, 2); P2.finish(2, () => drawn++); }
+  assert.ok(P2.slots.every(s => s.ready) && P2.stats.waiting === 0, 'every slot is drawn within a few frames');
+  const before = drawn; P2.prepare(T, 2); P2.finish(2, () => drawn++);
+  assert.ok(drawn === before, 'a slot nothing moved in is not drawn again');
+  assert.ok(L(car).slot >= 0 && L(car).proj && L(car).texel > 0, 'a slotted lamp reads its slot through its matrix');
+  console.log('night lights: shapes, a pool that keeps its lights, spot lights on WebGL only when wanted, tubes and signs, shadow slots for the nearest, a few drawn a frame ok');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
