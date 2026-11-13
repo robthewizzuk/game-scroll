@@ -586,6 +586,12 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   (the same on WebGL and WebGPU, nothing where the ground is unmarked), and every mark is remembered,
   so `marks.trail()` can be followed. The full list is in
   [maker-kit.md](maker-kit.md#ground-that-takes-marks); `node scripts/marks.cjs film.png` films it.
+- **Cloth in the wind** (`new gs.outdoors.Cloth(v, { wind })`, then `cloth.flag()`, `banner()`, `awning()`,
+  `line()` or `sheet()`, and `cloth.update(dt)`): flags that hang in still air and fly in a breeze with
+  ripples running downwind, banners, awnings and washing lines, and sheets that drape over solid balls
+  and capsules and grip them. On WebGPU the graphics chip steps every piece at once and the mesh reads
+  its places from there; elsewhere a coarser set runs on the CPU. The full list is in
+  [maker-kit.md](maker-kit.md#cloth-in-the-wind); `node scripts/cloth.cjs film.png` films it.
 - **Cliffs, caves and overhangs** (`land.rocks({ caves, shapes })` on a `gs.outdoors` `Land`): real rock on
   the height map that can fold over itself. Cliffs with beds, ledges and lips that overhang come by
   themselves where the land is steep; `caves: [{ path, radius }]` cuts tunnels you can walk through (the

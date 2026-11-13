@@ -1,0 +1,52 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Cloth in the wind (gs.outdoors.Cloth), filmed for scripts/cloth.cjs: a flag on a pole, an awning over a door, a banner on a rail,
+// a washing line, and a ball the wind blows a sheet over; pictures every so often from two places. It prints how many points
+// there are, how long the steps take a frame here, and whether the graphics chip ran them.
+//   ?cols=5 &cell=320x240 &secs=4 &wind=5 &gpu (WebGPU) &eye=x,y,z&at=x,y,z (one view of your own)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const cols = +(Q.get('cols') || 5), [cw, ch] = (Q.get('cell') || '320x240').split('x').map(Number), secs = +(Q.get('secs') || 4), ws = +(Q.get('wind') || 5);
+  window.__hd.force = 2; window.__hd.upscale = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .3 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sun = gs.hd.sun('#fff2d8', 1.4, 8, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const pbr = gs.hd.pbr, box = (w, h, d, c, x, y, z) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), pbr(c, { rough: .9 })); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  box(40, .2, 40, '#7d8274', 0, -.1, 0);
+  box(.08, 6, .08, '#ccc', 0, 3, 0);                          // the flagpole
+  box(6, 3.4, .3, '#b8a888', 4, 1.7, -3.15);                   // a wall with an awning
+  box(2.4, .1, .1, '#555', -2.8, 3.2, -1);                     // the banner's rail
+  box(.08, 2, .08, '#8a6a4a', -5, 1, 3); box(.08, 2, .08, '#8a6a4a', -1, 1, 3.6);   // the washing line's posts
+  const wind = new gs.outdoors.Wind({ x: ws, z: ws * .35, gust: .4, gustSize: 20 }), cloth = new gs.outdoors.Cloth(v, { wind, ground: 0 });
+  cloth.flag({ at: [0, 5.95, 0], size: [1.8, 1.2], colours: ['#c33', '#f4f0e6', '#2a5cb0'] });
+  cloth.awning({ at: [4, 2.7, -3], width: 3, depth: 1.3, fall: .5, colours: ['#2a7a4a', '#eeeae0', '#2a7a4a', '#eeeae0', '#2a7a4a', '#eeeae0', '#2a7a4a'] });
+  cloth.banner({ from: [-3.95, 3.15, -.95], to: [-1.65, 3.15, -.95], drop: 2.2, colour: '#7a2440', weight: .6 });   // (canvas, weighted at the foot)
+  cloth.line({ from: [-5, 1.95, 3], to: [-1, 1.95, 3.6], items: 3 });
+  const ball = cloth.ball({ x: 2.5, y: .5, z: 2.5, r: .5 }); box(.6, .3, .6, '#e6dcc8', 4, .15, 2.2);   // (a box the sheet's colour, to tell its light from the sun's)
+  { const m = new T.Mesh(new T.SphereGeometry(.48, 24, 16), pbr('#a05a30', { rough: .6 })); m.position.set(2.5, .5, 2.5); m.castShadow = true; v.scene.add(m); }
+  cloth.sheet({ cols: Math.round(1.6 * cloth.fine), rows: Math.round(1.6 * cloth.fine), place: (i, j) => [2.5 - .8 + 1.6 * i / (Math.round(1.6 * cloth.fine) - 1), 1.3, 2.5 - .8 + 1.6 * j / (Math.round(1.6 * cloth.fine) - 1)], colour: '#e6dcc8', weight: .5, open: .25 });   // (a tarp in the lee of something)
+  const views = Q.get('eye') ? [[Q.get('eye').split(',').map(Number), (Q.get('at') || '0,2,0').split(',').map(Number)]] : [[[7, 4, 9], [1, 2.2, 0]], [[-9, 3.2, 7], [-2.5, 2, 1]]];
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * views.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const dt = 1 / 60, N = Math.round(secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((i + 1) / cols * N) - 1);
+  let cost = 0, cpuFrames = 0;
+  for (let i = 0; i < N; i++) {
+    wind.update(dt); const t0 = performance.now(); cloth.update(dt); cost += performance.now() - t0;
+    if (cloth.mode === 'cpu') cpuFrames++;
+    const k = shots.indexOf(i);
+    // (every frame is drawn so the graphics chip takes its steps; the pictures are taken from each place in turn)
+    for (let w = 0; w < (k >= 0 ? views.length : 1); w++) {
+      const [eye, at] = views[k >= 0 ? w : 0]; v.cam.fov = 40; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+      v.cam.position.set(...eye); v.cam.lookAt(...at); v.cam.updateMatrixWorld(); v.t = 0; v.render(cx, cw, ch);
+      if (k >= 0) { if (w > 0) { cloth.pending = 0; } await frame(); v.render(cx, cw, ch); sx.drawImage(cell, k * cw, w * ch); sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${((i + 1) * dt).toFixed(2)}s ${cloth.mode}`, k * cw + 4, w * ch + 12); }
+    }
+    if (i % 10 === 0) await frame();
+  }
+  const nan = cloth.mode === 'cpu' && [...cloth.P].some(x => !Number.isFinite(x));
+  window.result = { sheet: sheet.toDataURL(), info: [`${cloth.N} points in ${cloth.pieces.length} pieces, ${cloth.fine} a metre; ${(cost / N).toFixed(3)} ms a frame here; ran on the ${cloth.mode === 'gpu' ? 'graphics chip' : 'CPU'} (${cpuFrames} frames on the CPU)${nan ? '; NOT A NUMBER' : ''}`], backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>
