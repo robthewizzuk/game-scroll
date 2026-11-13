@@ -19,6 +19,7 @@
 // ('wrap' or 'bounce'), seed, gpu (false keeps it on the CPU). obstacle(x, y, r) adds a round
 // obstacle (up to 16). On the GPU the positions you read are one or two frames old, which nobody sees.
 // Not lazy: it starts on the CPU at once and moves to the GPU when that's ready.
+import { timed } from './prof.js';
 import { computeDevice } from './gpu.js';
 import { phoneClass } from './speed.js';
 import { own } from './cleanup.js';
@@ -299,3 +300,6 @@ async function startGPU(s) {
   s.gpu = true;
   return true;
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Swarm.prototype, 'update', 'swarm');

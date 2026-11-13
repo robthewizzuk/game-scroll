@@ -13,9 +13,14 @@
 //     measures it
 //   - heat (Android thermal status and headroom, iPhone thermal state), battery, and a CPU speed probe (a
 //     fixed bit of work timed every 2 s: it slows when the phone throttles its clocks)
+//   - CPU by part of the engine (src/kit/prof.js): physics, poses, crowds, AI, sound, the 3D frame's own
+//     pieces (occlusion, shadows, drawing...), and the game's own code as what is left of its update and draw
+//   - memory (src/kit/memory.js): the memory guard's level (fine, tight, low, critical) and, on Android, the
+//     phone's free memory against the line where it starts closing apps
 //   - hitch causes: each stutter is checked for shaders built, textures uploaded, a garbage collection
 //     (the heap dropped), a long script (the browser's long animation frame entries name the file and
-//     function), a quality or resolution change, a fold / resize, the game's own CPU time, GPU time
+//     function), a quality, resolution or effect size change (effects step down by their cost: hd3d.js
+//     FXS), a fold / resize, the game's own CPU time, GPU time
 //
 // Tools:
 //   Rec       records up to 60 s, then Report shares a self-contained HTML report (graphs, hitch list,
@@ -36,10 +41,12 @@
 import { Capacitor } from '@capacitor/core';
 import { speed, screenHz, fpsFor, phoneClass, frameGenStatus } from './kit/speed.js';
 import { power } from './kit/power.js';
+import { memory, LEVELS as MEM, forceMemory } from './kit/memory.js';
 import { screen } from './kit/screenrate.js';
 import { webgpu, gpuPick, setGpuPick, prepareGPU, gpuName, glStats } from './kit/gpu.js';
 import { BUILD } from './perf.js';
 import { store } from './util.js';
+import { PROF, take } from './kit/prof.js';
 
 const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250;
 const is3D = d => d && (d.era === 'nextgen' || d.era === 'ar' || d.era === 'board');
@@ -75,10 +82,10 @@ function probe() {
   probeBest = Math.min(probeBest, ms); return probeBest / ms;
 }
 let kk = 0;
-const samples = [];       // { t, cpu, heat, thermal, headroom, level, charging, saving, heap, hz }
+const samples = [];       // { t, cpu, heat, thermal, headroom, level, charging, saving, heap, hz, mem, free, line }
 function sample() {
   const now = performance.now(), cpu = probe();
-  const s = { t: now, cpu: r2(cpu), heat: power.heat, thermal: power.thermal ?? null, headroom: power.headroom ?? null, level: r2(power.level), charging: power.charging, saving: power.saving, heap: heapMB(), hz: screenHz() };
+  const s = { t: now, cpu: r2(cpu), heat: power.heat, thermal: power.thermal ?? null, headroom: power.headroom ?? null, level: r2(power.level), charging: power.charging, saving: power.saving, heap: heapMB(), hz: screenHz(), mem: memory.level, free: memory.avail > 0 ? Math.round(memory.avail / 1048576) : null, line: memory.threshold > 0 ? Math.round(memory.threshold / 1048576) : null };
   samples.push(s); if (samples.length > 300) samples.shift();
   if (rec) rec.samples.push(s);
 }
@@ -106,6 +113,8 @@ function event(k, text, t = performance.now(), ms = 0) {
 }
 
 /* ---------- counters ---------- */
+// the effects the 3D kit draws smaller by their cost (hd3d.js FXS), in words: 'bloom 70%, ao 50%' ('' when none)
+const fxText = () => Object.entries(HD?.fx || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ');
 function counters(s) {
   const G = webgpu(), d = s?.def;
   let progs = glStats.programs, tex = glStats.r?.info?.memory?.textures ?? 0;
@@ -117,13 +126,15 @@ function counters(s) {
   if (C.heap && h < C.heap - 1.5 * 1048576) { const mb = (C.heap - h) / 1048576; pend.push(`garbage collected (${mb.toFixed(1)} MB)`); event('G', `heap fell ${mb.toFixed(1)} MB (garbage collection)`); }
   C.heap = h;
   if (HD && is3D(d)) {
-    const tier = HD.name, res = HD.res, rw = HD.info.rw || 0;
+    const tier = HD.name, res = HD.res, rw = HD.info.rw || 0, fx = fxText();
+    if (C.fx != null && fx !== C.fx) { pend.push(`effect drawn smaller or back (${fx || 'all full'})`); event('Q', `effects: ${fx || 'all at full size'}`); }
+    C.fx = fx;
     if (C.tier != null && tier !== C.tier) { pend.push(`quality tier change (${C.tier} → ${tier})`); event('Q', `quality tier ${C.tier} → ${tier}`); }
     if (C.res != null && res !== C.res) { pend.push(`resolution step change (${Math.round(C.res * 100)}% → ${Math.round(res * 100)}%)`); event('Q', `resolution step ${Math.round(C.res * 100)}% → ${Math.round(res * 100)}%`); }
     C.tier = tier; C.res = res; C.rw = rw;
-  } else { C.tier = C.res = null; }
+  } else { C.tier = C.res = C.fx = null; }
   const id = d?.id || '', st = s?.state || '';
-  if (C.id && id !== C.id) { pend.push('card changed'); event('C', `card → ${id || 'none'}`); C.tier = C.res = null; }
+  if (C.id && id !== C.id) { pend.push('card changed'); event('C', `card → ${id || 'none'}`); C.tier = C.res = C.fx = null; }
   else if (C.state && st !== C.state && st === 'playing') { pend.push('round started'); event('C', 'round started'); }
   C.id = id; C.state = st;
 }
@@ -154,11 +165,34 @@ function tick(now, s, how, upd = 0, drw = 0) {
     lastPresent = now; pend = [];
     if (k === 1) { last.upd = last.upd * .9 + upd * .1; last.drw = last.drw * .9 + drw * .1; }
   }
+  parts(k, upd, drw, playing);
   if (tint && tintEl) paintTint(s, k, now);
   if (frozenWait && k) frozenWait();
   if (fgArm && k) fgArm(k, s);
 }
 const last = { upd: 0, drw: 0 };
+// CPU by part (prof.js): what each part took since the last real frame, the game's own code being what is
+// left of update() and draw(). Live: a running average a frame; recorded: the sum and the worst frame.
+const SYS = new Map(), carry = {}; let carryIn = 0;
+const GAME = 'game\u2019s own code';
+function parts(k, upd, drw, playing) {
+  carryIn += take(carry);
+  if (k !== 1 || upd + drw <= 0) return;
+  carry[GAME] = Math.max(0, upd + drw - carryIn);
+  for (const [n, v] of SYS) if (!(n in carry)) SYS.set(n, v * .95);
+  for (const n in carry) SYS.set(n, (SYS.get(n) ?? carry[n]) * .95 + carry[n] * .05);
+  for (const [n, v] of SYS) if (v < .002 && !(n in carry)) SYS.delete(n);
+  if (rec && playing) {
+    const S = rec.sys; rec.sysN++;
+    for (const n in carry) { const e = S[n] ||= { sum: 0, max: 0 }; e.sum += carry[n]; e.max = Math.max(e.max, carry[n]); }
+  }
+  for (const n in carry) delete carry[n];
+  carryIn = 0;
+}
+// the biggest parts, as "physics 3D 1.2 · poses 0.8 · ..." (ms a frame)
+function partsText(list, n = 7) {
+  return list.filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${v.toFixed(v < 1 ? 2 : 1)}`).join(' · ');
+}
 function hitch(now, iv, exp, s, upd, drw) {
   const why = pend.slice();
   if (now - C.resizeAt < 600) why.push('fold / resize');
@@ -212,7 +246,7 @@ function windowRows(ms) {
 
 /* ---------- recording ---------- */
 function startRec(s) {
-  rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [] };
+  rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0 };
   rec.cfg.push(config(s)); sample();
 }
 function stopRec() {
@@ -233,7 +267,7 @@ function config(s) {
     game: d?.id || '', era: d?.era || (d?.retro ? 'pocket' : 'phone'), hz: screenHz(), fps: d ? Math.round(fpsFor(d)) : 0, cls: phoneClass(), gpu: gpuName(),
     backend: hd ? i.backend : d?.era === 'console' ? 'webgl' : '2d', tier: hd ? HD.name : null, res: hd ? HD.res : null,
     rw: hd ? i.rw : s?.canvas?.width, rh: hd ? i.rh : s?.canvas?.height, ow: hd ? i.ow : s?.canvas?.width, oh: hd ? i.oh : s?.canvas?.height,
-    upscaler: hd ? i.upscaled || 'off' : null, fg: hd ? i.framegen || false : false, fgWhy: d && hd ? frameGenStatus(d) : '', lite: !!s?.lite,
+    upscaler: hd ? i.upscaled || 'off' : null, fx: hd ? fxText() : '', fg: hd ? i.framegen || false : false, fgWhy: d && hd ? frameGenStatus(d) : '', lite: !!s?.lite,
     rates: screen.rates.join('/'), asked: screen.want, lifted: screen.lifted,
     view: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, form: Math.min(innerWidth, innerHeight) >= 600 ? 'wide' : 'phone',
   };
@@ -524,10 +558,12 @@ export function summary(R = lastRec) {
   const S = R.samples, s0 = S[0], s1 = S[S.length - 1];
   const lines = [
     `Frame lab · ${R.title || R.game} · ${phoneLabel()} · build ${BUILD} · ${secs.toFixed(0)} s · ${c.view} (${c.form})`,
-    c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${c.upscaler} · frame gen ${c.fg || 'off'}${c1.tier !== c.tier || c1.rw !== c.rw ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
+    c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${c.upscaler} · frame gen ${c.fg || 'off'}${c.fx ? ` · effects smaller: ${c.fx}` : ''}${c1.tier !== c.tier || c1.rw !== c.rw || c1.fx !== c.fx ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}${c1.fx ? ` (smaller: ${c1.fx})` : ''}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
     `screen ${c.hz} Hz${c.rates ? ` (offers ${c.rates}, asked ${c.asked || 'none'})` : ''} · game ${c.fps} fps · phone class ${c.cls} · ${c.gpu || 'gpu ?'}`,
     m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}` : 'not enough frames in play',
     cpuLine(R),
+    sysLine(R),
+    memLine(S),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
   ];
@@ -542,6 +578,20 @@ function cpuLine(R) {
   const parts = [part('update', r.upd), part('draw', r.drw), part('3D', r.cpu3d), part('frame gen', r.fg), part('GPU', r.gpu)].filter(Boolean);
   return parts.length ? `CPU per frame in ms (middle/95%): ${parts.join(' · ')}` : '';
 }
+// The memory guard (src/kit/memory.js) over the recording: its level at the start and end and the worst,
+// and the phone's free memory against the line where it starts closing apps (Android)
+const gb = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+function memLine(S) {
+  const s0 = S[0], s1 = S[S.length - 1]; if (!s0 || !s1 || s1.mem == null) return '';
+  const worst = Math.max(...S.map(s => s.mem || 0)), low = S.reduce((a, s) => s.free != null && (a == null || s.free < a) ? s.free : a, null);
+  return `Memory ${MEM[s0.mem]} → ${MEM[s1.mem]}${worst > s1.mem ? ` (worst ${MEM[worst]})` : ''}${s1.free != null ? ` · free ${gb(s1.free)}, least ${gb(low)} (apps close below ${gb(s1.line)})` : ''}${worst && memory.why ? ` · ${memory.why}` : ''}`;
+}
+// CPU by part over the recording: the average a frame and the worst frame, biggest first
+function sysLine(R) {
+  const S = R.sys, n = R.sysN; if (!S || !n) return '';
+  const l = Object.entries(S).map(([k, e]) => [k, e.sum / n, e.max]).filter(([, a]) => a >= .05).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  return l.length ? `CPU by part in ms a frame (average/worst): ${l.map(([k, a, m]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}/${m.toFixed(1)}`).join(' · ')}` : '';
+}
 let model = '';
 (async () => { try { const { Device } = await import('@capacitor/device'); const d = await Device.getInfo(); model = `${d.manufacturer || ''} ${d.model || ''}`.trim(); } catch (_) {} })();
 const phoneLabel = () => model || (navigator.userAgentData?.platform || navigator.platform || 'browser');
@@ -550,7 +600,7 @@ function reportData(R = lastRec) {
   const all = shots.map(s => ({ kind: s.kind, title: s.title, game: s.game, notes: s.notes, images: s.images.filter(i => i.cv).map(i => ({ label: i.label, url: toURL(i.cv) })), heat: s.heat ? { url: toURL(s.heat.cv), boxes: s.heat.boxes } : null }));
   return {
     made: new Date().toISOString(), build: BUILD, phone: phoneLabel(), platform: Capacitor.getPlatform(), ua: navigator.userAgent, summary: summary(R),
-    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
+    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
     shots: all,
   };
 }
@@ -576,7 +626,7 @@ const X=(t,W)=>36+(t/T)*(W-40);
 chart('Frame time (every picture shown)',220,(x,W,h)=>{const top=Math.max(E*3,50);axes(x,W,h,top,[[E,E.toFixed(1)],[E*2,(E*2).toFixed(1)],[top,top.toFixed(0)+'ms']]);for(const [t,iv,k,p] of pres){const y=h-20-Math.min(1,iv/top)*(h-36);x.fillStyle=!p?C.grey:iv>=E*1.5&&iv-E>=rf*.9?C.bad:k===2?C.made:C.real;x.fillRect(X(t,W),y,1.2,h-20-y)}for(const e of ev){x.fillStyle=col[e.k]||'#fff';x.fillRect(X(e.t-0,W),4,2,8)}x.fillStyle=C.mut;x.fillText('green real · magenta made · red stutter · ticks: orange shader, purple textures, yellow GC, blue quality, grey card',40,14)});
 chart('Frame rate (1 s windows) and 1% low',180,(x,W,h)=>{const top=(cfg.hz||60)*1.1;axes(x,W,h,top,[[30,'30'],[60,'60'],[cfg.hz||60,String(cfg.hz||60)]]);const pts=[],low=[];for(let s=0;s<T;s+=500){const w=pres.filter(p=>p[0]>s&&p[0]<=s+1000&&p[3]);if(w.length<3)continue;const sum=w.reduce((a,b)=>a+b[1],0),sorted=w.map(p=>p[1]).sort((a,b)=>a-b);pts.push([s+500,w.length/(sum/1000)]);low.push([s+500,1000/sorted[Math.floor(.99*(sorted.length-1))]])}for(const [arr,c] of [[pts,C.real],[low,C.bad]]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();arr.forEach(([t,v],i)=>{const y=h-20-(v/top)*(h-36);i?x.lineTo(X(t,W),y):x.moveTo(X(t,W),y)});x.stroke()}x.fillStyle=C.mut;x.fillText('green fps · red 1% low',40,14)});
 chart('CPU time per real frame',180,(x,W,h)=>{const top=Math.max(E*1.5,10);axes(x,W,h,top,[[E,'budget '+E.toFixed(1)],[top,top.toFixed(0)+'ms']]);for(let j=0;j<r.ft.length;j++){const t=r.t[r.ft[j]];let y0=h-20;for(const [v,c] of [[r.upd[j],'#22d3ee'],[r.drw[j],C.cpu],[r.fg[j],C.fg]]){const hh=Math.min(1,(v||0)/top)*(h-36);x.fillStyle=c;x.fillRect(X(t,W),y0-hh,1.2,hh);y0-=hh}if(r.gpu[j]!=null){x.fillStyle=C.gpu;x.fillRect(X(t,W),h-20-Math.min(1,r.gpu[j]/top)*(h-36),2,2)}}x.fillStyle=C.mut;x.fillText('cyan update · blue draw (incl. 3D) · magenta frame gen · yellow dots GPU',40,14)});
-const S=R.samples;if(S.length>1)chart('Phone: CPU speed, heat, battery',160,(x,W,h)=>{axes(x,W,h,1,[[.5,'50%'],[1,'100%']]);for(const [f,c] of [[s=>s.cpu,'#22d3ee'],[s=>s.heat/2,'#f87171'],[s=>s.headroom!=null&&s.headroom>=0?Math.min(1,s.headroom):null,'#fb923c'],[s=>s.level,'#4ade80']]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();let st=0;for(const s of S){const v=f(s);if(v==null)continue;const y=h-20-v*(h-36);st++?x.lineTo(X(s.t,W),y):x.moveTo(X(s.t,W),y)}x.stroke()}x.fillStyle=C.mut;x.fillText('cyan CPU speed probe · red heat (0 cool, 1 hot) · orange thermal headroom · green battery',40,14)});
+const S=R.samples;if(S.length>1)chart('Phone: CPU speed, heat, battery',160,(x,W,h)=>{axes(x,W,h,1,[[.5,'50%'],[1,'100%']]);for(const [f,c] of [[s=>s.cpu,'#22d3ee'],[s=>s.heat/2,'#f87171'],[s=>s.headroom!=null&&s.headroom>=0?Math.min(1,s.headroom):null,'#fb923c'],[s=>s.level,'#4ade80'],[s=>s.mem!=null?s.mem/3:null,'#a78bfa']]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();let st=0;for(const s of S){const v=f(s);if(v==null)continue;const y=h-20-v*(h-36);st++?x.lineTo(X(s.t,W),y):x.moveTo(X(s.t,W),y)}x.stroke()}x.fillStyle=C.mut;x.fillText('cyan CPU speed probe · red heat (0 cool, 1 hot) · orange thermal headroom · green battery · violet memory (0 fine, 1 critical)',40,14)});
 chart('Frame times in screen refreshes',120,(x,W,h)=>{const hist=R.stats?R.stats.hist:[0,0,0,0,0],tot=hist.reduce((a,b)=>a+b,0)||1;hist.forEach((v,i)=>{const bw=(W-40)/5,bh=(v/tot)*(h-36);x.fillStyle=i?C.bad:C.real;x.fillRect(40+i*bw+4,h-20-bh,bw-8,bh);x.fillStyle=C.mut;x.fillText((i+1)+(i===4?'+':'')+' refresh'+(i?'es':'')+' '+(100*v/tot).toFixed(1)+'%',44+i*bw,h-4)})});
 const hs=ev.filter(e=>e.k==='H');const t=document.getElementById('hitches');t.appendChild($('<h2>Hitches ('+hs.length+') and events</h2>'));t.appendChild($('<table><tr><th>at</th><th>ms</th><th>what</th></tr>'+ev.map(e=>'<tr><td>'+(e.t/1000).toFixed(2)+'s</td><td>'+(e.ms||'')+'</td><td><span style="color:'+(col[e.k]||'#fff')+'">'+e.k+'</span> '+e.text.replace(/</g,'&lt;')+'</td></tr>').join('')+'</table>'));
 t.appendChild($('<h2>Settings</h2><pre>'+JSON.stringify(R.cfg,null,1).replace(/</g,'&lt;')+'</pre>'))}
@@ -705,13 +755,14 @@ function text(now) {
   L.push(`${d ? d.id : 'no card'}${s ? ' ' + s.state : ''} · screen ${cfg.hz} Hz${screen.rates.length ? ` (offers ${cfg.rates}, asked ${screen.want || 'none'})` : ''}${screen.lifted ? ' 60 Hz cap off' : ''} · game ${cfg.fps} fps · ${cfg.view}`);
   if (hd) {
     const pct = i.ow ? Math.round(100 * i.rw / i.ow) : 0;
-    L.push(`${i.backend} ${cfg.tier} (step ${Math.round(HD.res * 100)}%) · 3D ${i.rw}×${i.rh} → ${i.ow}×${i.oh} ${pct}% · ${i.upscaled || 'no upscaler'}`);
+    L.push(`${i.backend} ${cfg.tier} (step ${Math.round(HD.res * 100)}%) · 3D ${i.rw}×${i.rh} → ${i.ow}×${i.oh} ${pct}% · ${i.upscaled || 'no upscaler'}${cfg.fx ? ` · smaller: ${cfg.fx}` : ''}`);
     L.push(`FG ${i.framegen ? `${i.framegen} ×${i.fgSteps} ${r1(i.fgMs)} ms` : 'off'} · ${frameGenStatus(d) || ''}`.slice(0, 120));
     L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}`);
   } else if (s) {
     L.push(`${cfg.backend} canvas ${s.canvas.width}×${s.canvas.height}${s.lite ? ' (eased: phone fell behind)' : ''} · CPU upd ${r2(last.upd)} draw ${r2(last.drw)} ms`);
   }
-  if (smp) L.push(`heat ${['cool', 'warm', 'hot'][smp.heat] || '?'}${smp.headroom != null && smp.headroom >= 0 ? ` hr ${smp.headroom.toFixed(2)}` : ''}${smp.saving ? ' saving' : ''} · CPU speed ${Math.round(smp.cpu * 100)}% · battery ${Math.round(smp.level * 100)}%${smp.charging ? '+' : ''}${smp.heap ? ` · heap ${smp.heap} MB` : ''}`);
+  if (SYS.size) L.push(`CPU by part (ms a frame): ${partsText([...SYS])}`);
+  if (smp) L.push(`heat ${['cool', 'warm', 'hot'][smp.heat] || '?'}${smp.headroom != null && smp.headroom >= 0 ? ` hr ${smp.headroom.toFixed(2)}` : ''}${smp.saving ? ' saving' : ''} · CPU speed ${Math.round(smp.cpu * 100)}% · battery ${Math.round(smp.level * 100)}%${smp.charging ? '+' : ''}${smp.heap ? ` · heap ${smp.heap} MB` : ''} · memory ${MEM[smp.mem] || '?'}${smp.free != null ? ` ${gb(smp.free)} free` : ''}`);
   if (lastH) L.push(`last hitch ${Math.round(lastH.ms)} ms ${((now - lastH.t) / 1000).toFixed(0)} s ago: ${lastH.text}`);
   UI.txt.textContent = L.join('\n');
   if (rec) UI.render();
@@ -731,7 +782,7 @@ let api = null;
 /** Turns the lab on. ctx.active() is the card on screen; returns the hooks the feed calls. */
 export function openLab(ctx = {}) {
   if (api) return api;
-  store.set(KEY, true); panel(); obs = observe(); sampler = setInterval(sample, 2000); setTimeout(sample, 300);
+  store.set(KEY, true); PROF.on = true; take(); panel(); obs = observe(); sampler = setInterval(sample, 2000); setTimeout(sample, 300);
   addEventListener('resize', onResize); document.addEventListener('visibilitychange', onVis);
   raf = requestAnimationFrame(loop);
   api = {
@@ -740,7 +791,12 @@ export function openLab(ctx = {}) {
     /** frame generation's hook says what each refresh shows */
     get frozen() { return frozen; },
     close: closeLab, summary, copy: copySummary, report: shareReport, data: reportData, html: () => reportHTML(reportData()),
-    rec: v => { if (v === false) stopRec(); else startRec(UI.s); }, freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, shots, events, measure,
+    rec: v => { if (v === false) stopRec(); else startRec(UI.s); },
+    /** CPU by part right now ({ name: ms a frame }); trace(true) also puts each part on Chrome DevTools' timeline */
+    parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
+    /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
+    memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)
@@ -752,7 +808,7 @@ export function openLab(ctx = {}) {
   return api;
 }
 function closeLab() {
-  if (!api) return; store.set(KEY, false); if (rec) stopRec(); setFrozen(false);
+  if (!api) return; store.set(KEY, false); if (rec) stopRec(); setFrozen(false); PROF.on = PROF.trace = false; take(); SYS.clear();
   cancelAnimationFrame(raf); clearInterval(sampler); obs?.disconnect(); removeEventListener('resize', onResize); document.removeEventListener('visibilitychange', onVis);
   UI.closeViewer?.(); UI.el?.remove(); UI.style?.remove(); tintEl?.remove(); UI.el = null; tintEl = null;
   if (HD?.fgTap?.gsLab) HD.fgTap = HD.fgTap.prev || null;

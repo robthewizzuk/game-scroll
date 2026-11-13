@@ -20,6 +20,7 @@
 // Units are your scene's (metres, y up). cell (default radius / 2) sets the map's detail: smaller is
 // more exact but slower to build. Like physics, the engine loads the first time a game needs it.
 
+import { timed } from './prof.js';
 import { lazy } from './lazy.js';
 import { need, pause, built } from './slices.js';
 import { runNav, canRunNav } from './jobs.js';
@@ -126,3 +127,6 @@ class Crowd3D {
   update(dt) { if (dt > 0) this.raw.update(Math.min(dt, .1)); return this; }
   destroy() { this.raw.destroy?.(); this.agents.clear(); }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Crowd3D.prototype, 'update', 'AI paths 3D');

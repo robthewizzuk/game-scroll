@@ -51,12 +51,43 @@ The numbers, over the last 5 seconds:
   needed), the upscaler (SGSR 1 or 2), frame generation (mode, frames made per real one, its cost)
   and why it's on or off, CPU time of the game's `update()`, `draw()` and the 3D render, GPU time
   (`HD.info.gpuMs`: every pass for a real frame and the frames made after it, with the compute
-  share in brackets: frame generation, GPU particles, culling), draw calls and triangles.
+  share in brackets: frame generation, GPU particles, culling), draw calls and triangles, and which
+  effects are drawn smaller by their cost ("smaller: ao 50%, bloom 70%"; see docs/nextgen-3d.md).
+- **CPU by part** (ms a frame, biggest first): where the phone's CPU time goes by part of the engine,
+  so "physics 3D 1.2 · poses 0.8 · crowds 0.4 · 3D render 4.1 · 3D: shadows 0.8 · 3D: drawing 2.1 ·
+  game's own code 0.6" (below).
 - 2D games: the canvas size, and whether it was eased because the phone fell behind.
-- the phone: heat (Android thermal status and headroom, iPhone thermal state), battery, heap, and
-  **CPU speed**: a fixed bit of work timed every 2 seconds, as a share of its best time. When the
-  phone throttles its clocks, this falls.
+- the phone: heat (Android thermal status and headroom, iPhone thermal state), battery, heap,
+  **memory** (the memory guard's level, fine, tight, low or critical, and on Android the phone's free
+  memory; see below), and **CPU speed**: a fixed bit of work timed every 2 seconds, as a share of its
+  best time. When the phone throttles its clocks, this falls.
 - the last hitch and its causes.
+
+### CPU by part
+
+Each kit marks its per-frame work once (`timed(World3D.prototype, 'step', 'physics 3D')`,
+`src/kit/prof.js`), and the 3D kit marks the parts of its frame (detail, occlusion, copies, contact
+shadows, traced reflections, shadows, drawing, shaders built ahead). While the lab is open each part's
+own time is added up (a ragdoll's physics inside reactions counts only for the physics), and what is
+left of the game's `update()` and `draw()` is the **game's own code**. With the lab closed nothing is
+counted: a marked method costs one call and one check. The parts: physics 2D and 3D, poses, crowds,
+AI, AI paths 3D, Tiny Brains, senses, sound, smoke and fire, liquids, ground marks, water, sky and
+weather, land and grass, props, breaking buildings, reactions, characters, city, particles 3D, voxels,
+falling sand, water flow, bullets, effects, board, soft things, vehicles, swarm, 3D render.
+`trace(true)` from the lab's api also writes each part as a User Timing measure, which Chrome's
+DevTools shows on its timeline (a debug build, the phone on a cable, `chrome://inspect`).
+
+### Memory
+
+The memory guard (`src/kit/memory.js`) asks the phone every 5 seconds, and at once when it warns:
+on Android its free memory against the line where it starts closing apps (ActivityManager's
+`availMem` and `threshold`), its own low memory flag and its trim warnings; on iPhone its memory
+warning; on both the page's JavaScript heap against its limit where the browser says. Its level climbs
+at once and falls a step at a time after 30 calm seconds. Low or critical: the feed keeps fewer cards
+ready below and behind the one on screen, the 3D draws a resolution step smaller now and a tier lower
+from the next round (as when hot), and the textures read back from storage are let go of. A crash
+report from a close that came while memory was short says "(memory was low)". The lab's api
+`memory(2)` acts as if memory were low (`memory(null)`: back to the phone's readings).
 
 ## Hitch causes
 
@@ -67,7 +98,7 @@ Every stutter during play is checked for what happened since the picture before 
   size, so small ones are missed)
 - the browser's long animation frame report: which script held the frame (file and function) or
   whether it was layout
-- a quality tier or resolution step change, a fold or resize, the app coming back to the front,
+- a quality tier, resolution step or effect size change, a fold or resize, the app coming back to the front,
   a card or round change, refreshes skipped
 - the game's own CPU time going over the beat, or GPU time going over it
 - if none of those: "no cause seen", which on a 3D game usually means the GPU, the driver or the
@@ -99,7 +130,8 @@ One HTML file with everything in it, readable in any browser, phone or desktop:
 - frame time of every picture over the whole recording, with event ticks
 - frame rate and 1% low in one-second windows
 - CPU time per real frame (update, draw, frame generation) and GPU time where known
-- the phone: CPU speed, heat, thermal headroom, battery over time
+- CPU by part: the average a frame and the worst frame for each part of the engine
+- the phone: CPU speed, heat, thermal headroom, battery and memory over time
 - frame times in screen refreshes (how many pictures took 1, 2, 3... refreshes)
 - every hitch and event with its causes, and the settings at the start and end
 - the pictures from A/B (with a wipe slider), Shimmer and FG check
@@ -120,4 +152,4 @@ Timing comes from `requestAnimationFrame`, which on Android and iPhone runs on t
 browser doesn't say when a picture actually lit up, so a frame the compositor held back is not seen.
 
 `scripts/framelab-test.cjs` checks the lab itself in the test browser (2D and Next Gen, A/B, Shimmer,
-FG check, fold and unfold, the report).
+FG check, fold and unfold, effects drawn smaller, memory, the report).

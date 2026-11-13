@@ -5128,5 +5128,76 @@ console.log('physics ok');
   console.log('gs.hd ray traced reflections: blocks, looks, what goes in, and the level\'s lists walked as the shader walks them ok');
 }
 
+// where the phone's time goes (prof.js): each part counts only its own time, and off it counts nothing
+{
+  const { PROF, timed, span, take, resetProf } = await import('../src/kit/prof.js');
+  const busy = ms => { const t = performance.now(); while (performance.now() - t < ms); };
+  class Thing { constructor() { this.n = 0; } step(a, b) { this.n++; busy(4); return a + b; } }
+  timed(Thing.prototype, 'step', 'test part'); timed(Thing.prototype, 'step', 'again');   // (a second mark is ignored)
+  const t = new Thing();
+  resetProf(); PROF.on = false; assert.equal(t.step(1, 2), 3); const off = {}; take(off);
+  assert.ok(!Object.keys(off).length && t.n === 1, 'off: the method runs as it was, nothing is counted');
+  PROF.on = true; take();
+  const out = {}; span('outer', () => { busy(3); t.step(2, 3); }); const inside = take(out);
+  assert.ok(out['test part'] >= 3.5 && out.outer >= 2.5 && out.outer < out['test part'] + 3, 'a part inside another counts only for itself: ' + JSON.stringify(out));
+  assert.ok(Math.abs(inside - (out.outer + out['test part'])) < .5, 'and the parts add up to the time spent in all of them');
+  let threw = false; Thing.prototype.bad = function () { busy(1); throw new Error('x'); }; timed(Thing.prototype, 'bad', 'bad part');
+  try { t.bad(); } catch (_) { threw = true; } const b = {}; take(b);
+  assert.ok(threw && b['bad part'] > .5 && t.step(1, 1) === 2, 'a method that throws still throws, and its time is counted');
+  assert.equal(Thing.prototype.step.name, 'step', 'a timed method keeps its name for stack traces');
+  PROF.on = false; resetProf();
+  console.log('prof: time by part, nested parts, off costs nothing ok');
+}
+
+// the memory guard (memory.js): readings to a level, up at once and down a step after a calm spell
+{
+  const M = await import('../src/kit/memory.js'), { memory, judge, read, onMemory, forceMemory } = M;
+  const t0 = Date.now(), G = 1024 ** 3, seen = [];
+  const stop = onMemory((l, was) => seen.push([was, l]));
+  assert.equal(judge({ avail: 3 * G, threshold: G }, t0).level, 0, 'three times the line free: fine');
+  assert.equal(judge({ avail: 2 * G, threshold: G }, t0).level, 1, 'twice the line: tight');
+  assert.equal(judge({ avail: 1.3 * G, threshold: G }, t0).level, 2, 'near the line: low');
+  assert.equal(judge({ avail: 1.3 * G, threshold: G, low: true }, t0).level, 3, 'the phone\'s own low memory flag: critical');
+  assert.equal(judge({ trim: 15, trimAt: t0 - 5000 }, t0).level, 3, 'a critical trim warning just now: critical');
+  assert.equal(judge({ trim: 15, trimAt: t0 - 25000 }, t0).level, 2, 'less as it ages');
+  assert.equal(judge({ trim: 15, trimAt: t0 - 70000 }, t0).level, 0, 'and gone after a minute');
+  assert.equal(judge({ trim: 40, trimAt: t0 }, t0).level, 0, 'a trim warning for an app in the background is no warning in front');
+  assert.equal(judge({ warnAt: t0 - 1000, warns: 1 }, t0).level, 2, 'an iPhone memory warning: low');
+  assert.equal(judge({ warnAt: t0 - 1000, warns: 2 }, t0).level, 3, 'two close together: critical');
+  assert.equal(judge({ warnAt: t0 - 60000, warns: 1 }, t0).level, 1, 'a minute after: tight');
+  assert.equal(judge({ heap: 950, heapLimit: 1000 }, t0).level, 3, 'the page\'s heap nearly full: critical');
+  const mem = avail => ({ mem: { total: 8 * G, avail, threshold: G, low: false, trim: 0, trimAt: 0, warnAt: 0 } });
+  assert.equal(read(mem(4 * G), t0), 0, 'plenty free');
+  assert.equal(read(mem(1.4 * G), t0 + 1000), 2, 'short: up at once');
+  assert.ok(/near the line/.test(memory.why) && memory.known, 'and says why: ' + memory.why);
+  assert.equal(read(mem(4 * G), t0 + 20000), 2, 'plenty again: held a while');
+  assert.equal(read(mem(4 * G), t0 + 31500), 1, 'then down one step');
+  assert.equal(read(mem(4 * G), t0 + 45000), 1, 'and held again');
+  assert.equal(read(mem(4 * G), t0 + 62000), 0, 'then down to fine');
+  assert.deepEqual(seen, [[0, 2], [2, 1], [1, 0]], 'listeners hear each change once: ' + JSON.stringify(seen));
+  assert.equal(read({ mem: { avail: 4 * G, threshold: G, trim: 10, trimAt: t0 + 63000 } }, t0 + 63000), 2, 'a trim warning moves it at once');
+  read({ mem: { avail: 4 * G, threshold: G, warnAt: t0 + 64000 } }, t0 + 64000); read({ mem: { avail: 4 * G, threshold: G, warnAt: t0 + 70000 } }, t0 + 70000);
+  assert.ok(memory.level === 3 && memory.warns === 2, 'two iPhone warnings close together: critical');
+  forceMemory(1); assert.ok(memory.level === 1 && memory.why === 'set by hand', 'the frame lab can set it by hand');
+  stop(); forceMemory(0);
+  const { memoryNote } = await import('../src/exits.js');
+  assert.ok(memoryNote({ mem: 2 }) === ' (memory was low)' && memoryNote({ mem: 0 }) === '' && memoryNote(null) === '', 'a crash report says how short of memory the phone was');
+  console.log('memory guard: levels from the phone\'s readings and warnings, up at once, down after a calm spell ok');
+}
+
+// effects that step down by their own cost (hd3d.js pickEffect): the costliest effect that takes a real share of the chip
+{
+  const { pickEffect } = await import('../src/kit/hd3d.js');
+  const on = new Set(['ao', 'bloom', 'reflections', 'light shafts']);
+  assert.equal(pickEffect(on, {}, 12, { scene: 6, ao: 2.5, bloom: 1.2, reflections: 1.8, 'light shafts': .2 }), 'ao', 'the costliest effect first');
+  assert.equal(pickEffect(on, { ao: 2 }, 12, { scene: 6, ao: 2.5, bloom: 1.2, reflections: 1.8 }), 'reflections', 'one at its smallest is passed over');
+  assert.equal(pickEffect(on, {}, 12, { scene: 11, ao: .4, bloom: .3 }), null, 'none takes a real share: the resolution steps instead');
+  assert.equal(pickEffect(new Set(['bloom']), {}, 12, { scene: 6, ao: 3, bloom: 2 }), 'bloom', 'only an effect the frame drew');
+  assert.equal(pickEffect(on, {}, null, null), 'light shafts', 'where the chip doesn\'t say: a fixed order, what shows least first');
+  assert.equal(pickEffect(on, { 'light shafts': 1, bloom: 1 }, null, null), 'reflections', 'one step each');
+  assert.equal(pickEffect(new Set(['ao']), { ao: 1 }, null, null), null, 'then the resolution');
+  console.log('gs.hd effects that step down by their own cost ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

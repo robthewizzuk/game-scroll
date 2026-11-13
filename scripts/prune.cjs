@@ -1,6 +1,6 @@
 // Scrolls a long way down the feed and checks that old cards are dropped (the page keeps at most a
-// handful behind you), that the card on screen never jumps when they are, and that swiping back
-// still works. Usage: npm run build:bundled && node scripts/prune.cjs
+// handful behind you), that the card on screen never jumps when they are, that the feed keeps fewer
+// cards while the phone is short of memory (the memory guard), and that swiping back still works. Usage: npm run build:bundled && node scripts/prune.cjs
 const { chromium } = require('playwright');
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4186 } });
@@ -27,6 +27,14 @@ const { chromium } = require('playwright');
   const end = await state();
   check(end.index <= 8 + 3, `cards behind the one on screen: ${end.index} (keeps 8, drops in fours)`);
   check(most <= 8 + 3 + 1 + 6, `most cards in the page at once: ${most}`);
+  // short of memory (src/kit/memory.js): the feed keeps fewer cards ready below and behind, and builds back up once it's fine
+  const ahead = st => st.cards - st.index - 1;
+  await p.evaluate(() => __gs.memory(3)); await p.waitForTimeout(1500);
+  const short = await state();
+  check(ahead(short) <= 1 && short.index <= 1 && Math.abs(short.offset) <= 1 && short.id === end.id, `critically short of memory: ${ahead(short)} card below and ${short.index} behind, the card on screen kept where it was`);
+  await p.evaluate(() => __gs.memory(null)); await p.waitForTimeout(5000);
+  const fine = await state();
+  check(ahead(fine) >= 3 && fine.id === end.id, `fine again: the feed builds back up (${ahead(fine)} below)`);
   const here = end.id;
   await p.evaluate(() => { const f = document.getElementById('feed'); f.scrollBy({ top: -f.clientHeight, behavior: 'instant' }); }); await p.waitForTimeout(400);
   const back = await state();

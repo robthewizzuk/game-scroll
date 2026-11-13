@@ -89,6 +89,25 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
   const restored = await p.evaluate(() => ({ up: __hd.upscale, sc: __hd.scale, f: __hd.force, tune: __hd.sgsrTune, mip: __hd.mipBias }));
   check(restored.up === true && restored.sc == null && restored.f == null && restored.tune === true && restored.mip == null, 'A/B puts the settings back');
 
+  // effects that step down by their own cost (hd3d.js FXS): drawn smaller with no shader built again, shown in the panel and the events
+  if (gpu && info.backend === 'webgpu') {
+    await p.evaluate(() => { __hd.force = 3; }); await play(2500);   // (ultra: ambient occlusion and bloom on)
+    let parts = [];
+    for (let i = 0; i < 8 && !parts.includes('ao'); i++) { await play(1000); parts = await p.evaluate(() => Object.keys(__hd.info.gpuParts || {})); }
+    check(parts.includes('ao') && parts.includes('bloom'), `the chip's time comes back by effect: ${parts.join(', ')}`);
+    const n0 = await p.evaluate(async () => (await __gs.lab(true)).events.length);
+    await p.evaluate(() => { __hd.fxStep('ao', 2); __hd.fxStep('bloom', 1); }); await play(1500);
+    const fx = await p.evaluate(async n0 => ({ fx: __hd.fx, txt: document.querySelector('.fl pre').textContent, ev: (await __gs.lab(true)).events.slice(n0).filter(e => e.k === 'Q' || e.k === 'S').map(e => e.text) }), n0);
+    check(fx.fx.ao === .5 && fx.fx.bloom === .7 && /smaller: ao 50%, bloom 70%/.test(fx.txt), 'effects drawn smaller show in the panel: ' + JSON.stringify(fx.fx));
+    check(fx.ev.some(t => /effects: ao 50%/.test(t)) && !fx.ev.some(t => /shader/.test(t)), 'and as an event, with no shader built for it: ' + fx.ev.join('; '));
+    await p.evaluate(() => { __hd.fxStep('ao', 0); __hd.fxStep('bloom', 0); __hd.force = null; }); await play(800);
+    // short of memory: the first resolution step at once, mid-round (and the lab says so)
+    await p.evaluate(async () => (await __gs.lab(true)).memory(2)); await play(1200);
+    const m = await p.evaluate(() => ({ res: __hd.res, txt: document.querySelector('.fl pre').textContent }));
+    check(m.res <= .85 && /memory low/.test(m.txt), `short of memory: the 3D drops a resolution step (${m.res}) and the panel says memory low`);
+    await p.evaluate(async () => (await __gs.lab(true)).memory(null));
+  }
+
   await p.evaluate(async () => (await __gs.lab(true)).shimmer());
   const sh = await p.evaluate(async () => { const L = await __gs.lab(true); const s = L.shots[L.shots.length - 1]; return s && s.kind === 'shimmer' ? s.notes.slice(0, -1).join('; ') : ''; });
   check(!!sh && await p.evaluate(() => __hd.sgsrTune === true), 'shimmer scan: ' + sh); await shot('shimmer');

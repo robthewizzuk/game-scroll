@@ -10,7 +10,8 @@
 //   on screen, so that's sent as a crash for the game that was open. On Android 11 and later the
 //   phone's own record of why the app ended is used instead (src/exits.js): it gives the reason
 //   (crashed, out of memory, not responding) and the time, and leaves out the app being closed by
-//   the player.
+//   the player. The marker also says how short of memory the phone was (src/kit/memory.js), and a
+//   close reported from it says "(memory was low)" when it was.
 // - Heat: how much of the timed play was with the phone warm or hot (src/kit/power.js), since a
 //   hot phone slows itself down and that isn't the game's doing.
 //
@@ -24,7 +25,8 @@ import { store } from './util.js';
 import { HEARTS_URL, REAL, deviceId } from './hearts.js';
 import { playstats } from './playstats.js';
 import { power } from './kit/power.js';
-import { appHealth, judgeExit } from './exits.js';
+import { memory, onMemory } from './kit/memory.js';
+import { appHealth, judgeExit, memoryNote } from './exits.js';
 
 const PENDING_KEY = 'gs_perf_pending', LOCAL_KEY = 'gs_perf_local', GLOBAL_KEY = 'gs_perf_global', OPEN_KEY = 'gs_perf_open';
 const EXIT_KEY = 'gs_perf_exit', BUILD_KEY = 'gs_perf_build';   // the newest exit record already looked at; the build that ran last
@@ -77,7 +79,7 @@ function addError(kind, game, msg, where, v = game && game === current ? curVer 
   save();
 }
 
-function openMarker() { store.set(OPEN_KEY, { game: current, ver: curVer, playing, app: BUILD, at: Date.now() }); }
+function openMarker() { store.set(OPEN_KEY, { game: current, ver: curVer, playing, app: BUILD, at: Date.now(), mem: memory.level }); }
 
 /**
  * How the last session ended. was: the open marker it left (null if it had gone to the background).
@@ -102,7 +104,7 @@ async function lastTime(was, health) {
     if (newest > seen) store.set(EXIT_KEY, newest);
   }
   // Nothing from the phone about it (iPhone, the web, Android 10 and older): the marker is all there is.
-  if (!told && was && was.app === BUILD) addError('crash', was.game || '', was.playing ? 'App closed while playing' : 'App closed while open', '', was.ver || '');
+  if (!told && was && was.app === BUILD) addError('crash', was.game || '', (was.playing ? 'App closed while playing' : 'App closed while open') + memoryNote(was), '', was.ver || '');
   store.set(PENDING_KEY, pending);
 }
 
@@ -210,5 +212,7 @@ if (typeof document !== 'undefined') {
     else { lastFrame = 0; openMarker(); perf.load(); }
   });
   addEventListener('pagehide', () => store.set(OPEN_KEY, null));
+  // the marker says how short of memory the phone was, so a close it leaves behind can say so
+  onMemory(() => { if (document.visibilityState !== 'hidden') openMarker(); });
   setInterval(() => { if (document.visibilityState === 'visible') perf.flush(); }, FLUSH_MS);
 }

@@ -15,6 +15,7 @@
 // Angles are radians, 0 pointing along +x (Car) or -z (Kart, the way a three.js camera looks).
 // Speeds are your game's units per second. Every option can be changed later (car.top = 320 for a
 // power-up). surface: 0..1 grip under the wheels each frame (1 road, .4 grass, .1 ice).
+import { timed } from './prof.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const toward = (v, to, step) => (v < to ? Math.min(to, v + step) : Math.max(to, v - step));
@@ -158,3 +159,7 @@ export class Laps {
   /** Where the racer should aim next (for computer drivers): { x, y } and the angle to it from (x, y). */
   aim(r, ahead = 0) { const p = this.points[(r.next + ahead) % this.points.length]; return { x: p[0], y: p[1], angle: Math.atan2(p[1] - (r.z ?? r.y), p[0] - r.x) }; }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Car.prototype, 'update', 'vehicles');
+timed(Kart.prototype, 'update', 'vehicles');

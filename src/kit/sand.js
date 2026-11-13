@@ -14,6 +14,7 @@
 //
 // A CPU grid in flat arrays: about 120 x 200 cells runs well inside a phone's frame. Each step walks
 // from the bottom up and turns left/right every step so piles don't lean.
+import { timed } from './prof.js';
 
 /** Materials. EMPTY, WALL (never moves or breaks), DIRT (solid, blasts into sand), WOOD (solid, burns), SAND, WATER, OIL, FIRE, SMOKE, ACID, STEAM, LAVA (slow, hot), STONE (solid: cooled lava). */
 export const M = Object.freeze({ EMPTY: 0, WALL: 1, DIRT: 2, WOOD: 3, SAND: 4, WATER: 5, OIL: 6, FIRE: 7, SMOKE: 8, ACID: 9, STEAM: 10, LAVA: 11, STONE: 12 });
@@ -136,3 +137,6 @@ export class Sand {
     return this.cv;
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Sand.prototype, 'update', 'falling sand');

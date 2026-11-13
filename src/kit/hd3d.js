@@ -24,6 +24,7 @@
 //  - bloom, tone mapping and the colour grade run as one final full-screen pass, and the bloom is a
 //    small down/up-sampling chain at half resolution and below.
 //  - shadow maps are only redrawn when something that casts a shadow (or a light) has moved.
+import { timed, PROF, enter, leave, mark } from './prof.js';
 import {
   Scene, Color, FogExp2, PerspectiveCamera, HemisphereLight, PointLight, SpotLight, DirectionalLight,
   MeshStandardMaterial, MeshPhysicalMaterial, ShaderMaterial, BufferGeometry, BufferAttribute, Points, AdditiveBlending, NormalBlending,
@@ -67,6 +68,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSteps, frameGenSteady, fgSaving, screenHz, qualityVerdict } from './speed.js';
 
@@ -102,9 +104,11 @@ const START = { top: 2, mid: 2, low: 1 };
 const CAP = 2;
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
+// The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
+// a smaller picture keep fewer and smaller render targets; critical also takes the second resolution step.
 const HOT_HOLD = 60000;
 let hotAt = -1e9;
-function hot(now = performance.now()) { if (power.heat >= 1) hotAt = now; return now - hotAt < HOT_HOLD; }
+function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2) hotAt = now; return now - hotAt < HOT_HOLD; }
 // Resolution moves in a few fixed steps (each step reallocates the render targets, so it must be
 // rare): drop a step after two slow windows of ~45 frames, climb back after ~6 s at full speed, and
 // never climb back above a step that already proved too slow (for 30 s, longer each time a climb fails).
@@ -121,13 +125,48 @@ const FG_PX = 1.6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
-const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9 };
+const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [] };
+// Effects that step down by their own cost (Rob's pick 3 of 2026-11-13). Before a slow game gives up
+// resolution, the effect that costs the chip most (by the GPU's own time for each pass, HD.info.gpuParts)
+// is drawn smaller: each has sizes (FXS), and only the size of its pictures changes, so no shader is built
+// again mid-round. One is stepped only while it takes a real share of the chip's frame (FX_SHARE, and at
+// least FX_MS). Where the chip doesn't say (WebGL, phones without timestamps) each effect in use gives one
+// step, in FX_ORDER, before the resolution does. Climbing back is the other way round: once the resolution
+// is full again, the last effect stepped down comes back first. Where a game settles is kept with its tier
+// and resolution.
+const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5] };
+const FX_ORDER = ['light shafts', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
+const FX_SHARE = .12, FX_MS = .5;
+let fxOn = new Set();   // the effects the last frame drew (the frame sets it)
+/** This effect's size now (1: as the tier has it). */
+const fxK = name => Q.force != null && !Q.fxPin ? 1 : FXS[name][Q.fx[name] | 0] ?? 1;
+/**
+ * Which effect to draw smaller next, or null (pure: tests). on: the effects the last frame drew (a Set);
+ * steps: { name: steps taken }; g: the chip's ms a frame (null where it doesn't say); parts: HD.info.gpuParts.
+ */
+export function pickEffect(on, steps, g, parts) {
+  let best = null, most = 0;
+  if (g != null && parts) {
+    for (const k of on) { const ms = parts[k] || 0; if (FXS[k] && (steps[k] | 0) < FXS[k].length - 1 && ms >= Math.max(FX_MS, g * FX_SHARE) && ms > most) { best = k; most = ms; } }
+  } else for (const k of FX_ORDER) if (on.has(k) && !(steps[k] > 0)) { best = k; break; }
+  return best;
+}
+/** The slow verdict, GPU-bound: step down the effect that costs most (g: the chip's ms a frame, or null). False if none fits. */
+function fxDown(g) {
+  const best = pickEffect(fxOn, Q.fx, g, HD.info.gpuParts);
+  if (!best) return false;
+  Q.fx[best] = (Q.fx[best] | 0) + 1; Q.fxLast.push(best); return true;
+}
+function fxUp() { const k = Q.fxLast.pop(); if (!k) return false; Q.fx[k] = Math.max(0, (Q.fx[k] | 0) - 1); if (!Q.fx[k]) delete Q.fx[k]; return true; }
+const fxSaved = () => Object.keys(Q.fx).length ? { ...Q.fx } : null;
 // a new game is on screen: start from where it settled last time, or from the phone's class
 // (and the resolution step it settled on, so a round doesn't start too sharp, stutter and step down again)
 function startGame(def) {
   Q.game = def; const s = settledFor(def?.id);
   Q.tier = Math.min(CAP, s?.tier ?? START[phoneClass()] ?? 2); Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
+  Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
+  for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
 }
 // WebGPU timestamps: three times every pass on the GPU, the picture's and the compute passes' (frame
 // generation, GPU particles, culling), and a read brings back all of them since the last read. Its own
@@ -136,15 +175,17 @@ function startGame(def) {
 // here, both kinds, and divided by the frames drawn since: the GPU's time for a real frame and whatever
 // was made after it. (One read at a time: the answer comes back a frame or two later.)
 // HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
-// shadow maps), ao, bloom, upscale (SGSR), effects (the other passes drawn into pictures of their own), show (the
-// last pass, onto the screen), compute }, in milliseconds a frame. three tells its inspector as each pass begins
-// (the name its time comes back under, what is drawn and into which picture), and partOf() files it.
+// shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'bounce light', 'depth of field',
+// 'motion blur', 'screen effects' (gs.fx3d's), upscale (SGSR), effects (the other passes drawn into pictures of
+// their own), show (the last pass, onto the screen), compute }, in milliseconds a frame. three tells its
+// inspector as each pass begins (the name its time comes back under, what is drawn and into which picture),
+// and partOf() files it.
 const GT = { n: 0, busy: false }, PARTS = new Map();
 function partOf(o, rt) {
   if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
   if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
   const n = o?.material?.name || '';
-  return n === 'GTAO' ? 'ao' : n.startsWith('SGSR') ? 'upscale' : n === 'Shadow map copy' ? 'shadows' : rt ? 'effects' : 'show';
+  return n === 'GTAO' ? 'ao' : n.startsWith('SGSR') ? 'upscale' : n === 'Shadow map copy' ? 'shadows' : n.startsWith('SSRNode') ? 'reflections' : n === 'SSGI' ? 'bounce light' : rt ? 'effects' : 'show';
 }
 function gpuParts(r) {
   const ins = r.inspector; if (!ins || ins.gsParts) return; ins.gsParts = true;
@@ -191,29 +232,35 @@ function adapt(gap) {
   const g = Q.gcnt >= 5 ? Q.gsum / Q.gcnt : null; Q.gsum = Q.gcnt = 0;
   const cpuBound = g != null && g < budget * .75, gpuRoom = g != null && g < budget * .6;
   if (now - Q.ceilT > Q.hold) { Q.ceil = 0; Q.tierCeil = 3; }
-  const tier0 = Q.tier, lvl0 = Q.lvl;
+  const tier0 = Q.tier, lvl0 = Q.lvl, fx0 = Q.fxLast.length;
   if (v === 'slow') {
     Q.fast = 0; Q.easy = 0; if (++Q.slow < 2) return; Q.slow = 0; Q.ceilT = now;
     if (now - Q.upT < 20000) Q.hold = Math.min(HOLD_MAX, Q.hold * 2);   // the last climb didn't hold
     // (held up by the CPU above 60: fewer pixels wouldn't help and a lower tier costs the picture, so it's the frame rate that gives first)
     if (fps > 60 && (Q.lvl >= 1 || cpuBound) && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
+    else if (!cpuBound && fxDown(g)) { /* an effect drawn smaller first */ }
     else if (Q.lvl < LEVELS.length - 1 && !cpuBound) { Q.lvl++; Q.ceil = Q.lvl; }
     else if (Q.tier > 0) { if (Q.want == null) { Q.tierCeil = Q.tier - 1; Q.want = Q.tier - 1; } }
     else if (stepDown(Q.game)) { Q.lvl = 1; Q.fpsT = now; }
   } else if (v === 'fast') {
     Q.slow = 0; if (++Q.fast < (gpuRoom && Q.lvl > Q.ceil ? 3 : 8)) return; Q.fast = 0;
     if (Q.lvl > Q.ceil) { if (!(hot(now) && Q.lvl <= 1)) { Q.lvl--; Q.upT = now; } }
+    else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
     else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP)) { Q.want = Q.tier + 1; Q.upT = now; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
   } else { Q.slow = 0; Q.fast = 0; }
-  if (Q.tier !== tier0 || Q.lvl !== lvl0) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl });
+  if (Q.tier !== tier0 || Q.lvl !== lvl0 || Q.fxLast.length !== fx0) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, fx: fxSaved() });
 }
 // A new tier changes which shaders every material needs (shadows, lights, edge smoothing), so three.js
 // rebuilds them all: a long stall. So a tier change waits until no round is being played (the
 // game-over screen, the next card) and the round carries on at its lowest resolution until then.
 function applyTier() {
-  if (speed.playing()) { if (Q.force == null && Q.lvl < 1 && hot()) { Q.lvl = 1; Q.ceil = Math.max(Q.ceil, 1); } return; }   // hot mid-round: the first resolution step
+  if (speed.playing()) {   // hot mid-round: the first resolution step (critically short of memory: the second)
+    const l = memory.level >= 3 ? 2 : 1;
+    if (Q.force == null && Q.lvl < l && hot()) { Q.lvl = l; Q.ceil = Math.max(Q.ceil, l); }
+    return;
+  }
   Q.capNow = hot() ? CAP - 1 : CAP;   // between rounds: one tier lower while hot
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
@@ -223,6 +270,10 @@ function applyTier() {
 export const HD = {
   get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
+  /** The effects drawn smaller by their cost now (FXS): { name: size, 1 = as the tier has it }; {} when none is. */
+  get fx() { const o = {}; for (const k in Q.fx) o[k] = fxK(k); return o; },
+  /** Tests and the frame lab: draw this effect smaller by n of its steps now (0: full size), also under HD.force; until the next game. */
+  fxStep(name, n) { if (!FXS[name]) throw new Error(`HD.fxStep: no effect '${name}' (${Object.keys(FXS).join(', ')})`); const v = Math.max(0, Math.min(FXS[name].length - 1, n | 0)); Q.fxLast = Q.fxLast.filter(k => k !== name); if (v) { Q.fx[name] = v; for (let i = 0; i < v; i++) Q.fxLast.push(name); } else delete Q.fx[name]; Q.fxPin = true; },
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
@@ -2211,7 +2262,9 @@ export class HDView {
     if (this.probes.length > 1) this.blendProbes();
     // (built for the screen, not the chain's own picture: a pipeline built for that picture also bound it to read, which WebGPU refuses)
     this.holdNew(r, baking || off, now);
-    detailShow(this);
+    // (the frame lab's CPU by part, prof.js: each piece of the frame on its own while the lab is open)
+    const pm = PROF.on ? mark() : -1;
+    if (pm >= 0) enter('3D: detail'); detailShow(this); if (pm >= 0) leave(pm);
     // SGSR 2: the scene at pw x ph (ph the passes' own rounding of the canvas height), upscaled to the canvas
     const pw = up ? up.pw : r.domElement.width, ph = up ? Math.max(1, Math.floor(up.fh * (pw + .5) / up.fw)) : r.domElement.height;
     // what is hidden behind other things this frame (a card's picture is drawn whole)
@@ -2222,16 +2275,20 @@ export class HDView {
     this.scene.updateMatrixWorld();
     const worldAuto = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;
     try {
+    if (pm >= 0) enter('3D: occlusion');
     const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !r.reversedDepthBuffer, pw, ph);
     if (HD.occludeShow) DETAIL.occ = null;
+    if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
     if (tier().shadow > 0) this.scene.traverseVisible(o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
     for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null);   // (the sets gpuSwap's walk found)
+    if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
-    const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao, msaa: T.msaa, bloomScale: T.bloom, smooth: !T.msaa, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
+    if (pm >= 0) leave(pm);
+    const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: T.msaa, bloomScale: T.bloom * fxK('bloom'), smooth: !T.msaa, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
@@ -2244,7 +2301,9 @@ export class HDView {
     if (TK) {
       if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) fn(e.o, e.twin); } }); }
       this._tracer.show = !!HD.traceShow;
+      if (pm >= 0) enter('3D: traced reflections');
       if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) tr = this._tracer;
+      if (pm >= 0) leave(pm);
     } else if (this._tracer) { this._tracer.dispose(); this._tracer = null; }
     if (tr) (this._traceRefl ||= { scale: .5, traced: null }).traced = tr;
     o.refl = wantRefl ? (tr ? this._traceRefl : T.ssr ? REFL_FULL : REFL_HALF) : null;
@@ -2291,6 +2350,7 @@ export class HDView {
     // shadows: each light's map is drawn again only when it or a caster it sees moved (shadowLights)
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
     if (T.shadow > 0) {
+      if (pm >= 0) enter('3D: shadows');
       if (this.shadowLights(lastView !== this || baking || off, true) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
       for (const l of this.shL) {
         const sh = l.shadow;
@@ -2299,6 +2359,7 @@ export class HDView {
         shadowSplit(l, ops);
         sh.needsUpdate = false;
       }
+      if (pm >= 0) leave(pm);
     }
     if (!this.warmed && !off) { this.warmed = true; this.aheadAgain = true; }   // (what this frame does not draw is built over the next ones: buildAhead)
     // an instanced mesh made with room for none (an empty list in a game) has a zero-size buffer that WebGPU
@@ -2324,6 +2385,9 @@ export class HDView {
     // the scene's pass writes each pixel's motion and the see-through mask while frame generation could
     // come on for this game (so it can start without rebuilding the chain) or SGSR 2 can use them
     o.live = live; o.mrt = live && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
+    // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
+    o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
+    if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); }
     // fresh aim: made frames turned to where the camera points at the moment they're shown (v.aimNow, AR's own)
     ch.aim = live && fg && HD.aim !== false && (this.aimFn || this.freshAim) ? () => this.aimPose() : null;
     this._aimJit = s2 && fg ? fg.jit : null;   // the real frame is shown while SGSR 2's jitter is still on the camera
@@ -2331,8 +2395,11 @@ export class HDView {
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
-    try { shown = ch.render(o) || false; } finally { showAll(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; }
+    if (pm >= 0) enter('3D: drawing');
+    try { shown = ch.render(o) || false; } finally { showAll(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
+    if (pm >= 0) leave(pm);
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
     const drawn = ch.occAt !== r.info.frame; ch.occAt = r.info.frame;
@@ -2505,7 +2572,8 @@ export class HDView {
     this.patchAir(); this.airUniforms();
     if (this.gi || this.rooms?.length) this.bakeExtras(null, r);
     this.holdNew(r, baking || off, now, this.clearBg ? null : cp.readBuffer);
-    detailShow(this);
+    const pm = PROF.on ? mark() : -1;   // (the frame lab's CPU by part, prof.js)
+    if (pm >= 0) enter('3D: detail'); detailShow(this); if (pm >= 0) leave(pm);
     r.toneMappingExposure = this.exposure * this.eyeAt(baking || off);
     if (this.clearBg) { P.arRender.scene = this.scene; P.arRender.camera = this.cam; } else { P.render.scene = P.ao.scene = this.scene; P.render.camera = P.ao.camera = this.cam; }
     // reflections (ultra, and only if the game marked shiny surfaces): SSR draws the scene itself
@@ -2526,8 +2594,10 @@ export class HDView {
     for (const p of this.parts) p.mat.uniforms.scale.value = ph / (2 * Math.tan(this.cam.fov * Math.PI / 360));
     if (!baking && !off) this.t += 1 / 60;
     if (!this.clearBg) {
-      const F = P.final; P.ao.enabled = T.ao > 0; if (T.ao > 0 && P.ao.scale !== T.ao) { P.ao.scale = T.ao; P.ao.setSize(P.ao.fw || pw, P.ao.fh || ph); }
-      F.strength = this.bloom; F.scale = T.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
+      const F = P.final, aoK = T.ao * fxK('ao'), blK = T.bloom * fxK('bloom'); P.ao.enabled = T.ao > 0; if (T.ao > 0 && P.ao.scale !== aoK) { P.ao.scale = aoK; P.ao.setSize(P.ao.fw || pw, P.ao.fh || ph); }
+      if (F.scale !== blK) { F.scale = blK; if (F.w) F.setSize(F.w, F.h); }   // (the effects ladder, FXS: the bloom's pictures smaller)
+      if (!baking && !off) { fxOn = new Set(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
+      F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
       const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035;
       const g = this.grade; u.gradeOn.value = g ? 1 : 0;
       if (g) { u.sat.value = g.saturation ?? 1; u.con.value = g.contrast ?? 1; toRGB(g.shadows, u.lo.value); toRGB(g.highlights, u.hi.value); }
@@ -2569,8 +2639,10 @@ export class HDView {
     this.scene.updateMatrixWorld();
     if (!baking && !off) { autoLod(this, r.domElement.height); autoBatch(this, now); }
     // what is hidden behind other things this frame (a card's picture is drawn whole), and this frame's depth read back for the frames to come
+    if (pm >= 0) enter('3D: occlusion');
     P.occ?.poll();
     const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !ssr, pw, ph);
+    if (pm >= 0) leave(pm);
     if (HD.occludeShow) DETAIL.occ = null;
     if (occJob) { occJob.pad = s2 || T.msaa ? 1 : 0; (P.occ ||= new DepthMeter()).job = occJob; cp.passes.splice(1, 0, P.occ); }
     r.shadowMap.enabled = T.shadow > 0;
@@ -2582,7 +2654,8 @@ export class HDView {
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
-    try { cp.render(); } finally { showAll(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); }
+    if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
+    try { cp.render(); } finally { showAll(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
     if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.refl = ssr ? 'screen' : ''; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
@@ -3617,3 +3690,6 @@ export class ContactShadows {
     r.setRenderTarget(prevT); r.setClearAlpha(clr); r.autoClear = auto;
   }
 }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(HDView.prototype, 'render', '3D render');

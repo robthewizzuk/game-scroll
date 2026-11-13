@@ -100,6 +100,11 @@ How much it can say depends on the phone:
   reads "App closed while playing" (or "while open") with no reason, and its time is when the app
   was next opened. Being swiped away within a second or two of leaving the app can be miscounted.
 
+On every phone a crash report ends in **(memory was tight)**, **(memory was low)** or **(memory was
+critical)** when the memory guard (`src/kit/memory.js`) had seen the phone short of memory at the time
+(apps built from 13 November 2026). With "the web view was killed" it all but confirms memory was the
+reason; on iPhone, which gives no reason, it is the best hint there is.
+
 **Script error** means a game threw an error. The app ends that round and carries on. Streamed
 games report as `games/<id>.js:<line>`, so the line points into that game's file.
 

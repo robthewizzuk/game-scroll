@@ -23,6 +23,7 @@
 // Faces: blend shapes eased together, blinking and lip sync to gs.sound.say (Face, shapes, visemes: src/kit/skin.js).
 //   face = new Face(mesh); face.say('Hello!'); face.set('smile', 1); face.update(dt);
 
+import { timed } from './prof.js';
 import { Vector3, Quaternion, Euler } from 'three';
 export { Face, shapes, visemes, FACE_SHAPES } from './skin.js';
 
@@ -137,3 +138,6 @@ export class Wobble {
   }
 }
 
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Steps.prototype, 'update', 'characters');
+timed(Wobble.prototype, 'update', 'characters');

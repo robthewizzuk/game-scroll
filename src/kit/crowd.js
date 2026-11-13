@@ -27,6 +27,7 @@
 // ground height as y), and anything else that needs a skeleton: for the one the player is looking at,
 // take a member out (hide it) and stand a real human() in its place.
 // The WebGL shader edit is the 'crowd' look below; crowd-gpu.js crowdLook is the same as nodes.
+import { timed } from './prof.js';
 import { BufferAttribute, Color, DataTexture, DynamicDrawUsage, FloatType, Frustum, Group, InstancedBufferGeometry, InstancedInterleavedBuffer, InterleavedBuffer, InterleavedBufferAttribute, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshDistanceMaterial, MeshNormalMaterial, NearestFilter, NoBlending, RGBAFormat, Sphere, Vector3 } from 'three';
 import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
@@ -384,3 +385,6 @@ export class Crowd {
 }
 // the row of a move's texture nearest a phase
 function rowOf(m, phase, round) { const f = m.loop ? phase * m.n : phase * (m.n - 1), i = round ? Math.round(f) : Math.floor(f); return m.base + Math.max(0, Math.min(m.loop ? m.n : m.n - 1, i)); }
+
+// per-frame work, timed while the frame lab is open (prof.js)
+timed(Crowd.prototype, 'update', 'crowds');
