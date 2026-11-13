@@ -53,13 +53,15 @@ const codes = pool(() => new Worker(new URL('./code-worker.js', import.meta.url)
 
 // and so do creatures (gs.models.creature): they carry the sculptor people are made with
 const beasts = pool(() => new Worker(new URL('./models/creature-worker.js', import.meta.url), { type: 'module' }), MOST);
+// and so does the traced level (ray traced reflections): it carries the tree builder
+const traces = pool(() => new Worker(new URL('./trace-worker.js', import.meta.url), { type: 'module' }), () => 2);
 
 // tests and the loading measurements read this (nothing else does)
 export const stats = work.stats, navStats = maps.stats;
 /** Can work be handed to a worker here? (No: do it on the spot.) */
 export const canRun = work.canRun, canRunNav = maps.canRun;
 /**
- * Runs one job in a worker: kind is a job job-worker.js knows ('surface', 'recipe', 'sculpt'), data
+ * Runs one job in a worker: kind is a job job-worker.js knows ('surface', 'recipe', 'sculpt', 'rock'), data
  * what it needs (plain values and arrays), transfer the array buffers in data to hand over without a
  * copy (they are gone from here afterwards). A promise of the answer; it rejects when the job failed
  * or there are no workers, and the caller then does the work itself.
@@ -71,3 +73,5 @@ export const runNav = (data, transfer) => maps.run('nav', data, transfer);
 export const runCreature = plan => beasts.run('creature', plan), canRunCreature = beasts.canRun;
 /** The same for a look for barcodes (code-worker.js): data { pixels, w, h, opts }, the answer what it found. canRunCode(): is there a worker for it? */
 export const runCode = (data, transfer) => codes.run('code', data, transfer), canRunCode = codes.canRun;
+/** The same for a block of the traced level (trace-worker.js): data what trace-build.js's buildBlock takes, the answer the block. canRunTrace(): is there a worker for it? */
+export const runTrace = (data, transfer) => traces.run('block', data, transfer), canRunTrace = traces.canRun;

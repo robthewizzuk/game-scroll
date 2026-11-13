@@ -11,6 +11,7 @@ export const OPEN_SOURCE = [
   { name: 'three.js', for: '3D graphics', licence: 'MIT', spdx: 'MIT', packages: ['three'] },
   { name: 'EZ-Tree', for: 'growing trees in code (gs.models), by Daniel Greenheck; its bark and leaf pictures are not used', licence: 'MIT', spdx: 'MIT', packages: ['@dgreenheck/ez-tree'] },
   { name: 'three-subdivide', for: 'smoothing code-built people and shapes (gs.models), by Stephens Nunnally', licence: 'MIT', spdx: 'MIT', packages: ['three-subdivide'] },
+  { name: 'three-mesh-bvh', for: 'the tree of triangles that rays are sent through for ray traced reflections (Next Gen on WebGPU), by Garrett Johnson', licence: 'MIT', spdx: 'MIT', packages: ['three-mesh-bvh'] },
   { name: 'isosurface', for: 'turning sculpted shapes into meshes with surface nets (gs.models), by Mikola Lysenko', licence: 'MIT', spdx: 'MIT', packages: ['isosurface'] },
   { name: 'spark.js', for: 'packing code-made textures into the graphics chip\'s compressed formats on WebGPU, by Ludicon; its JavaScript is MIT, its Spark encoders are used under a commercial licence', licence: 'MIT (JavaScript) and Spark EULA (encoders, licensed)', spdx: 'See LICENSE', packages: ['@ludicon/spark.js'], notice: '© Ludicon LLC' },
   { name: 'Capacitor', for: 'the phone app and its haptics, motion, location, share and file plugins', licence: 'MIT', spdx: 'MIT',

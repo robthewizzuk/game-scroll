@@ -4,6 +4,7 @@
 import { surfaceMath } from './surface-math.js';
 import { paintRecipe } from './models/recipe-paint.js';
 import { sculptArrays } from './models/sculpt-arrays.js';
+import { rockArrays } from './land-rock.js';
 
 const JOBS = {
   // a surface's normal map and rougher small copies, from its height and roughness layers (gs.hd.surface)
@@ -12,6 +13,8 @@ const JOBS = {
   recipe({ name, K, size, seed, strength }) { const layers = paintRecipe(name, K, size, seed); return { ...surfaceMath(layers.h, layers.r, size, strength), layers }; },
   // a sculpted mesh's arrays (gs.models.sculpt)
   sculpt: ({ shapes, o }) => sculptArrays(shapes, o),
+  // a land's rock: cliffs, caves and shapes as triangles, and the spans of solid height (gs.outdoors land.rocks())
+  rock: ({ grid, o }) => rockArrays(grid, o),
 };
 // every array buffer in an answer, once each (they are handed over, not copied)
 function buffers(v, out = new Set()) {

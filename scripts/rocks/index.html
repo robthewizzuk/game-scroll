@@ -1,0 +1,74 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Pictures of a gs.outdoors Land with rock on it (land.rocks()), for scripts/rocks.cjs: a plateau that drops
+// in a cliff to a valley, a spur with a cave through it, an arch on the valley floor and a shelf of rock that
+// sticks out of the cliff, with people standing about for scale. One picture for each camera, to judge the
+// rock by eye; and it notes how many triangles the rock is, in how many pieces, and how long it took to make.
+//   ?views=wide,cliff,mouth,inside,arch,under,edge,top (default: all)   &cols=4   &cell=480x340   &gpu (WebGPU)
+//   &off (the land as a height map only, to compare)   &rockcell=.4   &seed=3   &snow (snow lying)   &time=15.5
+//   &nomeadow   &flat (no beds, joints or lumps: the bare shapes)   &look (gs.outdoors.looks.rock on the rock; &look=.6: with moss)
+// window.__lab ({ land, v, shot(at, to) }) is left for a script that wants a closer look.
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), M = gs.models, { Land } = gs.outdoors;
+  const VIEWS = {
+    wide: [[-40, 13, -10], [0, 7, 6]],              // the cliff and the spur from across the valley
+    cliff: [[-8, 5, -40], [11, 9, -26]],            // the cliff face and the shelf that sticks out of it
+    mouth: [[-10, 2.4, -17], [-3, 2, -3]],          // the cave's south mouth
+    inside: [[-4.3, 1.9, 9], [-3.1, 1.6, -5]],      // inside the cave, looking out
+    arch: [[-33, 2.6, 19], [-22, 4, 28]],           // the arch on the valley floor
+    under: [[2.5, 1.9, -19], [8, 8.5, -25.5]],      // under the shelf, looking up
+    edge: [[17, 19.5, -42], [8, 13, -12]],          // along the top of the cliff
+    top: [[0, 75, .1], [0, 0, 0]],                  // straight down
+  };
+  const views = (Q.get('views') || 'wide,cliff,mouth,inside,arch,under,edge,top').split(','), cols = +(Q.get('cols') || 4), [cw, ch] = (Q.get('cell') || '480x340').split('x').map(Number), OFF = Q.has('off');
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;   // (pictures: nothing waits, hidden, for its shader)
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const rows = Math.ceil(views.length / cols), sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * rows; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#aab4c0', fog: 0, env: .55, amb: .5 });
+  const sun = gs.hd.sun('#fff2e0', 1.8, 60, [-.55, .6, -.45]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sky = new gs.sky.Sky(v, { time: +(Q.get('time') || 15.5), env: true, clouds: .4 }); v.air({ haze: .0012 });
+  // the place: a valley in the west, a plateau in the east, a cliff between them that wanders, and a spur
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const lie = (x, z) => 16 * sm(-5, 5, x + 6 * Math.sin(z * .05) + 3 * Math.sin(z * .13 + 1) + 14 * Math.exp(-(((z - 10) / 9) ** 2)) - 4) + .8 * Math.sin(x * .07) * Math.cos(z * .06) + .5 * gs.math.fbm(x * .05 + 3, z * .05, 3);
+  const land = new Land({ kind: lie, size: 160, segments: 96, colours: [[-2, '#6f7d43'], [3, '#63783a'], [9, '#857f66'], [15, '#5f7436'], [19, '#6f7d43']] }); v.scene.add(land.object);
+  let made = 0;
+  if (!OFF) {
+    const t0 = performance.now();
+    land.rocks({
+      seed: +(Q.get('seed') || 3), cell: +(Q.get('rockcell') || .4), cliffs: Q.has('flat') ? { ledge: 0, lip: 0, rough: 0, cracks: 0 } : true,
+      caves: [{ path: [[-3, land.height(-3, -6) + 2.1, -5], [-4.5, land.height(-3, -6) + 2.3, 10], [-3, land.height(-3, 32) + 2.1, 31]], radius: 2.6 }],   // (its floor level with the valley's at each mouth)
+      shapes: [{ arch: [9, 5.5, 2.2, 3], at: [-22, land.height(-22, 28) - .5, 28], turn: .5 }, { box: [8, 1.8, 6], at: [8.5, 10, -25], turn: .1 }],
+    });
+    made = performance.now() - t0;
+    if (Q.has('look')) gs.outdoors.looks.rock(land.rock.material, { mossy: +(Q.get('look') || 0) });   // (the kit's rock look over the rock's own colours: grit and cracks three ways)
+  }
+  if (!Q.has('nomeadow')) land.meadow({ reach: 16, gap: .34, height: .4, blades: 8 });
+  const people = [{ seed: 3, build: 'medium' }, { seed: 8, sex: 'f', build: 'slim' }, { seed: 5 }]; await M.human.ready(people);
+  for (const [i, x, z, y, turn] of [[0, -3.4, -6.5, 3, 2.6], [1, 5.5, -22.5, 2, 1], [2, -24, 25, 3, .6], [0, 13.5, -30, 30, -1.2]]) {
+    const p = i === 0 && y === 30 ? M.human(people[0]).twin?.() || M.human(people[0]) : M.human(people[i]); p.lod = 0; p.position.set(x, land.floor(x, y, z), z); p.rotation.y = turn; p.rig.blend({ idle: 0, walk: 1.4 }, 0); p.rig.update(1 / 60, { speed: 0 }); v.scene.add(p);
+  }
+  let weather = null;
+  if (Q.has('snow')) { weather = new gs.sky.Weather(v, { kind: 'clear', ground: (x, z) => land.height(x, z) }); weather.update(1 / 60); weather.snow = 1; }
+  const info = [];
+  for (let k = 0; k < views.length; k++) {
+    const V = VIEWS[views[k]]; if (!V) throw new Error('no view ' + views[k] + ': ' + Object.keys(VIEWS).join(', '));
+    v.cam.fov = 55; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 600; v.cam.updateProjectionMatrix(); v.cam.position.set(...V[0]); v.cam.lookAt(...V[1]); v.cam.updateMatrixWorld();
+    v.cut?.(); sun.follow(V[1][0], V[1][1], V[1][2]);
+    v.hemi.intensity = .5 * land.sky(...V[0]);   // (a game dims its own light in a cave: land.sky() says by how much)
+    land.update(0, v.cam); weather?.cover?.update(true);
+    for (let n = 0; n < 8; n++) { sky.update(0); weather?.update(0); v.t = n / 60; v.render(cx, cw, ch); await frame(); }
+    sx.drawImage(cell, (k % cols) * cw, Math.floor(k / cols) * ch);
+    sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${views[k]}${OFF ? '  (no rock)' : ''}  sky ${land.sky(...V[0]).toFixed(2)}`, (k % cols) * cw + 4, Math.floor(k / cols) * ch + 12);
+  }
+  if (land.rock) info.push(`rock: ${land.rock.tris} triangles in ${land.rock.pieces} pieces, ${land.rock.holes.length} of the land's squares left out, made in ${made.toFixed(0)} ms (the number work ${land.rock.ms} ms)`);
+  info.push(`the last picture: ${window.__hd.info.calls ?? '?'} draws, ${window.__hd.info.tris ?? '?'} triangles`);
+  window.__lab = { land, v, shot: async (at, to, n = 4) => { v.cam.position.set(...at); v.cam.lookAt(...to); v.cam.updateMatrixWorld(); v.cut?.(); v.hemi.intensity = .5 * land.sky(...at); land.update(0, v.cam); for (let i = 0; i < n; i++) { v.render(cx, cw, ch); await frame(); } return cell.toDataURL(); } };
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

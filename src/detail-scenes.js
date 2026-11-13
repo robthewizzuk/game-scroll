@@ -13,6 +13,10 @@
 //            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
 //   yard     smoke and fire that flow (src/kit/gas.js, gs.gas): a camp fire under a beam, a smoking chimney, a burning drum and an explosion every
 //            seven seconds, in a wind that swings round: with no gas, as the smaller version (soft puffs), and on WebGPU as the gas on the graphics chip
+//   cliff    land with cliffs, caves and overhangs (src/kit/land-rock.js, gs.outdoors land.rocks()): a walk along the foot of a cliff, through a
+//            cave under a spur, out and under an arch: once on the height map alone (over the spur), then with the rock
+//   hall     ray traced reflections (src/kit/hd3d-gpu-trace.js, v.reflect() on WebGPU): a polished hall with no reflections, with reflections
+//            found on the screen, and with rays sent through a copy of the hall (banners and lanterns over the camera's head show only in those)
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -434,7 +438,152 @@ function yard({ gs, size, gpu }) {
   };
 }
 
-/** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu })]. */
+/* ---------- cliff: land with cliffs, caves and overhangs ---------- */
+function cliff({ gs, size }) {
+  const T = gs.THREE, { human } = gs.models, { Land, looks } = gs.outdoors, { v, sun } = view(gs, 320, .0015), amb = v.hemi.intensity;
+  const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // a valley in the west, a plateau in the east, a cliff between them that wanders, and a spur that stands out of it
+  const lie = (x, z) => 16 * sm(-5, 5, x + 6 * Math.sin(z * .05) + 3 * Math.sin(z * .13 + 1) + 14 * Math.exp(-(((z - 10) / 9) ** 2)) - 4) + .8 * Math.sin(x * .07) * Math.cos(z * .06) + .3 * Math.sin(x * .19 + 2) * Math.sin(z * .23);
+  const land = new Land({ kind: lie, size: 160, segments: Math.max(32, Math.round(96 * Math.sqrt(size))), colours: [[-2, '#6f7d43'], [3, '#63783a'], [9, '#857f66'], [15, '#5f7436'], [19, '#6f7d43']] }); v.scene.add(land.object);
+  // the rock: beds and ledges where the land is steep, a cave under the spur from the valley on one side of it to
+  // the valley on the other, an arch on the valley floor and a shelf that stands out of the cliff
+  const ROCK = { seed: 3, cell: size >= .5 ? .4 : .8,
+    caves: [{ path: [[-3, lie(-3, -6) + 2.1, -5], [-4.5, lie(-3, -6) + 2.3, 10], [-3, lie(-3, 32) + 2.1, 31]], radius: 2.6 }],
+    shapes: [{ arch: [9, 5.5, 2.2, 3], at: [-22, lie(-22, 28) - .5, 28], turn: .5 }, { box: [8, 1.8, 6], at: [8.5, 10, -25], turn: .1 }] };
+  // the walk: a ring through the cave and under the arch, a point every quarter of a metre. How high each point
+  // is comes from the land as it is in this run (land.floor(): without the rock the walk goes over the spur).
+  const ring = new T.CatmullRomCurve3([[-12, -24], [-5, -14], [-3, -5], [-4.5, 10], [-3, 31], [-8, 38.5], [-18.2, 35], [-22, 28], [-25.8, 21], [-28, 8], [-23, -10]].map(([x, z]) => new T.Vector3(x, 0, z)), true, 'centripetal');
+  const LEN = ring.getLength(), NP = Math.round(LEN / .25), pts = ring.getSpacedPoints(NP).slice(0, NP), ys = new Float32Array(NP), sk = new Float32Array(NP), tmp = new Float32Array(NP), SPEED = 4;
+  const soften = (a, n) => { for (let pass = 0; pass < 2; pass++) { for (let i = 0; i < NP; i++) { let t = 0; for (let k = -n; k <= n; k++) t += a[(i + k + NP) % NP]; tmp[i] = t / (2 * n + 1); } a.set(tmp); } };
+  const lay = () => {
+    let y = land.height(pts[0].x, pts[0].z);
+    for (let i = 0; i < NP; i++) { ys[i] = y = land.floor(pts[i].x, y, pts[i].z); sk[i] = land.sky(pts[i].x, y + 1.7, pts[i].z); }
+    soften(ys, 3); soften(sk, 8);
+  };
+  // people standing about, for the size of things: at the cave's mouth, in it, under the arch, on the cliff top
+  const SPECS = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], SPOTS = [[-5.5, -9, 2, 2.4], [-3.6, 14, 2, 3], [-21, 26.5, 2, .4], [1.5, 6, 40, -1.9]];
+  const folk = []; let made = null, on = false, rockMs = 0;
+  const make = draw => made ||= (async () => {
+    const t0 = performance.now(); let done = false, err = null;
+    human.ready(SPECS).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+    const src = SPECS.map(o => human(o));
+    SPOTS.forEach(([x, z, , turn], i) => { const p = i < 2 ? src[i] : src[i % 2].twin(); p.position.set(x, 0, z); p.rotation.y = turn; v.scene.add(p); folk.push(p); });
+    return performance.now() - t0;
+  })();
+  const enter = key => async draw => {
+    const first = !made, build = await make(draw); on = key === 'on'; let ms = null;
+    land.meadow(false);
+    if (on) { const t0 = performance.now(), fresh = !rockMs; land.rocks(ROCK); looks.rock(land.rock.material, { mossy: 0 }); if (fresh) ms = rockMs = Math.max(1, performance.now() - t0); }
+    else land.rocks(false);
+    land.meadow({ reach: 14, gap: .34, height: .4, blades: 8 });   // (planted again: grass keeps off the rock)
+    lay(); SPOTS.forEach(([x, z, y], i) => { folk[i].position.y = land.floor(x, lie(x, z) < 6 ? lie(x, z) + y : y, z); folk[i].updateMatrixWorld(true); });
+    for (let i = 0; i < 4; i++) await draw();
+    return ms != null ? { build: ms + (first ? build : 0), note: `rock of ${num(land.rock.tris)} triangles made` + (first ? ', two people sculpted' : '') } : first ? { build, note: 'two people sculpted' } : null;
+  };
+  const at = (d, out) => { const f = ((d / LEN) % 1 + 1) % 1 * NP, i = Math.floor(f) % NP, j = (i + 1) % NP, u = f - Math.floor(f); out.set(pts[i].x + (pts[j].x - pts[i].x) * u, ys[i] + (ys[j] - ys[i]) * u, pts[i].z + (pts[j].z - pts[i].z) * u); return sk[i] + (sk[j] - sk[i]) * u; };
+  const eye = new T.Vector3(), ahead = new T.Vector3(); let last = 1e9;
+  return {
+    v, holds: 'a walk along the foot of a cliff, through a cave under a spur and under an arch, four people standing about',
+    modes: [
+      { key: 'off', name: 'the height map alone', enter: enter('off') },
+      { key: 'on', name: 'cliffs, a cave, an arch', enter: enter('on') },
+    ],
+    path(t, cam) {
+      const dt = t < last ? 0 : Math.min(1, t - last); last = t;
+      const light = at(t * SPEED, eye); at(t * SPEED + 5, ahead);
+      cam.position.set(eye.x, eye.y + 1.7, eye.z); cam.lookAt(ahead.x, ahead.y + 1.5, ahead.z); cam.updateMatrixWorld(); sun.follow(eye.x, eye.y, eye.z);
+      v.hemi.intensity = amb * (.3 + .7 * light);   // (a game dims its own fill light in a cave: land.sky() says by how much)
+      for (const p of folk) { p.rig.blend({ idle: 0, walk: 1.4 }, 0); p.rig.update(dt, { speed: 0 }); p.see(v.cam, 800); }
+      land.update(dt, cam);
+    },
+    tell() { return on && land.rock ? `rock of ${num(land.rock.tris)} triangles in ${num(land.rock.pieces)} pieces, its numbers worked out in ${num(land.rock.ms)} ms` : null; },
+    dispose() { land.meadow(false); land.rocks(false); for (const p of folk) p.removeFromParent(); v.hemi.intensity = amb; clear(v); },   // (the people's shapes are the kit's own: not freed here)
+  };
+}
+
+/* ---------- hall: ray traced reflections ---------- */
+function hall({ gs, HD, size, gpu, top = true }) {
+  const T = gs.THREE, pbr = gs.hd.pbr, n = Math.max(3, Math.round(12 * size)), L = n * 7, { v, sun } = view(gs, 260, .001), was = { traced: HD.traced };
+  const add = (g, m, x, y, z, shadow = true) => { const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = shadow; o.receiveShadow = true; v.scene.add(o); return o; };
+  add(new T.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), pbr('#8a8478', { rough: .95 }), 0, -.3, 0, false);
+  // a polished floor, with a polished panel standing at each end (they show what is behind the camera)
+  const floor = add(new T.BoxGeometry(22, .3, L + 18), pbr('#7c858f', { rough: .07, metal: .9 }), 0, -.15, 0, false);
+  const chrome = pbr('#e6e8ea', { rough: .04, metal: 1 }), panelG = new T.BoxGeometry(7, 5, .25), panels = [-1, 1].map(s => add(panelG, chrome, 0, 2.9, s * (L / 2 + 5)));
+  // two rows of pillars with a beam across each pair, and a figure on a plinth by each pillar
+  const stone = pbr('#b9b0a2', { rough: .8 }), dark = pbr('#4a443c', { rough: .7 }), pillarG = new T.CylinderGeometry(.5, .58, 8, 40, 10), beamG = new T.BoxGeometry(17.2, .7, .9), plinthG = new T.BoxGeometry(1.7, .9, 1.7);
+  const q = Math.max(10, Math.round(70 * size)), figures = [0, 1, 2].map(i => boulder(T, q, .95 + i * .12, 3 + i * 1.7)), made = [pbr('#8a6a3c', { rough: .45, metal: .6 }), pbr('#5f7f72', { rough: .6 }), pbr('#a8a29a', { rough: .55 })];
+  // over the camera's head as it walks: banners, and lanterns that glow (three of them real lamps)
+  const bannerG = new T.BoxGeometry(.12, 2.6, 1.9), flags = ['#d03a30', '#2f6fd0', '#e0b020', '#2fa860'].map(c => pbr(c, { rough: .7 })), lanternG = new T.SphereGeometry(.3, 16, 12);
+  const lit = pbr('#ffe6b0', { rough: .6 }); lit.emissive = new T.Color('#ffb850'); lit.emissiveIntensity = 3;
+  for (let i = 0; i < n; i++) {
+    const z = (i + .5) * 7 - L / 2;
+    for (const s of [-1, 1]) {
+      const k = i * 2 + (s > 0 ? 1 : 0);
+      add(pillarG, stone, s * 8, 4, z); add(plinthG, stone, s * 5.4, .45, z + 3.5); add(figures[k % 3], made[(k + i) % 3], s * 5.4, 1.75 + (k % 3) * .1, z + 3.5);
+      add(bannerG, flags[k % 4], s * 3.2, 6.6, z, false);
+    }
+    add(beamG, dark, 0, 8.35, z); add(lanternG, lit, 0, 7.4, z, false);
+  }
+  for (const i of new Set([Math.floor(n / 6), Math.floor(n / 2), Math.floor(n * 5 / 6)])) { const lamp = new T.PointLight('#ffd9a0', 8, 24); lamp.position.set(0, 7, (i + .5) * 7 - L / 2); v.scene.add(lamp); }
+  // copies (a set of posts down each side): the traced level leaves copies out, and rays find them on the screen
+  const posts = new T.InstancedMesh(new T.CylinderGeometry(.09, .11, 1, 10), pbr('#c8a040', { rough: .35, metal: .8 }), n * 4), M = new T.Matrix4();
+  for (let i = 0; i < n * 4; i++) posts.setMatrixAt(i, M.makeTranslation((i % 2 ? 1 : -1) * 6.7, .5, (Math.floor(i / 2) + .5) * 3.5 - L / 2));
+  posts.instanceMatrix.needsUpdate = true; posts.castShadow = posts.receiveShadow = true; v.scene.add(posts);
+  // things that move, each a block of its own in the traced level: glowing orbs drifting down the hall and chrome balls rolling about
+  const orbG = new T.SphereGeometry(.32, 20, 14), ballG = new T.SphereGeometry(.6, 40, 28);
+  const glows = ['#40e0ff', '#ff5a90', '#80ff60', '#ffd040'].map(c => { const m = pbr(c, { rough: .5 }); m.emissive = new T.Color(c); m.emissiveIntensity = 2.5; return m; });
+  const orbs = Array.from({ length: Math.max(2, Math.round(10 * size)) }, (_, i) => add(orbG, glows[i % 4], 0, 3, 0, false)), balls = Array.from({ length: Math.max(1, Math.round(5 * size)) }, () => add(ballG, chrome, 0, .6, 0));
+  for (const o of [...orbs, ...balls]) o.userData.moves = true;
+  // (by the clock, so every run sees them in the same places)
+  const place = t => {
+    orbs.forEach((o, i) => { const u = t * (.5 + i * .07) + i * 2.1; o.position.set(Math.sin(u * .7 + i) * 4.2, 2.4 + 1.3 * Math.sin(u * .9 + i * 1.3) + (i % 3) * 1.2, ((u * 2.5 + i * L / orbs.length) % L) - L / 2); });
+    balls.forEach((o, i) => { const u = t * .6 + i * 1.9, R = 2.2 + (i % 3) * .5; o.position.set(Math.sin(u) * R, .6, Math.cos(u * 1.3) * R + (i - (balls.length - 1) / 2) * L / (balls.length + 1)); });
+  };
+  place(0);
+  let tris = 0; v.scene.traverse(o => { if (o.isMesh) tris += trisOf(o.geometry) * (o.isInstancedMesh ? o.count : 1); });
+  const shiny = [floor, ...panels, ...balls], ahead = new T.Vector3();
+  let mode = '';
+  const set = (key, traced, on) => { mode = key; HD.traced = traced; if (on) v.reflect(shiny); else { v.reflectors.length = 0; for (const o of shiny) o.userData.gsReflect = false; } };
+  const modes = [
+    { key: 'none', name: 'no reflections', enter() { set('none', false, false); } },
+    { key: 'screen', name: 'from the screen', enter() { set('screen', false, true); } },
+  ];
+  // (WebGPU only: on WebGL the hall is walked without reflections and with the ones WebGL has)
+  if (gpu) modes.push({ key: 'traced', name: 'ray traced', async enter(draw) {
+    set('traced', true, true);
+    const t0 = performance.now(); await draw(); await draw();
+    if (!HD.info.refl) return null;   // (a quality with no reflections at all: nothing to wait for)
+    await until(draw, () => HD.info.refl === 'traced', 12000);   // (the ray tracing part is loaded the first time it is wanted)
+    await until(draw, () => { const t = HD.info.trace; return !t || (t.builds > 0 && t.tris > 0 && !t.busy); }, 90000);
+    for (let i = 0; i < 8; i++) await draw();   // (a chip that won't take the tracing says so in its first frames)
+    const t = HD.info.trace;
+    return t ? { build: performance.now() - t0, note: t.builds ? `the hall's traced copy made in ${num(t.ms)} ms` : 'the traced copy did not arrive in time' } : null;
+  } });
+  return {
+    v, holds: `a polished hall of ${n * 2} pillars and figures, ${num(tris)} triangles, with ${orbs.length + balls.length} things moving`,
+    modes,
+    pairs: gpu ? [['none', 'screen', 'reflections from the screen against none'], ['screen', 'traced', 'ray traced against from the screen']] : null,
+    // a walk down one side of the hall and back up the other, about 3 metres a second, looking a little down at the floor ahead
+    path(t, cam) {
+      const P = (u, p) => p.set(Math.sin(u) * 2.6, 1.7, Math.cos(u) * (L / 2 - 7)), a = t * 2.2 / (L * .3);
+      P(a + .02, ahead); P(a, cam.position); ahead.sub(cam.position).setY(0).normalize().multiplyScalar(11).add(cam.position);
+      cam.lookAt(ahead.x, .7, ahead.z); sun.follow(cam.position.x, 0, cam.position.z);
+      place(t);
+    },
+    tell() {
+      const t = HD.info.trace;
+      if (mode === 'none') return null;
+      if (!HD.info.refl) return 'this quality draws no reflections here';
+      if (mode === 'screen') return null;
+      if (!t) return 'NOT ray traced: this phone would not take it, and drew reflections from the screen';
+      return `traced copy ${num(t.tris)} triangles (${num(t.was)} before simplifying) of ${num(t.things)} things, ${t.movers} of them moving, ${num(t.other + t.left)} left to the screen · ${t.mb} MB on the chip${top ? '' : ' · on for this test only: by itself this phone keeps to reflections from the screen'}`;
+    },
+    dispose() { HD.traced = was.traced; clear(v); },
+  };
+}
+
+/** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -443,4 +592,6 @@ export const SCENES = [
   ['square', 'Square', 'crowds', square],
   ['field', 'Field', 'ground that takes marks', field],
   ['yard', 'Yard', 'smoke and fire that flow', yard],
+  ['cliff', 'Cliff', 'land with cliffs, caves and overhangs', cliff],
+  ['hall', 'Hall', 'ray traced reflections', hall],
 ];
