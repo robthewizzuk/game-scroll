@@ -1172,7 +1172,9 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   the heel and push off the toes, and has weight: `rig.update(dt, { speed, turn })`; its feet stay where they
   are put down however the game moves it, and it steps round when turned on the spot: "Steps that are really
   taken" in the maker kit guide; a new move takes up the speed the body had, and arms, head and kit swing on
-  and settle when it starts, stops or turns: "Momentum and follow-through" there) in three levels of detail: call
+  and settle when it starts, stops or turns: "Momentum and follow-through" there; it stops in two steps and its
+  eyes and head go first into a turn, `rig.update(dt, { speed, toward })` to say where it means to go: "The eyes
+  and the head go first") in three levels of detail: call
   `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after
@@ -1258,6 +1260,22 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   little more in a woman, faster and deeper after a run and back to rest over half a minute, and a heavy belly
   lags a moment behind the hips in a stride or a landing and settles. `breath.on = false` holds a breath (a
   sniper before the shot); `breath.puff = 1` leaves someone winded. Close up only.
+  On WebGPU the clothes are woven at the size of their threads, each its own way (`outfit.top.weave`,
+  `outfit.legs.weave`, `outfit.hat.weave`: `plain`, `twill`, `denim`, `knit`, `canvas`, `wool`, `fine`; from the
+  kind of garment when not given), leather has its grain, and sleeves and trousers crease at the inside of the
+  elbow and the back of the knee as far as they bend; it all fades to the plain cloth before the threads get too
+  small to show. `person.grime` (`wet`, `mud`, `dust`, `snow`, each 0..1) is drawn over the clothes and skin: rain
+  soaks a person from the shoulders down by itself under the open sky (with a `gs.sky.Weather`), `marks.watch(person)`
+  splashes mud up the boots and trousers a step at a time in mud and dusts them in sand, and a game sets any of it
+  (`grime.wet = 1` after a fall in a river). Wet dries over a few minutes and snow melts; `grime.clean()`.
+  Standing about, a person is never still (`person.idle`, close up, nothing to call): now and then a fidget
+  (shoulders rolled, the neck stretched, a look down, a sigh, a swallow, a hand shaken out, a look about), and
+  where the eyes go (`person.face.look(point)`) the head follows a moment later, and the body too for a thing
+  further round than a right angle. `idle.notice(point)` is a glance and back; `idle.listen(noises)` (a
+  `gs.senses.Noises`) and `idle.watch(thing)` glance at a noise nearby and at something that hurries past.
+  Gestures by name: `idle.gesture('nod' | 'shake' | 'shrug' | 'wave' | 'point' | 'hips' | 'cross', { at, hold })`
+  (`point` at a place; `hips`, hands on the hips, and `cross`, arms crossed, hold until `gesture(null)`).
+  `idle.on = false` for none of it, `idle.turn = 0` to keep the head the game's.
   The face is live: it blinks, the eyes move by themselves and go where you send them
   (`person.face.look(point)`), and `person.face.say(text)`, `set('smile', 1)` and `mouth(level)` work as on
   `gs.characters.Face`, with no `update()` to call: "A live face" in the maker kit guide. Besides the

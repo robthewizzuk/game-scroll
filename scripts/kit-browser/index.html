@@ -787,7 +787,8 @@ try {
       const grain = new Uint8Array(I.length); for (const q of g.groups) if (M[q.materialIndex].normalMap && q.materialIndex !== 6) grain.fill(1, q.start, q.start + q.count);   // (skin, cloth and leather: what has a grain; hair's strands are laid round the head and run together at the crown)
       let smeared = 0, grained = 0; for (let t = 0; t < I.length; t += 3) if (grain[t]) { grained++; for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3], d = Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]), du = Math.hypot(U[a * 2] - U[b * 2], U[a * 2 + 1] - U[b * 2 + 1]); if (du > d * 64 + 1e-3) { smeared++; break; } } }
       plain.updateMatrixWorld(true); const hy = plain.bones.head.getWorldPosition(new T.Vector3()).y / plain.scale.y; let thin = 0, off = 0;
-      for (let i = 0; i < n; i++) if (TH.getX(i) > .02) { thin++; const ax = Math.abs(P[i * 3]), y = P[i * 3 + 1] - hy; if (ax < .06 || ax > .1 || y < .09 || y > .21) off++; }
+      const onSkin = new Uint8Array(n); for (const q of g.groups) if (q.materialIndex === 0) for (let t = q.start; t < q.start + q.count; t++) onSkin[I[t]] = 1;   // (on cloth the first of gsThin's two says how it is woven: WEAVES)
+      for (let i = 0; i < n; i++) if (onSkin[i] && TH.getX(i) > .02) { thin++; const ax = Math.abs(P[i * 3]), y = P[i * 3 + 1] - hy; if (ax < .06 || ax > .1 || y < .09 || y > .21) off++; }
       ok(smeared === 0 && grained > 25000 && TH.count === n && TH.itemSize === 2 && thin > 600 && thin < n * .06 && off === 0 && M[0].userData.sss?.thin === true && M[0].normalMap && M[0].userData.gsGpu === 'sss' && M[1].clearcoat === 1 && M[1].clearcoatRoughness < .1 && !M[4].normalMap,
         `skin: pores on a person's skin and a wet eye; of ${grained} close-up triangles of skin, cloth and leather ${smeared} have their grain smeared; ${thin} of ${n} points are thin flesh, ${off} of them anywhere but the ears`);
       // the face's paint: a picture the engine made, on the skin by a second set of coordinates (in one list with the thin flesh: WebGPU takes eight lists a mesh), dark where the brows are
@@ -843,6 +844,22 @@ try {
       }
       ok(sm?.isDataTexture && sm.name === 'human:seams' && sm.channel === 1 && sm.mipmaps?.length > 4 && M[3].map?.name === 'human:seams' && M[3].map !== sm && seam > cloth * .02 && stitch > cloth * .02 && seam + stitch < cloth * .5 && jumps === 0,
         `seams: clothes sewn, by a picture made in code (${sm?.image.width} x ${sm?.image.height}, one for cloth and one for leather): of ${cloth} points of cloth and leather ${seam} by a seam and ${stitch} by a row of stitching; ${jumps} close-up triangles count more stitches than they are long`); }
+    { // how each cloth is woven (human.js WEAVES, read on WebGPU: hd3d-gpu.js gpuMaterials.cloth): a shirt knitted and trousers of twill unless told,
+      // denim when asked; and each person's wet, mud, dust and snow and the bends of the elbows and knees, on every level of detail
+      const dj = { ...opts, outfit: { legs: { weave: 'denim' } } }; await human.ready([dj]);
+      const weaves = h => { const g = h.mesh.geometry, TH = g.attributes.gsThin, I = g.index.array, seen = new Set(); for (const q of g.groups) if (q.materialIndex === 2) for (let t = q.start; t < q.start + q.count; t++) seen.add(Math.round(TH.getX(I[t]) * 8)); return [...seen].sort(); };
+      const W = ['plain', 'twill', 'denim', 'knit', 'canvas', 'wool', 'fine'], a = weaves(plain).map(i => W[i]), b = weaves(human(dj)).map(i => W[i]), M2 = plain.mesh.material;
+      ok(a.includes('knit') && a.includes('twill') && !a.includes('denim') && b.includes('denim') && M2[2].userData.gsGpu === 'cloth' && M2[3].userData.grime === 'leather' && M2[0].userData.grime === 'skin'
+        && plain.grime?.v?.isVector4 && plain.grime.bends.length === 4 && plain.lods.every(m => m.userData.gsGrime === plain.grime.v && m.userData.gsBends === plain.grime.bends) && plain.rig.grime === plain.grime,
+        `clothes woven their own ways (${a.join(', ')}; asked for denim: ${b.join(', ')}), and wet, mud, dust and snow on every level of detail`); }
+    { // a tunic's skirt swings on from the belt as the body starts off, and settles (human-shapes.js S.hang.hem, rig.hang)
+      const tj = { ...opts, outfit: { top: { kind: 'tunic' } } }; await human.ready([tj]); const tu = human(tj); v.scene.add(tu); tu.lod = 0;
+      for (let i = 0; i < 30; i++) tu.rig.update(1 / 60);
+      const h = tu.bones.hem, q0 = h?.quaternion.clone(); let most = 0;
+      for (let i = 0; i < 30; i++) { tu.position.z += i < 15 ? .002 * i : .03; tu.updateMatrixWorld(true); tu.rig.update(1 / 60); most = Math.max(most, h.quaternion.angleTo(q0)); }
+      for (let i = 0; i < 180; i++) tu.rig.update(1 / 60);
+      ok(h && most > .005 && most < .12 && h.quaternion.angleTo(q0) < .2 * most && !plain.bones.hem, `a tunic's skirt swings on from the belt as he sets off (${(most * 57.3).toFixed(1)} degrees) and settles`);
+      v.scene.remove(tu); }
     // hands that hold (human.js rig.hands): a hand left to the engine lies relaxed, each finger a little more curled than the one before;
     // on a bar (touch() with round) or round a thing it holds (hold()) each finger closes until it meets it, round a thin bar further than
     // round a thick one; a hand a game has set with fingers() is left as set, and 'auto' gives it back

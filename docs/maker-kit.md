@@ -1906,6 +1906,22 @@ touches the ground, for a footstep sound. It stands down by itself for a walk on
 a person carried along faster than a slow walk, a far-off person and one that `Reactions` has off its balance;
 `rig.steps = false` leaves every pose as drawn (a person riding on something slow).
 
+Starts, stops and turns are stepped as a person keeps their balance. Setting off, the foot that bears less of the
+weight steps first (turning as it sets off, the one on the side it turns to). Stopping, the body is a weight on legs:
+from how fast it is slowing the rig works out where it will come to rest, puts the braking foot down there and
+brings the other up square beside it, in two steps (a person stopped dead reaches a little further ahead, a runner
+takes more braking steps), with no shuffling of the feet after. Round a bend each foot comes down already turned
+into it, so the feet are not wrung round under the body. `rig.stride.plan = false` keeps the walk's own footfalls.
+
+**The eyes and the head go first** (`gs.models.human` people, by themselves): a person who turns looks where they
+are turning before they get there: the eyes flick round, the head follows a moment later, then the rib cage, and
+the hips and feet come last. Round a curve the gaze goes about to where the person will be in half a second, and
+never past where a turn that is slowing down will end. Tell the rig where the person means to go and the gaze goes
+there before the body has begun to turn: `rig.update(dt, { speed, toward: { x, z } })` (a point in the world) or
+`toward: heading` (radians, as `rotation.y`), from the stick, the next point on a path, a door to run for. Nothing
+while aiming, off balance or far off; little while the face is set on something (`person.face.look(...)`).
+`rig.lead.amount = 0` turns it off (2 makes it plainer).
+
 **Momentum and follow-through** (`gs.models.human` people, by themselves): a body has weight. A new move begins
 at once and takes up what the body was doing: how far each joint was from where the new move has it, and how
 fast it was turning, die away smoothly in about the fade you ask for (`rig.play(name, { fade })`), so a limb in
@@ -1928,6 +1944,20 @@ breath; set it for a winded person). `person.breath.on = false` holds the breath
 playing dead). A heavy belly lags a moment behind the hips in a stride or a landing and settles. A bicep swells as its
 elbow bends, more on a muscled arm, and shoulders, elbows, hips and knees keep their girth in a deep bend. With
 `look: 'real'` the body comes from the seed too, with `muscle` (0 slight .. 1 built) beside `age` and `weight`.
+
+**Clothes and dirt** (`gs.models.human` people on WebGPU): each cloth is woven at the size of its threads (twill
+trousers, a knitted T-shirt, denim, canvas webbing, a woollen coat with a soft sheen; `outfit.legs.weave: 'denim'` and
+so on), leather has its grain, and sleeves and trousers crease where the elbows and knees bend. `person.grime`
+(`wet`, `mud`, `dust`, `snow`, 0..1) shows on the clothes and the skin: rain soaks a person from the shoulders down
+under the open sky by itself, `gs.outdoors` Marks splashes mud up the legs of someone it watches, and you can set
+any of it (`person.grime.wet = 1` after a fall in a river; `grime.clean()`). Wet dries and snow melts by themselves.
+
+**Standing about** (`gs.models.human` people, by themselves, close up): a person fidgets now and then (shoulders
+rolled, the neck stretched, a look down, a sigh, a swallow, a hand shaken out, a look about), and the head follows
+the eyes a moment later (`person.face.look(point)`), the body too for something far round. A glance and back:
+`person.idle.notice(point)`; at noises and at things that hurry past: `idle.listen(noises)` (`gs.senses.Noises`),
+`idle.watch(thing)`. Gestures: `person.idle.gesture('nod')`, `'shake'`, `'shrug'`, `'wave'`, `'point'` (`{ at: [x, y, z] }`),
+`'hips'` and `'cross'` (held until `gesture(null)`). `idle.on = false` stops it; `idle.turn = 0` leaves the head to you.
 
 **A live face** (`gs.models.human` people, by themselves): close up, a person blinks, and the eyes keep to a
 spot in the world while the head moves, as eyes do, and jump to a new one now and then or when the head has

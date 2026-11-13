@@ -148,6 +148,11 @@ class FleshModel extends PhysicalLightingModel {
 }
 
 /* ---------- kit materials with a shader of their own, as node materials ---------- */
+// gs.models.human's weaves (human.js WEAVES: plain, twill, denim, knit, canvas, wool, fine): threads a tile, and the sheen each catches at a glance
+const WEAVE_N = [0, 18, 11, 20, 9, 10, 30], WEAVE_SHEEN = [.12, .12, .08, .25, .06, .4, .1];
+const ARM_OUT = .27;   // (human-shapes.js ARM: the arms out as a person's mesh was bound)
+const NO_BEND = new Vector4(0, -9, 0, 0), NO_GRIME = new Vector4();   // (a mesh with no elbows or knees; a person clean and dry)
+const ridge = x => { const f = fract(x); return f.mul(f.oneMinus()).mul(4); };   // a thread's round top: 0 at its edges, 1 along its middle
 // hd3d.js swaps a mesh's material for its twin here while the view draws on WebGPU (material.userData.gsGpu
 // names it). The twin reads the WebGL material's own uniform objects, so changes show on both.
 export const gpuMaterials = {
@@ -234,6 +239,65 @@ export const gpuMaterials = {
       m.thicknessDistortionNode = float(S.distortion); m.thicknessAmbientNode = float(S.ambient); m.thicknessAttenuationNode = float(S.attenuation);
     }
     m.name = gm.name || 'sss';
+    return m;
+  },
+  // gs.models.human's clothes (userData.grime: 'cloth', 'leather', or 'far' for the plain stand-in further off). Close up each cloth is woven
+  // its own way at the size of its threads (the weave in gsThin.x: human.js WEAVES), leather has its grain, and both crease at the inside of
+  // an elbow and the back of a knee as far as it is bent (mesh.userData.gsBends: Grime in human-life.js). Each fades to the plain surface as
+  // its threads get smaller than three pixels or so, before they can sparkle. Wet, mud, dust and snow go on after (grime(), hd3d.js twinOf).
+  cloth(gm) {
+    const kind = gm.userData.grime, m = new MeshPhysicalNodeMaterial();
+    for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];
+    m.name = gm.name || 'cloth';
+    if (kind === 'far') return m;
+    const q = uv(), P = positionGeometry, NG = TSL.normalGeometry, leather = kind === 'leather';
+    const wv = leather ? float(0) : floor(attribute('gsThin', 'vec2').x.mul(8).add(.5)).toVar('gsWeave');
+    const by = (list, d = 0) => list.reduceRight((acc, v, i) => (v === d ? acc : select(wv.equal(i), float(v), acc)), float(d));
+    // threads a tile (64 tiles a metre: 0.9 mm a thread of twill, 1.4 of denim, 0.5 of shirting), and how many of them one pixel covers
+    // (and where the tiles are laid on stretched, seen along the way they were projected, the threads would show many times their size: there
+    // the weave goes too, by the tiles a metre of the surface really has, which should be 64 every way)
+    const dqx = length(dFdx(q)), dqy = length(dFdy(q)), tight = min(dqx.div(max(length(dFdx(positionView)), 1e-7)), dqy.div(max(length(dFdy(positionView)), 1e-7)));
+    const N = leather ? float(10) : by(WEAVE_N), per = max(dqx, dqy).mul(N), facing = abs(dot(normalView, positionViewDirection)).toVar('gsFacing');
+    // (and both the weave and the creases go where the cloth is seen edge on, where bumps only sparkle along the outline)
+    const near = smoothstep(.4, .15, per).mul(smoothstep(20, 40, tight)).mul(smoothstep(.12, .35, facing)).toVar('gsNear');
+    // the threads' height (0..1) and each yarn's own shade
+    const ht = leather ? vec2(mx_noise_float(vec3(q.mul(10), 3.7)).abs().min(.35).mul(1.6), 1)   // (pebbled grain: creases where the noise crosses nought)
+      : Fn(() => {
+        const h = float(0).toVar(), tone = float(1).toVar(), t = q.mul(N), c = floor(t), r = ridge;
+        // over or under at each crossing: plain (canvas, shirting) alternates; a 2/2 twill (drill, wool) and a 3/1 (denim) step one along each row
+        const woven = over => { const a = r(t.x), b = r(t.y); h.assign(select(over, a.mul(b.mul(.35).add(.65)), b.mul(a.mul(.35).add(.65)))); return over; };
+        const own = over => tone.assign(float(1).add(hash21(select(over, vec2(c.x, 0), vec2(0, c.y))).sub(.5).mul(.1)));   // (each yarn a little lighter or darker)
+        const diag = TSL.mod(c.x.add(c.y), 4);
+        If(wv.equal(1).or(wv.equal(5)), () => { own(woven(diag.lessThan(2))); })
+          .ElseIf(wv.equal(2), () => { const over = diag.lessThan(3); woven(over); own(over); tone.mulAssign(select(over, float(1), float(1.5))); })   // (the white weft shows between the blue ribs)
+          .ElseIf(wv.equal(3), () => {
+            // jersey: columns of small V-shaped loops, each leg leaning out towards the top of its row
+            const k = q.mul(vec2(16, 20)), x = fract(k.x).sub(.5).abs(), y = fract(k.y);
+            h.assign(smoothstep(.15, 0, x.sub(y.mul(.22).add(.14)).abs()).mul(r(k.y).mul(.35).add(.65)));
+          })
+          .ElseIf(wv.equal(4).or(wv.equal(6)), () => { own(woven(TSL.mod(c.x.add(c.y), 2).lessThan(1))); });
+        If(wv.equal(5), () => { h.addAssign(mx_noise_float(vec3(q.mul(40), 1.3)).mul(.45)); });   // (wool's fuzz over its twill)
+        return vec2(h, tone);
+      })().toVar('gsThread');
+    const h = ht.x, tone = ht.y;
+    // the creases where an elbow or a knee bends: rings round the limb that wander a little, on the inside of the bend (the front of an elbow,
+    // the back of a knee), deeper the further it is bent. Where it was as the mesh was made (the person bound standing, arms out by ARM).
+    const n = mx_noise_float(P.mul(18)).toVar('gsFoldN');
+    let fold = float(0);
+    for (let i = 0; i < 4; i++) {
+      const J = uniform(new Vector4(0, -9, 0, 0)).onObjectUpdate(({ object }) => object?.userData?.gsBends?.[i] ?? NO_BEND), arm = i < 2;
+      const ax = arm ? vec3(TSL.sign(J.x).mul(Math.sin(ARM_OUT)), -Math.cos(ARM_OUT), 0) : vec3(0, -1, 0);
+      const d = P.sub(J.xyz), along = dot(d, ax), r = length(d.sub(ax.mul(along))), inside = arm ? NG.z : NG.z.negate();
+      // (a bent joint squeezes the skin of its inside into a few pixels: the folds go before they are finer than the pixels can show)
+      const env = smoothstep(.06, .012, abs(along)).mul(smoothstep(.12, .08, r)).mul(smoothstep(-.35, .45, inside)).mul(J.w.mul(2).min(1)).mul(smoothstep(.45, .2, fwidth(along).div(.03))).mul(smoothstep(.15, .4, facing));
+      fold = fold.add(sin(along.mul(2 * Math.PI / .03).add(n.mul(2.4))).mul(env));
+    }
+    m.normalNode = bumpN(h.mul(near).mul(leather ? .00018 : .00024).add(fold.mul(.0018)), 1, TSL.materialNormal);
+    if (!leather) {
+      m.colorNode = materialColor.mul(vec4(vec3(mix(float(1), tone, near)), 1));
+      // the sheen of a cloth's fibres at a glance: most on wool and knits, least on smooth canvas and denim
+      m.sheen = 1; m.sheenNode = diffuseColor.rgb.mul(.6).add(.4).mul(by(WEAVE_SHEEN, .12)); m.sheenRoughnessNode = by([.6, .6, .6, .7, .6, .8, .5], .6);
+    }
     return m;
   },
   // gs.sky's dome (sky.js): the sky gradient and sun glow, or Preetham scattering (pSun.z > 0), the sun's
@@ -539,10 +603,7 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
     return;
   }
   const facing = m.userData.gsBothSides ? n => n : TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at; grass blades are lit alike on both, so snow lies on both)
-  const on = live(AIR.gsAirOn), wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld.add(ORG), gg = facing(normalWorldGeometry), flat = facing(normalViewGeometry);
-  const gp = wp.xz.add(gg.xz.mul(wx.w)), gd = abs(gp.sub(at.xy));
-  const top = texture(AIR.gsCover.value || blankCover(), gp.mul(at.z)).onRenderUpdate(() => AIR.gsCover.value || blankCover()).r;
-  const open = mix(float(1), smoothstep(-.7, -.25, wp.y.sub(top)), step(max(gd.x, gd.y), at.w).mul(step(1e-6, at.w)));
+  const on = live(AIR.gsAirOn), flat = facing(normalViewGeometry), { wx, wp, gg, open } = openSky(AIR, facing);
   const w = max(live(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
   let rough = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
   if (dry) { m.roughnessNode = rough; afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3)))); return; }
@@ -555,6 +616,43 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
   m.metalnessNode = (m.metalnessNode ? float(m.metalnessNode) : TSL.materialMetalness).mul(s.oneMinus());
   afterColor(m, o, c => mix(c.mul(float(1).sub(w.mul(.3))).mul(float(1).sub(p.mul(.3))), vec3(.86, .9, .96), s));
   m.normalNode = mix(m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, flat, max(p.mul(.92), s.mul(.6))).normalize();
+}
+// the weather's cover over this point (Weather's picture of the highest roof over each spot): 1 under the open sky, 0 under a roof
+function openSky(AIR, facing) {
+  const wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld.add(ORG), gg = facing(normalWorldGeometry);
+  const gp = wp.xz.add(gg.xz.mul(wx.w)), gd = abs(gp.sub(at.xy));
+  const top = texture(AIR.gsCover.value || blankCover(), gp.mul(at.z)).onRenderUpdate(() => AIR.gsCover.value || blankCover()).r;
+  const open = mix(float(1), smoothstep(-.7, -.25, wp.y.sub(top)), step(max(gd.x, gd.y), at.w).mul(step(1e-6, at.w)));
+  return { wx, wp, gg, open };
+}
+// A person's skin and clothes, wet, muddy, dusty and snowy (gs.models.human: person.grime, Grime in human-life.js, which the mesh's
+// userData.gsGrime carries: wet, mud, dust, snow), on top of what the weather does under the open sky. Rain soaks a person from the head and
+// shoulders down, cloth going much darker and its fibres losing their sheen, leather a little darker and shiny, skin glistening; mud splashes
+// up the legs from the feet (as high as mud says: up to mid-thigh), dust settles most low down and lightens and dulls, snow lies on what
+// faces up (hat, shoulders, the tops of the arms). Measured where the point was on the person as made (standing, 1.8 m), so it stays on the
+// cloth however the body moves. kind: 'cloth', 'leather', 'skin', 'far' (the plain stand-in further off, taken as cloth). air: the view's air
+// settings, or null (only the person's own).
+const MUD = vec3(.075, .052, .034), DUST = vec3(.42, .37, .3), SNOW = vec3(.68, .72, .78);
+export function grime(m, kind, o, AIR, air) {
+  const g = uniform(new Vector4()).onObjectUpdate(({ object }) => object?.userData?.gsGrime ?? NO_GRIME), P = positionGeometry;
+  const n = mx_noise_float(P.mul(11)).toVar('gsGrimeN');
+  let ww = float(0), ws = float(0);
+  if (air) {
+    const on = live(AIR.gsAirOn);
+    if (air.world) { const { wx, open } = openSky(AIR, TSL.negateOnBackSide || TSL.directionToFaceDirection); ww = max(live(AIR.gsWet), wx.x.mul(open)).mul(on); ws = wx.y.mul(open).mul(on); }
+    else ww = live(AIR.gsWet).mul(on);
+  }
+  const skin = kind === 'skin', leather = kind === 'leather', w = max(g.x, ww);
+  const soak = smoothstep(.05, .3, w.mul(1.3).sub(float(1).sub(P.y.div(1.8)).mul(.35)).add(n.mul(.1))).toVar('gsSoak');
+  const top = g.y.mul(.55), mud = smoothstep(top, top.sub(.1), P.y.add(n.mul(.05))).mul(smoothstep(0, .2, g.y)).mul(n.mul(.2).add(.85)).min(1).toVar('gsMud');
+  const dust = g.z.mul(smoothstep(1.5, .2, P.y).mul(.6).add(.4)).mul(n.mul(.3).add(.7)).mul(skin ? .5 : 1).toVar('gsDust');
+  const snow = skin ? float(0) : smoothstep(.5, .95, normalWorld.y.add(n.mul(.35))).mul(max(g.w, ws.mul(.9)).mul(1.5).min(1)).toVar('gsSnow');
+  const dark = skin ? .06 : leather ? .3 : .45, wetR = skin ? .4 : leather ? .28 : .6;   // (wet skin glistens, but rain on a face is beads and a film, not a varnish)
+  let r = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
+  r = mix(r, wetR, soak.mul(skin ? .55 : 1)); r = mix(r, .6, mud); r = mix(r, .95, dust); if (!skin) r = mix(r, .9, snow);
+  m.roughnessNode = r;
+  afterColor(m, o, c => { let k = mix(c.mul(float(1).sub(soak.mul(dark))), MUD, mud.mul(.88)); k = mix(k, DUST, dust.mul(.5)); return skin ? k : mix(k, SNOW, snow); });
+  if (m.sheenNode) m.sheenNode = vec3(m.sheenNode).mul(float(1).sub(soak.mul(.8)).mul(mud.oneMinus()));
 }
 // The sun's light on WebGPU: cloud shadows drifting over everything (hd3d.js gsShadeAt) and the near
 // shadow cascade's share (CASC_NEAR / CASC_W: the near light inside its box, fading at the edges, the far
