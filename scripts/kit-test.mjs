@@ -4777,6 +4777,56 @@ console.log('physics ok');
   }
 }
 
+// rain that runs (src/kit/lens-drops.js, src/kit/sky.js): drops on the lens, spray off tyres, the clock running water keeps
+{
+  const THREE = await import('three'), { Weather } = await import('../src/kit/sky.js'), { LensDrops, DROPS_N } = await import('../src/kit/lens-drops.js');
+  // the lens: drops land at the rate asked, fade in, the big ones run down, and they dry; never more than DROPS_N
+  {
+    const d = new LensDrops(); assert.ok(!d.on && d.count === 0, 'a dry lens, and its loop not built in');
+    d.update(1, 0); assert.ok(d.count === 0 && !d.on, 'nothing lands at a rate of 0');
+    d.update(.5, 4); assert.ok(d.count === 2 && d.on, 'two a second for half a second: ' + d.count);
+    const v0 = d.vecs[0]; assert.ok(v0.x >= 0 && v0.x <= 1 && v0.y >= 0 && v0.y <= 1 && v0.z > .015 && v0.z < .1 && v0.w > 0 && v0.w <= 1, 'x, y across and up the screen, its size, how much it shows');
+    d.clear(); d.add(.5, .8, .08); d.update(.01, 0); assert.ok(d.vecs[0].w < .2, 'it fades in as it lands'); d.update(.2, 0); assert.ok(d.vecs[0].w === 1 && d.vecs[0].y < .8, 'a big one runs down: ' + d.vecs[0].y.toFixed(3));
+    d.add(.2, .3, .02); d.update(.5, 0); const small = d.list.find(q => q.r === .02); assert.ok(small && small.y === .3 && d.vecs[1].z < .02, 'a small one sits, and shrinks as it dries');
+    for (let i = 0; i < 40; i++) d.add(); d.update(0, 0); assert.ok(d.count === DROPS_N, 'the oldest give way: ' + d.count);
+    for (let i = 0; i < 20; i++) d.update(1, 0); assert.ok(d.count === 0 && d.on, 'all dry again (the loop stays built)');
+  }
+  // the weather lands them while it rains and the camera looks out under the open sky; lens: false keeps it dry
+  const P = (x, y, z) => ({ x, y, z }), run = (w, secs) => { for (let i = 0; i < Math.round(secs * 60); i++) w.update(1 / 60); };
+  const view = (y = 1.6) => { const cam = new THREE.PerspectiveCamera(60, 1, .1, 100); cam.position.set(0, y, 0); cam.lookAt(0, y + 1, -1); cam.updateMatrixWorld(); return { cam, scene: new THREE.Scene(), hemi: null, _air: null, parts: [], drops: new LensDrops(), air() { return this._air ||= { wet: 0, world: null }; } }; };
+  const roof = (f, d, max) => (f.x > 20 && f.y >= 4 ? f.y - 4 : Infinity), ground = () => 0;   // (a tunnel's roof 4 m up, east of x = 20)
+  {
+    const v = view(), w = new Weather(v, { kind: 'clear', level: roof, ground });
+    assert.ok(w.lens === v.drops && v.drops.on, 'the lens is turned on when the weather is made (its shaders are built with the drops in)');
+    run(w, 1); assert.ok(v.drops.count === 0 && w.shown.rain === 0, 'no rain, no drops');
+    w.set('rain'); run(w, 1); assert.ok(v.drops.count >= 3 && w.shown.rain === 1 && w.shown.runT > .9 && w.shown.runT < 1.1, 'looking up into the rain: ' + v.drops.count + ' drops; the running water clock goes');
+    const before = w.shown.runT; v.drops.clear(); v.cam.position.set(30, 1.6, 0); v.cam.updateMatrixWorld(); w.cover.place(30, 1.6, 0); w.cover.update(true); run(w, 1); assert.ok(v.drops.count === 0 && w.shown.runT > before, 'none in the tunnel');
+    w.dispose(); assert.ok(v.drops.count === 0, 'dispose() wipes the lens');
+    const v2 = view(), w2 = new Weather(v2, { kind: 'rain', lens: false }); run(w2, 1); assert.ok(!v2.drops.on && v2.drops.count === 0, 'lens: false'); w2.dispose();
+  }
+  // spray off tyres: a car on a wet road throws mist and drops behind its wheels from about 4 m/s, more the faster; none on a
+  // dry road, none slow, none under a roof over the road (but its own body is no roof)
+  {
+    const v = view(), w = new Weather(v, { kind: 'rain', level: roof, ground, soak: 1 }), car = new THREE.Group();
+    const wheels = [[-.8, -1.3], [.8, -1.3], [-.8, 1.3], [.8, 1.3]].map(([x, z]) => { const q = new THREE.Object3D(); q.position.set(x, .33, z); q.radius = .33; car.add(q); return q; });
+    car.wheels = wheels; car.size = { length: 4, width: 1.8, height: 1.5 }; v.scene.add(car);
+    assert.ok(w.watch(car) === car && w.mist && w.flung && v.parts.includes(w.mist) && v.scene.children.includes(w.flung.mesh), 'watch(): the mist and the drops are made');
+    const drive = (secs, speed, x0 = -10) => { for (let i = 0; i < Math.round(secs * 60); i++) { car.position.set(x0 + speed * i / 60, 0, 0); car.rotation.y = -Math.PI / 2; car.updateMatrixWorld(true); w.update(1 / 60); } };
+    w.set('clear'); w.wet = 0; drive(1, 20); assert.ok(w.mist.list.length === 0 && w.flung.alive === 0, 'a dry road: no spray');
+    w.set('rain'); run(w, 2); assert.ok(w.wet === 1);
+    w.mist.clear(); drive(1, 2.5); assert.ok(w.mist.list.length === 0, 'slow: none');
+    drive(1, 20); const mist = w.mist.list.length, drops = w.flung.alive; assert.ok(mist > 30 && drops > 10, 'fast on a wet road: ' + mist + ' puffs of mist, ' + drops + ' drops');
+    const at = car.position.x; let behind = 0; for (const q of w.mist.list) if (q.x < at - .5) behind++; assert.ok(behind > mist * .8, 'left behind it: ' + behind + ' of ' + mist);
+    let low = 0; for (const q of w.mist.list) if (q.y < 2.2 && q.y >= 0) low++; assert.ok(low === mist, 'low over the road');
+    w.mist.clear(); w.watched[0].vx = 0; drive(1, 10); const half = w.mist.list.length; assert.ok(half > 0 && half < mist * .8, 'less at half the speed: ' + half);
+    w.mist.clear(); v.cam.position.set(40, 1.6, 0); v.cam.updateMatrixWorld(); w.cover.place(40, 1.6, 0); w.cover.update(true); drive(1.2, 20, 22); assert.ok(w.mist.list.length === 0, 'in the tunnel: a dry road');
+    w.unwatch(car); w.mist.clear(); v.cam.position.set(0, 1.6, 0); drive(1, 20); assert.ok(w.mist.list.length === 0 && w.watched.length === 0, 'unwatch()');
+    const boat = Object.assign(new THREE.Group(), { kind: 'boat' }); w.watch(boat); assert.ok(w.watched.length === 0, "a boat is the water's");
+    w.dispose(); assert.ok(!v.scene.children.includes(w.flung?.mesh) && w.mist === null && !v.parts.length, 'dispose()');
+    console.log('rain that runs: drops on the lens (land, run, dry; only under the open sky), spray off tyres (wet roads, by speed, behind the wheels, not in a tunnel) ok');
+  }
+}
+
 // ground that takes marks (src/kit/marks.js: gs.outdoors.Marks)
 {
   globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
@@ -6015,6 +6065,28 @@ console.log('physics ok');
   assert.ok(fw.at.x === 2048 && fw.at.z === 512 && fw.recentred === 1 && Math.abs(box.position.x - 2048) < 1e-4 && box.position.y < y0 && Math.abs(fb.body.translation().x) < 1e-4, 'follows the view\'s centre: the box falls on where it was, kept near Rapier\'s own centre');
   for (const x of [fw, w]) x.free();
   console.log('floating origin: the centre moves in steps, physics far out runs as at the centre, a shift leaves bodies, lifts, hinges and rays be, and follows the view ok');
+}
+
+// the physical sky's air on WebGPU (atmosphere.js, Hillaire's method): blue overhead at noon, a red low sun, the sky round a
+// setting sun warmer than away from it, more air further down, and the tables made once for the same settings
+{
+  const A = await import('../src/kit/atmosphere.js');
+  const t0 = performance.now(), L = A.luts(A.airOf({})), ms = performance.now() - t0;
+  assert.ok(A.luts(A.airOf({})) === L, 'the tables are made once for the same air');
+  const n = v => { const l = Math.hypot(...v); return { x: v[0] / l, y: v[1] / l, z: v[2] / l }; };
+  const noon = n([0, 1, .35]), low = n([1, .05, .35]);
+  const zen = A.skyLight(L, { x: 0, y: 1, z: 0 }, noon, .002);
+  assert.ok(zen[2] > zen[0] * 1.8 && zen[2] > zen[1], 'blue overhead at noon: ' + zen.map(v => v.toFixed(4)));
+  const sunHigh = A.transmittance(L, A.RG + .002, noon.y), sunLow = A.transmittance(L, A.RG + .002, low.y);
+  assert.ok(sunHigh[0] > .8 && sunHigh[2] > .6, 'the noon sun comes through nearly whole: ' + sunHigh.map(v => v.toFixed(3)));
+  assert.ok(sunLow[0] > sunLow[2] * 3, 'a low sun is red: ' + sunLow.map(v => v.toFixed(3)));
+  const toward = A.skyLight(L, n([1, .08, .3]), low, .002), away = A.skyLight(L, n([-1, .08, -.3]), low, .002);
+  assert.ok(toward[0] / toward[2] > away[0] / away[2] * 1.3 && toward[0] > away[0], 'the low sky towards a setting sun is warmer and brighter: ' + toward.map(v => v.toFixed(4)) + ' against ' + away.map(v => v.toFixed(4)));
+  const horiz = A.skyLight(L, n([0, .02, -1]), noon, .002);
+  assert.ok(horiz[0] / horiz[2] > zen[0] / zen[2], 'paler (less blue) at the horizon than overhead');
+  const up = A.transmittance(L, A.RG + 3, noon.y);
+  assert.ok(up[2] > sunHigh[2], 'less air in the way from 3 km up');
+  console.log(`physical sky (Hillaire): blue overhead, red low sun, warm towards a setting sun, tables in ${ms.toFixed(0)} ms ok`);
 }
 
 // night lights (lamps.js): the lamp pool, light shapes, shadow slots

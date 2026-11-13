@@ -157,6 +157,28 @@ full one held still, while moving and after a cut. `HD.spread = false` takes eve
 button times both on a phone. WebGL draws every sample every frame. `node scripts/detail-test.cjs --page spread
 --webgpu` checks it.
 
+**The sky as the big engines draw it** (WebGPU; `src/kit/atmosphere.js`, `src/kit/hd3d-gpu-sky.js`). A physical
+sky (`new Sky(v, { physical: true })`) is worked out from how sunlight scatters in real air, by Hillaire's method
+(as in Unreal): small tables of how much sun gets through the air and how much light it scatters, made once on
+the CPU (about 50 ms, again only when the sky's `physical` settings change), and a picture of the sky round the
+camera (192 x 108) made on the chip when the sun moves or the camera climbs. The dome reads that picture, so a
+sunset is orange round the sun and blue-grey away from it, and the air's haze (`v.air()`) takes the sky's own
+colour in each direction, with real air's blue over the far kilometres. Sky clouds (`clouds: 0..1`) on high and
+ultra are real ones: a layer from 1.5 to 4 km up, marched through a noise made in code (Perlin-Worley, as in
+Guerrilla's Nubis clouds), lit by the sun through themselves, with light scattered many times inside that makes
+their sunlit sides white and their edges glow towards the sun, and a sky light that is bluer on top. They are
+marched at a quarter of the picture's pixels with 16 steps (24 on ultra, 64 for a card's picture), a different
+way along each frame, and filled in from the frames before (moved with the camera's turn: the sky is far off, so
+walking doesn't move it). Their light is kept just under the bloom's threshold, as a camera keeps a white cloud
+just under white. Their shadows come from the same clouds: a picture of how much sun gets through, 6 km across
+round the camera, made again six times a second, which darkens the sun on the ground, in the froxel fog and in
+the volumetric light (on a view with air, as dark as its `cloudShade`, as the painted clouds' shadows were). `cover` is how much of the sky they hide, as before; `gap` still keeps the low sky round
+the sun clear, and `sky.flash` lights them. `HD.atmosphere = false` keeps the Preetham sky and `HD.clouds = false`
+the painted clouds (WebGL and the low and medium tiers always do); `HD.info.sky` says what is drawn (`'air +
+clouds'`). `node scripts/detail-test.cjs --page sky --webgpu` checks it: blue overhead at noon, a warm sunset,
+clouds that shade the field, settle when held still, keep their place as the camera turns, a card's picture with
+the same clouds, Long Shadow's morning and storm skies, and the switches off drawing as before.
+
 **Speed tricks that keep the picture the same:**
 
 - The 3D canvas is shown directly on the playing card, under the card's own canvas, which is cleared
@@ -617,7 +639,10 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   dry; puddles spread on flat ground and dry up; snow settles on ground and roofs and melts. It keeps a
   map of the highest solid thing over each half metre round the camera (rays into the level a few
   hundred a frame) and the air reads it, so it costs no extra pass and is the same on WebGL and WebGPU.
-  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. The full list is in
+  `weather.wetAt(p)`, `snowAt(p)` and `open(p)` answer for a spot. In the rain water runs down walls and
+  windows, beads sit on glass and car paint and rings open on the puddles (all in the same look); drops land
+  on the lens (`view.drops`; `lens: false` keeps it dry); and `weather.watch(car)` throws spray off its
+  tyres on a wet road. The full list is in
   [maker-kit.md](maker-kit.md#weather-that-changes-the-world); `node scripts/weather.cjs film.png` films it.
 - **Ground that takes marks** (`new gs.outdoors.Marks(v, { land, weather, mud, sand })`, then
   `marks.watch(person)` and `marks.update(dt)`): feet leave prints and wheels leave tracks in snow where
@@ -662,7 +687,8 @@ s.fit(v, { far: 600, ground: (x, z) => land.height(x, z) });
   edge), so it's never lit twice. High and ultra tiers only, with `v.air()` on; turn it off (`near: 0`)
   while a scope is up, where `around` already keeps the shadows sharp round the target.
 - **Physical sky** (`new Sky(v, { physical: true })`, or `{ haze, blue, mie, glow, bright }`): the sky's
-  colours come from how sunlight scatters in air (the Preetham model): deep blue overhead, pale at the
+  colours come from how sunlight scatters in air (the Preetham model; on WebGPU Hillaire's, with real
+  clouds: see "The sky as the big engines draw it" above): deep blue overhead, pale at the
   horizon, an orange sun as it sets. Clouds, reflections (`env`), the air's colours, fog and the sky
   light all follow it; the day keys then only set how strong the sun and fill are. `sky.physical` can be
   switched any time (a clear morning on one mission, a grey storm with the day keys' colours on the next).

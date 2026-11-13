@@ -3025,6 +3025,20 @@ weather.set('snow');                                    // it starts to settle; 
   lying there; `deep`, .25, when it has all settled) and `weather.cover.at(x, z)` (the height of the
   highest thing over a spot). Slipping, slower steps, footprints, splashing footsteps, the sound of rain
   on a roof overhead and who comes in out of the rain are yours, from these.
+- **Water that runs**: in the rain, steep walls and windows get rivulets running down them, and glass, car
+  paint (a clearcoat) and other smooth things get beads that sit on them; the smoother the surface, the
+  more it shows (on rough brick it is a faint sheen). Puddles get rings where the drops land. All of it is in
+  the same wet look, with no extra pass, on WebGL and WebGPU, and only where the sky can see.
+- **Rain on the lens** (`lens: true`, the default): while it rains and the camera looks out under the open
+  sky, drops land on the view's lens, more when it faces up or into the wind. Each bends what is behind it,
+  and the big ones run down before they dry. It is drawn in the final pass (16 drops at most). `lens: false`
+  keeps the lens dry; `view.drops.add(x, y, r)` is a splash of your own (from a wave, a puddle a car drove
+  through), `view.drops.clear()` wipes it.
+- **Spray off tyres**: `weather.watch(car)` (a `gs.models.vehicle`, a `World3D.vehicle()` made with its wheel
+  meshes, or any moving `Object3D` with `wheels: [[x, z], ...]`) throws a mist that hangs in the air behind
+  it and drops flung off the tread while the road is wet, from about 4 m/s and all of it by 25; the back
+  wheels throw most. Under a roof higher than the car (a tunnel, a bridge) the road stays dry. `amount`
+  sets how much, `weather.unwatch(car)` stops it.
 - `water` (one `gs.outdoors.Water`, or a list): the rain falls on it too (it sets `water.rain`), and its
   drops hop off the water's surface.
 - Nothing settles on water, on people and animals (skinned meshes), or on anything whose mesh or material
@@ -3041,7 +3055,8 @@ weather.set('snow');                                    // it starts to settle; 
 - Not there: snow has no depth of its own (it is a look; `snowAt()` is the depth, and
   [`gs.outdoors.Marks`](#ground-that-takes-marks) presses prints into it),
   puddles do not seek out the hollows of the land (they lie on flat ground where the map of them says),
-  water does not run down walls or drip off eaves, and nothing piles up on things that move.
+  water runs down walls only as a look (it does not drip off eaves or gather at a wall's foot), and nothing
+  piles up on things that move.
 
 ## Ground that takes marks
 

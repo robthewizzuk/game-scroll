@@ -1,0 +1,80 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.city drawn to look over, for scripts/city.cjs: a column for each camera, a row for each time of day.
+//   ?views=street,close,shop,corner,high,far   &times=18.3,21.5   &cell=480x360   &seed=7   &style=downtown   &blocks=6
+//   &gpu (WebGPU)   &old (the city as it was before the close-up work: rooms: false, dress: false, fleet: false, crowd: false)
+//   &off=rooms,dress,fleet,crowd,parked (switch single parts off)   &frames=12
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const views = (Q.get('views') || 'street,close,high').split(','), times = (Q.get('times') || '18.3').split(',').map(Number), [cw, ch] = (Q.get('cell') || '480x360').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * times.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = +(Q.get('far') || 1500); v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0012, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: times[0], speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const off = new Set((Q.get('off') || '').split(',').filter(Boolean)); if (Q.has('old')) for (const k of ['rooms', 'dress', 'fleet', 'crowd', 'parked']) off.add(k);
+  const opts = { seed: +(Q.get('seed') || 7), blocks: +(Q.get('blocks') || 6), style: Q.get('style') || 'downtown', sky };
+  for (const k of off) opts[k] = false;
+  await gs.city.City.ready?.(opts);   // (the far shapes' simplifier, and the people sculpted: not counted)
+  const t0 = performance.now();
+  const city = new gs.city.City(v, opts), made = performance.now() - t0;
+  city.warm();
+  // the cameras: on a pavement looking down the street, close to a facade, at a shop front, a corner, over the roofs, far out
+  const P = city.plan, b = P.blocks.find(k => k.kind === 'build' && k.i === Math.floor(P.nx / 2) && k.j === Math.floor(P.nz / 2)) || P.blocks[0];
+  const bl = P.buildings.filter(x => x.block === b.id), front = bl.find(x => x.face === 0 && x.shops) || bl.find(x => x.face === 0) || bl[0];
+  const VIEWS = {
+    street: () => [[b.x0 + 2, 1.7, b.z0 - 1], [b.x1, 6, b.z0 - 4]],
+    close: () => [[(front.x0 + front.x1) / 2 - 4, 6.5, front.z0 - 5], [(front.x0 + front.x1) / 2 + 2, 9, front.z0]],
+    // beside the road at the corner; then (after its frames) from the pavement at the nearest car
+    cars: () => [[b.x0 - 2, 1.6, b.z0 - 2], [b.x0 - 2, 1.2, b.z0 - 40]],
+    folk: () => [[b.x0 + 3, 1.6, b.z0 + 3], [b.x0 + 30, 1.2, b.z0 + 3]],
+    shop: () => [[(front.x0 + front.x1) / 2 - 3, 1.6, front.z0 - 4.5], [(front.x0 + front.x1) / 2 + 1, 2.2, front.z0]],
+    corner: () => [[b.x0 - 6, 2.2, b.z0 - 6], [b.x0 + 20, 8, b.z0 + 10]],
+    high: () => [[b.x0 - 30, 45, b.z0 - 60], [b.x0 + 40, 10, b.z0 + 60]],
+    far: () => [[P.bounds.x0 - 20, 90, P.bounds.z0 - 20], [0, 20, 0]],
+  };
+  const info = [`city made in ${made.toFixed(0)} ms (${P.buildings.length} buildings)`];
+  for (let r = 0; r < times.length; r++) {
+    sky.time = times[r]; sky.update(0);
+    for (let c = 0; c < views.length; c++) {
+      const V = VIEWS[views[c]]; if (!V) throw new Error('no view ' + views[c]);
+      const [at, look] = V();
+      v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld();
+      sun.follow(at[0], 0, at[2]); v.cut?.();
+      const focus = { x: at[0], z: at[2] };
+      const H = window.__hd.info, one = () => { H.shCalls = H.shTris = 0; v.render(cx, cw, ch); };   // (the view adds up shadow draws: these are the last frame's)
+      for (let n = 0; n < +(Q.get('frames') || 12); n++) { city.update(1 / 60, focus); sky.update(1 / 60); v.t = n / 60; one(); await frame(); }
+      if (views[c] === 'folk') {   // the nearest person, from 4 m in front
+        const p = city.people.near(focus, 200)[0];
+        if (p) {
+          const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+          v.cam.position.set(p.x + fx * 4 + fz * 1.2, 1.6, p.z + fz * 4 - fx * 1.2); v.cam.lookAt(p.x, 1.1, p.z); v.cam.updateMatrixWorld(); v.cut?.();
+          for (let n = 0; n < 6; n++) { city.update(1 / 600, focus); one(); await frame(); }
+        }
+      }
+      if (views[c] === 'cars') {   // the nearest car, seen from 7 m off its side, a little ahead of it
+        const car = city.cars.near(focus, 200)[0];
+        if (car) {
+          const fx = Math.sin(car.heading), fz = Math.cos(car.heading), sx = fz, sz = -fx;
+          v.cam.position.set(car.x + sx * 6 + fx * 4, 1.5, car.z + sz * 6 + fz * 4); v.cam.lookAt(car.x - fx * .5, .7, car.z - fz * .5); v.cam.updateMatrixWorld(); v.cut?.();
+          for (let n = 0; n < 6; n++) { city.update(1 / 600, focus); one(); await frame(); }
+        }
+      }
+      if (Q.has('dump')) { const cp = v.cam.position; for (const q of city.people.near({ x: cp.x, z: cp.z }, 45).slice(0, 8)) { const m = city.people.members[city.people.list.indexOf(q)]; info.push(`  person ${q.x.toFixed(1)},${q.z.toFixed(1)} d ${Math.hypot(q.x - cp.x, q.z - cp.z).toFixed(1)} wait ${q.wait.toFixed(1)} cross ${!!q.cross} member ${m ? [m.x.toFixed(1), m.y, m.z.toFixed(1), m.move, m.hide, m.c.lv].join(' ') : '-'}`); } }
+      sx.drawImage(cell, c * cw, r * ch);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(`${views[c]} ${times[r]}h`, c * cw + 5, r * ch + 14);
+      const I = window.__hd.info; info.push(`${views[c].padEnd(7)} ${String(times[r]).padEnd(5)} draws ${I.calls ?? '?'} triangles ${I.tris ?? "?"} (+ shadows ${I.shCalls ?? 0} draws) · ${city.cars.list.length} cars, ${city.people.list.length} people${city.people.crowd ? ` (${city.people.crowd.info.drawn} drawn in ${city.people.crowd.info.draws} draws)` : ''}`);
+    }
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

@@ -8,6 +8,8 @@
 // material reads at once (phones allow 16).
 //   ?views=yard,porch,in,roof,top,pond (default: all)   &cols=8   &cell=300x210   &gpu (WebGPU)
 //   &story=rain,dry,snow,melt   &secs=8 (each part)   &phys (the level as a physics world; default: its meshes)
+//   views also: wall, glass, car, puddle (close ups of water that runs, beads and rings)   &nocar
+//   spray, pass: a car driving by on the road in front at &drive=20 m/s (spray off its tyres: behind it, and from the verge)
 //   &time=14 (hour)   &cover=0 (no level given: wet and white everywhere)   &hold=<part>:<0..1> (one moment only, in every column)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
@@ -26,7 +28,14 @@ try {
     roof: [[-7.5, 6.5, 8], [0.5, 2.8, -1]],         // down onto the roofs
     top: [[2, 24, 2.02], [2, 0, 2]],                // straight down
     pond: [[-4.5, 1.7, 10.5], [-10, -.4, 5]],       // the pond in the hollow
+    wall: [[4.3, 1.5, -1.6], [2.9, 1.3, -3.2]],     // close to the house's side: water running down the bricks
+    glass: [[5.6, 1.3, 9.6], [5.2, 1.2, 8.2]],      // a window pane standing in the yard: rivulets and beads
+    car: [[9.6, 1.6, 9.2], [7, .7, 6.8]],           // a car's paint and glass: beads
+    lens: [[2, 1.6, 4.5], [2.4, 2.6, 1.5]],         // the player's own view, looking up into the rain: drops on the lens (with &lookup)
+    puddle: [[-1, .7, 12.5], [-5, 0, 6]],          // down onto the yard's puddles: rings where drops land
+    spray: 'chase', pass: 'verge',                  // a car driving by on the road: from behind it, and from the roadside
   };
+  for (const [i, at] of (Q.get('at') || '').split(';').filter(Boolean).entries()) { const [x, z, h = 2.5] = at.split(',').map(Number); VIEWS['down' + i] = [[x, h, z + .01], [x, 0, z]]; VIEWS['low' + i] = [[x + 1.6, h * .4, z + 1.6], [x, 0, z]]; }   // (&at=x,z[,height];...: views down0, down1... straight down onto a spot; low0, low1... across it, low down)
   const views = (Q.get('views') || Object.keys(VIEWS).join(',')).split(','), cols = +(Q.get('cols') || 8), [cw, ch] = (Q.get('cell') || '300x210').split('x').map(Number);
   const story = (Q.get('story') || 'rain,dry,snow,melt').split(','), secs = +(Q.get('secs') || 8), COVER = Q.get('cover') !== '0';
   window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;   // (a film: nothing waits, hidden, for its shader)
@@ -55,6 +64,15 @@ try {
   const put = (o, x, z, turn = 0) => { o.position.set(x, lie(x, z), z); o.rotation.y = turn; world.add(o); return o; };
   put(M.prop('crate'), 1.9, 1.3).position.y = .12; put(M.prop('crate'), 3.4, 4.6, .5).position.y = .05; put(M.prop('barrel'), 6.4, 2.6).position.y = .05; put(M.prop('bench'), -1.6, 3.4, .1); put(M.prop('barrel'), 7.4, 3.4).position.y = .05;
   put(M.tree('oak', { seed: 2 }), 8, -4); put(M.tree('pine', { seed: 5 }), -6.5, -6); put(M.tree('bush', { seed: 3 }), -3.9, 1.2);
+  { const pane = box(gs.hd.pbr('#7f939c', { rough: .04, metal: .1 }), 1.4, 1.1, .03, 5.2, 1.25, 8.2); const fr = gs.hd.pbr('#e8e4dc', { rough: .5 }); for (const [w, h, x, y] of [[1.5, .07, 5.2, .7], [1.5, .07, 5.2, 1.8], [.07, 1.1, 4.5, 1.25], [.07, 1.1, 5.9, 1.25]]) box(fr, w, h, .08, x, y, 8.2); box(fr, .1, .7, .1, 5.2, .35, 8.2); }
+  if (!Q.has('nocar')) { const car = gs.models.vehicle('car', { seed: 2, colour: '#8a1d24' }); car.position.set(7, .05, 6.8); car.rotation.y = .9; world.add(car); }
+  // a road in front of the yard, and a car driving along it (&drive m/s), looping
+  const DRIVE = +(Q.get('drive') ?? 20), ROADZ = 15, roadY = x => lie(x, ROADZ) + .05;
+  box(gs.models.material('concrete', { colour: '#3b3d42', repeat: [24, 2] }), 90, .1, 6, 0, lie(0, ROADZ) + .0, ROADZ);
+  const racer = DRIVE > 0 ? gs.models.vehicle('car', { seed: 5, colour: '#2c4f7a' }) : null;
+  if (racer) { racer.rotation.y = -Math.PI / 2; world.add(racer); }
+  const drive = t => { if (!racer) return; const x = -30 + (t * DRIVE) % 60; racer.position.set(x, lie(x, ROADZ - 1) + .05, ROADZ - 1); racer.move(1 / 60, DRIVE); racer.updateMatrixWorld(true); };
+  drive(0);
   const person = (x, z, turn) => put(gs.poses.person({ mat: c => gs.hd.pbr(c) }), x, z, turn); person(2.2, 6.2, -.6); person(-1.1, 1.2, .3).position.y = .12;
   const pond = new Water({ level: -.45, waves: .12, size: 14, segments: 24, ripples: false }); pond.mesh.position.set(-10, pond.mesh.position.y, 5); world.add(pond.mesh);
   world.updateMatrixWorld(true);
@@ -64,20 +82,22 @@ try {
   const crown = { x: 8, y: 4.4, z: -4, r: 2.5 };
   level.push((f, d, max) => { const dx = f.x - crown.x, dz = f.z - crown.z, q = crown.r * crown.r - dx * dx - dz * dz; return q > 0 && f.y > crown.y ? f.y - crown.y - Math.sqrt(q) : Infinity; });
   const speed = secs / 8, weather = new gs.sky.Weather(v, { kind: 'clear', amount: 1, area: 26, max: 1400, ...(COVER ? { level, ground: (x, z) => Math.max(lie(x, z), Math.abs(x - 4.2) < 4.5 && Math.abs(z - 5.2) < 2.75 ? .05 : -9) } : { level: true }), water: pond, soak: 2.6 * speed, dry: 6 * speed, settle: 4.6 * speed, melt: 6.5 * speed });
+  if (racer) weather.watch(racer);
   const hold = Q.get('hold')?.split(':');
   const dt = 1 / 60, N = Math.round(story.length * secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((hold ? (story.indexOf(hold[0]) + +hold[1]) / story.length : (i + .5) / cols) * N)), info = [];
   const player = [2, 1.6, 4.5]; let cost = 0, worst = 0, ready = -1, part = -1;
   for (let i = 0; i <= N; i++) {
     const t = i * dt, now = Math.min(story.length - 1, Math.floor(t / secs));
     if (now !== part) { part = now; const k = story[part]; weather.set(k === 'rain' || k === 'storm' || k === 'snow' ? k : 'clear', 1); }
-    v.cam.position.set(...player); v.cam.updateMatrixWorld();
-    sky.update(dt);
+    v.cam.position.set(...player); if (Q.has('lookup')) v.cam.lookAt(2.4, 2.6, 1.5); v.cam.updateMatrixWorld();   // (&lookup: the player looks up into the rain, so drops land on the lens)
+    drive(t); sky.update(dt);
     const c0 = performance.now(); weather.update(dt); const c = performance.now() - c0; if (i > 5) { cost += c; worst = Math.max(worst, c); }
     if (ready < 0 && (!weather.cover || weather.cover.ready)) ready = i;
     pond.update(dt, { x: -10, z: 5 });
     for (let k = 0; k < cols; k++) if (shots[k] === i) {
       for (let r = 0; r < views.length; r++) {
-        const V = VIEWS[views[r]]; if (!V) throw new Error('no view ' + views[r] + ': ' + Object.keys(VIEWS).join(', '));
+        let V = VIEWS[views[r]]; if (!V) throw new Error('no view ' + views[r] + ': ' + Object.keys(VIEWS).join(', '));
+        if (V === 'chase' || V === 'verge') { const p = racer?.position ?? new T.Vector3(0, 0, ROADZ); V = V === 'chase' ? [[p.x - 9, p.y + 2.2, p.z + 1.8], [p.x + 2, p.y + .6, p.z]] : [[p.x + 6, p.y + 1.1, p.z + 6.5], [p.x - 2, p.y + .7, p.z]]; }
         v.cam.fov = 50; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix(); v.cam.position.set(...V[0]); v.cam.lookAt(...V[1]); v.cam.updateMatrixWorld();
         v.cut?.(); sun.follow(2, 0, 2);
         for (let n = 0; n < (k || r ? 2 : 8); n++) { v.t = t; v.render(cx, cw, ch); await frame(); }
