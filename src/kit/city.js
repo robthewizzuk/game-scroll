@@ -56,6 +56,8 @@ import { rooms, ROOMS } from './city-rooms.js';
 import { Fleet, CITY_CARS, carKit, parkKinds, ParkedGlass } from './city-cars.js';
 import { DRESS_SHAPES, signAtlas, dressBuilding, dressBits, dressShops, dressPlan, kerbs, blades, wires, drain } from './city-dress.js';
 import { Crowd } from './crowd.js';
+import { GroundPaint } from './ground-paint.js';
+import { wallMarks, wallGeometry, wallMat } from './city-walls.js';
 import { human } from './models/human.js';
 
 /* ---------- looks ---------- */
@@ -514,6 +516,26 @@ function buildPaint(plan, dressing = null) {
   return q;
 }
 
+// The marks the ground paint lays on the roads: oil under some parked cars, skid marks before some stop lines.
+function groundMarks(gp, plan, parked, seed) {
+  const R = rng(seed * 13 + 41), sideK = plan.side === 'left' ? -1 : 1;
+  for (const c of parked) if (R() < .35) {
+    const nx = Math.sin(c.heading), nz = Math.cos(c.heading), f = (R() - .3) * c.len * .6;
+    gp.stamp(c.x + nx * f, c.z + nz * f, 'oil', { size: .5 + R() * .7, strength: .4 + R() * .5, seed: R() * 100 });
+  }
+  for (const e of plan.edges) {
+    const A = plan.nodes[e.a], B = plan.nodes[e.b]; if (e.dx < 0 || e.dz < 0) continue;
+    const alongX = e.axis === 'x', c = alongX ? A.z : A.x, a = alongX ? A.x + A.hx : A.z + A.hz, b = alongX ? B.x - B.hx : B.z - B.hz, half = e.width / 2;
+    if (b - a < 24) continue;
+    for (const [end, dir] of [[a, 1], [b, -1]]) {
+      if (R() > .3) continue;
+      // (cars arriving at this end travel in -dir, on their right: the skid runs back from the stop line)
+      const tdx = alongX ? -dir : 0, tdz = alongX ? 0 : -dir, r = (alongX ? tdx * sideK : -tdz * sideK) * half * (.35 + R() * .25), len = 5 + R() * 9, s = end + dir * (4.2 + len / 2 + R() * 3);
+      gp.stamp(alongX ? s : c + r, alongX ? c + r : s, 'skid', { size: len, angle: alongX ? 0 : Math.PI / 2, track: 1.5, strength: .35 + R() * .45, seed: R() * 100 });
+    }
+  }
+}
+
 // Shapes for the street furniture and roof things (vertex-coloured, so one material draws them all).
 function coloured(geo, hex) { const g = geo.index ? geo.toNonIndexed() : geo, n = g.attributes.position.count, c = new Float32Array(n * 3), col = C(hex); for (let i = 0; i < n; i++) { c[i * 3] = col.r; c[i * 3 + 1] = col.g; c[i * 3 + 2] = col.b; } g.setAttribute('color', new BufferAttribute(c, 3)); g.deleteAttribute('uv'); return g; }
 const at = (g, x, y, z) => { g.translate(x, y, z); return g; };
@@ -859,6 +881,8 @@ class People {
 
 const CYCLE = 26, GREEN = 10, AMBER = 2.5, HALF = 13;
 const TIER = { top: 1, mid: .65, low: .4 };
+const WALL_BUSY = { downtown: .6, oldtown: 1, harbour: 1, suburb: .3 };   // how much the street walls wear, by style
+const GROUND_KIND = { pave: 'paving', plaza: 'plaza', grass: 'grass' };   // chunk meshes the ground paint paints
 
 export class City {
   /**
@@ -866,12 +890,14 @@ export class City {
    * side as for layout(); traffic / people: how busy (1 = normal; scaled down on slower phones);
    * night: 0..1 (or sky: a gs.sky Sky to follow); lamps: real lights from the nearest street lamps at
    * night; sound: the city's hum, horns and birds; at: where the player starts (built first);
-   * detail: metres within which awnings, cornices and fire escapes show.
+   * detail: metres within which awnings, cornices and fire escapes show. paint: the ground painted
+   * round the camera with no repeats (ground-paint.js; on by default on a Next Gen view). walls: posters, tags
+   * and stains on the street walls (city-walls.js).
    */
   constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, ...over } = {}) {
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, ...over } = {}) {
     this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
-    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, style: typeof style === 'string' ? style : 'downtown' };
+    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, style: typeof style === 'string' ? style : 'downtown' };
     if (this.opts.crowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
     // What a city keeps from one making to the next comes first: its textures and materials, and the
@@ -879,6 +905,7 @@ export class City {
     // the next pass has them already (slices.js); the rest is this city's own and is made in one go.
     const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop', ...(dress ? ['signs'] : [])]); for (const b of P.buildings) kinds.add('f:' + b.facade);
     for (const k of kinds) chunkMat(k, S);
+    if (walls) wallMat();
     groundTex('grass', '#4f7a3a'); asphaltMat(S.ground);
     for (const name in FURNITURE) shaped(name);
     if (this.opts.fleet) for (const s of CITY_CARS[this.opts.style] || CITY_CARS.downtown) carKit(s);
@@ -899,7 +926,13 @@ export class City {
       const q = new Quads(); q.box(B.x0 - m, -2, B.z1 + 2, B.x1 + m, KERB, B.z1 + 10, null, 4);
       const quay = new Mesh(q.geometry(), pavingMat(S.pavement)); quay.receiveShadow = true; this.group.add(quay);
       const water = new Mesh(new PlaneGeometry(6000, 3000), waterMat()); water.rotation.x = -Math.PI / 2; water.position.set(0, -.6, B.z1 + 10 + 1500); this.group.add(water);
-      view.reflect?.(water); this.water = water;
+      view.reflect?.(water); this.water = water; this.quay = quay;
+    }
+    // the ground with no repeats: painted round the camera from what each piece is, read in place of the tiled pictures
+    this.groundPaint = paint ? new GroundPaint(view) : null;
+    if (this.groundPaint) {
+      this.groundPaint.add(road, 'asphalt', { base: S.ground }); this.groundPaint.add(ground, 'grass', { base: '#4f7a3a' });
+      if (this.quay) this.groundPaint.add(this.quay, 'paving', { base: S.pavement });
     }
     // chunks of 2 x 2 blocks, built a few at a time, nearest first
     const cs = P.nx * P.nz > 9 ? 2 : 1; this.chunks = new Map();
@@ -915,12 +948,13 @@ export class City {
     // what the streets are dressed with, and what hangs on the buildings and stands on their roofs (city-dress.js)
     this.dressing = dress ? dressPlan(P, seed, { kits: parkKits.length ? parkKits : null, buildingAt: (x, z) => this.buildingAt(x, z), style: this.opts.style, busy: TIER[phoneClass()] ?? .65 }) : null;
     if (dress) for (const b of P.buildings) dressBits(b, FACADES[b.facade], KERB + (b.shops ? 4.6 : 0), CELLS, P.blocks[b.block]);
-    const paint = new Mesh(buildPaint(P, this.dressing).geometry(), paintMat()); paint.receiveShadow = true; this.group.add(paint);
+    const lines = new Mesh(buildPaint(P, this.dressing).geometry(), paintMat()); lines.receiveShadow = true; this.group.add(lines);
     if (this.dressing?.wires.length) { const q = new Quads(); wires(q, this.dressing.wires); const m = new Mesh(q.geometry(), plainMat()); m.name = 'city wires'; this.group.add(m); }
     // parked cars: solid (collide()), in a grid of their own
     this.parked = this.dressing?.parked || []; this.pgrid = new Map();
     for (const c of this.parked) { const ax = Math.abs(Math.sin(c.heading)) > .5, hx = (ax ? c.len : c.wid) / 2, hz = (ax ? c.wid : c.len) / 2; Object.assign(c, { parked: true, x0: c.x - hx, x1: c.x + hx, z0: c.z - hz, z1: c.z + hz }); const k = Math.floor(c.x / 32) + ',' + Math.floor(c.z / 32); if (!this.pgrid.has(k)) this.pgrid.set(k, []); this.pgrid.get(k).push(c); }
     this.parkStyles = parkStyles;
+    if (this.groundPaint) groundMarks(this.groundPaint, P, this.parked, seed);
     this.props = this.furnish();
     this.signals = this.makeSignals();
     this.cars = new Traffic(this, Math.round(70 * traffic * scale * Math.min(1.6, P.nx * P.nz / 36 + .4)));
@@ -932,6 +966,7 @@ export class City {
     // the view compile them all with the rest before play (HDView.warm / prepare draw hidden things too).
     this.warmers = new Group(); this.warmers.name = 'city shaders';
     for (const k of kinds) { const m = new Mesh(WARM_GEO(), chunkMat(k, P.style)); m.castShadow = m.receiveShadow = true; m.visible = false; m.frustumCulled = false; this.warmers.add(m); }
+    if (this.opts.walls) { const m = new Mesh(WARM_GEO(), wallMat()); m.receiveShadow = true; m.visible = false; m.frustumCulled = false; this.warmers.add(m); }
     this.group.add(this.warmers);
     this.ears = null; this.hum = null;
     this.applyNight(); this.reset();
@@ -1040,8 +1075,17 @@ export class City {
     for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) buildBuilding(bl, Q, D, this.opts);
     const matOf = k => chunkMat(k, S);
     const g = new Group(), d = new Group(); g.name = 'chunk ' + c.key;
-    for (const [k, q] of bufs) if (!q.empty) { const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza'; m.receiveShadow = true; m.userData.city = k; g.add(m); }
+    for (const [k, q] of bufs) if (!q.empty) {
+      const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza'; m.receiveShadow = true; m.userData.city = k; g.add(m);
+      if (this.groundPaint && GROUND_KIND[k]) { m.updateMatrixWorld(true); this.groundPaint.add(m, GROUND_KIND[k], { base: k === 'grass' ? '#4f7a3a' : k === 'plaza' ? shade(S.pavement, .85) : S.pavement }); }   // (pavements first: a park or plaza is painted over its block)
+    }
     for (const [k, q] of det) if (!q.empty) { const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = true; m.receiveShadow = true; d.add(m); }
+    if (this.opts.walls) {   // what the street walls wear: posters, tags, damp and grime (city-walls.js)
+      const marks = [], open = (x, z) => !this.buildingAt(x, z), busy = WALL_BUSY[this.opts.style] ?? .6;
+      for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) { const F = FACADES[bl.facade]; wallMarks(bl, F, ROOM_KINDS[F.kind].win, KERB + (bl.shops ? 4.6 : 0), KERB, this.seed, open, busy, marks); }
+      if (marks.length) { const m = new Mesh(wallGeometry(marks), wallMat()); m.receiveShadow = true; m.name = 'city walls'; d.add(m); }
+      this.wallMarks = (this.wallMarks || 0) + marks.length;
+    }
     g.add(d); this.group.add(g); c.group = g; c.detail = d;
     this.applyNight(); this.view.shadowsDirty?.(); this.view.patchAir?.(true);
   }
@@ -1071,6 +1115,7 @@ export class City {
       this.view.placeLamps(F?.close.size ? near.concat(F.headlamps(this.night, this._hl ||= [])) : near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f);
+    this.groundPaint?.update(this.view.cam.position);
     return this;
   }
   /** Cars brake for this (the player, a fallen tree...) for one frame: { x, z } and how wide it is (r). */
@@ -1273,7 +1318,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.groundPaint?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }

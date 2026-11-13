@@ -220,7 +220,7 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
    for each run and press **Start**.
-2. Fifteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+2. Sixteen scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
    and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
    **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
    with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses
@@ -281,7 +281,15 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    a dent with scraped paint, a side window that breaks and drops its glass on the road, a crazed windscreen
    and a broken lamp (`src/kit/models/vehicle-damage.js`); each run says how many triangles a car is, the
    second what the hit car took.
-   About 16 minutes at 20 seconds a run on WebGPU (31 runs), longer the
+   And the **ground**: a drive at 9 metres a second down the streets of a made-up old town at midday, once on
+   the tiled ground pictures the city had (they repeat every few metres) past bare walls, then on the ground
+   painted round the camera (`src/kit/ground-paint.js`): patches, cracks and tar lines in the asphalt, slabs
+   laid in a bond with a cracked one here and there, gum and stains, oil under parked cars and skid marks before
+   stop lines, painted into two pictures that follow the camera a strip at a time and read in place of the
+   tiles, with posters, made-up tags, damp streaks and grime on the street walls (`src/kit/city-walls.js`); the
+   second run says how many strips were painted, how many texels a frame on average and how many things the
+   walls wear.
+   About 17 minutes at 20 seconds a run on WebGPU (33 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
