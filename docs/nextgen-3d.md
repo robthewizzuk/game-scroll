@@ -1135,8 +1135,14 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `legL`, `shinL`, `footL` and their `R` twins) and, between them, a waist, a neck, a collar bone to each arm,
   the turn along each forearm, toes and three joints a finger. The rig sets those by itself from the pose: the
   back and the neck bend along their length, a shoulder rises and comes forward with its arm, the forearm's
-  skin turns with the hand, and the toes lie flat as the heel lifts. So old poses, and whatever you parent to
-  `bones.spine` or `bones.head`, work as before; after turning joints yourself call `person.rig.fill()`.
+  skin turns with the hand, and the toes lie flat as the heel lifts. At each shoulder, elbow, hip and knee
+  there is also a joint in between (`shoulderL`, `elbowL`, `hipL`, `kneeL` and their `R` twins) that takes
+  half its joint's turn by itself, whoever turns it (a pose, `hold()`, a ragdoll, your own code), and the skin
+  round the joint goes with it: a bent arm or leg keeps its girth instead of pinching in, and the creases in
+  the crook of an elbow, behind a knee and in the lap deepen as it closes. Nothing poses those, and a pose
+  never names them. The arms are of one skin with the body, so no line shows where a sleeve is set in. So old
+  poses, and whatever you parent to `bones.spine` or `bones.head`, work as before; after turning joints
+  yourself call `person.rig.fill()`.
   `person.fingers({ L: .5, R: [0, 1, 1, 1, 1] })` closes a hand (0 flat, 1 a fist, `null` as sculpted; a
   number for the hand or one a finger, thumb first), and they stay as set. At the middle and far levels
   the small bones (fingers, toes, forearm turn) stand still and cost nothing.
