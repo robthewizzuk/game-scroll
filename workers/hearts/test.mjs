@@ -4,7 +4,7 @@
 // 1. App Attest and Play Integrity checks, run directly in Node with a fake Apple CA / fake Google.
 // 2. The Worker end to end (wrangler dev, local D1): hearts, limits, passes, ENFORCE, CORS.
 import assert from 'node:assert/strict';
-import { writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { webcrypto as crypto } from 'node:crypto';
 import 'reflect-metadata';
@@ -16,7 +16,7 @@ import { newChallenge, checkChallenge, newSession, readSession } from './src/ses
 import { cbor, b64u, sha256, concat } from './src/util.js';
 import { cleanBatch } from './src/stats.js';
 import { sharePage, shareGame, idFromPath } from './src/sharepage.js';
-import { cleanPerf, perfPage } from './src/perf.js';
+import { cleanPerf, perfPage, perfReport } from './src/perf.js';
 import { plausible, cleanSecs } from './src/scores.js';
 
 x509.cryptoProvider.set(crypto);
@@ -80,41 +80,97 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
 
 /* ---------- performance and crash reports ---------- */
 {
-  const known = new Map([['mini-golf', { title: 'Mini Golf' }]]);
+  const known = new Map([['mini-golf', { hash: 'aaaaaaaaaaaa', meta: { title: 'Mini Golf' } }]]);
+  const T = Date.UTC(2026, 10, 12, 21, 44), sec = Math.floor(T / 1000);
   const b = cleanPerf({
     info: { platform: 'android', model: 'SM-F966B\u0000<x>', os: 'Android 16', app: '1.0.5', form: 'wide' },
-    games: { 'mini-golf': { r: 2, f: 600, ms: 12000, w: 20000, sl: 900, h: 50, x: 99999 }, nope: { f: 10, ms: 100 }, 'mini-golf-x': 1 },
-    errors: [{ kind: 'crash', game: 'mini-golf', msg: 'App closed', n: 999 }, { kind: 'weird', game: 'nope', msg: 'TypeError: x', place: 'a.js:1' }, { msg: '' }],
-  }, known);
+    games: { 'mini-golf': { r: 2, f: 600, ms: 12000, w: 20000, sl: 900, h: 50, x: 99999, v: 'aaaaaaaaaaaa', hk: 99999, hw: 5000, hh: 9000 }, nope: { f: 10, ms: 100 }, 'mini-golf-x': 1 },
+    errors: [{ kind: 'crash', game: 'mini-golf', msg: 'App closed', n: 999, v: 'aaaaaaaaaaaa', at: sec - 7200 }, { kind: 'weird', game: 'nope', msg: 'TypeError: x', place: 'a.js:1', v: 'aaaaaaaaaaaa', at: sec + 9999 }, { msg: '' },
+      { msg: 'old', at: sec - 15 * 86400 }, { game: 'mini-golf', msg: 'bad version', v: '<b>' }],
+  }, known, T);
   assert.deepEqual(b.info, { platform: 'android', model: 'SM-F966B<x>', os: 'Android 16', app: '1.0.5', form: 'wide' });
-  assert.deepEqual(b.games, [['mini-golf', 2, 600, 12000, 12000, 600, 50, 12000]]);
-  assert.deepEqual(b.errors, [['crash', 'mini-golf', 'App closed', '', 50], ['error', '', 'TypeError: x', 'a.js:1', 1]]);
+  assert.deepEqual(b.games, [['mini-golf', 2, 600, 12000, 12000, 600, 50, 12000, 'aaaaaaaaaaaa', 12000, 3000, 9000]], 'heat times fit inside the time played');
+  assert.deepEqual(b.errors, [['crash', 'mini-golf', 'App closed', '', 50, 'aaaaaaaaaaaa', sec - 7200], ['error', '', 'TypeError: x', 'a.js:1', 1, '', 0], ['error', '', 'old', '', 1, '', 0], ['error', 'mini-golf', 'bad version', '', 1, '', 0]],
+    'a time is kept only if it is within the days kept and not in the future; a version only if it is a short hash of a known game');
   assert.equal(cleanPerf({ games: [] }, known), null);
   assert.equal(cleanPerf({ info: { platform: 'pc', form: 'huge' } }, known).info.platform, 'web');
+  assert.equal(cleanPerf({ info: { platform: 'android', robot: true } }, known).info.platform, 'android-robot');
+  assert.equal(cleanPerf({ info: { platform: 'android', robot: 'yes' } }, known).info.platform, 'android');
+  assert.equal(cleanPerf({ info: { platform: 'web', robot: true } }, known).info.platform, 'web');
   ok('perf batches drop unknown games, clean text and keep numbers consistent');
   const d = 20769, at = d * 86400 + 21 * 3600 + 44 * 60;   // 12 Nov 2026, 21:44 UTC
-  const slow = { rounds: 3, frames: 600, ms: 12000, work: 6000, slow: 120, hitches: 9, worst: 210 }, fine = { rounds: 1, frames: 600, ms: 10000, work: 2000, slow: 3, hitches: 0, worst: 40 };
+  const slow = { rounds: 3, frames: 600, ms: 12000, work: 6000, slow: 120, hitches: 9, worst: 210, heat: 12000, warm: 2000, hot: 9000 }, fine = { rounds: 1, frames: 600, ms: 10000, work: 2000, slow: 3, hitches: 0, worst: 40, heat: 10000, warm: 3000, hot: 0 };
+  const cool = { ...fine, warm: 100 }, unknown = { ...fine, heat: 0, warm: 0 };
   const report = { days: 14, at, game: '',
     phones: [{ platform: 'android', model: '<b>SM</b>', kind: '', app: '1.0.7 abc1234', d0: d - 3, d1: d, t1: at, builds: 2, rounds: 4, ms: 22000 },
-      { platform: 'android', model: 'Robo', kind: 'robot', app: '1.0.7 abc1234', d0: d - 1, d1: d, t1: 0, builds: 40, rounds: 90, ms: 99000 }],
-    games: [{ game: 'mini-golf', platform: 'android', model: '<b>SM</b>', form: 'wide', builds: 2, d0: d - 3, all: slow, app: '1.0.7 abc1234', d1: d, t1: at, now: fine },
-      { game: 'old-game', platform: 'android', model: '<b>SM</b>', form: 'phone', builds: 1, d0: d - 3, all: slow, app: '1.0.5 "><i>x', d1: d - 3, t1: 0, now: slow }],
-    errors: [{ kind: 'error', game: 'mini-golf', msg: '<script>alert(1)</script>', place: 'x.js:1', n: 4, d0: d - 3, d1: d - 2, t0: at, t1: 0, models: ['<b>SM</b>', 'Robo'],
-      apps: [{ app: '1.0.6 fedcba9', d1: d - 2, t1: 0 }, { app: 'local', d1: d - 3, t1: 0 }], state: 'gone', newer: 2 },
-    { kind: 'crash', game: '', msg: 'App closed while open', place: '', n: 1, d0: d, d1: d, t0: at, t1: at, models: ['Robo'], apps: [{ app: '1.0.7 abc1234', d1: d, t1: at }], state: 'now', newer: 0 }] };
+      { platform: 'android', model: 'Robo', kind: 'likely', app: '1.0.7 abc1234', d0: d - 1, d1: d, t1: 0, builds: 40, rounds: 90, ms: 99000, crashes: 55 },
+      { platform: 'android-robot', model: 'Pixel 9', kind: 'robot', app: '1.0.7 abc1234', d0: d, d1: d, t1: at, builds: 1, rounds: 2, ms: 9000 }],
+    games: [{ game: 'mini-golf', platform: 'android', model: '<b>SM</b>', form: 'wide', builds: 2, d0: d - 3, all: slow, app: '1.0.7 abc1234', ver: 'aaaaaaaaaaaa', d1: d, t1: at, now: fine },
+      { game: 'old-game', platform: 'android', model: '<b>SM</b>', form: 'phone', builds: 1, d0: d - 3, all: slow, app: '1.0.5 "><i>x', ver: '', d1: d - 3, t1: 0, now: slow },
+      { game: 'mini-golf', platform: 'android-robot', model: 'Pixel 9', form: 'phone', builds: 1, d0: d, all: fine, app: '1.0.7 abc1234', ver: 'bbbbbbbbbbbb', d1: d, t1: at, now: cool }],
+    errors: [{ kind: 'error', game: 'mini-golf', msg: '<script>alert(1)</script>', place: 'x.js:1', n: 4, d0: d - 3, d1: d - 2, t0: at, t1: 0, phones: [{ platform: 'android', model: '<b>SM</b>' }, { platform: 'android', model: 'Robo' }, { platform: 'android-robot', model: 'Solo' }],
+      apps: [{ app: '1.0.6 fedcba9', ver: 'bbbbbbbbbbbb', d1: d - 2, t1: 0 }, { app: 'local', ver: '', d1: d - 3, t1: 0 }], state: 'gone', newer: 2, rounds: 7 },
+    { kind: 'crash', game: '', msg: 'App closed while open', place: '', n: 1, d0: d, d1: d, t0: at, t1: at, phones: [{ platform: 'android', model: 'Robo' }], apps: [{ app: '1.0.7 abc1234', ver: '', d1: d, t1: at }], state: 'now', newer: 0 }] };
   const page = perfPage(report, known, 'https://github.com/x/y');
   assert.ok(!page.includes('<script>') && !page.includes('<b>SM') && !page.includes('<i>x'));
   assert.match(page, /<a href="\?game=mini-golf">Mini Golf<\/a>/); assert.ok(!page.includes('?game=old-game'), 'only games in the catalogue get a page');
   assert.match(page, /class="n bad">20\.0%/); assert.match(page, /class="n ok">0\.5%/);   // every build, and the newest
   assert.match(page, /href="https:\/\/github\.com\/x\/y\/commit\/abc1234"/); assert.match(page, /12 Nov 21:44/);
   assert.match(page, /<td class=t>9 Nov<\/td><td class=t>10 Nov<\/td>/, 'no time is shown for a day whose time was not kept');
-  assert.match(page, /Probably not: 2 newer builds have played it/); assert.match(page, /Yes: on the newest build that phone has run/);
-  assert.match(page, /probably a test robot: 40 builds in 2 days/); assert.match(page, /<tr class=old><td>old-game/);
+  assert.match(page, /Probably not: 2 newer builds have played it since without this<\/span> <small>\(7 rounds\)/); assert.match(page, /Yes: on the newest build that phone has run/);
+  assert.match(page, /probably a test robot: 40 builds in 2 days, 55 crashes/); assert.match(page, /<tr class=old><td>old-game/);
+  assert.match(page, /Pixel 9 <small>android<\/small><\/td><td>test robot \(the phone says so\)/); assert.ok(!page.includes('android-robot'), 'a robot shows as a label, not as a kind of phone');
+  assert.match(page, /Robo <small>\(test robot\?\)<\/small>, Solo <small>\(test robot\)<\/small>/, 'a robot that only sent an error is still labelled');
+  assert.match(page, /game file aaaaaaaa \(current\)/); assert.match(page, /game file bbbbbbbb \(older\)/);
+  assert.match(page, /<td class=n>warm 30%<\/td>/); assert.match(page, /<td class="n ok">cool<\/td>/); assert.equal(page.split('hot 75%').length - 1, 1, 'heat is told for the newest build that played it, not for all of them');
   assert.ok(page.indexOf('<details open><summary><b>&lt;b&gt;SM') > 0 && page.indexOf('<details><summary><b>Robo') < 0, 'a phone with no rows gets no block');
+
+  // The report's own sums, on a real database holding what phones have left there: rows from before
+  // times were kept (no time, only a day), a phone that is given a new build many times a day by the
+  // person trying them, and a test robot from before the app could tell.
+  {
+    const { DatabaseSync } = await import('node:sqlite');
+    const sq = new DatabaseSync(':memory:');
+    for (const f of readdirSync('migrations').sort()) sq.exec(readFileSync('migrations/' + f, 'utf8'));
+    const prepare = sql => { const st = sq.prepare(sql); let args = []; const me = { bind(...a) { args = a; return me; }, all: async () => ({ results: st.all(...args) }) }; return me; };
+    const db = { prepare, batch: list => Promise.all(list.map(s => s.all())) };
+    const played = sq.prepare('INSERT INTO perf (day, game, platform, model, form, app, ver, rounds, frames, ms, work_ms, slow, hitches, worst_ms, first_at, last_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 900, 15000, 4000, 9, 1, 80, ?, ?)');
+    const failed = sq.prepare('INSERT INTO crashes (day, kind, game, msg, place, platform, model, os, app, ver, n, first_at, last_at) VALUES (?, ?, ?, ?, \'\', ?, ?, \'Android 17\', ?, \'\', ?, ?, ?)');
+    const noon = d * 86400 + 12 * 3600, now = (d * 86400 + 23 * 3600) * 1000;
+    // Mine: 41 builds in 6 days, each played a little, and a few crashes. Bot: 75 builds in 5 days, closed at the end of nearly every run.
+    for (let i = 0; i < 41; i++) played.run(d - 5 + Math.floor(i / 7), 'g' + i % 5, 'android', 'Mine', 'phone', `1.0.${100 + i} aaaaaaa`, '', 2, 0, 0);
+    for (let i = 0; i < 75; i++) { played.run(d - 4 + Math.floor(i / 15), 'g' + i % 5, 'android', 'Bot', 'phone', `1.0.${100 + i} aaaaaaa`, '', 9, 0, 0); failed.run(d - 4 + Math.floor(i / 15), 'crash', 'g' + i % 5, 'App closed while open', 'android', 'Bot', `1.0.${100 + i} aaaaaaa`, 2, 0, 0); }
+    // A crash on Mine with no time (told before times were kept), then the same game on a newer build with a time, on the same day.
+    failed.run(d, 'crash', 'long-game', 'App closed while playing', 'android', 'Mine', '1.0.140 aaaaaaa', 4, 0, 0);
+    played.run(d, 'long-game', 'android', 'Mine', 'phone', '1.0.140 aaaaaaa', '', 6, 0, 0);
+    played.run(d, 'long-game', 'android', 'Mine', 'phone', '1.0.141 bbbbbbb', '', 3, noon, noon + 120);
+    // The other way round: a crash with a time, and a build whose play has none, so it was before it.
+    failed.run(d, 'crash', 'short-game', 'App closed while playing', 'android', 'Mine', '1.0.139 aaaaaaa', 1, noon, noon);
+    played.run(d, 'short-game', 'android', 'Mine', 'phone', '1.0.139 aaaaaaa', '', 1, 0, 0);
+    played.run(d, 'short-game', 'android', 'Mine', 'phone', '1.0.120 aaaaaaa', '', 5, 0, 0);
+    const all = await perfReport(db, now), kind = (r, m) => r.phones.find(x => x.model === m).kind;
+    assert.equal(kind(all, 'Mine'), '', 'a phone given many builds a day by the person trying them is a phone');
+    assert.equal(kind(all, 'Bot'), 'likely', 'many builds a day and a crash for every build is a robot');
+    assert.equal(all.phones.find(x => x.model === 'Bot').crashes, 150);
+    const long = all.errors.find(x => x.game === 'long-game'), short = all.errors.find(x => x.game === 'short-game');
+    assert.deepEqual([long.state, long.newer, long.rounds], ['gone', 1, 3], 'play with a time came after a crash told before times were kept');
+    assert.equal(short.state, 'unknown', 'play with no time was before a crash that has one');
+    // one game's page: the robot played it on few builds there, and is a robot all the same
+    const one = await perfReport(db, now, 'g1');
+    assert.equal(kind(one, 'Bot'), 'likely'); assert.equal(kind(one, 'Mine'), '');
+    assert.equal(one.errors[0].phones[0].kind, 'likely');
+    assert.match(perfPage(one, known), /Bot <small>\(test robot\?\)<\/small>/);
+    assert.match(perfPage(all, known), /probably a test robot: 75 builds in 5 days, 150 crashes/);
+    sq.close();
+    ok('a phone given many builds a day is told from a test robot, and play is "since" a crash told before times were kept');
+  }
+  assert.ok(page.indexOf('<details><summary><b>Pixel 9') > 0, 'a robot\'s rows are folded shut');
   assert.ok(!perfPage(report, known, 'javascript:alert(1)').includes('javascript:'));
-  const one = perfPage({ ...report, game: 'mini-golf', games: [], history: [{ platform: 'android', model: '<b>SM</b>', form: 'wide', app: '1.0.7 abc1234', day: d, t0: at - 600, t1: at, ...fine }] }, known, 'https://github.com/x/y');
+  const row = { platform: 'android', model: '<b>SM</b>', form: 'wide', app: '1.0.7 abc1234', ver: 'aaaaaaaaaaaa', day: d, t0: at - 600, t1: at };
+  const one = perfPage({ ...report, game: 'mini-golf', games: [], history: [{ ...row, ...slow }, { ...row, day: d - 1, ver: '', t0: 0, t1: 0, ...unknown }] }, known, 'https://github.com/x/y');
   assert.match(one, /Game Scroll performance: Mini Golf/); assert.match(one, /21:34 to 21:44/); assert.ok(!one.includes('?game='));
-  ok('perf report page escapes reported text, flags slow games and says when and on which build');
+  assert.match(one, /<td class="n warn">hot 75%<\/td>/); assert.match(one, /<td class="n mute">–<\/td>/); assert.match(one, /game file aaaaaaaa \(current\)/);
+  ok('perf report page escapes reported text, flags slow games and says when, on which build and game file, and how hot the phone was');
 }
 
 /* ---------- sessions ---------- */
@@ -371,6 +427,40 @@ await run({}, async url => {
   const main = await (await fetch(url + '/perf/report')).text();
   assert.match(main, new RegExp('<b>' + phone + '</b>')); assert.match(main, new RegExp('href="\\?game=' + g2 + '"'));
   ok('the report says when and on which build, whether an error is still happening, and has a page per game');
+
+  // The game file's version, heat, a test robot, and when a crash really happened.
+  const D = 'test-device-d-' + run_, third = { 'CF-Connecting-IP': IP + '.3' }, g3 = 'ver-game-' + run_, flip = 'Flip-' + run_;
+  const play = (v, more = {}, errors = [], info = {}) => ({ device: D, info: { platform: 'android', model: flip, os: 'Android 17', app: '1.0.9 ccccccc', form: 'phone', ...info },
+    games: { [g3]: { r: 1, f: 600, ms: 10000, w: 3000, sl: 6, h: 1, x: 90, v, ...more } }, errors });
+  const crashAt = Math.floor(Date.now() / 1000) - 3 * 3600, hhmm = new Date(crashAt * 1000).toISOString().slice(11, 16);
+  const crashRow = async path => (await (await fetch(url + path)).text()).split('<tr>').find(row => row.includes('ran out of memory') && row.includes(flip));
+  r = await post(url, '/perf', play('111111aaaaaa', { hk: 10000, hh: 8000, hw: 1000 },
+    [{ kind: 'crash', game: g3, msg: 'App closed while playing: the phone ran out of memory', place: 'android: lmk', v: '111111aaaaaa', at: crashAt }]), third); assert.equal(r.status, 200);
+  let row3 = await crashRow('/perf/report?game=' + g3);
+  assert.match(row3, new RegExp(' ' + hhmm + '</td><td>'), 'a crash is filed under when it happened, not when it was told');
+  assert.match(row3, /Yes: on the newest build that ran this game on that phone/); assert.match(row3, /game file 111111aa/);
+  assert.match(await (await fetch(url + '/perf/report?game=' + g3)).text(), /hot 80%/);
+  await new Promise(done => setTimeout(done, 1100));
+  // the same app build with a newer version of the game's file, and no crash
+  r = await post(url, '/perf', play('222222bbbbbb', { hk: 10000 }), third); assert.equal(r.status, 200);
+  row3 = await crashRow('/perf/report?game=' + g3);
+  assert.match(row3, /Probably not: 1 newer build has played it/, 'a newer game file that plays without it counts, though the app build is the same');
+  assert.match(await crashRow('/perf/report'), /Probably not: 1 newer build has played it/);
+  let pg = await (await fetch(url + '/perf/report?game=' + g3)).text(); pg = pg.slice(pg.indexOf('Smoothness by phone, day and build'));
+  assert.ok(pg.indexOf('game file 222222bb') > 0 && pg.indexOf('game file 222222bb') < pg.indexOf('game file 111111aa'), 'each version of the game\'s file has its own row, newest first');
+  assert.match(pg, /class="n ok">cool/);
+  // a crash worded differently on that newer game file: the first one is not "probably fixed" by it
+  await new Promise(done => setTimeout(done, 1100));
+  r = await post(url, '/perf', play('333333cccccc', {}, [{ kind: 'crash', game: g3, msg: 'App closed while playing', v: '333333cccccc' }]), third); assert.equal(r.status, 200);
+  assert.match(await crashRow('/perf/report?game=' + g3), /Probably not: 1 newer build has played it/, 'a build that crashed in that game, however it was worded, does not count as playing without it');
+  // the same phone model driven by a test robot is kept apart, and out of the app's own totals
+  r = await post(url, '/perf', play('222222bbbbbb', {}, [{ kind: 'error', game: g3, msg: 'TypeError: robot only', place: 'games/z.js:1' }], { robot: true }), third); assert.equal(r.status, 200);
+  const both = await (await fetch(url + '/perf/report')).text();
+  assert.match(both, new RegExp(flip + ' <small>android</small></td><td>test robot \\(the phone says so\\)')); assert.match(both, new RegExp(flip + ' <small>android</small></td><td>phone'));
+  assert.match(both.split('<tr>').find(x => x.includes('TypeError: robot only')), new RegExp(flip + ' <small>\\(test robot\\)</small>'));
+  const totals = await (await fetch(url + '/perf')).json(), mine = totals.games.filter(x => x.game === g3);
+  assert.deepEqual(mine.map(x => [x.platform, x.rounds]), [['android', 3]]); assert.ok(!totals.errors.some(x => x.msg === 'TypeError: robot only'));
+  ok('reports say which version of the game\'s file, how hot the phone was and when a crash happened, and test robots are kept apart');
 });
 
 await run({ ENFORCE: 'on' }, async url => {
