@@ -211,7 +211,7 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
 
 1. QA panel, **Phone test tour**, and under **Play** choose **Engine test scenes**. Pick the seconds
    for each run and press **Start**.
-2. Ten scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
+2. Eleven scenes made in code (`src/detail-scenes.js`) are each flown through with one system off
    and then on (`src/detail-tour.js`): a **valley** of about 1.9 million triangles (cluster detail), a
    **forest** of 20,000 firs and 2,000 rocks (detail levels for copies; on WebGPU it is flown twice over,
    with the chip picking the copies and then the CPU, as happens while frame generation runs), a **village** of twelve houses
@@ -245,7 +245,12 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    dog, a horse and a goods train walked along close up, their points kept as plain floats and then kept
    small (`src/kit/slim.js`); each run says how many bytes they took in memory and on the graphics chip
    (the pictures are the same, so the frame rates say whether a phone's chip minds the smaller lists).
-   About 13 minutes at 20 seconds a run on WebGPU (25 runs), longer the
+   Then a **line-up**: eight people along a line, one walking a ring, one turning quickly on the spot, one
+   kneeling and turning, one dropping to a crouch and up, one holding a rifle, one talking, one walking to
+   and fro with stops and one standing with a pack on, posed as drawn and then with what makes people move
+   and look alive (steps that are really taken, momentum and follow-through, a live face, hands that hold);
+   each run says how long the posing took a frame, and the second how many steps were taken.
+   About 14 minutes at 20 seconds a run on WebGPU (27 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
