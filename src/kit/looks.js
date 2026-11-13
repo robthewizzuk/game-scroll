@@ -299,17 +299,34 @@ function rock(m, { detail = groundDetail().detail, scale = .7, moss = [.07, .09,
  * atlas: [w, h] of the map in texels. wind can be a gs.outdoors Wind: the trees then lean and stream
  * the way it blows, harder in its gusts. Returns its uniforms: set time and wind each frame (or share them).
  */
-function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .012, above = 2, glow = .6, atlas = [1024, 512] } = {}) {
+// Brushed aside by what passes (a gs.outdoors.Marks grass field: lkPart, lkPartAt as the meadow reads them):
+// a leaf leans the way the field there leans, more the higher it is on its plant (lkPartK: metres pushed at
+// the top, the height that gets all of it). Added to a world offset sw, at world point wp, h metres up.
+const PART_HEAD = '\n#ifdef LK_PART\nuniform sampler2D lkPart; uniform vec4 lkPartAt; uniform vec2 lkPartK;\n#endif';
+const PART_GLSL = (h, cap = '1.') => `
+#ifdef LK_PART
+    { vec2 pd = abs(wp.xz - lkPartAt.xy); vec4 pk = texture2D(lkPart, wp.xz * lkPartAt.z) * step(max(pd.x, pd.y), lkPartAt.w);
+      vec2 ln = (pk.rg * 2. - 1.00392) * step(.5, pk.a); float up = smoothstep(0., lkPartK.y, ${h}) * ${cap};
+      sw.xz += ln * lkPartK.x * up; sw.y -= length(ln) * lkPartK.x * up * .35; }
+#endif`;
+// the field a look's material reads (null: none): its picture, where its square lies, and the define that turns the code on
+function partOf(m, U, field) {
+  U.lkPart.value = field ? field.texture : null; if (field) U.lkPartAt.value = field.where;
+  const had = !!m.defines && 'LK_PART' in m.defines; if (!!field !== had) { m.defines ||= {}; if (field) m.defines.LK_PART = ''; else delete m.defines.LK_PART; m.needsUpdate = true; }
+}
+
+function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .012, above = 2, glow = .6, atlas = [1024, 512], part = null, push = [.35, 1.2] } = {}) {
   const W = wind?.uniforms?.lkWindDir ? wind.uniforms : null;
-  const U = { lkTime: uni(time), lkWind: W ? W.lkWind : uni(wind), lkWindDir: W ? W.lkWindDir : uni(new Vector2()), lkSun: uni(sun), lkSway: uni(new Vector2(sway, above)), lkGlow: uni(glow), lkAtlas: uni(new Vector2(...atlas)) };
+  const U = { lkTime: uni(time), lkWind: W ? W.lkWind : uni(wind), lkWindDir: W ? W.lkWindDir : uni(new Vector2()), lkSun: uni(sun), lkSway: uni(new Vector2(sway, above)), lkGlow: uni(glow), lkAtlas: uni(new Vector2(...atlas)),
+    lkPart: uni(null), lkPartAt: uni(new Vector4()), lkPartK: uni(new Vector2(...push)) };
   lookPatch(m, 'leaves', spec('leaves', {
     uniforms: U, world: true,
     vertex: {
-      head: 'uniform float lkTime, lkWind; uniform vec2 lkSway, lkWindDir;',
+      head: 'uniform float lkTime, lkWind; uniform vec2 lkSway, lkWindDir;' + PART_HEAD,
       after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz) + gsOrigin;
     float hh = max(position.y - lkSway.y, 0.), ph = wp.x * .19 + wp.z * .23;
     vec3 sw = vec3(sin(lkTime * 1.7 + ph) + sin(lkTime * 3.1 + ph * 2.3) * .3, 0., cos(lkTime * 1.3 + ph * 1.4)) * lkWind * hh * lkSway.x;
-    sw.xz += lkWindDir * lkWind * hh * lkSway.x * (1.2 + .6 * sin(lkTime * .9 + ph * .5));   // a lean downwind (none without a Wind)
+    sw.xz += lkWindDir * lkWind * hh * lkSway.x * (1.2 + .6 * sin(lkTime * .9 + ph * .5));   // a lean downwind (none without a Wind)${PART_GLSL('position.y')}
     mvPosition.xyz += mat3(viewMatrix) * sw; gl_Position = projectionMatrix * mvPosition; }` },
     },
     fragment: {
@@ -321,7 +338,48 @@ function leaves(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .01
       },
     },
   }));
-  return { uniforms: U };
+  if (part) partOf(m, U, part);
+  return { uniforms: U, part: f => partOf(m, U, f) };
+}
+
+/**
+ * looks.fronds(material, o): long leaves that grow out from one point (palm fronds, fan palm and banana
+ * leaves, ferns, reeds, ivy, hanging moss, weeds): each bounces and flutters more towards its tip and leans
+ * downwind, light comes through towards the sun, outlines hold up far away, and both sides are lit alike.
+ * The mesh says, at each point, where its leaf starts and how far along it the point is (lkFrond: x, y, z in
+ * the plant's own metres, 0..1 along) and which leaf it is (lkFrondId: a number, its length in metres):
+ * gs.models' plants do. o: time, wind (a number, or a gs.outdoors Wind: then they lean and stream the way it
+ * blows, harder in its gusts), sun, sway (how far a tip moves per metre of leaf in wind 1: .08), glow, atlas
+ * ([w, h] of the map in texels), part (a gs.outdoors.Marks grass field: brushed aside by what walks through)
+ * and push ([metres a leaf's tip is pushed, how far along a leaf (metres) it gets all of that]; nothing above
+ * 2.6 m, out of a passer-by's reach). Returns { uniforms, part(field) }.
+ */
+function fronds(m, { time = 0, wind = .6, sun = new Vector3(0, 1, 0), sway = .08, glow = .5, atlas = [128, 256], part = null, push = [.4, 1] } = {}) {
+  const W = wind?.uniforms?.lkWindDir ? wind.uniforms : null;
+  const U = { lkTime: uni(time), lkWind: W ? W.lkWind : uni(wind), lkWindDir: W ? W.lkWindDir : uni(new Vector2()), lkSun: uni(sun), lkSway: uni(sway), lkGlow: uni(glow), lkAtlas: uni(new Vector2(...atlas)),
+    lkPart: uni(null), lkPartAt: uni(new Vector4()), lkPartK: uni(new Vector2(...push)) };
+  lookPatch(m, 'fronds', spec('fronds', {
+    uniforms: U, world: true,
+    vertex: {
+      head: 'attribute vec4 lkFrond; attribute vec2 lkFrondId; uniform float lkTime, lkWind, lkSway; uniform vec2 lkWindDir;' + PART_HEAD,
+      after: { project_vertex: `  { vec3 wp = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz) + gsOrigin;
+    float a = lkFrond.w, k = lkWind * lkSway * lkFrondId.y * a * a, ph = wp.x * .11 + wp.z * .13 + lkFrondId.x * 1.93;   // (the tip moves most; the phase runs along a leaf a little, so it flexes)
+    vec3 sw = vec3(sin(lkTime * 1.3 + ph) + sin(lkTime * 2.9 + ph * 1.7) * .35, 0., cos(lkTime * 1.1 + ph * 1.3)) * k * .45;
+    sw.y = -k * (.5 * sin(lkTime * 2.1 + ph * 1.6) + .12 * sin(lkTime * 8.7 + ph * 3.1 + a * 6.));   // it bounces, and flutters
+    sw.xz += lkWindDir * k * (1.1 + .6 * sin(lkTime * .8 + ph * .4)); sw.y -= length(lkWindDir) * k * .25;   // a lean downwind (none without a Wind)${PART_GLSL('a * lkFrondId.y', '(1. - smoothstep(1.8, 2.6, position.y))')}
+    mvPosition.xyz += mat3(viewMatrix) * sw; gl_Position = projectionMatrix * mvPosition; }` },
+    },
+    fragment: {
+      head: 'uniform vec3 lkSun; uniform float lkGlow; uniform vec2 lkAtlas;',
+      replace: { normal_fragment_begin: ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', '') },
+      before: {
+        alphatest_fragment: '  { vec2 lq = vMapUv * lkAtlas; vec2 dx = dFdx(lq), dy = dFdy(lq); diffuseColor.a *= 1. + max(0., .5 * log2(max(dot(dx, dx), dot(dy, dy)))) * .35; }',
+        emissivemap_fragment: '  { vec3 vd = normalize(vGsWorld - gsOrigin - cameraPosition); diffuseColor.rgb *= 1. + lkGlow * pow(max(dot(vd, lkSun), 0.), 4.); }',
+      },
+    },
+  }));
+  if (part) partOf(m, U, part);
+  return { uniforms: U, part: f => partOf(m, U, f) };
 }
 
 
@@ -443,8 +501,8 @@ vec4 lkLavaN(float sc) {
   return { uniforms: U };
 }
 
-/** The outdoor looks: ground, hills, rock, leaves, flow, lava (each returns its uniforms). */
-export const looks = Object.freeze({ ground, hills, rock, leaves, meadow, flow, lava });
+/** The outdoor looks: ground, hills, rock, leaves, fronds, meadow, flow, lava (each returns its uniforms). */
+export const looks = Object.freeze({ ground, hills, rock, leaves, fronds, meadow, flow, lava });
 
 /**
  * horizon(land, o): a ring of far hills and mountains round the land (they only need light and haze),

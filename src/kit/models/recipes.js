@@ -34,6 +34,16 @@ export const RECIPES = {
       return { col: O.mixc(k.dark, k.colour, t), rough: .9, metal: 0, h: t };
     },
   },
+  // a palm's trunk: rings where old leaves fell, a little wavy, fibres running up between them
+  palm: {
+    P: 4, look: { colour: '#8c7c64', dark: '#4e4234', scar: '#362c22' },
+    f(O, p, k) {
+      const w = O.fbm(O.scale(p, 2), 8, 3, 3), y = O.add(O.y(p), O.mul(O.sub(w, .5), .16)), g = O.fract(O.mul(y, 2));
+      const ring = O.mul(O.smooth(0, .07, g), O.sub(1, O.smooth(.12, .32, g))), scar = O.sub(1, O.smooth(.01, .05, O.abs(O.sub(g, .04))));
+      const fib = O.fbm(O.scale(p, 4, 1), 4, 3, 5), t = O.clamp(O.add(O.mul(fib, .65), O.mul(ring, .45)));
+      return { col: O.mixc(O.mixc(k.dark, k.colour, t), k.scar, O.mul(scar, .65)), rough: .88, metal: 0, h: O.clamp(O.add(O.mul(ring, .6), O.mul(fib, .4))) };
+    },
+  },
   brick: {
     P: 4, look: { colour: '#9c4a32', dark: '#6e2e1e', mortar: '#b8b0a2' },
     f(O, p, k) {

@@ -15,7 +15,7 @@ await loadParts();
 await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
 if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const HD = window.__hd, W = +(Q.get('w') || 200), H = +(Q.get('h') || 300);
-HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0;
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false;
 if (Q.has('set')) for (const kv of Q.get('set').split(',')) { const [k, v] = kv.split(':'); HD[k] = v === 'true' ? true : v === 'false' ? false : +v; }
 const frame = () => new Promise(r => requestAnimationFrame(r));
 const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c);

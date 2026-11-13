@@ -116,6 +116,28 @@ stepped down last comes back first, and not within 30 s of a slow spell. Steps a
 game's tier and resolution. `HD.fx` says what is drawn smaller now (`{ ao: .5, bloom: .7 }`); the frame lab
 shows it and logs each change. Tests pin a step with `HD.fxStep('bloom', 2)`.
 
+**Heavy effects spread over frames** (WebGPU, high and ultra; `src/kit/hd3d-gpu-spread.js`). Ambient
+occlusion, volumetric light (`v.beams`) and screen bounce light (`v.liveBounce = 'screen'`) each take a part of
+their samples in a frame, with a pattern that turns from frame to frame, and the frames before fill in the rest,
+as the big engines' temporal effects do: each pixel keeps what it had, moved to where that point is now on
+screen (by the scene's motion picture where there is one, else by the camera's move), and blends in this
+frame's samples. Ambient occlusion takes 3 directions of 3 steps a frame (12 directions' worth over frames, against
+3 of 4 before) and no denoise pass; volumetric light a third of its steps along each ray; bounce light one slice of
+12 steps at half size (three's SSGI sized itself from the canvas, the screen's size under an upscaler: it now
+follows the picture's size, spread or not). Where a point was hidden last frame, off screen, or the camera cut,
+the frame's own samples are used, smoothed over neighbours on the same surface; ambient occlusion and bounce light
+also keep history within the range this frame's neighbours span, so nothing lingers where a thing moved away.
+Volumetric light depends on where the camera stands, so the frames before count for less the faster it moves,
+and it starts again from one frame when its light changes (another light, its shadow map arriving, other settings).
+After 48 frames with the camera still and no shadow map drawn again, the picture is held as it is, so it stops
+changing and the app's still-frame check can stop drawing. In the software renderer (the build machine; not a
+phone) a room with all three took 83 ms of the chip a frame against 198 ms with every sample (ambient occlusion
+15.3 to 10.9 ms, volumetric light 8.2 to 5.2, bounce light 126 to 20), with the picture within 1.3/255 of the
+full one held still, while moving and after a cut. `HD.spread = false` takes every sample every frame as before
+(a list, `'ao,vol,bounce'`, spreads only those), `HD.info.spread` says which are spread, and the frame lab's Spread
+button times both on a phone. WebGL draws every sample every frame. `node scripts/detail-test.cjs --page spread
+--webgpu` checks it.
+
 **Speed tricks that keep the picture the same:**
 
 - The 3D canvas is shown directly on the playing card, under the card's own canvas, which is cleared
@@ -1059,8 +1081,8 @@ const barrel = gs.models.prop('barrel', { seed: 2 }); barrel.position.set(1, 0, 
 wear(wall, { moss: .7 });                                                    // moss on the top
 ```
 
-- **`material(name, o)`**: 18 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
-  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`
+- **`material(name, o)`**: 19 recipes: `wood`, `planks`, `bark`, `brick`, `stone`, `cobbles`, `tiles`,
+  `concrete`, `metal`, `rust`, `paint`, `fabric`, `leather`, `marble`, `dirt`, `sand`, `snow`, `skin`, `palm`
   (`gs.models.materials` lists them; `skin` is pores and fine lines, a tile to 16 mm at 64 repeats a metre:
   what the kit's people wear). Change the recipe's colours (`colour`, `dark`, `mortar`, `gap`, `rust`,
   `under`, `vein`, `grout`...), `seed` for another pattern, `repeat: [u, v]`, `size` (texture pixels, 256).
@@ -1113,6 +1135,32 @@ const rock = gs.models.sculpt([{ box: [.9, .6, .7], round: .15 }, { cylinder: [.
   the same kind), `leaves` and `bark` (colours), `wind` (.6, or a `gs.outdoors` Wind). About 20 to 80 ms each;
   the same options again give a copy sharing shapes and materials, so make a few kinds and place copies (or
   hand them to `gs.props` for instancing and far-off impostors).
+  The same call grows plants EZ-Tree can't, each by rules of its own: `palm` (a ringed trunk that leans out
+  and curves up, arching fronds, two or three dead ones hanging brown, nuts under the crown), `fan` (a fan
+  palm: a tall trunk, a skirt of dry leaves, round pleated fans), `banana` (paddle leaves torn along their
+  veins), `fern` (`trunk: 3` for a tree fern), `taro` (elephant ears), `cypress` (a swamp cypress: flared
+  foot, knees, feathery sprays and hanging moss), `reeds` (blades and cattails), `flowers` (`petals`: a colour
+  or a list) and `lily` (pads on still water: put its foot at the water's top). Each leaf bounces, flutters and
+  leans downwind from where it grows, and `bend: marks` (a `gs.outdoors.Marks`) has leaves and bushes
+  brushed aside by whoever the marks watch walking through. `group.userData.fronds` lists every leaf
+  (`{ id, root, dir, len }`). Per kind: `lean`, `fronds`, `dead`, `fruit`, `skirt`, `trunk`, `branches`,
+  `knees`, `moss`, `blades`, `cattails`, `stems`, `petals`, `pads`, `blooms`, `spread`.
+- **`ivy(targets, o)`**: ivy grown over meshes as they stand (a wall, a house, a stump): vines start at the
+  foot of steep faces (or `from: [[x, y, z]]`) and climb, keeping to the surface, branching out sideways,
+  going over edges and hanging where there is nothing to hold, with clusters of leaves facing out. `roots`
+  (8), `length` (metres each climbs: 5), `size` (a leaf: .13), `density`, `up`, `leaves`, `stem`, `seed`,
+  `wind`, `bend`. A Group in world metres; 30 to 150 ms, kept for the same walls and options, so grow it while
+  loading.
+- **`weeds(o)`**: weeds where nobody weeds, in one draw: along cracks and kerbs (`lines`), at the foot of
+  walls (`walls: mesh`) and at `spots`, each tuft turned and sized its own way. `ground(x, z)`, `gap`,
+  `height`, `colours`, `seed`, `wind`, `bend`, `max`.
+
+```js
+const palm = gs.models.tree('palm', { height: 8, wind, seed: 2 });
+const ferns = [1, 2, 3].map(seed => gs.models.tree('fern', { seed, wind, bend: marks }));
+house.add(gs.models.ivy(walls, { roots: 10, length: 6 }));
+v.scene.add(gs.models.weeds({ lines: [[[-4, 0], [0, .4], [4, .1]]], walls: kerb, wind }));
+```
 - **`building(o)`**: a building to walk up to, from a small shape grammar: the block is split into floors,
   each wall into bays, and each bay into a real window opening (reveal, frame, sill, glass set back) or the
   door, with a string course, cornice, and a flat roof with a parapet or a gable roof. `style` (`brick`,
@@ -1174,7 +1222,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   taken" in the maker kit guide; a new move takes up the speed the body had, and arms, head and kit swing on
   and settle when it starts, stops or turns: "Momentum and follow-through" there; it stops in two steps and its
   eyes and head go first into a turn, `rig.update(dt, { speed, toward })` to say where it means to go: "The eyes
-  and the head go first") in three levels of detail: call
+  and the head go first"; it walks its own way, from its body and seed, with moods, `rig.manner.mood = 'sad'`: "A walk
+  of one's own") in three levels of detail: call
   `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after

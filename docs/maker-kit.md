@@ -90,7 +90,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Sounds muffled by walls, each place with its own echo, by themselves | `new Ears({ level })` | [Action and adventure kits](#action-and-adventure-kits) |
 | Knocks by what things are made of, footsteps by what is underfoot, engines that rev through the gears, by themselves | `gs.sound.Foley` | [Action and adventure kits](#action-and-adventure-kits) |
 | Thousands of trees and rocks, rooms, big worlds | `gs.props` (InstancedMesh2) | [Action and adventure kits](#action-and-adventure-kits) |
-| Materials, props, sculpted shapes, trees, buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
+| Materials, props, sculpted shapes, trees and plants (palms, ferns, swamp plants, ivy over walls, weeds in cracks), buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Water you can disturb: rings, splashes and spray, wakes and foam behind boats and swimmers, rain on it, foam at the shore, the view from under it | `gs.outdoors.Water` | [Water you can disturb](#water-you-can-disturb) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
@@ -1921,6 +1921,22 @@ there before the body has begun to turn: `rig.update(dt, { speed, toward: { x, z
 `toward: heading` (radians, as `rotation.y`), from the stick, the next point on a path, a door to run for. Nothing
 while aiming, off balance or far off; little while the face is set on something (`person.face.look(...)`).
 `rig.lead.amount = 0` turns it off (2 makes it plainer).
+
+**A walk of one's own** (`gs.models.human` people, by themselves): no two people walk alike, and nobody takes the
+same step twice. Each person's walk comes from their body: an older person takes shorter, quicker steps, swings the
+arms and hips less, leans and looks down a little more and stands wider with the toes out; a heavy person walks wider
+and rolls more from side to side with the arms held out; a muscled one carries the arms out and a little bent. The
+seed gives the rest of a person's own way of walking (how far the arms swing, one more than the other, how far the
+hips turn, how upright, a habit of the head), the same on every phone, and each `twin()` walks a little differently.
+From stride to stride the time a stride takes, the arms' swing, how wide the feet go and the lean wander a little,
+as they do in a person (slowly, not at random from one step to the next). Each footfall is felt: the hips give, the
+rib cage dips and the head nods after it, the elbows bounce, more at a run and in a heavy person. Slopes are read
+from how the body rises or falls as you move it: uphill the person leans in and takes shorter, quicker steps swinging
+the arms, downhill leans back with the knees bent and the arms out; with `rig.plant(ground, person)` the feet lie
+along the slope and keep the point they stand on. A mood: `person.rig.manner.mood = 'tired'` (`brisk`, `tired`,
+`wary`, `proud`, `sad`, `limp`; `manner.side = 'L'` for the leg that hurts; or a mix, `{ tired: .5, limp: 1 }`;
+`null` for none), eased in over a second. A mood changes how a person walks at the speed you give, so slow a tired or
+limping person yourself. `rig.manner.amount = 0` leaves the walk as drawn.
 
 **Momentum and follow-through** (`gs.models.human` people, by themselves): a body has weight. A new move begins
 at once and takes up what the body was doing: how far each joint was from where the new move has it, and how

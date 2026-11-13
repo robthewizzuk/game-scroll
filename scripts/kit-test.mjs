@@ -2259,7 +2259,7 @@ console.log('physics ok');
       for (const b of OLD) { const a = HS.AT[b], p = OP[b]; if (p) { const pa = HS.AT[p]; B[b].position.set(a[0] - pa[0], a[1] - pa[1], a[2] - pa[2]); B[p].add(B[b]); } else B[b].position.set(...a); }
       const root = new T.Group(); root.add(B.hips); root.bones = B; root.rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1 }); return root;
     };
-    const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion());
+    const a = fifteen(), b = skeleton(), wp = o => o.getWorldPosition(new T.Vector3()), wq = o => o.getWorldQuaternion(new T.Quaternion()); b.rig.manner = null;   // (as drawn: a person's own walk is manner.js's)
     const put = (pose, at = 0) => { for (const r of [a, b]) { r.rig.layers = [{ name: pose, w: 1, phase: at, pin: true }]; r.rig.state = pose; r.rig.update(0); r.updateMatrixWorld(true); } };
     assert.equal(Object.keys(b.bones).length, 85, 'eighty-five bones: thirty-five (eight of them joints in between, two that breathe and two biceps), fourteen to a hand and twenty-two in the face');
     {
@@ -2553,7 +2553,42 @@ console.log('physics ok');
     assert.ok(meant.head > .3, `told where it means to go (to its left), the head goes ${(meant.head * 57.3).toFixed(0)} degrees that way before the body turns`);
     const p = skeleton({}); p.rig.blend(STR, 1.3); for (let i = 0; i < 60; i++) { p.position.z = i * 1.3 * dt; p.rig.update(dt, { speed: 1.3 }); } assert.ok(Math.abs(p.rig.lead.head) < 1e-3 && Math.abs(p.face.lead) < 1e-3, 'going straight it does nothing');
   }
-  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance; kneeling, changes of stance, quick turns; starts, stops in two steps, feet turned into a bend; the eyes and head lead turns) ok');
+  // a walk of one's own (manner.js): from the body and a seed, moods, no two strides alike, footfalls felt, slopes
+  {
+    const walkOf = (o, secs = 6, set, grade = 0) => {
+      const p = skeleton(o), R = { arm: [9, -9], spine: 0, head: 0, n: 0, falls: [], down: [0, 0], hips: [], p }; set?.(p); let z = 0, last = null;
+      for (let i = 0, n = Math.round(secs / dt); i < n; i++) {
+        z += 1.4 * dt; p.position.set(0, z * grade, z); p.rig.blend(STR, 1.4); p.updateMatrixWorld(true); p.rig.update(dt, { speed: 1.4 }); if (grade) p.rig.plant((x, zz) => zz * grade, p); p.updateMatrixWorld(true);
+        if (i * dt < 2) continue;
+        const a = p.rig.cur.armL[0]; R.arm[0] = Math.min(R.arm[0], a); R.arm[1] = Math.max(R.arm[1], a); R.spine += p.rig.cur.spine[0]; R.head += p.rig.cur.head[0]; R.n++;
+        const ph = p.rig.blendPhase; if (last != null && ph < last - .5) R.falls.push(i * dt - dt * ph / (ph + 1 - last)); last = ph;   // (when it came round, between the two updates)
+        p.rig.stride.feet.forEach((f, k) => { if (f.down) R.down[k] += dt; }); R.hips.push(p.bones.hips.getWorldPosition(new Vector3()).y - z * grade);
+      }
+      R.swing = R.arm[1] - R.arm[0]; R.spine /= R.n; R.head /= R.n; const d = R.falls.slice(1).map((t, i) => t - R.falls[i]), m = d.reduce((a, b) => a + b, 0) / d.length; R.beat = m; R.cv = Math.sqrt(d.reduce((a, b) => a + (b - m) ** 2, 0) / d.length) / m; return R;
+    };
+    const [s1, s1b, s2] = [walkOf({ seed: 1 }), walkOf({ seed: 1 }), walkOf({ seed: 2 })];
+    assert.ok(Math.abs(s1.swing - s1b.swing) < 1e-9 && Math.abs(s1.swing - s2.swing) > .02, `two people with other seeds walk differently (the arms swing ${s1.swing.toFixed(2)} and ${s2.swing.toFixed(2)} rad), and with the same seed alike`);
+    const [young, old] = [walkOf({ look: 'real', age: 22 }), walkOf({ look: 'real', age: 80 })];
+    assert.ok(old.swing < young.swing * .8 && old.spine > young.spine + .04 && old.beat < young.beat, `an old person leans more (${old.spine.toFixed(2)} against ${young.spine.toFixed(2)}), swings the arms less (${old.swing.toFixed(2)}, ${young.swing.toFixed(2)}) and takes quicker steps (a stride every ${old.beat.toFixed(2)} s, ${young.beat.toFixed(2)})`);
+    const [calm, sad] = [walkOf({ seed: 4 }), walkOf({ seed: 4 }, 6, p => { p.rig.manner.mood = 'sad'; })];
+    assert.ok(sad.head > calm.head + .12 && sad.spine > calm.spine + .06 && sad.swing < calm.swing * .7, `sad: the head down ${(sad.head - calm.head).toFixed(2)} rad more, leaning ${(sad.spine - calm.spine).toFixed(2)} more, the arms swing ${(sad.swing / calm.swing * 100).toFixed(0)}% as far`);
+    // (stride times wander by a percent or two, as a person's do)
+    const long = walkOf({ seed: 5 }, 30); assert.ok(long.cv > .006 && long.cv < .04, `no two strides alike: they vary by ${(long.cv * 100).toFixed(1)}% of a stride's time`);
+    const still = walkOf({ seed: 5 }, 12, p => { p.rig.manner.amount = 0; }); assert.ok(still.cv < .001, 'and as drawn with the manner off: ' + (still.cv * 100).toFixed(2) + '%');
+    // (a limp: less time on the leg that hurts)
+    const limp = walkOf({ seed: 6 }, 8, p => { p.rig.manner.mood = 'limp'; p.rig.manner.side = 'R'; }); assert.ok(limp.down[1] < limp.down[0] * .9, `a limp on the right: ${limp.down[1].toFixed(2)} s on the right foot against ${limp.down[0].toFixed(2)} on the left`);
+    // (each footfall felt: the hips give a little more as the foot lands)
+    const dip = r => { let m = 0; for (let i = 2; i < r.hips.length; i++) m = Math.max(m, (r.hips[i - 1] - r.hips[i]) - (r.hips[i - 2] - r.hips[i - 1])); return m; };
+    const [felt, drawn] = [walkOf({ seed: 7 }), walkOf({ seed: 7 }, 6, p => { p.rig.manner.amount = 0; })];
+    assert.ok(dip(felt) > dip(drawn) * 1.5, `a footfall is felt in the hips: ${(dip(felt) * 1000).toFixed(2)} mm a frame a frame against ${(dip(drawn) * 1000).toFixed(2)}`);
+    // (uphill a person leans into the slope; and with rig.plant the feet lie along it and keep their place)
+    const up = walkOf({ seed: 8 }, 6, null, .3), flat = walkOf({ seed: 8 }); assert.ok(up.spine > flat.spine + .08, `uphill the body leans in: ${(up.spine - flat.spine).toFixed(2)} rad more`);
+    { const p = skeleton({}), w = new Vector3(), was = [null, null]; let slid = 0, z = 0;
+      for (let i = 0; i < 240; i++) { z += 1.4 * dt; p.position.set(0, z * .3, z); p.rig.blend(STR, 1.4); p.updateMatrixWorld(true); p.rig.update(dt, { speed: 1.4 }); p.rig.plant((x, zz) => zz * .3, p); p.updateMatrixWorld(true);
+        p.rig.stride.feet.forEach((f, k) => { p.bones[k ? 'footR' : 'footL'].localToWorld(w.set(0, -.085, f.on ? .13 : -.06)); if (f.down && was[k] && was[k].on === f.on && i > 60) slid += Math.hypot(w.x - was[k].x, w.z - was[k].z); was[k] = f.down ? { x: w.x, z: w.z, on: f.on } : null; }); }
+      assert.ok(slid / (4.2 * 2) < .015, `on a slope planted feet slide ${(slid / 8.4 * 100).toFixed(2)} cm a metre (4 as they were put down level)`); }
+  }
+  console.log('gs.models: steps that are really taken (walks, bends, runs, starts and stops, turning and shoved while standing; left alone on the spot, carried, far off, driven, off balance; kneeling, changes of stance, quick turns; starts, stops in two steps, feet turned into a bend; the eyes and head lead turns; a walk of one\'s own, moods, a limp, no two strides alike, footfalls felt, slopes) ok');
 }
 
 // momentum between moves (Rig.carried) and follow-through (follow.js): a person's rig takes a new move up with the speed the body had, and
@@ -2587,7 +2622,7 @@ console.log('physics ok');
   const run = change(4, 2.13, (p, t) => { if (t < 2.13) { p.rig.blend(STR, 5.6); return 5.6; } p.rig.play('idle', { fade: .22 }); return 0; });
   assert.ok(run.kept.jerk < run.fade.jerk * .6 && run.kept.knee > -1e-9, `a run that stops: ${run.kept.jerk.toFixed(2)} against ${run.fade.jerk.toFixed(2)} rad/s, and no knee bends back (${run.kept.knee})`);
   // a move begun with no fade is a cut, whatever is asked for after it before the next update; and the pose is the new one at once
-  { const p = skeleton({}); p.rig.steps = false; p.rig.follow.amount = 0;
+  { const p = skeleton({}); p.rig.steps = false; p.rig.follow.amount = 0; p.rig.manner = null;   // (the pose as drawn: no bearing of a person's own over it)
     for (let i = 0; i < 90; i++) { p.rig.blend(STR, 3.3); p.rig.update(dt, { speed: 3.3 }); }
     p.rig.play('idle', { fade: 0 }); p.rig.play('crouch', { fade: .2 }); p.rig.play('idle', { fade: .2 }); p.rig.update(dt);
     const l = p.rig.layers, want = p.rig.sample('idle', l[0].phase).j;
@@ -2845,7 +2880,7 @@ console.log('physics ok');
     assert.ok(out === 0 && proud > .00024 && proud < .00026, `the cornea stands ${(proud * 1000).toFixed(2)} mm proud of the ball (the lids pass a fifth of a millimetre over it) and nothing else does`);
     assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
   // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
-  { assert.ok(RECIPES.skin && Object.keys(RECIPES).length === 18, 'a skin among the recipes: ' + Object.keys(RECIPES).length); }
+  { assert.ok(RECIPES.skin && RECIPES.palm && Object.keys(RECIPES).length === 19, 'a skin (and a palm trunk) among the recipes: ' + Object.keys(RECIPES).length); }
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 
@@ -2889,9 +2924,10 @@ console.log('physics ok');
     assert.ok(jaw(real) > jaw(clean) + .004, `a real jaw is broader: ${(jaw(clean) * 2000).toFixed(0)} mm across the clean face's, ${(jaw(real) * 2000).toFixed(0)} mm a real one's`);
     assert.ok(halves(real) < .15 && halves(uneven) > halves(real) * 3, `an even face's halves alike (${halves(real).toFixed(2)} mm apart), an uneven one's not (${halves(uneven).toFixed(2)} mm)`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
-  { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = age => { const ff = f(age), rim = HH.rimOf(ff); let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };
+  { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
     assert.ok(y0 === 0 && m0 === 0 && y1 > 0 && y2 > y1 * 1.5 && m2 <= 1, `fine lines come with age: none at 22, ${y1.toFixed(0)} at 45, ${y2.toFixed(0)} at 75 (summed over the face)`);
+    const [l0] = sum(22, true); assert.ok(l0 > 20, `the lips creased at any age: ${l0.toFixed(0)} at 22`);
     assert.ok(HP.oilAt(0, .025, 0) > .5 && HP.oilAt(.005, -.02, 0) > .5 && HP.oilAt(.05, -.03, 0) === 0, 'oily down the middle of the face (the forehead, the nose), not on the cheeks');
     const det = HP.paintDetail({ face: f(70) }), W = HP.FACE_REAL.w, H = HP.FACE_REAL.h; let low = 0, oily = 0; for (let i = 0; i < W * H; i++) { if (det[i * 2] < 200) low++; if (det[i * 2 + 1] > 128) oily++; }
     assert.ok(det.length === W * H * 2 && low > 200 && low < W * H * .05 && oily > W * H * .01 && oily < W * H * .2 && det[0] === 255 && det[(W - 1) * 2] === 255, `a picture of it: ${low} dots in a line, ${oily} oily, its edges plain`);

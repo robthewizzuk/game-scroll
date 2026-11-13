@@ -68,6 +68,7 @@ import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { crowdLook } from './crowd-gpu.js';
 import { roomsLook } from './city-gpu.js';
+import { SpreadFrame, SpreadNode, ownFrames } from './hd3d-gpu-spread.js';
 import { sdfLook, fxPlan, fxStages, fxFrame, fxDispose, reflMRT, reflStage, reflFrame, reflDispose, bakeProbe } from './hd3d-gpu-fx.js';
 // Ray traced reflections (hd3d-gpu-trace.js) load the first time a view wants them (something marked shiny on
 // one of the best phones), not with every 3D game: the part brings a tree builder and a simplifier with it.
@@ -150,6 +151,7 @@ class FleshModel extends PhysicalLightingModel {
 /* ---------- kit materials with a shader of their own, as node materials ---------- */
 // gs.models.human's weaves (human.js WEAVES: plain, twill, denim, knit, canvas, wool, fine): threads a tile, and the sheen each catches at a glance
 const WEAVE_N = [0, 18, 11, 20, 9, 10, 30], WEAVE_SHEEN = [.12, .12, .08, .25, .06, .4, .1];
+const HAIR_MIN_PX = .5, HAIR_MOST = 40;   // (hairs: the least a strand reaches out from its middle, in pixels, and the most it is widened by)
 const ARM_OUT = .27;   // (human-shapes.js ARM: the arms out as a person's mesh was bound)
 const NO_BEND = new Vector4(0, -9, 0, 0), NO_GRIME = new Vector4();   // (a mesh with no elbows or knees; a person clean and dry)
 const ridge = x => { const f = fract(x); return f.mul(f.oneMinus()).mul(4); };   // a thread's round top: 0 at its edges, 1 along its middle
@@ -222,7 +224,7 @@ export const gpuMaterials = {
         m.normalNode = bumpN(FW ? D.r.sub(texture(FW, uv(1)).dot(wr).mul(2.6)) : D.r, float(.00016), pores);
         // (and rougher where the pores turn the surface faster than a pixel can show, Kaplanyan and Hoffman's specular antialiasing: a pore
         // a pixel or two across had each caught the light as a glint of its own, so a close face glittered like wet sand, darkest skin most)
-        const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1)), ex = dFdx(normalView), ey = dFdy(normalView);
+        const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1).sub(smoothstep(.9, 1, D.g).mul(.22))), ex = dFdx(normalView), ey = dFdy(normalView);
         const spread = ex.dot(ex).add(ey.dot(ey)).mul(.5).min(.18).toVar();
         m.roughnessNode = sqrt(r0.mul(r0).add(spread)).min(1);
         // (and less of it where the skin is dry, and where the pores are too small to see: a pore's hollow shines little, so as they blur into
@@ -239,6 +241,25 @@ export const gpuMaterials = {
       m.thicknessDistortionNode = float(S.distortion); m.thicknessAmbientNode = float(S.ambient); m.thicknessAttenuationNode = float(S.attenuation);
     }
     m.name = gm.name || 'sss';
+    return m;
+  },
+  // gs.models.human's hairs one by one (a real face's lashes, brows, moustache and beard: human-head.js eyeParts). A brow hair is a tenth
+  // of a millimetre across, a small part of a pixel even with the face filling the screen: drawn as it is, only the few pixels whose middles
+  // it crosses showed it, a dark speck each, and a brow or a beard read as specks. So each strand is drawn at least a pixel wide, widened
+  // out from the middle of each of its rings (the way out in gsThin and uv1.x: human.js hairRings), and as see-through as it is thinner than
+  // that: what a pixel shows is how much of it the hairs cover, as with a real face's brow seen from across a room. Its shadow is its own size.
+  hairs(gm) {
+    const m = new MeshPhysicalNodeMaterial();
+    for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];
+    m.name = gm.name || 'hairs';
+    const o = vec3(attribute('gsThin', 'vec2'), attribute('uv1', 'vec2').x), p11 = uniform(1).onRenderUpdate(({ camera }) => camera?.projectionMatrix?.elements[5] ?? 1);
+    // (how many pixels its round reaches out from its middle here, at its depth; a pixel across is half of one out)
+    const depth = max(TSL.modelViewMatrix.mul(vec4(positionLocal, 1)).z.negate(), 1e-3), px = length(o).mul(p11).mul(TSL.screenSize.y).mul(.5).div(depth);
+    const wide = max(float(1), float(HAIR_MIN_PX).div(max(px, 1e-5))).min(HAIR_MOST);
+    m.positionNode = positionLocal.add(o.mul(wide.sub(1)));
+    m.castShadowPositionNode = positionLocal;
+    m.opacityNode = materialOpacity.mul(TSL.varying(float(1).div(wide), 'gsHairCover'));
+    m.transparent = true; m.depthWrite = false;
     return m;
   },
   // gs.models.human's clothes (userData.grime: 'cloth', 'leather', or 'far' for the plain stand-in further off). Close up each cloth is woven
@@ -422,6 +443,26 @@ export function bakeRoom(r, scene, s) {
   try { cc.update(r, scene); } finally { cc.removeFromParent(); }
   g.rt.texture.needsPMREMUpdate = true;
 }
+// leaves and fronds: alpha that thins less in the mips (outlines that hold up far away), light through towards
+// the sun, both sides lit alike (looks.js leaves / fronds fragment)
+function seeThroughLeaf(m, o, u) {
+  const lq = uv().mul(live(u.lkAtlas)), dx = dFdx(lq), dy = dFdy(lq);
+  m.opacityNode = (m.opacityNode ? float(m.opacityNode) : materialOpacity).mul(float(1).add(max(0, log2(max(dot(dx, dx), dot(dy, dy))).mul(.5)).mul(.35)));
+  afterColor(m, o, c => c.mul(float(1).add(live(u.lkGlow).mul(pow(max(dot(normalize(positionWorld.sub(cameraPosition)), live(u.lkSun)), 0), 4)))));
+  if (!m.normalMap) m.normalNode = normalViewGeometry;
+}
+// looks.js PART_GLSL: a leaf brushed aside by what walks through a gs.outdoors.Marks grass field, more the higher it
+// is on its plant: (world point, height) => a world offset. Only for a material given the field before it was first drawn.
+function partPush(u) {
+  if (!u.lkPart?.value) return null;
+  return (wp, h, cap = null) => {
+    const PA = live(u.lkPartAt), K = live(u.lkPartK), pd = abs(wp.xz.sub(PA.xy));
+    const pk = texture(u.lkPart.value, wp.xz.mul(PA.z)).onRenderUpdate(() => u.lkPart.value || BLANK_PART()).mul(step(max(pd.x, pd.y), PA.w));
+    let up = smoothstep(0, K.y, h).mul(K.x); if (cap) up = up.mul(cap);
+    const ln = pk.rg.mul(2).sub(1.00392).mul(step(.5, pk.a));
+    return vec3(ln.x.mul(up), length(ln).mul(up).mul(-.35), ln.y.mul(up));
+  };
+}
 export const gpuLooks = {
   // gs.fx3d's 3D text (text3d.js): distance-field letters
   sdf: sdfLook,
@@ -552,13 +593,30 @@ export const gpuLooks = {
       const lean = dir.mul(k).mul(sin(t.mul(.9).add(ph.mul(.5))).mul(.6).add(1.2));
       return modelWorldMatrixInverse.mul(vec4(swing.add(vec3(lean.x, 0, lean.y)), 0)).xyz;
     };
+    // brushed aside by what walks through (looks.js PART_GLSL; only when given a Marks grass field before first drawn)
+    const push = partPush(u), pushAt = push ? (sw, wp) => sw.add(modelWorldMatrixInverse.mul(vec4(push(wp, positionGeometry.y), 0)).xyz) : sw => sw;
     // the leaves where they swayed to last frame as well, for the motion three works out (frame generation,
     // SGSR 2): without it every leaf seemed to move by its whole sway each frame, and broke up in made frames
-    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(sway(lastFrame(u.lkTime), kWas, dWas))); return positionLocal.add(sway(t, k, dir)); })();
-    const lq = uv().mul(live(u.lkAtlas)), dx = dFdx(lq), dy = dFdy(lq);
-    m.opacityNode = (m.opacityNode ? float(m.opacityNode) : materialOpacity).mul(float(1).add(max(0, log2(max(dot(dx, dx), dot(dy, dy))).mul(.5)).mul(.35)));
-    afterColor(m, o, c => c.mul(float(1).add(live(u.lkGlow).mul(pow(max(dot(normalize(positionWorld.sub(cameraPosition)), live(u.lkSun)), 0), 4)))));
-    if (!m.normalMap) m.normalNode = normalViewGeometry;
+    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(sway(lastFrame(u.lkTime), kWas, dWas))); return positionLocal.add(pushAt(sway(t, k, dir), wp)); })();
+    seeThroughLeaf(m, o, u);
+  },
+  // looks.js fronds(): long leaves from one point (palms, banana, fern, reeds, ivy, moss, weeds): the tip
+  // bounces, flutters and leans downwind most, read from the mesh's lkFrond (where the leaf starts, how far
+  // along) and lkFrondId (which leaf, how long); light through, outlines that hold up, both sides lit alike
+  fronds(m, s, o) {
+    const u = s.uniforms, F = attribute('lkFrond', 'vec4'), FI = attribute('lkFrondId', 'vec2'), a = F.w, push = partPush(u);
+    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), ph = wp.x.mul(.11).add(wp.z.mul(.13)).add(FI.x.mul(1.93));
+    const off = (t, wind, dir) => {
+      const k = wind.mul(live(u.lkSway)).mul(FI.y).mul(a).mul(a), lean = dir.mul(k).mul(sin(t.mul(.8).add(ph.mul(.4))).mul(.6).add(1.1));
+      const sx = sin(t.mul(1.3).add(ph)).add(sin(t.mul(2.9).add(ph.mul(1.7))).mul(.35)).mul(k).mul(.45), sz = cos(t.mul(1.1).add(ph.mul(1.3))).mul(k).mul(.45);
+      const sy = k.negate().mul(sin(t.mul(2.1).add(ph.mul(1.6))).mul(.5).add(sin(t.mul(8.7).add(ph.mul(3.1)).add(a.mul(6))).mul(.12))).sub(length(dir).mul(k).mul(.25));
+      let w = vec3(sx.add(lean.x), sy, sz.add(lean.y));
+      if (push) w = w.add(push(wp, a.mul(FI.y), smoothstep(1.8, 2.6, positionGeometry.y).oneMinus()));   // (pushed by how far along its leaf, not above a passer-by's reach)
+      return modelWorldMatrixInverse.mul(vec4(w, 0)).xyz;
+    };
+    // (where the leaf was last frame as well, for the motion three works out: see leaves)
+    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(off(lastFrame(u.lkTime), lastFrame(u.lkWind), lastFrame(u.lkWindDir)))); return positionLocal.add(off(live(u.lkTime), live(u.lkWind), live(u.lkWindDir))); })();
+    seeThroughLeaf(m, o, u);
   },
   // looks.js meadow(): the blades of land.meadow(): each tuft shrinks into the ground towards the edge of the
   // patch that travels with the camera, bends downwind in rolling gusts, and is lit alike on both sides
@@ -1798,14 +1856,16 @@ export class GpuChain {
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
-  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${halfKey()}`;
+  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false) {
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${halfKey()}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
+    for (const k of ['spAO', 'spVol', 'spGI']) { this[k]?.dispose(); this[k] = null; }
+    this.spread = '';
     this.aoN = this.dnN = this.dnT = this.bloomN = this.s2 = this.s1 = this.dofT = this.shM = this.shB = this.volT = this.baseT = this.mbT = null;
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     // v.oit: three's weighted blended order-independent transparency (McGuire and Bavoil) in place of the plain
@@ -1847,6 +1907,10 @@ export class GpuChain {
     // 'screen': three's SSGI (what's on screen bounces); 'voxel': three's VXGI (the level as voxels, light
     // traced through them in cones: off-screen walls count too, the level's shape built once).
     // (its noise is the same every frame: no pass right after it averages a changing one over frames)
+    // (spread over frames, HD.spread: hd3d-gpu-spread.js; the scene's motion picture where it draws one, so moving things are followed)
+    // (spreadOn: true, or a list of the ones to spread, 'ao,vol,bounce': tests and the frame lab, to tell them apart)
+    const SP = spreadOn ? (this.SP ||= new SpreadFrame()) : null, velN = spreadOn && (mrtOn || mbOn) ? sp.getTextureNode('velocity') : null;
+    const spr = k => !!SP && (spreadOn === true || String(spreadOn).split(',').includes(k));
     if (giOn && aoOn) {
       const dN = sp.getTextureNode('depth'), nN = this.nrmN, dif = sp.getTextureNode('diffuse'), C = colT;
       let g;
@@ -1859,7 +1923,10 @@ export class GpuChain {
       } else {
         const n = this.giN = ssgi(C, dN, nN, this.cam); n.useTemporalFiltering = false;
         n.sliceCount.value = 3; n.stepCount.value = 8; n.radius.value = 6; n.giIntensity.value = 4; n.aoIntensity.value = 0;
-        const gt = n.getGINode();
+        let gt = n.getGINode();
+        // spread: three's low setting for temporal filtering (one slice of 12 steps, against three of 8), at half the
+        // size, its pattern turning each frame and the frames before filling in
+        if (spr('bounce')) { ownFrames(n, SP); n.sliceCount.value = 1; n.stepCount.value = 12; this.spGI = new SpreadNode(gt, dN, SP, { vel: velN, part: 'bounce light' }); gt = this.spGI.getTextureNode(); this.spread += ' bounce'; }
         g = Fn(() => vec4(C.sample(uv()).rgb.add(dif.sample(uv()).rgb.mul(gt.sample(uv()).rgb).mul(U.giK)), 1))();
       }
       this.giT = rtt(g, 1, 1, { type: HalfFloatType, depthBuffer: false }); colT = this.giT; this.giT.renderTarget.gsPart = 'bounce light';
@@ -1871,7 +1938,12 @@ export class GpuChain {
     if (aoOn) {
       this.aoN = ao(sp.getTextureNode('depth'), this.nrmN, this.cam);
       Object.assign(this.aoN, { resolutionScale: 1 });
-      this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = 12;
+      this.aoN.radius.value = .6; this.aoN.distanceExponent.value = 1.4; this.aoN.thickness.value = 1.2; this.aoN.scale.value = 1.1; this.aoN.samples.value = spr('ao') ? 8 : 12;
+      let aoT;
+      // spread: half the samples (3 directions of 2 steps, not 4), the directions turning each frame, and no denoise: the
+      // frames before fill in, and the blend's own nine neighbours on the same surface smooth what is new
+      if (spr('ao')) { ownFrames(this.aoN, SP); this.spAO = new SpreadNode(this.aoN.getTextureNode(), sp.getTextureNode('depth'), SP, { vel: velN, wide: true, one: true, part: 'ao' }); aoT = this.spAO.getTextureNode(); this.spread += ' ao'; }
+      else {
       // (WebGL's GTAOPass smooths its own noise; here three's denoise does it)
       this.dnN = denoise(this.aoN.getTextureNode(), sp.getTextureNode('depth'), this.nrmN, this.cam);
       this.dnN.noiseNode = texture(denoiseNoise());   // (the same noise for every view and every run: denoiseNoise above)
@@ -1881,8 +1953,9 @@ export class GpuChain {
       // Fold the finishing pass was the chip's biggest (2.6 ms of 9.3 in the town, 2026-11-13); the picture is read
       // back with one smooth read where the occlusion is laid on
       this.dnT = rtt(vec4(this.dnN.r, 0, 0, 1), null, null, { depthBuffer: false, type: UnsignedByteType, format: RedFormat });
-      this.dnT.renderTarget.gsPart = 'ao';
-      aoF = mix(float(1), this.dnT.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
+      this.dnT.renderTarget.gsPart = 'ao'; aoT = this.dnT;
+      }
+      aoF = mix(float(1), aoT.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
     }
     let src = colT, srcAo = aoF;
     const V = this.V, dT = sp.getTextureNode('depth');
@@ -1893,7 +1966,7 @@ export class GpuChain {
         const q = uv(), d = dT.sample(q).r, vp = getViewPosition(q, d, V.invProj), wp = V.camWorld.mul(vec4(vp, 1)).xyz;
         const rd0 = wp.sub(V.camPos), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toConst();
         const L = select(d.greaterThanEqual(1), V.k.y, min(L0, V.k.y)).toConst(), dt = L.div(V.steps).toConst();
-        const t = dt.mul(interleavedGradientNoise(screenCoordinate)).toVar(), sum = float(0).toVar(), g = V.k.z, spot = V.lt.x.greaterThan(.5);
+        const t = dt.mul(spr('vol') ? fract(interleavedGradientNoise(screenCoordinate).add(SP.turn)) : interleavedGradientNoise(screenCoordinate)).toVar(), sum = float(0).toVar(), g = V.k.z, spot = V.lt.x.greaterThan(.5);
         Loop({ start: 0, end: VOL_MAX }, ({ i }) => {
           If(float(i).greaterThanEqual(V.steps), () => { Break(); });
           const p = V.camPos.add(rd.mul(t)), s4 = V.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
@@ -1905,12 +1978,18 @@ export class GpuChain {
           const c = dot(rd, select(spot, qn.negate(), V.lDir.negate()));
           sum.addAssign(lit.mul(g.mul(g).oneMinus()).div(pow(g.mul(g).add(1).sub(g.mul(2).mul(c)), 1.5)).mul(.25)); t.addAssign(dt);
         });
-        return vec4(exp(V.k.x.negate().mul(L).mul(sum).div(V.steps)).oneMinus(), 0, 0, 1);
+        // (spread: the light gathered along the ray, before it is turned into how much shows (1 - e^-x). Frames are
+        // blended in that, as a few steps' guesses averaged after the turn come out darker than the full number of steps)
+        const x = V.k.x.mul(L).mul(sum).div(V.steps);
+        return vec4(spr('vol') ? x : exp(x.negate()).oneMinus(), 0, 0, 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
-      const volT = this.volT, vpx = this.volPx = uniform(new Vector2(1, 1)); volT.renderTarget.gsPart = 'volumetric light';
+      let volT = this.volT; const vpx = this.volPx = uniform(new Vector2(1, 1)); volT.renderTarget.gsPart = 'volumetric light';
+      // spread: a third of the steps along each ray (render() below), starting a different way along each frame
+      if (spr('vol')) { this.spVol = new SpreadNode(volT, dT, SP, { vel: velN, one: true, hold: false, view: true, alpha: .2, keep: 16, part: 'volumetric light' }); volT = this.spVol.getTextureNode(); this.spread += ' vol'; }
+      const shows = this.spVol ? p => exp(volT.sample(p).r.negate()).oneMinus() : p => volT.sample(p).r;
       this.baseT = rtt(Fn(() => {
-        const q = uv(), a = volT.sample(q.add(vpx.mul(vec2(-1, -1)))).r.add(volT.sample(q.add(vpx.mul(vec2(1, -1)))).r)
-          .add(volT.sample(q.add(vpx.mul(vec2(-1, 1)))).r).add(volT.sample(q.add(vpx.mul(vec2(1, 1)))).r);
+        const q = uv(), a = shows(q.add(vpx.mul(vec2(-1, -1)))).add(shows(q.add(vpx.mul(vec2(1, -1)))))
+          .add(shows(q.add(vpx.mul(vec2(-1, 1))))).add(shows(q.add(vpx.mul(vec2(1, 1)))));
         return vec4(colT.sample(q).rgb.mul(aoF).add(V.tint.mul(a.mul(.25))), 1);
       })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
       src = this.baseT; srcAo = float(1);   // (this full-size mix, which also lays the ambient occlusion on, counts as 'effects')
@@ -2072,14 +2151,30 @@ export class GpuChain {
     // gs.fx3d's screen effects and reflections have a key of their own: the chain is built again when it changes
     // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
     { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
-    this.build(!this.clear && o.ao > 0, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, !this.clear && o.ao > 0 && o.gi ? o.gi.kind : false);
+    const fx = !this.clear && o.ao > 0;
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false);
+    // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
+    // again or the volumetric light's light moved, which change the picture though the camera didn't)
+    if (this.spread) {
+      let stir = !!o.shDrawn; const m = this.spVol && o.vol;
+      if (m) { const k = this.volKey ||= new Float64Array(6), put = (i, x) => { if (k[i] !== x) { k[i] = x; stir = true; } };
+        put(0, m.lDir.x); put(1, m.lDir.y); put(2, m.lDir.z); put(3, m.lPos.x); put(4, m.lPos.y); put(5, m.lPos.z);
+        // (another light, its shadow map there or not yet (the first frame has none: the whole room lit), or other settings: what the
+        // frames before gathered is of another light, so it starts again from this frame. Blended in at a fifth a frame, a game's first
+        // frames, or a lamp turned on in place of the sun, kept the old light in the air for a dozen frames)
+        const id = `${m.lt.x}|${m.map ? m.map.id : 0}|${m.density}|${m.far}|${m.g}|${m.tint.r},${m.tint.g},${m.tint.b}`;
+        if (m.light !== this.volLight || id !== this.volId) { this.volLight = m.light; this.volId = id; this.spVol.fresh = true; } }
+      this.SP.frame(this.cam, !!o.cut, stir, f ? f.jd : null);
+    }
     if (this.s1) this.s1.size(o.w, o.h);
     // the passes size themselves from the canvas: upscaled, the canvas is the screen's size, so scale them down
     const k = f || s1 ? (o.w + .5) / o.fw : 1;
     if (this.sp.getResolutionScale() !== k) this.sp.setResolutionScale(k);
     if (!this.clear) {
       const U = this.U;
-      if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT.setResolutionScale(o.ao * k); }
+      if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT?.setResolutionScale(o.ao * k); }
+      // (three's SSGI sizes itself from the canvas, the screen's size under an upscaler: the picture's size, or half of it spread)
+      if (this.giN && 'resolutionScale' in this.giN) this.giN.resolutionScale = (this.spGI ? .5 : 1) * k;
       this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }
@@ -2102,7 +2197,7 @@ export class GpuChain {
         this.volPx.value.set(1 / this.volT.renderTarget.width, 1 / this.volT.renderTarget.height);
         if (m) {
           this.volShadow.value = m.map || NO_SHADOW; if (m.shadowM) V.shM.value = m.shadowM; cam.getWorldPosition(V.camPos.value);
-          V.lDir.value.copy(m.lDir); V.lPos.value.copy(m.lPos); V.lt.value.copy(m.lt); V.k.value.set(m.density, m.far, m.g, m.map ? 1 : 0); V.steps.value = m.steps; V.tint.value.copy(m.tint);
+          V.lDir.value.copy(m.lDir); V.lPos.value.copy(m.lPos); V.lt.value.copy(m.lt); V.k.value.set(m.density, m.far, m.g, m.map ? 1 : 0); V.steps.value = this.spVol ? Math.max(6, Math.ceil(m.steps / 3)) : m.steps; V.tint.value.copy(m.tint);
         } else { V.tint.value.setRGB(0, 0, 0); V.steps.value = 1; }
       }
       if (this.mbT) { this.mbT.setSize(o.w, o.h); { const tw = Math.max(1, Math.ceil(o.w / 16)), th = Math.max(1, Math.ceil(o.h / 16)); this.mbTile.setSize(tw, th); this.mbTilePx.value.set(1 / tw, 1 / th); } const m = o.mb; if (m) { V.prevVP.value.copy(m.prevVP); V.mb.value.copy(m.mb); V.mbObj.value = m.obj; } else V.mb.value.set(0, 0, 0, 1); }

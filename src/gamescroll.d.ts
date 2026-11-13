@@ -2680,7 +2680,7 @@ export interface RigT {
   blend(space: Record<string, number>, v: number): RigT;
   /** 2D blend space: { pose: [x, y] }, mixed at (x, y). */
   blend2(space: Record<string, [number, number]>, x: number, y: number): RigT;
-  /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. */
+  /** Foot IK after update(): feet on the floor at ground(x, z); body is the character. A gs.models.human's feet lie along a slope (as far as an ankle tilts) and keep the point they stand on. */
   plant(ground: (x: number, z: number) => number, body: Loose, o?: { most?: number }): RigT;
   /**
    * speed: metres a second (strides follow it); aim: up/down aim for the upper layer (radians); turn: radians a second (with weight: banks into it).
@@ -2721,6 +2721,17 @@ export interface RigT {
    * face is set on something (face.look). amount: 0 turns it off, 1 as a person does it, more to make it plainer; reset() stills it (a new round).
    */
   readonly lead?: { amount: number; reset(): void } | null;
+  /**
+   * A walk of one's own (gs.models.human people; on by itself): from the body (an older person takes shorter, quicker steps, swings the arms
+   * less, leans and stands wider; a heavy one walks wider and rolls more; a muscled one carries the arms out) and the seed (how much the arms
+   * swing, one more than the other, the hips, how upright, a habit of the head), the same on every phone; a twin() walks a little differently.
+   * No two strides alike (their time, the arms' swing, the feet's width and the lean wander from stride to stride, 1/f), each footfall felt
+   * (the hips give, the rib cage dips, the elbows bounce), and slopes read from how the body rises as it goes (uphill it leans in and takes
+   * shorter steps, downhill leans back with the knees bent; with rig.plant the feet lie along the slope). mood: 'brisk' | 'tired' | 'wary' |
+   * 'proud' | 'sad' | 'limp' (side: the leg that hurts, 'L' or 'R'), or { tired: .5, limp: 1 }, eased in over a second; null for none. A mood
+   * changes how a person walks at the speed you give: slow a tired or hurt person yourself. amount: 0 the walk as drawn, 1 a person's own.
+   */
+  manner?: { mood: string | Record<string, number> | null; side: 'L' | 'R'; amount: number; readonly pace: number; readonly limp: number; reset(): void } | null;
   /**
    * Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. How far each joint was
    * from where the new move has it, and how fast it was turning, die away smoothly in about the fade asked for, so a limb in mid swing swings on a
@@ -3128,7 +3139,9 @@ export interface OutdoorsPart {
     ground(material: Loose, o?: { detail?: Loose; colours?: Partial<Record<'grassA' | 'grassB' | 'dry' | 'dirt' | 'mud' | 'rock' | 'forest' | 'cropA' | 'cropB' | 'plough' | 'hedge', string | number[]>>; fields?: false | { angle?: number; size?: [number, number]; furrows?: number; hedge?: number }; roads?: [number, number, number, number][]; road?: { width?: number; edge?: number; ruts?: number }; bank?: { low?: number; high?: number; shiny?: number; shinier?: number }; wet?: number | { value: number }; scale?: [number, number, number] }): { uniforms: Record<string, { value: Loose }>; wet: number };
     hills(material: Loose, o?: { wood?: string | number[]; scale?: number; woods?: number }): { uniforms: Record<string, { value: Loose }> };
     rock(material: Loose, o?: { detail?: Loose; scale?: number; moss?: string | number[]; mossy?: number }): { uniforms: Record<string, { value: Loose }> };
-    leaves(material: Loose, o?: { time?: number | { value: number }; wind?: number | { value: number } | WindPart; sun?: Loose; sway?: number; above?: number; glow?: number; atlas?: [number, number] }): { uniforms: Record<string, { value: Loose }> };
+    leaves(material: Loose, o?: { time?: number | { value: number }; wind?: number | { value: number } | WindPart; sun?: Loose; sway?: number; above?: number; glow?: number; atlas?: [number, number]; /** A gs.outdoors.Marks' grass field: leaves pushed aside by what passes. */ part?: Loose | null; push?: [number, number] }): { uniforms: Record<string, { value: Loose }>; part(field: Loose | null): void };
+    /** Long leaves that grow from one point (palm fronds, banana leaves, ferns, reeds, ivy, moss): each bounces, flutters and leans downwind more towards its tip. The mesh gives lkFrond (where its leaf starts, x y z, and 0..1 along) and lkFrondId (which leaf, its length): gs.models' plants do. sway (metres a tip moves per metre of leaf in wind 1: .08), part (a Marks grass field), push ([metres, metres along a leaf that gets all of it]). */
+    fronds(material: Loose, o?: { time?: number | { value: number }; wind?: number | { value: number } | WindPart; sun?: Loose; sway?: number; glow?: number; atlas?: [number, number]; part?: Loose | null; push?: [number, number] }): { uniforms: Record<string, { value: Loose }>; part(field: Loose | null): void };
     /** Grass blades for an instanced meadow (land.meadow() uses it): tufts shrink to their roots towards reach[1] metres from the camera and bend with the wind. The mesh needs an instanced vec4 'lkRoot' (each tuft's root) and uv.y from root to tip. */
     meadow(material: Loose, o?: { reach?: [number, number]; time?: number; bend?: number; dir?: Loose; /** A gs.outdoors.Marks' grass field (marks.grass): the blades lean away from what passes and lie flat where trodden. */ part?: Loose | null }): { uniforms: Record<string, { value: Loose }>; /** Gives the blades a Marks' grass field to read (null: none). On WebGPU before they are first drawn. */ part(field: Loose | null): void };
     /** Moving water for a River mesh (its lkFlow / lkDir attributes). */
@@ -3186,7 +3199,7 @@ export interface SculptShape {
   blend?: number; cut?: boolean; colour?: string; color?: string;
 }
 export interface ModelsPart {
-  /** A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' | 'fabric' | 'leather' | 'marble' | 'dirt' | 'sand' | 'snow' | 'skin' (pores and fine lines). Options: the recipe's colours (colour, dark, mortar, gap, rust, deep, under, vein, grout), seed, repeat [u, v], size (texture pixels, 256), depth (parallax, WebGPU); WebGPU: closeUp (sharp detail near the camera, default on), solid (laid on by world position, metres per tile), scatter (no visible repeat). Others go to gs.hd.pbr. */
+  /** A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' | 'fabric' | 'leather' | 'marble' | 'dirt' | 'sand' | 'snow' | 'skin' (pores and fine lines) | 'palm' (a palm trunk: rings, leaf scars, fibres). Options: the recipe's colours (colour, dark, mortar, gap, rust, deep, under, vein, grout), seed, repeat [u, v], size (texture pixels, 256), depth (parallax, WebGPU); WebGPU: closeUp (sharp detail near the camera, default on), solid (laid on by world position, metres per tile), scatter (no visible repeat). Others go to gs.hd.pbr. */
   material(name: string, o?: { colour?: string; color?: string; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean; solid?: boolean | number; scatter?: boolean; [k: string]: Loose }): Loose;
   /** The recipe names. */
   readonly materials: readonly string[];
@@ -3198,9 +3211,30 @@ export interface ModelsPart {
   readonly props: readonly string[];
   /** A mesh from soft shapes melted together or carved away, made with surface nets: each { ball: r } | { box: [w, h, d], round } | { cylinder: [r, h], round } | { torus: [R, r] } | { cone: [r, h] } | { capsule: [[x, y, z], [x, y, z]], r }, with at, rot, scale, blend (metres), cut, colour (vertex colours: use a material with vertexColors). Or a distance function (x, y, z) => d with o.bounds. Options: blend (.08), res (48, up to 128), colour. Returns a BufferGeometry (shared for the same shapes: clone before changing). */
   sculpt(shapes: SculptShape[] | ((x: number, y: number, z: number) => number), o?: { blend?: number; res?: number; bounds?: [[number, number, number], [number, number, number]]; colour?: string; color?: string }): Loose;
-  /** A tree grown in code (EZ-Tree: branches that split, bend and taper) with the bark recipe and leaves drawn in code that sway and glow with the sun behind: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush'. size 'small' | 'medium' | 'large' (its shape), height (metres), seed, leaves / bark (colours), wind (.6, or a gs.outdoors Wind). A Group, foot at y = 0; the same options again give a copy sharing shapes and materials. */
-  tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush', o?: { size?: 'small' | 'medium' | 'large'; height?: number; seed?: number; leaves?: string; bark?: string; wind?: number | Loose }): Loose;
-  /** The tree kinds. */
+  /**
+   * A tree or plant grown in code with the bark recipe and leaves drawn in code that sway and glow with the sun behind. A Group, foot at y = 0; the same options again give a copy sharing shapes and materials.
+   * EZ-Tree kinds (branches that split, bend and taper): 'oak' | 'ash' | 'aspen' | 'pine' | 'bush'; size 'small' | 'medium' | 'large' (its shape).
+   * Plants grown by their own rules: 'palm' (a leaning ringed trunk, arching fronds, a few dead ones and nuts; lean, fronds, dead, fruit), 'fan' (a fan palm with a skirt of dry leaves; fronds, skirt),
+   * 'banana' (paddle leaves torn along their veins; fronds), 'fern' (trunk: metres for a tree fern; fronds), 'taro' (elephant ears; fronds), 'cypress' (a swamp cypress with a flared foot, knees and hanging moss; branches, knees, moss: false or a colour),
+   * 'reeds' (blades and cattails; blades, cattails), 'flowers' (stems, petals: a colour or a list), 'lily' (pads on still water, the foot at the water's top; pads, blooms, petals, spread).
+   * All: height (metres), seed, leaves / bark (colours), wind (.6, or a gs.outdoors Wind), bend (a gs.outdoors.Marks: leaves and bushes brushed aside by whoever it watches walking through).
+   * A plant's leaves bounce, flutter and lean downwind from where each grows; group.userData.fronds lists them ({ id, root, dir, len }).
+   */
+  tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush' | 'palm' | 'fan' | 'banana' | 'fern' | 'taro' | 'cypress' | 'reeds' | 'flowers' | 'lily', o?: { size?: 'small' | 'medium' | 'large'; height?: number; seed?: number; leaves?: string; bark?: string; wind?: number | Loose; bend?: Loose;
+    lean?: number; fronds?: number; dead?: number; fruit?: boolean; skirt?: boolean; trunk?: number; branches?: number; knees?: number; moss?: false | string; blades?: number; cattails?: number; stems?: number; petals?: string | string[]; pads?: number; blooms?: number; spread?: number }): Loose;
+  /**
+   * Ivy grown over meshes (walls, a house, a stump, a statue; their world places as they are now): vines start at the foot of steep faces (or from: points) and climb, keeping to the surface, branching out sideways,
+   * going over edges and hanging where there is nothing to hold, with clusters of leaves facing out, bigger on older vine. roots (vines that start: 8), length (metres each may climb: 5), size (a leaf, metres: .13),
+   * density (leaf clusters per 10 cm: 1.2), up (how hard they climb: 1), leaves / stem (colours), seed, wind, bend. A Group in world metres ('branches', 'leaves'); userData.ivy { vines, metres, leaves }.
+   * 30 to 150 ms, kept for the same targets and options: make it while loading.
+   */
+  ivy(targets: Loose, o?: { seed?: number; roots?: number; from?: [number, number, number][]; length?: number; size?: number; density?: number; up?: number; leaves?: string; stem?: string; wind?: number | Loose; bend?: Loose }): Loose;
+  /**
+   * Weeds where nobody weeds, in one InstancedMesh (one draw): along cracks and kerbs (lines: [[[x, z], ...], ...] or points with y), at the foot of walls (walls: meshes; where their steep faces meet the ground)
+   * and at spots ([[x, z] | [x, y, z], ...]). ground(x, z): the height to plant at. gap (metres along a line: .4), height (.22), colours ([green, green, dry]), seed, wind, bend, max (2000). userData.weeds: how many.
+   */
+  weeds(o?: { lines?: ([number, number] | [number, number, number])[][]; walls?: Loose; spots?: number[][]; ground?: (x: number, z: number) => number; gap?: number; height?: number; colours?: string[]; seed?: number; wind?: number | Loose; bend?: Loose; max?: number }): Loose;
+  /** The tree and plant kinds. */
   readonly trees: readonly string[];
   /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear, materials (your own three.js materials in place of the style's). A Group centred on x/z, foot at y = 0, door facing +z. One that comes apart: gs.destruction.Structure. */
   building(o?: BuildingOptions): Loose;

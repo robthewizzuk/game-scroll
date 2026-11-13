@@ -12,11 +12,12 @@
 // each piece is saved on the phone, so the next launch has them at once. People in the same cut of
 // clothes share their pieces whatever their colours; twin() makes another of the very same person for free.
 // Kit use only: games reach it as gs.models.human.
-import { AdditiveBlending, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
+import { AdditiveBlending, MeshBasicMaterial, MeshPhysicalMaterial, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { material } from './materials.js';
 import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
+import { Manner } from '../manner.js';
 import { Breath, Grime } from './human-life.js';
 import { Idle } from './human-idle.js';
 import { reach } from '../characters.js';
@@ -190,8 +191,12 @@ function mats() {
   // over them has it (wetOf), drawn adding its light only, so the eye shows through it
   { const t = new DataTexture(paintIris(), IRIS.w, IRIS.w, RGBAFormat, UnsignedByteType); t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; t.name = 'human:iris';
     MATS.eyesReal = pbr('#ffffff', { rough: .5, vertexColors: true }); MATS.eyesReal.map = t; MATS.eyesReal.color.setScalar(1 / IRIS.plain); }
-  MATS.lash = pbr('#ffffff', { rough: .8, vertexColors: true }); MATS.lash.envMapIntensity = .3;   // (a real face's lashes: thin and dark, so a shine on them would be all reflection, and it came out pink, the skin's)
+  // a real face's lashes, brows, moustache and beard, hair by hair: lit by the sky as fully as the skin under them (with the sky's light cut to
+  // a third, to keep the shine off, an overcast day had left them black specks), but with little shine of their own (a shine off a strand
+  // this thin is mostly what is round it, and it came out pink, the skin's)
+  MATS.lash = new MeshPhysicalMaterial({ color: '#ffffff', roughness: .75, metalness: 0, vertexColors: true, specularIntensity: .3 }); MATS.lash.name = 'human:hairs'; MATS.lash.userData.gsGpu = 'hairs';
   MATS.wet = pbr('#000000', { rough: .05 }); Object.assign(MATS.wet, { transparent: true, depthWrite: false, blending: AdditiveBlending });
+  MATS.occ = new MeshBasicMaterial({ color: 0x000000, transparent: true, depthWrite: false, vertexColors: true }); MATS.occ.name = 'human:eye shadow';   // (occOf: as dark as each point says)
   // hair: combed strands in a small picture made in code (human-paint.js), over the hair's own colour and its sculpted locks
   { const { colour, normal } = paintHair(), tex = (px, srgb) => { const t = new DataTexture(px, HAIR.w, HAIR.h, RGBAFormat, UnsignedByteType); if (srgb) t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = RepeatWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t; };
     MATS.hair.map = tex(colour, true); MATS.hair.normalMap = tex(normal, false); MATS.hair.normalScale.set(.6, .6); MATS.hair.color.setScalar(1 / HAIR.plain); }
@@ -236,6 +241,21 @@ const FINE = /^((twist|toe|eye|lid|brow|browIn|corner|lowLid|cheek|nose|lipUp|li
  * a bigger hand's finger joints are further apart, and a hand sculpted closed round a stock is bent already (HAND).
  * own: bones added for things that come off or hide (a hat, a pack), each at its parent's place.
  */
+// (see its call: in runs of hair points, three at a time, each three the same distance from their middle, or it leaves them be)
+const LASHK = CLASSES.indexOf('lash');
+function hairRings(p, cs, at, TU) {
+  for (let i = 0; i < p.n;) {
+    if (cs[p.slot[i]].k !== LASHK) { i++; continue; }
+    let e = i; while (e < p.n && cs[p.slot[e]].k === LASHK) e++;
+    for (let a = i; a + 2 < e; a += 3) {
+      const P = p.P, cx = (P[a * 3] + P[a * 3 + 3] + P[a * 3 + 6]) / 3, cy = (P[a * 3 + 1] + P[a * 3 + 4] + P[a * 3 + 7]) / 3, cz = (P[a * 3 + 2] + P[a * 3 + 5] + P[a * 3 + 8]) / 3, d = [];
+      for (let v = 0; v < 3; v++) d.push(Math.hypot(P[(a + v) * 3] - cx, P[(a + v) * 3 + 1] - cy, P[(a + v) * 3 + 2] - cz));
+      if (!(d[0] > 0) || Math.abs(d[1] - d[0]) > d[0] * .02 || Math.abs(d[2] - d[0]) > d[0] * .02) continue;
+      for (let v = 0; v < 3; v++) { const j = at + a + v; TU[j * 4] = P[(a + v) * 3] - cx; TU[j * 4 + 1] = P[(a + v) * 3 + 1] - cy; TU[j * 4 + 2] = P[(a + v) * 3 + 2] - cz; TU[j * 4 + 3] = 0; }
+    }
+    i = e;
+  }
+}
 // Where a real face's beard and moustache grow: human-head.js beardArea
 // a real beard's colour at a point (linear [r, g, b]): the hair's own, lighter and warmer as beards are (a dark brown head of hair grows a
 // brown beard with red in it; even a black one is a very dark brown in the light), uneven in clumps, with some grey in it from the late
@@ -286,9 +306,10 @@ function frameOf(sp) {
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
 // (and breathe: the chest and belly bones rise and fall, the belly settles behind the hips; the rig steps it)
-const rigOf = (B, scale, body, sp) => {
+const rigOf = (B, scale, body, sp, n = 0) => {
   const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR];
   if (sp && B.chest) rig.breath = new Breath(B, { fem: sp.fem, fat: sp.face.fat ?? (sp.build.waist > 1.05 ? .7 : .5), muscle: sp.build.muscle ?? .45 });
+  if (sp) rig.manner = new Manner(rig, body, { seed: n ? (sp.o.seed ?? '') + '/' + n : sp.o.seed ?? null, age: sp.face.age ?? 30, fat: sp.face.fat ?? (sp.build.waist > 1.05 ? .7 : .5), muscle: sp.build.muscle ?? .45, fem: sp.fem });   // a walk of one's own (and moods, no two steps alike, footfalls felt, slopes)
   return rig;
 };
 /** Kit use (tests, tools): the bare skeleton a person of these options stands on, with its rig and nothing sculpted (a Group with .bones and .rig). */
@@ -421,13 +442,40 @@ function wetOf(f, bones) {
   g.setAttribute('skinIndex', new BufferAttribute(J, 4)); g.setAttribute('skinWeight', new BufferAttribute(W, 4)); g.setIndex(I);
   g.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3); wets.set(key, g); return g;
 }
+// A real face's shadow over its eyes, a mesh of its own just over the wet film (MATS.occ: black, as see-through as each point says), as real
+// eyes have from their lids and lashes: darkest along the upper lid's edge and fading over a few millimetres down the eye, a little along
+// the lower lid and into each corner. Its upper part rides on the upper lid's bone (down in a blink, up as the eye looks up), the rest on the
+// head's. Without it the whites and the iris were lit right up to the lid, which reads as a doll's glass eye.
+const occs = new Map();
+function occOf(f, bones) {
+  const es = esOf(f), r = .0122 * es, key = JSON.stringify([f.eyes, es, f.tilt || 0, bones.indexOf('lidL'), bones.indexOf('lidR'), bones.indexOf('head')]);
+  let g = occs.get(key); if (g) return g;
+  const rim = eyeRim(f.eyes, es, f.tilt || 0, true), at = [0, 0, 0], P = [], C = [], J = [], W = [], I = [], n = 40, rings = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60], head = Math.max(0, bones.indexOf('head'));
+  for (const [s, lb] of [[1, 'lidL'], [-1, 'lidR']]) {
+    const c = [s * EYE[0], HC[1] + EYE[1], HC[2] + EYE[2]], li = bones.indexOf(lb), base = P.length / 3, rr = r + .0006;
+    for (const deg of rings) for (let i = 0; i < n; i++) {
+      const a = deg * Math.PI / 180, t = i / n * Math.PI * 2, ex = Math.sin(a) * Math.cos(t), ey = Math.sin(a) * Math.sin(t), ez = Math.cos(a);
+      P.push(c[0] + ex * rr, c[1] + ey * rr, c[2] + ez * rr);
+      rim.at(EYE[0] + s * ex * rr, EYE[1] + ey * rr, at);   // (across the opening, and how far outside its upper and lower edges)
+      const up = ss(-.0032 * es, .0002 * es, at[1]), low = ss(-.0014 * es, .0002 * es, at[2]), corner = ss(.6, 1, Math.abs(at[0]));
+      const inside = ss(.0012 * es, 0, Math.max(at[1], at[2])) * ss(1.12, .98, Math.abs(at[0]));   // (none of it beyond the opening, where it could show through the skin of the lids and cheek)
+      C.push(0, 0, 0, inside * Math.min(.7, Math.max(.5 * up * up, .2 * low, .28 * corner)));
+      const wl = li >= 0 ? ss(-.0065 * es, -.001 * es, at[1]) : 0; J.push(li >= 0 ? li : head, head, 0, 0); W.push(wl, 1 - wl, 0, 0);
+    }
+    for (let q = 0; q < rings.length - 1; q++) for (let i = 0; i < n; i++) { const a = base + q * n + i, b = base + q * n + (i + 1) % n; I.push(a, b + n, b, a, a + n, b + n); }
+  }
+  g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(new Float32Array(P), 3)); g.setAttribute('color', new BufferAttribute(new Float32Array(C), 4));
+  g.setAttribute('skinIndex', new BufferAttribute(new Uint16Array(J), 4)); g.setAttribute('skinWeight', new BufferAttribute(new Float32Array(W), 4)); g.setIndex(I);
+  g.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3); occs.set(key, g); return g;
+}
 // a real face's lashes: darker and greyer than the hair (near black for dark or red hair), lighter only for fair or grey hair
 const lashColour = hair => { const h = { h: 0, s: 0, l: 0 }; new Color(hair || '#3b2a1a').getHSL(h); return '#' + new Color('#120e0c').lerp(new Color('#6a625a'), ss(.3, .7, h.l)).getHexString(); };
 // the colour of each slot for this person
 function palette(sp) {
   const { top, legs, feet, hat, belt, web, o } = sp, c = v => v, ex = sp.extras;
   return {
-    lashes: lashColour(sp.hair), browhair: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), beardhair: beardHex(sp), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
+    lashes: lashColour(sp.hair), browhair: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.8).getHexString(), beardhair: beardHex(sp), caruncle: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#b8625c'), .4).multiplyScalar(.9).getHexString(),
     teeth: '#d6cdbb', tongue: '#7d3f3c', skin: o.skin ?? DEF.skin, lid: o.skin ?? DEF.skin, lash: '#' + new Color(o.skin ?? DEF.skin).lerp(new Color('#1c120c'), sp.fem ? .94 : .86).getHexString(), lips: sp.face.real && !o.lips ? realLips(o.skin ?? DEF.skin, sp.fem) : sp.fem ? o.lips ?? DEF.lips : '#' + new Color(o.skin ?? DEF.skin).lerp(new Color(o.lips ?? DEF.lips), .62).getHexString(), mouth: '#2e1512', hair: sp.hair || '#3b2a1a', brow: '#' + new Color(sp.hair || o.eyes || '#2a1c12').multiplyScalar(.6).getHexString(), glove: sp.gloves?.colour ?? '#4a3d2c',
     top: top.colour, trim: top.collar || top.cuffs || top.strapColour || top.colour, tab: top.tabs || top.colour, band: top.band || '#d9c25a', hatband: hat?.band ?? hat?.colour ?? '#4b5249', button: top.buttons || '#8a8270',
     legs: legs.colour, boots: feet.colour, sole: '#16120e', kit: feet.gaiter || ex.bag || ex.kit || '#6e6a4c', strap: web?.colour ?? belt?.colour ?? '#2b2723', pouch: web?.pouchColour ?? web?.colour ?? belt?.colour ?? '#2b2723',
@@ -552,6 +600,10 @@ export function human(o = {}) {
       const ws = p.SW[i * 4] + p.SW[i * 4 + 1] + p.SW[i * 4 + 2] + p.SW[i * 4 + 3] || 1;
       for (let q = 0; q < 4; q++) { SI[j * 4 + q] = bi[p.SI[i * 4 + q]]; SW[j * 4 + q] = p.SW[i * 4 + q] / ws; }
     }
+    // a real face's hairs (lashes, brows, a moustache, a beard: human-head.js eyeParts, each strand rings of three points): each point's way
+    // out from the middle of its ring, which WebGPU widens a strand along to a pixel at least and makes it as see-through as it is thinner than
+    // that (hd3d-gpu.js hairs), in gsThin and the first of uv1 (which a hair has no other use for)
+    if (p === headP && sp.face.real) hairRings(p, cs, at, TU);
     // the twins: the same points again, their grain laid on another way or at another size (seams(), above)
     for (let t = 0, j = at + p.n; t < sm.n; t++, j++) {
       const v = at + sm.src[t], lk = sm.way[t], sc = sm.size[t], x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
@@ -647,9 +699,10 @@ export function human(o = {}) {
   };
 
   const sh = o.shadows !== false, scale = (o.scale ?? sp.tall) * (sp.fem ? .945 : 1), tris = geos.map(g => g.index.count / 3);
-  const wetGeo = headP && sp.face.real ? wetOf(sp.face, bones) : null;
+  const wetGeo = headP && sp.face.real ? wetOf(sp.face, bones) : null, occGeo = headP && sp.face.real ? occOf(sp.face, bones) : null;
+  let born = 0;   // (each twin walks a little differently: a squad of two or three faces is not a squad of clones on the move)
   const stand = () => {
-    const B = tree(), root = new Group();
+    const B = tree(), root = new Group(), n = born++;
     root.add(B.hips); B.armL.rotation.z = ARM; B.armR.rotation.z = -ARM; root.updateMatrixWorld(true);   // bound with the arms out, as sculpted
     const skel = new Skeleton(bones.map(b => B[b]));
     const jointAt = ['elbowL', 'elbowR', 'kneeL', 'kneeR'].map(b => { const i = bones.indexOf(b); return i < 0 ? null : _v3.setFromMatrixPosition(_m4.copy(skel.boneInverses[i]).invert()).toArray(); });   // (where the elbows and knees were as the mesh was made: the creases in the clothes there)
@@ -671,13 +724,15 @@ export function human(o = {}) {
     // (a real face's wet eyes: their own see-through mesh on the same bones, close up only)
     const wet = wetGeo ? new SkinnedMesh(wetGeo, M.wet) : null;
     if (wet) { wet.name = 'human:wet'; wet.castShadow = wet.receiveShadow = false; wet.userData.noAO = true; wet.frustumCulled = true; wet.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(wet); wet.bind(skel, new Matrix4()); }
+    const occ = occGeo ? new SkinnedMesh(occGeo, M.occ) : null;   // (and the shadow the lids cast over the eyes: drawn before the wet film's shine)
+    if (occ) { occ.name = 'human:eye shadow'; occ.castShadow = occ.receiveShadow = false; occ.userData.noAO = true; occ.renderOrder = -1; occ.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(occ); occ.bind(skel, new Matrix4()); }
     root.scale.setScalar(scale);
-    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet;
-    root.rig = rigOf(B, scale, root, sp);
+    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet; root.eyeShadow = occ;
+    root.rig = rigOf(B, scale, root, sp, n);
     root.grime = root.rig.grime = new Grime(B, jointAt);   // (how wet, muddy, dusty and snowy, and the elbows' and knees' bends: what the clothes' and skin's look reads on WebGPU)
     for (const m of lods) { m.userData.gsGrime = root.grime.v; m.userData.gsBends = root.grime.bends; }
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
-    root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid });   // blinks, eyes, brows and mouth: the rig steps it with the body
+    root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid, droop: sp.face.real ? .14 : 0 });   // blinks, eyes, brows and mouth: the rig steps it with the body
     root.breath = root.rig.breath;   // (breathing and soft flesh: it runs by itself; set breath.on = false to hold it, breath.puff for a winded one)
     root.idle = root.rig.idle = new Idle(root, root.rig);   // (fidgets, the head after the eyes, glances, gestures: person.idle)
     // (a real face's eyeballs a hair smaller than the lids were sculpted round: the lower lid lies on the ball, and where it dipped a fraction
@@ -686,7 +741,7 @@ export function human(o = {}) {
     let cur = 0;
     Object.defineProperty(root, 'lod', { get: () => cur, set(v) {
       v = Math.max(0, Math.min(2, v | 0)); if (v === cur) return;
-      lods[cur].visible = false; lods[v].visible = true; if (wet) wet.visible = !v;
+      lods[cur].visible = false; lods[v].visible = true; if (wet) wet.visible = !v; if (occ) occ.visible = !v;
       if (!v !== !cur) {
         for (const bone of small) { const kids = bone.parent.children, i = kids.indexOf(bone); if (v) { if (i >= 0) kids.splice(i, 1); } else if (i < 0) kids.push(bone); }   // (the small bones: in the scene only close up)
         if (small.some(holds)) sceneEdited(root);   // (something a game hung on a finger or the jaw: the scene's list has to know it went or came back)
