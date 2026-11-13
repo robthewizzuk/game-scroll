@@ -49,7 +49,7 @@ import { BUILD } from './perf.js';
 import { store } from './util.js';
 import { PROF, take } from './kit/prof.js';
 
-const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250;
+const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250, FREEZE_MAX = 3000;
 const is3D = d => d && (d.era === 'nextgen' || d.era === 'ar' || d.era === 'board');
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 const file = u => String(u || '').split(/[?#]/)[0].split('/').pop() || '';
@@ -57,7 +57,7 @@ const file = u => String(u || '').split(/[?#]/)[0].split('/').pop() || '';
 /* ---------- what each refresh showed ---------- */
 // kind: 0 nothing new, 1 a real frame, 2 a made frame (frame generation)
 const T = new Float64Array(N), K = new Uint8Array(N), PLAY = new Uint8Array(N), EXP = new Float32Array(N);
-let head = 0, count = 0, lastPresent = 0, lastTick = 0;
+let head = 0, count = 0, lastPresent = 0, lastPlay = false, lastTick = 0;
 const events = [];        // { t, k: 'S'|'X'|'G'|'L'|'Q'|'F'|'C'|'H', text, ms }
 const loafs = [];         // long animation frames from the browser
 let rec = null;           // recording: { t0, rows: {...columns}, events, samples, shots }
@@ -160,13 +160,16 @@ function tick(now, s, how, upd = 0, drw = 0) {
     if (k === 1) { R.upd.push(r2(upd)); R.drw.push(r2(drw)); R.cpu3d.push(HD && is3D(s?.def) ? r2(HD.info.cpu) : 0); R.fg.push(fg ? r2(HD.info.fgMs) : 0); R.gpu.push(HD?.info.gpuMs != null ? r2(HD.info.gpuMs) : null); R.ft.push(R.t.length - 1); if (playing) chipParts(); }
     if (now - rec.t0 > REC_MAX) stopRec();
   }
+  parts(k, upd, drw, playing);
   if (k) {
     const iv = lastPresent ? now - lastPresent : 0;
-    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw);
-    lastPresent = now; pend = [];
+    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw, k);
+    // a freeze: a quarter of a second or more between two pictures of play (not the app coming back to the front, not
+    // a pause). The frame rate, the lows and the stutters leave out gaps this long, so freezes are counted on their own.
+    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, upd, drw, k);
+    lastPresent = now; lastPlay = playing; pend = [];
     if (k === 1) { last.upd = last.upd * .9 + upd * .1; last.drw = last.drw * .9 + drw * .1; }
   }
-  parts(k, upd, drw, playing);
   if (tint && tintEl) paintTint(s, k, now);
   if (frozenWait && k) frozenWait();
   if (fgArm && k) fgArm(k, s);
@@ -183,12 +186,13 @@ function chipParts() {
 }
 // CPU by part (prof.js): what each part took since the last real frame, the game's own code being what is
 // left of update() and draw(). Live: a running average a frame; recorded: the sum and the worst frame.
-const SYS = new Map(), carry = {}; let carryIn = 0;
+const SYS = new Map(), carry = {}; let carryIn = 0, bigPart = null;   // (bigPart: the biggest part of the last real frame, [name, ms])
 const GAME = 'game\u2019s own code';
 function parts(k, upd, drw, playing) {
   carryIn += take(carry);
   if (k !== 1 || upd + drw <= 0) return;
   carry[GAME] = Math.max(0, upd + drw - carryIn);
+  bigPart = null; for (const n in carry) if (!bigPart || carry[n] > bigPart[1]) bigPart = [n, carry[n]];
   for (const [n, v] of SYS) if (!(n in carry)) SYS.set(n, v * .95);
   for (const n in carry) SYS.set(n, (SYS.get(n) ?? carry[n]) * .95 + carry[n] * .05);
   for (const [n, v] of SYS) if (v < .002 && !(n in carry)) SYS.delete(n);
@@ -203,12 +207,14 @@ function parts(k, upd, drw, playing) {
 function partsText(list, n = 7) {
   return list.filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${v.toFixed(v < 1 ? 2 : 1)}`).join(' · ');
 }
-function hitch(now, iv, exp, s, upd, drw) {
+function hitch(now, iv, exp, s, upd, drw, k) {
   const why = pend.slice();
   if (now - C.resizeAt < 600) why.push('fold / resize');
   if (now - C.hiddenAt < 1500) why.push('app came back to the front');
   const lf = loafAt(now - iv, now); if (lf) why.push(lf);
   if (upd + drw > exp) why.push(`game CPU over the beat (update ${r1(upd)} + draw ${r1(drw)} ms)`);
+  // (where that CPU time went, by part: the scene pass, physics, the game's own code...)
+  if (k === 1 && upd + drw > exp && bigPart && bigPart[1] > exp * .5) why.push(`most in ${bigPart[0]} (${r1(bigPart[1])} ms)`);
   // (the GPU's time is for a real frame and the frames made after it: with frame generation, that many refreshes)
   const gpu = HD?.info.gpuMs; if (gpu != null && gpu > exp * (HD.info.framegen ? HD.info.fgSteps || 2 : 1)) why.push(`GPU over the beat (${r1(gpu)} ms)`);
   if (!why.length) why.push(HD && is3D(s?.def) ? 'no cause seen (GPU / driver / system?)' : 'no cause seen (system?)');
@@ -622,14 +628,14 @@ function shrinkTo(src, w, h) { if (src.width === w && src.height === h) return s
 export function summary(R = lastRec) {
   if (!R) return 'Frame lab: nothing recorded yet (Rec, play, Rec again).';
   const m = measure(recRows(R), R.cfg[0]?.hz || 60), c = R.cfg[0] || {}, c1 = R.cfg[R.cfg.length - 1] || c, secs = ((R.t1 || performance.now()) - R.t0) / 1000;
-  const hit = R.events.filter(e => e.k === 'H'), groups = {};
+  const hit = R.events.filter(e => e.k === 'H'), groups = {}, fz = hit.filter(e => e.ms >= PAUSE_GAP);
   for (const h of hit) for (const why of h.text.split(', ')) { const k = why.replace(/\s*\([^)]*\d[^)]*\)/g, '').trim(); (groups[k] ||= { n: 0, worst: 0 }).n++; groups[k].worst = Math.max(groups[k].worst, h.ms); }
   const S = R.samples, s0 = S[0], s1 = S[S.length - 1];
   const lines = [
     `Frame lab · ${R.title || R.game} · ${phoneLabel()} · build ${BUILD} · ${secs.toFixed(0)} s · ${c.view} (${c.form})`,
     c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${c.upscaler} · frame gen ${c.fg || 'off'}${c.fx ? ` · effects smaller: ${c.fx}` : ''}${c1.tier !== c.tier || c1.rw !== c.rw || c1.fx !== c.fx ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}${c1.fx ? ` (smaller: ${c1.fx})` : ''}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
     `screen ${c.hz} Hz${c.rates ? ` (offers ${c.rates}, asked ${c.asked || 'none'})` : ''} · game ${c.fps} fps · phone class ${c.cls} · ${c.gpu || 'gpu ?'}`,
-    m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}` : 'not enough frames in play',
+    m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}${fz.length ? ` · ${fz.length} freeze${fz.length > 1 ? 's' : ''} of ${PAUSE_GAP} ms or more (worst ${Math.max(...fz.map(e => e.ms)).toFixed(0)} ms; not in the numbers before)` : ''}` : 'not enough frames in play',
     cpuLine(R),
     sysLine(R),
     chipLine(R),
