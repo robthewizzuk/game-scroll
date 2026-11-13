@@ -4465,9 +4465,16 @@ console.log('physics ok');
     assert.ok(w.world && w.cover && v._air.world === w.shown && w.wet === 0 && w.hops && v.scene.children.includes(w.hops.mesh), 'given the level it tells the air what to draw');
     run(w, 1); assert.ok(w.cover.ready && Math.abs(w.wet - .25) < .01 && w.pools === 0 && w.rain === 1 && pond.rain === 1, 'rain soaks in, and falls on the water it was given');
     assert.ok(w.open(P(8, 0, 0)) && !w.open(P(0, 0, 0)) && w.wetAt(P(8, 0, 0)) === w.wet && w.wetAt(P(0, 0, 0)) === 0 && w.wetAt(P(0, 3, 0)) === w.wet, 'wet in the yard and on the roof, dry under it');
-    // no drop is drawn under the roof (its two ends are one point), and the drops that hop come up off what the sky can see
+    // no drop is drawn under the roof (its four corners are one point), and the drops that hop come up off what the sky can see;
+    // a drawn drop is a streak with some width, square to the way the camera sees it (two of the 3D's pixels, a fraction of a millimetre a metre off)
     const a = w.rainMesh.geometry.attributes.position.array; let under = 0, shown = 0;
-    for (let i = 0; i < 900; i++) { const x = a[i * 6], y = a[i * 6 + 1], z = a[i * 6 + 2], drawn = a[i * 6 + 4] !== y; if (Math.abs(x) < 3.5 && Math.abs(z) < 3.5 && y < 3) { under++; assert.ok(!drawn, 'a drop under the roof'); } else if (drawn) shown++; }
+    for (let i = 0; i < 900; i++) {
+      const j = i * 12, x = (a[j] + a[j + 3]) / 2, y = a[j + 1], z = (a[j + 2] + a[j + 5]) / 2, drawn = a[j + 7] !== y;
+      if (Math.abs(x) < 3.5 && Math.abs(z) < 3.5 && y < 3) { under++; assert.ok(!drawn, 'a drop under the roof'); continue; }
+      if (!drawn) continue; shown++;
+      const wx = a[j + 3] - a[j], wz = a[j + 5] - a[j + 2], wide = Math.hypot(wx, wz), d = Math.hypot(x, y - 1.6, z);
+      assert.ok(wide > 0 && wide < .02 * Math.max(1, d) && Math.abs(wx * x + wz * z) < 1e-3 * Math.max(1, Math.hypot(x, z)) * wide + 1e-6, 'a streak across the view: ' + wide.toFixed(5) + ' wide, ' + d.toFixed(1) + ' m off');
+    }
     assert.ok(under > 5 && shown > 300, under + ' drops hidden under the roof, ' + shown + ' drawn');
     assert.ok(w.hops.alive > 20, 'drops hop off the ground: ' + w.hops.alive); for (let i = 0; i < w.hops.n; i++) if (w.hops.L[i] > 0) { const x = w.hops.P[i * 3], z = w.hops.P[i * 3 + 2]; assert.ok(w.hops.P[i * 3 + 1] >= w.cover.at(x, z) - .05, 'a hop under what it landed on'); }
     run(w, 4); assert.ok(w.wet === 1 && w.pools > .2 && w.pools < .5 && v._air.world.pools === w.pools, 'puddles start once it is wet through: ' + w.pools); run(w, 8); assert.ok(w.pools === 1);

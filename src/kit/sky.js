@@ -28,9 +28,9 @@
 // then only set how strong the sun and fill lights are.
 
 import { timed } from './prof.js';
-import { AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, LineBasicMaterial, LineSegments, Mesh, Points, PointsMaterial, Scene, ShaderMaterial, SphereGeometry, Vector3, Vector4 } from 'three';
+import { AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, MeshBasicMaterial, Points, PointsMaterial, Scene, ShaderMaterial, SphereGeometry, Vector3, Vector4 } from 'three';
 import { prefs } from './prefs.js';
-import { noiseTex } from './hd3d.js';
+import { HD, noiseTex } from './hd3d.js';
 import { Cover } from './cover.js';
 import { Spray } from './water.js';
 
@@ -262,8 +262,13 @@ export class Weather {
     this.view = view; this.wind = wind; this.max = max; this.area = area ?? Math.min(radiusOf(view.cam) * .35, (view.cam?.far ?? 100) > 1000 ? 400 : 30);
     this.flashLeft = 0; this.nextFlash = 3 + Math.random() * 5; this.flashI = 0; this.onFlash = null; this.t = 0;
     this.off = new Float32Array(max * 3); for (let i = 0; i < this.off.length; i++) this.off[i] = Math.random();
-    const g = new BufferGeometry(); g.setAttribute('position', new BufferAttribute(new Float32Array(max * 6), 3));
-    this.rainMesh = new LineSegments(g, new LineBasicMaterial({ color: color ?? '#a8c0e0', transparent: true, opacity: .55, depthWrite: false }));
+    // rain: a thin streak for each drop, turned to face the camera and kept about two of the 3D's pixels wide however far off it
+    // falls (a line is one pixel on any screen: on a phone's sharp screen, drawn smaller and built up over frames by the upscaler,
+    // a storm of them all but vanished)
+    const g = new BufferGeometry(), I = max * 4 > 65535 ? new Uint32Array(max * 6) : new Uint16Array(max * 6);
+    for (let i = 0; i < max; i++) I.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3], i * 6);
+    g.setAttribute('position', new BufferAttribute(new Float32Array(max * 12), 3)); g.setIndex(new BufferAttribute(I, 1));
+    this.rainMesh = new Mesh(g, new MeshBasicMaterial({ color: color ?? '#a8c0e0', transparent: true, opacity: .55, depthWrite: false, side: DoubleSide }));
     const pg = new BufferGeometry(); pg.setAttribute('position', new BufferAttribute(new Float32Array(max * 3), 3));
     this.snowMesh = new Points(pg, new PointsMaterial({ color: color ?? '#ffffff', size: flake ?? (level || ground || cover ? Math.min(.07, this.area * .012) : this.area * .012), transparent: true, opacity: .9, depthWrite: false }));
     for (const m of [this.rainMesh, this.snowMesh]) { m.frustumCulled = false; m.renderOrder = 5; if (isToon(view)) m.layers.set(1); view.scene.add(m); }
@@ -298,13 +303,20 @@ export class Weather {
     const cv = this.cover;
     if (this.rainMesh.visible) {
       const p = this.rainMesh.geometry.attributes.position, a = p.array, fall = A * 1.6, len = A * .03;
+      // (how wide a pixel of the 3D is a metre off, so each streak can be about two of them wide where it is)
+      const px = 2 * Math.tan(((cam?.fov ?? 60) * Math.PI / 180) / 2) / Math.max(1, HD.info.rh || this.view.renderer?.domElement?.height || 720) / ((cam?.zoom) || 1);
+      const ft = this.t * fall / A, fx = wx * this.t / A, fz = wz * this.t / A, fr = v => v - Math.floor(v);   // (fr: the part after the point, also below 0)
       for (let i = 0; i < n; i++) {
-        const k = i * 3, y = (((o[k + 1] - this.t * fall / A * (.8 + o[k] * .4)) % 1) + 1) % 1;
-        const x = cx + (((o[k] + wx * this.t / A) % 1 + 1) % 1 - .5) * A, z = cz + (((o[k + 2] + wz * this.t / A) % 1 + 1) % 1 - .5) * A, yy = cy + (y - .5) * A;
-        if (cv && yy < cv.at(x, z)) { a[i * 6] = a[i * 6 + 3] = x; a[i * 6 + 1] = a[i * 6 + 4] = yy; a[i * 6 + 2] = a[i * 6 + 5] = z; continue; }   // (under a roof: no drop)
-        a[i * 6] = x; a[i * 6 + 1] = yy; a[i * 6 + 2] = z; a[i * 6 + 3] = x - wx * .02; a[i * 6 + 4] = yy + len; a[i * 6 + 5] = z - wz * .02;
+        const k = i * 3, y = fr(o[k + 1] - ft * (.8 + o[k] * .4)), j = i * 12;
+        const x = cx + (fr(o[k] + fx) - .5) * A, z = cz + (fr(o[k + 2] + fz) - .5) * A, yy = cy + (y - .5) * A;
+        if (cv && yy < cv.at(x, z)) { for (let q = 0; q < 12; q += 3) { a[j + q] = x; a[j + q + 1] = yy; a[j + q + 2] = z; } continue; }   // (under a roof: no drop)
+        // across it, square to the way the camera sees it: half its width either side (by how far it passes from the camera, not
+        // how far its end is: a streak that falls past the eye stays two pixels wide where it is nearest, and thinner further up and down)
+        const dx = x - cx, dz = z - cz, hh = dx * dx + dz * dz, h = Math.sqrt(hh) || 1, w = Math.max(1e-5, Math.sqrt(hh) * px), sx = dz / h * w, sz = -dx / h * w, tx = x - wx * .02, tz = z - wz * .02;
+        a[j] = x - sx; a[j + 1] = yy; a[j + 2] = z - sz; a[j + 3] = x + sx; a[j + 4] = yy; a[j + 5] = z + sz;
+        a[j + 6] = tx - sx; a[j + 7] = yy + len; a[j + 8] = tz - sz; a[j + 9] = tx + sx; a[j + 10] = yy + len; a[j + 11] = tz + sz;
       }
-      p.needsUpdate = true; this.rainMesh.geometry.setDrawRange(0, n * 2);
+      p.needsUpdate = true; this.rainMesh.geometry.setDrawRange(0, n * 6);
     }
     if (this.snowMesh.visible) {
       const p = this.snowMesh.geometry.attributes.position, a = p.array, fall = A * .12;

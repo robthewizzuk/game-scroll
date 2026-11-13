@@ -2942,8 +2942,9 @@ weather.set('snow');                                    // it starts to settle; 
   frame (a second or so after a jump), follows the camera, and looks everything over again every six
   seconds, so a roof that is blown off lets the rain in. `weather.cover.touch(x, z, r)` asks again round
   a spot at once. Beyond the map everything counts as open.
-- **What you see** (a Next Gen view; the weather turns the view's `air()` on if it is off). In rain the
-  drops stop at the first thing they meet, little drops hop off the ground round the camera, and
+- **What you see** (a Next Gen view; the weather turns the view's `air()` on if it is off). In rain each
+  drop is a streak turned to the camera and about two of the 3D's pixels wide wherever it falls (so a storm
+  still shows on a phone's sharp screen, drawn smaller and filled in by the upscaler); the drops stop at the first thing they meet, little drops hop off the ground round the camera, and
   everything the sky can see gets darker and shinier over `soak` seconds (20). Then puddles open on flat
   ground and spread (they take twice as long), and when the rain stops it all dries over `dry` seconds
   (90), the puddles last. In snow the flakes stop at roofs too, and snow settles over `settle` seconds
