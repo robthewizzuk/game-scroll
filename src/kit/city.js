@@ -24,8 +24,10 @@
 //
 // Phones: buildings are merged into a few meshes per chunk and built a few at a time, nearest first;
 // trees, lamps and roof things are gs.props (culled, simpler far away); cars and people are instanced
-// and only live within a radius of the player, and how many follows the phone's speed. Stock three.js
-// materials and canvas textures only, so it draws the same on WebGL and WebGPU.
+// and only live within a radius of the player, and how many follows the phone's speed. Canvas textures
+// and stock three.js materials, with one look of its own: the rooms behind the windows (city-rooms.js,
+// and city-gpu.js the same as WebGPU nodes), so it draws the same on WebGL and WebGPU. On a Next Gen view
+// the traffic is real cars (city-cars.js) and the people sculpted ones in a gs.props.Crowd.
 //
 // The facade colours, window sizes and lit-window numbers, and the idea of streaming detail round the
 // player, come from Slop New York by Mr.doob (MIT, github.com/mrdoob/slop-newyork); the city here is
@@ -49,6 +51,9 @@ import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
 import { pause, built } from './slices.js';
 import { rooms, ROOMS } from './city-rooms.js';
+import { Fleet, CITY_CARS, carKit } from './city-cars.js';
+import { Crowd } from './crowd.js';
+import { human } from './models/human.js';
 
 /* ---------- looks ---------- */
 
@@ -545,10 +550,12 @@ class Traffic {
   constructor(city, count) {
     this.city = city; this.plan = city.plan; this.max = count; this.list = []; this.avoid = []; this.R = rng(city.seed * 13 + 1); this.radius = 190;
     const P = this.plan; this.sideK = P.side === 'left' ? -1 : 1;
+    // real cars (gs.models.vehicle, city-cars.js) on a Next Gen view; two boxes a car elsewhere
+    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, count) : null;
     const paint = mat('carpaint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .45 }));
     const lit = () => new MeshBasicMaterial({ vertexColors: false, toneMapped: false, color: '#ffffff' });
     this.meshes = {};
-    for (const [k, geo] of [['car', carGeo()], ['van', vanGeo()]]) {
+    for (const [k, geo] of this.fleet ? [] : [['car', carGeo()], ['van', vanGeo()]]) {
       const m = new InstancedMesh(geo, paint, Math.max(1, count)); m.count = 0; m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
       m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(Math.max(1, count) * 3), 3); this.meshes[k] = m; city.group.add(m);
     }
@@ -562,9 +569,10 @@ class Traffic {
   reset(focus) {
     this.list.length = 0; this.R = rng(this.city.seed * 13 + 1);
     for (let i = 0; i < this.max; i++) { const c = this.spawn(focus, 0); if (c) this.list.push(c); }
+    this.fleet?.assign(this.list);
     this.draw(0);
   }
-  spawn(focus, min) {
+  spawn(focus, min, keep = null) {
     const P = this.plan, R = this.R;
     for (let tries = 0; tries < 80; tries++) {
       const e = P.edges[R() * P.edges.length | 0], A = P.nodes[e.a], mx = A.x + e.dx * e.len / 2, mz = A.z + e.dz * e.len / 2, d = Math.hypot(mx - focus.x, mz - focus.z);
@@ -572,9 +580,12 @@ class Traffic {
       const [s0, s1] = this.ends(e); if (s1 - s0 < 14) continue;
       const k = R() * e.lanes | 0, s = s0 + 3 + R() * (s1 - s0 - 10);
       if (this.list.some(c => c.edge === e && c.lane === k && !c.turn && Math.abs(c.s - s) < 9)) continue;
-      const r = R(), kind = r < .14 ? 'van' : 'car', taxi = kind === 'car' && r > .82;
-      const car = { id: this.nextId = (this.nextId || 0) + 1, kind, taxi, colour: taxi ? '#f2c21b' : R.pick(CAR_COLOURS), edge: e, lane: k, s, v: e.speed * .6, vmax: e.speed * (.8 + R() * .3),
-        x: 0, z: 0, heading: 0, braking: false, turn: null, plan: null, blocked: 0, stun: 0, honked: 0 };
+      // (a car that comes back keeps its style, so it keeps its place among the copies: city-cars.js)
+      const F = this.fleet, r = R(), style = F ? keep?.style ?? F.pick(R) : 0, kit = F?.kits[style], kind = F ? (kit.style === 'van' ? 'van' : 'car') : keep?.kind ?? (r < .14 ? 'van' : 'car');
+      const taxi = F ? (kit.style === 'saloon' || kit.style === 'hatch') && r > .8 : kind === 'car' && r > .82;
+      const car = { id: this.nextId = (this.nextId || 0) + 1, kind, style, taxi, colour: taxi ? '#f2c21b' : R.pick(CAR_COLOURS), edge: e, lane: k, s, v: e.speed * .6, vmax: e.speed * (.8 + R() * .3),
+        len: kit ? kit.length : kind === 'van' ? 4.6 : CAR_LEN, wid: kit ? kit.width : kind === 'van' ? 1.9 : 1.84, x: 0, z: 0, heading: 0, braking: false, turn: null, plan: null, blocked: 0, stun: 0, honked: 0, odo: 0 };
+      if (keep) car.slot = keep.slot;
       this.place(car); return car;
     }
     return null;
@@ -604,20 +615,20 @@ class Traffic {
       if (!c.turn) {
         const e = c.edge, [, s1] = this.ends(e), b = c._b, i = c._i;
         const follow = gap => { target = Math.min(target, Math.max(0, (gap - 2) * 1.1)); };
-        if (i > 0) follow(b[i - 1].s - c.s - CAR_LEN);
-        else if (c.ahead && (c.ahead.turn || c.ahead.edge !== e)) follow(Math.hypot(c.ahead.x - c.x, c.ahead.z - c.z) - CAR_LEN - 1);
-        const stop = s1 - 3.6 - CAR_LEN / 2, toStop = stop - c.s;
+        if (i > 0) follow(b[i - 1].s - c.s - (b[i - 1].len + c.len) / 2);
+        else if (c.ahead && (c.ahead.turn || c.ahead.edge !== e)) follow(Math.hypot(c.ahead.x - c.x, c.ahead.z - c.z) - (c.ahead.len + c.len) / 2 - 1);
+        const stop = s1 - 3.6 - c.len / 2, toStop = stop - c.s;
         if (toStop < 40) {
           c.plan ||= this.choose(c);
           const st = city.signal(P.nodes[e.b], e.axis, t);
           if (st !== 'g' && toStop > -.5 && !(st === 'a' && toStop < c.v * c.v / 12 * .6)) follow(toStop + 2);
           // don't drive into the junction when the road out is backed up
           const nb = buckets.get(c.plan.e.id * 4 + c.plan.k), last = nb?.at(-1), [n0] = this.ends(c.plan.e);
-          if (last && last.s < n0 + CAR_LEN + 2.5 && toStop > -.5) follow(toStop + 2);
+          if (last && last.s < n0 + (last.len + c.len) / 2 + 2.5 && toStop > -.5) follow(toStop + 2);
         }
         for (const o of this.avoid) {
           const rx = o.x - c.x, rz = o.z - c.z, fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = Math.abs(rx * fz - rz * fx);
-          if (along > 0 && along < 24 && lat < 1.3 + o.r) { follow(along - CAR_LEN / 2 - o.r); blocked = true; }
+          if (along > 0 && along < 24 && lat < 1.3 + o.r) { follow(along - c.len / 2 - o.r); blocked = true; }
         }
       }
       c.blocked = blocked ? c.blocked + dt : 0;
@@ -647,12 +658,13 @@ class Traffic {
       }
       this.place(c);
       // gone too far from the player: comes back somewhere nearer, out of sight
-      if (Math.hypot(c.x - focus.x, c.z - focus.z) > this.radius + 20) { const n = this.spawn(focus, this.radius * .45); if (n) { Object.assign(c, n, { id: c.id, ahead: null }); for (const o of this.list) if (o.ahead === c) o.ahead = null; } }
+      if (Math.hypot(c.x - focus.x, c.z - focus.z) > this.radius + 20) { const n = this.spawn(focus, this.radius * .45, c); if (n) { Object.assign(c, n, { id: c.id, ahead: null }); for (const o of this.list) if (o.ahead === c) o.ahead = null; } }
     }
     this.avoid.length = 0;
     this.noise = noisy;
   }
-  draw(night) {
+  draw(night, dt = 0) {
+    if (this.fleet) return this.drawFleet(night, dt);
     // each car keeps its own slot (its place in the list) in both the car and the van mesh, drawn as
     // nothing in the one it isn't: three works out motion (frame generation, SGSR 2) from what each slot
     // held last frame, so packing the cars of a kind together gave every car after one that came back
@@ -672,14 +684,26 @@ class Traffic {
     // vans use the car's light spots (close enough at this size)
     this.head.material.color.set('#fff3d6').multiplyScalar(.35 + night * 3.2); this.tail.material.color.set('#ff2c1c').multiplyScalar(.5 + night * 1.6);
   }
+  // real cars (city-cars.js): the nearest few whole, the rest as copies; the lamp boxes stand in for the far ones' lamps
+  drawFleet(night, dt) {
+    const F = this.fleet, n = this.list.length; F.focus = this.city.focus || this.city.start; F.draw(this.list, night, dt);
+    this.list.forEach((c, i) => {
+      if (F.close.has(c)) { this.head.setMatrixAt(i, _none.makeScale(0, 0, 0).setPosition(c.x, 0, c.z)); this.tail.setMatrixAt(i, _none); return; }
+      const k = F.kits[c.style]; _q.setFromAxisAngle(_up, c.heading); _m.compose(_p.set(c.x, 0, c.z), _q, _s.set(1, k.lampY / .64, c.len / 4.53));
+      this.head.setMatrixAt(i, _m); this.tail.setMatrixAt(i, _m); this.tail.setColorAt(i, _c.setScalar(c.braking ? 2.4 : 1));
+    });
+    _s.set(1, 1, 1);
+    for (const m of [this.head, this.tail]) { m.count = n; sendUsed(m.instanceMatrix, n); sendUsed(m.instanceColor, n); }
+    this.head.material.color.set('#fff3d6').multiplyScalar(.35 + night * 3.2); this.tail.material.color.set('#ff2c1c').multiplyScalar(.5 + night * 1.6);
+  }
   near(p, r) { const pz = p.z ?? p.y; return this.list.filter(c => Math.hypot(c.x - p.x, c.z - pz) <= r).sort((a, b) => Math.hypot(a.x - p.x, a.z - pz) - Math.hypot(b.x - p.x, b.z - pz)); }
   /** The first car whose body overlaps a circle at p of radius r (or null). */
   hit(p, r = .5) {
     const pz = p.z ?? p.y;
     for (const c of this.list) {
       const rx = p.x - c.x, rz = pz - c.z; if (rx * rx + rz * rz > 16 + r * r * 4 + 8 * r) continue;
-      const fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = rx * fz - rz * fx, hl = c.kind === 'van' ? 2.4 : 2.2;
-      const dx = Math.max(Math.abs(lat) - .92, 0), dz = Math.max(Math.abs(along) - hl, 0);
+      const fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = rx * fz - rz * fx, hl = c.len / 2;
+      const dx = Math.max(Math.abs(lat) - c.wid / 2, 0), dz = Math.max(Math.abs(along) - hl, 0);
       if (dx * dx + dz * dz <= r * r) return c;
     }
     return null;
@@ -696,10 +720,24 @@ const torsoGeo = () => mergeGeometries([coloured(at(new BoxGeometry(.46, .62, .2
 const headGeo = () => coloured(at(new IcosahedronGeometry(.13, 1), 0, 1.66, 0), '#ffffff');
 const legGeo = () => coloured(at(new BoxGeometry(.16, .86, .18), 0, -.43, 0), '#ffffff');   // hangs from the hip, so it swings
 
+// the people of a city on a Next Gen view (a gs.props.Crowd of sculpted people; no strands: a crowd has none)
+const FOLK = [
+  { seed: 31, body: '#3d6fb6', legs: '#2a3242', strands: false },
+  { seed: 32, sex: 'f', hairStyle: 'long', body: '#c8483c', legs: '#30364a', strands: false },
+  { seed: 33, body: '#d8d2c2', legs: '#5a4a38', strands: false },
+  { seed: 34, sex: 'f', hairStyle: 'bun', body: '#2e5e48', legs: '#1d1d22', strands: false },
+  { seed: 35, body: '#2a2a30', legs: '#3a3a3a', strands: false },
+  { seed: 36, sex: 'f', hairStyle: 'short', body: '#e0b84a', legs: '#24324f', strands: false },
+];
 /** The people of a city: they walk round the pavements, wait for the green man and cross at the corners. */
 class People {
   constructor(city, count) {
     this.city = city; this.plan = city.plan; this.max = count; this.list = []; this.R = rng(city.seed * 17 + 3); this.radius = 100;
+    // sculpted people as one crowd on a Next Gen view (City option crowd); figures of boxes elsewhere
+    this.crowd = city.opts.crowd ? new Crowd(city.view, { of: FOLK.map(o => human(o)), moves: ['idle', 'walk', 'run', 'downed'], far: 140 }) : null;
+    this.members = []; this.spread = 50;
+    if (this.crowd) { this.radius = 75; this.spread = 32; }   // (more of them, closer round the player: busy pavements where you are)
+    if (this.crowd) return;
     const skin = mat('people', () => new MeshStandardMaterial({ vertexColors: true, roughness: .8 }));
     const n = Math.max(1, count), mk = (g, k) => { const m = new InstancedMesh(g, skin, n * k); m.count = 0; m.castShadow = true; m.frustumCulled = false; m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(n * k * 3), 3); city.group.add(m); return m; };
     this.torso = mk(torsoGeo(), 1); this.head = mk(headGeo(), 1); this.legs = mk(legGeo(), 2);
@@ -713,13 +751,17 @@ class People {
     out.x = a[0] + (c[0] - a[0]) * f; out.z = a[1] + (c[1] - a[1]) * f; out.seg = seg; out.toCorner = len - (s - base); out.L = L; out.cs = [0, w, w + d, 2 * w + d];
     return out;
   }
-  reset(focus) { this.list.length = 0; this.R = rng(this.city.seed * 17 + 3); for (let i = 0; i < this.max; i++) { const p = this.spawn(focus, 0); if (p) this.list.push(p); } this.draw(); }
-  spawn(focus, min) {
+  reset(focus) {
+    this.list.length = 0; this.R = rng(this.city.seed * 17 + 3); for (let i = 0; i < this.max; i++) { const p = this.spawn(focus, 0); if (p) this.list.push(p); }
+    if (this.crowd) { this.crowd.clear(); this.members = this.list.map(p => this.crowd.add({ x: p.x, y: KERB, z: p.z, kind: p.kind, move: 'walk', size: p.h })); }
+    this.draw();
+  }
+  spawn(focus, min, keep = null) {
     const R = this.R, B = this.plan.blocks;
     for (let tries = 0; tries < 80; tries++) {
       const b = B[R() * B.length | 0], s = R() * this.perim(b), p = this.at(b, s);
-      const d = Math.hypot(p.x - focus.x, p.z - focus.z); if (d > this.radius || d < min || (!min && R() > Math.exp(-d / 50))) continue;
-      return { id: this.nextId = (this.nextId || 0) + 1, block: b, s, dir: R() < .5 ? 1 : -1, side: (R() - .5) * 1.4, speed: 1.1 + R() * .5, x: p.x, z: p.z, heading: 0,
+      const d = Math.hypot(p.x - focus.x, p.z - focus.z); if (d > this.radius || d < min || (!min && R() > Math.exp(-d / this.spread))) continue;
+      return { id: this.nextId = (this.nextId || 0) + 1, block: b, s, dir: R() < .5 ? 1 : -1, side: (R() - .5) * 1.4, speed: 1.1 + R() * .5, x: p.x, z: p.z, heading: 0, kind: keep?.kind ?? (R() * FOLK.length | 0),
         shirt: R.pick(SHIRTS), pants: R.pick(PANTS), skin: R.pick(SKIN), h: .92 + R() * .16, phase: R() * 6, wait: 0, cross: null, panic: 0, down: 0, fall: 0, fx: 0, fz: 0 };
     }
     return null;
@@ -756,7 +798,7 @@ class People {
         p.heading = Math.atan2(nx - p.x, nz - p.z) || p.heading; p.x = nx; p.z = nz;
       }
       p.phase += v * dt * 4.4;
-      if (Math.hypot(p.x - focus.x, p.z - focus.z) > this.radius + 15) { const n = this.spawn(focus, this.radius * .5); if (n) Object.assign(p, n, { id: p.id }); }
+      if (Math.hypot(p.x - focus.x, p.z - focus.z) > this.radius + 15) { const n = this.spawn(focus, this.radius * .5, p); if (n) Object.assign(p, n, { id: p.id }); }
     }
   }
   // the zebra crossing straight on from this block's corner (0 NW, 1 NE, 2 SE, 3 SW) for someone walking
@@ -770,7 +812,11 @@ class People {
     const r = this.ring(b)[corner], r2 = this.ring(nb)[arrive], node = (b.i + (east ? 1 : 0)) * (P.nz + 1) + b.j + (south ? 1 : 0);
     return { node, axis: alongX ? 'x' : 'z', go: { ax: r[0], az: r[1], bx: r2[0], bz: r2[1], len: Math.hypot(r2[0] - r[0], r2[1] - r[1]), u: 0, to: nb, s: this.at(nb, 0).cs[arrive] } };
   }
-  draw() {
+  draw(dt = 0) {
+    if (this.crowd) {   // (a member stands on the kerb's top, or the road when crossing; it walks, runs from a scare, waits, or lies where it was knocked)
+      this.list.forEach((p, i) => { const m = this.members[i]; if (!m) return; m.x = p.x; m.z = p.z; m.y = p.cross ? 0 : KERB; m.turn = p.heading; m.size = p.h; m.move = p.down > 0 ? 'downed' : p.wait > 0 ? 'idle' : p.panic > 0 ? 'run' : 'walk'; });
+      this.crowd.update(dt); return;
+    }
     const T = this.torso, Hd = this.head, L = this.legs, e = this._e ||= new Object3D(), leg = this._leg ||= new Object3D();
     this.list.forEach((p, i) => {
       const bob = Math.abs(Math.sin(p.phase)) * .05 * (p.down > 0 ? 0 : 1), sc = p.h;
@@ -809,8 +855,10 @@ export class City {
    * detail: metres within which awnings, cornices and fire escapes show.
    */
   constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, ...over } = {}) {
-    this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail; this.opts = { rooms };
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, ...over } = {}) {
+    this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
+    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, style: typeof style === 'string' ? style : 'downtown' };
+    if (this.opts.crowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
     // What a city keeps from one making to the next comes first: its textures and materials, and the
     // street furniture's shapes. While a card loads, a pass of make() can be stopped between these and
@@ -819,6 +867,7 @@ export class City {
     for (const k of kinds) chunkMat(k, S);
     groundTex('grass', '#4f7a3a'); asphaltMat(S.ground);
     for (const name in FURNITURE) shaped(name);
+    if (this.opts.fleet) for (const s of CITY_CARS[this.opts.style] || CITY_CARS.downtown) carKit(s);
     if (occlude) view.occluders?.(this.occluders());   // what's behind the buildings isn't drawn (occlude: false to draw it all)
     this.group = new Group(); this.group.name = 'city'; view.scene.add(this.group);
     this.t = 0; this._night = -1; this.night = night;
@@ -852,7 +901,7 @@ export class City {
     this.props = this.furnish();
     this.signals = this.makeSignals();
     this.cars = new Traffic(this, Math.round(70 * traffic * scale * Math.min(1.6, P.nx * P.nz / 36 + .4)));
-    this.people = new People(this, Math.round(110 * people * scale));
+    this.people = new People(this, Math.round((this.opts.crowd ? 360 : 110) * people * scale));   // (a crowd costs a few draws however many: busier pavements)
     this.start = at || this.spot('pavement', { rnd: rng(seed + 9) }) || { x: 0, z: 0 };
     for (const c of [...this.chunks.values()].filter(c => Math.hypot(c.x - this.start.x, c.z - this.start.z) < 200)) this.build(c);
     // The far chunks are built as you get near them, and their materials (a facade first seen there)
@@ -864,6 +913,8 @@ export class City {
     this.ears = null; this.hum = null;
     this.applyNight(); this.reset();
   }
+  /** Resolves when everything a city is made from is in (the simplifier for far shapes): await City.ready() before a screenshot. */
+  static ready({ crowd = true, people = 1 } = {}) { return Promise.all([simplifyReady, crowd && people > 0 ? human.ready(FOLK) : null]); }
   /** Cars and people back to the start (call from your game's reset()). */
   reset(focus = this.start) { this.t = 0; this.cars.reset(focus); this.people.reset(focus); this.signalTick(); return this; }
 
@@ -967,7 +1018,7 @@ export class City {
     if (!want.length) this.allBuilt = true;
     for (const c of this.chunks.values()) if (c.detail) c.detail.visible = Math.hypot(c.x - f.x, c.z - f.z) < this.detail;
     this.cars.update(dt, f, this.t); this.people.update(dt, f, this.t);
-    this.cars.draw(this.night); this.people.draw(); this.signalTick();
+    this.cars.draw(this.night, dt); this.people.draw(dt); this.signalTick();
     if (this.lampsOn && this.view.placeLamps && this.night > .05) {
       if (!this.view.lamps?.length) this.view.lampLights(26);
       const near = this.lampSpots.filter(s => Math.abs(s.x - f.x) < 70 && Math.abs(s.z - f.z) < 70);
@@ -1166,7 +1217,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }

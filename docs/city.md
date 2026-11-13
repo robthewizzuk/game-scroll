@@ -56,6 +56,9 @@ Make the city once (in `make()` or the first `reset()`, like the view) and call 
 | `sound` | The city's hum, horns from cars stuck behind you, birds in the parks, a far siren (default on). |
 | `at` | Where the player starts (that part is built first). |
 | `detail` | Metres within which awnings, cornices and fire escapes show (default 260). |
+| `rooms` | Rooms behind every window and shop front (default on): the glass is set back in the wall with its frame and bars, and past it a room of its own, with walls, a floor, a ceiling, something standing in it and curtains or blinds, dim by day and lit at night (the windows the facade lights, so a street is lit the same near and far). `false`: windows painted on, as before. |
+| `fleet` | The traffic as real cars (`gs.models.vehicle`, default on a Next Gen view): the nearest few drawn whole, wheels rolling and steering, bodies dipping as they brake, brake lamps; the rest as simpler copies in two draws a style. `false`: two boxes a car. |
+| `crowd` | The pavements full of sculpted people (`gs.models.human` in a `gs.props.Crowd`, default on a Next Gen view): walking, running from a scare, waiting at the lights, lying where they were knocked. They are sculpted the first time a phone meets them (the card says "Loading…" a few seconds, once) and kept. `false`: figures of boxes. |
 
 Any style setting can be passed straight in too: `new City(v, { style: 'oldtown', floors: [2, 4], trees: 1 })`.
 A style is `STYLES.downtown` and friends: `block` (sizes), `street` and `avenue` (road widths; every
@@ -95,14 +98,25 @@ by name: `stone`, `brick`, `plaster`, `concrete`, `glass`, `dark`, `silver`, `ho
   lot at once.
 - Awnings, cornices and fire escapes only show within `detail` metres.
 - Trees, lamps, traffic lights, benches and roof tanks are `gs.props`: culled, and simpler far away.
-- Cars live within about 190 m of the player and people within 100 m; ones that drift further away
+- Cars live within about 190 m of the player and people within 100 m (75 m for a crowd); ones that drift further away
   come back somewhere nearer and out of sight. How many follows the phone's speed.
 - Facade textures are made once and shared by every city (smaller on slower phones). Each building
   starts at a different window, so the lit windows don't repeat.
 - While the card says "Loading…", the textures and the street furniture's shapes are made a few each
   frame (they are kept, so the feed keeps moving); the streets and blocks round the start are then
   made in one go, which is the longest single step of a city game's loading.
-- Stock three.js materials only (no shader patches), so it draws the same on WebGL and WebGPU.
+- The rooms behind the windows are one look on the facade's own material (`src/kit/city-rooms.js`, and
+  `src/kit/city-gpu.js` the same as WebGPU nodes): a few dozen sums a pixel and one texture read, no
+  room models; past 240 m the painted facade takes over, faded so nothing pops.
+- Real cars: each style the city drives is made once and taken apart: its paint, everything else that
+  doesn't glow in one material (each surface's roughness and metal read from a small table), its lamps
+  and its wheel. The nearest few (about 32 m) are drawn whole, each a new object as it comes close (so
+  frame generation never sees one jump); the others are copies of a simpler shape of about 1,250
+  triangles, two draws a style.
+- People are one `gs.props.Crowd`: a few draws for all of them, each drawn as finely as its size on
+  screen needs; there are more of them, and closer round the player, than the boxes were.
+- `await City.ready()` (tools and tests) waits for the far shapes' simplifier and the people's sculpts.
+- Otherwise stock three.js materials, so it draws the same on WebGL and WebGPU.
 
 ## Credits
 

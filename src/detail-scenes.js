@@ -20,6 +20,9 @@
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 //   lineup   people that move (src/kit/stride.js, follow.js, human-face.js, human.js hands): eight people posed as drawn, then stepping, live faced and holding
 //   faces    people close up (gs.models.human look: 'real'): four faces in turn filling the screen, in the clean look and then the real one
+//   street   a city that holds up close (src/kit/city.js, city-rooms.js, city-cars.js): a walk along a made-up downtown street at golden hour
+//            and then at night, once as the city was (windows painted on, cars and people of boxes), then with rooms behind every window,
+//            real cars and sculpted people on the pavements
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -784,6 +787,55 @@ function faces({ gs, size }) {
   };
 }
 
+/* ---------- street: a city that holds up close ---------- */
+function street({ gs, size }) {
+  const { City } = gs.city, v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 900; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0012, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 17.2, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const blocks = Math.max(3, Math.round(6 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.25, Math.min(1, size));
+  const OLD = { rooms: false, fleet: false, crowd: false };
+  let city = null, mode = '', ready = false;
+  const sum = { n: 0, ms: 0, t: 0, hour: -1 };
+  const enter = key => async draw => {
+    const t0 = performance.now(), opts = { seed: 7, blocks, style: 'downtown', sky, traffic: busy, people: busy, ...(key === 'old' ? OLD : {}) };
+    if (key !== 'old' && !ready) {   // (the people are sculpted the first time a phone meets them, and kept)
+      let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+      await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the city\'s people were not sculpted in time'); ready = true;
+    }
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; sum.n = sum.ms = 0; sum.t = 0; sum.hour = -1;
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.cars.list.length)} cars, ${num(city.people.list.length)} people` };
+  };
+  const ahead = new gs.THREE.Vector3();
+  return {
+    v, holds: `a walk along a made-up downtown street of ${blocks} blocks a side, at golden hour and then (after ten seconds) at night`,
+    modes: [
+      { key: 'old', name: 'windows painted on, boxes for cars and people', enter: enter('old') },
+      { key: 'new', name: 'rooms behind the windows, real cars, sculpted people', enter: enter('new') },
+    ],
+    // along the pavement past the shops of the middle block, 1.4 metres a second, looking down the street and across at the shop fronts
+    path(t, cam) {
+      if (!city) return;
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const hour = t < 10 ? 17.2 : 21.5; if (hour !== sum.hour) { sum.hour = hour; sky.time = hour; sky.update(0); v.cut?.(); }
+      const P = city.plan, b = P.blocks.find(k => k.kind === 'build' && k.i === Math.floor(P.nx / 2) && k.j === Math.floor(P.nz / 2)) || P.blocks[0];
+      const x = b.x0 + 3 + (t % 40) * 1.4, z = b.z0 + b.sw * .3;
+      cam.position.set(x, 1.65 + .025 * Math.sin(t * 7.5), z); ahead.set(x + 6, 1.5, z + 2.2 + 1.6 * Math.sin(t * .4)); cam.lookAt(ahead); cam.updateMatrixWorld();
+      sun.follow(x, 0, z); sky.update(dt);
+      const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`, C = city.cars.fleet, crowd = city.people.crowd;
+      return mode === 'old' ? ms : `${ms} · ${num(C ? C.close.size : 0)} cars drawn whole · ${num(crowd ? crowd.info.drawn : 0)} people drawn in ${num(crowd ? crowd.info.draws : 0)} draws`;
+    },
+    dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
@@ -798,4 +850,5 @@ export const SCENES = [
   ['parade', 'Parade', 'smaller meshes', parade],
   ['lineup', 'Line-up', 'people that move: steps, weight, a live face and hands', lineup],
   ['faces', 'Faces', 'people close up: the clean look against the real one', faces],
+  ['street', 'Street', 'a city that holds up close: rooms behind the windows, real cars, sculpted people', street],
 ];
