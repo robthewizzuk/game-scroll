@@ -709,15 +709,29 @@ async function tour(b) {
     && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
-  // one scene alone, on a bigger screen: in a picture that small a brick's depth is under a pixel, and a surface is then drawn as flat as before
+  // one scene alone, on a bigger screen: in a picture that small a brick's depth is under a pixel, and a surface is then drawn as flat as before.
+  // Each of its timed frames is held up for over half a second, which is what a slow build machine's are at this size. They are frames
+  // all the same: they used to be taken for the phone having gone to another app, the run's clock stood still, and this step ran for
+  // nine minutes or for ever. (A timed run that has not ended in a minute is stopped here, and fails the checks below.)
+  // And once, in the first run, the phone does go to another app for a second and a half while a frame is waited for.
   await q.setViewportSize({ width: 720, height: 960 }); await q.waitForTimeout(400);
   const one = await q.evaluate(async () => {
-    const res = await __gs.tour({ scenes: true, seconds: 1.5, size: .1, only: ['village'] });
-    await new Promise(r => setTimeout(r, 400));
-    return { n: res.scenes.length, error: res.scenes[0].error, modes: res.scenes[0].modes.map(m => ({ key: m.key, tris: Math.round(m.tris), build: m.build == null ? null : Math.round(m.build), shown: m.ow + ' x ' + m.oh })), active: __gs.active?.def.id };
+    const signal = {}, plays = []; let guard = 0;
+    const hold = ms => { const end = performance.now() + ms; while (performance.now() < end); };
+    const away = () => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); hold(1500); delete document.visibilityState; document.dispatchEvent(new Event('visibilitychange')); };
+    const res = await __gs.tour({ scenes: true, seconds: 4, size: .1, only: ['village'], signal,
+      onStep(s) { clearTimeout(guard); if (s.what === '0 s') { plays.push(0); guard = setTimeout(() => { signal.stop = true; }, 60000); } },
+      onPlay() { hold(520); if (++plays[plays.length - 1] === 1 && plays.length === 1) setTimeout(away); } });
+    clearTimeout(guard); await new Promise(r => setTimeout(r, 400));
+    return { n: res.scenes.length, stopped: res.stopped, error: res.scenes[0].error, plays, modes: res.scenes[0].modes.map(m => ({ key: m.key, tris: Math.round(m.tris), build: m.build == null ? null : Math.round(m.build), shown: m.ow + ' x ' + m.oh, frames: m.frames, longest: Math.round(m.worst) })), active: __gs.active?.def.id };
   });
   check(one.n === 1 && !one.error && one.modes[1]?.tris > one.modes[0]?.tris * 1.5 && one.modes[1].build < 8000 && one.active === 'bunker-breakout',
     'one scene can be run alone; close to, the village draws more triangles for its surfaces, which were kept from the first run', JSON.stringify(one));
+  check(!one.stopped && one.modes.length === 2 && one.modes.every(m => m.frames >= 1 && m.longest > 500),
+    'a frame that takes over half a second is timed as a frame, and the run still ends by the clock', JSON.stringify(one));
+  // (a run times every frame after its first: one fewer where the phone was away)
+  check(one.modes[0]?.frames === one.plays[0] - 2 && one.modes[1]?.frames === one.plays[1] - 1,
+    'time spent in another app in the middle of a run is nobody\'s frame', JSON.stringify(one));
   if (process.env.SHOTS) require('fs').writeFileSync(process.env.SHOTS + '/scenes-report.txt', sc.text);
   await q.done();
 }
