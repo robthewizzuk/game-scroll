@@ -6025,6 +6025,16 @@ console.log('physics ok');
   console.log('gs.hd effects that step down by their own cost ok');
 }
 
+// the chip's own times are checked against the time its frames took (hd3d.js chipFits): Apple's chips time each pass
+// from stage boundaries, so a chain of passes overlap and add up to more than the frames take
+{
+  const { chipFits } = await import('../src/kit/hd3d.js');
+  assert.ok(chipFits(9, 16.7) && chipFits(16, 16.7) && chipFits(34, 16.7), 'a chip busy for its whole frame, or a read that lags a frame or overlaps on a software chip, fits');
+  assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
+  assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
+  console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
+}
+
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
 {
   const { Stats } = await import('../src/kit/stats.js');
