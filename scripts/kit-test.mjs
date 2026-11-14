@@ -3038,7 +3038,9 @@ console.log('physics ok');
   const F = await import('../src/kit/models/field.js'), HH = await import('../src/kit/models/human-head.js'), { realFace } = await import('../src/kit/models/human.js'), { Color } = await import('three');
   const { HC, RELIEF, reliefOf } = HH, base = { jaw: 1, chin: 1, brow: .82, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 };
   // ---- the face from a seed: the same seed, the same face; age thins the lips, hoods the lids and greys the hair
-  { const a = realFace({ seed: 7, age: 25 }, false, base), b = realFace({ seed: 7, age: 25 }, false, base), c = realFace({ seed: 8, age: 25 }, false, base), old = realFace({ seed: 7, age: 75 }, false, base);
+  // (the sculpted face's measures: gnm: false; a real face is a GNM face unless the game says not)
+  assert.ok(realFace({ seed: 7 }, false, base).f.gnm && !realFace({ seed: 7, gnm: false }, false, base).f.gnm, 'a real face is a GNM face, the sculpted one with gnm: false');
+  { const a = realFace({ seed: 7, age: 25, gnm: false }, false, base), b = realFace({ seed: 7, age: 25, gnm: false }, false, base), c = realFace({ seed: 8, age: 25, gnm: false }, false, base), old = realFace({ seed: 7, age: 75, gnm: false }, false, base);
     assert.deepEqual(a, b, 'the same seed, the same face'); assert.notDeepEqual(a.f, c.f, 'another seed, another face');
     assert.ok(a.f.real === 1 && a.f.es === 1 && a.f.age === 25 && Object.values(a.f).every(v => typeof v !== 'number' || Math.round(v * 1e4) / 1e4 === v), 'life-size eyes, its age, every measure to four figures (the face names the saved shape)');
     assert.ok(old.f.lips < a.f.lips * .85 && old.f.lidFold > a.f.lidFold && old.f.eyes < a.f.eyes && old.f.ears > a.f.ears && old.f.nose > a.f.nose, `older: thinner lips (${a.f.lips} to ${old.f.lips}), lower lids, smaller eyes, bigger ears, a longer nose`);
@@ -3095,6 +3097,32 @@ console.log('physics ok');
     let drawn = 0; for (const [k, z] of fitW.front) if (plainW.front.has(k)) drawn = Math.min(drawn, z - plainW.front.get(k));
     assert.ok(fitW.w > plainW.w + .004, `a woman's face as wide at the mouth as a real one: ${(plainW.w * 2000).toFixed(0)} mm unfitted, ${(fitW.w * 2000).toFixed(0)} mm fitted`);
     assert.ok(drawn > -.001, `the throat under the chin never drawn in (at most ${(-drawn * 1000).toFixed(1)} mm)`); }
+  // ---- a GNM face (human({ gnm: true }), human-gnm.js): one of GNM Head's heads, drawn by sex and heritage from the seed, with the outlines
+  // the rest of the face is built along; its skin a field that is inside the head and outside round it, with no bubble of outside behind
+  // the lips (GNM's lips run on into each other: they are closed in a crease) and no pocket of inside by the neck (the sides of the far
+  // grid are worked out by regions, not handed on from node to node); the lips cut along one line where they meet
+  { const G = await import('../src/kit/models/human-gnm.js'), HS = await import('../src/kit/models/human-shapes.js'); await G.gnmReady();
+    const face = (seed, sex, heritage) => realFace({ seed, sex, heritage, gnm: true }, sex === 'f', base).f, k = face(4, 'f', 'east-asian'), g = k.gnm;
+    assert.deepEqual(face(4, 'f', 'east-asian').gnm.c, g.c, 'the same seed, the same head');
+    assert.ok(g.c.length === 32 && face(5, 'f', 'east-asian').gnm.c.some((v, i) => Math.abs(v - g.c[i]) > .3), 'another seed, another head');
+    const mean = (fem, kin) => G.gnmDraw(fem, kin), far = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
+    assert.ok(far(mean(true, { european: 1 }), mean(false, { european: 1 })) > 1 && far(mean(false, { african: 1 }), mean(false, { 'east-asian': 1 })) > 1, 'a woman\'s head and a man\'s, each background\'s, apart');
+    assert.ok(g.rim.w > .009 && g.rim.w < .014 && g.lip.half > .017 && g.lip.half < .029 && g.eye[0] > .026 && g.eye[0] < .035 && g.lip.up[0] > g.lip.line[0] && g.lip.dn[0] < g.lip.line[0],
+      `its outlines: an eye opening ${(g.rim.w * 2000).toFixed(0)} mm long, a mouth ${(g.lip.half * 2000).toFixed(0)} mm wide, the eyes ${(g.eye[0] * 2000).toFixed(0)} mm apart, each lip's red on its side of the line`);
+    const at = HH.Hd(0, HH.EYE[1], HH.EYE[2]), H = G.gnmHead(k, at), d = (x, y, z) => H.d(x, HC[1] + y, HC[2] + z);
+    assert.ok(d(0, 0, 0) < -.05 && d(0, .2, 0) > .05 && d(.15, 0, 0) > .03, 'inside the head, outside over it and beside it');
+    let bubble = -1; for (const x of [-.0145, .0145]) for (let z = .075; z < .094; z += .001) bubble = Math.max(bubble, d(x, -.066, z));
+    let pocket = 1; for (let x = .085; x < .12; x += .005) pocket = Math.min(pocket, d(x, -.093, -.053));
+    assert.ok(bubble < 0 && pocket > 0, `no bubble behind the lips (${(bubble * 1000).toFixed(1)} mm), no pocket beside the neck (${(pocket * 1000).toFixed(1)} mm)`);
+    let deep = 0, line = 0; HS.finish(HH.head({ face: k, neck: 1, hair: 'bald' }, []), { cell: .002, bones: () => [['head', 1]], keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01,
+      after: m => { const r = HH.partLips(m, k); line = r.line.length; for (const [u] of r.line) if (r.P[u * 3 + 2] - HC[2] < .09 && Math.abs(r.P[u * 3]) < .017) deep++; return r; } });
+    assert.ok(line > 30 && deep === 0, `the lips cut along where they meet (${line} points), never deep in the head (${deep})`);
+    // grown old (gnmAged): the same head at 78 has jowls over the line of the jaw and its lips sunk back
+    const aged = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 78 }, true, base).f, young = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 24 }, true, base).f;
+    const Ho = G.gnmHead(aged, at), Hy = G.gnmHead(young, at), front = (x, hy) => { let z = .2; while (z > 0 && Hy.d(x, HC[1] + hy, HC[2] + z) > 0) z -= .0002; return z; };
+    const jx = young.gnm.lip.half + .019, jy = young.gnm.lip.line[0] - .04, jz = front(jx, jy), ly = young.gnm.lip.line[0] + .003, lz = front(0, ly);
+    const jowl = -Ho.d(jx, HC[1] + jy, HC[2] + jz), sunk = Ho.d(0, HC[1] + ly, HC[2] + lz);
+    assert.ok(jowl > .001 && sunk > .0005, `grown old: jowls ${(jowl * 1000).toFixed(1)} mm out, lips ${(sunk * 1000).toFixed(1)} mm back`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
@@ -6032,6 +6060,16 @@ console.log('physics ok');
   console.log('gs.hd effects that step down by their own cost ok');
 }
 
+// the chip's own times are checked against the time its frames took (hd3d.js chipFits): Apple's chips time each pass
+// from stage boundaries, so a chain of passes overlap and add up to more than the frames take
+{
+  const { chipFits } = await import('../src/kit/hd3d.js');
+  assert.ok(chipFits(9, 16.7) && chipFits(16, 16.7) && chipFits(34, 16.7), 'a chip busy for its whole frame, or a read that lags a frame or overlaps on a software chip, fits');
+  assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
+  assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
+  console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
+}
+
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
 {
   const { Stats } = await import('../src/kit/stats.js');
@@ -6309,6 +6347,167 @@ console.log('physics ok');
   assert.ok(drawn === before, 'a slot nothing moved in is not drawn again');
   assert.ok(L(car).slot >= 0 && L(car).proj && L(car).texel > 0, 'a slotted lamp reads its slot through its matrix');
   console.log('night lights: shapes, a pool that keeps its lights, spot lights on WebGL only when wanted, tubes and signs, shadow slots for the nearest, a few drawn a frame ok');
+}
+
+// Rapier through the engine: riders, karts and craft that are solid, a floor that is a true plane, grapples, shots,
+// lobs and barrels in a world, broken things that keep going, props, voxel blocks and cloth round bodies, cars that dent,
+// rivers that carry bodies; in 2D, walkers and cars moved through a world, tile maps made solid, soft things that stay out
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Kart, Car } = await import('../src/kit/vehicles.js'), { Hover } = await import('../src/kit/craft.js'), { Grapple } = await import('../src/kit/gadgets.js');
+  const { Shots, arc, Explosives } = await import('../src/kit/combat.js'), { shatter, slice } = await import('../src/kit/destruction.js');
+  const { Props } = await import('../src/kit/props.js'), { Voxels, BLOCKS } = await import('../src/kit/voxels.js'), { Cloth } = await import('../src/kit/cloth.js');
+  const { Streams } = await import('../src/kit/flow.js'), { Path } = await import('../src/kit/paths.js');
+  const t0 = performance.now(), run = (w, n, f) => { for (let i = 0; i < n; i++) { f?.(i); w.step(1 / 60); } };
+  // the floor is a plane: a walker goes the whole way and a rider sits on it, not in it
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0); const hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), r = w.rider({ box: [1.2, .6, 2], at: { x: 5, y: 0, z: 0 } });
+    run(w, 120, () => { hero.walk(0, -4); r.slide(0, -.005, -.1, 0, 1 / 60); });
+    assert.ok(Math.abs(hero.pos.z + 8) < .05, 'a walker on the floor goes the whole way: ' + hero.pos.z);
+    assert.ok(Math.abs(r.pos.z + 12) < .05 && Math.abs(r.body.translation().y - .32) < .01 && r.grounded, 'a rider slides along the floor at its height: ' + r.pos.z + ', ' + r.body.translation().y); }
+  // a kart: up a ramp, through a stack of crates, stopped by a wall, and onHit says so
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(4, .4, 6)); ramp.position.set(0, .4, -12); ramp.rotation.x = .25; w.ground(ramp);
+    const crates = [0, 1, 2].map(i => w.box(null, 1, 1, 1, { at: { x: 3, y: .5 + i * 1.02, z: -10 } }));
+    w.box(null, 8, 3, 1, { at: { x: -3, y: 1.5, z: -30 }, fixed: true, tag: 'wall' });
+    let walled = 0; w.onHit((a, b, sp) => { if ((a.tag === 'wall' || b.tag === 'wall') && sp > 3) walled++; });
+    const k = new Kart({ world: w, x: 0, z: 0 }), k2 = new Kart({ world: w, x: 3, z: 0 }); let top = 0;
+    run(w, 150, () => { k.update(1 / 60, { throttle: 1 }); k2.update(1 / 60, { throttle: 1 }); top = Math.max(top, k.y); });
+    assert.ok(top > .6, 'the kart drives up the ramp: ' + top);
+    assert.ok(crates[0].pos.z < -11, 'the kart shoves the crates out of its way: ' + crates[0].pos.z);
+    run(w, 150, () => { k.update(1 / 60, { throttle: 1 }); });
+    assert.ok(k.z > -29.6 && k.z < -27 && walled > 0, 'a wall stops it and onHit hears it: ' + k.z + ' ' + walled); }
+  // a hovercraft at a wall; a grapple pulls a crate in and pulls the hero to a heavy truck
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0); w.box(null, 1, 6, 10, { at: { x: 5, y: 3, z: 0 }, fixed: true });
+    const hv = new Hover({ world: w, at: { x: 0, y: 3, z: 0 } }); let crash = null;
+    run(w, 120, () => { hv.update(1 / 60, { x: 1 }); crash ||= hv.crash; });
+    assert.ok(hv.pos.x < 4.5 && hv.pos.x > 3 && crash, 'a drone stops at a wall and says it crashed: ' + hv.pos.x);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: -10 }, density: 20 }), hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), hook = new Grapple({ range: 20 }); run(w, 1);   // (rays see what was added once the world has stepped)
+    assert.ok(hook.fire({ x: 0, y: .5, z: 0 }, { x: 0, y: 0, z: -1 }, w, hero) && hook.thing === crate, 'a grapple hooks a crate in a world');
+    let v = { x: 0, y: 0, z: 0 }; run(w, 120, () => { v = hook.update(1 / 60, hero.pos, v, { reel: true }); hero.walk(v.x, v.z); v = { x: 0, y: 0, z: 0 }; });
+    assert.ok(crate.pos.z > -2, 'and pulls the light crate to the hero: ' + crate.pos.z); }
+  // shots shove what they hit and pass the shooter; a lob stops where it meets something; a knocked barrel goes off
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: -10 }, density: 20 }), hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), shots = new Shots({ push: 40 });
+    shots.add({ from: { x: 0, y: .8, z: 0 }, dir: { x: 0, y: 0, z: -1 }, speed: 60, range: 50 }, { not: hero }); let got = null;
+    run(w, 30, () => { got ||= shots.update(1 / 60, w)[0]; });
+    assert.ok(got?.hit.thing === crate && Math.abs(got.at.z + 9.5) < .05, 'a shot traced in the world hits the crate face');
+    run(w, 30); assert.ok(crate.pos.z < -10.2, 'and shoves it: ' + crate.pos.z);
+    const pts = arc({ x: 0, y: 1.5, z: 0 }, { x: 0, y: 3, z: -6 }, -9.8, { ground: w, not: hero }), end = pts[pts.length - 1];
+    assert.ok(end.hit && end.y < 1.1, 'a lob ends where it meets the world');
+    const w2 = new World3D({ gravity: -9.8 }); w2.floor(0);
+    const barrel = w2.box(null, .6, 1, .6, { at: { x: 0, y: .5, z: 0 }, density: 100 }), near = w2.box(null, 1, 1, 1, { at: { x: 3, y: .5, z: 0 }, density: 10 });
+    const ex = new Explosives({ world: w2, radius: 5 }); ex.add({ x: 0, y: .5, z: 0, body: barrel }); let booms = 0; ex.on('boom', () => booms++);
+    const rock = w2.box(null, .5, .5, .5, { at: { x: -6, y: .5, z: 0 }, density: 400 }); rock.push(14, 2, 0);
+    run(w2, 120, () => ex.update(1 / 60));
+    assert.ok(booms === 1 && near.pos.x > 6, 'a barrel knocked hard goes off and throws what is near it: ' + booms + ' ' + near.pos.x); }
+  // broken things keep going as they were; props, voxels, cloth, a car that dents, a river
+  { const scene = new THREE.Scene(), w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()); m.position.set(0, 3, 0); scene.add(m);
+    const b = w.box(m, 1, 1, 1); b.setVel(5, 0, 0); run(w, 5);
+    const ps = shatter(m, { pieces: 6, world: w, push: 0 }), moving = ps.filter(p => p.body && p.body.vel.x > 3).length;
+    assert.ok(b.dead && moving >= 4, 'a thrown crate that shatters gives up its body and its pieces carry on: ' + moving);
+    const melon = new THREE.Mesh(new THREE.SphereGeometry(.4, 12, 8), new THREE.MeshStandardMaterial()); melon.position.set(0, 2, 5); scene.add(melon);
+    const mb = w.ball(melon, .4); mb.setVel(0, 0, -4); run(w, 1);
+    const halves = slice(melon, melon.position, { x: 1, y: 0, z: 0 }, { world: w, apart: 2 });
+    assert.ok(mb.dead && halves.length === 2 && halves.every(h => h.body && h.body.vel.z < -3) && halves[0].body.vel.x * halves[1].body.vel.x < 0, 'slice with a world: two bodies going on, parted along the cut');
+    const props = new Props(scene); props.kind('tree', new THREE.CylinderGeometry(1.5, 1.5, 6, 8).translate(0, 3, 0), new THREE.MeshStandardMaterial());
+    const t1 = props.add('tree', 0, 0, -5); props.add('tree', 3, 0, -5, { scale: 2 }); const trunks = props.solid(w, 'tree', { shape: 'trunk' }); run(w, 1);
+    const hit = w.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 20);
+    assert.ok(hit?.thing === trunks && hit.part?.id === t1 && Math.abs(hit.point.z + 4.55) < .02 && !w.ray({ x: 1, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 3), 'a forest of props as trunks: rays find the copy, and pass beside it');
+    props.kind('crate', new THREE.BoxGeometry(1, 1, 1).translate(0, .5, 0), new THREE.MeshStandardMaterial());
+    for (let i = 0; i < 3; i++) props.add('crate', 8, i * 1.05 + 1, 8);
+    const loose = props.solid(w, 'crate', { loose: true }); run(w, 90);
+    const M = new THREE.Matrix4(), P = new THREE.Vector3(), ys = [...loose.keys()].map(id => { props.mesh('crate').getMatrixAt(id, M); return P.setFromMatrixPosition(M).y; }).sort((a, b) => a - b);
+    assert.ok(loose.size === 3 && ys.every((y, i) => Math.abs(y - i) < .05), 'loose props fall, stack and are drawn where their bodies are: ' + ys.map(y => y.toFixed(2)));
+    const vox = new Voxels({ size: [32, 16, 32], worker: false }); vox.fill(0, 0, 0, 31, 3, 31, BLOCKS.stone); vox.build();
+    const w3 = new World3D({ gravity: -9.8 }); vox.physics(w3); const c3 = w3.box(null, 1, 1, 1, { at: { x: 10, y: 8, z: 10 } }); run(w3, 90);
+    assert.ok(Math.abs(c3.pos.y - 4.5) < .05, 'a crate lands on voxel blocks: ' + c3.pos.y);
+    vox.fill(9, 0, 9, 11, 3, 11, 0); vox.build(); run(w3, 60);
+    assert.ok(c3.pos.y < 2, 'and falls into a pit dug under it: ' + c3.pos.y);
+    const pushed = [];
+    for (const world of [null, true]) {
+      const wc = new World3D({ gravity: -9.8 }); wc.floor(0); const ball = wc.ball(null, .5, { at: { x: 0, y: .5, z: -2 } }); ball.setVel(0, 0, 4);
+      const cloth = new Cloth(null, world ? { world: wc } : {}), cur = cloth.sheet({ cols: 11, rows: 10, place: (i, j) => [-1 + i / 10 * 2, 2 - j / 9 * 1.8, 0], pins: [0, 10, 5] });
+      let most = -9; run(wc, 150, () => { cloth.update(1 / 60); const k = cur.base + 7 * 11 + 5; most = Math.max(most, cloth.P[k * 3 + 2]); }); pushed.push(most);
+    }
+    assert.ok(pushed[1] > pushed[0] + .4, 'cloth with a world is pushed aside by a ball rolling through it: ' + pushed.map(x => x.toFixed(2)));
+    const car = new THREE.Group(), dents = []; car.position.set(0, 1, 30); car.hit = (p, o) => dents.push(o.power);
+    const v3 = w.vehicle(car, { at: { x: 0, y: 1, z: 30 } }); w.box(null, 6, 3, 1, { at: { x: 0, y: 1.5, z: 15 }, fixed: true });
+    run(w, 180, () => v3.drive(1, 0));
+    assert.ok(dents.length >= 1 && dents[0] > .5, 'a model car dents itself where it hits a wall: ' + dents);
+    const S = w.shapes([{ box: [1, 1, 1], at: { x: 20, y: .5, z: 0 }, part: 'a' }]); S.add({ ball: .5, at: { x: 22, y: .5, z: 0 }, part: 'b' }); run(w, 1);
+    assert.ok(w.ray({ x: 22, y: 5, z: 0 }, { x: 0, y: -1, z: 0 }, 10)?.part === 'b', 'shapes: a shape added later is found');
+    S.drop('b'); S.set('a', { x: 22, y: .5, z: 0 }); run(w, 1);
+    assert.ok(w.ray({ x: 22, y: 5, z: 0 }, { x: 0, y: -1, z: 0 }, 10)?.part === 'a', 'shapes: dropped and moved');
+    const water = new Streams({ space: '3d' }); water.river(new Path([{ x: -50, y: 0, z: 40 }, { x: 50, y: 0, z: 40 }]), { width: 10, speed: 3 });
+    const log = w.box(null, 1, .4, .4, { at: { x: -20, y: 1, z: 40 }, density: .5, gravity: 0 }); run(w, 120, () => water.carry(log, 1 / 60));   // (afloat: gs.craft's Floater would hold it up)
+    assert.ok(log.pos.x > -17, 'a river carries a loose body downstream: ' + log.pos.x); }
+  // 2D: a tile level made solid, a platformer and a top-down walker moved through a world, a car, jelly and water
+  { const { Physics } = await import('../src/kit/physics.js'), { TileMap } = await import('../src/kit/tiles.js'), { Platformer, TopDown } = await import('../src/kit/movers.js'), { Soft, Liquid } = await import('../src/kit/soft.js');
+    const map = TileMap.fromText(['....................', '....................', '...........#........', 'P....../####\\.......', '####################'], { size: 16 });
+    const p = new Physics({ gravity: 900 }), lvl = p.tiles(map), crate = p.box(200, 0, 14, 14);
+    assert.ok(lvl.rects.length <= 4 && lvl.ramps.length === 2, 'a tile map as a few merged boxes and two ramps: ' + lvl.rects.length);
+    const s0 = map.find('P')[0], hero = new Platformer({ x: s0.x, y: s0.y, w: 12, h: 14, run: 90 }); let onTop = false, blocked = 0;
+    for (let f = 0; f < 150; f++) { hero.update(1 / 60, p, { x: 1 }); p.step(1 / 60); if (hero.onGround && Math.abs(hero.y - 41) < 1) onTop = true; if (hero.hit.right) blocked++; }
+    assert.ok(onTop && blocked > 0 && hero.x < 171, 'a platformer walks up the slope onto the block and is stopped by the wall: ' + hero.x + ',' + hero.y);
+    assert.ok(Math.abs(crate.y - 57) < 1.5, 'a crate lands on the level: ' + crate.y);
+    const q = new Physics({ gravity: 0 }); q.walls(0, 0, 400, 400);
+    const box = q.box(200, 100, 20, 20, { drag: 2 }), td = new TopDown({ x: 200, y: 300, w: 16, h: 16, speed: 120 });
+    for (let f = 0; f < 350; f++) { td.update(1 / 60, q, { x: 0, y: -1 }); q.step(1 / 60); }
+    assert.ok(box.y < 11 && td.y < 30, 'a top-down walker shoves a crate to the wall: ' + box.y + ' ' + td.y);
+    const cone = q.circle(100, 100, 6, { density: .5, drag: 3 }), car = new Car({ x: 100, y: 300, angle: -Math.PI / 2, world: q, top: 200 }); let crashed = null;
+    for (let f = 0; f < 200; f++) { car.update(1 / 60, { throttle: 1 }); q.step(1 / 60); }
+    assert.ok(cone.y < 10 && car.y > 20 && car.speed < 60, 'a car shoves a cone to the wall and is held there: ' + cone.y + ' ' + car.y + ' ' + car.speed);
+    const r = new Physics({ gravity: 0 }); r.walls(0, 0, 400, 400); const car2 = new Car({ x: 200, y: 300, angle: -Math.PI / 2, world: r, top: 200 });
+    for (let f = 0; f < 120 && !crashed; f++) { car2.update(1 / 60, { throttle: 1 }); r.step(1 / 60); crashed = car2.crash; }
+    assert.ok(crashed && crashed.ny > .9 && car2.speed < 100, 'a car hits a wall hard, says so and bounces off');
+    const ph = new Physics({ gravity: 900, walls: [0, 0, 360, 640] }), ledge = ph.box(180, 400, 200, 20, { fixed: true });
+    const soft = new Soft({ world: ph, bounds: [0, 0, 360, 640] }), blob = soft.jelly(180, 200, 30, 16);
+    for (let f = 0; f < 120; f++) { soft.update(1 / 60); ph.step(1 / 60); }
+    assert.ok(Math.abs(soft.centre(blob).y - 360) < 12 && !blob.points.some(pt => ledge.contains(pt.x, pt.y)), 'jelly lands on a ledge in the world: ' + soft.centre(blob).y);
+    const L = new Liquid({ world: ph, bounds: [0, 0, 360, 640] }); L.pour(180, 300, 80, 25);
+    for (let f = 0; f < 60; f++) { L.update(1 / 60); ph.step(1 / 60); }
+    assert.ok(!L.list.some(d => ledge.contains(d.x, d.y)), 'water poured on it stays out of it'); }
+  console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
+// finer sun shadows (sunmask.js): capsules for far people and their shadows, the grid they go in, the map of heights' tiles
+{
+  const { binCapsules, figureCapsule, capsuleShade, HeightTiles, CAPS, GRID, PER } = await import('../src/kit/sunmask.js');
+  const n = Math.hypot(-.5, .7, .35), L = [-.5 / n, .7 / n, .35 / n];
+  // a person stands up as a post as tall as they are; an animal on four legs lies along the way it faces
+  const man = figureCapsule(1.75, .3, 2, 0, 3, 0, 1, []);
+  assert.ok(man[0] === 2 && man[3] === 2 && man[2] === 3 && man[5] === 3 && Math.abs(man[1] - man[6]) < 1e-9 && Math.abs(man[4] + man[6] - 1.75) < 1e-9, 'a person: an upright post from their feet to the top of their head');
+  const dog = figureCapsule(.6, 1.2, 0, 0, 0, Math.PI / 2, 1, []);
+  assert.ok(Math.abs(dog[1] - dog[4]) < 1e-9 && Math.abs(dog[2] - dog[5]) < 1e-9 && dog[3] > dog[0], 'an animal: lying level, along the way it faces');
+  // its shadow: dark on the ground behind it (away from the sun), none beside it, on its sunny side or on itself
+  const at = k => capsuleShade(2 - L[0] * k, 0, 3 - L[2] * k, L, man);
+  assert.ok(at(.5) > .9 && at(1.5) > .9, 'dark on the ground behind a person, away from the sun');
+  const h = Math.hypot(L[0], L[2]), beside = capsuleShade(2 - L[2] / h * .5, 0, 3 + L[0] / h * .5, L, man);
+  assert.ok(at(-1) === 0 && beside === 0 && capsuleShade(2, 1, 3 + man[6] * 1.1, L, man) === 0, 'no shadow on their sunny side, half a metre beside them or on their own body');
+  assert.ok(at(2) > .9 && at(3) === 0, 'it ends about as far off as the sun makes a body 1.75 m tall throw it');
+  // the grid: each capsule in the squares its shadow falls across, and no more than PER a square
+  const caps = new Float32Array(CAPS * 8), grid = new Float32Array(GRID * GRID * 8), list = [];
+  for (let i = 0; i < 300; i++) list.push(figureCapsule(1.75, .3, (i % 20) * 3, 0, Math.floor(i / 20) * 3, 0, 1, []));
+  const b = binCapsules(list, L, caps, grid);
+  assert.ok(b.n === CAPS && caps[(CAPS - 1) * 8] === list[CAPS - 1][0] && caps[3] === Math.fround(man[6]), 'no more than CAPS capsules, kept in the order given (nearest first)');
+  const sq = (x, z) => Math.floor((z - b.z0) / b.cell) * GRID + Math.floor((x - b.x0) / b.cell), has = (s, i) => [...grid.slice(s * 8, s * 8 + PER)].includes(i + 1);
+  assert.ok(has(sq(list[0][0], list[0][2]), 0) && has(sq(list[0][0] - L[0], list[0][2] - L[2]), 0), 'a capsule sits in its own square and in the squares its shadow falls across');
+  let most = 0; for (let s = 0; s < GRID * GRID; s++) most = Math.max(most, grid.slice(s * 8, s * 8 + 8).filter(Boolean).length);
+  assert.ok(most <= PER && binCapsules([], L, caps, grid).n === 0 && grid.every(v => v === 0), 'no square holds more than PER; none at all leaves the grid empty');
+  const far = binCapsules([man], L, caps, grid, 40, { x: 2048, y: 0, z: -1024 });
+  assert.ok(caps[0] === 2 - 2048 && caps[2] === 3 + 1024 && far.x0 < 2 - 2048 && far.z0 < 3 + 1024, 'far from the world\'s centre: in the drawing\'s space, about the centre the frame is drawn round (origin.js)');
+  // the map of heights: tiles in a ring round the camera; only the tiles that come in are drawn first, then each again in turn
+  const H = new HeightTiles(512, 512, 4), came = H.at(10, 10), s0 = H.slot(0, 0), s4 = H.slot(4, 0);
+  assert.ok(came.length === 16 && !H.ready && s0.sx === s4.sx && s0.sy === s4.sy && s4.x0 === 512, 'sixteen tiles at first; a place\'s tile always sits at the same spot of the picture');
+  for (let i = 0; i < 16; i++) H.next();
+  assert.ok(H.ready && H.next() && H.at(40, 10).length === 0, 'all drawn after sixteen; a step of less than one tile moves nothing');
+  const step = H.at(10 + 128 * 1.2, 10);
+  assert.ok(step.length === 4 && !H.ready && step.every(s => s.tx === H.cx + 3) && step.includes(H.next()), 'a step of a tile brings in one column of four, drawn first');
+  for (let i = 0; i < 3; i++) H.next();
+  assert.ok(H.ready, 'then the window is whole again');
+  console.log('finer sun shadows: people and animals as capsules, their shadows behind them and none beside or on themselves, a grid of the squares they fall across, the map of heights\' tiles ok');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

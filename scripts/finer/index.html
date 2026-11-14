@@ -1,0 +1,117 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Finer sun shadows (sunmask-gpu.js), for scripts/finer.cjs: each scene twice, with the sun's shadow maps alone and with
+// the sun mask (contact shadows, far shadows over a map of heights, capsule shadows for a crowd), to judge by eye, and
+// what each costs.
+//   ?acts=contact,face,far,crowd (default: all)   &cell=360x300   &gpu (WebGPU)   &tier=3   &frames=8   &people=120
+//   ?scene=shade&at=3,8,13,18&size=.4: the phone test tour's engine test scene instead (src/detail-scenes.js), a row a time along its walk
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+const frame = () => new Promise(r => requestAnimationFrame(r));
+// (WebGPU: wait for the chip to finish the frame, so a frame's time is all of its work)
+let GR = null; const done = () => GR?.r?.backend?.device?.queue.onSubmittedWorkDone();
+try {
+  await loadParts();
+  if (GPU && !(GR = await prepareGPU())) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, hd = gs.hd;
+  const mk = (mat, geo, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; return m; };
+  const sunOf = (v, size, dir) => { const s = hd.sun('#fff2d8', 3, size, dir); v.scene.add(s, s.target); v.sun = s; s.follow(0, 0, 0); return s; };
+  // each act: the camera, what is made, and what "on" switches on
+  const ACTS = {
+    // close up: a cup on a table, a hand's fingers laid on it, a head with a nose and a collar, under a low sun
+    contact: { eye: [.02, .99, .43], aim: [.01, .8, .08], sun: [60, [-.8, .55, .35]],
+      make: (v) => {
+        const wood = hd.pbr('#8a6440', { rough: .6 }), skin = hd.pbr('#c99a7c', { rough: .55 }), cloth = hd.pbr('#3a4a66', { rough: .8 }), pot = hd.pbr('#e8e2d6', { rough: .3 });
+        const out = [mk(hd.pbr('#5a5048', { rough: .9 }), new T.PlaneGeometry(20, 20).rotateX(-Math.PI / 2), 0, 0, 0), mk(wood, new T.BoxGeometry(1.6, .06, .9), 0, .75, 0)];
+        out.push(mk(pot, new T.CylinderGeometry(.045, .04, .1, 24, 1, false), -.15, .83, .05), mk(pot, new T.TorusGeometry(.03, .008, 8, 16), -.1, .835, .05));
+        for (let i = 0; i < 4; i++) { const f = mk(skin, new T.CapsuleGeometry(.009, .07, 4, 8), .12 + i * .022, .789, .12 - Math.abs(i - 1.5) * .01); f.rotation.x = Math.PI / 2; f.rotation.z = -.15; out.push(f); }
+        out.push(mk(skin, new T.BoxGeometry(.09, .025, .1), .155, .792, .2));
+        out.push(mk(skin, new T.SphereGeometry(.11, 32, 24), .05, 1.25, -.25), mk(skin, new T.ConeGeometry(.018, .045, 12).rotateX(Math.PI / 2), .05, 1.24, -.13), mk(cloth, new T.CylinderGeometry(.07, .13, .12, 24), .05, 1.08, -.25), mk(cloth, new T.TorusGeometry(.075, .016, 8, 24).rotateX(Math.PI / 2), .05, 1.135, -.25));
+        return out;
+      },
+      on: (v) => { v.contactShadows = true; }, off: (v) => { v.contactShadows = false; } },
+    // a person's face close up in a low sun (gs.models.human): the nose, the eyes' sockets, the collar
+    face: { eye: [.3, 1.66, .42], aim: [0, 1.6, 0], sun: [60, [-.7, .45, .55]], spec: { seed: 11, strands: false },
+      make: (v, A) => { const p = gs.models.human(A.spec); p.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; }); return [p, mk(hd.pbr('#5a5048', { rough: .9 }), new T.PlaneGeometry(20, 20).rotateX(-Math.PI / 2), 0, 0, 0)]; },
+      on: (v) => { v.contactShadows = true; }, off: (v) => { v.contactShadows = false; } },
+    // far: towers and hills hundreds of metres off, past the sun's shadow box, on open land late in the day
+    far: { eye: [0, 70, 90], aim: [0, 0, -260], sun: [40, [-.75, .32, -.55]], far: 1500,
+      make: (v) => {
+        const g = hd.pbr('#7c8a5a', { rough: .95 }), stone = hd.pbr('#a49a88', { rough: .85 }), out = [mk(g, new T.PlaneGeometry(3000, 3000).rotateX(-Math.PI / 2), 0, 0, 0)];
+        const R = gs.math.rng(4);
+        for (let i = 0; i < 26; i++) { const x = (R() - .5) * 500, z = -80 - R() * 420, h = 15 + R() * 50, w = 8 + R() * 14; out.push(mk(stone, new T.BoxGeometry(w, h, w), x, h / 2, z)); }
+        for (let i = 0; i < 6; i++) { const x = (R() - .5) * 700, z = -300 - R() * 300, h = 40 + R() * 60; out.push(mk(g, new T.ConeGeometry(h * 2, h, 24), x, h / 2, z)); }
+        return out;
+      },
+      on: (v) => { v.farShadows = { size: 768 }; v.contactShadows = false; }, off: (v) => { v.farShadows = false; v.contactShadows = false; } },
+    // a crowd crossing a square, seen from above: with capsules, the far members' shadows leave the sun's map
+    crowd: { eye: [0, 22, 34], aim: [0, 0, -4], sun: [45, [-.5, .7, .35]], far: 300, crowd: true,
+      make: (v) => [mk(hd.pbr('#8a8478', { rough: .95 }), new T.PlaneGeometry(200, 200).rotateX(-Math.PI / 2), 0, 0, 0), mk(hd.pbr('#b9a78c', { rough: .85 }), new T.BoxGeometry(60, 10, 4), 0, 5, -40)],
+      on: (v) => { window.__hd.capsules = true; v.contactShadows = false; }, off: (v) => { window.__hd.capsules = false; v.contactShadows = false; } },
+  };
+  if (Q.has('scene')) {   // the engine test scene, off and then on, a row for each time along its walk
+    const { SCENES } = await import('../../src/detail-scenes.js'), HD = window.__hd, [cw, ch] = (Q.get('cell') || '360x300').split('x').map(Number), at = (Q.get('at') || '3,8,13,18').split(',').map(Number);
+    HD.force = +(Q.get('tier') || 3); HD.upscale = false; HD.hold = false; HD.grain = 0;
+    const S = SCENES.find(s => s[0] === Q.get('scene'))[3]({ gs, HD, size: +(Q.get('size') || .4), gpu: GPU });
+    const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+    const sheet = document.createElement('canvas'); sheet.width = cw * S.modes.length; sheet.height = ch * at.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+    const draw = () => { S.v.render(cx, cw, ch); return frame(); }, info = [];
+    for (let col = 0; col < S.modes.length; col++) {
+      const m = S.modes[col]; await m.enter(draw);
+      for (let k = 0; k < at.length; k++) {
+        for (let f = 0; f < 8; f++) { S.path(at[k] - (7 - f) / 30, S.v.cam); await draw(); if (GPU) await done(); }
+        sx.drawImage(cell, col * cw, k * ch);
+        sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.strokeStyle = '#000'; sx.lineWidth = 3; const label = `${m.name} · ${at[k]} s (${HD.info.backend})`; sx.strokeText(label, col * cw + 6, k * ch + 16); sx.fillText(label, col * cw + 6, k * ch + 16);
+      }
+      info.push(`${m.key}: ${S.tell() || ''}`);
+    }
+    S.dispose();
+    window.result = { sheet: sheet.toDataURL(), info, backend: HD.info.backend }; throw 'done';
+  }
+  const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(','), [cw, ch] = (Q.get('cell') || '360x300').split('x').map(Number), frames = +(Q.get('frames') || 8);
+  window.__hd.force = +(Q.get('tier') || 3); window.__hd.upscale = false; window.__hd.hold = false; window.__hd.grain = 0;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * 2; sheet.height = ch * acts.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [];
+  for (let k = 0; k < acts.length; k++) {
+    const A = ACTS[acts[k]]; if (!A) throw new Error('no act ' + acts[k]);
+    const v = new hd.HDView({ bg: '#9ab4d0', fog: A.far ? .0004 : .002, amb: .35 });
+    v.cam.far = A.far || 100; v.cam.updateProjectionMatrix();
+    const sun = sunOf(v, A.sun[0], A.sun[1]);
+    if (A.spec) await gs.models.human.ready([A.spec]);
+    for (const m of A.make(v, A)) v.scene.add(m);
+    let crowd = null, who = [];
+    if (A.crowd) {
+      const { human } = gs.models, specs = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', strands: false }];
+      await human.ready(specs);
+      crowd = new gs.props.Crowd(v, { of: specs.map(s => human(s)), moves: ['idle', 'walk'] });
+      const R = gs.math.rng(7), N = +(Q.get('people') || 120);
+      for (let i = 0; i < N; i++) who.push(crowd.add({ x: (R() - .5) * 56, z: (R() - .5) * 50 - 6, turn: R() * 6.28, kind: i % 2, move: R() < .7 ? 'walk' : 'idle' }));
+    }
+    for (const [mode, col] of [['off', 0], ['on', 1]]) {
+      A[mode](v);
+      let ms = 0, mask = 0, shTris = 0, shCalls = 0;
+      for (let f = 0; f < frames; f++) {
+        if (crowd) { for (const p of who) if (p.move === 'walk') { p.x += Math.sin(p.turn) * 1.3 / 30; p.z += Math.cos(p.turn) * 1.3 / 30; } }
+        v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...A.eye); v.cam.lookAt(...A.aim);
+        if (crowd) crowd.update(1 / 30);
+        sun.fit ? sun.follow(A.aim[0], 0, A.aim[2] * .2) : 0;
+        window.__hd.info.shTris = 0; window.__hd.info.shCalls = 0;
+        const c0 = performance.now(); v.render(cx, cw, ch); if (GPU) await done(); const dt = performance.now() - c0; await frame();
+        if (f >= frames / 2) { ms += dt; shTris += window.__hd.info.shTris || 0; shCalls += window.__hd.info.shCalls || 0; }
+      }
+      const mi = GPU ? (await import('../../src/kit/sunmask-gpu.js')).sunMaskInfo() : { ms: 0, frames: 0, tiles: 0 };
+      sx.drawImage(cell, col * cw, k * ch);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.strokeStyle = '#000'; sx.lineWidth = 3;
+      const label = `${acts[k]} · ${mode === 'on' ? 'sun mask' : 'sun maps only'} (${window.__hd.info.backend})`; sx.strokeText(label, col * cw + 6, k * ch + 16); sx.fillText(label, col * cw + 6, k * ch + 16);
+      const sm = window.__hd.info.sunMask, half = frames - Math.ceil(frames / 2);
+      info.push(`${acts[k]} ${mode}: ${window.__hd.info.backend}, mask ${sm ? JSON.stringify(sm) : 'none'}; render ${(ms / half).toFixed(1)} ms a frame to the chip's last pixel (this machine's software chip, the second half of the frames), the mask's CPU ${(mi.frames ? mi.ms / mi.frames : 0).toFixed(2)} ms, height tiles drawn ${mi.tiles}; sun map triangles ${Math.round(shTris / half)} and draws ${(shCalls / half).toFixed(1)} a frame; draws ${window.__hd.info.calls}, triangles ${window.__hd.info.tris}`);
+    }
+    window.__hd.capsules = undefined;
+    crowd?.dispose();
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { if (e !== 'done') window.result = { error: String(e && e.stack || e) }; }
+</script>

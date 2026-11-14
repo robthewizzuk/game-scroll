@@ -81,7 +81,14 @@ Phones must stay smooth, so the kit adapts on its own:
 | low | 0.5 M | off | 2 | no | light FXAA |
 
 Ambient occlusion (the soft dark in corners and under things) on the high tier is worked out at half
-the picture's width and height, a quarter of the cost, and blended back at full size.
+the picture's width and height, a quarter of the cost, and blended back at full size. On WebGPU it
+darkens the light that bounces (the sky's and the room's, and reflections by roughness) in each
+thing's own shading, as Filament, Godot, Bevy and Unity do, and only a quarter of it still falls on
+the direct light, so sunlit corners stay clean while shaded ones go dark; bright surfaces take less
+(light bounces round a white corner more). It reads the last frame's occlusion where each point was
+then, so there is no extra pass. `HD.aoBack = false` puts it back on the whole picture (the frame
+lab's A/B has the switch), `HD.aoDirect` (0..1, default .25) is the share on direct light.
+WebGL always lays it on the whole picture.
 
 **Phone class and frame rate** (`src/kit/speed.js`). Each phone is sorted into top, mid or low from
 its graphics chip (Adreno 830, Mali-G720, ...), its model for iPhones, and its cores and memory.
@@ -122,10 +129,10 @@ game held up by the CPU above 60 fps (the graphics chip has room) goes straight 
 up a tier first.
 
 **Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
-(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, bounce light,
+(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, sun mask, bounce light,
 depth of field, motion blur, screen effects, upscale...). When a game is slow and the graphics chip is the
 reason, the effect that costs it most is drawn smaller first: ambient occlusion, bloom, reflections (screen
-space or traced), volumetric light and sun shafts each have three sizes (100%, 70%, 50% of the tier's). An
+space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's). An
 effect is only stepped while it takes at least an eighth of the chip's frame (and half a millisecond), so a
 cheap effect is never made worse for nothing; when none does, the resolution steps as before. Only the size
 of the effect's pictures changes, so no shader is built again mid-round. Where the chip doesn't say (WebGL,
@@ -479,7 +486,16 @@ the frames have not drawn yet (a muzzle flash that is switched off, the wall beh
 room) is built too, one kind of thing at a time for about 3 ms a frame over the view's first frames, so
 turning round or switching a thing on mid-round does not stop a frame: `v.shadersLeft` says how many
 things are still to look at (a loading screen can wait for 0), and `v.precompile()` waits for them once
-the view has drawn a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
+the view has drawn a frame. They are taken nearest first, and what the camera carries (a first-person
+rifle) before anything else. three keys a lit shader by the scene's lights, sky light and fog too, so when
+those change to a setting the view has not had before (a game's next level, set up under its loading screen),
+the hidden things are built again for it, and one that shows before its turn waits for its shader. Two things
+of one material and shape are two shaders to three when one takes shadows and the other does not, and the kit
+tells them apart the same way. A shadow is drawn with a shader of its own for each kind of thing that casts
+one (its skinning, its bones, its own shape and cut-out nodes), so each kind's shadow shader is made on the
+view's first frame and while a round gets ready under the loading screen, by drawing everything that casts a
+shadow once into a tiny stand-in of each sun and spot light's map, hidden things and a person's other levels
+of detail too (`v.shadowAhead`); what comes into the scene later is done the same way a few kinds a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
 there only gets textures and the canvas's own shaders ready and the first frame builds what it draws.
 The shader-hold script fails on WebGPU if a pipeline or a shader's text is made in the middle of a frame
 for a thing switched on, turned to or added, or for anything at all after a view's first frame.
@@ -588,6 +604,27 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   - Checked by `node scripts/detail-test.cjs --page traced --webgpu` and the kit test (the copy's lists
     are walked there the way the shader walks them, against three's own ray caster). On a phone: the
     **Hall** in the engine test scenes. Nobody has seen it on a phone yet.
+- **Finer sun shadows (WebGPU).** The sun's shadow map is tens of metres across, so a cup on a table,
+  fingers on a rail or a nose throws next to nothing in it, and past its box nothing throws a shadow at all.
+  On WebGPU a half-size *sun mask* is worked out once a frame after the scene is drawn, and the sun's light
+  reads it the next frame (moved on by the camera's move, and checked by distance so nothing smears):
+  - `v.contactShadows = true | false | { length: .3, thickness: .25, out: 40 }`: short rays towards the sun
+    through the depth picture, for small things close by (cups, hands, a face's nose and jaw). On by
+    itself at ultra; `length` is how far the rays go (metres), `out` how far off they fade.
+  - `v.farShadows = { size: 768, px: 512, tiles: 4, reach }` (or `true`): shadows past the sun map's box,
+    from a map of heights round the camera (the top of every shadow caster seen from above, drawn one
+    tile a frame as the camera moves on): far hills and towers shade the land. Off by itself: turn it on
+    for wide views (a hill top, a plane, a long road). `size` is the metres it covers, `reach` how far a
+    ray goes (half of `size` by itself).
+  - Crowds (`gs.props.Crowd`) do it by themselves: members with nobody of their own level within 15 m of
+    the camera leave the sun's shadow map and throw the shadow of a rounded post (an animal's lies along
+    it) instead, which costs no triangles: in the engine test scene below, the sun map drew up to six times fewer
+    triangles with the far people as capsules.
+  - `__hd.capsules = false` keeps crowds in the sun's map; `__hd.sunMask = false` turns the whole mask
+    off; `__hd.info.sunMask` says what the last frame's held (`{ contact, far, caps, full }`). Its
+    passes are timed as `sun mask`, and a slow game draws it smaller like the effects above.
+  - WebGL draws none of it: the sun's map alone, crowds in it as always. Checked by `node scripts/finer.cjs`
+    (see docs/testing.md); on a phone, the **Shade** engine test scene.
 - `const cs = v.contact({ y: 0, size: 8 })` lays soft contact shadows on a floor (medium tier and up),
   so things look like they're standing on it even where real shadows are off. In a big level, keep it
   under the action with `cs.at(x, z)`.
@@ -916,6 +953,22 @@ Burst fields: `at`, `radius` (start anywhere in a ball), `vel`, `spread` (a rand
 `size` and `color`/`to` (start and end), `alpha`, `fadeIn`, `ease`. Up to 16 bursts a frame. They are for
 looks only (positions can't be read back); use `Particles` for the few the game must know about.
 
+Pulls and flows (as Babylon.js 9's attractors and flow maps; on the graphics chip with WebGPU, the same
+rules on the CPU with WebGL):
+
+```js
+const portal = sparks.pull([0, 1.5, 0], { strength: 60, swirl: 60, take: .3 });   // drawn in, round, and gone
+const blast = sparks.pull(at, { strength: -80, radius: 6 });                       // pushed away, only within 6 m
+dust.flow((x, y, z) => wind.at(x, z), { box: { min: [-20, 0, -20], max: [20, 8, 20] }, strength: 2 });
+portal.at = [x, y, z]; blast.remove();
+```
+
+`strength` and `swirl` are m/s² at 1 m (steady closer in, falling as 1/d² beyond, and to nothing at
+`radius` if given); a swirl spins them up, so give the particles `drag` for them to spiral in rather than
+fly off. Up to 8 pulls. A flow is sampled from your function into 16 x 16 x 16 cells over its box once
+(`flow.update()` samples it again, say from `gs.gas`'s `flowAt` or a river's current), and particles
+inside take up its speed at `strength` a second; one flow at a time.
+
 ## Glowing rings
 
 `gs.hd.pulse(material, { at, radius, strength, color, width, fill })` adds a glowing ring that
@@ -991,6 +1044,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   picture is back, and in views where the last frame's depth can't be used (`{ max: 300 }` of the
   nearest are used). Most games need none. `gs.city` lists its buildings by itself (`occlude: false`
   to stop it). `v.occlusion.stats` says what the last frame tested and skipped.
+- People posed once a frame (WebGPU): three.js poses a mesh on bones in its vertex shader, so every pass that
+  draws a person (the picture, each shadow map, the motion picture's pose of the frame before) poses every point
+  again. On WebGPU one compute pass a frame poses every person in view or in a shadow's view into one list, and
+  every pass reads its points from there; the frame before's points are kept beside them, so motion costs no
+  second posing. People, creatures, their eyes, eye shadow and hair strips go in by themselves; meshes on blend
+  shapes (fur's shells, faces of blend shapes) and meshes with tangents are posed as before. Games don't change
+  anything. `__hd.gpuSkin = false` turns it off; `__hd.info.skin` says how many meshes were posed and how many
+  points. WebGL poses in the vertex shader as before.
 - GPU culling (WebGPU): a `gs.props` kind with 2,000 copies or more is culled on the graphics chip
   instead of the CPU. A compute pass tests every copy against the view and the lights' shadow views,
   picks its detail level by distance, and packs the ones that pass into a list drawn with one indirect
@@ -1354,7 +1415,12 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   'african' | 'east-asian' | 'european' | 'middle-eastern'`, or a mix such as `{ european: .6, 'east-asian': .4 }`,
   each fitted the same way to the heads of Google's GNM Head model (learned from many scans); with none given it
   comes from the seed and the skin, and `heritage: false` keeps the one scan's fit (a woman's face then takes half
-  of it). It has life-size eyes, a jaw as broad as a real one, the
+  of it). And the face itself is one of GNM Head's (its whole shape, its eyes, nose and lips, learned from real
+  scans, from the seed, sex and heritage), joined to our neck, hair and hats and with our eyes, lids, lips that
+  part, expressions and paint; with age it sags as a real face does (jowls, thinner lips, the cheeks lower).
+  `gnm: false` keeps the older sculpted face, shaped by the fits above. Its numbers (2.9 MB) load the first time
+  one is made (the app shows "Loading…" as for any sculpting); a tool that sculpts with `now: true` awaits
+  `human.gnmReady()` first. It has life-size eyes, a jaw as broad as a real one, the
   folds of a real face pressed into its skin (from the nose to the mouth, under the eyes, under the lower lip,
   round the nose; with age the lines down from the mouth, hollow temples and cheeks, the cords of an old neck),
   its two sides not quite alike, and quieter brows, lashes and lips. Its skin works out the light under it
