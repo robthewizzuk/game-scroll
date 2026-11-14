@@ -346,8 +346,8 @@ export function sceneLines(s, hz) {
 /** The scenes' result as the text to copy. */
 export function scenesText(t) {
   const m0 = t.scenes.flatMap(s => s.modes).find(m => m.frames), hz = t.phone.hz;
-  const lines = head(t, t.framegen ? 'engine test scenes, frame generation' : t.traced ? 'engine test scenes, ray tracing' : 'engine test scenes', t.stopped ? ` · STOPPED after ${t.scenes.length} of ${t.asked} scenes` : '');
-  lines.push(m0 ? `PICTURE: ${m0.backend === 'webgpu' ? 'WebGPU' : 'WebGL' + (m0.why ? ` (${m0.why})` : '')} · quality ${TIER[t.tier] || t.tier}, pinned · 3D drawn at ${m0.rw} x ${m0.rh}, shown at ${m0.ow} x ${m0.oh}${m0.upscaled ? ` (${m0.upscaled === 'sgsr2' ? 'SGSR 2' : 'SGSR 1'})` : ''} · ${t.framegen ? `frame generation as each run says, for a ${t.fgTop} Hz screen` : 'frame generation off'} · ${t.seconds} s a run${t.size !== 1 ? ` · scenes at ${t.size} of full size` : ''}`
+  const lines = head(t, t.framegen ? 'engine test scenes, GSFG frame generation' : t.traced ? 'engine test scenes, ray tracing' : 'engine test scenes', t.stopped ? ` · STOPPED after ${t.scenes.length} of ${t.asked} scenes` : '');
+  lines.push(m0 ? `PICTURE: ${m0.backend === 'webgpu' ? 'WebGPU' : 'WebGL' + (m0.why ? ` (${m0.why})` : '')} · quality ${TIER[t.tier] || t.tier}, pinned · 3D drawn at ${m0.rw} x ${m0.rh}, shown at ${m0.ow} x ${m0.oh}${m0.upscaled ? ` (${m0.upscaled === 'sgsr2' ? 'GSSR' : 'SGSR 1'})` : ''} · ${t.framegen ? `GSFG as each run says, for a ${t.fgTop} Hz screen` : 'GSFG off'} · ${t.seconds} s a run${t.size !== 1 ? ` · scenes at ${t.size} of full size` : ''}`
     : 'PICTURE: no frames were timed');
   if (t.note) lines.push(t.note);
   for (const s of t.scenes) lines.push(...sceneLines(s, hz));

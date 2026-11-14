@@ -473,6 +473,8 @@ export const HD = {
   grain: null,
   /** Tests and the frame lab's A/B: false draws SGSR 2 as Qualcomm's shader has it, without our changes (hd3d-gpu.js sgsr2Gpu, sgsr2.js), and on WebGPU with the tier's MSAA under it. */
   sgsrTune: true,
+  /** Tests: true has WebGPU's scene pass write each pixel's motion for SGSR 2 off the card too (screenshots, scripts/upscale-compare.cjs), as it does for the game on the card. */
+  motion: false,
   /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
   half: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
@@ -2978,7 +2980,7 @@ export class HDView {
       fg = { mode: how, pace: HD.fgPace || frameGenPaceOf(speed.game, steps), quick: HD.fgQuick !== false, parts: !!HD.fgParts, drop: HD.fgDrop !== false, cost: speed.cost,
         reset: cut || m.jumped || now - (this._fgT || 0) > HD.fgGap, jd: [0, 0], jit: [0, 0], steps, hz: screenHz() }; this._fgT = now;
     } else this._fgCam = null;
-    if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); }   // WebGPU pictures count rows from the top
+    if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); o.s2.fsr = HD.sgsrFsr || null; }   // WebGPU pictures count rows from the top
     // SGSR 2 moves the camera by a fraction of a pixel each frame (its jitter) and three's motion picture
     // includes the change: SGSR 2 and frame generation take it back out (in NDC: x right, y up, so rows down are minus)
     if (s2) {
@@ -2987,7 +2989,7 @@ export class HDView {
     } else this._fgJ = null;
     // the scene's pass writes each pixel's motion and the see-through mask while frame generation could
     // come on for this game (so it can start without rebuilding the chain) or SGSR 2 can use them
-    o.live = live; o.mrt = live && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
+    o.live = live; o.mrt = (live || HD.motion === true) && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
     // finer sun shadows: what goes into this frame's sun mask (drawn after the scene), and whether this frame reads the last one
     if (pm >= 0) enter('3D: sun mask'); o.sunMask = this.sunMaskFrame(G, r, T, baking || off, cut); if (pm >= 0) leave(pm);
     // (effects spread over frames: a cut starts them from this frame alone)
@@ -3296,7 +3298,7 @@ export class HDView {
     lastView = this; if (TEST) window.__hdView = this;
     r.info.autoReset = false; r.info.reset();
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
-    if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
+    if (s2) { s2.tuned = HD.sgsrTune !== false; s2.fsr = HD.sgsrFsr || null; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
     fadeOn(this, null, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)

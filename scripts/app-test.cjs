@@ -641,7 +641,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (18)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (18)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'GSFG frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -673,7 +673,7 @@ async function tour(b) {
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   await p.selectOption('.tour-set', 'framegen');
   const sheet3 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display), name: document.querySelector('.tour-set option[value="framegen"]')?.textContent }));
-  check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
+  check(sheet3.name === 'GSFG frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
     'the sheet also offers frame generation, timed in four of the engine test scenes', JSON.stringify(sheet3));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
@@ -788,7 +788,7 @@ async function scenes(b) {
     'while they run the feed is empty, the scenes draw on a stage of their own with the 3D canvas under it, quality is pinned and the screen is kept on', JSON.stringify({ seen: sc.seen, steps: sc.steps }));
   check(!sc.after.stage && !sc.after.touring && sc.after.force == null && sc.after.active === 'bunker-breakout' && !sc.after.awake && !sc.after.msg,
     'afterwards the stage is gone, quality is the phone\'s own again and the feed is back on the game it was on', JSON.stringify(sc.after));
-  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · frame generation off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
+  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · GSFG off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
     && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms \([a-z ]+ [\d.]+(, [a-z ]+ [\d.]+)*\) · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
@@ -836,7 +836,7 @@ async function scenes(b) {
     'ray tracing alone flies only the hall, with the engine test scenes\' report', JSON.stringify(rt));
   // frame generation's runs need WebGPU: drawn with WebGL, the report says so and nothing is flown
   const noFg = await q.evaluate(async () => { const r = await __gs.tour({ scenes: true, framegen: true, seconds: 1, size: .1 }); return { n: r.scenes.length, note: r.note || '', text: r.text, active: __gs.active?.def.id }; });
-  check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
+  check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, GSFG frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
     'frame generation\'s runs, where the 3D is drawn with WebGL, say there was nothing to time', JSON.stringify(noFg));
   await q.done();
 }
@@ -864,7 +864,7 @@ async function framegenScenes() {
   check(M('before').pace === 'after' && ['first', 'after'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
     'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times', JSON.stringify(fg.modes));
   const told = !/chip time not told/.test(fg.text);
-  check(/^Game Scroll engine test scenes, frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · frame generation as each run says, for a \d+ Hz screen · /.test(fg.text)
+  check(/^Game Scroll engine test scenes, GSFG frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · GSFG as each run says, for a \d+ Hz screen · /.test(fg.text)
     && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · .*(each frame on a refresh of its own|the made frame on the real one's refresh) · .*code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
     && /\n  \d+ \+ \d+ blended before +\d+ pictures a second \(\d+ drawn\) · .*the made frame on the real one's refresh · /.test(fg.text)
     && (!told || (/\n  \d+ drawn, \d+ blended +.*chip [\d.]+ ms a drawn frame \(.*made frames [\d.]+.*\) · a made frame [\d.]+ ms \(.*picture [\d.]+.*\)/.test(fg.text)

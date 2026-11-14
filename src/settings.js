@@ -66,9 +66,9 @@ export function openSettings({ stream, cached, clear, arTest }) {
         <div class="qa-actions set-fps">${['auto', 120, 60, 30].map(v => `<button data-fps="${v}"${fpsPick() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}${v !== 'auto' && v > screenHz() ? ' disabled' : ''}>${v === 'auto' ? 'Auto' : v === 30 ? '30 · battery saver' : v}</button>`).join('')}</div>
       </section>
       ${webgpuHere ? `<section class="set-row">
-        <h3>Frame generation</h3>
+        <h3>GSFG frame generation</h3>
         <p class="qa-help">When a 3D game draws fewer frames than a fast screen shows (90, 120 or 144 Hz), make the ones in between so it moves at the screen's rate. Auto does it for games that can't reach the screen's rate, and for any 3D game while the phone is warm, in battery saver or low on battery, or through a busy moment that would stutter. Always draws half the frames (or fewer) of every 3D game and makes the rest (cooler, more detail). Needs Frame rate on Auto.</p>
-        <div class="qa-actions set-fps set-fg" role="group" aria-label="Frame generation">${[['auto', 'Auto'], ['always', 'Always'], ['off', 'Off']].map(([v, n]) => `<button data-fg="${v}"${frameGenPick() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}>${n}</button>`).join('')}</div>
+        <div class="qa-actions set-fps set-fg" role="group" aria-label="GSFG frame generation">${[['auto', 'Auto'], ['always', 'Always'], ['off', 'Off']].map(([v, n]) => `<button data-fg="${v}"${frameGenPick() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}>${n}</button>`).join('')}</div>
         <p class="qa-help">Blend makes the frames between the last two (the fewest flaws; each real frame shows a moment later). Ahead guesses past the newest (no delay; edges a little softer when things move fast). Game's choice is blend unless a game asks for ahead, or the phone can't keep up with blend in that game.</p>
         <div class="qa-actions set-fps set-fg-how" role="group" aria-label="How frames are made">${[['game', 'Game’s choice'], ['blend', 'Blend'], ['ahead', 'Ahead']].map(([v, n]) => `<button data-how="${v}"${frameGenHow() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}>${n}</button>`).join('')}</div>
         <p class="qa-help set-fg-now"><b>Now:</b> ${frameGenStatus(speed.game)}</p>

@@ -17,14 +17,17 @@ const T = gs.THREE, HD = window.__hd, W = 480, H = 640, Q = new URLSearchParams(
 // drawn here, since grain is otherwise most of the error and hides what the upscalers do), &modes=plain,sgsr2
 // (which upscalers), &warm=80 (that many frames with nothing moving first, so the history has settled)
 HD.force = +(Q.get('tier') || 0); HD.grain = Q.has('grain') ? +Q.get('grain') : 0;
+// on WebGPU the scene's pass writes each pixel's motion for SGSR 2, as it does for a game on the card (&nomotion: not)
+HD.motion = GPU && !Q.has('nomotion');
 const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .002, amb: .3 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
 const sun = gs.hd.sun('#fff2d8', 3, 18, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
 const ground = new T.Mesh(new T.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), gs.hd.pbr('#6a7a58', { rough: .9 })); v.scene.add(ground);
 const cols = ['#c44', '#4a8', '#48c', '#cc4', '#a6c'];
 for (let i = 0; i < 5; i++) { const m = new T.Mesh(gs.hd.rbox(1, 1.6, 1), gs.hd.pbr(cols[i], { rough: .3 + i * .1, metal: i % 2 })); m.position.set(-3 + i * 1.5, .8, -i * .7); m.rotation.y = i * .4; v.scene.add(m); }
-// thin things: a fence of poles and wires, the hard case for any upscaler
-for (let i = 0; i < 24; i++) { const p = new T.Mesh(new T.BoxGeometry(.04, 1.2, .04), gs.hd.pbr('#eee')); p.position.set(-4 + i * .35, .6, 2); v.scene.add(p); }
-for (let j = 0; j < 3; j++) { const w = new T.Mesh(new T.BoxGeometry(8.4, .02, .02), gs.hd.pbr('#222')); w.position.set(0, .3 + j * .4, 2); v.scene.add(w); }
+// thin things: a fence of poles and wires, the hard case for any upscaler (scored on their own too: thin)
+const fence = new T.Group(); v.scene.add(fence);
+for (let i = 0; i < 24; i++) { const p = new T.Mesh(new T.BoxGeometry(.04, 1.2, .04), gs.hd.pbr('#eee')); p.position.set(-4 + i * .35, .6, 2); fence.add(p); }
+for (let j = 0; j < 3; j++) { const w = new T.Mesh(new T.BoxGeometry(8.4, .02, .02), gs.hd.pbr('#222')); w.position.set(0, .3 + j * .4, 2); fence.add(w); }
 const mover = new T.Mesh(gs.hd.rbox(.8, .8, .8), gs.hd.pbr('#f80', { rough: .4 })); mover.position.set(0, .4, 3.5); v.scene.add(mover);
 // the textured runs: the ground, three walls and a strip of floor in code-made tiling textures (cobbles,
 // brick, tiles, planks, stone), fine enough that the size the 3D is drawn at decides which mip level is
@@ -42,6 +45,10 @@ const textured = on => { tex.visible = on; ground.visible = !on; };
 v.grade = { saturation: 1.1, contrast: 1.05 };
 const pose = f => { const a = f * .004; v.cam.position.set(Math.sin(a) * 9, 4, Math.cos(a) * 9); v.cam.lookAt(0, 1, 0); v.cam.updateMatrixWorld(); };
 const place = f => { mover.position.x = -3 + f * .05; };
+// a lamp low over the ground that moves (lamp-moves): the light on the ground changes with nothing there moving,
+// as under a torch or headlights (no motion to follow: SGSR 2 must see the change itself). Dark in the other runs.
+const lamp = new T.PointLight('#ffd9a0', 0, 6, 2); lamp.position.set(-3, .5, 3); v.scene.add(lamp);
+const shine = (f, on) => { lamp.intensity = on ? 9 : 0; lamp.position.x = -3 + f * .08; };
 // modes: full (the reference: drawn at twice the size and scaled down, no jaggies), plain, sgsr1 and sgsr2
 // (drawn at 1/K size), native (full size, FXAA or the tier's MSAA), aa (full size, SGSR 2 as anti-aliasing);
 // sgsr2-plain and aa-plain: SGSR 2 as it was; sgsr2-soft: SGSR 2 with the textures read as the small picture
@@ -49,44 +56,69 @@ const place = f => { mover.position.x = -3 + f * .05; };
 const MIP = Q.has('mip') ? +Q.get('mip') : null;
 const ONLY = Q.get('scenes')?.split(',');   // &scenes=textured: only the runs whose names start so
 const set = m => {
-  const mode = m.replace(/-plain|-soft/, ''); HD.sgsrTune = !m.endsWith('-plain'); HD.mipBias = m.endsWith('-soft') ? false : MIP;
+  const mode = m.replace(/-plain|-soft|-x\d+/g, ''); HD.sgsrTune = !m.endsWith('-plain'); HD.mipBias = m.endsWith('-soft') ? false : MIP;
+  // (-x then digits, tests of FSR 3.1's tricks: HD.sgsrFsr, hd3d-gpu.js sgsr2Gpu U.fsr and U.fsr2)
+  const x = m.match(/-x(\d+)/); HD.sgsrFsr = x ? [...x[1]].map((d, i) => i === 4 && +d ? 2 ** (d - 1) : +d) : null;   // (the shading change digit d: 2^(d-1) times as strong)
   HD.upscale = !['full', 'plain', 'native'].includes(mode); HD.upscaler = mode === 'sgsr1' ? 'sgsr1' : 'sgsr2';
   HD.scale = mode === 'full' ? 2 : mode === 'native' || mode === 'aa' ? 1 : 1 / K;
 };
 const draw = () => { v.t = 0; v.render(x, W, H); return x.getImageData(0, 0, W, H).data; };
 const err = (a, b) => { let s = 0; for (let i = 0; i < a.length; i += 4) s += (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3; return s / (a.length / 4); };
+// the same over the pixels a mask holds (a byte a pixel), and the mask of where two pictures differ
+const errM = (a, b, m) => { let s = 0, n = 0; for (let i = 0, j = 0; i < a.length; i += 4, j++) if (m[j]) { s += (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3; n++; } return n ? s / n : 0; };
+const differ = (a, b, m = new Uint8Array(a.length / 4)) => { for (let i = 0, j = 0; i < a.length; i += 4, j++) if ((Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) > 18) m[j] = 1; return m; };
 // error: how far the last 8 frames are from the reference's same frames. flicker: how much the picture
 // changes from frame to frame over them; the reference's own (ref) is what the motion itself changes, so
-// more than that is crawl or shimmer and less is blur
+// more than that is crawl or shimmer and less is blur. The same two over the fence alone (thin: the pixels
+// where the reference with the fence differs from it without) and, where the box moves, over where it is
+// and where it was 12 frames before (moving: a box that leaves a trail, ghosting, scores worse there)
 const out = { scale: K, scenes: {} }, shots = {}, LAST = 8, tick = () => new Promise(r => requestAnimationFrame(r));
 const MODES = Q.get('modes')?.split(','), AA = ['native', 'aa', 'aa-plain'].filter(m => !MODES || MODES.includes(m));
-const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/^(native|aa)/.test(m)) || ['plain', 'sgsr1', 'sgsr2', 'sgsr2-plain']) => {
+const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/^(native|aa)/.test(m)) || ['plain', 'sgsr1', 'sgsr2', 'sgsr2-plain'], moveLamp = false) => {
   if (ONLY && !ONLY.some(s => name.startsWith(s))) return;
-  const at = f => { pose(moveCam ? f : 0); place(moveBox ? f : 0); };
+  const at = f => { pose(moveCam ? f : 0); place(moveBox ? f : 0); shine(moveLamp ? f : 0, moveLamp); };
   set('full'); at(frames - LAST); draw(); await tick(); await tick();   // (a resized WebGPU canvas shows the old picture until the next frame)
-  const refs = [];
-  for (let f = frames - LAST; f <= frames; f++) { at(f); draw(); if (GPU) { await tick(); draw(); } refs.push(draw()); await tick(); }
-  let rf = 0; for (let i = 1; i < refs.length; i++) rf += err(refs[i], refs[i - 1]) / LAST;
-  const res = { ref: { error: 0, flicker: +rf.toFixed(2), ms: 0, used: 'reference', backend: HD.info.backend } };
+  for (let i = 0; i < 120 && v.shadersLeft > 0; i++) { draw(); await tick(); }   // (and its shaders built: see below)
+  const refs = [], thin = [], moving = [], B = moveBox || moveLamp ? 12 : 0, drawn = async () => { draw(); if (GPU) { await tick(); draw(); } return draw(); };
+  for (let f = frames - LAST - B; f <= frames; f++) {
+    at(f); const d = await drawn(); refs.push(d);
+    if (f >= frames - LAST) { fence.visible = false; thin.push(differ(d, await drawn())); fence.visible = true; }
+    if (B && f >= frames - LAST) moving.push(differ(d, refs[refs.length - 1 - B]));
+    await tick();
+  }
+  refs.splice(0, B);
+  let rf = 0, rt = 0; for (let i = 1; i < refs.length; i++) { rf += err(refs[i], refs[i - 1]) / LAST; rt += errM(refs[i], refs[i - 1], thin[i]) / LAST; }
+  const res = { ref: { error: 0, flicker: +rf.toFixed(2), thin: 0, thinFlicker: +rt.toFixed(2), ms: 0, used: 'reference', backend: HD.info.backend } };
   for (const mode of modes) {
-    set(mode); v.cut(); let prev = null, flick = 0, e = 0, ms = 0;   // (a cut: every mode starts from a clean history, whatever ran before it)
-    pose(0); place(0); for (let i = +(Q.get('warm') || 0); i > 0; i--) { draw(); await tick(); }
+    // (first the mode's shaders: until they are built new things wait hidden (v.holdNew), for more frames on a
+    // slower machine, and a run would score a history that had fewer frames of them)
+    set(mode); pose(0); place(0); shine(0, moveLamp); let waited = 0; do { draw(); await tick(); } while (v.shadersLeft > 0 && ++waited < 120);
+    v.cut(); let prev = null, flick = 0, e = 0, ms = 0, te = 0, tf = 0, me = 0;   // (a cut: every mode starts from a clean history, whatever ran before it)
+    pose(0); place(0); shine(0, moveLamp); for (let i = +(Q.get('warm') || 0); i > 0; i--) { draw(); await tick(); }
     for (let f = 0; f <= frames; f++) {
       at(f);
       const t0 = performance.now(); let d = draw(); ms += performance.now() - t0;
-      if (f > frames - LAST) { flick += err(d, prev) / LAST; e += err(d, refs[f - frames + LAST]) / LAST; }
+      if (f > frames - LAST) {
+        const k = f - frames + LAST; flick += err(d, prev) / LAST; e += err(d, refs[k]) / LAST;
+        te += errM(d, refs[k], thin[k]) / LAST; tf += errM(d, prev, thin[k]) / LAST; if (B) me += errM(d, refs[k], moving[k]) / LAST;
+      }
       prev = d;
-      if (f === frames) { res[mode] = { error: +e.toFixed(2), flicker: +flick.toFixed(2), ms: +(ms / (frames + 1)).toFixed(1), used: HD.info.upscaled, backend: HD.info.backend }; if (Q.has('shots')) shots[name + '.' + mode] = c.toDataURL(); }
+      if (f === frames) {
+        res[mode] = { error: +e.toFixed(2), flicker: +flick.toFixed(2), thin: +te.toFixed(2), thinFlicker: +tf.toFixed(2), ...(B ? { moving: +me.toFixed(2) } : {}), waited, ms: +(ms / (frames + 1)).toFixed(1), used: HD.info.upscaled, backend: HD.info.backend };
+        if (Q.has('shots')) shots[name + '.' + mode] = c.toDataURL();
+      }
       await tick();
     }
   }
   if (Q.has('shots')) { set('full'); at(frames); draw(); await tick(); draw(); shots[name + '.full'] = c.toDataURL(); }
+  shine(0, false);
   out.scenes[name] = res;
 };
 try {
   await run('still', 24, false, false);
   await run('camera-moves', 40, true, false);
   await run('box-moves', 40, false, true);
+  await run('lamp-moves', 40, false, false, undefined, true);
   await run('anti-aliasing', 24, true, false, AA);
   await run('anti-aliasing-still', 24, false, false, AA);
   await run('anti-aliasing-box', 40, false, true, AA);
