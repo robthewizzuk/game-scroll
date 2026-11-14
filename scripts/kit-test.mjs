@@ -264,6 +264,49 @@ console.log('physics ok');
   S.add(new THREE.Group()); eachShown(S, () => {}); assert.equal(listStats.built, b0 + 1, 'and made again once after a change');
   console.log(`scene list ok (${thingCount(S)} things after 400 changes; three's walk for each render made over it draws the same)`);
 }
+// still scenery in render bundles (still.js): what keeps still joins its area's bundle, what changes leaves it at once
+// (and says why), comes back later, and the walk hands three each area the camera sees in place of its things
+{
+  const THREE = await import('three');
+  const { stillFrame, stillOff, stillStats, STILL, pushCells } = await import('../src/kit/still.js');
+  const { thingsOf } = await import('../src/kit/scene-list.js');
+  const S = new THREE.Scene(), geo = new THREE.BoxGeometry(), mat = new THREE.MeshStandardMaterial(), boxes = [];
+  for (let i = 0; i < 40; i++) { const m = new THREE.Mesh(geo, mat); m.position.set((i % 8) * 6 - 20, 0, Math.floor(i / 8) * 6 - 12); S.add(m); boxes.push(m); }
+  const odd = [new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ transparent: true })), new THREE.Mesh(geo, mat), new THREE.InstancedMesh(geo, mat, 4), new THREE.Mesh(geo, mat)];
+  odd[1].renderOrder = 2; odd[3].userData.noBundle = true; for (const o of odd) S.add(o);
+  let now = 0; const tick = (n = 1) => { for (let i = 0; i < n; i++) { now += 300; S.updateMatrixWorld(); stillFrame(S, thingsOf(S), now); } };
+  tick(6);
+  assert.ok(stillStats.things === 40 && boxes.every(b => b.gsStill) && odd.every(o => !o.gsStill), `still boxes join, the see-through, ordered, instanced and noBundle ones don't: ${stillStats.things} in ${stillStats.cells} areas`);
+  const St = STILL.get(S), cellOf = b => b.gsStill.cell, why = k => stillStats.why[k] || 0;
+  assert.ok(St.list.every(c => c.things.length <= 160) && new Set(boxes.map(cellOf)).size === stillStats.cells, 'each thing in one area');
+  const w = { ...stillStats.why }, c3 = cellOf(boxes[3]), v3 = c3.v;
+  boxes[3].position.x += .01; boxes[4].visible = false; boxes[5].material = new THREE.MeshStandardMaterial(); boxes[6].removeFromParent(); tick();
+  assert.ok(!boxes[3].gsStill && c3.v > v3 && why('moved') === (w.moved || 0) + 1 && why('hidden') === (w.hidden || 0) + 1 && why('gone') === (w.gone || 0) + 1, 'a moved, a hidden and a removed box leave their areas, which are recorded again');
+  assert.ok(!boxes[5].gsStill && why('material') === (w.material || 0) + 1 && boxes.filter(b => b.gsStill).length === 36, 'a new material takes its thing out, and only the changed ones left');
+  mat.needsUpdate = true; tick();
+  assert.ok(boxes.filter(b => b.material === mat).every(b => !b.gsStill), 'a shared material changed takes all its things out');
+  tick(30); const back = boxes.filter(b => b.gsStill).length;
+  assert.ok(back >= 30 && !boxes[6].gsStill, `what changed once comes back after a while (${back} of 39 in the scene)`);
+  // the walk: an area the camera sees is handed to three as a bundle, one it doesn't is not
+  const cam = new THREE.PerspectiveCamera(40, 1, .1, 200); cam.position.set(0, 3, 40); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+  const pipe = { _frustum: new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)) }, got = [];
+  pushCells(pipe, St, S, cam, { pushBundle: e => got.push(e) }, null);
+  assert.ok(got.length > 0 && got.every(e => e.bundleGroup.isBundleGroup && e.renderList.opaque.length === e.bundleGroup.gsCell.things.length), `areas in view handed over whole (${got.length})`);
+  const far = e => e.bundleGroup.gsCell.sphere.center.distanceTo(cam.position);
+  assert.ok(got.every((e, i) => !i || far(got[i - 1]) <= far(e) + 1e-6), 'nearest areas first');
+  // an area all of whose things occlusion hid this frame (their first layer off) is left out; one partly hidden is not
+  const cA = got[0].bundleGroup.gsCell, cB = got[got.length - 1].bundleGroup.gsCell, n0 = got.length;
+  for (const t of cA.things) t.layers.mask = 1 << 30; cB.things[0].layers.mask = 1 << 30; got.length = 0;
+  pushCells(pipe, St, S, cam, { pushBundle: e => got.push(e) }, null);
+  assert.ok(got.length === n0 - 1 && !got.some(e => e.bundleGroup.gsCell === cA) && (cA === cB || got.some(e => e.bundleGroup.gsCell === cB)), 'an area hidden whole by occlusion is left out, one hidden in part is drawn');
+  for (const t of [...cA.things, ...cB.things]) t.layers.mask = 1;
+  cam.lookAt(0, 0, 100); cam.updateMatrixWorld(); pipe._frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)); got.length = 0;
+  pushCells(pipe, St, S, cam, { pushBundle: e => got.push(e) }, null);
+  assert.ok(got.length === 0, 'areas behind the camera are not');
+  stillOff(S);
+  assert.ok(!STILL.get(S) && boxes.every(b => !b.gsStill), 'stillOff puts every thing back');
+  console.log('still scenery in bundles ok (joins, leaves with a reason, comes back, areas culled whole)');
+}
 // camera rigs and living characters (three.js maths only)
 {
   const THREE = await import('three');
