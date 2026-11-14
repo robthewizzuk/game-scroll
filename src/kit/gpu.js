@@ -95,6 +95,7 @@ export function prepareGPU() {
     try {
       if (!await hasWebGPU()) { console.warn('WebGPU: no adapter'); return null; }
       const [W, fx] = await Promise.all([import('three/webgpu'), import('./hd3d-gpu.js')]);
+      fullOutputs(W);
       const canvas = document.createElement('canvas');
       // trackTimestamp: three times each pass on the GPU where the phone allows it (hd3d.js reads it as HD.info.gpuMs)
       // HDR screens: a half-float canvas in extended range, so highlights can go brighter than paper white
@@ -151,6 +152,19 @@ let hdrPick = null;
 /** Tests: true or false to pick HDR output before WebGPU starts; null (default): the screen decides. */
 export function setHdr(v) { hdrPick = v; }
 function hdrScreen() { try { return hdrPick ?? (typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches); } catch (_) { return false; } }
+// A picture with fewer than four channels (the scene pass's motion is two: hd3d-gpu.js slimPictures) is written from a
+// four-channel output. three gave the output the picture's own channels, and a see-through thing blends its motion by
+// its alpha (it leaves the motion behind it), which a two-channel output has none of: WebGPU refused the pipeline
+// ("reading alpha but it is missing from fragment output") and so the whole frame it was drawn in: any see-through
+// thing in a round with SGSR 2, frame generation or motion blur (the Mac app's check, 2026-11-14; framegen-games.cjs
+// bunker-breakout showed it here too). The channels the picture has no room for are dropped as it is written.
+function fullOutputs(W) {
+  const B = W.WGSLNodeBuilder?.prototype;
+  if (!B || B.gsFullOut || typeof B.getOutputType !== 'function') return;
+  const get = B.getOutputType;
+  B.getOutputType = function (i) { const t = get.call(this, i); return t === 'float' || t === 'vec2' || t === 'vec3' ? 'vec4' : t; };
+  B.gsFullOut = true;
+}
 /** The ready WebGPU setup { r (WebGPURenderer), W (three/webgpu), fx (hd3d-gpu.js) }, or null (not supported, not ready, or WebGL forced for a test). */
 export const webgpu = () => pick === 'webgpu' ? gpu : null;
 
