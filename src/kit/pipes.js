@@ -22,6 +22,7 @@
 // a game, the KEEP games played last. A new three.js (rev) starts the notes again.
 // Kit use only: games never see this. The app says which card is on screen and when its round is played.
 import { waitsOn } from './getready.js';
+import { built } from './prof.js';
 
 const DB = 'gs-pipes', STORE = 'games', V = 1;
 export const PIPES = { MAX: 96, KEEP: 40, MISS: 3, playedMs: 20000, on: true };
@@ -93,6 +94,8 @@ function made(desc, out, kind) {
   let d; try { d = plain(desc, mods); } catch (e) { return; }
   const compute = kind.includes('Compute'), key = hash((compute ? 'c' : 'r') + JSON.stringify(d));
   const first = !everMade.has(key); everMade.add(key); stats.made++;
+  // (named for the frame lab: three's label without its number, 'renderPipeline_MeshStandardMaterial_81' -> MeshStandardMaterial)
+  if (playingCard) built(String(desc?.label || '').replace(/^(render|compute)Pipeline_/, '').replace(/_\d+$/, '') || (kind.includes('Compute') ? 'compute' : 'render'), first ? '' : 'again');
   let had = false;
   for (const H of cards.values()) if (H.keys.has(key)) { had = true; if (!H.used.has(key)) { H.used.add(key); stats.hits++; } }
   const card = playingCard, H = card && cards.get(card);
