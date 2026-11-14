@@ -15,6 +15,7 @@
 //   node scripts/detail-test.cjs --page spread --webgpu [--shots dir]        heavy effects spread over frames (HD.spread): a room with ambient occlusion, volumetric light and bounce light, every sample against spread, held still, moving, a crate sliding and after cuts
 //   node scripts/detail-test.cjs --page sky [--webgpu] [--shots dir]         the sky on WebGPU (HD.atmosphere, HD.clouds): Hillaire's air and marched clouds against the sky before, at noon, late afternoon and sunset; cloud shadows, settling, turning, cuts
 //   node scripts/detail-test.cjs --page lens [--webgpu] [--shots dir]        a camera like a real lens (v.lens): blur from the f-stop against the circle of confusion, bokeh discs and blades, near spill, autofocus, pulls, exposure in stops
+//   node scripts/detail-test.cjs --page aoback --webgpu [--shots dir]       ambient occlusion on the light that bounces only (HD.aoBack): a sunlit and a shaded corner against the occlusion on the whole picture, cuts, a moving camera, no new shaders when the chain is built anew
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
