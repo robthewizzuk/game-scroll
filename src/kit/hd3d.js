@@ -320,13 +320,20 @@ export const HD = {
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
   /**
+   * People on bones posed once a frame on the graphics chip (WebGPU, skin-gpu.js): one compute pass poses every point of
+   * every mesh on bones in view, and the picture, the shadow maps and the motion picture all read it, instead of each
+   * posing them again in its vertex shader. false: posed in each pass, as three does (tests, the engine test square).
+   * info.skin: { meshes, posed, points, bones, kinds, poolMB } for the last frame (null when off or on WebGL).
+   */
+  gpuSkin: true,
+  /**
    * The world's centre moved along with the camera (origin.js), so far-off places don't shake: how far in metres
    * the camera goes from it before it moves (0: never). originAt: { x, z } a centre given outright (tests, the frame lab).
    * info.origin: [x, z] where the last frame's centre was, or null at the world's own.
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
+  info: { skin: null, gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -2459,6 +2466,10 @@ export class HDView {
     const live = direct && !baking && !off;
     if (live && this.stillSkip(ch, now)) { speed.between = null; HD.info.still = true; HD.info.cpu = performance.now() - now; return; }
     if (!baking && !off) HD.info.still = false;
+    // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
+    // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
+    const SK = G.fx.skinPool(r);
+    if (SK) { SK.set(HD.gpuSkin !== false); SK.list(this.scene, eachShown); }
     try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ }
     this.scene.environment = this.envFor(G); this.scene.environmentIntensity = this.envI;
     let fogN = null;
@@ -2497,7 +2508,7 @@ export class HDView {
     if (HD.occludeShow) DETAIL.occ = null;
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
-    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
+    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) { shc.push(o.shadow.camera); if (o.isPointLight) o.shadow.camera.gsPoint = true; } });
     // the lamps' shadow slots (lamps.js): handed out now the lamps' matrices are this frame's, and their atlas made
     const LP = this.lampPool;
     if (LP?.gpu) {
@@ -2509,6 +2520,8 @@ export class HDView {
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
     for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null);   // (the sets gpuSwap's walk found)
+    if (pm >= 0) { leave(pm); enter('3D: skinning'); }
+    HD.info.skin = SK?.on ? (SK.run(this.cam, shc), SK.info) : null;
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
     if (pm >= 0) leave(pm);

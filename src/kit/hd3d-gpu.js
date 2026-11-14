@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -64,6 +64,7 @@ export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
 export { gpuCloth } from './cloth-gpu.js';
+export { skinPool } from './skin-gpu.js';   // (and, on import, the vertex stage that reads a mesh's points from the pool)
 import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
@@ -1416,7 +1417,20 @@ const normalOut = skip => new PerMaterial(m => drawnOver(m) ? vec4(0) : vec4(pac
  */
 function slimPictures(sp, { normals, motion }) {
   if (normals) { const t = sp.getTexture('normal'); t.type = UnsignedByteType; t.colorSpace = NoColorSpace; }
-  if (motion) sp.getTexture('velocity').format = RGFormat;
+  if (motion) { const t = sp.getTexture('velocity'); t.format = RGFormat; t.userData.gsOut4 = true; }
+}
+// A see-through thing blends into the motion picture by its own blending (frame generation and motion blur: its motion
+// written with no weight, so the motion under it stays), which reads the alpha its shader writes. three gives a
+// shader as many outputs as its target has channels, so with the motion in two channels those pipelines were invalid
+// (WebGPU: "reading alpha but it is missing from fragment output") and three left the things out of every frame drawn
+// with motion: a real-look person's wet eyes, eye shadow, lashes and soft hair strips, and any other blended thing. A picture marked
+// gsOut4 keeps four outputs (WebGPU writes the channels its target has and the blend reads the fourth).
+const outType = NodeBuilder.prototype.getOutputType;
+if (!outType.gsOut4) {
+  NodeBuilder.prototype.getOutputType = function (index = 0) {
+    return this.renderer.getRenderTarget()?.textures[index]?.userData?.gsOut4 ? 'vec4' : outType.call(this, index);
+  };
+  NodeBuilder.prototype.getOutputType.gsOut4 = true;
 }
 /** The scene's normals as the readers want them (view space, -1..1; zero where nothing solid was drawn): a node that can be sampled anywhere. */
 function sceneNormals(sp) {

@@ -9,6 +9,7 @@
 //   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
 //            and shadows in tiles (src/kit/shadow-tiles.js): the same walk once more with the sun's shadow map drawn whole, as it used to be
 //   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
+//            (on WebGPU first with each skeleton posed in every pass's vertex shader, then once a frame on the chip: src/kit/skin-gpu.js)
 //   field    ground that takes marks (src/kit/marks.js, gs.outdoors.Marks): people, a dog, a jeep and a tank going round a field of sand, grass
 //            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
 //   yard     smoke and fire that flow (src/kit/gas.js, gs.gas): a camp fire under a beam, a smoking chimney, a burning drum and an explosion every
@@ -263,8 +264,8 @@ function town({ gs, HD, size }) {
 }
 
 /* ---------- square: crowds ---------- */
-function square({ gs, size }) {
-  const T = gs.THREE, { human, creature } = gs.models, N = Math.max(24, Math.round(300 * size)), span = 26 + 44 * Math.sqrt(N / 300), { v, sun } = view(gs, 220, .002);
+function square({ gs, HD, size, gpu }) {
+  const T = gs.THREE, skinWas = HD.gpuSkin, { human, creature } = gs.models, N = Math.max(24, Math.round(300 * size)), span = 26 + 44 * Math.sqrt(N / 300), { v, sun } = view(gs, 220, .002);
   const ground = new T.Mesh(new T.PlaneGeometry(span + 160, span + 160).rotateX(-Math.PI / 2), gs.hd.pbr('#8a8478', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
   // houses round it, so the place has edges and the low sun something to throw across it
   const box = new T.BoxGeometry(1, 1, 1), walls = ['#b9a78c', '#a8846c', '#c9c2b4'].map(c => gs.hd.pbr(c, { rough: .85 })), R0 = span / 2 + 9;
@@ -298,14 +299,18 @@ function square({ gs, size }) {
   // (the crowd's run has the skeleton people out of the scene, not just switched off: a game with a crowd has none, and
   // the view walks everything in its scene each frame, hidden or not. Left in, 19,000 hidden parts cost the crowd's
   // run most of its code time on the first phone to try it)
-  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  // (on WebGPU the skeleton people are posed once a frame on the chip, for every pass; 'each' poses them in each pass's
+  // vertex shader as three does, as WebGL still does)
+  const enter = key => async draw => { HD.gpuSkin = key === 'each' ? false : skinWas; if (key === 'each') key = 'off'; const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
   const sum = { n: 0, ms: 0, sent: 0, draws: 0, t: 0 }, ahead = new T.Vector3();
   return {
     v, holds: `${num(N)} people and dogs walking, running and standing in a square`,
     modes: [
-      { key: 'off', name: 'a skeleton each', enter: enter('off') },
+      ...gpu ? [{ key: 'each', name: 'a skeleton each, posed in each pass', enter: enter('each') }] : [],
+      { key: 'off', name: gpu ? 'a skeleton each, posed once' : 'a skeleton each', enter: enter('off') },
       { key: 'on', name: 'one crowd', enter: enter('on') },
     ],
+    pairs: gpu ? [['each', 'off', 'posed once a frame on the chip against posed in each pass'], ['off', 'on']] : null,
     // a walk in a figure of eight through the middle of them, 1.5 metres a second, looking where it is going
     path(t, cam) {
       const P = (u, p) => { const a = u * 1.5 / (span * .22); return p.set(Math.sin(a) * span * .3, 1.7, Math.sin(a * 2) * span * .16); };
@@ -327,7 +332,7 @@ function square({ gs, size }) {
       const posed = `posed in ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
       return mode === 'on' ? `${posed} · ${num(sum.sent / sum.n)} of ${num(N)} sent to be drawn a frame, in ${num(sum.draws / sum.n)} draws` : posed;
     },
-    dispose() { crowd?.dispose(); folk.removeFromParent(); folk.clear(); twins = []; members = []; clear(v); },   // (the people's shapes are the kit's own: not freed here)
+    dispose() { HD.gpuSkin = skinWas; crowd?.dispose(); folk.removeFromParent(); folk.clear(); twins = []; members = []; clear(v); },   // (the people's shapes are the kit's own: not freed here)
   };
 }
 

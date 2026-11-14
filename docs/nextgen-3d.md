@@ -991,6 +991,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   picture is back, and in views where the last frame's depth can't be used (`{ max: 300 }` of the
   nearest are used). Most games need none. `gs.city` lists its buildings by itself (`occlude: false`
   to stop it). `v.occlusion.stats` says what the last frame tested and skipped.
+- People posed once a frame (WebGPU): three.js poses a mesh on bones in its vertex shader, so every pass that
+  draws a person (the picture, each shadow map, the motion picture's pose of the frame before) poses every point
+  again. On WebGPU one compute pass a frame poses every person in view or in a shadow's view into one list, and
+  every pass reads its points from there; the frame before's points are kept beside them, so motion costs no
+  second posing. People, creatures, their eyes, eye shadow and hair strips go in by themselves; meshes on blend
+  shapes (fur's shells, faces of blend shapes) and meshes with tangents are posed as before. Games don't change
+  anything. `__hd.gpuSkin = false` turns it off; `__hd.info.skin` says how many meshes were posed and how many
+  points. WebGL poses in the vertex shader as before.
 - GPU culling (WebGPU): a `gs.props` kind with 2,000 copies or more is culled on the graphics chip
   instead of the CPU. A compute pass tests every copy against the view and the lights' shadow views,
   picks its detail level by distance, and packs the ones that pass into a list drawn with one indirect
