@@ -12,6 +12,10 @@
 //                   restart the app; the Mac and Windows app turns that rule off)
 //   --when gate     lost while the round gets ready under the loading screen instead: it must start, on WebGPU
 //   --when feed     lost while the card waits in the feed: Play afterwards must start the round on WebGPU
+//   --when traced   no games: the phone test tour's ray tracing hall (src/detail-tour.js), the device lost while its reflections
+//                   are ray traced. The tracing must be put down as the cause (src/kit/trace-guard.js): the new device draws
+//                   reflections from the screen, on WebGPU, the tracing stays off though the tour asks for it, it is noted on
+//                   the phone, and the tour's report and the app's own report say what happened
 //   --shots dir     the round's picture before and after, side by side, as dir/<id>.png
 // For each game: how long the new device and the round's shaders took ("back in"), what drew after ("webgpu"), the
 // picture after against the one before (mean difference per channel, out of 255; the game moves on, so a few tens is
@@ -25,9 +29,48 @@ const path = require('path'), fs = require('fs');
   const args = process.argv.slice(2), opt = n => { const i = args.indexOf(n); return i >= 0 ? args.splice(i, 2)[1] : null; }, flag = n => { const i = args.indexOf(n); if (i >= 0) args.splice(i, 1); return i >= 0; };
   const how = opt('--how') || 'cdp', when = opt('--when') || 'round', times = Math.max(1, +(opt('--times') || 1)), shots = opt('--shots');
   const ids = args.filter(a => !a.startsWith('--')), list = ids.length ? ids : ['gravity-grip', 'frost-line', 'bumper-bowl'];
-  const server = await (await import('vite')).preview({ preview: { port: 4197 } });
+  const server = await (await import('vite')).preview({ preview: { port: +(process.env.PORT || 4197) } }), URL = `http://localhost:${+(process.env.PORT || 4197)}/`;
   const icd = path.join(path.dirname(chromium.executablePath()), 'vk_swiftshader_icd.json');
   let bad = 0;
+  if (when === 'traced') {
+    // (a small screen and a small hall: the software renderer draws the full ones at seconds a frame)
+    const b = await chromium.launch({ args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--use-angle=vulkan', '--enable-features=Vulkan'], env: { ...process.env, VK_ICD_FILENAMES: icd } });
+    const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1, viewport: { width: 200, height: 320 } }), p = await ctx.newPage(), errs = [];
+    // (the build machine's four cores make it a 'low' phone, whose quality draws no reflections: eight, as a phone has)
+    await p.addInitScript(() => { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }); Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 }); });
+    p.on('pageerror', e => errs.push(e.message));
+    p.on('console', m => { const t = m.text(); if (m.type() === 'error' && !/Error resolving queries|^Failed to load resource/.test(t)) errs.push(t); });
+    const say = (ok, what, more = '') => { if (!ok) bad++; console.log(`${ok ? 'ok  ' : 'BAD '} ${what}${ok || !more ? '' : '\n       ' + String(more).slice(0, 900)}`); };
+    try {
+      await p.goto(URL); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 });
+      // (reports the app sends off, and here drops, before they are read are kept: see below)
+      await p.evaluate(() => { const P = __gs.perf, flush = P.flush; window.__gpuReps = []; P.flush = function (...a) { for (const e of P.waiting.errors) if (e.kind === 'gpu') window.__gpuReps.push({ ...e }); return flush.apply(this, a); }; });
+      const gpu = await p.evaluate(async () => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick('webgpu'); return !!(await window.__gpu.ready()); });
+      if (!gpu) throw new Error('no WebGPU in this browser');
+      const r = await p.evaluate(async () => {
+        const kit = await __gs.tourKit(); let at = null;
+        const res = await __gs.tour({ scenes: true, traced: true, seconds: 6, size: .3, onStep(s) {
+          // (a second into the ray traced run, once a ray traced frame has been drawn)
+          if (/ray traced/.test(s.game.title) && s.what === '0 s' && !at) { at = {}; setTimeout(function go() { if (__hd.info.refl !== 'traced') return setTimeout(go, 100); at = { refl: __hd.info.refl, backend: __hd.info.backend }; window.__gpu.lose(); }, 1000); }
+        } });
+        const hall = res.scenes[0], tr = hall?.modes.find(m => m.key === 'traced') || {};
+        return { text: kit.reportText(res), at, L: window.__gpu.losses(), info: { refl: __hd.info.refl, backend: __hd.info.backend, off: __hd.info.traceOff }, tr: { lost: tr.lost, tell: tr.tell, backend: tr.backend, frames: tr.frames },
+          note: JSON.parse(localStorage.getItem('gs_trace_lost') || 'null'), rep: [...window.__gpuReps, ...__gs.perf.waiting.errors.filter(e => e.kind === 'gpu')].map(e => e.msg) };
+      });
+      if (shots) { fs.mkdirSync(shots, { recursive: true }); fs.writeFileSync(path.join(shots, 'traced-report.txt'), r.text); }
+      const line = (r.text.split('\n').find(l => /^  ray traced /.test(l)) || ''), head = r.text.split('\n').find(l => /^WEBGPU: /.test(l)) || '';
+      say(r.at?.refl === 'traced' && r.L.n === 1 && r.L.last?.backend === 'webgpu', 'the hall\'s reflections were ray traced when the device went, and a new WebGPU device was made', JSON.stringify({ at: r.at, L: r.L }));
+      say(r.info.backend === 'webgpu' && r.info.off === 'lost' && r.tr.backend === 'webgpu' && r.tr.frames > 3, 'the ray tracing is put down as the cause and switched off, and the hall is drawn on with WebGPU', JSON.stringify(r.info));
+      say(/^NOT ray traced by the end: ray tracing lost this phone's graphics chip/.test(r.tr.tell || '') && r.tr.lost === 1, 'the run ends with reflections from the screen, though the tour asks for ray tracing', JSON.stringify(r.tr));
+      say(/THE GRAPHICS CHIP WAS LOST once in this run \(test: "[^"]+"\), and a new one was made: its numbers are not a fair run/.test(line) && /\n  = ray traced against from the screen: not compared \(the graphics chip was lost in the run "ray traced"\)/.test(r.text), 'the tour\'s report says the chip was lost in that run, and does not compare it', line);
+      say(/^WEBGPU: .* · chip times (yes|no: [^·]+) · half floats (yes|no) · subgroups (yes|no) · \d+ lists in a pixel shader \(ray tracing needs 4\) · \d+ bytes a pixel · graphics chip lost once in this tour \(the last: test: "[^"]+", a new one in [\d.]+ m?s\) · ray tracing lost the graphics chip, so it is off until the app starts again, and by itself until the app is updated$/.test(head), 'and what the WebGPU device says of itself, the loss, and the tracing switched off', head);
+      say(r.note?.n === 1 && typeof r.note.build === 'string' && r.rep.some(m => /^WebGPU device lost \(test\).* · back on WebGPU · ray tracing was on$/.test(m)), 'it is noted on the phone for this build, and the app\'s own report says ray tracing was on', JSON.stringify({ note: r.note, rep: r.rep }));
+      say(!errs.length, 'no page error', errs.slice(0, 4).join(' | '));
+    } catch (e) { bad++; console.log(`FAIL the ray tracing hall: ${String(e.message).split('\n')[0]}`); for (const x of errs.slice(0, 4)) console.log('     ! ' + x.slice(0, 220)); }
+    await b.close(); server.httpServer.close();
+    console.log(`\nthe device lost while reflections were ray traced${bad ? `: ${bad} to look at` : ': the tracing was switched off and the rest carried on, on WebGPU'}`);
+    process.exit(bad ? 1 : 0);
+  }
   for (const id of list) {
     const b = await chromium.launch({ args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--use-angle=vulkan', '--enable-features=Vulkan'], env: { ...process.env, VK_ICD_FILENAMES: icd } });
     const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 }), p = await ctx.newPage(), errs = [], warns = [];
@@ -38,7 +81,7 @@ const path = require('path'), fs = require('fs');
     const cdp = await b.newBrowserCDPSession();
     const lose = () => how === 'cdp' ? cdp.send('Browser.crashGpuProcess') : p.evaluate(() => window.__gpu.lose());
     try {
-      await p.goto('http://localhost:4197/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 });
+      await p.goto(URL); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 });
       // (the app sends its waiting reports off every minute, and with nowhere to send them here, drops them: a report made
       // before the minute and read after it would be gone, on a slow machine one run in a few. What is waiting at each
       // send is kept for reps())

@@ -115,7 +115,10 @@ was reset after a hang, the system wanted the chip's memory back, or the browser
 crashed. The app pauses the round under "The graphics restarted. Getting them back…", makes a new
 device, builds the round's shaders again, and gives "Carry on" back once the round draws as before
 (`src/kit/gpu.js` `lostGPU`, `src/main.js` `mendStep`). The message gives the reason the browser
-named (`unknown` is the usual one for a crash, `test` is our own test script) and how it ended:
+named (`unknown` is the usual one for a crash, `test` is our own test script) and how it ended
+(`· ray tracing was on` after it: reflections were being ray traced when the device went, and the 3D
+kit has switched the tracing off on that phone, `src/kit/trace-guard.js`; several of those on one chip
+are a case for `traced: false` in the steering list):
 
 | Ending | What happened |
 | --- | --- |

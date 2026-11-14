@@ -182,6 +182,18 @@ let hdrPick = null;
 /** Tests: true or false to pick HDR output before WebGPU starts; null (default): the screen decides. */
 export function setHdr(v) { hdrPick = v; }
 function hdrScreen() { try { return hdrPick ?? (STEER.hdr !== false && typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches); } catch (_) { return false; } }
+/**
+ * What the WebGPU device says of itself, for the reports (the phone test tour): { vendor, arch (as the browser names
+ * them: 'arm', 'valhall'), timing (the chip times its own passes: the timestamp-query feature), f16 (half floats in
+ * shaders), subgroups, compat (compatibility mode), fragLists (lists a pixel shader may read: ray tracing needs 4),
+ * pixelBytes (bytes a pixel the scene pass may write) }, or null (no WebGPU device now).
+ */
+export function gpuFacts() {
+  const be = gpu?.r?.backend, dev = be?.device; if (!dev) return null;
+  const ai = dev.adapterInfo || {}, l = dev.limits || {}, has = n => !!dev.features?.has?.(n);
+  return { vendor: String(ai.vendor || ''), arch: String(ai.architecture || ''), timing: !!be.trackTimestamp, f16: has('shader-f16'), subgroups: has('subgroups'), compat: !has('core-features-and-limits'),
+    fragLists: Math.min(l.maxStorageBuffersInFragmentStage ?? l.maxStorageBuffersPerShaderStage ?? 0, l.maxStorageBuffersPerShaderStage ?? 0), pixelBytes: l.maxColorAttachmentBytesPerSample || 32 };
+}
 /** The ready WebGPU setup { r (WebGPURenderer), W (three/webgpu), fx (hd3d-gpu.js) }, or null (not supported, not ready, or WebGL forced for a test). */
 export const webgpu = () => pick === 'webgpu' ? gpu : null;
 

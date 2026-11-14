@@ -365,6 +365,17 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    the time the engine's code took to draw a frame; `ready in` is how long the system took to build
    what it needs.
 
+   Under `PICTURE`, on WebGPU, a `WEBGPU` line says what the device says of itself: the chip's maker and
+   family as the browser names them, whether the chip times its own passes (`chip times no: this chip
+   does not offer them` means `chip time not told` in every run is the phone's doing, not a fault), half
+   floats, subgroups, how many lists a pixel shader may read (ray tracing needs 4), and any graphics chip
+   lost during the tour, with the browser's reason and what drew afterwards. A run with frames of 70 ms
+   or more counts them and says what held each up: `12 freezes of 70 ms or more (9 with the code done in
+   8.2 ms: the chip, or the phone; 3 in the engine's code, most in shadow maps)`. "In the engine's code"
+   means its own time for that frame was half the frame or more; "in other code" is a script the browser
+   saw run that long; the rest came late with the code done early, which is the graphics chip or the
+   phone itself. A run in which the graphics chip was lost says so in capitals and is not compared.
+
    A phone's chip doesn't run at one speed: it slows down as it gets hot, and when the code holds the
    frames up it clocks down to fill the time (on Rob's Fold, 2026-11-13, the bloom and the upscale, which
    do the same work in every run, each took from one to four times as long from one run to the next, and
@@ -398,6 +409,14 @@ the full tour's 15. Read `= ray traced against from the screen` for what tracing
 `reflections` part of each run's chip time for the reflection passes themselves. On WebGL the hall is
 walked twice, without the ray traced run, and the report says ray tracing needs WebGPU. In a test
 browser: `__gs.tour({ scenes: true, traced: true, seconds, size })`.
+
+A driver that will not take the ray tracing can take the whole WebGPU device down with it (the first
+Mali report, a Pixel 10a, 2026-11-14: the device was lost four times in the ray traced run and the 3D
+ended on WebGL). The ray traced run then reads `THE GRAPHICS CHIP WAS LOST once in this run (...)` and
+`NOT ray traced by the end`, and the 3D kit has switched ray tracing off (`src/kit/trace-guard.js`):
+for the rest of the session whoever asks, and by itself until the app is updated. The tour still tries
+it once after each start of the app, so a later build can be checked on the same phone.
+`node scripts/gpu-loss.cjs --when traced` checks all of that on the build machine.
 
 ### Frame generation on a phone
 
