@@ -1291,8 +1291,10 @@ All of it draws on WebGL and on WebGPU, so none of it changes which one a view u
 In the phone apps the models run on the phone's AI chip (Qualcomm's NPU on Snapdragon, the Neural
 Engine on iPhone, else the CPU) through [ONNX Runtime](https://onnxruntime.ai), with the camera read
 natively, so the game's frame time and the GPU stay free; on the web, MediaPipe runs in the page.
-(The test APKs from GitHub fetch Qualcomm's NPU libraries, about 40 MB, on Wi-Fi a little after the
-first start on a Snapdragon 8 Gen 2 or newer; until then the models run on the CPU.)
+(Qualcomm's NPU libraries are not in the app: on a Snapdragon 8 Gen 2 or newer, the first time a game
+starts face, hand or sound tracking, on Wi-Fi, the store app asks Google Play for them (the NPU from the next
+start) and the test APKs from GitHub download them, about 40 MB (the NPU from the next game). Until then the
+models run on the CPU.)
 
 ```js
 reset() { face = new Face(); }           // loads the library first

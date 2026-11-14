@@ -1,0 +1,47 @@
+// Qualcomm's NPU libraries (QNN, Qualcomm's AI Engine runtime) as an on-demand part of the store app
+// (Google Play Feature Delivery). The store build used to carry them in the app itself, about 57 MB that
+// every phone downloaded whether a game used the AI chip or not. Now Play keeps them in this module and
+// sends it only when the app asks (plugins/npu QnnRuntime.java): the first time a game starts face, hand
+// or sound tracking, on a phone whose Snapdragon NPU is listed in plugins/npu/.../assets/qnn-runtime.json.
+// Our own APKs (debug builds) don't use this module: they download the same files from Qualcomm's release
+// on Maven Central instead. Same version as there (the pin file, checked against ONNX Runtime by
+// scripts/qnn-pin.mjs --check), and the same parts left out: the older DSP and the GPU backends, and the
+// NPU generations before the Snapdragon 8 Gen 2's (those phones use the CPU).
+apply plugin: 'com.android.dynamic-feature'
+
+// QNN goes in as files (assets/qnn/), not as native libraries: a module's native libraries must come for every
+// kind of CPU the app supports, and QNN is for 64-bit ARM only. The app copies the phone's five files out into
+// its own folder, checking each against the SHA-256s in the pin file, as the download does.
+def qnnPin = new groovy.json.JsonSlurper().parse(rootProject.file('../plugins/npu/android/src/main/assets/qnn-runtime.json'))
+def qnnFiles = qnnPin.files.keySet() as List   // the pinned ones: Htp, System, HtpPrepare and V73..V81's stub and skel
+
+android {
+    namespace = 'com.gamescroll.qnn'
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    sourceSets.main.assets.srcDirs += layout.buildDirectory.dir('qnn-assets').get().asFile
+}
+
+configurations { qnnAar }
+dependencies {
+    implementation project(':app')
+    qnnAar "com.qualcomm.qti:qnn-runtime:${qnnPin.qnn}@aar"
+}
+
+def unpackQnn = tasks.register('unpackQnn', Sync) {
+    from({ zipTree(configurations.qnnAar.singleFile) }) {
+        include qnnFiles.collect { 'jni/arm64-v8a/' + it }
+        eachFile { it.path = 'qnn/' + it.name }
+        includeEmptyDirs = false
+    }
+    into layout.buildDirectory.dir('qnn-assets')
+}
+// Everything else in this module runs after it: asset merging and packaging read the folder, and so do lint's
+// models (generateReleaseLintVitalModel), which Gradle stops the build over if they are left unordered.
+tasks.configureEach { if (it.name != 'unpackQnn' && !it.name.startsWith('clean')) it.dependsOn unpackQnn }
