@@ -313,6 +313,7 @@ function stepped(t, a, late, v, was) {
   else if (Q.want != null && Q.want !== was.want) did = `${TIERS[Q.want].name} wanted (from the next round)`;
   else if (Q.game && fpsFor(Q.game) !== was.fps) did = `${Math.round(fpsFor(Q.game))} fps`;
   else if (v === 'slow') did = Q.slow ? 'waits for a second slow window' : Q.want != null ? `${TIERS[Q.want].name} waits for the next round` : 'nothing left to step down';
+  else if (v === 'ok') did = 'holds';
   else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), desktop, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
   STEPS.log.push({ t: Math.round(t), avg: +a.toFixed(1), late, v, did }); if (STEPS.log.length > 400) STEPS.log.shift();
 }
@@ -2926,6 +2927,7 @@ export class HDView {
     r.info.autoReset = false; r.info.reset();   // (HD.info counts the frame from here: the shadow maps drawn below as well, as on WebGL)
     // shadows: each light's map is drawn again only when it or a caster it sees moved (shadowLights)
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
+    let shAhead = null;
     if (T.shadow > 0) {
       if (pm >= 0) enter('3D: shadows');
       if ((o.shDrawn = !!this.shadowLights(lastView !== this || baking || off, true)) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
@@ -2939,12 +2941,8 @@ export class HDView {
         sh.needsUpdate = false;
       }
       if (pm >= 0) leave(pm);
-      // (the shadow shaders of what these maps have not drawn yet: shadowAhead)
-      if (!baking && !off && HD.hold !== false) {
-        if (pm >= 0) enter('3D: shadows ahead');
-        this.shadowAhead(r, G, getready.warming || !this.warmed);
-        if (pm >= 0) leave(pm);
-      }
+      // (the shadow shaders of what these maps have not drawn yet: shadowAhead, after the scene pass below, once this frame's uniforms are set)
+      if (!baking && !off && HD.hold !== false) shAhead = getready.warming || !this.warmed;
     }
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
@@ -3009,6 +3007,8 @@ export class HDView {
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
+    // (drawn after the scene pass: a look's per-frame colours (live uniforms) have no value until the pass has run once, and three reads them as it draws a shadow)
+    if (shAhead !== null) { if (pm >= 0) enter('3D: shadows ahead'); this.shadowAhead(r, G, shAhead); if (pm >= 0) leave(pm); }
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
     const drawn = ch.occAt !== r.info.frame; ch.occAt = r.info.frame;

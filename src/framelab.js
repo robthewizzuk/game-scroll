@@ -164,12 +164,15 @@ function tick(now, s, how, upd = 0, drw = 0) {
   }
   parts(k, upd, drw, playing);
   if (k) {
-    const iv = lastPresent ? now - lastPresent : 0;
-    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw, k);
+    // `now` is when this refresh began, and this frame's update() and draw() (and the shaders, textures and garbage
+    // counted above) came after it: so the gap that ends now was made by the frame before, and is judged by its work
+    const iv = lastPresent ? now - lastPresent : 0, w = before;
+    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, w);
     // a freeze: a quarter of a second or more between two pictures of play (not the app coming back to the front, not
     // a pause). The frame rate, the lows and the stutters leave out gaps this long, so freezes are counted on their own.
-    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, upd, drw, k);
-    lastPresent = now; lastPlay = playing; pend = [];
+    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, w);
+    lastPresent = now; lastPlay = playing;
+    before = { upd, drw, real: k === 1, big: k === 1 ? bigPart : null, why: pend }; pend = [];
     if (k === 1) { last.upd = last.upd * .9 + upd * .1; last.drw = last.drw * .9 + drw * .1; }
   }
   if (tint && tintEl) paintTint(s, k, now);
@@ -177,6 +180,8 @@ function tick(now, s, how, upd = 0, drw = 0) {
   if (fgArm && k) fgArm(k, s);
 }
 const last = { upd: 0, drw: 0 };
+// the work of the last frame shown: its update() and draw(), its biggest part and what was counted with it
+let before = { upd: 0, drw: 0, real: false, big: null, why: [] };
 // The chip's own time a frame by pass (HD.info.gpuParts, a new list each time the 3D kit reads the chip's
 // timestamps: every few frames, where the phone has them) and the draws and triangles a frame, while playing
 let chipSeen = null;
@@ -209,14 +214,14 @@ function parts(k, upd, drw, playing) {
 function partsText(list, n = 7) {
   return list.filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${v.toFixed(v < 1 ? 2 : 1)}`).join(' · ');
 }
-function hitch(now, iv, exp, s, upd, drw, k) {
-  const why = pend.slice();
+function hitch(now, iv, exp, s, w) {
+  const { upd, drw, big } = w, why = w.why.slice();
   if (now - C.resizeAt < 600) why.push('fold / resize');
   if (now - C.hiddenAt < 1500) why.push('app came back to the front');
   const lf = loafAt(now - iv, now); if (lf) why.push(lf);
   if (upd + drw > exp) why.push(`game CPU over the beat (update ${r1(upd)} + draw ${r1(drw)} ms)`);
   // (where that CPU time went, by part: the scene pass, physics, the game's own code...)
-  if (k === 1 && upd + drw > exp && bigPart && bigPart[1] > exp * .5) why.push(`most in ${bigPart[0]} (${r1(bigPart[1])} ms)`);
+  if (w.real && upd + drw > exp && big && big[1] > exp * .5) why.push(`most in ${big[0]} (${r1(big[1])} ms)`);
   // (the GPU's time is for a real frame and the frames made after it: with frame generation, that many refreshes)
   const gpu = HD?.info.gpuMs; if (gpu != null && gpu > exp * (HD.info.framegen ? HD.info.fgSteps || 2 : 1)) why.push(`GPU over the beat (${r1(gpu)} ms)`);
   if (!why.length) why.push(HD && is3D(s?.def) ? 'no cause seen (GPU / driver / system?)' : 'no cause seen (system?)');
@@ -672,7 +677,7 @@ function keepSteps(R) {
 }
 function stepsLine(R) {
   const L = R.steps; if (!L) return '';
-  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => !/^(waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
+  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => e.did && !/^(holds|waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
   const held = L.find(e => /^stays on/.test(e.did)), off = Object.entries(R.off || {}).filter(([, v]) => v > 0);
   return `Quality steps: ${!L.length ? 'no window of frames counted' : `${L.length} windows`}${L.length ? ` (${n('slow')} slow, ${n('ok')} ok, ${n('fast')} fast)` : ''}${!L.length ? '' : done.length ? ' · ' + done.slice(0, 8).map(e => `${e.did} at ${(e.t / 1000).toFixed(0)} s`).join(', ') + (done.length > 8 ? ` and ${done.length - 8} more` : '') : ' · nothing changed'}`
     + (held ? ` · ${held.did}` : '') + (off.length ? ` · frames not counted: ${off.map(([k, v]) => `${v} ${{ pinned: 'with the tier pinned', long: 'after a gap of 100 ms or more', warming: 'under the loading screen' }[k] || k}`).join(', ')}` : '');

@@ -39,7 +39,17 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
   await p.evaluate(async () => (await __gs.lab(true)).rec(true));
   await play(3500);
   // a freeze (the page held for 400 ms in play): counted on its own, as the frame rate leaves gaps that long out
+  // (in play: a round that ended while it was played counts no hitches)
+  const inPlay = async () => { if (await p.evaluate(() => __gs.active.state) !== 'playing') { await p.evaluate(() => __gs.start()); await p.waitForTimeout(400); } };
+  await inPlay();
   await p.evaluate(() => { const t = performance.now(); while (performance.now() - t < 400); }); await p.waitForTimeout(400);
+  await inPlay();
+  // a frame whose own draw() takes 300 ms: the gap after it is put down to the game's CPU, not "no cause seen"
+  // (the gap that ends at a refresh was made by the frame before it)
+  await p.evaluate(() => { const g = __gs.active.game, d = g.draw; let once = true; g.draw = function (...a) { if (once) { once = false; const t = performance.now(); while (performance.now() - t < 300); } return d.apply(this, a); }; });
+  await p.waitForTimeout(600);
+  { const ev = await p.evaluate(async () => (await __gs.lab(true)).events.filter(e => e.k === 'H' && e.ms >= 250).map(e => e.text));
+    check(ev.some(t => /game CPU over the beat \(update [\d.]+ \+ draw (\d+)/.test(t) && +/draw (\d+)/.exec(t)[1] >= 250), `${id2d}: a 300 ms draw() is named as the cause of the gap after it (${ev.join(' | ') || 'no hitch'})`); }
   const sum2 = await p.evaluate(async () => { const L = await __gs.lab(true); L.rec(false); return L.summary(); });
   { const fz = /(\d+) freezes? of 250 ms or more \(worst (\d+) ms/.exec(sum2); check(fz && +fz[1] >= 1 && +fz[2] >= 300, `${id2d}: a 400 ms freeze in play is counted`); }
   console.log('   ' + sum2.split('\n').join('\n   '));
