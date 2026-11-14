@@ -9,7 +9,11 @@
 // NPU generations before the Snapdragon 8 Gen 2's (those phones use the CPU).
 apply plugin: 'com.android.dynamic-feature'
 
+// QNN goes in as files (assets/qnn/), not as native libraries: a module's native libraries must come for every
+// kind of CPU the app supports, and QNN is for 64-bit ARM only. The app copies the phone's five files out into
+// its own folder, checking each against the SHA-256s in the pin file, as the download does.
 def qnnPin = new groovy.json.JsonSlurper().parse(rootProject.file('../plugins/npu/android/src/main/assets/qnn-runtime.json'))
+def qnnFiles = qnnPin.files.keySet() as List   // the pinned ones: Htp, System, HtpPrepare and V73..V81's stub and skel
 
 android {
     namespace = 'com.gamescroll.qnn'
@@ -21,16 +25,21 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
-    packaging {
-        jniLibs {
-            // kept as files on the phone: the NPU loads its half of QNN (the "skel" libraries) from disk
-            useLegacyPackaging = true
-            excludes += ['**/libQnnDsp*.so', '**/libQnnGpu.so', '**/libQnnHtpV68*.so', '**/libQnnHtpV69*.so']
-        }
-    }
+    sourceSets.main.assets.srcDirs += layout.buildDirectory.dir('qnn-assets').get().asFile
 }
 
+configurations { qnnAar }
 dependencies {
     implementation project(':app')
-    implementation "com.qualcomm.qti:qnn-runtime:${qnnPin.qnn}"
+    qnnAar "com.qualcomm.qti:qnn-runtime:${qnnPin.qnn}@aar"
 }
+
+def unpackQnn = tasks.register('unpackQnn', Sync) {
+    from({ zipTree(configurations.qnnAar.singleFile) }) {
+        include qnnFiles.collect { 'jni/arm64-v8a/' + it }
+        eachFile { it.path = 'qnn/' + it.name }
+        includeEmptyDirs = false
+    }
+    into layout.buildDirectory.dir('qnn-assets')
+}
+tasks.configureEach { if (it.name ==~ /(merge|generate|package|lint|extract).*Assets.*/) it.dependsOn unpackQnn }

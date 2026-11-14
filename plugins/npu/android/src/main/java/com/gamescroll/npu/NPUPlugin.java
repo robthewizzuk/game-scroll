@@ -156,7 +156,7 @@ public class NPUPlugin extends Plugin {
     // first time it loads, so it is set when the plugin starts, before any model. QNN is fetched only when
     // a game first asks for a model (loadModel: face, hand or sound tracking), on a supported Snapdragon and
     // on Wi-Fi: our own APKs download it (that game runs on the CPU, the ones after it on the NPU), store
-    // builds ask Play for its on-demand module (the NPU from the next start). (Our own APKs used to fetch it
+    // builds ask Play for its on-demand module and unpack it (the NPU once it's in). (Our own APKs used to fetch it
     // a little after every start, and store builds carried it: ~40-57 MB whether a game wanted it or not.
     // Rob, 2026-11-14.)
     @Override
@@ -166,6 +166,7 @@ public class NPUPlugin extends Plugin {
         try {
             android.system.Os.setenv("ADSP_LIBRARY_PATH", qnn.adspPath(), true);
         } catch (Exception e) { Logger.warn("NPU", "ADSP_LIBRARY_PATH: " + e.getMessage()); }
+        qnn.unpackSoon();   // store builds: a Play module put in during the last run, not unpacked yet
     }
 
     // On Snapdragon: the HTP (NPU) backend, float16 maths and burst speed. The first start compiles the
