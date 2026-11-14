@@ -18,6 +18,7 @@
 //   ?verify=top   the same from straight above, with the tiles that are wrong and what casts there
 //   ?verify=kept  the map is made again from its kept copy (HD.shadowCheck)    ?verify=end  once, after the warm-up
 //   ?verify=map  (WebGL) the sun's map itself read back and compared texel by texel: says which texels differ, in which tile
+//   ?one=0        (WebGPU) a pass for each step of a kept map, as before HD.shadowOne: the passes a frame to compare
 //   ?control      both walks with their shadows whole: what two runs of the same thing differ by (nothing)
 //   ?at=N  verify frame N only    ?shot=N  keep frame N's pictures    ?warm  trace the warm-up frames
 //   ?big=plain|none  the big mesh not in clusters, or not there    ?nobatch  no static batching    ?hd=pack:false,detail:false  any engine test switch
@@ -25,13 +26,13 @@
 //   ?bench: the walk as it was (the sun a texel at a time, every map whole each time) and in tiles: shadow triangles and draws, and the frame's time
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
-const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu'), ONE = Q.get('one') !== '0';   // (?one=0: a pass for each step of a kept map, as before HD.shadowOne)
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
 if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480), FRAMES = +(Q.get('frames') || 90), { Props } = gs.props;
 const nextFrame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
-HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.occlude = false; HD.shadowStill = 3; if (Q.has('nobatch')) HD.batch = false; for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }   // (?hd=pack:false,detail:false: any of the engine's test switches)
+HD.force = +(Q.get('tier') ?? 2); HD.shadowOne = ONE; HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.occlude = false; HD.shadowStill = 3; if (Q.has('nobatch')) HD.batch = false; for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }   // (?hd=pack:false,detail:false: any of the engine's test switches)
 const out = {}, info = {}, checks = [];
 const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
 
@@ -84,7 +85,10 @@ const draw = S => { S.v.t = 0; S.v.render(S.x, W, H); return S.x.getImageData(0,
 const diff = (a, b) => { let off = 0, worst = 0; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); if (d > worst) worst = d; if (d > 12) off++; } return { off, worst }; };
 const mean = a => a.reduce((s, q) => s + q, 0) / Math.max(1, a.length), sum = a => a.reduce((s, q) => s + q, 0);
 const KEYS = ['shTris', 'shCalls', 'shTiles', 'shPut', 'shSlid', 'shWhole', 'shDraws', 'shSplit'];
-const snap = () => Object.fromEntries(KEYS.map(k => [k, HD.info[k] || 0]));
+// WebGPU: the passes that write a depth picture alone (a shadow map, or its kept copy), and how many of them load what was there
+const PASSES = { n: 0, load: 0 };
+if (typeof GPUCommandEncoder !== 'undefined') { const P = GPUCommandEncoder.prototype, o = P.beginRenderPass; P.beginRenderPass = function (d) { const z = d?.depthStencilAttachment; if (z && ![...(d.colorAttachments || [])].some(Boolean)) { PASSES.n++; if (z.depthLoadOp === 'load') PASSES.load++; } return o.call(this, d); }; }
+const snap = () => ({ ...Object.fromEntries(KEYS.map(k => [k, HD.info[k] || 0])), passes: PASSES.n, loads: PASSES.load });
 // (WebGL: a light's shadow map read back as depths, a number a texel)
 const mapTools = new Map();
 async function mapOf(l) {
@@ -146,7 +150,7 @@ async function walk(S, whole, keep) {
   }
   for (let i = 0; i < FRAMES; i++) {
     pose(S, i); if (whole) S.v.shadowsDirty();
-    const a = snap(), px = draw(S), b = snap(), row = { tris: HD.info.tris, calls: HD.info.calls, cpu: HD.info.cpu, merged: S.v.batches?.list.length || 0 }; for (const k of KEYS) row[k] = b[k] - a[k];
+    const a = snap(), px = draw(S), b = snap(), row = { tris: HD.info.tris, calls: HD.info.calls, cpu: HD.info.cpu, merged: S.v.batches?.list.length || 0 }; for (const k of KEYS) row[k] = b[k] - a[k]; row.passes = b.passes - a.passes; row.loads = b.loads - a.loads;
     if (Q.has('trace') && !whole) { const mv = []; S.v.scene.traverse(o => { if (o.castShadow && (o.layers.mask & (1 << 28))) mv.push((o.isSkinnedMesh ? 'skinned' : o.isInstancedMesh2 ? 'copies' : o.isBatchedMesh ? 'batch' : o.isInstancedMesh ? 'instanced' : o.geometry?.type || o.type) + (o.name ? ':' + o.name : '')); }); row.movers = mv.join(','); const st = S.sun.shadow.gsTiles; row.plan = st ? JSON.stringify({ reset: st.plan.reset, shift: st.plan.shift, redo: st.plan.redo, back: st.plan.back.length, movers: st.plan.movers, valid: st.valid, mode: S.sun.shadow.gsPlan?.mode }) : ''; }
     rows.push(row); if (keep) pics.push(px.slice()); if (keep && !GPU && !Q.has('verify')) { const m = []; for (const l of lightsOf(S)) m.push(await mapOf(l)); maps.push(m); } if (!Q.has('at') || i === +Q.get('at')) await verify('frame ' + i, px);
     if (keep && (i === 3 || i === FRAMES - 1 || (Q.has('shot') && i === +Q.get('shot')))) out[(S.fit ? 'fit-' : '') + (whole ? 'whole-' : 'tiles-') + i] = S.c.toDataURL();
@@ -200,6 +204,13 @@ try {
       // the walk (frames 21 to FA): the gate has stopped, the crate has gone: only the truck and the walker move, and now and then a slide
       const quiet = A.rows.slice(22, FA), noSlide = quiet.filter(q => !q.shSlid && !q.shWhole);
       check('between slides only the moving things are drawn', noSlide.length > 5 && Math.max(...noSlide.map(q => q.shCalls)) <= 12 && Math.max(...noSlide.map(q => q.shTiles)) === 0, 'at most ' + Math.max(...noSlide.map(q => q.shCalls)) + ' draws, ' + Math.max(...noSlide.map(q => q.shTiles)) + ' tiles drawn again');
+      if (GPU) {
+        // (one pass: hd3d.js shadowTiles. A pass loads the whole map into a phone chip's tile memory and stores it again, whatever part it writes)
+        const slid = quiet.filter(q => q.shSlid && !q.shWhole), most = a => a.length ? Math.max(...a) : 0;
+        info.passes = { oneAtATime: !ONE, betweenSlides: most(noSlide.map(q => q.passes)), onASlide: most(slid.map(q => q.passes)), aFrame: +(sum(col(A.rows, 'passes')) / FRAMES).toFixed(2), thatLoadAFrame: +(sum(col(A.rows, 'loads')) / FRAMES).toFixed(2) };
+        if (ONE) check('between slides the map is written in one pass, the kept copy put back and the moving things drawn over it', most(noSlide.map(q => q.passes)) === 1, most(noSlide.map(q => q.passes)) + ' at most');
+        if (ONE) check('and a slide takes a pass for the slide, one for each new part and one for the moving things', slid.length > 0 && most(slid.map(q => q.passes)) <= 4, slid.map(q => q.passes).join(' '));
+      }
       check('and the kept copy goes back only where they are', Math.max(...noSlide.map(q => q.shPut)) <= 40 && Math.min(...noSlide.map(q => q.shPut)) > 0, 'between ' + Math.min(...noSlide.map(q => q.shPut)) + ' and ' + Math.max(...noSlide.map(q => q.shPut)) + ' of 256 tiles');
       const stopped = A.rows.slice(11, 22);
       check('a gate that stops, a balloon that comes and a crate that goes redraw a few tiles, not the map', sum(stopped.map(q => q.shTiles)) > 0 && Math.max(...stopped.filter(q => !q.shSlid).map(q => q.shTiles)) <= 64, 'most in a frame: ' + Math.max(...stopped.filter(q => !q.shSlid).map(q => q.shTiles)));

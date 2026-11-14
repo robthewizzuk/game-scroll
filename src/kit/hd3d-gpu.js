@@ -32,7 +32,7 @@ import { built } from './prof.js';
 import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
-import { eachShown, listPipeline } from './scene-list.js';
+import { eachShown, listPipeline, RIDE } from './scene-list.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -1216,18 +1216,29 @@ export function shadowOps(r) {
   let blit = null; const stands = new WeakMap();
   const ops = {
     scene: null, camera: null,
-    draw(l, mask, keep, q, px) {
-      const sh = l.shadow, node = sh.shadowNode, c = sh.camera, m0 = c.layers.mask, map = node.shadowMap, N = map.width;
+    // back, from (one pass: SHADOW_ONE): those parts of `from` (none: "far") are written into the map first, in the
+    // same pass as the things drawn over them. A pass loads the whole map into the chip's tile memory and stores
+    // it again whatever part it writes, so two passes move the map four times and one moves it twice.
+    draw(l, mask, keep, q, px, back, from) {
+      const sh = l.shadow, node = sh.shadowNode, c = sh.camera, m0 = c.layers.mask, map = node.shadowMap, N = map.width, one = SHADOW_ONE.on;
+      let ride = null;
       if (q) {
-        if (!keep) (blit ||= shadowBlit(r)).wipe(map, q, px);   // (WebGPU clears a whole picture or none of it: the part is emptied by drawing "far" over it)
+        // (WebGPU clears a whole picture or none of it: the part is emptied by drawing "far" over it, in this pass or one of its own)
+        if (!keep) { if (one) ride = (blit ||= shadowBlit(r)).ride(null, WHOLE, 1, N, WHOLE[0]); else (blit ||= shadowBlit(r)).wipe(map, q, px); }
         const x = q[0] * px, w = q[2] * px, h = q[3] * px, y = N - q[1] * px - h;
         c.setViewOffset(N, N, x, y, w, h); map.viewport.set(x, y, w, h); map.scissor.set(x, y, w, h); map.scissorTest = true;
       }
+      if (back) ride = (blit ||= shadowBlit(r)).ride(from ? from.depthTexture : null, back, px, N, q);
       c.layers.mask = mask; node.gsKeep = keep || !!q; node.gsPart = !!q;
       const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      RIDE.mesh = ride; RIDE.scene = ride && ops.scene;
       try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
-      finally { c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
+      finally { RIDE.mesh = RIDE.scene = null; c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
     },
+    /** One pass (hd3d.js shadowTiles, shadowSplit): what is put back goes in the pass of the things drawn over it. */
+    get one() { return SHADOW_ONE.on; },
+    /** A rectangle of no size, as `back`: nothing is written, the shaders of what rides in that kind of pass are made (a whole map drawn again is the frame for it). */
+    none: NONE1,
     copy(l, from, to, qs, px) { if (qs) (blit ||= shadowBlit(r)).copy(from.depthTexture, to, qs, px); else r.copyTextureToTexture(from.depthTexture, to.depthTexture); },
     shift(l, from, to, dx, dy, dz) { (blit ||= shadowBlit(r)).shift(from.depthTexture, to, dx, dy, dz); },
     // the copies' shaders, built when the kept copy is made (a frame that is building shaders anyway) and not in
@@ -1273,11 +1284,30 @@ export function shadowOps(r) {
 // away and dz deeper (what comes from outside it, or ends up outside the depth range, is "far": nothing there).
 /** Tests: `on: false` keeps (loads) the map under a whole-map slide, as before. */
 export const SHIFT_CLEAR = { on: true };
+/**
+ * A shadow map kept in parts is written in as few passes as there can be (hd3d.js HD.shadowOne; tests: `on: false`
+ * is a pass for each step, as before): a part is emptied, and the kept copy's parts are put back, in the pass of
+ * the things drawn over them (scene-list.js RIDE).
+ */
+export const SHADOW_ONE = { on: true };
+const WHOLE = [[0, 0, 1, 1]], NONE1 = [[0, 0, 0, 0]];
 function shadowBlit(r) {
-  const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64;
-  const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
-  const mesh = new Mesh(geo, null), cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); mesh.frustumCulled = false;
-  const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
+  const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64, RING = 8, ring = [], cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); let turn = 0;
+  // Each use takes the next of a few meshes, with its own rectangles (and, as three keeps them for each thing drawn,
+  // its own copy of the numbers): WebGPU does an upload at once, so a second use of one mesh in a frame changed the
+  // rectangles of the first before its pass had gone to the chip, and the passes held to go together (submit.js)
+  // had to be sent first, three times a frame in a town.
+  const next = () => {
+    let k = ring[turn];
+    if (!k) {
+      const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
+      const mesh = new Mesh(geo, null); mesh.frustumCulled = false; mesh.castShadow = true;   // (castShadow: three draws it in a shadow map's pass, where it rides)
+      k = ring[turn] = { pos, geo, at, mesh };
+    }
+    turn = (turn + 1) % RING; return k;
+  };
+  // (allowOverride: drawn as it is in a shadow map's pass too, not with the light's shadow material)
+  const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; m.allowOverride = false; return m; };
   let far = null;
   const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
   // materials made ahead for stand-ins (ahead), by the kind of depth picture they read: a real picture of that
@@ -1298,33 +1328,39 @@ function shadowBlit(r) {
     if (spare) { const k = kindOf(tex); (spares.get(k) || spares.set(k, []).get(k)).push(m); } else mats.set(tex, m);
     return m;
   };
-  // the rectangles (texels, y up) as triangles in clip space
-  const quads = (qs, px, N) => {
-    const n = Math.min(MAX, qs.length);
+  // the rectangles (texels, y up) as triangles in clip space, on the next mesh; part: the rectangle [x, y, w, h] the
+  // pass draws into (its viewport), when that is not the whole picture
+  const quads = (qs, px, N, part) => {
+    const k = next(), pos = k.pos, n = Math.min(MAX, qs.length);
+    const X = part ? part[0] * px : 0, Y = part ? part[1] * px : 0, W = part ? part[2] * px : N, H = part ? part[3] * px : N;
     for (let i = 0; i < n; i++) {
-      const q = qs[i], x0 = q[0] * px / N * 2 - 1, y0 = q[1] * px / N * 2 - 1, x1 = (q[0] + q[2]) * px / N * 2 - 1, y1 = (q[1] + q[3]) * px / N * 2 - 1, o = i * 18;
+      const q = qs[i], x0 = (q[0] * px - X) / W * 2 - 1, y0 = (q[1] * px - Y) / H * 2 - 1, x1 = ((q[0] + q[2]) * px - X) / W * 2 - 1, y1 = ((q[1] + q[3]) * px - Y) / H * 2 - 1, o = i * 18;
       pos[o] = x0; pos[o + 1] = y0; pos[o + 3] = x1; pos[o + 4] = y0; pos[o + 6] = x1; pos[o + 7] = y1;
       pos[o + 9] = x0; pos[o + 10] = y0; pos[o + 12] = x1; pos[o + 13] = y1; pos[o + 15] = x0; pos[o + 16] = y1;
     }
-    at.needsUpdate = true; geo.setDrawRange(0, n * 6);
+    k.at.needsUpdate = true; k.geo.setDrawRange(0, n * 6);
+    return k.mesh;
   };
   const ALL = [[0, 0, 1, 1]];
   // whole: every texel is written, so what was in the picture is not read back first (it is cleared: on a
   // phone's chip a pass that keeps a picture loads all of it into the chip's tile memory, a clear loads nothing)
-  const run = (m, to, whole = false) => {
+  const run = (mesh, m, to, whole = false) => {
     const was = r.getRenderTarget(), ac = r.autoClear, st = to.scissorTest; mesh.material = m;
     r.autoClear = whole && SHIFT_CLEAR.on; to.scissorTest = false; r.setRenderTarget(to);
     try { r.render(mesh, cam); } finally { r.setRenderTarget(was); r.autoClear = ac; to.scissorTest = st; }
   };
   return {
-    copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; quads(qs, px, to.width); run(matFor(tex), to); },
-    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to, true); },
-    wipe(to, q, px) { ALL2[0] = q; quads(ALL2, px, to.width); run(farMat(), to); },
+    copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; run(quads(qs, px, to.width), matFor(tex), to); },
+    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; run(quads(ALL, to.width, to.width), matFor(tex), to, true); },
+    wipe(to, q, px) { ALL2[0] = q; run(quads(ALL2, px, to.width), farMat(), to); },
+    // the rectangles qs of the picture tex (none: "far"), as a mesh for the pass that draws into `part` of a picture
+    // N across to take with it (shadowOps draw: RIDE)
+    ride(tex, qs, px, N, part) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = N - 1; const mesh = quads(qs, px, N, part); mesh.material = tex ? matFor(tex) : farMat(); return mesh; },
     // each of the three drawn once with a rectangle of no size: nothing is written, the shaders and pipelines are made
     warm(map, cache) {
       if (warmed.get(cache) === map) return; warmed.set(cache, map);
-      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1; quads(NONE, 1, map.width);
-      run(matFor(map.depthTexture), cache); run(matFor(cache.depthTexture), map); run(farMat(), map);
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1;
+      run(quads(NONE, 1, map.width), matFor(map.depthTexture), cache); run(quads(NONE, 1, map.width), matFor(cache.depthTexture), map); run(quads(NONE, 1, map.width), farMat(), map);
     },
     // the same three on stand-ins like a sun's map and the copy its tiles would keep (shadowOps make), kept for
     // the real ones (their pictures stay, 4 x 4: three keeps a pipeline while what was drawn with it is there).
@@ -1341,8 +1377,9 @@ function shadowBlit(r) {
       };
       const lin = like(LinearFilter), near = like(NearestFilter);
       const copy = new RenderTarget(4, 4, { depthBuffer: true, count: colours(map) }); copy.depthTexture = new DepthTexture(4, 4); r.initRenderTarget(copy);   // (as shadowOps make)
-      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3; quads(NONE, 1, 4);
-      run(matFor(lin.depthTexture, true), copy); run(matFor(near.depthTexture, true), copy); run(matFor(copy.depthTexture, true), lin); run(farMat(), lin);
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3;
+      const none = () => quads(NONE, 1, 4);
+      run(none(), matFor(lin.depthTexture, true), copy); run(none(), matFor(near.depthTexture, true), copy); run(none(), matFor(copy.depthTexture, true), lin); run(none(), farMat(), lin);
       (this.stand ||= []).push(lin, near, copy);
     },
   };

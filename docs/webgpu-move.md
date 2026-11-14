@@ -85,6 +85,20 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   passes, two reads back), the coast 1.5 where it was 25. `gpu-calls.cjs --why` names the buffer or picture
   behind each early send; a kit that uploads to a buffer between two passes that both read it costs a send.
   Before the canvas is read (`copyFrame`, a test's own read) `flushGPU()` sends what is held.
+- A shadow map kept from frame to frame is written in as few passes as there can be (`HD.shadowOne`,
+  `SHADOW_ONE` in `hd3d-gpu.js`). WebGPU has no way to load or store a part of a picture: every pass on a
+  2048 map loads its 16 MB into a phone chip's tile memory and stores them again, whatever part it writes.
+  A sun's map in tiles took two passes on a frame where only moving things changed (the kept copy's parts
+  put back, then the moving things) and seven on a sun's step (slide, then empty and draw each new part,
+  copy them aside, draw the moving things). Now the rectangles that put the kept copy back, or empty a
+  part, are drawn first in the pass of the things drawn over them (`scene-list.js` `RIDE`: a mesh the next
+  draw of a scene takes with it, ahead of everything in the scene, with its own material where three would
+  draw it with the light's: `allowOverride = false`): one pass, and four on a sun's step (after a slide the
+  map holds no moving things yet, so the kept copy is one plain copy of it once its new parts are drawn).
+  A lamp's kept map is cleared, filled from its kept copy and drawn over in one pass, where it was a copy
+  and a pass that loaded it again. The rectangles are drawn from a few meshes in turn: one mesh used twice
+  in a frame had its rectangles uploaded under a pass still held (`submit.js`), which cost a send each time.
+  The village walk of `--page shadows`: 2.03 passes a frame on the sun's map and its copy down to 1.12.
 
 ## When the device is lost
 

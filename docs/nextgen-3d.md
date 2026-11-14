@@ -266,8 +266,13 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
     box it has. A camera that zooms (its fov or zoom changes, or `around` is turned on or off: a scope
     going up) is fitted at once, so the scope has sharp shadows straight away. (Rob's Fold, mission 2 of Long Shadow: the shadow maps' worst frame was 18 ms; panning
     round in the test browser drew the whole map 29 times in 60 frames before, 4 after.)
+  - On WebGPU a kept map is written in one pass on most frames: the kept copy's parts are put back in the
+    pass that draws the moving things over them (every pass loads the whole map into a phone chip's memory
+    and stores it again, so two passes moved it four times). A sun's step takes four where it took seven.
   - Switches: `__hd.shadowTiles = false` (the sun moves a shadow texel at a time and its map is drawn
-    whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all).
+    whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all),
+    `__hd.shadowOne = false` (WebGPU: a pass for each step of a kept map, as before; the frame lab's
+    Shadow passes check times both).
     `node scripts/detail-test.cjs --page shadows` (and `--webgpu`) walks the village both ways and
     checks every frame is the same picture to a pixel or two, and on WebGL that the maps themselves
     differ only by those stray texels; `--bench` gives the numbers above.
