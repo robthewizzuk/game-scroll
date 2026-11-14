@@ -1,0 +1,136 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Training frames for GSSR's learned blend (scripts/gssr-train.cjs, src/kit/gssr-net.js). Each seed builds a
+// scene of its own from the engine's parts (code-made textures, boxes and balls, thin poles and wires, props,
+// plants, things that move) with a camera path of its own and an upscale of its own, then draws every frame
+// at twice the size and scaled down (the reference, as upscale-compare does), and again through GSSR, which
+// gives the network's inputs for every pixel (hd3d-gpu.js sgsr2Gpu probe). A sample of the pixels, more of
+// them where the history and the new frame disagree, goes to the script with the reference's colour.
+// Never upscale-compare's own scene: that one stays for scoring.
+//   ?seeds=0-29  &tier=0  &frames=24  (window.__gssrNet: a network to draw with, else the hand-written GSSR)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { SgsrFrame } from '../../src/kit/sgsr2.js';
+SgsrFrame.pause = 1e9;   // (reading the GPU between frames is slow: that is no pause in the game)
+setGpuPick('webgpu');
+await loadParts();
+if (!await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = 480, H = 640, Q = new URLSearchParams(location.search);
+HD.force = +(Q.get('tier') || 0); HD.grain = 0; HD.pack = false; HD.motion = true;   // (each pixel's own motion, as in a game)
+HD.gssrNet = window.__gssrNet || false;
+const [s0, s1] = (Q.get('seeds') || '0-0').split('-').map(Number), FRAMES = +(Q.get('frames') || 24), PER = +(Q.get('per') || 5000);
+const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .002, amb: .3 });
+const sun = gs.hd.sun('#fff2d8', 3, 18, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+const world = new T.Group(); v.scene.add(world);
+const tick = () => new Promise(r => requestAnimationFrame(r));
+const RECIPES = ['cobbles', 'tiles', 'planks', 'stone', 'concrete', 'dirt', 'sand', 'brick', 'marble', 'wood', 'metal', 'rust', 'fabric'];
+const PROPS = ['crate', 'barrel', 'drum', 'pallet', 'table', 'chair', 'bench', 'shelf', 'fence', 'sign', 'bucket', 'sack', 'chest', 'cone', 'bin', 'pipe'];
+const PLANTS = ['bush', 'fern', 'pine', 'oak', 'reeds', 'flowers'];
+
+function clear() {
+  for (const o of [...world.children]) { world.remove(o); o.traverse(m => { m.geometry?.dispose?.(); }); }
+}
+// one seed's scene: returns at(f), which puts the camera and the movers where they are on frame f
+function build(seed) {
+  clear();
+  const R = gs.math.rng(seed * 7919 + 13), r = (a, b) => a + (b - a) * R(), pick = l => l[Math.floor(R() * l.length)], hex = () => '#' + new T.Color().setHSL(R(), r(.1, .8), r(.25, .75)).getHexString();
+  const sky = new T.Color().setHSL(r(.5, .7), r(.1, .5), r(.45, .85));
+  v.scene.background = sky; v.scene.fog = R() < .5 ? new T.FogExp2(sky, r(0, .02)) : null;
+  const sd = new T.Vector3(r(-1, 1), r(.25, 1), r(-1, 1)).normalize(); sun.position.copy(sd.multiplyScalar(18)); sun.intensity = r(1.5, 4);
+  v.grade = R() < .5 ? { saturation: r(.9, 1.2), contrast: r(.95, 1.1) } : null;
+  const mat = (o = {}) => R() < .45 ? gs.models.material(pick(RECIPES), { repeat: [r(1, 4), r(1, 4)], closeUp: false, seed: Math.floor(R() * 1e6) }) : gs.hd.pbr(hex(), { rough: r(.15, .95), metal: R() < .25 ? 1 : 0, ...o });
+  const add = (m, px, py, pz, ry = 0) => { m.position.set(px, py, pz); m.rotation.y = ry; world.add(m); return m; };
+  // the ground
+  const gt = R() < .65, u = r(8, 30);
+  add(new T.Mesh(new T.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), gt ? gs.models.material(pick(RECIPES), { repeat: [u, u], closeUp: false, seed }) : gs.hd.pbr(hex(), { rough: r(.6, 1) })), 0, 0, 0);
+  // walls
+  for (let i = Math.floor(r(0, 3.99)); i > 0; i--) { const w = r(2, 6), h = r(1.5, 4); add(new T.Mesh(new T.PlaneGeometry(w, h), gs.models.material(pick(RECIPES), { repeat: [w / r(.5, 2), h / r(.5, 2)], closeUp: false, seed: i + seed })), r(-6, 6), h / 2, r(-8, -2), r(-1, 1)); }
+  // boxes and balls
+  for (let i = Math.floor(r(3, 10)); i > 0; i--) { const s = r(.3, 1.8); add(new T.Mesh(R() < .6 ? gs.hd.rbox(s * r(.5, 1.5), s, s * r(.5, 1.5)) : new T.SphereGeometry(s / 2, 32, 16), mat()), r(-6, 6), s / 2, r(-7, 4), r(0, 6.3)); }
+  // thin things: poles, wires, a lattice (the hard case)
+  if (R() < .8) {
+    const n = Math.floor(r(6, 40)), sp = r(.12, .5), y0 = r(.6, 2), tk = r(.015, .07), ang = r(-.8, .8), cx = r(-3, 3), cz = r(-3, 4), pm = gs.hd.pbr(hex(), { rough: .5 });
+    const g = new T.Group(); add(g, cx, 0, cz, ang);
+    for (let i = 0; i < n; i++) { const p = new T.Mesh(new T.BoxGeometry(tk, y0, tk), pm); p.position.set((i - n / 2) * sp, y0 / 2, 0); g.add(p); }
+    for (let j = Math.floor(r(0, 5)); j > 0; j--) { const w = new T.Mesh(new T.BoxGeometry(n * sp, tk * .6, tk * .6), gs.hd.pbr(hex())); w.position.set(-sp / 2, y0 * j / 5, 0); g.add(w); }
+  }
+  // everyday props and plants
+  for (let i = Math.floor(r(0, 3.99)); i > 0; i--) { const p = gs.models.prop(pick(PROPS), { seed: Math.floor(R() * 1e4) }); add(p, r(-5, 5), 0, r(-6, 3), r(0, 6.3)); }
+  for (let i = Math.floor(r(0, 2.99)); i > 0; i--) { const p = gs.models.tree(pick(PLANTS), { size: 'small', seed: Math.floor(R() * 1e4) }); add(p, r(-6, 6), 0, r(-8, 0), r(0, 6.3)); }
+  // things that move by themselves: straight across, or round
+  const movers = [];
+  for (let i = R() < .35 ? 0 : Math.floor(r(1, 3.99)); i > 0; i--) {
+    const s = r(.3, 1), m = add(new T.Mesh(R() < .5 ? gs.hd.rbox(s, s, s) : new T.SphereGeometry(s / 2, 32, 16), mat()), 0, s / 2, 0);
+    const kind = R() < .6 ? 'line' : 'round', p0 = [r(-5, 5), r(-4, 4)], d = r(0, 6.3), sp = r(.01, .18), spin = r(-.1, .1);
+    movers.push(f => { if (kind === 'line') m.position.set(p0[0] + Math.cos(d) * sp * f, s / 2, p0[1] + Math.sin(d) * sp * f); else m.position.set(p0[0] + Math.cos(f * sp) * 1.5, s / 2 + Math.abs(Math.sin(f * sp * 2)) * .4, p0[1] + Math.sin(f * sp) * 1.5); m.rotation.y = f * spin; });
+  }
+  // the camera: still, round the scene, toward it, turning, sideways or held in a hand; slow to fast
+  const cam = pick(['still', 'still', 'orbit', 'orbit', 'dolly', 'pan', 'strafe', 'hand']), rad = r(4, 12), ht = r(.8, 6), a0 = r(0, 6.3), sp = r(.001, .02) * (R() < .5 ? -1 : 1), look = new T.Vector3(r(-1, 1), r(.3, 1.5), r(-2, 1));
+  const at = f => {
+    let a = a0, rr = rad, lk = look.clone();
+    if (cam === 'orbit') a += f * sp;
+    if (cam === 'dolly') rr = Math.max(2, rad - f * Math.abs(sp) * 8);
+    const p = new T.Vector3(Math.sin(a) * rr, ht, Math.cos(a) * rr);
+    if (cam === 'strafe') { const side = new T.Vector3(Math.cos(a), 0, -Math.sin(a)).multiplyScalar(f * sp * 6); p.add(side); lk.add(side); }
+    if (cam === 'pan') lk.applyAxisAngle(new T.Vector3(0, 1, 0), f * sp * .5);
+    if (cam === 'hand') { const n = q => gs.math.noise2(f * .15, q) * .04; p.add(new T.Vector3(n(1), n(2), n(3))); lk.add(new T.Vector3(n(4), n(5), n(6)).multiplyScalar(3)); }
+    v.cam.position.copy(p); v.cam.lookAt(lk); v.cam.updateMatrixWorld();
+    for (const m of movers) m(f);
+  };
+  const scale = pick([1.25, 1.5, 1.5, 1.75, 1.75, 2, 1]);
+  return { at, scale, warm: Math.floor(r(6, 30)), desc: `${cam} ${movers.length} movers x${scale}` };
+}
+
+const set = (full, scale) => { HD.upscale = !full; HD.upscaler = 'sgsr2'; HD.scale = full ? 2 : 1 / scale; };
+const draw = () => { v.t = 0; v.render(x, W, H); return x.getImageData(0, 0, W, H).data; };
+// (half floats from the GPU)
+const h2f = h => { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 31, m = h & 1023; return e === 0 ? s * m * 2 ** -24 : e === 31 ? (m ? NaN : s * Infinity) : s * (1 + m / 1024) * 2 ** (e - 15); };
+const NF = 40;   // floats a sample: x0..x11, hist rgb, kept, clamped rgb, cut, new rgb, own, ref rgb, weight, drawn rgb, tag, x12..x15, box centre rgb, x16
+const stats = { frames: 0, samples: 0, outErr: 0, n: 0 };
+try {
+  for (let seed = s0; seed <= s1; seed++) {
+    const S = build(seed), t0 = performance.now();
+    // the reference: every frame at twice the size, scaled down (drawn three times: a resized WebGPU canvas shows the old picture until the next frame)
+    set(true); S.at(0); draw(); await tick(); await tick();
+    const refs = [];
+    for (let f = 0; f <= FRAMES; f++) { S.at(f); draw(); await tick(); draw(); refs.push(draw()); await tick(); }
+    // through GSSR, from a clean history: a few frames still first, as a game does after a cut
+    set(false, S.scale); v.cut();
+    const s2 = () => { const ch = v._gpuChain; if (ch?.s2 && !ch.s2.probe) ch.s2.probe = true; return ch?.s2; };
+    S.at(0); for (let i = S.warm; i > 0; i--) { s2(); draw(); await tick(); }
+    for (let f = 0; f <= FRAMES; f++) {
+      S.at(f); s2(); const pic = draw(); const s = s2();
+      const P = await s.read(v._gpuChain.r);
+      await tick();
+      if (!P || P.w !== W || P.h !== H) throw new Error(`probe ${P ? P.w + 'x' + P.h : 'missing'}`);
+      if (f < 2) continue;   // (the first frames after the still ones)
+      const [p0, p1, p2, p3, p4, p5, p6, p7] = P.parts, ref = refs[f], N = W * H;
+      // how much the history and the new frame disagree here: more samples there
+      let act = new Float32Array(N), sum = 0;
+      for (let i = 0; i < N; i++) {
+        const j = i * 4, a = Math.max(Math.abs(p3[j] - p5[j]), Math.abs(p3[j + 1] - p5[j + 1]), Math.abs(p3[j + 2] - p5[j + 2])) + Math.max(Math.abs(p3[j] - p4[j]), Math.abs(p3[j + 1] - p4[j + 1]), Math.abs(p3[j + 2] - p4[j + 2]));
+        act[i] = .004 + Math.min(a, .25); sum += act[i];
+      }
+      const k = PER / sum, R = gs.math.rng(seed * 1000 + f), out = [];
+      for (let i = 0; i < N; i++) {
+        const j = i * 4; if (p4[j + 3] > .5) continue;   // a cut: the network has nothing to say
+        const p = Math.min(1, act[i] * k); if (R() >= p) continue;
+        const o = [p0[j], p0[j + 1], p0[j + 2], p0[j + 3], p1[j], p1[j + 1], p1[j + 2], p1[j + 3], p2[j], p2[j + 1], p2[j + 2], p2[j + 3],
+          p3[j], p3[j + 1], p3[j + 2], p3[j + 3], p4[j], p4[j + 1], p4[j + 2], p4[j + 3], p5[j], p5[j + 1], p5[j + 2], p5[j + 3],
+          ref[j] / 255, ref[j + 1] / 255, ref[j + 2] / 255, 1 / p, pic[j] / 255, pic[j + 1] / 255, pic[j + 2] / 255, seed * 100 + f,
+          p6[j], p6[j + 1], p6[j + 2], p6[j + 3], p7[j], p7[j + 1], p7[j + 2], p7[j + 3]];
+        out.push(...o);
+      }
+      // the picture the probe says GSSR drew is the one on the canvas (else the samples don't line up)
+      for (let i = 0; i < N; i += 97) { const j = i * 4; for (let ch = 0; ch < 3; ch++) { stats.outErr += Math.abs(Math.min(1, Math.max(0, h2f(P.out[j + ch]))) * 255 - pic[j + ch]); stats.n++; } }
+      const buf = new Float32Array(out), u8 = new Uint8Array(buf.buffer); let bin = '';
+      for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+      await window.gssrSave(`s${seed}`, btoa(bin));
+      stats.frames++; stats.samples += buf.length / NF;
+    }
+    console.log(`seed ${seed}: ${S.desc}, ${((performance.now() - t0) / 1000).toFixed(0)} s, ${stats.samples} samples so far, canvas vs probe ${(stats.outErr / Math.max(1, stats.n)).toFixed(2)}/255`);
+  }
+  window.result = { ...stats, outErr: stats.outErr / Math.max(1, stats.n) };
+} catch (e) { window.result = { error: e.message + '\n' + e.stack }; }
+</script>

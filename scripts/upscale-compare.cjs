@@ -12,10 +12,12 @@
 // fails unless the sharper textures come out clearly closer to the reference.
 // No film grain is drawn here (it is most of the error otherwise, and SGSR 2 averaging it away looks
 // like a better picture); --grain .035 puts the app's back.
-//   node scripts/upscale-compare.cjs [--scale 1.5] [--webgpu] [--tier 0..3] [--warm 80] [--modes plain,sgsr2] [--grain .035] [--scenes textured] [--mip -.5] [--shots dir]
+// GSSR's learned blend (src/kit/gssr-net.js) runs as sgsr2 and aa, the hand-written one as sgsr2-hand and aa-hand,
+// and the run fails if the learned one comes out worse than the hand-written one (once trained weights are in).
+//   node scripts/upscale-compare.cjs [--scale 1.5] [--webgpu] [--tier 0..3] [--warm 80] [--modes plain,sgsr2] [--grain .035] [--scenes textured] [--mip -.5] [--shots dir] [--net weights.json]
 //   --tier: the quality tier (2 and 3 have MSAA); --warm: frames with nothing moving before each run;
 //   --scenes: only the runs whose names start so; --mip: that many mip levels more (negative: sharper) on
-//   top of the usual sharper textures
+//   top of the usual sharper textures; --net: the learned blend with those weights (scripts/gssr-train.py --out)
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
@@ -29,6 +31,7 @@ const fs = require('fs'), path = require('path');
     ? { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--use-angle=vulkan', '--enable-features=Vulkan'], env: { ...process.env, VK_ICD_FILENAMES: icd } }
     : { args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] }), p = await b.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+  if (opt('--net')) await p.addInitScript(n => { window.__gssrNet = n; }, JSON.parse(fs.readFileSync(opt('--net'), 'utf8')));
   await p.goto(`${server.resolvedUrls.local[0]}scripts/upscale-compare/?scale=${scale}${shots ? '&shots' : ''}${gpu ? '&gpu' : ''}${['tier', 'warm', 'modes', 'grain', 'mip', 'scenes'].map(k => opt('--' + k) ? `&${k}=${opt('--' + k)}` : '').join('')}`);
   await p.waitForFunction(() => window.result, null, { timeout: 900000 });   // (the PR check's runner is about half as fast as this machine)
   const res = await p.evaluate(() => window.result);
@@ -37,7 +40,7 @@ const fs = require('fs'), path = require('path');
   for (const [name, r] of Object.entries(res.scenes)) {
     console.log(name);
     const n = v => String(v ?? '').padStart(5);
-    for (const [m, s] of Object.entries(r)) console.log(`  ${m.padEnd(11)} error ${n(s.error)}  flicker ${n(s.flicker)}  thin ${n(s.thin)} / ${n(s.thinFlicker)}${s.moving != null ? `  moving ${n(s.moving)}` : ''}  ${s.ms} ms${s.waited ? `  (${s.waited} frames for its shaders)` : ''}  (${s.used || 'stretch'} on ${s.backend})`);
+    for (const [m, s] of Object.entries(r)) console.log(`  ${m.padEnd(11)} error ${n(s.error)}  flicker ${n(s.flicker)}  thin ${n(s.thin)} / ${n(s.thinFlicker)}${s.moving != null ? `  moving ${n(s.moving)}` : ''}  ${s.ms} ms${s.waited ? `  (${s.waited} frames for its shaders)` : ''}  (${s.used || 'stretch'}${s.net ? ' learned ' + s.net : ''} on ${s.backend})`);
   }
   if (shots) { fs.mkdirSync(shots, { recursive: true }); for (const [k, u] of Object.entries(res.shots)) fs.writeFileSync(path.join(shots, k + '.png'), Buffer.from(u.split(',')[1], 'base64')); console.log('shots in', shots); }
   // What must hold: the upscalers really ran; SGSR 2 is no further from the reference than a plain stretch;
@@ -50,6 +53,12 @@ const fs = require('fs'), path = require('path');
     if (r.sgsr2 && r.sgsr2.used !== 'sgsr2') bad.push(`${name}: SGSR 2 did not run`);
     if (r.sgsr1 && r.sgsr1.used !== 'sgsr1') bad.push(`${name}: SGSR 1 did not run`);
     if (r.sgsr2 && r.plain && r.sgsr2.error > r.plain.error * 1.05) bad.push(`${name}: SGSR 2 (${r.sgsr2.error}) is further from the reference than a plain stretch (${r.plain.error})`);
+    // the learned blend is no further from the reference than the hand-written one (both ours), and no shimmerier when still
+    for (const [ours, was] of [['sgsr2', 'sgsr2-hand'], ['aa', 'aa-hand']]) {
+      const a = r[ours], b = r[was]; if (!a || !b || !a.net) continue;
+      if (a.error > b.error * 1.02 + .02) bad.push(`${name}: ${ours} (learned) error ${a.error} is worse than the hand-written blend (${b.error})`);
+      if (r.ref.flicker < .3 && a.flicker > b.flicker * 1.05 + .02) bad.push(`${name}: ${ours} (learned) flicker ${a.flicker} is worse than the hand-written blend (${b.flicker})`);
+    }
     for (const [ours, was] of [['sgsr2', 'sgsr2-plain'], ['aa', 'aa-plain']]) {
       const a = r[ours], b = r[was]; if (!a || !b) continue;
       // (a moving light, printed and not checked: a settled pixel's history counts for more, so the light's change

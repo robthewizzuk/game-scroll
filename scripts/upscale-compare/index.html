@@ -55,10 +55,13 @@ const shine = (f, on) => { lamp.intensity = on ? 9 : 0; lamp.position.x = -3 + f
 // reads them (no mip bias: WebGPU's sharper textures under SGSR 2 off), and &mip=-.5 for more or less of it
 const MIP = Q.has('mip') ? +Q.get('mip') : null;
 const ONLY = Q.get('scenes')?.split(',');   // &scenes=textured: only the runs whose names start so
+// sgsr2-hand: GSSR's hand-written blend (HD.gssrNet false), against the learned one (sgsr2: gssr-net.js, or
+// window.__gssrNet from upscale-compare.cjs --net)
 const set = m => {
-  const mode = m.replace(/-plain|-soft|-x\d+/g, ''); HD.sgsrTune = !m.endsWith('-plain'); HD.mipBias = m.endsWith('-soft') ? false : MIP;
+  const mode = m.replace(/-plain|-soft|-hand|-x\d+/g, ''); HD.sgsrTune = !m.endsWith('-plain'); HD.mipBias = m.endsWith('-soft') ? false : MIP;
   // (-x then digits, tests of FSR 3.1's tricks: HD.sgsrFsr, hd3d-gpu.js sgsr2Gpu U.fsr and U.fsr2)
   const x = m.match(/-x(\d+)/); HD.sgsrFsr = x ? [...x[1]].map((d, i) => i === 4 && +d ? 2 ** (d - 1) : +d) : null;   // (the shading change digit d: 2^(d-1) times as strong)
+  HD.gssrNet = m.includes('-hand') ? false : window.__gssrNet || true;
   HD.upscale = !['full', 'plain', 'native'].includes(mode); HD.upscaler = mode === 'sgsr1' ? 'sgsr1' : 'sgsr2';
   HD.scale = mode === 'full' ? 2 : mode === 'native' || mode === 'aa' ? 1 : 1 / K;
 };
@@ -73,8 +76,8 @@ const differ = (a, b, m = new Uint8Array(a.length / 4)) => { for (let i = 0, j =
 // where the reference with the fence differs from it without) and, where the box moves, over where it is
 // and where it was 12 frames before (moving: a box that leaves a trail, ghosting, scores worse there)
 const out = { scale: K, scenes: {} }, shots = {}, LAST = 8, tick = () => new Promise(r => requestAnimationFrame(r));
-const MODES = Q.get('modes')?.split(','), AA = ['native', 'aa', 'aa-plain'].filter(m => !MODES || MODES.includes(m));
-const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/^(native|aa)/.test(m)) || ['plain', 'sgsr1', 'sgsr2', 'sgsr2-plain'], moveLamp = false) => {
+const MODES = Q.get('modes')?.split(','), AA = ['native', 'aa', 'aa-hand', 'aa-plain'].filter(m => !MODES || MODES.includes(m));
+const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/^(native|aa)/.test(m)) || ['plain', 'sgsr1', 'sgsr2', 'sgsr2-hand', 'sgsr2-plain'], moveLamp = false) => {
   if (ONLY && !ONLY.some(s => name.startsWith(s))) return;
   const at = f => { pose(moveCam ? f : 0); place(moveBox ? f : 0); shine(moveLamp ? f : 0, moveLamp); };
   set('full'); at(frames - LAST); draw(); await tick(); await tick();   // (a resized WebGPU canvas shows the old picture until the next frame)
@@ -104,7 +107,7 @@ const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/
       }
       prev = d;
       if (f === frames) {
-        res[mode] = { error: +e.toFixed(2), flicker: +flick.toFixed(2), thin: +te.toFixed(2), thinFlicker: +tf.toFixed(2), ...(B ? { moving: +me.toFixed(2) } : {}), waited, ms: +(ms / (frames + 1)).toFixed(1), used: HD.info.upscaled, backend: HD.info.backend };
+        res[mode] = { error: +e.toFixed(2), flicker: +flick.toFixed(2), thin: +te.toFixed(2), thinFlicker: +tf.toFixed(2), ...(B ? { moving: +me.toFixed(2) } : {}), waited, ms: +(ms / (frames + 1)).toFixed(1), used: HD.info.upscaled, backend: HD.info.backend, net: HD.info.gssrNet };
         if (Q.has('shots')) shots[name + '.' + mode] = c.toDataURL();
       }
       await tick();
@@ -128,6 +131,6 @@ try {
   await run('textured-still', 24, false, false, TEX);
   await run('textured-camera', 40, true, false, TEX);
   textured(false);
-  HD.scale = null; HD.sgsrTune = true; HD.mipBias = null; out.shots = shots; window.result = out;
+  HD.scale = null; HD.sgsrTune = true; HD.mipBias = null; HD.gssrNet = true; out.shots = shots; window.result = out;
 } catch (e) { window.result = { error: e.message + '\n' + e.stack }; }
 </script>

@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -103,6 +103,7 @@ export function traceFits(r) {
   return Math.min(l.maxStorageBuffersInFragmentStage ?? l.maxStorageBuffersPerShaderStage ?? 0, l.maxStorageBuffersPerShaderStage ?? 0) >= 4;
 }
 import { S2_HOLD, FSR_X } from './sgsr2.js';
+import { netText, netFor } from './gssr-net.js';
 import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
 // where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
 const ORG = uniform(ORIGIN);
@@ -1944,8 +1945,9 @@ function sgsr1Gpu(src) {
 // Each step is the same as the TSL it was written from, in the same order (the build machine's pictures
 // came out the same); only the smallest number divided by is bigger in half (HEPS).
 const S2_TAPS = [[0, 1], [1, 0], [-1, 0], [0, 0], [0, -1]];
-const S2_UP = halfFn('gsS2Up', `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32, lockc: f32) -> vec4<f32> {
-  let mlen = hf(min(m.x, 1e4)); let df = hf(m.y); let start = hf(m.z); let reset = hf(m.w);
+const S2_SIG = `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32, lockc: f32)`;
+// (everything up to the blend: the same in the hand-written pass and the learned one)
+const S2_HEAD = `  let mlen = hf(min(m.x, 1e4)); let df = hf(m.y); let start = hf(m.z); let reset = hf(m.w);
   let biasmax = hf(sr.x); let biasmin = max(hf(1.0), biasmax * hf(0.3) + hf(0.3));
   let kb = mix(biasmax, biasmin, df * hf(0.25)) * hf(0.5); let kb2 = kb * kb;
   let curve = mix(hf(-2.0), hf(-3.0), clamp(mlen * hf(0.02), hf(0.0), hf(1.0)));
@@ -1971,11 +1973,55 @@ ${S2_TAPS.map(([x, y], i) => `  { let c = hf3(c${i}); let o = s + hf2(${x.toFixe
   let ba = mix(min(base, hf(0.1)), base, lerpC);
   let own = upw / max(hf(HEPS), ba + upw);
   let a = max(clamp(own + reset, hf(0.0), hf(1.0)), hf(see));
-  var settled = hf(1.0);
+`;
+const S2_UP = halfFn('gsS2Up', `${S2_SIG} -> vec4<f32> {
+${S2_HEAD}  var settled = hf(1.0);
   if (tuned > 0.5) { settled = select(clamp((held + upw - hf(1.0)) / hf(${(S2_HOLD - 1).toFixed(1)}), hf(0.0), hf(1.0)), hf(0.0), a > own + hf(1e-4)); }
   if (tuned > 1.5) { settled = settled * (hf(1.0) - df); }
   return vec4<f32>(vec3<f32>(mix(h, upc, a)), f32(settled));
 }`);
+// GSSR's learned blend (gssr-net.js): the same maths up to the blend, then the network's seventeen inputs, the
+// network, and its three corrections: to the hand-written new-frame weight, to how much of a history outside the
+// colour box is kept as it is, and to the new frame's colour (towards the colour box's centre, smoother, or away
+// from it, sharper). A pixel restarts its settling where the hand-written pass would (a cut, see-through)
+// and where the network threw away more than half the history the hand-written pass kept (it saw a change).
+// out: 'px' the pixel (rgb, settled); 0..7 the training numbers (scripts/gssr-train): the inputs four at a time,
+// then (history, how much of it outside the box was kept), (clamped history, cut), (new frame's colour, own weight),
+// the next four inputs, (the colour box's centre, the lock: x16).
+const S2_FEAT = `  let spr = max(max(vr.x, vr.y), vr.z);
+  let gap = max(max(lo - hc, hc - hi), hf3(0.0)); let outd = max(max(gap.x, gap.y), gap.z);
+  let dif = abs(hc - upc); let difm = max(max(dif.x, dif.y), dif.z);
+  let r6 = outd / (spr + hf(0.01)); let r7 = difm / (spr + hf(0.01));
+  let x0 = log2(hf(1.0) + mlen) * hf(0.25); let x1 = df; let x2 = upw; let x3 = clamp(hf(hist.a), hf(0.0), hf(1.0));
+  let x4 = hf(see); let x5 = spr / (spr + hf(0.03)); let x6 = r6 / (hf(1.0) + r6); let x7 = r7 / (hf(1.0) + r7);
+  let x8 = dot(upc, hf3(${LUM_K.join(', ')})); let x9 = biasmax - hf(1.0); let x10 = clamp(own, hf(0.0), hf(1.0)); let x11 = start;
+  let lk = hf3(${LUM_K.join(', ')}); let cl = dot(cen, lk);
+  let r12 = (dot(upc, lk) - cl) / (spr + hf(0.01)); let r13 = (dot(hc, lk) - cl) / (spr + hf(0.01)); let r15 = dot(bmax - bmin, lk) / (spr + hf(0.01));
+  let x12 = r12 / (hf(1.0) + abs(r12)); let x13 = r13 / (hf(1.0) + abs(r13)); let x14 = dot(s, s); let x15 = r15 / (hf(1.0) + r15);
+  let x16 = clamp(hf(lockc), hf(0.0), hf(1.0));`;
+const S2_PROBE = ['vec4<f32>(f32(x0), f32(x1), f32(x2), f32(x3))', 'vec4<f32>(f32(x4), f32(x5), f32(x6), f32(x7))', 'vec4<f32>(f32(x8), f32(x9), f32(x10), f32(x11))',
+  'vec4<f32>(vec3<f32>(hc), f32(lerpC))', 'vec4<f32>(vec3<f32>(clamped), f32(reset))', 'vec4<f32>(vec3<f32>(upc), f32(own))',
+  'vec4<f32>(f32(x12), f32(x13), f32(x14), f32(x15))', 'vec4<f32>(vec3<f32>(cen), f32(x16))'];
+const S2_NETS = new Map();
+function s2Net(net, out = 'px') {
+  const k = net.id + ':' + out;
+  if (!S2_NETS.has(k)) S2_NETS.set(k, halfFn(`gsS2Net${net.id}${out === 'px' ? '' : 'P' + out}`, `${S2_SIG} -> vec4<f32> {
+${S2_HEAD}
+${S2_FEAT}
+${out === 'px' ? `${netText(net, 'wgsl')}
+  let kc = clamp(z2, hf(-0.5), hf(1.0)); let cur = max(upc + (cen - upc) * kc, hf3(0.0));
+  let ownc = clamp(own, hf(0.001), hf(0.999)); let lc = clamp(lerpC, hf(0.01), hf(0.99));
+  let an = ownc / (ownc + (hf(1.0) - ownc) * exp(-z0)); let tn = lc / (lc + (hf(1.0) - lc) * exp(-z1));
+  let hn = mix(clamped, hc, tn);
+  let a2 = max(clamp(an + reset, hf(0.0), hf(1.0)), hf(see));
+  let sv = clamp((held + upw - hf(1.0)) / hf(${(S2_HOLD - 1).toFixed(1)}), hf(0.0), hf(1.0));
+  var settled = select(sv, hf(0.0), a > own + hf(1e-4) || an > own + (hf(1.0) - own) * hf(0.5));
+  if (tuned > 1.5) { settled = settled * (hf(1.0) - df); }
+  return vec4<f32>(vec3<f32>(mix(hn, cur, a2)), f32(settled));` : `  return ${S2_PROBE[out]};`}
+}`));
+  return S2_NETS.get(k);
+}
+{ const n = netFor(true); if (n) s2Net(n); }   // (the shipped network made at load, as S2_UP is, so the half-precision check builds it too)
 // Render-target memory shared between passes that never overlap, as the big engines' render graphs alias the
 // pictures a frame uses for a while and lets go of. The full-size steps after the scene pass (the volumetric
 // mix, depth of field, motion blur, then the finishing pass under SGSR 2) each read the step just before them
@@ -2001,7 +2047,8 @@ function sharePictures(steps) {
   }
   return n;
 }
-function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
+// net: GSSR's learned blend (gssr-net.js netFor), or null for the hand-written one
+function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
     fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()),
     nf: uniform(new Vector2(.1, 1000)), jm: uniform(new Vector2()), ortho: uniform(0), lockDec: uniform(.005), fsr: uniform(new Vector4(...FSR_X.slice(0, 4))), fsr2: uniform(new Vector4(...FSR_X.slice(4), 0)) };
@@ -2108,8 +2155,10 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const histT = texture(H2[1].texture), outT = texture(H2[0].texture), lockT = texture(H2[1].textures[1]);
   // upscale: Lanczos of the 5 nearest small pixels, a colour box, history clamped to it, then blended
   const half = halfWanted();
-  let lockOut = null;
-  const upscale = Fn(() => {
+  // the pass's inputs and this frame's locks, made here as they are (no Fn: its body would only run when the
+  // material is built, after the lock picture's node was wanted)
+  const inputs = () => {
+    let lockOut = float(0);
     const H = screenUV, J = clamp(H.add(U.jit.div(U.rs)), 0, 1), IP = ivec2(J.mul(U.rs)), hi = ivec2(U.rs).sub(1);
     const mda = mdc.sample(J), M = mda.xy, see = mo ? smoothstep(.1, .6, mda.w).mul(.9) : float(0);
     // shading change (FSR 3.1's): where a patch of the picture as a whole grew brighter or darker since last frame
@@ -2155,13 +2204,39 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
       const add = select(here, thin, float(0)).mul(float(1).sub(see));
       lockOut = max(min(held.add(add), 2).sub(U.lockDec.mul(float(1).sub(dec))), 0).mul(U.fsr.y);
     }
-    return S2_UP(args, half);
-  })();
-  const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(lockOut || float(0), 0, 0, 1)); upMat.name = 'SGSR2';
+    return { args, lock: lockOut };
+  };
+  const I = inputs();
+  // the hand-written blend (S2_UP) or the learned one (s2Net)
+  const upscale = net ? s2Net(net)(I.args, half) : S2_UP(I.args, half);
+  const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(I.lock, 0, 0, 1)); upMat.name = 'SGSR2';
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
   const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat);
+  // the training numbers (scripts/gssr-train): drawn after each upscale while asked for, from the same inputs
+  // (in full: the network's inputs as the learned pass has them, with or without a network running)
+  let probe = null;
+  const probeDraw = r => {
+    if (!probe) return;
+    if (!probe.q) {
+      const n = net || { id: 'probe', layers: [] };
+      probe.q = S2_PROBE.map((_, k) => { const m = new NodeMaterial(); m.fragmentNode = s2Net(n, k)(I.args, false); m.name = 'GSSR probe ' + k; return new QuadMesh(m); });
+    }
+    const w = H2[0].width, h = H2[0].height;
+    probe.t ||= probe.q.map(() => new RenderTarget(1, 1, { type: FloatType, depthBuffer: false }));
+    probe.t.forEach((t, k) => { if (t.width !== w || t.height !== h) t.setSize(w, h); r.setRenderTarget(t); probe.q[k].render(r); });
+  };
   return {
     U, key: '', low,
+    /** Training (scripts/gssr-train): on, each upscale also draws the network's numbers for every pixel; read() gives them. */
+    get probe() { return !!probe; },
+    set probe(on) { if (!on && probe) { probe.q?.forEach(q => q.material.dispose()); probe.t?.forEach(t => t.dispose()); } probe = on ? probe || {} : null; },
+    /** The last upscale's numbers: { w, h, parts: [8 x Float32Array of w x h x 4], out: the picture it drew (Uint16Array, half floats) }. */
+    async read(r) {
+      const t = probe?.t; if (!t) return null;
+      const parts = []; for (const x of t) parts.push(await r.readRenderTargetPixelsAsync(x, 0, 0, x.width, x.height));
+      const o = H2[1 - cur];   // (render() has turned: this frame's picture is the one it reads from next)
+      return { w: o.width, h: o.height, parts, out: await r.readRenderTargetPixelsAsync(o, 0, 0, o.width, o.height, 0) };
+    },
     size(pw, ph, fw, fh) {
       const k = `${pw}x${ph}>${fw}x${fh}`; if (k === this.key) return; this.key = k;
       low.setSize(pw, ph); mdc.setSize(pw, ph); for (const t of [...SD, ...LH]) t.setSize(pw, ph); for (const t of H2) t.setSize(fw, fh);
@@ -2186,6 +2261,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
         r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
         r.setRenderTarget(LH[sc]); qLh.render(r);
         r.setRenderTarget(into); qUp.render(r);
+        probeDraw(r);
         sc = 1 - sc;
         r.setRenderTarget(null); if (show) qCp.render(r);
         cur = 1 - cur;
@@ -2195,7 +2271,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
     last() { return H2[1 - cur].texture; },
     /** The picture the render before that made (it stays until the next render draws over it). */
     before() { return H2[cur].texture; },
-    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); },
+    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); this.probe = false; },
   };
 }
 
@@ -2604,7 +2680,7 @@ export class GpuChain {
     }
     // live, the last touches go on as each refresh is shown (show()), not here
     const fin = live ? vec4(out.rgb, 1) : Fn(() => vec4(touches(U, out.rgb, U.t, float(1)), 1))();
-    if (s2) this.s2 = sgsr2Gpu(fin, sp.getTextureNode('depth'), mrtOn ? { vel: sp.getTextureNode('velocity'), rea: sp.getTextureNode('reactive') } : null, s2 !== 'plain');
+    if (s2) this.s2 = sgsr2Gpu(fin, sp.getTextureNode('depth'), mrtOn ? { vel: sp.getTextureNode('velocity'), rea: sp.getTextureNode('reactive') } : null, s2 !== 'plain', String(s2).startsWith('net:') ? this.s2Net : null);
     // the full-size steps after the scene pass, two pictures between them (sharePictures)
     this.shared = SHARE.on && !lensOn && !this.fxSlots.length ? sharePictures([this.baseT, this.dofT, this.mbT, this.s2?.low].filter(Boolean)) : 0;
     if (s2) return;
@@ -2670,7 +2746,8 @@ export class GpuChain {
     { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
     const fx = !this.clear && o.ao > 0;
     this.aoBack = fx && o.aoBack !== false;
-    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
+    this.s2Net = o.s2Net || null;
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : o.s2Net ? 'net:' + o.s2Net.id : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
     // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
     // again or the volumetric light's light moved, which change the picture though the camera didn't)
     if (this.spread) {
