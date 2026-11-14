@@ -194,7 +194,7 @@ export function gpuCull(im, levels, group, pad = 0) {
             for (let k = 1; k < L; k++) lv = lv.add(int(d2.greaterThanEqual(U.dist.element(k))));
             const lvv = lv.toVar();
             If(seen, () => { If(U.occ.equal(1).and(hidden(pc, rad)), () => { lvH.assign(lvv); }).Else(() => { lvC.assign(lvv); }); });
-            If(lvC.lessThan(0).and(cast.equal(1)), () => { lvS.assign(lvv); });
+            If(lvC.lessThan(0).and(cast.equal(1).or(lvH.greaterThanEqual(0))), () => { lvS.assign(lvv); });   // (a hidden copy stays in everything else's list, as before it was hidden: the sun's far shadows, a reflection)
           });
         });
       });
