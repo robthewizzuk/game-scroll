@@ -476,6 +476,11 @@ export const HD = {
   /** With aoBack: the share of the occlusion still laid on the whole picture, direct light included (0..1; Unity's "direct lighting strength"). */
   aoDirect: .25,
   /**
+   * WebGPU: v.decal() marks are boxes in the lamps' grid with their pictures in one atlas (decals-gpu.js): no mesh and no draw
+   * each. false: a mesh cut from the surface for each, as on WebGL (the frame lab's A/B, tests); marks already made swap over.
+   */
+  gridDecals: true,
+  /**
    * WebGPU: a gs.sky Sky's clouds marched through as real ones (high and ultra; hd3d-gpu-sky.js), shading the ground, the fog and
    * the light beams. false: the painted layer, as on WebGL. HD.info.sky says what the sky drew ('air', 'clouds', 'air + clouds').
    */
@@ -1842,6 +1847,8 @@ const toRGB = (c, out) => { if (c == null) out.set(1, 1, 1); else if (Array.isAr
 // decal pictures: drawn once per key and kept (a soft round mark by default)
 const decalTexs = new Map();
 const DEFAULT_DECAL = (c, s) => { const g = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2); g.addColorStop(0, '#fff'); g.addColorStop(.55, '#ddd'); g.addColorStop(1, '#000'); c.fillStyle = g; c.fillRect(0, 0, s, s); };
+// (the grid's soft mark: white, its shape in the alpha, tinted by the decal's colour)
+const SOFT_MARK = (c, s) => { const g = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.55, 'rgba(255,255,255,.87)'); g.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = g; c.fillRect(0, 0, s, s); };
 function decalTex(paint, key) {
   if (!paint) return null;
   const k = key || paint; let t = decalTexs.get(k); if (t) return t;
@@ -1898,41 +1905,84 @@ export class HDView {
   }
   /** The direction towards the sun this view uses for air, glare and cloud shadows. */
   /**
-   * A mark on a surface: a scorch, a bullet mark, a footprint, paint, a splat. It wraps over the
-   * mesh's shape where it lands (three's DecalGeometry). mesh: what was hit; point and normal: where
-   * and which way it faces (from a ray hit: hit.point, hit.normal). Options: size (metres, or
-   * [w, h, depth]), angle (turn round the normal; default random), colour, paint (c, s) => {} to
-   * draw your own mark on an s x s canvas (cached by key), rough, glow, life (seconds; 0 = stays),
-   * max (oldest go first; default 40). Returns the decal mesh (dispose() removes it early).
+   * A mark on a surface: a scorch, a bullet mark, a footprint, paint, a splat. mesh: what was hit; point and normal:
+   * where and which way it faces (from a ray hit: hit.point, hit.normal). Options: size (metres, or [w, h, depth]),
+   * angle (turn round the normal; default random), colour, paint (c, s) => {} to draw your own mark on an s x s canvas
+   * (cached by key), rough, glow, life (seconds; 0 = stays), max (oldest go first; default 40). Returns the decal
+   * (dispose() removes it early).
+   * On WebGPU it is no mesh and no draw: a box listed in the lamps' grid, whose picture every lit surface inside it
+   * takes on (facing the same way: decals-gpu.js), so hundreds cost a little per pixel where they lie. Things that move
+   * through it take it on too while inside, except people (bodies that bend), see-through things and a material
+   * given material.decals = false. On WebGL, and past the 16 pictures the grid holds at once, it wraps over the mesh's
+   * shape (three's DecalGeometry), one draw each.
    */
   decal(mesh, point, normal, { size = .3, angle = Math.random() * Math.PI * 2, colour = '#1a1410', paint = null, key = null, rough = .9, glow = 0, life = 0, max = 40, opacity = 1 } = {}) {
     if (!mesh?.isMesh) return null;
-    const P0 = point.isVector3 ? point : new Vector3(...point), N0 = (normal?.isVector3 ? normal.clone() : new Vector3(...(normal || [0, 1, 0]))).normalize();
-    mesh.updateMatrixWorld();
+    const P0 = point.isVector3 ? point.clone() : new Vector3(...point), N0 = (normal?.isVector3 ? normal.clone() : new Vector3(...(normal || [0, 1, 0]))).normalize();
     const look = new Matrix4().lookAt(P0.clone().add(N0), P0, Math.abs(N0.y) > .99 ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0));
-    const rot = new Euler().setFromQuaternion(new Quaternion().setFromRotationMatrix(look).multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), angle)));
+    const q = new Quaternion().setFromRotationMatrix(look).multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), angle));
     const sz = Array.isArray(size) ? new Vector3(size[0], size[1], size[2] ?? Math.max(size[0], size[1])) : new Vector3(size, size, size);
-    let geo; try { geo = new DecalGeometry(mesh, P0, rot, sz); } catch { return null; }
-    if (!geo.attributes.position?.count) { geo.dispose(); return null; }
-    const map = decalTex(paint, key);
-    const mat = new MeshStandardMaterial({ color: map ? '#ffffff' : colour, map, roughness: rough, metalness: 0, transparent: true, opacity, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, emissive: glow ? new Color(colour) : new Color(0), emissiveIntensity: glow });
-    if (!map) mat.alphaMap = decalTex(DEFAULT_DECAL, '_soft');
-    const d = new Mesh(geo, mat); d.userData.noAO = true; d.receiveShadow = true; d.renderOrder = 2;
-    d.userData.decal = { life, left: life, opacity };
-    this.scene.add(d); this.decals.push(d);
-    while (this.decals.length > max) this.dropDecal(this.decals[0]);
+    // the picture, painted now (not at the first frame it shows): the game's, or a soft round mark in its colour
+    const pic = paint ? decalTex(paint, key) : decalTex(SOFT_MARK, '_softA');
+    const c = new Color(colour);
+    const d = { target: mesh, at: P0, q, size: sz, paint: !!paint, key: key || paint || '_softA', pic, colour: c, rough, glow, life, left: life, opacity, alpha: opacity,
+      m: null, cell: -1, kind: '', inv: null, r: .5 * sz.length(), tint: paint ? [1, 1, 1] : [c.r, c.g, c.b], glowC: [c.r * glow, c.g * glow, c.b * glow] };
     d.dispose = () => this.dropDecal(d);
+    // where the view draws is known (it has drawn): made for it now; before its first frame, as a mesh (as on WebGL),
+    // swapped for the grid at that frame if it draws on WebGPU (syncDecals)
+    if (!(this._onGpu === true && this.gridDecal(d)) && !this.meshDecal(d)) return null;
+    this.decals.push(d); this._decalsDirty = true;
+    while (this.decals.length > max) this.dropDecal(this.decals[0]);
     return d;
   }
-  dropDecal(d) { const i = this.decals.indexOf(d); if (i >= 0) this.decals.splice(i, 1); d.removeFromParent(); d.geometry.dispose(); d.material.dispose(); }
+  /** (decal) In the lamps' grid on WebGPU: false when it can't be (WebGL, no grid, every picture square in use). */
+  gridDecal(d) {
+    const G = webgpu(); if (!G?.r.gsClustered || HD.gridDecals === false) return false;
+    const cell = G.fx.decalCell(G.r, d.key, d.pic); if (cell < 0) return false;
+    d.cell = cell; d.kind = 'grid'; d.fx = G.fx;
+    d.inv ||= new Matrix4().compose(d.at, d.q, d.size).invert();
+    return true;
+  }
+  /** (decal) A mesh wrapped over what it hit (three's DecalGeometry), one draw: false when nothing of it lies in the box. */
+  meshDecal(d) {
+    const mesh = d.target; mesh.updateMatrixWorld();
+    let geo; try { geo = new DecalGeometry(mesh, d.at, new Euler().setFromQuaternion(d.q), d.size); } catch { return false; }
+    if (!geo.attributes.position?.count) { geo.dispose(); return false; }
+    const map = d.paint ? d.pic : null;
+    const mat = new MeshStandardMaterial({ color: map ? '#ffffff' : d.colour, map, roughness: d.rough, metalness: 0, transparent: true, opacity: d.alpha, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, emissive: d.glow ? d.colour.clone() : new Color(0), emissiveIntensity: d.glow });
+    if (!map) mat.alphaMap = decalTex(DEFAULT_DECAL, '_soft');
+    const m = new Mesh(geo, mat); m.userData.noAO = true; m.receiveShadow = true; m.renderOrder = 2; m.userData.decal = d;
+    this.scene.add(m); d.m = m; d.kind = 'mesh';
+    return true;
+  }
+  /** Each frame, for where the view draws now: decals made for the other way made again for this one. */
+  syncDecals(G) {
+    const grid = !!G?.r.gsClustered && HD.gridDecals !== false;
+    if (!this._decalsDirty && this._decalGrid === grid) return;
+    this._decalGrid = grid; this._decalsDirty = false;
+    for (const d of [...this.decals]) {
+      if (grid ? d.kind === 'grid' : d.kind === 'mesh') continue;
+      if (grid && this.gridDecal(d)) { this.unmesh(d); continue; }
+      this.ungrid(d);
+      if (!d.m && !this.meshDecal(d)) this.dropDecal(d);   // (made again where its mesh is now)
+    }
+    this.gsGrid = this.decals.filter(d => d.kind === 'grid');
+  }
+  unmesh(d) { const m = d.m; if (!m) return; d.m = null; m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); }
+  ungrid(d) { if (d.cell >= 0) d.fx?.decalFree(d.cell); d.cell = -1; if (d.kind === 'grid') d.kind = ''; }
+  dropDecal(d) {
+    const i = this.decals.indexOf(d); if (i < 0) return;
+    this.decals.splice(i, 1); this.unmesh(d); this.ungrid(d); d.kind = ''; this._decalsDirty = true;
+  }
   /** Removes every decal. */
   clearDecals() { for (const d of [...this.decals]) this.dropDecal(d); }
   tickDecals(dt) {
     for (const d of [...this.decals]) {
-      const u = d.userData.decal; if (!u.life) continue;
-      u.left -= dt; if (u.left <= 0) { this.dropDecal(d); continue; }
-      d.material.opacity = u.opacity * Math.min(1, u.left / Math.min(1, u.life * .3));
+      if (!d.life) continue;
+      d.left -= dt; if (d.left <= 0) { this.dropDecal(d); continue; }
+      d.alpha = d.opacity * Math.min(1, d.left / Math.min(1, d.life * .3));
+      if (d.m) d.m.material.opacity = d.alpha;
     }
   }
   /**
@@ -2732,6 +2782,7 @@ export class HDView {
     G.fx.setCascade(casc ? cs.near : null, cs?.fade ?? .06);
     const ls = this.lensStep(baking || off);   // (v.lens: a real lens's focus and exposure, lens.js)
     r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off) * (ls ? ls.exp : 1);
+    this.syncDecals(G);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (!baking && !off) this.t += 1 / 60;
     gpuSwap(this, G);
@@ -2762,7 +2813,7 @@ export class HDView {
     // the lamps' shadow slots (lamps.js): handed out now the lamps' matrices are this frame's, and their atlas made
     const LP = this.lampPool;
     if (LP?.gpu) {
-      LP.prepare(T, HD.tier);
+      LP.prepare(T, HD.tier); LP.pictures(G.fx, r);   // (signs lit with their own picture: their squares of the decals' atlas)
       const at = G.fx.lampAtlas(r, LP.cols, LP.rows, LP.slotPx, LP); LP.atlasGen = G.fx.lampAtlasInfo().gen;
       for (const p of LP.proxies()) { p.shadow.map = at; shc.push(p.shadow.camera); }
     }
@@ -3129,6 +3180,7 @@ export class HDView {
       if (P.ssr.cw !== pw || P.ssr.ch !== ph) { P.ssr.setSize(pw, ph); P.ssr.cw = pw; P.ssr.ch = ph; }
     }
     for (const cs of this.contacts) cs.update(r, this.scene, T.contact);
+    this.syncDecals(null);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (this.probes.length > 1) this.blendProbes();
     for (const p of this.parts) p.mat.uniforms.scale.value = ph / (2 * Math.tan(this.cam.fov * Math.PI / 360));
@@ -4355,20 +4407,24 @@ export function neon(points, { colour = '#ff3d8b', thick = .025, glow = 5, i = 3
  * A glowing sign, w x h metres, facing +z (turn the group to aim it): paint(ctx, pw, ph) draws its face in a canvas
  * (text, a shape; what is bright glows), and it lights what is in front of it as a sign does (a rect light on WebGPU,
  * a lamp at its middle on WebGL). colour: its light's colour (the face's own colours glow as they are); glow, i,
- * reach, px (the canvas's pixels a metre). Pass s.spots() to v.placeLamps each frame.
+ * reach, px (the canvas's pixels a metre). picture: true lights with its own picture instead (a TV, a video wall, a
+ * stained window): each part of its light takes the colour of the part of the face it comes from (WebGPU; on WebGL
+ * the face's average colour), and colour, white by default, tints it. g.paint(fn) paints the face again (each frame
+ * for a screen that plays; the light follows). Pass s.spots() to v.placeLamps each frame.
  */
-export function sign(w, h, paint, { colour = '#ffd9a0', glow = 3, i = 4, reach = 7, px = 128 } = {}) {
+export function sign(w, h, paint, { picture = false, colour = picture ? '#ffffff' : '#ffd9a0', glow = 3, i = 4, reach = 7, px = 128 } = {}) {
   const cv = document.createElement('canvas'); cv.width = Math.max(8, Math.round(w * px)); cv.height = Math.max(8, Math.round(h * px));
   const c = cv.getContext('2d'); c.fillStyle = '#000'; c.fillRect(0, 0, cv.width, cv.height); paint?.(c, cv.width, cv.height);
   const tex = new CanvasTexture(cv); tex.colorSpace = SRGBColorSpace;
   const m = new MeshStandardMaterial({ color: '#111', emissive: '#fff', emissiveMap: tex, emissiveIntensity: glow, roughness: .4 });
   const g = new Group(), face = new Mesh(new PlaneGeometry(w, h), m); face.userData.noContact = true; face.userData.noLod = true; g.add(face); g.name = 'sign';
-  const s = { x: 0, y: 0, z: 0, col: colour, i, reach, rect: { w, h, normal: [0, 0, 1] } }, A = new Vector3(), N = new Vector3();
+  const s = { x: 0, y: 0, z: 0, col: colour, i, reach, rect: { w, h, normal: [0, 0, 1] }, picture: picture ? tex : undefined }, A = new Vector3(), N = new Vector3();
   g.spots = (list = []) => {
     g.updateWorldMatrix(true, false); A.setFromMatrixPosition(g.matrixWorld); N.set(0, 0, 1).transformDirection(g.matrixWorld);
     // (WebGL lights a sign from a lamp at its middle: a little in front, so the wall it hangs on is lit too)
     s.x = A.x + N.x * .05; s.y = A.y + N.y * .05; s.z = A.z + N.z * .05; s.rect.normal[0] = N.x; s.rect.normal[1] = N.y; s.rect.normal[2] = N.z; list.push(s); return list;
   };
+  g.paint = fn => { c.fillStyle = '#000'; c.fillRect(0, 0, cv.width, cv.height); fn?.(c, cv.width, cv.height); tex.needsUpdate = true; return g; };
   g.material = m; g.texture = tex;
   return g;
 }

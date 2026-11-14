@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Qualcomm's NPU libraries, sent by Google Play only when the app asks for them (see build.gradle). No code of its own. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:dist="http://schemas.android.com/apk/distribution">
+    <dist:module dist:instant="false" dist:title="@string/title_qnn">
+        <dist:delivery>
+            <dist:on-demand />
+        </dist:delivery>
+        <dist:fusing dist:include="false" />
+    </dist:module>
+    <application android:hasCode="false" />
+</manifest>

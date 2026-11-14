@@ -103,12 +103,24 @@ jobs:
           echo "### App bundle" >> "$GITHUB_STEP_SUMMARY"
           echo "Version code **${GITHUB_RUN_NUMBER}**, $(du -m game-scroll.aab | cut -f1) MB, signed: **${{ steps.key.outputs.signed }}**" >> "$GITHUB_STEP_SUMMARY"
 
+      # Qualcomm's NPU libraries (QNN) are only in the on-demand module android/qnn (as files the app copies
+      # out and checks), which Play sends to a phone only when the app asks (plugins/npu QnnRuntime.java),
+      # never in the app itself (base).
+      - name: Qualcomm's NPU libraries only in their on-demand module
+        run: |
+          unzip -Z1 game-scroll.aab | grep 'libQnn' > "$RUNNER_TEMP/qnn.txt" || true
+          if [ "$(grep -c '^qnn/assets/qnn/libQnn.*\.so$' "$RUNNER_TEMP/qnn.txt")" != 11 ]; then echo "::error::the qnn module should carry the 11 pinned QNN files in assets/qnn/"; exit 1; fi
+          if grep -v '^qnn/' "$RUNNER_TEMP/qnn.txt"; then echo "::error::QNN libraries outside the qnn module (above)"; exit 1; fi
+          if grep -E 'libQnn(Dsp|Gpu|HtpV68|HtpV69)' "$RUNNER_TEMP/qnn.txt"; then echo "::error::QNN parts we don't use are in the bundle (above)"; exit 1; fi
+          echo "QNN in the on-demand module: $(wc -l < "$RUNNER_TEMP/qnn.txt") files"
+          echo "Qualcomm's NPU libraries: on-demand module only ($(wc -l < "$RUNNER_TEMP/qnn.txt") files)" >> "$GITHUB_STEP_SUMMARY"
+
       # Google Play turns away apps for Android 15+ whose 64-bit native libraries can't run on phones
       # with 16 KB memory pages. Every LOAD segment must be aligned to at least 16 KB (0x4000).
       - name: Native libraries work with 16 KB pages
         run: |
           rm -rf "$RUNNER_TEMP/aab" && mkdir -p "$RUNNER_TEMP/aab"
-          unzip -q game-scroll.aab 'base/lib/*' -d "$RUNNER_TEMP/aab" || true
+          unzip -q game-scroll.aab '*/lib/*' -d "$RUNNER_TEMP/aab" || true
           bad=0; n=0
           while IFS= read -r so; do
             # Only 64-bit ARM/x86 code runs on the phone's CPU. Qualcomm's *Skel.so files sit in

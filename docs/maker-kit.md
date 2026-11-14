@@ -1291,8 +1291,10 @@ All of it draws on WebGL and on WebGPU, so none of it changes which one a view u
 In the phone apps the models run on the phone's AI chip (Qualcomm's NPU on Snapdragon, the Neural
 Engine on iPhone, else the CPU) through [ONNX Runtime](https://onnxruntime.ai), with the camera read
 natively, so the game's frame time and the GPU stay free; on the web, MediaPipe runs in the page.
-(The test APKs from GitHub fetch Qualcomm's NPU libraries, about 40 MB, on Wi-Fi a little after the
-first start on a Snapdragon 8 Gen 2 or newer; until then the models run on the CPU.)
+(Qualcomm's NPU libraries are not in the app: on a Snapdragon 8 Gen 2 or newer, the first time a game
+starts face, hand or sound tracking, on Wi-Fi, the store app asks Google Play for them (the NPU from the next
+start) and the test APKs from GitHub download them, about 40 MB (the NPU from the next game). Until then the
+models run on the CPU.)
 
 ```js
 reset() { face = new Face(); }           // loads the library first
@@ -2502,7 +2504,7 @@ planet. Nodes have `x`, `y`, `angle`, `scale` relative to their parent; `root.up
 
 **Next Gen extras** (`gs.hd` HDView): `v.decal(mesh, point, normal, { size, colour, paint, life })` puts a
 mark on a surface that wraps over its shape (scorches, footprints, paint; capped at 40, oldest
-first), `v.bakeLight([x, y, z], { radius })` bakes the light around a point into a light probe so rooms
+first; on WebGPU hundreds cost no draws, as boxes in the lamps' grid), `v.bakeLight([x, y, z], { radius })` bakes the light around a point into a light probe so rooms
 and caves pick up the colour of their walls and windows (several blend as the camera, or
 `v.probeAt`, moves; bake once after building the level: it returns a promise and joins a frame or two later), `v.bounce(box)` adds bounce light over a level (a grid of probes: a red wall tints the floor, light from a door fills a room; WebGL and WebGPU), `v.room(box)` gives shiny things in a room box-projected reflections of that room, `v.detail(meshes)` asks for cluster detail on meshes under 20,000 triangles (big still meshes get it by themselves: each part is drawn only as finely as shows, see docs/nextgen-3d.md; `v.detail(meshes, false)` draws them whole), what is fully hidden behind other things is left out of the frame by itself (occlusion culling, from the last frame's own depth: nothing to list; `mesh.userData.noOcclude = true` always draws a mesh, and `v.occluders(boxes)` adds big solid boxes of your own, as `gs.city` does for its buildings), and `v.shafts = 1` adds sun shafts streaming
 past whatever blocks the sky (not on the lowest tier).
