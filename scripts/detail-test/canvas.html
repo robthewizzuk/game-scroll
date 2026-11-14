@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// The 3D canvas opaque to the page while a view fills it (src/kit/gpu.js canvasShows, HD.opaque) for
+// scripts/detail-test.cjs --page canvas --webgpu.
+// A view that fills its picture is drawn on an opaque canvas (the browser blends nothing behind it), and the picture is
+// the one a blended canvas gives. A see-through view (as AR's: no background, clearBg) turns the canvas back to
+// blended for its own frames, where nothing is drawn lets what is behind show, and the next filled view turns it
+// opaque again. The device and the renderer are the same throughout.
+//   ?gpu  ?tier=2  ?w=240&h=320
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const scene = v => {
+    const sun = gs.hd.sun('#fff0d6', 2.4, 14, [-.5, 1, .3]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(12, 12).rotateX(-Math.PI / 2), gs.hd.pbr('#7b8468', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    const R = gs.math.rng(5);
+    for (let i = 0; i < 9; i++) { const m = new T.Mesh(new T.BoxGeometry(.8, .6 + R() * 1.6, .8), gs.hd.pbr(['#b8553d', '#3d7ab8', '#c9b458'][i % 3], { rough: .5 })); m.position.set((R() - .5) * 8, .5, (R() - .5) * 6 - 2); m.castShadow = m.receiveShadow = true; v.scene.add(m); }
+    v.cam.fov = 45; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 200; v.cam.position.set(-3, 2.2, 8); v.cam.lookAt(0, .8, -1); v.cam.updateProjectionMatrix(); v.cam.updateMatrixWorld();
+    return v;
+  };
+  const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c); const x = c.getContext('2d', { willReadFrequently: true });
+  const draw = async (v, n = 8) => { for (let i = 0; i < n; i++) { x.clearRect(0, 0, W, H); v.render(x, W, H); await frame(); } return x.getImageData(0, 0, W, H).data; };
+  const modeNow = () => G?.r.backend.context.getConfiguration?.()?.alphaMode || '';
+  const differ = (a, b, tol) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const clearPx = p => { let n = 0; for (let i = 3; i < p.length; i += 4) if (p[i] < 250) n++; return n; };
+  const full = scene(new gs.hd.HDView({ bg: '#8fa6c4', fog: .01, amb: .35 }));
+  if (!GPU) {
+    await draw(full, 3);
+    check('WebGL: the canvas stays as it was made (it cannot be told again)', !HD.info.canvas, `HD.info.canvas: '${HD.info.canvas || ''}'`);
+    window.result = { out, info, checks }; throw new Error('done');
+  }
+  const dev = G.r.backend.device;
+  await draw(full, 10);   // (shaders, shadow maps)
+  const a = await draw(full, 3); out.opaque = c.toDataURL();
+  check('a view that fills its picture is drawn on an opaque canvas', modeNow() === 'opaque' && HD.info.canvas === 'opaque', `the canvas is '${modeNow()}', HD.info.canvas '${HD.info.canvas}'`);
+  check('and nothing in its picture is see-through', clearPx(a) === 0, `${clearPx(a)} pixels with alpha under 250`);
+  HD.opaque = false;
+  const b = await draw(full, 3); out.blended = c.toDataURL();
+  check('HD.opaque = false: the canvas is blended with the page, as three sets it up', modeNow() === 'premultiplied' && HD.info.canvas === 'premultiplied', `'${modeNow()}'`);
+  check('blended, a filled view left nothing see-through either (so opaque changes no pixel on the page)', clearPx(b) === 0, `${clearPx(b)} pixels with alpha under 250`);
+  const again = await draw(full, 3), noise = differ(b, again, 2), off = differ(a, b, 2);
+  check('the same picture on an opaque canvas as on a blended one', off <= Math.max(noise, W * H * .0005), `${off} pixels differ by more than 2 of 255 (two draws the same way: ${noise})`);
+  HD.opaque = true;
+  await draw(full, 2);
+  check('and opaque again with the switch back on', modeNow() === 'opaque');
+  // three sets the canvas up anew whenever its size changes: it must come back opaque
+  { const big = document.createElement('canvas'); big.width = W + 32; big.height = H + 48; const bx = big.getContext('2d');
+    for (let i = 0; i < 3; i++) { full.render(bx, W + 32, H + 48); await frame(); }
+    check('a change of size keeps it opaque', modeNow() === 'opaque', `'${modeNow()}' at ${W + 32} x ${H + 48}`);
+    await draw(full, 3); check('and back at the first size', modeNow() === 'opaque', `'${modeNow()}'`); }
+  // a see-through view, as AR's: nothing behind the things, and what is behind the canvas shows there
+  const ar = scene(new gs.hd.HDView({ bg: '#8fa6c4', amb: .5 })); ar.scene.background = null; ar.scene.fog = null; ar.clearBg = true;
+  const s = await draw(ar, 10); out.through = c.toDataURL();
+  check('a see-through view (as AR) turns the canvas back to blended for its frames', modeNow() === 'premultiplied' && HD.info.canvas === 'premultiplied', `'${modeNow()}'`);
+  check('and where it draws nothing, what is behind shows', clearPx(s) > W * H * .1 && clearPx(s) < W * H * .95, `${clearPx(s)} of ${W * H} pixels see-through`);
+  const a2 = await draw(full, 3);
+  check('the next filled view turns it opaque again, with the same picture as before', modeNow() === 'opaque' && differ(a, a2, 2) <= Math.max(noise, W * H * .0005), `'${modeNow()}', ${differ(a, a2, 2)} pixels differ`);
+  check('the device is the same one throughout', G.r.backend.device === dev);
+  info.modes = { filled: 'opaque', seeThrough: 'premultiplied' };
+  window.result = { out, info, checks };
+} catch (e) { if (e.message !== 'done') { console.error(e); window.result = { error: String(e?.stack || e) }; } }
+</script>

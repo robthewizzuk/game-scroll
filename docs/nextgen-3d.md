@@ -485,9 +485,12 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   stay half floats). The volumetric light's one number takes 2 bytes and motion blur's fastest move a tile 4.
   In the town at 1080 x 2340 with depth of field, motion blur, beams and shafts on, those pictures go from
   19.1 MB to 9.5 MB, and every pass that draws or reads one moves half the bytes. The scene's own picture,
-  GSSR's, frame generation's and traced reflections' keep four channels. `HD.shadowColour = true`,
+  GSSR's, frame generation's and traced reflections' keep four channels.
+  The 3D canvas is opaque to the page while a view fills it, so the browser
+  shows it without blending it over what is behind (AR views, which show the camera through it, turn that
+  off for their own frames; `HD.info.canvas`). `HD.shadowColour = true`,
   `HD.shadow16 = false` (both before a
-  light's first frame), `HD.hdrSmall = false` and `HD.shareTargets = false` put each back to
+  light's first frame), `HD.hdrSmall = false`, `HD.opaque = false` and `HD.shareTargets = false` put each back to
   compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
   --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
   which could share, and draws the scene as before and as now: less memory, the same picture.

@@ -121,6 +121,19 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   little each frame needs a half float's steps: its pictures stay half floats (`hd3d-gpu-fx.js`). `sharePictures` shares a picture only between steps of one
   kind, so GSSR's small picture (four channels) no longer takes a step's. Not changed: the scene pass's
   colour, anything in `hd3d-gpu-trace.js`, GSSR's and frame generation's pictures.
+- The 3D canvas is opaque to the page while a view fills it (`HD.opaque`, `canvasShows` in `src/kit/gpu.js`).
+  three makes the canvas see-through (`alphaMode: 'premultiplied'`), which AR needs for the camera picture
+  behind it; then the browser blends the whole 3D picture over what is behind it on every frame. Told the
+  picture is opaque, the browser draws it with no blending, skips what is under it, and the system may show
+  it on a display plane of its own. WebGPU lets a canvas be configured again between frames with the device
+  and everything on it kept, so the view says before each frame whether anything shows through: a view with
+  `clearBg` (AR) turns the canvas back to blended for its frames, and the next filled view turns it opaque.
+  three sets the canvas up anew after every change of size from the backend's `parameters.alpha`, so that
+  is kept in step; the renderer's own `alpha` (how it clears) is left as it was, and the picture is the same
+  to the bit: a filled view left no see-through pixel on the blended canvas either (the test page counts
+  them), so nothing on the page changes. The pictures of cards waiting in the feed are drawn before the
+  live view's frame, each the way its own view asks. WebGL's canvas is fixed when it is made and stays
+  blended. `HD.info.canvas` says which.
 - A sun's shadow map and its kept copy are 16-bit depth (`depth16unorm`; `HD.shadow16`, `SHADOW_16` in
   `hd3d-gpu.js`): half the memory, and half of what each pass on them moves. three makes every shadow map
   `depth24plus`, 4 bytes a texel. An orthographic light's depth is even from near to far, so 65,536 steps
