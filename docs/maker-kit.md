@@ -637,10 +637,14 @@ function make(api) {
 | `gs.outdoors` `Land` | `Marks` (the ground they lie on), `Foley` (what is underfoot), `Reactions` (the ground people fall on) |
 | `gs.outdoors` `Marks` | `Foley` (steps sound like the ground they print), plants made after it (`bend`), blasts (soft ground is dented) |
 | `gs.sky` `Weather` | `Marks` (snow, wet earth: a weather made with a `level`), `Foley`; a blast makes it look again at what is still a roof |
-| `gs.sky` `Sky` | `gs.city` `City` (lights come on as it darkens) |
-| `gs.outdoors` `Water`, `Sea` | `Weather` rains on every one; a 3D blast or a shot going in splashes it, if it was made with `ripples`; `Foley` sounds what lands in it |
-| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray) |
-| `gs.physics` `Physics` (2D) | `Explosives`, `Shots` |
+| `gs.sky` `Sky` | `gs.city` `City` (lights come on as it darkens); a storm's lightning lights its clouds |
+| `gs.outdoors` `Water`, `Sea` | `Weather` rains on every one; a 3D blast or a shot going in splashes it, if it was made with `ripples`; `Foley` sounds what lands in it; a `Boat` or `Floater` given no water floats on the newest (`new Boat({ power: 9 })`) |
+| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray), `Kart`, `Plane`, `Boat`, `Hover` (solid in it), `Grapple` (`fire(from, dir)`), `shatter` and `slice` (the pieces are bodies), `Regions` |
+| `gs.physics` `Physics` (2D) | `Explosives`, `Shots`, `Car`, `Soft`, `Liquid`, `Platformer` and `TopDown` (`hero.update(dt, undefined, input)`) |
+| `gs.tiles` `TileMap` | `Platformer` and `TopDown` (`hero.update(dt, undefined, input)`), guards' sight (`Senses`), flat `Ears` |
+| `gs.ai` `NavGrid` | `Senses` (sight stops at its walls), agents that hunt (`agent.hunt(target)`) |
+| `gs.senses` `Noises` | every `Senses` hears them (`senses.update(dt, guard, player)`) |
+| `gs.tactics` `CoverMap` | `Squad` |
 | `gs.destruction` `Structure` | 3D blasts blow it in, `Foley` sounds what breaks off |
 | `gs.gas`, `gs.fluid` | 3D blasts burst in the smoke they are in and throw the liquid |
 | `gs.characters` `Reactions` | 3D blasts knock people down |
@@ -653,7 +657,7 @@ The rules, the same in every kit:
   keeps a kit to itself entirely (it finds nothing and is not found).
 - **One set a game.** Things find what the same game made in its `make()` and `reset()`; nothing crosses to
   another card. Something made later (in `update()`) joins through its view, so give it one (`new Water({ view })`).
-- **The newest wins.** Make a new `World3D` each round and the kits follow it. Kinds a game may have several of
+- **The newest wins.** Make a new `World3D` each round and the kits that look each frame follow it (blasts, shots, cloth, sounds, ears, the camera). Things that make a body of their own in the world (a kart, a boat, a hover, soft things, regions) take the world that was there when they were made, so make the world first. Kinds a game may have several of
   (water, gas, fluid, structures, people who react) are all told.
 - **What the world does, never the rules.** A link is wind on cloth, rain on water, a blast through smoke. Who is
   hurt, what scores and what a shot does to what it hit stay your game's (`bombs.on('boom', ...)`, the hits

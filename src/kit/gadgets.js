@@ -12,6 +12,7 @@
 //
 // Positions and speeds are { x, y, z } (2D games leave out z; gravity then points along +y).
 
+import { linksFor } from './links.js';
 const V = (x = 0, y = 0, z = 0) => ({ x, y, z });
 const sub = (a, b) => V(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
 const len = a => Math.hypot(a.x, a.y, a.z || 0);
@@ -33,9 +34,10 @@ const turn = (v, q) => {
  * heavy one pulls you to it. hook.thing is what it holds (null for the level).
  */
 export class Grapple {
-  constructor({ range = 14, reel = 12, swing = true, flyTime = .12, min = 1, mass = 80 } = {}) { Object.assign(this, { range, reelSpeed: reel, swing, flyTime, min, mass }); this.attached = false; this.flying = 0; this.point = null; this.length = 0; this.thing = null; }
-  /** Fires along dir. ray(from, dir, max) returns { point } or null, or ray is a World3D (not: your hero's body or mover there, which it passes through). True if it will hook something. */
+  constructor({ range = 14, reel = 12, swing = true, flyTime = .12, min = 1, mass = 80, link = true } = {}) { Object.assign(this, { range, reelSpeed: reel, swing, flyTime, min, mass }); this.links = linksFor(null, link); this.attached = false; this.flying = 0; this.point = null; this.length = 0; this.thing = null; }
+  /** Fires along dir. ray(from, dir, max) returns { point } or null, or ray is a World3D (not: your hero's body or mover there, which it passes through); left out: the World3D the game made (links.js). True if it will hook something. */
   fire(from, dir, ray, not = null) {
+    ray ??= this.links?.one('world'); if (!ray) return false;
     const world = typeof ray === 'function' ? null : ray, l = len(dir) || 1, d = scale(dir, 1 / l), hit = world ? world.ray(from, d, this.range, t => t !== not && !t.collider.isSensor()) : ray(from, d, this.range);
     if (!hit) { this.miss = { from, to: add(from, scale(d, this.range)) }; return false; }
     this.point = V(hit.point.x, hit.point.y, hit.point.z || 0); this.flying = this.flyTime; this.attached = false; this.length = len(sub(this.point, from)); this.miss = null;

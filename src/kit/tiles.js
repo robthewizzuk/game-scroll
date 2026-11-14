@@ -21,6 +21,7 @@
 // Your own tile kinds: TileMap.fromText(text, { legend: { '~': { solid: false, water: true } } }) and
 // map.info(tx, ty).water. map.ray() is a line of sight; map.walkable() feeds gs.ai.NavGrid.
 
+import { linksFor } from './links.js';
 const DEFAULT_LEGEND = {
   '#': { solid: true }, '=': { solid: true }, 'X': { solid: true },
   '-': { oneWay: true },
@@ -43,8 +44,9 @@ export { BLOB_MASKS };
 
 export class TileMap {
   /** cols × rows tiles of size units, all empty. */
-  constructor(cols, rows, { size = 16, legend = {} } = {}) {
+  constructor(cols, rows, { size = 16, legend = {}, link = true } = {}) {
     this.cols = cols; this.rows = rows; this.size = size;
+    linksFor(null, link)?.join('tiles', this);   // (links.js: the game's level, for its movers, its guards' sight and flat ears)
     this.legend = { ...DEFAULT_LEGEND, ...legend };
     this.cells = new Array(cols * rows).fill('.');
     this.marks = [];

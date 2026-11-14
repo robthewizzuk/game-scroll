@@ -21,6 +21,7 @@
 // Positions are { x, y } (3D games: pass x and z as x and y). Members need x, y, and alive or hp.
 // Tell the squad what happened: squad.hurt(member) when one is hit, squad.reloading(member).
 
+import { linksFor, linked } from './links.js';
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
@@ -30,8 +31,8 @@ const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
  * world (a cell's centre is x0 + (col + .5) * size).
  */
 export class CoverMap {
-  constructor(cols, rows, blocked, { size = 1, x0 = 0, y0 = 0, low = null } = {}) {
-    Object.assign(this, { cols, rows, blocked, size, x0, y0, lowAt: low });
+  constructor(cols, rows, blocked, { size = 1, x0 = 0, y0 = 0, low = null, link = true } = {}) {
+    Object.assign(this, { cols, rows, blocked, size, x0, y0, lowAt: low }); linksFor(null, link)?.join('cover', this);   // (links.js: a Squad made after it uses it)
     this.spots = [];
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       if (blocked(c, r)) continue;
@@ -90,7 +91,8 @@ export class CoverMap {
  * camp (seconds still before a grenade), think, aggression 0..1 (more advancing, less waiting).
  */
 export class Squad {
-  constructor(members, { cover = null, sees = null, range = 12, grenades = 2, camp = 4, think = .6, aggression = .5, rng = Math.random } = {}) {
+  constructor(members, { cover = null, sees = null, range = 12, grenades = 2, camp = 4, think = .6, aggression = .5, rng = Math.random, link = true } = {}) {
+    cover = linked(cover, linksFor(null, link), 'cover');   // (links.js: with none given, the CoverMap the game made; false: none)
     Object.assign(this, { members, cover, sees, range, grenades, camp, thinkEvery: think, aggression, rng });
     this.t = 0; this.handlers = {}; this.still = 0; this.lastTarget = null; this.alerted = false; this.lastFlank = -99; this.lastGrenade = -99;
     for (const m of members) m.order = { do: 'hold', role: 'idle' };

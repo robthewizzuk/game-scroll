@@ -21,9 +21,11 @@
 // x and y (and can set hidden: true in a locker or bush). Senses.alertAll(guards, x, y, radius)
 // tells nearby guards when one raises the alarm.
 import { timed } from './prof.js';
+import { linksFor } from './links.js';
 
 export class Senses {
-  constructor({ range = 120, fov = 90, near = 20, hearing = 1, spotTime = .9, memory = 4, searchTime = 6, calmDown = 3 } = {}) {
+  constructor({ range = 120, fov = 90, near = 20, hearing = 1, spotTime = .9, memory = 4, searchTime = 6, calmDown = 3, link = true } = {}) {
+    this.links = linksFor(null, link); this.wall = null; this.wallOf = null;   // (links.js: with no sees or noises given to update(), the walls and the noises the game made)
     Object.assign(this, { range, fov: fov * Math.PI / 180, near, hearing, spotTime, memory, searchTime, calmDown });
     this.mood = 'calm'; this.awareness = 0; this.seen = false; this.lastSeen = null; this.lookAt = null; this.since = 99; this.moodTime = 0; this.heard = null;
   }
@@ -46,6 +48,11 @@ export class Senses {
   /** Something worth checking at (x, y). */
   suspect(x, y, amount = .5) { this.lookAt = { x, y }; this.awareness = Math.max(this.awareness, Math.min(.99, amount)); if (this.mood === 'calm') this.set('suspicious'); return this; }
   update(dt, me, target, { sees, noises, light = 1 } = {}) {
+    const L = this.links;
+    if (L) {   // (what blocks sight: the game's NavGrid, else its TileMap, in the same units as the guard and the player; what is heard: its Noises; false: none)
+      if (sees == null) { const w = L.one('nav') ?? L.one('tiles'); if (w !== this.wallOf) { this.wallOf = w; this.wall = w ? (a, b, c, d) => w.sees(a, b, c, d) : null; } sees = this.wall; }
+      if (noises == null) noises = L.one('noises');
+    }
     this.moodTime += dt; this.since += dt;
     this.seen = this.canSee(me, target, sees, light);
     if (this.seen) {
@@ -78,7 +85,7 @@ export class Senses {
  * in noises.list for half a second (n.age) so you can draw ripples.
  */
 export class Noises {
-  constructor() { this.list = []; }
+  constructor({ link = true } = {}) { this.list = []; linksFor(null, link)?.join('noises', this); }
   make(x, y, loud = 60) { this.list.push({ x, y, loud, age: 0 }); return this; }
   update(dt) { for (const n of this.list) n.age += dt; this.list = this.list.filter(n => n.age < .5); return this; }
   clear() { this.list = []; return this; }

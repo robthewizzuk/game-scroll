@@ -6824,9 +6824,60 @@ console.log('physics ok');
     rig.update(1 / 60, hero); const open = new CameraRig({ cam: new THREE.PerspectiveCamera(), scene: v.scene }, { mode: 'chase', distance: 8, height: 1, lag: 0, walls: false }); open.update(1 / 60, hero);
     assert.ok(Math.abs(open.cam.position.z - hero.position.z) > 7 && Math.abs(rig.cam.position.z - hero.position.z) < 4.2, `a camera rig stays this side of a wall in the game's world: ${rig.cam.position.z.toFixed(2)} against ${open.cam.position.z.toFixed(2)}`);
   });
+  // things that move find the world and the water; a level, its walls and its noises find the guards and the heroes
+  {
+    const { Kart, Car } = await import('../src/kit/vehicles.js'), { Boat, Hover, Plane, Floater } = await import('../src/kit/craft.js'), { Grapple } = await import('../src/kit/gadgets.js'), { Soft, Liquid } = await import('../src/kit/soft.js');
+    const { shatter } = await import('../src/kit/destruction.js'), { Regions } = await import('../src/kit/regions.js'), { linksOf } = await import('../src/kit/links.js');
+    const { TileMap } = await import('../src/kit/tiles.js'), { NavGrid, Crowd } = await import('../src/kit/ai.js'), { Senses, Noises } = await import('../src/kit/senses.js'), { CoverMap, Squad } = await import('../src/kit/tactics.js'), { Platformer, TopDown } = await import('../src/kit/movers.js');
+    together(() => {
+      const w = new World3D({ gravity: -9.8 }); w.floor(0); const sea = new Water({ level: 2, waves: 0 });
+      const kart = new Kart({ y: 1 }), plane = new Plane(), hover = new Hover(), boat = new Boat({ at: { x: 4, y: 0, z: 4 } }), old = new Boat(sea, { world: false }), own = new Kart({ link: false });
+      assert.ok(kart.world === w && kart.rider && plane.world === w && hover.world === w && boat.world === w && boat.rider, 'a kart, a plane, a hover and a boat are solid in the game\'s physics world');
+      assert.ok(boat.water === sea && Math.abs(boat.y - 2) < 1e-6 && old.water === sea && !old.world && !own.world, 'a boat floats on the game\'s water; world: false and link: false: by itself');
+      const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: 5, z: 0 } }), fl = new Floater(crate, { float: 2 }); assert.equal(fl.water, sea, 'a floater floats in the game\'s water');
+      const g = new Grapple({ range: 30 }); w.box(null, 4, 4, 1, { at: { x: 0, y: 2, z: -10 }, fixed: true }); w.step(1 / 60);
+      assert.ok(g.fire({ x: 0, y: 2, z: 0 }, { x: 0, y: 0, z: -1 }) && Math.abs(g.point.z + 9.5) < .05, 'a grapple fired with no ray hooks what is in the game\'s world');
+      const v = view(); Object.defineProperty(v.scene, 'gsView', { value: v }); linksFor(v);
+      const pane = new THREE.Mesh(new THREE.BoxGeometry(1, 1, .1), new THREE.MeshBasicMaterial()); pane.position.set(0, 3, 0); v.scene.add(pane);
+      assert.equal(linksOf(pane).one('world'), w, 'something in the game\'s scene finds the game\'s set during play');
+      const bits = ownedBy(null, () => shatter(pane, { pieces: 4, seed: 2 })); assert.ok(bits.length >= 2 && bits.every(b => b.body), 'a thing shattered during play (outside make() and reset()): its pieces are bodies in the game\'s world');
+      const loose = new THREE.Mesh(new THREE.BoxGeometry(1, 1, .1), new THREE.MeshBasicMaterial()); v.scene.add(loose); assert.ok(ownedBy(null, () => shatter(loose, { pieces: 4, seed: 2, world: false })).every(b => !b.body), 'world: false: pieces that are only meshes');
+      assert.equal(new Regions(v).world, w, 'regions free their bodies in the game\'s world');
+    });
+    together(() => {
+      const p = new Physics({ gravity: 900 }), soft = new Soft(), drops = new Liquid(), cloth3 = new Soft({ dims: 3 }), car = new Car(), free = new Car({ world: false });
+      assert.ok(soft.world === p && drops.world === p && cloth3.world === null && car.world === p && !free.world, 'soft things, liquid and a 2D car find the game\'s 2D physics world (3D soft things do not)');
+      const hero = new Platformer({ x: 50, y: 50 }); p.box(50, 200, 300, 20, { fixed: true }); for (let i = 0; i < 90; i++) { hero.update(1 / 60, undefined, {}); p.step(1 / 60); }
+      assert.ok(hero.onGround && hero.y < 200, 'a platformer with no level given walks the game\'s 2D physics world: ' + hero.y.toFixed(1));
+    });
+    together(() => {
+      const map = TileMap.fromText(['........', '........', '...#....', '...#....', '########'], { size: 10 }), noises = new Noises();
+      const hero = new Platformer({ x: 15, y: 5, w: 6, h: 8 }); for (let i = 0; i < 90; i++) hero.update(1 / 60, undefined, {});
+      assert.ok(hero.onGround && Math.abs(hero.bottom - 40) < .5, 'a platformer with no level given stands on the game\'s TileMap: ' + hero.bottom);
+      const ghost = new Platformer({ x: 15, y: 5, w: 6, h: 8 }); for (let i = 0; i < 30; i++) ghost.update(1 / 60, null, {}); assert.ok(ghost.y > 45, 'null: no level, as before');
+      const walker = new TopDown({ x: 15, y: 25, w: 6, h: 6 }); for (let i = 0; i < 60; i++) walker.update(1 / 60, undefined, { x: 1 }); assert.ok(walker.x < 30, 'a top-down mover stops at the game\'s walls: ' + walker.x.toFixed(1));
+      const guard = { x: 15, y: 25, facing: 0 }, thief = { x: 55, y: 25 }, s = new Senses({ range: 80, fov: 90 }), blind = new Senses({ range: 80, fov: 90 }), deaf = new Senses({ range: 80, fov: 90, link: false });
+      s.update(1 / 60, guard, thief); blind.update(1 / 60, guard, thief, { sees: false }); assert.ok(!s.seen && blind.seen, 'a guard\'s sight stops at the game\'s walls (sees: false: nothing in the way)');
+      s.update(1 / 60, guard, { x: 15, y: 5 }); guard.facing = -Math.PI / 2; s.update(1 / 60, guard, { x: 15, y: 5 }); assert.ok(s.seen, 'and sees where nothing is in the way');
+      const s2 = new Senses({ range: 80, fov: 90 }); guard.facing = Math.PI; noises.make(30, 25, 60); s2.update(1 / 60, guard, null); deaf.update(1 / 60, guard, null);
+      assert.ok(s2.heard && s2.mood !== 'calm' && !deaf.heard, 'a guard hears the game\'s noises with nothing given (link: false: deaf to them)');
+    });
+    together(() => {
+      const nav = new NavGrid(10, 10, 10, (x, y) => x === 5 && y < 8), cover = new CoverMap(10, 10, (c, r) => c === 5 && r < 8), crowd = new Crowd(), a = crowd.add(15, 15), sq = new Squad([]), s = new Senses({ range: 200, fov: 360 });
+      a.hunt({ x: 85, y: 15 }); assert.equal(a.hunting?.nav, nav, 'an agent that hunts with no nav given goes round the game\'s walls');
+      assert.equal(sq.cover, cover, 'a squad finds the game\'s cover map'); assert.equal(new Squad([], { cover: false }).cover, null);
+      s.update(1 / 60, { x: 15, y: 15, facing: 0 }, { x: 85, y: 15 }); assert.ok(!s.seen, 'a guard\'s sight stops at the walls of the game\'s NavGrid');
+    });
+    // lightning lights the clouds of the game's sky
+    together(() => {
+      const v = view(), fake = { flash: 0 }; linksFor(v).join('sky', fake);
+      const storm = new Weather(v, { kind: 'storm' }); storm.flash(); storm.update(1 / 60); assert.ok(fake.flash > 0, 'lightning lights the game\'s sky');
+      for (let i = 0; i < 40; i++) storm.update(1 / 60); assert.equal(fake.flash, 0, 'and it goes dark again');
+    });
+  }
   // kits' own private things stay out of the set
   together(() => { const s = linksFor(null); new World3D({ link: false }); new Ears({ link: false }); new Wind({ link: false }); assert.ok(!s.one('world') && !s.one('ears') && !s.one('wind'), 'link: false things are not found'); });
-  console.log('kits that find each other: one set a card, one wind (cloth, rain, smoke, swell, sand, particles), land, weather and water, sounds that find it all, blasts felt by everything, shots, the camera and walls ok');
+  console.log('kits that find each other: one set a card, one wind (cloth, rain, smoke, swell, sand, particles), land, weather and water, sounds that find it all, blasts felt by everything, shots, the camera and walls, karts, craft, soft things, shattered things and regions in the world, heroes, guards, hunters and squads in the level, lightning in the sky ok');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

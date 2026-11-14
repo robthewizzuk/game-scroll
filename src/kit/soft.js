@@ -20,6 +20,7 @@
 // in it (crates, the level, a tile map made solid, the player) and, with weight (kg a point), push loose things back:
 // jelly that knocks a crate over, water that floats a ball and turns a wheel.
 import { timed } from './prof.js';
+import { linksFor, linked } from './links.js';
 
 export class Soft {
   /**
@@ -28,7 +29,8 @@ export class Soft {
    * points can't pass (3D: up is +y so it's a minimum); bounce off walls; friction on them. world: a gs.physics world
    * (2D) whose shapes the points stay out of; weight: kg a point, to push loose things there back.
    */
-  constructor({ gravity = null, dims = 2, iterations = 8, damping = .995, bounds = null, floor = null, bounce = .3, friction = .9, step = 1 / 120, world = null, weight = 0 } = {}) {
+  constructor({ gravity = null, dims = 2, iterations = 8, damping = .995, bounds = null, floor = null, bounce = .3, friction = .9, step = 1 / 120, world = null, weight = 0, link = true } = {}) {
+    world = dims === 3 ? world || null : linked(world, linksFor(null, link), 'world2d');   // (links.js: with none given, the 2D physics world the game made, made before this; false: none)
     this.dims = dims; this.gravity = gravity || (dims === 3 ? { x: 0, y: -9.8, z: 0 } : { x: 0, y: 900, z: 0 });
     Object.assign(this, { iterations, damping, bounds, floor, bounce, friction, step, world, weight });
     this.points = []; this.sticks = []; this.bodies = []; this.solids = []; this.acc = 0; this.handlers = {};
@@ -207,7 +209,8 @@ function cross(ax, ay, bx, by, cx, cy, dx, dy) {
  * world whose shapes the drops stay out of; weight: kg a drop, to push loose things (floats a light ball, turns a wheel).
  */
 export class Liquid {
-  constructor({ r = 16, gravity = 600, stiff = .004, near = .01, rest = 10, viscosity = .1, bounds = [0, 0, 360, 640], max = 400, bounce = .3, world = null, weight = 0 } = {}) {
+  constructor({ r = 16, gravity = 600, stiff = .004, near = .01, rest = 10, viscosity = .1, bounds = [0, 0, 360, 640], max = 400, bounce = .3, world = null, weight = 0, link = true } = {}) {
+    world = linked(world, linksFor(null, link), 'world2d');   // (links.js)
     Object.assign(this, { r, gravity, stiff, nearK: near, rest, viscosity, bounds, max, bounce, world, weight }); this.list = []; this.solids = []; this.grid = new Map();
   }
   /** Adds a drop at x, y with speed vx, vy (px a second). */
