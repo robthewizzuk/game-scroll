@@ -105,8 +105,8 @@ try {
   const lamp = gs.hd.spot('#ffd9a0', 30, 14, .6); lamp.position.set(3, 4, 2); lamp.target.position.set(0, 0, -2); v.scene.add(lamp, lamp.target);
   v.cam.fov = 45; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
   const FR = 14;
-  const walk = async on => {
-    HD.oneSubmit = on;
+  const walk = async (on, early = true) => {
+    HD.oneSubmit = on; HD.submitEarly = early;
     const pics = [], counts = [];
     for (let i = 0; i < FR + 6; i++) {
       const t = Math.max(0, i - 6) / FR;   // (six frames in place first: shaders, shadow maps and the frames-before pictures settle)
@@ -120,7 +120,12 @@ try {
   // (walked once before either is kept: the first walk makes the shaders, and frames drawn while they are made differ)
   await walk(true); v.cut?.();
   const each = await walk(false); out.each = each.url; v.cut?.();
+  const w0 = { ...ONE_SUBMIT.why };
   const one = await walk(true); out.one = one.url; v.cut?.();
+  const w1 = { ...ONE_SUBMIT.why };
+  // (held to the end of the frame's code, HD.submitEarly = false: what the early sends are compared with)
+  const late = await walk(true, false); v.cut?.();
+  const w2 = { ...ONE_SUBMIT.why };
   const again = await walk(false);
   const differ = (a, b, tol) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
   const worst = (A, B, tol) => Math.max(...A.pics.map((p, i) => differ(p, B.pics[i], tol)));
@@ -130,6 +135,13 @@ try {
   info.sends = { 'each pass by itself': +mean(each.counts).toFixed(1), together: +mean(one.counts).toFixed(1), why: { ...ONE_SUBMIT.why } };
   check('every frame is the same picture sent together as with each pass sent by itself', off <= Math.max(noise, W * H * .0005), `${off} pixels differ by more than 2 of 255 in the worst frame (two walks sent the same way: ${noise})`);
   check('the frame goes to the chip in a quarter of the sends or fewer', mean(one.counts) <= mean(each.counts) / 4 && mean(one.counts) <= 8, `${mean(one.counts).toFixed(1)} sends a frame against ${mean(each.counts).toFixed(1)}`);
+  // the chip starts on a pass when it is sent: what is held goes before the scene is drawn, after a shadow map drawn inside
+  // the scene's pass and when the scene's pass is encoded, so the chip draws while the frame's code goes on (submit.js)
+  const by = (a, b, k) => (b[k] || 0) - (a[k] || 0);
+  info.sends.atTheEnd = +mean(late.counts).toFixed(1); info.sends.early = { scene: by(w0, w1, 'scene'), shadows: by(w0, w1, 'shadows'), before: by(w0, w1, 'before the scene') };
+  check("the scene's pass goes to the chip as soon as it is encoded, every frame", by(w0, w1, 'scene') >= FR, `${by(w0, w1, 'scene')} sends at the scene's pass in ${FR + 6} frames, ${by(w0, w1, 'shadows')} after a shadow map`);
+  check('with HD.submitEarly off nothing is sent before the frame\'s code ends but what has to be', by(w1, w2, 'scene') === 0 && by(w1, w2, 'shadows') === 0 && by(w1, w2, 'before the scene') === 0 && mean(late.counts) <= mean(one.counts), `${mean(late.counts).toFixed(1)} sends a frame held to the end, ${mean(one.counts).toFixed(1)} with the early ones`);
+  check('the same picture with the early sends as held to the end', worst(one, late, 2) <= Math.max(noise, W * H * .0005), `${worst(one, late, 2)} pixels differ in the worst frame`);
   check('the view says how many sends a frame took', HD.info.submits > 0 && HD.info.submits <= Math.max(...again.counts), `${HD.info.submits} in the last frame, each pass by itself (the most in that walk: ${Math.max(...again.counts)})`);
   check('nothing is left held after a frame', S.list.length === 0);
   window.result = { out, info, checks };
