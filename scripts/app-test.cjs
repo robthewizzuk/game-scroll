@@ -5,7 +5,9 @@
 // 3D game a little each frame (each pass on a fresh copy of the game's file), getting a 3D round ready behind
 // a loading screen after Play (its first frames and its first update, before the round starts), the fill-ins for
 // old WebViews, that a test build sends no play stats or crash reports, and updates from Google Play.
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading|ready|oldweb|reports|updates]   (SHOTS=<dir> saves a picture of every font and look)
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|scenes|framegen|loading|ready|oldweb|reports|updates ...]
+//   (no names: every part; -scenes or any -name: every part but those; SHOTS=<dir> saves a picture of every font and look).
+//   scenes (the engine test scenes, about 6 of the 11 minutes on GitHub) runs as a job of its own there.
 const { chromium } = require('playwright');
 
 let failed = 0;
@@ -675,7 +677,11 @@ async function tour(b) {
     'the sheet also offers frame generation, timed in four of the engine test scenes', JSON.stringify(sheet3));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
+}
 
+/* ---------- the engine test scenes, flown by the tour (its own part: the slowest one, run as a job of its own on GitHub) ---------- */
+async function scenes(b) {
+  console.log('\nEngine test scenes');
   // the engine test scenes (src/detail-tour.js): each detail system off and on, on a stage over the app.
   // Small scenes on a small screen here: the software renderer draws the full ones at seconds a frame.
   const q = await open(b, { width: 240, height: 320, dpr: 1, before: () => {
@@ -833,7 +839,6 @@ async function tour(b) {
   check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
     'frame generation\'s runs, where the 3D is drawn with WebGL, say there was nothing to time', JSON.stringify(noFg));
   await q.done();
-  await framegenScenes();
 }
 
 // Frame generation's runs in the engine test scenes (src/detail-tour.js), on a browser with WebGPU on its
@@ -1258,8 +1263,11 @@ async function updates(b) {
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading, ready, oldweb, reports, updates };
-  for (const [name, fn] of Object.entries(parts)) if (!only.length || only.includes(name)) await fn(b);
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, scenes, framegen: framegenScenes, loading, ready, oldweb, reports, updates };
+  const unknown = only.map(n => n.replace(/^-/, '')).filter(n => !parts[n]);
+  if (unknown.length) { console.log(`no part called ${unknown.join(', ')}: the parts are ${Object.keys(parts).join(', ')}`); process.exit(1); }
+  const want = only.filter(n => !n.startsWith('-')), skip = only.filter(n => n.startsWith('-')).map(n => n.slice(1));
+  for (const [name, fn] of Object.entries(parts)) if ((!want.length || want.includes(name)) && !skip.includes(name)) await fn(b);
   await b.close(); server.httpServer.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall app checks passed'); process.exit(failed ? 1 : 0);
 })();

@@ -20,6 +20,7 @@ import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
 import { fur } from './fur.js';
 import { slimShared } from '../slim.js';
+import { fadeable, fadeLevels } from '../lod-fade.js';
 
 const PI = Math.PI, abs = Math.abs;
 
@@ -229,7 +230,9 @@ export function creature(o = {}) {
     root.size = { length: (hi[2] - lo[2]) * scale, height: (hi[1] - lo[1]) * scale, width: (hi[0] - lo[0]) * scale };
     root.look = { kind: plan.kind, like: plan.like, seed: plan.seed, size: plan.size, ...look, build: { ...plan.p } };
     let cur = 0;
-    Object.defineProperty(root, 'lod', { get: () => cur, set(v) { v = Math.max(0, Math.min(2, v | 0)); if (v !== cur) { lods[cur].visible = false; lods[v].visible = true; cur = v; } } });
+    // (seen on screen, a change of level fades: both drawn for a moment, each dithered, rather than a pop: lod-fade.js)
+    Object.defineProperty(root, 'lod', { get: () => cur, set(v) { v = Math.max(0, Math.min(2, v | 0)); if (v !== cur) { const from = cur; cur = v; fadeLevels(root, [lods[from]], [lods[v]]); } } });
+    fadeable(root, () => lods);
     /** Picks the level of detail by how big the creature is on screen (pixels): call each frame, or now and then. */
     const wp = new Vector3(), big = Math.max(root.size.length, root.size.height);
     root.see = (cam, screenH = 800) => {

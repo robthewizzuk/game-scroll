@@ -2275,7 +2275,7 @@ console.log('physics ok');
   // the list and the list's version after the draw.
   const lv = [{ object: { geometry: geo, material: im.material }, distance: 0, hysteresis: 0 }, { object: { geometry: geo, material: im.material }, distance: 15 * 15, hysteresis: 0 }];
   const tw2 = gpuProps({ ...im, LODinfo: { render: { levels: lv } } });
-  const chips = tw2.group.children.map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });
+  const chips = tw2.group.children.filter(m => m.userData.slots).map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });   // (the levels' lists: not their lists of copies changing level)
   const draw = () => {
     let wrong = 0, drawn = 0;
     for (const g of chips) {
@@ -2297,6 +2297,66 @@ console.log('physics ok');
   cam.lookAt(2, 0, -20); tw2.sync(cam); const d5 = draw(); lv[1].distance = 15 * 15; tw2.sync(cam); const d6 = draw(); tw2.sync(cam); const d7 = draw();
   assert.equal(d5.wrong + d6.wrong + d7.wrong, 0, 'and through a turn and the change back');
   console.log('gs.props on WebGPU: only changed copies are sent, and each keeps its own motion ok');
+  // a copy changing level fades (lod-fade.js): out of both levels' own lists and into their lists of copies changing
+  // level, each with its share, until the fade ends; none of it until the dithered shaders are built (ready)
+  const { FADE } = await import('../src/kit/lod-fade.js'), s0 = FADE.s;
+  const lists = () => tw2.group.children.filter(m => m.userData.slots).map(m => m.userData.slots.owner.reduce((k, o) => k + (o ? 1 : 0), 0)), fl = () => tw2.fades().map(m => m.visible ? m.count : 0);
+  cam.lookAt(0, 0, -20); tw2.sync(cam, null, null, null, () => true); const was = lists();
+  FADE.s = 1e6; lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => false);
+  assert.ok(fl().every(n => n === 0) && lists()[0] > was[0], 'no fades while the dithered shaders are not built: the change is at once');
+  FADE.on = false; lv[1].distance = 15 * 15; tw2.sync(cam, null, null, null, () => true); FADE.on = true;
+  assert.ok(fl().every(n => n === 0) && lists().join() === was.join(), 'nor with fades off');
+  lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => true);
+  const f1 = fl(), mid = lists(), F0 = tw2.fades()[0].geometry.attributes.gsFade.array, F1 = tw2.fades()[1].geometry.attributes.gsFade.array;
+  assert.ok(f1[0] > 20 && f1[0] === f1[1] && mid[0] === was[0] && mid[1] === was[1] - f1[0], `the copies changing level are in both fading lists and neither level's own (${f1} fading; lists ${was} then ${mid})`);
+  assert.ok(F0[1] === 1 && F1[1] === -1 && F0[0] < .01 && F1[0] === F0[0], 'each with its share: coming in to the near level, going out of the far');
+  lv[1].distance = 15 * 15; tw2.sync(cam, null, null, null, () => true);
+  assert.deepEqual(fl(), [0, 0], 'a change back before the fade has gone anywhere is at once');
+  assert.deepEqual(lists(), was, 'and they are back in their lists');
+  lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => true); FADE.s = .01; await new Promise(r => setTimeout(r, 30)); tw2.sync(cam, null, null, null, () => true);   // (30 ms of a fade of 10)
+  const done = lists();
+  assert.ok(fl().every(n => n === 0) && done[0] === was[0] + f1[0] && done[1] === was[1] - f1[0], `at the end of the fade they are in the new level's list (${done})`);
+  FADE.s = s0; lv[1].distance = 15 * 15;
+  console.log('gs.props on WebGPU: copies changing level fade ok');
+}
+
+// Detail levels that fade into each other (lod-fade.js): when a thing fades, the shares each level is drawn with,
+// the shadow from one level at a time, a fade turned round, one waiting for its shaders, and things that switch at once
+{
+  const T = await import('three'), { FADE, FADING, fadeable, fadeLevels, fadeStep, fadesDone } = await import('../src/kit/lod-fade.js');
+  const scene = new T.Scene(), root = new T.Group(), mesh = () => new T.Mesh(new T.BoxGeometry(), new T.MeshBasicMaterial()), a = mesh(), b = mesh(), out = [];
+  b.visible = false; root.add(a, b); scene.add(root); fadeable(root);
+  let done = 0;
+  assert.equal(fadeLevels(root, [a], [b], () => done++), false, 'a thing no view has drawn changes level at once');
+  assert.ok(!a.visible && b.visible && done === 1 && !FADING.size);
+  fadeLevels(root, [b], [a]); fadeStep(scene, () => true, false, out);   // (a frame: it has been seen)
+  const s0 = FADE.s; FADE.s = 1e6;
+  assert.equal(fadeLevels(root, [a], [b], () => done++), true, 'one on screen fades');
+  assert.ok(a.visible && b.visible && done === 1, 'both shown while it fades, and done() not called yet');
+  fadeStep(scene, () => true, false, out);
+  assert.ok(out.length === 6 && out[0] === a && out[1].y === -1 && out[2] === true && out[3] === b && out[4].y === 1 && out[5] === false && out[4].x === out[1].x, 'the old level going out and casting the shadow, the new coming in with the same share');
+  FADING.get(root).t = .6; fadeStep(scene, () => true, false, out);
+  assert.ok(out[2] === false && out[5] === true, 'from half way the new level casts the shadow');
+  assert.equal(fadeLevels(root, [b], [a], () => done++), true, 'a change back turns the fade round');
+  assert.ok(Math.abs(FADING.get(root).t - .4) < 1e-6 && FADING.get(root).to[0] === a);
+  FADE.s = .01; await new Promise(r => setTimeout(r, 30)); fadeStep(scene, () => true, false, out);
+  assert.ok(!FADING.size && a.visible && !b.visible && done === 2 && !a.userData.gsFadeV, 'and it ends there');
+  // its shaders not built: the new level waits, hidden, then the change is made at once
+  FADE.s = 1e6; const w0 = FADE.wait; FADE.wait = 1e6;
+  fadeLevels(root, [a], [b], () => done++); fadeStep(scene, () => false, false, out);
+  assert.ok(out.length === 3 && out[0] === b && out[1] === null && FADING.get(root).t === 0, 'waiting for its shaders the new level is hidden and the old drawn whole');
+  assert.equal(fadeLevels(root, [b], [a], () => done++), false, 'turned back before it began, it just ends');
+  assert.ok(!FADING.size && a.visible && !b.visible && done === 3);
+  FADE.wait = 0; fadeLevels(root, [a], [b], () => done++); fadeStep(scene, () => false, false, out); fadeStep(scene, () => false, false, out);
+  assert.ok(!FADING.size && !a.visible && b.visible && done === 4, 'waited too long: the change made at once');
+  FADE.wait = w0;
+  // fades off, or hidden: at once
+  FADE.on = false; assert.equal(fadeLevels(root, [b], [a], () => done++), false); FADE.on = true;
+  root.visible = false; assert.equal(fadeLevels(root, [a], [b], () => done++), false); root.visible = true;
+  fadeLevels(root, [b], [a]); fadeLevels(root, [a], [b]); fadesDone();
+  assert.ok(!FADING.size && b.visible && !a.visible, 'fadesDone() ends every fade');
+  FADE.s = s0;
+  console.log('detail levels that fade: shares, shadows, turning round, waiting for shaders, at once when not seen ok');
 }
 
 // gs.models material recipes: each tiles seamlessly (the same at p and p + one tile), with finite numbers
