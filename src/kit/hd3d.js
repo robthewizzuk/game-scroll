@@ -405,7 +405,7 @@ export const HD = {
    * People on bones posed once a frame on the graphics chip (WebGPU, skin-gpu.js): one compute pass poses every point of
    * every mesh on bones in view, and the picture, the shadow maps and the motion picture all read it, instead of each
    * posing them again in its vertex shader. false: posed in each pass, as three does (tests, the engine test square).
-   * info.skin: { meshes, posed, points, bones, kinds, poolMB } for the last frame (null when off or on WebGL).
+   * info.skin: { meshes, posed, points, bones, kinds, poolMB, left } for the last frame (null when off or on WebGL; left: meshes the pool had no room for, posed in their own shaders).
    */
   gpuSkin: true,
   /**

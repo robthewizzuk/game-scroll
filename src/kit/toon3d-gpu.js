@@ -77,6 +77,8 @@ export function setup(r) {
 }
 
 /* ---------- the passes ---------- */
+/** Tests: `on: true` before the first Console view draws keeps the colour pass's samples in memory, as three does by default. */
+export const MSAA_KEEP = { on: false };
 // One set for every Console view (each draw gives them the view's scene and camera), as WebGL has one
 // canvas and one outline target: the scene in colour, the scene again as normals and depth for the
 // outlines (things on layer 0 only), then the ink over the colour.
@@ -86,6 +88,11 @@ function chainFor(r) {
   const normals = new NodeMaterial(); normals.fragmentNode = vec4(normalView.mul(.5).add(.5), 1); normals.vertexNode = SNAPPED; normals.gsRaw = true;
   const sp = pass(NO_SCENE, NO_CAM, { samples: 4, type: UnsignedByteType }), ip = pass(NO_SCENE, NO_CAM, { samples: 0, type: UnsignedByteType });
   ip.overrideMaterial = normals; ip.setLayers(L0);
+  // The colour pass has four samples a pixel, and only the one picture they are joined into is read afterwards
+  // (the ink's depth comes from the second pass): the samples themselves, colour and depth, are thrown away at
+  // the end of the pass and not written to memory, which on a phone's chip is most of what the pass would write
+  // (four samples of colour and of depth a pixel, against one of colour). MSAA_KEEP.on brings them back (tests).
+  if (!MSAA_KEEP.on) { sp.renderTarget.storeMultisampledColorBuffer = false; sp.renderTarget.storeMultisampledDepthBuffer = false; sp.renderTarget.storeMultisampledStencilBuffer = false; }
   const col = sp.getTextureNode('output'), tN = ip.getTextureNode('output'), tD = ip.getTextureNode('depth');
   // the ink, as toon3d.js's inkQuad: a line where the depth jumps (on the nearer side) or the surface turns sharply
   const span = U.far.sub(U.near);

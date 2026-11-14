@@ -51,6 +51,30 @@ The rules for new 3D code until then:
   different the first seconds of play look (a guide: each game's own randomness moves things too). Both
   use SwiftShader's Vulkan driver, so they run without a GPU.
 
+## What a frame asks of the chip
+
+`node scripts/gpu-calls.cjs` counts every WebGPU call a frame makes (docs/testing.md). A phone's chip draws in
+tiles: a pass that keeps what was in a picture loads all of it into the chip's tile memory first, and a pass
+writes out every picture it does not throw away, so the things to keep small are the bytes of each picture, the
+passes that load, and the pictures kept for nothing. What the kit does about it (2026-11-14):
+
+- The screen's own picture has no depth picture beside it (`SCREEN_DEPTH` in `gpu.js`): every view draws its scene
+  into pictures of its own and only finished rectangles onto the screen. three makes one by default, 4 bytes a
+  pixel, cleared and written out every frame.
+- Console's passes are 8-bit and its colour pass throws its samples away (above): about 16 bytes a pixel written
+  a frame where it was 76.
+- A sun's shadow map slid whole (`shadowBlit.shift`) is cleared, not loaded (`SHIFT_CLEAR`).
+- The device is asked for lists of up to 256 MB (`maxStorageBufferBindingSize`; WebGPU promises 128), and the
+  posed people's list (`skin-gpu.js`) stops growing at what the device allows: a mesh with no room is posed in
+  its own vertex shader. Before, 300 close-up people asked for a 512 MB list, WebGPU refused it, and nobody in
+  the list was drawn.
+- A kit's compute passes of a frame go to the chip as one list (`renderer.compute([a, b, a, b])`: one compute
+  pass and one submit, where a call for each made a pass and a submit of its own): the sea's 18 (`sea-gpu.js`),
+  a cloth's small step (`cloth-gpu.js`), the flood's and the liquid's steps of a frame (`flood-gpu.js`,
+  `fluid-gpu.js`) and a set of culled copies' up to seven (`props-gpu.js`). The gas, frame generation and the
+  posed people already did. A list is kept and used again (the chip's times are told apart by the list), and
+  nothing between two of its passes may change a uniform: three sends each uniform once for the whole list.
+
 ## When the device is lost
 
 A browser can take the WebGPU device away at any time: a driver reset after a hang, the system taking
@@ -132,7 +156,10 @@ screen shows them. The WebGPU Console renderer draws the same way, so the two pi
 (`PICK=console,console-floor,console-side,console-persp,console-figure,console-chunky,console-soft,console-tube
 node scripts/look-compare.cjs save base`, then `check base --webgpu`: under 1/255 apart):
 
-- An 8-bit canvas and 8-bit passes, no tone mapping, and a renderer-wide `getOutput` (`celOut`) that turns
+- An 8-bit canvas and 8-bit passes (the renderer is made with `outputBufferType: UnsignedByteType`: three gives
+  every scene pass the renderer's own kind of picture whatever the pass asks for, so until 2026-11-14 they were
+  16-bit float), the colour pass's four samples a pixel thrown away once joined (`storeMultisampledColorBuffer`
+  and `...DepthBuffer` false: not written to memory, and on Chrome 146 and later not kept in memory at all), no tone mapping, and a renderer-wide `getOutput` (`celOut`) that turns
   every material's finished colour into the screen's colours as it is written, mixes the fog in after
   that, and cuts it to a retro look's few shades. three's own fog and background are off while it draws;
   the clear colour is the background as the screen shows it.

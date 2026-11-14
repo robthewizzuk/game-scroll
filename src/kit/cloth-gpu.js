@@ -114,6 +114,7 @@ export function gpuCloth(cloth) {
   const mesh = new Mesh(g, m); mesh.frustumCulled = false; mesh.castShadow = mesh.receiveShadow = true; mesh.name = 'cloth:gpu';
   Object.assign(mesh.userData, { gsTwin: true, noLod: true, detail: false, noOcclude: true });   // (its geometry's points are where it began: simpler far copies, cluster detail or hiding by those would be wrong)
 
+  const lists = [];   // a small step's passes, by how many times over the links (kept: the chip's times are told apart by list)
   return {
     mesh, N, version: cloth.version,
     /** dt seconds of the cloth, in `steps` small steps */
@@ -136,7 +137,9 @@ export function gpuCloth(cloth) {
       r.compute(keep);
       // (more small steps while limbs swing fast through clothes (cloth.stepsNow), each with fewer passes over the links: about as many in all)
       const pairs = Math.max(1, Math.round(ITER / 2 * cloth.steps / steps));
-      for (let s = 0; s < steps; s++) { fr.value = (s + 1) / steps; fr0.value = s / steps; r.compute(predict); for (let k = 0; k < pairs; k++) { r.compute(solveA); r.compute(solveB); } r.compute(finish); }
+      // (a small step's passes as one list: one compute pass and one submit to the chip a step, not one for each pass over the links)
+      const list = lists[pairs] ||= [predict, ...Array.from({ length: pairs * 2 }, (_, i) => i % 2 ? solveB : solveA), finish];
+      for (let s = 0; s < steps; s++) { fr.value = (s + 1) / steps; fr0.value = s / steps; r.compute(list); }
     },
     dispose() { m.dispose(); g.deleteAttribute('clothAt'); for (const b of [Pb, P2, Qb, Vb, Ab, A0b, Lb, Kb, Cb, Nb, Xb, Tb]) b.value?.dispose?.(); },
   };

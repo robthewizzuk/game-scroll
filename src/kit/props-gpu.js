@@ -272,7 +272,7 @@ export function gpuCull(im, levels, group, pad = 0) {
         });
       })().compute(cap, [64]);
     });
-    nodes = { reset, pick, clampF, camLists, mid, otherLists, fading };
+    nodes = { reset, pick, clampF, camLists, mid, otherLists, fading, runs: [] };
     dirty = true; lastHidden = null;
   };
   const send = n => {
@@ -329,10 +329,9 @@ export function gpuCull(im, levels, group, pad = 0) {
       ball(); U.pad.value = pad ?? 8;   // (a shader that moves the copies by who knows how much: the old 8 m round them)
       for (let k = 0; k < MAX_LEVELS; k++) U.dist.array[k] = k < L ? (k ? levels[k].dist : 0) : 1e30;
       U.occ.value = occ ? 1 : 0;
-      r.compute(nodes.reset); r.compute(nodes.pick); if (on) r.compute(nodes.clampF);
-      r.compute(nodes.camLists); r.compute(nodes.mid);
-      if (all || occ) r.compute(nodes.otherLists);   // (nobody else to draw for and nothing hidden: none of them)
-      if (on) r.compute(nodes.fading);
+      // (one list: one compute pass and one submit to the chip for a set, not up to seven of each; a list for each of the four ways, kept)
+      const other = all || occ ? 1 : 0, way = (on ? 2 : 0) + other;   // (other: nobody else to draw for and nothing hidden, none of those lists)
+      r.compute(nodes.runs[way] ||= [nodes.reset, nodes.pick, ...(on ? [nodes.clampF] : []), ...nodes.camLists, nodes.mid, ...(other ? nodes.otherLists : []), ...(on ? nodes.fading : [])]);
       if (occ) readHidden(r);
       return n;
     },
