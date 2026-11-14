@@ -2355,6 +2355,12 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   // the hand-written blend (S2_UP) or the learned one (s2Net)
   const upscale = net ? s2Net(net)(I.args, half) : S2_UP(I.args, half);
   const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(I.lock, 0, 0, 1)); upMat.name = 'SGSR2';
+  // Beside the learned blend, the hand-written one from the same inputs into the same pictures (light: hd3d.js asks
+  // for it once a game has had to step its final picture down: the network is some 500 multiply-adds for every pixel
+  // of that picture, on top of the pass's own sums). Picked frame by frame, so nothing is built again mid-round.
+  const upLight = net ? new NodeMaterial() : null;
+  if (upLight) { upLight.fragmentNode = new OutputStructNode(S2_UP(I.args, half), vec4(I.lock, 0, 0, 1)); upLight.name = 'SGSR2 hand'; }
+  const qLight = upLight ? new QuadMesh(upLight) : null; let warmed = false;
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
   const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat), qFl = flMat ? new QuadMesh(flMat) : null;
   // the training numbers (scripts/gssr-train): drawn after each upscale while asked for, from the same inputs
@@ -2372,6 +2378,8 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   };
   return {
     U, key: '', low, shape,
+    /** Draw with the hand-written blend where this was built with the learned one (the same history carries on). */
+    light: false,
     /** Training (scripts/gssr-train): on, each upscale also draws the network's numbers for every pixel; read() gives them. */
     get probe() { return !!probe; },
     set probe(on) { if (!on && probe) { probe.q?.forEach(q => q.material.dispose()); probe.t?.forEach(t => t.dispose()); } probe = on ? probe || {} : null; },
@@ -2407,7 +2415,10 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
           r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
           r.setRenderTarget(LH[sc]); qLh.render(r);
         } else if (qFl) { lhT.value = FL[1 - sc].texture; sdT.value = FL[sc].textures[1]; r.setRenderTarget(FL[sc]); qFl.render(r); }
-        r.setRenderTarget(into); qUp.render(r);
+        const q = this.light && qLight ? qLight : qUp;
+        // (the first frame, under the loading screen, draws the other blend first: its shader is made then, not at the switch)
+        if (qLight && !warmed) { warmed = true; r.setRenderTarget(into); (q === qUp ? qLight : qUp).render(r); }
+        r.setRenderTarget(into); q.render(r);
         probeDraw(r);
         sc = 1 - sc;
         r.setRenderTarget(null); if (show) qCp.render(r);
@@ -2418,7 +2429,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     last() { return H2[1 - cur].texture; },
     /** The picture the render before that made (it stays until the next render draws over it). */
     before() { return H2[cur].texture; },
-    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
+    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); upLight?.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
   };
 }
 
@@ -2959,7 +2970,7 @@ export class GpuChain {
   }
   present(o, f, live) {
     if (live) return this.realFrame(o, f);
-    if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
+    if (this.s2) { this.s2.light = !!o.s2Light; this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
     if (o.sunMask && this.sp && !this.clear) sunMask(this.r, this.sp.getTextureNode('depth').value, this.cam, o.sunMask);
   }
@@ -2990,7 +3001,7 @@ export class GpuChain {
     // the frame's picture, and the last frame's: two pictures taking turns (SGSR 2's own two, or ours), so
     // frame generation reads the last frame where it is instead of copying a screen-sized picture every frame
     let color, before;
-    if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(r, false); color = this.s2.last(); before = this.s2.before(); }
+    if (this.s2) { this.s2.light = !!o.s2Light; this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(r, false); color = this.s2.last(); before = this.s2.before(); }
     else {
       // (the second picture only once frame generation runs for this view)
       const mk = () => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false }), two = this.fgRT ||= [mk()];

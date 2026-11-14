@@ -34,7 +34,7 @@ frame generation is on), the dotted line twice that. The **strip** above the bar
 screen refresh: green real, magenta made, dark nothing new, red a refresh the phone skipped. A 60 fps
 game on a 120 Hz screen shows green, dark, green, dark; a 60 fps game on a 90 Hz screen shows uneven
 gaps, and its pacing number drops. Letters over the graph mark events: **S** shaders built, **X**
-textures uploaded, **G** heap fell (garbage collection), **Q** quality tier or resolution step changed,
+textures uploaded, **G** heap fell (garbage collection), **Q** quality tier, resolution step or final picture step changed,
 **F** fold or resize, **C** card or round changed.
 
 The numbers, over the last 5 seconds:
@@ -106,7 +106,7 @@ pause), so the recording's summary counts freezes on their own, with the worst.
   size, so small ones are missed)
 - the browser's long animation frame report: which script held the frame (file and function) or
   whether it was layout
-- a quality tier, resolution step or effect size change, a fold or resize, the app coming back to the front,
+- a quality tier, resolution step, final picture step or effect size change, a fold or resize, the app coming back to the front,
   a card or round change, refreshes skipped
 - the game's own CPU time going over the beat (and the CPU part that took most of it: the scene pass,
   physics, the game's own code...), or GPU time going over it

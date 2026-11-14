@@ -131,6 +131,10 @@ const is3D = def => def && (def.era === 'nextgen' || def.era === 'ar' || def.era
 // down within seconds if it still has to. How its frames are made (fgPace) is about the phone's screen
 // pacing, not its heat: that is kept. (An entry with no date is from before dates were kept: old.)
 const SETTLE_MS = 24 * 3600 * 1000;
+// What the steps mean changed (2: the final picture has steps of its own and the 3D a floor, 2026-11-14): where a
+// game settled under an older meaning is forgotten, as an old one is (Long Shadow on Rob's Fold had settled on low
+// at its smallest picture, and a hot phone never climbed back from there).
+const SETTLE_V = 2;
 // (fgHow 'ahead' was set by the 3D kit before fgPace: it was making room on the real frame's refresh, which is 'first' now)
 const lasting = s => (s?.fgPace || s?.fgHow === 'ahead' ? { fgPace: 'first' } : null);
 // A step down in frame rate is forgotten a day after it was taken (fpsAt), however often the picture has
@@ -140,7 +144,7 @@ const fpsOld = (s, now = Date.now()) => s?.fps != null && !(Math.abs(now - (s.fp
 const noFps = s => { const { fps, fpsAt, ...rest } = s; return rest; };
 function fresh(all, now = Date.now()) {
   const out = {};
-  for (const [id, s] of Object.entries(all || {})) { const keep = s && Math.abs(now - s.at) < SETTLE_MS ? (fpsOld(s, now) ? noFps(s) : s) : lasting(s); if (keep) out[id] = keep; }
+  for (const [id, s] of Object.entries(all || {})) { const keep = s && s.v === SETTLE_V && Math.abs(now - s.at) < SETTLE_MS ? (fpsOld(s, now) ? noFps(s) : s) : lasting(s); if (keep) out[id] = keep; }
   return out;
 }
 let settled = fresh(store.get(SETTLE_KEY, {}));
@@ -384,14 +388,14 @@ Object.defineProperty(speed, 'shield', { get: shieldOn });
 export function settle(id, o) {
   if (!id) return;
   const was = settled[id] || {}, now = { ...was, ...o };
-  if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && was.fgPace === now.fgPace && JSON.stringify(was.fx || null) === JSON.stringify(now.fx || null)) return;
-  now.at = Date.now(); if (now.fps !== was.fps) now.fpsAt = now.at;   // (when the frame rate was stepped, apart from the rest)
+  if (was.tier === now.tier && was.fps === now.fps && was.lvl === now.lvl && (was.out | 0) === (now.out | 0) && was.fgPace === now.fgPace && JSON.stringify(was.fx || null) === JSON.stringify(now.fx || null)) return;
+  now.at = Date.now(); now.v = SETTLE_V; if (now.fps !== was.fps) now.fpsAt = now.at;   // (when the frame rate was stepped, apart from the rest)
   settled[id] = now; store.set(SETTLE_KEY, settled);
 }
 /** Where this game settled, if that was within the last day (older: forgotten here, so the game starts from the phone's class again). */
 export function settledFor(id) {
   const s = settled[id];
-  if (s && (s.tier != null || s.lvl != null || s.fps != null) && !(Math.abs(Date.now() - s.at) < SETTLE_MS)) { const keep = lasting(s); if (keep) settled[id] = keep; else delete settled[id]; store.set(SETTLE_KEY, settled); }
+  if (s && (s.tier != null || s.lvl != null || s.fps != null) && !(s.v === SETTLE_V && Math.abs(Date.now() - s.at) < SETTLE_MS)) { const keep = lasting(s); if (keep) settled[id] = keep; else delete settled[id]; store.set(SETTLE_KEY, settled); }
   return settled[id] || null;
 }
 /** The 3D kit can't keep up: step this game's frame rate down one notch (120 -> 60 -> 30). False if it can't. */

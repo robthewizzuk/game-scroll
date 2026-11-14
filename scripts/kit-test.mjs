@@ -2201,6 +2201,8 @@ console.log('physics ok');
   assert.deepEqual(sp.settledFor('kt-old'), { fgPace: 'first' }, 'a day later only how its frames are paced is left');
   sp.settle('kt-old3', { tier: 1, fgHow: 'ahead' }); sp.settledFor('kt-old3').at -= 25 * 3600 * 1000;
   assert.deepEqual(sp.settledFor('kt-old3'), { fgPace: 'first' }, 'the old switch to ahead (to make room on the real frame\'s refresh) is pace first now');
+  sp.settle('kt-v1', { tier: 0, lvl: 3 }); sp.settledFor('kt-v1').v = 1;
+  assert.equal(sp.settledFor('kt-v1'), null, 'where a game settled under an older meaning of the steps is forgotten');
   sp.settle('kt-old2', { tier: 1 }); sp.settledFor('kt-old2').at -= 25 * 3600 * 1000;
   assert.equal(sp.settledFor('kt-old2'), null, 'and a game with nothing lasting is forgotten');
   // a step down in frame rate is let go a day after it was taken, though the picture changed since (each change dates the entry)
@@ -6237,6 +6239,35 @@ console.log('physics ok');
   assert.ok(mayClimb(1, 'top', true, false) && !mayClimb(2, 'top', true, false) && mayClimb(2, 'top', true, true), 'a computer climbs past its start only with room');
   assert.ok(mayClimb(1, 'low', false, false), 'a phone climbs by its frames alone, as before');
   console.log('gs.hd tiers start and climb ok');
+  // the sizes a frame is drawn at (hd3d.js frameSizes, pickSize): the final picture follows the 3D's own size, and
+  // the 3D has a floor (Rob's Fold unfolded, 2026-11-14: 486 x 311 blown up four times, the upscaler twice the scene's cost)
+  const { frameSizes, pickSize } = await import('../src/kit/hd3d.js');
+  const px = s => s.pw * s.ph, out = s => s.fw * s.fh, FOLD = [2446, 1848], PHONE = [1080, 2340];
+  { const s = frameSizes(...PHONE, 1.3e6); assert.ok(s.fw === 1080 && s.fh === 2340 && Math.abs(px(s) - 1.3e6) < 2e4, 'a phone keeping up on high: the screen\'s own size from the tier\'s pixels'); }
+  { const s = frameSizes(...FOLD, 1.3e6); assert.ok(s.fw === 2446 && s.fh === 1848, 'the Fold unfolded on high, keeping up: under twice the 3D\'s size, so untouched'); }
+  { const s = frameSizes(...PHONE, .5e6); assert.ok(Math.abs(s.fw / s.pw - 2) < .02 && Math.abs(s.fw / s.fh - 1080 / 2340) < .01, 'low on a phone: the final picture twice the 3D\'s size, the same shape'); }
+  { const s = frameSizes(...FOLD, .5e6, 3, 0, true); assert.ok(px(s) >= .39e6 && out(s) <= px(s) * 4.1, 'low at its last step on the Fold: the 3D keeps its floor and the final picture is four times it at most (it was 486 x 311 into 1937 x 1239)'); }
+  { const a = frameSizes(...FOLD, .85e6, 1, 0, true), b = frameSizes(...FOLD, .85e6, 2, 0, true), c = frameSizes(...FOLD, .85e6, 2, 2, true);
+    assert.ok(px(b) < px(a) * .75 && out(b) < out(a) * .8, 'a resolution step takes the final picture down with the 3D');
+    assert.ok(px(c) === px(b) && out(c) < out(b) * .6, 'the final picture\'s own steps leave the 3D as it is'); }
+  { const s = frameSizes(300, 300, .5e6, 3, 2, true); assert.ok(s.pw === 300 && s.fw === 300, 'a small card is drawn whole: the floor never asks for more than there is'); }
+  assert.equal(pickSize(...FOLD, .5e6, 1, 0, 11.6, { upscale: 5.9, scene: 3, show: .4 }), 'out', 'the upscaler twice the scene\'s cost: the final picture steps first');
+  assert.equal(pickSize(...FOLD, 1.3e6, 0, 0, 14, { upscale: 1.5, scene: 9, show: .3 }), 'lvl', 'the scene is the cost: the 3D steps');
+  assert.equal(pickSize(...FOLD, .5e6, 1, 2, 9, { upscale: 4, scene: 3 }), null, 'low at its floor with the final picture at its last step: neither (the tier, or the frame rate)');
+  assert.equal(pickSize(...FOLD, 1.3e6, 1, 2, 12, { upscale: 5, scene: 5 }), 'lvl', 'the final picture at its last step: the 3D');
+  assert.equal(pickSize(...PHONE, .5e6, 0, 0, null, null), 'out', 'where the chip doesn\'t say: the final picture while it is over one and a half times the 3D\'s size');
+  assert.equal(pickSize(...PHONE, 1.3e6, 0, 0, null, null), 'lvl', 'and the 3D where it is not');
+  // the steps themselves (hd3d.js stepsRun): Rob's Fold run again, low at the first resolution step, the chip 11.6 ms a frame
+  // in the middle and 22 at its worst, the upscaler 5.9 of it
+  const { stepsRun } = await import('../src/kit/hd3d.js');
+  const slow = { v: 'slow', g: 11.6, worst: 22, parts: { upscale: 5.9, scene: 3, show: .4, effects: .9 } }, fast = { v: 'fast', g: 6, worst: 8, parts: { upscale: 2, scene: 3 } };
+  assert.deepEqual(stepsRun([slow, slow, slow, slow, slow, slow], { cw: 2446, ch: 1848, tier: 0, lvl: 1 }), ['', 'out 1', '', 'out 2', '', ''], 'the Fold on low: the final picture gives two steps, the 3D stays at its floor (it gave two more, to 486 x 311)');
+  assert.deepEqual(stepsRun([slow, slow], { cw: 2446, ch: 1848, tier: 2 }), ['', 'out 1'], 'a chip whose average is under three quarters of the budget but whose worst reading is over it is what holds the game up');
+  assert.deepEqual(stepsRun([{ ...slow, worst: 12 }, { ...slow, worst: 12 }], { cw: 2446, ch: 1848, tier: 2 }), ['', 'tier 1'], 'a chip with room all through the window: the CPU holds it up, and the picture\'s size is left alone');
+  { const scene = { v: 'slow', g: 15, worst: 19, parts: { upscale: 1.6, scene: 10, show: .3 } };
+    assert.deepEqual(stepsRun([scene, scene, scene, scene], { cw: 1080, ch: 2340, tier: 2 }), ['', 'lvl 1', '', 'lvl 2'], 'a scene that is the cost: the 3D steps, and takes the final picture with it'); }
+  assert.deepEqual(stepsRun([...Array(8).fill(fast), ...Array(8).fill(fast)], { cw: 2446, ch: 1848, tier: 2, lvl: 1, out: 1 }).filter(Boolean), ['lvl 0', 'out 0'], 'climbing back: the 3D\'s own pixels first, then the final picture');
+  console.log('gs.hd frame sizes: the final picture follows the 3D, the 3D keeps a floor ok');
 }
 
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
