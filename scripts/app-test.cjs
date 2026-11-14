@@ -301,6 +301,7 @@ async function fonts(b) {
     for (const f of F.list) for (const w of f.weights) if (!F.ready(f.name, w) || !document.fonts.check(`${w} 20px "${f.name}"`)) bad.push(f.name + ' ' + w);
     return bad;
   });
+  for (let i = 0; i < 20 && library().length < 22; i++) await p.waitForTimeout(100);   // (a file's request can reach the test a moment after the page has the font)
   check(!all.length && library().length === 22, 'every font and weight in the library loads (22 files)', JSON.stringify({ notLoaded: all, files: library().length }));
   check(library().every(u => u.startsWith('http://localhost:4184/')), 'and they come from inside the app, not the network');
   await p.done();
@@ -742,8 +743,9 @@ async function tour(b) {
   check(M('faces', 'clean').build > 0 && M('faces', 'real').build > 0 && /^posed in [\d.]+ ms a frame$/.test(M('faces', 'real').tell || '') && /\n  = the real look against the clean look: /.test(sc.text),
     'the faces are drawn close up in the clean look and then the real one', JSON.stringify(sby.faces));
   // the street: the city as it was (windows painted on, boxes for cars and people), then with rooms behind its windows, real cars and sculpted people
+  // (more than twice the triangles, not more draws: on a slow machine the draws of the two runs come out the same as often as not)
   const strt = /^the city's code [\d.]+ ms a frame · (\d+) cars drawn whole · ([\d,]+) parked · ([\d,]+) people drawn in (\d+) draws$/.exec(M('street', 'new').tell || '');
-  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3].replace(/,/g, '') >= 1 && +strt[4] >= 1 && M('street', 'new').calls > M('street', 'old').calls && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
+  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3].replace(/,/g, '') >= 1 && +strt[4] >= 1 && M('street', 'new').tris > M('street', 'old').tris * 2 && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
     && /^\d+ buildings, \d+ cars, \d+ parked, \d+ people$/.test(M('street', 'new').note || '') && /\n  = rooms behind the windows, real and parked cars, sculpted people, the street dressed against windows painted on, boxes for cars and people: /.test(sc.text),
     'the street is walked as the city was and then with rooms behind its windows, real and parked cars, sculpted people and the street dressed', JSON.stringify(sby.street));
   // the night: a wet street with every lamp a plain round light, then with the nearest lamps' shadows (from the atlas on WebGPU, where
