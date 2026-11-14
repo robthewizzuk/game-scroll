@@ -458,7 +458,12 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   turns in two pictures however many there are, as the big engines' render graphs share memory between
   passes that never overlap (with depth of field and motion blur on, as Long Shadow has them, a
   full-size half-float picture less: 10 MB at 1080 x 2340). Not with `v.lens` or gs.fx3d's screen
-  effects (pictures they keep). `HD.shadowColour = true` and `HD.shareTargets = false` put each back to
+  effects (pictures they keep). A sun's shadow map and the copy kept of it hold 16-bit depth, half the
+  bytes of the 24 bits in 32 three makes (8 MB for a 2048 map where it was 16, and half of what every pass
+  on it loads and stores): a sun's light is a box, so its depth runs evenly from near to far, 1.8 mm a
+  step over a `follow()`'s 119 m against a bias of 48 mm. Lamps and spots keep 24 bits (a cone's depth
+  crowds its steps up to the light). `HD.shadowColour = true`, `HD.shadow16 = false` (both before a
+  light's first frame) and `HD.shareTargets = false` put each back to
   compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
   --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
   which could share, and draws the scene as before and as now: less memory, the same picture.

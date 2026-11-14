@@ -397,6 +397,8 @@ export const HD = {
   shareTargets: true,
   /** WebGPU: true keeps three's colour picture beside each shadow map's depth (16 MB a 2048 map, never read), for maps made from then on, to compare. */
   shadowColour: false,
+  /** WebGPU: a sun's shadow map and its kept copy hold 16-bit depth (8 MB for a 2048 map where it was 16: half the memory, and half of what every pass on it loads and stores), for maps made from then on. false: 24 bits in 32, as three makes them, to compare. Lamps and spots keep 24. */
+  shadow16: true,
   /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
   bundle: true,
   /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
@@ -3002,6 +3004,7 @@ export class HDView {
     o.s2Plain = HD.sgsrTune === false;
     o.s2Net = s2 && !o.s2Plain ? netFor(HD.gssrNet) : null; HD.info.gssrNet = o.s2Net ? o.s2Net.id : '';
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
+    if (G.fx.SHADOW_16) G.fx.SHADOW_16.on = HD.shadow16 !== false;
     if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
     if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
     const g = this.grade;
@@ -4616,7 +4619,10 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
     const tw = 2 * size / TILES, a = x * FX.x + y * FX.y + z * FX.z, b = x * FY.x + y * FY.y + z * FY.z, e = x * FZ.x + y * FZ.y + z * FZ.z, at = s.gsAt ||= [NaN, NaN, NaN];
     if (!(Math.abs(a - at[0]) <= .6 * tw)) at[0] = Math.round(a / tw) * tw;
     if (!(Math.abs(b - at[1]) <= .6 * tw)) at[1] = Math.round(b / tw) * tw;
-    if (!(Math.abs(e - at[2]) <= 10)) at[2] = Math.round(e / 2) * 2;
+    // (in depth by whole steps of a 16-bit map, 1024 of them, 1.86 m: the kept copy moved deeper by a step in
+    // depth lands on the map's own numbers again and again, with nothing rounded each time: hd3d-gpu.js SHADOW_16)
+    const zs = 1024 * (c.far - c.near) / 65535;
+    if (!(Math.abs(e - at[2]) <= 10)) at[2] = Math.round(e / zs) * zs;
     s.target.position.copy(FX).multiplyScalar(at[0]).addScaledVector(FY, at[1]).addScaledVector(FZ, at[2]);
     s.position.copy(s.target.position).addScaledVector(FZ, 50); s.target.updateMatrixWorld();
   };
@@ -4731,7 +4737,9 @@ function fitShadow(s, view, { far = 250, ground = null, low = -5, high = 30, tal
   s.position.copy(FP); s.target.position.copy(FP).sub(FZ); s.target.updateMatrixWorld();
   if (c.right !== hx || c.top !== hy || c.far !== depth || !s.fitted) { c.left = -hx; c.right = hx; c.bottom = -hy; c.top = hy; c.near = .5; c.far = depth; c.updateProjectionMatrix(); view.shadowsDirty?.(); }
   s.fitted = true;
-  const tex = Math.max(2 * hx / msz, 2 * hy / msz); s.shadow.normalBias = tex * 1.2 * soft; s.shadow.bias = -(.03 + tex * .2) / depth;
+  const tex = Math.max(2 * hx / msz, 2 * hy / msz); s.shadow.normalBias = tex * 1.2 * soft;
+  // (never under four steps of a 16-bit map, hd3d-gpu.js SHADOW_16: a box more than 500 m deep, where 3 cm is fewer)
+  s.shadow.bias = -Math.max((.03 + tex * .2) / depth, 4 / 65535);
   return { width: hx * 2, height: hy * 2, texel: tex };
 }
 /** A shadow-casting spotlight (torch, searchlight) whose shadow follows the quality tier. */

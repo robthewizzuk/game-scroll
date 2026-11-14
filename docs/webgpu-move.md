@@ -99,6 +99,14 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   and a pass that loaded it again. The rectangles are drawn from a few meshes in turn: one mesh used twice
   in a frame had its rectangles uploaded under a pass still held (`submit.js`), which cost a send each time.
   The village walk of `--page shadows`: 2.03 passes a frame on the sun's map and its copy down to 1.12.
+- A sun's shadow map and its kept copy are 16-bit depth (`depth16unorm`; `HD.shadow16`, `SHADOW_16` in
+  `hd3d-gpu.js`): half the memory, and half of what each pass on them moves. three makes every shadow map
+  `depth24plus`, 4 bytes a texel. An orthographic light's depth is even from near to far, so 65,536 steps
+  are plenty: 1.8 mm over a `follow()`'s 119 m. `follow()` moves in depth by 1,024 whole steps (1.86 m, it
+  was 2 m), so a kept copy moved deeper lands on the map's own numbers and nothing is rounded each time; a
+  fitted sun's bias is never under four steps (a box more than 500 m deep). Lamps' atlas and spot lights
+  keep 24 bits: a perspective light crowds its steps up to the near plane, and the lamps' bias is a step
+  and a half of 16 bits. The kept copy takes the map's own kind (WebGPU refuses a copy between two).
 
 ## When the device is lost
 
