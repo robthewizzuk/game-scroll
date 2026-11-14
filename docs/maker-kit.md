@@ -94,6 +94,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Materials, props, sculpted shapes, trees and plants (palms, ferns, swamp plants, ivy over walls, weeds in cracks), buildings, close-up people, and animals and monsters from a seed, made in code, and real surface detail (Next Gen) | `gs.models` | [Next Gen 3D](nextgen-3d.md#things-made-in-code-gsmodels) |
 | Hills, islands, grass and trees, water to float on | `gs.outdoors` (THREE.Terrain) | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Water you can disturb: rings, splashes and spray, wakes and foam behind boats and swimmers, rain on it, foam at the shore, the view from under it | `gs.outdoors.Water` | [Water you can disturb](#water-you-can-disturb) |
+| The open sea to the horizon: a swell the wind made that boats float on, fine waves, whitecaps, waves that break at a shore, the swash and wet sand | `gs.outdoors.Sea` | [The open sea and its shore](#the-open-sea-and-its-shore) |
 | A whole city: streets, buildings, traffic at the lights, people, routes | `gs.city` | [Cities](city.md) |
 | Planes, boats, hover craft, floating crates | `gs.craft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
 | Cloth, ropes, jelly to cut and squish; a simple liquid | `gs.soft` | [Worlds, craft, soft things, cards and menus](#worlds-craft-soft-things-cards-and-menus) |
@@ -3030,8 +3031,45 @@ sea.ring(x, z, { size: .3 });                                        // somethin
   and wakes (its own map hides the small rings).
 - Ask for `ripples: true` with the level: the first `ring()`, `splash()` or `watch()` makes the field
   otherwise, in the middle of a round. `foam: false` and `spray: 0` leave those out.
-- Not there: waves that break, water that flows or changes level (`gs.flow`, `gs.fluid`), and a split
-  picture while the camera is half under.
+- Not there: waves that break (that is `Sea`, below), water that flows or changes level (`gs.flow`,
+  `gs.fluid`), and a split picture while the camera is half under.
+
+### The open sea and its shore
+
+`const { Sea } = gs.outdoors;` (Next Gen.) The sea out to the horizon, with a shore. It is a `Water`, so
+everything above works on it too (ripples, `watch`, `splash`, rain, `underwater`). On top of that it has:
+
+```js
+make():   sea = new Sea({ wind: 8, dir: .6, bed: (x, z) => land.height(x, z), view });
+          view.scene.add(sea.mesh);
+update(dt) { sea.update(dt, view.cam.position); boat.position.y = sea.height(boat.position.x, boat.position.z); }
+```
+
+- **A swell the wind has made.** `wind` (metres a second) sets five long waves running `dir`'s way: about
+  50 m long and a metre high for 8 m/s, shorter and lower in a light wind (`Sea.swell(wind)` lists them).
+  `height()` and `normal()` answer with the same sums the water is drawn with, on both renderers, so a
+  boat floats on what you see.
+- **Fine waves and whitecaps.** On WebGPU the small waves are an ocean's spectrum for that wind, turned
+  into waves each frame by an FFT on the graphics chip. On WebGL eight short waves stand in for them.
+  From about 5 m/s, whitecaps break on the steep crests. `fine` sets how rough the small waves are.
+- **Colour by depth.** `deep` and `shallow` colours, and `clear` (3: metres of water that hide the
+  bottom). The water lets more through the steeper you look down into it, and reflects the sky at low
+  angles: light it with a `gs.sky.Sky` (`env: true`) and a sun, or it mirrors the studio lamps the view
+  starts with. On WebGPU's high and ultra tiers, what is under the water is seen through it, bent by the
+  waves and tinted with depth, with light playing on the bottom (caustics).
+- **A shore** (with `bed`): the waves rise as the water shoals, break into a rolling band of foam, and
+  run up the beach and slide back. `height()` follows all of it, so a boat in the surf rides the
+  breakers. `covered(x, z)` says whether the swash covers the beach there now. `shore` sets how big the
+  breakers are (1; 0 for none). `sea.sea.period` and `sea.sea.H0` give their timing and height for
+  your sound.
+- **Wet sand.** Behind the waves the sand is dark and glossy, and it dries over `sand` seconds (40) after
+  they leave it. `wetAt(x, z)` is 0..1 near the centre.
+- **To the horizon.** Rings of water round the near patch reach `far` metres (4000), carrying as much
+  of the swell as their points can.
+- **What it costs.** Measured on a desktop, `update()` is about .6 ms a frame for a 160 m patch with a
+  shore running through all of it. It is less without a bed. It has not been measured on a phone yet.
+  The FFT and the see-through are the graphics chip's. Film it with `node scripts/sea.cjs` (add
+  `--webgpu` for that renderer).
 
 ## Weather that changes the world
 

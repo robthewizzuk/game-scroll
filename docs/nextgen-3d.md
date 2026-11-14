@@ -1270,6 +1270,12 @@ const leafLook = looks.leaves(leafMaterial, { wind: .6 });      // sway, sun glo
   goes under (the view's air turns to murky water and comes back). Stock materials only, so WebGL and
   WebGPU match, and your own water material is left as it is. See
   [Water you can disturb](maker-kit.md#water-you-can-disturb); film it with `node scripts/water.cjs`.
+- **The open sea**: `new Sea({ wind, dir, bed: land.height, view })` is a `Water` out to the horizon. It
+  has a swell the wind has made (what `height()` answers on both renderers), fine waves, whitecaps,
+  colour by depth, and, over a `bed`, waves that rise and break at the shore, a swash up the beach and
+  back, and wet sand that dries. On WebGPU the fine waves are an FFT on the graphics chip (`sea-gpu.js`).
+  On high and ultra the bottom shows through, bent, with caustics. See
+  [The open sea and its shore](maker-kit.md#the-open-sea-and-its-shore); film it with `node scripts/sea.cjs`.
 - Every look is a named effect (`material.userData.gsLooks` lists them), so the WebGPU version can
   swap each one for a node later (see `docs/webgpu-move.md`). Road segments: up to 32.
 

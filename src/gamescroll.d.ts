@@ -3161,6 +3161,49 @@ export interface WaterOptions {
   /** How many drops splashes and rain can throw at once (80). 0: no spray, and no rings from rain. */
   spray?: number;
 }
+export interface SeaOptions {
+  /** The calm height (0). */
+  level?: number;
+  /** The wind, metres a second (7): it sets the swell (longer and higher the stronger it blows), the fine waves and, from about 5, whitecaps. */
+  wind?: number;
+  /** The way it blows and the waves run, radians (0: +x, PI/2: +z). */
+  dir?: number;
+  /** How big the swell is for that wind (1), or your own list of waves as for Water. */
+  waves?: number | { height: number; length: number; dir?: number; speed?: number }[];
+  /** The near patch that follows the camera: metres across (160) and points a side (96). */
+  size?: number; segments?: number;
+  /** Metres out the sea reaches round the patch, to the horizon (4000; 0: none). */
+  far?: number;
+  /** The ground under it, (x, z) => height (land.height): shallows, waves that rise and break at the shore, a swash that runs up the beach and back, and wet sand. */
+  bed?: ((x: number, z: number) => number) | null;
+  /** How big the breakers are (1; 0: none). */
+  shore?: number;
+  /** Seconds the sand takes to dry after the waves leave it (40; 0: no wet sand). */
+  sand?: number;
+  /** Your HDView: on WebGPU the fine waves are an FFT on the graphics chip, and on high and ultra the bottom shows through, bent, with caustics. */
+  view?: Loose;
+  /** Colours: the deep water, the shallows, the foam. */
+  deep?: string; shallow?: string; foam?: string;
+  /** Metres of water that hide the bottom (3). */
+  clear?: number;
+  /** How rough the fine waves are (1) and how sharp the swell's crests (1.2). */
+  fine?: number; choppy?: number;
+  seed?: number; ripples?: boolean | number; reach?: number; spray?: number;
+}
+export interface SeaPart extends WaterPart {
+  /** The shore's waves, worked out from the wind: their period (seconds), height (H0, metres), the depth they start to feel the bottom at (feel), wind and dir. */
+  readonly sea: { wind: number; dir: number; period: number; H0: number; feel: number; on: boolean; [k: string]: Loose };
+  /** The swell's waves (length, height, dir) as Water's list. */
+  readonly list: { length: number; height: number; dir: number }[];
+  /** Water height at x, z now: the swell, the breakers and the swash (the beach under it where it reaches), and the ripples; what a boat floats at. */
+  height(x: number, z: number, t?: number): number;
+  /** Whether the beach at x, z is under water now (the sea, or the swash running up it). */
+  covered(x: number, z: number): boolean;
+  /** How wet the sand is at x, z, 0..1: 1 where the waves reach, drying behind them (near the centre). */
+  wetAt(x: number, z: number): number;
+  /** Each frame: moves the waves on and keeps the patch under centre (the camera, or what is being looked at). */
+  update(dt: number, centre?: P3 | null): SeaPart;
+}
 export interface WaterPart {
   mesh: Loose; level: number; t: number;
   /** Rain falling on it, 0..1 (set it each frame from your weather): the water is duller, rings open where the drops land round the centre, and little drops hop back up. Works on any water, ripples or not. */
@@ -3271,6 +3314,12 @@ export interface OutdoorsPart {
   Land: new (o?: { kind?: string | ((x: number, z: number) => number); size?: number; segments?: number; low?: number; high?: number; seed?: number; smooth?: number; steps?: number; colours?: [number, string][]; material?: Loose; edge?: number }) => LandPart;
   /** Waves (a sum of sines) you can read anywhere: height, normal, depth. And water you can disturb: rings, splashes with spray and foam, wakes behind watched things, rain, shallows and shore foam over a `bed`, and the look from under the surface. */
   Water: new (o?: WaterOptions) => WaterPart;
+  /**
+   * The open sea to the horizon: a swell the wind has made (what height() answers, so boats float on it on both renderers), fine waves (an FFT on the graphics chip on
+   * WebGPU), whitecaps in a fresh wind, colour by depth, and with a `bed` waves that rise and break at the shore, a swash up the beach and back, and wet sand that dries.
+   * `view.scene.add(sea.mesh)`; `sea.update(dt, view.cam.position)` each frame. Everything Water does too (ripples, watch, splash, rain, underwater).
+   */
+  Sea: (new (o?: SeaOptions) => SeaPart) & { swell(wind?: number, dir?: number, amount?: number, seed?: number): { dir: number; length: number; height: number; speed: number }[] };
   tree(o?: { kind?: 'pine' | 'round' | 'palm' | 'bush'; trunk?: string; leaves?: string; height?: number; seed?: number }): Loose;
   rock(o?: { size?: number; colour?: string; seed?: number }): Loose;
   /** Outdoor looks for Next Gen worlds, as patches on standard materials. Colours: '#hex' or [r, g, b] linear. Numbers can be shared uniforms ({ value }). */

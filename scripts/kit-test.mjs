@@ -5106,6 +5106,60 @@ console.log('physics ok');
   }
 }
 
+// the open sea and its shore (src/kit/sea.js: gs.outdoors.Sea)
+{
+  const THREE = await import('three'), { Sea } = await import('../src/kit/sea.js');
+  // a sandy coast: the shore wanders along x, the beach rises 1 in 22 to -z, the bed falls away to +z
+  const shoreZ = x => 3 * Math.sin(x * .03), bed = (x, z) => -(z - shoreZ(x)) * .045 + .05 * Math.sin(x * .3) * Math.sin(z * .23);
+  const run = (s, secs, c, each) => { for (let i = 0; i < Math.round(secs * 30); i++) { s.update(1 / 30, c); each?.(i); } };
+  {
+    const scene = new THREE.Scene(), view = { scene }, s = new Sea({ wind: 7, dir: -1.4, bed, size: 80, segments: 48, far: 600, view }), c = { x: 3.3, y: 0, z: 9.1 };
+    scene.add(s.mesh); run(s, 7.3, c);
+    // the patch is drawn where height() says, breakers and swash too, wherever the patch has got to
+    const P = s.mesh.geometry.attributes.position.array, p = s.mesh.position; let e = 0;
+    for (let i = 0; i < P.length; i += 3) { const x = P[i] + p.x, z = P[i + 2] + p.z; if (bed(x, z) > s.height(x, z) + .3) continue; e = Math.max(e, Math.abs(P[i + 1] - s.height(x, z))); }
+    assert.ok(e < 1e-4, 'the sea is drawn where height() says: ' + e); assert.deepEqual([p.x, p.z].map(v => +v.toFixed(3)), [3.333, 8.333], 'the patch follows the centre in whole cells');
+    // the shore: waves rise as the water shoals and break into foam; the swash runs up the beach and back
+    const S = s.sea, P1 = s.sea.period; let low = 1, high = -1, foam = 0, wetSome = false, dryTop = true, cov = [0, 0];
+    const xw = 2, zIn = shoreZ(xw) + 33, zUp = shoreZ(xw) - 6, zTop = shoreZ(xw) - 28, A = s.attr.array;
+    run(s, P1 * 2, c, () => {
+      const y = s.height(xw, zIn) - s.level; low = Math.min(low, y); high = Math.max(high, y);
+      for (let i = 0; i < A.length; i += 4) foam = Math.max(foam, A[i]);
+      cov[s.covered(xw, zUp) ? 1 : 0]++; if (s.covered(xw, zTop)) dryTop = false;
+      if (s.wetAt(xw, zUp) > .9) wetSome = true;
+    });
+    assert.ok(high - low > S.H0 * .6, 'waves taller near the shore: ' + (high - low).toFixed(2) + ' m against ' + S.H0.toFixed(2));
+    assert.ok(foam > .8, 'they break into foam: ' + foam.toFixed(2));
+    assert.ok(cov[0] > 5 && cov[1] > 5 && dryTop, 'the swash runs up the beach and back, never to its top: ' + cov);
+    assert.ok(wetSome && s.wetAt(xw, zTop) === 0 && s.wetAt(xw, shoreZ(xw) + 5) === 1, 'the sand it reaches is wet, above it dry, under the sea 1');
+    assert.ok(s.wetMesh.parent === scene && s.farMesh.parent === s.mesh, 'the wet sand lies in the world, the far rings round the patch');
+    // the far rings: out to far, facing up, their first row on the patch's edge
+    const F = s.farMesh.geometry, fp = F.attributes.position.array, ix = F.index.array, v = i => new THREE.Vector3(fp[i * 3], fp[i * 3 + 1], fp[i * 3 + 2]);
+    const n = new THREE.Vector3().crossVectors(v(ix[1]).sub(v(ix[0])), v(ix[2]).sub(v(ix[0])));
+    assert.ok(n.y > 0 && Math.max(...s.farBase.filter((_, i) => i % 3 === 0)) >= 600, 'the far rings face up and reach the horizon');
+    const edge = []; for (let u = 0; u < 5; u++) edge.push(Math.abs(fp[u * 3 + 1] - P[u * 3 + 1]));
+    assert.ok(Math.max(...edge) < 1e-6, 'the far rings meet the patch with no gap');
+    // the look's fourth channel: how far the swash is past each point (metres), 1 out in the water
+    const at = (x, z) => { const q = Math.round((x - p.x + 40) / S.cell), j = Math.round((z - p.z + 40) / S.cell); return A[(j * 49 + q) * 4 + 3]; };
+    assert.ok(at(xw, zTop) < 0 && at(-30, 45) === 1, 'the swash edge for the look: ' + [at(xw, zTop), at(-30, 45)]);
+    // a game's own: the shore's numbers, and dispose()
+    assert.ok(S.period > 3 && S.period < 8 && S.feel > 2 && S.H0 > .4, 'shore waves every ' + S.period.toFixed(1) + ' s, ' + S.H0.toFixed(2) + ' m');
+    let called = null; s.gpuStep(null); s.gpuStep({ r: 'r', fx: { seaStep: (r, look, t) => { called = [r, look === s.look, t]; }, seaFree: () => {} } });
+    assert.deepEqual(called, ['r', true, s.t], 'on WebGPU the fine waves are stepped with the sea\'s clock');
+    s.dispose(); assert.ok(!s.mesh.parent && !s.wetMesh.parent && !view.sims.includes(s), 'dispose()');
+  }
+  // open water (no bed): the swell alone, as Water's; a fresher wind, longer and higher waves; no wet sand
+  {
+    const s = new Sea({ wind: 9, far: 0 }); s.update(1 / 30, { x: 0, y: 0, z: 0 });
+    assert.ok(!s.sea.on && !s.wetMesh && !s.farMesh && s.covered(0, 0) === true, 'no shore without a bed');
+    const L = w => Math.max(...Sea.swell(w).map(q => q.length)), Hs = w => Math.max(...Sea.swell(w).map(q => q.height));
+    assert.ok(L(4) < L(7) && L(7) < L(10) && Hs(4) < Hs(10), 'the swell grows with the wind');
+    const P = s.mesh.geometry.attributes.position.array; let e = 0; for (let i = 0; i < P.length; i += 3) e = Math.max(e, Math.abs(P[i + 1] - s.height(P[i], P[i + 2])));
+    assert.ok(e < 1e-5, 'open water too');
+  }
+  console.log('sea: drawn where height() says, waves that rise and break at the shore, a swash that runs up and back, wet sand, far rings to the horizon ok');
+}
+
 // ground that takes marks (src/kit/marks.js: gs.outdoors.Marks)
 {
   globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};

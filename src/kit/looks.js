@@ -559,8 +559,57 @@ vec4 lkLavaN(float sc) {
   return { uniforms: U };
 }
 
-/** The outdoor looks: ground, hills, rock, leaves, fronds, meadow, flow, lava (each returns its uniforms). */
-export const looks = Object.freeze({ ground, hills, rock, leaves, fronds, meadow, flow, lava });
+/**
+ * looks.sea(material, o): gs.outdoors.Sea's water (sea.js), from the lkSea attribute it keeps on its points (shore
+ * foam, depth, how high and steep the swell is there, the swash's thin film): deep and shallow colours by depth, clear
+ * in the shallows, foam cut by a lace where the waves break and on the swell's crests in a fresh wind, a little light
+ * through the crests, and fine waves: on WebGL eight short waves running with the wind; on WebGPU an FFT of an ocean's
+ * spectrum, with the bottom seen through the water (sea-gpu.js). o: deep, shallow, foam (colours), clear (metres of water
+ * that hide the bottom), wind (m/s), dir (radians), fine (how strong the fine waves are), choppy, tile (metres the FFT's
+ * waves repeat over), lace (the foam's picture).
+ */
+function sea(m, { deep = '#0b3550', shallow = '#2a8f9e', foam = '#f2f7f7', clear = 3, wind = 7, dir = 0, fine = 1, choppy = 1.2, tile = 48, lace = null } = {}) {
+  const U = { lkSeaT: uni(0), lkDeep: col(deep), lkShallow: col(shallow), lkFoamC: col(foam), lkSeaK: uni(new Vector4(clear, fine, choppy, 0)), lkSeaW: uni(new Vector4(Math.cos(dir), Math.sin(dir), wind, tile)), lkLace: uni(lace) };
+  lookPatch(m, 'sea', spec('sea', {
+    uniforms: U, world: true,
+    vertex: {
+      head: 'attribute vec4 lkSea; varying vec4 vLkSea;',
+      after: { begin_vertex: '  vLkSea = lkSea;' },
+    },
+    fragment: {
+      head: `uniform float lkSeaT; uniform vec3 lkDeep, lkShallow, lkFoamC; uniform vec4 lkSeaK, lkSeaW; uniform sampler2D lkLace; varying vec4 vLkSea;
+vec3 lkSeaFine(vec2 p, float t, float px) {   // eight short waves running round the wind's way: their slopes (xy) and height (z); each fades out where a pixel is too big to show it
+  vec2 g = vec2(0.); float h = 0., a0 = atan(lkSeaW.y, lkSeaW.x), sw = smoothstep(1., 9., lkSeaW.z);
+  for (int i = 0; i < 8; i++) {
+    float fi = float(i), a = a0 + (fract(fi * .618) - .5) * 2.4, L = 5.5 * pow(.7, fi), k = 6.2832 / L, ph = k * dot(p, vec2(cos(a), sin(a))) - sqrt(9.81 * k) * t + fi * 1.7, A = L * .014 * lkSeaK.y * (.35 + .65 * sw) * (1. - smoothstep(L * .12, L * .4, px));
+    h += A * sin(ph); g += A * k * cos(ph) * vec2(cos(a), sin(a));
+  }
+  return vec3(g, h);
+}`,
+      after: {
+        color_fragment: `  float lkPx = length(fwidth(vGsWorld.xz));
+  vec3 lkF = lkSeaFine(vGsWorld.xz, lkSeaT, lkPx);
+  float lkDepth = vLkSea.y, lkBody = 1. - exp(-max(lkDepth, 0.) / lkSeaK.x), lkFilm = 1. - smoothstep(-.05, .15, lkDepth), lkEdge = smoothstep(0., .03, vLkSea.w);
+  float lkCap = smoothstep(.62, .95, max(vLkSea.z, 0.) * .85 + lkF.z * 6.) * smoothstep(5., 11., lkSeaW.z) * (1. - smoothstep(.4, 1.6, lkPx));   // (whitecaps on the steep crests in a fresh wind)
+  float lkFoam = clamp(max(vLkSea.x, lkCap), 0., 1.), lkLc = texture2D(lkLace, vGsWorld.xz / 3.).a;
+  lkFoam = smoothstep(.36, .62, lkFoam * lkLc * 1.1 + lkFoam * .08);   // (thick foam whole, thin foam in holes and scraps)
+  diffuseColor.rgb = mix(mix(lkShallow, lkDeep, lkBody), lkFoamC, lkFoam);
+  diffuseColor.a = lkEdge;   // (alphaTest drops the unseen film past the swash's edge; the rest is settled once the normal is known)`,
+        roughnessmap_fragment: '  roughnessFactor = mix(.035, .75, lkFoam);',
+        normal_fragment_maps: `  normal = normalize(normal + (viewMatrix * vec4(-lkF.x, 0., -lkF.y, 0.)).xyz * (1. - lkFoam));`,
+        emissivemap_fragment: `  totalEmissiveRadiance += lkShallow * .18 * max(vLkSea.z, 0.) * (1. - lkFoam) * (1. - lkFilm);   // (light through the thin crests)
+  // how much of what is under the water shows through: what the surface lets in (less the lower one looks: Fresnel) times
+  // what the water lets through on the way down and back (a longer way, bent, when looking in low)
+  float lkCos = clamp(dot(normalize(vViewPosition), normal), 0., 1.), lkFr = .02 + .98 * pow(1. - lkCos, 5.), lkSlant = inversesqrt(max(.05, 1. - (1. - lkCos * lkCos) * .5625));
+  diffuseColor.a = max(1. - (1. - lkFr) * exp(-max(lkDepth, 0.) * lkSlant / lkSeaK.x) * mix(.88, .72, lkFilm), lkFoam) * lkEdge;`,
+      },
+    },
+  }));
+  return { uniforms: U };
+}
+
+/** The outdoor looks: ground, hills, rock, leaves, fronds, meadow, flow, lava, sea (each returns its uniforms). */
+export const looks = Object.freeze({ ground, hills, rock, leaves, fronds, meadow, flow, lava, sea });
 
 /**
  * horizon(land, o): a ring of far hills and mountains round the land (they only need light and haze),

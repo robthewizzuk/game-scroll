@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -42,6 +42,7 @@ import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
 import { lensflare } from 'three/examples/jsm/tsl/display/LensflareNode.js';
 import { dropsNode, DROPS_N } from './lens-drops.js';
+import { SeaFFT } from './sea-gpu.js';
 import { ssgi } from 'three/examples/jsm/tsl/display/SSGINode.js';
 import { vxgi } from 'three/examples/jsm/lighting/vxgi/VXGINode.js';
 import { LightProbeGrid } from 'three/examples/jsm/lighting/LightProbeGrid.js';
@@ -519,6 +520,21 @@ function partPush(u) {
     return vec3(ln.x.mul(up), length(ln).mul(up).mul(-.35), ln.y.mul(up));
   };
 }
+// gs.outdoors.Sea's fine waves (sea-gpu.js): one FFT per sea, found by its look's uniforms, made by whichever asks
+// first (the look as the material is first drawn, or the sea's step before it)
+const SEA_FFT = new WeakMap();
+function seaFFT(u) {
+  let f = SEA_FFT.get(u);
+  if (!f) { const W = u.lkSeaW.value; SEA_FFT.set(u, f = new SeaFFT({ tile: W.w, wind: W.z, dir: Math.atan2(W.y, W.x), fine: u.lkSeaK.value.y })); }
+  return f;
+}
+// the copies of the picture and its depths that the sea reads what is under it from (the scene pass's own formats)
+let SEE = null;
+const seeBehind = () => SEE ||= { colour: Object.assign(new FramebufferTexture(), { type: HalfFloatType }), depth: new DepthTexture(), depthF: Object.assign(new DepthTexture(), { type: FloatType }) };
+/** sea.js gpuStep: the fine waves moved on to t, before the frame is drawn. */
+export function seaStep(r, look, t) { seaFFT(look.uniforms).step(r, t); }
+/** sea.js dispose: the FFT's buffers and texture. */
+export function seaFree(look) { const f = SEA_FFT.get(look.uniforms); if (f) { f.dispose(); SEA_FFT.delete(look.uniforms); } }
 export const gpuLooks = {
   // gs.fx3d's 3D text (text3d.js): distance-field letters
   sdf: sdfLook,
@@ -642,6 +658,50 @@ export const gpuLooks = {
     afterColor(m, o, () => mix(live(u.lkCrust).mul(mm.r.mul(.6).add(.6)), G.mul(.05), hot));
     m.roughnessNode = mix(float(.9), float(.5), hot);
     m.emissiveNode = materialEmissive.add(G.mul(hot).mul(heat).mul(K.y));
+  },
+  // looks.js sea(): gs.outdoors.Sea's water (sea.js): colour by depth, foam cut by the lace, the surface letting more of
+  // what is under it through the steeper one looks down (Fresnel) and the deeper it is the less; the fine waves are
+  // an FFT of the wind's spectrum (sea-gpu.js) where WebGL has eight sines, with whitecaps where its waves crowd
+  sea(m, s, o, T) {
+    const u = s.uniforms, F = attribute('lkSea', 'vec4'), wp = positionWorld.add(ORG), K = live(u.lkSeaK), W = live(u.lkSeaW), fft = seaFFT(u);
+    const tile = W.w, px = length(fwidth(wp.xz)).toVar('lkPx'), texel = tile.div(fft.n);
+    // two looks at the tile: as it is close by, and turned and four times bigger further out (so far water keeps a grain);
+    // each fades as a pixel grows too big for its waves (the tile has no smaller copies)
+    const a = texture(fft.texture, wp.xz.div(tile)), q = vec2(wp.x.mul(.8).sub(wp.z.mul(.6)), wp.x.mul(.6).add(wp.z.mul(.8))).div(tile.mul(4.1)), b = texture(fft.texture, q.add(.37));
+    const near = float(1).sub(smoothstep(texel.mul(1.5), texel.mul(6), px)), far = float(1).sub(smoothstep(texel.mul(6), texel.mul(26), px)).mul(.6);
+    const sl = a.gb.mul(near).add(vec2(b.g.mul(.8).add(b.b.mul(.6)), b.g.mul(-.6).add(b.b.mul(.8))).mul(far)).toVar('lkSl');
+    const crowd = a.a.mul(near).add(b.a.mul(far).mul(.25));   // (the bigger copy's crests are four times less sharp)
+    const depth = F.y, body = float(1).sub(exp(max(depth, 0).negate().div(K.x))), film = float(1).sub(smoothstep(-.05, .15, depth)), edge = smoothstep(0, .03, F.w);
+    // whitecaps: on the swell's steep crests and where the fine waves crowd, in a fresh wind
+    const cap = smoothstep(.62, .95, max(F.z, 0).mul(.85).add(crowd.mul(K.z).mul(.5))).mul(smoothstep(5, 11, W.z)).mul(float(1).sub(smoothstep(.4, 1.6, px)));
+    const f0 = clamp(max(F.x, cap), 0, 1), foam = smoothstep(.36, .62, f0.mul(texture(u.lkLace.value, wp.xz.div(3)).a).mul(1.1).add(f0.mul(.08))).toVar('lkFoam');
+    afterColor(m, o, () => mix(mix(live(u.lkShallow), live(u.lkDeep), body), live(u.lkFoamC), foam));
+    m.roughnessNode = mix(float(.035), float(.75), foam);
+    const nrm = normalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(sl.x.negate(), 0, sl.y.negate(), 0)).xyz.mul(foam.oneMinus()))).toVar('lkNrm');
+    m.normalNode = nrm;
+    m.emissiveNode = materialEmissive.add(live(u.lkShallow).mul(.18).mul(max(F.z, 0)).mul(foam.oneMinus()).mul(film.oneMinus()));   // (light through the thin crests)
+    const cs = clamp(dot(positionViewDirection, nrm), 0, 1), fr = pow(cs.oneMinus(), 5).mul(.98).add(.02), slant = TSL.inverseSqrt(max(.05, float(1).sub(float(1).sub(cs.mul(cs)).mul(.5625))));
+    if (!T || (T.name !== 'high' && T.name !== 'ultra')) {
+      m.opacityNode = max(float(1).sub(fr.oneMinus().mul(exp(max(depth, 0).negate().mul(slant).div(K.x))).mul(mix(.88, .72, film))), foam).mul(edge);
+      return;
+    }
+    // high and ultra: what lies under the water, from the picture drawn so far and its depths (copied as the water is
+    // drawn): bent by the waves, dimmed and tinted by how far the light goes through the water (red goes first), with
+    // light playing on it where the waves above focus the sun (caustics). The water is then drawn whole, over it
+    const pv = TSL.positionView, dist = length(pv), wz = pv.z, see = seeBehind();
+    const bend = nrm.xy.sub(normalViewGeometry.xy).mul(.05).div(max(1, dist.mul(.08))), qr = screenUV.add(bend);
+    // (one copy of the depths, read where the bent ray goes; the scene pass's depth is 32-bit float with reversed depth, else 24-bit)
+    const zR = Fn(builder => TSL.perspectiveDepthToViewZ(TSL.viewportDepthTexture(qr, null, builder.renderer.reversedDepthBuffer ? see.depthF : see.depth).x, TSL.cameraNear, TSL.cameraFar))();
+    const bent = zR.lessThan(wz.sub(.02));   // (bent onto something nearer than the water: not bent, and as deep as the bed there says)
+    const qb = select(bent, qr, screenUV), wide = select(bent, max(wz.sub(zR), 0).mul(dist).div(max(wz.negate(), 1e-3)), max(depth, 0).mul(slant));
+    const ray = wide.toVar('lkRay'), Pb = positionWorld.add(normalize(positionWorld.sub(cameraPosition)).mul(ray));
+    const below = max(positionWorld.y.sub(Pb.y), 0), lap = texture(fft.texture, Pb.xz.add(ORG.xz).div(tile)).a;
+    const focus = float(1).div(clamp(float(1).sub(below.mul(.25).mul(lap)), .3, 2));
+    const caustic = mix(float(1), focus, exp(below.div(-5)).mul(smoothstep(0, .3, below)));
+    const Tr = exp(vec3(1.7, 1, .75).div(K.x).mul(ray.add(below)).negate());
+    m.backdropNode = TSL.viewportTexture(qb, null, see.colour).rgb.mul(caustic).mul(Tr).div(max(Tr.g, 1e-3));
+    m.backdropAlphaNode = Tr.g.mul(foam.oneMinus());
+    m.opacityNode = edge;
   },
   // looks.js leaves(): sway (more towards the top, leaning downwind), light through towards the sun,
   // outlines that hold up far away, and both sides lit alike

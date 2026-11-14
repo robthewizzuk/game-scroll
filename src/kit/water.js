@@ -25,7 +25,7 @@ const posOf = t => t.position || t.pos || t;
 // ripple square only says how much foam lies where; the two are multiplied and cut at a half, so thick foam
 // is whole (the tile's alpha never falls under a half), and as it thins it opens into holes, then scraps, then goes.
 let LACE = null;
-function lace() {
+export function lace() {
   if (LACE) return LACE;
   const S = 128, pix = new Uint8Array(S * S * 4), f = new Float32Array(S * S); let s = 4321; const R = () => (s = (s * 16807) % 2147483647) / 2147483647, sm = t => t * t * (3 - 2 * t);
   // blotches: value noise that tiles, five sizes from half the tile down
