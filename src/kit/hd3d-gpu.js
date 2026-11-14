@@ -1146,8 +1146,8 @@ export function shadowOps(r) {
       let st = stands.get(map);
       if (!st) {
         const d = map.depthTexture;
-        st = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples });
-        st.texture.type = map.texture.type; st.texture.format = map.texture.format;
+        st = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples, count: colours(map) });   // (depth alone, as the map: SHADOW_DEPTH)
+        if (map.texture) { st.texture.type = map.texture.type; st.texture.format = map.texture.format; }
         if (d) { const z = st.depthTexture = new DepthTexture(4, 4, d.type); z.format = d.format; z.compareFunction = d.compareFunction; z.minFilter = d.minFilter; z.magFilter = d.magFilter; }
         r.initRenderTarget(st); stands.set(map, st);
       }
