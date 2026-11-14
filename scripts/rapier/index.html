@@ -1,0 +1,153 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A film of Rapier wired through the kits, for scripts/rapier.cjs: a row for each kit doing something in one
+// World3D (a kart through crates, a forest of props, a crate that shatters on a wall and a melon cut in two, a model
+// car that dents on a wall, cloth round a rolling ball, voxel ground with a pit dug under crates, a barrel set off by
+// a shot, a city made solid), a picture every so often along it, so it can be judged by eye. It also notes what
+// happened in numbers and the cost of a frame.
+//   ?acts=kart,props,shatter,car,cloth,voxels,blast,city (default: all)   &cols=6   &cell=300x220   &gpu (WebGPU)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { loadPhysics3D } from '../../src/kit/physics3d.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await loadPhysics3D();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, { World3D } = gs.physics3d, frame = () => new Promise(r => requestAnimationFrame(r));
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .45, amb: .35 });
+  const sun = gs.hd.sun('#fff2d8', 2, 24, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const cols = +(Q.get('cols') || 6), [cw, ch] = (Q.get('cell') || '300x220').split('x').map(Number);
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const mat = c => gs.hd.pbr(c, { rough: .8 }), box = (g, w, h, d, c) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(c)); m.castShadow = m.receiveShadow = true; g.add(m); return m; };
+  const ballMesh = (g, r, c) => { const m = new T.Mesh(new T.SphereGeometry(r, 20, 14), mat(c)); m.castShadow = true; g.add(m); return m; };
+  const ground = (g, w, size = 80) => { const f = box(g, size, .2, size, '#7a7f70'); f.position.y = -.1; w.floor(0); return f; };
+  const fmt = p => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
+  // each act: secs; make(g, w) => { step(i, dt), cam: [eye, aim], info() }
+  const ACTS = {
+    // a kart driven up a ramp, through a stack of crates and into a wall
+    kart: { secs: 4, make(g, w) {
+      ground(g, w);
+      const ramp = box(g, 4, .4, 6, '#8d8676'); ramp.position.set(0, .4, -10); ramp.rotation.x = .25; ramp.updateMatrixWorld(); w.ground(ramp);
+      const crates = []; for (let i = 0; i < 6; i++) { const m = box(g, 1, 1, 1, '#b07a3c'); crates.push(w.box(m, 1, 1, 1, { at: { x: 3 + (i % 2) * 1.05 - .5, y: .5 + Math.floor(i / 2) * 1.02, z: -9 } })); }
+      const wall = box(g, 10, 3, 1, '#a9a39a'); wall.position.set(1.5, 1.5, -24); w.box(wall, 10, 3, 1, { fixed: true, tag: 'wall' });
+      const kart = new gs.vehicles.Kart({ world: w, x: 2.6, z: 2, size: [1.3, .7, 2] }), km = box(g, 1.3, .7, 2, '#d23b2b'); let walled = 0;
+      w.onHit((a, b, sp) => { if ((a.tag === 'wall' || b.tag === 'wall') && sp > 3) walled++; });
+      return { cam: [[13, 7, 2], [1.5, .5, -12]],
+        step() { kart.update(1 / 60, { throttle: 1, steer: kart.z < -6 ? -.05 : 0 }); km.position.set(kart.x, kart.y + .35, kart.z); km.rotation.set(0, kart.heading, 0); },
+        info: () => `kart at ${fmt(kart)}; crates thrown to z ${crates.map(c => c.pos.z.toFixed(1)).join(' ')}; wall hits ${walled}` };
+    } },
+    // a forest of props as trunks in one body, loose crates stacked by them; a heavy ball rolled through
+    props: { secs: 4, make(g, w) {
+      ground(g, w);
+      const props = new gs.props.Props(g);
+      const trunk = new T.CylinderGeometry(.25, .32, 4, 10).translate(0, 2, 0);
+      props.kind('tree', trunk, mat('#6b4a2f'));
+      props.kind('crate', new T.BoxGeometry(.8, .8, .8).translate(0, .4, 0), mat('#b07a3c'));
+      for (let i = 0; i < 9; i++) props.add('tree', -3 + (i % 3) * 3, 0, -6 - Math.floor(i / 3) * 3);
+      for (let i = 0; i < 8; i++) props.add('crate', -1.5 + (i % 4) * .85, (Math.floor(i / 4)) * .82, -3);
+      const trees = props.solid(w, 'tree', { shape: 'trunk', r: .3 }), crates = props.solid(w, 'crate', { loose: true, density: 2 });
+      const ball = w.ball(ballMesh(g, .6, '#3b5bd2'), .6, { at: { x: -.3, y: .6, z: 6 }, density: 8 }); ball.setVel(0, 0, -11);
+      let trunkHit = 0; w.onHit((a, b) => { if (a === trees || b === trees) trunkHit++; });
+      const P = new T.Vector3(), M = new T.Matrix4();
+      return { cam: [[11, 7, 6], [0, 1, -5]], step() {},
+        info: () => { const off = [...crates].map(([id, b]) => { props.mesh('crate').getMatrixAt(id, M); return P.setFromMatrixPosition(M).distanceTo(b.pos); }); return `ball at ${fmt(ball.pos)}; crates at z ${[...crates.values()].map(b => b.pos.z.toFixed(1)).join(' ')}, drawn at most ${Math.max(...off).toFixed(2)} m from their bodies; hits on the trunks ${trunkHit}`; } };
+    } },
+    // a crate thrown at a wall shatters there and its pieces carry on; a melon thrown past is cut in two in the air
+    shatter: { secs: 3, make(g, w) {
+      ground(g, w);
+      const wall = box(g, 6, 3, .6, '#a9a39a'); wall.position.set(0, 1.5, -8); w.box(wall, 6, 3, .6, { fixed: true, tag: 'wall' });
+      const cm = box(g, 1, 1, 1, '#b07a3c'), crate = w.box(cm, 1, 1, 1, { at: { x: -1, y: 1.6, z: 2 } }); crate.setVel(0, 2, -12);
+      const melon = ballMesh(g, .4, '#4f8f3a'), mb = w.ball(melon, .4, { at: { x: 2, y: 1, z: 3 } }); mb.setVel(0, 5, -6);
+      let pieces = [], halves = [], broke = false;
+      w.onHit((a, b, sp) => { if (!broke && (a === crate || b === crate) && sp > 4) broke = true; });
+      return { cam: [[9, 5, 4], [0, 1, -4]], tidy: () => { for (const m of [...pieces, ...halves]) { m.removeFromParent(); m.geometry.dispose(); } },
+        step(i) {
+          if (broke && !pieces.length) pieces = gs.destruction.shatter(cm, { pieces: 10, world: w, push: 1.5, at: cm.position.clone() });
+          if (i === 40) halves = gs.destruction.slice(melon, melon.position.clone(), { x: 1, y: 0, z: 0 }, { world: w, apart: 1.5 });
+        },
+        info: () => `crate ${broke ? 'broke into ' + pieces.length + ' pieces, moving ' + pieces.filter(p => p.body && Math.hypot(p.body.vel.x, p.body.vel.z) > .5).length : 'did not break'}; melon ${halves.length} halves at ${halves.map(h => fmt(h.body.pos)).join(' / ')}` };
+    } },
+    // a model car on springs driven into a wall: it dents and its glass breaks where it hit
+    car: { secs: 4, make(g, w) {
+      ground(g, w);
+      const wall = box(g, 8, 3, 1, '#a9a39a'); wall.position.set(0, 1.5, -16); w.box(wall, 8, 3, 1, { fixed: true });
+      const car = gs.models.vehicle('car', { style: 'saloon', seed: 3 }); g.add(car); car.position.set(0, 0, 4);
+      const drive = w.vehicle(car, car.chassis({ power: 16 })); let dents = 0; const hit0 = car.hit; car.hit = (p, o) => { dents++; return hit0.call(car, p, o); };
+      return { cam: [[11, 5, 0], [0, .8, -9]],
+        step(i, dt) { drive.drive(i < 150 ? 1 : 0, 0, i < 150 ? 0 : 1); car.update?.(dt); },
+        info: () => `car at z ${car.position.z.toFixed(1)}; dents ${dents}, damage ${JSON.stringify(car.damage, (k, x) => typeof x === 'number' ? +x.toFixed(2) : x)}` };
+    } },
+    // a curtain on a frame; a ball rolls through and the cloth goes round it by itself
+    cloth: { secs: 4, every: true, make(g, w) {   // (every: drawn every frame, since on WebGPU the cloth takes its steps as the view draws)
+      ground(g, w);
+      const bar = box(g, 3.2, .1, .1, '#666'); bar.position.set(0, 2.55, 0);
+      // (&manual: the cloth given balls of its own that follow the bodies, not the world: to compare)
+      const manual = Q.has('manual'), cloth = new gs.outdoors.Cloth(v, { world: manual ? null : w, wind: { x: 0, y: 0, z: .3 } });
+      cloth.sheet({ cols: 15, rows: 14, place: (i, j) => [-1.5 + i / 14 * 3, 2.5 - j / 13 * 2.3, 0], pins: [0, 3, 7, 11, 14] });
+      const ball = Q.has('noball') ? null : w.ball(ballMesh(g, .55, '#d2a23b'), .55, { at: { x: -.2, y: .55, z: -4 } }); ball?.setVel(0, 0, +(Q.get('speed') || 4.5));
+      const crate = Q.has('nocrate') ? null : w.box(box(g, .7, .7, .7, '#b07a3c'), .7, .7, .7, { at: { x: 1, y: 3.5, z: .15 } });
+      const own = manual ? [ball, crate].filter(Boolean).map(b => [b, cloth.ball({ r: b === ball ? .55 : .35 })]) : [];
+      return { cam: [[4.5, 2.2, 5], [0, 1.1, 0]], step(i, dt) { for (const [b, s] of own) s.set(b.pos.x, b.pos.y, b.pos.z); cloth.update(dt); }, tidy: () => { cloth.clear(); cloth.dispose(); },
+        info: () => `ball at ${ball ? fmt(ball.pos) : '-'}; crate at ${crate ? fmt(crate.pos) : '-'}; cloth goes round ${cloth.felt.size} bodies` };
+    } },
+    // voxel ground made solid: crates land on it, then a pit is dug under them and they fall in
+    voxels: { secs: 4, make(g, w) {
+      const vox = new gs.voxels.Voxels({ size: [24, 12, 24], worker: false }), B = gs.voxels.BLOCKS;
+      vox.fill(0, 0, 0, 23, 3, 23, B.stone); vox.fill(0, 4, 0, 23, 4, 23, B.grass); g.add(vox.group); vox.physics(w); vox.build();
+      const crates = []; for (let i = 0; i < 5; i++) crates.push(w.box(box(g, .8, .8, .8, '#b07a3c'), .8, .8, .8, { at: { x: 10 + (i % 3), y: 7 + i, z: 12 + (i % 2) } }));
+      return { cam: [[15, 20, 19], [11, 1.5, 12.5]], step(i) { if (i === 110) { vox.sphere(11, 4, 12.5, 3.5, 0); vox.build(); } }, tidy: () => { vox.physics(null); vox.dispose?.(); },
+        info: () => `crates at y ${crates.map(c => c.pos.y.toFixed(1)).join(' ')}` };
+    } },
+    // a shot knocks a barrel over; it goes off and throws the crates round it
+    blast: { secs: 3, make(g, w) {
+      ground(g, w);
+      const barrel = new T.Mesh(new T.CylinderGeometry(.35, .35, 1, 16), mat('#c0392b')); barrel.castShadow = true; g.add(barrel);
+      const bb = w.box(barrel, .7, 1, .7, { at: { x: 0, y: .5, z: -6 }, density: 30 });
+      const crates = []; for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; crates.push(w.box(box(g, .8, .8, .8, '#b07a3c'), .8, .8, .8, { at: { x: Math.cos(a) * 2.2, y: .4, z: -6 + Math.sin(a) * 2.2 }, density: 2 })); }
+      const ex = new gs.combat.Explosives({ world: w, radius: 5, knock: 3 }); ex.add({ x: 0, y: .5, z: -6, body: bb }); let booms = 0; ex.on('boom', () => booms++);
+      const shots = new gs.combat.Shots({ push: 80 }); let hit = null;
+      return { cam: [[9, 6, 5], [0, .8, -6]],
+        step(i, dt) { if (i === 30) shots.add({ from: { x: 0, y: .9, z: 4 }, dir: { x: 0, y: 0, z: -1 }, speed: 80, range: 40 }); hit ||= shots.update(dt, w)[0]; ex.update(dt); },
+        info: () => `shot hit ${hit ? (hit.hit.thing === bb ? 'the barrel' : hit.hit.thing?.tag ?? hit.hit.thing?.kind) : 'nothing'}; booms ${booms}; crates thrown to ${crates.map(c => Math.hypot(c.pos.x, c.pos.z + 6).toFixed(1)).join(' ')} m out` };
+    } },
+    // a city made solid: crates dropped along a street land on kerbs, benches and parked cars; traffic and people get bodies
+    city: { secs: 4, async make(g, w) {
+      const opts = { seed: 7, blocks: 2, style: 'downtown' }; await gs.city.City.ready?.(opts);
+      const city = new gs.city.City(v, opts); city.warm?.(); const s0 = performance.now(); city.solid(w); const made = performance.now() - s0;
+      const P = city.plan, b = P.blocks.find(k => k.kind === 'build') || P.blocks[0], eye = [b.x0 + 1, 2.2, b.z0 + 2.4], aim = [b.x0 + 14, .5, b.z0 - 1.5];
+      // crates dropped across the pavement (it stands a kerb high), the kerb, the parking lane and the road
+      const crates = []; for (let i = 0; i < 24; i++) crates.push(w.box(box(g, .7, .7, .7, '#b07a3c'), .7, .7, .7, { at: { x: b.x0 + 4 + (i % 8) * 2.4, y: 5 + Math.floor(i / 8) * 1.5, z: b.z0 + 1.2 - Math.floor(i / 8) * 2 - (i % 2) * .3 }, density: 3 }));
+      return { cam: [eye, aim], step(i, dt) { city.update(dt, v.cam.position); }, tidy: () => city.dispose?.(),
+        info: () => `made solid in ${made.toFixed(0)} ms; ${city.bodies?.cars.length ?? 0} car bodies, ${city.bodies?.people.length ?? 0} people bodies; crates came to rest at y ${crates.map(c => c.pos.y.toFixed(2)).join(' ')}` };
+    } },
+  };
+  const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(',');
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * acts.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [];
+  for (let r = 0; r < acts.length; r++) {
+    const A = ACTS[acts[r]]; if (!A) throw new Error('no act ' + acts[r] + ': ' + Object.keys(ACTS).join(', '));
+    const g = new T.Group(); v.scene.add(g);
+    const w = new World3D({ gravity: -9.81 });
+    const act = await A.make(g, w);
+    const dt = 1 / 60, N = Math.round(A.secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round(N * i / (cols - 1)));
+    let cost = 0, worst = 0;
+    for (let i = 0; i <= N; i++) {
+      const c0 = performance.now(); act.step(i, dt); w.step(dt); const c = performance.now() - c0; cost += c; worst = Math.max(worst, c);
+      const k = shots.indexOf(i);
+      if (k < 0 && A.every) { v.render(cx, cw, ch); await frame(); }
+      if (k >= 0) {
+        const [e, a] = act.cam; v.cam.fov = 45; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix();
+        v.cam.position.set(...e); v.cam.lookAt(...a); v.cam.updateMatrixWorld(); v.cut?.(); sun.follow?.(a[0], a[1], a[2]);
+        for (let n = 0; n < (k ? 2 : 6); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+        sx.drawImage(cell, k * cw, r * ch);
+        sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${acts[r]} ${(i * dt).toFixed(2)}s`, k * cw + 4, r * ch + 12);
+      }
+    }
+    info.push(`${acts[r]}: ${act.info()}; ${(cost / (N + 1)).toFixed(2)} ms a frame, worst ${worst.toFixed(1)}`);
+    act.tidy?.(); w.free(); v.scene.remove(g);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

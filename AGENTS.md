@@ -151,9 +151,11 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   `Orbitron`, `Creepster`, `Pirata One`, `Rye`, `Monoton`, `Black Ops One`, `Cinzel`, `Patrick Hand`, `Courier Prime`; plus `Rubik`), loaded on first use;
   `use('Bangers')` in `make()` or `reset()` to have one in before the first frame. Not the phone's own fonts (`Arial`, `Courier New`, `Impact`...).
 - `gs.physics.Physics` (Rapier 2D; lazy): `circle`, `box`, `poly`, `line`, `walls`, `hinge`, `spring`,
-  `rope`, `ragdoll(x, y, { size })`, `weld`, `slider`, `wheel`, `grab`, `ray`, `at`, `blast`, `onHit`, `step(dt)`, `path(c, t)`.
+  `rope`, `ragdoll(x, y, { size })`, `weld`, `slider`, `wheel`, `grab`, `ray`, `at`, `blast`, `onHit`, `step(dt)`, `path(c, t)`,
+  `move(box, dx, dy)` (a hero walked through the world: steps, slopes, shoves crates), `tiles(map)` (a TileMap level made solid).
 - `gs.physics3d.World3D` (Rapier 3D; lazy): `ball`, `box`, `capsule`, `hull`, `ground(mesh)`,
-  `floor`, `mover()` (walking character), `ragdoll(character)` (a jointed ragdoll on a `gs.poses` rig: joints that only turn as real ones do, `drive(pose, strength)` muscles), `ray`, joints, `step(dt)` syncs meshes.
+  `floor`, `mover()` (walking character), `rider()` (something your code moves, solid: kerbs, walls, shoves), `shape(mesh, { box | ball | capsule | hull })`, `shapes(list)` (thousands of still shapes in one body), `floorAt`, `ragdoll(character)` (a jointed ragdoll on a `gs.poses` rig: joints that only turn as real ones do, `drive(pose, strength)` muscles), `ray`, joints, `step(dt)` syncs meshes.
+  One world through the kits: `Platformer`/`TopDown`, `Car`/`Kart`, `Plane`/`Boat`/`Hover`, `Shots`/`arc`/`Explosives`, `Grapple`, `slice`, `props.solid`, `city.solid`, `voxels.physics`, `Cloth`, `Soft`/`Liquid` and `Streams.carry` all take it (`docs/maker-kit.md`, "One physics world through the kits").
 - `gs.ai`: `Crowd` (`add(x, y).chase(t) / flee / wander / follow(route) / flock / hunt(t, nav)`),
   `NavGrid` (`path`, `sees`), `Brain` (state machine), `Tree` (behaviour trees: mistreevous text, actions by name), `Choose`
   (utility AI: the highest-scoring want), `YUKA`, `Swarm({ count, w, h, speed })` (thousands of flockers on the

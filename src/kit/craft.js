@@ -11,6 +11,12 @@
 //   crate = world.box(mesh, 1, 1, 1); floats = new Floater(crate, sea, { size: [1, 1, 1] }); update: floats.update(dt) before world.step(dt)
 //
 // Touch tip: `assist` (0..1) levels the wings and nose when the stick is let go, so thumbs can fly.
+//
+// In a gs.physics3d World3D they are solid (pass world: phys): a boat runs into docks and rocks and shoves floating
+// crates aside, a drone slides along walls and lands on roofs and crates, a plane lands on whatever is solid and
+// crashes into what stands in its way. Without a ground function they find the ground in the world. craft.crash
+// is what it ran into this frame ({ thing, normal, point, speed }); craft.rider is its body there. The water a
+// Boat or a Floater floats on can be a gs.outdoors Water, a gs.fluid Fluid, a gs.flow Flood or Streams.
 
 const V = (x = 0, y = 0, z = 0) => ({ x, y, z });
 // quaternion helpers (x, y, z, w)
@@ -24,6 +30,22 @@ const rot = (v, q) => {
 const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const yawQ = a => qaxis(0, 1, 0, a);
+// the height of any water there: gs.outdoors Water (height), gs.fluid Fluid and gs.flow Flood (level, NaN or 0 where dry), gs.flow Streams (at)
+const surface = w => typeof w.height === 'function' ? (x, z) => w.height(x, z)
+  : typeof w.level === 'function' && w.level.length >= 2 ? (x, z) => { const l = w.level(x, z); return l > 0 || l < 0 ? l : -Infinity; }
+  : typeof w.at === 'function' ? (x, z) => { const h = w.at({ x, y: 0, z }); return h.in ? h.level : -Infinity; }
+  : () => -Infinity;
+// ran into something in the world: takes the speed into it away from vel ({ x, y, z }); returns the hit with its speed, or null
+function wallHit(rider, vel, up = .6) {
+  let out = null;
+  for (const h of rider.hits) {
+    const n = h.normal; if (Math.abs(n.y) >= up) continue;
+    const into = -(vel.x * n.x + vel.y * n.y + vel.z * n.z); if (into <= 0) continue;
+    vel.x += n.x * into; vel.y += n.y * into; vel.z += n.z * into;
+    if (!out || into > out.speed) out = { thing: h.thing, normal: n, point: h.point, speed: into };
+  }
+  return out;
+}
 
 /**
  * A plane. power: thrust (m/s² at full throttle); lift: how much the wings carry; stall: speed
@@ -33,24 +55,28 @@ const yawQ = a => qaxis(0, 1, 0, a);
  */
 export class Plane {
   constructor({ at = V(0, 30, 0), heading = 0, speed = 30, power = 14, lift = 1, drag = .0016, stall = 16, top = 70, turn = [1.2, 2.2, .5], assist = .6,
-    grip = 2.5, gravity = 9.8, ground = null, gear = 1, crashSpeed = 7 } = {}) {
+    grip = 2.5, gravity = 9.8, ground = null, gear = 1, crashSpeed = 7, world = null, size = [1.6, 1.4, 7] } = {}) {
     Object.assign(this, { power, liftK: lift, drag, stallSpeed: stall, top, turn, assist, grip, gravity, ground, gear, crashSpeed });
     this.pos = V(at.x, at.y, at.z); this.quat = yawQ(-heading); this.vel = rot(V(0, 0, -speed), this.quat);
-    this.throttle = .6; this.stalled = false; this.onGround = !!ground && at.y <= ground(at.x, at.z) + gear + .01; this.crashed = false; this.events = [];
+    if (world) {   // its body (the fuselage: wings would catch on everything) rides on the gear, so the runway goes under it
+      this.world = world; this.rider = world.rider({ box: size, lift: gear * .5, at: V(at.x, at.y - gear, at.z), slope: 0, mass: 2000, tag: 'plane' }); this.rider.owner = this;
+      if (!ground) this.ground = (x, z) => world.floorAt(x, this.pos.y, z, .5, this.rider);
+    }
+    this.throttle = .6; this.stalled = false; this.onGround = !!this.ground && at.y <= (this.ground(at.x, at.z) ?? -Infinity) + gear + .01; this.crashed = false; this.events = []; this.crash = null;
   }
   get forward() { return rot(V(0, 0, -1), this.quat); }
   get up() { return rot(V(0, 1, 0), this.quat); }
   get right() { return rot(V(1, 0, 0), this.quat); }
   get speed() { return Math.hypot(this.vel.x, this.vel.y, this.vel.z); }
   /** Height above the ground (or above y = 0 without ground). */
-  get altitude() { return this.pos.y - (this.ground ? this.ground(this.pos.x, this.pos.z) : 0); }
+  get altitude() { return this.pos.y - (this.ground ? this.ground(this.pos.x, this.pos.z) ?? -Infinity : 0); }
   /** Heading (radians, 0 = -z), pitch (nose up +) and bank (right wing down +). */
   get heading() { const f = this.forward; return Math.atan2(f.x, -f.z); }
   get pitch() { return Math.asin(clamp(this.forward.y, -1, 1)); }
   get bank() { const r = this.right; return -Math.asin(clamp(r.y, -1, 1)); }
   /** Stick input: throttle 0..1 (or leave out to keep it), pitch -1..1 (+ nose up), roll -1..1 (+ right), yaw -1..1, brake. */
   update(dt, { throttle = this.throttle, pitch = 0, roll = 0, yaw = 0, brake = false } = {}) {
-    this.events.length = 0; if (this.crashed) return this;
+    this.events.length = 0; this.crash = null; if (this.crashed) return this;
     this.throttle = clamp(throttle, 0, 1);
     const sp = this.speed, auth = clamp(sp / (this.stallSpeed * 1.5), .15, 1);   // controls go soft when slow
     // auto-levelling when the stick is let go
@@ -81,9 +107,14 @@ export class Plane {
       const ud = dot(v, u); v.x -= u.x * ud * k * .5; v.y -= u.y * ud * k * .5; v.z -= u.z * ud * k * .5;
     }
     const s2 = Math.hypot(v.x, v.y, v.z); if (s2 > this.top) { v.x *= this.top / s2; v.y *= this.top / s2; v.z *= this.top / s2; }
-    this.pos.x += v.x * dt; this.pos.y += v.y * dt; this.pos.z += v.z * dt;
+    if (this.rider) {   // in a world: as far as it lets it go; anything standing in the way (not the ground under it) is a crash
+      const r = this.rider; r.move(this.pos.x + v.x * dt, this.pos.y + v.y * dt - this.gear, this.pos.z + v.z * dt, this.quat, dt);
+      const p = r.pos; this.pos.x = p.x; this.pos.y = p.y + this.gear; this.pos.z = p.z;
+      const hit = wallHit(r, { ...v }, .7);
+      if (hit && hit.speed > 2) { this.crash = hit; this.crashed = true; this.events.push('crash'); v.x = v.y = v.z = 0; return this; }
+    } else { this.pos.x += v.x * dt; this.pos.y += v.y * dt; this.pos.z += v.z * dt; }
     // the ground
-    const gy = (this.ground ? this.ground(this.pos.x, this.pos.z) : -Infinity) + this.gear;
+    const gy = (this.ground ? this.ground(this.pos.x, this.pos.z) ?? -Infinity : -Infinity) + this.gear;
     if (this.pos.y <= gy) {
       const level = Math.abs(this.bank) < .35 && this.pitch > -.2, soft = -v.y < this.crashSpeed;
       if (!level || !soft) { this.crashed = true; this.events.push('crash'); this.pos.y = gy; return this; }
@@ -95,7 +126,7 @@ export class Plane {
     return this;
   }
   /** Back in the air at a point, flying level. */
-  reset(at, heading = 0, speed = 30) { this.pos = V(at.x, at.y, at.z); this.quat = yawQ(-heading); this.vel = rot(V(0, 0, -speed), this.quat); this.crashed = false; this.onGround = false; this.stalled = false; return this; }
+  reset(at, heading = 0, speed = 30) { this.pos = V(at.x, at.y, at.z); this.quat = yawQ(-heading); this.vel = rot(V(0, 0, -speed), this.quat); this.crashed = false; this.onGround = false; this.stalled = false; this.rider?.place(at.x, at.y - this.gear, at.z, this.quat); return this; }
 }
 
 /**
@@ -104,9 +135,11 @@ export class Plane {
  * length / width: hull size for how it pitches and rolls on the waves.
  */
 export class Boat {
-  constructor(water, { at = V(), heading = 0, power = 8, top = 16, turn = 1.4, drift = .25, drag = .6, length = 4, width = 1.8, draft = .2 } = {}) {
+  constructor(water, { at = V(), heading = 0, power = 8, top = 16, turn = 1.4, drift = .25, drag = .6, length = 4, width = 1.8, draft = .2, world = null, height = 1 } = {}) {
     Object.assign(this, { water, power, top, turnK: turn, drift, dragK: drag, length, width, draft });
-    this.x = at.x; this.z = at.z; this.y = water.height(at.x, at.z); this.heading = heading; this.vx = 0; this.vz = 0; this.spin = 0; this.quat = yawQ(-heading); this.wake = []; this.air = 0;
+    this.h = surface(water); const h0 = this.h(at.x, at.z);
+    this.x = at.x; this.z = at.z; this.y = h0 > -Infinity ? h0 : at.y ?? 0; this.heading = heading; this.vx = 0; this.vz = 0; this.spin = 0; this.quat = yawQ(-heading); this.wake = []; this.air = 0; this.crash = null;
+    if (world) { this.world = world; this.rider = world.rider({ box: [width, height, length], at: V(this.x, this.y - draft, this.z), turn: -heading, slope: 0, mass: 800, tag: 'boat' }); this.rider.owner = this; }
   }
   get pos() { return V(this.x, this.y, this.z); }
   get speed() { return Math.hypot(this.vx, this.vz); }
@@ -119,12 +152,21 @@ export class Boat {
     const ns = side * Math.max(0, 1 - (1 - this.drift) * 6 * dt);
     this.vx = f.x * na + r.x * ns; this.vz = f.z * na + r.z * ns;
     this.spin += (steer * this.turnK * clamp(Math.abs(along) / 4, 0, 1) * Math.sign(along || 1) - this.spin) * Math.min(1, dt * 4);
-    this.heading += this.spin * dt; this.x += this.vx * dt; this.z += this.vz * dt;
+    this.heading += this.spin * dt; this.crash = null;
+    let nx = this.x + this.vx * dt, nz = this.z + this.vz * dt;
     // ride the waves: height from the middle, pitch and roll from bow, stern and sides
-    const L = this.length / 2, W = this.width / 2, f2 = this.forward, r2 = V(-f2.z, 0, f2.x);
-    const hb = w.height(this.x + f2.x * L, this.z + f2.z * L), hs = w.height(this.x - f2.x * L, this.z - f2.z * L), hr = w.height(this.x + r2.x * W, this.z + r2.z * W), hl = w.height(this.x - r2.x * W, this.z - r2.z * W);
+    const L = this.length / 2, W = this.width / 2, f2 = this.forward, r2 = V(-f2.z, 0, f2.x), H = this.h;
+    const at = (x, z) => { const v = H(x, z); return v > -Infinity ? v : this.y + this.draft; };   // (dry there: as it is)
+    const hb = at(nx + f2.x * L, nz + f2.z * L), hs = at(nx - f2.x * L, nz - f2.z * L), hr = at(nx + r2.x * W, nz + r2.z * W), hl = at(nx - r2.x * W, nz - r2.z * W);
     const target = (hb + hs + hr + hl) / 4 - this.draft;
-    if (this.y > target + .05) { this.air += dt; this.y = Math.max(target, this.y - 9.8 * this.air * dt); } else { this.air = 0; this.y += (target - this.y) * Math.min(1, dt * 8); }
+    let ny = this.y;
+    if (ny > target + .05) { this.air += dt; ny = Math.max(target, ny - 9.8 * this.air * dt); } else { this.air = 0; ny += (target - ny) * Math.min(1, dt * 8); }
+    if (this.rider) {   // in a world: docks, rocks and other boats stop it, floating things get shoved, and a shore it runs onto holds it up
+      const r = this.rider; r.move(nx, ny - this.draft, nz, -this.heading, dt);
+      const p = r.pos; nx = p.x; nz = p.z; ny = p.y + this.draft;
+      const v = V(this.vx, 0, this.vz), hit = wallHit(r, v, .7); if (hit) { this.crash = hit; this.vx = v.x; this.vz = v.z; this.spin *= .5; }
+    }
+    this.x = nx; this.z = nz; this.y = ny;
     const pitch = Math.atan2(hb - hs, this.length), roll = Math.atan2(hl - hr, this.width);
     this.quat = qnorm(qmul(qmul(yawQ(-this.heading), qaxis(1, 0, 0, pitch)), qaxis(0, 0, 1, roll)));
     // wake points behind the stern for your game to draw
@@ -139,9 +181,10 @@ export class Boat {
  * that way; yaw to turn. ground(x, z) for landing. Speeds are m/s.
  */
 export class Hover {
-  constructor({ at = V(0, 2, 0), heading = 0, climb = 6, speed = 14, accel = 6, turn = 1.8, tilt = .35, gravity = 9.8, ground = null } = {}) {
+  constructor({ at = V(0, 2, 0), heading = 0, climb = 6, speed = 14, accel = 6, turn = 1.8, tilt = .35, gravity = 9.8, ground = null, world = null, size = [1, .4, 1] } = {}) {
     Object.assign(this, { climb, top: speed, accel, turnK: turn, tiltMax: tilt, gravity, ground });
-    this.pos = V(at.x, at.y, at.z); this.vel = V(); this.heading = heading; this.quat = yawQ(-heading); this.onGround = false; this.tiltX = 0; this.tiltZ = 0;
+    this.pos = V(at.x, at.y, at.z); this.vel = V(); this.heading = heading; this.quat = yawQ(-heading); this.onGround = false; this.tiltX = 0; this.tiltZ = 0; this.crash = null;
+    if (world) { this.world = world; this.rider = world.rider({ box: size, at, turn: -heading, slope: 0, mass: 60, tag: 'hover' }); this.rider.owner = this; }
   }
   get speed() { return Math.hypot(this.vel.x, this.vel.z); }
   /** x, y: stick (-1..1; y + forward), up: -1..1 climb or sink, yaw: -1..1. */
@@ -149,9 +192,20 @@ export class Hover {
     this.heading += yaw * this.turnK * dt;
     const s = Math.sin(this.heading), c = Math.cos(this.heading), wx = (x * c + y * s) * this.top, wz = (x * s - y * c) * this.top, k = Math.min(1, this.accel * dt / this.top * 2);
     this.vel.x += (wx - this.vel.x) * k; this.vel.z += (wz - this.vel.z) * k; this.vel.y += (up * this.climb - this.vel.y) * Math.min(1, dt * 3);
-    this.pos.x += this.vel.x * dt; this.pos.y += this.vel.y * dt; this.pos.z += this.vel.z * dt;
-    const gy = this.ground ? this.ground(this.pos.x, this.pos.z) : 0;
-    this.onGround = this.pos.y <= gy; if (this.onGround) { this.pos.y = gy; this.vel.y = Math.max(0, this.vel.y); }
+    this.crash = null;
+    if (this.rider) {   // in a world: walls and roofs stop it, it sets down on whatever is under it
+      const r = this.rider, dy = this.vel.y * dt; r.move(this.pos.x + this.vel.x * dt, this.pos.y + dy, this.pos.z + this.vel.z * dt, -this.heading, dt);
+      const p = r.pos; this.pos.x = p.x; this.pos.y = p.y; this.pos.z = p.z;
+      this.crash = wallHit(r, this.vel);
+      const under = r.hits.some(h => h.normal.y > .6);
+      if (this.vel.y > 0 && r.moved.y < dy * .5) this.vel.y = 0;   // a roof
+      const gy = this.ground ? this.ground(this.pos.x, this.pos.z) ?? -Infinity : -Infinity;
+      this.onGround = (under && this.vel.y <= .01) || this.pos.y <= gy; if (this.pos.y < gy) this.pos.y = gy; if (this.onGround) this.vel.y = Math.max(0, this.vel.y);
+    } else {
+      this.pos.x += this.vel.x * dt; this.pos.y += this.vel.y * dt; this.pos.z += this.vel.z * dt;
+      const gy = this.ground ? this.ground(this.pos.x, this.pos.z) : 0;
+      this.onGround = this.pos.y <= gy; if (this.onGround) { this.pos.y = gy; this.vel.y = Math.max(0, this.vel.y); }
+    }
     // lean into the way it's going
     this.tiltX += (y * this.tiltMax - this.tiltX) * Math.min(1, dt * 5); this.tiltZ += (-x * this.tiltMax - this.tiltZ) * Math.min(1, dt * 5);
     this.quat = qnorm(qmul(qmul(yawQ(-this.heading), qaxis(1, 0, 0, -this.tiltX)), qaxis(0, 0, 1, this.tiltZ)));
@@ -160,7 +214,8 @@ export class Hover {
 }
 
 /**
- * Buoyancy for a gs.physics3d body: points around it that push up when under water and drag in it.
+ * Buoyancy for a gs.physics3d body: points around it that push up when under water and drag in it. water: a
+ * gs.outdoors Water, a gs.fluid Fluid or gs.flow Flood (their level), or gs.flow Streams (a river's surface).
  * size: [w, h, d] of the body (8 corner points), or points: your own local points; float: how
  * strongly it floats (1 = half under, 2 = rides high); drag: water drag; gravity: the world's pull
  * (read from the body's World3D if left out).
@@ -170,7 +225,7 @@ export class Floater {
     const [w, h, d] = size;
     this.pull = gravity ?? Math.abs(body.world?.gravity?.y ?? 9.8);
     this.points = points || [-1, 1].flatMap(sx => [-1, 1].flatMap(sy => [-1, 1].map(sz => V(sx * w / 2, sy * h / 2, sz * d / 2))));
-    Object.assign(this, { body, water, float, drag, spinDrag, h }); this.under = 0;
+    Object.assign(this, { body, water, float, drag, spinDrag, h }); this.under = 0; this.height = surface(water);
   }
   /** Call before world.step(dt). under: 0..1 of the points under water. */
   update(dt) {
@@ -178,7 +233,7 @@ export class Floater {
     const m = b.mass(), p = b.translation(), q = b.rotation(), v = b.linvel(), g = this.pull * this.float * 2 / this.points.length, at = this.body.world?.at || V(0, 0, 0);
     let n = 0;
     for (const lp of this.points) {
-      const o = rot(lp, q), wp = V(p.x + o.x, p.y + o.y, p.z + o.z), depth = this.water.height(wp.x + at.x, wp.z + at.z) - wp.y;   // (wp: where Rapier has it, about the world's own centre in it: physics3d.js centre())
+      const o = rot(lp, q), wp = V(p.x + o.x, p.y + o.y, p.z + o.z), depth = this.height(wp.x + at.x, wp.z + at.z) - wp.y;   // (wp: where Rapier has it, about the world's own centre in it: physics3d.js centre())
       if (depth <= 0) continue; n++;
       const k = Math.min(1, depth / Math.max(.1, this.h));
       b.applyImpulseAtPoint({ x: 0, y: g * k * m * dt, z: 0 }, wp, true);

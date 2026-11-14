@@ -198,7 +198,7 @@ export class Voxels {
   }
   place(key, m, ox, oy, oz) {
     const old = this.meshes.get(key) || [];
-    for (const o of old) { this.group.remove(o); o.geometry.dispose(); }
+    for (const o of old) { this.group.remove(o); o.geometry.dispose(); o.userData.body?.remove(); }
     const now = [];
     for (const [g, mat] of [[m.solid, this.solidMat], [m.clear, this.clearMat]]) {
       if (!g) continue;
@@ -210,6 +210,7 @@ export class Voxels {
       mesh.castShadow = this.shadows && mat === this.solidMat; mesh.receiveShadow = this.shadows; mesh.matrixAutoUpdate = false; mesh.updateMatrix();
       if (mat === this.clearMat) mesh.renderOrder = 1;
       this.group.add(mesh); now.push(mesh);
+      if (this.world && mat === this.solidMat) this.solidChunk(mesh);
     }
     this.meshes.set(key, now);
     this.changed = (this.changed || 0) + 1;   // for games that bake shadows or light: something moved
@@ -296,8 +297,25 @@ export class Voxels {
     this.dirtyAll(); return this;
   }
 
+  /**
+   * Makes the blocks solid in a gs.physics3d World3D: each chunk's solid blocks become fixed ground, made again
+   * when the chunk changes (dig a hole and a crate falls in; build a ramp and a kart drives up it). See-through
+   * blocks (water, glass) stay open. physics(null) takes them out again.
+   */
+  physics(world) {
+    for (const list of this.meshes.values()) for (const o of list) { o.userData.body?.remove(); o.userData.body = null; }
+    this.world = world || null;
+    if (world) for (const list of this.meshes.values()) for (const o of list) if (o.material === this.solidMat) this.solidChunk(o);
+    return this;
+  }
+  solidChunk(mesh) {
+    if (!this.world?.world) return;   // (a world that has been freed)
+    this.group.updateMatrixWorld(true);
+    mesh.userData.body = this.world.ground(mesh, { tag: 'voxels', sound: 'stone' });
+  }
   /** Frees the meshes (the world can't be used afterwards). */
   dispose() {
+    if (this.world) this.physics(null);
     this.disposed = true;
     for (const list of this.meshes.values()) for (const o of list) { this.group.remove(o); o.geometry.dispose(); }
     this.meshes.clear(); this.solidMat.dispose(); this.clearMat.dispose();

@@ -81,7 +81,14 @@ Phones must stay smooth, so the kit adapts on its own:
 | low | 0.5 M | off | 2 | no | light FXAA |
 
 Ambient occlusion (the soft dark in corners and under things) on the high tier is worked out at half
-the picture's width and height, a quarter of the cost, and blended back at full size.
+the picture's width and height, a quarter of the cost, and blended back at full size. On WebGPU it
+darkens the light that bounces (the sky's and the room's, and reflections by roughness) in each
+thing's own shading, as Filament, Godot, Bevy and Unity do, and only a quarter of it still falls on
+the direct light, so sunlit corners stay clean while shaded ones go dark; bright surfaces take less
+(light bounces round a white corner more). It reads the last frame's occlusion where each point was
+then, so there is no extra pass. `HD.aoBack = false` puts it back on the whole picture (the frame
+lab's A/B has the switch), `HD.aoDirect` (0..1, default .25) is the share on direct light.
+WebGL always lays it on the whole picture.
 
 **Phone class and frame rate** (`src/kit/speed.js`). Each phone is sorted into top, mid or low from
 its graphics chip (Adreno 830, Mali-G720, ...), its model for iPhones, and its cores and memory.
@@ -479,7 +486,16 @@ the frames have not drawn yet (a muzzle flash that is switched off, the wall beh
 room) is built too, one kind of thing at a time for about 3 ms a frame over the view's first frames, so
 turning round or switching a thing on mid-round does not stop a frame: `v.shadersLeft` says how many
 things are still to look at (a loading screen can wait for 0), and `v.precompile()` waits for them once
-the view has drawn a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
+the view has drawn a frame. They are taken nearest first, and what the camera carries (a first-person
+rifle) before anything else. three keys a lit shader by the scene's lights, sky light and fog too, so when
+those change to a setting the view has not had before (a game's next level, set up under its loading screen),
+the hidden things are built again for it, and one that shows before its turn waits for its shader. Two things
+of one material and shape are two shaders to three when one takes shadows and the other does not, and the kit
+tells them apart the same way. A shadow is drawn with a shader of its own for each kind of thing that casts
+one (its skinning, its bones, its own shape and cut-out nodes), so each kind's shadow shader is made on the
+view's first frame and while a round gets ready under the loading screen, by drawing everything that casts a
+shadow once into a tiny stand-in of each sun and spot light's map, hidden things and a person's other levels
+of detail too (`v.shadowAhead`); what comes into the scene later is done the same way a few kinds a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
 there only gets textures and the canvas's own shaders ready and the first frame builds what it draws.
 The shader-hold script fails on WebGPU if a pipeline or a shader's text is made in the middle of a frame
 for a thing switched on, turned to or added, or for anything at all after a view's first frame.

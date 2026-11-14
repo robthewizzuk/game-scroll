@@ -96,16 +96,29 @@ export class Streams {
   remove(s) { this.list = this.list.filter(x => x !== s); return this; }
   /** What the liquid is doing at a point: { in, kind, depth, speed, current: { x, y, z }, edge (0 middle .. 1 bank), fall, foam, hurt, level (3D surface height), stream }. Later streams win where they overlap. */
   at(p) { for (let i = this.list.length - 1; i >= 0; i--) { const s = this.list[i].sample(p); if (s) return s; } return NONE; }
-  /** Moves obj (x, y or x, z) with the current this frame; drag 0..1 is how much it goes with it (a boat 1, a swimmer .5). Returns at(obj). */
+  /**
+   * Moves obj (x, y or x, z) with the current this frame; drag 0..1 is how much it goes with it (a boat 1, a swimmer .5).
+   * obj can also be a loose body in a physics world (a gs.physics3d World3D body, or a gs.physics 2D thing): the current
+   * then drags its speed toward its own, so it still bumps into the banks, rocks and other things. Returns at(obj).
+   */
   carry(obj, dt, { drag = 1 } = {}) {
+    if (obj?.body?.linvel && !obj.body.isKinematic?.() && !obj.body.isFixed?.()) return this.drag(obj, dt, drag);
     const h = this.at(obj); if (!h.in) return h;
     const k = drag * h.stream.push * dt; obj.x += h.current.x * k;
     if (this.d3) { obj.z += h.current.z * k; if (h.fall) obj.y += h.current.y * k; } else obj.y += h.current.y * k;
     return h;
   }
+  // a body in a physics world: its speed eased toward the current's (2 a second at drag 1), as a push so it still collides
+  drag(t, dt, drag) {
+    const flat = !!t.phys, p = flat ? { x: t.x, y: t.y } : t.pos, h = this.at(p); if (!h.in) return h;
+    const k = Math.min(1, 2 * drag * dt), c = h.current, m = h.stream.push;
+    if (flat) { if (this.d3) return h; t.push((c.x * m - t.vx) * k, (c.y * m - t.vy) * k); return h; }
+    const v = t.vel; t.push((c.x * m - v.x) * k, h.fall ? (c.y * m - v.y) * k : 0, (c.z * m - v.z) * k);
+    return h;
+  }
   /** Damage this frame for obj from what it's in (hurt per second x dt), and fires 'enter' / 'leave' (obj, stream). */
   hurt(obj, dt) {
-    const h = this.at(obj), was = this.inside.get(obj) || null, now = h.in ? h.stream : null;
+    const h = this.at(obj?.body?.linvel ? (obj.phys ? { x: obj.x, y: obj.y } : obj.pos) : obj), was = this.inside.get(obj) || null, now = h.in ? h.stream : null;
     if (was !== now) { if (was) this.emit('leave', obj, was); if (now) this.emit('enter', obj, now, h); if (now) this.inside.set(obj, now); else this.inside.delete(obj); }
     return h.in ? h.hurt * dt : 0;
   }

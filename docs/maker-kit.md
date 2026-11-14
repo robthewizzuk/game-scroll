@@ -531,6 +531,18 @@ debug(c) { phys.debugDraw(c); }
 - **Drag with a finger**: `g = phys.grab(x, y)` in `down`, `g.move(x, y)` in `move`, `g.release()` in `up`.
 - **Ask the world**: `at(x, y)`, `inBox(x, y, w, h)`, `ray(x1, y1, x2, y2)` → `{ thing, x, y, nx, ny, distance }`,
   `blast(x, y, radius, strength)`. Things made this frame show up in these after the next `step()`.
+- **Walk a hero through the world**: `phys.move(box, dx, dy, { step, slope, snap, mass, angle, drop })` moves a
+  `{ x, y, w, h }` box (or `{ x, y, r }`) as far as the world lets it, the same way a `TileMap`'s `move()` does and with
+  the same answer (`{ left, right, up, down, hits }`). It stops at walls and slides along them, walks up steps and slopes,
+  keeps to the ground going down, and shoves crates and balls out of its way (`mass`, kg: how hard). It is solid
+  itself, so things land on it, and `onHit` tells you what it ran into. With no gravity (seen from above) walls are
+  walls all round. `unmove(box)` takes it out. `gs.movers`' `Platformer` and `TopDown` and `gs.vehicles`' 2D `Car`
+  take the world in place of a tile map (`hero.update(dt, phys, input)`), so a hero kicks the crates about.
+- **A tile level in the world**: `phys.tiles(map)` makes a `gs.tiles` `TileMap` solid: walls as a few merged boxes,
+  `/` `\` slopes as ramps and `-` one-way tiles as ledges (`move()` boxes jump up through them and drop through with
+  `drop: true`). Crates, balls and ragdolls then land on your level. After digging or building call its `rebuild()`.
+- **Things that aren't bodies** (your own particles, `gs.soft`'s points): `near(x0, y0, x1, y1)` gives the shapes in a
+  box and `outOf(x, y, r, shapes)` says where a point of radius `r` must go to be out of them (`null` when it's clear).
 - The raw engine is there too: `phys.R` and `phys.world` (Rapier works in metres: `phys.toWorld(px)`).
 - The old simple engine is still there as `gs.physics.World` (balls and upright boxes, no joints).
 
@@ -555,9 +567,46 @@ update(dt) { hero.walk(stick.x * 6, stick.y * 6); if (tapped) hero.jump(8); phys
 - A body: `pos`, `vel`, `place(x, y, z)`, `setVel()`, `push(x, y, z)`, `twist()`, `touching()`, `remove()`.
 - The mover: `walk(vx, vz)` every frame, `jump(speed)`, `grounded`, `feet`, `place()`.
 - `ray(from, dir, max)` → `{ thing, point, normal, distance }` (aiming, line of sight, "what's under me"),
-  `near(p, r)`, `blast(p, r, strength)`, `onHit((a, b, speed) => ...)`.
+  `near(p, r)`, `blast(p, r, strength)`, `onHit((a, b, speed, contact) => ...)` (`contact.at` and
+  `contact.normal`: where they met, worked out only if you read them; `contact.part` for a `shapes()` part).
+- `floor(y)` is a true endless plane (walkers and riders don't sink into it or stall). `floorAt(x, y, z, reach, not)`
+  is the height of the first solid thing under a point (a crate's top, a ramp; a bridge above is left out), so a
+  World3D can be the `ground` of any kit that asks for one.
+- **Your own movers, solid in the world**: `rider({ box: [w, h, l] | ball: r | capsule: [r, h], at, turn, step,
+  slope, snap, mass })` is something your code moves (a kart, a boat, a drone, a tram) that stops at walls, climbs
+  kerbs, keeps to the ground and shoves loose bodies by its `mass`. `slide(dx, dy, dz, turn, dt)` each frame,
+  then `pos`, `moved`, `grounded`, `hits` (`[{ thing, normal, point }]`) and `wall`; `move(x, y, z)`, `place()`.
+  `gs.vehicles`' `Kart`, `gs.craft`'s `Plane`, `Boat` and `Hover` take `world` and ride one by themselves.
+- **Shapes by size, and many in one body**: `shape(mesh, { box: [w, h, d] | ball: r | capsule: [r, h] | hull: points,
+  off, turn })` for a body of a size you give (not the mesh's). `shapes([{ box, at, turn, part }...], { tag, sound })`
+  puts thousands of still shapes (a street's posts, a forest's trunks) in one fixed body: `add`, `drop(part)`,
+  `set(part, at, turn)`, and a ray's `hit.part` says which one. `gs.props`' `solid()` and `gs.city`'s `solid()` use it.
+- A `vehicle()` whose mesh is a `gs.models` vehicle dents, cracks its glass and breaks its lamps where it hits
+  things by itself (`dents: false` to do your own).
 - Joints: `hinge(a, b, p, axis, { min, max, motor })`, `pin(a, b, p)` (ball and socket), `weld(a, b)`,
   `spring(a, b, pa, pb)`, `leash(a, b, pa, pb, length)`.
+
+### One physics world through the kits
+
+The kits that move things work on their own, and each also takes a physics world (a 2D `Physics` or a
+`World3D`), so everything in a game meets everything else: a kart shoves the crates, a shot knocks a barrel over,
+a flag wraps round a passing ball. Give the same world to each and step it once a frame.
+
+| Kit | With a world |
+| --- | --- |
+| `gs.movers` `Platformer`, `TopDown` | `hero.update(dt, phys, input)`: walks it with `phys.move()`; kicks loose things about |
+| `gs.vehicles` `Car` (2D), `Kart` (3D) | `{ world }`: drives solid, shoves what is lighter, `crash` says what stopped it; `size`, `mass` |
+| `gs.craft` `Plane`, `Boat`, `Hover` | `{ world }`: lands on and crashes into what is there, a boat shoves floating crates and stops at a dock; `crash` |
+| `gs.combat` `Shots`, `arc`, `Explosives` | `shots.update(dt, world)` traces each shot, stops it where it meets something and shoves that; `arc(..., { ground: world })` stops at what is there; `new Explosives({ world })` blasts throw what is near, and a barrel with a `body` goes off when knocked hard |
+| `gs.gadgets` `Grapple` | `fire(from, dir, world, not)`: a light crate comes to you, you go to a truck (`mass`); `thing` |
+| `gs.destruction` `shatter`, `slice` | pieces and halves become bodies going on as the thing did (`slice(..., { world, apart })`) |
+| `gs.props` | `props.solid(world, name, { shape: 'box'\|'trunk'\|'ball'\|'hull', loose })`: still copies in one body, loose ones fall and are knocked over and drawn where their bodies are; `unsolid(name)` |
+| `gs.city` | `city.solid(world, { furniture, parked, cars, people })`: buildings, kerbs, posts and benches, parked cars, and bodies that follow the nearest traffic and people (a car hit hard stops, a person hit falls) |
+| `gs.voxels` | `vox.physics(world)`: the solid blocks as ground, made again as chunks change |
+| `gs.outdoors` `Cloth` | `new Cloth(view, { world })`: goes round the bodies near it by itself |
+| `gs.soft` `Soft`, `Liquid` | `{ world, weight }` (2D): points and drops stay out of its shapes and push loose things back (a ball floats) |
+| `gs.flow` `Streams` | `streams.carry(body, dt)` drifts a loose 2D body with the current |
+| `gs.fluid`, `gs.gas` | a solid's `follow` can be a physics body: the liquid and smoke go round it as it moves |
 
 ## AI
 
