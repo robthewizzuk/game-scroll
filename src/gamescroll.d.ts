@@ -3507,7 +3507,8 @@ export interface CityPart {
     /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
     /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean;
     /** The ground painted round the camera with no repeats (patches, cracks and tar lines in the asphalt, slabs in a bond, stains, oil under parked cars, skid marks), read in place of the tiled ground pictures (default: on a Next Gen view). */ paint?: boolean;
-    /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean; [style: string]: Loose }) => CityWorld;
+    /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean;
+    /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number; [style: string]: Loose }) => CityWorld;
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
@@ -3517,6 +3518,8 @@ export interface CityPart {
 }
 export interface CityWorld {
   plan: CityPlan; group: Loose; seed: number; start: CitySpot; t: number;
+  /** With { far }: the city to the horizon (stand-ins, far lamps and land), else null. */
+  far: { count: number; lampCount: number; readonly triangles: number; readonly draws: number; group: Loose } | null;
   /** 0 day .. 1 night: windows, shop signs, street lamps and car lights. Follows sky.night when made with { sky }. */
   night: number;
   cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | null; bump(car: CityCar, seconds?: number): CityCar };
