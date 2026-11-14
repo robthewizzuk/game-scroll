@@ -1,0 +1,167 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Still scenery drawn from render bundles (src/kit/still.js, HD.bundle, WebGPU) for scripts/detail-test.cjs --page bundles --webgpu:
+// a yard of boxes, walls and posts that keep still is left until they are in their areas' bundles, then changed in every way a game
+// changes things (moved, hidden alone and by a parent, recoloured, given another material, another texture, a texture of another
+// size with the old one destroyed, fewer triangles drawn, taken out, a new one added, a light switched on, the drawing's centre
+// moved, made see-through, given an order of its own). After each change the picture drawn with the bundles must be the one drawn
+// with every thing drawing itself (stillPause), what changed must have left its bundle, and the chip must have reported no error.
+// A sky drawn first with no depth, a decal drawn over a wall without writing depth and a glass pane check the bundles' place in the
+// order of drawing. Then the engine test scenes (the town, the village, the street) are drawn both ways at a few places of their
+// flights, as a game's level would be.
+//   ?gpu  ?w=200&h=300  ?scenes=town,village,street (none: leave them out)  ?size=.35
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+import { stillStats, stillPause } from '../../src/kit/still.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
+if (!GPU) { window.result = { checks: [{ name: 'render bundles are WebGPU only: nothing to check on WebGL', ok: true }], info: {}, out: {} }; throw new Error('webgl'); }
+if (!await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 200), H = +(Q.get('h') || 300);
+HD.force = 2; HD.upscale = false; HD.grain = 0; HD.still = false; HD.spread = false; HD.occlude = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note });
+// the chip's own complaints (a destroyed texture in a bundle, a bundle made for another pass) come here, not as exceptions
+const gpuErrs = []; webgpu().r.backend.device.addEventListener('uncapturederror', e => gpuErrs.push(e.error?.message?.slice(0, 300) || String(e)));
+const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c);
+const x = c.getContext('2d', { willReadFrequently: true });
+let v = null;
+const draw = () => { v.render(x, W, H); x.getImageData(0, 0, 1, 1); return frame(); };
+const grab = () => x.getImageData(0, 0, W, H).data.slice();
+function apart(a, b) {
+  let sum = 0, big = 0; const n = a.length / 4;
+  for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 40) big++; }
+  return { mean: +(sum / n).toFixed(3), big: +(big / n * 100).toFixed(3) };
+}
+function picture(px, diffWith) {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H);
+  for (let i = 0; i < px.length; i += 4) {
+    if (diffWith) { const d = Math.min(255, 4 * Math.max(Math.abs(px[i] - diffWith[i]), Math.abs(px[i + 1] - diffWith[i + 1]), Math.abs(px[i + 2] - diffWith[i + 2]))); im.data[i] = d; im.data[i + 1] = d >> 1; im.data[i + 2] = 0; }
+    else { im.data[i] = px[i]; im.data[i + 1] = px[i + 1]; im.data[i + 2] = px[i + 2]; }
+    im.data[i + 3] = 255;
+  }
+  g.putImageData(im, 0, 0); return cv.toDataURL('image/png');
+}
+// (until no shader is building in the background: a thing whose shader is still building is left out of the frame
+// by three, or held back by the kit, either way, and its bundle is recorded again once it is in)
+// (textures being packed into the chip's own formats, pack.js, too); then until the picture stops changing
+const building = () => (v.held?.size || 0) + (v.shJobs?.size || 0) + (webgpu().r.gsBuilding || 0) + (webgpu().r.gsPacking || 0);
+async function settle(limit = 900) {
+  let prev = null, still = 0;
+  for (let i = 0; i < limit && still < 3; i++) { await draw(); const p = grab(); still = !building() && prev && apart(p, prev).mean === 0 ? still + 1 : 0; prev = p; }
+}
+// the picture with the bundles, and with every thing drawing itself (each after a few frames, so the shadows and the like have caught up)
+async function both(n = 3) {
+  await settle();
+  for (let i = 0; i < n; i++) await draw();
+  const a = grab(), calls = HD.info.calls; await draw(); const a2 = grab();
+  stillPause(v.scene, true); await settle(); for (let i = 0; i < n; i++) await draw();
+  const b = grab(); stillPause(v.scene, false); await draw();
+  return { a, b, d: apart(a, b), base: apart(a, a2), calls };
+}
+const same = (r, slack = .05) => r.d.mean <= r.base.mean * 1.5 + slack && r.d.big <= r.base.big * 1.5 + .02;
+const wait = async (test, limit = 600) => { for (let i = 0; i < limit && !test(); i++) await draw(); return test(); };
+try {
+  // ---------- the yard ----------
+  v = new gs.hd.HDView({ bg: '#8aa0b8', fog: 0, env: .4, amb: .5 });
+  v.cam.position.set(0, 9, 22); v.cam.lookAt(0, 1, 0);
+  const sun = gs.hd.sun('#fff2e0', 2.4, 30, [.5, .8, .6]); v.scene.add(sun, sun.target);
+  const ground = new T.Mesh(new T.PlaneGeometry(90, 90), gs.hd.pbr('#7a7462', { rough: .95 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; v.scene.add(ground);
+  // a sky drawn first, with no depth (as a sky dome or three's background is)
+  const skyM = new T.MeshBasicMaterial({ color: '#9cc0e8', side: T.BackSide, depthTest: false, depthWrite: false });
+  const sky = new T.Mesh(new T.SphereGeometry(200, 16, 8), skyM); sky.renderOrder = -1; sky.frustumCulled = false; v.scene.add(sky);
+  const tex = (w, h, a, b) => { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const g = cv.getContext('2d'); g.fillStyle = a; g.fillRect(0, 0, w, h); g.fillStyle = b; for (let i = 0; i < w; i += 8) g.fillRect(i, 0, 4, h); const t = new T.CanvasTexture(cv); t.colorSpace = T.SRGBColorSpace; return t; };
+  const t1 = tex(32, 32, '#c84', '#842');
+  const boxes = [], group = new T.Group(); v.scene.add(group);
+  const COLS = ['#b9a78c', '#a8846c', '#8a9aa8', '#9a8a6a', '#6a8a6a', '#a86a6a'];
+  for (let i = 0; i < 48; i++) {
+    const gx = i % 8, gz = Math.floor(i / 8), geo = new T.BoxGeometry(1.4, 1 + (i % 3) * .6, 1.4);
+    let mat = gs.hd.pbr(COLS[i % COLS.length], { rough: .8 });
+    if (i === 13) mat = gs.hd.pbr('#ffffff', { rough: .7, tex: t1 });
+    if (i === 20) mat = COLS.map(cc => gs.hd.pbr(cc, { rough: .6 }));   // (a box of six materials, one a face)
+    const m = new T.Mesh(geo, mat); m.position.set((gx - 3.5) * 3.2, geo.parameters.height / 2, (gz - 2.5) * 3.2); m.castShadow = m.receiveShadow = true;
+    (i >= 40 && i < 44 ? group : v.scene).add(m); boxes.push(m);
+  }
+  // a decal drawn over a box's face without writing depth, after the walls (an order of its own, as the kit's decals
+  // are: with none, three's front-to-back order draws it before the wall it lies on, which then covers it; the
+  // bundles draw such a thing after the still things, so there it shows), and a pane of glass in front of a row
+  const decal = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshStandardMaterial({ color: '#2050ff', depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  decal.position.copy(boxes[26].position).add(new T.Vector3(0, 0, .705)); decal.renderOrder = 1; v.scene.add(decal);
+  const glass = new T.Mesh(new T.PlaneGeometry(8, 3), new T.MeshStandardMaterial({ color: '#80c0ff', transparent: true, opacity: .45 }));
+  glass.position.set(-4, 1.5, 9.5); v.scene.add(glass);
+  // and one thing that moves every frame
+  const mover = new T.Mesh(new T.SphereGeometry(.6, 16, 8), gs.hd.pbr('#e0d040', { rough: .4 })); mover.castShadow = true; v.scene.add(mover);
+  // (it moves while the yard settles, and keeps still while the two pictures are compared)
+  let mt = 0;
+  const drawYard = () => { mt += .1; mover.position.set(Math.sin(mt) * 6, .6, 5 + Math.cos(mt) * 2); return draw(); };
+  const joined = await (async () => { for (let i = 0; i < 600 && stillStats.things < 46; i++) await drawYard(); return stillStats.things; })();
+  info.joined = { things: stillStats.things, cells: stillStats.cells, records: stillStats.records };
+  check('the yard\'s still things joined their areas\' bundles within a few seconds (the ground, 48 boxes, the decal and glass left out)', joined >= 46 && stillStats.cells >= 2, `${joined} things in ${stillStats.cells} areas`);
+  const r0 = stillStats.replays; await drawYard(); await drawYard();
+  check('the bundles are replayed frame after frame, not recorded again', stillStats.replays > r0 && stillStats.records === info.joined.records, `replays ${r0} -> ${stillStats.replays}, records ${info.joined.records} -> ${stillStats.records}`);
+  const steps = [
+    ['as they joined', () => {}],
+    ['a box moved', () => { boxes[3].position.x += .6; }, 'moved'],
+    ['a box hidden', () => { boxes[5].visible = false; }, 'hidden'],
+    ['four boxes hidden by their group', () => { group.visible = false; }, 'hidden'],
+    ['a material\'s colour changed (nothing else told)', () => { boxes[7].material.color.set('#ff2020'); }],
+    ['another material', () => { boxes[8].material = gs.hd.pbr('#20a0ff', { rough: .3, metal: .6 }); }, 'material'],
+    ['another texture of the same size', () => { const m = boxes[13].material; m.map = tex(32, 32, '#4c8', '#284'); m.needsUpdate = true; }],
+    // (a new material with a texture of another size, and the old material and its texture destroyed once the new one
+    // is drawn. Not material.map swapped again and the old texture destroyed: three r187 on WebGPU keeps the old
+    // texture bound to that material's draws, so every frame's submit then fails, bundles or not)
+    ['a texture of another size, the old one destroyed once it is out of use', async () => { const old = boxes[13].material; boxes[13].material = gs.hd.pbr('#ffffff', { rough: .7, tex: tex(64, 16, '#48c', '#248') }); await settle(); old.map?.dispose(); old.dispose(); }],
+    ['fewer triangles drawn', () => { boxes[9].geometry.setDrawRange(0, 18); }, 'geometry'],
+    ['a box taken out', () => { boxes[10].removeFromParent(); }, 'gone'],
+    ['a new box', () => { const m = new T.Mesh(new T.BoxGeometry(1, 3, 1), gs.hd.pbr('#ffffff', { rough: .5 })); m.position.set(1.6, 1.5, -1.6); m.castShadow = true; v.scene.add(m); }],
+    ['a lamp switched on', () => { const l = new T.PointLight('#ff8040', 30, 18); l.position.set(-3, 3, 2); v.scene.add(l); }],
+    ['the drawing\'s centre moved', () => { HD.originAt = { x: 768, z: -512 }; }],
+    ['a box made see-through', () => { const m = boxes[11].material; m.transparent = true; m.opacity = .4; }, 'kind'],
+    ['a box given an order of its own', () => { boxes[12].renderOrder = 3; }, 'kind'],
+  ];
+  for (const [name, change, why] of steps) {
+    const w0 = { ...stillStats.why }, e0 = gpuErrs.length;
+    await change(); const r = await both();
+    const left = why ? (stillStats.why[why] || 0) > (w0[why] || 0) : true;
+    info['yard: ' + name] = { d: r.d, base: r.base, things: stillStats.things, why: { ...stillStats.why }, records: stillStats.records, stale: stillStats.stale };
+    check(`the yard, ${name}: the same picture with the bundles as with every thing drawn by itself` + (why ? `, and it left its bundle (${why})` : ''), same(r) && left && gpuErrs.length === e0,
+      `mean ${r.d.mean} (frame to frame ${r.base.mean}), ${r.d.big}% off by 40+${gpuErrs.length > e0 ? '; the chip said: ' + gpuErrs.slice(e0).join(' | ') : ''}`);
+    if (!same(r)) { const k = name.replace(/\W+/g, '-'); out[`yard-${k}-bundles`] = picture(r.a); out[`yard-${k}-alone`] = picture(r.b); out[`yard-${k}-diff`] = picture(r.a, r.b); }
+  }
+  // what changed once comes back after a while; then once more, both ways
+  const back = await wait(() => stillStats.things >= 40, 900);
+  const rb = await both();
+  check('the yard after a while: what changed now and then has joined again, and the picture is still the same both ways', back && same(rb) && !gpuErrs.length, `${stillStats.things} things in bundles; mean ${rb.d.mean} (frame to frame ${rb.base.mean})`);
+  out['yard-bundles'] = picture(rb.a); out['yard-alone'] = picture(rb.b);
+  HD.originAt = null;
+  // turned off: everything draws itself, and nothing is left marked
+  HD.bundle = false; await draw(); await draw();
+  check('HD.bundle = false: every thing draws itself again', stillStats.things === 0 && boxes.every(b => !b.gsStill), `${stillStats.things} left in bundles`);
+  HD.bundle = true;
+  v.scene.clear(); v.release(); v = null;
+
+  // ---------- the engine test scenes ----------
+  const want = Q.has('scenes') ? Q.get('scenes').split(',').filter(Boolean) : ['town', 'village', 'street'], size = +(Q.get('size') || .35);
+  for (const [key, , , make] of SCENES) {
+    if (!want.includes(key)) continue;
+    const S = make({ gs, HD, size, gpu: true }); v = S.v;
+    const mk = S.modes.some(m => m.key === 'new') ? 'new' : S.modes.some(m => m.key === 'on') ? 'on' : S.modes[S.modes.length - 1].key;
+    for (const m of S.modes) { await m.enter(draw); if (m.key === mk) break; }
+    let worst = null;
+    for (const t of [4, 17]) {
+      S.path(t, v.cam); await wait(() => false, 40);   // (a second or more where it stands: what keeps still joins)
+      const r = await both(4);
+      info[`${key}@${t}`] = { d: r.d, base: r.base, things: stillStats.things, cells: stillStats.cells, why: { ...stillStats.why }, records: stillStats.records, stale: stillStats.stale };
+      if (!worst || r.d.mean - r.base.mean > worst.d.mean - worst.base.mean) worst = { ...r, t, n: stillStats.things };
+    }
+    check(`${key}: the same picture with its still things in bundles as drawn one by one`, same(worst, .08) && !gpuErrs.length, `${worst.n} things in bundles; mean ${worst.d.mean} (frame to frame ${worst.base.mean}), ${worst.d.big}% off by 40+${gpuErrs.length ? '; the chip said: ' + gpuErrs.join(' | ') : ''}`);
+    out[`${key}-bundles`] = picture(worst.a); out[`${key}-alone`] = picture(worst.b); out[`${key}-diff`] = picture(worst.a, worst.b);
+    S.dispose(); v = null;
+  }
+  window.result = { checks, info, out };
+} catch (e) { if (!window.result) window.result = { error: (e && e.stack) || String(e) }; }
+</script>
