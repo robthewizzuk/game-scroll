@@ -21,6 +21,7 @@
 // hard, shoves loose crates and cones out of its way, bumps other karts, and rays and onHit see it. kart.crash is
 // what it ran into this frame ({ thing, normal, point, speed }) for a sound or a shake; kart.rider is its body.
 import { timed } from './prof.js';
+import { linksFor, linked } from './links.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const toward = (v, to, step) => (v < to ? Math.min(to, v + step) : Math.max(to, v - step));
@@ -73,8 +74,9 @@ class Wheels {
  * ny, speed }); size: [length, width] in game units; car.thing is its body.
  */
 export class Car extends Wheels {
-  constructor({ x = 0, y = 0, angle = 0, world = null, size = [34, 18], mass = 900, ...o } = {}) {
-    super(o); this.x = x; this.y = y; this.angle = angle; this.vx = 0; this.vy = 0; this.crash = null;
+  constructor({ x = 0, y = 0, angle = 0, world = null, size = [34, 18], mass = 900, link = true, ...o } = {}) {
+    super(o); world = linked(world, linksFor(null, link), 'world2d');   // (links.js: with none given, the 2D physics world the game made, made before the car; false: none)
+    this.x = x; this.y = y; this.angle = angle; this.vx = 0; this.vy = 0; this.crash = null;
     if (world) { this.world = world; this.w = size[0]; this.h = size[1]; this.mass = mass; }
   }
   update(dt, input = {}) {
@@ -126,8 +128,8 @@ export class Kart extends Wheels {
    * size: [width, height, length] of its body (metres), clear: the gap under its body (a kerb or a ramp's lip lower
    * than this is driven up, anything taller is a wall) and fall: the height below which it has fallen off (-20).
    */
-  constructor({ x = 0, y = 0, z = 0, heading = 0, gravity = 30, hop = 4, world = null, size = [1.3, .7, 2], clear = .25, fall = -20, ...o } = {}) {
-    super({ top: 22, accel: 26, brakes: 50, turn: 2.4, ...o });
+  constructor({ x = 0, y = 0, z = 0, heading = 0, gravity = 30, hop = 4, world = null, size = [1.3, .7, 2], clear = .25, fall = -20, link = true, ...o } = {}) {
+    super({ top: 22, accel: 26, brakes: 50, turn: 2.4, ...o }); world = linked(world, linksFor(null, link), 'world');   // (links.js: with none given, the World3D the game made, made before the kart; false: none)
     Object.assign(this, { x, y, z, heading, gravity, hopSpeed: hop, vx: 0, vy: 0, vz: 0, onGround: true, lean: 0, pitch: 0, airTime: 0, landed: false, fell: false, fallY: fall, crash: null });
     if (world) {
       this.world = world; this.clear = clear; this.len = size[2];

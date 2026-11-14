@@ -31,6 +31,7 @@ import { StillLoading } from './lazy.js';
 import { loading as passLoading } from './slices.js';
 import { onMemory, memory } from './memory.js';
 import { timed } from './prof.js';
+import { linksFor, linked } from './links.js';
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 // ids three hands out in order: a probe's id says where the count stands, so what a part made is what was born between
@@ -69,7 +70,8 @@ export class Regions {
    * world: a gs.physics3d.World3D the parts make bodies in. budget: milliseconds of a frame to build in.
    * keep: how many named parts no longer wanted to keep for later while memory is fine (0: let go of at once).
    */
-  constructor(view, { world = null, budget = 3, keep = 1 } = {}) {
+  constructor(view, { world = null, budget = 3, keep = 1, link = true } = {}) {
+    world = linked(world, linksFor(view, link), 'world');   // (links.js: with none given, the World3D the game made, made before this; false: none)
     Object.assign(this, { view, world, budget, keepN: keep });
     this.parts = new Map();      // name -> { make, piece }
     this.wanted = new Set();

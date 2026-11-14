@@ -844,13 +844,14 @@ export interface AimPart {
 
 export type Mood = 'calm' | 'suspicious' | 'alert' | 'searching';
 export interface SensesPart {
-  Senses: (new (o?: { range?: number; fov?: number; near?: number; hearing?: number; spotTime?: number; memory?: number; searchTime?: number; calmDown?: number }) => {
+  Senses: (new (o?: { range?: number; fov?: number; near?: number; hearing?: number; spotTime?: number; memory?: number; searchTime?: number; calmDown?: number; link?: boolean }) => {
     mood: Mood; awareness: number; seen: boolean; lastSeen: XY | null; lookAt: XY | null; heard: XY | null; onMood?: (mood: Mood, prev: Mood) => void;
     inCone(me: XY & { facing?: number }, x: number, y: number): boolean;
     alert(x: number, y: number): Loose; suspect(x: number, y: number, amount?: number): Loose;
-    update(dt: number, me: XY & { facing?: number }, target: (XY & { hidden?: boolean }) | null, o?: { sees?: (x1: number, y1: number, x2: number, y2: number) => boolean; noises?: Loose; light?: number }): Loose;
+    /** sees: what blocks sight; noises: a Noises. Left out: the NavGrid (else the TileMap) and the Noises the game made, in the same units as the guard and the player; false: none. */
+    update(dt: number, me: XY & { facing?: number }, target: (XY & { hidden?: boolean }) | null, o?: { sees?: ((x1: number, y1: number, x2: number, y2: number) => boolean) | false; noises?: Loose | false; light?: number }): Loose;
   }) & { alertAll(guards: Loose[], x: number, y: number, radius: number, from?: Loose): void };
-  Noises: new () => { list: { x: number; y: number; loud: number; age: number }[]; make(x: number, y: number, loud?: number): Loose; update(dt: number): Loose; clear(): Loose };
+  Noises: new (o?: { link?: boolean }) => { list: { x: number; y: number; loud: number; age: number }[]; make(x: number, y: number, loud?: number): Loose; update(dt: number): Loose; clear(): Loose };
 }
 
 /** The player's Reduce motion setting (read only). The kits already apply it. */
@@ -1276,7 +1277,7 @@ export interface RegionsPart {
    * picked), squares round the player, land in tiles. world: a gs.physics3d.World3D the parts make bodies in.
    * budget: ms of a frame to build in. keep: named parts no longer wanted to keep for later while memory is fine.
    */
-  Regions: new (view: Loose, o?: { world?: Loose; budget?: number; keep?: number }) => RegionsT;
+  Regions: new (view: Loose, o?: { /** A World3D: solid ground and bodies freed with their parts. Left out: the one the game made before this; false: none. */ world?: Loose | false; budget?: number; keep?: number; link?: boolean }) => RegionsT;
 }
 export interface GasPart {
   /** Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. */
@@ -1324,9 +1325,9 @@ export interface Box { x: number; y: number; w: number; h: number; onGround?: bo
 export interface TileHit { left: boolean; right: boolean; up: boolean; down: boolean; slope: number }
 export interface TileKind { solid?: boolean; oneWay?: boolean; slope?: 1 | -1; [k: string]: Loose }
 export declare class TileMap {
-  constructor(cols: number, rows: number, o?: { size?: number; legend?: Record<string, TileKind> });
+  constructor(cols: number, rows: number, o?: { size?: number; legend?: Record<string, TileKind>; /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean });
   /** '#' wall, '-' one-way, '/' '\' slopes, '.' empty; other letters are marks. */
-  static fromText(text: string | string[], o?: { size?: number; legend?: Record<string, TileKind> }): TileMap;
+  static fromText(text: string | string[], o?: { size?: number; legend?: Record<string, TileKind>; link?: boolean }): TileMap;
   /** Auto-tiling: which neighbours join (same: characters that join, or a test). mask is 4-bit, blob 0..46. */
   edges(tx: number, ty: number, same?: string | ((ch: string, tx: number, ty: number) => boolean) | null, o?: { edge?: boolean }): TileEdges;
   cols: number; rows: number; size: number; readonly w: number; readonly h: number;
@@ -1353,12 +1354,12 @@ export interface MoversPart {
     jump: number; jumpTime: number; run: number; airJumps: number; wall: boolean;
     state: 'idle' | 'run' | 'jump' | 'fall' | 'wall'; jumped: boolean; landed: boolean; impact: number; onWall: -1 | 0 | 1;
     readonly gravity: number; readonly jumpSpeed: number;
-    /** input: x -1..1, jump held now, down (drop through one-way platforms). map: a TileMap, or { floor: y }. */
-    update(dt: number, map: TileMap | { floor: number } | null, input?: { x?: number; jump?: boolean; down?: boolean }): Loose;
+    /** input: x -1..1, jump held now, down (drop through one-way platforms). map: a TileMap, a 2D Physics, or { floor: y }; null: none; undefined: the TileMap (else the 2D Physics) the game made. */
+    update(dt: number, map: TileMap | { floor: number } | Loose | null | undefined, input?: { x?: number; jump?: boolean; down?: boolean }): Loose;
   };
   TopDown: new (o?: { x?: number; y?: number; w?: number; h?: number; speed?: number; accel?: number; stop?: number }) => MoverBase & {
     speed: number; state: 'idle' | 'walk'; dir: XY;
-    update(dt: number, map: TileMap | null, input?: { x?: number; y?: number }): Loose;
+    update(dt: number, map: TileMap | Loose | null | undefined, input?: { x?: number; y?: number }): Loose;
   };
 }
 
@@ -2275,9 +2276,9 @@ export interface Kart extends WheelsBase {
 }
 export interface VehiclesPart {
   /** world: a gs.physics Physics with no gravity (top-down) to drive in, solid; size: [length, width]; mass (kg: how hard it shoves). */
-  Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; world?: Loose; size?: [number, number]; mass?: number }) => Car;
+  Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; /** A 2D Physics to drive in, solid. Left out: the one the game made before the car; false: none. */ world?: Loose | false; size?: [number, number]; mass?: number; link?: boolean }) => Car;
   /** world: a gs.physics3d World3D to drive in, solid; size: [width, height, length] (metres); clear: the gap under it (kerbs and ramp lips lower pass under); fall: the y it counts as fallen out. */
-  Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; world?: Loose; size?: [number, number, number]; clear?: number; fall?: number }) => Kart;
+  Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; /** A World3D to drive in, solid. Left out: the one the game made before the kart; false: none. */ world?: Loose | false; size?: [number, number, number]; clear?: number; fall?: number; link?: boolean }) => Kart;
   Laps: new (points: Pt[], o?: { radius?: number; laps?: number }) => {
     points: Pt[]; laps: number; racers: Loose[]; join<T>(r: T): T; update<T>(r: T): T; places<T = Loose>(): T[]; aim(r: Loose, ahead?: number): { x: number; y: number; angle: number };
   };
@@ -2394,12 +2395,12 @@ export interface CombatPart {
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
 export interface TacticsPart {
-  CoverMap: new (cols: number, rows: number, blocked: (c: number, r: number) => boolean, o?: { size?: number; x0?: number; y0?: number; low?: (c: number, r: number) => boolean }) => {
+  CoverMap: new (cols: number, rows: number, blocked: (c: number, r: number) => boolean, o?: { size?: number; x0?: number; y0?: number; low?: (c: number, r: number) => boolean; link?: boolean }) => {
     spots: CoverSpot[]; size: number; protects(spot: CoverSpot, threat: P3): boolean;
     find(from: P3, threat: P3, o?: { near?: number; band?: [number, number]; flank?: number; who?: Loose; sees?: (a: P3, b: P3) => boolean }): CoverSpot | null;
     take(spot: CoverSpot | null, who: Loose): CoverSpot | null; free(who: Loose): Loose; peek(spot: CoverSpot, threat: P3): P3; at(col: number, row: number): CoverSpot | null;
   };
-  Squad: new (members: Loose[], o?: { cover?: Loose; sees?: (m: Loose, t: P3) => boolean; range?: number; grenades?: number; camp?: number; think?: number; aggression?: number; rng?: () => number }) => On<Loose> & {
+  Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m: Loose, t: P3) => boolean; range?: number; grenades?: number; camp?: number; think?: number; aggression?: number; rng?: () => number }) => On<Loose> & {
     members: Loose[]; readonly left: Loose[]; update(dt: number, target: P3): Loose; hurt(m: Loose): Loose; reloading(m: Loose): Loose;
   };
   Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: number, ally: P3, player: P3): Loose };
@@ -2462,11 +2463,11 @@ export interface StealthPart {
 type Pt2 = { x: number; y: number };
 export interface GadgetsPart {
   /** mass: the user's (kg): hooked onto a loose body in a World3D, the pull is shared by mass (a light crate comes to you, you go to a truck). */
-  Grapple: new (o?: { range?: number; reel?: number; swing?: boolean; flyTime?: number; min?: number; mass?: number }) => {
+  Grapple: new (o?: { range?: number; reel?: number; swing?: boolean; flyTime?: number; min?: number; mass?: number; link?: boolean }) => {
     attached: boolean; flying: number; point: P3 | null; length: number; arrived?: boolean; miss: { from: P3; to: P3 } | null;
     /** The body it hooked in a World3D (null for still things). */ thing: Loose | null;
-    /** ray: your own (from, dir, max) => { point } | null, or a World3D (not: the user's own body, which it passes). */
-    fire(from: P3, dir: P3, ray: ((from: P3, dir: P3, max: number) => { point: P3 } | null) | Loose, not?: Loose): boolean; update(dt: number, pos: P3, vel: P3, o?: { reel?: boolean }): P3; release(): Loose;
+    /** ray: your own (from, dir, max) => { point } | null, or a World3D (not: the user's own body, which it passes); left out: the World3D the game made. */
+    fire(from: P3, dir: P3, ray?: ((from: P3, dir: P3, max: number) => { point: P3 } | null) | Loose | null, not?: Loose): boolean; update(dt: number, pos: P3, vel: P3, o?: { reel?: boolean }): P3; release(): Loose;
   };
   Zipline: new (a: P3, b: P3, o?: { gravity?: number; drag?: number; grab?: number; hang?: number }) => { riding: boolean; done?: boolean; t: number; speed: number; near(p: P3, handsUp?: number): boolean; ride(p?: P3 | null, speed?: number): Loose; update(dt: number): Loose; closest(p: P3): { t: number; point: P3; d: number }; readonly hands: P3; readonly pos: P3; readonly vel: P3 };
   Wires: new (cols?: number, rows?: number, o?: { seed?: number }) => { cols: number; rows: number; cells: number[]; moves: number; readonly solved: boolean; get(c: number, r: number): number; turn(c: number, r: number): Loose; lit(c: number, r: number): boolean };
@@ -2854,9 +2855,9 @@ export interface PosesPart {
   figure(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose;
 }
 export interface DestructionPart {
-  shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; world?: Loose; push?: number; seed?: number; density?: number; radius?: number }): Loose[];
+  shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; /** Left out: the World3D the game made; false: none. */ world?: Loose | false; push?: number; seed?: number; density?: number; radius?: number }): Loose[];
   /** world: a World3D: both halves become bodies going on as the mesh did (its own body there is given up); apart: m/s they part along the cut. */
-  slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose; world?: Loose; apart?: number; density?: number }): Loose[];
+  slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose; /** Left out: the World3D the game made; false: none. */ world?: Loose | false; apart?: number; density?: number }): Loose[];
   Rubble: new (scene?: Loose, o?: { max?: number; life?: number; shrink?: number }) => { add(pieces: Loose | Loose[]): Loose; update(dt: number): Loose; clear(): Loose; readonly count: number };
   /**
    * A building that comes apart (Next Gen). It is made of pieces, and each knows what holds it up: shoot one away or set off a
@@ -3630,27 +3631,28 @@ export interface CityWorld {
 }
 export interface CraftPart {
   /** Arcade-true flight. Events this frame in events[]: 'stall', 'land', 'touch', 'crash', 'takeoff'. */
-  Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number]; assist?: number; grip?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; gear?: number; crashSpeed?: number; /** a World3D to fly in, solid: it lands on what is there and crashes into it */ world?: Loose; size?: [number, number, number] }) => {
+  Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number]; assist?: number; grip?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; gear?: number; crashSpeed?: number; /** a World3D to fly in, solid: it lands on what is there and crashes into it. Left out: the one the game made before this; false: none. */ world?: Loose | false; size?: [number, number, number]; link?: boolean }) => {
     pos: P3; vel: P3; quat: Loose; throttle: number; stalled: boolean; onGround: boolean; crashed: boolean; events: string[]; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
     readonly forward: P3; readonly up: P3; readonly right: P3; readonly speed: number; readonly altitude: number; readonly heading: number; readonly pitch: number; readonly bank: number;
     update(dt: number, i?: { throttle?: number; pitch?: number; roll?: number; yaw?: number; brake?: boolean }): Loose; reset(at: P3, heading?: number, speed?: number): Loose;
   };
-  /** water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); world: a World3D, solid: it shoves floating crates and stops at docks; height: its hull's (m). */
-  Boat: new (water: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose }, o?: { at?: P3; heading?: number; power?: number; top?: number; turn?: number; drift?: number; drag?: number; length?: number; width?: number; draft?: number; world?: Loose; height?: number }) => {
+  /** water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); null, or the options in its place: the newest Water or Sea the game made; world: a World3D, solid: it shoves floating crates and stops at docks; height: its hull's (m). */
+  Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: number; top?: number; turn?: number; drift?: number; drag?: number; length?: number; width?: number; draft?: number; /** A World3D, solid. Left out: the one the game made; false: none. */ world?: Loose | false; height?: number; link?: boolean }) => {
     x: number; y: number; z: number; heading: number; vx: number; vz: number; quat: Loose; wake: Loose[]; air: number; readonly pos: P3; readonly speed: number; readonly forward: P3; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
     update(dt: number, i?: { throttle?: number; steer?: number }): Loose;
   };
-  Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; /** a World3D, solid */ world?: Loose; size?: [number, number, number] }) => {
+  Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; /** a World3D, solid. Left out: the one the game made before this; false: none. */ world?: Loose | false; size?: [number, number, number]; link?: boolean }) => {
     pos: P3; vel: P3; heading: number; quat: Loose; onGround: boolean; readonly speed: number; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose; update(dt: number, i?: { x?: number; y?: number; up?: number; yaw?: number }): Loose;
   };
   /** Makes a physics3d body float on Water (or anything with height(x, z)). */
-  Floater: new (body: Loose, water: Loose, o?: { size?: [number, number, number]; points?: P3[]; float?: number; drag?: number; spinDrag?: number; gravity?: number }) => { under: number; update(dt: number): Loose };
+  /** water: null (or the options in its place): the newest Water or Sea the game made. */
+  Floater: new (body: Loose, water?: Loose | null, o?: { size?: [number, number, number]; points?: P3[]; float?: number; drag?: number; spinDrag?: number; gravity?: number; link?: boolean }) => { under: number; update(dt: number): Loose };
 }
 export interface SoftPoint { x: number; y: number; z: number; px: number; py: number; pz: number; pinned: boolean; mass: number; r: number }
 export interface SoftBody { points: SoftPoint[]; sticks: Loose[]; [k: string]: Loose }
 export interface SoftPart {
   /** world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. */
-  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; world?: Loose; weight?: number }) => On<Loose> & {
+  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; /** A 2D Physics the points stay out of. Left out (2D): the one the game made before this; false: none. */ world?: Loose | false; weight?: number; link?: boolean }) => On<Loose> & {
     points: SoftPoint[]; sticks: Loose[]; bodies: SoftBody[]; solids: Loose[];
     point(x: number, y: number, z?: number, o?: { pinned?: boolean; mass?: number; r?: number }): SoftPoint;
     stick(a: SoftPoint, b: SoftPoint, o?: { stiff?: number; len?: number | null; tear?: number; slack?: boolean }): Loose;
@@ -3663,7 +3665,7 @@ export interface SoftPart {
     centre(body: SoftBody): P3; toGeometry(body: SoftBody, geometry: Loose): Loose;
   };
   /** A simple 2D liquid (particles that pool and splash). */
-  Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: number; bounce?: number; /** a 2D gs.physics world the drops stay out of */ world?: Loose; /** kg a drop: pushes loose things (floats a ball) */ weight?: number }) => {
+  Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: number; bounce?: number; /** a 2D gs.physics world the drops stay out of. Left out: the one the game made before this; false: none. */ world?: Loose | false; link?: boolean; /** kg a drop: pushes loose things (floats a ball) */ weight?: number }) => {
     list: { x: number; y: number; vx: number; vy: number }[]; solids: Loose[];
     add(x: number, y: number, vx?: number, vy?: number): Loose; pour(x: number, y: number, n?: number, spread?: number, vx?: number, vy?: number): Loose;
     circle(x: number, y: number, r: number): Loose; box(x: number, y: number, w: number, h: number): Loose; near(x: number, y: number, r: number): Loose[]; count(test?: (p: Loose) => boolean): number; update(dt: number): Loose;

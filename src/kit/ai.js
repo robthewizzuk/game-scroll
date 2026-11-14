@@ -26,6 +26,7 @@
 
 import { timed } from './prof.js';
 import * as YUKA from 'yuka';
+import { linksFor } from './links.js';
 export { YUKA };
 export { Swarm } from './swarm.js';
 export { Tree, Choose } from './bt.js';
@@ -89,7 +90,7 @@ class Agent {
   /** Has it reached the end of its route? */
   get arrived() { const b = this.b.follow; return !b || (b.path.finished() && (b.path.loop || Math.hypot(this.end.x - this.x, this.end.z - this.y) < this.r * 2)); }
   /** Chases a target round the walls of a NavGrid, re-planning as it moves (every `every` seconds). */
-  hunt(target, nav, every = .4) { this.stop(); this.hunting = { target, nav, every, t: 0 }; return this; }
+  hunt(target, nav, every = .4) { this.stop(); nav ??= this.crowd.links?.one('nav'); if (nav) this.hunting = { target, nav, every, t: 0 }; else this.chase?.(target); return this; }   // (nav left out: the NavGrid the game made, links.js)
   /** Keeps its distance from the others in the crowd. */
   separate(weight = 1.5) { this.v.updateNeighborhood = true; return this.set('sep', new SeparationBehavior(), weight); }
   /** Moves with the others nearby like a flock or shoal: stays close, faces the same way, doesn't bump. */
@@ -118,7 +119,7 @@ class Agent {
 
 /** A group of agents that move together and know about each other. */
 export class Crowd {
-  constructor() { this.em = new EntityManager(); this.agents = []; }
+  constructor({ link = true } = {}) { this.em = new EntityManager(); this.agents = []; this.links = linksFor(null, link); }
   /** Adds an agent at (x, y). Options: speed, agility (how quickly it turns and brakes, default 6), force (the most it can steer), radius, mass, tag. */
   add(x, y, o = {}) { const a = new Agent(this, x, y, o); this.agents.push(a); this.em.add(a.v); return a; }
   remove(a) { if (a.dead) return; a.dead = true; this.em.remove(a.v); this.agents = this.agents.filter(x => x !== a); }
@@ -140,8 +141,9 @@ export class Crowd {
  * blocked. path() finds the shortest way round the walls (A*), diagonals included unless diagonal: false.
  */
 export class NavGrid {
-  constructor(cols, rows, cell, wall = () => false, { diagonal = true } = {}) {
+  constructor(cols, rows, cell, wall = () => false, { diagonal = true, link = true } = {}) {
     this.cols = cols; this.rows = rows; this.cell = cell; this.diagonal = diagonal;
+    linksFor(null, link)?.join('nav', this);   // (links.js: the game's walls, for agents that hunt and guards that look)
     this.walls = new Uint8Array(cols * rows);
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) this.walls[y * cols + x] = wall(x, y) ? 1 : 0;
     this.build();

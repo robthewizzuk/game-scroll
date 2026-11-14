@@ -18,6 +18,7 @@
 // is what it ran into this frame ({ thing, normal, point, speed }); craft.rider is its body there. The water a
 // Boat or a Floater floats on can be a gs.outdoors Water, a gs.fluid Fluid, a gs.flow Flood or Streams.
 
+import { linksFor, linked } from './links.js';
 const V = (x = 0, y = 0, z = 0) => ({ x, y, z });
 // quaternion helpers (x, y, z, w)
 const qmul = (a, b) => ({ x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z });
@@ -35,6 +36,8 @@ const surface = w => typeof w.height === 'function' ? (x, z) => w.height(x, z)
   : typeof w.level === 'function' && w.level.length >= 2 ? (x, z) => { const l = w.level(x, z); return l > 0 || l < 0 ? l : -Infinity; }
   : typeof w.at === 'function' ? (x, z) => { const h = w.at({ x, y: 0, z }); return h.in ? h.level : -Infinity; }
   : () => -Infinity;
+// options given where the water goes (new Boat({ power: 9 })): the water is then the one the game made (links.js), else flat at 0
+const plain = w => !!w && typeof w === 'object' && typeof w.height !== 'function' && typeof w.level !== 'function' && typeof w.at !== 'function', FLAT = { height: () => 0 };
 // ran into something in the world: takes the speed into it away from vel ({ x, y, z }); returns the hit with its speed, or null
 function wallHit(rider, vel, up = .6) {
   let out = null;
@@ -55,7 +58,8 @@ function wallHit(rider, vel, up = .6) {
  */
 export class Plane {
   constructor({ at = V(0, 30, 0), heading = 0, speed = 30, power = 14, lift = 1, drag = .0016, stall = 16, top = 70, turn = [1.2, 2.2, .5], assist = .6,
-    grip = 2.5, gravity = 9.8, ground = null, gear = 1, crashSpeed = 7, world = null, size = [1.6, 1.4, 7] } = {}) {
+    grip = 2.5, gravity = 9.8, ground = null, gear = 1, crashSpeed = 7, world = null, size = [1.6, 1.4, 7], link = true } = {}) {
+    world = linked(world, linksFor(null, link), 'world');   // (links.js: with none given, the World3D the game made, made before this; false: none)
     Object.assign(this, { power, liftK: lift, drag, stallSpeed: stall, top, turn, assist, grip, gravity, ground, gear, crashSpeed });
     this.pos = V(at.x, at.y, at.z); this.quat = yawQ(-heading); this.vel = rot(V(0, 0, -speed), this.quat);
     if (world) {   // its body (the fuselage: wings would catch on everything) rides on the gear, so the runway goes under it
@@ -135,7 +139,11 @@ export class Plane {
  * length / width: hull size for how it pitches and rolls on the waves.
  */
 export class Boat {
-  constructor(water, { at = V(), heading = 0, power = 8, top = 16, turn = 1.4, drift = .25, drag = .6, length = 4, width = 1.8, draft = .2, world = null, height = 1 } = {}) {
+  constructor(water, o) {
+    if (o === undefined && plain(water)) { o = water; water = null; }   // (new Boat({ power: 9 }): the game's water)
+    let { at = V(), heading = 0, power = 8, top = 16, turn = 1.4, drift = .25, drag = .6, length = 4, width = 1.8, draft = .2, world = null, height = 1, link = true } = o || {};
+    // (links.js: with no water given, the newest Water or Sea the game made; with no world, its World3D; both made before the boat)
+    const L = linksFor(null, link); water ??= L?.one('water') ?? FLAT; world = linked(world, L, 'world');
     Object.assign(this, { water, power, top, turnK: turn, drift, dragK: drag, length, width, draft });
     this.h = surface(water); const h0 = this.h(at.x, at.z);
     this.x = at.x; this.z = at.z; this.y = h0 > -Infinity ? h0 : at.y ?? 0; this.heading = heading; this.vx = 0; this.vz = 0; this.spin = 0; this.quat = yawQ(-heading); this.wake = []; this.air = 0; this.crash = null;
@@ -181,7 +189,8 @@ export class Boat {
  * that way; yaw to turn. ground(x, z) for landing. Speeds are m/s.
  */
 export class Hover {
-  constructor({ at = V(0, 2, 0), heading = 0, climb = 6, speed = 14, accel = 6, turn = 1.8, tilt = .35, gravity = 9.8, ground = null, world = null, size = [1, .4, 1] } = {}) {
+  constructor({ at = V(0, 2, 0), heading = 0, climb = 6, speed = 14, accel = 6, turn = 1.8, tilt = .35, gravity = 9.8, ground = null, world = null, size = [1, .4, 1], link = true } = {}) {
+    world = linked(world, linksFor(null, link), 'world');   // (links.js)
     Object.assign(this, { climb, top: speed, accel, turnK: turn, tiltMax: tilt, gravity, ground });
     this.pos = V(at.x, at.y, at.z); this.vel = V(); this.heading = heading; this.quat = yawQ(-heading); this.onGround = false; this.tiltX = 0; this.tiltZ = 0; this.crash = null;
     if (world) { this.world = world; this.rider = world.rider({ box: size, at, turn: -heading, slope: 0, mass: 60, tag: 'hover' }); this.rider.owner = this; }
@@ -221,7 +230,10 @@ export class Hover {
  * (read from the body's World3D if left out).
  */
 export class Floater {
-  constructor(body, water, { size = [1, 1, 1], points = null, float = 1.2, drag = 1.5, spinDrag = 1, gravity = null } = {}) {
+  constructor(body, water, o) {
+    if (o === undefined && plain(water)) { o = water; water = null; }   // (new Floater(crate, { float: 2 }): the game's water)
+    const { size = [1, 1, 1], points = null, float = 1.2, drag = 1.5, spinDrag = 1, gravity = null, link = true } = o || {};
+    water ??= linksFor(null, link)?.one('water') ?? FLAT;   // (links.js: the newest Water or Sea the game made, made before this)
     const [w, h, d] = size;
     this.pull = gravity ?? Math.abs(body.world?.gravity?.y ?? 9.8);
     this.points = points || [-1, 1].flatMap(sx => [-1, 1].flatMap(sy => [-1, 1].map(sz => V(sx * w / 2, sy * h / 2, sz * d / 2))));

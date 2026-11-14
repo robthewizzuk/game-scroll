@@ -19,7 +19,7 @@ import { currentOwner, onRelease, ownedBy } from './cleanup.js';
 
 const sets = new WeakMap();   // a card, or a view made outside one -> its Links
 const NONE = Object.freeze([]);
-const MANY = new Set(['water', 'gas', 'fluid', 'structure', 'reactions', 'explosives', 'watcher']);   // kinds a game may have several of
+const MANY = new Set(['water', 'gas', 'fluid', 'structure', 'reactions', 'explosives']);   // kinds a game may have several of
 const refOf = typeof WeakRef === 'function' ? x => new WeakRef(x) : x => ({ deref: () => x });
 
 export class Links {
@@ -37,8 +37,8 @@ export class Links {
     for (const k in this.many) { const l = this.many[k], i = l.findIndex(r => r.deref() === thing); if (i >= 0) { l.splice(i, 1); this.live[k] = null; } }
     return this;
   }
-  /** The newest of a kind, or null. */
-  one(kind) { return this.single[kind] ?? null; }
+  /** The newest of a kind, or null (of a kind there can be several of: the last one made that is still about). */
+  one(kind) { if (!MANY.has(kind)) return this.single[kind] ?? null; const l = this.all(kind); return l.length ? l[l.length - 1] : null; }
   /** Every live thing of a kind there can be several of (a list to read, not to keep). */
   all(kind) {
     const l = this.many[kind]; if (!l) return NONE;
@@ -68,7 +68,10 @@ export function linksFor(view = null, on = true) {
 }
 
 /** A kit's own option, or what the set has: given (anything but null or undefined) wins, false is "none". */
-export const linked = (given, links, kind) => given === false ? null : given ?? links?.single[kind] ?? null;
+export const linked = (given, links, kind) => given === false ? null : given ?? links?.one(kind) ?? null;
+
+/** The set for something that happens to a mesh during play (a thing shattered in update()): its scene's view's, which is its card's. */
+export function linksOf(obj) { let top = obj; while (top?.parent) top = top.parent; return top?.gsView ? linksFor(top.gsView) : linksFor(null); }
 
 /** Run fn with a set of its own (tests, lab pages): what it makes finds each other and nothing else. */
 export const together = fn => ownedBy({}, fn);

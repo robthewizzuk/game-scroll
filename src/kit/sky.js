@@ -381,7 +381,11 @@ export class Weather {
     if (this.flashLeft > 0) {
       this.flashLeft -= dt; const on = this.flashLeft > .25 || (this.flashLeft > .08 && this.flashLeft < .16);
       if (h) { if (!this.lit) this.hemiBase = h.intensity; h.intensity = this.hemiBase * (on ? 1 + 4 * this.flashI : 1); this.lit = true; }
-    } else if (this.lit && h) { h.intensity = this.hemiBase; this.lit = false; }
+      const sky = this.links?.one('sky'); if (sky) { sky.flash = on ? this.flashI : 0; this.skyLit = sky; }   // (links.js: lightning lights the clouds of the Sky the game made)
+    } else {
+      if (this.lit && h) { h.intensity = this.hemiBase; this.lit = false; }
+      if (this.skyLit) { this.skyLit.flash = 0; this.skyLit = null; }
+    }
     return this;
   }
   // The world under the weather: how wet it is, how much lies in puddles, how much snow has settled; the map of

@@ -16,8 +16,11 @@
 // Units are your game's: jump is the jump height, run the top speed per second. Change any option
 // later (hero.run = 160 after a power-up). hero.vx / hero.vy can be set for knockback and springs.
 
+import { linksFor } from './links.js';
 class Mover {
-  constructor(o) { Object.assign(this, { x: 0, y: 0, w: 12, h: 14, vx: 0, vy: 0, onGround: false, facing: 1 }, o); this.hit = {}; }
+  constructor(o) { Object.assign(this, { x: 0, y: 0, w: 12, h: 14, vx: 0, vy: 0, onGround: false, facing: 1 }, o); this.hit = {}; this.links = linksFor(null, o?.link); }
+  // the level it moves in: what update() was given (null: none), else, left out, the TileMap the game made, else its 2D physics world (links.js)
+  levelOf(map) { return map !== undefined ? map : this.links ? this.links.one('tiles') ?? this.links.one('world2d') : null; }
   get left() { return this.x - this.w / 2; }
   get right() { return this.x + this.w / 2; }
   get top() { return this.y - this.h / 2; }
@@ -50,6 +53,7 @@ export class Platformer extends Mover {
   get gravity() { return 2 * this.jump / (this.jumpTime * this.jumpTime); }
   get jumpSpeed() { return 2 * this.jump / this.jumpTime; }
   update(dt, map, input = {}) {
+    map = this.levelOf(map);
     const ix = Math.max(-1, Math.min(1, input.x || 0)), held = !!input.jump, pressed = held && !this.wasJump;
     this.wasJump = held; this.jumped = false; this.landed = false;
     if (pressed) this.sinceJumpPress = 0; else this.sinceJumpPress += dt;
@@ -97,6 +101,7 @@ export class TopDown extends Mover {
   /** speed: top speed; accel / stop: per second; diagonal moves aren't faster. */
   constructor(o = {}) { super({ speed: 90, accel: 800, stop: 1000, ...o }); this.state = 'idle'; this.dir = { x: 0, y: 1 }; }
   update(dt, map, input = {}) {
+    map = this.levelOf(map);
     let ix = input.x || 0, iy = input.y || 0; const m = Math.hypot(ix, iy); if (m > 1) { ix /= m; iy /= m; }
     const tx = ix * this.speed, ty = iy * this.speed;
     this.vx = approach(this.vx, tx, (ix ? this.accel : this.stop) * dt);

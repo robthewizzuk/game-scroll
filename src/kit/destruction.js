@@ -17,6 +17,7 @@
 
 import { Vector3 } from 'three';
 import { DestructibleMesh, FractureOptions } from '@dgreenheck/three-pinata';
+import { linksOf, linked } from './links.js';
 
 const v3 = p => (p ? new Vector3(p.x, p.y, p.z) : null);
 // the body a mesh has in a World3D (made with world.box(mesh...) and the like), if any
@@ -45,7 +46,7 @@ function solid(world, f, { density, was, tag = 'piece' }) {
  * with .body when there's a world).
  */
 export function shatter(mesh, { pieces = 12, at = null, flat = false, inside = null, world = null, push = 4, seed, density = 1, radius = null } = {}) {
-  mesh.updateMatrixWorld(true);
+  mesh.updateMatrixWorld(true); world = linked(world, linksOf(mesh), 'world');   // (links.js: with none given, the World3D the game made; false: none)
   let root = mesh; while (root.parent) root = root.parent;   // pieces live in world space, in the scene
   const dm = new DestructibleMesh(mesh.geometry, mesh.material, inside || mesh.material);
   mesh.matrixWorld.decompose(dm.position, dm.quaternion, dm.scale); dm.updateMatrixWorld(true);
@@ -77,7 +78,7 @@ export function shatter(mesh, { pieces = 12, at = null, flat = false, inside = n
  * cut (metres a second); density as for shatter.
  */
 export function slice(mesh, point, normal, { inside = null, world = null, apart = 0, density = 1 } = {}) {
-  mesh.updateMatrixWorld(true);
+  mesh.updateMatrixWorld(true); world = linked(world, linksOf(mesh), 'world');   // (links.js)
   const dm = new DestructibleMesh(mesh.geometry, mesh.material, inside || mesh.material);
   let root = mesh; while (root.parent) root = root.parent;
   mesh.matrixWorld.decompose(dm.position, dm.quaternion, dm.scale); dm.updateMatrixWorld(true);
