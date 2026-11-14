@@ -741,17 +741,21 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
     if it stood behind the mirror, as far behind as the ray went). So a mirror comes out at the
     picture's full size with smooth edges where half-size rays showed steps, and a rough surface's blur
     is the real one, sharp where the reflected thing touches the surface and softer the further off it
-    is, where it used to be a blur of the picture. A rough surface's rays are a noisy few, so what it has
+    is, where it used to be a blur of the picture. A mirror's history is held to what this frame's rays
+    saw round the pixel. A rough surface's rays are a noisy few, so what it has
     gathered is also smoothed a little over the pixels round it each frame (never wider than its own
-    blur), and is let go only when this frame's rays are further from it than they usually are there:
-    a thing that leaves a reflection is gone from it in a frame or two, and a frame whose rays all
-    missed doesn't throw the reflection away (that showed as specks). While the camera moves, a rough
-    surface keeps only as many frames as its reflection takes to slide by its own blur (longer, and a
+    blur, and over the blur's own shape: on a floor seen at a low angle a pole's reflection is a streak
+    toward the camera, not a smudge), and is let go only when this frame's rays are further from it than
+    they usually are there: a thing that leaves a reflection is gone from it in a frame or two, and a
+    frame whose rays all missed doesn't throw the reflection away (that showed as specks). What a rough
+    surface keeps is what its rays found, apart from the sky the rest of them missed into, and it is
+    found again by how far off the things found are. While the camera moves it keeps only as many frames
+    as those things take to part from the sky behind them by the surface's own blur (longer, and a
     near thing's reflection trails behind it, too strong). Against a reference with a ray for every
-    pixel the error is under a fifth of what it was with the camera still, about two fifths at a walk
-    and under half moving fast, with fewer specks than the old pass in each; a moving camera leaves a
-    fine grain on rough surfaces, and when a thing jumps aside the soft glow round its rough reflection
-    takes about twenty frames to follow. `__hd.regen = false` puts
+    pixel the error is about a seventh of what it was with the camera still, a little over a quarter at a walk
+    and a third moving fast, with fewer specks than the old pass in each; a moving camera leaves a
+    fine grain on rough surfaces and thin reflections (a pole's) a little faint, and when a thing jumps
+    aside the soft glow round its rough reflection takes about twenty frames to follow. `__hd.regen = false` puts
     the old pass back; `__hd.traceScale = .35` sends half as many rays, which still measures closer to
     the reference than the old pass did with all of them.
   - `__hd.traced = false` turns the tracing off (screen-space reflections then, as on other phones),
