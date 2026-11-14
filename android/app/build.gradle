@@ -53,26 +53,18 @@ android {
     }
 }
 
-// The phone's AI chip (plugins/npu). Qualcomm's NPU loads its half of QNN from files on disk, so the
-// app's native libraries stay unpacked on the phone. Left out: the QNN parts we don't use (the older DSP
-// and the GPU backends) and the NPU generations before the Snapdragon 8 Gen 2's; those phones use the CPU.
+// The phone's AI chip (plugins/npu). Qualcomm's NPU libraries (QNN) are not in the app itself: store builds
+// get them from Google Play as the on-demand module android/qnn, and our own APKs (debug builds) download
+// them from Qualcomm's release; either way only on a phone with a supported Snapdragon NPU and only once a
+// game first starts face, hand or sound tracking (plugins/npu QnnRuntime.java). The NPU loads its half of
+// QNN from files on disk, so the app's native libraries stay unpacked on the phone.
 android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            excludes += ['**/libQnnDsp*.so', '**/libQnnGpu.so', '**/libQnnHtpV68*.so', '**/libQnnHtpV69*.so']
         }
     }
-}
-
-// Our own APKs (debug builds, from GitHub) leave Qualcomm's NPU libraries out entirely: about 57 MB of
-// an 85 MB APK. On a phone with a supported Snapdragon NPU the app downloads the ~40 MB that phone needs
-// from Qualcomm's own release, on Wi-Fi, and checks every file (plugins/npu QnnRuntime.java). Store
-// (release) builds keep them, because Google Play doesn't let an app download code.
-androidComponents {
-    onVariants(selector().withBuildType('debug')) { variant ->
-        variant.packaging.jniLibs.excludes.add('**/libQnn*.so')
-    }
+    if (findProject(':qnn') != null) dynamicFeatures = [':qnn']
 }
 
 repositories {

@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- Our own APKs download Qualcomm's NPU libraries on Wi-Fi only (QnnRuntime.java) -->
+    <!-- Our own APKs download Qualcomm's NPU libraries on Wi-Fi only, once a game wants them (QnnRuntime.java) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <application>

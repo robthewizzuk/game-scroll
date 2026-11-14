@@ -12,6 +12,9 @@
 //   (crashed, out of memory, not responding) and the time, and leaves out the app being closed by
 //   the player. The marker also says how short of memory the phone was (src/kit/memory.js), and a
 //   close reported from it says "(memory was low)" when it was.
+// - Lost graphics chips: a WebGPU device that went away (its driver restarted, the browser's GPU process
+//   crashed; src/kit/gpu.js makes a new one), told once it is known whether it came back, with the chip's name
+//   and the browser engine's version (where a driver's or Chromium's bug shows). Kind 'gpu'.
 // - Heat: how much of the timed play was with the phone warm or hot (src/kit/power.js), since a
 //   hot phone slows itself down and that isn't the game's doing.
 //
@@ -28,7 +31,7 @@ import { power } from './kit/power.js';
 import { memory, onMemory } from './kit/memory.js';
 import { appHealth, judgeExit, memoryNote } from './exits.js';
 import { desktop } from './desktop.js';
-import { gpuName, chipLabel } from './kit/gpu.js';
+import { gpuName, chipLabel, onGpuLoss } from './kit/gpu.js';
 
 const PENDING_KEY = 'gs_perf_pending', LOCAL_KEY = 'gs_perf_local', GLOBAL_KEY = 'gs_perf_global', OPEN_KEY = 'gs_perf_open';
 const EXIT_KEY = 'gs_perf_exit', BUILD_KEY = 'gs_perf_build';   // the newest exit record already looked at; the build that ran last
@@ -82,6 +85,13 @@ function place(e) {
 const message = e => (e instanceof Error ? `${e.name}: ${e.message}` : typeof e === 'string' ? e : (() => { try { return JSON.stringify(e); } catch (_) { return String(e); } })())
   .replace(/https?:\/\/[^\s)]+/g, u => u.split('/').pop()).slice(0, 160);
 
+/** The browser engine drawing the app: "Chrome 142" (Android's WebView, the Mac and Windows app), "Safari 26" (iPhone), "" if it doesn't say. */
+export function engine(ua = typeof navigator !== 'undefined' ? navigator.userAgent : '') {
+  if (desktop?.chrome) return 'Chrome ' + String(desktop.chrome).split('.')[0];
+  const c = /\b(?:Chrome|CriOS)\/(\d+)/.exec(ua); if (c) return 'Chrome ' + c[1];
+  const v = /\bVersion\/(\d+)/.exec(ua) || /\bOS (\d+)[_.]\d+.* like Mac OS X/.exec(ua); return v && /AppleWebKit/.test(ua) ? 'Safari ' + v[1] : '';
+}
+
 /** v: the game file's version; at: when it happened (seconds since 1970) where that is known and isn't now. */
 function addError(kind, game, msg, where, v = game && game === current ? curVer : verOf(game), at = 0) {
   if (!msg) return;
@@ -90,6 +100,15 @@ function addError(kind, game, msg, where, v = game && game === current ? curVer 
   else if (list.length < MAX_ERRORS) list.push({ kind, game, msg, place: where, n: 1, ...(v ? { v } : {}), ...(at ? { at } : {}) });
   save();
 }
+
+// A lost graphics chip, once it is known how it ended: on the game that was up when it went
+let lossAt = null;
+onGpuLoss(e => {
+  if (e.kind === 'lost') { lossAt = { game: current, reason: e.reason, message: e.message }; return; }
+  const l = lossAt; lossAt = null; if (!l) return;
+  const end = e.backend === 'webgpu' ? 'back on WebGPU' : e.backend === 'webgl' ? 'WebGL from then on' : 'no 3D until the app restarted';
+  addError('gpu', l.game, `WebGPU device lost (${l.reason})${l.message ? ': ' + l.message.slice(0, 90) : ''} · ${end}`, [chipLabel(gpuName()), engine()].filter(Boolean).join(' · ').slice(0, 80));
+});
 
 function openMarker() { store.set(OPEN_KEY, { game: current, ver: curVer, playing, app: BUILD, at: Date.now(), mem: memory.level }); }
 
@@ -222,7 +241,7 @@ if (typeof document !== 'undefined') {
   lastTime(was);
 
   addEventListener('error', e => { if (e.error || e.message) perf.error(e.error || e.message); });
-  addEventListener('unhandledrejection', e => perf.error(e.reason ?? 'unhandled rejection'));
+  addEventListener('unhandledrejection', e => { if (!e.defaultPrevented) perf.error(e.reason ?? 'unhandled rejection'); });   // (stopped: what a lost graphics chip left in flight, kit/gpu.js)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { store.set(OPEN_KEY, null); clearTimeout(saveT); saveT = 0; store.set(PENDING_KEY, pending); store.set(LOCAL_KEY, local); perf.flush(true); }
     else { lastFrame = 0; openMarker(); }

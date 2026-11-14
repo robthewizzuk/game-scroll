@@ -1557,6 +1557,33 @@ console.log('physics ok');
   }
   console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
 }
+// the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
+// further out, land from where the city's ground ends, the camera made to see it, lit windows at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Skyline } = await import('../src/kit/city-far.js');
+  for (const style of ['downtown', 'harbour']) {
+    const p = layout({ seed: 3, blocks: [4, 4], style }), B = p.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
+    const make = () => { const cam = new THREE.PerspectiveCamera(60, 1, .2, 900), v = { scene: new THREE.Scene(), cam }; return [v, new Skyline(v, p, { seed: 3, colours: ['#a45a45', '#d8cdb8'], water: !!p.water })]; };
+    const [v, s] = make(), [, s2] = make(), pos = m => Array.from(m.geometry.attributes.position.array);
+    assert.equal(JSON.stringify(s.meshes.map(pos)), JSON.stringify(s2.meshes.map(pos)), style + ': the same seed, the same skyline');
+    assert.ok(s.count > 200 && s.meshes.length >= 6 && s.meshes.length <= 8, style + ': stand-ins in slices round the city (' + s.count + ' in ' + s.meshes.length + ')');
+    let wet = 0, inner = 0, coarse = 0;
+    for (const m of s.meshes) { const P = m.geometry.attributes.position.array;
+      for (let i = 0; i < P.length; i += 60) {   // (a box: 20 corners, its first wall's first corner at x0, z1 and the second wall's at x1)
+        const x0 = P[i], z1 = P[i + 2], x1 = P[i + 3], d = Math.hypot(x0 - cx, z1 - cz);
+        if (x0 > B.x0 - 60 && x0 < B.x1 + 60 && z1 > B.z0 - 60 && z1 < B.z1 + 60) inner++;
+        if (p.water && x0 > B.x0 - 40 && x1 < B.x1 + 40 && z1 > B.z1 && z1 < B.z1 + 3010) wet++;
+        if (d < 1200 && x1 - x0 > 90) coarse++;
+      } }
+    assert.ok(!inner && !wet && !coarse, style + ': none on the city\'s own ground, the water, or wider than its block near by (' + [inner, wet, coarse] + ')');
+    const L = s.land.geometry.attributes.position.array; let near = Infinity; for (let i = 0; i < L.length; i += 3) near = Math.min(near, Math.max(Math.abs(L[i] - cx) - (B.x1 - B.x0) / 2, Math.abs(L[i + 2] - cz) - (B.z1 - B.z0) / 2));
+    assert.ok(near > (p.water ? 2900 : 3030) && near < 3050, style + ': the land starts where the city\'s ground ends (' + near.toFixed(0) + ' m out)');
+    assert.ok(v.cam.far >= 10000 && s.triangles === s.count * 10 + s.pads.geometry.index.count / 3 + s.land.geometry.index.count / 3, style + ': the camera sees it, ten triangles a stand-in');
+    s.update(1); assert.ok(s.mat.emissiveIntensity > 1, 'its windows light at night'); s.update(0); assert.equal(s.mat.emissiveIntensity, 0, 'and not by day');
+    s.dispose(); s2.dispose(); assert.ok(!v.scene.children.includes(s.group), 'disposed: gone from the scene');
+  }
+  console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {
@@ -2248,7 +2275,7 @@ console.log('physics ok');
   // the list and the list's version after the draw.
   const lv = [{ object: { geometry: geo, material: im.material }, distance: 0, hysteresis: 0 }, { object: { geometry: geo, material: im.material }, distance: 15 * 15, hysteresis: 0 }];
   const tw2 = gpuProps({ ...im, LODinfo: { render: { levels: lv } } });
-  const chips = tw2.group.children.map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });
+  const chips = tw2.group.children.filter(m => m.userData.slots).map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });   // (the levels' lists: not their lists of copies changing level)
   const draw = () => {
     let wrong = 0, drawn = 0;
     for (const g of chips) {
@@ -2270,6 +2297,66 @@ console.log('physics ok');
   cam.lookAt(2, 0, -20); tw2.sync(cam); const d5 = draw(); lv[1].distance = 15 * 15; tw2.sync(cam); const d6 = draw(); tw2.sync(cam); const d7 = draw();
   assert.equal(d5.wrong + d6.wrong + d7.wrong, 0, 'and through a turn and the change back');
   console.log('gs.props on WebGPU: only changed copies are sent, and each keeps its own motion ok');
+  // a copy changing level fades (lod-fade.js): out of both levels' own lists and into their lists of copies changing
+  // level, each with its share, until the fade ends; none of it until the dithered shaders are built (ready)
+  const { FADE } = await import('../src/kit/lod-fade.js'), s0 = FADE.s;
+  const lists = () => tw2.group.children.filter(m => m.userData.slots).map(m => m.userData.slots.owner.reduce((k, o) => k + (o ? 1 : 0), 0)), fl = () => tw2.fades().map(m => m.visible ? m.count : 0);
+  cam.lookAt(0, 0, -20); tw2.sync(cam, null, null, null, () => true); const was = lists();
+  FADE.s = 1e6; lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => false);
+  assert.ok(fl().every(n => n === 0) && lists()[0] > was[0], 'no fades while the dithered shaders are not built: the change is at once');
+  FADE.on = false; lv[1].distance = 15 * 15; tw2.sync(cam, null, null, null, () => true); FADE.on = true;
+  assert.ok(fl().every(n => n === 0) && lists().join() === was.join(), 'nor with fades off');
+  lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => true);
+  const f1 = fl(), mid = lists(), F0 = tw2.fades()[0].geometry.attributes.gsFade.array, F1 = tw2.fades()[1].geometry.attributes.gsFade.array;
+  assert.ok(f1[0] > 20 && f1[0] === f1[1] && mid[0] === was[0] && mid[1] === was[1] - f1[0], `the copies changing level are in both fading lists and neither level's own (${f1} fading; lists ${was} then ${mid})`);
+  assert.ok(F0[1] === 1 && F1[1] === -1 && F0[0] < .01 && F1[0] === F0[0], 'each with its share: coming in to the near level, going out of the far');
+  lv[1].distance = 15 * 15; tw2.sync(cam, null, null, null, () => true);
+  assert.deepEqual(fl(), [0, 0], 'a change back before the fade has gone anywhere is at once');
+  assert.deepEqual(lists(), was, 'and they are back in their lists');
+  lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => true); FADE.s = .01; await new Promise(r => setTimeout(r, 30)); tw2.sync(cam, null, null, null, () => true);   // (30 ms of a fade of 10)
+  const done = lists();
+  assert.ok(fl().every(n => n === 0) && done[0] === was[0] + f1[0] && done[1] === was[1] - f1[0], `at the end of the fade they are in the new level's list (${done})`);
+  FADE.s = s0; lv[1].distance = 15 * 15;
+  console.log('gs.props on WebGPU: copies changing level fade ok');
+}
+
+// Detail levels that fade into each other (lod-fade.js): when a thing fades, the shares each level is drawn with,
+// the shadow from one level at a time, a fade turned round, one waiting for its shaders, and things that switch at once
+{
+  const T = await import('three'), { FADE, FADING, fadeable, fadeLevels, fadeStep, fadesDone } = await import('../src/kit/lod-fade.js');
+  const scene = new T.Scene(), root = new T.Group(), mesh = () => new T.Mesh(new T.BoxGeometry(), new T.MeshBasicMaterial()), a = mesh(), b = mesh(), out = [];
+  b.visible = false; root.add(a, b); scene.add(root); fadeable(root);
+  let done = 0;
+  assert.equal(fadeLevels(root, [a], [b], () => done++), false, 'a thing no view has drawn changes level at once');
+  assert.ok(!a.visible && b.visible && done === 1 && !FADING.size);
+  fadeLevels(root, [b], [a]); fadeStep(scene, () => true, false, out);   // (a frame: it has been seen)
+  const s0 = FADE.s; FADE.s = 1e6;
+  assert.equal(fadeLevels(root, [a], [b], () => done++), true, 'one on screen fades');
+  assert.ok(a.visible && b.visible && done === 1, 'both shown while it fades, and done() not called yet');
+  fadeStep(scene, () => true, false, out);
+  assert.ok(out.length === 6 && out[0] === a && out[1].y === -1 && out[2] === true && out[3] === b && out[4].y === 1 && out[5] === false && out[4].x === out[1].x, 'the old level going out and casting the shadow, the new coming in with the same share');
+  FADING.get(root).t = .6; fadeStep(scene, () => true, false, out);
+  assert.ok(out[2] === false && out[5] === true, 'from half way the new level casts the shadow');
+  assert.equal(fadeLevels(root, [b], [a], () => done++), true, 'a change back turns the fade round');
+  assert.ok(Math.abs(FADING.get(root).t - .4) < 1e-6 && FADING.get(root).to[0] === a);
+  FADE.s = .01; await new Promise(r => setTimeout(r, 30)); fadeStep(scene, () => true, false, out);
+  assert.ok(!FADING.size && a.visible && !b.visible && done === 2 && !a.userData.gsFadeV, 'and it ends there');
+  // its shaders not built: the new level waits, hidden, then the change is made at once
+  FADE.s = 1e6; const w0 = FADE.wait; FADE.wait = 1e6;
+  fadeLevels(root, [a], [b], () => done++); fadeStep(scene, () => false, false, out);
+  assert.ok(out.length === 3 && out[0] === b && out[1] === null && FADING.get(root).t === 0, 'waiting for its shaders the new level is hidden and the old drawn whole');
+  assert.equal(fadeLevels(root, [b], [a], () => done++), false, 'turned back before it began, it just ends');
+  assert.ok(!FADING.size && a.visible && !b.visible && done === 3);
+  FADE.wait = 0; fadeLevels(root, [a], [b], () => done++); fadeStep(scene, () => false, false, out); fadeStep(scene, () => false, false, out);
+  assert.ok(!FADING.size && !a.visible && b.visible && done === 4, 'waited too long: the change made at once');
+  FADE.wait = w0;
+  // fades off, or hidden: at once
+  FADE.on = false; assert.equal(fadeLevels(root, [b], [a], () => done++), false); FADE.on = true;
+  root.visible = false; assert.equal(fadeLevels(root, [a], [b], () => done++), false); root.visible = true;
+  fadeLevels(root, [b], [a]); fadeLevels(root, [a], [b]); fadesDone();
+  assert.ok(!FADING.size && b.visible && !a.visible, 'fadesDone() ends every fade');
+  FADE.s = s0;
+  console.log('detail levels that fade: shares, shadows, turning round, waiting for shaders, at once when not seen ok');
 }
 
 // gs.models material recipes: each tiles seamlessly (the same at p and p + one tile), with finite numbers

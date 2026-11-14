@@ -4,11 +4,14 @@
 //
 // What each lamp needs beyond three's own four rows of numbers goes in eight more rows of the same lights picture
 // (a shader may read only 16 pictures, and a lit material already reads many): row 4 its slot, shape, kind and reach;
-// 5 to 8 the matrix from the camera's view to its slot's (or its shape's) picture; 9 and 10 a tube's or sign's edges.
+// 5 to 8 the matrix from the camera's view to its slot's (or its shape's) picture; 9 and 10 a tube's or sign's edges;
+// 11 its shadow's texel size and the square of a sign's own picture (decals-gpu.js's atlas: a sign that lights with its picture).
 // The loop over a pixel's lamps is three's own (ClusteredLightsNode.setupLights) with those added.
+// Decals share the list and the grid, after the lamps (decals-gpu.js): a pixel lays its decals on before any light.
 import { DataTexture, FloatType, RGBAFormat, RenderTarget, DepthTexture, LessEqualCompare, GreaterEqualCompare, LinearFilter, NodeMaterial, NoBlending, LightsNode, Matrix4, Vector4, RendererUtils, Mesh, PlaneGeometry, OrthographicCamera, AlwaysDepth } from 'three/webgpu';
-import { Fn, Loop, If, Break, int, float, positionGeometry, vec2, vec3, vec4, ivec2, textureLoad, texture, uniform, positionView, normalView, normalViewGeometry, smoothstep, dot, clamp, max, min, mix, normalize, cross, directPointLight, select, roughness, abs, reflect, fract, floor, sin, exp, length, atan, step, sqrt, getDistanceAttenuation, clearcoatRoughness, renderGroup } from 'three/tsl';
+import { Fn, Loop, If, Break, int, float, positionGeometry, vec2, vec3, vec4, ivec2, textureLoad, texture, uniform, positionView, normalView, normalViewGeometry, smoothstep, dot, clamp, max, min, mix, normalize, cross, directPointLight, select, roughness, abs, reflect, fract, floor, sin, exp, length, atan, step, sqrt, log2, getDistanceAttenuation, clearcoatRoughness, renderGroup } from 'three/tsl';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
+import { writeDecals, decalPass, pictureAt, PX as PIC_PX } from './decals-gpu.js';
 
 const ROW0 = 4, ROWS = 12;   // (three's rows are 0..3)
 const VM = new Matrix4();
@@ -69,6 +72,8 @@ export class KitLampsNode extends ClusteredLightsNode {
     // again only when that thing or its material changes, so a scene first drawn at another size (the loading screen's
     // build, a card's picture) went on reading the old grid, and lamps dropped out of squares of the screen
     this._gridDimensions.setGroup(renderGroup);
+    // where the decals start in the list (after the lamps), and how many (decals-gpu.js)
+    this.gsLampN = uniform(0, 'int').setGroup(renderGroup); this.gsDecalN = uniform(0, 'int').setGroup(renderGroup);
   }
   _isClusteredLight(l) { return !l.userData.gsFill && super._isClusteredLight(l); }
   _updateLightsTexture(camera) {
@@ -90,14 +95,16 @@ export class KitLampsNode extends ClusteredLightsNode {
         r = line * (ROW0 + 5) + o; data[r] = L.a.x; data[r + 1] = L.a.y; data[r + 2] = L.a.z; data[r + 3] = L.ha;
         r = line * (ROW0 + 6) + o; data[r] = L.b.x; data[r + 1] = L.b.y; data[r + 2] = L.b.z; data[r + 3] = L.hb;
       }
-      r = line * (ROW0 + 7) + o; data[r] = L.texel || 0;
+      r = line * (ROW0 + 7) + o; data[r] = L.texel || 0; data[r + 1] = L.kind === 2 && L.cell >= 0 ? L.cell : -1;
     }
     this.gsAny = any;
+    writeDecals(this, camera, this.gsScene?.gsView?.gsGrid);
   }
   setupLights(builder, lightNodes) {
     this._initGrid(builder.renderer);
     const lightingModel = builder.context.reflectedLight;
     lightingModel.directDiffuse.toStack(); lightingModel.directSpecular.toStack();
+    decalPass(this, builder);   // (the decals first: every light, the sun's and the sky's too, lights the marked surface)
     LightsNode.prototype.setupLights.call(this, builder, lightNodes);
     const T = this._lightsTexture, V = this._cameraViewMatrix, rev = !!builder.renderer.reversedDepthBuffer;
     Fn(() => {
@@ -108,12 +115,14 @@ export class KitLampsNode extends ClusteredLightsNode {
         const lightIndex = this._getTile(i);
         If(lightIndex.equal(int(0)), () => { Break(); });
         const li = lightIndex.sub(1);
+        If(li.greaterThanEqual(this.gsLampN), () => { Break(); });   // (the decals, after every lamp of the cell)
         const { color, decay, viewPosition, distance, spotDirection, spotOffset } = this._getLightData(li);
         const X = textureLoad(T, ivec2(li, ROW0)).toVar();
         const lightVector = viewPosition.sub(P).toVar(), cut = distance.toVar(), col = color.toVar();
         // a tube or a sign: the nearest point of it, and the point its mirror image shows (Karis 2013, "representative
         // point"; lit from those below), so a long tube is a long highlight on a wet road
-        const area = X.z.greaterThan(.5), specV = vec3().toVar(), size = vec3().toVar();   // (size: its half length and half height, over how far its highlight's point is)
+        const area = X.z.greaterThan(.5), specV = vec3().toVar(), size = vec3().toVar();
+        const picD = vec3(1).toVar(), picS = vec3(1).toVar();   // (a sign's own picture where its light comes from: diffuse, highlight)   // (size: its half length and half height, over how far its highlight's point is)
         If(area, () => {
           cut.assign(X.w);
           const A = textureLoad(T, ivec2(li, ROW0 + 5)), a = V.mul(vec4(A.xyz, 0)).xyz, ha = A.w, d = lightVector.toVar();
@@ -131,6 +140,20 @@ export class KitLampsNode extends ClusteredLightsNode {
             lightVector.assign(nearP); specV.assign(select(s.greaterThan(0), mirP, nearP));
             size.assign(vec3(ha, hb, max(length(specV), .05)));
             col.mulAssign(smoothstep(0, .06, dot(d.negate(), n)));   // (its front only)
+            // a sign that lights with its own picture (a TV, a video wall, a stained window): its colour where each part of
+            // its light comes from, blurred as that part is spread: the diffuse light, from the nearest point, more blurred
+            // the further off (a quarter of the picture across from as far off as it is wide: the near part of a sign gives
+            // most of the light a wall beside it gets); the highlight, from the mirror point,
+            // by roughness (a wet road shows the picture, a dull floor its colours)
+            const cell = textureLoad(T, ivec2(li, ROW0 + 7)).y;
+            If(cell.greaterThanEqual(0), () => {
+              const big = max(ha, hb), sa = clamp(dot(d, a).negate(), ha.negate(), ha), sb = clamp(dot(d, b).negate(), hb.negate(), hb);
+              const ma = select(s.greaterThan(0), clamp(dot(hit, a), ha.negate(), ha), sa), mb = select(s.greaterThan(0), clamp(dot(hit, b), hb.negate(), hb), sb);
+              const lodD = clamp(log2(length(nearP).div(big)).add(Math.log2(PIC_PX) - 2), 1, Math.log2(PIC_PX));
+              const lodS = clamp(log2(max(rough.mul(rough), .002).mul(length(specV)).div(big).mul(PIC_PX / 2).add(1)), 0, Math.log2(PIC_PX));
+              picD.assign(pictureAt(cell, vec2(sa.div(ha), sb.div(hb)).mul(.5).add(.5), lodD));
+              picS.assign(pictureAt(cell, vec2(ma.div(ha), mb.div(hb)).mul(.5).add(.5), lodS));
+            });
           });
         });
         const spotAttenuation = smoothstep(0, 1, dot(lightVector.normalize(), spotDirection).sub(spotOffset)).toVar();
@@ -173,8 +196,8 @@ export class KitLampsNode extends ClusteredLightsNode {
               lm.direct({ lightDirection: dir, lightColor: colour, reflectedLight: { directDiffuse: diffuse, directSpecular: specular }, lightNode: this }, builder);
               lm.clearcoat = cc; lm.sheen = sh;
             };
-            const toS = specV.normalize(), litS = col.mul(att(specV));
-            go(lightVector.normalize(), col.mul(att(lightVector)), RL.directDiffuse, sink, false, sh);
+            const toS = specV.normalize(), litS = col.mul(att(specV)).mul(picS);
+            go(lightVector.normalize(), col.mul(att(lightVector)).mul(picD), RL.directDiffuse, sink, false, sh);
             go(toS, litS.mul(spread(rough)), sink, RL.directSpecular, false, false);
             if (cc) go(toS, litS.mul(spread(clearcoatRoughness)), sink, sink, true, false);
           }).Else(() => {

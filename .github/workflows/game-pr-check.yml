@@ -304,7 +304,7 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare)|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss)|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
 
       - uses: actions/setup-node@v7
         if: steps.changed.outputs.run
@@ -354,6 +354,13 @@ jobs:
       - name: Recipe materials up close
         if: steps.changed.outputs.run
         run: node scripts/close-up.cjs
+
+      # (the graphics chip lost mid-round, as a driver reset or a crashed GPU process does: the round pauses, a new WebGPU
+      # device is made, the round is drawn again on it under a cover and carries on, and the loss is reported; then the
+      # same while the card waits in the feed. scripts/gpu-loss.cjs)
+      - name: A lost graphics chip comes back
+        if: ${{ !cancelled() && steps.changed.outputs.run }}
+        run: npm run build:bundled && node scripts/gpu-loss.cjs gravity-grip bumper-bowl && node scripts/gpu-loss.cjs gravity-grip --when feed
 
       # (dust, smoke and glows are drawn over the scene: the ground round each puff is shaded as it is without it,
       # with no square where the puff's corners are; the scene checks itself, scripts/look-compare/index.html dustScene)

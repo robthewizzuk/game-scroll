@@ -162,12 +162,15 @@ function tick(now, s, how, upd = 0, drw = 0) {
   }
   parts(k, upd, drw, playing);
   if (k) {
-    const iv = lastPresent ? now - lastPresent : 0;
-    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw, k);
+    // `now` is when this refresh began, and this frame's update() and draw() (and the shaders, textures and garbage
+    // counted above) came after it: so the gap that ends now was made by the frame before, and is judged by its work
+    const iv = lastPresent ? now - lastPresent : 0, w = before;
+    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, w);
     // a freeze: a quarter of a second or more between two pictures of play (not the app coming back to the front, not
     // a pause). The frame rate, the lows and the stutters leave out gaps this long, so freezes are counted on their own.
-    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, upd, drw, k);
-    lastPresent = now; lastPlay = playing; pend = [];
+    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, w);
+    lastPresent = now; lastPlay = playing;
+    before = { upd, drw, real: k === 1, big: k === 1 ? bigPart : null, why: pend }; pend = [];
     if (k === 1) { last.upd = last.upd * .9 + upd * .1; last.drw = last.drw * .9 + drw * .1; }
   }
   if (tint && tintEl) paintTint(s, k, now);
@@ -175,6 +178,8 @@ function tick(now, s, how, upd = 0, drw = 0) {
   if (fgArm && k) fgArm(k, s);
 }
 const last = { upd: 0, drw: 0 };
+// the work of the last frame shown: its update() and draw(), its biggest part and what was counted with it
+let before = { upd: 0, drw: 0, real: false, big: null, why: [] };
 // The chip's own time a frame by pass (HD.info.gpuParts, a new list each time the 3D kit reads the chip's
 // timestamps: every few frames, where the phone has them) and the draws and triangles a frame, while playing
 let chipSeen = null;
@@ -207,14 +212,14 @@ function parts(k, upd, drw, playing) {
 function partsText(list, n = 7) {
   return list.filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${v.toFixed(v < 1 ? 2 : 1)}`).join(' · ');
 }
-function hitch(now, iv, exp, s, upd, drw, k) {
-  const why = pend.slice();
+function hitch(now, iv, exp, s, w) {
+  const { upd, drw, big } = w, why = w.why.slice();
   if (now - C.resizeAt < 600) why.push('fold / resize');
   if (now - C.hiddenAt < 1500) why.push('app came back to the front');
   const lf = loafAt(now - iv, now); if (lf) why.push(lf);
   if (upd + drw > exp) why.push(`game CPU over the beat (update ${r1(upd)} + draw ${r1(drw)} ms)`);
   // (where that CPU time went, by part: the scene pass, physics, the game's own code...)
-  if (k === 1 && upd + drw > exp && bigPart && bigPart[1] > exp * .5) why.push(`most in ${bigPart[0]} (${r1(bigPart[1])} ms)`);
+  if (w.real && upd + drw > exp && big && big[1] > exp * .5) why.push(`most in ${big[0]} (${r1(big[1])} ms)`);
   // (the GPU's time is for a real frame and the frames made after it: with frame generation, that many refreshes)
   const gpu = HD?.info.gpuMs; if (gpu != null && gpu > exp * (HD.info.framegen ? HD.info.fgSteps || 2 : 1)) why.push(`GPU over the beat (${r1(gpu)} ms)`);
   if (!why.length) why.push(HD && is3D(s?.def) ? 'no cause seen (GPU / driver / system?)' : 'no cause seen (system?)');
@@ -356,6 +361,7 @@ const PAIRS = {
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   aoBack: { title: 'Ambient occlusion on everything vs on bounce light only', a: 'on the whole picture (as before)', b: 'on the light that bounces only', set: on => { HD.aoBack = on; }, needs: () => HD?.info.backend === 'webgpu' && HD.tier >= 2, no: 'Ambient occlusion in the shading needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  gridDecals: { title: 'Decals as meshes vs in the lamps\' grid', a: 'a mesh cut from the surface for each, one draw each (as before)', b: 'boxes in the lamps\' grid, no draws', set: on => { HD.gridDecals = on; }, needs: () => HD?.info.backend === 'webgpu', no: 'Decals in the lamps\' grid need WebGPU, so there is nothing to compare.' },
   sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
@@ -368,7 +374,7 @@ function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -382,7 +388,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -657,7 +663,7 @@ function keepSteps(R) {
 }
 function stepsLine(R) {
   const L = R.steps; if (!L) return '';
-  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => !/^(waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
+  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => e.did && !/^(holds|waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
   const held = L.find(e => /^stays on/.test(e.did)), off = Object.entries(R.off || {}).filter(([, v]) => v > 0);
   return `Quality steps: ${!L.length ? 'no window of frames counted' : `${L.length} windows`}${L.length ? ` (${n('slow')} slow, ${n('ok')} ok, ${n('fast')} fast)` : ''}${!L.length ? '' : done.length ? ' · ' + done.slice(0, 8).map(e => `${e.did} at ${(e.t / 1000).toFixed(0)} s`).join(', ') + (done.length > 8 ? ` and ${done.length - 8} more` : '') : ' · nothing changed'}`
     + (held ? ` · ${held.did}` : '') + (off.length ? ` · frames not counted: ${off.map(([k, v]) => `${v} ${{ pinned: 'with the tier pinned', long: 'after a gap of 100 ms or more', warming: 'under the loading screen' }[k] || k}`).join(', ')}` : '');

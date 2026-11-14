@@ -75,6 +75,6 @@ export const OPEN_SOURCE = [
 
 // Parts that ship inside the app but aren't open source, shown under the list above.
 export const OTHER_PARTS = [
-  { name: 'Qualcomm AI Engine runtime (QNN)', for: "running models on the NPU of Snapdragon phones (Android); our test APKs download it from Qualcomm, only on phones that can use it", licence: "Qualcomm's AI Stack License", native: 'plugins/npu/android/build.gradle',
+  { name: 'Qualcomm AI Engine runtime (QNN)', for: "running models on the NPU of Snapdragon phones (Android); fetched only on phones that can use it and only once a game uses face, hand or sound tracking: from Google Play as an on-demand part of the app, or from Qualcomm in our test APKs", licence: "Qualcomm's AI Stack License", native: 'plugins/npu/android/build.gradle',
     notice: '© Qualcomm Technologies, Inc. Qualcomm and Snapdragon are trademarks of Qualcomm Incorporated.' },
 ];

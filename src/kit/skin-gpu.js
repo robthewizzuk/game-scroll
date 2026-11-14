@@ -22,7 +22,7 @@
 import { StorageBufferAttribute, Frustum, Matrix4, Sphere, Vector3, NodeMaterial, VelocityNode } from 'three/webgpu';
 import { Fn, If, storage, uniform, instanceIndex, vertexIndex, uint, float, vec2, vec3, vec4, uvec4, mat3, mat4, abs, max, select, length, normalize,
   uintBitsToFloat, floatBitsToUint, unpackSnorm2x16, packSnorm2x16, unpackUnorm2x16, positionLocal, normalLocal, positionPrevious } from 'three/tsl';
-import { floats } from './slim.js';
+import { floats, SKIN_POOLED } from './slim.js';
 
 const WG = 64;           // points a group (the compute shader's workgroup)
 const MESH = 10;         // vec4s a mesh in the table: (rest, points, first group, this half), (bones, other half to fill, 0, 0), bind, bind inverse
@@ -156,7 +156,19 @@ class SkinPool {
     this.R.addUpdateRange(o0, n * 8); this.R.needsUpdate = true;
   }
   dropRest(g) { const R = this.rests.get(g); if (!R) return; this.rests.delete(g); this.restSpans.give(R.at, R.n); for (const e of [...this.meshes.values()]) if (e.rest === R) this.drop(e.o); }
-  drop(o) { const e = this.meshes.get(o); if (!e) return; this.meshes.delete(o); if (e.out >= 0) this.outSpans.give(e.out, e.n * 2); e.out = -1; this.marked(o); }
+  join(o) { const e = new Entry(o, this.restOf(o.geometry), this.frame); this.meshes.set(o, e); this.place(e); SKIN_POOLED.add(o); this.marked(o); return e; }
+  /**
+   * Takes a mesh on bones into the pool before it is shown (a level about to fade in, its shaders built ahead: hd3d.js
+   * fadeReady), so they are built as it will be drawn; it is posed once it is shown. Whether it is in the pool now.
+   */
+  take(o) {
+    if (!this.on || !o.isSkinnedMesh) return false;
+    if (this.meshes.has(o)) return true;
+    if (!skinFits(o)) return false;
+    if (!this.keyed) this.keyed = keyed(this.r);
+    this.join(o); return true;
+  }
+  drop(o) { const e = this.meshes.get(o); if (!e) return; this.meshes.delete(o); SKIN_POOLED.delete(o); if (e.out >= 0) this.outSpans.give(e.out, e.n * 2); e.out = -1; this.marked(o); }
   // a mesh came into the pool or left it: its materials are marked changed, so three compares its shaders' key again
   marked(o) { const m = o.material; for (const x of Array.isArray(m) ? m : [m]) if (x) x.needsUpdate = true; }
   // a mesh's two halves, emptied (all its points at its middle: nothing drawn) until it is first posed
@@ -220,8 +232,7 @@ class SkinPool {
       if (e && e.o.geometry && this.rests.get(o.geometry) !== e.rest) { this.drop(o); e = null; }   // (it was given another geometry)
       if (!e) {
         if (!skinFits(o)) continue;
-        e = new Entry(o, this.restOf(o.geometry), this.frame); this.meshes.set(o, e); this.place(e);
-        this.marked(o);
+        this.join(o);
       } else if (e.rest.v !== o.geometry.attributes.position.version) this.pack(o.geometry, e.rest);
     }
   }

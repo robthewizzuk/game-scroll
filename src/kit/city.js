@@ -57,6 +57,7 @@ import { Fleet, CITY_CARS, carKit, parkKinds, ParkedGlass } from './city-cars.js
 import { DRESS_SHAPES, signAtlas, dressBuilding, dressBits, dressShops, dressPlan, kerbs, blades, wires, drain } from './city-dress.js';
 import { Crowd } from './crowd.js';
 import { GroundPaint } from './ground-paint.js';
+import { Skyline } from './city-far.js';
 import { wallMarks, wallGeometry, wallMat } from './city-walls.js';
 import { human } from './models/human.js';
 
@@ -881,6 +882,18 @@ class People {
 
 const CYCLE = 26, GREEN = 10, AMBER = 2.5, HALF = 13;
 const TIER = { top: 1, mid: .65, low: .4 };
+// the far city's wall colours (city-far.js): each facade the style uses, as often as it is picked (glass towers by their glass, a
+// little lighter, as they look from afar), or the houses' paints
+function farColours(S) {
+  if (S.houses) return HOUSE_COLOURS;
+  const out = [];
+  for (const [name, w] of Object.entries(S.facades || {})) {
+    const F = FACADES[name]; if (!F) continue;
+    const c = F.kind === 'curtain' ? '#' + new Color(F.glass).lerp(new Color(F.trim), .35).getHexString() : F.wall;
+    for (let i = 0; i < Math.max(1, Math.round(w * 2)); i++) out.push(c);
+  }
+  return out.length ? out : ['#a8a090'];
+}
 const WALL_BUSY = { downtown: .6, oldtown: 1, harbour: 1, suburb: .3 };   // how much the street walls wear, by style
 const GROUND_KIND = { pave: 'paving', plaza: 'plaza', grass: 'grass' };   // chunk meshes the ground paint paints
 
@@ -895,9 +908,9 @@ export class City {
    * and stains on the street walls (city-walls.js).
    */
   constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, ...over } = {}) {
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, ...over } = {}) {
     this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
-    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, style: typeof style === 'string' ? style : 'downtown' };
+    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown' };
     if (this.opts.crowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
     // What a city keeps from one making to the next comes first: its textures and materials, and the
@@ -916,9 +929,9 @@ export class City {
     const scale = TIER[phoneClass()] ?? .65;
     // the ground: asphalt under the city, grass (or the harbour) round it
     // (the grass is a frame round the asphalt, not a sheet under it, so the two never fight over the same pixels)
-    const B = P.bounds, m = 40, gx0 = B.x0 - m, gx1 = B.x1 + m, gz0 = B.z0 - m, gz1 = B.z1 + m, far = 3000;
+    const B = P.bounds, m = 40, gx0 = B.x0 - m, gx1 = B.x1 + m, gz0 = B.z0 - m, gz1 = B.z1 + m, fr = 3000;
     const fieldTex = groundTex('grass', '#4f7a3a').clone(); fieldTex.repeat.set(.1, .1); fieldTex.needsUpdate = true;
-    const field = new Quads(); for (const [a, b, c, d] of [[gx0 - far, gz0 - far, gx1 + far, gz0], ...(P.water ? [] : [[gx0 - far, gz1, gx1 + far, gz1 + far]]), [gx0 - far, gz0, gx0, gz1 + (P.water ? far : 0)], [gx1, gz0, gx1 + far, gz1 + (P.water ? far : 0)]]) field.top(a, b, c, d, 0, 1);
+    const field = new Quads(); for (const [a, b, c, d] of [[gx0 - fr, gz0 - fr, gx1 + fr, gz0], ...(P.water ? [] : [[gx0 - fr, gz1, gx1 + fr, gz1 + fr]]), [gx0 - fr, gz0, gx0, gz1 + (P.water ? fr : 0)], [gx1, gz0, gx1 + fr, gz1 + (P.water ? fr : 0)]]) field.top(a, b, c, d, 0, 1);
     const ground = new Mesh(field.geometry(), new MeshStandardMaterial({ map: fieldTex, roughness: 1 })); ground.receiveShadow = true; this.group.add(ground); this.field = ground;
     const road = new Mesh(new PlaneGeometry(gx1 - gx0, gz1 - gz0), asphaltMat(S.ground).clone()); road.rotation.x = -Math.PI / 2; road.position.set((gx0 + gx1) / 2, 0, (gz0 + gz1) / 2); road.receiveShadow = true;
     road.material.map = road.material.map.clone(); road.material.map.repeat.set((gx1 - gx0) / 10, (gz1 - gz0) / 10); road.material.map.needsUpdate = true; this.group.add(road); this.asphalt = road;
@@ -934,6 +947,8 @@ export class City {
       this.groundPaint.add(road, 'asphalt', { base: S.ground }); this.groundPaint.add(ground, 'grass', { base: '#4f7a3a' });
       if (this.quay) this.groundPaint.add(this.quay, 'paving', { base: S.pavement });
     }
+    // past the streets, out to the horizon: a made-up city of stand-ins in this one's colours, its lights, and hills (city-far.js)
+    this.far = this.opts.far ? new Skyline(view, P, { seed, colours: farColours(S), street: S.ground, reach: this.opts.far, floors: S.floors, tall: S.tall, water: !!P.water, scale }) : null;
     // chunks of 2 x 2 blocks, built a few at a time, nearest first
     const cs = P.nx * P.nz > 9 ? 2 : 1; this.chunks = new Map();
     for (const b of P.blocks) {
@@ -1117,6 +1132,7 @@ export class City {
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f);
     this.groundPaint?.update(this.view.cam.position);
+    this.far?.update(this.night);
     return this;
   }
   /** Cars brake for this (the player, a fallen tree...) for one frame: { x, z } and how wide it is (r). */
@@ -1372,7 +1388,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.groundPaint?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.groundPaint?.dispose(); this.far?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
