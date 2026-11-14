@@ -118,6 +118,14 @@ export function canvasShows(r, through) {
   } catch (e) { console.warn('canvas alpha mode:', e); r.gsAlpha = mode; return ''; }
   return mode;
 }
+/**
+ * Reversed depth on the Next Gen WebGPU renderer (depth-gpu.js): 32-bit float depth that runs from 1 at the near
+ * plane to 0 at the far one, so far surfaces close together stay apart. Read when the renderer is made. Tests:
+ * `?depth=forward` in the page's address, or `on: false` before prepareGPU(), keeps 24-bit depth running forward,
+ * as three does by default; the steering list's `depth: false` does the same for a phone or driver that needs it.
+ * HD.info.depth says which.
+ */
+export const REVERSED = { on: !(typeof location !== 'undefined' && /[?&]depth=forward\b/.test(location.search)) };
 /** Tests: `on: false` before the Console WebGPU renderer is made draws its passes in 16-bit float pictures, as three does by default. */
 export const CONSOLE_8BIT = { on: true };
 /**
@@ -158,7 +166,7 @@ export function prepareGPU() {
       } catch (_) { /* stays 32 */ }
       const make = async (cv, bytes) => {
         const limits = { ...(bytes > 32 ? { maxColorAttachmentBytesPerSample: bytes } : {}), ...(pics > 16 ? { maxSampledTexturesPerShaderStage: pics } : {}), ...(list > 134217728 ? { maxStorageBufferBindingSize: list } : {}), ...(buf > 268435456 ? { maxBufferSize: buf } : {}) };
-        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, depth: SCREEN_DEPTH.on, powerPreference: 'high-performance', trackTimestamp: true, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
+        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, depth: SCREEN_DEPTH.on, powerPreference: 'high-performance', trackTimestamp: true, reversedDepthBuffer: REVERSED.on && STEER.depth !== false, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
         await r.init(); return r;
       };
       let r = null;

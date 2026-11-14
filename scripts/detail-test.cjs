@@ -23,6 +23,7 @@
 //   node scripts/detail-test.cjs --page decals [--webgpu] [--shots dir]      decals in the lamps' grid (HDView.decal on WebGPU): marks on a floor, a wall and a panel against the same marks as meshes, draws, shaders, a thing that asks for none, a lamp beside them, life, past 16 pictures
 //   node scripts/detail-test.cjs --page signs [--webgpu] [--shots dir]       signs that light with their own picture (gs.hd.sign(..., { picture: true })): each half of a red and blue screen lights its own side, a shiny floor shows the picture and a rough one blurs it, a white picture as the plain sign, painted again with no shader made
 //   node scripts/detail-test.cjs --page canvas [--webgpu] [--shots dir]      the 3D canvas opaque to the page while a view fills it (HD.opaque): opaque and blended give the same picture, a see-through view (AR) turns it back for its frames, a change of size keeps it
+//   node scripts/detail-test.cjs --page depth [--webgpu] [--shots dir] [--q depth=forward]   reversed 32-bit depth on WebGPU (gpu.js REVERSED): walls a metre apart at 500 m, 3 km and 8 km and cards 2 mm apart at arm's length, clean reversed and fighting as before; toScreen() the same for a game
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {

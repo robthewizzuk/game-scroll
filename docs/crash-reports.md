@@ -191,6 +191,7 @@ And what it can set (each only turns something off or down):
 | `half: false` | the kit's passes stay in full precision |
 | `pack: false` | textures made in code are not packed into the chip's compressed formats |
 | `submit: false` | each WebGPU pass goes to the chip by itself, as three.js sends it, not a frame's passes together (`src/kit/submit.js`) |
+| `depth: false` | the 3D depth runs forward in 24 bits as it did, not reversed in 32-bit floats (`REVERSED` in `src/kit/gpu.js`) |
 | `hide: true` | (with `game`) the game is not shown on this device |
 
 The QA panel's report (tap the GAME SCROLL logo, then Copy report) says which rules matched this

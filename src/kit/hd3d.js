@@ -2780,7 +2780,8 @@ export class HDView {
   /** Size the camera to the game's W x H (call from draw before render). */
   fit(W, H) { if (W !== this.W || H !== this.H || this.cam.aspect !== W / H) { this.W = W; this.H = H; this.cam.aspect = W / H; this.cam.updateProjectionMatrix(); } return this; }
   /** Logical screen position of a world point: [x, y, depth] (depth > 1 = behind the camera). */
-  toScreen(x, y, z) { const p = new Vector3(x, y, z).project(this.cam); return [(p.x + 1) / 2 * this.W, (1 - p.y) / 2 * this.H, p.z]; }
+  // (the third number: under 1 in front of the camera, over 1 behind it or nearer than its near plane, whichever way the renderer keeps depth: gpu.js REVERSED)
+  toScreen(x, y, z) { const p = new Vector3(x, y, z).project(this.cam); return [(p.x + 1) / 2 * this.W, (1 - p.y) / 2 * this.H, this.cam.reversedDepth ? 1 - p.z : p.z]; }
   /**
    * Compile every shader the scene can need now (hidden things too: muzzle flashes, explosions,
    * swapped materials), so nothing compiles mid-game and stutters. Call after building a level;
@@ -3004,6 +3005,7 @@ export class HDView {
     if (!baking && !off) HD.info.still = false;
     // (the canvas is opaque unless this view lets what is behind it show, AR's camera picture: gpu.js canvasShows)
     OPAQUE.on = HD.opaque !== false; { const m = canvasShows(r, !!this.clearBg); if (!baking && !off) HD.info.canvas = m; }
+    if (!baking && !off) HD.info.depth = r.reversedDepthBuffer ? 'reversed' : 'forward';   // (gpu.js REVERSED)
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
     ONE_SUBMIT.on = HD.oneSubmit !== false; ONE_SUBMIT.early = HD.submitEarly !== false; if (!baking && !off) { HD.info.submits = ONE_SUBMIT.sent - (HD.sentAt ?? ONE_SUBMIT.sent); HD.sentAt = ONE_SUBMIT.sent; }   // (submit.js: the frame before's)
@@ -3045,7 +3047,7 @@ export class HDView {
     const worldAuto = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;
     try {
     if (pm >= 0) enter('3D: occlusion');
-    const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !r.reversedDepthBuffer, pw, ph);
+    const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg, pw, ph);
     if (HD.occludeShow) DETAIL.occ = null;
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
