@@ -1542,6 +1542,47 @@ console.log('physics ok');
   F.dispose(); PG.dispose();
   console.log('city cars up close: seats behind see-through glass close by, dark glass further off, the paint look on cars drawn whole, the parked cars\' glass ok');
 }
+// what the street walls wear (city-walls.js): the same for the same seed, flat on the walls that face the street, posters, tags and grime
+{
+  const { layout, FACADES } = await import('../src/kit/city.js'), { wallMarks, wallGeometry } = await import('../src/kit/city-walls.js');
+  const WIN = { punched: [.24, .22, .76, .8], curtain: [.04, .22, .96, .96], house: [.3, .25, .7, .75], shed: [.1, .68, .9, .9] };
+  for (const style of ['oldtown', 'harbour']) {
+    const p = layout({ seed: 5, blocks: [4, 4], style }), inside = (x, z) => p.buildings.some(b => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1);
+    const run = () => { const out = []; for (const b of p.buildings) { const F = FACADES[b.facade]; wallMarks(b, F, WIN[F.kind], .15 + (b.shops ? 4.6 : 0), .15, 5, (x, z) => !inside(x, z), 1, out); } return out; };
+    const M = run(), kinds = new Set(M.map(m => m.q.w === 2 && m.q.h === .5 ? 'grime' : m.q.h === .72 ? 'tag' : m.q.w === 2 ? 'piece' : m.q.y >= 3 ? 'streak' : 'poster'));
+    assert.equal(JSON.stringify(M), JSON.stringify(run()), style + ': the same seed, the same walls');
+    for (const m of M) assert.ok(!inside(m.x + m.nx * .5, m.z + m.nz * .5) && inside(m.x - m.nx * .5, m.z - m.nz * .5), style + ': a mark off a street wall');
+    assert.ok(kinds.has('grime') && kinds.has('tag') && kinds.has(style === 'harbour' ? 'piece' : 'poster'), style + ': grime, tags and ' + (style === 'harbour' ? 'pieces' : 'posters') + ' (' + [...kinds] + ')');
+    const g = wallGeometry(M); assert.ok(g.index.count === M.length * 6 && g.attributes.color.count === M.length * 4, style + ': one quad a mark');
+  }
+  console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
+}
+// the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
+// pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
+{
+  const THREE = await import('three'), { GroundPaint } = await import('../src/kit/ground-paint.js'), { looksOf } = await import('../src/kit/looks.js');
+  const drawn = [], fake = { autoClear: true, getRenderTarget: () => null, setRenderTarget() {}, render(scene, cam) { drawn.push({ ...this.cur, l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, x: cam.position.x, z: cam.position.z }); } };
+  const view = { scene: new THREE.Scene(), _onGpu: false }, gp = new GroundPaint(view); gp.gl = fake;
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial()); road.updateMatrixWorld(true);
+  gp.add(road, 'asphalt', { base: '#333' });
+  assert.ok(looksOf(road.material).includes('groundpaint'), 'the road reads the ground paint');
+  const watch = L => { const rt = gp.target(L, null), set = rt.viewport.set.bind(rt.viewport); rt.viewport.set = (x, y, w, h) => { fake.cur = { x0: x, y0: y, w, h, L }; return set(x, y, w, h); }; };
+  for (const L of gp.levels) watch(L);
+  const at = new THREE.Vector3(.3, 1.6, -.2); gp.update(at);
+  const T = list => list.reduce((t, d) => t + d.w * d.h, 0);
+  assert.ok(T(drawn) === 2 * 1024 * 1024 && gp.U.gpOn.value === 1 && drawn.every(d => d.x0 >= 0 && d.y0 >= 0 && d.x0 + d.w <= 1024 && d.y0 + d.h <= 1024), 'both levels painted whole at first, in pieces inside the pictures');
+  // each piece's camera is over the world its texels stand for (columns along x, rows along -z, both wrapping round)
+  for (const d of drawn) { const S = d.L.size, N = d.L.px, c0 = (((d.x + d.l) / S * N) % N + N) % N, r0 = (((-(d.z + d.t)) / S * N) % N + N) % N; assert.ok(Math.abs(c0 - d.x0) < 1e-6 && Math.abs(r0 - d.y0) < 1e-6 && Math.abs((d.r - d.l) / S * N - d.w) < 1e-6, 'a piece over the world its texels stand for'); }
+  drawn.length = 0; at.x += 4.1; gp.update(at);
+  assert.ok(T(drawn) === 128 * 1024 && drawn.every(d => d.L === gp.levels[0]), 'a step along: only the fine level\'s uncovered strip is painted (' + T(drawn) + ' texels)');
+  drawn.length = 0; at.set(at.x + 200, 1.6, at.z - 300); gp.update(at);
+  assert.ok(T(drawn) === 2 * 1024 * 1024, 'a jump: both painted whole again');
+  drawn.length = 0; gp.update(at); assert.equal(drawn.length, 0, 'standing still paints nothing');
+  gp.stamp(at.x + 2, at.z + 1, 'oil', { size: .8 }); gp.stamp(at.x + 5000, at.z, 'skid', { size: 6 }); gp.update(at);
+  assert.ok(drawn.length >= 2 && drawn.length <= 8 && T(drawn) < 2 * 4096, 'a mark close by is painted on both levels; one far off is not (' + T(drawn) + ' texels)');
+  gp.dispose(); assert.equal(gp.U.gpOn.value, 0, 'disposed: the ground reads its own pictures again');
+  console.log('ground paint: painted whole, then only what a move uncovers, pieces over the right world, marks where they fall ok');
+}
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
 {
@@ -3030,7 +3071,9 @@ console.log('physics ok');
   const F = await import('../src/kit/models/field.js'), HH = await import('../src/kit/models/human-head.js'), { realFace } = await import('../src/kit/models/human.js'), { Color } = await import('three');
   const { HC, RELIEF, reliefOf } = HH, base = { jaw: 1, chin: 1, brow: .82, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 };
   // ---- the face from a seed: the same seed, the same face; age thins the lips, hoods the lids and greys the hair
-  { const a = realFace({ seed: 7, age: 25 }, false, base), b = realFace({ seed: 7, age: 25 }, false, base), c = realFace({ seed: 8, age: 25 }, false, base), old = realFace({ seed: 7, age: 75 }, false, base);
+  // (the sculpted face's measures: gnm: false; a real face is a GNM face unless the game says not)
+  assert.ok(realFace({ seed: 7 }, false, base).f.gnm && !realFace({ seed: 7, gnm: false }, false, base).f.gnm, 'a real face is a GNM face, the sculpted one with gnm: false');
+  { const a = realFace({ seed: 7, age: 25, gnm: false }, false, base), b = realFace({ seed: 7, age: 25, gnm: false }, false, base), c = realFace({ seed: 8, age: 25, gnm: false }, false, base), old = realFace({ seed: 7, age: 75, gnm: false }, false, base);
     assert.deepEqual(a, b, 'the same seed, the same face'); assert.notDeepEqual(a.f, c.f, 'another seed, another face');
     assert.ok(a.f.real === 1 && a.f.es === 1 && a.f.age === 25 && Object.values(a.f).every(v => typeof v !== 'number' || Math.round(v * 1e4) / 1e4 === v), 'life-size eyes, its age, every measure to four figures (the face names the saved shape)');
     assert.ok(old.f.lips < a.f.lips * .85 && old.f.lidFold > a.f.lidFold && old.f.eyes < a.f.eyes && old.f.ears > a.f.ears && old.f.nose > a.f.nose, `older: thinner lips (${a.f.lips} to ${old.f.lips}), lower lids, smaller eyes, bigger ears, a longer nose`);
@@ -3087,6 +3130,32 @@ console.log('physics ok');
     let drawn = 0; for (const [k, z] of fitW.front) if (plainW.front.has(k)) drawn = Math.min(drawn, z - plainW.front.get(k));
     assert.ok(fitW.w > plainW.w + .004, `a woman's face as wide at the mouth as a real one: ${(plainW.w * 2000).toFixed(0)} mm unfitted, ${(fitW.w * 2000).toFixed(0)} mm fitted`);
     assert.ok(drawn > -.001, `the throat under the chin never drawn in (at most ${(-drawn * 1000).toFixed(1)} mm)`); }
+  // ---- a GNM face (human({ gnm: true }), human-gnm.js): one of GNM Head's heads, drawn by sex and heritage from the seed, with the outlines
+  // the rest of the face is built along; its skin a field that is inside the head and outside round it, with no bubble of outside behind
+  // the lips (GNM's lips run on into each other: they are closed in a crease) and no pocket of inside by the neck (the sides of the far
+  // grid are worked out by regions, not handed on from node to node); the lips cut along one line where they meet
+  { const G = await import('../src/kit/models/human-gnm.js'), HS = await import('../src/kit/models/human-shapes.js'); await G.gnmReady();
+    const face = (seed, sex, heritage) => realFace({ seed, sex, heritage, gnm: true }, sex === 'f', base).f, k = face(4, 'f', 'east-asian'), g = k.gnm;
+    assert.deepEqual(face(4, 'f', 'east-asian').gnm.c, g.c, 'the same seed, the same head');
+    assert.ok(g.c.length === 32 && face(5, 'f', 'east-asian').gnm.c.some((v, i) => Math.abs(v - g.c[i]) > .3), 'another seed, another head');
+    const mean = (fem, kin) => G.gnmDraw(fem, kin), far = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
+    assert.ok(far(mean(true, { european: 1 }), mean(false, { european: 1 })) > 1 && far(mean(false, { african: 1 }), mean(false, { 'east-asian': 1 })) > 1, 'a woman\'s head and a man\'s, each background\'s, apart');
+    assert.ok(g.rim.w > .009 && g.rim.w < .014 && g.lip.half > .017 && g.lip.half < .029 && g.eye[0] > .026 && g.eye[0] < .035 && g.lip.up[0] > g.lip.line[0] && g.lip.dn[0] < g.lip.line[0],
+      `its outlines: an eye opening ${(g.rim.w * 2000).toFixed(0)} mm long, a mouth ${(g.lip.half * 2000).toFixed(0)} mm wide, the eyes ${(g.eye[0] * 2000).toFixed(0)} mm apart, each lip's red on its side of the line`);
+    const at = HH.Hd(0, HH.EYE[1], HH.EYE[2]), H = G.gnmHead(k, at), d = (x, y, z) => H.d(x, HC[1] + y, HC[2] + z);
+    assert.ok(d(0, 0, 0) < -.05 && d(0, .2, 0) > .05 && d(.15, 0, 0) > .03, 'inside the head, outside over it and beside it');
+    let bubble = -1; for (const x of [-.0145, .0145]) for (let z = .075; z < .094; z += .001) bubble = Math.max(bubble, d(x, -.066, z));
+    let pocket = 1; for (let x = .085; x < .12; x += .005) pocket = Math.min(pocket, d(x, -.093, -.053));
+    assert.ok(bubble < 0 && pocket > 0, `no bubble behind the lips (${(bubble * 1000).toFixed(1)} mm), no pocket beside the neck (${(pocket * 1000).toFixed(1)} mm)`);
+    let deep = 0, line = 0; HS.finish(HH.head({ face: k, neck: 1, hair: 'bald' }, []), { cell: .002, bones: () => [['head', 1]], keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01,
+      after: m => { const r = HH.partLips(m, k); line = r.line.length; for (const [u] of r.line) if (r.P[u * 3 + 2] - HC[2] < .09 && Math.abs(r.P[u * 3]) < .017) deep++; return r; } });
+    assert.ok(line > 30 && deep === 0, `the lips cut along where they meet (${line} points), never deep in the head (${deep})`);
+    // grown old (gnmAged): the same head at 78 has jowls over the line of the jaw and its lips sunk back
+    const aged = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 78 }, true, base).f, young = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 24 }, true, base).f;
+    const Ho = G.gnmHead(aged, at), Hy = G.gnmHead(young, at), front = (x, hy) => { let z = .2; while (z > 0 && Hy.d(x, HC[1] + hy, HC[2] + z) > 0) z -= .0002; return z; };
+    const jx = young.gnm.lip.half + .019, jy = young.gnm.lip.line[0] - .04, jz = front(jx, jy), ly = young.gnm.lip.line[0] + .003, lz = front(0, ly);
+    const jowl = -Ho.d(jx, HC[1] + jy, HC[2] + jz), sunk = Ho.d(0, HC[1] + ly, HC[2] + lz);
+    assert.ok(jowl > .001 && sunk > .0005, `grown old: jowls ${(jowl * 1000).toFixed(1)} mm out, lips ${(sunk * 1000).toFixed(1)} mm back`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
@@ -6022,6 +6091,16 @@ console.log('physics ok');
   assert.equal(pickEffect(on, { 'light shafts': 1, bloom: 1 }, null, null), 'reflections', 'one step each');
   assert.equal(pickEffect(new Set(['ao']), { ao: 1 }, null, null), null, 'then the resolution');
   console.log('gs.hd effects that step down by their own cost ok');
+}
+
+// the chip's own times are checked against the time its frames took (hd3d.js chipFits): Apple's chips time each pass
+// from stage boundaries, so a chain of passes overlap and add up to more than the frames take
+{
+  const { chipFits } = await import('../src/kit/hd3d.js');
+  assert.ok(chipFits(9, 16.7) && chipFits(16, 16.7) && chipFits(34, 16.7), 'a chip busy for its whole frame, or a read that lags a frame or overlaps on a software chip, fits');
+  assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
+  assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
+  console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
 }
 
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
