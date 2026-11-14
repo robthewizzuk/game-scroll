@@ -30,13 +30,15 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
-    // QNN_DOWNLOAD: our own APKs (debug builds) leave Qualcomm's QNN libraries out (android/app/build.gradle)
-    // and fetch them on phones with a supported Snapdragon NPU (QnnRuntime.java). Store (release) builds
-    // carry them and never download code: Google Play doesn't allow it.
+    // Qualcomm's QNN libraries are never in the app itself; on a phone with a supported Snapdragon NPU, once
+    // a game first wants a model (QnnRuntime.java):
+    // QNN_DOWNLOAD: our own APKs (debug builds) fetch them from Qualcomm's release on Maven Central.
+    // QNN_MODULE: store (release) builds ask Google Play for the on-demand module that carries them
+    // (android/qnn), since Play doesn't let an app download code itself.
     buildFeatures { buildConfig = true }
     buildTypes {
-        debug { buildConfigField 'boolean', 'QNN_DOWNLOAD', String.valueOf(qnnOn) }
-        release { buildConfigField 'boolean', 'QNN_DOWNLOAD', 'false' }
+        debug { buildConfigField 'boolean', 'QNN_DOWNLOAD', String.valueOf(qnnOn); buildConfigField 'boolean', 'QNN_MODULE', 'false' }
+        release { buildConfigField 'boolean', 'QNN_DOWNLOAD', 'false'; buildConfigField 'boolean', 'QNN_MODULE', String.valueOf(qnnOn) }
     }
 }
 
@@ -48,14 +50,16 @@ repositories {
 dependencies {
     implementation project(':capacitor-android')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    // ONNX Runtime (MIT) with the QNN execution provider; it brings Qualcomm's QNN runtime libraries
+    // ONNX Runtime (MIT) with the QNN execution provider. Qualcomm's QNN runtime libraries it would bring
     // (com.qualcomm.qti:qnn-runtime, Qualcomm's AI Stack License, listed under Settings › Licence › Other
-    // parts). Debug builds leave those out of the APK and download the same version on a supported
-    // Snapdragon (pinned in src/main/assets/qnn-runtime.json: run node scripts/qnn-pin.mjs after
-    // changing this version).
+    // parts) are left out here: the store app's on-demand Play module (android/qnn) carries them, and debug
+    // builds download the same version on a supported Snapdragon (pinned in src/main/assets/qnn-runtime.json:
+    // run node scripts/qnn-pin.mjs after changing this version).
     def ort = '1.29.0'
-    if (qnnOn) implementation "com.microsoft.onnxruntime:onnxruntime-android-qnn:$ort"
+    if (qnnOn) implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:$ort") { exclude group: 'com.qualcomm.qti', module: 'qnn-runtime' }
     else implementation "com.microsoft.onnxruntime:onnxruntime-android:$ort"
+    // Google Play Feature Delivery: asks Play for the on-demand QNN module in store builds
+    implementation "com.google.android.play:feature-delivery:2.1.0"
     def camerax = '1.4.2'
     implementation "androidx.camera:camera-core:$camerax"
     implementation "androidx.camera:camera-camera2:$camerax"
