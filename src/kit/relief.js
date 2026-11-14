@@ -163,7 +163,7 @@ function start(mesh, o) {
  */
 export function relief(target, o = {}) {
   target?.traverse?.(x => {
-    if (!x.isMesh || x.isDetailMesh) return;
+    if (!x.isMesh || x.isDetailMesh || x.isCutMesh) return;
     if (o === false) { if (RELIEF.delete(x)) { delete x.userData.relief; reliefNews.n++; } }
     else start(x, o);
   });

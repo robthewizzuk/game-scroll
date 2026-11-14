@@ -65,7 +65,7 @@ import { ShadowTiles, TILES } from './shadow-tiles.js';
 import { LampPool } from './lamps.js';
 import { binCapsules } from './sunmask.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
-import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
+import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutTwin, cutUpdate, headsOf, drawnOf, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { eachThing, eachShown, thingsOf } from './scene-list.js';
@@ -427,8 +427,8 @@ export const HD = {
   get slim() { return SLIM.on; }, set slim(v) { SLIM.on = v !== false; }, get slimmed() { const S = SLIM.stats; return { meshes: S.meshes, wasMB: +(S.was / 1048576).toFixed(2), nowMB: +(S.now / 1048576).toFixed(2) }; },
   /** The bytes the geometries under a thing keep, each list once: { js, chip (worked out for the renderer in use), points } (tests, the engine test scenes). */
   meshBytes(root) { return meshBytes(root, this.info.backend === 'webgpu'); },
-  /** Cluster detail for big still meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is taken; detailPx: pixels its simpler parts may be out by. */
-  detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
+  /** Cluster detail for big meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is tried (under DETAIL_SURE it stays only while it pays); detailPx: pixels its simpler parts may be out by. */
+  detail: true, detailMin: 8000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
   /**
    * Real surface detail (gs.models.relief): false draws those meshes flat, as they were. reliefPx: pixels its
    * simpler parts may be out by (2.5: the bumps' light and shade still come from the material's own picture,
@@ -2102,14 +2102,14 @@ export class HDView {
    */
   detail(meshes, o = {}) {
     const set = o === false ? false : typeof o.px === 'number' ? o.px : true;
-    for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh) x.userData.detail = set; });
+    for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh && !x.isCutMesh) x.userData.detail = set; });
     return this;
   }
   /** Is cluster detail still getting ready: a big mesh not looked at yet or waiting for its clusters, or a twin waiting for its shader? (tests, the engine test scenes) */
   detailPending() {
     if (HD.detail === false) return false;
     const D = this.details;
-    if (D) for (const e of D.map.values()) if (!e.twin || (e.twin.layers.mask & HOLD_BIT)) return true;
+    if (D) for (const e of D.map.values()) if (!e.twin || e.parts.some(p => p.twin.layers.mask & HOLD_BIT)) return true;
     let more = false;
     eachShown(this.scene, o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (reliefBudget() > 0 && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
     return more;
@@ -2183,7 +2183,7 @@ export class HDView {
         const onLayer = go => inReach(o, go);
         try { (r.isWebGPURenderer ? compileGPU(r, o, this.cam, this.scene, onLayer, this) : Promise.resolve(forPicture(() => r.compileAsync(o, this.cam, this.scene)))).then(fin, fin); } catch (_) { fin(); }
       }
-      if (!j.done) { if (o.isDetailMesh) j.keep = true; held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
+      if (!j.done) { if (o.isDetailMesh || o.isCutMesh) j.keep = true; held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
     });
     HD.info.held = held.size;
   }
@@ -2242,7 +2242,7 @@ export class HDView {
    */
   newRenderer() {
     if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
-    this.shJobs?.clear(); this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
+    this.shJobs?.clear(); this._fadeFrames = 0; this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
     this.holdBase = false; this.warmed = false; this.aheadAgain = true;
   }
   /**
@@ -2693,6 +2693,7 @@ export class HDView {
       // (a gs.props set by how many copies it has, not by how many of them the last camera to draw it could see: that changes as the camera turns, and nothing about the shadows does)
       else if (o.isInstancedMesh2) { h += (((o._parentLOD || o).instancesCount ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = (o._parentLOD || o).instancesCount ?? 1; }
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
+      else if (o.isDetailMesh && o.copySrc) { h += o.copyStamp * 7 * w; wide = true; copies = o._n; }   // (copies drawn in clusters: a count that goes up when one moves, or the set does)
       else if (o.isBatchedMesh && !o.isDetailMesh) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
       if (o.isSkinnedMesh && o.skeleton) {
         // a posed body: where its bones are says where it is (a ball round them, and as much again as a third of the body's own size for the flesh on them)
@@ -2712,7 +2713,7 @@ export class HDView {
       const still = rec.still >= (HD.shadowStill ?? SH_STILL) && !held, bit = held ? 0 : still ? SH_STILL_BIT : SH_MOVE_BIT;
       if ((o.layers.mask & SH_BITS) !== bit) o.layers.mask = (o.layers.mask & ~SH_BITS) | bit;
       const bs = !wide && !ball && g && (g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere));
-      const tris = o.isDetailMesh ? o.fullTris : g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
+      const tris = o.isDetailMesh ? o.fullTris * (o.copySrc ? o._n : 1) : g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
       if (bs) { SH_S.copy(bs).applyMatrix4(o.matrixWorld); ball = true; }
       for (let i = 0; i < n; i++) {
         const l = L[i];
@@ -2868,7 +2869,7 @@ export class HDView {
     // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
     const TK = wantRefl && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
     if (TK) {
-      if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) fn(e.o, e.twin); } }); }
+      if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) for (const p of e.parts) fn(e.o, p.twin); } }); }
       this._tracer.show = !!HD.traceShow;
       if (pm >= 0) enter('3D: traced reflections');
       if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) tr = this._tracer;
@@ -3190,7 +3191,7 @@ export class HDView {
     const cv = r.domElement; if (cv.width !== ow || cv.height !== oh) r.setSize(ow, oh, false);
     gridRoom(r, this);   // (before this view's first picture of any size: a small one for its card would set the lights' room)
     if (!baking && !off) speed.gpu = !!G;   // (frame generation needs the game on screen drawn with WebGPU)
-    autoDetail(this, now, !!(baking || off));
+    autoDetail(this, now, !!(baking || off), ph);
     autoCopies(this, ph, now, !!(baking || off));
     if (this.occHid?.size) showAll(this);   // (nothing stays hidden between frames: see occludeStep)
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
@@ -3858,6 +3859,10 @@ function fadeReady(v, G, r, per) {
   // shown, on the camera's layer, and an empty list of copies given one), into the picture the scene is drawn into
   const build = (o, k, mats) => {
     if (jobs.has(k) || fadeBusy.has(r) || v.shJobs?.has(k)) return;   // (v.shJobs: holdNew is building it)
+    // (the view's own shaders first: builds wait their turn on a renderer, and things new on screen are held back until
+    // theirs are built, so a twin built in a view's first frames, or while the view builds, kept the whole view's copies
+    // from showing for that long)
+    if ((v._fadeFrames || 0) < FADE_SETTLE || v.shadersLeft > 0) return;
     jobs.add(k); fadeBusy.add(r);
     let fin = false;
     const done = ok => { if (fin) return; fin = true; if (ok) seen.add(k); jobs.delete(k); fadeBusy.delete(r); clearTimeout(cap); }, cap = setTimeout(() => done(false), 4000);
@@ -3874,6 +3879,20 @@ function fadeReady(v, G, r, per) {
     // a level on bones not shown yet is taken into the chip's pool now (skin-gpu.js), so its shaders are built as
     // they will be drawn: posed from the pool, not in their own vertex stage
     if (o.isSkinnedMesh) SK?.take(o);
+    // a level cluster detail draws through cut twins (detail.js cutTwin): the twins are what is drawn, theirs the shaders
+    // to build (their own ones are holdNew's), each with its part of the dithered twins
+    const e = o.userData.gsDetailed ? v.details?.map.get(o) : null;
+    if (e && per === 'object') {
+      const tw = fadeTwinsOf(o, G, per);
+      if (!tw || (Array.isArray(tw) && tw.some(t => !t))) return false;
+      for (const p of e.parts) {
+        const t = p.twin; if (!t?.isCutMesh) continue;
+        if (!(t.layers.mask & 1) && !o.userData.noHold) return false;   // (its own shader still building)
+        const m = partMaterial(tw, p); if (!m) continue;
+        const k = shaderKeyAs(t, m); if (!seen.has(k)) { build(t, k, m); return false; }
+      }
+      return true;
+    }
     // a person's level coming in is drawn with its own shader once the fade ends: built too (on WebGL nothing else
     // builds a hidden thing's ahead), and while holdNew has it back for that build, it waits
     if (per === 'object' && !o.userData.noHold) {
@@ -3890,7 +3909,9 @@ function fadeReady(v, G, r, per) {
   };
 }
 const NOT_NOW = () => false;
+const FADE_SETTLE = 20;   // frames a view draws before twins are built (fadeReady)
 function fadeOn(v, G, r, smooth, still) {
+  v._fadeFrames = (v._fadeFrames || 0) + 1;
   const keep = v._fadeKeep ||= []; keep.length = 0;
   const ready = still ? NOT_NOW : fadeReady(v, G, r, 'object');
   fadeStep(v.scene, ready, smooth, FADE_LIST);
@@ -3898,9 +3919,18 @@ function fadeOn(v, G, r, smooth, still) {
   for (let i = 0; i < FADE_LIST.length; i += 3) {
     const o = FADE_LIST[i], val = FADE_LIST[i + 1], casts = FADE_LIST[i + 2];
     keep.push(o, o.material, o.visible, o.castShadow, o.onBeforeRender);
-    if (!val) { o.visible = false; continue; }   // (a level waiting for its twins' shaders: not shown yet)
+    // (a level cluster detail draws through cut twins, detail.js cutTwin: the twins fade in its place, with its share)
+    const e = o.userData.gsDetailed ? v.details?.map.get(o) : null;
+    if (e) for (const p of e.parts) { const t = p.twin; if (t) keep.push(t, t.material, t.visible, t.castShadow, t.onBeforeRender); }
+    if (!val) { o.visible = false; if (e) for (const p of e.parts) if (p.twin) p.twin.visible = false; continue; }   // (a level waiting for its twins' shaders: not shown yet)
     o.material = fadeTwinsOf(o, G, 'object');
     if (!G) { hookGL(o); if (!casts) o.castShadow = false; }   // (WebGL: the value goes in before each draw; the shadow from one level at a time)
+    if (e) for (const p of e.parts) {
+      const t = p.twin; if (!t?.isCutMesh) continue;   // (a still mesh's clusters, DetailMesh: drawn as they are)
+      const m = partMaterial(o.material, p); if (!m) continue;
+      t.material = m; t.userData.gsFadeV = o.userData.gsFadeV;
+      if (!G) { hookGL(t); if (!casts) t.castShadow = false; }
+    }
   }
   if (G) for (const s of v.sets || []) {
     const f = s.userData.gpuTwin?.fades?.(); if (!f) continue;
@@ -4035,47 +4065,79 @@ function unbatch(B, b, se) {
 }
 function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B.list[0], v.scene.matrixWorld.elements); }
 // Cluster detail (HD.detail, on by default; detail.js): a Nanite-style level of detail for the game's big
-// still meshes (HD.detailMin triangles or more: a hillside, a cliff, a cathedral made in code). Where
+// meshes (HD.detailMin triangles or more: a hillside, a cliff, a cathedral made in code, a person close up). Where
 // automatic LOD above swaps a whole mesh for a simpler copy, here the mesh is cut into clusters of a few
 // hundred triangles with coarser and coarser versions of each neighbourhood, and every frame each part of
 // it is drawn only as finely as shows in the picture (within HD.detailPx pixels) and not at all where it
 // is out of view: the near end of a long wall at full detail, the far end at a fraction, with no cracks
 // between them. Shadow maps pick for themselves the same way. So a model can carry far more triangles
 // close up without costing more far away.
+// As Unreal's Nanite now does, it takes nearly everything solid: still or moving (a twin follows its mesh's
+// place every frame and is picked from where the camera is in the mesh's own space, so a mesh that is carried
+// about, spun or thrown is picked just as a still one), copies (a three InstancedMesh: each copy picked on
+// its own, a near copy fine and a far one from a few clusters), meshes in several materials (each material's
+// part built and drawn by a twin of its own, the seams between them kept still at every level so they never
+// crack), cut-out leaves and fences (alpha-tested: built without the rough merge that would melt their cards
+// together), and meshes on bones or with blend shapes (people, animals: one cut a frame from where the camera
+// is in the mesh's space at rest through the bone that carries most of it, written into an index list of the
+// twin's own; the twin is skinned as the mesh was, on WebGPU by the chip's skinning pool from the mesh's own
+// posed points; detail.js cutTwin).
 // The clusters take a second or so for each quarter of a million triangles, in a worker; the mesh draws
 // whole until they arrive (and until the cluster shader has built, in the background), and they are kept
 // by the mesh's content (memory, then IndexedDB), so the next round and the next visit have them at once.
 // The game's mesh stays in the scene, untouched, for the game and for raycasts, on the batch layer no
-// camera draws; a DetailMesh twin is drawn in its place and follows its place, material, shadows and
-// visibility. The moment the mesh's geometry or material stops fitting, or it leaves the scene, the twin
-// goes and the mesh draws as itself again. Not for: skinned, morphing, instanced, see-through,
-// alpha-tested, multi-material and moving-vertex meshes (leaves, grass, water), marked reflectors, and
-// mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
-const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6;
+// camera draws; twins are drawn in its place and follow its place, materials, shadows and visibility. The
+// moment the mesh's geometry or material stops fitting, or it leaves the scene, the twins go and the mesh
+// draws as itself again. Not for: see-through materials (drawn back to front), materials that move points
+// in the shader (water, wind in leaves: positionNode, displacement maps), meshes whose points the game
+// rewrites (their clusters would be of the old shape), copies on bones, gs.props sets (they have levels of
+// their own: autoCopies below), marked reflectors, and mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
+// A set of copies is taken from DETAIL_COPY_TRIS triangles a copy and HD.detailMin in all, up to
+// DETAIL_COPIES copies: each copy is a few draws of its own, so thousands of small ones are better whole.
+const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6, DETAIL_COPY_TRIS = 2000, DETAIL_COPIES = 256;
+// Does a mesh pay? Triangles left out against the draws added. A mesh drawn whole is one draw; in clusters it is a
+// draw for each run of them, and its twins are looked after every frame. The rates are the Galaxy Z Fold 8's (2026-11-12
+// engine test scenes: 740,000 fewer triangles saved 6.9 ms of the chip; a run inside a mesh's own draws, the same shader and
+// lists, is far cheaper than a draw of a thing of its own, taken as a sixth of one). A mesh of DETAIL_SURE triangles or more
+// stays in (a big one saves plenty once it is a few metres off); a smaller one (HD.detailMin up to that) is tried, and one that
+// over DETAIL_TRY frames saves less than it costs goes back to drawing whole until DETAIL_AGAIN ms later.
+const DETAIL_SURE = 20000, TRI_MS = 9.3e-6, RUN_MS = .002, MESH_MS = .01, DETAIL_TRY = 90, DETAIL_AGAIN = 12000;
+const DETAIL_RESTS = new WeakMap();   // mesh -> when it may be tried again
+const DRAWN = [0, 0];
 const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock', 'rooms']);   // kit looks that leave the points where they are
 const NO_DETAIL = new WeakSet();   // geometries that can't be clustered, aren't worth it, or keep changing
 let detailAsking = 0;
 const OBR = Object3D.prototype.onBeforeRender, OAR = Object3D.prototype.onAfterRender;
 function detailMaterial(m) {
-  if (!m || Array.isArray(m) || m.transparent || m.alphaTest > 0 || m.alphaHash || m.wireframe || m.displacementMap || m.positionNode || m.isShaderMaterial || m.isRawShaderMaterial) return false;
+  if (!m || Array.isArray(m) || m.transparent || m.wireframe || m.displacementMap || m.positionNode || m.isShaderMaterial || m.isRawShaderMaterial) return false;
   if (Object.hasOwn(m, 'onBeforeCompile') && m.onBeforeCompile !== BASE_OBC) { const l = looksOf(m); if (!l.length || !l.every(n => DETAIL_LOOKS.has(n))) return false; }
   return true;
 }
+// (a list of materials: every one of them, each drawn by a part of its own)
+const detailMaterials = m => (Array.isArray(m) ? m.length > 0 && m.every(detailMaterial) : detailMaterial(m));
+const cutOut = m => (Array.isArray(m) ? m.some(cutOut) : m.alphaTest > 0 || !!m.alphaHash);
 const detailVersion = g => g.attributes.position.version + (g.index ? g.index.version * 65537 : 0);
-// a mesh a twin can stand in for: still, drawn the ordinary way, on the ordinary layer
+// what kind of twin a mesh gets: 'cut' (on bones, or with blend shapes), 'copies' (an InstancedMesh) or 'mesh'
+const detailKind = o => (o.isSkinnedMesh || o.morphTargetInfluences?.length ? 'cut' : o.isInstancedMesh ? 'copies' : 'mesh');
+// a mesh twins can stand in for: drawn the ordinary way, on the ordinary layer
 function detailFits(o) {
-  if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isSkinnedMesh || o.morphTargetInfluences) return false;
+  if (!o.isMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isDetailMesh || o.isCutMesh) return false;
   const ud = o.userData; if (ud.detail === false || ud.gsTwin || ud.gsReflect || ud.decal) return false;
-  if (!detailMaterial(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
-  return (o.layers.mask & ~SH_BITS) === 1 && o.frustumCulled && o.onBeforeRender === OBR && o.onAfterRender === OAR;
+  if (o.isInstancedMesh && (o.isSkinnedMesh || o.morphTargetInfluences || o.count > DETAIL_COPIES || o.count < 1)) return false;
+  if (o.isSkinnedMesh && !o.skeleton) return false;
+  if (!detailMaterials(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
+  return (o.layers.mask & ~SH_BITS) === 1 && o.onBeforeRender === OBR && o.onAfterRender === OAR;
 }
 function detailable(o) {
   if (!detailFits(o)) return false;
   const ud = o.userData, g = ud.gsLod?.base || o.geometry;
   if (!g || NO_DETAIL.has(g)) return false;
-  if (g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;   // (a geometry's groups only matter with a list of materials, turned away above)
-  const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
-  return tris >= (ud.detail ? DETAIL_OWN_TRIS : HD.detailMin) && canCluster(g);
+  if (g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;
+  const m = ud.gsGlMat || o.material;
+  if (Array.isArray(m) && (g.groups.length < 2 || g.groups.some(gr => !m[gr.materialIndex ?? 0]))) return false;   // (a list of materials draws by its groups: every group needs one)
+  const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3, n = o.isInstancedMesh ? o.count : 1;
+  const enough = ud.detail ? tris >= DETAIL_OWN_TRIS : n > 1 ? tris >= DETAIL_COPY_TRIS && tris * n >= HD.detailMin : tris >= HD.detailMin;
+  return enough && canCluster(g, detailKind(o) === 'cut');
 }
 // Real surface detail (gs.models.relief, relief.js): a mesh whose relief has arrived is drawn by a twin
 // made from the relief's geometry, however few triangles the mesh itself has. The mesh keeps its own
@@ -4104,16 +4166,37 @@ const reliefBudget = () => (HD.relief === false ? 0 : Math.max(0, HD.reliefTris 
 function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
 function detailDrop(v, e, never = false) {
   const o = e.o, D = v.details;
-  D.map.delete(o); e.gone = true;
+  D.map.delete(o); e.gone = true; if (e.kind === 'cut' && e.shown) v._shAgain = 3;
   if (never && !e.relief) NO_DETAIL.add(e.g);
-  if (e.twin) { e.twin.removeFromParent(); e.twin.dispose(); e.twin = null; }
+  for (const p of e.parts) if (p.twin) { p.twin.removeFromParent(); if (p.twin.isDetailMesh) p.twin.dispose(); else p.twin.geometry.dispose(); p.twin = null; }
+  e.twin = null;
   if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
   if (o.userData.gsLod === null) o.userData.gsLod = undefined;   // (automatic LOD may have it again)
+  delete o.userData.gsDetailed;
 }
 function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.map.values()]) detailDrop(v, e); }
+// the parts of a mesh: one for each material of a list (detail.js partsOf), or the whole of it
+function detailParts(o, g) {
+  const m = o.userData.gsGlMat || o.material;
+  if (!Array.isArray(m)) return [{ g, material: -1, cl: null, twin: null }];
+  const ps = partsOf(g); return ps ? ps.map(p => ({ g: p.g, material: p.material, cl: null, twin: null })) : null;
+}
+// a part's material, as the mesh has it now
+const partMaterial = (m, p) => (p.material < 0 ? m : Array.isArray(m) ? m[p.material] : null);
+function detailEntry(o, g, R) {
+  if (R) return { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), kind: 'mesh', parts: [{ g: R.geometry, material: -1, cl: R.clusters, twin: null }], twin: null, failed: false, gone: false, relief: R, shown: false, mats: Array.isArray(o.material) };
+  const parts = detailParts(o, g); if (!parts) return null;
+  const tris = (g.index ? g.index.count : g.attributes.position.count) / 3, full = tris * (o.isInstancedMesh ? o.count : 1);
+  return { o, g, base: g, ver: detailVersion(g), kind: detailKind(o), parts, twin: null, failed: false, gone: false, relief: null, shown: false, mats: Array.isArray(o.userData.gsGlMat || o.material), cut: cutOut(o.userData.gsGlMat || o.material),
+    full, trial: full < DETAIL_SURE && o.userData.detail == null, wf: 0, gain: 0 };
+}
 // before the frame's other housekeeping: new big meshes are found and asked for, twins are made and follow their meshes
-function autoDetail(v, now, quiet) {
+function autoDetail(v, now, quiet, ph = 1080) {
   const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
+  // a body on bones (cut twins) shown in clusters or whole again: its shadow is drawn again over the next frames, until
+  // it is posed for every pass on the chip (skin-gpu.js), where a body that keeps still would otherwise keep a shadow
+  // drawn before then (the shadow cache sees nothing move)
+  if (v._shAgain > 0) { v._shAgain--; v.shadowsDirty(); }
   // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
   // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off. A step finer
   // that went over is not tried again (D.bad: the scale that went over) until the view is a quarter lighter or
@@ -4135,52 +4218,80 @@ function autoDetail(v, now, quiet) {
   const rpx = HD.reliefPx * D.rk;
   if (HD.detail === false) { if (D.map.size) detailDropAll(v); return; }
   for (const e of D.map.values()) {
-    const o = e.o, g = e.g, base = e.base, tw = e.twin, m0 = o.userData.gsGlMat || o.material, m = e.relief && m0 ? reliefMaterial(m0) : m0;
+    const o = e.o, base = e.base, m0 = o.userData.gsGlMat || o.material;
     // the game changed it: back to drawing as itself (a geometry whose points changed under us is left alone from then on)
     const changed = detailVersion(base) !== e.ver, R = reliefOf(o);
     const ud0 = o.userData, lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);   // (1: drawing as itself; BATCH_BIT: its twin is; anything else: the game moved it to a layer of its own)
-    if (changed || e.failed || (o.geometry !== base && ud0.gsLod?.base !== base) || ud0.detail === false || ud0.gsReflect || !detailMaterial(m0) || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || !o.frustumCulled || o.onBeforeRender !== OBR || !inScene(o, v.scene)) { detailDrop(v, e, changed || e.failed); continue; }
+    if (changed || e.failed || (o.geometry !== base && ud0.gsLod?.base !== base) || ud0.detail === false || ud0.gsReflect || !detailMaterials(m0) || Array.isArray(m0) !== e.mats || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || o.onBeforeRender !== OBR || !inScene(o, v.scene) ||
+      (e.kind === 'copies' && (o.count > DETAIL_COPIES || o.count < 1 || (e.twin && !!o.instanceColor !== !!e.twin._colorsTexture) || o.instanceMatrix.count > (e.twin?.copyMax ?? Infinity))) ||
+      (e.kind === 'cut' && o.isSkinnedMesh && !o.skeleton) || (!e.relief && cutOut(m0) !== e.cut)) { detailDrop(v, e, changed || e.failed); continue; }
     if (e.relief ? R !== e.relief || !reliefOn : R?.state === 'ready' && reliefOn) { detailDrop(v, e); D.t = 0; continue; }   // (its relief was taken off or turned off, or has just arrived: looked at again below)
-    if (!tw) {
-      if (!e.cl) continue;   // still being built
-      if (!e.relief && e.cl.coarseTris > e.cl.fullTris * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
+    if (!e.twin) {
+      if (e.parts.some(p => !p.cl)) continue;   // still being built
+      let coarse = 0, full = 0; for (const p of e.parts) { coarse += p.cl.coarseTris; full += p.cl.fullTris; }
+      if (!e.relief && coarse > full * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
       if (o.geometry !== base) o.geometry = base;
       o.userData.gsLod = null;
-      const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : e.relief ? rpx : null });
-      t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
-      if (g.userData.gsGrid) gridNormals(t, g.userData.gsGrid.scale);
-      // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
-      v.scene.add(t); const ch = v.scene.children; ch.unshift(ch.pop());
+      const px = typeof o.userData.detail === 'number' ? o.userData.detail : e.relief ? rpx : null;
+      for (const p of e.parts) {
+        const mt = partMaterial(e.relief && m0 ? reliefMaterial(m0) : m0, p);
+        const t = p.twin = e.kind === 'cut' ? cutTwin(o, p.g, mt, p.cl, { px }) : new DetailMesh(p.g, mt, p.cl, { px, copies: e.kind === 'copies' ? o : null });
+        t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
+        if (p.g.userData.gsGrid) gridNormals(t, p.g.userData.gsGrid.scale);
+        // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
+        v.scene.add(t); const ch = v.scene.children; ch.unshift(ch.pop());
+      }
+      e.twin = e.parts[0].twin;
     }
-    const t = e.twin, ud = o.userData, td = t.userData;
+    const ud = o.userData;
     o.updateWorldMatrix(true, false);
-    const grid = g.userData.gsGrid;   // (a relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix puts them back where the mesh is)
-    if (grid) t.matrix.multiplyMatrices(o.matrixWorld, grid.matrix); else t.matrix.copy(o.matrixWorld);
-    // (the twin sits right under the scene: its own matrix is where the mesh is in the world's numbers, and its world matrix the
-    // scene's times that, which while a view draws is a step back by the drawing's centre: origin.js)
-    { const te = t.matrix.elements, se = v.scene.matrixWorld.elements; te[12] -= se[12]; te[13] -= se[13]; te[14] -= se[14]; }
-    t.matrixWorld.multiplyMatrices(v.scene.matrixWorld, t.matrix);
-    t.visible = shownInScene(o, v.scene);
-    if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
-    t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : e.relief ? rpx : null;
-    // (once it has drawn it is never hidden for a shader again: its mesh would have to stand in with a shader of its own to build, and for a moment neither drew)
-    td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold || e.shown;
+    const se = v.scene.matrixWorld.elements, px = typeof ud.detail === 'number' ? ud.detail : e.relief ? rpx : null, shown = shownInScene(o, v.scene);
+    for (const p of e.parts) {
+      const t = p.twin, td = t.userData, m = partMaterial(e.relief && m0 ? reliefMaterial(m0) : m0, p);
+      const grid = p.g.userData.gsGrid;   // (a relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix puts them back where the mesh is)
+      if (grid) t.matrix.multiplyMatrices(o.matrixWorld, grid.matrix); else t.matrix.copy(o.matrixWorld);
+      // (the twin sits right under the scene: its own matrix is where the mesh is in the world's numbers, and its world matrix the
+      // scene's times that, which while a view draws is a step back by the drawing's centre: origin.js)
+      { const te = t.matrix.elements; te[12] -= se[12]; te[13] -= se[13]; te[14] -= se[14]; }
+      t.matrixWorld.multiplyMatrices(v.scene.matrixWorld, t.matrix);
+      t.visible = shown;
+      if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
+      t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder;
+      if (t.isDetailMesh) t.px = px; else t.cut.px = px;
+      // (once it has drawn it is never hidden for a shader again: its mesh would have to stand in with a shader of its own to build, and for a moment neither drew)
+      td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold || e.shown;
+      if (e.kind === 'copies') t.syncCopies();
+      else if (e.kind === 'cut' && shown && !quiet) cutUpdate(t, v.cam, ph);
+    }
+    // a smaller mesh on trial: what the last frame saved against what it cost (counted only while it was drawn)
+    if (e.trial && e.shown && !quiet && shown) {
+      let tris = 0, runs = 0; for (const p of e.parts) { drawnOf(p.twin, DRAWN); tris += DRAWN[0]; runs += DRAWN[1]; }
+      if (runs) { e.wf++; e.gain += (e.full - tris) * TRI_MS - Math.max(0, runs - 1) * RUN_MS - MESH_MS * e.parts.length; }
+      if (e.wf >= DETAIL_TRY) {
+        if (e.gain <= 0) { DETAIL_RESTS.set(o, now + DETAIL_AGAIN); detailDrop(v, e); HD.info.detailRested = (HD.info.detailRested || 0) + 1; continue; }
+        e.wf = 0; e.gain = 0;
+      }
+    }
   }
   // now and then: the scene's big meshes that aren't in yet (their clusters come from memory at once, or are asked for, a couple at a time)
   if (quiet || (now - D.t < DETAIL_SCAN && D.news === reliefNews.n)) return; D.t = now; D.news = reliefNews.n;
   eachShown(v.scene, o => {
     if (D.map.has(o)) return;
     const R = o.isMesh ? reliefOf(o) : undefined;
-    if (R && reliefOn && reliefReady(o, R)) { if (detailFits(o)) D.map.set(o, { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), cl: R.clusters, twin: null, failed: false, gone: false, relief: R, shown: false }); return; }
+    if (R && reliefOn && reliefReady(o, R)) { if (detailFits(o) && !Array.isArray(o.material) && detailKind(o) === 'mesh') D.map.set(o, detailEntry(o, null, R)); return; }
     if (!detailable(o)) return;
-    const g = o.userData.gsLod?.base || o.geometry;
-    let cl = null; try { cl = clustersNow(g); } catch (e) { NO_DETAIL.add(g); return; }
-    if (!cl && detailAsking >= DETAIL_ASK) return;
-    const e = { o, g, base: g, ver: detailVersion(g), cl, twin: null, failed: false, gone: false, relief: null, shown: false };
+    const rest = DETAIL_RESTS.get(o); if (rest && now < rest) return;   // (tried a moment ago, and it did not pay)
+    const g = o.userData.gsLod?.base || o.geometry, e = detailEntry(o, g, null);
+    if (!e) { NO_DETAIL.add(g); return; }
+    // (cut-out leaves: never the rough merge; on bones or with blend shapes: measured in test poses too, detail.js moved)
+    const opts = { sloppy: !e.cut, heads: o.isSkinnedMesh ? headsOf(o) : null, morphs: !!o.morphTargetInfluences?.length };
+    let missing = 0;
+    for (const p of e.parts) { try { p.cl = clustersNow(p.g, opts); } catch (err) { NO_DETAIL.add(g); return; } if (!p.cl) missing++; }
+    if (missing && detailAsking >= DETAIL_ASK) return;
     D.map.set(o, e);
-    if (cl) return;
+    if (!missing) return;
     detailAsking++;
-    clustersFor(g).then(c => { e.cl = c; }, () => { e.failed = true; }).finally(() => { detailAsking--; });
+    Promise.all(e.parts.map(p => p.cl || clustersFor(p.g, opts).then(c => { p.cl = c; }))).catch(() => { e.failed = true; }).finally(() => { detailAsking--; });
   });
 }
 // Detail for copies (HD.copies, on by default): the same idea for things placed many times. A set of copies
@@ -4273,15 +4384,21 @@ function copiesAsk(C, o) {
   let p; try { p = levelsFor(e.g); } catch (err) { p = Promise.reject(err); }
   p.then(lv => { e.lv = lv; }, () => { e.failed = true; NO_LEVELS.add(e.g); }).finally(() => { copiesAsking--; });
 }
-// after the shader hold: a mesh hides once its twin is drawing (a twin whose shader is still building waits, and the mesh draws on)
+// after the shader hold: a mesh hides once its twins are drawing (a twin whose shader is still building waits, and the mesh draws on)
 function detailShow(v) {
   const D = v.details; if (!D?.map.size) return;
   for (const e of D.map.values()) {
-    const t = e.twin, o = e.o; if (!t) continue;
-    if (t.layers.mask & HOLD_BIT) {
+    const o = e.o; if (!e.twin) continue;
+    let held = false; for (const p of e.parts) if (p.twin.layers.mask & HOLD_BIT) held = true;
+    if (held) {
+      // (every part waits for the slowest: a person with their clothes drawn and their face not yet would be half there)
+      for (const p of e.parts) if (!(p.twin.layers.mask & HOLD_BIT) && (p.twin.layers.mask & 1)) p.twin.layers.mask &= ~1;
       if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
-      else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twin: it never waits as well)
-    } else { e.shown = true; if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); } }
+      else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twins: it never waits as well)
+    } else {
+      for (const p of e.parts) if (!(p.twin.layers.mask & 1)) p.twin.layers.mask |= 1;
+      e.shown = true; o.userData.gsDetailed = true; if (e.kind === 'cut') { v._shAgain = 3; v._fadeOk = null; } if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
+    }
   }
 }
 // shadowLights(): scratch (no garbage per frame)
@@ -4317,7 +4434,7 @@ const listKind = a => {
   return ':' + name[0] + A.BYTES_PER_ELEMENT + (a.normalized ? 'n' : '') + (x ? 'x' : '');
 };
 function shaderKey(o) {
-  const mat = o.material, g = o.geometry, c = KEYS.get(o), pk = SKIN_POOLED.has(o);   // (pk: posed once a frame on the chip, skin-gpu.js: other shaders)
+  const mat = o.material, g = o.geometry, c = KEYS.get(o), pk = SKIN_POOLED.has(o.userData.gsPoseOf || o);   // (pk: posed once a frame on the chip, skin-gpu.js: other shaders)
   if (c && c.rs === o.receiveShadow && c.pk === pk && sameMats(c, mat, g)) return c.key;
   const ms = Array.isArray(mat) ? mat : [mat];
   // (three draws a two-sided see-through material as back faces then front faces, marking it changed for each,
@@ -4337,7 +4454,7 @@ function shaderKey(o) {
 // the key a thing would have with material m on it (its close-up twin, before that is swapped in), kept for each thing
 const KEYS_AS = new WeakMap();
 function shaderKeyAs(o, m) {
-  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '', pk = SKIN_POOLED.has(o);
+  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '', pk = SKIN_POOLED.has(o.userData.gsPoseOf || o);
   if (c && c.m === m && c.v === m.version && c.g === g && c.rs === o.receiveShadow && c.pk === pk) return c.key;
   const keep = o.material, was = KEYS.get(o);
   o.material = m; KEYS.delete(o);
@@ -4348,7 +4465,7 @@ function shaderKeyAs(o, m) {
 }
 function remember(o, sig, key, mat, g) {
   const arr = Array.isArray(mat);
-  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
+  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o.userData.gsPoseOf || o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
     ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(m => m.version) : null });
 }
 export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
