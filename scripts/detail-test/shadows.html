@@ -9,8 +9,9 @@
 // picture to a pixel or two, and the first walk must draw a small share of the shadow triangles. On
 // WebGL the shadow maps themselves are read back every frame and compared texel by texel: the map from
 // tiles may differ from the map drawn whole only by stray texels on the edges of shadows (an edge that
-// fell the other way by the last bit of a sum: some tens of 262,144), never by four together, which
-// is what a tile that was not drawn again looks like. Then: nothing moving draws no shadows at all;
+// fell the other way by the last bit of a sum: some tens of 262,144), never by four together by more
+// than a steep side moved a step of the chip's grid (mapDiff), which is what a tile that was not drawn
+// again looks like. Then: nothing moving draws no shadows at all;
 // one walker puts back only the tiles they cross; and the same again under sun.fit() with its near cascade.
 //   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?frames=90    ?trace (what each frame's tiles did)
 //   For finding a frame that went wrong (they change what is checked, so the checks' verdicts mean nothing with them):
@@ -108,11 +109,26 @@ const lightsOf = S => [S.sun, S.sun.nearLight].filter(l => l?.shadow?.map);
 // texel alone is an edge that fell the other way by the last bit of a sum; a block is a shadow that is
 // missing or left over). Depths closer than MAP_EPS count as the same: a fortieth of the sun's bias (a
 // surface drawn from merged pieces, or through another camera, lands a last bit deeper or shallower all over).
-const MAP_EPS = 1e-5;
+// A block's four must also differ by more than a corner put a step of the chip's grid over can make: a
+// chip places each corner of a triangle on a grid finer than the map's texels (a sixteenth of a texel
+// on SwiftShader, a 256th on a phone), and a map drawn with the sun a tile over rounds a corner in a
+// thousand to the next step. On a steep side (a barrel's, three texels tall in the fitted map) that moves
+// the whole side by up to an eighth of its fall across a texel: a 2 x 4 patch of texels 0.00002 to
+// 0.00013 apart, 3 mm to 2 cm along the sun's ray, where a shadow missing or left over is a caster's
+// height apart on a surface that is smooth in one of the two maps (so the gentler map's fall is the measure).
+const MAP_EPS = 1e-5, SNAP = 1 / 8;
 function mapDiff(a, b) {
   const N = Math.round(Math.sqrt(a.length)), off = i => Math.abs(a[i] - b[i]) > MAP_EPS; let n = 0, block = 0;
-  for (let i = 0; i < a.length; i++) if (off(i)) { n++; const x = i % N, y = (i / N) | 0; if (x + 1 < N && y + 1 < N && off(i + 1) && off(i + N) && off(i + N + 1)) block++; }
+  const fall = (m, i, x, y) => Math.max(x > 0 ? Math.abs(m[i] - m[i - 1]) : 0, x + 1 < N ? Math.abs(m[i] - m[i + 1]) : 0, y > 0 ? Math.abs(m[i] - m[i - N]) : 0, y + 1 < N ? Math.abs(m[i] - m[i + N]) : 0);
+  const far = (i, x, y) => Math.abs(a[i] - b[i]) > MAP_EPS + SNAP * Math.min(fall(a, i, x, y), fall(b, i, x, y));
+  for (let i = 0; i < a.length; i++) if (off(i)) { n++; const x = i % N, y = (i / N) | 0; if (x + 1 < N && y + 1 < N && off(i + 1) && off(i + N) && off(i + N + 1) && far(i, x, y) && far(i + 1, x + 1, y) && far(i + N, x, y + 1) && far(i + N + 1, x + 1, y + 1)) block++; }
   return { n, block };
+}
+if (!GPU) {   // (the rule itself: a steep side a sixteenth of a texel over is no block, a box missing from the map or left in it is)
+  const N = 32, mk = f => { const m = new Float32Array(N * N); for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) m[y * N + x] = f(x, y); return m; };
+  const ground = (x, y) => .6 + y * 1e-4, side = (x, y, s = 0) => x >= 10 && x < 12 && y >= 10 && y < 14 ? .5 - (y - 10 + s) * .0017 : ground(x, y), box = (x, y) => x >= 20 && x < 23 && y >= 20 && y < 23 ? .597 : ground(x, y);
+  const snap = mapDiff(mk((x, y) => side(x, y)), mk((x, y) => side(x, y, 1 / 16))), gone = mapDiff(mk(box), mk(ground)), left = mapDiff(mk(ground), mk(box));
+  check('the maps\' rule: a steep side a sixteenth of a texel over is texels that differ, none in a block; a box missing from the map or left in it is blocks', snap.n === 8 && snap.block === 0 && gone.block === 4 && left.block === 4, JSON.stringify([snap, gone, left]));
 }
 // one walk: the pictures and what each frame's shadows took
 async function walk(S, whole, keep) {
@@ -124,7 +140,7 @@ async function walk(S, whole, keep) {
   const verify = async (tag, px) => { if (!Q.has('verify') || Q.get('verify') === 'end' || whole) return;
     if (Q.get('verify') === 'map') {   // (the map itself, texel by texel: one texel on an edge is the last bit of a sum, a patch of them is a tile that was not drawn again)
       const plan = planOf(), l = S.sun, N = l.shadow.map.width, tp = N / 16, m1 = await mapOf(l); S.v.shadowsDirty(); draw(S); const m2 = await mapOf(l), bad = []; for (let i = 0; i < m1.length; i++) if (Math.abs(m1[i] - m2[i]) > MAP_EPS) bad.push(i);
-      if (bad.length) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': ' + bad.length + ' texels of the map differ: ' + bad.slice(0, 16).map(i => { const x = i % N, y = (i / N) | 0; return `(${x},${y}) tile ${x / tp | 0},${y / tp | 0} ${m1[i].toFixed(6)}/${m2[i].toFixed(6)}`; }).join(' ') + ' ' + plan); return; }
+      if (bad.length) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': ' + bad.length + ' texels of the map differ: ' + bad.slice(0, 16).map(i => { const x = i % N, y = (i / N) | 0; const c = l.shadow.camera, w = new T.Vector3((x + .5) / N * 2 - 1, (y + .5) / N * 2 - 1, m2[i] * 2 - 1).applyMatrix4(c.projectionMatrixInverse).applyMatrix4(c.matrixWorld), w1 = new T.Vector3((x + .5) / N * 2 - 1, (y + .5) / N * 2 - 1, m1[i] * 2 - 1).applyMatrix4(c.projectionMatrixInverse).applyMatrix4(c.matrixWorld); return `(${x},${y}) tile ${x / tp | 0},${y / tp | 0} ${m1[i].toFixed(6)}/${m2[i].toFixed(6)} at ${w.x.toFixed(2)},${w.y.toFixed(2)},${w.z.toFixed(2)} (${w1.distanceTo(w).toFixed(4)} apart)`; }).join(' ') + ' ' + plan); return; }
     if (Q.get('verify') === 'kept') { const plan = planOf(); if (GPU) await nextFrame(); HD.shadowCheck = true; const b = draw(S); HD.shadowCheck = false; const d = diff(px, b); if (d.off) (info.verify ||= []).push((S.fit ? 'fit ' : '') + tag + ': the kept copy is wrong, ' + d.off + ' px ' + plan); return; } const plan = planOf(), n0 = HD.info.batches || 0, cam = S.v.cam, top = Q.get('verify') === 'top', p0 = cam.position.clone(), q0 = cam.quaternion.clone(); if (top) { cam.position.set(p0.x, 70, p0.z - 20); cam.lookAt(p0.x, 0, p0.z - 20.01); cam.updateMatrixWorld(); } if (GPU) await nextFrame(); const a = top ? draw(S).slice() : px.slice(), plan2 = top ? ' TOP ' + planOf() + ' truck ' + (S.truck.layers.mask >>> 26) + ' any ' + S.sun.shadow.gsTiles?.plan.any + ' pend ' + S.sun.shadow.gsTiles?.pending : ''; S.v.shadowsDirty(); if (GPU) await nextFrame(); const b = draw(S), d = diff(a, b);
     // (from above: which tiles of the map the wrong pixels of the ground are in)
     let where = ''; if (top && d.off) { const st = S.sun.shadow.gsTiles, hit = new Map(), ray = new T.Raycaster(), ndc = new T.Vector2(), P = new T.Vector3(), gp = new T.Plane(new T.Vector3(0, 1, 0), 0);
