@@ -70,7 +70,7 @@ export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
 export { gpuCloth } from './cloth-gpu.js';
 export { skinPool } from './skin-gpu.js';   // (and, on import, the vertex stage that reads a mesh's points from the pool)
-import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
+import GTAONode, { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
@@ -871,6 +871,38 @@ NodeMaterial.prototype.setupPosition = function (builder) {
   positionLocal.assign(positionGeometry);
   if (geometry.morphAttributes.normal && geometry.hasAttribute('normal')) TSL.normalLocal.assign(TSL.normalGeometry);
   return positionSetup.call(this, builder);
+};
+// Screen passes that rewrite their shaders for nothing. (three r187: a pass node (rtt(), SSR, GTAO, blur, bloom...)
+// hands its inner material a brand new context node each time the material it sits in is built, and a new node
+// is a new cache key, so the inner pass writes its shader again (the same WGSL; the chip's pipeline is kept). A
+// pass is drawn once a frame, inside out, so one rebuild at the top of the effects chain ran down it a layer a
+// frame: Long Shadow on a Mac rewrote 70-odd pass shaders over the next eight frames, a 200-550 ms freeze each
+// time ("25 shaders built" in the frame lab).) A context node with the same node and the same values as the one
+// the material has is the same context: the material keeps the one it has, its cache key stays, and three only
+// bumps the version it saw. scripts/shader-hold.cjs --webgpu counts shader text written in play.
+const CTX = Symbol('contextNode');
+const sameContext = (a, b) => {
+  if (a === b) return true;
+  if (!a?.isContextNode || !b?.isContextNode || a.node !== b.node) return false;
+  const x = a.value, y = b.value, kx = Object.keys(x);
+  if (kx.length !== Object.keys(y).length) return false;
+  for (const k of kx) if (!(k in y) || x[k] !== y[k]) return false;
+  return true;
+};
+if (!Object.getOwnPropertyDescriptor(NodeMaterial.prototype, 'contextNode')) Object.defineProperty(NodeMaterial.prototype, 'contextNode', {
+  configurable: true,
+  get() { return this[CTX] ?? null; },
+  set(n) { if (!sameContext(this[CTX], n)) this[CTX] = n; },
+});
+// (and three's ambient occlusion pass makes its shader's graph anew each time it is set up, a new key again: the graph is kept
+// while the samples and the kind of camera it was made for are the same, so it too is written once a chain)
+const gtaoSetup = GTAONode.prototype.setup;
+GTAONode.prototype.setup = function (builder) {
+  const m = this._material, made = this.samples.value + ':' + !!this._camera?.isPerspectiveCamera, keep = this._gsMade === made ? m.fragmentNode : null;
+  const out = gtaoSetup.call(this, builder);
+  if (keep) m.fragmentNode = keep;
+  this._gsMade = made;
+  return out;
 };
 // area lights' LTC tables (hd3d.js panel), once they've loaded
 export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
