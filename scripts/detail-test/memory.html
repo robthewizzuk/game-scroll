@@ -41,8 +41,8 @@ const VT = new WeakMap(), BGT = new WeakMap(), EV = { on: false, list: [] }, PAS
   const sub = GPUQueue.prototype.submit; GPUQueue.prototype.submit = function (list) { if (EV.on) for (const b of list) EV.list.push(...(CB.get(b) || [])); return sub.call(this, list); };
   // (a bundle replayed reads what its draws bound: still.js's bundles of the scene)
   const BR = new WeakMap(), fin = GPURenderBundleEncoder.prototype.finish, sbb = GPURenderBundleEncoder.prototype.setBindGroup, eb = GPURenderPassEncoder.prototype.executeBundles;
-  GPURenderBundleEncoder.prototype.setBindGroup = function (i, g, ...a) { (this.gsR ||= new Set()); for (const t of BGT.get(g) || []) this.gsR.add(t); return sbb.call(this, i, g, ...a); };
-  GPURenderBundleEncoder.prototype.finish = function (...a) { const b = fin.apply(this, a); BR.set(b, this.gsR || new Set()); return b; };
+  GPURenderBundleEncoder.prototype.setBindGroup = function (i, g, ...a) { (this.memR ||= new Set()); for (const t of BGT.get(g) || []) this.memR.add(t); return sbb.call(this, i, g, ...a); };
+  GPURenderBundleEncoder.prototype.finish = function (...a) { const b = fin.apply(this, a); BR.set(b, this.memR || new Set()); return b; };
   GPURenderPassEncoder.prototype.executeBundles = function (list) { const p = PASS.get(this); if (p) for (const b of list) for (const t of BR.get(b) || []) p.reads.add(t); return eb.call(this, list); };
 }
 setGpuPick('webgpu');
@@ -138,6 +138,7 @@ async function run(label, set) {
   const R = {
     label, set: { ...set }, picturesMB: sum(pics), texturesMB: sum(tex), leftFromBeforeMB: +(left / 1048576).toFixed(1), shared: HD.info.shared, rw: HD.info.rw, rh: HD.info.rh, ow: HD.info.ow, oh: HD.info.oh, upscaled: HD.info.upscaled,
     shadowColour: pics.filter(o => o.name === 'ShadowMap').reduce((a, o) => a + o.mb, 0),
+    shadowDepth: +pics.filter(o => o.name === 'ShadowDepthTexture' || o.name === 'ShadowDepthKept').reduce((a, o) => a + o.mb, 0).toFixed(2),
     couldShare: { savedMB: +save.toFixed(1), groups: share },
     persistent: pics.filter(o => o.early >= 0).map(o => `${o.name} ${o.mb} MB (read at pass ${o.early} before it's drawn)`),
     pictures: pics.map(o => `${String(o.mb).padStart(6)} MB ${o.w}x${o.h} ${o.kind}${o.samples ? ' x' + o.samples : ''} ${o.name}${o.part ? ' (' + o.part + ')' : ''} ${o.first < 0 ? 'not used this frame' : `[${o.first}..${o.last}]${o.early >= 0 ? ' from the frame before' : ''}`}`),
@@ -149,15 +150,17 @@ async function run(label, set) {
 }
 try {
   // as before (each effect step its own picture, three's colour picture beside each shadow map), then as now
-  const wasSet = { shareTargets: false, shadowColour: true, ...sets('was') }, nowSet = { shareTargets: true, shadowColour: false, ...sets('now') };
+  const wasSet = { shareTargets: false, shadowColour: true, shadow16: false, ...sets('was') }, nowSet = { shareTargets: true, shadowColour: false, shadow16: true, ...sets('now') };
   let was, now;
   if (Q.has('swap')) { now = await run('now', nowSet); was = await run('as before', wasSet); }
   else { was = await run('as before', wasSet); now = await run('now', nowSet); }
   // (against how much two frames in a row of one run differ: the upscaler's jitter and what moves in the scene)
   const d = apart(now.pic, was.pic), slack = Math.max(was.base.mean, now.base.mean), slackBig = Math.max(was.base.big, now.base.big);
   for (const R of [was, now]) { const { pic, ...rest } = R; data[R.label] = rest; }
-  data.compare = { picturesMB: [was.picturesMB, now.picturesMB], saved: +(was.picturesMB - now.picturesMB).toFixed(1), shadowColour: [was.shadowColour, now.shadowColour], sharedSteps: now.shared, d, frameToFrame: [was.base, now.base] };
+  data.compare = { picturesMB: [was.picturesMB, now.picturesMB], saved: +(was.picturesMB - now.picturesMB).toFixed(1), shadowColour: [was.shadowColour, now.shadowColour], shadowDepth: [was.shadowDepth, now.shadowDepth], sharedSteps: now.shared, d, frameToFrame: [was.base, now.base] };
   checks.push({ name: `${key}${FX.length ? ' with ' + FX.join(', ') : ''} at tier ${HD.force}, ${W}x${H}: the view's pictures take less memory now`, ok: now.picturesMB < was.picturesMB || (!was.shadowColour && !FX.length), note: `${was.picturesMB} MB as before, ${now.picturesMB} MB now (shadow maps' colour ${was.shadowColour} MB -> ${now.shadowColour} MB, ${now.shared} effect steps sharing a picture)` });
+  // (a sun's map and its kept copy in 16-bit depth: HD.shadow16, hd3d-gpu.js SHADOW_16)
+  if (was.shadowDepth > 0 && !('shadow16' in sets('was')) && !('shadow16' in sets('now'))) checks.push({ name: "the sun's shadow map holds half the bytes in 16-bit depth", ok: now.shadowDepth <= was.shadowDepth * .5 + .01, note: `${was.shadowDepth} MB as before, ${now.shadowDepth} MB now` });
   checks.push({ name: 'the same picture as before', ok: d.mean <= slack * 1.5 + .05 && d.big <= slackBig * 1.5 + .05, note: `mean ${d.mean} (frame to frame ${slack}), ${d.big}% off by 40+ (frame to frame ${slackBig}%)` });
   out.before = picture(was.pic); out.now = picture(now.pic); out.diff = picture(now.pic, was.pic);
   window.result = { checks, info: data, out };

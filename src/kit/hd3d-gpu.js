@@ -8,7 +8,7 @@
 // hurt, smoothing), plus three's own GTAO for ambient occlusion and the outdoor air as a fog node.
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
-import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
+import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, UnsignedShortType, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
   MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
@@ -906,10 +906,18 @@ ShadowNode.prototype.setup = function (builder) { return builder.renderer.shadow
 // which three draws as a depth-only pass). Point lights' cube maps keep theirs (their node has its own).
 // HD.shadowColour = true (before the light's first frame) keeps three's colour pictures, to compare.
 export const SHADOW_DEPTH = { on: true };
+// A sun's shadow map in 16-bit depth (HD.shadow16; for a light's map made from now on). three makes every shadow
+// map's depth 24 bits in a 32-bit texel: 16 MB for a 2048 map, and as much again for the copy the kit keeps of it
+// (shadowOps make), each loaded and stored whole by every pass that writes it. A sun's light is a box, so its depth
+// runs evenly from near to far: 65,536 steps over a follow()'s 119 m are 1.8 mm each, against a bias of 48 mm, and
+// the map and its copy are 8 MB each. Lamps and spots keep 24 bits: their depth is a cone's, which crowds its
+// steps up to the light and leaves the far end coarse.
+export const SHADOW_16 = { on: true };
 const shadowTarget = ShadowNode.prototype.setupRenderTarget;
 ShadowNode.prototype.setupRenderTarget = function (shadow, builder) {
   const o = shadowTarget.call(this, shadow, builder), map = o.shadowMap;
   if (SHADOW_DEPTH.on && builder.renderer.shadowMap.transmitted !== true && !map.isCubeRenderTarget && map.textures.length === 1 && map.depthTexture) map.textures.length = 0;
+  if (SHADOW_16.on && !map.isCubeRenderTarget && map.depthTexture && shadow.camera?.isOrthographicCamera) map.depthTexture.type = UnsignedShortType;
   return o;
 };
 // Blend shapes in the motion picture. (three r187 moves a morphing mesh's points by its shapes but leaves
@@ -1271,7 +1279,8 @@ export function shadowOps(r) {
     },
     make(l) {
       // (depth alone, as the map it keeps: no colour picture, see SHADOW_DEPTH)
-      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true, count: colours(l.shadow.map) }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
+      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true, count: colours(l.shadow.map) }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h, l.shadow.map?.depthTexture?.type); t.depthTexture.name = 'ShadowDepthKept';   // (the map's own depth: 16 bits for a sun, SHADOW_16; a copy between two kinds is refused)
+      r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
       r.setRenderTarget(t); r.clearDepth(); r.setRenderTarget(was);
       return t;
@@ -1376,7 +1385,7 @@ function shadowBlit(r) {
         r.initRenderTarget(t); return t;
       };
       const lin = like(LinearFilter), near = like(NearestFilter);
-      const copy = new RenderTarget(4, 4, { depthBuffer: true, count: colours(map) }); copy.depthTexture = new DepthTexture(4, 4); r.initRenderTarget(copy);   // (as shadowOps make)
+      const copy = new RenderTarget(4, 4, { depthBuffer: true, count: colours(map) }); copy.depthTexture = new DepthTexture(4, 4, d.type); r.initRenderTarget(copy);   // (as shadowOps make)
       U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3;
       const none = () => quads(NONE, 1, 4);
       run(none(), matFor(lin.depthTexture, true), copy); run(none(), matFor(near.depthTexture, true), copy); run(none(), matFor(copy.depthTexture, true), lin); run(none(), farMat(), lin);
