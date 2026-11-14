@@ -56,7 +56,7 @@ import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
 import { packing } from './pack.js';
-import { ONE_SUBMIT, flushGPU } from './submit.js';
+import { ONE_SUBMIT, flushGPU, sendEarly } from './submit.js';
 import { steerFor } from './steering.js';
 import { SLIM, isSlim, meshBytes, SKIN_POOLED } from './slim.js';
 import { makeRenderer } from './renderer.js';
@@ -495,6 +495,8 @@ export const HD = {
   half: true,
   /** The frame lab's switch and tests: false sends each WebGPU pass to the chip by itself, as three does; true (default) holds a frame's passes and sends them together (submit.js). HD.info.submits: how many times the last frame went to the chip. */
   oneSubmit: true,
+  /** With oneSubmit: true (default) also sends what is held before the scene is drawn, after a shadow map drawn inside the scene's pass and when the scene's pass is encoded, so the chip works while the frame's code goes on (three or four sends a frame); false: one send when the frame's code ends, to compare. */
+  submitEarly: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
   subgroups: true,
   /**
@@ -2911,7 +2913,7 @@ export class HDView {
     if (!baking && !off) HD.info.still = false;
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
-    ONE_SUBMIT.on = HD.oneSubmit !== false; if (!baking && !off) { HD.info.submits = ONE_SUBMIT.sent - (HD.sentAt ?? ONE_SUBMIT.sent); HD.sentAt = ONE_SUBMIT.sent; }   // (submit.js: the frame before's)
+    ONE_SUBMIT.on = HD.oneSubmit !== false; ONE_SUBMIT.early = HD.submitEarly !== false; if (!baking && !off) { HD.info.submits = ONE_SUBMIT.sent - (HD.sentAt ?? ONE_SUBMIT.sent); HD.sentAt = ONE_SUBMIT.sent; }   // (submit.js: the frame before's)
     G.fx.SUB.on = HD.subgroups !== false; HD.info.subgroups = G.fx.subgroupsInfo(r);   // (subgroups.js: passes built from now on use them or not)
     const SK = G.fx.skinPool(r);
     if (SK) { SK.set(HD.gpuSkin !== false); SK.list(this.scene, eachShown); }
@@ -3130,6 +3132,7 @@ export class HDView {
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
     fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
+    sendEarly('before the scene');   // (skinning, compute, the kit's shadow maps and the sky's pictures go to the chip now, to be drawn while the scene is encoded: submit.js)
     try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
