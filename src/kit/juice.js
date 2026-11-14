@@ -70,16 +70,17 @@ export class Tweens {
     return tw;
   }
   update(dt) {
-    const ended = [];
+    if (!this.list.length) return;
+    let ended = null;
     for (const tw of this.list) {
       tw.t += dt;
       if (tw.t < 0) continue;
       if (!tw.from) { tw.from = {}; for (const k of tw.keys) tw.from[k] = +tw.obj[k] || 0; }
       const k = Math.min(1, tw.t / tw.dur), e = tw.fn(k);
       for (const key of tw.keys) tw.obj[key] = tw.from[key] + (tw.to[key] - tw.from[key]) * e;
-      if (k >= 1) ended.push(tw);
+      if (k >= 1) (ended ||= []).push(tw);
     }
-    if (ended.length) { this.list = this.list.filter(t => !ended.includes(t)); for (const t of ended) t.done?.(t.obj); }
+    if (ended) { this.list = this.list.filter(t => !ended.includes(t)); for (const t of ended) t.done?.(t.obj); }
   }
   /** Is anything still animating (on this object, if given)? */
   busy(obj) { return this.list.some(t => !obj || t.obj === obj); }
@@ -139,6 +140,8 @@ export class Timeline {
   restart() { return this.seek(0).play(); }
 }
 
+const alive = p => p.life > 0, showing = p => p.t < p.life;
+
 /* ---------- particles ---------- */
 /**
  * A pool of 2D particles. burst() throws out a ring of them:
@@ -172,7 +175,8 @@ export class Particles {
       p.vx *= d; p.vy = p.vy * d + p.g * dt;
       p.x += p.vx * dt; p.y += p.vy * dt;
     }
-    if (this.list.some(p => p.life <= 0)) this.list = this.list.filter(p => p.life > 0);
+    let dead = false; for (const p of this.list) if (p.life <= 0) { dead = true; break; }
+    if (dead) this.list = this.list.filter(alive);
   }
   draw(c) {
     if (!this.list.length) return;
@@ -229,7 +233,7 @@ export class Popups {
     if (this.list.length > 40) this.list.shift();
     this.list.push({ x, y, text: String(text), t: 0, life: o.life ?? .9, rise: o.rise ?? 30, color: o.color || this.color, size: o.size || this.size, font: o.font || this.font });
   }
-  update(dt) { for (const p of this.list) p.t += dt; this.list = this.list.filter(p => p.t < p.life); }
+  update(dt) { let done = false; for (const p of this.list) if ((p.t += dt) >= p.life) done = true; if (done) this.list = this.list.filter(showing); }
   draw(c) {
     if (!this.list.length) return;
     c.save(); c.textAlign = 'center'; c.textBaseline = 'middle';

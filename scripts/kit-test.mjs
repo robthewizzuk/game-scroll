@@ -6880,5 +6880,31 @@ console.log('physics ok');
   console.log('kits that find each other: one set a card, one wind (cloth, rain, smoke, swell, sand, particles), land, weather and water, sounds that find it all, blasts felt by everything, shots, the camera and walls, karts, craft, soft things, shattered things and regions in the world, heroes, guards, hunters and squads in the level, lightning in the sky ok');
 }
 
+// the speed pass: the same answers from the cheaper ways (a ray with no filter, snow from kept sines)
+{
+  const THREE = await import('three'), { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'), { Weather } = await import('../src/kit/sky.js'); await loadPhysics3D();
+  globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
+  const M = () => new THREE.MeshBasicMaterial(), box = (w, x, o) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), M()); m.position.set(x, .5, 0); return w.box(m, 1, 1, 1, { fixed: true, ...o }); };
+  // a ray: past a sensor to the solid thing behind it, by itself and with a filter of the game's own; the answer's fields, and its mesh when asked
+  { const w = new World3D({ link: false }); w.floor(0); const gate = box(w, 2, { sensor: true }), wall = box(w, 5), far = box(w, 9); w.step(1 / 60);
+    const from = { x: -2, y: .5, z: 0 }, dir = { x: 3, y: 0, z: 0 }, h = w.ray(from, dir, 30);
+    assert.ok(h && h.thing === wall && Math.abs(h.distance - 6.5) < 1e-3 && Math.abs(h.point.x - 4.5) < 1e-3 && h.normal.x < -.99 && h.mesh === wall.mesh, `a ray goes through a sensor to the wall behind (${h?.distance})`);
+    assert.deepEqual(Object.keys(h).sort(), ['distance', 'normal', 'part', 'point', 'thing'], 'the answer keeps its fields');
+    const g = w.ray(from, dir, 30, t => t !== wall && !t.collider.isSensor()); assert.ok(g && g.thing === far && Math.abs(g.distance - 10.5) < 1e-3, 'a filter of the game\'s own is still asked');
+    const s = w.ray(from, dir, 30, t => t === gate); assert.ok(s && s.thing === gate, 'and can ask for a sensor');
+    assert.equal(w.ray(from, { x: 0, y: 1, z: 0 }, 30), null, 'nothing above: null'); assert.equal(w.ray(from, dir, 3), null, 'nothing within reach: null');
+    w.free?.(); }
+  // snow: each flake where the sum it was first written as puts it (a sine a flake a frame), to a hair
+  { const cam = { position: new THREE.Vector3(3, 2, -4), far: 100 }, v = { cam, scene: new THREE.Scene(), hemi: null, parts: [], _air: null, air() { return this._air ||= { wet: 0, world: null }; } };
+    const w = new Weather(v, { kind: 'snow', amount: 1, max: 300, wind: { x: 2.5, z: -1 }, link: false }), A = w.area, o = w.off, a = w.snowMesh.geometry.attributes.position.array; let worst = 0;
+    for (let f = 0; f < 240; f++) { w.update(1 / 60);
+      if (f % 40 === 7) for (let i = 0; i < 300; i++) { const k = i * 3, fall = A * .12, y = (((o[k + 1] - w.t * fall / A * (.7 + o[k] * .6)) % 1) + 1) % 1, sway = Math.sin(w.t * 1.3 + i) * .02;
+        const x = cam.position.x + (((o[k] + sway + 2.5 * w.t / A) % 1 + 1) % 1 - .5) * A, yy = cam.position.y + (y - .5) * A, z = cam.position.z + (((o[k + 2] - w.t / A) % 1 + 1) % 1 - .5) * A;
+        const wrap = d => Math.min(Math.abs(d), Math.abs(Math.abs(d) - A));   // (a flake on the very edge of the box may be on either side of it)
+        worst = Math.max(worst, wrap(a[k] - x), wrap(a[k + 1] - yy), wrap(a[k + 2] - z)); } }
+    assert.ok(worst < A * 1e-5, `snow falls and sways as it did (furthest off ${worst.toExponential(1)} m in a box of ${A} m)`); w.dispose?.(); }
+  console.log('the speed pass: a ray with no filter (through sensors, the same answer), a filter of the game\'s own, snow as it fell before ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

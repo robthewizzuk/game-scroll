@@ -4,7 +4,8 @@
 // listed apart) and the long stretches of busy main thread ("hitches") with the engine function under them.
 // A kit function that is a little slow in fifty games matters more than one game's own slow code.
 //   node scripts/kit-hot.cjs [id ...] [--era 2d|pocket|console|nextgen|ar|board|3d|all] [--secs 5] [--jobs 3]
-//                            [--json out.json] [--vs base.json] [--top 40] [--hitch 34] [--gpu]
+//                            [--json out.json] [--vs base.json] [--top 40] [--hitch 34] [--gpu] [--warm 6]
+// --warm: seconds of play before the profile starts, so a 3D game's first shaders and first round are not what is measured.
 // It runs the dev server (real names and lines), so no build is needed. Code time only: the software
 // renderer here says nothing about a phone's graphics chip.
 const { chromium, devices } = require('playwright');
@@ -12,7 +13,7 @@ const fs = require('fs'), path = require('path');
 const { jobs, pool } = require('./lib/pool.cjs');
 (async () => {
   const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv.splice(i, 2)[1] : d; };
-  const secs = +opt('--secs', 5), out = opt('--json'), vs = opt('--vs'), top = +opt('--top', 40), era = opt('--era', '2d'), hitchMs = +opt('--hitch', 34);
+  const secs = +opt('--secs', 5), out = opt('--json'), vs = opt('--vs'), top = +opt('--top', 40), era = opt('--era', '2d'), hitchMs = +opt('--hitch', 34), warm = +opt('--warm', 0);
   const gpu = argv.includes('--gpu'), n = jobs(argv, era === '2d' || era === 'pocket' ? 'light' : 'heavy');
   const ids0 = argv.filter(a => !a.startsWith('--'));
   const port = +(process.env.PORT || 4211);
@@ -43,18 +44,22 @@ const { jobs, pool } = require('./lib/pool.cjs');
       await p.evaluate(() => __gs.start()); await p.waitForTimeout(700);
       const r = await p.evaluate(() => { const c = __gs.active.canvas.getBoundingClientRect(); return { x: c.x, y: c.y, w: c.width, h: c.height }; });
       await p.evaluate(() => { const T = window.__hot = { gaps: [], last: 0 }; const tick = t => { if (window.__hot !== T) return; if (T.last) T.gaps.push(t - T.last); T.last = t; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
-      await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 250 });
-      await cdp.send('HeapProfiler.enable');
-      await cdp.send('HeapProfiler.startSampling', { samplingInterval: 8192, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
-      await cdp.send('Profiler.start');
-      const t0 = Date.now(); let rounds = 0;
-      while (Date.now() - t0 < secs * 1000) {
+      const poke = async () => {
         if (await p.evaluate(() => __gs.active.state !== 'playing')) { await p.evaluate(() => __gs.start()).catch(() => {}); rounds++; }
         const x = r.x + Math.random() * r.w, y = r.y + Math.random() * r.h;
         await p.mouse.move(x, y); await p.mouse.down();
         await p.mouse.move(r.x + Math.random() * r.w, r.y + Math.random() * r.h, { steps: 4 });
         await p.waitForTimeout(40 + Math.random() * 160); await p.mouse.up(); await p.waitForTimeout(Math.random() * 100);
-      }
+      };
+      let rounds = 0;
+      for (const w0 = Date.now(); Date.now() - w0 < warm * 1000;) await poke();
+      rounds = 0;
+      await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 250 });
+      await cdp.send('HeapProfiler.enable');
+      await cdp.send('HeapProfiler.startSampling', { samplingInterval: 8192, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+      await cdp.send('Profiler.start');
+      const t0 = Date.now();
+      while (Date.now() - t0 < secs * 1000) await poke();
       const wall = (Date.now() - t0) / 1000;
       const prof = (await cdp.send('Profiler.stop')).profile;
       const al = (await cdp.send('HeapProfiler.stopSampling')).profile;

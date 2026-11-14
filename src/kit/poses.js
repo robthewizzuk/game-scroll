@@ -39,6 +39,8 @@ const JOINTS = ['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'fore
 const FULL = [...JOINTS, 'waist', 'neck', 'collarL', 'collarR', 'twistL', 'twistR', 'toeL', 'toeR'];
 const FILLED = new Set(['waist', 'neck', 'collarL', 'collarR', 'twistL', 'twistR']), TOES = new Set(['toeL', 'toeR']);   // (set by fill(); and the two that are mostly at rest)
 const UPPER = new Set(['spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR', 'collarL', 'collarR']);
+// (the length of two to four numbers: Math.hypot makes a list for its numbers on every call, and this runs for every person every frame)
+const hyp = (a, b, c = 0, d = 0) => Math.sqrt(a * a + b * b + c * c + d * d);
 const S = Math.sin, TAU = Math.PI * 2, SPACES = new WeakMap();
 const HINGES = [['shinL', 1], ['shinR', 1], ['foreL', -1], ['foreR', -1]];   // joints that bend one way only: a knee (+x), an elbow (-x)
 const _q = new Quaternion(), _q2 = new Quaternion(), _v = new Vector3(), Z3 = [0, 0, 0];
@@ -46,8 +48,8 @@ const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a)
 // A share of a turn q, into out: `sw` of its bend and `tw` of its twist about the bone's own length (y).
 function shareOf(q, sw, tw, out) {
   let x = q.x, y = q.y, z = q.z, w = q.w; if (w < 0) { x = -x; y = -y; z = -z; w = -w; }
-  const tl = Math.hypot(y, w), ty = tl > 1e-9 ? y / tl : 0, t0 = tl > 1e-9 ? w / tl : 1;   // the twist (0, ty, 0, t0); what is left is the bend
-  const bx = x * t0 + z * ty, bz = z * t0 - x * ty, bl = Math.hypot(bx, bz), hb = Math.atan2(bl, tl) * sw, k = bl > 1e-9 ? Math.sin(hb) / bl : 0, ax = bx * k, az = bz * k, aw = Math.cos(hb);
+  const tl = hyp(y, w), ty = tl > 1e-9 ? y / tl : 0, t0 = tl > 1e-9 ? w / tl : 1;   // the twist (0, ty, 0, t0); what is left is the bend
+  const bx = x * t0 + z * ty, bz = z * t0 - x * ty, bl = hyp(bx, bz), hb = Math.atan2(bl, tl) * sw, k = bl > 1e-9 ? Math.sin(hb) / bl : 0, ax = bx * k, az = bz * k, aw = Math.cos(hb);
   const ht = Math.atan2(ty, t0) * tw, by = Math.sin(ht), bw = Math.cos(ht);
   return out.set(ax * bw - az * by, aw * by, az * bw + ax * by, aw * bw);
 }
@@ -67,7 +69,7 @@ export class Between extends Bone {
   updateMatrix() {
     const of = this.of;
     if (of) {
-      const q = of.quaternion, s = q.w < 0 ? -1 : 1, w = q.w * s + 1, l = 1 / Math.hypot(q.x, q.y, q.z, w), o = this.out;
+      const q = of.quaternion, s = q.w < 0 ? -1 : 1, w = q.w * s + 1, l = 1 / hyp(q.x, q.y, q.z, w), o = this.out;
       this.quaternion.set(q.x * s * l, q.y * s * l, q.z * s * l, w * l);   // (half a turn q is q + 1, made a turn again)
       if (o) { const k = 1 - q.w * q.w; _v.set(o[0] * k, o[1] * k, o[2] * k).applyQuaternion(this.quaternion); this.position.copy(this.home).add(_v); }
     }
@@ -194,7 +196,7 @@ function gait(g) {
   // the leg bent to reach it: the thigh's and the knee's angles through the cycle, worked out once
   const leg = k => table(p => {
     const a = p * TAU, [z, y] = ankle(p), hipY = HJ - (drop + bob * Math.cos(2 * a - bobAt)) * 1.8 + HX * list * S(a + .6), hipZ = HX * yaw * Math.cos(a);
-    const dz = z - hipZ, dy = hipY - y, d = Math.min(L1 + L2 - .003, Math.hypot(dz, dy)), al = Math.acos((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d)), kn = Math.PI - Math.acos((L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2));
+    const dz = z - hipZ, dy = hipY - y, d = Math.min(L1 + L2 - .003, hyp(dz, dy)), al = Math.acos((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d)), kn = Math.PI - Math.acos((L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2));
     return k ? kn : -(Math.atan2(dz, dy) + al);
   });
   const thigh = leg(0), knee = leg(1), foot = table(footW);
@@ -428,7 +430,7 @@ export class Rig {
     const last = this.layers[this.layers.length - 1]; last.w = Math.min(1, last.w + k);
     this.done = !!this.poses[last.name]?.once && last.phase >= 1;
     let rest = 1 - last.w; for (let i = this.layers.length - 2; i >= 0; i--) { this.layers[i].w = Math.min(this.layers[i].w, rest); rest -= this.layers[i].w; }
-    this.layers = this.layers.filter((l, i) => l.w > .001 || i === this.layers.length - 1);
+    for (let i = this.layers.length - 2; i >= 0; i--) if (!(this.layers[i].w > .001)) { this.layers = this.layers.filter((l, i) => l.w > .001 || i === this.layers.length - 1); break; }   // (a new list only when a layer has faded out)
     this.topW += ((this.topOn ? 1 : 0) - this.topW) * Math.min(1, dt / Math.max(.01, this.fade));
     // mix the layers
     const out = {}, shift = [0, 0, 0]; let drop = 0, gw = 0, gph = null, gb = 0;
@@ -583,7 +585,7 @@ export class Rig {
     const hips = out.hips ||= [0, 0, 0], spine = out.spine ||= [0, 0, 0], head = out.head ||= [0, 0, 0];
     hips[0] += q.lean * .35; spine[0] += q.lean * .65; head[0] -= q.lean * .6;
     hips[2] += q.bank * .6; spine[2] += q.bank * .4; head[2] -= q.bank * .7;
-    for (const [leg, sd] of [['legL', 1], ['legR', -1]]) { const l = out[leg] ||= [0, 0, 0]; l[0] -= q.lean * .35; l[2] -= q.bank * .6; }   // the feet stay where they are
+    const ll = out.legL ||= [0, 0, 0], lr = out.legR ||= [0, 0, 0]; ll[0] -= q.lean * .35; ll[2] -= q.bank * .6; lr[0] -= q.lean * .35; lr[2] -= q.bank * .6;   // the feet stay where they are
     return this;
   }
 }

@@ -199,7 +199,7 @@ export class Sky {
     const ang = (t - 6) / 12 * Math.PI, up = Math.sin(ang);
     this.sunDir.set(Math.cos(ang), up, this.tilt).normalize();
     this.night = Math.min(1, Math.max(0, (-up + .1) * 3));
-    const lightDir = this.lightDir = this.night > .5 ? this.sunDir.clone().negate() : this.sunDir;   // moonlight from the other side
+    const lightDir = this.lightDir = this.night > .5 ? (this.moonDir ||= this.sunDir.clone()).copy(this.sunDir).negate() : this.sunDir;   // moonlight from the other side
     this.sunI = sunI;
     if (this.phys) {
       // the colours come from the scattering sums: overhead, round the horizon, and the sunlight itself
@@ -360,9 +360,12 @@ export class Weather {
     }
     if (this.snowMesh.visible) {
       const p = this.snowMesh.geometry.attributes.position, a = p.array, fall = A * .12;
+      // (each flake sways as sin(t * 1.3 + i): from two sines a frame and each flake's own sine and cosine, kept, not a sine a flake a frame)
+      const sw = this.swayOf ||= (() => { const m = this.max, t = new Float32Array(m * 2); for (let i = 0; i < m; i++) { t[i * 2] = Math.sin(i); t[i * 2 + 1] = Math.cos(i); } return t; })();
+      const ft = this.t * fall / A, fx = wx * this.t / A, fz = wz * this.t / A, ss = Math.sin(this.t * 1.3) * .02, sc = Math.cos(this.t * 1.3) * .02;
       for (let i = 0; i < n; i++) {
-        const k = i * 3, y = (((o[k + 1] - this.t * fall / A * (.7 + o[k] * .6)) % 1) + 1) % 1, sway = Math.sin(this.t * 1.3 + i) * .02;
-        a[k] = cx + (((o[k] + sway + wx * this.t / A) % 1 + 1) % 1 - .5) * A; a[k + 1] = cy + (y - .5) * A; a[k + 2] = cz + (((o[k + 2] + wz * this.t / A) % 1 + 1) % 1 - .5) * A;
+        const k = i * 3, yv = o[k + 1] - ft * (.7 + o[k] * .6), y = yv - Math.floor(yv), sway = ss * sw[i * 2 + 1] + sc * sw[i * 2], xv = o[k] + sway + fx, zv = o[k + 2] + fz;
+        a[k] = cx + (xv - Math.floor(xv) - .5) * A; a[k + 1] = cy + (y - .5) * A; a[k + 2] = cz + (zv - Math.floor(zv) - .5) * A;
         if (cv && a[k + 1] < cv.at(a[k], a[k + 2])) a[k + 1] = cy - A * 4;   // (under a roof: no flake; out of sight below)
       }
       p.needsUpdate = true; this.snowMesh.geometry.setDrawRange(0, n);
