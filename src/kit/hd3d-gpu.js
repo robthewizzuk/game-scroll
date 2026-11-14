@@ -907,7 +907,7 @@ class KitLighting extends ClusteredLighting {
   constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
   createNode(lights = []) { return new KitLampsNode(this.maxLights, this.tileSize, this.zSlices, this.maxLightsPerCluster).setLights(lights); }
   getNode(scene) {
-    if (scene !== this.gsShadowOf) return super.getNode(scene);
+    if (scene !== this.gsShadowOf) { const n = super.getNode(scene); n.gsScene = scene; return n; }   // (its view's decals: decals-gpu.js)
     let n = this.gsShadowNodes.get(scene);
     if (!n) { n = this.createNode(); this.gsShadowNodes.set(scene, n); this._track?.(n); }
     return n;
@@ -915,6 +915,8 @@ class KitLighting extends ClusteredLighting {
   /** go(), with every render of scene inside it taken for a shadow map's. */
   shadowDraw(scene, go) { const was = this.gsShadowOf; this.gsShadowOf = scene; try { return go(); } finally { this.gsShadowOf = was; } }
 }
+// decals in the lamps' grid (decals-gpu.js): the atlas's squares, for hd3d.js HDView.decal
+export { takeCell as decalCell, giveCell as decalFree, refreshCell as decalRefresh, cellRect as decalRect, cellsInfo as decalCells } from './decals-gpu.js';
 export function manyLights(r) { r.lighting = new KitLighting(256, 32, 24, 32); r.gsClustered = true; }
 // three's walk of the scene for each render (the picture, each shadow map), made over the scene's list (scene-list.js)
 let ListPipeline = null;
