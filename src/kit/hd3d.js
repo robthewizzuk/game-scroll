@@ -458,8 +458,11 @@ export const HD = {
    * (shadow-tiles.js); false: the sun moves a shadow texel at a time, as it used to, and its map is drawn again whenever it does.
    * shadowCheck (tests): true makes a tiled map again from its kept copy and the moving things on frames with nothing to draw,
    * which is what it should hold already, so a kept copy that has gone wrong shows in the picture.
+   * shadowOne (WebGPU): a kept map is written in as few passes as there can be, one on most frames: a part is emptied, and
+   * the kept copy's parts are put back, in the pass of the things drawn over them (every pass loads the whole map into a
+   * phone chip's tile memory and stores it again); false: a pass for each step, as before (the frame lab's Shadow passes check, tests).
    */
-  shadowCache: true, shadowTiles: true, shadowCheck: false,
+  shadowCache: true, shadowTiles: true, shadowCheck: false, shadowOne: true,
   /**
    * Ray traced reflections (v.reflect() on WebGPU; hd3d-gpu-trace.js). traced: null traces on the best phones
    * (speed.js's 'top' class) on high and ultra, true wherever the chip can (tests), false never: screen-space
@@ -628,10 +631,15 @@ function shadowSplit(l, ops) {
   if (plan.mode === 'rebuild' || !sh.gsCache) {
     ops.draw(l, SH_STILL_BIT, false);
     ops.copy(l, sh.map, sh.gsCache ||= ops.make(l));
-  } else ops.copy(l, sh.gsCache, sh.map);
-  ops.draw(l, SH_MOVE_BIT, true);
+    ops.draw(l, SH_MOVE_BIT, true, null, 1, ops.one ? ops.none : null, sh.gsCache);
+  }
+  // (WebGPU, one pass: the map is cleared, the kept copy written into it and the moving things drawn over that, where
+  // it was a copy of the whole map and then a pass that loaded it all again)
+  else if (ops.one) ops.draw(l, SH_MOVE_BIT, false, null, sh.mapSize.x, ALL_OF_IT, sh.gsCache);
+  else { ops.copy(l, sh.gsCache, sh.map); ops.draw(l, SH_MOVE_BIT, true); }
   HD.info.shSplit = (HD.info.shSplit || 0) + 1;
 }
+const ALL_OF_IT = [[0, 0, 1, 1]];
 // A sun's map in tiles (shadow-tiles.js has the book-keeping and says why). The plan made in
 // shadowLights is carried out here: the kept copy slides with the map when the sun has stepped a tile,
 // the parts whose still things changed are drawn again and copied aside, the parts where only moving
@@ -639,13 +647,30 @@ function shadowSplit(l, ops) {
 function shadowTiles(l, ops) {
   const sh = l.shadow, st = sh.gsTiles, p = st.plan, px = sh.mapSize.x / st.T, I = HD.info;
   let cache = sh.gsCache;
+  const one = !!ops.one;
   if (p.reset || !cache) {
     cache = sh.gsCache ||= ops.make(l);
-    ops.draw(l, SH_STILL_BIT, false);
+    // (one pass: the rectangles that will ride in these two kinds of pass have their shaders made here, with one of no size)
+    ops.draw(l, SH_STILL_BIT, false, null, px, one ? ops.none : null, null);
     ops.copy(l, sh.map, cache);
     ops.warm?.(l, sh.map, cache);
-    ops.draw(l, SH_MOVE_BIT, true);
+    ops.draw(l, SH_MOVE_BIT, true, null, px, one ? ops.none : null, cache);
     I.shTiles = (I.shTiles || 0) + st.T * st.T; I.shWhole = (I.shWhole || 0) + 1;
+  } else if (one) {
+    // WebGPU, where every pass on the map loads the whole of it into the chip's tile memory and stores it again: as
+    // few passes as there can be. A part drawn again is emptied in the pass that draws it; a map that slid has no
+    // moving things in it yet when its new parts are drawn, so the kept copy is one plain copy of it afterwards (no
+    // pass); and the parts put back go in the pass of the moving things drawn over them. A frame where only things
+    // that move changed is one pass (it was two), a sun's step with a new row and column four (it was seven).
+    if (p.shift) { ops.shift(l, cache, sh.map, p.shift[0], p.shift[1], p.shift[2]); I.shSlid = (I.shSlid || 0) + 1; }
+    for (const q of p.redo) ops.draw(l, SH_STILL_BIT, false, q, px);
+    if (p.shift) ops.copy(l, sh.map, cache);
+    else if (p.redo.length) ops.copy(l, sh.map, cache, p.redo, px);
+    const whole = !p.movers || (p.movers[2] === st.T && p.movers[3] === st.T), put = p.back.length ? p.back : null;
+    // (every tile put back: the map is cleared, not loaded, and the kept copy fills it)
+    if (p.movers) ops.draw(l, SH_MOVE_BIT, !(put && p.put >= st.T * st.T), whole ? null : p.movers, px, put, cache);
+    else if (put) ops.copy(l, cache, sh.map, put, px);
+    I.shTiles = (I.shTiles || 0) + p.tiles; I.shPut = (I.shPut || 0) + p.put;
   } else {
     if (p.shift) { ops.shift(l, cache, sh.map, p.shift[0], p.shift[1], p.shift[2]); ops.copy(l, sh.map, cache); I.shSlid = (I.shSlid || 0) + 1; }
     for (const q of p.redo) ops.draw(l, SH_STILL_BIT, false, q, px);
@@ -3035,6 +3060,7 @@ export class HDView {
         if (sh.gsTiles && sh.map && sh.shadowNode?.gsSplit && sh.shadowNode.shadowMap === sh.map && !baking && !off) (G.shOps ||= G.fx.shadowOps(r)).ahead(l);
         if (!sh.needsUpdate || !sh.map || sh.gsPlan?.mode === 'full' || !sh.gsPlan || !sh.shadowNode?.gsSplit || sh.shadowNode.shadowMap !== sh.map) continue;
         const ops = G.shOps ||= G.fx.shadowOps(r); ops.scene = this.scene; ops.camera = this.cam;
+        G.fx.SHADOW_ONE.on = HD.shadowOne !== false;
         shadowSplit(l, ops);
         sh.needsUpdate = false;
       }
