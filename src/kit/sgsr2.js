@@ -120,6 +120,7 @@ const CONVERT = /* glsl */`
     vec4 PreClip = clipToPrevClip * vec4(ScreenPos, btmLeftMax9 * 2.0 - 1.0, 1.0);
     vec2 motion = ScreenPos - PreClip.xy / PreClip.w;
 
+    #ifdef S2_DIS
     // disocclusion (FSR 3.1's, as hd3d-gpu.js sgsr2Gpu: from last frame's own depth): where last frame had
     // something nearer at the place this pixel came from, this surface was hidden behind it then
     // (this pixel's own depth, or the nearest in the 3 x 3 round it)
@@ -143,6 +144,9 @@ const CONVERT = /* glsl */`
     }
     float dis = (nearer && ws > 0.0) ? clamp(1.0 - acc / ws, 0.0, 1.0) : 0.0;
     float df = fsrX.x < 0.5 ? depthclip : fsrX.x < 1.5 ? max(depthclip, dis) : dis;
+    #else
+    float df = depthclip;
+    #endif
     gl_FragColor = vec4(motion, df, 0.0);
   }`;
 
@@ -214,6 +218,26 @@ const CHANGES = CAMEFROM + /* glsl */`
     gl_FragColor = vec4(diff, diff == 0.0 ? 0.0 : sign(diff), inst, 0.0);
   }`;
 
+// The flicker hold alone (the shape GSSR ships in: no disocclusion, no shading change): the two passes above as
+// one that draws two pictures, the brightness history and beside it whether the pixel flickers, with none of the
+// change in brightness (ten reads and twenty-five comparisons a pixel that only the shading change reads)
+const FLICKER = CAMEFROM + /* glsl */`
+  layout(location = 1) out highp vec4 gsFlicker;
+  float mdm(float a, float b) { return min(a, b) / max(max(a, b), 1.0e-6); }
+  void main() {
+    ivec2 P = ivec2(gl_FragCoord.xy);
+    vec4 m = texelFetch(MotionDepthClipAlphaBuffer, P, 0), cf = cameFrom(P, m.xy);
+    vec4 h = texture(LumHist, cf.xy / renderSize);
+    float Lc = lumOf(texelFetch(InputColor, P, 0).rgb), s0 = mdm(Lc, h.x), d0 = Lc - h.x, ms = s0;
+    if (sign(d0) == sign(Lc - h.y)) ms = max(ms, mdm(Lc, h.y));
+    if (sign(d0) == sign(Lc - h.z)) ms = max(ms, mdm(Lc, h.z));
+    if (sign(d0) == sign(Lc - h.w)) ms = max(ms, mdm(Lc, h.w));
+    float inst = (ms > s0 && s0 < 1.0 && h.w > 0.0) ? 1.0 : 0.0;
+    inst *= cf.z * (1.0 - clamp(cf.w / 20.0, 0.0, 1.0)) * (1.0 - m.z);
+    gl_FragColor = vec4(Lc, h.xyz * cf.z);
+    gsFlicker = vec4(inst, 0.0, 0.0, 1.0);
+  }`;
+
 // Upscale: a Lanczos filter of the 5 nearest low-res pixels, a colour box from them, history clamped
 // to that box, then blended.
 const UPSCALE = /* glsl */`
@@ -271,10 +295,19 @@ const UPSCALE = /* glsl */`
     highp vec2 PrevUV = clamp(-0.5 * Motion + Hruv, 0.0, 1.0);
     // shading change (FSR 3.1's): where a patch of the picture as a whole grew brighter or darker since last frame
     // (a shadow or a light moving over it), the most of three patch sizes; counted as somewhere uncovered
+    #ifdef S2_SHADE
     float shc = 0.0;
     for (int k = 1; k <= 3; k++) { vec2 v = textureLod(Changes, Jitteruv, float(k)).xy; shc = max(shc, abs(v.x * v.y)); }
     float depthfactor = max(mda.z, clamp(shc * fsrY.x, 0.0, 1.0));
-    float inst = textureLod(Changes, Jitteruv, 0.0).z * fsrY.y * (1.0 - depthfactor);
+    #else
+    float depthfactor = mda.z;
+    #endif
+    // (whether the pixel flickers: the changes picture's z, or the flicker picture's one number: S2_INST)
+    #ifdef S2_INST
+    float inst = textureLod(Changes, Jitteruv, 0.0).S2_INST * fsrY.y * (1.0 - depthfactor);
+    #else
+    float inst = 0.0;
+    #endif
     #ifdef S2_TUNED
     vec4 History = sharpHistory(PrevUV);
     #else
@@ -418,6 +451,10 @@ const histRT = () => { const t = new WebGLRenderTarget(1, 1, { type: HalfFloatTy
 const depthRT = () => new WebGLRenderTarget(1, 1, { type: HalfFloatType, format: RedFormat, depthBuffer: false, minFilter: NearestFilter, magFilter: NearestFilter });
 // how each small pixel changed since last frame, with smaller copies to read a patch's average
 const changesRT = () => new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: LinearMipmapLinearFilter, magFilter: LinearFilter });
+// the flicker hold alone: the brightness history with whether the pixel flickers beside it (one number)
+const flickRT = () => { const t = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, minFilter: LinearFilter, magFilter: LinearFilter, count: 2 }); t.textures[1].format = RedFormat; return t; };
+/** Which of FSR 3.1's tricks the passes are built with (x: FSR_X's digits): 'dis shade flicker' as 0s and 1s. A trick that is off is left out of the shaders. */
+export const s2Shape = x => { const v = x || FSR_X; return (v[0] > 0 ? '1' : '0') + (v[4] > 0 ? '1' : '0') + (v[5] > 0 ? '1' : '0'); };
 const halton = (i, b) => { let f = 1, r = 0; for (; i > 0; i = Math.floor(i / b)) { f /= b; r += f * (i % b); } return r; };
 const VP = new Matrix4(), INV = new Matrix4();
 
@@ -425,9 +462,9 @@ const VP = new Matrix4(), INV = new Matrix4();
 class ConvertPass extends Pass {
   constructor(s) { super(); this.s = s; this.needsSwap = false; }
   render(r, writeBuffer, readBuffer) {
-    const s = this.s; s.cu.InputDepth.value = readBuffer.depthTexture; s.cu.PrevDepth.value = s.pd[1 - s.pc].texture;
+    const s = this.s; s.cu.InputDepth.value = readBuffer.depthTexture; s.cu.PrevDepth.value = s.pd.length ? s.pd[1 - s.pc].texture : null;
     s.quad.material = s.convert; r.setRenderTarget(s.mdc); s.quad.render(r);
-    if (s.cu.fsrX.value.x > .5) { s.quad.material = s.depthLin; r.setRenderTarget(s.pd[s.pc]); s.quad.render(r); s.pc = 1 - s.pc; }   // (kept for the next frame's disocclusion, when it is on)
+    if (s.pd.length) { s.quad.material = s.depthLin; r.setRenderTarget(s.pd[s.pc]); s.quad.render(r); s.pc = 1 - s.pc; }   // (kept for the next frame's disocclusion, when it is on)
   }
 }
 // Upscales the finished small picture into the history, then shows it.
@@ -435,10 +472,17 @@ class UpscalePass extends Pass {
   constructor(s) { super(); this.s = s; this.needsSwap = false; }
   render(r, writeBuffer, readBuffer) {
     const s = this.s, u = s.uu, out = s.hist[s.cur];
-    s.lu.InputColor.value = readBuffer.texture; s.lu.LumHist.value = s.lh[1 - s.lc].texture;
-    s.quad.material = s.changes; r.setRenderTarget(s.sd); s.quad.render(r);
-    s.quad.material = s.lumHist; r.setRenderTarget(s.lh[s.lc]); s.quad.render(r); s.lc = 1 - s.lc;
-    u.Changes.value = s.sd.texture;
+    s.lu.InputColor.value = readBuffer.texture;
+    if (s.sd) {
+      s.lu.LumHist.value = s.lh[1 - s.lc].texture;
+      s.quad.material = s.changes; r.setRenderTarget(s.sd); s.quad.render(r);
+      s.quad.material = s.lumHist; r.setRenderTarget(s.lh[s.lc]); s.quad.render(r); s.lc = 1 - s.lc;
+      u.Changes.value = s.sd.texture;
+    } else if (s.fl.length) {
+      s.lu.LumHist.value = s.fl[1 - s.lc].texture;
+      s.quad.material = s.flicker; r.setRenderTarget(s.fl[s.lc]); s.quad.render(r);
+      u.Changes.value = s.fl[s.lc].textures[1]; s.lc = 1 - s.lc;
+    }
     u.InputColor.value = readBuffer.texture; u.PrevOutput.value = s.hist[1 - s.cur].texture; u.LockHist.value = s.hist[1 - s.cur].textures[1]; u.MotionDepthClipAlphaBuffer.value = s.mdc.texture;
     s.quad.material = s.upscale; r.setRenderTarget(out); s.quad.render(r);
     s.copy.uniforms.tDiffuse.value = out.texture; s.quad.material = s.copy; r.setRenderTarget(null); s.quad.render(r);
@@ -507,10 +551,12 @@ export class SGSR2 {
     this.lu = { InputColor: { value: null }, MotionDepthClipAlphaBuffer: { value: null }, LumHist: { value: null }, renderSize: this.cu.renderSize, jitterMove: this.cu.jitterMove, reset: this.uu.reset };
     this.convert = mat(CONVERT, this.cu); this.upscale = mat(UPSCALE.replace('S2_NET_BODY', ''), this.uu, { S2_TUNED: 1, S2_HOLD: S2_HOLD.toFixed(1) }); this._net = null; this.copy = mat(COPY, { tDiffuse: { value: null } });
     this.depthLin = mat(DEPTHLIN, { InputDepth: this.cu.InputDepth, cameraNF: this.cu.cameraNF, orthoCam: this.cu.orthoCam });
-    this.changes = mat(CHANGES, this.lu); this.lumHist = mat(LUMHIST, this.lu);
+    this.changes = mat(CHANGES, this.lu); this.lumHist = mat(LUMHIST, this.lu); this.flicker = mat(FLICKER, this.lu);
     this.quad = new FullScreenQuad(null);
-    this.mdc = rt(); this.hist = [histRT(), histRT()]; this.cur = 0; this.pd = [depthRT(), depthRT()]; this.pc = 0; this.fsr = null;
-    this.sd = changesRT(); this.lh = [rt(), rt()]; this.lc = 0; this.lu.MotionDepthClipAlphaBuffer.value = this.mdc.texture;
+    this.mdc = rt(); this.hist = [histRT(), histRT()]; this.cur = 0; this.pc = 0; this.fsr = null;
+    // the pictures of FSR 3.1's tricks, made for the shape in use (shaped()): last frame's depth (pd), the changes
+    // (sd) and the brightness history (lh), or the flicker hold's one pair (fl)
+    this.pd = []; this.sd = null; this.lh = []; this.fl = []; this.lc = 0; this.shape = ''; this.lu.MotionDepthClipAlphaBuffer.value = this.mdc.texture;
     this.convertPass = new ConvertPass(this); this.upscalePass = new UpscalePass(this);
     this.f = new SgsrFrame();
   }
@@ -531,10 +577,27 @@ export class SGSR2 {
     this.upscale.fragmentShader = UPSCALE.replace('S2_NET_BODY', n ? netText(n, 'glsl') : '');
     this.upscale.needsUpdate = true; this.f.key = '';
   }
+  // The passes built for the tricks in use (s2Shape): one that is off is left out of the shaders, not multiplied by
+  // nothing. As shipped (the flicker hold and the locks): the changes and the brightness history are one pass that
+  // draws two pictures where they were two passes, the motion pass reads last frame's depth nowhere, the upscale
+  // reads no patch averages and no smaller copies are made. The picture is the same; a new shape starts the history again.
+  shaped(x) {
+    const k = this.tuned ? s2Shape(x) : '000'; if (k === this.shape) return;
+    this.shape = k;
+    const dis = k[0] === '1', shade = k[1] === '1', flick = k[2] === '1', full = dis || shade;
+    for (const t of [...this.pd, this.sd, ...this.lh, ...this.fl]) t?.dispose();
+    this.pd = dis ? [depthRT(), depthRT()] : []; this.sd = full ? changesRT() : null; this.lh = full ? [rt(), rt()] : []; this.fl = !full && flick ? [flickRT(), flickRT()] : [];
+    if (this.sd) this.sd.texture.generateMipmaps = shade;   // (the smaller copies: only for the shading change)
+    const set = (m, key, v) => { if (v == null) delete m.defines[key]; else m.defines[key] = v; m.needsUpdate = true; };
+    set(this.convert, 'S2_DIS', dis ? 1 : null); set(this.upscale, 'S2_SHADE', shade ? 1 : null); set(this.upscale, 'S2_INST', full && flick ? 'z' : flick ? 'x' : null);
+    const w = this.mdc.width, h = this.mdc.height; for (const t of [...this.pd, this.sd, ...this.lh, ...this.fl]) t?.setSize(w, h);
+    this.f.key = '';
+  }
   /** Before drawing: sizes, the camera's move since last frame, and this frame's jitter on cam. */
   begin(cam, pw, ph, ow, oh, view, now, cut = false) {
     const cu = this.cu, uu = this.uu, f = this.f;
-    if (this.mdc.width !== pw || this.mdc.height !== ph || this.hist[0].width !== ow || this.hist[0].height !== oh) { this.mdc.setSize(pw, ph); for (const d of [...this.pd, this.sd, ...this.lh]) d.setSize(pw, ph); for (const h of this.hist) h.setSize(ow, oh); }
+    this.shaped(this.fsr);
+    if (this.mdc.width !== pw || this.mdc.height !== ph || this.hist[0].width !== ow || this.hist[0].height !== oh) { this.mdc.setSize(pw, ph); for (const d of [...this.pd, this.sd, ...this.lh, ...this.fl]) d?.setSize(pw, ph); for (const h of this.hist) h.setSize(ow, oh); }
     f.begin(cam, pw, ph, ow, oh, view, now, cut);
     cu.renderSize.value.copy(f.renderSize); cu.renderSizeRcp.value.set(1 / pw, 1 / ph); uu.outputSize.value.copy(f.outputSize);
     uu.scaleRatio.value.copy(f.scaleRatio); cu.cameraFovAngleHor.value = f.fovH; cu.clipToPrevClip.value.copy(f.clipToPrevClip);
@@ -544,5 +607,5 @@ export class SGSR2 {
   }
   /** After drawing: the camera without jitter again. */
   end(cam) { this.f.end(cam); }
-  dispose() { for (const t of [this.mdc, ...this.hist, ...this.pd, this.sd, ...this.lh]) t.dispose(); for (const m of [this.convert, this.upscale, this.copy, this.depthLin, this.changes, this.lumHist]) m.dispose(); this.quad.dispose(); }
+  dispose() { for (const t of [this.mdc, ...this.hist, ...this.pd, this.sd, ...this.lh, ...this.fl]) t?.dispose(); for (const m of [this.convert, this.upscale, this.copy, this.depthLin, this.changes, this.lumHist, this.flicker]) m.dispose(); this.quad.dispose(); }
 }

@@ -103,7 +103,7 @@ export function traceFits(r) {
   const l = r.backend?.device?.limits; if (!l) return false;
   return Math.min(l.maxStorageBuffersInFragmentStage ?? l.maxStorageBuffersPerShaderStage ?? 0, l.maxStorageBuffersPerShaderStage ?? 0) >= 4;
 }
-import { S2_HOLD, FSR_X } from './sgsr2.js';
+import { S2_HOLD, FSR_X, s2Shape } from './sgsr2.js';
 import { netText, netFor } from './gssr-net.js';
 import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
 // where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
@@ -2110,7 +2110,14 @@ function sharePictures(steps) {
   return n;
 }
 // net: GSSR's learned blend (gssr-net.js netFor), or null for the hand-written one
-function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
+// shape (s2Shape): which of FSR 3.1's tricks the passes are built with. A trick that is off is left out of the
+// shaders, not multiplied by nothing: as shipped (the flicker hold and the locks) the changes pass and the
+// brightness history are one pass with two pictures where they were two, the changes picture is one number a
+// pixel where it was four in two pictures, the motion pass reads last frame's depth nowhere and the upscale reads
+// no patch averages. The sums are the same ones, so the picture is too (upscale-compare: the same scores to within a run's own spread); a switch that changes the shape (HD.sgsrFsr, the
+// frame lab) builds the chain again.
+function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Shape()) {
+  const disOn = tuned && shape[0] === '1', shadeOn = tuned && shape[1] === '1', flickOn = tuned && shape[2] === '1', full = disOn || shadeOn;
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
     fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()),
     nf: uniform(new Vector2(.1, 1000)), jm: uniform(new Vector2()), ortho: uniform(0), lockDec: uniform(.005), fsr: uniform(new Vector4(...FSR_X.slice(0, 4))), fsr2: uniform(new Vector4(...FSR_X.slice(4), 0)) };
@@ -2119,15 +2126,20 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
   // frame (x: the change in brightness where it came from, y: its sign, z: whether it flickers, w: its depth as a
   // distance from the camera, read by the next frame), with smaller copies (mipmaps) to read a patch's average;
   // LH, each small pixel's brightness in the last four frames
-  const SD = [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: LinearMipmapLinearFilter }));
-  const LH = [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false }));
+  // (full: with the disocclusion or the shading change on, the two as they are described. With the flicker hold
+  // alone, FL: one picture of two taking turns, the brightness history and beside it whether the pixel flickers)
+  const SD = full ? [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: LinearMipmapLinearFilter })) : [];
+  const LH = full ? [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })) : [];
+  const FL = !full && flickOn ? [0, 1].map(() => { const t = new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, count: 2 }); t.textures[1].format = RedFormat; t.textures[1].name = 'flicker'; return t; }) : [];
+  for (const t of [...SD, ...LH, ...FL]) t.gsPart = 'upscale';   // (hd3d.js gpuTime: the chip's time by pass)
   let sc = 0;
-  const prevD = texture(SD[1].texture), sdT = texture(SD[0].texture), lhT = texture(LH[1].texture);
+  const prevD = full ? texture(SD[1].texture) : null, sdT = full ? texture(SD[0].texture) : FL.length ? texture(FL[0].textures[1]) : null, lhT = full ? texture(LH[1].texture) : FL.length ? texture(FL[1].texture) : null;
   const dist = d => select(U.ortho.greaterThan(.5), orthographicDepthToViewZ(d, U.nf.x, U.nf.y), perspectiveDepthToViewZ(d, U.nf.x, U.nf.y)).negate();
   // convert: motion back to last frame from the nearest depth and the camera's move, and the depth clip
   const conv = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1);
-    const D = (x, y) => depthT.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).x;
+    // (each of the 4 x 4 depths round the pixel read once: the nearest surface below is among them)
+    const seen = new Map(), D = (x, y) => { const k = x + ',' + y; if (!seen.has(k)) seen.set(k, depthT.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).x.toVar()); return seen.get(k); };
     // textureGather's order round the 2 x 2 texels from o: (0,1) (1,1) (1,0) (0,0)
     const G = (ox, oy) => ({ x: D(ox, oy + 1), y: D(ox + 1, oy + 1), z: D(ox + 1, oy), w: D(ox, oy) });
     const bl = G(-1, -1), br = G(1, -1), tl = G(-1, 1), tr = G(1, 1);
@@ -2141,9 +2153,9 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
     const pre = U.c2p.mul(vec4(ndc, bl9, 1)), camM = ndc.sub(pre.xy.div(pre.w));
     // the nearest surface in the 3 x 3 round it
     const at = (x, y) => clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi);
-    const near = ivec2(P).toVar(), nz = depthT.load(P).x.toVar();
+    const near = ivec2(P).toVar(), nz = float(D(0, 0)).toVar();
     for (const [x, y] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
-      const z = depthT.load(at(x, y)).x; If(z.lessThan(nz), () => { nz.assign(z); near.assign(at(x, y)); });
+      const z = D(x, y); If(z.lessThan(nz), () => { nz.assign(z); near.assign(at(x, y)); });
     }
     let M = camM, rea = float(0);
     // with each thing's own motion: that of the nearest surface round it (edges move with what's in front), less the
@@ -2152,7 +2164,8 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
     // disocclusion (FSR 3.1's, ffx_fsr3upscaler_prepare_reactivity.h ComputeDisocclusions, read from last frame's
     // own depth where FSR builds it from this frame's): where last frame had something nearer at the place this
     // pixel came from, this surface was hidden behind it then, so the history there holds the thing in front
-    const own = depthT.load(P).x, pr = U.c2p.mul(vec4(ndc, select(U.fsr.z.greaterThan(.5), own, nz), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
+    if (!disOn) return vec4(M, clip, rea);
+    const own = D(0, 0), pr = U.c2p.mul(vec4(ndc, select(U.fsr.z.greaterThan(.5), own, nz), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
     // (last frame's pixels were drawn a jitter step apart from this frame's: read them where this one's point fell)
     const pu = vec2(u.x.sub(M.x.mul(.5)), u.y.add(M.y.mul(.5))), pp = pu.mul(U.rs).sub(.5).add(U.jm), b0 = ivec2(floor(pp)), fr = pp.sub(floor(pp));
     const K = float(1.37e-05).mul(length(U.rs.mul(.5)));
@@ -2181,7 +2194,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
   });
   // LH: this frame's brightness, then last frame's three (read where this pixel came from)
   const lhMat = new NodeMaterial(); lhMat.name = 'GSSR brightness history';
-  lhMat.fragmentNode = Fn(() => {
+  if (full) lhMat.fragmentNode = Fn(() => {
     const P = ivec2(screenCoordinate.xy), cf = cameFrom(), h = lhT.sample(cf.xy.div(U.rs)).mul(cf.z);
     return vec4(lumOf(low.load(P).rgb), h.x, h.y, h.z);
   })();
@@ -2190,7 +2203,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
   // with its sign; whether it flickers (brighter, then darker, then brighter again: it matches one of the three
   // frames before last better than last frame's, on the same side); and this frame's depth for the next
   const sdMat = new NodeMaterial(); sdMat.name = 'GSSR changes';
-  sdMat.fragmentNode = Fn(() => {
+  if (full) sdMat.fragmentNode = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1), cf = cameFrom(), Q = ivec2(floor(cf.xy));
     const X = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
     const cur = X.map(([x, y]) => lumOf(low.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).rgb));
@@ -2208,6 +2221,20 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
       .mul(cf.z).mul(float(1).sub(clamp(cf.w.div(20), 0, 1))).mul(float(1).sub(m.z)).mul(float(1).sub(clamp(m.w, 0, 1)));
     return vec4(diff, select(diff.equal(0), float(0), sign(diff)), inst, dist(depthT.load(P).x));
   })();
+  // the flicker hold alone: the two passes above as one, with none of the change in brightness (ten reads and
+  // twenty-five comparisons a pixel that only the shading change reads) and no depth kept (the disocclusion's)
+  const flMat = FL.length ? new NodeMaterial() : null;
+  if (flMat) {
+    // (made here as they are, no Fn: the two pictures share what they read)
+    const P = ivec2(screenCoordinate.xy), cf = cameFrom(), h = lhT.sample(cf.xy.div(U.rs)), Lc = lumOf(low.load(P).rgb), mdm = (a, b) => min(a, b).div(max(max(a, b), 1e-6));
+    const s0 = mdm(Lc, h.x), d0 = Lc.sub(h.x);
+    let ms = s0;
+    for (const k of ['y', 'z', 'w']) ms = select(sign(d0).equal(sign(Lc.sub(h[k]))), max(ms, mdm(Lc, h[k])), ms);
+    const m = mdc.load(P), inst = select(ms.greaterThan(s0).and(s0.lessThan(1)).and(h.w.greaterThan(0)), float(1), float(0))
+      .mul(cf.z).mul(float(1).sub(clamp(cf.w.div(20), 0, 1))).mul(float(1).sub(m.z)).mul(float(1).sub(clamp(m.w, 0, 1)));
+    const hk = h.mul(cf.z);
+    flMat.name = 'GSSR flicker'; flMat.fragmentNode = new OutputStructNode(vec4(Lc, hk.x, hk.y, hk.z), vec4(inst, 0, 0, 1));
+  }
   // two history pictures taking turns: this frame's upscale is drawn into one while it reads last
   // frame's from the other. (Copying into a single history picture broke after a resize, like
   // unfolding a Fold: a picture that is only copied into keeps its old size on the GPU.)
@@ -2226,9 +2253,10 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
     // shading change (FSR 3.1's): where a patch of the picture as a whole grew brighter or darker since last frame
     // (a shadow or a light moving over it, something moving that has no motion of its own), the most of three
     // patch sizes; counted as somewhere uncovered: the history there is no good
-    let shc = float(0); for (const k of [1, 2, 3]) { const v = sdT.sample(J).level(k); shc = max(shc, abs(v.x.mul(v.y))); }
-    shc = clamp(shc.mul(U.fsr2.x), 0, 1);
-    const df = max(mda.z, shc), inst = sdT.sample(J).level(0).z.mul(U.fsr2.y).mul(float(1).sub(df));
+    let df = mda.z;
+    if (shadeOn) { let shc = float(0); for (const k of [1, 2, 3]) { const v = sdT.sample(J).level(k); shc = max(shc, abs(v.x.mul(v.y))); } df = max(mda.z, clamp(shc.mul(U.fsr2.x), 0, 1)); }
+    // (whether the pixel flickers: the changes picture's z, or the flicker picture's one number)
+    const inst = full && flickOn ? sdT.sample(J).level(0).z.mul(U.fsr2.y).mul(float(1).sub(df)) : FL.length ? sdT.sample(J).level(0).x.mul(U.fsr2.y).mul(float(1).sub(df)) : float(0);
     const pu = vec2(M.x.mul(-.5).add(H.x), M.y.mul(.5).add(H.y)), prevUV = clamp(pu, 0, 1);
     const hist = tuned ? sharpAt(histT, prevUV, half) : histT.sample(prevUV);
     const mlen = length(M.mul(U.os)), start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
@@ -2273,7 +2301,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
   const upscale = net ? s2Net(net)(I.args, half) : S2_UP(I.args, half);
   const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(I.lock, 0, 0, 1)); upMat.name = 'SGSR2';
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
-  const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat);
+  const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat), qFl = flMat ? new QuadMesh(flMat) : null;
   // the training numbers (scripts/gssr-train): drawn after each upscale while asked for, from the same inputs
   // (in full: the network's inputs as the learned pass has them, with or without a network running)
   let probe = null;
@@ -2288,7 +2316,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
     probe.t.forEach((t, k) => { if (t.width !== w || t.height !== h) t.setSize(w, h); r.setRenderTarget(t); probe.q[k].render(r); });
   };
   return {
-    U, key: '', low,
+    U, key: '', low, shape,
     /** Training (scripts/gssr-train): on, each upscale also draws the network's numbers for every pixel; read() gives them. */
     get probe() { return !!probe; },
     set probe(on) { if (!on && probe) { probe.q?.forEach(q => q.material.dispose()); probe.t?.forEach(t => t.dispose()); } probe = on ? probe || {} : null; },
@@ -2301,7 +2329,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
     },
     size(pw, ph, fw, fh) {
       const k = `${pw}x${ph}>${fw}x${fh}`; if (k === this.key) return; this.key = k;
-      low.setSize(pw, ph); mdc.setSize(pw, ph); for (const t of [...SD, ...LH]) t.setSize(pw, ph); for (const t of H2) t.setSize(fw, fh);
+      low.setSize(pw, ph); mdc.setSize(pw, ph); for (const t of [...SD, ...LH, ...FL]) t.setSize(pw, ph); for (const t of H2) t.setSize(fw, fh);
     },
     set(f) {
       U.rs.value.copy(f.renderSize); U.os.value.copy(f.outputSize); U.jit.value.copy(f.jitter); U.sr.value.copy(f.scaleRatio);
@@ -2310,7 +2338,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
       U.nf.value.set(f.near, f.far); U.jm.value.copy(f.jitterMove); U.ortho.value = f.ortho ? 1 : 0; U.lockDec.value = .1 / f.jitters;
       // (Qualcomm's shader as it was: none of FSR 3.1's tricks either)
       if (!tuned) { U.fsr.value.set(0, 0, 0, 0); U.fsr2.value.set(0, 0, 0, 0); }
-      else if (f.fsr) { U.fsr.value.set(f.fsr[0], f.fsr[1], f.fsr[2] || 0, f.fsr[3] || 0); U.fsr2.value.set(f.fsr[4] || 0, f.fsr[5] || 0, f.fsr[6] || 0, 0); }
+      else { const x = f.fsr || FSR_X; U.fsr.value.set(x[0], x[1], x[2] || 0, x[3] || 0); U.fsr2.value.set(x[4] || 0, x[5] || 0, x[6] || 0, 0); }
     },
     // draw (the scene and the small finished picture are drawn on the way, by the nodes the upscale reads);
     // show = false leaves the screen alone (frame generation shows it, or a made frame, itself)
@@ -2318,10 +2346,12 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
       const tm = r.toneMapping, cs = r.outputColorSpace; r.toneMapping = NoToneMapping; r.outputColorSpace = LinearSRGBColorSpace;
       try {
         const into = H2[cur], from = H2[1 - cur]; histT.value = from.texture; lockT.value = from.textures[1]; outT.value = into.texture;
-        prevD.value = SD[1 - sc].texture; sdT.value = SD[sc].texture; lhT.value = LH[1 - sc].texture;
-        SD[sc].texture.generateMipmaps = U.fsr2.value.x > 0;   // (the smaller copies: only for the shading change)
-        r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
-        r.setRenderTarget(LH[sc]); qLh.render(r);
+        if (full) {
+          prevD.value = SD[1 - sc].texture; sdT.value = SD[sc].texture; lhT.value = LH[1 - sc].texture;
+          SD[sc].texture.generateMipmaps = U.fsr2.value.x > 0;   // (the smaller copies: only for the shading change)
+          r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
+          r.setRenderTarget(LH[sc]); qLh.render(r);
+        } else if (qFl) { lhT.value = FL[1 - sc].texture; sdT.value = FL[sc].textures[1]; r.setRenderTarget(FL[sc]); qFl.render(r); }
         r.setRenderTarget(into); qUp.render(r);
         probeDraw(r);
         sc = 1 - sc;
@@ -2333,7 +2363,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null) {
     last() { return H2[1 - cur].texture; },
     /** The picture the render before that made (it stays until the next render draws over it). */
     before() { return H2[cur].texture; },
-    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); this.probe = false; },
+    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
   };
 }
 
@@ -2742,7 +2772,7 @@ export class GpuChain {
     }
     // live, the last touches go on as each refresh is shown (show()), not here
     const fin = live ? vec4(out.rgb, 1) : Fn(() => vec4(touches(U, out.rgb, U.t, float(1)), 1))();
-    if (s2) this.s2 = sgsr2Gpu(fin, sp.getTextureNode('depth'), mrtOn ? { vel: sp.getTextureNode('velocity'), rea: sp.getTextureNode('reactive') } : null, s2 !== 'plain', String(s2).startsWith('net:') ? this.s2Net : null);
+    if (s2) this.s2 = sgsr2Gpu(fin, sp.getTextureNode('depth'), mrtOn ? { vel: sp.getTextureNode('velocity'), rea: sp.getTextureNode('reactive') } : null, s2 !== 'plain', String(s2).startsWith('net:') ? this.s2Net : null, String(s2).split('#')[1] || s2Shape());
     // the full-size steps after the scene pass, two pictures between them (sharePictures)
     this.shared = SHARE.on && !lensOn && !this.fxSlots.length ? sharePictures([this.baseT, this.dofT, this.mbT, this.s2?.low].filter(Boolean)) : 0;
     if (s2) return;
@@ -2809,7 +2839,7 @@ export class GpuChain {
     const fx = !this.clear && o.ao > 0;
     this.aoBack = fx && o.aoBack !== false;
     this.s2Net = o.s2Net || null;
-    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : o.s2Net ? 'net:' + o.s2Net.id : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : (o.s2Net ? 'net:' + o.s2Net.id : 'hand') + '#' + s2Shape(f.fsr)) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
     // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
     // again or the volumetric light's light moved, which change the picture though the camera didn't)
     if (this.spread) {
@@ -2948,7 +2978,8 @@ export class GpuChain {
     // (first: the real frame's own refresh only ever shows the last real frame, even after a late one)
     if (t < .02 || (S.first && k === 0)) { this.showFrame(fg.prev, 0); return 'real'; }
     if (t > 2.6) return false;   // too far past the newest to guess: the screen keeps what it has
-    fg.make(t); this.showFrame(fg.output, t); return 'made';
+    // (the made frame's gaps are filled as it is drawn to the screen: FrameGen.shown, no pass or picture of their own)
+    fg.make(t, false); this.showMade(t); return 'made';
   }
   /**
    * A refresh after a real frame (the feed's skipped refresh): shows the moment due then. last: the next
@@ -3000,11 +3031,25 @@ export class GpuChain {
   // from the camera it was made for (the moment t) to where the camera points now. Only while the input is
   // turning the camera between real frames (a finger looking round, the phone turning in AR): a turn the
   // game makes in its update (a stick held over) is followed by the made frames' own motion instead.
-  showFrame(tex, t) {
+  showFrame(tex, t) { this.aimWarp(t); this.show(tex); }
+  // sets the turn (this.warp) for a frame made for the moment t; true when it is turned at all
+  aimWarp(t) {
     const fresh = this.aim && t != null && this.fg?.ready ? this.aim() : null, now = performance.now(), B = this.aimBase;
     if (fresh && (fresh.q.angleTo(B.q) > 1e-5 || Math.abs(fresh.fx - B.fx) > 1e-6 * Math.abs(B.fx))) this.aimAt = now;
-    if (fresh && now - this.aimAt < AIM_HOLD) homography(fresh, this.fg.poseAt(t, AIM_POSE), this.warp.value); else this.warp.value.identity();
-    this.show(tex);
+    if (fresh && now - this.aimAt < AIM_HOLD) { homography(fresh, this.fg.poseAt(t, AIM_POSE), this.warp.value); return true; }
+    this.warp.value.identity(); return false;
+  }
+  // a made frame onto the screen, its gaps filled on the way (FrameGen.shown), with the last touches as show() gives them
+  showMade(t) {
+    const fg = this.fg, turned = this.aimWarp(t);
+    if (!this.madeQ) {
+      const m = new NodeMaterial(), U = this.U, c = fg.shown(this.warp); m.name = 'Frame gen show made';
+      m.fragmentNode = this.clear ? c : Fn(() => vec4(touches(U, c.rgb, U.gt, U.gk), 1))();
+      this.madeQ = new QuadMesh(m);
+    }
+    fg.showTurned.value = turned ? 1 : 0; this.U.gt.value = (this.U.gt.value + .37) % 10;
+    const r = this.r, tm = r.toneMapping, cs = r.outputColorSpace; r.toneMapping = NoToneMapping; r.outputColorSpace = LinearSRGBColorSpace;
+    try { r.setRenderTarget(null); this.madeQ.render(r); } finally { r.toneMapping = tm; r.outputColorSpace = cs; }
   }
   // a picture onto the screen (already tone mapped and in sRGB), with the last touches (AR: as it is, see-through)
   show(tex) {
@@ -3021,7 +3066,7 @@ export class GpuChain {
     this.lensN?.dispose(); this.lensN = null;
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
-    this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = null; this.sched = null; this.lastColor = null;
+    this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.madeQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = this.madeQ = null; this.sched = null; this.lastColor = null;
     this._bf?.rt.dispose(); this._bf = null;
   }
 }

@@ -284,6 +284,13 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   camera jump (`v.cut()`) starts SGSR 2's history again. (three.js's TRAA was
   here for those views at full size until it measured further from the true picture than SGSR 2 with
   the camera still, moving, and with a thing moving, and almost no view reached it.)
+- SGSR 2's passes are built for the tricks that are switched on. Its extra tricks (the ones after FSR 3.1:
+  uncovered ground told by depth, shading changes, a hold on pixels that flicker) each have a switch
+  (`__hd.sgsrFsr`), and one that is off is left out of the shaders, not worked out and multiplied by
+  nothing. As shipped (the flicker hold and the locks) that is one pass over the drawn picture where
+  there were two, over two dozen fewer reads for each of its pixels, three fewer for each pixel of the screen and
+  about 12 bytes a drawn pixel less memory, for the same picture. `__hd.info.gpuParts.upscale` now
+  counts all of SGSR 2's passes (two of them used to be counted as `effects`).
 - WebGPU times each frame on the graphics chip where the phone allows it (`__hd.info.gpuMs`: every
   pass since the last real frame, the made frames and other compute work included, which
   `__hd.info.gpuCompute` gives on its own; `__hd.info.gpuParts` says where it went, in milliseconds a
@@ -918,6 +925,12 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   scenes (the commonest frame gen complaint after ghosting).
 - **Big gaps** that open behind fast things are filled from a small pyramid of the made frame that
   favours the far side (the background), instead of a smear from the edge.
+  The filling is done by the pass that draws the made frame to the screen, as it reads each pixel, so a
+  made frame has no pass of its own for it and no finished picture kept: one pass over the screen and one
+  screen-sized picture less for every made frame.
+- **Still pixels cost one read:** where nothing moves between the two real frames (a still camera's still
+  things, most of a board game) a made pixel is the real frames' own pixel, read as it is; the sharp
+  filter's five reads a frame are kept for what moves.
 - **As sharp as real frames:** both real frames are read with a sharp 5-tap filter, so made frames don't
   look softer than the real ones between them (no "shimmer" from sharp, soft, sharp).
 - **Pacing by the clock:** each refresh works out which moment it shows from its own time, so a refresh

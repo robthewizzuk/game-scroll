@@ -86,6 +86,8 @@ const slack = (now, was) => now > was * 1.1 + .1;
       if (k === 'still' && f.error > rp.error + .5) why = 'a still scene changed';
       if (k === 'cut' && (f.error > rp.error + .5 || f.broken > rp.broken + .5)) why = 'a cut mixed two scenes';
       if (check && !save && was && (slack(f.error, was.error) || slack(f.broken, was.broken))) why = `worse than the baseline (${was.error} / ${was.broken}%)`;
+      // the frame as the app draws it (gaps filled on the way to the screen) is the finished picture, turned or not
+      if (s.same > 1 || s.turned > 1) why = `drawn with its gaps filled on the way it is not the finished picture (off by ${s.same} of 255, turned ${s.turned})`;
       if (why) bad++;
       console.log(`  ${k.padEnd(13)} framegen ${String(f.error).padStart(5)} / ${String(f.broken).padStart(5)}%   repeat ${String(rp.error).padStart(5)} / ${String(rp.broken).padStart(5)}%` + (s.mix ? `   mix ${String(s.mix.error).padStart(5)} / ${String(s.mix.broken).padStart(5)}%` : '') + `   ${s.ms} ms` + (s.bench != null ? ` (one more: ${s.bench} ms)` : '') + (s.easy != null ? `   ${s.easy}% quick` : '') + (why ? `   FAIL: ${why}` : ''));
     }
