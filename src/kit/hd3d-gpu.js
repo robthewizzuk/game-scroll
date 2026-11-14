@@ -1835,10 +1835,14 @@ ${S2_TAPS.map(([x, y], i) => `  { let c = hf3(c${i}); let o = s + hf2(${x.toFixe
 // on high. Not with a real lens (v.lens, pictures of its own) or gs.fx3d's screen effects (trails keep theirs
 // from frame to frame). The chip's time by pass still goes to each step (partOf: the picture says whose pass it is
 // as each is drawn). SHARE.on: HD.shareTargets !== false (hd3d.js); the chain is built again when it changes.
+// (three draws an rtt() picture once a frame, and knows it has by the picture it draws into, updateReference: two
+// steps drawing into one picture would be one step to it, and the second would not be drawn at all. So each step
+// is known by itself.)
 export const SHARE = { on: true };
+function ownKey() { return this; }
 function sharePictures(steps) {
   let n = 0;
-  for (const t of steps) if (t.gsPartOwn === undefined) { const up = t.updateBefore; t.gsPartOwn = t.renderTarget.gsPart || null; t.updateBefore = function (frame) { this.renderTarget.gsPart = this.gsPartOwn || undefined; return up.call(this, frame); }; }
+  for (const t of steps) if (t.gsPartOwn === undefined) { const up = t.updateBefore; t.gsPartOwn = t.renderTarget.gsPart || null; t.updateBefore = function (frame) { this.renderTarget.gsPart = this.gsPartOwn || undefined; return up.call(this, frame); }; t.updateReference = ownKey; }
   for (let i = 2; i < steps.length; i++) {
     const b = steps[i], rt = steps[i - 2].renderTarget;
     if (b.renderTarget === rt) continue;
