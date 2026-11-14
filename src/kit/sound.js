@@ -19,6 +19,7 @@ import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
 import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks } from './voice-fx.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
+import { linksFor } from './links.js';
 
 /* ---------- notes ---------- */
 const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -618,10 +619,13 @@ export class Ears {
    * metre (16 for a map of 16-pixel tiles a metre across); auto: false to work the place out (ears.room) but leave the echo to you;
    * rays: how many the place is felt with each frame (4).
    */
-  constructor({ ref = 2, max = 60, rolloff = 1, hrtf = true, flat = false, space = null, send = .5, level = null, hard = .6, unit = 1, auto = true, rays = 4 } = {}) {
+  constructor({ ref = 2, max = 60, rolloff = 1, hrtf = true, flat = false, space = null, send = .5, level = null, hard = .6, unit = 1, auto = true, rays = 4, link = true } = {}) {
     Object.assign(this, { ref, max, rolloff, hrtf, flat, space, send, hard, unit, auto, rays }); this.pos = { x: 0, y: 0, z: 0 }; this.at = { x: 0, y: 0, z: 0 };
     this.live = []; this.turn = 0; this.heardAt = -1; this.level = level;
+    // (links.js: with no level given, the game's physics world (a TileMap for flat ears) is what stands in the way of sound; level: false: nothing does)
+    this.links = linksFor(null, link); this.seeks = level == null && !!this.links; this.links?.join('ears', this); this.findLevel();
   }
+  findLevel() { if (!this.seeks) return; const L = this.links, l = (this.flat ? L.one('tiles') : L.one('world')) ?? null; if (l && l !== this._level) this.level = l; }
   /** What stands in the way of sound (null: nothing does). Set it again when the level is another one. */
   set level(l) { this._level = l || null; this.cast = caster(l, { flat: this.flat }); this.place0 = new Room({ hard: this.hard, flat: this.flat, unit: this.unit }); if (!l && this.auto) mixer.place(null); }
   get level() { return this._level; }
@@ -637,6 +641,7 @@ export class Ears {
         else { L.setPosition(p.x, p.y, p.z); L.setOrientation(f.x, f.y || 0, f.z ?? -1, up.x, up.y, up.z); }
       } catch { /* old audio */ }
     } else this.pos = this.flat ? P3(pos) : { x: pos.x, y: pos.y, z: pos.z || 0 };
+    if (this.seeks) this.findLevel();
     if (this.cast) this.listen(a);
     return this;
   }

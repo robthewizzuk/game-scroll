@@ -15,6 +15,7 @@
 // pictures (a normal map for the water, an alpha map for a layer of foam over it), so it is the same on
 // WebGL and WebGPU and costs nothing while the water is calm. Kit use only: games reach it as gs.outdoors.Water.
 import { timed } from './prof.js';
+import { linksFor } from './links.js';
 import { BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, DoubleSide, DynamicDrawUsage, FogExp2, AdditiveBlending, BackSide, IcosahedronGeometry, InstancedMesh, LinearFilter, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, SphereGeometry, RepeatWrapping, RGBAFormat, RGFormat, UnsignedByteType, Vector2 } from 'three';
 
 const STEP = 1 / 60, TAU = Math.PI * 2, FADE = .996;   // (foam: a third is left after four and a half seconds)
@@ -295,8 +296,9 @@ class Dapple {
  * colour, or false for none. spray: how many drops splashes can throw (80; 0: none).
  */
 export class Water {
-  constructor({ level = 0, waves = 1, size = 160, segments = 64, colour = '#2f7fb8', opacity = .85, material = null, seed = 3, ripples = 0, reach = 24, bed = null, shallow = null, clear = 2.5, foam = '#f2f8fa', spray = 80 } = {}) {
+  constructor({ level = 0, waves = 1, size = 160, segments = 64, colour = '#2f7fb8', opacity = .85, material = null, seed = 3, ripples = 0, reach = 24, bed = null, shallow = null, clear = 2.5, foam = '#f2f8fa', spray = 80, view = null, link = true } = {}) {
     Object.assign(this, { level, size, segments, bed, clear, reach }); this.t = 0;
+    this.links = linksFor(view, link); this.links?.join('water', this);   // (links.js: the game's weather rains on it, its blasts and shots splash in it, its Foley hears what lands in it)
     let s = seed; const R = () => (s = (s * 16807) % 2147483647) / 2147483647;
     this.list = Array.isArray(waves) ? waves : Array.from({ length: 4 }, (_, i) => ({ dir: R() * Math.PI * 2, length: [24, 13, 7, 4][i], height: waves * [.35, .18, .08, .04][i], speed: 0 }));
     for (const w of this.list) { w.k = Math.PI * 2 / w.length; w.c = w.speed || Math.sqrt(9.8 / w.k); w.dx = Math.cos(w.dir); w.dz = Math.sin(w.dir); w.ph = R() * 6.28; }
@@ -395,9 +397,10 @@ export class Water {
     if (this.own) { this.rough0 ??= m.roughness; m.roughness = this.rough0 + .22 * rain; }
     if (rain > 0 && dt > 0 && this.sprayMax > 0) {
       if (!this.dapple) { this.dapple = new Dapple(Math.min(640, this.sprayMax * 8), this.foamColour || '#f2f8fa'); this.mesh.add(this.dapple.mesh); }
-      const spray = this.drops(), cx = this.cx ?? 0, cz = this.cz ?? 0, reach = 9, n = rain * dt * this.dapple.n / .45, k = Math.floor(n) + (R() < n % 1 ? 1 : 0);
+      const spray = this.drops(), cx = this.cx ?? 0, cz = this.cz ?? 0, reach = 9, half = this.size / 2, n = rain * dt * this.dapple.n / .45, k = Math.floor(n) + (R() < n % 1 ? 1 : 0);
       for (let q = 0; q < k; q++) {
         const a = R() * TAU, d = Math.pow(R(), .65) * reach, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;   // (more of them near the centre, where they can be seen)
+        if (Math.abs(x - cx) > half || Math.abs(z - cz) > half || (this.bed && this.bed(x, z) > this.level)) continue;   // (a pond smaller than that, or its shore: no rings on dry land)
         this.dapple.add(x, z, .07 + R() * .13);
         if (q % 8 === 0) spray.add(x, this.level + this.swellAt(x, z) + .01, z, (R() - .5) * .4, 1 + R() * 1.1, (R() - .5) * .4, .016 + R() * .014);
       }
@@ -529,6 +532,7 @@ export class Water {
   /** Calm again (a new round): no ripples, foam or spray. */
   calm() { const r = this.rip; if (r) { r.H.fill(0); r.V.fill(0); r.F.fill(0); r.sources.length = 0; r.live = 2; r.calmPix = r.foamPix = false; } this.spray?.clear(); this.dapple?.clear(); for (const w of this.watched) w.first = true; this.splashes = []; this.pending = []; return this; }
   dispose() {
+    this.links?.leave(this);
     this.rip?.dispose(); this.foamMesh?.material.dispose(); this.lace?.dispose();
     if (this.deepMesh) { this.deepMesh.removeFromParent(); this.deepMesh.geometry.dispose(); this.deepMesh.material.dispose(); }
     if (this.medium && this.under) { this.under = 0; const k = this.medium.knobs; if (k) for (const q of k) { if (q.c) q.c.copy(q.base); else q.set(q.base); } }   // (the view's air goes back to the game's)

@@ -19,6 +19,7 @@
 // a trail is still there when you come back to it, and a game can read it (marks.trail(): who went where).
 // Kit use only: games reach it as gs.outdoors.Marks.
 import { timed } from './prof.js';
+import { linksFor, linked } from './links.js';
 import { BufferAttribute, BufferGeometry, Color, DataTexture, LinearFilter, Mesh, MeshStandardMaterial, RGBAFormat, RepeatWrapping, SRGBColorSpace, UnsignedByteType, Vector3, Vector4 } from 'three';
 
 const TEX = 128, APRON = 2, T = TEX - APRON * 2;   // a tile's pictures are TEX texels a side: T of its own, and APRON of its neighbours' round them (so the two meet without a seam)
@@ -194,8 +195,13 @@ const posOf = (t, out) => { if (t.isObject3D) return t.getWorldPosition(out); co
  * parts on WebGPU), and clear() it in reset().
  */
 export class Marks {
-  constructor(view, { land = null, ground = null, weather = null, sand = null, mud = null, grass = true, reach = 10, cell = .025, keep = 4000, colours = {}, fill = .3, wash = 90, blow = 400, last = {}, mend = 40, above = .02, sheet = true, wind = null, parting = {}, budget = 20000 } = {}) {
+  constructor(view, { land = null, ground = null, weather = null, sand = null, mud = null, grass = true, reach = 10, cell = .025, keep = 4000, colours = {}, fill = .3, wash = 90, blow = 400, last = {}, mend = 40, above = .02, sheet = true, wind = null, parting = {}, budget = 20000, link = true } = {}) {
+    // (links.js: with nothing given, the land, the weather and the wind the game made are found by themselves; false: none)
+    const L = this.links = linksFor(view, link); this.seeks = weather == null && !!L;
+    if (land == null && !ground) land = L?.one('land') ?? null;
+    land ||= null; weather ||= null;
     Object.assign(this, { view, land, weather, sand, mud, reach, cell, keep, fill, wash, blow, above, wind });
+    L?.join('marks', this);
     this.size = T * cell;                                 // metres a tile
     this.surface = land ? surfaceOf(land) : ground ? surfaceFn(ground) : (x, z, out) => { out.y = 0; out.nx = 0; out.ny = 1; out.nz = 0; return out; };
     this.grows = grass === true ? (x, z) => { let g = 0; for (const m of land?.meadows || []) { const w = m.userData.meadow?.where; g = Math.max(g, w ? w(x, z) : 1); } return g; } : grass || null;   // (true: wherever the land's meadows grow)
@@ -522,7 +528,8 @@ export class Marks {
    */
   update(dt, centre = this.view?.cam?.position) {
     this.t += dt; this.frame++; this.made.length = 0;
-    const W = this.weather, wind = this.wind ?? this.land?.wind;
+    if (this.seeks && !this.weather) { const w = this.links.one('weather'); if (w?.world) { this.weather = w; this.lay0 = w.snow; } }   // (a weather made after the marks; one that changes the world: rain that only falls wets nothing)
+    const W = this.weather, wind = linked(this.wind, this.links, 'wind') ?? this.land?.wind;
     // the clocks marks age by: fresh snow fallen (of a full cover), seconds of rain, metres of wind over a light breeze
     if (W && dt > 0) { if (W.snowing > 0) this.clock.snow += dt / (W.settle || 40) * W.snowing; if (W.rain > 0) this.clock.rain += dt * W.rain; }
     if (wind && dt > 0) { const sp = (wind.speed ?? Math.hypot(wind.x ?? wind[0] ?? 0, wind.z ?? wind[1] ?? 0)) - 2.5; if (sp > 0) this.clock.wind += dt * sp; }
@@ -593,6 +600,7 @@ export class Marks {
     return this;
   }
   dispose() {
+    this.links?.leave(this);
     this.clear(); for (const tile of this.pool) this.scrap(tile); this.pool.length = 0; this.watching.length = 0;
     if (this.grass) { if (this.land?.parting === this.grass) { this.land.parting = null; for (const m of this.land.meadows || []) m.userData.meadow?.look?.part?.(null); } this.grass.dispose(); }
   }

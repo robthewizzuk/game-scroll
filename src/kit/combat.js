@@ -21,6 +21,8 @@
 //
 // Vectors are plain { x, y } or { x, y, z } (three.js vectors work too). 2D games leave out z.
 
+import { linksFor } from './links.js';
+
 const len = v => Math.hypot(v.x, v.y, v.z || 0);
 const norm = v => { const l = len(v) || 1; return { x: v.x / l, y: v.y / l, z: (v.z || 0) / l }; };
 const has3 = v => v.z != null;
@@ -114,22 +116,31 @@ export class Gun {
  * about 4, a rocket 300) when update is given a physics world.
  */
 export class Shots {
-  constructor({ gravity = 0, push = 0 } = {}) { this.list = []; this.gravity = gravity; this.push = push; }
+  constructor({ gravity = 0, push = 0, link = true } = {}) { this.list = []; this.gravity = gravity; this.push = push; this.links = linksFor(null, link); }
   /** extra: anything to keep on the shot (who fired it; not: their body in the physics world, which the shot passes). */
   add(s, extra = {}) { const v = { x: s.dir.x * s.speed, y: s.dir.y * s.speed, z: (s.dir.z || 0) * s.speed }; this.list.push({ ...extra, x: s.from.x, y: s.from.y, z: s.from.z || 0, v, left: s.range / Math.max(1, s.speed), shot: s }); return this; }
   /**
    * Moves every shot. hits(from, to, shot) => what it hit (or null): give it your ray test, or a physics world
    * (a gs.physics3d World3D, or gs.physics' 2D Physics): each shot is then traced against everything in it, hits
    * stop where they met it ({ thing, point, normal }) and shove what they hit. Returns [{ shot, hit, at }] for
-   * shots that hit this frame (they are removed).
+   * shots that hit this frame (they are removed). With nothing given, the physics world the game made is used
+   * (links.js; hits: false for none); then a shot that goes into the game's water (made with ripples) splashes there, and its Foley
+   * sounds what a shot struck. What a hit does to what it hit stays yours.
    */
   update(dt, hits) {
+    const L = this.links, own = hits == null && L ? L.one('world') ?? L.one('world2d') : null; if (own) hits = own;
     const out = [], test = typeof hits === 'function' ? hits : hits?.ray ? traced(hits, this) : null;
+    const waters = L && this.list.length ? L.all('water') : null, foley = L && hits?.ray ? L.one('foley') : null;
     for (const p of this.list) {
       const from = { x: p.x, y: p.y, z: p.z };
       p.v.y += this.gravity * dt; p.x += p.v.x * dt; p.y += p.v.y * dt; p.z += p.v.z * dt; p.left -= dt;
       const h = test ? test(from, { x: p.x, y: p.y, z: p.z }, p) : null;
-      if (h) { p.dead = true; const at = h.point ? { x: h.point.x, y: h.point.y, z: h.point.z ?? 0 } : { x: p.x, y: p.y, z: p.z }; out.push({ shot: p, hit: h, at }); } else if (p.left <= 0) p.dead = true;
+      if (h) { p.dead = true; const at = h.point ? { x: h.point.x, y: h.point.y, z: h.point.z ?? 0 } : { x: p.x, y: p.y, z: p.z }; out.push({ shot: p, hit: h, at }); if (foley && h.thing) foley.hit(h.point?.z == null ? { x: at.x, y: at.y } : at, foley.sideOf(h.thing).m, { speed: 9, size: .12, mass: .4 }); } else if (p.left <= 0) p.dead = true;
+      if (waters?.length && !p.wet) for (const w of waters) {   // (through the surface on its way down, before whatever stopped it)
+        if (!w.rip) continue;   // (water made to be disturbed: ripples)
+        const e = h?.point ?? p, y0 = w.height(from.x, from.z), y1 = w.height(e.x, e.z ?? 0);
+        if (from.y > y0 && e.y <= y1) { const k = (from.y - y0) / Math.max(1e-6, (from.y - y0) + (y1 - e.y)); w.splash(from.x + (e.x - from.x) * k, from.z + ((e.z ?? 0) - from.z) * k, { size: .25, speed: Math.min(12, Math.hypot(p.v.x, p.v.y, p.v.z) * .2) }); p.wet = true; break; }
+      }
     }
     this.list = this.list.filter(p => !p.dead);
     return out;
@@ -249,10 +260,33 @@ export class Markers {
  * a car, a crate thrown at it).
  */
 export class Explosives {
-  constructor({ fuse = .25, radius = 4, damage = 80, world = null, knock = null } = {}) {
-    this.list = []; this.handlers = {}; this.d = { fuse, radius, damage }; this.world = world;
-    knock ??= world?.ray?.length >= 4 ? 300 : 9;   // (2D: game units a second)
-    if (world?.onHit) world.onHit((a, b, speed) => { if (speed < knock) return; for (const x of this.list) if (!x.gone && (x.body === a || x.body === b)) this.light(x); });
+  constructor({ fuse = .25, radius = 4, damage = 80, world = null, knock = null, link = true } = {}) {
+    this.list = []; this.handlers = {}; this.d = { fuse, radius, damage }; this.knock = knock; this.hooked = new WeakSet();
+    // (links.js: with no world given, the game's physics world is found, each round's new one too; and a blast is felt by what else the game made: see felt())
+    const L = this.links = linksFor(null, link); this.seeks = world == null && !!L; L?.join('explosives', this);
+    this.world = world || null; this.find();
+  }
+  set world(w) {
+    this._world = w || null; if (!w?.onHit || this.hooked.has(w)) return;
+    this.hooked.add(w); const knock = this.knock ?? (w.ray?.length >= 4 ? 300 : 9);   // (2D: game units a second)
+    w.onHit((a, b, speed) => { if (speed < knock || this._world !== w) return; for (const x of this.list) if (!x.gone && (x.body === a || x.body === b)) this.light(x); });
+  }
+  get world() { return this._world; }
+  find() { if (!this.seeks) return; const L = this.links, w = L.one('world') ?? L.one('world2d'); if (w && w !== this._world) this.world = w; }
+  // What else the game made feels a blast (3D): buildings that come apart are blown in, smoke and fire burst, liquid is thrown,
+  // water splashes, people who react are thrown, the ground is dented and its grass flattened, and the weather looks again at
+  // what is still a roof. Each is what that kit's own blast call does; link: false keeps a blast to itself.
+  felt(b, at) {
+    const L = this.links; if (!L || b.z == null) return;
+    const r = b.radius, push = b.push ?? r * 3;
+    for (const s of L.all('structure')) s.blast(at, r * .75, { power: b.damage / 20, push: push * .7 });
+    for (const g of L.all('gas')) { const B = g.bounds; if (at.x > B[0] - r && at.x < B[3] + r && at.y > B[1] - r && at.y < B[4] + r && at.z > B[2] - r && at.z < B[5] + r) g.burst(at.x, at.y, at.z, { size: r * .5 }); }
+    for (const f of L.all('fluid')) f.push(at.x, at.y, at.z, { radius: r, strength: push * .5, up: push * .25 });
+    for (const w of L.all('water')) { if (!w.rip) continue; const h = w.height(at.x, at.z); if (Math.abs(at.y - h) < r * .6) w.splash(at.x, at.z, { size: r * .5, speed: 6 + r }); }   // (water made to be disturbed: ripples; a blast makes no ripple field the game never asked for)
+    for (const p of L.all('reactions')) p.blast(at, push, r * 1.5);
+    const marks = L.one('marks');
+    if (marks) { const k = marks.kindAt(at.x, at.z, this._k ||= {}); if (k.kind && Math.abs(at.y - k.y) < r * .5) marks.press(at.x, at.z, r * .3, { by: b }); marks.push(at.x, at.z, r, { amount: 1 }); }
+    L.one('weather')?.cover?.touch?.(at.x, at.z, r);
   }
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
   add(o) { const b = { ...this.d, ...o, lit: -1, gone: false }; this.list.push(b); return b; }
@@ -262,6 +296,7 @@ export class Explosives {
   /** Things in range of a point (for a shot or a fire hitting barrels): lights them. */
   near(p, r = 0) { for (const b of this.list) if (!b.gone && Math.hypot(b.x - p.x, b.y - p.y, (b.z || 0) - (p.z || 0)) <= r + (b.size || .5)) this.light(b); return this; }
   update(dt) {
+    this.find();
     for (const b of this.list) if (b.body && !b.gone) { if (b.body.dead) { b.body = null; continue; } const p = b.body.pos ?? b.body; b.x = p.x; b.y = p.y; if (p.z != null) b.z = p.z; }   // (a barrel that rolls)
     for (const b of this.list) {
       if (b.gone || b.lit < 0) continue;
@@ -269,6 +304,7 @@ export class Explosives {
       b.gone = true;
       const e = { ...b, at: { x: b.x, y: b.y, z: b.z || 0 }, hurt: p => { const d = Math.hypot(p.x - b.x, p.y - b.y, (p.z || 0) - (b.z || 0)); return d >= b.radius ? 0 : Math.round(b.damage * (1 - d / b.radius)); } };
       const W = this.world; if (W) { if (W.ray.length >= 4) W.blast(b.x, b.y, b.radius, b.push); else W.blast(e.at, b.radius, b.push ?? b.radius * 3); }   // (2D: game units a second, its own default)
+      this.felt(b, e.at);
       for (const f of this.handlers.boom || []) f(e, b);
       for (const o of this.list) if (!o.gone && o.lit < 0 && Math.hypot(o.x - b.x, o.y - b.y, (o.z || 0) - (b.z || 0)) <= b.radius) this.light(o);
     }

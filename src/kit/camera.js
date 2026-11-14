@@ -15,7 +15,8 @@
 // v is your View or HDView (or a camera). Settings, all changeable later as rig.set({...}):
 //   distance, height (above the target), side (shoulder offset, + = right), look (height of the
 //   point looked at), lag (seconds to catch up; 0 = locked on), lead (look ahead by speed), fov,
-//   walls (meshes the camera can't go through), pitchMin/pitchMax, rail (a THREE.Curve for 'rail':
+//   walls (meshes the camera can't go through, or a gs.physics3d World3D: its still things, asked with one quick
+//   ray; with none given, the physics world the game made is used; walls: false for none), pitchMin/pitchMax, rail (a THREE.Curve for 'rail':
 //   the camera rides it, staying level with the target's progress), at / aim (for 'fixed').
 // The rig follows the target's facing (yaw, or its rotation.y) in chase and shoulder. rig.yaw and
 // rig.pitch are the player's own look offsets on top. rig.forward() and rig.right() give the
@@ -23,6 +24,7 @@
 
 import { Vector3, Raycaster, MathUtils } from 'three';
 import { prefs } from './prefs.js';
+import { linksFor } from './links.js';
 
 const MODES = {
   chase: { distance: 6, height: 2.2, side: 0, look: 1.2, lag: .18, follows: true },
@@ -35,13 +37,16 @@ const MODES = {
   fixed: { distance: 0, height: 0, side: 0, look: 0, lag: .3, follows: false },
 };
 
+// what a camera stops at in a physics world: the ground, floors and other still things (not a crate, a person or a sensor)
+const STILL = t => !t.collider?.isSensor?.() && (t.kind === 'ground' || t.kind === 'floor' || t.fixed === true || (t.body?.isFixed?.() ?? false));
 const _a = new Vector3(), _b = new Vector3(), _c = new Vector3(), _d = new Vector3(), _up = new Vector3(0, 1, 0), _ray = new Raycaster();
 
 export class CameraRig {
   constructor(view, { mode = 'chase', ...o } = {}) {
     this.view = view; this.yaw = 0; this.pitch = 0; this.trauma = 0; this.kickFov = 0; this.kickLeft = 0; this.kickTime = 0; this.t = 0;
     this.pos = new Vector3(); this.aim = new Vector3(); this.from = null; this.blend = 0; this.blendTime = 0; this.started = false;
-    this.opts = { pitchMin: -1.2, pitchMax: 1.2, walls: [], margin: .25, lead: 0, fov: null, ...o };
+    this.opts = { pitchMin: -1.2, pitchMax: 1.2, walls: null, margin: .25, lead: 0, fov: null, ...o };
+    this.links = linksFor(view?.isCamera ? null : view, o.link); this.links?.join('rig', this);   // (links.js)
     this.mode = mode; this.cfg = { ...MODES[mode], ...o };
     this.targetYaw = 0; this.lastTarget = new Vector3(); this.vel = new Vector3(); this.yawSeen = 0; this.pitchSeen = 0;
     // frame generation's fresh aim: a Next Gen view turns its made frames by the look the finger has
@@ -97,10 +102,12 @@ export class CameraRig {
   }
   /** Pulls the camera in front of any wall between the aim point and it. */
   unblock(aim, pos) {
-    const walls = this.cfg.walls || this.opts.walls; if (!walls?.length) return;
+    const walls = this.cfg.walls ?? this.opts.walls, world = walls?.ray ? walls : walls == null ? this.links?.one('world') : null;
+    if (!world?.world && !walls?.length) return;
     _d.subVectors(pos, aim); const d = _d.length(); if (d < 1e-3) return;
-    _ray.set(aim, _d.divideScalar(d)); _ray.far = d;
-    const hit = _ray.intersectObjects(walls, true)[0];
+    _d.divideScalar(d);
+    // a physics world: the first still thing on the way (one ray in its tree, not every triangle of the level's meshes)
+    const hit = world?.world ? world.ray(aim, _d, d, STILL) : (_ray.set(aim, _d), _ray.far = d, _ray.intersectObjects(walls, true)[0]);
     if (hit) pos.copy(aim).addScaledVector(_d, Math.max(.1, hit.distance - (this.opts.margin ?? .25)));
   }
   // Fresh aim (frame generation, hd3d.js aimNow): the camera turned by however much rig.yaw and

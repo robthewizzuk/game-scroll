@@ -18,6 +18,7 @@ import { BufferAttribute, BufferGeometry, Color, Mesh, MeshPhysicalMaterial, Mes
 import { Water, lace } from './water.js';
 import { looks } from './looks.js';
 import { timed } from './prof.js';
+import { linksFor } from './links.js';
 
 const TAU = Math.PI * 2, G = 9.81;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -41,11 +42,15 @@ const wander = (x, z) => 1.3 * Math.sin(x * .031 + z * .017) + .8 * Math.sin(-x 
  * HDView it is drawn in (for the graphics chip's part on WebGPU). Also ripples, reach, spray as for Water.
  */
 export class Sea extends Water {
-  constructor({ level = 0, wind = 7, dir = 0, waves = 1, size = 160, segments = 96, far = 4000, bed = null, shore = 1, sand = 40, view = null,
-    deep = '#0b3550', shallow = '#2a8f9e', foam = '#f2f7f7', clear = 3, fine = 1, choppy = 1.2, seed = 7, ripples = 0, reach = 24, spray = 80 } = {}) {
+  constructor({ level = 0, wind = null, dir = null, waves = 1, size = 160, segments = 96, far = 4000, bed = null, shore = 1, sand = 40, view = null,
+    deep = '#0b3550', shallow = '#2a8f9e', foam = '#f2f7f7', clear = 3, fine = 1, choppy = 1.2, seed = 7, ripples = 0, reach = 24, spray = 80, link = true } = {}) {
+    // (links.js: with no wind given, the swell is what the game's Wind has raised, running its way; else a wind of 7 along x)
+    const air = wind == null ? linksFor(view, link)?.one('wind') : null;
+    if (air && air.speed > .01) { wind = air.speed; dir ??= air.angle; }
+    wind ??= 7; dir ??= 0;
     const list = Array.isArray(waves) ? waves : Sea.swell(wind, dir, waves, seed);
     const m = new MeshPhysicalMaterial({ color: deep, roughness: .05, metalness: 0, ior: 1.333, transparent: true, depthWrite: true, alphaTest: .01 });
-    super({ level, waves: list, size, segments, material: m, seed, ripples, reach, bed, shallow, clear, foam, spray, colour: deep });
+    super({ level, waves: list, size, segments, material: m, seed, ripples, reach, bed, shallow, clear, foam, spray, colour: deep, view, link });
     m.vertexColors = false; m.needsUpdate = true; this.own = true;
     const n1 = segments + 1, cnt = n1 * n1, g = this.mesh.geometry;
     g.deleteAttribute('color');

@@ -26,6 +26,7 @@ import { Color, IcosahedronGeometry, InstancedMesh, MeshStandardMaterial, Quater
 import { webgpu, sendUsed } from './gpu.js';
 import { phoneClass } from './speed.js';
 import { own } from './cleanup.js';
+import { linksFor } from './links.js';
 
 // The fluid works in cells and steps: a place is counted in cells from the grid's corner, a speed in
 // cells a step. RHO drops fill a cell at rest; K is how hard squeezed liquid pushes back (as stiff as a
@@ -468,6 +469,7 @@ export class Fluid {
   constructor(view, o = {}) {
     const kind = { ...KINDS.water, ...(KINDS[o.kind] || {}), ...o };
     this.view = view; this.bounds = (o.box || [-2, 0, -2, 2, 3, 2]).slice(); this.open = !!o.open;
+    this.links = linksFor(view, o.link); this.links?.join('fluid', this);   // (links.js: the game's blasts throw it about)
     const [x0, y0, z0, x1, y1, z1] = this.bounds;
     this.volume = o.volume || (x1 - x0) * (y1 - y0) * (z1 - z0) / 4;
     const g = o.gravity ?? 9.8; this.gravity = typeof g === 'number' ? { x: 0, y: -g, z: 0 } : { x: g.x || 0, y: g.y || 0, z: g.z || 0 };
@@ -719,6 +721,7 @@ export class Fluid {
   }
   /** Takes the fluid out of the view and frees what it holds. */
   dispose() {
+    this.links?.leave(this);
     this.mesh.removeFromParent(); this.mesh.geometry.dispose(); this.mesh.material.dispose(); this.mesh.dispose();
     this.twin?.mesh.removeFromParent(); this.twin?.dispose(); this.twin = null;
     const s = this.view?.sims, i = s ? s.indexOf(this) : -1; if (i >= 0) s.splice(i, 1);

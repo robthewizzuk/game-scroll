@@ -648,7 +648,7 @@ class DiceSet {
   constructor(table, n, { size = .7, body, pips, tray = null, gravity = -70, bounce = .32 } = {}) {
     this.T = table; this.size = size; this.n = n; this.rolling = false; this.res = null; this.still = 0; this.age = 0; this.kept = new Set();
     const S = table.span, t = this.tray = tray || { x: 0, z: 0, w: S * .9, d: S * .9 };
-    const W = this.world = new World3D({ gravity });
+    const W = this.world = new World3D({ gravity, link: false });   // (the dice's own little world: not the game's)
     W.floor(0, { friction: .7, bounce: .25 });
     const wall = (x, z, w, d) => W.box(null, w, S * 3, d, { fixed: true, at: { x, y: S * 1.5, z }, bounce: .4, friction: .2 });
     wall(t.x - t.w / 2 - .5, t.z, 1, t.d + 2); wall(t.x + t.w / 2 + .5, t.z, 1, t.d + 2); wall(t.x, t.z - t.d / 2 - .5, t.w + 2, 1); wall(t.x, t.z + t.d / 2 + .5, t.w + 2, 1);

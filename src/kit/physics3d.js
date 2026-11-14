@@ -31,6 +31,7 @@ import { Box3, Matrix4, Vector3 as V3, Quaternion } from 'three';
 import { own } from './cleanup.js';
 import { onBlend } from './tick.js';
 import { rigDoll } from './ragdoll.js';
+import { linksFor } from './links.js';
 // The SIMD build where the phone has WebAssembly SIMD (faster: Neon on ARM phones), else the plain one.
 // Same engine and API; only one of the two is ever downloaded.
 const engine = lazy('The 3D physics engine', () => (wasmSimd() ? import('@dimforge/rapier3d-simd-compat') : import('@dimforge/rapier3d-compat')).then(async m => {
@@ -312,9 +313,10 @@ export class World3D {
    * tick (`tick: 60`), meshes are drawn between the last two ticks so motion stays smooth on 90 and
    * 120 Hz screens (aim your camera in draw() from the meshes, not the bodies, so they agree).
    */
-  constructor({ gravity = -20, smooth = false } = {}) {
+  constructor({ gravity = -20, smooth = false, link = true } = {}) {
     R = engine.get();
     this.R = R;
+    linksFor(null, link)?.join('world', this);   // (links.js: cloth, sounds, blasts, buildings that come apart and the ears made beside it find it by themselves)
     this.gravity = typeof gravity === 'number' ? V(0, gravity, 0) : vec(gravity);
     this.world = new R.World(this.gravity);
     this.events = new R.EventQueue(true);

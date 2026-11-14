@@ -68,6 +68,7 @@ import { binCapsules } from './sunmask.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, occlusionNow, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutTwin, cutUpdate, headsOf, drawnOf, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
+import { linksFor } from './links.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { eachThing, eachShown, thingsOf } from './scene-list.js';
 import { stillFrame, stillOff, stillStats } from './still.js';
@@ -1639,6 +1640,7 @@ const PLL = [0, 0, 0];   // (Particles: the lamps' light on a soft one)
 export class Particles {
   constructor(view, { max = 300, additive = true, wind = null, blow = 1, reactive = false } = {}) {
     this.max = max; this.list = []; this.wind = wind; this.blow = blow; this.wAt = {}; this.reactive = reactive;
+    this.links = wind == null ? linksFor(view) : null;   // (links.js: with no wind given, they drift with the Wind the game made; wind: false: still air)
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(new Float32Array(max * 3), 3));
     g.setAttribute('size', new BufferAttribute(new Float32Array(max), 1));
@@ -1653,13 +1655,13 @@ export class Particles {
   update(dt) {
     this.tick = (this.tick || 0) + 1;
     const L = this.list, g = this.pts.geometry, P = g.attributes.position.array, S = g.attributes.size.array, T = g.attributes.tint.array;
-    const lit = this.soft ? this.view.effectLit : null, lamps = lit?.n > 0;
+    const lit = this.soft ? this.view.effectLit : null, lamps = lit?.n > 0, air = this.wind || this.links?.one('wind');
     let n = 0;
     for (let i = 0; i < L.length; i++) {
       const p = L[i]; p.t += dt; if (p.t >= p.life) continue;
       const k = Math.max(0, 1 - p.drag * dt); p.vx *= k; p.vy = p.vy * k - p.grav * dt; p.vz *= k;
       p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-      const bl = p.blow ?? this.blow; if (this.wind && bl) { if (p.wx === undefined || ((i + this.tick) & 7) === 0) { const w = this.wind.at(p.x, p.z, this.wAt); p.wx = w.x; p.wz = w.z; } p.x += p.wx * bl * dt; p.z += p.wz * bl * dt; }   // the wind where it is, looked up every 8th frame
+      const bl = p.blow ?? this.blow; if (air && bl) { if (p.wx === undefined || ((i + this.tick) & 7) === 0) { const w = air.at(p.x, p.z, this.wAt); p.wx = w.x; p.wz = w.z; } p.x += p.wx * bl * dt; p.z += p.wz * bl * dt; }   // the wind where it is, looked up every 8th frame
       if (p.floor != null && p.y < p.floor) { p.y = p.floor; p.vy *= -.35; p.vx *= .6; p.vz *= .6; }
       const f = p.t / p.life;
       P[n * 3] = p.x; P[n * 3 + 1] = p.y; P[n * 3 + 2] = p.z; S[n] = p.size * (1 + p.grow * f);
@@ -1707,6 +1709,7 @@ export class GPUParticles {
     this.maxGpu = Math.max(16, Math.min(262144, max | 0));
     this.max = this.maxGpu;
     Object.assign(this, { additive, gravity, drag, bounce, floor, turbulence, wind, view });
+    this.links = wind == null ? linksFor(view) : null;   // (links.js: with no wind given, they drift with the Wind the game made; wind: false: still air)
     this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {}; this.pulls = []; this.flowOn = null;
     this.cpuMax = Math.min(this.maxGpu, SPARK_CPU[phoneClass()] ?? 3000);
     const n = this.cpuMax, g = new BufferGeometry();
@@ -1770,7 +1773,7 @@ export class GPUParticles {
     if (gpu) { this.pendingDt += dt; return; }   // the WebGPU step runs at draw time (stepGpu)
     this.spawnCpu(); this.stepCpu(dt);
   }
-  windNow() { if (!this.wind) return [0, 0, 0]; const b = this.lastAt || [0, 0, 0], w = this.wind.at(b[0], b[2], this.wAt); return [w.x, 0, w.z]; }
+  windNow() { const air = this.wind || this.links?.one('wind'); if (!air) return [0, 0, 0]; const b = this.lastAt || [0, 0, 0], w = air.at(b[0], b[2], this.wAt); return [w.x, 0, w.z]; }
   spawnCpu() {
     const N = this.cpuMax, { P, V, C, E, S } = this;
     for (const b of this.bursts) {
@@ -1907,6 +1910,7 @@ export class HDView {
     this.drops = new LensDrops();   // rain on the lens (lens-drops.js): gs.sky.Weather lands drops while it rains; add() for a splash of your own
     this.lamps = []; this.tierSeen = -1; this.parts = []; this.reflectors = []; this.contacts = [];
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
+    linksFor(this);   // (links.js: what is made with this view later, in update(), finds what the card made)
     this.shafts = 0; this.shaftsAt = null; this.decals = []; this.probes = []; this.probe = null; this.rooms = []; this.gi = null; this.focus = null; this.lens = null; this.cascade = null; this.beams = null; this.motionBlur = null;
     this.upscaler = undefined;   // 'sgsr1' keeps this view on Snapdragon GSR 1 (lots of fast movers: SGSR 2 can leave a short soft trail)
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)

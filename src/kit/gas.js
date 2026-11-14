@@ -28,6 +28,7 @@ import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, DataTexture, 
 import { webgpu } from './gpu.js';
 import { phoneClass } from './speed.js';
 import { own } from './cleanup.js';
+import { linksFor } from './links.js';
 
 // The gas works in cells and steps: a place is counted in cells from the grid's corner, a speed in cells a
 // step. SOURCES: fires, smoke makers, fans and bursts at work in one step; SOLIDS: moving solid things.
@@ -524,6 +525,8 @@ export class Gas {
     for (const k of ['lift', 'weight', 'fade', 'cool', 'soot', 'burn', 'curl']) this[k] = +kind[k] || 0;
     this.look = { colour: new Color(kind.colour), colour2: new Color(kind.colour2), flame: kind.flame.map(c => new Color(c)), thick: kind.thick, glow: kind.glow, sun: 1, sky: 1 };
     const w = o.wind || {}; this.wind = { x: w.x || 0, y: w.y || 0, z: w.z || 0 };
+    // (links.js: the game's blasts burst in it; out in the open with no wind given, the game's Wind leans on it, gusts and all; wind: false: still air)
+    this.links = linksFor(view, o.link); this.links?.join('gas', this); this.seeksWind = o.wind == null && this.open && !!this.links;
     this.size = o.size || 1; this.draws = o.draw !== false; this.seed = (o.seed ?? 1) >>> 0; this.rnd = dice(this.seed);
     this.solids = []; this.packed = []; this.makers = []; this.queue = []; this.groundFn = null; this.solidFn = null; this.marks = true;
     this.src = { n: 0, rows: Array.from({ length: SOURCES }, () => ({ x: 0, y: 0, z: 0, r: 1, smoke: 0, heat: 0, fuel: 0, tint: 0, vx: 0, vy: 0, vz: 0, grip: 0, div: 0, gain: 0 })) };
@@ -596,6 +599,7 @@ export class Gas {
   /* ----- each frame ----- */
   update(dt) {
     dt = Math.min(Math.max(dt, 0), 1 / 20);
+    if (this.seeksWind) { const air = this.links.one('wind'); if (air) { const B = this.bounds, g = air.at((B[0] + B[3]) / 2, (B[2] + B[5]) / 2, this._air ||= {}); this.wind.x = g.x; this.wind.z = g.z; } }
     const S = this.sim;
     let moved = false; for (const s of this.solids) if (s.moved(dt)) moved = true;
     if (moved || this.marks) { this.packed.length = this.solids.length; for (let i = 0; i < this.solids.length; i++) this.packed[i] = this.solids[i].pack(S); this.marks = true; }
@@ -746,6 +750,7 @@ export class Gas {
   read(field) { if (this.mode !== 'gpu') return; field.stamp = (this.field?.stamp || 0) + 1; this.field = field; }
   /** Takes the gas out of the view and frees what it holds. */
   dispose() {
+    this.links?.leave(this);
     this.puffs.dispose(); this.twin?.dispose(); this.twin = null; this.lamp?.removeFromParent();
     const s = this.view?.sims, i = s ? s.indexOf(this) : -1; if (i >= 0) s.splice(i, 1);
   }
