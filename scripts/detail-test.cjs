@@ -17,6 +17,7 @@
 //   node scripts/detail-test.cjs --page lens [--webgpu] [--shots dir]        a camera like a real lens (v.lens): blur from the f-stop against the circle of confusion, bokeh discs and blades, near spill, autofocus, pulls, exposure in stops
 //   node scripts/detail-test.cjs --page fades [--webgpu] [--shots dir]       detail levels that fade (lod-fade.js): a person and a dog half way through a change, its end against a plain switch, turned round; on WebGPU copies stepping back, picked on the CPU and on the chip
 //   node scripts/detail-test.cjs --page aoback --webgpu [--shots dir]       ambient occlusion on the light that bounces only (HD.aoBack): a sunlit and a shaded corner against the occlusion on the whole picture, cuts, a moving camera, no new shaders when the chain is built anew
+//   node scripts/detail-test.cjs --page particles [--webgpu] [--shots dir]   particles pulled, pushed, swirled, taken and carried by a flow (GPUParticles pull() and flow()), against the same burst left alone
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {

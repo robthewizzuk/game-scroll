@@ -6101,6 +6101,18 @@ console.log('physics ok');
   assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
   assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
   console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
+  // where a game's tier starts and when it may climb (hd3d.js startTier, mayClimb): a computer goes above its class's start
+  // only on the chip's own say-so (Rob's MacBook Air M5, 2026-11-14: Long Shadow started on ultra again, settled there the run before)
+  const { startTier, mayClimb } = await import('../src/kit/hd3d.js');
+  assert.equal(startTier(null, 'top', false), 2); assert.equal(startTier(null, 'low', false), 1); assert.equal(startTier(null, 'top', true), 2, 'a top computer starts on high, as a top phone does');
+  assert.equal(startTier({ tier: 1 }, 'top', true), 1, 'a game that settled lower starts there');
+  assert.equal(startTier({ tier: 3 }, 'top', true), 2, 'a computer\'s ultra saved without the chip showing room (an earlier version, or a Mac) starts on high');
+  assert.equal(startTier({ tier: 3, room: true }, 'top', true), 3, 'ultra climbed to with room is taken up again');
+  assert.equal(startTier({ tier: 2 }, 'low', true), 1, 'a low computer\'s high, the same');
+  assert.equal(startTier({ tier: 3 }, 'top', false), 2, 'a phone never starts above high');
+  assert.ok(mayClimb(1, 'top', true, false) && !mayClimb(2, 'top', true, false) && mayClimb(2, 'top', true, true), 'a computer climbs past its start only with room');
+  assert.ok(mayClimb(1, 'low', false, false), 'a phone climbs by its frames alone, as before');
+  console.log('gs.hd tiers start and climb ok');
 }
 
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
@@ -6503,6 +6515,44 @@ console.log('physics ok');
     for (let f = 0; f < 60; f++) { L.update(1 / 60); ph.step(1 / 60); }
     assert.ok(!L.list.some(d => ledge.contains(d.x, d.y)), 'water poured on it stays out of it'); }
   console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
+// finer sun shadows (sunmask.js): capsules for far people and their shadows, the grid they go in, the map of heights' tiles
+{
+  const { binCapsules, figureCapsule, capsuleShade, HeightTiles, CAPS, GRID, PER } = await import('../src/kit/sunmask.js');
+  const n = Math.hypot(-.5, .7, .35), L = [-.5 / n, .7 / n, .35 / n];
+  // a person stands up as a post as tall as they are; an animal on four legs lies along the way it faces
+  const man = figureCapsule(1.75, .3, 2, 0, 3, 0, 1, []);
+  assert.ok(man[0] === 2 && man[3] === 2 && man[2] === 3 && man[5] === 3 && Math.abs(man[1] - man[6]) < 1e-9 && Math.abs(man[4] + man[6] - 1.75) < 1e-9, 'a person: an upright post from their feet to the top of their head');
+  const dog = figureCapsule(.6, 1.2, 0, 0, 0, Math.PI / 2, 1, []);
+  assert.ok(Math.abs(dog[1] - dog[4]) < 1e-9 && Math.abs(dog[2] - dog[5]) < 1e-9 && dog[3] > dog[0], 'an animal: lying level, along the way it faces');
+  // its shadow: dark on the ground behind it (away from the sun), none beside it, on its sunny side or on itself
+  const at = k => capsuleShade(2 - L[0] * k, 0, 3 - L[2] * k, L, man);
+  assert.ok(at(.5) > .9 && at(1.5) > .9, 'dark on the ground behind a person, away from the sun');
+  const h = Math.hypot(L[0], L[2]), beside = capsuleShade(2 - L[2] / h * .5, 0, 3 + L[0] / h * .5, L, man);
+  assert.ok(at(-1) === 0 && beside === 0 && capsuleShade(2, 1, 3 + man[6] * 1.1, L, man) === 0, 'no shadow on their sunny side, half a metre beside them or on their own body');
+  assert.ok(at(2) > .9 && at(3) === 0, 'it ends about as far off as the sun makes a body 1.75 m tall throw it');
+  // the grid: each capsule in the squares its shadow falls across, and no more than PER a square
+  const caps = new Float32Array(CAPS * 8), grid = new Float32Array(GRID * GRID * 8), list = [];
+  for (let i = 0; i < 300; i++) list.push(figureCapsule(1.75, .3, (i % 20) * 3, 0, Math.floor(i / 20) * 3, 0, 1, []));
+  const b = binCapsules(list, L, caps, grid);
+  assert.ok(b.n === CAPS && caps[(CAPS - 1) * 8] === list[CAPS - 1][0] && caps[3] === Math.fround(man[6]), 'no more than CAPS capsules, kept in the order given (nearest first)');
+  const sq = (x, z) => Math.floor((z - b.z0) / b.cell) * GRID + Math.floor((x - b.x0) / b.cell), has = (s, i) => [...grid.slice(s * 8, s * 8 + PER)].includes(i + 1);
+  assert.ok(has(sq(list[0][0], list[0][2]), 0) && has(sq(list[0][0] - L[0], list[0][2] - L[2]), 0), 'a capsule sits in its own square and in the squares its shadow falls across');
+  let most = 0; for (let s = 0; s < GRID * GRID; s++) most = Math.max(most, grid.slice(s * 8, s * 8 + 8).filter(Boolean).length);
+  assert.ok(most <= PER && binCapsules([], L, caps, grid).n === 0 && grid.every(v => v === 0), 'no square holds more than PER; none at all leaves the grid empty');
+  const far = binCapsules([man], L, caps, grid, 40, { x: 2048, y: 0, z: -1024 });
+  assert.ok(caps[0] === 2 - 2048 && caps[2] === 3 + 1024 && far.x0 < 2 - 2048 && far.z0 < 3 + 1024, 'far from the world\'s centre: in the drawing\'s space, about the centre the frame is drawn round (origin.js)');
+  // the map of heights: tiles in a ring round the camera; only the tiles that come in are drawn first, then each again in turn
+  const H = new HeightTiles(512, 512, 4), came = H.at(10, 10), s0 = H.slot(0, 0), s4 = H.slot(4, 0);
+  assert.ok(came.length === 16 && !H.ready && s0.sx === s4.sx && s0.sy === s4.sy && s4.x0 === 512, 'sixteen tiles at first; a place\'s tile always sits at the same spot of the picture');
+  for (let i = 0; i < 16; i++) H.next();
+  assert.ok(H.ready && H.next() && H.at(40, 10).length === 0, 'all drawn after sixteen; a step of less than one tile moves nothing');
+  const step = H.at(10 + 128 * 1.2, 10);
+  assert.ok(step.length === 4 && !H.ready && step.every(s => s.tx === H.cx + 3) && step.includes(H.next()), 'a step of a tile brings in one column of four, drawn first');
+  for (let i = 0; i < 3; i++) H.next();
+  assert.ok(H.ready, 'then the window is whole again');
+  console.log('finer sun shadows: people and animals as capsules, their shadows behind them and none beside or on themselves, a grid of the squares they fall across, the map of heights\' tiles ok');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

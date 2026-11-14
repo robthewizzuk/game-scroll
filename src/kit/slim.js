@@ -214,3 +214,7 @@ export function meshBytes(root, webgpu = false) {
   });
   return { js, chip, points };
 }
+
+// The meshes on bones a renderer poses once a frame on the chip (skin-gpu.js keeps it; hd3d.js keys their shaders
+// apart by it: they are other shaders). Here because both read this file, and the 3D kit doesn't load skin-gpu.js itself.
+export const SKIN_POOLED = new WeakSet();

@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -66,11 +66,14 @@ export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
 export { gpuCloth } from './cloth-gpu.js';
+export { skinPool } from './skin-gpu.js';   // (and, on import, the vertex stage that reads a mesh's points from the pool)
 import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
+import { sunMaskAt, sunMask } from './sunmask-gpu.js';
+export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -1394,7 +1397,8 @@ export function gpuSunLight(l, AIR, noise) {
   const shade = select(SKY.shadeOn.greaterThan(.5), cloudShadeAt(wp.add(ORG), S), flat);
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());
   const nearW = select(p.z.greaterThan(0).and(p.z.lessThan(1)), smoothstep(0, CASC.fade, min(e.x, e.y)), float(0));
-  l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1))));
+  // (and the finer shadows from last frame's sun mask: contact, far and capsule shadows, sunmask-gpu.js)
+  l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1)))).mul(sunMaskAt());
   return role;
 }
 
@@ -1442,7 +1446,20 @@ const normalOut = skip => new PerMaterial(m => drawnOver(m) ? vec4(0) : vec4(pac
  */
 function slimPictures(sp, { normals, motion }) {
   if (normals) { const t = sp.getTexture('normal'); t.type = UnsignedByteType; t.colorSpace = NoColorSpace; }
-  if (motion) sp.getTexture('velocity').format = RGFormat;
+  if (motion) { const t = sp.getTexture('velocity'); t.format = RGFormat; t.userData.gsOut4 = true; }
+}
+// A see-through thing blends into the motion picture by its own blending (frame generation and motion blur: its motion
+// written with no weight, so the motion under it stays), which reads the alpha its shader writes. three gives a
+// shader as many outputs as its target has channels, so with the motion in two channels those pipelines were invalid
+// (WebGPU: "reading alpha but it is missing from fragment output") and three left the things out of every frame drawn
+// with motion: a real-look person's wet eyes, eye shadow, lashes and soft hair strips, and any other blended thing. A picture marked
+// gsOut4 keeps four outputs (WebGPU writes the channels its target has and the blend reads the fourth).
+const outType = NodeBuilder.prototype.getOutputType;
+if (!outType.gsOut4) {
+  NodeBuilder.prototype.getOutputType = function (index = 0) {
+    return this.renderer.getRenderTarget()?.textures[index]?.userData?.gsOut4 ? 'vec4' : outType.call(this, index);
+  };
+  NodeBuilder.prototype.getOutputType.gsOut4 = true;
 }
 /** The scene's normals as the readers want them (view space, -1..1; zero where nothing solid was drawn): a node that can be sampled anywhere. */
 function sceneNormals(sp) {
@@ -2508,6 +2525,7 @@ export class GpuChain {
     if (live) return this.realFrame(o, f);
     if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
+    if (o.sunMask && this.sp && !this.clear) sunMask(this.r, this.sp.getTextureNode('depth').value, this.cam, o.sunMask);
   }
 
   /* ---------- the game on screen: real frames, made frames, still frames ---------- */
@@ -2547,6 +2565,8 @@ export class GpuChain {
       try { this.pp.render(); } finally { r.setRenderTarget(was); }
       color = rt.texture;
     }
+    // the sun mask from this frame's depth, for the next frame's sun (sunmask-gpu.js; hd3d.js sunMaskFrame says what goes in it)
+    if (o.sunMask) sunMask(r, sp.getTextureNode('depth').value, cam, o.sunMask);
     this.vpLast.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.lastColor = color;
     if (o.still) (this.still ||= new StillCheck(r)).check(color, o.fw, o.fh);
