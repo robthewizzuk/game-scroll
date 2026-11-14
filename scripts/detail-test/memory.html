@@ -153,11 +153,12 @@ try {
   let was, now;
   if (Q.has('swap')) { now = await run('now', nowSet); was = await run('as before', wasSet); }
   else { was = await run('as before', wasSet); now = await run('now', nowSet); }
-  const d = apart(now.pic, was.pic), slack = Math.max(was.base.mean, now.base.mean);
+  // (against how much two frames in a row of one run differ: the upscaler's jitter and what moves in the scene)
+  const d = apart(now.pic, was.pic), slack = Math.max(was.base.mean, now.base.mean), slackBig = Math.max(was.base.big, now.base.big);
   for (const R of [was, now]) { const { pic, ...rest } = R; data[R.label] = rest; }
   data.compare = { picturesMB: [was.picturesMB, now.picturesMB], saved: +(was.picturesMB - now.picturesMB).toFixed(1), shadowColour: [was.shadowColour, now.shadowColour], sharedSteps: now.shared, d, frameToFrame: [was.base, now.base] };
   checks.push({ name: `${key}${FX.length ? ' with ' + FX.join(', ') : ''} at tier ${HD.force}, ${W}x${H}: the view's pictures take less memory now`, ok: now.picturesMB < was.picturesMB || (!was.shadowColour && !FX.length), note: `${was.picturesMB} MB as before, ${now.picturesMB} MB now (shadow maps' colour ${was.shadowColour} MB -> ${now.shadowColour} MB, ${now.shared} effect steps sharing a picture)` });
-  checks.push({ name: 'the same picture as before', ok: d.mean <= slack * 1.5 + .05 && d.big <= .05, note: `mean ${d.mean} (frame to frame ${slack}), ${d.big}% off by 40+` });
+  checks.push({ name: 'the same picture as before', ok: d.mean <= slack * 1.5 + .05 && d.big <= slackBig * 1.5 + .05, note: `mean ${d.mean} (frame to frame ${slack}), ${d.big}% off by 40+ (frame to frame ${slackBig}%)` });
   out.before = picture(was.pic); out.now = picture(now.pic); out.diff = picture(now.pic, was.pic);
   window.result = { checks, info: data, out };
 } catch (e) { window.result = { error: (e && e.stack) || String(e) }; }
