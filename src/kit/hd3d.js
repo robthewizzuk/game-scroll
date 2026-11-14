@@ -32,7 +32,7 @@ import {
   WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry, LinearFilter, AdditiveBlending as ADD,
   OrthographicCamera, PlaneGeometry, MeshBasicMaterial, MeshDepthMaterial, Group, Vector4, DataTexture, RGBAFormat, ShaderChunk,
   LightProbe, CubeCamera, WebGLCubeRenderTarget, Euler, Matrix4, Quaternion, DepthTexture, WebGLCoordinateSystem, Box3, Sphere, UnsignedIntType,
-  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry,
+  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry, Frustum,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
@@ -107,12 +107,12 @@ export const TIERS = [
 // Where a phone starts: top phones (Fold 8, recent iPhone Pro) on high, others on high or medium.
 // Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
 // ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
-// A computer (the Mac and Windows app, src/desktop.js) doesn't heat up in a hand: a 'top' one starts on ultra,
-// any of them may climb to it, and each tier draws more of a big window's pixels before the upscaler fills in
-// the rest (ultra about a 2560 x 1440 window's worth, where a phone's is a little over a 1080p screen's).
-const START = desktop ? { top: 3, mid: 2, low: 1 } : { top: 2, mid: 2, low: 1 };
+// A computer (the Mac and Windows app, src/desktop.js) starts where a phone of its class does and draws a tier's
+// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra when its frames have room. (It
+// used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's MacBook Air M5,
+// 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60.)
+const START = { top: 2, mid: 2, low: 1 };
 const CAP = desktop ? 3 : 2;
-if (desktop) [.9e6, 1.5e6, 2.4e6, 3.7e6].forEach((px, i) => { TIERS[i].px = px; });
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -129,9 +129,10 @@ function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2
 // fps a struggling game first gives up a little resolution, then drops to 60 fps at full resolution
 // (keeping the picture); at the lowest tier and resolution it can drop to 30.
 const LEVELS = [1, .85, .7, .55];
-// Most pixels in the final picture once a game has stepped down (about a phone screen's worth, a 2560 x 1440
-// window's on a computer; see draw()).
-const OUT_PX = desktop ? 3.7e6 : 2.4e6;
+// Most pixels in the final picture once a game has stepped down (about a phone screen's worth; see draw()). On a
+// computer, from the first frame: a Retina window is three to six times a phone screen's pixels, and the effects
+// after the upscaler (bloom, motion blur, the finish) cost by the final picture's size, whatever the 3D's own is.
+const OUT_PX = 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
@@ -197,7 +198,18 @@ function startGame(def) {
 // counts only from frames the chip was kept busy for (drawn every refresh, or with frames made between): a phone
 // clocks its chip down at half rate (a real frame took 11.8 ms at 60 against 6.2 at 120 on the Fold, 2026-11-13),
 // and frame generation's checks need the time it takes once it is busy again (speed.cost).
-const GT = { n: 0, busy: false, full: true }, PARTS = new Map();
+// The chip can't take longer over its frames than the frames take to come: a chip whose times say it does is
+// timing something else. Apple's (the Mac app, Rob's MacBook Air M5, 2026-11-13) take each pass's start and end at
+// stage boundaries, so a chain of passes overlap (the next one's vertices start while the last is still drawing)
+// and added up they came to 225 ms a frame, bloom's chain of small passes 66 ms of it, while the frames came every
+// 16.7 ms. Each read is checked against the time its frames took; after BAD of the last 10 reads don't fit, the
+// chip's times are left alone for the rest of the session (HD.info.gpuOff: null, as on WebGL, and the quality
+// steps, the effects' sizes and the gas go by frame times). Twice the frames' time (and 2 ms) is let by, and reads
+// with made frames in them aren't judged: a software chip (the tests' SwiftShader) works on several threads, so
+// its times run past its frames now and then (up to 3.7x, 2026-11-13) and well past them while it makes frames.
+export const chipFits = (gpuMs, wallMs) => !(gpuMs > wallMs * 2 + 2);
+const BAD = 6;
+const GT = { n: 0, busy: false, full: true, at: 0, fits: [] }, PARTS = new Map();
 function partOf(o, rt) {
   if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
   if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
@@ -230,10 +242,11 @@ function gpuTime(r, full = true) {
   codeParts(r);
   GT.n++; GT.full &&= full;
   const be = r.backend;
-  if (!be?.trackTimestamp) return;
+  if (!be?.trackTimestamp || HD.info.gpuOff) return;
   gpuParts(r);
   if (GT.busy) return;
-  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}; GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true;
+  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}, now = performance.now(), wall = GT.at ? (now - GT.at) / n : 0;
+  GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true; GT.at = now;
   // (a read that brought nothing new leaves three's list as it was: its frames list is a new one after each real read)
   const read = type => {
     const pool = be.timestampQueryPool?.[type], was = pool?.frames;
@@ -248,8 +261,13 @@ function gpuTime(r, full = true) {
     });
   };
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
-    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; return; }   // nothing read: those frames count towards the next read
-    const f = (draw + comp) / n; HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; GT.at = now - wall * n; return; }   // nothing read: those frames count towards the next read
+    const f = (draw + comp) / n;
+    if (!made && wall > 0 && wall < 250) {
+      GT.fits.push(chipFits(f, wall)); if (GT.fits.length > 10) GT.fits.shift();
+      if (GT.fits.filter(x => !x).length >= BAD) { chipOff(); return; }
+    }
+    HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
     let fg = 0; for (const k in by) if (k === 'fg' || k.startsWith('fg:')) fg += by[k];
     for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     const real = f - fg / n; HD.info.gpuReal = real; HD.info.fgGpu = fg / n; HD.info.madeMs = made && fg > 0 ? fg / made : null;
@@ -257,6 +275,10 @@ function gpuTime(r, full = true) {
     // what frame generation's checks go by (speed.js frameGenFits, GpuChain.late): eased, for the game being played
     if (real > 0 && real < 100) chipCost(speed.game?.id, kept ? real : null, made && fg > 0 ? fg / made : null);
   }, () => {}).finally(() => { GT.busy = false; });
+}
+function chipOff() {
+  const I = HD.info; I.gpuOff = true; I.gpuMs = I.gpuParts = I.gpuReal = I.fgGpu = I.madeMs = null; I.gpuCompute = 0; Q.gsum = Q.gcnt = 0;
+  console.warn('3D: the graphics chip\'s own times don\'t fit its frames here; the quality steps go by frame times');
 }
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
 const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
@@ -327,13 +349,20 @@ export const HD = {
   /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
   bundle: true,
   /**
+   * People on bones posed once a frame on the graphics chip (WebGPU, skin-gpu.js): one compute pass poses every point of
+   * every mesh on bones in view, and the picture, the shadow maps and the motion picture all read it, instead of each
+   * posing them again in its vertex shader. false: posed in each pass, as three does (tests, the engine test square).
+   * info.skin: { meshes, posed, points, bones, kinds, poolMB } for the last frame (null when off or on WebGL).
+   */
+  gpuSkin: true,
+  /**
    * The world's centre moved along with the camera (origin.js), so far-off places don't shake: how far in metres
    * the camera goes from it before it moves (0: never). originAt: { x, z } a centre given outright (tests, the frame lab).
    * info.origin: [x, z] where the last frame's centre was, or null at the world's own.
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
+  info: { skin: null, gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -401,6 +430,14 @@ export const HD = {
    * HD.info.spread says which are spread.
    */
   spread: true,
+  /**
+   * WebGPU: ambient occlusion darkens the light that bounces (the sky's and the room's, and reflections by roughness), in each
+   * thing's own shading, as Filament, Godot, Bevy and Unity do, not the whole lit picture (hd3d-gpu.js aoInShading).
+   * false: the whole picture as before (the frame lab's A/B, tests). WebGL always lays it on the whole picture.
+   */
+  aoBack: true,
+  /** With aoBack: the share of the occlusion still laid on the whole picture, direct light included (0..1; Unity's "direct lighting strength"). */
+  aoDirect: .25,
   /**
    * WebGPU: a gs.sky Sky's clouds marched through as real ones (high and ultra; hd3d-gpu-sky.js), shading the ground, the fog and
    * the light beams. false: the painted layer, as on WebGL. HD.info.sky says what the sky drew ('air', 'clouds', 'air + clouds').
@@ -1579,6 +1616,14 @@ export class Particles {
  * [r, g, b], above 1 glows; white), to (colour at the end; color), alpha (1), fadeIn (false), ease (fade curve, 1).
  * Up to 16 bursts a frame. Switching between WebGL and WebGPU starts them afresh (they are only for looks: the
  * game can't read where they are; use Particles for the few that must).
+ * p.pull(at, { strength, radius, swirl, axis, take }) draws them to a point (a portal, a magnet, a drain), pushes
+ * them away (strength below 0: a blast's wake, a fan) or turns them round it (swirl: a whirlwind), and takes those
+ * that come within take; it gives back the pull, whose fields can change each frame (pull.at, pull.strength...), and
+ * pull.remove(). Up to 8. strength and swirl are m/s² at 1 m (steady closer in, falling as 1/d² beyond, and to nothing at
+ * radius, if given); a swirl spins them up, so give the particles drag for them to spiral in rather than fly off. p.flow(fn, { box, strength }) moves them with a flow: fn(x, y, z) gives the air's or the
+ * water's velocity there ([x, y, z] or { x, y, z }), sampled into 16 x 16 x 16 cells over box ({ min, max }, or a
+ * THREE.Box3), which particles inside take up at strength a second; flow.update() samples it again, flow.remove().
+ * One flow at a time. (Babylon.js 9's attractors and flow maps, the engines review's option 11.)
  */
 const SPARK_CPU = { top: 12000, high: 6000, mid: 3000, low: 1500 };
 const GPC = new Color();
@@ -1587,7 +1632,7 @@ export class GPUParticles {
     this.maxGpu = Math.max(16, Math.min(262144, max | 0));
     this.max = this.maxGpu;
     Object.assign(this, { additive, gravity, drag, bounce, floor, turbulence, wind, view });
-    this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {};
+    this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {}; this.pulls = []; this.flowOn = null;
     this.cpuMax = Math.min(this.maxGpu, SPARK_CPU[phoneClass()] ?? 3000);
     const n = this.cpuMax, g = new BufferGeometry();
     this.P = new Float32Array(n * 4); this.V = new Float32Array(n * 4); this.C = new Float32Array(n * 4); this.E = new Float32Array(n * 4); this.S = new Float32Array(n * 4);
@@ -1598,7 +1643,7 @@ export class GPUParticles {
     this.mat = new ShaderMaterial({ vertexShader: PV, fragmentShader: PF, transparent: true, depthWrite: false, blending: additive ? AdditiveBlending : NormalBlending, uniforms: { scale: { value: 300 }, soft: { value: additive ? 0 : 1 } } });
     this.pts = new Points(g, this.mat); this.pts.frustumCulled = false; this.pts.renderOrder = 5; view.scene.add(this.pts); view.parts.push(this);
     this.pts.userData.gsTwin = true;
-    this.onGpu = false;
+    this.onGpu = null;   // (not known until the view first draws)
   }
   /** A burst of count particles (see the class notes for the fields). */
   emit(count, o = {}) {
@@ -1613,12 +1658,37 @@ export class GPUParticles {
     return this;
   }
   clear() { this.bursts.length = 0; for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.twin?.reset(); this.head = 0; }
+  /** Draws particles to a point, pushes them away (strength < 0) or swirls them round it; see the class notes. Null past 8. */
+  pull(at, { strength = 5, radius = 0, swirl = 0, axis = [0, 1, 0], take = 0 } = {}) {
+    if (this.pulls.length >= PULL_MAX) return null;
+    const list = this.pulls, h = { at, strength, radius, swirl, axis, take, remove() { const i = list.indexOf(h); if (i >= 0) list.splice(i, 1); } };
+    list.push(h); return h;
+  }
+  /** Moves particles with a flow field over a box; see the class notes. A new one replaces the last. */
+  flow(fn, { box, strength = 2 } = {}) {
+    const lo = v3(box?.min ?? [-5, -5, -5]), hi = v3(box?.max ?? [5, 5, 5]), N = FLOW_N;
+    const size = [Math.max(1e-3, hi[0] - lo[0]), Math.max(1e-3, hi[1] - lo[1]), Math.max(1e-3, hi[2] - lo[2])];
+    const f = { fn, min: lo, size, strength, cells: new Float32Array(N * N * N * 4), fresh: true,
+      update: () => {
+        for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+          const v = fn(lo[0] + size[0] * x / (N - 1), lo[1] + size[1] * y / (N - 1), lo[2] + size[2] * z / (N - 1)), j = (x + y * N + z * N * N) * 4;
+          f.cells[j] = v?.x ?? v?.[0] ?? 0; f.cells[j + 1] = v?.y ?? v?.[1] ?? 0; f.cells[j + 2] = v?.z ?? v?.[2] ?? 0;
+        }
+        f.fresh = true; return f;
+      },
+      remove: () => { if (this.flowOn === f) this.flowOn = null; } };
+    this.flowOn = f.update(); return f;
+  }
   update(dt) {
     dt = Math.min(dt, .1); this.time += dt;
-    const gpu = !!this.view._onGpu;
-    if (gpu !== this.onGpu) {   // moved between WebGL and WebGPU: what was flying is dropped, bursts already asked for still start
+    // (the view hasn't drawn yet, so it isn't known where they move: what was asked for waits for its first frame. Taken on
+    // the CPU here, the bursts of a system made before the view's first frame were lost on WebGPU, and the chip's copy was
+    // then started afresh as if moved from WebGL)
+    if (this.view._onGpu === undefined) { this.pendingDt += dt; return; }
+    const gpu = !!this.view._onGpu, was = this.onGpu;
+    if (gpu !== was) {   // moved between WebGL and WebGPU: what was flying is dropped, bursts already asked for still start
       this.onGpu = gpu; this.max = gpu ? this.maxGpu : this.cpuMax;
-      if (gpu) this.twin?.reset(); else { for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.head %= this.cpuMax; for (const b of this.bursts) { b.n = Math.min(b.n, this.cpuMax); b.start %= this.cpuMax; } }
+      if (was === null) { /* the first frame said where */ } else if (gpu) this.twin?.reset(); else { for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.head %= this.cpuMax; for (const b of this.bursts) { b.n = Math.min(b.n, this.cpuMax); b.start %= this.cpuMax; } }
     }
     if (gpu) { this.pendingDt += dt; return; }   // the WebGPU step runs at draw time (stepGpu)
     this.spawnCpu(); this.stepCpu(dt);
@@ -1644,12 +1714,26 @@ export class GPUParticles {
   stepCpu(dt) {
     const N = this.cpuMax, { P, V, C, E, S } = this, g = this.pts.geometry, PP = g.attributes.position.array, SS = g.attributes.size.array, TT = g.attributes.tint.array;
     const k = Math.max(0, 1 - this.drag * dt), gr = this.gravity, T = this.turbulence, ts = T?.strength ?? 0, tsc = T?.scale ?? 1, tt = this.time * (T?.speed ?? 1), w = this.windNow(), fl = this.floor;
+    const pulls = this.pulls.map(pl => ({ p: v3(pl.at), strength: +pl.strength || 0, radius: +pl.radius || 0, swirl: +pl.swirl || 0, ax: unit(v3(pl.axis ?? [0, 1, 0])), take: +pl.take || 0 })), fo = this.flowOn;
     let n = 0;
     for (let i = 0; i < N; i++) {
       const j = i * 4; if (!(P[j + 3] < V[j + 3])) continue;
       let vx = V[j] * k, vy = V[j + 1] * k - gr * dt, vz = V[j + 2] * k;
       if (ts) { const x = P[j] * tsc, y = P[j + 1] * tsc, z = P[j + 2] * tsc;
         vx += (Math.sin(y + tt) + Math.sin(z * 1.7 - tt)) * .5 * ts * dt; vy += (Math.sin(z + tt * 1.3) + Math.sin(x * 1.3 + tt)) * .5 * ts * dt; vz += (Math.sin(x + tt * .7) + Math.sin(y * 1.9 - tt)) * .5 * ts * dt; }
+      let took = false;
+      for (const pl of pulls) {   // (as the chip's step: particles-gpu.js)
+        const a = pl.p, dx = a[0] - P[j], dy = a[1] - P[j + 1], dz = a[2] - P[j + 2], dl = Math.max(1e-4, Math.hypot(dx, dy, dz)), nx = dx / dl, ny = dy / dl, nz = dz / dl;
+        const fall = (pl.radius > 0 ? 1 - smooth(pl.radius * .67, pl.radius, dl) : 1) / Math.max(dl * dl, 1), s = pl.strength * fall * dt, sw = pl.swirl * fall * dt, ax = pl.ax;
+        vx += nx * s + (ax[1] * nz - ax[2] * ny) * sw; vy += ny * s + (ax[2] * nx - ax[0] * nz) * sw; vz += nz * s + (ax[0] * ny - ax[1] * nx) * sw;
+        if (dl < pl.take) took = true;
+      }
+      if (fo) {
+        const qx = (P[j] - fo.min[0]) / fo.size[0], qy = (P[j + 1] - fo.min[1]) / fo.size[1], qz = (P[j + 2] - fo.min[2]) / fo.size[2];
+        const ew = smooth(0, .1, qx) * (1 - smooth(.9, 1, qx)) * smooth(0, .1, qy) * (1 - smooth(.9, 1, qy)) * smooth(0, .1, qz) * (1 - smooth(.9, 1, qz));
+        if (ew > 0) { const fv = flowAt(fo, qx, qy, qz), t = Math.min(fo.strength * dt, 1) * ew; vx += (fv[0] - vx) * t; vy += (fv[1] - vy) * t; vz += (fv[2] - vz) * t; }
+      }
+      if (took) P[j + 3] = V[j + 3];
       let x = P[j] + (vx + w[0]) * dt, y = P[j + 1] + vy * dt, z = P[j + 2] + (vz + w[2]) * dt;
       if (fl != null && y < fl) { y = fl; vy *= -this.bounce; vx *= .6; vz *= .6; }
       P[j] = x; P[j + 1] = y; P[j + 2] = z; P[j + 3] += dt; V[j] = vx; V[j + 1] = vy; V[j + 2] = vz;
@@ -1672,12 +1756,32 @@ export class GPUParticles {
       rows[r + 3].set(o.life[0], o.life[1], o.size[0], o.size[1]); rows[r + 4].set(o.col[0], o.col[1], o.col[2], o.a); rows[r + 5].set(o.to[0], o.to[1], o.to[2], o.ease); rows[r + 6].set(o.fadeIn, 0, 0, 0); }
     const T = this.turbulence, w = this.windNow();
     this._turb ||= new Vector4(); this._turb.set(T?.strength ?? 0, T?.scale ?? 1, T?.speed ?? 1, 0); this._wind ||= new Vector3(); this._wind.set(w[0], 0, w[2]);
-    t.step(G.r, { rows, count: B.length, dt: this.pendingDt, time: this.time, gravity: this.gravity, drag: this.drag, bounce: this.bounce, floor: this.floor, turb: this._turb, wind: this._wind });
+    const pr = this._pullRows ||= Array.from({ length: PULL_MAX * 3 }, () => new Vector4()), pk = this._pk ||= { rows: pr, count: 0 };
+    pk.count = this.pulls.length;
+    this.pulls.forEach((pl, i) => { const a = v3(pl.at), ax = unit(v3(pl.axis ?? [0, 1, 0])); pr[i * 3].set(a[0], a[1], a[2], +pl.strength || 0); pr[i * 3 + 1].set(ax[0], ax[1], ax[2], +pl.swirl || 0); pr[i * 3 + 2].set(+pl.radius || 0, +pl.take || 0, 0, 0); });
+    const fo = this.flowOn, fl = fo ? (this._fl ||= { min: new Vector3(), size: new Vector3() }) : null;
+    if (fo) { fl.min.fromArray(fo.min); fl.size.fromArray(fo.size); fl.strength = fo.strength; fl.cells = fo.cells; fl.fresh = fo.fresh; fo.fresh = false; }
+    t.step(G.r, { rows, count: B.length, dt: this.pendingDt, time: this.time, gravity: this.gravity, drag: this.drag, bounce: this.bounce, floor: this.floor, turb: this._turb, wind: this._wind, pulls: pk, flow: fl });
     B.length = 0; this.pendingDt = 0;
   }
   dispose() { this.pts.removeFromParent(); this.pts.geometry.dispose(); this.mat.dispose(); this.twin?.dispose(); this.twin?.sprite.removeFromParent(); const i = this.view.parts.indexOf(this); if (i >= 0) this.view.parts.splice(i, 1); }
 }
 const rgbOf = c => { if (Array.isArray(c)) return [c[0], c[1], c[2]]; const k = c.isColor ? c : GPC.set(c); return [k.r, k.g, k.b]; };
+// (pulls and flow fields: as many as particles-gpu.js's PULLS, its FLOW_N cells a side)
+const PULL_MAX = 8, FLOW_N = 16;
+const v3 = a => a?.isVector3 ? [a.x, a.y, a.z] : [+a?.[0] || 0, +a?.[1] || 0, +a?.[2] || 0];
+const unit = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+// the flow's velocity at a place in its box (0..1 a side), between its cells' as the chip reads it
+function flowAt(fo, qx, qy, qz) {
+  const N = FLOW_N, g = [qx, qy, qz].map(q => Math.min(1, Math.max(0, q)) * (N - 1)), b = g.map(v => Math.min(N - 2, Math.max(0, Math.floor(v)))), f = g.map((v, i) => v - b[i]), out = [0, 0, 0];
+  for (let c = 0; c < 8; c++) {
+    const o = [c & 1, (c >> 1) & 1, (c >> 2) & 1], j = ((b[0] + o[0]) + (b[1] + o[1]) * N + (b[2] + o[2]) * N * N) * 4;
+    const w = (o[0] ? f[0] : 1 - f[0]) * (o[1] ? f[1] : 1 - f[1]) * (o[2] ? f[2] : 1 - f[2]);
+    out[0] += fo.cells[j] * w; out[1] += fo.cells[j + 1] * w; out[2] += fo.cells[j + 2] * w;
+  }
+  return out;
+}
 function hashF(i, s, c) { const x = Math.sin(i * 12.9898 + s * 78.233 + c * 37.719) * 43758.5453; return x - Math.floor(x); }
 
 /* ---------- view ---------- */
@@ -1952,7 +2056,9 @@ export class HDView {
     // the waiting starts from: what's there now draws at once
     if (this.holdBase !== true) {
       const all = this.holdBase === 'all'; this.holdBase = true;
-      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material) seen.add(shaderKey(o)); });
+      // (not a set of copies with none in it: the frame draws it not at all, so nothing of its was built, and later, with
+      // copies in it, it waits for its shader as a new thing does: Long Shadow's birds, 68 ms at the first shot)
+      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material && (all || !o.isInstancedMesh || o.count > 0 || !o.instanceMatrix?.count)) seen.add(shaderKey(o)); });
       return;
     }
     eachShown(this.scene, o => {
@@ -1992,8 +2098,19 @@ export class HDView {
     A.spent = 0;
     if (A.key !== ch.key || A.r !== r || this.aheadAgain) {
       A.key = ch.key; A.r = r; this.aheadAgain = false; A.done.clear(); A.list.length = 0;
-      this.scene.traverse(o => { if (aheadFits(o)) A.list.push(o); });
-      A.list.reverse();   // (taken from the end: in the scene's order)
+      // the nearest first, and before all what the camera carries (a first-person rifle shown once play starts): the
+      // list can take a minute to get through on a slow phone, well past the loading screen (Long Shadow's mission 2 on
+      // the build machine, 2026-11-13), and in the scene's order its rifle came up in play before its turn and made
+      // its shaders in that frame, 124 ms. (By where each was last drawn: worked out again, a deep scene's matrices
+      // took longer than the list.)
+      const cm = this.cam.matrixWorld.elements, cx = cm[12], cy = cm[13], cz = cm[14], far = new Map();
+      this.scene.traverse(o => {
+        if (!aheadFits(o)) return;
+        let d = -1; for (let p = o.parent; p; p = p.parent) if (p === this.cam) { d = -2; break; }
+        if (d === -1) { const e = o.matrixWorld.elements, x = e[12] - cx, y = e[13] - cy, z = e[14] - cz; d = x * x + y * y + z * z; }
+        far.set(o, d); A.list.push(o);
+      });
+      A.list.reverse(); A.list.sort((a, b) => far.get(b) - far.get(a));   // (taken from the end: the nearest first, and a tie in the scene's order)
     }
     if (all && !A.all) { let ok; A.all = new Promise(res => { ok = res; }); A.all.ok = ok; }
     const fin = () => { A.busy = false; if (!A.list.length && A.all) { const p = A.all; A.all = null; p.ok(); } };
@@ -2003,7 +2120,7 @@ export class HDView {
         if (A.key !== key || A.r !== r || !A.list.length || (!A.all && A.spent > AHEAD_MS)) return fin();   // (the rest next frame)
         const o = A.list.pop();
         if (!aheadFits(o) || !inScene(o, this.scene)) continue;
-        const k = shaderKey(o) + (o.receiveShadow ? '+r' : '');
+        const k = shaderKey(o);
         if (A.done.has(k)) continue;
         A.done.add(k); A.n++;
         const timed = go => { const t = performance.now(); try { return inReach(o, go); } finally { A.spent += performance.now() - t; } };
@@ -2014,6 +2131,77 @@ export class HDView {
     };
     if (!A.busy) { A.busy = true; step(); }
     return A.all || Promise.resolve();
+  }
+  /**
+   * The shadow maps' shaders, ahead (WebGPU). A thing's shadow is drawn with a shader of its own (three's shadow
+   * material with the thing's skinning, bones, position and cut-out nodes), made in the frame the thing is first drawn
+   * into a map, and buildAhead builds the scene pass's alone. So a man's nearer level of detail, a thing switched
+   * on, or a kind of thing first coming into the sun's view made its shadow shader in the middle of play: 2 to 24 ms
+   * each on the build machine, 107 ms for the frame Long Shadow's bullet camera first came up close to the men
+   * (2026-11-13). Here each thing that casts a shadow, of a kind not drawn this way yet, is drawn once through each
+   * shadow light's own node into a 4 x 4 stand-in of its map (hd3d-gpu.js shadowOps pre), on a layer of its own and
+   * with it and its parents shown for the draw, which makes its shader and pipeline as the real draw will want them.
+   * all: everything waiting at once (the view's first frame, and a round getting ready under the loading screen);
+   * else a few kinds a frame, of what came into the scene since (taken from the scene's list each time it changes).
+   */
+  shadowAhead(r, G, all) {
+    const S = this.shPre ||= { seen: new Set(), looked: new WeakSet(), list: null, todo: [], sig: '' }, ops = G.shOps ||= G.fx.shadowOps(r);
+    const lights = [];
+    for (const l of this.shL) { const sh = l.shadow, node = sh.shadowNode; if (!l.isPointLight && sh.map && node?.gsSplit && node.shadowMap === sh.map) lights.push(l); }
+    if (!lights.length) return;
+    const sig = lights.map(l => l.id).join(','); if (sig !== S.sig) { S.sig = sig; S.seen.clear(); S.looked = new WeakSet(); S.list = null; }   // (another light: everything again)
+    // (what has been looked at is not listed again when the scene changes: a scene that changes every frame would otherwise only ever get to its first few hundred things)
+    const T = thingsOf(this.scene);
+    if (T !== S.list) { S.list = T; S.todo.length = 0; for (let i = T.length - 1; i >= 0; i--) { const o = T[i]; if (o.castShadow && !S.looked.has(o) && aheadFits(o)) S.todo.push(o); } }
+    const pick = [];
+    for (let looked = 0; S.todo.length && (all || (looked < PRE_LOOK && pick.length < PRE_N)); looked++) {
+      const o = S.todo.pop();
+      if (!o.castShadow || !aheadFits(o) || !inScene(o, this.scene)) continue;
+      S.looked.add(o);
+      const k = shaderKey(o) + '|' + (o.skeleton ? o.skeleton.bones.length : '');   // (three keys a skinned thing's shaders by its bones too)
+      if (S.seen.has(k)) continue;
+      S.seen.add(k); pick.push(o);
+    }
+    if (!pick.length) return;
+    const was = [], shown = [];
+    for (const o of pick) {
+      was.push(o.layers.mask, o.visible, o.frustumCulled);
+      o.layers.mask |= PRE_BIT; o.visible = true; o.frustumCulled = false;
+      for (let p = o.parent; p && p !== this.scene; p = p.parent) if (!p.visible) { p.visible = true; shown.push(p); }
+    }
+    ops.scene = this.scene; ops.camera = this.cam;
+    try { for (const l of lights) ops.pre(l, PRE_BIT); }
+    finally {
+      for (let i = 0; i < pick.length; i++) { const o = pick[i]; o.layers.mask = was[i * 3]; o.visible = was[i * 3 + 1]; o.frustumCulled = was[i * 3 + 2]; }
+      for (const p of shown) p.visible = false;
+      HD.info.shAhead = (HD.info.shAhead || 0) + pick.length;
+    }
+  }
+  /**
+   * three keys every lit shader by the scene's lights (how many of each kind, which cast shadows), its sky light and its
+   * fog as well as by the thing, and the kit's own key for a shader (shaderKey) has none of that. So when a game sets up
+   * other lights or another sky (Long Shadow's next mission, under the loading screen), what was built ahead for the
+   * hidden things before was taken as built, and each was made again in the frame it first showed: the rifle in your
+   * hands, built while the card sat in the feed, 124 ms in the first frame of mission 2's play. A setting of those not
+   * met before has them built again: buildAhead lists the scene again, and a thing hidden or out of view (whose kind
+   * nothing in view shares: what is in view was drawn, and so made, for them in this frame) is no longer taken as built,
+   * so if it shows before its turn it waits for its shader as a new thing does (holdNew). (Back to a setting met before: its shaders
+   * are still kept.)
+   */
+  envCheck(r) {
+    let k; try { k = r._nodes.getCacheKey(this.scene, r.lighting.getNode(this.scene)); } catch (e) { return; }
+    const E = this.envKeys ||= new Set();
+    if (E.has(k)) return;
+    E.add(k);
+    if (E.size < 2) return;
+    this.aheadAgain = true;
+    const seen = this.shSeen; if (!seen?.size) return;
+    // (shown and in the camera's view: a thing shown but out of view was not drawn, so not made for the new setting either)
+    const draws = o => (o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material, shown = new Set(), keys = new Set(), cam = this.cam;
+    VIEW_FR.setFromProjectionMatrix(VIEW_M.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse), cam.coordinateSystem, cam.reversedDepth);
+    const inView = o => { try { return !o.frustumCulled || VIEW_FR.intersectsObject(o); } catch (_) { return true; } };
+    eachShown(this.scene, o => { if (draws(o) && (o.layers.mask & 1) && inView(o)) { shown.add(o); keys.add(shaderKey(o)); } });
+    eachThing(this.scene, o => { if (draws(o) && !shown.has(o)) { const sk = shaderKey(o); if (!keys.has(sk)) seen.delete(sk); } });
   }
   /** Things whose shaders are still being built or still to look at (held back, close-up, and the rest of the scene). */
   get shadersLeft() { return (this.held?.size || 0) + (this.shJobs?.size || 0) + (this.shAhead ? this.shAhead.list.length + (this.shAhead.busy ? 1 : 0) : 0); }
@@ -2467,6 +2655,10 @@ export class HDView {
     const live = direct && !baking && !off;
     if (live && this.stillSkip(ch, now)) { speed.between = null; HD.info.still = true; HD.info.cpu = performance.now() - now; return; }
     if (!baking && !off) HD.info.still = false;
+    // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
+    // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
+    const SK = G.fx.skinPool(r);
+    if (SK) { SK.set(HD.gpuSkin !== false); SK.list(this.scene, eachShown); }
     try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ }
     this.scene.environment = this.envFor(G); this.scene.environmentIntensity = this.envI;
     let fogN = null;
@@ -2505,7 +2697,7 @@ export class HDView {
     if (HD.occludeShow) DETAIL.occ = null;
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
-    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
+    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) { shc.push(o.shadow.camera); if (o.isPointLight) o.shadow.camera.gsPoint = true; } });
     // the lamps' shadow slots (lamps.js): handed out now the lamps' matrices are this frame's, and their atlas made
     const LP = this.lampPool;
     if (LP?.gpu) {
@@ -2517,6 +2709,8 @@ export class HDView {
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
     for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null);   // (the sets gpuSwap's walk found)
+    if (pm >= 0) { leave(pm); enter('3D: skinning'); }
+    HD.info.skin = SK?.on ? (SK.run(this.cam, shc), SK.info) : null;
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
     if (pm >= 0) leave(pm);
@@ -2611,6 +2805,12 @@ export class HDView {
         sh.needsUpdate = false;
       }
       if (pm >= 0) leave(pm);
+      // (the shadow shaders of what these maps have not drawn yet: shadowAhead)
+      if (!baking && !off && HD.hold !== false) {
+        if (pm >= 0) enter('3D: shadows ahead');
+        this.shadowAhead(r, G, getready.warming || !this.warmed);
+        if (pm >= 0) leave(pm);
+      }
     }
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
@@ -2650,6 +2850,7 @@ export class HDView {
     // (effects spread over frames: a cut starts them from this frame alone)
     // (a card's picture is a frame of its own: it keeps nothing from the last one baked)
     o.spread = HD.spread === false ? false : typeof HD.spread === 'string' ? HD.spread : true; o.cut = cut || !!baking;
+    o.aoBack = HD.aoBack !== false; o.aoDirect = HD.aoDirect;   // (ambient occlusion on bounce light only, and the share still on the whole picture: hd3d-gpu.js aoInShading)
     // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
     o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
     if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); }
@@ -2669,7 +2870,7 @@ export class HDView {
     const drawAt = performance.now();
     try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
-    if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
+    if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
@@ -2819,9 +3020,9 @@ export class HDView {
     // The final picture (upscaler, last effects, the copy onto the card) is the screen's own size. On a big
     // screen (a foldable opened up) that's twice a phone's pixels and the resolution steps can't lighten it,
     // so once the game has had to step down (Q.lvl >= 1), it's also drawn at no more than OUT_PX and the
-    // screen stretches it. A game keeping up is never touched.
+    // screen stretches it. A game keeping up is never touched on a phone; on a computer it always is.
     let fw = c.canvas.width, fh = c.canvas.height;
-    if (!baking && !off && HD.scale == null && Q.force == null && Q.lvl >= 1 && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
+    if (!baking && !off && HD.scale == null && Q.force == null && (Q.lvl >= 1 || desktop) && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
     // (Frame generation leaves the 3D's size as it is. It used to give each real frame 1.6 times the pixels, as its
     // two refreshes' time, but the made frames take some of that time, and the Fold is held back by its pixels:
     // the real frame got slower, which is the opposite of what frame generation is for.)
@@ -2968,6 +3169,7 @@ PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 PORTED_LOOKS.add('rooms');   // gs.city's rooms behind the windows (city-rooms.js, city-gpu.js)
 PORTED_LOOKS.add('carpaint').add('carglass');   // gs.models.vehicle's paint and glass (models/vehicle-looks.js, models/vehicle-gpu.js)
+PORTED_LOOKS.add('groundpaint');   // gs.city's ground paint (ground-paint.js, ground-paint-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)
@@ -3052,7 +3254,9 @@ const AHEAD_MS = 3;
 function aheadFits(o) {
   if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || !o.geometry) return false;
   if (o.isInstancedMesh2 || o._parentLOD || o.userData.gsTwin?.isInstancedMesh2) return false;   // (sets of copies are their library's to draw: gpuSwap, hideSets)
-  if (o.isInstancedMesh && (!o.count || !o.instanceMatrix?.count)) return false;   // (room for none: a buffer of no size, which WebGPU won't bind)
+  // (room for none: a buffer of no size, which WebGPU won't bind. One with room but none shown yet, a flock that only
+  // takes off at the first shot, is built: three builds its shader and pipeline whatever its count, and draws nothing)
+  if (o.isInstancedMesh && !o.instanceMatrix?.count) return false;
   const lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);
   return lm === 1 || lm === 0;   // (0: held back or hidden for this frame alone; the batch layer and a game's own layers are never drawn by the view's camera as they are)
 }
@@ -3838,6 +4042,10 @@ let SH_H = new Float64Array(40); const SH_S = new Sphere(), SH_P = new Vector3()
 const SH_STILL = 45, SH_STILL_BIT = 1 << 27, SH_MOVE_BIT = 1 << 28, SH_BITS = SH_STILL_BIT | SH_MOVE_BIT, SH_MIN_TRIS = 20000;
 // the layer things wait on while their shaders build (holdNew): nothing draws it
 const HOLD_LAYER = 29, HOLD_BIT = 1 << HOLD_LAYER;
+// envCheck: the camera's view (scratch)
+const VIEW_FR = new Frustum(), VIEW_M = new Matrix4();
+// shadowAhead: the layer things are drawn on for their shadow shaders (alone), and how many kinds a frame once the round is under way, among how many things looked at
+const PRE_BIT = 1 << 25, PRE_N = 6, PRE_LOOK = 400;
 // what makes a thing need its own shader: its materials (and their versions), its kind and its geometry's layout
 // (asked for every visible thing every frame: when nothing changed, the answer comes back without
 // building any strings, so it leaves no garbage)
@@ -3860,7 +4068,7 @@ const listKind = a => {
 };
 function shaderKey(o) {
   const mat = o.material, g = o.geometry, c = KEYS.get(o);
-  if (c && sameMats(c, mat, g)) return c.key;
+  if (c && c.rs === o.receiveShadow && sameMats(c, mat, g)) return c.key;
   const ms = Array.isArray(mat) ? mat : [mat];
   // (three draws a two-sided see-through material as back faces then front faces, marking it changed for each,
   // so its version climbs every frame: its shaders are the same, so the version is left out, or holdNew
@@ -3868,7 +4076,11 @@ function shaderKey(o) {
   const sig = ms.map(m => m.id + '.' + (m.transparent && m.side === DoubleSide && !m.forceSinglePass ? 'd' : m.version)).join(',') + '|' + (g?.id ?? '');
   if (c?.sig === sig) { remember(o, c.sig, c.key, mat, g); return c.key; }
   const key = sig.replace(/\|.*$/, '') + '|' + (o.isSkinnedMesh ? 's' : '') + (o.isInstancedMesh ? 'i' : '') + (o.isBatchedMesh ? 'b' : '') + (o.isPoints ? 'p' : o.isLine ? 'l' : o.isSprite ? 'S' : '') +
-    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '');
+    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '') +
+    // (three keys a shader by whether the thing takes shadows too: two things of one material and layout, one taking shadows,
+    // were one to the kit, so the second, built for neither, drew its shader in the frame it first showed: Long Shadow's
+    // mission 2 intro, two in its first frame, 126 and 69 ms on the build machine)
+    (o.receiveShadow ? '+r' : '');
   remember(o, sig, key, mat, g);
   return key;
 }
@@ -3876,17 +4088,17 @@ function shaderKey(o) {
 const KEYS_AS = new WeakMap();
 function shaderKeyAs(o, m) {
   const c = KEYS_AS.get(o), g = o.geometry?.id ?? '';
-  if (c && c.m === m && c.v === m.version && c.g === g) return c.key;
+  if (c && c.m === m && c.v === m.version && c.g === g && c.rs === o.receiveShadow) return c.key;
   const keep = o.material, was = KEYS.get(o);
   o.material = m; KEYS.delete(o);
   const key = shaderKey(o);
   o.material = keep; if (was) KEYS.set(o, was); else KEYS.delete(o);
-  KEYS_AS.set(o, { m, v: m.version, g, key });
+  KEYS_AS.set(o, { m, v: m.version, g, rs: o.receiveShadow, key });
   return key;
 }
 function remember(o, sig, key, mat, g) {
   const arr = Array.isArray(mat);
-  KEYS.set(o, { sig, key, g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
+  KEYS.set(o, { sig, key, rs: o.receiveShadow, g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
     ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(m => m.version) : null });
 }
 export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {

@@ -1,0 +1,225 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// People posed once a frame on the graphics chip (src/kit/skin-gpu.js, HD.gpuSkin), for scripts/detail-test.cjs --page skin.
+// 1. A line of people (a clean look and a real one with wet eyes, eye shadow and hair strips, a dog with fur whose shells are
+//    still posed in the vertex shader, on the same bones as its pooled body) in several poses and at each level of detail:
+//    posed in each pass (three's own skinning) against posed once in the pool. The pictures must match, shadows and all.
+// 2. Twenty frames of them walking, both ways: still the same picture at the end.
+// 3. Motion (WebGPU): a walker and a post of six materials moved 30 cm to the right: all the pixels of both say so (every
+//    draw of a thing of several materials, not only its first), standing people say nothing; posed once as posed in each pass.
+// 4. The pool's own bookkeeping: what it took in and posed; people out of every view are not posed; turning it off and on.
+//   ?gpu  WebGPU (on WebGL the pool is never used: the pictures must be the same to the pixel)   ?tier=2   ?w=640&h=360
+//   ?bench (--bench): n people walking with a skeleton each, posed in each pass against posed once: code, chip and draws a frame (&n=300 &frames=40)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { skinPool } from '../../src/kit/skin-gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 640), H = +(Q.get('h') || 360), { human, creature } = gs.models;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false;
+const out = {}, info = {}, checks = [];
+if (Q.has('nopool')) Object.defineProperty(HD, 'gpuSkin', { get: () => false, set() {}, configurable: true });   // (a check of the check: three's own posing throughout)
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const SPECS = [{ seed: 1, strands: false }, { seed: 61, sex: 'f', age: 26, hairStyle: 'long', look: 'real' }], DOG = { like: 'dog' };
+  await Promise.all([human.ready(SPECS), creature.ready([DOG])]);
+  function stage() {
+    const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+    const sun = gs.hd.sun('#fff2d8', 2.6, 12, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(300, 300).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8a66', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    v.cam.fov = 40; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix();
+    return { v, c, x, sun };
+  }
+  const look = (S, from, at) => { S.v.cam.position.set(...from); S.v.cam.lookAt(...at); S.v.cam.updateMatrixWorld(); S.v.cut?.(); };
+  const hook = S => { const O = S.v._gpuChain?.r?._objects; if (O && !O.testHook) { O.testHook = true; const get = O.get; O.get = function (...a) { const ro = get.apply(this, a); ro.testSeen = tick; return ro; }; } };
+  const draw = async S => { S.v.t = 0; tick++; hook(S); S.v.render(S.x, W, H); await nextFrame(); return S.x.getImageData(0, 0, W, H).data; };
+  // a picture once it has stopped changing (new shaders come in over a frame or two)
+  const shot = async (S, most = 40) => {
+    let last = null, same = 0;
+    for (let i = 0; i < most && same < 2; i++) { const d = await draw(S); same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d; }
+    return last;
+  };
+  const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); };
+  const poolOf = S => { const ch = S.v._gpuChain; return ch?.r ? skinPool(ch.r) : null; };
+  // which shaders three really drew the line's meshes with: those reading the pool (its posed points, by vertex_index)
+  // and those posing in the vertex shader (three's bone list): counted over the render objects of the meshes given
+  // (only the render objects drawn in the last frame: three keeps those of passes that did not draw a mesh this frame
+  // as they were until they next draw it, when they are checked against the material and made again)
+  let tick = 0;
+  const shaders = (S, meshes) => {
+    const r = S.v._gpuChain?.r, set = new Set(meshes), n = { pool: 0, own: 0, other: 0 };
+    const O = r?._objects;
+    for (const ro of O?._renderObjects || []) {
+      if (!set.has(ro.object) || ro.testSeen !== tick) continue;
+      const vs = r._nodes.get(ro)?.nodeBuilderState?.vertexShader; if (!vs) continue;
+      if (/skinIndex/.test(vs)) n.own++; else if (/bitcast<f32>/.test(vs)) n.pool++; else n.other++;
+    }
+    return n;
+  };
+  const both = async (S, fn) => { HD.gpuSkin = false; const a = await fn(); HD.gpuSkin = true; const b = await fn(); return [a, b]; };
+
+  if (Q.has('bench')) {
+    const N = +(Q.get('n') || 300), frames = +(Q.get('frames') || 40), res = {};
+    for (const mode of ['each pass', 'once']) {
+      HD.gpuSkin = mode === 'once';
+      const S = stage(), src = [human(SPECS[0]), creature({ like: 'dog', fur: false })], R = gs.math.rng(5), who = [];
+      look(S, [0, 9, 46], [0, 0, 0]);
+      for (let i = 0; i < N; i++) { const f = src[i % 3 === 2 ? 1 : 0].twin(); f.position.set((R() - .5) * 70, 0, (R() - .5) * 70); f.rotation.y = R() * 6.28; f.rig.play?.('walk'); f.lod = 2; S.v.scene.add(f); who.push(f); }
+      const step = async () => {
+        const t0 = performance.now();
+        for (const p of who) { p.position.x += Math.sin(p.rotation.y) * .022; p.position.z += Math.cos(p.rotation.y) * .022; p.rotation.y += .004; p.rig.update(1 / 60, { speed: 1.3 }); p.see?.(S.v.cam, H); }
+        const js = performance.now() - t0; S.v.t = 0; S.v.render(S.x, W, H); await nextFrame(); S.x.getImageData(0, 0, 1, 1); return js;
+      };
+      for (let i = 0; i < 20; i++) await step();
+      const cpu = [], gpu = [], calls = [], parts = {};
+      for (let i = 0; i < frames; i++) { await step(); cpu.push(HD.info.cpu); if (HD.info.gpuMs != null) gpu.push(HD.info.gpuMs); calls.push(HD.info.calls); for (const [k, v] of Object.entries(HD.info.gpuParts || {})) (parts[k] ||= []).push(v); }
+      const med = a => a.length ? +[...a].sort((p, q) => p - q)[a.length >> 1].toFixed(2) : null;
+      res[mode] = { backend: HD.info.backend, people: N, codeMs: med(cpu), chipMs: med(gpu), draws: med(calls), byPass: Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, med(v)])), skin: HD.info.skin && { ...HD.info.skin } };
+      out[mode.replace(' ', '-')] = S.c.toDataURL();
+      S.v.dispose?.();
+    }
+    HD.gpuSkin = true;
+    window.result = { out, info: res, checks };
+    throw new Error('bench done');
+  }
+
+  /* ---------- 1. the same picture both ways ---------- */
+  const S = stage(), src = [human(SPECS[0]), human(SPECS[1]), creature(DOG)];
+  const LINE = [
+    { kind: 0, move: 'walk', phase: .2, x: -2.4, z: 0, turn: .5 }, { kind: 1, move: 'idle', phase: .4, x: -.8, z: .3, turn: -.3 },
+    { kind: 0, move: 'run', phase: .6, x: .8, z: -.2, turn: 2.2 }, { kind: 2, move: 'walk', phase: .3, x: 2.4, z: .4, turn: 1.2 },
+  ];
+  const line = LINE.map(o => { const f = src[o.kind].twin?.() || src[o.kind]; f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
+  look(S, [0, 1.4, 6.2], [0, .85, 0]);
+  const worst = [];
+  for (const L of [0, 1, 2]) {
+    for (const f of line) if (f.lods) f.lod = L;
+    let k = 0;
+    const [a, b] = await both(S, async () => { const d = await shot(S); out[(k++ ? 'once-' : 'each-pass-') + L] = S.c.toDataURL(); return d; });
+    const P = poolOf(S), n = GPU ? P?.info.posed : 0;
+    const off = differ(a, b, 12), offAny = differ(a, b, 3);
+    worst.push(off);
+    check(`level ${L}: posed once a frame is the same picture as posed in each pass`, off <= W * H * .0015, `${off} pixels differ by more than 12 of 255, ${offAny} by more than 3` + (GPU ? `; ${n} meshes posed in the pool` : ''));
+    if (GPU) {
+      const mine = []; for (const f of line) f.traverse(o => { if (o.isSkinnedMesh && P.has(o)) mine.push(o); });
+      const sh = shaders(S, mine);
+      check(`level ${L}: the people are posed in the pool, and drawn by shaders that read it`, P && P.info.posed >= line.length && HD.info.skin?.posed === P.info.posed && sh.pool >= mine.length && sh.own === 0, JSON.stringify(P?.info) + ' shaders ' + JSON.stringify(sh));
+    }
+  }
+  if (!GPU) check('WebGL: the pool is never made', HD.info.skin === null && !poolOf(S));
+  for (const f of line) if (f.lods) f.lod = 0;
+  // close up to the dog (its coat shows its shells, which are on blend shapes: posed in the vertex shader as before, on the
+  // bones the pool poses its body with) and to the real-look woman (wet eyes, eye shadow, hair strips: all in the pool)
+  for (const [k, at] of [['dog', [2.4, .45, .4]], ['face', [-.8, 1.55, .3]]]) {
+    look(S, [at[0] + .25, at[1] + .1, at[2] + (k === 'dog' ? 1.3 : .75)], at);
+    const [a, b] = await both(S, async () => { const d = await shot(S); return d; });
+    out['close-' + k] = S.c.toDataURL();
+    const off = differ(a, b, 12);
+    check(`close up (${k}): the same picture both ways`, off <= W * H * .003, `${off} pixels differ by more than 12 of 255, ${differ(a, b, 3)} by more than 3`);
+    if (!GPU) continue;
+    const P = poolOf(S), inPool = [], left = [], f = line[k === 'dog' ? 3 : 1];
+    f.traverse(o => { if (o.isSkinnedMesh && o.visible) (P.has(o) ? inPool : left).push(o.name || o.type); });
+    info['meshes ' + k] = { inPool: inPool.join(', '), vertexShader: [...new Set(left)].join(', ') };
+    if (k === 'dog') check('the dog\'s body is in the pool; its fur shells, shown close up, are posed in the vertex shader', inPool.length > 0 && left.length > 0 && left.every(n => /^fur/.test(n)), `in: ${inPool.length}, left: ${left.length}`);
+    else check('the real-look woman\'s body, wet eyes, eye shadow and hair strips are all in the pool', inPool.some(n => /^human0$/.test(n)) && inPool.some(n => /wet/.test(n)) && inPool.some(n => /hair/.test(n)) && left.length === 0, `in: ${inPool.length}, left: ${left.length}`);
+  }
+  look(S, [0, 1.4, 6.2], [0, .85, 0]);
+  await shot(S);
+
+  /* ---------- 2. walking for twenty frames ---------- */
+  // (the rigs breathe, blink and fidget by themselves, so two runs are not the same: the pool walks them, and then the last
+  // pose and one halfway are drawn both ways)
+  {
+    for (const [i, f] of line.entries()) f.rig.play(i % 2 ? 'walk' : 'run', { fade: 0 });
+    let worstWalk = 0, note = '';
+    for (let k = 1; k <= 20; k++) {
+      for (const f of line) { f.position.x += .01; f.rig.update(1 / 60, { speed: 1.4 }); }
+      if (k % 10) { await draw(S); continue; }
+      const a = await draw(S); HD.gpuSkin = false; const b = await shot(S); HD.gpuSkin = true; await shot(S);
+      const off = differ(a, b, 12); worstWalk = Math.max(worstWalk, off); note += `frame ${k}: ${off} `;
+      if (k === 20) out.walked = S.c.toDataURL();
+    }
+    check('walking: each frame posed in the pool is the pose the rig has then', worstWalk <= W * H * .0015, note + 'pixels differ by more than 12 of 255');
+  }
+
+  /* ---------- 3. motion (WebGPU): what frame generation, SGSR 2 and motion blur go by ---------- */
+  if (GPU) {
+    const TW = await import('three/webgpu'), { texture, uv, vec4 } = await import('three/tsl');
+    S.v.motionBlur = { amount: .001 };   // (the view then draws the picture of how each pixel moved; too little blur to see)
+    for (const f of line) f.removeFromParent();
+    look(S, [0, 1.2, 8], [0, 1.2, 0]);
+    const mover = src[0].twin(), stand = src[1].twin();
+    mover.position.set(-2.4, 0, 0); mover.rotation.y = Math.PI / 2; pin(mover, 'walk', .1); stand.position.set(2.4, 0, 0); pin(stand, 'idle', .3);
+    // (a post of six materials, one a side: every one of its draws must say it moved, not only the first)
+    const grey = gs.hd.pbr('#888888'), tan = gs.hd.pbr('#a08a6a');
+    const post = new T.Mesh(new T.BoxGeometry(.5, 1.8, .5), [grey, tan, grey, tan, grey, tan]); post.position.set(0, .9, 0);
+    S.v.scene.add(mover, stand, post);
+    await shot(S);
+    const chain = S.v._gpuChain, r = chain.r, rt8 = new TW.RenderTarget(W, H), qm = new TW.NodeMaterial(), tx = texture(new TW.Texture());
+    qm.fragmentNode = vec4(tx.sample(uv()).xy.mul(4).add(.5), 0, 1); const quad = new TW.QuadMesh(qm);
+    const moved = async () => {
+      tx.value = chain.sp.getTexture('velocity'); r.setRenderTarget(rt8); quad.render(r); r.setRenderTarget(null);
+      const px = await r.readRenderTargetPixelsAsync(rt8, 0, 0, W, H), row = px.length / H, third = [[], [], []];
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const vx = (px[y * row + x * 4] / 255 - .5) / 4, vy = (px[y * row + x * 4 + 1] / 255 - .5) / 4; if (Math.abs(vx) > .004 || Math.abs(vy) > .004) third[Math.min(2, x * 3 / W | 0)].push(vx); }
+      return third.map(a => ({ n: a.length, mid: a.length ? +a.sort((p, q) => p - q)[a.length >> 1].toFixed(4) : 0 }));
+    };
+    const one = async () => { await draw(S); return moved(); };
+    for (const pooled of [false, true]) {
+      HD.gpuSkin = pooled; await shot(S);
+      const still = await one();
+      mover.position.x += .3; post.position.x += .3;
+      const went = await one(), again = await one();
+      mover.position.x -= .3; post.position.x -= .3; await one();
+      const how = pooled ? 'posed once' : 'posed in each pass';
+      info['motion ' + how] = { still, went, again };
+      if (!pooled) info.eachPassWent = went;
+      check(`${how}: people standing still have not moved since the last frame`, still.every(t => t.n <= 4), JSON.stringify(still));
+      // (all of the walker: three kept where a thing was a frame ago by the draw, so every draw of a person after the
+      // first said nothing had moved, or, posed by three, the first said twice as far)
+      check(`${how}: a walker moved 30 cm says so all over, as much as a post of six materials moved as far`, went[0].n > 1000 && went[1].n > 2000 && Math.abs(went[0].mid - went[1].mid) < Math.abs(went[1].mid) * .25 && went[2].n <= 4, JSON.stringify(went));
+      if (pooled) check('posed once: the walker\'s motion is posed in each pass\'s, pixel for pixel', Math.abs(went[0].n - info.eachPassWent[0].n) <= info.eachPassWent[0].n * .03 && Math.abs(went[0].mid - info.eachPassWent[0].mid) < .002, JSON.stringify([info.eachPassWent[0], went[0]]));
+      check(`${how}: drawn again with nothing moved, nothing has moved`, again.every(t => t.n <= 4), JSON.stringify(again));
+    }
+    // a pose changing (an arm swinging) moves its pixels; the same pose drawn again does not
+    {
+      HD.gpuSkin = true; pin(stand, 'walk', .1); await one(); pin(stand, 'walk', .16);
+      const swung = await one(), held = await one();
+      check('posed once: a pose that changed moves its pixels, and drawn again it does not', swung[2].n > 30 && held[2].n <= 4, `${swung[2].n} then ${held[2].n}`);
+    }
+    S.v.motionBlur = null; mover.removeFromParent(); stand.removeFromParent(); post.removeFromParent();
+    for (const f of line) S.v.scene.add(f);
+    look(S, [0, 1.4, 6.2], [0, .85, 0]);
+  }
+
+  /* ---------- 4. the pool's own bookkeeping ---------- */
+  if (GPU) {
+    const P = poolOf(S);
+    HD.gpuSkin = true; await shot(S);
+    const posed = P.info.posed;
+    // turned away from them, with the sun's shadow nowhere near: nobody is posed
+    look(S, [0, 1.4, 6.2], [0, 1.4, 60]); S.sun.follow(0, 0, 80); await draw(S); await draw(S);
+    check('people that no camera or shadow can see are not posed', P.info.posed === 0 && P.info.meshes >= posed, JSON.stringify(P.info));
+    look(S, [0, 1.4, 6.2], [0, .85, 0]); S.sun.follow(0, 0, 0);
+    const back = await shot(S);
+    check('turned back to them, they are posed again (into both halves: no motion from the old pose)', P.info.posed === posed, JSON.stringify(P.info));
+    // off and on: the shaders are made again both ways and the picture is the same
+    out.back = S.c.toDataURL();
+    const all = []; for (const f of line) f.traverse(o => { if (o.isSkinnedMesh) all.push(o); });
+    HD.gpuSkin = false; const off1 = await shot(S); const offInfo = HD.info.skin, offSh = shaders(S, all); out.off = S.c.toDataURL();
+    HD.gpuSkin = true; const on1 = await shot(S), onSh = shaders(S, all);
+    check('turned off: nothing is posed in the pool, the shaders are three\'s own again, and the picture is the same', offInfo === null && offSh.pool === 0 && offSh.own > 0 && differ(off1, back, 12) <= W * H * .0015, differ(off1, back, 12) + ' pixels differ; shaders ' + JSON.stringify(offSh));
+    check('turned on again: the same picture, drawn by shaders that read the pool', differ(on1, back, 2) <= 4 && P.info.posed === posed && onSh.pool > 0, differ(on1, back, 2) + ' pixels differ; ' + JSON.stringify(P.info) + ' shaders ' + JSON.stringify(onSh));
+    // a person taken out of the scene: no longer posed, and after a while let go
+    const f = line[0]; f.removeFromParent(); await draw(S);
+    check('a person taken out is no longer posed', P.info.posed < posed, JSON.stringify(P.info));
+    S.v.scene.add(f); await shot(S);
+    check('put back, they are posed again', P.info.posed === posed, JSON.stringify(P.info));
+    info.pool = { ...P.info };
+  }
+  window.result = { out, info, checks };
+} catch (e) { console.error(e); window.result = { error: String(e?.stack || e) }; }
+</script>

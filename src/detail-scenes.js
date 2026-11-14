@@ -9,6 +9,7 @@
 //   town     hiding what is behind other things (src/kit/occlude.js): an old town's lanes, with statues, urns, rocks and crates round every house
 //            and shadows in tiles (src/kit/shadow-tiles.js): the same walk once more with the sun's shadow map drawn whole, as it used to be
 //   square   crowds (src/kit/crowd.js, gs.props.Crowd): a square full of people and dogs, each with a skeleton of its own and then as one crowd
+//            (on WebGPU first with each skeleton posed in every pass's vertex shader, then once a frame on the chip: src/kit/skin-gpu.js)
 //   field    ground that takes marks (src/kit/marks.js, gs.outdoors.Marks): people, a dog, a jeep and a tank going round a field of sand, grass
 //            and bare earth as snow lies, melts to wet earth and dries: once leaving no trace, then with their prints, tracks and parted grass
 //   yard     smoke and fire that flow (src/kit/gas.js, gs.gas): a camp fire under a beam, a smoking chimney, a burning drum and an explosion every
@@ -263,8 +264,8 @@ function town({ gs, HD, size }) {
 }
 
 /* ---------- square: crowds ---------- */
-function square({ gs, size }) {
-  const T = gs.THREE, { human, creature } = gs.models, N = Math.max(24, Math.round(300 * size)), span = 26 + 44 * Math.sqrt(N / 300), { v, sun } = view(gs, 220, .002);
+function square({ gs, HD, size, gpu }) {
+  const T = gs.THREE, skinWas = HD.gpuSkin, { human, creature } = gs.models, N = Math.max(24, Math.round(300 * size)), span = 26 + 44 * Math.sqrt(N / 300), { v, sun } = view(gs, 220, .002);
   const ground = new T.Mesh(new T.PlaneGeometry(span + 160, span + 160).rotateX(-Math.PI / 2), gs.hd.pbr('#8a8478', { rough: .95 })); ground.receiveShadow = true; v.scene.add(ground);
   // houses round it, so the place has edges and the low sun something to throw across it
   const box = new T.BoxGeometry(1, 1, 1), walls = ['#b9a78c', '#a8846c', '#c9c2b4'].map(c => gs.hd.pbr(c, { rough: .85 })), R0 = span / 2 + 9;
@@ -298,14 +299,18 @@ function square({ gs, size }) {
   // (the crowd's run has the skeleton people out of the scene, not just switched off: a game with a crowd has none, and
   // the view walks everything in its scene each frame, hidden or not. Left in, 19,000 hidden parts cost the crowd's
   // run most of its code time on the first phone to try it)
-  const enter = key => async draw => { const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
+  // (on WebGPU the skeleton people are posed once a frame on the chip, for every pass; 'each' poses them in each pass's
+  // vertex shader as three does, as WebGL still does)
+  const enter = key => async draw => { HD.gpuSkin = key === 'each' ? false : skinWas; if (key === 'each') key = 'off'; const first = !made, build = await make(draw); mode = key; folk.visible = key === 'off'; if (key === 'off') { if (!folk.parent) v.scene.add(folk); } else folk.removeFromParent(); crowd.visible = key === 'on'; crowd.update(0); for (let i = 0; i < 4; i++) await draw(); return first ? { build, note: 'two people and a dog sculpted' } : null; };
   const sum = { n: 0, ms: 0, sent: 0, draws: 0, t: 0 }, ahead = new T.Vector3();
   return {
     v, holds: `${num(N)} people and dogs walking, running and standing in a square`,
     modes: [
-      { key: 'off', name: 'a skeleton each', enter: enter('off') },
+      ...gpu ? [{ key: 'each', name: 'a skeleton each, posed in each pass', enter: enter('each') }] : [],
+      { key: 'off', name: gpu ? 'a skeleton each, posed once' : 'a skeleton each', enter: enter('off') },
       { key: 'on', name: 'one crowd', enter: enter('on') },
     ],
+    pairs: gpu ? [['each', 'off', 'posed once a frame on the chip against posed in each pass'], ['off', 'on']] : null,
     // a walk in a figure of eight through the middle of them, 1.5 metres a second, looking where it is going
     path(t, cam) {
       const P = (u, p) => { const a = u * 1.5 / (span * .22); return p.set(Math.sin(a) * span * .3, 1.7, Math.sin(a * 2) * span * .16); };
@@ -327,7 +332,7 @@ function square({ gs, size }) {
       const posed = `posed in ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
       return mode === 'on' ? `${posed} · ${num(sum.sent / sum.n)} of ${num(N)} sent to be drawn a frame, in ${num(sum.draws / sum.n)} draws` : posed;
     },
-    dispose() { crowd?.dispose(); folk.removeFromParent(); folk.clear(); twins = []; members = []; clear(v); },   // (the people's shapes are the kit's own: not freed here)
+    dispose() { HD.gpuSkin = skinWas; crowd?.dispose(); folk.removeFromParent(); folk.clear(); twins = []; members = []; clear(v); },   // (the people's shapes are the kit's own: not freed here)
   };
 }
 
@@ -988,6 +993,58 @@ function cars({ gs, size }) {
   };
 }
 
+/* ---------- ground: no repeats ---------- */
+// A drive down a made-up old town's streets (src/kit/ground-paint.js, ground-paint-gpu.js, city-walls.js). Off, the roads, pavements and
+// parks are tiled pictures that repeat every few metres and the walls are bare; on, the ground round the camera is painted from what
+// each piece of it is (patches, cracks and tar lines in the asphalt, slabs laid in a bond with a cracked one here and there, gum and
+// stains, oil under parked cars, skid marks before stop lines) into two pictures that follow the camera, a strip at a time, and the
+// ground reads them in place of its tiles; and the street walls wear posters, made-up tags, damp streaks and grime.
+function ground({ gs, size }) {
+  const { City } = gs.city, v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 700; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#fff1dc', 2.6, 60, [-.4, .8, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0012, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 11.5, speed: 0, stars: 0, sun, physical: true, fog: true, env: true });
+  const blocks = size < .3 ? 2 : Math.max(3, Math.round(5 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.2, Math.min(.6, size));
+  let city = null, mode = '';
+  const sum = { n: 0, ms: 0, t: 0, strips: 0, texels: 0 };
+  const enter = key => async draw => {
+    const t0 = performance.now(), opts = { seed: 11, blocks, style: 'oldtown', sky, traffic: busy, people: busy, crowd: false, sound: false, paint: key === 'on', walls: key === 'on' };
+    let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err;
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; Object.assign(sum, { n: 0, ms: 0, t: 0, strips: 0, texels: 0 });
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.parked.length)} parked cars${city.groundPaint ? `, ${num(city.groundPaint.stamps.length)} marks on the ground` : ''}` };
+  };
+  const ahead = new gs.THREE.Vector3();
+  return {
+    v, holds: `a drive at 9 metres a second down the streets of a made-up old town of ${blocks} blocks a side, at midday`,
+    modes: [
+      { key: 'off', name: 'tiled ground, bare walls', enter: enter('off') },
+      { key: 'on', name: 'the ground painted round the camera with no repeats, posters and stains on the walls', enter: enter('on') },
+    ],
+    // down the road beside the middle row of blocks, at a car's height, looking ahead and a little down
+    path(t, cam) {
+      if (!city) return;
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const P = city.plan, B = P.bounds, row = P.blocks.filter(k => k.j === Math.floor(P.nz / 2)), z = Math.min(...row.map(k => k.z0)) - 3.2;
+      const span = B.x1 - B.x0 - 30, x = B.x0 + 15 + (t * 9) % span;
+      cam.position.set(x, 1.3, z); ahead.set(x + 14, .2, z + .6 * Math.sin(t * .3)); cam.lookAt(ahead); cam.updateMatrixWorld();
+      sun.follow(x, 0, z); sky.update(dt);
+      const i0 = city.groundPaint?.info, s0 = i0 ? i0.strips : 0, x0 = i0 ? i0.texels : 0;
+      const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
+      if (i0) { sum.strips += i0.strips - s0; sum.texels += i0.texels - x0; }
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
+      return mode === 'off' ? ms : `${ms} · ${num(sum.strips)} strips painted, ${num(sum.texels / sum.n)} texels a frame · ${num(city.groundPaint.stamps.length)} marks · ${num(city.wallMarks || 0)} things on the walls`;
+    },
+    dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -1004,4 +1061,5 @@ export const SCENES = [
   ['street', 'Street', 'a city that holds up close: rooms behind the windows, real and parked cars, sculpted people, the street dressed', street],
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
   ['cars', 'Cars', 'cars up close: seats behind the glass, paint, dirt and rain, dents and broken glass', cars],
+  ['ground', 'Ground', 'ground and walls with no repeats: the ground painted round the camera, posters and stains on the walls', ground],
 ];

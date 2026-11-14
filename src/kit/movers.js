@@ -1,7 +1,9 @@
 // Movement that feels right without a physics engine: a platformer jump with the tricks good
 // platformers use (coyote time, jump buffering, variable jump height, wall slide and wall jump), and
 // top-down walking with acceleration. They move a box through a gs.tiles TileMap (or any solid(x, y)
-// test), and your game says what the input is and how it all looks.
+// test), or through a gs.physics world (hero.update(dt, phys, input): it is then solid there, shoves crates,
+// stands on what it lands on; phys.tiles(map) makes a TileMap solid in it), and your game says what the
+// input is and how it all looks.
 //
 //   const { Platformer, TopDown } = gs.movers;
 //   reset() { hero = new Platformer({ x: 40, y: 40, w: 12, h: 14, jump: 52, run: 110 }); }
@@ -79,7 +81,12 @@ export class Platformer extends Mover {
   }
   doJump() { this.vy = -this.jumpSpeed; this.sinceJumpPress = 9; this.sinceGround = 9; this.onGround = false; this.jumped = true; this.rising = true; }
   touching(map, side) {
-    if (!map?.at) return false;
+    if (map?.walkers) {   // (a gs.physics world: a short look sideways from the box's edge at three heights)
+      const x = side > 0 ? this.right : this.left;
+      for (const y of [this.top + 2, this.y, this.bottom - 2]) if (map.ray(x, y, x + side * 1.5, y, t => t !== this.thing && !t.collider.isSensor() && (t.fixed || t.body.isKinematic()))) return true;
+      return false;
+    }
+    if (!map?.at || !map.solid) return false;
     const x = side > 0 ? this.right + .5 : this.left - .5;
     for (const y of [this.top + 2, this.y, this.bottom - 2]) { const t = map.at(x, y); if (map.solid(t.tx, t.ty)) return true; }
     return false;

@@ -8,6 +8,7 @@
 import { Loft, ready, smin, smax, lumps, ss, bump } from './field.js';
 import { fitAt, FIT_MAX, FIT_DATA, FIT_KIN, kinTable } from './human-fit.js';
 import { row as slice, shoulderRows, neckRows, neckOpening } from './human-body.js';
+import { gnmHead, gnmAged, gnmMarks, meshField, GNM_HASH } from './human-gnm.js';
 export { ss, bump };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs, mx = Math.max, hyp = Math.hypot, pow = Math.pow;
@@ -21,6 +22,8 @@ export const ES = 1.1;
 /** A face's own eye scale: a real face (f.real) has eyes at life size; the clean, friendlier face's are a tenth bigger (ES). */
 export const esOf = f => f?.es ?? ES;
 export const EYE = [.0335, 0, .071];   // the middle of the left eye, from the middle of the head
+/** The middle of a face's left eye (from the middle of the head): a GNM face's own (human-gnm.js gnmMarks), else EYE. */
+export const eyeOf = f => f?.gnm?.eye || EYE;
 // how far the mouth's line dips to its corners (a slope: much of one and it scowls), and how far its very ends turn up again
 export const MOUTH_DIP = .02, MOUTH_UP = .0007;
 /**
@@ -28,12 +31,20 @@ export const MOUTH_DIP = .02, MOUTH_UP = .0007;
  * on the lower edge of the brow ridge, close over the eye (high on the forehead they look startled), the tail
  * no higher than the inner end (a brow that climbs to its tail scowls). A woman's stands a little higher and arches more.
  */
-export const browOf = soft => [[.0135, .0214 + .0012 * soft, .0925], [.036 + .0015 * soft, .0248 + .0022 * soft, .0885], [.0555, .0208 + .001 * soft, .0725]];
+// (f: a GNM face's brows lie over its own eyes, as much nearer the middle as they are)
+export const browOf = (soft, f = null) => { const k = f?.gnm ? f.gnm.eye[0] / EYE[0] : 1; return [[.0135 * k, .0214 + .0012 * soft, .0925], [(.036 + .0015 * soft) * k, .0248 + .0022 * soft, .0885], [.0555 * k, .0208 + .001 * soft, .0725]]; };
+/** The wing of a face's left nostril, seen from in front ([x, y from the eyes]): a GNM face's own, else where the clean and real faces' lie. */
+export const noseOf = f => f?.gnm ? [f.gnm.nose[0] - .0065, f.gnm.nose[1]] : [.0108, -.039];
 // the line between the lips (y from the eyes) and half its length; the inner corner of the left eye (where the lids meet by the nose: pink, not white)
 export const MOUTH = { y: -.0655, half: .0235 }, CORNER = [EYE[0] - .0138 * ES, -.0012 * ES];
 /** Half the width of a face's mouth: a real face's is as wide as a real mouth (about the distance between the pupils, 5.4 cm on a man,
  * 5 on a woman, measured faces' averages); the clean face's is smaller. */
-export const mouthHalf = f => (MOUTH.half - .002 * (f.soft || 0)) * (f.real ? 1.15 : 1);
+export const mouthHalf = f => f.gnm ? f.gnm.lip.half : (MOUTH.half - .002 * (f.soft || 0)) * (f.real ? 1.15 : 1);
+// (a GNM face's mouth, human-gnm.js gnmMarks: where its lips meet and the edges of their red, measured at U along half the mouth: v at x)
+const LIP_U = [0, .2, .4, .6, .8, .92, 1];
+const lipAt = (g, k, x) => { const L = g.lip[k], e = Math.min(1, abs(x) / g.lip.half); let i = 0; while (i < LIP_U.length - 2 && e > LIP_U[i + 1]) i++; return L[i] + (L[i + 1] - L[i]) * (e - LIP_U[i]) / (LIP_U[i + 1] - LIP_U[i]); };
+/** Where a face's lips meet in the middle (y from the eyes). */
+export const mouthY = f => f?.gnm ? f.gnm.lip.line[0] : MOUTH.y;
 
 // a slice of the face: y from the eyes, half width, the front and the back of it (z), where it is widest (z), how square in front and behind
 const slice0 = (y, w, zf, zb, zc, pf = 2.2, pb = 2) => [HC[1] + y, w, zf - zc, HC[2] + zc, 0, pf, zc - zb, pb];
@@ -47,10 +58,11 @@ const ball3 = (x, y, z, rx, ry, rz) => { const X = x / rx, Y = y / ry, Z = z / r
  * the sculpting's grid, and come out ragged); its floor comes up to the skin at the corners, where the eyeball
  * does not reach: by the nose there is a little pink flesh. open: 1 as wide as an eye is at rest.
  */
-export function eyeOpening(open, es = ES, tilt = 0, real = false) {
-  const ex = EYE[0], ey = HC[1] + EYE[1], ez = HC[2] + EYE[2], rim = eyeRim(open, es, tilt, real), w = rim.w, cx = rim.cx;
+export function eyeOpening(open, es = ES, tilt = 0, real = false, g = null) {
+  const E = g?.eye || EYE, ex = E[0], ey = HC[1] + E[1], ez = HC[2] + E[2], rim = eyeRim(open, es, tilt, real, g), w = rim.w, cx = rim.cx;
   const ni = real ? .0145 : .01, field = (x, y, z) => mx(rim(x, y - HC[1])[0], ez + .0035 * es + .75 * mx(0, ex - ni * es - x) + .5 * mx(0, x - ex - .01 * es) - z);
-  return { field, lo: [cx - w - .003, ey - .009 * es - abs(tilt) * w, ez], hi: [cx + w + .003, ey + .01 * es + abs(tilt) * w, ez + .03 * es] };
+  const R = g?.rim, ry0 = R ? HC[1] + R.cy - mx(R.hu, R.hl) * open - .003 - abs(tilt + R.ang) * w : ey - .009 * es - abs(tilt) * w, ry1 = R ? HC[1] + R.cy + mx(R.hu, R.hl) * open + .003 + abs(tilt + R.ang) * w : ey + .01 * es + abs(tilt) * w;
+  return { field, lo: [cx - w - .003, ry0, ez], hi: [cx + w + .003, ry1, ez + .03 * es] };
 }
 /**
  * The outline of the left eye's opening, seen from in front: a function (x, y from the eyes) => [how far outside
@@ -60,15 +72,17 @@ export function eyeOpening(open, es = ES, tilt = 0, real = false) {
 // (a real face's opening is as long as a real eye's, 3 cm from corner to corner, measured faces' averages, its inner corner close by the
 // nose: 3.3 cm between the two; the clean face's is shorter, and further from the nose. And lower: at rest a real upper lid covers the top
 // of the iris; open as wide as the clean face's, a real one stared)
-export function eyeRim(open, es = ES, tilt = 0, real = false) {
-  const ES = es, w = (real ? .0152 : .0143) * ES, cx = EYE[0] - (real ? .0022 : .001) * ES, ct = cos(.075 + tilt), st = sin(.075 + tilt), o = [0, 0];
-  const hu = (real ? .0037 : .0044) * ES * open, hl = (real ? .0048 : .0052) * ES * open, R1 = (w * w + hu * hu) / (2 * hu), c1 = hu - R1, R2 = (w * w + hl * hl) / (2 * hl), c2 = R2 - hl;
-  const rim = (x, hy) => { const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx, a = hyp(u, v - c1) - R1, b = hyp(u, v - c2) - R2; o[0] = mx(a, b); o[1] = a > b ? 1 : 0; return o; };
+// g: a GNM face's own (f.gnm, human-gnm.js gnmMarks): its opening as GNM's head has it, the corners where they are and each lid as far
+// from the line between them (open and tilt as for any face).
+export function eyeRim(open, es = ES, tilt = 0, real = false, g = null) {
+  const ES = es, R = g?.rim, w = R ? R.w : (real ? .0152 : .0143) * ES, cx = R ? R.cx : EYE[0] - (real ? .0022 : .001) * ES, cy = R ? R.cy : EYE[1], an = (R ? R.ang : .075) + tilt, ct = cos(an), st = sin(an), o = [0, 0];
+  const hu = (R ? R.hu : (real ? .0037 : .0044) * ES) * open, hl = (R ? R.hl : (real ? .0048 : .0052) * ES) * open, R1 = (w * w + hu * hu) / (2 * hu), c1 = hu - R1, R2 = (w * w + hl * hl) / (2 * hl), c2 = R2 - hl;
+  const rim = (x, hy) => { const dx = x - cx, dy = hy - cy, u = ct * dx + st * dy, v = ct * dy - st * dx, a = hyp(u, v - c1) - R1, b = hyp(u, v - c2) - R2; o[0] = mx(a, b); o[1] = a > b ? 1 : 0; return o; };
   // how much of the upper lid a point is (0..1): all of it along the lid's edge and a little way up, none of it a finger's width above; less towards
   // the corners, where the lids meet and nothing moves. T: for strips across the eye from its inner corner out, the share of the lid's whole turn
   // that brings its edge down onto the lower lid's there (lidPlan() measures it on the mesh; without it, by how tall the opening was drawn)
   rim.lid = (x, hy, T) => {
-    const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx; if (abs(u) >= w) return 0;
+    const dx = x - cx, dy = hy - cy, u = ct * dx + st * dy, v = ct * dy - st * dx; if (abs(u) >= w) return 0;
     const a = hyp(u, v - c1) - R1; if (a <= -.0016 * ES || a >= .0105 * ES) return 0;
     let lat;
     if (T) { const q = (u / w * .5 + .5) * T.length - .5, i = Math.floor(q), t = q - i, A = i < 0 ? 0 : T[i], B = i + 1 >= T.length ? 0 : T[i + 1]; lat = i < 0 ? A + (B - A) * (t * 2 - 1) : i + 1 >= T.length ? A * (1 - t * 2) : A + (B - A) * t; }
@@ -76,15 +90,15 @@ export function eyeRim(open, es = ES, tilt = 0, real = false) {
     return mx(0, lat) * ss(-.0016 * ES, -.0004 * ES, a) * ss(.0105 * ES, .0012 * ES, a);
   };
   // (for lidPlan: how far across the opening a point is, -1 at the inner corner .. 1 at the outer; how far outside the upper edge, and the lower)
-  rim.at = (x, hy, out) => { const dx = x - cx, dy = hy - EYE[1], u = ct * dx + st * dy, v = ct * dy - st * dx; out[0] = u / w; out[1] = hyp(u, v - c1) - R1; out[2] = hyp(u, v - c2) - R2; return out; };
+  rim.at = (x, hy, out) => { const dx = x - cx, dy = hy - cy, u = ct * dx + st * dy, v = ct * dy - st * dx; out[0] = u / w; out[1] = hyp(u, v - c1) - R1; out[2] = hyp(u, v - c2) - R2; return out; };
   // (a point on the upper lid's edge (upper) or the lower's, t: -1 at the inner corner .. 1 at the outer: [x, y from the eyes])
-  rim.edge = (t, upper, out) => { const u = t * w, v = upper ? c1 + Math.sqrt(R1 * R1 - u * u) : c2 - Math.sqrt(R2 * R2 - u * u); out[0] = cx + ct * u - st * v; out[1] = EYE[1] + st * u + ct * v; return out; };
+  rim.edge = (t, upper, out) => { const u = t * w, v = upper ? c1 + Math.sqrt(R1 * R1 - u * u) : c2 - Math.sqrt(R2 * R2 - u * u); out[0] = cx + ct * u - st * v; out[1] = cy + st * u + ct * v; return out; };
   rim.w = w; rim.cx = cx; return rim;
 }
 /** The outline of a face's left eye opening (eyeRim) as that face has it: its size, how open, how tilted. */
-export const rimOf = f => eyeRim(f.eyes, esOf(f), f.tilt || 0, !!f.real);
+export const rimOf = f => eyeRim(f.eyes, esOf(f), f.tilt || 0, !!f.real, f.gnm);
 
-const M3 = [0, 0, 0];
+const M3 = [0, 0, 0, 0];
 /**
  * The lips at a point of the face (x, and y from the eyes), for a face f ({ lips, soft }): [how far they stand
  * out of the round of the mouth (metres; a dip under the nose and at each corner is negative), how much of the
@@ -93,6 +107,20 @@ const M3 = [0, 0, 0];
  * is fuller and shorter. (The same array each call unless given one.)
  */
 export function mouthAt(x, hy, f, out = M3) {
+  if (f.gnm) {   // (a GNM face: its lips' red as its head has it, from where they meet to its edges; its shape is the head's own)
+    // (the red of a real lip: its upper border a crisp line, the lower lip's fading out into the chin; thinner with age, as it turns in)
+    const g = f.gnm, e = abs(x) / g.lip.half, line = lipAt(g, 'line', x), v = hy - line, th = 1 - .22 * ss(30, 80, f.age ?? 30); let lip = 0, t = 0;
+    if (e < 1.05 && v < .014 && v > -.016) {
+      if (v >= 0) { const H = (lipAt(g, 'up', x) - line) * th; if (H > 2e-4) { t = v / H; lip = ss(1.05, .93, t); } }
+      else { const H = (line - lipAt(g, 'dn', x)) * th; if (H > 2e-4) { t = v / H; lip = ss(1.1, .62, -t); } }
+      lip *= ss(1, .9, e);
+    }
+    out[3] = t;   // (how far across its lip a point is: 0 where they meet, 1 the upper's border, -1 the lower's)
+    // (the line between them fine and dark: GNM's lips meet in a crease too shallow for the sculpting's grid to shade, so it is in the paint;
+    // on to the corners, where the lips' meeting runs back into the cheek)
+    out[0] = 0; out[1] = lip; out[2] = e < 1.4 ? (.85 * bump(v, 0, .0008) + .3 * bump(v, 0, .002)) * ss(1.08, .85, e) : 0;
+    return out;
+  }
   const so = f.soft, LP = f.lips, half = mouthHalf(f), u = abs(x), e = u / half, v = hy - (MOUTH.y - MOUTH_DIP * u / (f.real ? 1.15 : 1) + MOUTH_UP * ss(.7, 1.1, e));
   let rise = 0, lip = 0;
   if (e < 1.4 && v < .014 && v > -.016) {
@@ -125,7 +153,7 @@ function mouthShape(f) {
 // The bones a face moves on, and how much of the head's skin goes with each. They only show close up: further off each stands in as the head.
 export const JAW = [-.014, .002], LID_R = .0138 * ES;   // where the jaw turns (y from the eyes, z: a little in front of the ears); how far the lids lie from the middle of the eye
 /** The line between the lips at x (y from the eyes), for a face f. */
-export const lipLine = (x, f) => { const u = abs(x); return MOUTH.y - MOUTH_DIP * u / (f.real ? 1.15 : 1) + MOUTH_UP * ss(.7, 1.1, u / mouthHalf(f)); };
+export const lipLine = (x, f) => { if (f.gnm) return lipAt(f.gnm, 'line', x); const u = abs(x); return MOUTH.y - MOUTH_DIP * u / (f.real ? 1.15 : 1) + MOUTH_UP * ss(.7, 1.1, u / mouthHalf(f)); };
 /**
  * How far the upper lid of each eye turns about the middle of the eye to close, measured on the head's own mesh (m: field.js's): the opening as it
  * is meshed is a little taller than it was drawn (its edges are rounded, and thinned). In strips across the eye, the lowest the upper lid's skin
@@ -133,11 +161,11 @@ export const lipLine = (x, f) => { const u = abs(x); return MOUTH.y - MOUTH_DIP 
  * more, so the two overlap). Returns { turn (radians: the most, about the middle of the eye), L, R: for each strip from the inner corner out, the share of it }.
  */
 export function lidPlan(m, f) {
-  const rim = rimOf(f), ES = esOf(f), K = 10, o = [0, 0, 0], out = { turn: 0 };
+  const rim = rimOf(f), ES = esOf(f), EY = eyeOf(f), K = 10, o = [0, 0, 0], out = { turn: 0 };
   const up = { L: new Float32Array(K).fill(9), R: new Float32Array(K).fill(9) }, lo = { L: new Float32Array(K).fill(-9), R: new Float32Array(K).fill(-9) };
   for (let i = 0; i < m.n; i++) {
-    const x = m.P[i * 3], ax = abs(x), hy = m.P[i * 3 + 1] - HC[1], dy = hy - EYE[1], dz = m.P[i * 3 + 2] - HC[2] - EYE[2];
-    if (dz < .008 * ES || abs(dy) > .012 * ES || abs(ax - rim.cx) >= rim.w || hyp(ax - EYE[0], dy, dz) < .0124 * ES) continue;   // (inside the eyeball it is never seen)
+    const x = m.P[i * 3], ax = abs(x), hy = m.P[i * 3 + 1] - HC[1], dy = hy - EY[1], dz = m.P[i * 3 + 2] - HC[2] - EY[2];
+    if (dz < .008 * ES || abs(dy) > .012 * ES || abs(ax - rim.cx) >= rim.w || hyp(ax - EY[0], dy, dz) < .0124 * ES) continue;   // (inside the eyeball it is never seen)
     rim.at(ax, hy, o); const k = Math.min(K - 1, Math.floor((o[0] * .5 + .5) * K)), an = Math.atan2(dy, dz), sd = x >= 0 ? 'L' : 'R';
     if (o[1] > o[2]) { if (o[1] > -.0006 && o[1] < .004 * ES) up[sd][k] = Math.min(up[sd][k], an); } else if (o[2] > -.0006 && o[2] < .004 * ES) lo[sd][k] = Math.max(lo[sd][k], an);
   }
@@ -160,10 +188,10 @@ export function lidPlan(m, f) {
  * half of the upper lip and of the lower, and the chin (the lower lip's halves and the chin ride on the jaw).
  */
 export function faceBones(f) {
-  const half = mouthHalf(f), B = browOf(f.soft), L0 = lipLine(0, f), out = [['jaw', 'head', Hd(0, JAW[0], JAW[1])], ['chin', 'jaw', Hd(0, L0 - .033, .08)]];
-  for (const [sd, s] of [['L', 1], ['R', -1]]) out.push(['eye' + sd, 'head', Hd(s * EYE[0], EYE[1], EYE[2])], ['lid' + sd, 'head', Hd(s * EYE[0], EYE[1], EYE[2])],
+  const half = mouthHalf(f), B = browOf(f.soft, f), L0 = lipLine(0, f), E = eyeOf(f), NO = noseOf(f), out = [['jaw', 'head', Hd(0, JAW[0], JAW[1])], ['chin', 'jaw', Hd(0, L0 - .033, .08)]];
+  for (const [sd, s] of [['L', 1], ['R', -1]]) out.push(['eye' + sd, 'head', Hd(s * E[0], E[1], E[2])], ['lid' + sd, 'head', Hd(s * E[0], E[1], E[2])],
     ['brow' + sd, 'head', Hd(s * B[1][0], B[1][1], B[1][2])], ['browIn' + sd, 'head', Hd(s * B[0][0], B[0][1], B[0][2])], ['corner' + sd, 'head', Hd(s * half, lipLine(half, f), .078)],
-    ['lowLid' + sd, 'head', Hd(s * EYE[0], EYE[1] - .011, .078)], ['cheek' + sd, 'head', Hd(s * .041, -.024, .072)], ['nose' + sd, 'head', Hd(s * .014, -.042, .092)],
+    ['lowLid' + sd, 'head', Hd(s * E[0], E[1] - .011, .078)], ['cheek' + sd, 'head', Hd(s * .041, -.024, .072)], ['nose' + sd, 'head', Hd(s * (NO[0] + .0032), NO[1] - .003, .092)],
     ['lipUp' + sd, 'head', Hd(s * half * .42, L0 + .007, .088)], ['lipLow' + sd, 'jaw', Hd(s * half * .42, L0 - .008, .086)]);
   return out;
 }
@@ -189,12 +217,12 @@ export function faceShare(x, y, z, f, side = 0, lids = null) {
   let lid = 0, low = 0;
   if (hy > -.02) {
     if (hy < .02 * ES && hz > .058) {
-      const key = f.eyes + ':' + ES + ':' + (f.tilt || 0) + ':' + !!f.real; if (RIMO !== key) { RIM = rimOf(f); RIMO = key; } lid = RIM.lid(ax, hy, lids && lids[sd]); if (lid > 0) out.push(['lid' + sd, lid]);
+      const key = f.eyes + ':' + ES + ':' + (f.tilt || 0) + ':' + !!f.real + ':' + (f.gnm ? JSON.stringify(f.gnm.rim) : ''); if (RIMO !== key) { RIM = rimOf(f); RIMO = key; } lid = RIM.lid(ax, hy, lids && lids[sd]); if (lid > 0) out.push(['lid' + sd, lid]);
       // the lower lid: its edge and the skin a little way down from it, less toward the corners, where the lids meet and nothing moves
       if (hy < .004 * ES) { const o = RIM.at(ax, hy, RO); if (o[2] >= o[1] && abs(o[0]) < 1) low = .9 * ss(-.0016, -.0004, o[2]) * ss(.009 * ES, .0015 * ES, o[2]) * ss(1, .55, abs(o[0])) * (1 - lid); if (low > 0) out.push(['lowLid' + sd, low]); }
     }
     if (hy > .004) {
-      const [b0, b1, b2] = browOf(f.soft), q = ax < b1[0] ? [b0, b1] : [b1, b2], t = mx(0, Math.min(1, (ax - q[0][0]) / (q[1][0] - q[0][0])));
+      const [b0, b1, b2] = browOf(f.soft, f), q = ax < b1[0] ? [b0, b1] : [b1, b2], t = mx(0, Math.min(1, (ax - q[0][0]) / (q[1][0] - q[0][0])));
       const k = ss(.017, .006, hyp(ax < b0[0] ? b0[0] - ax : ax > b2[0] ? ax - b2[0] : 0, hy - (q[0][1] + (q[1][1] - q[0][1]) * t))) * ss(.045, .06, hz) * (1 - lid);
       if (k > 0) {
         // (between the brows the skin is shared by both inner ends; the tail of a brow moves less than its arch)
@@ -207,9 +235,9 @@ export function faceShare(x, y, z, f, side = 0, lids = null) {
   // the cheek's pad, under the lower lid's own skin and clear of the nose; the wing of the nose and the skin beside it
   if (hy < .004 && hy > -.06 && hz > .045) {
     // (none of it over the eyeball: skin that lies on the ball and rose with the cheek straight up rose into the ball, which showed through it)
-    const ch = .75 * ss(.027, .007, hyp(ax - .041, (hy + .024) * 1.25)) * ss(.05, .066, hz) * ss(.011, .019, ax) * ss(.017 * ES, .026 * ES, hyp(ax - EYE[0], hy - EYE[1])) * (1 - lid) * (1 - low);
+    const ch = .75 * ss(.027, .007, hyp(ax - .041, (hy + .024) * 1.25)) * ss(.05, .066, hz) * ss(.011, .019, ax) * ss(.017 * ES, .026 * ES, hyp(ax - eyeOf(f)[0], hy - eyeOf(f)[1])) * (1 - lid) * (1 - low);
     if (ch > .002) out.push(['cheek' + sd, ch]);
-    const ns = .85 * ss(.011, .003, hyp(ax - .016, (hy + .043) * 1.15)) * ss(.06, .075, hz);
+    const NO = noseOf(f), ns = .85 * ss(.011, .003, hyp(ax - NO[0] - .005, (hy - NO[1] + .004) * 1.15)) * ss(.06, .075, hz);
     if (ns > .002) out.push(['nose' + sd, ns]);
   }
   if (hy <= -.02) {
@@ -245,12 +273,12 @@ const RO = [0, 0, 0];
  * to their left, [upper lip's, lower lip's] each.
  */
 export function partLips(m, f) {
-  const n0 = m.n, half = mouthHalf(f), lim = half * 1.08, SNAP = .00025, I = m.I;
+  const n0 = m.n, half = mouthHalf(f), lim = half * 1.08, SNAP = .00025, I = m.I, MY = mouthY(f);
   const P = Array.from(m.P.subarray(0, n0 * 3)), N = Array.from(m.N.subarray(0, n0 * 3)), ao = Array.from(m.ao.subarray(0, n0)), own = Array.from(m.own.subarray(0, n0)), ride = Array.from(m.ride.subarray(0, n0));
   // st: 1 above the line, 2 below it, 3 on it (a point within a hair of the line is put on it), 0 not by the mouth; v: how far above the line
   const v = new Float32Array(n0), st = new Uint8Array(n0), line = [];
   for (let i = 0; i < n0; i++) {
-    const x = P[i * 3], hy = P[i * 3 + 1] - HC[1]; if (P[i * 3 + 2] - HC[2] < .05 || abs(hy - MOUTH.y) > .03) continue;
+    const x = P[i * 3], hy = P[i * 3 + 1] - HC[1]; if (P[i * 3 + 2] - HC[2] < .05 || abs(hy - MY) > .03) continue;
     const d = hy - lipLine(x, f); v[i] = d; if (abs(x) > lim) continue;
     if (abs(d) < SNAP && abs(x) <= half) { st[i] = 3; P[i * 3 + 1] -= d; v[i] = 0; line.push(i); } else st[i] = d > 0 ? 1 : 2;
   }
@@ -346,8 +374,10 @@ export function mouthInside(m, f) {
 export function beardArea(sp, x, hy, hz, out) {
   const ax = Math.abs(x), sf = sp.face.soft || 0, fl = sp.face.lips || 1, mw = mouthHalf(sp.face) / (MOUTH.half - .002 * sf);
   const e = .003 * lumps(x * 260, hy * 260 + 3.1, hz * 260) + .0013 * lumps(x * 800 + 5.3, hy * 800, hz * 800 + 1.7);
-  const lip = Math.min(Math.hypot(x / ((.0228 - .0035 * sf) * mw), (hy - MOUTH.y - .005) / (.0048 * fl)), Math.hypot(x / ((.0195 - .002 * sf) * mw), (hy - MOUTH.y + .0058) / (.0062 * fl)));
-  const lipOff = hy > MOUTH.y ? ss(.94, 1.04, lip) : ss(.97, 1.1, lip);
+  // (the lips: an oval over each; a GNM face's over its own lips' red)
+  const g = sp.face.gnm, MY = mouthY(sp.face), L = g?.lip, lip = g ? Math.min(Math.hypot(x / (L.half * .97), (hy - (L.line[0] + L.up[0]) / 2) / mx(.002, (L.up[0] - L.line[0]) / 2 + .0005)), Math.hypot(x / (L.half * .83), (hy - (L.line[0] + L.dn[0]) / 2) / mx(.002, (L.line[0] - L.dn[0]) / 2 + .0005)))
+    : Math.min(Math.hypot(x / ((.0228 - .0035 * sf) * mw), (hy - MOUTH.y - .005) / (.0048 * fl)), Math.hypot(x / ((.0195 - .002 * sf) * mw), (hy - MOUTH.y + .0058) / (.0062 * fl)));
+  const lipOff = hy > MY ? ss(.94, 1.04, lip) : ss(.97, 1.1, lip);
   const top = -.0485 - .0055 * ss(.012, .03, ax) + .034 * ss(.035, .075, ax) + .014 * ss(.068, .078, ax) + e, dn = ((hz + .04) * .045 + (hy + .085) * .075) / .0875 + .6 * e;
   const ang = Math.atan2(ax, hz) * 180 / Math.PI, back = 80 + 8 * ss(-.045, -.075, hy);
   out[0] = sp.beard ? ss(top + .004, top - .004 - .014 * ss(.02, .05, ax), hy) * ss(-.008, .01, dn) * ss(back, back - 12, ang) * lipOff : 0;
@@ -371,7 +401,7 @@ export function eyeParts(m, f, hair = {}) {
   const rim = rimOf(f), es = esOf(f), so = f.soft || 0, age = mx(0, Math.min(1, ((f.age ?? 30) - 30) / 50)), MP = m.P, o = [0, 0, 0], e = [0, 0];
   let seed = Math.floor((f.aseed || 0) * 977) + 13; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   // the head's points round the eyes (of the left one: x is mirrored), to find each lid's front edge on
-  const near = []; for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1], hz = MP[i * 3 + 2] - HC[2]; if (abs(hy - EYE[1]) < .013 * es && abs(ax - EYE[0]) < .022 * es && hz > EYE[2] - .004) near.push(i); }
+  const EY = eyeOf(f), near = []; for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1], hz = MP[i * 3 + 2] - HC[2]; if (abs(hy - EY[1]) < .013 * es && abs(ax - EY[0]) < .022 * es && hz > EY[2] - .004) near.push(i); }
   // the frontmost point of the skin within reach of (x, y from the eyes) on the left side, that is on the lid asked for (upper: 1, lower: 2,
   // inside the opening: 0); its z (from the head's middle), or NaN
   const front = (x, hy, which, reach) => {
@@ -427,7 +457,7 @@ export function eyeParts(m, f, hair = {}) {
     // the brow: its hairs one by one in the brow's band (as the paint's, human-paint.js browAt), close over the skin: standing up
     // at the inner end, lying out along the brow toward its tail, the last few turning down; longest over the arch. The paint
     // keeps a fainter brow under them, the skin's own colour where the hairs are few
-    { const B = browOf(so), fem = so > .5, x0 = B[0][0], x1 = B[1][0], x2 = B[2][0], full = fem ? .0025 : .0036, nb = Math.round((fem ? 540 : 760) * (1 - .2 * age));   // (as tall and as thick as a real brow: a thinner band of fewer hairs read as a pencil line; and many fine hairs, not a few thick ones)
+    { const B = browOf(so, f), fem = so > .5, x0 = B[0][0], x1 = B[1][0], x2 = B[2][0], full = fem ? .0025 : .0036, nb = Math.round((fem ? 540 : 760) * (1 - .2 * age));   // (as tall and as thick as a real brow: a thinner band of fewer hairs read as a pencil line; and many fine hairs, not a few thick ones)
       const yc = x => B[0][1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + B[1][1] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2)) + B[2][1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1));
       const skin = []; for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1]; if (ax > x0 - .008 && ax < x2 + .006 && hy > .006 && hy < .045 && MP[i * 3 + 2] - HC[2] > .03 && m.N[i * 3 + 2] > .2) skin.push(i); }
       for (let i = 0, tries = 0; i < nb && tries < nb * 20; tries++) {
@@ -447,9 +477,10 @@ export function eyeParts(m, f, hair = {}) {
     }
     // the caruncle: a small pink mound in the inner corner, between the lids' edges, lying on the round of the eye (which turns under it)
     // (a real eye's inner corner lies beyond the round of the eyeball, on the floor of the opening there)
-    { const t = -.76, a = rim.edge(t, true, [0, 0]), b = rim.edge(t, false, [0, 0]), x = (a[0] + b[0]) / 2, hy = (a[1] + b[1]) / 2, r = .0122 * es, d2 = (x - EYE[0]) ** 2 + (hy - EYE[1]) ** 2;
+    // (a GNM face's: further into its corner, which comes to a point, smaller and lying back in it, under the lids' edges)
+    { const G = !!f.gnm, t = G ? -.86 : -.76, a = rim.edge(t, true, [0, 0]), b = rim.edge(t, false, [0, 0]), x = (a[0] + b[0]) / 2, hy = (a[1] + b[1]) / 2, r = .0122 * es, d2 = (x - EY[0]) ** 2 + (hy - EY[1]) ** 2;
       if (d2 < r * r || f.real) {
-        const c = [s * x, HC[1] + hy, HC[2] + EYE[2] + mx(Math.sqrt(mx(0, r * r - d2)), f.real ? .0035 * es + .75 * mx(0, EYE[0] - .0145 * es - x) : 0) + .0001], R = [.001 * es, .0014 * es, .0007 * es], like = { like: [c[0], c[1], c[2], 0] }, base = P.length / 3, U = 8, V = 6;
+        const c = [s * x, HC[1] + hy, HC[2] + EY[2] + mx(Math.sqrt(mx(0, r * r - d2)), f.real ? .0035 * es + .75 * mx(0, EY[0] - .0145 * es - x) : 0) + (G ? -.0005 : .0001)], R = G ? [.0008 * es, .0011 * es, .0005 * es] : [.001 * es, .0014 * es, .0007 * es], like = { like: [c[0], c[1], c[2], 0] }, base = P.length / 3, U = 8, V = 6;
         for (let j = 0; j <= V; j++) for (let i = 0; i < U; i++) {
           const th = j / V * PI, ph = i / U * PI * 2, nx = sin(th) * cos(ph), ny = cos(th), nz = sin(th) * sin(ph), nn = hyp(nx / R[0], ny / R[1], nz / R[2]);
           P.push(c[0] + R[0] * nx, c[1] + R[1] * ny, c[2] + R[2] * nz); N.push(nx / R[0] / nn, ny / R[1] / nn, nz / R[2] / nn); K.push('caruncle'); src.push(like); ao.push(.6 + .3 * mx(0, nz));
@@ -464,7 +495,7 @@ export function eyeParts(m, f, hair = {}) {
     const slotOf = m.slots && m.slot ? i => m.slots[m.slot[i]] : () => 'skin';
     if (hair.moustache || hair.beard > 0) {
       const full = hair.moustache ? 1 : Math.min(1, hair.beard * 1.4), mh = mouthHalf(f), nm = Math.round(900 * (.5 + .5 * full) * (1 - .2 * age));
-      const top = ax => -.0482 + .0022 * bump(ax, .0175, .0045) - .0075 * ss(.02, .031, ax), bot = ax => lipLine(ax, f) + .0042, q3 = [0, 0, 0];
+      const top = ax => -.0482 + .0022 * bump(ax, .0175, .0045) - .0075 * ss(.02, .031, ax), bot = ax => lipLine(ax, f) + .0042, q3 = [0, 0, 0, 0];
       const skin = [];
       for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1]; if (ax < mh * 1.3 && hy > -.078 && hy < -.04 && MP[i * 3 + 2] - HC[2] > .05 && m.N[i * 3 + 2] > .2 && slotOf(i) === 'skin') skin.push(i); }
       for (let i = 0, tries = 0; i < nm && tries < nm * 30; tries++) {
@@ -598,35 +629,38 @@ export function reliefOf(f) {
     const ex = x1 - x0, ey = y1 - y0, t = mx(0, Math.min(1, ((ax - x0) * ex + (hy - y0) * ey) / (ex * ex + ey * ey))), dx = ax - x0 - ex * t, dy = hy - y0 - ey * t;
     o[0] = hyp(dx, dy); o[1] = t; o[2] = dx * -ey + dy * ex > 0 ? -1 : 1; return o;
   };
-  const DN = .00035 + .0014 * a + .0005 * heavy - .00015 * so, DT = .00025 + .0011 * a + .0005 * thin, BAG = .0002 + .0009 * a + .0002 * heavy, DM = .0006 + .0005 * a;
-  const wx = .0108 * NS * NW, wy = -.039, WR = .0074 * NS;   // the wing of the nose
+  const G = f.gnm ? 1.4 : 1;   // (a GNM face's age deeper: its own skin is smooth, where ours had the slack of age in its shapes too; but not under
+  // the eyes, where its own shape already has a trough: the two together read as bruises)
+  const DN = .00035 + .0014 * G * a + .0005 * heavy - .00015 * so, DT = .00025 + .0011 * a * (f.gnm ? .8 : 1) + .0005 * thin, BAG = .0002 + .0009 * a + .0002 * heavy, DM = .0006 + .0005 * a;
+  const g = f.gnm, wx = g ? noseOf(f)[0] : .0108 * NS * NW, wy = g ? noseOf(f)[1] : -.039, WR = .0074 * NS, MY = mouthY(f), EY = eyeOf(f), ex = EY[0] - EYE[0];   // the wing of the nose (the mouth, the eyes)
   const AS = (f.asym || 0) * .0011, ph = (f.aseed || 0) * 7.3;   // (how uneven its two sides are, and where its unevenness falls)
+  const sx = g ? g.lip.half - .027 : 0, sy = g ? g.lip.line[6] + .0655 : 0;   // (a GNM face's corners of the mouth from where a real face of ours has them: the folds by them go with them)
   return (x, y, z) => {
     const ax = abs(x), hy = y - HC[1], hz = z - HC[2]; let h = 0;
     if (hy > .07 || hy < -.2) return 0;
     if (hz > .04 && hy > -.1 && hy < -.005) {
       // the fold from the nose to the mouth, with the cheek standing over it (the side away from the middle)
-      seg(ax, hy, wx + .0068 * NS * NW, wy + .006, .0305 + .002 * a, -.074 - .004 * a);
+      seg(ax, hy, wx + .0068 * NS * NW, wy + .006, .0305 + .002 * a + sx, -.074 - .004 * a + sy);
       if (o[0] < .012) { const t = o[1], g = ss(0, .12, t) * ss(1, .78, t) * ss(.05, .065, hz); h -= DN * bump(o[0], 0, .0034) * g; if (o[2] > 0) h += DN * .35 * bump(o[0], .005, .005) * g; }
       // the trough under the eye, from by the nose down and out, a little swell between it and the lower lid
-      seg(ax, hy, .0185, -.0115, .043, -.0255);
+      seg(ax, hy, .0185 + ex, -.0115, .043 + ex, -.0255);
       if (o[0] < .012) { const t = o[1], g = ss(0, .15, t) * ss(1, .7, t) * ss(.055, .068, hz); h -= DT * bump(o[0], 0, .003) * g; if (o[2] < 0 || hy > -.012) h += BAG * bump(o[0], .0042, .0034) * g; }
       // the crease round the wing of the nose (on the side of it facing the cheek and above)
       { const dx = ax - wx, dy = hy - wy, r = hyp(dx, dy), ang = Math.atan2(dy, dx); if (r < WR + .006 && r > WR - .004 && hz > .08) h -= .0007 * bump(r, WR, .0016) * ss(-1.2, -.6, ang) * ss(2.6, 2.1, ang); }
     }
     if (hz > .04 && hy < -.07 && hy > -.11) {
       // the groove under the lower lip (curving up at its ends), and with age the lines down from the corners of the mouth
-      const yc = MOUTH.y - .0168 + .009 * (ax / .022) ** 2; h -= DM * bump(hy, yc, .0028) * ss(.026, .016, ax);
-      if (a > 0) { seg(ax, hy, .0262, -.072, .031, -.099); if (o[0] < .014) { const g = ss(0, .15, o[1]) * ss(1, .75, o[1]); h -= .0011 * a * bump(o[0], 0, .0028) * g; if (o[2] > 0) h += .0007 * (a + .5 * heavy) * bump(o[0], .0065, .0055) * ss(.3, .7, o[1]); } }
+      const yc = MY - .0168 + .009 * (ax / .022) ** 2; h -= DM * bump(hy, yc, .0028) * ss(.026 + sx, .016 + sx, ax);
+      if (a > 0) { seg(ax, hy, .0262 + sx, -.072 + sy, .031 + sx, -.099 + sy); if (o[0] < .014) { const g = ss(0, .15, o[1]) * ss(1, .75, o[1]); h -= .0011 * G * a * bump(o[0], 0, .0028) * g; if (o[2] > 0) h += .0007 * (a + .5 * heavy) * bump(o[0], .0065, .0055) * ss(.3, .7, o[1]); } }
     }
     // hollows: the temples, and under the cheekbones (thin and old faces)
     if (ax > .04) {
-      const tq = hyp(ax - .066, hy - .03, hz - .022); if (tq < .03) h -= (.0013 * a + .0012 * thin) * bump(tq, 0, .016);
-      const cq = hyp(ax - .052, hy + .05, hz - .05); if (cq < .03) h -= (.001 * a + .0018 * thin) * bump(cq, 0, .015);
+      const tq = hyp(ax - .066, hy - .03, hz - .022); if (tq < .03) h -= (.0013 * G * a + .0012 * thin) * bump(tq, 0, .016);
+      const cq = hyp(ax - .052, hy + .05, hz - .05); if (cq < .03) h -= (.001 * G * a + .0018 * thin) * bump(cq, 0, .015);
     }
     // no face is the same both sides: broad soft swells and dips (a cheek a little fuller, one side of the jaw or the mouth a little
     // lower), different on the left and the right, none round the eyes (a lid that isn't even reads as a droop)
-    if (AS) { const e = hyp(ax - EYE[0], hy - EYE[1], hz - EYE[2]); if (e > .016) h += AS * lumps(x * 21 + ph, y * 21 + ph * .7, z * 21 + 3.1) * ss(.016, .03, e); }
+    if (AS) { const e = hyp(ax - EY[0], hy - EY[1], hz - EY[2]); if (e > .016) h += AS * lumps(x * 21 + ph, y * 21 + ph * .7, z * 21 + 3.1) * ss(.016, .03, e); }
     // the cords down the front of an old neck
     if (a > 0 && hy < -.12 && hz > .0 && ax < .05) h += .0011 * a * bump(ax, .019, .006) * ss(-.125, -.14, hy) * ss(-.2, -.17, hy);
     return mx(-RELIEF, Math.min(RELIEF, h));
@@ -651,8 +685,10 @@ export function head(a, ghosts = []) {
   // before it is meshed (field.js grow); a woman's face has half of it, the rest of her shape being her own; a.fit: false leaves it out, a.fit a
   // table to use in its place, the whole of it. A face with a heritage (f.kin, human.js realFace) has the fit of its own sex and heritage instead,
   // the whole of it too (each of those was worked out on that sex's own head with no fit on it: scripts/head-fit.mjs solve=1)
+  // (a face from GNM Head, f.gnm: its whole shape from that, human-gnm.js; our neck, hair and hats round it)
+  const G = real && f.gnm ? gnmHead(f, Hd(0, EYE[1], EYE[2])) : null;
   const kin = real && a.fit !== false && !(a.fit && typeof a.fit === 'object') && f.kin ? kinTable(so > .5, f.kin) : null, own = kin || (a.fit && typeof a.fit === 'object' ? a.fit : null);
-  const relief = real ? reliefOf(f) : null, fk = real && a.fit !== false ? own ? 1 : 1 - .5 * so : 0;
+  const relief = real ? reliefOf(f) : null, fk = real && !G && a.fit !== false ? own ? 1 : 1 - .5 * so : 0;   // (a GNM head: its own shape, unfitted; the folds of age along its own outlines)
   const grow = fk ? (x, y, z) => fk * fitAt(x, y - HC[1], z - HC[2], own) : null, grown = s => grow ? { ...s, grow, growMax: FIT_MAX } : s, fitted = s => grown(relief ? { ...s, folds: relief, foldMax: RELIEF } : s);
   const A = s => S.push(s.cut ? { slot: 'skin', ...s } : fitted({ slot: 'skin', ...s }));
   // (a real face's width: wider or narrower below the brow, fuller low down when heavy, and with age the flesh of the jaw hanging a little at its corners)
@@ -674,7 +710,8 @@ export function head(a, ghosts = []) {
   ]);
   // the neck: as deep as it is wide and nearly as wide as the jaw, standing behind it (its front a hand's width back from the chin), wider at its foot
   const neck = new Loft(neckRows(nk));
-  const base = [{ loft: face, blend: 0 }, { ball: [.0755, .09, .1], at: Hd(0, .026, -.006), blend: .008 }, { loft: neck, blend: .014 }];
+  const base = G ? [{ field: (x, y, z) => smax(G.d(x, y, z), -G.cut(x, y, z), .012), lo: G.lo, hi: G.hi, blend: 0 }, { loft: neck, blend: .014 }]
+    : [{ loft: face, blend: 0 }, { ball: [.0755, .09, .1], at: Hd(0, .026, -.006), blend: .008 }, { loft: neck, blend: .014 }];
   for (const s of base) A(s);
   if (a.foot) {
     // the top of the trunk as the trunk has it (a hair lower: cloth lies on it, and lower still by the top's edge, where the skin goes in under the
@@ -685,6 +722,7 @@ export function head(a, ghosts = []) {
     A({ field: (x, y, z) => { const e = neckOpening(x, y, z); return smax(mx(top.d(x, y, z) + .0022 * ss(-.006, -.001, e), e - .005), y - 1.546, .012); }, lo: [-.1, 1.44, -.105], hi: [.1, 1.56, .105], blend: .028 });
     A({ taper: [[.017, 1.4795, .0445], [.064, 1.487, .037]], r: [.0071, .0056], mirror: true, blend: .014 }); A({ ball: [.014, .008, .006], at: [0, 1.487, .057], cut: true, blend: .018 });
   }
+  if (!G) {
   const BRr = BR * (real ? 1.12 : 1);   // (a real brow ridge stands out more over the eyes: they are set in under it)
   A({ taper: [Hd(.0125, .0225, .083 + (real ? .0025 : 0)), Hd(.052, .025, .0655 + (real ? .002 : 0))], r: [.0086 * BRr, .0066 * BRr], mirror: true, blend: .02 });   // brow ridge
   A({ ball: .0078 * BR, at: Hd(0, .0205, .0812), blend: .018 });
@@ -701,7 +739,7 @@ export function head(a, ghosts = []) {
   const fy = -.0013 * LF - .0006 * age, fz = .0007 * LF, fr = 1 + .3 * LF;
   A({ taper: [E(-.0135, .0088 + fy, .0045 + fz), E(.001, .0128 + fy, .0052 + fz)], r: [.0032 * fr, .0039 * fr], mirror: true, blend: .003 });
   A({ taper: [E(.001, .0128 + fy, .0052 + fz), E(.0145, .0088 + fy * 1.3, -.0045 + fz)], r: [.0039 * fr, .0028 * fr], mirror: true, blend: .003 });
-  S.push({ ...eyeOpening(f.eyes, es, f.tilt || 0, real), mirror: true, cut: true, slot: 'lash', blend: .0022 });
+  S.push({ ...eyeOpening(f.eyes, es, f.tilt || 0, real, f.gnm), mirror: true, cut: true, slot: 'lash', blend: .0022 });
   // ---- nose: a wedge standing out of the face from between the eyes (the bridge, with its flanks), the tip, the wings beside it, the nostrils under them
   // (a real nose: its bridge higher or lower, its tip up or down, wider or narrower across the wings)
   // (a real nose is longer, its tip lower, only a little above where it meets the lip, so its nostrils open downward, out of sight from in front, and
@@ -745,6 +783,7 @@ export function head(a, ghosts = []) {
     E({ torus: [.014, .0022], at: P(.0045, .0065, -.0105), rot: [0, 0, PI / 2], blend: .0035 });
     E({ taper: [P(.0056, .015, -.0125), P(.0056, -.005, -.0145)], r: .0022, blend: .003 }); E({ ball: [.0024, .0034, .0026], at: P(.003, -.0035, .0015), blend: .003 });
     E({ ball: [.003, .0072, .0055], at: P(.0066, .0005, -.0065), cut: true, blend: .004 }); }
+  }
   // ---- neck: the two cords from behind the jaw's corners (they start inside the neck there) to the breastbone, a man's Adam's apple
   A({ taper: [Hd(.047 * nk, -.045, -.034), [.02 * nk, 1.5, .03]], r: [.0105 * (1 - .3 * so), .012 * (1 - .3 * so)], mirror: true, blend: .02 + .01 * so });
   if (so < .5) A({ ball: .009, at: [0, 1.553, .031], blend: .018 });
@@ -754,7 +793,7 @@ export function head(a, ghosts = []) {
   if (hs && hs !== 'bald') {
     // (what it grows out of: the head's mass, and over the top of the head the skull's ball alone: the slices of the face end there, and a
     // centimetre off them their measure jumps where they end, which stood in the hair as a ledge round the head)
-    const B = ready(real ? base.map(fitted) : base), all = (x, y, z) => { let d = 1e9; for (const s of B) d = smin(d, s.d(x, y, z), s.k); return d; }, crown = B[1].d;
+    const B = ready(real ? base.map(fitted) : base), all = (x, y, z) => { let d = 1e9; for (const s of B) d = smin(d, s.d(x, y, z), s.k); return d; }, crown = B[G ? 0 : 1].d;
     const skull = (x, y, z) => { const w = ss(.035, .06, y - HC[1]); return w <= 0 ? all(x, y, z) : w >= 1 ? crown(x, y, z) : crown(x, y, z) * w + all(x, y, z) * (1 - w); };
     const bob = fem && hs === 'short' && !a.hat, th = a.hat ? [.003, .003] : !fem ? [.0105, .006] : hs === 'long' ? [.012, .011] : [.007, .006];
     if (!bob) S.push({ ...hairShape(skull, th, fem, real && !a.hat), out: .0015, slot: 'hair', blend: .003 });
@@ -773,4 +812,4 @@ export function head(a, ghosts = []) {
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + [kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + GNM_HASH + [gnmHead, gnmAged, meshField, gnmMarks, eyeOf, mouthY, noseOf, lipAt, kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([LIP_U, ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
