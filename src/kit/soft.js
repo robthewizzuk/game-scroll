@@ -15,17 +15,22 @@
 //   draw: for (const s of soft.sticks) line(s.a, s.b); or flag.at(c, r), blob.points
 //
 // 3D cloth: soft = new Soft({ gravity: { x: 0, y: -9.8, z: 0 }, dims: 3 }); cloth(..., { plane: 'xy' }); soft.toGeometry(flag, mesh.geometry).
+//
+// In a gs.physics world (2D): new Soft({ world: phys }) or new Liquid({ world: phys }): the points stay out of every shape
+// in it (crates, the level, a tile map made solid, the player) and, with weight (kg a point), push loose things back:
+// jelly that knocks a crate over, water that floats a ball and turns a wheel.
 import { timed } from './prof.js';
 
 export class Soft {
   /**
    * gravity: { x, y, z } (default 2D, 900 down the screen); iterations: stick passes a step (more =
    * stiffer); damping: 0..1 kept each step; bounds: [x0, y0, x1, y1] walls (2D); floor: a y the
-   * points can't pass (3D: up is +y so it's a minimum); bounce off walls; friction on them.
+   * points can't pass (3D: up is +y so it's a minimum); bounce off walls; friction on them. world: a gs.physics world
+   * (2D) whose shapes the points stay out of; weight: kg a point, to push loose things there back.
    */
-  constructor({ gravity = null, dims = 2, iterations = 8, damping = .995, bounds = null, floor = null, bounce = .3, friction = .9, step = 1 / 120 } = {}) {
+  constructor({ gravity = null, dims = 2, iterations = 8, damping = .995, bounds = null, floor = null, bounce = .3, friction = .9, step = 1 / 120, world = null, weight = 0 } = {}) {
     this.dims = dims; this.gravity = gravity || (dims === 3 ? { x: 0, y: -9.8, z: 0 } : { x: 0, y: 900, z: 0 });
-    Object.assign(this, { iterations, damping, bounds, floor, bounce, friction, step });
+    Object.assign(this, { iterations, damping, bounds, floor, bounce, friction, step, world, weight });
     this.points = []; this.sticks = []; this.bodies = []; this.solids = []; this.acc = 0; this.handlers = {};
   }
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
@@ -104,6 +109,7 @@ export class Soft {
   wind(w) { this.windV = w; return this; }
   update(dt) {
     this.acc = Math.min(this.acc + dt, this.step * 8);
+    this.felt = this.world && this.dims !== 3 ? nearAll(this.world, this.points) : null;
     while (this.acc >= this.step) { this.tick(this.step); this.acc -= this.step; }
     return this;
   }
@@ -127,6 +133,7 @@ export class Soft {
       for (const body of this.bodies) if (body.kind === 'jelly') this.inflate(body);
       this.collide();
     }
+    if (this.felt?.length) for (const p of this.points) if (!p.pinned) keepOut(this.world, p, p.r, this.felt, h, this.weight, this.friction);
     if (this.sticks.some(s => s.broken)) { const gone = this.sticks.filter(s => s.broken); this.sticks = this.sticks.filter(s => !s.broken); for (const b of this.bodies) b.sticks = b.sticks.filter(s => !s.broken); for (const s of gone) this.emit('tear', s); }
   }
   // jelly: push the ring's points out along their normals to keep its area
@@ -171,6 +178,21 @@ export class Soft {
     a.needsUpdate = true; geometry.computeVertexNormals?.(); geometry.computeBoundingSphere?.(); return geometry;
   }
 }
+// the shapes of a gs.physics world near a set of points (reach: as far as they may go before the next look)
+function nearAll(world, pts) {
+  if (!pts.length) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r = 0;
+  for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; if (p.r > r) r = p.r; }
+  return world.near(x0, y0, x1, y1, r + 24);   // (and a little more: where they may get to this frame)
+}
+// a point kept out of the world's shapes: it stops going into them (and slides along with friction); weight pushes loose things back
+function keepOut(world, p, r, near, h, weight, friction = 1) {
+  const o = world.outOf(p.x, p.y, r, near); if (!o) return;
+  const vx = p.x - (p.px ?? p.x), vy = p.y - (p.py ?? p.y), vn = vx * o.nx + vy * o.ny;
+  p.x = o.x; p.y = o.y;
+  if (p.px != null) { const tx = vx - vn * o.nx, ty = vy - vn * o.ny, n = Math.max(0, vn); p.px = p.x - (tx * friction + n * o.nx); p.py = p.y - (ty * friction + n * o.ny); }
+  const t = o.thing; if (weight > 0 && t && !t.fixed && !t.body.isKinematic()) { const k = weight * Math.min(o.depth / h, 3000) / Math.max(1e-3, t.mass); t.push(-o.nx * k, -o.ny * k, p.x, p.y); }
+}
 function area(pts) { let a = 0; for (let i = 0, n = pts.length; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n]; a += p.x * q.y - q.x * p.y; } return a / 2; }
 function cross(ax, ay, bx, by, cx, cy, dx, dy) {
   const d = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx); if (!d) return false;
@@ -181,11 +203,12 @@ function cross(ax, ay, bx, by, cx, cy, dx, dy) {
 /**
  * Simple 2D water: particles that pour, splash and settle. r: how far each one feels its
  * neighbours (about 2-3 times the size you draw them); stiff / near: how hard they push apart;
- * viscosity: thickness (0 water .. 1 honey); bounds: [x0, y0, x1, y1]; max: most particles.
+ * viscosity: thickness (0 water .. 1 honey); bounds: [x0, y0, x1, y1]; max: most particles. world: a gs.physics
+ * world whose shapes the drops stay out of; weight: kg a drop, to push loose things (floats a light ball, turns a wheel).
  */
 export class Liquid {
-  constructor({ r = 16, gravity = 600, stiff = .004, near = .01, rest = 10, viscosity = .1, bounds = [0, 0, 360, 640], max = 400, bounce = .3 } = {}) {
-    Object.assign(this, { r, gravity, stiff, nearK: near, rest, viscosity, bounds, max, bounce }); this.list = []; this.solids = []; this.grid = new Map();
+  constructor({ r = 16, gravity = 600, stiff = .004, near = .01, rest = 10, viscosity = .1, bounds = [0, 0, 360, 640], max = 400, bounce = .3, world = null, weight = 0 } = {}) {
+    Object.assign(this, { r, gravity, stiff, nearK: near, rest, viscosity, bounds, max, bounce, world, weight }); this.list = []; this.solids = []; this.grid = new Map();
   }
   /** Adds a drop at x, y with speed vx, vy (px a second). */
   add(x, y, vx = 0, vy = 0) { if (this.list.length >= this.max) this.list.shift(); const p = { x, y, vx, vy, px: x, py: y }; this.list.push(p); return p; }
@@ -198,6 +221,7 @@ export class Liquid {
   count(test) { return test ? this.list.filter(test).length : this.list.length; }
   update(dt) {
     dt = Math.min(dt, 1 / 30); const n = Math.max(1, Math.ceil(dt * 120)), h = dt / n;
+    this.felt = this.world ? nearAll(this.world, this.list) : null;
     for (let i = 0; i < n; i++) this.tick(h);
     return this;
   }
@@ -226,6 +250,7 @@ export class Liquid {
         if (s.kind === 'circle') { const dx = p.x - s.x, dy = p.y - s.y, d = Math.hypot(dx, dy), m = s.r + rr; if (d < m && d > 1e-6) { p.x = s.x + dx / d * m; p.y = s.y + dy / d * m; } }
         else if (p.x > s.x - rr && p.x < s.x + s.w + rr && p.y > s.y - rr && p.y < s.y + s.h + rr) { const l = p.x - s.x + rr, rt = s.x + s.w + rr - p.x, t = p.y - s.y + rr, bt = s.y + s.h + rr - p.y, m = Math.min(l, rt, t, bt); if (m === l) p.x = s.x - rr; else if (m === rt) p.x = s.x + s.w + rr; else if (m === t) p.y = s.y - rr; else p.y = s.y + s.h + rr; }
       }
+      if (this.felt?.length) keepOut(this.world, p, rr, this.felt, h, this.weight);
       if (p.x < B[0] + rr) p.x = B[0] + rr; if (p.x > B[2] - rr) p.x = B[2] - rr; if (p.y < B[1] + rr) p.y = B[1] + rr; if (p.y > B[3] - rr) p.y = B[3] - rr;
       p.vx = (p.x - p.px) / h; p.vy = (p.y - p.py) / h;
     }

@@ -5,7 +5,7 @@
 //
 //   const { Grapple, Zipline, Wires, Lock, Code } = gs.gadgets;
 //   hook = new Grapple({ range: 14, reel: 12 });
-//   on fire: hook.fire(hand, aimDir, ray)          // ray(from, dir, max) -> { point } (World3D.ray or your own); false if nothing in range
+//   on fire: hook.fire(hand, aimDir, ray)          // ray(from, dir, max) -> { point } (your own), or a gs.physics3d World3D; false if nothing in range
 //   update(dt) { if (hook.attached) { const v = hook.update(dt, hero.pos, hero.vel, { reel: holding }); hero.setVel(v); } }
 //   line = new Zipline(top, bottom); if (line.near(hero.pos)) line.ride(); line.update(dt) -> line.pos
 //   puzzle = new Wires(5, 5, { seed }); tap a cell: puzzle.turn(c, r); puzzle.solved
@@ -18,38 +18,53 @@ const len = a => Math.hypot(a.x, a.y, a.z || 0);
 const scale = (a, k) => V(a.x * k, a.y * k, (a.z || 0) * k);
 const add = (a, b) => V(a.x + b.x, a.y + b.y, (a.z || 0) + (b.z || 0));
 const dot = (a, b) => a.x * b.x + a.y * b.y + (a.z || 0) * (b.z || 0);
+// v turned by the quaternion q
+const turn = (v, q) => {
+  const ix = q.w * v.x + q.y * v.z - q.z * v.y, iy = q.w * v.y + q.z * v.x - q.x * v.z, iz = q.w * v.z + q.x * v.y - q.y * v.x, iw = -q.x * v.x - q.y * v.y - q.z * v.z;
+  return V(ix * q.w + iw * -q.x + iy * -q.z - iz * -q.y, iy * q.w + iw * -q.y + iz * -q.x - ix * -q.z, iz * q.w + iw * -q.z + ix * -q.y - iy * -q.x);
+};
 
 /**
  * A grappling hook. range: how far it reaches; reel: metres a second pulled in while reeling; swing:
  * true lets the hero swing on the rope (a pendulum constraint) when not reeling; flyTime: seconds the
- * hook takes to reach (it attaches after).
+ * hook takes to reach (it attaches after); mass: the hero's (kg), for what the rope does to loose things.
+ * Fired at a gs.physics3d World3D, it hooks what it hits: the hook rides a body as it moves, and reeling in
+ * a loose thing lighter than the hero pulls it to you (a crate off a ledge, a shield off a guard), while a
+ * heavy one pulls you to it. hook.thing is what it holds (null for the level).
  */
 export class Grapple {
-  constructor({ range = 14, reel = 12, swing = true, flyTime = .12, min = 1 } = {}) { Object.assign(this, { range, reelSpeed: reel, swing, flyTime, min }); this.attached = false; this.flying = 0; this.point = null; this.length = 0; }
-  /** Fires along dir. ray(from, dir, max) returns { point } or null. True if it will hook something. */
-  fire(from, dir, ray) {
-    const l = len(dir) || 1, d = scale(dir, 1 / l), hit = ray(from, d, this.range);
+  constructor({ range = 14, reel = 12, swing = true, flyTime = .12, min = 1, mass = 80 } = {}) { Object.assign(this, { range, reelSpeed: reel, swing, flyTime, min, mass }); this.attached = false; this.flying = 0; this.point = null; this.length = 0; this.thing = null; }
+  /** Fires along dir. ray(from, dir, max) returns { point } or null, or ray is a World3D (not: your hero's body or mover there, which it passes through). True if it will hook something. */
+  fire(from, dir, ray, not = null) {
+    const world = typeof ray === 'function' ? null : ray, l = len(dir) || 1, d = scale(dir, 1 / l), hit = world ? world.ray(from, d, this.range, t => t !== not && !t.collider.isSensor()) : ray(from, d, this.range);
     if (!hit) { this.miss = { from, to: add(from, scale(d, this.range)) }; return false; }
     this.point = V(hit.point.x, hit.point.y, hit.point.z || 0); this.flying = this.flyTime; this.attached = false; this.length = len(sub(this.point, from)); this.miss = null;
+    // on a body that moves: where on it, in its own turn, so the hook stays put on it
+    const t = hit.thing; this.thing = null;
+    if (t?.body?.translation && !t.fixed && !t.body.isFixed?.()) { const c = t.pos ?? t.body.translation(), q = t.body.rotation(); this.thing = t; this.local = turn(sub(this.point, c), { x: -q.x, y: -q.y, z: -q.z, w: q.w }); }
     return true;
   }
-  release() { this.attached = false; this.flying = 0; this.point = null; return this; }
+  release() { this.attached = false; this.flying = 0; this.point = null; this.thing = null; return this; }
   /**
    * Each frame while hooked: returns the hero's new velocity. reel: pull in now. gravity is applied
    * by your own physics; this keeps the rope from stretching and pulls when reeling.
    */
   update(dt, pos, vel, { reel = false } = {}) {
+    const t = this.thing;
+    if (t) { if (t.dead) { this.release(); return vel; } this.point = add(t.pos ?? t.body.translation(), turn(this.local, t.body.rotation())); }   // (the hook rides what it holds)
     if (this.flying > 0) { this.flying -= dt; if (this.flying <= 0) this.attached = true; return vel; }
     if (!this.attached) return vel;
     const to = sub(this.point, pos), d = len(to) || 1, n = scale(to, 1 / d);
     if (reel) { this.length = Math.max(this.min, this.length - this.reelSpeed * dt); }
+    // a loose body takes its share of every pull (the lighter, the more), the hero the rest
+    const m = t && !t.body.isKinematic?.() ? t.body.mass() : Infinity, mine = m === Infinity ? 1 : m / (m + this.mass), bv = t ? t.body.linvel() : V(), give = dv => { if (mine < 1) t.push(-dv.x * (1 - mine) / mine, -dv.y * (1 - mine) / mine, -dv.z * (1 - mine) / mine); };
     let v = { ...vel, z: vel.z || 0 };
     if (d > this.length) {
       // the rope is taut: take away speed going outwards and pull back to length
-      const out = -dot(v, n); if (out > 0) v = add(v, scale(n, out));
-      v = add(v, scale(n, (d - this.length) / Math.max(dt, 1e-3) * .5));
+      const out = -dot(sub(v, bv), n); if (out > 0) { const dv = scale(n, out * mine); v = add(v, dv); give(scale(n, out * mine)); }
+      const back = scale(n, (d - this.length) / Math.max(dt, 1e-3) * .5 * mine); v = add(v, back); give(back);
     }
-    if (reel) v = add(v, scale(n, Math.max(0, this.reelSpeed * .6 - dot(v, n))));
+    if (reel) { const pull = scale(n, Math.max(0, this.reelSpeed * .6 - dot(sub(v, bv), n)) * mine); v = add(v, pull); give(pull); }
     if (!this.swing && !reel) v = add(v, scale(n, Math.max(0, -dot(v, n))));
     if (d <= this.min + .05 && reel) this.arrived = true; else this.arrived = false;
     return v;
