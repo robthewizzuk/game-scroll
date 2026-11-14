@@ -3830,7 +3830,7 @@ function makeBatch(v, B, list) {
   mesh.name = 'gs-batch'; mesh.userData.noBatch = mesh.userData.noLod = mesh.userData.noHold = true;
   const b = { mesh, items: new Map() };
   for (const o of parts) { b.items.set(o, { g: o.geometry, m: ownMatrix(new Float64Array(16), o.matrixWorld.elements, se), mask: o.layers.mask }); o.layers.mask = BATCH_BIT; }   // off the camera's (and the shadow passes') layers, still in the scene
-  v.scene.add(mesh); B.list.push(b);
+  v.scene.add(mesh); mesh.updateMatrixWorld(true); B.list.push(b);   // (made after this frame's matrices were worked out: without its own, it drew its pieces about the world's centre for a frame)
   HD.info.batched = (HD.info.batched || 0) + parts.length; HD.info.batches = (HD.info.batches || 0) + 1;
 }
 function unbatch(B, b, se) {
