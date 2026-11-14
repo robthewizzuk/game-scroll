@@ -42,4 +42,6 @@ def unpackQnn = tasks.register('unpackQnn', Sync) {
     }
     into layout.buildDirectory.dir('qnn-assets')
 }
-tasks.configureEach { if (it.name ==~ /(merge|generate|package|lint|extract).*Assets.*/) it.dependsOn unpackQnn }
+// Everything else in this module runs after it: asset merging and packaging read the folder, and so do lint's
+// models (generateReleaseLintVitalModel), which Gradle stops the build over if they are left unordered.
+tasks.configureEach { if (it.name != 'unpackQnn' && !it.name.startsWith('clean')) it.dependsOn unpackQnn }
