@@ -819,11 +819,16 @@ round them. The method follows AMD FSR 3's frame interpolation (MIT) and Mob-FGS
 written fresh as WebGPU compute. It runs after SGSR 2 at the screen's size, takes SGSR 2's camera
 jitter back out of the motion, and costs a few milliseconds of compute instead of a whole extra frame.
 
-- **What motion vectors miss** (a shadow sliding over still ground, a scrolling texture, a reflection)
-  is read from the pictures too: an optical flow, worked out once per pair of real frames by matching
-  blocks coarse to fine, as FSR 3 does. It's used per pixel only where it matches both real frames
-  clearly better than the game's own motion and the surface's depth agrees, so a still floor under a
-  moving shadow isn't dragged along.
+- **What motion vectors miss** (a shadow sliding over still ground, a scrolling texture, a reflection,
+  a picture moving on a screen in the world) is read from the pictures too: an optical flow, worked out
+  once per pair of real frames by matching blocks coarse to fine, as FSR 3 does. It's only searched
+  where the game's own motion doesn't already match the picture (most of a frame does, so it costs
+  little), and to a screen pixel, so a small thing moving unlike what's round it is found. It's used per
+  pixel only where it matches both real frames clearly better than the game's own motion, with both ends
+  on the same surface. Where what it finds is a mix of the two real frames there (a shadow's soft edge
+  half way across a pixel), the made pixel is that mix, by how far the flow says the edge has got: a
+  still floor under a moving shadow keeps its texture exactly and isn't dragged along, only its light
+  moves.
 - **Cuts are found by themselves:** the same pass compares the two frames' brightness spread and how
   well anything matches; after a cut the made frames show the nearer real frame instead of mixing two
   scenes (the commonest frame gen complaint after ghosting).
@@ -894,11 +899,13 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   picture that changes in ways motion can't follow).
 - **See-through things** (transparent materials: glass, water, smoke) have no single motion, so the
   background's motion is kept under them and the made frame shows them from the newest real frame,
-  unmoved: they never smear or show twice. **Glowing sparks** (added-light particles that say how
+  unmoved, so they never smear or show twice, unless moving them with what's behind them matches the
+  last real frame clearly better (smoke as the camera moves past it: the ground seen through it keeps
+  moving with the rest of the ground). **Glowing sparks** (added-light particles that say how
   they move, as `GPUParticles` do) are moved along their own motion where the last frame shows the
   same spark where it came from, so sparks fly at the screen's rate; where sparks cross or flare up
-  they stay as drawn. Smoke stays as drawn: moving it dragged the ground behind it along, which looked
-  worse than leaving it.
+  they stay as drawn. Smoke isn't moved along its own motion: that dragged the ground behind it along,
+  which looked worse than leaving it.
 - **Still pictures:** when nothing on screen changed for three frames in a row (the GPU compares a
   sample of pixels; the camera, the hurt flash and the last touch are checked too), the 3D view shows
   its last picture again instead of drawing, and draws one frame in six to look again.
@@ -937,8 +944,10 @@ showed a still picture again. `node scripts/framegen-test.cjs [--mode ahead] [--
 scores made frames against the truth on test scenes (moving things, things going round in circles,
 a camera turning round the scene and on the spot, glass, sparks, smoke, SGSR 2's jitter; `--kinds shapes`
 for blend shapes (morph targets, as fur and faces use them) on still things; `--kinds
-shadow,scroll,cut` for a moving shadow, a scrolling texture and a cut, with `--query '&flow=0'`,
-`&fill=0` or `&sharp=0` to compare without the optical flow, the gap pyramid or the sharp filter), and
+shadow,scroll,cut` for a moving shadow, a scrolling texture and a cut, `--kinds sweep,sweep-strafe,mirror,unmarked`
+for a long shadow sweeping past, reflections in a pool and a picture moving on a screen, with `--query '&flow=0'`,
+`&fill=0` or `&sharp=0` to compare without the optical flow, the gap pyramid or the sharp filter, and `&tint` with
+`--shots dir` to see where the optical flow moved pixels), and
 `node scripts/framegen-test.cjs --check` runs every suite against `scripts/framegen-test/baseline.json`
 (the PR check does this when frame generation's code changes; `--save` after a change meant to move
 the numbers). `npm run build:bundled && node scripts/framegen-games.cjs [id ...] [--shots dir]` plays
