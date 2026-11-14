@@ -526,6 +526,7 @@ async function runFG() {
 //           (src/kit/hd3d-gpu-spread.js)
 //   Clouds: the sky's painted clouds, and real ones marched through with their shadow (src/kit/hd3d-gpu-sky.js)
 //   Subgroups: the kit's compute passes built without and with WebGPU subgroups (src/kit/subgroups.js)
+//   Submits: each pass sent to the chip by itself as three does, and a frame's passes sent together (src/kit/submit.js)
 //   Bundles: still scenery drawn thing by thing, and from render bundles (src/kit/still.js); this one is about the CPU,
 //           so the 3D draw's own time is timed too (cpu), and it is reported even where the chip has no timer
 const CHECKS = {
@@ -539,6 +540,8 @@ const CHECKS = {
     note: 'with subgroups: the copies picked on the chip (GPU culling and its occlusion test) and frame generation\'s counts take their places and add up a subgroup at a time' },
   bundle: { title: 'Bundles check', name: 'Bundles check', key: 'bundle', off: 'one by one', on: 'bundles', can: bundleCan, no: () => 'Still scenery in render bundles needs WebGPU, so there is nothing to compare.', says: () => `${HD.info.bundled || 0} still things in ${HD.info.bundles || 0} bundles`, cpu: true,
     note: 'bundles: what keeps still (walls, roofs, rocks, props) recorded once per area and replayed, each area culled whole (more triangles sent, far less work for the CPU)' },
+  submit: { title: 'Submits check', name: 'Submits check', key: 'oneSubmit', off: 'each pass by itself', on: 'together', can: bundleCan, no: () => 'Sending a frame\'s passes to the chip together needs WebGPU, so there is nothing to compare.', says: () => `${HD.info.submits || 0} sends a frame`, cpu: true,
+    note: 'together: a frame\'s passes are held and go to the chip in one send (sooner only where an upload or a read back needs them gone first); the saving is in the browser\'s graphics process, so watch the frame rate as well as these times' },
 };
 // still scenery in render bundles (src/kit/still.js) can be compared: WebGPU
 function bundleCan() { return HD?.info.backend === 'webgpu'; }
@@ -579,7 +582,7 @@ async function runCheck(kind) {
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runSubgroups = () => runCheck('subgroups'), runBundle = () => runCheck('bundle');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runSubgroups = () => runCheck('subgroups'), runBundle = () => runCheck('bundle'), runSubmit = () => runCheck('submit');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -820,7 +823,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">GSFG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="subgroups">Subgroups</button><button data-a="bundle">Bundles</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">GSFG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="subgroups">Subgroups</button><button data-a="bundle">Bundles</button><button data-a="submit">Submits</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -845,6 +848,7 @@ function panel() {
       case 'spread': runSpread(); break;
       case 'clouds': runClouds(); break;
       case 'bundle': runBundle(); break;
+      case 'submit': runSubmit(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -942,7 +946,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, subgroups: runSubgroups, bundle: runBundle, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, subgroups: runSubgroups, bundle: runBundle, submit: runSubmit, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)

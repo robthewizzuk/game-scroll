@@ -187,6 +187,7 @@ And what it can set (each only turns something off or down):
 | `traced: false` | no ray traced reflections |
 | `half: false` | the kit's passes stay in full precision |
 | `pack: false` | textures made in code are not packed into the chip's compressed formats |
+| `submit: false` | each WebGPU pass goes to the chip by itself, as three.js sends it, not a frame's passes together (`src/kit/submit.js`) |
 | `hide: true` | (with `game`) the game is not shown on this device |
 
 The QA panel's report (tap the GAME SCROLL logo, then Copy report) says which rules matched this

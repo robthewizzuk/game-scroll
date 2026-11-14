@@ -74,6 +74,17 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   `fluid-gpu.js`) and a set of culled copies' up to seven (`props-gpu.js`). The gas, frame generation and the
   posed people already did. A list is kept and used again (the chip's times are told apart by the list), and
   nothing between two of its passes may change a uniform: three sends each uniform once for the whole list.
+- A frame's passes go to the chip together (`src/kit/submit.js`, `HD.oneSubmit`, the steering list's `submit`).
+  three makes a command encoder for every pass and compute call and submits each by itself: 25 to 40 submits a
+  frame. The device's queue now holds what three submits and sends it in one go when the frame's code ends, in
+  the same order. WebGPU does an upload at once, ahead of anything not yet submitted, so each encoder keeps a
+  list of the buffers and pictures its passes use (bind groups, vertex and index buffers, copies, bundles, the
+  pictures drawn into), each of those counts the held encoders that use it, and an upload to, a read back of
+  or the freeing of one that a held pass uses sends the held passes first. Everything else goes straight
+  through. The town goes to the chip 4.8 times a frame where it was 30 (three uploads to a shared list between
+  passes, two reads back), the coast 1.5 where it was 25. `gpu-calls.cjs --why` names the buffer or picture
+  behind each early send; a kit that uploads to a buffer between two passes that both read it costs a send.
+  Before the canvas is read (`copyFrame`, a test's own read) `flushGPU()` sends what is held.
 
 ## When the device is lost
 

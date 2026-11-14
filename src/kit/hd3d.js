@@ -56,6 +56,7 @@ import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
 import { packing } from './pack.js';
+import { ONE_SUBMIT, flushGPU } from './submit.js';
 import { steerFor } from './steering.js';
 import { SLIM, isSlim, meshBytes, SKIN_POOLED } from './slim.js';
 import { makeRenderer } from './renderer.js';
@@ -487,6 +488,8 @@ export const HD = {
   gssrNet: true,
   /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
   half: true,
+  /** The frame lab's switch and tests: false sends each WebGPU pass to the chip by itself, as three does; true (default) holds a frame's passes and sends them together (submit.js). HD.info.submits: how many times the last frame went to the chip. */
+  oneSubmit: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
   subgroups: true,
   /**
@@ -2881,6 +2884,7 @@ export class HDView {
     if (!baking && !off) HD.info.still = false;
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
+    ONE_SUBMIT.on = HD.oneSubmit !== false; if (!baking && !off) { HD.info.submits = ONE_SUBMIT.sent - (HD.sentAt ?? ONE_SUBMIT.sent); HD.sentAt = ONE_SUBMIT.sent; }   // (submit.js: the frame before's)
     G.fx.SUB.on = HD.subgroups !== false; HD.info.subgroups = G.fx.subgroupsInfo(r);   // (subgroups.js: passes built from now on use them or not)
     const SK = G.fx.skinPool(r);
     if (SK) { SK.set(HD.gpuSkin !== false); SK.list(this.scene, eachShown); }
@@ -3112,9 +3116,9 @@ export class HDView {
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
     if (ls?.afWant && !baking && !off && ch.lensN?.on) this.lensRead(() => ch.lensN.readAF(r));   // (v.lens autofocus: the distance under the spot)
     const made = !!fg && !!shown;
-    if (made) HD.fgTap?.(shown, r.domElement, 'frame');
+    if (made && HD.fgTap) { flushGPU('frame'); HD.fgTap(shown, r.domElement, 'frame'); }
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
-    speed.between = made ? (last = true, now = null) => { const k = ch.between(last, now); if (k) HD.fgTap?.(k, r.domElement, 'between'); return k; } : null;
+    speed.between = made ? (last = true, now = null) => { const k = ch.between(last, now); flushGPU('frame'); if (k) HD.fgTap?.(k, r.domElement, 'between'); return k; } : null;
     // the refreshes between kept not coming, or their frames were dropped as late (the phone is too busy to make
     // them in time): blend's 'after' pace puts a made frame on the real frame's refresh, so first try 'first' (each
     // refresh one frame's work); then stop for this game. (Not while it is forced on: a test, or the engine test
@@ -3389,7 +3393,7 @@ export class HDView {
     try { cp.render(); } finally { showAll(this); lodBack(this); fadeBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
     if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.half = ''; HD.info.refl = ssr ? 'screen' : ''; }
     }
-    if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
+    if (direct) { flushGPU('frame'); c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }   // (the frame's passes go to the chip now, together: submit.js)
     c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
     if (baking) { c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-over'; copyFrame(r, c, 0, 0, ow, oh, 0, 0, c.canvas.width, c.canvas.height); }
     else copyFrame(r, c, 0, 0, ow, oh, 0, 0, w, h);
