@@ -79,7 +79,11 @@ void gsRooms(vec2 uv0, vec3 V, vec3 N, vec3 Up, float dist, vec3 lamp) {
   if (kind < .5 || abs(kind - 2.) < .5) fr = fr || abs(g.x - (W.x + W.z) * .5) < fw * .45;   // a middle bar
   if (abs(kind - 1.) < .5 || abs(kind - 4.) < .5) fr = fr || abs(g.y - mix(W.y, W.w, .8)) < fy * .45;   // a transom
   if (fr) { gsRmC = gsRmTrim * .92; gsRmE = vec3(0.); gsRmR = .5; return; }
-  float r1 = gsRmH(cell + vGsRoom.z * 7.13), r2 = gsRmH(cell.yx * 1.3 + vGsRoom.z * 3.7 + 11.), r3 = gsRmH(cell * 1.7 + vGsRoom.z + 23.), r4 = gsRmH(cell * .7 + vGsRoom.z * 1.9 + 41.);
+  // (the seed is the same at every corner, but drawn across a wall it comes a hair off from pixel to pixel, more so on some
+  // chips and about some centres (origin.js), and the hash makes that hair a different room: speckled walls. It is kept to
+  // eighths (city.js Quads.room), so rounding here gives back exactly the corners' number)
+  float sd = floor(vGsRoom.z * 8. + .5) / 8.;
+  float r1 = gsRmH(cell + sd * 7.13), r2 = gsRmH(cell.yx * 1.3 + sd * 3.7 + 11.), r3 = gsRmH(cell * 1.7 + sd + 23.), r4 = gsRmH(cell * .7 + sd * 1.9 + 41.);
   float lit = abs(kind - 4.) < .5 ? 1. : step(.004, dot(lamp, vec3(.3, .59, .11)));
   vec3 lc = abs(kind - 4.) < .5 ? vec3(1., .95, .86) : lamp / max(max(lamp.r, max(lamp.g, lamp.b)), 1e-3);
   // the room: x across the bay (0..1), y up the storey (0..1), z metres in from the glass
