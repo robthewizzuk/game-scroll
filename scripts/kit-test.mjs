@@ -6041,6 +6041,18 @@ console.log('physics ok');
   assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
   assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
   console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
+  // where a game's tier starts and when it may climb (hd3d.js startTier, mayClimb): a computer goes above its class's start
+  // only on the chip's own say-so (Rob's MacBook Air M5, 2026-11-14: Long Shadow started on ultra again, settled there the run before)
+  const { startTier, mayClimb } = await import('../src/kit/hd3d.js');
+  assert.equal(startTier(null, 'top', false), 2); assert.equal(startTier(null, 'low', false), 1); assert.equal(startTier(null, 'top', true), 2, 'a top computer starts on high, as a top phone does');
+  assert.equal(startTier({ tier: 1 }, 'top', true), 1, 'a game that settled lower starts there');
+  assert.equal(startTier({ tier: 3 }, 'top', true), 2, 'a computer\'s ultra saved without the chip showing room (an earlier version, or a Mac) starts on high');
+  assert.equal(startTier({ tier: 3, room: true }, 'top', true), 3, 'ultra climbed to with room is taken up again');
+  assert.equal(startTier({ tier: 2 }, 'low', true), 1, 'a low computer\'s high, the same');
+  assert.equal(startTier({ tier: 3 }, 'top', false), 2, 'a phone never starts above high');
+  assert.ok(mayClimb(1, 'top', true, false) && !mayClimb(2, 'top', true, false) && mayClimb(2, 'top', true, true), 'a computer climbs past its start only with room');
+  assert.ok(mayClimb(1, 'low', false, false), 'a phone climbs by its frames alone, as before');
+  console.log('gs.hd tiers start and climb ok');
 }
 
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
