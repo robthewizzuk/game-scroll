@@ -7,6 +7,8 @@
 // sgsr2Gpu, sgsr2.js) against what they changed.
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { SgsrFrame } from '../../src/kit/sgsr2.js';
+SgsrFrame.pause = 1e9;   // (a slow runner takes over a second a frame here, reading every picture back: that is no pause in a game, and would start the history again every frame)
 // ?gpu: on WebGPU (upscale-compare.cjs --webgpu), with hd3d-gpu.js's TSL versions of SGSR 1 and 2
 const GPU = new URLSearchParams(location.search).has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
