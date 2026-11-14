@@ -55,9 +55,16 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
   - `tube: [x, y, z]` (a neon tube from the spot to there) and `rect: { w, h, normal }` (a lit sign's
     face): on WebGPU they light from their nearest point, and their highlight on a wet or shiny floor is
     their whole length and face, as a real tube's is; WebGL lights them from their middle.
+  - `picture` with `rect`: a sign that lights with its own picture (a canvas or a `CanvasTexture`): a
+    TV, a video wall, a stained window. On WebGPU each part of its light takes the colour of the part
+    of the face it comes from, so a red half of a screen lights the near wall red and a wet floor
+    shows the picture, sharp or blurred by its roughness; WebGL lights with the picture's average
+    colour. `live: true` for a canvas you redraw every frame (a `CanvasTexture` is read again whenever
+    you set its `needsUpdate`). A dark picture gives less light: raise `i` to match.
   `gs.hd.neon(points, { colour, i, reach })` and `gs.hd.sign(w, h, paint, { colour, i, reach })` make
   the glowing tube and sign to go with them: pass `n.spots()` / `s.spots()` to `placeLamps` with the
-  rest. A car's headlights: two spots at its nose each frame with `dir` along the car,
+  rest. `sign(w, h, paint, { picture: true })` lights with its face; `s.paint(fn)` paints it again
+  (each frame for a screen that plays). A car's headlights: two spots at its nose each frame with `dir` along the car,
   `shape: 'headlamp'`, `shadow: true`, `reach: 25`, `i: 45`. `v.lampShadows` says what the lamps'
   shadows did last frame (`slots`, `drawn`, `waiting`).
 - **Post-processing**, one shared chain: HDR render with MSAA (or a light FXAA on lower tiers), ground-truth ambient occlusion
@@ -985,6 +992,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   `paint: (c, s) => {}` draws your own mark on an `s` x `s` canvas (give it a `key` so it's drawn
   once), `life` fades it out after that many seconds, `max` (default 40) drops the oldest first, and
   `glow` makes it shine (lava, neon paint). `v.clearDecals()` removes them all.
+  On WebGPU a decal is no mesh and no draw: it is a box listed in the lamps' grid, and every lit
+  surface inside the box that faces the way the decal does takes on its picture (colour, roughness
+  and glow) before it is lit, so it is lit, shadowed and reflected like the surface. Hundreds cost a
+  little per pixel where they lie, so raise `max` freely. The pictures share one atlas of 16; past
+  that, or on WebGL, a decal is a mesh cut from the surface as before. Something moving through a
+  decal's box takes the mark on while inside, except people (bodies that bend), see-through things
+  and a material given `material.decals = false`. Keep the box thin with `size: [w, h, depth]` where
+  things pass close by. `__hd.gridDecals = false` (and the frame lab's switch) draws them as meshes.
 - `v.bakeLight([x, y, z], { radius: 10, strength: 1 })` bakes the light round a point into a light
   probe (the colour coming from every direction), so lit materials pick up a red wall, a blue
   window or green grass. Bake once the level is built, not every frame. Several probes blend as the
