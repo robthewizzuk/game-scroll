@@ -363,6 +363,7 @@ const paintMat = () => mat('paint', () => new MeshStandardMaterial({ vertexColor
 const waterMat = () => mat('water', () => new MeshStandardMaterial({ color: '#1b3a4c', roughness: .06, metalness: .2 }));
 
 /* ---------- geometry made from many quads, one buffer per material ---------- */
+const UV4 = [0, 0, 1, 0, 1, 1, 0, 1];
 
 class Quads {
   // rooms: every quad also says which rooms are behind it (gsRoom: bay width and storey height in metres, the
@@ -370,14 +371,16 @@ class Quads {
   constructor(rooms = false) { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; this.r = rooms ? [] : null; this.rm = [0, 0, 0, 0]; }
   room(w = 0, h = 0, seed = 0, on = 0) { this.rm = [w, h, Math.round(seed * 8) / 8, on]; return this; }   // (the seed in eighths: the rooms' shaders round it back, city-rooms.js)
   // a, b, c, d: corners in order round the face (counter-clockwise seen from the front)
-  quad(a, b, c, d, uv = [0, 0, 1, 0, 1, 1, 0, 1], col = null) {
+  quad(a, b, c, d, uv, col = null) { this.q12(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], d[0], d[1], d[2], uv, col); }
+  // the same from twelve numbers (a city is tens of thousands of these, made while the game plays: no lists made on the way)
+  q12(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, uv = UV4, col = null) {
     const k = this.p.length / 3;
-    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
+    const ux = bx - ax, uy = by - ay, uz = bz - az, vx = dx - ax, vy = dy - ay, vz = dz - az;
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
-    for (const q of [a, b, c, d]) { this.p.push(q[0], q[1], q[2]); this.n.push(nx, ny, nz); }
-    if (this.r) for (let j = 0; j < 4; j++) this.r.push(...this.rm);
-    this.u.push(...uv);
-    if (col) for (let j = 0; j < 4; j++) this.c.push(col.r, col.g, col.b);
+    this.p.push(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz); this.n.push(nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz);
+    if (this.r) { const m = this.rm, m0 = m[0], m1 = m[1], m2 = m[2], m3 = m[3]; this.r.push(m0, m1, m2, m3, m0, m1, m2, m3, m0, m1, m2, m3, m0, m1, m2, m3); }
+    if (uv.length === 8) this.u.push(uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], uv[6], uv[7]); else this.u.push(...uv);
+    if (col) { const r = col.r, g = col.g, b = col.b; this.c.push(r, g, b, r, g, b, r, g, b, r, g, b); }
     this.i.push(k, k + 1, k + 2, k, k + 2, k + 3);
   }
   tri(a, b, c, uv = [0, 0, 1, 0, .5, 1], col = null) {
@@ -390,14 +393,16 @@ class Quads {
   }
   // the four walls of a box from y0 to y1; uvOf(side, length, y0, y1) gives the uvs of each wall
   walls(x0, z0, x1, z1, y0, y1, uvOf, col = null) {
-    const sides = [[[x1, z0], [x0, z0]], [[x1, z1], [x1, z0]], [[x0, z1], [x1, z1]], [[x0, z0], [x0, z1]]];
-    sides.forEach(([[ax, az], [bx, bz]], s) => this.quad([ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az], uvOf ? uvOf(s, Math.hypot(bx - ax, bz - az), y0, y1) : undefined, col));
+    for (let s = 0; s < 4; s++) {
+      const ax = s === 0 || s === 1 ? x1 : x0, az = s === 1 || s === 2 ? z1 : z0, bx = s === 1 || s === 2 ? x1 : x0, bz = s === 2 || s === 3 ? z1 : z0;
+      this.q12(ax, y0, az, bx, y0, bz, bx, y1, bz, ax, y1, az, uvOf ? uvOf(s, Math.hypot(bx - ax, bz - az), y0, y1) : undefined, col);
+    }
   }
   top(x0, z0, x1, z1, y, uvScale = 0, col = null) {
-    const s = uvScale; this.quad([x0, y, z1], [x1, y, z1], [x1, y, z0], [x0, y, z0], s ? [x0 / s, -z1 / s, x1 / s, -z1 / s, x1 / s, -z0 / s, x0 / s, -z0 / s] : undefined, col);
+    const s = uvScale; this.q12(x0, y, z1, x1, y, z1, x1, y, z0, x0, y, z0, s ? [x0 / s, -z1 / s, x1 / s, -z1 / s, x1 / s, -z0 / s, x0 / s, -z0 / s] : undefined, col);
   }
   // a downward face (an overhang's underside)
-  under(x0, z0, x1, z1, y, col = null) { this.quad([x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1], undefined, col); }
+  under(x0, z0, x1, z1, y, col = null) { this.q12(x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1, undefined, col); }
   // a box with its underside too (for things hung on walls)
   slab(x0, y0, z0, x1, y1, z1, col = null, under = true) { this.box(x0, y0, z0, x1, y1, z1, col); if (under) this.under(x0, z0, x1, z1, y0, col); }
   box(x0, y0, z0, x1, y1, z1, col = null, uvScale = 0) { this.walls(x0, z0, x1, z1, y0, y1, uvScale ? (s, L, a, b) => [0, a / uvScale, L / uvScale, a / uvScale, L / uvScale, b / uvScale, 0, b / uvScale] : null, col); this.top(x0, z0, x1, z1, y1, uvScale, col); }

@@ -26,6 +26,11 @@ export const LIVE_SHAPES = ['open', 'wide', 'round', 'smile', 'frown', 'surprise
 const NE = 16;   // (how many named expressions come before MOVES)
 const BONES = ['jaw', 'chin', 'eyeL', 'eyeR', 'lidL', 'lidR', 'browL', 'browR', 'browInL', 'browInR', 'cornerL', 'cornerR', 'lowLidL', 'lowLidR', 'cheekL', 'cheekR', 'noseL', 'noseR', 'lipUpL', 'lipUpR', 'lipLowL', 'lipLowR'];
 const SIDES = [['L', 1, 11, 'Left'], ['R', -1, 12, 'Right']], M = Object.fromEntries(MOVES.map((m, i) => [m, i]));
+// each side's movements and bones by number and by name, worked out once (step() runs for every face close up, every frame)
+const SIDE_MOVES = ['mouthSmile', 'mouthFrown', 'mouthStretch', 'mouthDimple', 'mouthPress', 'mouthUpperUp', 'mouthLowerDown', 'noseSneer', 'cheekSquint', 'eyeSquint', 'eyeWide', 'browDown', 'browOuterUp', 'eyeBlink'];
+const SIDE_BONES = ['lid', 'lowLid', 'corner', 'lipUp', 'lipLow', 'cheek', 'nose', 'brow', 'browIn'];
+const SIDE = SIDES.map(([sd, sg, wink, Sd]) => ({ sg, wink, eye: sg > 0 ? 1 : 3, m: SIDE_MOVES.map(n => M[n + Sd]), b: SIDE_BONES.map(n => n + sd) }));
+const BOTH = ['browOuterUp', 'browDown', 'cheekSquint', 'eyeSquint', 'mouthSmile', 'mouthUpperUp', 'noseSneer'].map(n => [M[n + 'Left'], M[n + 'Right']]);
 // each expression as a blend of single movements (both sides alike unless named): [move, amount]; Left/Right left off for both
 const BLEND = {
   smile: [['mouthSmile', 1], ['cheekSquint', .55], ['eyeSquint', .3]], frown: [['mouthFrown', 1], ['browDown', .3], ['mouthShrugLower', .3]],
@@ -42,6 +47,8 @@ const YAW = .56, UP = .36, DOWN = .46;    // how far an eye turns: to either sid
 const _inv = new Matrix4(), _t = new Vector3(), _v = new Vector3(), MBP = /[mbp]/, FV = /[fv]/;
 // a wince: the brows down, the nose screwed up, the cheeks up, the mouth stretched and the lip lifted (with the eyes shut, and the jaw a little open)
 const WINCE = [['browDown', .75], ['noseSneer', .5], ['cheekSquint', .6], ['mouthStretch', .7], ['mouthUpperUp', .25]].flatMap(([m, a]) => [[M[m + 'Left'], a], [M[m + 'Right'], a]]);
+// (the length of two to four numbers: Math.hypot makes a list for its numbers on every call, and this runs for every person every frame)
+const hyp = (a, b, c = 0, d = 0) => Math.sqrt(a * a + b * b + c * c + d * d);
 const rnd = (a, b) => a + Math.random() * (b - a), cl = (v, a, b) => v < a ? a : v > b ? b : v, bell = () => Math.random() + Math.random() + Math.random() + Math.random() - 2;
 const at = t => t.isObject3D ? t.getWorldPosition(_t) : Array.isArray(t) ? _t.set(t[0], t[1], t[2]) : _t.set(t.x, t.y, t.z);
 
@@ -66,6 +73,7 @@ export class LiveFace extends Face {
     this.eyeSize = 1;
     /** How far the upper lids hang at rest, a share of their whole closing (a real face's .14: over the top of the iris, as relaxed lids are; eyeWide lifts them). */
     this.droop = droop;
+    this.sides = SIDE.map(S => ({ S, b: S.b.map(n => B[n]), r: S.b.map(n => this.rest[n]) }));
     this.A = new Float32Array(MOVES.length); this.talk.press = this.talk.tuck = 0; this.bt = Math.random() * 9; this.wr = new Vector4();
   }
   /** One blink now: shut in a twentieth of a second, open again in a little longer. */
@@ -86,7 +94,7 @@ export class LiveFace extends Face {
     if (byRig) this.rigged = true;
     const B = this.bones, R = this.rest, I = this.inf, V = this.val, W = this.want;
     // ---- asleep? When told so, or when the head lies over and low: a body on the ground (never one that crouches or bends)
-    const hm = B.head.matrixWorld.elements, s = Math.hypot(hm[4], hm[5], hm[6]) || 1, lying = hm[5] / s < .42 && (hm[13] - this.person.matrixWorld.elements[13]) / s < .62;
+    const hm = B.head.matrixWorld.elements, s = hyp(hm[4], hm[5], hm[6]) || 1, lying = hm[5] / s < .42 && (hm[13] - this.person.matrixWorld.elements[13]) / s < .62;
     this.lie = lying ? Math.min(.4, this.lie + dt) : Math.max(0, this.lie - dt * 2);
     const asleep = this.awake === false || (this.awake == null && this.lie >= .35);
     this.shut += ((asleep ? 1 : 0) - this.shut) * (1 - Math.exp(-dt * (asleep ? 7 : 12)));
@@ -97,7 +105,7 @@ export class LiveFace extends Face {
     if (this.line) { const L = this.line; L.t += dt; while (L.i < L.v.length - 1 && L.v[L.i + 1].t <= L.t) L.i++; const a = L.v[L.i]; mo = a.open; mw = a.wide; mr = a.round; mp = MBP.test(a.ch) ? 1 : 0; mf = FV.test(a.ch) ? 1 : 0; if (L.t >= L.v.end) this.line = null; }
     else if (this.level != null) { mo = cl(this.level, 0, 1); mw = mo * .25; }
     const km = 1 - Math.exp(-30 * dt), ke = 1 - Math.exp(-this.speed * dt); m.open += (mo - m.open) * km; m.wide += (mw - m.wide) * km; m.round += (mr - m.round) * km; m.press += (mp - m.press) * km; m.tuck += (mf - m.tuck) * km;
-    for (let i = 0; i < V.length; i++) { V[i] += ((W[LIVE_SHAPES[i]] ?? 0) - V[i]) * ke; I[i] = V[i]; }
+    for (let i = 0; i < V.length; i++) { const w = W[LIVE_SHAPES[i]]; V[i] += ((w ?? 0) - V[i]) * ke; I[i] = V[i]; }
     I[0] = cl(V[0] + m.open * .85, 0, 1.5); I[1] = cl(V[1] + m.wide, 0, 1.5); I[2] = cl(V[2] + m.round, 0, 1.5);   // (talking, a jaw moves less than it can)
     if (this.blinking > 0) { const q = 1 - this.blinking / .2, c = q < .28 ? q / .28 : 1 - (q - .28) / .72; I[6] = Math.max(I[6], c * c * (3 - 2 * c)); }
     // ---- the movements: each as set, with each expression's share of it, and the lips' shapes for m, b, p (pressed together) and f, v (the lower lip
@@ -105,9 +113,9 @@ export class LiveFace extends Face {
     if (this.winceT > 0) { this.winceT -= dt; this.wn += (this.winceA - this.wn) * (1 - Math.exp(-dt * 35)); } else this.wn *= Math.exp(-dt * 7);
     const wi = Math.max(I[10], this.wn), A = this.A;
     for (let k = 0; k < A.length; k++) A[k] = I[NE + k];
-    for (const [e, list] of BLENDS) { const a = I[e]; if (a > 0) for (const [k, w] of list) A[k] += a * w; }
+    for (let i = 0; i < BLENDS.length; i++) { const a = I[BLENDS[i][0]]; if (a > 0) { const list = BLENDS[i][1]; for (let j = 0; j < list.length; j++) A[list[j][0]] += a * list[j][1]; } }
     A[M.mouthPressLeft] += .7 * m.press; A[M.mouthPressRight] += .7 * m.press; A[M.mouthClose] += m.press; A[M.mouthRollLower] += .8 * m.tuck; A[M.mouthUpperUpLeft] += .15 * m.tuck; A[M.mouthUpperUpRight] += .15 * m.tuck;
-    if (wi > 0) for (const [k, w] of WINCE) A[k] += wi * w;
+    if (wi > 0) for (let j = 0; j < WINCE.length; j++) A[WINCE[j][0]] += wi * WINCE[j][1];
     for (let k = 0; k < A.length; k++) A[k] = cl(A[k], 0, 1.5);
     const blink = I[6];
     // ---- the eyes: on a point, or ahead: holding a spot in the world while the head moves (as eyes do), and jumping to a new one
@@ -117,11 +125,11 @@ export class LiveFace extends Face {
     if (asleep) { yl = yr = 0; pl = pr = .1; this.aim = null; }
     else if (tgt) {
       at(tgt).applyMatrix4(_inv); this.aim = null;
-      let d = _v.subVectors(_t, R.eyeL); yl = Math.atan2(d.x, Math.max(1e-4, d.z)); pl = Math.atan2(-d.y, Math.hypot(d.x, Math.max(1e-4, d.z)));
-      d = _v.subVectors(_t, R.eyeR); yr = Math.atan2(d.x, Math.max(1e-4, d.z)); pr = Math.atan2(-d.y, Math.hypot(d.x, Math.max(1e-4, d.z)));
+      let d = _v.subVectors(_t, R.eyeL); yl = Math.atan2(d.x, Math.max(1e-4, d.z)); pl = Math.atan2(-d.y, hyp(d.x, Math.max(1e-4, d.z)));
+      d = _v.subVectors(_t, R.eyeR); yr = Math.atan2(d.x, Math.max(1e-4, d.z)); pr = Math.atan2(-d.y, hyp(d.x, Math.max(1e-4, d.z)));
     } else {
       this.dartT -= dt; let y = 0, p = 0, off = true; const ld = this.lead || 0;   // (ld: into a turn the eyes look about a spot that far round)
-      if (this.aim) { const d = _v.copy(this.aim).transformDirection(_inv); y = Math.atan2(d.x, d.z); p = Math.atan2(-d.y, Math.hypot(d.x, d.z)); off = d.z < 0 || Math.abs(y - ld) > .3 || p > .26 || p < -.22; }
+      if (this.aim) { const d = _v.copy(this.aim).transformDirection(_inv); y = Math.atan2(d.x, d.z); p = Math.atan2(-d.y, hyp(d.x, d.z)); off = d.z < 0 || Math.abs(y - ld) > .3 || p > .26 || p < -.22; }
       const flick = !off && Math.abs(ld) > .06 && Math.abs(y - ld) > .1;   // a turn begun: the eyes go first, in one jump, to where it is going
       if (off || flick || this.dartT <= 0) {
         const glance = !off && !flick && !this.glance && Math.abs(ld) < .1 && Math.random() < .22;   // a glance aside, and back soon after
@@ -146,36 +154,37 @@ export class LiveFace extends Face {
     const shrugU = A[M.mouthShrugUpper], shrugL = A[M.mouthShrugLower], close = A[M.mouthClose] * Math.min(1, jo), puff = A[M.cheekPuff], inUp = A[M.browInnerUp];
     this.bt += dt; const flare = this.line || !this.breathe ? 0 : .3 * Math.max(0, Math.sin(this.bt * 1.5));   // (the nostrils widen a little on each breath in)
     let r = R.chin; B.chin.position.set(r.x, r.y + .002 * shrugL, r.z + .0015 * shrugL);
-    for (const [sd, sg, wink, Sd] of SIDES) {
-      const g = n => A[M[n + Sd]], smile = g('mouthSmile'), frown = g('mouthFrown'), stretch = g('mouthStretch'), dimple = g('mouthDimple'), press = g('mouthPress'), upUp = g('mouthUpperUp'), lowDown = g('mouthLowerDown');
-      const sneer = g('noseSneer'), chSq = g('cheekSquint'), eSq = g('eyeSquint'), eW = g('eyeWide'), bD = g('browDown'), bOU = g('browOuterUp');
-      const c = Math.max(closed, I[wink], g('eyeBlink')), part = cl(this.droop * (1 - eW) + .3 * eSq - .28 * eW + .55 * e[sg > 0 ? 1 : 3] / this.lid, -.25, .7), lid = B['lid' + sd], turn = c + (1 - c) * part;
+    for (let si = 0; si < 2; si++) {
+      const side = this.sides[si], S = side.S, sg = S.sg, mv = S.m, sb = side.b, sr = side.r;
+      const smile = A[mv[0]], frown = A[mv[1]], stretch = A[mv[2]], dimple = A[mv[3]], press = A[mv[4]], upUp = A[mv[5]], lowDown = A[mv[6]];
+      const sneer = A[mv[7]], chSq = A[mv[8]], eSq = A[mv[9]], eW = A[mv[10]], bD = A[mv[11]], bOU = A[mv[12]];
+      const c = Math.max(closed, I[S.wink], A[mv[13]]), part = cl(this.droop * (1 - eW) + .3 * eSq - .28 * eW + .55 * e[S.eye] / this.lid, -.25, .7), lid = sb[0], turn = c + (1 - c) * part;
       lid.rotation.x = turn * this.lid; lid.scale.setScalar(1 + .03 * Math.max(0, turn));   // (closing, it lies a hair further out: over the lower lid's edge, not in it)
       // the lower lid: up (and out, along the eyeball, not into it) in a squint and as the cheek rises
-      r = R['lowLid' + sd]; B['lowLid' + sd].position.set(r.x, r.y + .0018 * eSq + .0008 * chSq - .0005 * eW, r.z + .0024 * eSq + .0011 * chSq - .0003 * eW);   // (out as far as up: the ball's lower half leans out that steeply)
+      r = sr[1]; sb[1].position.set(r.x, r.y + .0018 * eSq + .0008 * chSq - .0005 * eW, r.z + .0024 * eSq + .0011 * chSq - .0003 * eW);   // (out as far as up: the ball's lower half leans out that steeply)
       // the corner of the mouth: out for a stretched mouth and a smile (up and back too), in and forward for a round one, down for a frown, back for a dimple
-      r = R['corner' + sd];
+      r = sr[2];
       // (a full smile takes the corners about 9 mm up, out and back, as far as a real one's: at half that it read as a polite smirk)
-      B['corner' + sd].position.set(r.x + sg * (.0034 * stretch + .0052 * smile - .0046 * pucker - .0025 * funnel - .0006 * frown + .0008 * dimple - .0008 * press) + shift,
+      sb[2].position.set(r.x + sg * (.0034 * stretch + .0052 * smile - .0046 * pucker - .0025 * funnel - .0006 * frown + .0008 * dimple - .0008 * press) + shift,
         r.y + .006 * smile - .0038 * frown - .0012 * stretch + .0006 * dimple + jy, r.z - .003 * smile - .0012 * stretch + .003 * pucker + .002 * funnel - .0018 * dimple + jz);
       // the lips' halves: the upper up (a sneer), the lower down; pressed, rolled in, pushed up, pushed forward (a kiss, an O), and together over an open jaw
-      r = R['lipUp' + sd];
+      r = sr[3];
       // (in a smile the lips stretch after the corners: the upper one up a little and back over the teeth, the lower one out and flatter)
-      B['lipUp' + sd].position.set(r.x + sg * (.0016 * smile - .0022 * pucker - .0012 * funnel) + shift, r.y + .0032 * upUp + .0012 * shrugU + .0012 * sneer + .001 * smile - .0008 * press - .0012 * rollU + .001 * funnel - .0035 * close, r.z + .003 * pucker + .0025 * funnel - .002 * rollU + .0006 * shrugU - .0008 * smile);
-      r = R['lipLow' + sd];
-      B['lipLow' + sd].position.set(r.x + sg * (.0014 * smile - .0022 * pucker - .0012 * funnel) + shift, r.y - .0035 * lowDown + .0008 * press + .0015 * rollL + .002 * shrugL - .001 * funnel + .0035 * close, r.z + .003 * pucker + .0025 * funnel - .0025 * rollL + .0012 * shrugL);
+      sb[3].position.set(r.x + sg * (.0016 * smile - .0022 * pucker - .0012 * funnel) + shift, r.y + .0032 * upUp + .0012 * shrugU + .0012 * sneer + .001 * smile - .0008 * press - .0012 * rollU + .001 * funnel - .0035 * close, r.z + .003 * pucker + .0025 * funnel - .002 * rollU + .0006 * shrugU - .0008 * smile);
+      r = sr[4];
+      sb[4].position.set(r.x + sg * (.0014 * smile - .0022 * pucker - .0012 * funnel) + shift, r.y - .0035 * lowDown + .0008 * press + .0015 * rollL + .002 * shrugL - .001 * funnel + .0035 * close, r.z + .003 * pucker + .0025 * funnel - .0025 * rollL + .0012 * shrugL);
       // the cheek's pad up and forward in a smile and a squint, out when puffed; the nose's wing up in a sneer, out on a breath
       // (as far forward as up: the pad rides up over the cheekbone and stands out, and skin near the eye that only rose went into the eyeball)
-      r = R['cheek' + sd]; B['cheek' + sd].position.set(r.x + sg * (.004 * puff + .0006 * smile), r.y + .0026 * chSq + .001 * smile + .001 * sneer, r.z + .0028 * chSq + .0012 * smile + .0035 * puff);
-      r = R['nose' + sd]; B['nose' + sd].position.set(r.x + sg * (.0006 * sneer + .0006 * flare), r.y + .0025 * sneer + .0006 * upUp, r.z - .0004 * sneer);
+      r = sr[5]; sb[5].position.set(r.x + sg * (.004 * puff + .0006 * smile), r.y + .0026 * chSq + .001 * smile + .001 * sneer, r.z + .0028 * chSq + .0012 * smile + .0035 * puff);
+      r = sr[6]; sb[6].position.set(r.x + sg * (.0006 * sneer + .0006 * flare), r.y + .0025 * sneer + .0006 * upUp, r.z - .0004 * sneer);
       // the brows: their arches up; the inner ends up in sorrow and fear, both down and together in anger and at a blow
-      r = R['brow' + sd]; B['brow' + sd].position.set(r.x, r.y + .0045 * bOU - .0013 * bD + .0005 * inUp, r.z);
-      r = R['browIn' + sd]; B['browIn' + sd].position.set(r.x - sg * (.0022 * bD + .0005 * inUp), r.y + .004 * inUp - .0032 * bD, r.z);
+      r = sr[7]; sb[7].position.set(r.x, r.y + .0045 * bOU - .0013 * bD + .0005 * inUp, r.z);
+      r = sr[8]; sb[8].position.set(r.x - sg * (.0022 * bD + .0005 * inUp), r.y + .004 * inUp - .0032 * bD, r.z);
     }
     // ---- the lines the skin folds into as it moves (a real face's skin, on WebGPU: hd3d-gpu.js): the forehead's as the brows rise, between the brows
     // as they come down, at the eyes' outer corners in a smile or a squint, and from the nose to the mouth
-    const both = n => (A[M[n + 'Left']] + A[M[n + 'Right']]) / 2, sn = both('noseSneer');
-    this.wr.set(Math.min(1, Math.max(inUp, both('browOuterUp'))), Math.min(1, Math.max(both('browDown'), .7 * sn)), Math.min(1, Math.max(both('cheekSquint'), .7 * both('eyeSquint'))), Math.min(1, Math.max(both('mouthSmile'), sn, .8 * both('mouthUpperUp'))));
+    const both = i => (A[BOTH[i][0]] + A[BOTH[i][1]]) / 2, sn = both(6);
+    this.wr.set(Math.min(1, Math.max(inUp, both(0))), Math.min(1, Math.max(both(1), .7 * sn)), Math.min(1, Math.max(both(2), .7 * both(3))), Math.min(1, Math.max(both(4), sn, .8 * both(5))));
     if (this.mesh) this.mesh.userData.gsWrinkle = this.wr;
     return this;
   }

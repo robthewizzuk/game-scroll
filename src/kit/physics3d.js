@@ -617,14 +617,17 @@ export class World3D {
   }
 
   /** First thing along a ray from `from` in direction `dir` (needn't be normalised), up to max metres. */
-  ray(from, dir, max = 100, filter = t => !t.collider.isSensor()) {
+  ray(from, dir, max = 100, filter = SOLID) {
     if (!this.steps) this.queries();   // (a world not stepped yet: what is in it is not yet where rays look)
-    const o = vec(from), d = vec(dir), l = Math.hypot(d.x, d.y, d.z) || 1, n = V(d.x / l, d.y / l, d.z / l);
-    const hit = this.world.castRayAndGetNormal(new R.Ray(this.inner(o), n), max, true, undefined, undefined, undefined, undefined,
+    const o = vec(from), d = vec(dir), l = Math.hypot(d.x, d.y, d.z) || 1, n = V(d.x / l, d.y / l, d.z / l), ray = new R.Ray(this.inner(o), n);
+    // (with no filter of the game's own the physics leaves out what can't be struck by itself: nothing is asked of this code for each thing on the way;
+    // a hit on something this kit did not make, which has happened to no game yet, is asked again the long way)
+    let hit = filter === SOLID ? this.world.castRayAndGetNormal(ray, max, true, R.QueryFilterFlags.EXCLUDE_SENSORS) : null;
+    if (filter !== SOLID || (hit && !hit.collider.parent()?.userData)) hit = this.world.castRayAndGetNormal(ray, max, true, undefined, undefined, undefined, undefined,
       c => { const t = c.parent()?.userData; return !!t && filter(t); });
     if (!hit) return null;
-    const s = hit.timeOfImpact, thing = hit.collider.parent()?.userData || null, point = V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s), part = hit.collider.userData ?? null;
-    return { thing, point, normal: V(hit.normal.x, hit.normal.y, hit.normal.z), distance: s, part, get mesh() { return meshAt(thing, point); } };
+    const s = hit.timeOfImpact;
+    return new RayHit(hit.collider.parent()?.userData || null, V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s), V(hit.normal.x, hit.normal.y, hit.normal.z), s, hit.collider.userData ?? null);
   }
   /** Every body within radius of a point. */
   near(p, radius) {
@@ -708,6 +711,12 @@ function rotate(v, q) {   // v rotated by quaternion q
 // Every triangle of a mesh and its children, in world space (or the mesh's own space for hulls).
 // the mesh a ray hit: a level made solid with ground() keeps where each of its meshes lies, and the smallest that
 // holds the point is the one (Rapier's own triangle numbers are not those of the meshes)
+// what a ray struck (world.ray): the thing, where, the surface's normal, how far, which part of a thing in parts, and `mesh` (found when asked for)
+const SOLID = t => !t.collider.isSensor();
+class RayHit {
+  constructor(thing, point, normal, distance, part) { this.thing = thing; this.point = point; this.normal = normal; this.distance = distance; this.part = part; }
+  get mesh() { return meshAt(this.thing, this.point); }
+}
 function meshAt(t, p) {
   if (!t) return null;
   const P = t.parts; if (!P) return t.mesh || null;

@@ -13,6 +13,8 @@
 
 import { Euler, Quaternion, Vector3 } from 'three';
 
+// (the length of two to four numbers: Math.hypot makes a list for its numbers on every call, and this runs for every person every frame)
+const hyp = (a, b, c = 0, d = 0) => Math.sqrt(a * a + b * b + c * c + d * d);
 const TAU = Math.PI * 2, wrap = a => a - Math.round(a / TAU) * TAU, lim = (v, m) => v < -m ? -m : v > m ? m : v;
 const _p = new Vector3(), _x = new Vector3(), _y = new Vector3(), _z = new Vector3(), _c = new Vector3(), _q = new Quaternion(), _e = new Euler();
 // each spring: how stiff, how damped, how far it goes for each unit of push (radians for a metre a second a second,
@@ -45,11 +47,11 @@ export class Follow {
   pose(dt, out) {
     const A = this.amount, body = this.body;
     body.updateWorldMatrix(true, false);
-    const e = body.matrixWorld.elements, px = e[12], py = e[13], pz = e[14], yaw = Math.atan2(e[8], e[10]), sc = Math.hypot(e[4], e[5], e[6]) || 1;
+    const e = body.matrixWorld.elements, px = e[12], py = e[13], pz = e[14], yaw = Math.atan2(e[8], e[10]), sc = hyp(e[4], e[5], e[6]) || 1;
     let af = 0, as = 0, au = 0, al = 0;
     if (this.on && dt > 0) {
       const dx = px - this.px, dy = py - this.py, dz = pz - this.pz, dyaw = wrap(yaw - this.yaw);
-      if (Math.hypot(dx, dy, dz) > Math.max(.6, 14 * dt) * sc || Math.abs(dyaw) > Math.max(.9, 20 * dt)) { this.v[0] = this.v[1] = this.v[2] = this.a[0] = this.a[1] = this.a[2] = this.w = this.al = 0; this.skip = 2; }   // moved at a stroke: no push (and none from the first move after it)
+      if (hyp(dx, dy, dz) > Math.max(.6, 14 * dt) * sc || Math.abs(dyaw) > Math.max(.9, 20 * dt)) { this.v[0] = this.v[1] = this.v[2] = this.a[0] = this.a[1] = this.a[2] = this.w = this.al = 0; this.skip = 2; }   // moved at a stroke: no push (and none from the first move after it)
       else {
         const k1 = this.skip ? 1 : 1 - Math.exp(-dt * 30), k2 = 1 - Math.exp(-dt * 20), v = this.v, a = this.a, q = 1 / (dt * sc);
         for (let i = 0; i < 3; i++) { const was = v[i]; v[i] += ((i ? i > 1 ? dz : dy : dx) * q - v[i]) * k1; a[i] += ((this.skip ? 0 : (v[i] - was) / dt) - a[i]) * k2; }
@@ -106,7 +108,7 @@ export class Follow {
    * and y (metres) from what this returns. The thing's place and turn as they are now are its rest.
    */
   hang(thing, { pivot = null, swing = .02, bounce = 0, stiff = 120, damp = 10, most = .3, away = null, apply = true } = {}) {
-    const n = away ? Math.hypot(away[0], away[2]) || 1 : 1;
+    const n = away ? hyp(away[0], away[2]) || 1 : 1;
     const h = { thing, pivot: pivot ? new Vector3(...pivot) : thing.position.clone(), swing, bounce, stiff, damp, most, apply, nx: away ? away[0] / n : 0, nz: away ? away[2] / n : 0, wall: !!away,
       rest: thing.position.clone(), q0: thing.quaternion.clone(), x: 0, z: 0, y: 0, vx: 0, vz: 0, vy: 0, p: new Vector3(), v: new Vector3(), a: new Vector3(), has: false, skip: 0 };
     this.things.push(h); return h;
@@ -128,7 +130,7 @@ export class Follow {
       const par = h.thing.parent; if (!par) continue;
       par.updateWorldMatrix(true, false);
       const e = par.matrixWorld.elements; _p.copy(h.pivot).applyMatrix4(par.matrixWorld);
-      const sc = Math.hypot(e[4], e[5], e[6]) || 1;
+      const sc = hyp(e[4], e[5], e[6]) || 1;
       if (!h.has || !(dt > 0) || _p.distanceTo(h.p) > Math.max(.6, 14 * dt) * sc) { if (dt > 0 || !h.has) { h.p.copy(_p); h.v.set(0, 0, 0); h.a.set(0, 0, 0); h.has = true; h.skip = 2; } if (h.apply && (h.x || h.z || h.y)) this.put(h); continue; }
       const k1 = h.skip ? 1 : 1 - Math.exp(-dt * 40), k2 = 1 - Math.exp(-dt * 25);
       _c.copy(_p).sub(h.p).multiplyScalar(1 / dt / sc); h.p.copy(_p);
