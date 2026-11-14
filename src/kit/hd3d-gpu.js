@@ -2345,13 +2345,14 @@ export class GpuChain {
   buildFor() {
     const sp = this.sp, rt = sp?.renderTarget; if (!rt) return null;
     let sig = rt.samples + '|' + rt.depthBuffer + '|' + rt.stencilBuffer + '|' + (rt.depthTexture ? rt.depthTexture.format + ':' + rt.depthTexture.type : '');
-    for (const t of rt.textures) sig += '|' + t.format + ':' + t.type + ':' + t.colorSpace;
+    for (const t of rt.textures) sig += '|' + t.format + ':' + t.type + ':' + t.colorSpace + (t.userData.gsOut4 ? ':4' : '');
     const b = this._bf;
     if (b?.sig !== sig) {
       // (made afresh, not rt.clone(): a copy's pictures share the pass's own image sizes, and sizing the copy shrank the pass's)
+      // (gsOut4 too: the motion picture's shaders keep four outputs, or a see-through thing's built here is refused: slimPictures)
       b?.rt.dispose();
       const c = new RenderTarget(4, 4, { count: rt.textures.length, samples: rt.samples, depthBuffer: rt.depthBuffer, stencilBuffer: rt.stencilBuffer });
-      rt.textures.forEach((t, i) => { const q = c.textures[i]; q.format = t.format; q.type = t.type; q.colorSpace = t.colorSpace; q.name = t.name; q.generateMipmaps = false; });
+      rt.textures.forEach((t, i) => { const q = c.textures[i]; q.format = t.format; q.type = t.type; q.colorSpace = t.colorSpace; q.name = t.name; q.generateMipmaps = false; q.userData.gsOut4 = t.userData.gsOut4; });
       if (rt.depthTexture) { const d = new DepthTexture(4, 4, rt.depthTexture.type); d.format = rt.depthTexture.format; c.depthTexture = d; }
       this._bf = { sig, rt: c, mrt: null };
     }

@@ -53,7 +53,7 @@ import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
-import { copyFrame, webgpu, setGpuPick, prepareGPU } from './gpu.js';
+import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
 import { packing } from './pack.js';
 import { SLIM, isSlim, meshBytes } from './slim.js';
 import { makeRenderer } from './renderer.js';
@@ -507,7 +507,7 @@ const tier = () => TIERS[HD.tier];
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__gpu = { pick: setGpuPick, ready: prepareGPU }; }
+if (TEST) { window.__hd = HD; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
@@ -2218,6 +2218,16 @@ export class HDView {
     return A.all || Promise.resolve();
   }
   /**
+   * The view now draws with another renderer than last frame: WebGL after WebGPU or back, or a new WebGPU device made
+   * after the last one was lost (gpu.js lostGPU). What it noted about built shaders was about the old one: the things
+   * held back for theirs are let go, and the scene is looked at afresh, as on a view's first frame.
+   */
+  newRenderer() {
+    if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
+    this.shJobs?.clear(); this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
+    this.holdBase = false; this.warmed = false; this.aheadAgain = true;
+  }
+  /**
    * The shadow maps' shaders, ahead (WebGPU). A thing's shadow is drawn with a shader of its own (three's shadow
    * material with the thing's skinning, bones, position and cut-out nodes), made in the frame the thing is first drawn
    * into a map, and buildAhead builds the scene pass's alone. So a man's nearer level of detail, a thing switched
@@ -2397,7 +2407,7 @@ export class HDView {
     swapTwins(S.scene, G, null, null, this._air);
     const bake = () => G.fx.envFrom(G.r, S.scene, S.o), rt = S.o.wrap ? S.o.wrap(bake) : bake();
     if (this._gpuEnvRT && this._gpuEnvRT !== rt) this._gpuEnvRT.dispose();
-    this._gpuEnvRT = rt; this.env = S.tex = rt.texture; this._gpuEnvN = S.n; return rt.texture;
+    this._gpuEnvRT = rt; this.env = S.tex = rt.texture; this._gpuEnvN = S.n; this._gpuEnvR = G.r; return rt.texture;
   }
   // the reflections for the renderer drawing this frame: the studio, or the view's own (envFrom),
   // made again for this renderer if they were last made on the other one
@@ -2405,7 +2415,7 @@ export class HDView {
     const S = this.envSrc;
     if (S && this.env !== S.tex) this.envSrc = null;   // the game set v.env itself (or back to null)
     if (this.envSrc) {
-      if (G) { if (this._gpuEnvN !== S.n) this.gpuEnvBake(G); else this.env = S.tex = this._gpuEnvRT.texture; }
+      if (G) { if (this._gpuEnvN !== S.n || this._gpuEnvR !== G.r) this.gpuEnvBake(G); else this.env = S.tex = this._gpuEnvRT.texture; }   // (made again on a new renderer: a lost device's pictures are gone)
       else if (this._glEnvN !== S.n) this.glEnvBake(); else this.env = S.tex = this.envRT.texture;
     }
     return G ? (this.envSrc ? this.env : gpuEnv(G)) : this.env || envTex;
@@ -3082,7 +3092,13 @@ export class HDView {
   draw3d(c, w, h, baking) {
     this.fit(w, h);
     if (this.faceLit?.person) aimFaceLight(this);
-    const G = gpuFor(this), r = G ? G.r : renderer();
+    const G = gpuFor(this);
+    // the graphics chip was lost and a new one is on its way (gpu.js lostGPU): nothing is drawn meanwhile (on WebGL
+    // every shader of the scene would be built for one frame, and then built again on the new chip). The app has
+    // paused a round being played and covers it while the new chip catches up (src/main.js)
+    if (!G && gpuMending()) { if (!baking && !HD.direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); } return; }
+    const r = G ? G.r : renderer();
+    if (r && this._drawR !== r) { if (this._drawR) this.newRenderer(); this._drawR = r; }
     // WebGPU's depth runs 0..1 and WebGL's -1..1, so the camera's projection differs. three switches it
     // only when the camera's own setting disagrees, and the SGSR 2 jitter puts back the matrix it saved
     // before, so a switch made inside the frame was undone (on WebGPU the near clip sat at twice its
@@ -3343,7 +3359,8 @@ function inReach(o, go) {
 // (said, not swallowed: a build that fails leaves its shaders to be made in the frames, which looks like nothing but a stutter)
 const buildFailed = e => { console.warn('3D: a background shader build failed', e); };
 function compileGPU(r, o, cam, scene, around = null, view = null) {
-  const go = () => { hideSets(o); return forPass(r, view, () => r.compileAsync(o, cam, scene)); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
+  // (a build that waited its turn on a renderer whose graphics chip has since been lost, gpu.js: nothing to build it on)
+  const go = () => { if (r._isDeviceLost) return; hideSets(o); return forPass(r, view, () => r.compileAsync(o, cam, scene)); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
   const done = () => { r.gsBuilding--; };
   r.gsBuilding = (r.gsBuilding || 0) + 1; p.then(done, done);
   r.gsCompiling = p.catch(() => {});
@@ -3595,7 +3612,13 @@ function gpuSwap(v, G) {
   for (const s of v.sims || []) s.gpuStep(G, chipMs, frameMs);
   for (const p of v.parts) {
     if (G) {
-      const tw = p.gpuTwin?.r === G.r ? p.gpuTwin : (p.gpuTwin = { r: G.r, ...(p.makeTwin ? p.makeTwin(G) : G.fx.gpuParticles(p)) });
+      let tw = p.gpuTwin;
+      if (tw?.r !== G.r) {
+        // (a twin made for another renderer, a lost graphics chip's: the new one takes its place in the scene, or the old
+        // one's sprite stayed there, never swapped back for the points on WebGL, which can't draw it)
+        const old = tw; tw = p.gpuTwin = { r: G.r, ...(p.makeTwin ? p.makeTwin(G) : G.fx.gpuParticles(p)) };
+        if (old?.sprite.parent) { old.sprite.parent.add(tw.sprite); old.sprite.removeFromParent(); }
+      }
       if (p.pts.parent) { p.pts.parent.add(tw.sprite); p.pts.removeFromParent(); }
       if (p.stepGpu) p.stepGpu(G); else tw.sync(p.n || 0);
     } else if (p.gpuTwin?.sprite.parent) { p.gpuTwin.sprite.parent.add(p.pts); p.gpuTwin.sprite.removeFromParent(); }
@@ -3639,6 +3662,7 @@ function bakeLater(view, c) {
 const LIVE = new Set();   // the views drawn on the 3D canvas lately (a game can draw more than one)
 function liveView(v, now) { LIVE.add(v); if (LIVE.size > 1) for (const o of LIVE) if (now - o.drawnAt > 2000) LIVE.delete(o); }
 function stillComing() {
+  if (gpuMending()) return { hard: 1, soft: 0, what: 'Graphics' };   // (a lost graphics chip being made again: gpu.js)
   const now = performance.now(); let hard = 0, soft = 0, ahead = 0;
   for (const v of LIVE) {
     if (now - v.drawnAt > 1000) continue;
@@ -3651,6 +3675,9 @@ function stillComing() {
   return hard || soft || ahead || packs ? { hard, soft: soft + ahead + packs, what: hard || ahead ? 'Shaders' : soft ? 'Detail' : 'Textures' } : null;
 }
 waitsOn(stillComing);
+// the canvases of renderers whose graphics chip was lost (gpu.js): taken off the card the next time a view mounts its own
+const LOST_CANVAS = new WeakSet();
+onGpuLoss(e => { if (e.kind === 'lost') for (const cv of e.canvases || []) LOST_CANVAS.add(cv); });
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
@@ -3661,7 +3688,7 @@ function mount(cv, c, view) {
     old.canvas.classList.remove('hd-host');
   }
   // a view that moved between WebGL and WebGPU: take the other renderer's canvas off this card
-  const prev = hc.previousSibling; if (prev && prev !== cv && (prev === R?.domElement || prev === webgpu()?.r.domElement)) prev.remove();
+  const prev = hc.previousSibling; if (prev && prev !== cv && (prev === R?.domElement || prev === webgpu()?.r.domElement || LOST_CANVAS.has(prev))) prev.remove();
   if (hc.previousSibling !== cv) par.insertBefore(cv, hc);
   cv.classList.add('hd-layer'); hc.classList.add('hd-host');
   const u = view.under || null;

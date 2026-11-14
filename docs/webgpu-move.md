@@ -51,6 +51,42 @@ The rules for new 3D code until then:
   different the first seconds of play look (a guide: each game's own randomness moves things too). Both
   use SwiftShader's Vulkan driver, so they run without a GPU.
 
+## When the device is lost
+
+A browser can take the WebGPU device away at any time: a driver reset after a hang, the system taking
+the chip's memory back, or the browser's graphics process crashing (2026-11-13, `src/kit/gpu.js`,
+"Lost graphics chips"):
+
+- `prepareGPU()` watches the device's `lost` promise. On a loss (`lostGPU`) it forgets the renderer,
+  the Console renderer and the shared compute device, waits 300 ms and makes new ones on a new device.
+  A loss we caused ourselves (`window.__gpu.lose()` in tests) counts; three's own `dispose()` doesn't.
+- `onGpuLoss(fn)` tells the app: `{ kind: 'lost', reason, message, n, canvases }`, then
+  `{ kind: 'back', backend: 'webgpu' | 'webgl' | 'none', ms, n }`. `gpuMending()` is the mend in
+  progress, `gpuLosses()` what happened last.
+- While it mends, views draw nothing and keep their picture (Next Gen clears its card, Console skips the
+  frame), and `stillComing` holds the loading screen. Then each view sees a new renderer (`newRenderer()`
+  in `hd3d.js`): what was hidden while its shaders built shows again, the shader bookkeeping starts over,
+  and everything else keyed by renderer (the environment light, GPU particles, gas, props and the other
+  twins) is made again for it the first time it draws.
+- `src/main.js` pauses a playing 3D round at once (`pauseWhy: 'gpu'`), shows the pause screen as a
+  loading screen with Play turned off, waits for the new device and three calm frames with no shaders
+  left to build (`mendStep`, the loading gate's rule), then gives "Carry on" back. A loss in the feed
+  or under the loading screen needs nothing: the round starts on the new device.
+- The fourth loss in a session draws with WebGL from then on. Chrome itself refuses a page any 3D after
+  its graphics process has crashed twice on it; then the pause screen says to restart the app (the Mac
+  and Windows app turns that rule off with `app.disableDomainBlockingFor3DAPIs()`).
+- `src/perf.js` reports each loss as kind `gpu` with how it ended, and the report page has a "Graphics
+  chip lost" table (docs/crash-reports.md).
+- Errors in flight on the lost device are quietened for a few seconds (`unhandledrejection` with a
+  device-lost message: three's pipeline error scopes), and three logs "Error resolving queries" for the
+  frame timing it was reading back; both are expected.
+
+Test: `npm run build:bundled && node scripts/gpu-loss.cjs` crashes the browser's graphics process
+(Chrome DevTools' `Browser.crashGpuProcess`, a real loss) in a round of two Next Gen games and a
+Console one, and checks the round comes back drawn as before, on WebGPU, with a report. `--times 4
+--how destroy` checks the move to WebGL, `--times 2` Chrome's block, `--when gate` and `--when feed`
+a loss before the round. The PR check runs it when `gpu.js`, `toon3d.js` or the script change.
+
 ## What still keeps a view on WebGL (the move checklist)
 
 | Part | Where | What it needs for WebGPU |

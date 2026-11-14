@@ -3,6 +3,8 @@
 //   POST /perf  body { device, info: { platform, model, os, app, form, robot },
 //                      games: { "<id>": { r, f, ms, w, sl, h, x, hk, hw, hh, v } },   per game, since the last batch
 //                      errors: [ { kind, game, msg, place, n, v, at } ] }             at most 10
+//                      (kind: 'crash', 'error' (a script error), or 'gpu': the graphics chip was lost; its place
+//                      is the chip and the browser engine, "Adreno (TM) 830 · Chrome 142")
 //   GET  /perf  -> { days, games: [...], errors: [...] }                       last 14 days, cached 5 min
 //   GET  /perf/report -> a web page: who is reporting, crashes, script errors, then smoothness per
 //                        phone, each row with the build it was last seen on and when
@@ -62,7 +64,7 @@ export function cleanPerf(b, known, t = Date.now()) {
   const errors = [], now = Math.floor(t / 1000);
   for (const x of e.slice(0, MAX_ERRORS)) {
     if (!x || typeof x !== 'object') continue;
-    const kind = x.kind === 'crash' ? 'crash' : 'error';
+    const kind = x.kind === 'crash' || x.kind === 'gpu' ? x.kind : 'error';
     const game = typeof x.game === 'string' && GAME_RE.test(x.game) && (!known || known.has(x.game)) ? x.game : '';
     const msg = txt(x.msg, 160);
     if (!msg) continue;
@@ -339,7 +341,7 @@ export function perfPage({ days, at, game = '', phones = [], games = [], history
 <td>${e.apps.length ? build(e.apps[0].app, repo) + file(e.apps[0].ver, e.game) : ''}${e.apps.length > 1 ? `<details><summary>and ${e.apps.length - 1} older</summary>${e.apps.slice(1).map(a => build(a.app, repo) + file(a.ver, e.game)).join('<br>')}</details>` : ''}</td>
 <td class=t>${when(e.d0, e.t0)}</td><td class=t>${when(e.d1, e.t1)}</td><td>${STATE[e.state](e)}</td></tr>`).join('')}</table>`
     : '<p class=ok>None reported.</p>';
-  const crashes = errors.filter(r => r.kind === 'crash'), scripts = errors.filter(r => r.kind === 'error');
+  const crashes = errors.filter(r => r.kind === 'crash'), scripts = errors.filter(r => r.kind === 'error'), chips = errors.filter(r => r.kind === 'gpu');
   const total = list => list.reduce((a, r) => a + r.n, 0);
 
   // Real phones first, then test machines; within each, whoever reported most recently.
@@ -399,6 +401,9 @@ ${game ? '' : `<h2>Who is reporting</h2>
 <h2>Crashes (${total(crashes)})</h2>
 <p>The app closed while it was open on screen, or crashed. On Android 11 and later the phone’s own record says why (out of memory, crashed, stopped responding) and when, and the app being closed by its player is not counted. Elsewhere the app can only tell that it was not closed tidily, and the time is when it was next opened.</p>
 <div class=wrap>${errTable(crashes)}</div>
+<h2>Graphics chip lost (${total(chips)})</h2>
+<p>The phone’s or computer’s graphics chip went away mid-game (its driver restarted, or the browser’s graphics process crashed) and the app made a new one. “Where” is the chip and the browser engine; the end of “What” says whether WebGPU came back or the app drew with WebGL from then on. A chip or driver that shows up here often is one to steer away from in the steering list.</p>
+<div class=wrap>${errTable(chips)}</div>
 <h2>Script errors (${total(scripts)})</h2>
 <p>A game threw an error. The app ends that round and carries on.</p>
 <div class=wrap>${errTable(scripts)}</div>
