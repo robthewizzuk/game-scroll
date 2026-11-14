@@ -39,7 +39,7 @@ try {
   // a picture once it has stopped changing (new shaders come in over a frame or two)
   const shot = async (S, most = 40) => {
     let last = null, same = 0;
-    for (let i = 0; i < most && same < 2; i++) { const d = await draw(S); same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d; }
+    for (let i = 0; i < most * 5 && (same < 2 || (i >= most ? false : S.v.detailPending?.())); i++) { const d = await draw(S); same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d; if (i >= most && same >= 2) break; }
     return last;
   };
   const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
@@ -54,7 +54,7 @@ try {
     const r = S.v._gpuChain?.r, set = new Set(meshes), n = { pool: 0, own: 0, other: 0 };
     const O = r?._objects;
     for (const ro of O?._renderObjects || []) {
-      if (!set.has(ro.object) || ro.testSeen !== tick) continue;
+      if (!set.has(ro.object.userData?.gsPoseOf || ro.object) || ro.testSeen !== tick) continue;   // (a mesh cluster detail draws through a twin: the twin's draws are its own)
       const vs = r._nodes.get(ro)?.nodeBuilderState?.vertexShader; if (!vs) continue;
       if (/skinIndex/.test(vs)) n.own++; else if (/bitcast<f32>/.test(vs)) n.pool++; else n.other++;
     }
@@ -94,6 +94,8 @@ try {
     { kind: 0, move: 'run', phase: .6, x: .8, z: -.2, turn: 2.2 }, { kind: 2, move: 'walk', phase: .3, x: 2.4, z: .4, turn: 1.2 },
   ];
   const line = LINE.map(o => { const f = src[o.kind].twin?.() || src[o.kind]; f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
+  // (cluster detail is kept on for the line, not tried and let go part way: both pictures draw the same twins)
+  S.v.detail?.(line);
   look(S, [0, 1.4, 6.2], [0, .85, 0]);
   const worst = [];
   for (const L of [0, 1, 2]) {

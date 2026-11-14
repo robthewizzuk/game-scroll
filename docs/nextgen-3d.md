@@ -281,8 +281,8 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   in for the frame's drawing only: between frames `mesh.geometry` is always the game's own, so a game
   can reshape it, work out its normals again or build physics from it as usual. A mesh whose points
   or triangles change is drawn whole, and its copies are made again once it has kept still for a second.
-- Cluster detail (a Nanite-style level of detail, by itself): a big still mesh (20,000 triangles or
-  more: a hillside, a cliff, a hall made in code) is cut into clusters of a few hundred triangles with
+- Cluster detail (a Nanite-style level of detail, by itself): a big mesh (8,000 triangles or
+  more: a hillside, a cliff, a hall made in code, a train, a person close up) is cut into clusters of a few hundred triangles with
   coarser and coarser versions of each neighbourhood, and every frame each part of it is drawn only as
   finely as shows in the picture (within a pixel) and not at all where it is out of view. So the near
   end of a long wall is at full detail and the far end at a fraction, with no cracks where they meet,
@@ -297,9 +297,23 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
     visibility. The moment the mesh stops fitting (another geometry or material, taken out of the
     scene) it draws as itself again. A geometry whose points change after it was taken is left alone
     from then on.
-  - Taken: plain meshes with one solid material. Not taken: skinned, morphing and instanced meshes,
-    see-through and alpha-tested materials, materials that move their points (leaves, grass, water,
-    your own shader), multi-material meshes and `v.reflect()` ones. Those keep what they had.
+  - Taken: still and moving meshes (a moving one is picked again each frame where it is now, so a
+    train or a falling crate keeps its detail in motion), meshes with several materials (each part
+    is cut on its own, and the seams between parts are kept in place so they never crack open),
+    cut-out (alpha-tested) materials such as fences and leaf cards (built more carefully, so holes
+    keep their shape), sets of copies (an InstancedMesh of up to 256 copies of 2,000 triangles or
+    more: each copy is drawn only as finely as it shows from where it is, with its own colour), and
+    skinned and morphing meshes (people, creatures, faces: one cut a frame from the camera, posed by
+    the same skeleton and morphs as the game's mesh, and simplified so it still bends right in other
+    poses than the one it was built in; on WebGPU it is posed by the chip's skin pool once, with the
+    game's mesh).
+  - Not taken: see-through materials, materials that move their points (leaves, grass, water, your
+    own shader), meshes whose points the game rewrites, gs.props sets (they keep their own levels)
+    and `v.reflect()` ones. Those keep what they had.
+  - Under 20,000 triangles a mesh is tried for a second and a half and kept only if it saves more
+    than it costs (fewer triangles against more, smaller draws, with a phone's costs); one that does
+    not pay goes back to drawing whole and is tried again 12 seconds later, when the camera may be
+    elsewhere. `__hd.info.detailRested` counts them. From 20,000 it is kept.
   - `v.detail(meshes)` asks for it on smaller meshes too (from 2,000 triangles), `v.detail(meshes,
     { px: .5 })` makes them finer (pixels the simpler parts may be out by; default 1), and
     `v.detail(meshes, false)` or `mesh.userData.detail = false` draws them whole.

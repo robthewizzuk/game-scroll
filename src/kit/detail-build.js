@@ -110,7 +110,9 @@ function partition(clusters, adj, size) {
  * attrs: the other numbers of each point the simplifier should keep true (normals, UVs, colours), `stride`
  * floats a point, each weighed by `weights` (0.5 suits normals); o: { maxTris: triangles in a cluster (512),
  * group: clusters simplified together (8), sloppy: let a patch that won't simplify any other way be
- * simplified roughly (true); layer and inLayer(triangles, points): for a mesh that is a thin layer of
+ * simplified roughly (true: never for cut-out leaves, whose cards it would melt together); keep: a list of points
+(numbers into `positions`) whose places never move at any level, the seam with the rest of a mesh drawn in
+another material (detail.js partOf); layer and inLayer(triangles, points): for a mesh that is a thin layer of
  * detail on a simpler surface (relief-build.js), how thick the layer is, and whether a simplified patch
  * (its triangles, as numbers into `points`, the mesh's point numbers) still lies in it: simplifying inside
  * the layer is then never counted as more than its thickness, however many levels do it }.
@@ -122,8 +124,10 @@ function partition(clusters, adj, size) {
  *     it (gSphere) and the error, in the mesh's units, of drawing its coarser version instead (gError)
  *   roots: the first `roots` clusters are the coarsest ones (where picking starts)
  */
-export function buildClusters({ positions, index, attrs = null, stride = 0, weights = null }, { maxTris = 512, group = 8, sloppy = true, layer = 0, inLayer = null } = {}) {
+export function buildClusters({ positions, index, attrs = null, stride = 0, weights = null, keep = null }, { maxTris = 512, group = 8, sloppy = true, layer = 0, inLayer = null } = {}) {
   const nv = positions.length / 3, remap = MeshoptSimplifier.generatePositionRemap(positions, 3);
+  // (points that stay where they are at every level, by place: the seam with another material's part of the mesh)
+  let fixed = null; if (keep?.length) { fixed = new Uint8Array(nv); for (let i = 0; i < keep.length; i++) if (keep[i] < nv) fixed[remap[keep[i]]] = 1; }
   const A = attrs && stride > 0 ? attrs : new Float32Array(0), S = attrs && stride > 0 ? stride : 0, W = S ? Array.from(weights || new Array(S).fill(.5)) : [];
   const mark = new Uint32Array(nv), vGroup = new Int32Array(nv), locked = new Uint8Array(nv), loc = new Int32Array(nv).fill(-1);
   const all = [], groups = [];   // every cluster made; groups: { members: [cluster], sphere, err }
@@ -134,7 +138,7 @@ export function buildClusters({ positions, index, attrs = null, stride = 0, weig
   while (pending.length > 1) {
     const adj = touching(pending, remap, nv, mark), parts = partition(pending, adj, group);
     // the points on the edge between two groups stay put (and stay in): the simplifier may not touch them
-    vGroup.fill(-1); locked.fill(0);
+    vGroup.fill(-1); if (fixed) locked.set(fixed); else locked.fill(0);
     for (let g = 0; g < parts.length; g++) for (const ci of parts[g]) { const ix = pending[ci].idx; for (let k = 0; k < ix.length; k++) { const r = remap[ix[k]]; if (vGroup[r] === -1) vGroup[r] = g; else if (vGroup[r] !== g) locked[r] = 1; } }
     const next = [], retry = [];
     let levelTris = 0;
@@ -207,14 +211,14 @@ export function buildClusters({ positions, index, attrs = null, stride = 0, weig
  * every three points are a triangle), parts: [{ array, size, use }] the attributes to keep true (the first
  * `use` numbers of each `size`), stride and weights for them all.
  */
-export function buildFrom({ positions, index, nv, parts = [], stride = 0, weights = [] }, o) {
+export function buildFrom({ positions, index, nv, parts = [], stride = 0, weights = [], keep = null }, o) {
   let attrs = null;
   if (stride) {
     attrs = new Float32Array(nv * stride); let at = 0;
     for (const p of parts) { for (let i = 0; i < nv; i++) for (let k = 0; k < p.use; k++) attrs[i * stride + at + k] = p.array[i * p.size + k]; at += p.use; }
   }
   if (!index) { index = new Uint32Array(nv); for (let i = 0; i < nv; i++) index[i] = i; }
-  return buildClusters({ positions, index, attrs, stride, weights }, o);
+  return buildClusters({ positions, index, attrs, stride, weights, keep }, o);
 }
 
 /**
