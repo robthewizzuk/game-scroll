@@ -57,6 +57,13 @@ export const thingsOf = scene => listOf(scene);
 export const thingCount = scene => listOf(scene).length;
 
 /**
+ * A mesh drawn with the next draw of `scene`, before everything in the scene and whatever layers the camera sees,
+ * without being in the scene: in the same pass, so the picture drawn into is loaded and stored once and not twice
+ * (hd3d-gpu.js shadowOps: the rectangles that put parts of a shadow map back, in the pass of the things drawn over
+ * them). That draw takes it; opaque things only.
+ */
+export const RIDE = { scene: null, mesh: null };
+/**
  * three's drawing pipeline (WebGPU: `renderer.drawingPipeline`) with its walk made over the list. For each render,
  * the scene's picture, each shadow map and each part of one, three walks the whole scene: every bone and group
  * between the things, 10,700 parts in the square of 300 people, twice a frame or more (11 of the build machine's
@@ -70,6 +77,8 @@ export function listPipeline(W) {
   const v4 = new Vector4();
   return class ListPipeline extends W.StandardDrawingPipeline {
     project(o, camera, groupOrder, list, clip) {
+      // (a thing that rides in this draw, ahead of everything in the scene: RIDE)
+      if (RIDE.mesh !== null && o === RIDE.scene) { const m = RIDE.mesh; RIDE.mesh = RIDE.scene = null; this.pushRenderItem(list, m, m.geometry, m.material, -1e9, 0, null, clip); }
       if (!o.isScene || this._bundleDepth > 0) return super.project(o, camera, groupOrder, list, clip);
       const L = listed(o);
       if (!L.plain) return super.project(o, camera, groupOrder, list, clip);

@@ -76,8 +76,7 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   nothing between two of its passes may change a uniform: three sends each uniform once for the whole list.
 - A frame's passes go to the chip together (`src/kit/submit.js`, `HD.oneSubmit`, the steering list's `submit`).
   three makes a command encoder for every pass and compute call and submits each by itself: 25 to 40 submits a
-  frame. The device's queue now holds what three submits and sends it in one go when the frame's code ends, in
-  the same order. WebGPU does an upload at once, ahead of anything not yet submitted, so each encoder keeps a
+  frame. The device's queue now holds what three submits and sends it in a few goes, in the same order. WebGPU does an upload at once, ahead of anything not yet submitted, so each encoder keeps a
   list of the buffers and pictures its passes use (bind groups, vertex and index buffers, copies, bundles, the
   pictures drawn into), each of those counts the held encoders that use it, and an upload to, a read back of
   or the freeing of one that a held pass uses sends the held passes first. Everything else goes straight
@@ -85,6 +84,35 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   passes, two reads back), the coast 1.5 where it was 25. `gpu-calls.cjs --why` names the buffer or picture
   behind each early send; a kit that uploads to a buffer between two passes that both read it costs a send.
   Before the canvas is read (`copyFrame`, a test's own read) `flushGPU()` sends what is held.
+  The chip starts on a pass when it is sent, not when the frame's code ends (`node scripts/gpu-overlap.cjs`: a
+  heavy pass sent and then its own time again spent in code is done in 1.1 times the pass's time; the code first
+  and the pass after, in 2 times). One send at the very end left the chip idle through the frame's code, so the
+  3D view also sends what is held where a lot of code is still to come (`sendEarly`, `HD.submitEarly`): before
+  the scene is drawn (skinning, compute, the kit's shadow maps, the sky's pictures), after a shadow map three
+  draws inside the scene's pass, and at once when the scene's pass is encoded. The effects, encoded while the
+  chip draws the scene, go together at the end. With those the town goes 5.9 times a frame and the coast 4.5.
+- A shadow map kept from frame to frame is written in as few passes as there can be (`HD.shadowOne`,
+  `SHADOW_ONE` in `hd3d-gpu.js`). WebGPU has no way to load or store a part of a picture: every pass on a
+  2048 map loads its 16 MB into a phone chip's tile memory and stores them again, whatever part it writes.
+  A sun's map in tiles took two passes on a frame where only moving things changed (the kept copy's parts
+  put back, then the moving things) and seven on a sun's step (slide, then empty and draw each new part,
+  copy them aside, draw the moving things). Now the rectangles that put the kept copy back, or empty a
+  part, are drawn first in the pass of the things drawn over them (`scene-list.js` `RIDE`: a mesh the next
+  draw of a scene takes with it, ahead of everything in the scene, with its own material where three would
+  draw it with the light's: `allowOverride = false`): one pass, and four on a sun's step (after a slide the
+  map holds no moving things yet, so the kept copy is one plain copy of it once its new parts are drawn).
+  A lamp's kept map is cleared, filled from its kept copy and drawn over in one pass, where it was a copy
+  and a pass that loaded it again. The rectangles are drawn from a few meshes in turn: one mesh used twice
+  in a frame had its rectangles uploaded under a pass still held (`submit.js`), which cost a send each time.
+  The village walk of `--page shadows`: 2.03 passes a frame on the sun's map and its copy down to 1.12.
+- A sun's shadow map and its kept copy are 16-bit depth (`depth16unorm`; `HD.shadow16`, `SHADOW_16` in
+  `hd3d-gpu.js`): half the memory, and half of what each pass on them moves. three makes every shadow map
+  `depth24plus`, 4 bytes a texel. An orthographic light's depth is even from near to far, so 65,536 steps
+  are plenty: 1.8 mm over a `follow()`'s 119 m. `follow()` moves in depth by 1,024 whole steps (1.86 m, it
+  was 2 m), so a kept copy moved deeper lands on the map's own numbers and nothing is rounded each time; a
+  fitted sun's bias is never under four steps (a box more than 500 m deep). Lamps' atlas and spot lights
+  keep 24 bits: a perspective light crowds its steps up to the near plane, and the lamps' bias is a step
+  and a half of 16 bits. The kept copy takes the map's own kind (WebGPU refuses a copy between two).
 
 ## When the device is lost
 

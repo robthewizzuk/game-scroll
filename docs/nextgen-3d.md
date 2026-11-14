@@ -139,8 +139,8 @@ draws every other refresh), which saves battery and heat. Settings has Auto / 12
 Frame times are averaged over 45-frame windows and compared with the frame budget for the game's rate
 (8.3 ms at 120 fps, 16.7 ms at 60). A window is slow when its average is a quarter over the budget, or
 when two or more of its frames came a whole refresh late (a game averaging 57 fps at 60 that drops a
-frame three times a second stutters visibly, though its average looks fine). After two slow windows the render resolution steps down one fixed
-level (100%, 85%, 70%, 55%), then the tier drops. At 120 fps a struggling game first gives up one
+frame three times a second stutters visibly, though its average looks fine). After two slow windows the final picture or the render resolution steps down (see below; the resolution's fixed
+levels are 100%, 85%, 70%, 55% of the tier's pixels), then the tier drops. At 120 fps a struggling game first gives up one
 resolution step, then drops to 60 fps at full resolution, keeping the picture; at the lowest tier and
 resolution a 60 fps game can drop to 30. It only climbs back after eight fast windows in a row (on the beat, with no late frames), and
 never above a level that was too slow in the last 30 seconds, so it does not bounce up and down (each
@@ -151,6 +151,22 @@ is quick where climbing back is slow, so after a day the game starts from the ph
 down in frame rate counts its day from when it was taken, however often the picture changed since). A
 game held up by the CPU above 60 fps (the graphics chip has room) goes straight to 60 instead of giving
 up a tier first.
+
+**The final picture follows the 3D's own size.** The upscaler (GSSR) makes the final picture, and its pass costs
+by the pixels it makes, whatever the 3D's own size is. So the final picture is never more than twice the 3D's size
+each way (four pixels made from one; the screen stretches the rest), a resolution step takes it down with the 3D,
+and it has two steps of its own (1.7 and 1.45 times the 3D's size) that a slow game takes first while the
+upscaler and the copy to the screen take a quarter of the chip's frame or more (`pickSize`, from
+`HD.info.gpuParts`; where the chip doesn't say, while the final picture is over one and a half times the 3D's
+size). Once it has stepped, GSSR draws with its hand-written blend, the lighter one; the learned blend runs on
+high and ultra while the final picture is as the tier has it. The 3D's own picture is never under 400,000 pixels
+(or the tier's, or the card's, where those are fewer): past that a game gives up a tier, or frame rate, not more
+pixels. (Long Shadow on the Fold 8, unfolded and hot, 2026-11-14: it had stepped down to 486 x 311 blown up four
+times to 1937 x 1239, where the upscaler took 5.9 ms of the chip's 11.6 a frame and the scene 3.0, and no step
+made the upscaler's share smaller.) A game counts as held up by the chip when the chip's frames average three
+quarters of the budget or any of its readings in the window came near the budget: a hot chip's clock swings, and
+its average alone hid frames of twice the middle. While hot a game may still climb back to the tier the heat
+allows (one under the cap) from the first resolution step.
 
 **Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
 (`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, sun mask, bounce light,
@@ -266,8 +282,13 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
     box it has. A camera that zooms (its fov or zoom changes, or `around` is turned on or off: a scope
     going up) is fitted at once, so the scope has sharp shadows straight away. (Rob's Fold, mission 2 of Long Shadow: the shadow maps' worst frame was 18 ms; panning
     round in the test browser drew the whole map 29 times in 60 frames before, 4 after.)
+  - On WebGPU a kept map is written in one pass on most frames: the kept copy's parts are put back in the
+    pass that draws the moving things over them (every pass loads the whole map into a phone chip's memory
+    and stores it again, so two passes moved it four times). A sun's step takes four where it took seven.
   - Switches: `__hd.shadowTiles = false` (the sun moves a shadow texel at a time and its map is drawn
-    whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all).
+    whenever it does, as it used to be), `__hd.shadowCache = false` (no kept copies at all),
+    `__hd.shadowOne = false` (WebGPU: a pass for each step of a kept map, as before; the frame lab's
+    Shadow passes check times both).
     `node scripts/detail-test.cjs --page shadows` (and `--webgpu`) walks the village both ways and
     checks every frame is the same picture to a pixel or two, and on WebGL that the maps themselves
     differ only by those stray texels; `--bench` gives the numbers above.
@@ -453,7 +474,12 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   turns in two pictures however many there are, as the big engines' render graphs share memory between
   passes that never overlap (with depth of field and motion blur on, as Long Shadow has them, a
   full-size half-float picture less: 10 MB at 1080 x 2340). Not with `v.lens` or gs.fx3d's screen
-  effects (pictures they keep). `HD.shadowColour = true` and `HD.shareTargets = false` put each back to
+  effects (pictures they keep). A sun's shadow map and the copy kept of it hold 16-bit depth, half the
+  bytes of the 24 bits in 32 three makes (8 MB for a 2048 map where it was 16, and half of what every pass
+  on it loads and stores): a sun's light is a box, so its depth runs evenly from near to far, 1.8 mm a
+  step over a `follow()`'s 119 m against a bias of 48 mm. Lamps and spots keep 24 bits (a cone's depth
+  crowds its steps up to the light). `HD.shadowColour = true`, `HD.shadow16 = false` (both before a
+  light's first frame) and `HD.shareTargets = false` put each back to
   compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
   --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
   which could share, and draws the scene as before and as now: less memory, the same picture.

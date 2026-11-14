@@ -15,11 +15,21 @@
 // Whatever is still held when the frame's code ends is sent in a microtask, before the browser shows the frame;
 // flushGPU() sends it now (gpu.js copyFrame: before the canvas is copied to a card).
 //
+// The chip starts on a pass when it is sent, not when the frame's code ends (measured: a heavy pass sent and then
+// its own time again spent in code is done in 1.1 times the pass's time; the code first and the pass after, in 2
+// times). So one send at the very end would leave the chip idle through the whole of the frame's code, and its
+// work would only begin then: the frame comes out later by whatever the chip could have done meanwhile. The 3D
+// view therefore sends what is held at the points where a lot of code is still to come (sendEarly): before the
+// scene is drawn (skinning, compute, the kit's shadow maps), after a shadow map three draws inside the scene's
+// pass, and at once when the scene's pass is encoded. The effects after it, encoded while the chip draws the scene,
+// go together at the end: three or four sends a frame, and the chip is never idle while there is work for it.
+// ONE_SUBMIT.early = false (HD.submitEarly): one send at the end, to compare.
+//
 // The patches are on WebGPU's own prototypes (the passes and encoders are made new each frame); they only keep
 // lists, and only a device given to holdSubmits() holds anything.
 
 /** Tests and the frame lab: `on: false` submits each pass by itself, as three does. sent: real submits so far; held: command buffers that went with others; why: what asked for each early flush (trace: true also keeps the buffer's or picture's label). */
-export const ONE_SUBMIT = { on: true, sent: 0, held: 0, why: {}, trace: false, names: {} };
+export const ONE_SUBMIT = { on: true, early: true, sent: 0, held: 0, why: {}, trace: false, names: {} };
 
 let patched = false, states = [];
 
@@ -123,3 +133,5 @@ export function holdSubmits(dev) {
 
 /** Sends what is held now (before the canvas is read: copied to a card, or looked at by a test). */
 export function flushGPU(why = 'copy') { for (const S of states) if (S.list.length) send(S, why); }
+/** Sends what is held now so the chip can start on it while the frame's code goes on (see the top of this file); nothing with ONE_SUBMIT.early off. */
+export function sendEarly(why) { if (ONE_SUBMIT.early) for (const S of states) if (S.list.length) send(S, why); }

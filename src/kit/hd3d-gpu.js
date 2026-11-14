@@ -8,7 +8,7 @@
 // hurt, smoothing), plus three's own GTAO for ambient occlusion and the outdoor air as a fog node.
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
-import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
+import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, UnsignedShortType, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
   MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
@@ -32,7 +32,8 @@ import { built } from './prof.js';
 import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
-import { eachShown, listPipeline } from './scene-list.js';
+import { eachShown, listPipeline, RIDE } from './scene-list.js';
+import { sendEarly } from './submit.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -906,10 +907,18 @@ ShadowNode.prototype.setup = function (builder) { return builder.renderer.shadow
 // which three draws as a depth-only pass). Point lights' cube maps keep theirs (their node has its own).
 // HD.shadowColour = true (before the light's first frame) keeps three's colour pictures, to compare.
 export const SHADOW_DEPTH = { on: true };
+// A sun's shadow map in 16-bit depth (HD.shadow16; for a light's map made from now on). three makes every shadow
+// map's depth 24 bits in a 32-bit texel: 16 MB for a 2048 map, and as much again for the copy the kit keeps of it
+// (shadowOps make), each loaded and stored whole by every pass that writes it. A sun's light is a box, so its depth
+// runs evenly from near to far: 65,536 steps over a follow()'s 119 m are 1.8 mm each, against a bias of 48 mm, and
+// the map and its copy are 8 MB each. Lamps and spots keep 24 bits: their depth is a cone's, which crowds its
+// steps up to the light and leaves the far end coarse.
+export const SHADOW_16 = { on: true };
 const shadowTarget = ShadowNode.prototype.setupRenderTarget;
 ShadowNode.prototype.setupRenderTarget = function (shadow, builder) {
   const o = shadowTarget.call(this, shadow, builder), map = o.shadowMap;
   if (SHADOW_DEPTH.on && builder.renderer.shadowMap.transmitted !== true && !map.isCubeRenderTarget && map.textures.length === 1 && map.depthTexture) map.textures.length = 0;
+  if (SHADOW_16.on && !map.isCubeRenderTarget && map.depthTexture && shadow.camera?.isOrthographicCamera) map.depthTexture.type = UnsignedShortType;
   return o;
 };
 // Blend shapes in the motion picture. (three r187 moves a morphing mesh's points by its shapes but leaves
@@ -1187,6 +1196,7 @@ export function depthMeter(r) {
 // The still/moving shadow split on WebGPU (hd3d.js shadowLights): the light gets three's own shadow
 // node, made here so the kit can draw its map when it wants to (shadowOps draw), and over what is already
 // there when told to keep it (three clears a shadow map each time it draws one).
+let kitShadow = false;   // (the kit is drawing a shadow map itself, shadowOps: a part, a wipe, one made ahead)
 export function splitShadowNode(l) {
   const node = shadowOf(l, l.shadow), base = node.renderShadow, update = node.updateShadow;
   node.gsSplit = true;
@@ -1202,7 +1212,9 @@ export function splitShadowNode(l) {
   // (HD.info: what the shadow maps cost this frame, as on WebGL)
   node.updateShadow = function (frame) {
     const I = frame.renderer.info.render, t0 = I.triangles, c0 = I.drawCalls;
-    try { return update.call(this, frame); } finally { SHADOW_COST[0] += I.triangles - t0; SHADOW_COST[1] += I.drawCalls - c0; }
+    // (a map three draws by itself, inside the scene's pass: sent now, to be drawn while the scene is encoded, submit.js;
+    // the kit's own are sent together before the scene, hd3d.js drawGPU)
+    try { return update.call(this, frame); } finally { SHADOW_COST[0] += I.triangles - t0; SHADOW_COST[1] += I.drawCalls - c0; if (!kitShadow) sendEarly('shadows'); }
   };
   return node;
 }
@@ -1216,18 +1228,29 @@ export function shadowOps(r) {
   let blit = null; const stands = new WeakMap();
   const ops = {
     scene: null, camera: null,
-    draw(l, mask, keep, q, px) {
-      const sh = l.shadow, node = sh.shadowNode, c = sh.camera, m0 = c.layers.mask, map = node.shadowMap, N = map.width;
+    // back, from (one pass: SHADOW_ONE): those parts of `from` (none: "far") are written into the map first, in the
+    // same pass as the things drawn over them. A pass loads the whole map into the chip's tile memory and stores
+    // it again whatever part it writes, so two passes move the map four times and one moves it twice.
+    draw(l, mask, keep, q, px, back, from) {
+      const sh = l.shadow, node = sh.shadowNode, c = sh.camera, m0 = c.layers.mask, map = node.shadowMap, N = map.width, one = SHADOW_ONE.on;
+      let ride = null;
       if (q) {
-        if (!keep) (blit ||= shadowBlit(r)).wipe(map, q, px);   // (WebGPU clears a whole picture or none of it: the part is emptied by drawing "far" over it)
+        // (WebGPU clears a whole picture or none of it: the part is emptied by drawing "far" over it, in this pass or one of its own)
+        if (!keep) { if (one) ride = (blit ||= shadowBlit(r)).ride(null, WHOLE, 1, N, WHOLE[0]); else (blit ||= shadowBlit(r)).wipe(map, q, px); }
         const x = q[0] * px, w = q[2] * px, h = q[3] * px, y = N - q[1] * px - h;
         c.setViewOffset(N, N, x, y, w, h); map.viewport.set(x, y, w, h); map.scissor.set(x, y, w, h); map.scissorTest = true;
       }
+      if (back) ride = (blit ||= shadowBlit(r)).ride(from ? from.depthTexture : null, back, px, N, q);
       c.layers.mask = mask; node.gsKeep = keep || !!q; node.gsPart = !!q;
       const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      RIDE.mesh = ride; RIDE.scene = ride && ops.scene; kitShadow = true;
       try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
-      finally { c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
+      finally { kitShadow = false; RIDE.mesh = RIDE.scene = null; c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
     },
+    /** One pass (hd3d.js shadowTiles, shadowSplit): what is put back goes in the pass of the things drawn over it. */
+    get one() { return SHADOW_ONE.on; },
+    /** A rectangle of no size, as `back`: nothing is written, the shaders of what rides in that kind of pass are made (a whole map drawn again is the frame for it). */
+    none: NONE1,
     copy(l, from, to, qs, px) { if (qs) (blit ||= shadowBlit(r)).copy(from.depthTexture, to, qs, px); else r.copyTextureToTexture(from.depthTexture, to.depthTexture); },
     shift(l, from, to, dx, dy, dz) { (blit ||= shadowBlit(r)).shift(from.depthTexture, to, dx, dy, dz); },
     // the copies' shaders, built when the kept copy is made (a frame that is building shaders anyway) and not in
@@ -1255,12 +1278,14 @@ export function shadowOps(r) {
       // (gsPart: drawn as a part of a map is, without three's resize of the map to the light's map size)
       node.shadowMap = st; c.layers.mask = bit; node.gsKeep = false; node.gsPart = true;
       const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      kitShadow = true;
       try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
-      finally { node.shadowMap = map; c.layers.mask = m0; node.gsPart = false; sh.updateMatrices(l); }
+      finally { kitShadow = false; node.shadowMap = map; c.layers.mask = m0; node.gsPart = false; sh.updateMatrices(l); }
     },
     make(l) {
       // (depth alone, as the map it keeps: no colour picture, see SHADOW_DEPTH)
-      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true, count: colours(l.shadow.map) }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
+      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true, count: colours(l.shadow.map) }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h, l.shadow.map?.depthTexture?.type); t.depthTexture.name = 'ShadowDepthKept';   // (the map's own depth: 16 bits for a sun, SHADOW_16; a copy between two kinds is refused)
+      r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
       r.setRenderTarget(t); r.clearDepth(); r.setRenderTarget(was);
       return t;
@@ -1273,11 +1298,30 @@ export function shadowOps(r) {
 // away and dz deeper (what comes from outside it, or ends up outside the depth range, is "far": nothing there).
 /** Tests: `on: false` keeps (loads) the map under a whole-map slide, as before. */
 export const SHIFT_CLEAR = { on: true };
+/**
+ * A shadow map kept in parts is written in as few passes as there can be (hd3d.js HD.shadowOne; tests: `on: false`
+ * is a pass for each step, as before): a part is emptied, and the kept copy's parts are put back, in the pass of
+ * the things drawn over them (scene-list.js RIDE).
+ */
+export const SHADOW_ONE = { on: true };
+const WHOLE = [[0, 0, 1, 1]], NONE1 = [[0, 0, 0, 0]];
 function shadowBlit(r) {
-  const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64;
-  const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
-  const mesh = new Mesh(geo, null), cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); mesh.frustumCulled = false;
-  const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; return m; };
+  const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64, RING = 8, ring = [], cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1), mats = new WeakMap(); let turn = 0;
+  // Each use takes the next of a few meshes, with its own rectangles (and, as three keeps them for each thing drawn,
+  // its own copy of the numbers): WebGPU does an upload at once, so a second use of one mesh in a frame changed the
+  // rectangles of the first before its pass had gone to the chip, and the passes held to go together (submit.js)
+  // had to be sent first, three times a frame in a town.
+  const next = () => {
+    let k = ring[turn];
+    if (!k) {
+      const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
+      const mesh = new Mesh(geo, null); mesh.frustumCulled = false; mesh.castShadow = true;   // (castShadow: three draws it in a shadow map's pass, where it rides)
+      k = ring[turn] = { pos, geo, at, mesh };
+    }
+    turn = (turn + 1) % RING; return k;
+  };
+  // (allowOverride: drawn as it is in a shadow map's pass too, not with the light's shadow material)
+  const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; m.allowOverride = false; return m; };
   let far = null;
   const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
   // materials made ahead for stand-ins (ahead), by the kind of depth picture they read: a real picture of that
@@ -1298,33 +1342,39 @@ function shadowBlit(r) {
     if (spare) { const k = kindOf(tex); (spares.get(k) || spares.set(k, []).get(k)).push(m); } else mats.set(tex, m);
     return m;
   };
-  // the rectangles (texels, y up) as triangles in clip space
-  const quads = (qs, px, N) => {
-    const n = Math.min(MAX, qs.length);
+  // the rectangles (texels, y up) as triangles in clip space, on the next mesh; part: the rectangle [x, y, w, h] the
+  // pass draws into (its viewport), when that is not the whole picture
+  const quads = (qs, px, N, part) => {
+    const k = next(), pos = k.pos, n = Math.min(MAX, qs.length);
+    const X = part ? part[0] * px : 0, Y = part ? part[1] * px : 0, W = part ? part[2] * px : N, H = part ? part[3] * px : N;
     for (let i = 0; i < n; i++) {
-      const q = qs[i], x0 = q[0] * px / N * 2 - 1, y0 = q[1] * px / N * 2 - 1, x1 = (q[0] + q[2]) * px / N * 2 - 1, y1 = (q[1] + q[3]) * px / N * 2 - 1, o = i * 18;
+      const q = qs[i], x0 = (q[0] * px - X) / W * 2 - 1, y0 = (q[1] * px - Y) / H * 2 - 1, x1 = ((q[0] + q[2]) * px - X) / W * 2 - 1, y1 = ((q[1] + q[3]) * px - Y) / H * 2 - 1, o = i * 18;
       pos[o] = x0; pos[o + 1] = y0; pos[o + 3] = x1; pos[o + 4] = y0; pos[o + 6] = x1; pos[o + 7] = y1;
       pos[o + 9] = x0; pos[o + 10] = y0; pos[o + 12] = x1; pos[o + 13] = y1; pos[o + 15] = x0; pos[o + 16] = y1;
     }
-    at.needsUpdate = true; geo.setDrawRange(0, n * 6);
+    k.at.needsUpdate = true; k.geo.setDrawRange(0, n * 6);
+    return k.mesh;
   };
   const ALL = [[0, 0, 1, 1]];
   // whole: every texel is written, so what was in the picture is not read back first (it is cleared: on a
   // phone's chip a pass that keeps a picture loads all of it into the chip's tile memory, a clear loads nothing)
-  const run = (m, to, whole = false) => {
+  const run = (mesh, m, to, whole = false) => {
     const was = r.getRenderTarget(), ac = r.autoClear, st = to.scissorTest; mesh.material = m;
     r.autoClear = whole && SHIFT_CLEAR.on; to.scissorTest = false; r.setRenderTarget(to);
     try { r.render(mesh, cam); } finally { r.setRenderTarget(was); r.autoClear = ac; to.scissorTest = st; }
   };
   return {
-    copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; quads(qs, px, to.width); run(matFor(tex), to); },
-    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to, true); },
-    wipe(to, q, px) { ALL2[0] = q; quads(ALL2, px, to.width); run(farMat(), to); },
+    copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; run(quads(qs, px, to.width), matFor(tex), to); },
+    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; run(quads(ALL, to.width, to.width), matFor(tex), to, true); },
+    wipe(to, q, px) { ALL2[0] = q; run(quads(ALL2, px, to.width), farMat(), to); },
+    // the rectangles qs of the picture tex (none: "far"), as a mesh for the pass that draws into `part` of a picture
+    // N across to take with it (shadowOps draw: RIDE)
+    ride(tex, qs, px, N, part) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = N - 1; const mesh = quads(qs, px, N, part); mesh.material = tex ? matFor(tex) : farMat(); return mesh; },
     // each of the three drawn once with a rectangle of no size: nothing is written, the shaders and pipelines are made
     warm(map, cache) {
       if (warmed.get(cache) === map) return; warmed.set(cache, map);
-      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1; quads(NONE, 1, map.width);
-      run(matFor(map.depthTexture), cache); run(matFor(cache.depthTexture), map); run(farMat(), map);
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = map.width - 1;
+      run(quads(NONE, 1, map.width), matFor(map.depthTexture), cache); run(quads(NONE, 1, map.width), matFor(cache.depthTexture), map); run(quads(NONE, 1, map.width), farMat(), map);
     },
     // the same three on stand-ins like a sun's map and the copy its tiles would keep (shadowOps make), kept for
     // the real ones (their pictures stay, 4 x 4: three keeps a pipeline while what was drawn with it is there).
@@ -1340,9 +1390,10 @@ function shadowBlit(r) {
         r.initRenderTarget(t); return t;
       };
       const lin = like(LinearFilter), near = like(NearestFilter);
-      const copy = new RenderTarget(4, 4, { depthBuffer: true, count: colours(map) }); copy.depthTexture = new DepthTexture(4, 4); r.initRenderTarget(copy);   // (as shadowOps make)
-      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3; quads(NONE, 1, 4);
-      run(matFor(lin.depthTexture, true), copy); run(matFor(near.depthTexture, true), copy); run(matFor(copy.depthTexture, true), lin); run(farMat(), lin);
+      const copy = new RenderTarget(4, 4, { depthBuffer: true, count: colours(map) }); copy.depthTexture = new DepthTexture(4, 4, d.type); r.initRenderTarget(copy);   // (as shadowOps make)
+      U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3;
+      const none = () => quads(NONE, 1, 4);
+      run(none(), matFor(lin.depthTexture, true), copy); run(none(), matFor(near.depthTexture, true), copy); run(none(), matFor(copy.depthTexture, true), lin); run(none(), farMat(), lin);
       (this.stand ||= []).push(lin, near, copy);
     },
   };
@@ -2304,6 +2355,12 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   // the hand-written blend (S2_UP) or the learned one (s2Net)
   const upscale = net ? s2Net(net)(I.args, half) : S2_UP(I.args, half);
   const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(I.lock, 0, 0, 1)); upMat.name = 'SGSR2';
+  // Beside the learned blend, the hand-written one from the same inputs into the same pictures (light: hd3d.js asks
+  // for it once a game has had to step its final picture down: the network is some 500 multiply-adds for every pixel
+  // of that picture, on top of the pass's own sums). Picked frame by frame, so nothing is built again mid-round.
+  const upLight = net ? new NodeMaterial() : null;
+  if (upLight) { upLight.fragmentNode = new OutputStructNode(S2_UP(I.args, half), vec4(I.lock, 0, 0, 1)); upLight.name = 'SGSR2 hand'; }
+  const qLight = upLight ? new QuadMesh(upLight) : null; let warmed = false;
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
   const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat), qFl = flMat ? new QuadMesh(flMat) : null;
   // the training numbers (scripts/gssr-train): drawn after each upscale while asked for, from the same inputs
@@ -2321,6 +2378,8 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   };
   return {
     U, key: '', low, shape,
+    /** Draw with the hand-written blend where this was built with the learned one (the same history carries on). */
+    light: false,
     /** Training (scripts/gssr-train): on, each upscale also draws the network's numbers for every pixel; read() gives them. */
     get probe() { return !!probe; },
     set probe(on) { if (!on && probe) { probe.q?.forEach(q => q.material.dispose()); probe.t?.forEach(t => t.dispose()); } probe = on ? probe || {} : null; },
@@ -2356,7 +2415,10 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
           r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
           r.setRenderTarget(LH[sc]); qLh.render(r);
         } else if (qFl) { lhT.value = FL[1 - sc].texture; sdT.value = FL[sc].textures[1]; r.setRenderTarget(FL[sc]); qFl.render(r); }
-        r.setRenderTarget(into); qUp.render(r);
+        const q = this.light && qLight ? qLight : qUp;
+        // (the first frame, under the loading screen, draws the other blend first: its shader is made then, not at the switch)
+        if (qLight && !warmed) { warmed = true; r.setRenderTarget(into); (q === qUp ? qLight : qUp).render(r); }
+        r.setRenderTarget(into); q.render(r);
         probeDraw(r);
         sc = 1 - sc;
         r.setRenderTarget(null); if (show) qCp.render(r);
@@ -2367,7 +2429,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     last() { return H2[1 - cur].texture; },
     /** The picture the render before that made (it stays until the next render draws over it). */
     before() { return H2[cur].texture; },
-    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
+    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); upLight?.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
   };
 }
 
@@ -2518,6 +2580,9 @@ export class GpuChain {
     // v.oit: three's weighted blended order-independent transparency (McGuire and Bavoil) in place of the plain
     // scene pass: see-through things blend right whatever order they're drawn in (glass behind glass, smoke in water)
     const sp = this.sp = (oitOn ? oitPass : pass)(this.scene, this.cam, { samples: msaa || 0 });
+    // (the scene's pass goes to the chip as soon as it is encoded, with what was held before it: the chip draws the scene
+    // while the code encodes the effects, submit.js)
+    { const draw = sp.updateBefore; sp.updateBefore = function (frame) { try { return draw.call(this, frame); } finally { sendEarly('scene'); } }; }
     // frame generation and SGSR 2: the scene's pass also writes each pixel's motion and where see-through things are
     if (mrtOn && this.clear) { sp.setMRT(frameGenMRT()); slimPictures(sp, { motion: true }); }
     if (this.clear) {
@@ -2908,7 +2973,7 @@ export class GpuChain {
   }
   present(o, f, live) {
     if (live) return this.realFrame(o, f);
-    if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
+    if (this.s2) { this.s2.light = !!o.s2Light; this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
     if (o.sunMask && this.sp && !this.clear) sunMask(this.r, this.sp.getTextureNode('depth').value, this.cam, o.sunMask);
   }
@@ -2939,7 +3004,7 @@ export class GpuChain {
     // the frame's picture, and the last frame's: two pictures taking turns (SGSR 2's own two, or ours), so
     // frame generation reads the last frame where it is instead of copying a screen-sized picture every frame
     let color, before;
-    if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(r, false); color = this.s2.last(); before = this.s2.before(); }
+    if (this.s2) { this.s2.light = !!o.s2Light; this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(r, false); color = this.s2.last(); before = this.s2.before(); }
     else {
       // (the second picture only once frame generation runs for this view)
       const mk = () => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false }), two = this.fgRT ||= [mk()];

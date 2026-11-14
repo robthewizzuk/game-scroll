@@ -147,10 +147,13 @@ function counters(s) {
     C.fx = fx;
     if (C.tier != null && tier !== C.tier) { pend.push(`quality tier change (${C.tier} → ${tier})`); event('Q', `quality tier ${C.tier} → ${tier}`); }
     if (C.res != null && res !== C.res) { pend.push(`resolution step change (${Math.round(C.res * 100)}% → ${Math.round(res * 100)}%)`); event('Q', `resolution step ${Math.round(C.res * 100)}% → ${Math.round(res * 100)}%`); }
-    C.tier = tier; C.res = res; C.rw = rw;
-  } else { C.tier = C.res = C.fx = null; }
+    // (the final picture's own steps, hd3d.js frameSizes: the upscaler's picture a step smaller or back with the 3D as it was)
+    const up = HD.out;
+    if (C.up != null && up !== C.up && res === C.res) { pend.push(`final picture step change (${C.up}x → ${up}x the 3D's size)`); event('Q', `final picture ${C.up}x → ${up}x the 3D's size`); }
+    C.tier = tier; C.res = res; C.rw = rw; C.up = up;
+  } else { C.tier = C.res = C.fx = C.up = null; }
   const id = d?.id || '', st = s?.state || '';
-  if (C.id && id !== C.id) { pend.push('card changed'); event('C', `card → ${id || 'none'}`); C.tier = C.res = C.fx = null; }
+  if (C.id && id !== C.id) { pend.push('card changed'); event('C', `card → ${id || 'none'}`); C.tier = C.res = C.fx = C.up = null; }
   else if (C.state && st !== C.state && st === 'playing') { pend.push('round started'); event('C', 'round started'); }
   C.id = id; C.state = st;
 }
@@ -542,6 +545,8 @@ const CHECKS = {
     note: 'bundles: what keeps still (walls, roofs, rocks, props) recorded once per area and replayed, each area culled whole (more triangles sent, far less work for the CPU)' },
   submit: { title: 'Submits check', name: 'Submits check', key: 'oneSubmit', off: 'each pass by itself', on: 'together', can: bundleCan, no: () => 'Sending a frame\'s passes to the chip together needs WebGPU, so there is nothing to compare.', says: () => `${HD.info.submits || 0} sends a frame`, cpu: true,
     note: 'together: a frame\'s passes are held and go to the chip in one send (sooner only where an upload or a read back needs them gone first); the saving is in the browser\'s graphics process, so watch the frame rate as well as these times' },
+  shadowOne: { title: 'Shadow passes check', name: 'Shadow passes check', key: 'shadowOne', off: 'a pass each step', on: 'one pass', can: bundleCan, no: () => 'Shadow maps written in one pass need WebGPU, so there is nothing to compare.', says: () => 'kept shadow maps written in as few passes as there can be',
+    note: 'one pass: a shadow map kept from frame to frame has its kept copy put back and its moving things drawn in a single pass, where each step was a pass that loaded the whole map into the chip\'s memory and stored it again; the saving shows under "shadows" on frames where shadows change' },
 };
 // still scenery in render bundles (src/kit/still.js) can be compared: WebGPU
 function bundleCan() { return HD?.info.backend === 'webgpu'; }
@@ -582,7 +587,7 @@ async function runCheck(kind) {
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runSubgroups = () => runCheck('subgroups'), runBundle = () => runCheck('bundle'), runSubmit = () => runCheck('submit');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runSubgroups = () => runCheck('subgroups'), runBundle = () => runCheck('bundle'), runSubmit = () => runCheck('submit'), runShadowOne = () => runCheck('shadowOne');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -823,7 +828,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">GSFG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="subgroups">Subgroups</button><button data-a="bundle">Bundles</button><button data-a="submit">Submits</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">GSFG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="subgroups">Subgroups</button><button data-a="bundle">Bundles</button><button data-a="submit">Submits</button><button data-a="shadowOne">Shadow passes</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -849,6 +854,7 @@ function panel() {
       case 'clouds': runClouds(); break;
       case 'bundle': runBundle(); break;
       case 'submit': runSubmit(); break;
+      case 'shadowOne': runShadowOne(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -946,7 +952,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, subgroups: runSubgroups, bundle: runBundle, submit: runSubmit, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, subgroups: runSubgroups, bundle: runBundle, submit: runSubmit, shadowOne: runShadowOne, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)
