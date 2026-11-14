@@ -47,7 +47,7 @@ export class LensNode extends Node {
     // shape: blades (0 round), their turn, how strong the discs are, on (0: the picture passes through); near / far: the camera's
     this.U = { lens: uniform(new Vector4()), shape: uniform(new Vector4()), cn: uniform(.1), cf: uniform(1000), px: uniform(new Vector2(1, 1)), hpx: uniform(new Vector2(1, 1)), tpx: uniform(new Vector2(1, 1)),
       grid: uniform(new Vector2(1, 1)), af: uniform(new Vector4(.5, .5, .02, .02)) };
-    this.pre = rt({ count: 2 }); this.tile = rt(); this.dil = rt(); this.gat = rt({ count: 2 }); this.spr = rt(); this.out = rt(pic || {});   // (the last step holds a colour alone: hd3d-gpu.js hdrPic) this.afRT = new RenderTarget(3, 3, { depthBuffer: false, type: UnsignedByteType });
+    this.pre = rt({ count: 2 }); this.tile = rt(); this.dil = rt(); this.gat = rt({ count: 2 }); this.spr = rt(); this.out = rt(pic || {}); this.afRT = new RenderTarget(3, 3, { depthBuffer: false, type: UnsignedByteType });   // (out: the last step holds a colour alone, hd3d-gpu.js hdrPic)
     for (const t of [this.pre, this.tile, this.dil, this.gat, this.spr, this.out]) t.gsPart = 'depth of field';
     this.pre.textures[0].name = 'Lens colour'; this.pre.textures[1].name = 'Lens highlights'; this.gat.textures[0].name = 'Lens blur'; this.gat.textures[1].name = 'Lens near'; this.spr.texture.name = 'Lens bokeh'; this.out.texture.name = 'Lens';
     this.mats = {};
