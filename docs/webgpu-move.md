@@ -134,6 +134,28 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   them), so nothing on the page changes. The pictures of cards waiting in the feed are drawn before the
   live view's frame, each the way its own view asks. WebGL's canvas is fixed when it is made and stays
   blended. `HD.info.canvas` says which.
+- Depth is kept reversed, in 32-bit floats (`REVERSED` in `src/kit/gpu.js`, three's `reversedDepthBuffer`;
+  `HD.info.depth`). A perspective depth crowds the far world into the top of its range: with a near plane at
+  10 cm everything past 100 m is in the last thousandth, and 24 bits cannot tell two walls a metre apart at
+  3 km (the test page counts 864 of 1,008 pixels of the wall behind showing through the one in front). Kept
+  the other way round, 1 at the near plane and 0 at the far one, a float's fine steps near 0 land where the
+  depths are crowded: the same walls are clean at 8 km with the same near plane, and cards 2 mm apart at
+  arm's length are as they were. three turns its own side round: the cameras' projection matrices, the depth
+  tests and clears, polygon offsets, the shadow cameras and their compare, and its nodes that read depth
+  (`getViewPosition`, `perspectiveDepthToViewZ`, the ambient occlusion, reflection and denoise nodes). The
+  kit's own readers are turned by hand. In three's projection the reversed depth is exactly 1 minus the
+  forward one, so a shader that reads a depth picture takes `fwdDepth()` for the depth as it ran before or
+  `noDepth()` for where nothing was drawn (`src/kit/depth-gpu.js`): the depth meter for occlusion culling, the
+  volumetric light, depth of field and the lens, motion blur, smoke and fire, GSSR and frame generation. The
+  kept shadow map's copies and slides write depth themselves (far is 0, a slide deeper subtracts), and 3D
+  fog's test against the sun's map is turned. Code on the CPU that works depths out itself takes
+  `forwardProjection(camera)` (`occlusion.js`); GPU culling's frustum is told the camera is reversed.
+  `toScreen()` still gives a game a third number that grows with distance and is over 1 behind the camera.
+  The scene's depth picture is `depth32float` where it was `depth24plus`, 4 bytes a pixel either way on
+  phone chips. The Console renderer and WebGL keep depth as it was. `?depth=forward` in the address, or
+  `REVERSED.on = false` before the renderer is made, keeps depth forward to compare, and the steering list's
+  `depth: false` keeps it forward on a phone or driver that turns out to need it. The projection native
+  AR hands over is turned in `ar3d.js` (`projectNative`); that has not run on a phone.
 - A sun's shadow map and its kept copy are 16-bit depth (`depth16unorm`; `HD.shadow16`, `SHADOW_16` in
   `hd3d-gpu.js`): half the memory, and half of what each pass on them moves. three makes every shadow map
   `depth24plus`, 4 bytes a texel. An orthographic light's depth is even from near to far, so 65,536 steps

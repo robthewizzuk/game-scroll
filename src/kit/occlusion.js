@@ -39,6 +39,17 @@
 // Kit use only.
 import { Box3, Matrix4, Vector3, Vector4, Frustum, Sphere, WebGPUCoordinateSystem } from 'three';
 
+/**
+ * A camera's projection matrix with depth running forward (0 at the near plane, 1 at the far one), whichever way the
+ * camera's own runs (reversed depth on WebGPU, gpu.js REVERSED: 1 near, 0 far, exactly 1 minus this): for code
+ * that works depths out itself, as the boxes here against the depths read back. Writes into out and returns it.
+ */
+export function forwardProjection(camera, out) {
+  out.copy(camera.projectionMatrix);
+  if (camera.reversedDepth) { const e = out.elements; e[2] = e[3] - e[2]; e[6] = e[7] - e[6]; e[10] = e[11] - e[10]; e[14] = e[15] - e[14]; }   // (z' = w - z)
+  return out;
+}
+const FP = new Matrix4();
 const M = new Matrix4(), IM = new Matrix4(), BX = new Box3(), FR = new Frustum(), V4 = new Vector4(), S = new Sphere(), C = new Vector3(), A = new Matrix4();
 const NEAR_W = .05;   // boxes are cut off this close in front of the camera
 // the last frame's depth: frames a move is remembered for a picture still on its way back from the chip (one
@@ -219,7 +230,7 @@ export class Occlusion {
     const w = S ? S.w : this.w, h = S ? S.h : Math.max(8, Math.min(256, Math.round(w / aspect)));
     let L0 = this.levels[0], fresh = false;
     if (!L0 || L0.w !== w || L0.h !== h) { this.levels = []; for (let lw = w, lh = h; ; lw = Math.ceil(lw / 2), lh = Math.ceil(lh / 2)) { this.levels.push({ w: lw, h: lh, d: new Float32Array(lw * lh) }); if (lw <= 4 && lh <= 4) break; } L0 = this.levels[0]; fresh = true; }
-    camera.updateMatrixWorld(); M.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    camera.updateMatrixWorld(); M.multiplyMatrices(forwardProjection(camera, FP), camera.matrixWorldInverse);   // (depths here run forward: the read-back's do, hd3d-gpu.js depthMeter)
     const pe = camera.projectionMatrix.elements; this.fx = Math.abs(pe[0]); this.fy = Math.abs(pe[5]);
     // this frame's moves take their old places out of the depth picture
     let cleared = 0;
@@ -272,8 +283,8 @@ export class Occlusion {
    * with the read-back and hand both to depth(). gl: WebGL's depth (-1..1 before it is stored), not WebGPU's (0..1).
    */
   shot(camera, W = 0, H = 0) {
-    const pe = camera.projectionMatrix.elements, p = camera.getWorldPosition(C);
-    return { f: this.f, t: performance.now(), vp: this.vp.clone(), inv: this.vp.clone().invert(), ip: camera.projectionMatrixInverse.clone(), gl: camera.coordinateSystem !== WebGPUCoordinateSystem, persp: pe[15] === 0, p10: pe[10], p14: pe[14], x: p.x, y: p.y, z: p.z, W, H };
+    const pe = forwardProjection(camera, FP).elements, p = camera.getWorldPosition(C);
+    return { f: this.f, t: performance.now(), vp: this.vp.clone(), inv: this.vp.clone().invert(), ip: FP.clone().invert(), gl: camera.coordinateSystem !== WebGPUCoordinateSystem, persp: pe[15] === 0, p10: pe[10], p14: pe[14], x: p.x, y: p.y, z: p.z, W, H };
   }
   /**
    * A frame's depth, back from the chip: px holds w x h texels of four bytes. The first three are the

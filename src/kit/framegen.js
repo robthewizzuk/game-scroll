@@ -65,6 +65,7 @@ import {
   mrt, output, velocity, diffuseColor, cameraProjectionMatrix, cameraViewMatrix, Loop, atomicLoad, atomicOr, screenUV,
 } from 'three/tsl';
 import { halfFn, halfWanted, halfKey } from './half.js';
+import { fwdDepth } from './depth-gpu.js';
 import { whole, addUp, subgroupsWanted } from './subgroups.js';
 
 const EMPTY = 0xffffffff;
@@ -282,6 +283,7 @@ export class FrameGen {
     // the inputs change every frame (SGSR 2 takes turns between two pictures): nodes whose value real() sets
     const col = this.colN = texture(blank), vel = this.velN = texture(blank), dep = this.depN = texture(this.prevDepth);
     const rea = this.reaN = texture(NO_REACTIVE);
+    const depAt = p => fwdDepth(dep.load(p).x);   // (the scene's depth 0 near, 1 far, whichever way the renderer keeps it: depth-gpu.js)
     const pcol = this.pcolN = texture(blank), pdep = texture(this.prevDepth), mm = texture(this.midMotion), mb = texture(this.midBend);
     const fm = texture(this.filled), fb = texture(this.filledBend);
     // (the sizes are uniforms, never numbers written into the shaders: a new size, which the resolution steps
@@ -320,7 +322,7 @@ export class FrameGen {
     // along a curve through the last three frames. Returns its straight-line motion d (uv, newest back to
     // last), the bend e off that line, its depth key z and whether a moving particle owns it.
     const motionAt = p => {
-      const u0 = uvOf(p), z0 = dep.load(p).x, r4 = rea.load(p);
+      const u0 = uvOf(p), z0 = depAt(p), r4 = rea.load(p);
       const dv = back(vel.load(p).xy), dp = back(partMove(r4));
       const part = liftAt(u0).greaterThan(.5);
       // the camera's turn from the newest frame back to the last, and what's left (moves, and the camera's slide)
@@ -378,7 +380,7 @@ export class FrameGen {
           If(found(at).and(c.w.lessThan(1.5)).and(c.z.greaterThan(best.z)), () => { best.assign(vec4(c.xyz, .5)); be.assign(mb.load(at).xy); });
         }
         // nothing found round it either (a big uncovered area): the newest frame's own motion there
-        If(best.z.lessThan(0), () => { best.assign(vec4(back(vel.load(p).xy), dep.load(p).x, .25)); be.assign(vec2(0)); });
+        If(best.z.lessThan(0), () => { best.assign(vec4(back(vel.load(p).xy), depAt(p), .25)); be.assign(vec2(0)); });
         textureStore(this.filled, p, best); textureStore(this.filledBend, p, vec4(be, 0, 0));
       });
     })().compute(n, [64]);
@@ -600,7 +602,7 @@ export class FrameGen {
           const inN = in01(uN), inP = in01(uP).and(U.interp.greaterThan(.5));
           // the newest frame's pixel there is a moving particle, but this one is the background behind it: not from there
           const rN = rea.sample(clamp(uN, 0, 1)).level(0), liftN = liftAt(uN), partN = liftN.greaterThan(.5);
-          const okN = inN.and(lin(dep.load(pixOf(uN)).x).greaterThan(L.sub(tol))).and(isPart.or(partN.not()));
+          const okN = inN.and(lin(depAt(pixOf(uN))).greaterThan(L.sub(tol))).and(isPart.or(partN.not()));
           const pP = pdep.load(pixOf(uP));
           // the last frame's see-through things were where they were, not where the background went: skip it there
           const okP = inP.and(lin(pP.x).greaterThan(L.sub(tol))).and(clear(pP.y, .25));
@@ -643,7 +645,7 @@ export class FrameGen {
                     const a = u.sub(c.xy.mul(float(1).sub(U.t))), b = u.add(c.xy.mul(U.t));
                     // both ends the same surface, then and now (not always the game's surface here: a thing that moves with
                     // no motion of its own, a ball on a screen, is in front of it at one end)
-                    const za = lin(dep.load(pixOf(a)).x), ok = in01(a).and(in01(b)).and(abs(lin(pdep.load(pixOf(b)).x).sub(za)).lessThan(za.mul(.1).add(.05)));
+                    const za = lin(depAt(pixOf(a))), ok = in01(a).and(in01(b)).and(abs(lin(pdep.load(pixOf(b)).x).sub(za)).lessThan(za.mul(.1).add(.05)));
                     const ca = col.sample(clamp(a, 0, 1)).level(0), cb = pcol.sample(clamp(b, 0, 1)).level(0), d = differ3(ca, cb);
                     If(ok.and(d.lessThan(best)), () => { best.assign(d); fc.assign(mix(cb, ca, U.t)); flowed.assign(1); });
                   });
@@ -663,7 +665,7 @@ export class FrameGen {
                 const all = C.slice(1).reduce((s, c) => s.and(c.w.greaterThan(FLOW_GAIN)).and(length(c.xy.sub(C[0].xy).mul(U.os)).lessThan(1)), C[0].w.greaterThan(FLOW_GAIN));
                 const fr = fq.sub(floor(fq)), fl = mix(mix(C[0].xy, C[1].xy, fr.x), mix(C[2].xy, C[3].xy, fr.x), fr.y);
                 const a = u.sub(fl.mul(float(1).sub(U.t)));
-                If(all.and(in01(a)).and(same(lin(dep.load(pixOf(a)).x))), () => { made.assign(col.sample(a).level(0)); flowed.assign(1); });
+                If(all.and(in01(a)).and(same(lin(depAt(pixOf(a))))), () => { made.assign(col.sample(a).level(0)); flowed.assign(1); });
               });
             });
           });
@@ -720,7 +722,7 @@ export class FrameGen {
     this.cKeepC = handed ? null : Fn(() => { const i = int(instanceIndex), q = ivec2(i.mod(OW), i.div(OW)); textureStore(this.prevColor, q, col.sample(vec2(q).add(.5).div(U.os)).level(0)); })().compute(on, [64]);
     this.cKeepD = Fn(() => {
       const p = xy(instanceIndex), r = rea.load(p), cover = select(movingOf(r, U.rs).greaterThan(.5), max(r.x, .001).negate(), r.x);
-      textureStore(this.prevDepth, p, vec4(dep.load(p).x, cover, back(vel.load(p).xy)));
+      textureStore(this.prevDepth, p, vec4(depAt(p), cover, back(vel.load(p).xy)));
     })().compute(n, [64]);
   }
 

@@ -18,6 +18,7 @@ import {
 import { SOURCES, SOLIDS, SOLID, IGNITE, HEAT, BURNS_AT, FLAME, SMOKE_MAX, VMAX, SHARP, NEAR, GAS, emptyField } from './gas.js';
 import { ORIGIN } from './origin.js';
 import { halfFn, halfWanted } from './half.js';
+import { noDepth } from './depth-gpu.js';
 
 const LK = 10, LSTEP = 1.5;   // the sun's light: this many looks through the smoke towards it, this many cells apart
 const SHADE = .55;            // smoke passes light on as well as stopping it: its own shadow is this much lighter than how much it hides
@@ -341,7 +342,7 @@ export function gasStage(s, src, U, keep, scaled, ch) {
   const inHalf = halfWanted();
   const half = rtt(Fn(() => {
     const q = uv(), d = dT.sample(q).r, vp = getViewPosition(q, d, Q.invProj), wp = Q.camWorld.mul(vec4(vp, 1)).xyz;
-    const rd0 = wp.sub(Q.cam), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toVar(), far = select(d.greaterThanEqual(1), float(1e6), L0);
+    const rd0 = wp.sub(Q.cam), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toVar(), far = select(noDepth(d), float(1e6), L0);
     // where the ray enters and leaves the gas's box
     const inv = select(rd.greaterThanEqual(vec3(0)), vec3(1), vec3(-1)).div(max(abs(rd), vec3(1e-5))).toVar(), a = Q.lo.sub(Q.cam).mul(inv).toVar(), b = Q.lo.add(Q.size).sub(Q.cam).mul(inv).toVar(), t0 = min(a, b), t1 = max(a, b);
     const tn = max(max(t0.x, t0.y), max(t0.z, float(0))).toVar(), tf = min(min(t1.x, t1.y), min(t1.z, far)).toVar();

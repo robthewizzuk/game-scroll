@@ -34,6 +34,7 @@ import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sk
 export { SKY };
 import { eachShown, listPipeline, RIDE } from './scene-list.js';
 import { sendEarly } from './submit.js';
+import { fwdDepth, noDepth } from './depth-gpu.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -1135,7 +1136,7 @@ export function depthMeter(r) {
       const lo = max(ivec2(floor(t.mul(U.blk))).sub(pad), ivec2(0)).toVar(), hi = min(ivec2(TSL.ceil(t.add(1).mul(U.blk))).sub(1).add(pad), top).toVar();
       const far = float(0).toVar(), near = float(1).toVar();
       Loop({ start: lo.y, end: hi.y, condition: '<=' }, { start: lo.x, end: hi.x, condition: '<=' }, ({ i, j }) => {
-        const d = dT.load(ivec2(j, i)).r; far.assign(max(far, d)); near.assign(min(near, d));
+        const d = fwdDepth(dT.load(ivec2(j, i)).r); far.assign(max(far, d)); near.assign(min(near, d));   // (0 near, 1 far, as occlusion.js works them out)
       });
       const none = far.greaterThanEqual(1);
       const q = select(none, float(16777215), min(float(16777214), TSL.ceil(far.mul(16777215)).add(1))).toVar();
@@ -1160,7 +1161,7 @@ export function depthMeter(r) {
      * Called in the frame a chain is made, which builds the chain's own shaders anyway.
      */
     warm(tex) {
-      if (!tex || !r.backend?.device || r.reversedDepthBuffer) return;
+      if (!tex || !r.backend?.device) return;
       const k = depthKind(r, tex); if (S.kinds.has(k)) return;
       const K = kindOf(tex), at = S.at ||= new RenderTarget(4, 4, { depthBuffer: false });
       U.blk.value.set(1, 1); U.size.value.set(1, 1); U.pk.value.set(1, 1); U.pad.value = 0;
@@ -1168,7 +1169,7 @@ export function depthMeter(r) {
     },
     /** Takes the picture of the depth just drawn (tex: the scene pass's depth texture). False when it could not. */
     read(tex, job, done) {
-      const device = r.backend?.device; if (!tex || !device || flying >= 2 || r.reversedDepthBuffer) return false;
+      const device = r.backend?.device; if (!tex || !device || flying >= 2) return false;
       const K = kindOf(tex);
       const { w, h } = job;
       if (!rt || rt.width !== w || rt.height !== h) { rt?.dispose(); rt = new RenderTarget(w, h, { depthBuffer: false }); }
@@ -1323,7 +1324,9 @@ function shadowBlit(r) {
   // (allowOverride: drawn as it is in a shadow map's pass too, not with the light's shadow material)
   const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; m.allowOverride = false; return m; };
   let far = null;
-  const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
+  // (reversed depth, gpu.js REVERSED: a map's depths run 1 at the light's near plane to 0 at its far one, so "far" is 0 and deeper is less)
+  const rev = !!r.reversedDepthBuffer, FAR = rev ? 0 : 1;
+  const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(FAR); finish(far); } return far; };
   // materials made ahead for stand-ins (ahead), by the kind of depth picture they read: a real picture of that
   // kind takes one over (pointed at it) and its shader and pipeline are already made
   const spares = new Map(), kindOf = t => `${t.type}|${t.format}|${t.compareFunction}|${t.minFilter}|${t.magFilter}`;
@@ -1335,7 +1338,8 @@ function shadowBlit(r) {
     m.depthNode = Fn(() => {
       const p = ivec2(floor(screenCoordinate.xy)).add(ivec2(U.off)).toVar(), top = int(U.top);
       const inside = p.x.greaterThanEqual(0).and(p.x.lessThanEqual(top)).and(p.y.greaterThanEqual(0)).and(p.y.lessThanEqual(top));
-      const d = dT.load(clamp(p, ivec2(0), ivec2(top))).r.toVar(), moved = d.add(U.dz);
+      const d = dT.load(clamp(p, ivec2(0), ivec2(top))).r.toVar(), moved = rev ? d.sub(U.dz) : d.add(U.dz);
+      if (rev) return select(inside.and(d.greaterThan(0)).and(moved.greaterThan(0)).and(moved.lessThanEqual(1)), moved, float(0));
       return select(inside.and(d.lessThan(1)).and(moved.greaterThanEqual(0)).and(moved.lessThan(1)), moved, float(1));
     })();
     finish(m);
@@ -1507,9 +1511,10 @@ export function froxels() {
       const d = U.dens.x.mul(exp(max(p.y.sub(U.dens.y), 0).mul(U.dens.z).negate())).mul(mix(float(1), n.mul(1.8), U.dens.w)).toConst();
       // the sun, through its shadow map (read by texel: nearest is plenty at froxel size)
       const s4 = U.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
-      const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.lessThan(1));
+      const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.greaterThan(0)).and(sc.z.lessThan(1));
       const sd = shT.load(ivec2(vec2(sc.x, sc.y.oneMinus()).mul(U.shSize))).x;
-      const lit = select(inside, step(sc.z, sd), float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir)).mul(gasSunAt(p, U.sunDir));   // (and under the clouds' shadow, and gs.gas's smoke: sunmask-gpu.js)
+      const sunLit = Fn(b => b.renderer.reversedDepthBuffer === true ? step(sd, sc.z) : step(sc.z, sd))();   // (reversed depth: the light's near plane is 1)
+      const lit = select(inside, sunLit, float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir)).mul(gasSunAt(p, U.sunDir));   // (and under the clouds' shadow, and gs.gas's smoke: sunmask-gpu.js)
       const L = vec3(U.sunCol).mul(lit.mul(sunPh)).add(U.amb).toVar();
       // lamps: soft round falloff to their range, scattered evenly
       Loop({ start: 0, end: FLAMPS }, ({ i: j }) => {
@@ -2226,7 +2231,9 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   const conv = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1);
     // (each of the 4 x 4 depths round the pixel read once: the nearest surface below is among them)
-    const seen = new Map(), D = (x, y) => { const k = x + ',' + y; if (!seen.has(k)) seen.set(k, depthT.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).x.toVar()); return seen.get(k); };
+    const seen = new Map(), D = (x, y) => { const k = x + ',' + y; if (!seen.has(k)) seen.set(k, fwdDepth(depthT.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).x).toVar()); return seen.get(k); };
+    // (D: 0 near, 1 far, as the comparisons below were written; raw() is that depth as the renderer keeps it, for the camera's own matrices: depth-gpu.js)
+    const raw = fwdDepth;
     // textureGather's order round the 2 x 2 texels from o: (0,1) (1,1) (1,0) (0,0)
     const G = (ox, oy) => ({ x: D(ox, oy + 1), y: D(ox + 1, oy + 1), z: D(ox + 1, oy), w: D(ox, oy) });
     const bl = G(-1, -1), br = G(1, -1), tl = G(-1, 1), tr = G(1, 1);
@@ -2237,7 +2244,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     const w = g => clamp(sep.div(abs(maxC.sub(min4(g))).add(1.19e-07)), 0, 1);
     const clip = select(maxC.lessThan(1 - 1e-5), clamp(float(1).sub(w(bl).add(w(br)).add(w(tl)).add(w(tr)).mul(.25)), 0, 1), float(0));
     const u = vec2(P).add(.5).div(U.rs), ndc = vec2(u.x.mul(2).sub(1), float(1).sub(u.y.mul(2)));
-    const pre = U.c2p.mul(vec4(ndc, bl9, 1)), camM = ndc.sub(pre.xy.div(pre.w));
+    const pre = U.c2p.mul(vec4(ndc, raw(bl9), 1)), camM = ndc.sub(pre.xy.div(pre.w));
     // the nearest surface in the 3 x 3 round it
     const at = (x, y) => clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi);
     const near = ivec2(P).toVar(), nz = float(D(0, 0)).toVar();
@@ -2252,7 +2259,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     // own depth where FSR builds it from this frame's): where last frame had something nearer at the place this
     // pixel came from, this surface was hidden behind it then, so the history there holds the thing in front
     if (!disOn) return vec4(M, clip, rea);
-    const own = D(0, 0), pr = U.c2p.mul(vec4(ndc, select(U.fsr.z.greaterThan(.5), own, nz), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
+    const own = D(0, 0), pr = U.c2p.mul(vec4(ndc, raw(select(U.fsr.z.greaterThan(.5), own, nz)), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
     // (last frame's pixels were drawn a jitter step apart from this frame's: read them where this one's point fell)
     const pu = vec2(u.x.sub(M.x.mul(.5)), u.y.add(M.y.mul(.5))), pp = pu.mul(U.rs).sub(.5).add(U.jm), b0 = ivec2(floor(pp)), fr = pp.sub(floor(pp));
     const K = float(1.37e-05).mul(length(U.rs.mul(.5)));
@@ -2721,7 +2728,7 @@ export class GpuChain {
       this.volT = rtt(Fn(() => {
         const q = uv(), d = dT.sample(q).r, vp = getViewPosition(q, d, V.invProj), wp = V.camWorld.mul(vec4(vp, 1)).xyz;
         const rd0 = wp.sub(V.camPos), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toConst();
-        const L = select(d.greaterThanEqual(1), V.k.y, min(L0, V.k.y)).toConst(), dt = L.div(V.steps).toConst();
+        const L = select(noDepth(d), V.k.y, min(L0, V.k.y)).toConst(), dt = L.div(V.steps).toConst();
         const t = dt.mul(spr('vol') ? fract(interleavedGradientNoise(screenCoordinate).add(SP.turn)) : interleavedGradientNoise(screenCoordinate)).toVar(), sum = float(0).toVar(), g = V.k.z, spot = V.lt.x.greaterThan(.5);
         Loop({ start: 0, end: VOL_MAX }, ({ i }) => {
           If(float(i).greaterThanEqual(V.steps), () => { Break(); });
@@ -2757,7 +2764,7 @@ export class GpuChain {
     // chain): what's in focus stays, the rest is blurred by up to lens.w pixels, into a picture of its own
     if (dofOn) {
       const cn = U.cn, cf = U.cf, L = U.lens, S = src, SA = srcAo;
-      const dist = q => { const z = dT.sample(q).x; return select(z.greaterThanEqual(1), float(0), cn.mul(cf).div(cf.sub(z.mul(cf.sub(cn))))); };
+      const dist = q => { const z = fwdDepth(dT.sample(q).x); return select(z.greaterThanEqual(1), float(0), cn.mul(cf).div(cf.sub(z.mul(cf.sub(cn))))); };
       const coc = z => select(z.lessThanEqual(0), float(0), clamp(abs(z.sub(L.x)).sub(L.y).div(max(L.x.mul(L.z), 1e-3)), 0, 1));
       const dof = Fn(() => {
         const q = uv(), base = S.sample(q).rgb, z = dist(q), c = coc(z), out = vec3(base).toVar();
@@ -2789,7 +2796,7 @@ export class GpuChain {
       const tileT = this.mbTile;
       this.mbT = rtt(hdrOut(Fn(() => {
         const q = uv(), base = S.sample(q).rgb.mul(SA), d = dT.sample(q).r, vp = getViewPosition(q, d, V.invProj);
-        const near = select(d.greaterThanEqual(1), float(1), smoothstep(mb.z, mb.z.mul(1.5).add(.01), vp.z.negate()));   // (mb.z: things this close stay sharp)
+        const near = select(noDepth(d), float(1), smoothstep(mb.z, mb.z.mul(1.5).add(.01), vp.z.negate()));   // (mb.z: things this close stay sharp)
         // the camera's move only (WebGL's way, and the frame after a cut)
         const pc = V.prevVP.mul(V.camWorld.mul(vec4(vp, 1))), pn = pc.xy.div(max(pc.w, 1e-4)), pu = vec2(pn.x.mul(.5).add(.5), pn.y.mul(-.5).add(.5));
         const v0 = q.sub(pu).mul(mb.x), l = length(v0.mul(vec2(mb.w, 1))), mx = mb.y.mul(mb.w);

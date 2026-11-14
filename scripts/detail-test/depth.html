@@ -1,0 +1,77 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Reversed 32-bit depth on WebGPU (src/kit/gpu.js REVERSED, src/kit/depth-gpu.js) for
+// scripts/detail-test.cjs --page depth --webgpu.
+// A camera that sees from 10 cm to 20 km looks at pairs of walls, a red one with a green one a metre behind it, at
+// 500 m, 3 km and 8 km, and at a blue card with a yellow one 2 mm behind it at arm's length. With depth stored
+// forward the far pairs fall into the same step of depth and the green wall shows through the red in stripes; stored
+// reversed (the near plane at 1, the far plane at 0, in 32-bit floats) the steps are spread evenly over the distance
+// and every pair is clean. A game sees no change: toScreen()'s third number still grows with distance and is over 1
+// behind the camera.
+//   ?gpu  ?tier=2  ?depth=forward (depth as before: this page then expects the far walls to fight, which shows it can tell)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu'), FWD = Q.get('depth') === 'forward';
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 320), H = +(Q.get('h') || 240);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const v = new gs.hd.HDView({ bg: '#8fa6c4', fog: 0, amb: 1 });
+  const sun = gs.hd.sun('#ffffff', 2, 14, [.2, 1, .6]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  v.cam.fov = 45; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 20000; v.cam.position.set(0, 0, 0); v.cam.lookAt(0, 0, -1); v.cam.updateProjectionMatrix(); v.cam.updateMatrixWorld();
+  // a pair: a front wall and one the same `gap` behind it (straight away from the camera), both turned a little so the depth runs across them
+  const pairs = [], pair = (name, x, y, z, w, h, gap, front, back) => {
+    const mk = (col, dz) => { const m = new T.Mesh(new T.PlaneGeometry(w, h), gs.hd.pbr(col, { rough: .9 })); m.position.set(x, y, z - dz); m.rotation.y = .2; v.scene.add(m); return m; };
+    pairs.push({ name, x, y, z, w, h, gap, f: mk(front, 0), b: mk(back, gap) });
+  };
+  for (const D of [500, 3000, 8000]) pair(D + ' m', (D === 500 ? -.33 : D === 3000 ? 0 : .33) * D, .08 * D, -D, .2 * D, .24 * D, 1, '#d02020', '#20d020');
+  pair('60 cm', 0, -.17, -.6, .12, .07, .002, '#2030e0', '#e0d020');
+  const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c); const x = c.getContext('2d', { willReadFrequently: true });
+  const draw = async (n = 6) => { for (let i = 0; i < n; i++) { x.clearRect(0, 0, W, H); v.render(x, W, H); await frame(); } return x.getImageData(0, 0, W, H).data; };
+  // the middle half of a pair's place on the screen: how many of its pixels show the front wall, how many the back one
+  const read = (px, P) => {
+    P.f.updateMatrixWorld(); let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const q = new T.Vector3(sx * P.w / 2, sy * P.h / 2, 0).applyMatrix4(P.f.matrixWorld), s = v.toScreen(q.x, q.y, q.z); x0 = Math.min(x0, s[0]); x1 = Math.max(x1, s[0]); y0 = Math.min(y0, s[1]); y1 = Math.max(y1, s[1]); }
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hw = (x1 - x0) / 4, hh = (y1 - y0) / 4; let front = 0, back = 0, n = 0;
+    const far = P.gap === 1;   // (red in front of green; else blue in front of yellow)
+    for (let j = Math.ceil(cy - hh); j <= cy + hh; j++) for (let i = Math.ceil(cx - hw); i <= cx + hw; i++) {
+      const k = (j * W + i) * 4, r = px[k], g = px[k + 1], b = px[k + 2]; n++;
+      if (far ? r > g + 40 : b > r + 40) front++; else if (far ? g > r + 40 : r > b + 40) back++;
+    }
+    return { n, front, back };
+  };
+  const px = await draw(GPU ? 10 : 4); out.walls = c.toDataURL();
+  const got = pairs.map(P => ({ P, ...read(px, P) }));
+  info.pairs = Object.fromEntries(got.map(g => [g.P.name, { pixels: g.n, front: g.front, back: g.back }]));
+  info.depth = HD.info.depth || '';
+  const near = got[3], far = got.slice(0, 3);
+  check('every pair fills enough of the picture to measure', got.every(g => g.n > 40), got.map(g => g.n).join(', ') + ' pixels');
+  check('the cards at arm\'s length, 2 mm apart: only the front one shows', near.front === near.n && !near.back, `${near.front} of ${near.n} front, ${near.back} back`);
+  check('the walls at 500 m, a metre apart: only the front one shows', far[0].front === far[0].n && !far[0].back, `${far[0].front} of ${far[0].n} front, ${far[0].back} back`);
+  if (!GPU) {
+    info.note = 'WebGL keeps its depth as it was';
+    check('WebGL: depth as before', !HD.info.depth, `HD.info.depth '${HD.info.depth || ''}'`);
+  } else if (FWD) {
+    check('?depth=forward: depth is stored as before', HD.info.depth === 'forward' && !G.r.reversedDepthBuffer, `HD.info.depth '${HD.info.depth}'`);
+    check('and the walls at 8 km fight (so this page can tell)', far[2].back > 0, `${far[2].back} of ${far[2].n} pixels show the wall behind`);
+  } else {
+    check('depth is stored reversed', HD.info.depth === 'reversed' && G.r.reversedDepthBuffer === true, `HD.info.depth '${HD.info.depth}'`);
+    check('and the camera\'s projection with it', v.cam.reversedDepth === true, `the camera's projection is ${v.cam.reversedDepth ? 'reversed' : 'forward'}`);
+    check('the walls at 3 km, a metre apart: only the front one shows', far[1].front === far[1].n && !far[1].back, `${far[1].front} of ${far[1].n} front, ${far[1].back} back`);
+    check('the walls at 8 km, a metre apart: only the front one shows', far[2].front === far[2].n && !far[2].back, `${far[2].front} of ${far[2].n} front, ${far[2].back} back`);
+  }
+  // what a game is told is the same either way
+  const a = v.toScreen(0, 0, -1), b = v.toScreen(0, 0, -1000), far3 = v.toScreen(0, 0, -19999), behind = v.toScreen(0, 0, 5), side = v.toScreen(.2, .1, -1);
+  check('toScreen: the middle of the view is the middle of the picture', Math.abs(a[0] - W / 2) < .01 && Math.abs(a[1] - H / 2) < .01, `${a[0].toFixed(2)}, ${a[1].toFixed(2)}`);
+  check('toScreen: right and up are right and up', side[0] > W / 2 && side[1] < H / 2);
+  check('toScreen: its third number grows with distance, 0 to 1', a[2] > 0 && a[2] < b[2] && b[2] < far3[2] && far3[2] <= 1, `1 m ${a[2].toFixed(5)}, 1 km ${b[2].toFixed(7)}, 20 km ${far3[2].toFixed(7)}`);
+  check('toScreen: and is over 1 behind the camera', behind[2] > 1, behind[2].toFixed(4));
+  window.result = { out, info, checks };
+} catch (e) { console.error(e); window.result = { error: String(e?.stack || e) }; }
+</script>

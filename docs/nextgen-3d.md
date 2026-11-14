@@ -488,7 +488,9 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   GSSR's, frame generation's and traced reflections' keep four channels.
   The 3D canvas is opaque to the page while a view fills it, so the browser
   shows it without blending it over what is behind (AR views, which show the camera through it, turn that
-  off for their own frames; `HD.info.canvas`). `HD.shadowColour = true`,
+  off for their own frames; `HD.info.canvas`). Depth is kept reversed in 32-bit floats on WebGPU, so far
+  things that are close together stay apart: walls a metre apart are clean at 8 km with a near plane at
+  10 cm, where they flickered from about 1 km (nothing for a game to do; `HD.info.depth`). `HD.shadowColour = true`,
   `HD.shadow16 = false` (both before a
   light's first frame), `HD.hdrSmall = false`, `HD.opaque = false` and `HD.shareTargets = false` put each back to
   compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory

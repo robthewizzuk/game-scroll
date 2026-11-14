@@ -27,6 +27,7 @@ import {
   passTexture, texture, context, outputStruct, property, Loop, If, instanceIndex, varying, positionGeometry, screenUV, log2,
 } from 'three/tsl';
 import { AF_LOG } from './lens.js';
+import { fwdDepth, noDepth } from './depth-gpu.js';
 
 const Q = new QuadMesh(), CAM = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
 let RS;   // (three fills it in: undefined, not null, the first time)
@@ -102,7 +103,7 @@ export class LensNode extends Node {
     const G0 = texture(this.gat.textures[0]), G1 = texture(this.gat.textures[1]), SP = texture(this.spr.texture);
     const L = U.lens, B = U.shape;
     // 1 / distance is a straight line in the depth picture's value; the sky is at no 1 / distance at all
-    const invZ = d => select(d.greaterThanEqual(1), float(0), float(1).div(U.cn).sub(d.mul(float(1).div(U.cn).sub(float(1).div(U.cf)))));
+    const invZ = d0 => { const d = fwdDepth(d0); return select(d.greaterThanEqual(1), float(0), float(1).div(U.cn).sub(d.mul(float(1).div(U.cn).sub(float(1).div(U.cf))))); };   // (fwdDepth: 0 near, 1 far, whichever way the renderer keeps it)
     const cocAt = d => clamp(L.x.mul(L.y.sub(invZ(d))), L.z.negate(), L.z);   // (half-size pixels, signed)
     // the aperture's outline: how far out its edge is at angle a (1 round; a polygon of `blades` sides, turned)
     const shapeAt = a => { const n = max(B.x, 3), s = float(Math.PI).div(n); return select(B.x.lessThan(3), float(1), cos(s).div(cos(mod(a.sub(B.y), s.mul(2)).sub(s)))); };
@@ -194,7 +195,7 @@ export class LensNode extends Node {
     this.mats.af = own(qmat(Fn(() => {
       const q = uv(), p = U.af.xy.add(q.sub(.5).mul(2).mul(U.af.zw)), d = dT.sample(p).r, iz = invZ(d);
       const n = clamp(log2(float(1).div(max(iz, 1e-7))).sub(AF_LOG[0]).div(AF_LOG[1]), 0, 1).mul(65535), hi = floor(n.div(256));
-      return vec4(hi.div(255), n.sub(hi.mul(256)).div(255), select(d.greaterThanEqual(1), float(1), float(0)), 1);
+      return vec4(hi.div(255), n.sub(hi.mul(256)).div(255), select(noDepth(d), float(1), float(0)), 1);
     })(), 'Lens autofocus'));
     return this.outN;
   }
