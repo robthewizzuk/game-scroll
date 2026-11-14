@@ -860,9 +860,11 @@ async function framegenScenes() {
   const q = await open(g, { width: 240, height: 320, dpr: 1 });
   await q.game('bunker-breakout');
   const fg = await q.evaluate(async () => {
-    __hd.direct = true; const steps = [];
+    // (a real frame more than a quarter of a second after the last counts as a pause, and frame generation starts
+    // afresh: on a slow build machine every frame is that late, so nothing was ever made: the gap is raised for the run)
+    __hd.direct = true; const steps = [], gap = __hd.fgGap; __hd.fgGap = 5000;
     const res = await __gs.tour({ scenes: true, framegen: true, alternate: true, seconds: 2, size: .1, only: ['square'], onStep(s) { steps.push(`${s.i + 1}/${s.n} ${s.game.title}: ${s.what}`); } });
-    __hd.direct = false; await new Promise(r => setTimeout(r, 400));
+    __hd.direct = false; __hd.fgGap = gap; await new Promise(r => setTimeout(r, 400));
     const s = res.scenes[0];
     return { text: res.text, steps, error: s?.error, modes: (s?.modes || []).map(m => ({ key: m.key, name: m.name, frames: m.frames, pictures: m.pictures, drawn: m.drawn, how: m.how, backend: m.backend, pace: m.pace, madeMs: m.madeMs, dropped: m.dropped, easy: m.easy })), active: __gs.active?.def.id, stage: !!document.querySelector('.tour-stage') };
   });
