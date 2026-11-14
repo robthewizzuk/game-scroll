@@ -34,11 +34,13 @@ import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.mo
 import { HD } from './hd3d.js';
 import { sameList } from './slim.js';
 import { skin8 } from './slim-core.js';
+import { figureCapsule } from './sunmask.js';
 
 const CYCLE = 32, FPS = 24, FADE = .25, STRIDE = 20;   // rows a stride cycle, rows a second for moves by the clock, seconds a blend takes, numbers a member
 const FINE = .15, KEEP = 1.4, NOMINAL = 800;            // triangles a member wants for each pixel of its height, squared (of a screen 800 high: triangles about two pixels across); a level is kept until one 1.4 times as fine would do
 const APART = 4, LAST = 500;                            // levels are at most this many times apart in triangles (more are made between); the coarsest has about this many
 const TIER = [.5, .75, 1, 1];                           // how tall a member counts as, by quality tier (as human().see())
+const CAP_NEAR = 15;   // (WebGPU, sun mask: members nearer than this keep a real shadow; their level's further members too)
 const M4 = new Matrix4(), INV = new Matrix4(), PS = new Matrix4(), FR = new Frustum(), BALL = new Sphere(), V = new Vector3();
 
 /* ---------- the look (WebGL): a vertex takes its pose from two rows of the kind's texture ---------- */
@@ -223,7 +225,7 @@ export class Crowd {
       });
       // h: how tall it stands; r: a ball round it whatever its move (a stride reaches further than it stands); w: how thick it is, for ray()
       const [x0, y0, z0, x1, y1, z1] = b.box, h = Math.max(.2, y1 - Math.min(0, y0)), ex = x1 - x0, ez = z1 - z0, r = Math.hypot(h / 2, Math.max(ex, ez) / 2) * 1.5;
-      const k = { plan: b.plan, size: b.size, h, r, w: (ex + ez) / 2, cy: h / 2, levels: [], own: [] };
+      const k = { plan: b.plan, size: b.size, h, r, w: (ex + ez) / 2, d: ez, cy: h / 2, levels: [], own: [] };
       for (const s of shapes) {
         const geo = s.geo, mesh = new Mesh(geo, Array.isArray(s.material) ? s.material.map(mat) : mat(s.material));
         if (s.own >= 0) k.own[s.own] = k.levels.length;
@@ -297,7 +299,10 @@ export class Crowd {
     const cam = this.view.cam || this.view.camera, I = this.info, far2 = this.far * this.far;
     // "last frame" is the last frame drawn, not the last update: a game on a fixed tick updates twice between two frames, or not at all
     const roll = !this.hooked || this.age > 0; this.age = 0;
-    for (const k of this.kinds) for (const lv of k.levels) lv.n = 0;
+    // (WebGPU with the view's sun mask: a level none of whose members is near casts no shadow into the sun's map; its members throw a capsule's instead, hd3d.js sunMaskFrame)
+    const caps = !!this.view.gsCapsules && this.shadows, near2 = CAP_NEAR * CAP_NEAR;
+    for (const k of this.kinds) for (const lv of k.levels) { lv.n = 0; lv.near = false; }
+    this.capN = 0;
     let fr = null, cx = 0, cy = 0, cz = 0, pxAt1 = 1;
     if (cam) {
       cam.updateMatrixWorld(); PS.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); fr = FR.setFromProjectionMatrix(PS, cam.coordinateSystem, cam.reversedDepth).planes;
@@ -326,7 +331,7 @@ export class Crowd {
       if (this.lod != null) lv = k.own[Math.max(0, Math.min(k.own.length - 1, this.lod | 0))];
       else { while (lv > 0 && L[lv].tris < want) lv--; if (lv > c.lv && c.lv >= 0) { let l2 = lv; while (l2 > c.lv && L[l2].tris < want * KEEP) l2--; lv = l2; } }
       c.lv = lv;
-      const T = k.levels[lv]; if (T.n >= T.cap) this.grow(T, Math.max(T.cap * 2, 2 ** Math.ceil(Math.log2(this.list.length))));   // (room for them all at once: a list that grows leaves its old one on the chip)
+      const T = k.levels[lv]; if (caps && d2 < near2) T.near = true; if (T.n >= T.cap) this.grow(T, Math.max(T.cap * 2, 2 ** Math.ceil(Math.log2(this.list.length))));   // (room for them all at once: a list that grows leaves its old one on the chip)
       // its numbers: where and which way, the two rows and how far between them, how big; its colour; and the same as the last frame drew them
       const a = T.a, o = T.n++ * STRIDE; let rowA, rowB, mix;
       if (c.fade < 1) { const t = c.fade; rowA = c.from; rowB = rowOf(m, p.phase, true); mix = t * t * (3 - 2 * t); }
@@ -342,7 +347,13 @@ export class Crowd {
     I.draws = 0; I.triangles = 0; I.levels.length = 0;
     for (const k of this.kinds) k.levels.forEach((lv, li) => {
       const n = lv.n, a = lv.a; lv.geo.instanceCount = n; lv.mesh.visible = n > 0; I.levels[li] = (I.levels[li] || 0) + n;
+      const cast = this.shadows && (!caps || lv.near);
+      if (lv.mesh.castShadow !== cast) { lv.mesh.castShadow = cast; lv.mesh.userData.gsMoved++; }
       if (!n) return;
+      if (!cast && caps) for (let i = 0; i < n; i++) {
+        const o = i * STRIDE, x = a[o], y = a[o + 1], z = a[o + 2], q = (this.caps ||= [])[this.capN] ||= new Float32Array(8);
+        figureCapsule(k.h, k.d, x, y, z, a[o + 3], a[o + 7], q); q[7] = (x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2; this.capN++;
+      }
       let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity, big = 0, sum = n;
       for (let i = 0; i < n; i++) {
         const o = i * STRIDE, x = a[o], y = a[o + 1], z = a[o + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; if (a[o + 7] > big) big = a[o + 7];
@@ -356,6 +367,9 @@ export class Crowd {
     });
     return this;
   }
+  // Kit use (hd3d.js sunMaskFrame): the capsules of the members whose level casts no shadow into the sun's map, each
+  // [ax, ay, az, bx, by, bz, r, distance squared from the camera], added to list.
+  capsules(list) { for (let i = 0; i < (this.capN || 0); i++) list.push(this.caps[i]); return list; }
   // Kit use: the view says it is about to draw a frame. One drawn with no update() since the last shows nobody moving:
   // the numbers "as the last frame drew them" become the ones it drew (or frame generation would carry everyone on).
   frame() {
