@@ -50,6 +50,7 @@
 
 import { ShaderMaterial, WebGLRenderTarget, HalfFloatType, LinearFilter, LinearMipmapLinearFilter, Vector2, Matrix4, RedFormat, NearestFilter, Vector4 } from 'three';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
+import { netText } from './gssr-net.js';
 
 /** How many times more the history counts for in a pixel that has settled (both versions). */
 export const S2_HOLD = 4;
@@ -279,7 +280,7 @@ const UPSCALE = /* glsl */`
     #else
     vec4 History = textureLod(PrevOutput, PrevUV, 0.0);
     #endif
-    vec3 HistoryColor = History.xyz;
+    vec3 HistoryColor = History.xyz, hc0 = History.xyz;
     // locks (FSR 3.1's, as hd3d-gpu.js sgsr2Gpu): last frame's, worn off where something uncovered the place
     float lockc = 0.0, lockOut = 0.0, lheld = 0.0;
     #ifdef S2_TUNED
@@ -356,6 +357,7 @@ const UPSCALE = /* glsl */`
     vec3 sboxvar = rectboxvar * boxsize;
     vec3 boxmin = rectboxcenter - sboxvar;
     vec3 boxmax = rectboxcenter + sboxvar;
+    vec3 tapmin = rectboxmin, tapmax = rectboxmax;
     rectboxmax = min(rectboxmax, boxmax);
     rectboxmin = max(rectboxmin, boxmin);
 
@@ -379,7 +381,30 @@ const UPSCALE = /* glsl */`
     #else
     float settled = 1.0;
     #endif
+    #ifdef S2_NET
+    // GSSR's learned blend (gssr-net.js): the network's seventeen inputs, the network, and its three corrections
+    // (as hd3d-gpu.js s2Net; no see-through mask here)
+    float spr = max(max(rectboxvar.x, rectboxvar.y), rectboxvar.z);
+    vec3 gap = max(max(rectboxmin - hc0, hc0 - rectboxmax), vec3(0.0)); float outd = max(max(gap.x, gap.y), gap.z);
+    vec3 dif = abs(hc0 - Upsampledcw.xyz); float difm = max(max(dif.x, dif.y), dif.z);
+    float r6 = outd / (spr + 0.01), r7 = difm / (spr + 0.01);
+    float x0 = log2(1.0 + min(motion_viewport_len, 1.0e4)) * 0.25, x1 = depthfactor, x2 = Upsampledcw.w, x3 = clamp(History.w, 0.0, 1.0), x4 = 0.0;
+    float x5 = spr / (spr + 0.03), x6 = r6 / (1.0 + r6), x7 = r7 / (1.0 + r7), x8 = dot(Upsampledcw.xyz, vec3(0.2126, 0.7152, 0.0722));
+    float x9 = scaleRatio.x - 1.0, x10 = clamp(own, 0.0, 1.0), x11 = startLerpValue;
+    vec3 lk = vec3(0.2126, 0.7152, 0.0722); float cl = dot(rectboxcenter, lk);
+    float r12 = (x8 - cl) / (spr + 0.01), r13 = (dot(hc0, lk) - cl) / (spr + 0.01), r15 = dot(tapmax - tapmin, lk) / (spr + 0.01);
+    float x12 = r12 / (1.0 + abs(r12)), x13 = r13 / (1.0 + abs(r13)), x14 = dot(srcpos_srcOutputPos, srcpos_srcOutputPos), x15 = r15 / (1.0 + r15);
+    float x16 = clamp(lockc, 0.0, 1.0);
+S2_NET_BODY
+    float kc = clamp(z2, -0.5, 1.0); vec3 cur = max(Upsampledcw.xyz + (rectboxcenter - Upsampledcw.xyz) * kc, vec3(0.0));
+    float ownc = clamp(own, 0.001, 0.999), lc = clamp(lerpcontribution, 0.01, 0.99);
+    float an = ownc / (ownc + (1.0 - ownc) * exp(-z0)), tn = lc / (lc + (1.0 - lc) * exp(-z1));
+    float sv = clamp((held + Upsampledcw.w - 1.0) / (S2_HOLD - 1.0), 0.0, 1.0);
+    settled = (alpha > own + 1.0e-4 || an > own + (1.0 - own) * 0.5 ? 0.0 : sv) * (1.0 - depthfactor * fsrX.w);
+    gl_FragColor = vec4(mix(mix(clampedcolor, hc0, tn), cur, clamp(an + reset, 0.0, 1.0)), settled);
+    #else
     gl_FragColor = vec4(mix(HistoryColor, Upsampledcw.xyz, alpha), settled);
+    #endif
     gsLock = vec4(lockOut, 0.0, 0.0, 1.0);
   }`;
 
@@ -428,6 +453,8 @@ class UpscalePass extends Pass {
  * top (WebGPU), so the jitter's y is turned round to stay in picture pixels.
  */
 export class SgsrFrame {
+  /** A pause this long (ms) between frames starts the history again. (Training and test pages that read the GPU between frames set it longer.) */
+  static pause = 1000;
   constructor() {
     this.renderSize = new Vector2(); this.outputSize = new Vector2(); this.jitter = new Vector2(); this.scaleRatio = new Vector2();
     this.jitterMove = new Vector2();   // last frame's jitter less this one's (picture pixels): where last frame's pixels sampled, from this one's
@@ -438,7 +465,7 @@ export class SgsrFrame {
   }
   begin(cam, pw, ph, ow, oh, view, now, cut = false, yDown = false) {
     const key = `${pw}x${ph}>${ow}x${oh}`, resized = key !== this.key; this.key = key;
-    const reset = cut || resized || this.view !== view || now - this.lastT > 1000;   // a cut: another view drew in between, or a long pause
+    const reset = cut || resized || this.view !== view || now - this.lastT > SgsrFrame.pause;   // a cut: another view drew in between, or a long pause
     this.view = view; this.lastT = now;
     this.renderSize.set(pw, ph); this.outputSize.set(ow, oh);
     const k = ow / pw;
@@ -478,7 +505,7 @@ export class SGSR2 {
       outputSize: { value: new Vector2() }, jitterOffset: { value: new Vector2() }, scaleRatio: { value: new Vector2() }, minLerpContribution: { value: 0 }, reset: { value: 1 },
       LockHist: { value: null }, lockDec: { value: .005 }, fsrX: this.cu.fsrX, Changes: { value: null }, fsrY: { value: new Vector4(FSR_X[4], FSR_X[5], FSR_X[6], 0) } };
     this.lu = { InputColor: { value: null }, MotionDepthClipAlphaBuffer: { value: null }, LumHist: { value: null }, renderSize: this.cu.renderSize, jitterMove: this.cu.jitterMove, reset: this.uu.reset };
-    this.convert = mat(CONVERT, this.cu); this.upscale = mat(UPSCALE, this.uu, { S2_TUNED: 1, S2_HOLD: S2_HOLD.toFixed(1) }); this.copy = mat(COPY, { tDiffuse: { value: null } });
+    this.convert = mat(CONVERT, this.cu); this.upscale = mat(UPSCALE.replace('S2_NET_BODY', ''), this.uu, { S2_TUNED: 1, S2_HOLD: S2_HOLD.toFixed(1) }); this._net = null; this.copy = mat(COPY, { tDiffuse: { value: null } });
     this.depthLin = mat(DEPTHLIN, { InputDepth: this.cu.InputDepth, cameraNF: this.cu.cameraNF, orthoCam: this.cu.orthoCam });
     this.changes = mat(CHANGES, this.lu); this.lumHist = mat(LUMHIST, this.lu);
     this.quad = new FullScreenQuad(null);
@@ -492,6 +519,16 @@ export class SGSR2 {
   set tuned(on) {
     if (!!on === this.tuned) return;
     if (on) this.upscale.defines.S2_TUNED = 1; else delete this.upscale.defines.S2_TUNED;
+    this.upscale.needsUpdate = true; this.f.key = '';
+  }
+  /** GSSR's learned blend (gssr-net.js netFor) or null: the hand-written one. Needs tuned. A change builds the shader again and starts the history again. */
+  get net() { return this._net; }
+  set net(n) {
+    n = this.tuned ? n || null : null;
+    if ((n?.id || null) === (this._net?.id || null)) return;
+    this._net = n;
+    const d = this.upscale.defines; if (n) d.S2_NET = 1; else delete d.S2_NET;
+    this.upscale.fragmentShader = UPSCALE.replace('S2_NET_BODY', n ? netText(n, 'glsl') : '');
     this.upscale.needsUpdate = true; this.f.key = '';
   }
   /** Before drawing: sizes, the camera's move since last frame, and this frame's jitter on cam. */

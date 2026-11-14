@@ -49,6 +49,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SGSR } from './sgsr.js';
 import { SGSR2, SgsrFrame } from './sgsr2.js';
+import { netFor } from './gssr-net.js';
 import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
@@ -414,7 +415,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { skin: null, subgroups: '', gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
+  info: { skin: null, subgroups: '', gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '', gssrNet: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -475,6 +476,14 @@ export const HD = {
   sgsrTune: true,
   /** Tests: true has WebGPU's scene pass write each pixel's motion for SGSR 2 off the card too (screenshots, scripts/upscale-compare.cjs), as it does for the game on the card. */
   motion: false,
+  /**
+   * GSSR's learned blend (gssr-net.js): a small trained network weighs the history pixel by pixel. true (the usual):
+   * on WebGPU, and the hand-written blend on WebGL (trained with each thing's own motion, which WebGL's GSSR hasn't:
+   * there it left a moving box's trail 30% longer); false is the hand-written GSSR everywhere; an object is a
+   * network of its own on both (scripts/gssr-train, upscale-compare --net). Not with sgsrTune false. HD.info.gssrNet
+   * says which ran.
+   */
+  gssrNet: true,
   /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
   half: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
@@ -2889,6 +2898,7 @@ export class HDView {
     // multisampled colour, depth and motion pictures and their resolves
     if (s2 && HD.sgsrTune !== false) o.msaa = 0;
     o.s2Plain = HD.sgsrTune === false;
+    o.s2Net = s2 && !o.s2Plain ? netFor(HD.gssrNet) : null; HD.info.gssrNet = o.s2Net ? o.s2Net.id : '';
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
     if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
@@ -3298,7 +3308,7 @@ export class HDView {
     lastView = this; if (TEST) window.__hdView = this;
     r.info.autoReset = false; r.info.reset();
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
-    if (s2) { s2.tuned = HD.sgsrTune !== false; s2.fsr = HD.sgsrFsr || null; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
+    if (s2) { s2.tuned = HD.sgsrTune !== false; s2.fsr = HD.sgsrFsr || null; s2.net = HD.gssrNet === true ? null : netFor(HD.gssrNet); HD.info.gssrNet = s2.net ? s2.net.id : ''; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
     fadeOn(this, null, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
