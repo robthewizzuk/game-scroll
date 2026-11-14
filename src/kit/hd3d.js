@@ -311,6 +311,7 @@ function stepped(t, a, late, v, was) {
   else if (Q.want != null && Q.want !== was.want) did = `${TIERS[Q.want].name} wanted (from the next round)`;
   else if (Q.game && fpsFor(Q.game) !== was.fps) did = `${Math.round(fpsFor(Q.game))} fps`;
   else if (v === 'slow') did = Q.slow ? 'waits for a second slow window' : Q.want != null ? `${TIERS[Q.want].name} waits for the next round` : 'nothing left to step down';
+  else if (v === 'ok') did = 'holds';
   else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), desktop, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
   STEPS.log.push({ t: Math.round(t), avg: +a.toFixed(1), late, v, did }); if (STEPS.log.length > 400) STEPS.log.shift();
 }
