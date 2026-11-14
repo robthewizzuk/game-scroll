@@ -3,7 +3,7 @@
 // reading the two pictures in place of their own map). The same sums as the WebGL version: change both.
 // Kit use only.
 import { MeshBasicNodeMaterial, NoBlending, DoubleSide, RendererUtils } from 'three/webgpu';
-import { Fn, If, Loop, uniform, uniformArray, texture, positionWorld, normalWorldGeometry, screenCoordinate, materialColor, materialRoughness, materialReference,
+import { Fn, If, Loop, uniform, uniformArray, texture, positionWorld, normalWorldGeometry, screenCoordinate, materialColor, materialRoughness, reference,
   vec2, vec3, vec4, float, int, floor, fract, mod, abs, min, max, clamp, dot, length, sqrt, cos, sin, smoothstep, step, mix, select, dFdx, dFdy } from 'three/tsl';
 import { DataTexture } from 'three';
 import { ORIGIN } from './origin.js';
@@ -133,6 +133,9 @@ export function groundPaintLook(m, s, o, { live }) {
   const u = s.uniforms, L = live(u.gpL), L2 = live(u.gpL2), on = live(u.gpOn);
   const pic = k => texture(u[k].value || BLANK()).onRenderUpdate(() => u[k].value || undefined);
   const T0 = pic('gpT0'), T1 = pic('gpT1');
+  // (the painted colour is tinted by this material's own colour: a reference to it, not to whichever material is
+  // drawing, since a shadow pass draws it with three's shadow material, which has no colour, and reads this node's alpha)
+  const col = reference('color', 'color', m);
   const own = m.colorNode ? vec4(m.colorNode) : materialColor, ownRough = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
   // what the pictures say here (sqrt colour, roughness), or -1 past them
   const G = Fn(() => {
@@ -146,6 +149,6 @@ export function groundPaintLook(m, s, o, { live }) {
     });
     return g;
   })().toVar('gsGpG');
-  m.colorNode = select(G.x.greaterThanEqual(0), vec4(vec3(materialReference('color', 'color')).mul(G.rgb.mul(G.rgb)), 1), own);
+  m.colorNode = select(G.x.greaterThanEqual(0), vec4(col.mul(G.rgb.mul(G.rgb)), 1), own);
   m.roughnessNode = select(G.x.greaterThanEqual(0), G.a, ownRough);
 }

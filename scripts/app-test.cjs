@@ -639,7 +639,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (17)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (18)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -656,7 +656,7 @@ async function tour(b) {
   // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^Sixteen scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  check(/^Eighteen scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   // and the ray tracing scene alone (the hall), started from the sheet: the bar names the hall, and Stop gives its report
   await p.selectOption('.tour-set', 'traced');
   const sheet4 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
@@ -694,8 +694,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 17 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street, a street at night, parked cars, the ground and walls and a café by a square under a low sun, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 18 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street, a street at night, parked cars, the ground and walls, a café by a square under a low sun and a skyline, each with its system off and then on', JSON.stringify(sc.scenes));
   // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
   check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
     && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
@@ -771,6 +771,11 @@ async function tour(b) {
   const shadeOff = shadeOf('off'), shadeOn = shadeOf('on'), shadeGpu = M('shade', 'on').backend === 'webgpu';
   check(shadeOff && !shadeOff[1] && shadeOn && (shadeGpu ? +shadeOn[2] > 50 && +shadeOn[3].replace(/,/g, '') > 0 : shadeOn[1] === 'no sun mask on WebGL') && /\n  = short rays close up, far shadows, crowd capsules against the sun's shadow maps alone: /.test(sc.text),
     'the café and the square are drawn with the sun\'s shadow maps alone and then with the sun mask', JSON.stringify(sby.shade));
+  // the skyline: the view from the tallest roof, the city alone and then going on to the horizon as stand-ins, far lights and hills
+  const sky = /^the city's code [\d.]+ ms a frame · ([\d,]+) stand-ins, ([\d,]+) far lamps, ([\d,]+) triangles in (\d+) draws$/.exec(M('skyline', 'on').tell || '');
+  check(sky && +sky[1].replace(/,/g, '') >= 50 && +sky[3].replace(/,/g, '') > 0 && +sky[4] >= 3 && /^the city's code [\d.]+ ms a frame$/.test(M('skyline', 'off').tell || '')
+    && M('skyline', 'on').tris > M('skyline', 'off').tris && /\n  = the city to the horizon: stand-ins, far lights and hills against the city alone: /.test(sc.text),
+    'the skyline is looked over from the tallest roof as the city alone and then going on to the horizon as stand-ins, far lights and hills', JSON.stringify(sby.skyline));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
   check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),

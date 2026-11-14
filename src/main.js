@@ -55,6 +55,7 @@ import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
 import { desktop } from './desktop.js';
 import { update } from './update.js';
+import { onGpuLoss, gpuMending } from './kit/gpu.js';
 // (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
 const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
 import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
@@ -335,22 +336,45 @@ function pauseOv(s){
   {
     let el=s.screen.querySelector('.pause-ov');
     if(!el){el=document.createElement('div');el.className='overlay pause-ov';s.screen.appendChild(el)}
-    el.onclick=e=>{e.stopPropagation();resumeGame(s)};
-    el.innerHTML=`<div class="ov-k">Paused</div><div class="ov-title">${s.def.title}</div><button class="play">${s.def.retro?'CONTINUE':'Carry on'}</button>${isFull(s)?'<button class="fs-exit">Exit full screen</button>':''}`;
+    // (the graphics chip was lost: solid, like the loading screen, and no carrying on until the round is drawn again: mendStep)
+    const busy=!!s.mend;el.classList.toggle('load-ov',busy);
+    el.onclick=e=>{e.stopPropagation();if(!s.mend)resumeGame(s)};
+    const note=s.pauseWhy==='gpu'?`<div class="ov-what">${busy?'The graphics restarted. Getting them back…':s.gpuEnd==='none'?'The graphics stopped working. Restart the app to play 3D games again':'The graphics are back'}</div>`:'';
+    el.innerHTML=`<div class="ov-k">Paused</div><div class="ov-title">${s.def.title}</div>${note}<button class="play"${busy?' disabled':''}>${busy?'…':s.def.retro?'CONTINUE':'Carry on'}</button>${isFull(s)?'<button class="fs-exit">Exit full screen</button>':''}`;
     const fx=el.querySelector('.fs-exit');if(fx)fx.onclick=e=>{e.stopPropagation();leaveFull()};
     el.hidden=false;
   }
 }
 function resumeGame(s){
-  if(!s||!s.paused)return;
+  if(!s||!s.paused||s.mend)return;
   s.paused=false;s.pauseWhy=null;const el=s.screen.querySelector('.pause-ov');if(el)el.hidden=true;
   lastT=performance.now();perf.gap();
   if(s.state!=='playing')return;
   try{s.game.resume?.()}catch(e){console.error(s.def.id,e)}
   resumeAll();
 }
-function clearPause(s){s.paused=false;s.pauseWhy=null;const el=s.screen.querySelector('.pause-ov');if(el)el.hidden=true}
+function clearPause(s){s.paused=false;s.pauseWhy=null;s.mend=null;const el=s.screen.querySelector('.pause-ov');if(el)el.hidden=true}
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&active)pauseGame(active,'away')});
+// The graphics chip was lost (src/kit/gpu.js: its driver restarted, the browser's GPU process crashed). A new one is
+// made at once, but everything the round drew with has to be sent to it again and its shaders built anew, so a 3D
+// round being played pauses there and then, under a solid screen that says why, and its frames go on being drawn
+// underneath (draw() without update(), as under the loading screen) until the kits have nothing left on its way and
+// a few frames in a row came on time (mendStep). Then "Carry on" comes back, and the round goes on where it was.
+const onChip=d=>usesHD(d)||d.era==='console';
+onGpuLoss(e=>{
+  const s=active;
+  if(e.kind==='back'){if(s&&s.mend){s.gpuEnd=e.backend;if(e.backend==='none'){s.mend=null;pauseOv(s)}}return}   // (no 3D to be had: nothing to wait for)
+  if(e.kind!=='lost'||!s||s.state!=='playing'||!onChip(s.def))return;
+  s.mend={t:0,last:0,steady:new Steady()};s.gpuEnd='';
+  if(!s.paused)pauseGame(s,'gpu');else{s.pauseWhy='gpu';pauseOv(s)}
+});
+function mendStep(s,now,step){
+  const m=s.mend;if(s.state!=='playing'||!s.paused){s.mend=null;return}
+  s.dirty=true;
+  if(gpuMending()){m.last=0;return}   // (the new chip isn't there yet)
+  const gap=m.last?now-m.last:0;m.last=now;if(gap){m.t+=Math.min(gap,250);m.steady.add(gap,step)}
+  if(m.t>GATE.most||m.steady.calm>=3&&!kitsWaiting().hard){s.mend=null;pauseOv(s)}
+}
 
 // Fun signals for the game's Tiny Brains (src/brainstore.js): what the player did around a round
 // says how fun it was. Played again within 30 s +1, hearted +1 (during or within a minute of the
@@ -1038,7 +1062,8 @@ function frame(now){
       let run=true;if(DBG&&DBG.on)({dt,run}=DBG.time(dt));if(LAB&&LAB.frozen)run=false;
       // a card getting ready for its round (getReady above): its frames are drawn under the loading screen, and the kits are told so
       if(s.starting)readyStep(s,now,step);
-      const warm=getready.warming=!!s.starting&&s.starting.phase!=='load'&&usesHD(s.def);
+      if(s.mend)mendStep(s,now,step);
+      const warm=getready.warming=(!!s.starting&&s.starting.phase!=='load'||!!s.mend)&&usesHD(s.def);   // (and while a lost graphics chip's round is drawn again: mendStep)
       const timed=s.state==='playing'&&!s.paused,t0=timed?performance.now():0;
       if(timed){if(run)runTicks(s,tickRate(s.def),dt,h=>{if(s.state==='playing'&&!s.paused)s.game.update(h)},DBG&&DBG.on?0:1/fps);if(!guest)gameRan(s.def.id);if(run)soundtrack.update(dt,s.score,s.def.goal)}else if(s.state==='over'&&s.game.fx)s.game.fx(dt);
       const t1=performance.now();

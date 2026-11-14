@@ -111,9 +111,13 @@ automatic upload says it can't publish the app, run it again later.
 - **Play Integrity (shared hearts):** link the Google Cloud project on the same **App integrity**
   page and turn on the Play Integrity API (`docs/api-security.md`). Play builds pass the
   "installed from Play" check that GitHub APKs fail.
-- **Qualcomm NPU:** the Play build carries Qualcomm's NPU libraries for every phone (about 57 MB),
-  because Play doesn't allow apps to download code. A later change moves them into a part that Play
-  only sends to Snapdragon phones that can use it.
+- **Qualcomm NPU:** Qualcomm's NPU libraries (about 57 MB) are not in the app itself. They are an
+  on-demand part of the bundle (`android/qnn`, Play Feature Delivery) that the app asks Play for only
+  on a Snapdragon phone whose NPU it can use, and only the first time a game starts face, hand or
+  sound tracking, on Wi-Fi. Play installs it in the background; the NPU is used from the next start.
+  Nothing to set up in Play Console: on-demand modules work on every track, internal testing included.
+  To try it before a release, use **internal app sharing** or the internal track (a sideloaded
+  `bundletool` install can't fetch on-demand parts).
 
 ## Updates inside the app
 
