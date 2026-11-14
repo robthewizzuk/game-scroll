@@ -107,11 +107,25 @@ export const TIERS = [
 // Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
 // ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
 // A computer (the Mac and Windows app, src/desktop.js) starts where a phone of its class does and draws a tier's
-// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra when its frames have room. (It
-// used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's MacBook Air M5,
-// 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60.)
+// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra, but only when the chip's own
+// times show room (mayClimb): on a 60 Hz screen frames that keep up say nothing about how much more the chip could
+// take. A tier above the start saved by a game (settle) is only taken up again when it was climbed to that way
+// (startTier). (It used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's
+// MacBook Air M5, 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60;
+// with that fixed it still started on ultra, as the game had settled there the run before, 2026-11-14.)
 const START = { top: 2, mid: 2, low: 1 };
 const CAP = desktop ? 3 : 2;
+/**
+ * The tier a game starts on (pure: tests). saved: where it settled last time (speed.js settledFor), cls: the
+ * phone's class, computer: the Mac and Windows app. A computer's saved tier above its class's start only counts
+ * with room: true (climbed to while the chip's own times showed room); else it starts at the class's start.
+ */
+export function startTier(saved, cls, computer) {
+  const start = START[cls] ?? 2, t = Math.min(computer ? 3 : 2, saved?.tier ?? start);
+  return computer && t > start && !saved?.room ? start : t;
+}
+/** May a game climb from this tier (pure: tests)? A phone may (up to CAP); a computer above its class's start only with room (the chip's times say so). */
+export const mayClimb = (tier, cls, computer, room) => !computer || tier < (START[cls] ?? 2) || !!room;
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -135,7 +149,7 @@ const OUT_PX = 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
-const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [] };
+const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [], room: false, wantRoom: false };
 // Effects that step down by their own cost (Rob's pick 3 of 2026-11-13). Before a slow game gives up
 // resolution, the effect that costs the chip most (by the GPU's own time for each pass, HD.info.gpuParts)
 // is drawn smaller: each has sizes (FXS), and only the size of its pictures changes, so no shader is built
@@ -172,8 +186,10 @@ const fxSaved = () => Object.keys(Q.fx).length ? { ...Q.fx } : null;
 // a new game is on screen: start from where it settled last time, or from the phone's class
 // (and the resolution step it settled on, so a round doesn't start too sharp, stutter and step down again)
 function startGame(def) {
-  Q.game = def; const s = settledFor(def?.id);
-  Q.tier = Math.min(CAP, s?.tier ?? START[phoneClass()] ?? 2); Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
+  Q.game = def; let s = settledFor(def?.id);
+  Q.tier = startTier(s, phoneClass(), desktop); Q.room = !!s?.room;
+  if (s?.tier != null && Q.tier < Math.min(CAP, s.tier)) s = null;   // (a saved tier not taken up: its resolution and effects were for that tier)
+  Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
   Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
   for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
@@ -281,12 +297,34 @@ function chipOff() {
 }
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
 const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
+// The quality steps' own record, for the frame lab's report (Rob's MacBook Air M5, 2026-11-14: Long Shadow stuttered
+// for 26 s before anything was stepped down, and the report couldn't say why): each window of frames (performance.now(),
+// its average gap in ms, frames a refresh or more late, the verdict, what was done about it), the last 400, and the
+// frames not counted and why (pinned: HD.force; long: a gap of 100 ms or more; warming: drawn under the loading screen).
+const STEPS = { log: [], off: { pinned: 0, long: 0, warming: 0 } };
+function stepped(t, a, late, v, was) {
+  let did = '';
+  if (Q.lvl !== was.lvl) did = `resolution ${Math.round(LEVELS[was.lvl] * 100)}% to ${Math.round(LEVELS[Q.lvl] * 100)}%`;
+  else if (Q.fxLast.length > was.fx) did = `${Q.fxLast[Q.fxLast.length - 1]} smaller`;
+  else if (Q.fxLast.length < was.fx) did = 'an effect back';
+  else if (Q.want != null && Q.want !== was.want) did = `${TIERS[Q.want].name} wanted (from the next round)`;
+  else if (Q.game && fpsFor(Q.game) !== was.fps) did = `${Math.round(fpsFor(Q.game))} fps`;
+  else if (v === 'slow') did = Q.slow ? 'waits for a second slow window' : Q.want != null ? `${TIERS[Q.want].name} waits for the next round` : 'nothing left to step down';
+  else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), desktop, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
+  STEPS.log.push({ t: Math.round(t), avg: +a.toFixed(1), late, v, did }); if (STEPS.log.length > 400) STEPS.log.shift();
+}
 function adapt(gap) {
-  if (Q.force != null || !(gap > 0 && gap < 100)) return;
+  if (Q.force != null) { STEPS.off.pinned++; return; }
+  if (!(gap > 0 && gap < 100)) { if (gap >= 100) STEPS.off.long++; return; }
   const fps = Q.game ? fpsFor(Q.game) : 60, budget = 1000 / fps;
   Q.sum += gap; if (gap > budget * 1.5) Q.late++;   // a frame a whole refresh (or more) late: a stutter you can see
   if (++Q.cnt < 45) return;
-  const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget); Q.sum = Q.cnt = Q.late = 0;
+  const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget), late = Q.late; Q.sum = Q.cnt = Q.late = 0;
+  const was = { lvl: Q.lvl, fx: Q.fxLast.length, want: Q.want, fps };
+  decide(v, now, fps, budget);
+  stepped(now, a, late, v, was);
+}
+function decide(v, now, fps, budget) {
   // the GPU's own time per frame (WebGPU timestamps, where the phone has them): how much of a slow frame
   // is the graphics chip's. A frame that's slow while the GPU has room is held up by the CPU, and fewer
   // pixels wouldn't help it; a GPU with plenty of room can take sharpness back sooner (Unreal and
@@ -309,7 +347,7 @@ function adapt(gap) {
     Q.slow = 0; if (++Q.fast < (gpuRoom && Q.lvl > Q.ceil ? 3 : 8)) return; Q.fast = 0;
     if (Q.lvl > Q.ceil) { if (!(hot(now) && Q.lvl <= 1)) { Q.lvl--; Q.upT = now; } }
     else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
-    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP)) { Q.want = Q.tier + 1; Q.upT = now; }
+    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom)) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
@@ -328,12 +366,15 @@ function applyTier() {
   Q.capNow = hot() ? CAP - 1 : CAP;   // between rounds: one tier lower while hot
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
-  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl });
+  if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)
+  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, room: Q.room || undefined });
 }
 /** Current quality: { tier, name, res }. Set HD.force = 0..3 to pin a tier (tests, screenshots). */
 export const HD = {
   get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
+  /** The quality steps' record (the frame lab): { log: [{ t, avg, late, v, did }] each window of frames, off: frames not counted, by why }. */
+  get steps() { return STEPS; },
   /** The effects drawn smaller by their cost now (FXS): { name: size, 1 = as the tier has it }; {} when none is. */
   get fx() { const o = {}; for (const k in Q.fx) o[k] = fxK(k); return o; },
   /** Tests and the frame lab: draw this effect smaller by n of its steps now (0: full size), also under HD.force; until the next game. */
@@ -2906,7 +2947,7 @@ export class HDView {
       // adaptive quality: first resolution, then tier (and frame rate)
       // (a round getting ready behind the loading screen, getready.js: its frames build what the round needs and say
       // nothing about how fast the phone draws, so none of them count; the measuring starts with the round)
-      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; else adapt(gap); applyTier();
+      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) { Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; STEPS.off.warming++; } else adapt(gap); applyTier();
     }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
