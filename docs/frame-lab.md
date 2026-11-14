@@ -126,10 +126,11 @@ pause), so the recording's summary counts freezes on their own, with the worst.
 | **Half** | While you play a WebGPU game on a chip with half precision (`shader-f16`): the chip's own time a frame by pass with the kit's own passes in full precision, then in half, then both again (1 s to settle and 2.5 s of readings each; the chain is built again at each switch), and how much each pass saved. The passes in half: GSSR's upscale, the sharp picture reads in GSSR and GSFG, smoke and fire, the grade and sun glare (`src/kit/half.js`). `HD.info.half` (in the report) says which precision is drawing and any function the chip would not compile in half. |
 | **Spread** | While you play a WebGPU game on high or ultra: the chip's time a frame by pass with ambient occlusion, volumetric light and bounce light taking every sample every frame (`HD.spread = false`), then spread over frames (a part of their samples a frame, the frames before filling in: `src/kit/hd3d-gpu-spread.js`), then both again, timed the same way as Half. `HD.info.spread` (in the report) says which are spread. |
 | **Clouds** | While you play a WebGPU game on high or ultra whose sky has clouds: the chip's time a frame by pass with the sky's painted clouds (`HD.clouds = false`), then with real ones marched through (a quarter of the pixels a frame, the frames before filling in, and their shadow a few times a second: `src/kit/hd3d-gpu-sky.js`), then both again, timed the same way as Half. `HD.info.sky` (in the report) says what the sky draws. |
+| **Subgroups** | While you play a WebGPU game on a chip with subgroups (Chrome and Android from 144): the chip's time a frame by pass with the kit's compute passes built the plain way (`HD.subgroups = false`: one add on a shared counter per thread), then with subgroups (one per group of threads: GPU culling and its occlusion test, frame generation's counts; `src/kit/subgroups.js`), then both again, timed the same way as Half. `HD.info.subgroups` (in the report) says whether the chip has them and their size. |
 | **Report** | Shares a self-contained HTML report (Android and iPhone share sheet; a download on the web). |
 | **Copy** | Puts a text summary on the clipboard, to paste into chat. |
 
-The **viewer** (after A/B, Shimmer, GSFG check, Half, Spread or Clouds) has Wipe (a slider between the two), Side by side
+The **viewer** (after A/B, Shimmer, GSFG check, Half, Spread, Clouds or Subgroups) has Wipe (a slider between the two), Side by side
 (every picture shows the same part, for pixel peeping), Difference (four times the difference),
 Flip (tap to swap), Flags (the heat map over the picture, boxes where flagged pixels gather), and
 zoom 1x to 16x (or pinch, or the mouse wheel) with sharp pixels. Drag to move around.
@@ -166,4 +167,4 @@ Timing comes from `requestAnimationFrame`, which on Android and iPhone runs on t
 browser doesn't say when a picture actually lit up, so a frame the compositor held back is not seen.
 
 `scripts/framelab-test.cjs` checks the lab itself in the test browser (2D and Next Gen, A/B, Shimmer,
-GSFG check, the Half check (the test browser has no half precision, so it pretends: `HD.halfPretend`), the Spread check, the Clouds check when the game's sky has clouds, fold and unfold, effects drawn smaller, memory, the report).
+GSFG check, the Half check (the test browser has no half precision, so it pretends: `HD.halfPretend`), the Spread check, the Clouds check when the game's sky has clouds, the Subgroups check when the chip has them, fold and unfold, effects drawn smaller, memory, the report).

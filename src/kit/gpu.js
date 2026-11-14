@@ -109,15 +109,19 @@ export function prepareGPU() {
       // reflections: 8 bytes a pixel each): WebGPU promises 32 bytes a pixel and most chips allow 64 or
       // more, which has to be asked for. Asked of the adapter three will pick (the same options); if the
       // device won't start with it, once more without
-      let room = 32;
-      try { room = Math.min(64, (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance', featureLevel: 'compatibility' }))?.limits?.maxColorAttachmentBytesPerSample || 32); } catch (_) { /* stays 32 */ }
+      // Pictures one shader may read: WebGPU promises 16, and a close-up person's skin on the high tier reads
+      // 17 with its shadows (on the test machine's chip, which allows 16, the pipeline was refused and the skin
+      // not drawn); many chips allow more, which has to be asked for: as many as the chip has, up to 32
+      let room = 32, pics = 16;
+      try { const lim = (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance', featureLevel: 'compatibility' }))?.limits; room = Math.min(64, lim?.maxColorAttachmentBytesPerSample || 32); pics = Math.min(32, lim?.maxSampledTexturesPerShaderStage || 16); } catch (_) { /* stays 32 */ }
       const make = async (cv, bytes) => {
-        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, powerPreference: 'high-performance', trackTimestamp: true, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(bytes > 32 ? { requiredLimits: { maxColorAttachmentBytesPerSample: bytes } } : {}) });
+        const limits = { ...(bytes > 32 ? { maxColorAttachmentBytesPerSample: bytes } : {}), ...(pics > 16 ? { maxSampledTexturesPerShaderStage: pics } : {}) };
+        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, powerPreference: 'high-performance', trackTimestamp: true, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
         await r.init(); return r;
       };
       let r = null;
-      try { r = await make(canvas, room); } catch (e) { if (room <= 32) throw e; }
-      if (room > 32 && !r?.backend?.isWebGPUBackend) { r?.dispose(); r = await make(document.createElement('canvas'), 32); }
+      try { r = await make(canvas, room); } catch (e) { if (room <= 32 && pics <= 16) throw e; }
+      if ((room > 32 || pics > 16) && !r?.backend?.isWebGPUBackend) { r?.dispose(); pics = 16; r = await make(document.createElement('canvas'), 32); }
       r.gsPixelBytes = r.backend?.device?.limits?.maxColorAttachmentBytesPerSample || 32;
       r.gsHdr = hdr && (r.backend?.context?.getConfiguration?.()?.toneMapping?.mode ?? 'extended') === 'extended';
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path

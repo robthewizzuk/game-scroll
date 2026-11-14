@@ -25,7 +25,7 @@ import { tslOps } from './models/ops.js';
 import { gpuCull, gpuCullFits } from './props-gpu.js';
 import { FADE } from './lod-fade.js';
 export { fadeTwin } from './lod-fade-gpu.js';
-import { OCC_LAYER } from './occlude.js';
+import { OCC_LAYER, copiesPad } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
 import { built } from './prof.js';
@@ -36,6 +36,7 @@ import { eachShown, listPipeline } from './scene-list.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
+export { SUB, subgroupsInfo } from './subgroups.js';
 import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
@@ -69,7 +70,7 @@ export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
 export { gpuCloth } from './cloth-gpu.js';
 export { skinPool } from './skin-gpu.js';   // (and, on import, the vertex stage that reads a mesh's points from the pool)
-import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
+import GTAONode, { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
@@ -871,6 +872,38 @@ NodeMaterial.prototype.setupPosition = function (builder) {
   if (geometry.morphAttributes.normal && geometry.hasAttribute('normal')) TSL.normalLocal.assign(TSL.normalGeometry);
   return positionSetup.call(this, builder);
 };
+// Screen passes that rewrite their shaders for nothing. (three r187: a pass node (rtt(), SSR, GTAO, blur, bloom...)
+// hands its inner material a brand new context node each time the material it sits in is built, and a new node
+// is a new cache key, so the inner pass writes its shader again (the same WGSL; the chip's pipeline is kept). A
+// pass is drawn once a frame, inside out, so one rebuild at the top of the effects chain ran down it a layer a
+// frame: Long Shadow on a Mac rewrote 70-odd pass shaders over the next eight frames, a 200-550 ms freeze each
+// time ("25 shaders built" in the frame lab).) A context node with the same node and the same values as the one
+// the material has is the same context: the material keeps the one it has, its cache key stays, and three only
+// bumps the version it saw. scripts/shader-hold.cjs --webgpu counts shader text written in play.
+const CTX = Symbol('contextNode');
+const sameContext = (a, b) => {
+  if (a === b) return true;
+  if (!a?.isContextNode || !b?.isContextNode || a.node !== b.node) return false;
+  const x = a.value, y = b.value, kx = Object.keys(x);
+  if (kx.length !== Object.keys(y).length) return false;
+  for (const k of kx) if (!(k in y) || x[k] !== y[k]) return false;
+  return true;
+};
+if (!Object.getOwnPropertyDescriptor(NodeMaterial.prototype, 'contextNode')) Object.defineProperty(NodeMaterial.prototype, 'contextNode', {
+  configurable: true,
+  get() { return this[CTX] ?? null; },
+  set(n) { if (!sameContext(this[CTX], n)) this[CTX] = n; },
+});
+// (and three's ambient occlusion pass makes its shader's graph anew each time it is set up, a new key again: the graph is kept
+// while the samples and the kind of camera it was made for are the same, so it too is written once a chain)
+const gtaoSetup = GTAONode.prototype.setup;
+GTAONode.prototype.setup = function (builder) {
+  const m = this._material, made = this.samples.value + ':' + !!this._camera?.isPerspectiveCamera, keep = this._gsMade === made ? m.fragmentNode : null;
+  const out = gtaoSetup.call(this, builder);
+  if (keep) m.fragmentNode = keep;
+  this._gsMade = made;
+  return out;
+};
 // area lights' LTC tables (hd3d.js panel), once they've loaded
 export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
 // Soft shadows that harden where things touch (hd3d.js sun().softShadows): PCSS (Fernando, NVIDIA 2005)
@@ -1648,7 +1681,7 @@ export function gpuProps(im) {
   };
   // GPU culling (props-gpu.js; hd3d.js says when): its own meshes, so the CPU lists keep their slots for switching back
   let gc = null, onGpu = false;
-  const useGpu = on => { if (on && !gc) gc = gpuCull(im, levels, group); if (on === onGpu) return; onGpu = on; for (const t of tw) t.visible = false; for (const m of gc?.meshes || []) m.visible = on; shownL?.fill(-1); };
+  const useGpu = on => { if (on && !gc) gc = gpuCull(im, levels, group, copiesPad(levels.map(l => l.obj))); if (on === onGpu) return; onGpu = on; for (const t of tw) t.visible = false; for (const m of gc?.meshes || []) m.visible = on; shownL?.fill(-1); };
   // a slot drawn as nothing: every point at the copy's own place
   const hide = (M, m0) => { const x = M[m0 + 12], y = M[m0 + 13], z = M[m0 + 14]; M.fill(0, m0, m0 + 16); M[m0 + 12] = x; M[m0 + 13] = y; M[m0 + 14] = z; M[m0 + 15] = 1; };
   return {
@@ -1657,14 +1690,18 @@ export function gpuProps(im) {
     gpuFits: gpuCullFits(levels),
     isGpu: () => onGpu,   // (a function: the twin is copied with ...spread in hd3d.js)
     sends: () => gc?.sends() ?? 0,
+    /** Triangles a frame the chip's own occlusion test leaves out (props-gpu.js; occlude.js counts them). */
+    occHidden: () => (onGpu && gc ? gc.hiddenTris : 0),
+    /** Tests: the chip's lists, { cam, all, hidden, fading } copies by level (props-gpu.js counts). */
+    counts: r => (onGpu && gc ? gc.counts(r) : null),
     /** The lists of copies changing level drawn this frame (hd3d.js draws them with their dithered twins). */
     fades: () => onGpu ? gc.fades : fd,
     /** How many copies are changing level now. */
     fadingNow: () => onGpu ? -1 : fading.length,
-    sync(cam, occ = null, shadowCams = null, gpuR = null, ready = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead; ready(mesh): are a fade list's dithered shaders built (lod-fade.js)
+    sync(cam, occ = null, shadowCams = null, gpuR = null, ready = null, oc = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead; ready(mesh): are a fade list's dithered shaders built (lod-fade.js); oc: the view's Occlusion when its culling is on (the GPU's own test, which keeps shadows)
       dists();
       useGpu(!!gpuR && this.gpuFits);
-      if (onGpu) { for (const t of fd) t.visible = false; gc.sync(gpuR, cam, shadowCams, ready); for (const m of gc.meshes) m.visible = true; return; }
+      if (onGpu) { for (const t of fd) t.visible = false; gc.sync(gpuR, cam, shadowCams, ready, oc); for (const m of gc.meshes) m.visible = true; return; }
       if ((im._capacity || 0) > cap) make();
       const n = Math.min(cap, im._instancesArrayCount || 0), D = im.matricesTexture?._data, C = im.colorsTexture?._data, wm = im.matrixWorld;
       if (!D) { for (const t of tw) { t.count = 0; t.userData.slots.top = 0; t.userData.slots.slotOf.fill(0); t.userData.slots.owner.fill(0); } for (const t of fd) { t.count = 0; t.visible = false; } shownL.fill(-1); stale = true; return; }

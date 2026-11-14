@@ -64,7 +64,7 @@ import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
 import { LampPool } from './lamps.js';
 import { binCapsules } from './sunmask.js';
-import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
+import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, occlusionNow, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutTwin, cutUpdate, headsOf, drawnOf, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
@@ -414,7 +414,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { skin: null, gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
+  info: { skin: null, subgroups: '', gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -477,6 +477,8 @@ export const HD = {
   motion: false,
   /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
   half: true,
+  /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
+  subgroups: true,
   /**
    * WebGPU: ambient occlusion, volumetric light and live bounce light take a part of their samples each frame, the
    * pattern turning from frame to frame, and the frames before fill in the rest (hd3d-gpu-spread.js). false: all of
@@ -2797,6 +2799,7 @@ export class HDView {
     if (!baking && !off) HD.info.still = false;
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
+    G.fx.SUB.on = HD.subgroups !== false; HD.info.subgroups = G.fx.subgroupsInfo(r);   // (subgroups.js: passes built from now on use them or not)
     const SK = G.fx.skinPool(r);
     if (SK) { SK.set(HD.gpuSkin !== false); SK.list(this.scene, eachShown); }
     try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ }
@@ -2849,8 +2852,9 @@ export class HDView {
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
+    const ocNow = occ ? occlusionNow(this) : null;   // (GPU culling asks the same depth pyramid on the chip: props-gpu.js)
     const fr = baking || off ? null : fadeReady(this, G, r, 'copy');   // (copies changing level fade: lod-fade.js)
-    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null, fr);   // (the sets gpuSwap's walk found)
+    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null, fr, ocNow);   // (the sets gpuSwap's walk found)
     if (pm >= 0) { leave(pm); enter('3D: skinning'); }
     HD.info.skin = SK?.on ? (SK.run(this.cam, shc), SK.info) : null;
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
@@ -4057,7 +4061,7 @@ function makeBatch(v, B, list) {
   mesh.name = 'gs-batch'; mesh.userData.noBatch = mesh.userData.noLod = mesh.userData.noHold = true;
   const b = { mesh, items: new Map() };
   for (const o of parts) { b.items.set(o, { g: o.geometry, m: ownMatrix(new Float64Array(16), o.matrixWorld.elements, se), mask: o.layers.mask }); o.layers.mask = BATCH_BIT; }   // off the camera's (and the shadow passes') layers, still in the scene
-  v.scene.add(mesh); B.list.push(b);
+  v.scene.add(mesh); mesh.updateMatrixWorld(true); B.list.push(b);   // (made after this frame's matrices were worked out: without its own, it drew its pieces about the world's centre for a frame)
   HD.info.batched = (HD.info.batched || 0) + parts.length; HD.info.batches = (HD.info.batches || 0) + 1;
 }
 function unbatch(B, b, se) {

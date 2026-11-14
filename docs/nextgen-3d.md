@@ -1120,8 +1120,9 @@ works on instanced meshes and on WebGL and WebGPU alike.
     `__hd.info.occluded` and `occTris` say what the last frame left out; `occAwake` whether it
     is at work, `occPays` what the last trial found.
   - Limits: on WebGL, the still things that static batching has merged are left out a merged mesh at
-    a time. On WebGPU, a `gs.props` kind picked on the chip (2,000 copies or more) or one that casts
-    shadows is not left out copy by copy. The shadow maps do not use it (they keep to what changed
+    a time. On WebGPU, a `gs.props` kind picked on the chip (2,000 copies or more) is tested copy by copy
+    on the chip itself (GPU culling, below); a smaller kind that casts shadows is not left out copy by copy.
+    The shadow maps do not use it (they keep to what changed
     instead: "kept in tiles" above). It is off
     for see-through views (AR), a card's picture, and cameras with no perspective.
   - Switches: `mesh.userData.noOcclude = true` always draws a mesh, `v.autoOcclude = false` stops it
@@ -1147,8 +1148,23 @@ works on instanced meshes and on WebGL and WebGPU alike.
   draw per level. The CPU only sends the copies again when the game moves, hides or recolours one, so a
   forest of 6,000 trees costs about 2 ms of CPU a frame instead of 6. Games don't change anything.
   `__hd.gpuCull` is `'auto'` (the default), `true` (every kind) or `false` (always the CPU). It is off while
-  frame generation runs, because frame generation needs each copy to keep its place in the list. Its
-  copies are not left out when hidden behind things, and a kind with a list of materials stays on the CPU. Copies that move every
+  frame generation runs, because frame generation needs each copy to keep its place in the list. While
+  occlusion culling (above) is at work, the same pass also asks the depth picture whether each copy in view
+  is wholly behind something nearer, the way the CPU asks it, and the camera leaves those out; each level's
+  list keeps them after the camera's part, so their shadows still fall past the end of a wall and a lamp's or
+  a reflection's view still draws them. Posts behind a wall: the camera drew 348 of 2,494 copies, the
+  shadows all of them, and the picture was the same as with every copy drawn (`--page cull`). How much it
+  hides comes back from the chip every few frames, so occlusion culling rests when it saves too little.
+  Copies whose shader moves them by an amount nobody knows are never hidden this way (swaying leaves are,
+  trusted a little less round where they are). A copy fading between detail levels is never hidden while it fades.
+  A kind with a list of materials stays on the CPU.
+- Subgroups (WebGPU, Chrome and Android from 144): where the graphics chip has them, the kit's own compute
+  passes that pack lists or add up counts (GPU culling, frame generation's counts) let a group of threads
+  take their places or add their numbers with one add between them instead of one each. The pictures and
+  counts are the same with them and without. `__hd.subgroups = false` builds them the plain way;
+  `__hd.info.subgroups` says which it is and the chip's subgroup size, and the frame lab's Subgroups check
+  times both. The fluid's sums stay plain: its drops are not in cell order, so a group's threads rarely add
+  to the same cell (one add in five saved at best). Copies that move every
   frame should be plain meshes anyway; on the GPU path a moved copy gets no motion blur for that frame.
   On the CPU path (smaller kinds, and every kind while frame generation runs) each copy keeps its place
   in the list while it stays in view, and only the copies that came in, left, changed level or were
