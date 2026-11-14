@@ -479,7 +479,16 @@ the frames have not drawn yet (a muzzle flash that is switched off, the wall beh
 room) is built too, one kind of thing at a time for about 3 ms a frame over the view's first frames, so
 turning round or switching a thing on mid-round does not stop a frame: `v.shadersLeft` says how many
 things are still to look at (a loading screen can wait for 0), and `v.precompile()` waits for them once
-the view has drawn a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
+the view has drawn a frame. They are taken nearest first, and what the camera carries (a first-person
+rifle) before anything else. three keys a lit shader by the scene's lights, sky light and fog too, so when
+those change to a setting the view has not had before (a game's next level, set up under its loading screen),
+the hidden things are built again for it, and one that shows before its turn waits for its shader. Two things
+of one material and shape are two shaders to three when one takes shadows and the other does not, and the kit
+tells them apart the same way. A shadow is drawn with a shader of its own for each kind of thing that casts
+one (its skinning, its bones, its own shape and cut-out nodes), so each kind's shadow shader is made on the
+view's first frame and while a round gets ready under the loading screen, by drawing everything that casts a
+shadow once into a tiny stand-in of each sun and spot light's map, hidden things and a person's other levels
+of detail too (`v.shadowAhead`); what comes into the scene later is done the same way a few kinds a frame. Before a view's first frame that picture is not known yet, so `v.prepare()`
 there only gets textures and the canvas's own shaders ready and the first frame builds what it draws.
 The shader-hold script fails on WebGPU if a pipeline or a shader's text is made in the middle of a frame
 for a thing switched on, turned to or added, or for anything at all after a view's first frame.

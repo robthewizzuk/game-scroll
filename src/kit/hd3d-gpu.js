@@ -1096,7 +1096,7 @@ export const SHADOW_COST = [0, 0];
 // at that part alone (a view offset), so only what is in it is drawn, into that part of the map.
 const aheadDone = new WeakSet();
 export function shadowOps(r) {
-  let blit = null;
+  let blit = null; const stands = new WeakMap();
   const ops = {
     scene: null, camera: null,
     draw(l, mask, keep, q, px) {
@@ -1121,6 +1121,26 @@ export function shadowOps(r) {
     // tiles once enough still things were in its view, often seconds into a round, and that frame made the
     // three pipelines then and there. The real copies then take over those materials (shadowBlit matFor).
     ahead(l) { const map = l.shadow.map; if (map && !aheadDone.has(map)) { aheadDone.add(map); (blit ||= shadowBlit(r)).ahead(map); } },
+    // the shadow shaders of the things on layer bit (hd3d.js shadowAhead), made by drawing them through this light's own
+    // shadow node into a 4 x 4 stand-in of its map's kinds (three keys a shadow shader by the thing, its material and
+    // the picture's kinds, not by which picture or camera): the real map is left as it is. The stand-in stays, as three
+    // keeps a pipeline while what was drawn with it is there.
+    pre(l, bit) {
+      const sh = l.shadow, node = sh.shadowNode, map = node.shadowMap, c = sh.camera, m0 = c.layers.mask;
+      let st = stands.get(map);
+      if (!st) {
+        const d = map.depthTexture;
+        st = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples });
+        st.texture.type = map.texture.type; st.texture.format = map.texture.format;
+        if (d) { const z = st.depthTexture = new DepthTexture(4, 4, d.type); z.format = d.format; z.compareFunction = d.compareFunction; z.minFilter = d.minFilter; z.magFilter = d.magFilter; }
+        r.initRenderTarget(st); stands.set(map, st);
+      }
+      // (gsPart: drawn as a part of a map is, without three's resize of the map to the light's map size)
+      node.shadowMap = st; c.layers.mask = bit; node.gsKeep = false; node.gsPart = true;
+      const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
+      finally { node.shadowMap = map; c.layers.mask = m0; node.gsPart = false; sh.updateMatrices(l); }
+    },
     make(l) {
       const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
