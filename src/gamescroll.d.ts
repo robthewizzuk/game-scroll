@@ -3382,6 +3382,9 @@ export interface ModelsPart {
    * given, those come from the seed too), age (years, 16..95: older, the folds deepen, the lips thin, the lids hood and the hair greys) and weight (0 thin .. 1 heavy).
    * A real head's shape is a real man's or woman's of a background (heritage: 'african' | 'east-asian' | 'european' | 'middle-eastern', or a mix such as
    * { european: .6, 'east-asian': .4 }; fitted to Google's GNM Head by measurement), from the seed and the skin when not given; heritage: false keeps the one scan's fit.
+   * And the face itself is one of GNM Head's, learned from real scans: its whole shape, eyes, nose and lips from this seed, sex and heritage, joined to our neck,
+   * hair and hats, sagging with age as a real face does; gnm: false keeps the older sculpted face. Its numbers (2.9 MB) load the first time one is made; with now: true,
+   * await human.gnmReady() first.
    * A real person's body comes from the same seed, age and weight, and muscle (0 slight .. 1 built): broader shoulders and thicker arms with muscle, a thicker waist and
    * belly with weight and age, a woman's hips and bust from her weight, and a height a few centimetres either way (build and scale, when given, win).
    * The body lives: biceps swell as an elbow bends (more on a muscled arm), elbows, shoulders, hips and knees keep their girth in a deep bend, and person.breath (a BreathT)
@@ -3389,14 +3392,16 @@ export interface ModelsPart {
    * Their clothes on WebGPU: each cloth woven its own way at the size of its threads (outfit.top.weave, outfit.legs.weave, outfit.hat.weave: 'plain' | 'twill' | 'denim' | 'knit' |
    * 'canvas' | 'wool' | 'fine'; from the kind of garment when not given), leather with its grain, creases at the inside of an elbow and the back of a knee as far as it bends,
    * and person.grime (a GrimeT): wet, muddy, dusty and snowy, by itself in the weather and in gs.outdoors Marks' mud, or set by the game.
-   * Options: look, seed, age, weight, muscle, sex, heritage, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
+   * Options: look, seed, age, weight, muscle, sex, heritage, gnm, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {
-    (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; heritage?: 'african' | 'east-asian' | 'european' | 'middle-eastern' | Partial<Record<'african' | 'east-asian' | 'european' | 'middle-eastern', number>> | false; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; cards?: boolean; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
+    (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; heritage?: 'african' | 'east-asian' | 'european' | 'middle-eastern' | Partial<Record<'african' | 'east-asian' | 'european' | 'middle-eastern', number>> | false; gnm?: boolean; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; cards?: boolean; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
     /** Several people at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
     all(list: Loose[]): Loose[];
     /** Starts sculpting whatever these people still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
     need(list: Loose[]): void;
+    /** Loads the numbers of GNM faces (gnm: true) if they aren't in yet: await it before human({ gnm: true, now: true }). */
+    gnmReady(): Promise<boolean>;
     /** The 51 single movements a person's face can be set to, face.set(move, 0..1): face capture's own, by ARKit's names. */
     readonly moves: readonly FaceMove[];
     /** For tools and tests: resolves once human(options) for each of these would come straight back. */
@@ -3467,7 +3472,9 @@ export interface CityPart {
     traffic?: number; people?: number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
     /** Rooms behind every window (default true). */ rooms?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
     /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
-    /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean; [style: string]: Loose }) => CityWorld;
+    /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean;
+    /** The ground painted round the camera with no repeats (patches, cracks and tar lines in the asphalt, slabs in a bond, stains, oil under parked cars, skid marks), read in place of the tiled ground pictures (default: on a Next Gen view). */ paint?: boolean;
+    /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean; [style: string]: Loose }) => CityWorld;
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */

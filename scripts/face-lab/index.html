@@ -15,6 +15,8 @@
 //   &noao &noshadow &nocontact (the person left out of the ambient occlusion, its own shadow or the contact shadows: to find where a dark patch comes from)   &nowet (a real face's wet film over the eyes left out)   &blinks (let them blink)
 //   &taa (the smoothing over frames the games have, SGSR 2: fine hairs as they look in play; with &frames=16 or so to let it settle)
 //   &frames=4 (frames drawn before a cell is taken: more lets the smoothing over frames settle)   &cell=300x360   &gpu (WebGPU)   &tier=3 (the phone's quality, 0..3)   &time (how long a frame takes)
+//   &gnmface=off (every real face the older sculpted one: human({ gnm: false }); a real face is GNM Head's by default, human-gnm.js)
+//   &gnm=f-white-0,m-black-1 (more rows: GNM Head's heads, written by gnm-heads.py into ref/gnm/, in a plain skin of their group's tone)
 //   &ref (one more row: a reference head scan, ref/LeePerrySmith.glb from three.js's examples (CC BY 3.0, Lee Perry-Smith / Infinite Realities), drawn
 //   under the same lights to judge our faces' shapes and skin against a real one: fetch it into scripts/face-lab/ref/ yourself, it is never committed)
 //   &strands (strands on the hair too; &strands=off: none, not even on a beard)   &wrap=4 (cells to a row of the sheet: people run on across rows)   &look=clean|real (every person drawn in that look)   &pose=idle   &mouth=.5 (open it)   &expr=smile:1 (a face shape set)
@@ -43,6 +45,7 @@ try {
   const T = gs.THREE, human = gs.models.human, frame = () => new Promise(r => requestAnimationFrame(r));
   const pick = Q.has('who') ? Q.get('who').split(',').map(Number) : LAB.map((_, i) => i);
   if (Q.has('ref')) { LAB.push({ name: 'Scan (reference)', scan: true }); pick.push(LAB.length - 1); }
+  for (const g of (Q.get('gnm') || '').split(',').filter(Boolean)) { LAB.push({ name: 'GNM ' + g, gnm: g }); pick.push(LAB.length - 1); }
   const cols = (Q.get('cols') || 'sun:face,overcast:face,lamp:face,indoor:face').split(',').map(c => { const [light, view = 'face', expr = '', pose = '', dirt = ''] = c.split(':'); return { light, view, expr, pose, dirt }; });
   const [cw, ch] = (Q.get('cell') || '300x360').split('x').map(Number);
   window.__hd.force = Q.has('tier') ? +Q.get('tier') : 3; window.__hd.upscale = Q.has('taa'); window.__hd.hold = false;   // (a sheet wants every cell drawn, not a frame's wait for a new shader)
@@ -73,13 +76,13 @@ try {
   sheet.width = cw * WRAP; sheet.height = (ch + LABEL) * Math.ceil(cells / WRAP); const sx = sheet.getContext('2d'); document.body.append(sheet);
   sx.fillStyle = '#1c1c1e'; sx.fillRect(0, 0, sheet.width, sheet.height);
   const info = [], t0 = performance.now();
-  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); if (Q.get('kin') === 'off') o.heritage = false; return o; };
-  await human.ready(pick.filter(i => !LAB[i].scan).map(optsOf));
+  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('gnmface')) o.gnm = Q.get('gnmface') !== 'off'; if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); if (Q.get('kin') === 'off') o.heritage = false; return o; };
+  await human.ready(pick.filter(i => !LAB[i].scan && !LAB[i].gnm).map(optsOf));
   const scan = Q.has('ref') ? await refHead(T, v) : null;
   info.push('sculpted ' + pick.length + ' in ' + Math.round(performance.now() - t0) + ' ms');
-  const VIEW = { eyes: [.3, .04, 1, .17], eyesfront: [0, .02, 1, .16], brow: [.15, .01, 1, .075], mouthfront: [0, -.02, 1, .2], nose: [.5, .02, 1, .3], mouth: [.45, -.05, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], back: [-.5, .1, -1, .62], hairline: [.3, .12, 1, .26], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.9], profile: [1, .15, .02, 3.9], arm: [.25, .05, 1, .75], legs: [1, .1, .15, 1.5], chest: [.3, .1, 1, .32], knee: [.5, .1, -1, .45], elbow: [.35, .15, 1, .4] };
+  const VIEW = { eyes: [.3, .04, 1, .17], eyesfront: [0, .02, 1, .16], brow: [.15, .01, 1, .075], mouthfront: [0, -.02, 1, .2], lips: [0, 0, 1, .11], lipside: [.7, .05, 1, .11], eye: [.15, .05, 1, .065], nose: [.5, .02, 1, .3], mouth: [.45, -.05, 1, .3], face: [.62, .1, 1, .62], front: [0, .06, 1, .62], side: [1, .06, .02, .62], back: [-.5, .1, -1, .62], hairline: [.3, .12, 1, .26], bust: [.5, .12, 1, 1.05], body: [.45, .2, 1, 3.9], profile: [1, .15, .02, 3.9], arm: [.25, .05, 1, .75], legs: [1, .1, .15, 1.5], chest: [.3, .1, 1, .32], knee: [.5, .1, -1, .45], elbow: [.35, .15, 1, .4] };
   for (let r = 0; r < pick.length; r++) {
-    const p = LAB[pick[r]].scan ? scan : human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
+    const p = LAB[pick[r]].scan ? scan : LAB[pick[r]].gnm ? await gnmHead(T, LAB[pick[r]].gnm) : human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
     if (Q.has('noocc') && p.eyeShadow) p.eyeShadow.visible = false;   // (&noocc: the lids' shadow over the eyes left out)
     if (Q.has('nowet') && p.wet) p.wet.visible = false;   // (&nowet: a real face's wet film over the eyes left out)
@@ -99,8 +102,9 @@ try {
         if (gn) p.idle?.gesture(gn, { hold: true, at: [-2.2, 2.1, 2.6] }); for (let i = 0; i < 40; i++) p.rig.update(1 / 30); }
       if (p.face && cols.some(c => c.expr)) { const one = e => { const m = /^([a-zA-Z]+)([\d.]*)$/.exec(e); return [m[1], m[2] ? +m[2] : 1]; };
         for (const c of cols) for (const e of c.expr.split(/[+ ]/).filter(Boolean)) p.face.set(one(e)[0], 0); for (const e of expr.split(/[+ ]/).filter(Boolean)) p.face.set(...one(e)); for (let i = 0; i < 30; i++) p.rig.update(1 / 30); }
-      const len = Math.hypot(d[0], d[1], d[2]), dist = d[3];
-      p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); if (view === 'brow' && p.bones.eyeL) { p.bones.eyeL.getWorldPosition(aim); aim.y += .02; } else if (view === 'eyesfront' && p.bones.eyeL) { p.bones.eyeL.getWorldPosition(aim); aim.lerp(p.bones.eyeR.getWorldPosition(new T.Vector3()), .5); } else if (view === 'arm' || view === 'elbow') p.bones.foreL.getWorldPosition(aim); else if (view === 'chest') p.bones.chest.getWorldPosition(aim); else if (view === 'knee') p.bones.shinL.getWorldPosition(aim); else if (view === 'legs') { p.bones.shinL.getWorldPosition(aim); aim.y += .12; } else aim.y += view === 'body' || view === 'profile' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : view === 'mouth' ? .07 : view === 'eyes' ? .148 : view === 'hairline' ? .24 : .1;
+      const len = Math.hypot(d[0], d[1], d[2]), dist = d[3] / +(Q.get('zoom') || 1);   // (&zoom=2: every view twice as close)
+      p.updateMatrixWorld(true); const aim = new T.Vector3(); p.bones.head.getWorldPosition(aim); if (view === 'brow' && p.bones.eyeL) { p.bones.eyeL.getWorldPosition(aim); aim.y += .02; } else if (view === 'eye' && p.bones.eyeL) { p.bones.eyeL.getWorldPosition(aim); aim.z += .012; } else if ((view === 'lips' || view === 'lipside') && p.bones.eyeL) { p.bones.eyeL.getWorldPosition(aim); aim.lerp(p.bones.eyeR.getWorldPosition(new T.Vector3()), .5); aim.y -= .068; aim.z += .02; } else if (view === 'eyesfront' && p.bones.eyeL) { p.bones.eyeL.getWorldPosition(aim); aim.lerp(p.bones.eyeR.getWorldPosition(new T.Vector3()), .5); } else if (view === 'arm' || view === 'elbow') p.bones.foreL.getWorldPosition(aim); else if (view === 'chest') p.bones.chest.getWorldPosition(aim); else if (view === 'knee') p.bones.shinL.getWorldPosition(aim); else if (view === 'legs') { p.bones.shinL.getWorldPosition(aim); aim.y += .12; } else aim.y += view === 'body' || view === 'profile' ? -.75 : view === 'bust' ? 0 : view === 'nose' ? .115 : view === 'mouth' ? .07 : view === 'eyes' ? .148 : view === 'hairline' ? .24 : .1;
+      if (Q.has('dy')) aim.y += +Q.get('dy');   // (&dy=.02: every view aimed that much higher)
       setLight(light, aim);
       v.cam.aspect = cw / ch; v.cam.near = dist * .05; v.cam.far = dist * 80; v.cam.updateProjectionMatrix();
       v.cam.position.set(aim.x + d[0] / len * dist, aim.y + d[1] / len * dist, aim.z + d[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
@@ -114,6 +118,21 @@ try {
   }
   window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
 } catch (e) { window.result = { error: String(e && e.stack || e) }; }
+// a GNM Head head (&gnm=f-white-0,m-black-1: scripts/face-lab/ref/gnm/, written by gnm-heads.py, never committed): its shape alone, in a
+// plain skin of its group's tone with its lips a little redder and its eyes painted, on the same material as the scan's, stood as the scan is
+async function gnmHead(T, name) {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'), g = await new GLTFLoader().loadAsync('./ref/gnm/' + name + '.glb'), mesh = g.scene.getObjectByProperty('isMesh', true);
+  const geo = mesh.geometry, part = geo.attributes._part, n = geo.attributes.position.count, col = new Float32Array(n * 3), eyes = g.parser.json.extras?.eyes;
+  const TONE = { white: '#e6bea6', black: '#6a4532', asian: '#e0b896', 'middle-eastern': '#c8957a' }, tone = new T.Color(TONE[name.split('-').slice(1, -1).join('-')] || '#d8a888');
+  const C = [tone, tone.clone().multiply(new T.Color(1, .78, .78)), new T.Color('#e4e0d8'), new T.Color(name.includes('black') || name.includes('asian') ? '#2a1a12' : '#5a6a74'), new T.Color('#080808')];
+  for (let i = 0; i < n; i++) { const c = C[part ? part.getX(i) : 0] || tone; col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+  geo.setAttribute('color', new T.BufferAttribute(col, 3)); geo.deleteAttribute('_part'); geo.computeVertexNormals();
+  const m = gs.hd.pbr('#ffffff', { rough: .5 }); Object.assign(m, { vertexColors: true, sheen: .25 }); m.sheenColor = new T.Color('#d08068');
+  mesh.material = m; mesh.castShadow = mesh.receiveShadow = true;
+  const ey = eyes ? (eyes[0][1] + eyes[1][1]) / 2 : .302, p = new T.Group(), inner = new T.Group(), head = new T.Object3D(); inner.add(mesh); p.add(inner, head);
+  head.position.set(0, 1.5, 0); inner.position.set(0, 1.5 + .148 - ey, 0);
+  return Object.assign(p, { bones: { head }, rig: { play() {}, update() {} }, face: { look() {}, awake: true }, tris: [geo.index ? geo.index.count / 3 : 0], wet: null });
+}
 // the reference scan (&ref): its own colour, shine and fine normals as photographed, on three's physical material with a sheen, scaled to a
 // real head (23 cm from the crown to the chin) and stood where a person's head would be; it has no rig or face of its own
 async function refHead(T, v) {
@@ -124,6 +143,8 @@ async function refHead(T, v) {
   // (measured off the scan: its crown at y 3.97 and its chin near -.65, so a 23 cm head is .05 of it; its eyes near 1.9 up; it faces +z as a person does)
   const k = .23 / 4.6, p = new T.Group(), inner = new T.Group(), head = new T.Object3D(); inner.add(mesh); p.add(inner, head); inner.scale.setScalar(k);
   head.position.set(0, 1.5, 0); inner.position.set(0, 1.5 + .148 - 1.9 * k, 0);   // (a person's head bone .148 under the eyes)
-  return Object.assign(p, { bones: { head }, rig: { play() {}, update() {} }, face: { look() {}, awake: true }, tris: [mesh.geometry.index ? mesh.geometry.index.count / 3 : 0], wet: null });
+  // (where its eyes' middles are, for the close views that aim at an eye or the mouth: its shut lids at x .48 and -.75, y 1.9, less an eyeball's depth)
+  const eyeL = new T.Object3D(), eyeR = new T.Object3D(); eyeL.position.set(.48 * k, 1.5 + .148, .068); eyeR.position.set(-.75 * k, 1.5 + .148, .068); p.add(eyeL, eyeR);
+  return Object.assign(p, { bones: { head, eyeL, eyeR }, rig: { play() {}, update() {} }, face: { look() {}, awake: true }, tris: [mesh.geometry.index ? mesh.geometry.index.count / 3 : 0], wet: null });
 }
 </script>

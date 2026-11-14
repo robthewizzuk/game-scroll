@@ -106,12 +106,12 @@ export const TIERS = [
 // Where a phone starts: top phones (Fold 8, recent iPhone Pro) on high, others on high or medium.
 // Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
 // ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
-// A computer (the Mac and Windows app, src/desktop.js) doesn't heat up in a hand: a 'top' one starts on ultra,
-// any of them may climb to it, and each tier draws more of a big window's pixels before the upscaler fills in
-// the rest (ultra about a 2560 x 1440 window's worth, where a phone's is a little over a 1080p screen's).
-const START = desktop ? { top: 3, mid: 2, low: 1 } : { top: 2, mid: 2, low: 1 };
+// A computer (the Mac and Windows app, src/desktop.js) starts where a phone of its class does and draws a tier's
+// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra when its frames have room. (It
+// used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's MacBook Air M5,
+// 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60.)
+const START = { top: 2, mid: 2, low: 1 };
 const CAP = desktop ? 3 : 2;
-if (desktop) [.9e6, 1.5e6, 2.4e6, 3.7e6].forEach((px, i) => { TIERS[i].px = px; });
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -128,9 +128,10 @@ function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2
 // fps a struggling game first gives up a little resolution, then drops to 60 fps at full resolution
 // (keeping the picture); at the lowest tier and resolution it can drop to 30.
 const LEVELS = [1, .85, .7, .55];
-// Most pixels in the final picture once a game has stepped down (about a phone screen's worth, a 2560 x 1440
-// window's on a computer; see draw()).
-const OUT_PX = desktop ? 3.7e6 : 2.4e6;
+// Most pixels in the final picture once a game has stepped down (about a phone screen's worth; see draw()). On a
+// computer, from the first frame: a Retina window is three to six times a phone screen's pixels, and the effects
+// after the upscaler (bloom, motion blur, the finish) cost by the final picture's size, whatever the 3D's own is.
+const OUT_PX = 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
@@ -196,7 +197,18 @@ function startGame(def) {
 // counts only from frames the chip was kept busy for (drawn every refresh, or with frames made between): a phone
 // clocks its chip down at half rate (a real frame took 11.8 ms at 60 against 6.2 at 120 on the Fold, 2026-11-13),
 // and frame generation's checks need the time it takes once it is busy again (speed.cost).
-const GT = { n: 0, busy: false, full: true }, PARTS = new Map();
+// The chip can't take longer over its frames than the frames take to come: a chip whose times say it does is
+// timing something else. Apple's (the Mac app, Rob's MacBook Air M5, 2026-11-13) take each pass's start and end at
+// stage boundaries, so a chain of passes overlap (the next one's vertices start while the last is still drawing)
+// and added up they came to 225 ms a frame, bloom's chain of small passes 66 ms of it, while the frames came every
+// 16.7 ms. Each read is checked against the time its frames took; after BAD of the last 10 reads don't fit, the
+// chip's times are left alone for the rest of the session (HD.info.gpuOff: null, as on WebGL, and the quality
+// steps, the effects' sizes and the gas go by frame times). Twice the frames' time (and 2 ms) is let by, and reads
+// with made frames in them aren't judged: a software chip (the tests' SwiftShader) works on several threads, so
+// its times run past its frames now and then (up to 3.7x, 2026-11-13) and well past them while it makes frames.
+export const chipFits = (gpuMs, wallMs) => !(gpuMs > wallMs * 2 + 2);
+const BAD = 6;
+const GT = { n: 0, busy: false, full: true, at: 0, fits: [] }, PARTS = new Map();
 function partOf(o, rt) {
   if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
   if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
@@ -229,10 +241,11 @@ function gpuTime(r, full = true) {
   codeParts(r);
   GT.n++; GT.full &&= full;
   const be = r.backend;
-  if (!be?.trackTimestamp) return;
+  if (!be?.trackTimestamp || HD.info.gpuOff) return;
   gpuParts(r);
   if (GT.busy) return;
-  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}; GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true;
+  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}, now = performance.now(), wall = GT.at ? (now - GT.at) / n : 0;
+  GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true; GT.at = now;
   // (a read that brought nothing new leaves three's list as it was: its frames list is a new one after each real read)
   const read = type => {
     const pool = be.timestampQueryPool?.[type], was = pool?.frames;
@@ -247,8 +260,13 @@ function gpuTime(r, full = true) {
     });
   };
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
-    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; return; }   // nothing read: those frames count towards the next read
-    const f = (draw + comp) / n; HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; GT.at = now - wall * n; return; }   // nothing read: those frames count towards the next read
+    const f = (draw + comp) / n;
+    if (!made && wall > 0 && wall < 250) {
+      GT.fits.push(chipFits(f, wall)); if (GT.fits.length > 10) GT.fits.shift();
+      if (GT.fits.filter(x => !x).length >= BAD) { chipOff(); return; }
+    }
+    HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
     let fg = 0; for (const k in by) if (k === 'fg' || k.startsWith('fg:')) fg += by[k];
     for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     const real = f - fg / n; HD.info.gpuReal = real; HD.info.fgGpu = fg / n; HD.info.madeMs = made && fg > 0 ? fg / made : null;
@@ -256,6 +274,10 @@ function gpuTime(r, full = true) {
     // what frame generation's checks go by (speed.js frameGenFits, GpuChain.late): eased, for the game being played
     if (real > 0 && real < 100) chipCost(speed.game?.id, kept ? real : null, made && fg > 0 ? fg / made : null);
   }, () => {}).finally(() => { GT.busy = false; });
+}
+function chipOff() {
+  const I = HD.info; I.gpuOff = true; I.gpuMs = I.gpuParts = I.gpuReal = I.fgGpu = I.madeMs = null; I.gpuCompute = 0; Q.gsum = Q.gcnt = 0;
+  console.warn('3D: the graphics chip\'s own times don\'t fit its frames here; the quality steps go by frame times');
 }
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
 const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
@@ -333,7 +355,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { skin: null, gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
+  info: { skin: null, gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -2814,9 +2836,9 @@ export class HDView {
     // The final picture (upscaler, last effects, the copy onto the card) is the screen's own size. On a big
     // screen (a foldable opened up) that's twice a phone's pixels and the resolution steps can't lighten it,
     // so once the game has had to step down (Q.lvl >= 1), it's also drawn at no more than OUT_PX and the
-    // screen stretches it. A game keeping up is never touched.
+    // screen stretches it. A game keeping up is never touched on a phone; on a computer it always is.
     let fw = c.canvas.width, fh = c.canvas.height;
-    if (!baking && !off && HD.scale == null && Q.force == null && Q.lvl >= 1 && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
+    if (!baking && !off && HD.scale == null && Q.force == null && (Q.lvl >= 1 || desktop) && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
     // (Frame generation leaves the 3D's size as it is. It used to give each real frame 1.6 times the pixels, as its
     // two refreshes' time, but the made frames take some of that time, and the Fold is held back by its pixels:
     // the real frame got slower, which is the opposite of what frame generation is for.)
@@ -2963,6 +2985,7 @@ PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 PORTED_LOOKS.add('rooms');   // gs.city's rooms behind the windows (city-rooms.js, city-gpu.js)
 PORTED_LOOKS.add('carpaint').add('carglass');   // gs.models.vehicle's paint and glass (models/vehicle-looks.js, models/vehicle-gpu.js)
+PORTED_LOOKS.add('groundpaint');   // gs.city's ground paint (ground-paint.js, ground-paint-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)

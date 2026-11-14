@@ -674,7 +674,7 @@ function chipLine(R) {
   const n = R.chipN, d = R.draws, l = n ? Object.entries(R.chip || {}).map(([k, v]) => [k, v / n]).filter(([, a]) => a >= .05).sort((a, b) => b[1] - a[1]).slice(0, 10) : [];
   const draws = d?.n ? `${Math.round(d.calls / d.n)} draws, ${Math.round(d.tris / d.n / 1000)}k triangles a frame` : '';
   if (!l.length && !draws) return '';
-  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
+  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : HD?.info.gpuOff ? 'not used: this chip\'s own times don\'t fit its frames (they were left alone)' : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
 }
 let model = '';
 (async () => { try { const { Device } = await import('@capacitor/device'); const d = await Device.getInfo(); model = `${d.manufacturer || ''} ${d.model || ''}`.trim(); } catch (_) {} })();
@@ -844,7 +844,7 @@ function text(now) {
     const pct = i.ow ? Math.round(100 * i.rw / i.ow) : 0;
     L.push(`${i.backend} ${cfg.tier} (step ${Math.round(HD.res * 100)}%) · 3D ${i.rw}×${i.rh} → ${i.ow}×${i.oh} ${pct}% · ${i.upscaled || 'no upscaler'}${cfg.fx ? ` · smaller: ${cfg.fx}` : ''}`);
     L.push(`FG ${i.framegen ? `${i.framegen} ×${i.fgSteps} ${r1(i.fgMs)} ms` : 'off'} · ${frameGenStatus(d) || ''}`.slice(0, 120));
-    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}`);
+    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : i.gpuOff ? 'times don\'t fit (off)' : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}`);
   } else if (s) {
     L.push(`${cfg.backend} canvas ${s.canvas.width}×${s.canvas.height}${s.lite ? ' (eased: phone fell behind)' : ''} · CPU upd ${r2(last.upd)} draw ${r2(last.drw)} ms`);
   }
