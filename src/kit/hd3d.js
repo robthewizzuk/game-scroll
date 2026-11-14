@@ -478,6 +478,8 @@ export const HD = {
   shadowColour: false,
   /** WebGPU: a sun's shadow map and its kept copy hold 16-bit depth (8 MB for a 2048 map where it was 16: half the memory, and half of what every pass on it loads and stores), for maps made from then on. false: 24 bits in 32, as three makes them, to compare. Lamps and spots keep 24. */
   shadow16: true,
+  /** WebGPU: the effect steps' pictures (bloom, bounce light, reflections, the volumetric mix, depth of field, motion blur, screen effects, sun shafts) hold a colour in 4 bytes (rg11b10ufloat, where the chip can draw into it) and not 8; false: half floats of four channels, to compare. The chain is built again when it changes. */
+  hdrSmall: true,
   /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
   bundle: true,
   /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
@@ -3091,6 +3093,7 @@ export class HDView {
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     if (G.fx.SHADOW_16) G.fx.SHADOW_16.on = HD.shadow16 !== false;
     if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
+    if (G.fx.HDR_SMALL) G.fx.HDR_SMALL.on = HD.hdrSmall !== false;   // (the effect steps' pictures in 4 bytes a pixel, hd3d-gpu.js hdrPic: the chain is built again when it changes)
     if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };

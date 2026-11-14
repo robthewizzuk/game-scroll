@@ -38,16 +38,16 @@ const qmat = (node, name) => { const m = new NodeMaterial(); m.name = name; m.fr
 
 export class LensNode extends Node {
   static get type() { return 'LensNode'; }
-  /** src: the picture so far; ao: its ambient occlusion factor (or 1); depth: the scene's depth picture. */
-  constructor(src, ao, depth) {
+  /** src: the picture so far; ao: its ambient occlusion factor (or 1); depth: the scene's depth picture; pic: the options of the last step's picture; fit: its colour as that picture holds it (hd3d-gpu.js hdrFit). */
+  constructor(src, ao, depth, pic, fit) {
     super('vec4');
     this.updateBeforeType = NodeUpdateType.FRAME;
-    Object.assign(this, { src, ao, depth });
+    Object.assign(this, { src, ao, depth, fit: fit || null });
     // lens: K (half-size pixels of blur per dioptre), D (the focus, dioptres), the widest blur (half-size pixels), the highlight's brightness;
     // shape: blades (0 round), their turn, how strong the discs are, on (0: the picture passes through); near / far: the camera's
     this.U = { lens: uniform(new Vector4()), shape: uniform(new Vector4()), cn: uniform(.1), cf: uniform(1000), px: uniform(new Vector2(1, 1)), hpx: uniform(new Vector2(1, 1)), tpx: uniform(new Vector2(1, 1)),
       grid: uniform(new Vector2(1, 1)), af: uniform(new Vector4(.5, .5, .02, .02)) };
-    this.pre = rt({ count: 2 }); this.tile = rt(); this.dil = rt(); this.gat = rt({ count: 2 }); this.spr = rt(); this.out = rt(); this.afRT = new RenderTarget(3, 3, { depthBuffer: false, type: UnsignedByteType });
+    this.pre = rt({ count: 2 }); this.tile = rt(); this.dil = rt(); this.gat = rt({ count: 2 }); this.spr = rt(); this.out = rt(pic || {});   // (the last step holds a colour alone: hd3d-gpu.js hdrPic) this.afRT = new RenderTarget(3, 3, { depthBuffer: false, type: UnsignedByteType });
     for (const t of [this.pre, this.tile, this.dil, this.gat, this.spr, this.out]) t.gsPart = 'depth of field';
     this.pre.textures[0].name = 'Lens colour'; this.pre.textures[1].name = 'Lens highlights'; this.gat.textures[0].name = 'Lens blur'; this.gat.textures[1].name = 'Lens near'; this.spr.texture.name = 'Lens bokeh'; this.out.texture.name = 'Lens';
     this.mats = {};
@@ -188,7 +188,7 @@ export class LensNode extends Node {
         const self = mix(base, g0.rgb, smoothstep(.25, 1, abs(coc)));
         out.assign(mix(self, g1.rgb, g0.a).add(SP.sample(q).rgb));
       });
-      return vec4(out, 1);
+      return vec4(this.fit ? this.fit(out) : out, 1);
     })(), 'Lens composite'));
     // the autofocus: the distance at nine points round the spot, as log2(metres) in two bytes, and the sky
     this.mats.af = own(qmat(Fn(() => {

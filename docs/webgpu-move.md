@@ -105,6 +105,22 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   and a pass that loaded it again. The rectangles are drawn from a few meshes in turn: one mesh used twice
   in a frame had its rectangles uploaded under a pass still held (`submit.js`), which cost a send each time.
   The village walk of `--page shadows`: 2.03 passes a frame on the sun's map and its copy down to 1.12.
+- The effect steps draw into `rg11b10ufloat` (`HD.hdrSmall`, `hdrPic` in `hd3d-gpu.js`): 4 bytes a pixel for an
+  HDR colour where a half-float picture of four channels took 8, the fourth always 1. In three that is a render
+  target of `UnsignedInt101111Type` and `RGBFormat`; drawing into it needs the device feature
+  `rg11b10ufloat-renderable` (three asks for every feature the adapter has), and without it the pictures stay
+  half floats. It has no sign, so a picture that holds a move (motion blur's tiles) is `rg16float`, and one
+  number (the volumetric light) `r16float`. 6 bits of fraction in red and green and 5 in blue are about a
+  screen's 8 bits in a picture's mid tones. A chip given a number between two that the format has may take the
+  lower one (the test machine's does): each step came out half a step darker, a whole one in blue, and three
+  steps in a row made the flare look scene 2% darker and 5% less blue. So each step rounds its colour itself
+  (`hdrFit`): to one of the two numbers either side, with the odds of how near each is, by a noise pattern that
+  stays put. That is right on average whichever way the chip rounds, and leaves no bands where a sky shades
+  off; the look scenes then differ from half floats by 0.3 of 255 at most. three's afterimage node (gs.fx3d
+  trails) gives its own pictures the type of the picture it reads but not the format, and a trail that fades a
+  little each frame needs a half float's steps: its pictures stay half floats (`hd3d-gpu-fx.js`). `sharePictures` shares a picture only between steps of one
+  kind, so GSSR's small picture (four channels) no longer takes a step's. Not changed: the scene pass's
+  colour, anything in `hd3d-gpu-trace.js`, GSSR's and frame generation's pictures.
 - A sun's shadow map and its kept copy are 16-bit depth (`depth16unorm`; `HD.shadow16`, `SHADOW_16` in
   `hd3d-gpu.js`): half the memory, and half of what each pass on them moves. three makes every shadow map
   `depth24plus`, 4 bytes a texel. An orthographic light's depth is even from near to far, so 65,536 steps
