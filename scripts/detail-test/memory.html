@@ -12,6 +12,7 @@
 // the same picture with less memory now.
 //   ?scene=town  ?tier=2  ?w=1080&h=2340  ?size=.35  ?fx=dof,mb,vol,shafts,lens (effects on)  ?set=spread:false (HD settings)
 //   ?swap (the run as now first)  ?was=shadowColour:false  ?now=shareTargets:false (one switch at a time)
+// (also HD.shadow16: a sun's map in 16-bit depth; HD.hdrSmall: the effect steps' pictures in 4 bytes a pixel)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
 import { SCENES } from '../../src/detail-scenes.js';
@@ -77,6 +78,7 @@ function picture(px, diffWith) {
   }
   g.putImageData(im, 0, 0); return cv.toDataURL('image/png');
 }
+const EFFECTS = new Set(['bloom', 'bounce light', 'reflections', 'volumetric light', 'depth of field', 'motion blur', 'light shafts', 'screen effects']);
 const key = Q.get('scene') || 'town', size = +(Q.get('size') || .35), FX = (Q.get('fx') || '').split(',').filter(Boolean);
 // One run: the scene made afresh with HD's memory switches set so, drawn at a few places of its flight, then one frame
 // followed pass by pass; its pictures by what they are for, and the picture it drew
@@ -139,6 +141,7 @@ async function run(label, set) {
     label, set: { ...set }, picturesMB: sum(pics), texturesMB: sum(tex), leftFromBeforeMB: +(left / 1048576).toFixed(1), shared: HD.info.shared, rw: HD.info.rw, rh: HD.info.rh, ow: HD.info.ow, oh: HD.info.oh, upscaled: HD.info.upscaled,
     shadowColour: pics.filter(o => o.name === 'ShadowMap').reduce((a, o) => a + o.mb, 0),
     shadowDepth: +pics.filter(o => o.name === 'ShadowDepthTexture' || o.name === 'ShadowDepthKept').reduce((a, o) => a + o.mb, 0).toFixed(2),
+    bloom: +pics.filter(o => o.part === 'bloom').reduce((a, o) => a + o.mb, 0).toFixed(2), effects: +pics.filter(o => EFFECTS.has(o.part)).reduce((a, o) => a + o.mb, 0).toFixed(2), small: !!r.hasFeature('rg11b10ufloat-renderable'),
     couldShare: { savedMB: +save.toFixed(1), groups: share },
     persistent: pics.filter(o => o.early >= 0).map(o => `${o.name} ${o.mb} MB (read at pass ${o.early} before it's drawn)`),
     pictures: pics.map(o => `${String(o.mb).padStart(6)} MB ${o.w}x${o.h} ${o.kind}${o.samples ? ' x' + o.samples : ''} ${o.name}${o.part ? ' (' + o.part + ')' : ''} ${o.first < 0 ? 'not used this frame' : `[${o.first}..${o.last}]${o.early >= 0 ? ' from the frame before' : ''}`}`),
@@ -150,17 +153,19 @@ async function run(label, set) {
 }
 try {
   // as before (each effect step its own picture, three's colour picture beside each shadow map), then as now
-  const wasSet = { shareTargets: false, shadowColour: true, shadow16: false, ...sets('was') }, nowSet = { shareTargets: true, shadowColour: false, shadow16: true, ...sets('now') };
+  const wasSet = { shareTargets: false, shadowColour: true, shadow16: false, hdrSmall: false, ...sets('was') }, nowSet = { shareTargets: true, shadowColour: false, shadow16: true, hdrSmall: true, ...sets('now') };
   let was, now;
   if (Q.has('swap')) { now = await run('now', nowSet); was = await run('as before', wasSet); }
   else { was = await run('as before', wasSet); now = await run('now', nowSet); }
   // (against how much two frames in a row of one run differ: the upscaler's jitter and what moves in the scene)
   const d = apart(now.pic, was.pic), slack = Math.max(was.base.mean, now.base.mean), slackBig = Math.max(was.base.big, now.base.big);
   for (const R of [was, now]) { const { pic, ...rest } = R; data[R.label] = rest; }
-  data.compare = { picturesMB: [was.picturesMB, now.picturesMB], saved: +(was.picturesMB - now.picturesMB).toFixed(1), shadowColour: [was.shadowColour, now.shadowColour], shadowDepth: [was.shadowDepth, now.shadowDepth], sharedSteps: now.shared, d, frameToFrame: [was.base, now.base] };
+  data.compare = { picturesMB: [was.picturesMB, now.picturesMB], saved: +(was.picturesMB - now.picturesMB).toFixed(1), shadowColour: [was.shadowColour, now.shadowColour], shadowDepth: [was.shadowDepth, now.shadowDepth], bloom: [was.bloom, now.bloom], effects: [was.effects, now.effects], sharedSteps: now.shared, d, frameToFrame: [was.base, now.base] };
   checks.push({ name: `${key}${FX.length ? ' with ' + FX.join(', ') : ''} at tier ${HD.force}, ${W}x${H}: the view's pictures take less memory now`, ok: now.picturesMB < was.picturesMB || (!was.shadowColour && !FX.length), note: `${was.picturesMB} MB as before, ${now.picturesMB} MB now (shadow maps' colour ${was.shadowColour} MB -> ${now.shadowColour} MB, ${now.shared} effect steps sharing a picture)` });
   // (a sun's map and its kept copy in 16-bit depth: HD.shadow16, hd3d-gpu.js SHADOW_16)
   if (was.shadowDepth > 0 && !('shadow16' in sets('was')) && !('shadow16' in sets('now'))) checks.push({ name: "the sun's shadow map holds half the bytes in 16-bit depth", ok: now.shadowDepth <= was.shadowDepth * .5 + .01, note: `${was.shadowDepth} MB as before, ${now.shadowDepth} MB now` });
+  // (the effect steps' pictures hold a colour in 4 bytes: HD.hdrSmall, hd3d-gpu.js hdrPic; the bloom's are all of that kind)
+  if (was.bloom > 0 && now.small && !('hdrSmall' in sets('was')) && !('hdrSmall' in sets('now'))) checks.push({ name: "the bloom's pictures hold half the bytes (a colour in 4 bytes a pixel)", ok: now.bloom <= was.bloom * .5 + .01, note: `bloom ${was.bloom} MB as before, ${now.bloom} MB now; every effect step ${was.effects} MB as before, ${now.effects} MB now` });
   checks.push({ name: 'the same picture as before', ok: d.mean <= slack * 1.5 + .05 && d.big <= slackBig * 1.5 + .05, note: `mean ${d.mean} (frame to frame ${slack}), ${d.big}% off by 40+ (frame to frame ${slackBig}%)` });
   out.before = picture(was.pic); out.now = picture(now.pic); out.diff = picture(now.pic, was.pic);
   window.result = { checks, info: data, out };

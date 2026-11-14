@@ -94,6 +94,30 @@ const BIG_LIST = 268435456;   // the most asked of a chip for one list a shader 
 // of the screen by default and clears and keeps it every frame (4 bytes a pixel: 10 MB on a 1080 x 2340 screen, written
 // out each frame on a phone's chip for nothing). `on: true` before WebGPU starts brings it back (tests).
 export const SCREEN_DEPTH = { on: false };
+// The screen's picture is opaque while nothing behind it is meant to show (HD.opaque). three asks for a canvas the
+// page blends with what is behind it ('premultiplied'), which AR needs for the camera's picture under the 3D and
+// nothing else does: every other view fills its picture, and the browser still blended a full screen of it over
+// the card behind, each frame. Told the picture is opaque, the browser's compositor draws it without blending and
+// knows nothing behind it needs drawing, and the system may show it on a display plane of its own. WebGPU lets
+// a canvas be told again between frames (its next picture is made the new way, the device and everything else
+// kept); WebGL's canvas is fixed when it is made and stays as it was.
+export const OPAQUE = { on: true };
+/**
+ * Before a frame is drawn on r's canvas: through says something behind the canvas shows through this frame
+ * (AR's camera picture, a CSS backdrop). Returns the canvas's mode, or '' where it can't be told (WebGL, an older browser).
+ */
+export function canvasShows(r, through) {
+  const ctx = r?.backend?.isWebGPUBackend ? r.backend.context : null; if (!ctx?.configure || !ctx.getConfiguration) return '';
+  const mode = through || !OPAQUE.on ? 'premultiplied' : 'opaque';
+  if (r.gsAlpha === mode) return mode;
+  try {
+    const now = ctx.getConfiguration(); if (!now) return '';
+    if (now.alphaMode !== mode) { flushGPU('canvas'); ctx.configure({ ...now, alphaMode: mode }); }   // (what is held may draw into the picture the canvas has now: sent first)
+    r.backend.parameters.alpha = mode === 'premultiplied';   // (three sets the canvas up anew after every change of size, from this; its clearing and its shaders read the renderer's own alpha, which stays)
+    r.gsAlpha = mode;
+  } catch (e) { console.warn('canvas alpha mode:', e); r.gsAlpha = mode; return ''; }
+  return mode;
+}
 /** Tests: `on: false` before the Console WebGPU renderer is made draws its passes in 16-bit float pictures, as three does by default. */
 export const CONSOLE_8BIT = { on: true };
 /**

@@ -54,7 +54,7 @@ import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
-import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
+import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses, canvasShows, OPAQUE } from './gpu.js';
 import { packing } from './pack.js';
 import { ONE_SUBMIT, flushGPU, sendEarly } from './submit.js';
 import { steerFor } from './steering.js';
@@ -479,6 +479,8 @@ export const HD = {
   shadowColour: false,
   /** WebGPU: a sun's shadow map and its kept copy hold 16-bit depth (8 MB for a 2048 map where it was 16: half the memory, and half of what every pass on it loads and stores), for maps made from then on. false: 24 bits in 32, as three makes them, to compare. Lamps and spots keep 24. */
   shadow16: true,
+  /** WebGPU: the effect steps' pictures (bloom, bounce light, reflections, the volumetric mix, depth of field, motion blur, screen effects, sun shafts) hold a colour in 4 bytes (rg11b10ufloat, where the chip can draw into it) and not 8; false: half floats of four channels, to compare. The chain is built again when it changes. */
+  hdrSmall: true,
   /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
   bundle: true,
   /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
@@ -581,6 +583,8 @@ export const HD = {
   oneSubmit: true,
   /** With oneSubmit: true (default) also sends what is held before the scene is drawn, after a shadow map drawn inside the scene's pass and when the scene's pass is encoded, so the chip works while the frame's code goes on (three or four sends a frame); false: one send when the frame's code ends, to compare. */
   submitEarly: true,
+  /** WebGPU: the 3D canvas is opaque to the page while the view fills it (every view but AR's, whose camera picture shows behind the 3D): the browser draws it without blending it over the card behind. false: blended always, as three sets it up, to compare. HD.info.canvas: 'opaque' or 'premultiplied' last frame. */
+  opaque: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
   subgroups: true,
   /**
@@ -2998,6 +3002,8 @@ export class HDView {
     const live = direct && !baking && !off;
     if (live && this.stillSkip(ch, now)) { speed.between = null; HD.info.still = true; HD.info.cpu = performance.now() - now; return; }
     if (!baking && !off) HD.info.still = false;
+    // (the canvas is opaque unless this view lets what is behind it show, AR's camera picture: gpu.js canvasShows)
+    OPAQUE.on = HD.opaque !== false; { const m = canvasShows(r, !!this.clearBg); if (!baking && !off) HD.info.canvas = m; }
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
     ONE_SUBMIT.on = HD.oneSubmit !== false; ONE_SUBMIT.early = HD.submitEarly !== false; if (!baking && !off) { HD.info.submits = ONE_SUBMIT.sent - (HD.sentAt ?? ONE_SUBMIT.sent); HD.sentAt = ONE_SUBMIT.sent; }   // (submit.js: the frame before's)
@@ -3099,6 +3105,7 @@ export class HDView {
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     if (G.fx.SHADOW_16) G.fx.SHADOW_16.on = HD.shadow16 !== false;
     if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
+    if (G.fx.HDR_SMALL) G.fx.HDR_SMALL.on = HD.hdrSmall !== false;   // (the effect steps' pictures in 4 bytes a pixel, hd3d-gpu.js hdrPic: the chain is built again when it changes)
     if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };
