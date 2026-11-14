@@ -1,0 +1,91 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Occlusion culling of copies on the graphics chip (src/kit/props-gpu.js: gs.props picked on the chip, HD.gpuCull, asking the
+// view's depth pyramid itself when occlusion culling is on), for scripts/detail-test.cjs --page cull --webgpu.
+// A long wall with a field of posts behind it and a low sun from the side, so the shadows of posts hidden behind the wall
+// reach past its end into view.
+// 1. A walk along: every frame drawn with the hidden posts left out of the camera's list and with occlusion worked out but
+//    all drawn (HD.occludeShow): the same picture, shadows and all. The chip's lists: the camera's holds far fewer posts than
+//    the shadows' (hidden and just off screen), and the chip counts what it hid.
+// 2. The shadows of hidden posts are in that picture: the posts the CPU's own test calls hidden, taken away, change it.
+// 3. Subgroups (subgroups.js) off and on: the same pictures and the same counts.
+// 4. A post carried out from behind the wall shows the frame it is moved.
+//   ?gpu  WebGPU (required)   ?tier=2   ?w=480&h=360   ?posts=2500
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (!GPU || !await prepareGPU()) { window.result = { error: 'this page needs WebGPU (--webgpu)' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 480), H = +(Q.get('h') || 360), { Props } = gs.props, NP = +(Q.get('posts') || 2500);
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.gpuCull = true; HD.occludeSleep = false;
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+try {
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  v.cam.fov = 60; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 300; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#fff2d8', 3, 40, [-1, .36, .05]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(4, 0, -22);
+  const ground = new T.Mesh(new T.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), gs.hd.pbr('#86936c', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  const wall = new T.Mesh(new T.BoxGeometry(44, 4, .6).translate(0, 2, 0), gs.hd.pbr('#a49a8c', { rough: .8 })); wall.position.set(-10, 0, -10); wall.castShadow = wall.receiveShadow = true; v.scene.add(wall);
+  const props = new Props(v.scene), mesh = props.kind('post', new T.CylinderGeometry(.18, .24, 3.4, 16, 2).translate(0, 1.7, 0), gs.hd.pbr('#7a5a3c', { rough: .8 }), { lod: false });
+  const ids = props.scatter('post', NP, { x0: -30, z0: -42, x1: 10.5, z1: -11.5 }, { seed: 4, gap: .55 });
+  props.done();
+  const S = { v, c, x }; window.S = S;
+  const look = (from, at) => { v.cam.position.set(...from); v.cam.lookAt(...at); v.cam.updateMatrixWorld(); };
+  const pose = i => look([4 + i * .25, 2.6, 6 - i * .2], [5 + i * .1, 1, -25]);
+  const twin = () => mesh.userData.gpuTwin, r = () => v._gpuChain?.r;
+  const draw = async show => { HD.occludeShow = !!show; v.t = 0; v.shadowsDirty(); v.render(x, W, H); HD.occludeShow = false; await nextFrame(); return x.getImageData(0, 0, W, H).data; };
+  // settle: shaders, the shadows and the first depth pictures back from the chip
+  pose(0); let last = null; for (let i = 0, same = 0; i < 80 && same < 3; i++) { const d = await draw(false); same = last && differ(last, d, 0) === 0 && i > 8 ? same + 1 : 0; last = d; }
+  check('the posts are picked on the chip', twin()?.isGpu?.(), HD.info.backend);
+
+  // 1. a walk along the wall
+  const N = 12; let bad = [], hid = 0, cam = 0, all = 0, frames = 0, worst = 0;
+  for (let i = 0; i < N; i++) {
+    pose(i);
+    await draw(false); const a = await draw(false), k = await twin().counts(r());   // (each picture after one at the same place: the shading takes last frame's ambient occlusion)
+    await draw(true); const b = await draw(true), d = differ(a, b);
+    if (d) { bad.push(i + ':' + d); if (d > worst) { worst = d; out.badOn = c.toDataURL(); x.putImageData(new ImageData(new Uint8ClampedArray(a), W, H), 0, 0); out.badOnly = c.toDataURL(); } }
+    if (k) { frames++; hid += k.hidden.reduce((s, q) => s + q, 0); cam += k.cam.reduce((s, q) => s + q, 0); all += k.all.reduce((s, q) => s + q, 0); }
+    if (i === 0) { x.putImageData(new ImageData(new Uint8ClampedArray(a), W, H), 0, 0); out.walk0 = c.toDataURL(); }
+  }
+  info.walk = { frames: N, countsRead: frames, camAFrame: Math.round(cam / frames), allAFrame: Math.round(all / frames), hiddenAFrame: Math.round(hid / frames), posts: ids.length, occluded: HD.info.occluded, backend: HD.info.backend, subgroups: HD.info.subgroups };
+  check('every frame is the same picture with the hidden posts left out as with them drawn, shadows and all', bad.length === 0, bad.length ? 'frames:pixels ' + bad.join(' ') : 'all ' + N);
+  check('the chip hides posts behind the wall', frames === N && hid / frames > ids.length * .5, Math.round(hid / Math.max(1, frames)) + ' of ' + ids.length + ' a frame');
+  check('the camera\'s list holds far fewer posts than the shadows\'', cam / frames < all / frames * .5 && all > cam, Math.round(cam / frames) + ' against ' + Math.round(all / frames));
+
+  // 2. the hidden posts' shadows are in the picture
+  { pose(6); const on = await draw(false); await draw(false); const oc = v.occlusion, gone = [];
+    if (oc?.ready) for (const id of ids) if (oc.hiddenInstance(mesh, id)) gone.push(id);
+    if (Q.has('dbg')) { const k = await twin().counts(r()), Fr = new T.Frustum().setFromProjectionMatrix(new T.Matrix4().multiplyMatrices(v.cam.projectionMatrix, v.cam.matrixWorldInverse)), g = mesh.geometry; if (!g.boundingSphere) g.computeBoundingSphere(); const M = new T.Matrix4(), sp = new T.Sphere(); let inF = 0, hs = 0, near = [];
+      for (const id of ids) { mesh.getMatrixAt(id, M); sp.copy(g.boundingSphere).applyMatrix4(M); if (!Fr.intersectsSphere(sp)) continue; inF++; if (oc.hiddenSphere(sp.center.x, sp.center.y, sp.center.z, sp.radius)) hs++; else if (near.length < 8) near.push([sp.center.x.toFixed(1), sp.center.z.toFixed(1)].join(',')); }
+      info.dbg = { chip: k, inFrustum: inF, cpuSphereHidden: hs, notHidden: near.join(' '), levels: oc.levels.map(L => L.w + 'x' + L.h).join(' '), margin: oc.margin, stamp: oc.stamp }; }
+    HD.occlude = false; for (const id of gone) mesh.setVisibilityAt(id, false);
+    const off = await draw(false); await draw(false); const off2 = await draw(false), d = differ(on, off2, 6);
+    x.putImageData(new ImageData(new Uint8ClampedArray(on), W, H), 0, 0); out.shadows = c.toDataURL(); x.putImageData(new ImageData(new Uint8ClampedArray(off2), W, H), 0, 0); out.shadowsGone = c.toDataURL();
+    for (const id of gone) mesh.setVisibilityAt(id, true); HD.occlude = true;
+    check('the shadows of posts hidden behind the wall are drawn: taking those posts away changes the picture', gone.length > 100 && d > 200, gone.length + ' posts hidden, ' + d + ' pixels of their shadows'); void off; }
+
+  // 3. subgroups off and on
+  if (/^on/.test(HD.info.subgroups)) {
+    const pics = {}, cnt = {};
+    for (const sg of [true, false]) {
+      HD.subgroups = sg; pose(3); for (let i = 0; i < 6; i++) await draw(false);
+      pics[sg] = await draw(false); const k = await twin().counts(r()); cnt[sg] = k && [k.cam, k.all, k.hidden].map(a => a.reduce((s, q) => s + q, 0));
+    }
+    HD.subgroups = true;
+    check('with subgroups and without: the same picture and the same lists', differ(pics.true, pics.false) === 0 && JSON.stringify(cnt.true) === JSON.stringify(cnt.false), 'cam, all, hidden: ' + JSON.stringify(cnt.true) + ' and ' + JSON.stringify(cnt.false));
+  } else check('subgroups: none on this chip, so only the plain way is tested', true, HD.info.subgroups);
+
+  // 4. a post carried out from behind the wall
+  { pose(4); for (let i = 0; i < 4; i++) await draw(false);
+    const id = ids.find(q => props.kinds.get('post').items[q].x > 5 && props.kinds.get('post').items[q].z < -20) ?? ids[0];
+    props.move('post', id, 12.5, 0, -4);
+    const a = await draw(false); await draw(true); const b = await draw(true), d = differ(a, b);
+    x.putImageData(new ImageData(new Uint8ClampedArray(a), W, H), 0, 0); out.moved = c.toDataURL();
+    check('a post carried out from behind the wall shows the frame it is moved', d === 0, d + ' pixels differ'); }
+  window.result = { out, info, checks };
+} catch (e) { window.result = { error: String(e?.stack || e), out, info, checks }; throw e; }
+</script>
