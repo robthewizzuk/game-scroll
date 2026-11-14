@@ -74,15 +74,22 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   so its frames always land on refreshes; a phone steps 120, 60, 30.
 - **No heat cap** (`src/kit/hd3d.js`): on a phone 3D games never climb above the high tier, because the Fold
   got hot and throttled on ultra. A computer starts where a phone of its class does, with a tier's pixels as a
-  phone draws them, and may climb to ultra when its frames have room. The final picture (the upscaler and the
+  phone draws them, and may climb to ultra only when the chip's own times show room: on a 60 Hz screen, frames
+  that keep up say nothing about how much more the chip could take. A Mac's chip times can't be used (below), so
+  a Mac stays on high, as the Fold does, and steps down from there. A tier a game saved above its start is only
+  taken up again when it was climbed to that way. The final picture (the upscaler and the
   effects after it) is at most about a phone screen's pixels (2.4 million) from the first frame, and the window
   stretches it: a Retina window has three to six times that, and those effects cost by the picture's size.
   (A first version started a `top` computer on ultra with half as many pixels again: a MacBook Air M5 played
-  Long Shadow at 47 fps with a stutter every few frames.)
+  Long Shadow at 47 fps with a stutter every few frames. With that fixed it still started on ultra the next
+  run, as the game had saved ultra the run before: 55.6 fps, 215 stutters a minute.)
 - **The graphics chip's own times** (WebGPU timestamps) are checked against how long the frames take. Apple's
   chips time each pass from stage boundaries, so a chain of passes overlap and add up to far more than the
   frame (225 ms a 16.7 ms frame on the M5): where they don't fit, they're left alone, as on WebGL, and the
   quality steps go by frame times. The frame lab says so.
+- **The quality steps' record**: a frame lab report of a 3D game has a "Quality steps" line: how many windows
+  of frames were slow, ok or fast, what was stepped and when, and frames that weren't counted and why (under
+  the loading screen, after a gap of 100 ms or more). The report's data keeps every window (`rec.steps`).
 - Crash and stutter reports say `mac` or `windows`, with the graphics chip as the model ("Apple M2 Pro").
 
 **Where it runs.** The app is served from `https://localhost`, the Android app's own address, read straight

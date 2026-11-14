@@ -62,6 +62,7 @@ import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.mo
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
 import { LampPool } from './lamps.js';
+import { binCapsules } from './sunmask.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
@@ -107,11 +108,25 @@ export const TIERS = [
 // Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
 // ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
 // A computer (the Mac and Windows app, src/desktop.js) starts where a phone of its class does and draws a tier's
-// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra when its frames have room. (It
-// used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's MacBook Air M5,
-// 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60.)
+// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra, but only when the chip's own
+// times show room (mayClimb): on a 60 Hz screen frames that keep up say nothing about how much more the chip could
+// take. A tier above the start saved by a game (settle) is only taken up again when it was climbed to that way
+// (startTier). (It used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's
+// MacBook Air M5, 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60;
+// with that fixed it still started on ultra, as the game had settled there the run before, 2026-11-14.)
 const START = { top: 2, mid: 2, low: 1 };
 const CAP = desktop ? 3 : 2;
+/**
+ * The tier a game starts on (pure: tests). saved: where it settled last time (speed.js settledFor), cls: the
+ * phone's class, computer: the Mac and Windows app. A computer's saved tier above its class's start only counts
+ * with room: true (climbed to while the chip's own times showed room); else it starts at the class's start.
+ */
+export function startTier(saved, cls, computer) {
+  const start = START[cls] ?? 2, t = Math.min(computer ? 3 : 2, saved?.tier ?? start);
+  return computer && t > start && !saved?.room ? start : t;
+}
+/** May a game climb from this tier (pure: tests)? A phone may (up to CAP); a computer above its class's start only with room (the chip's times say so). */
+export const mayClimb = (tier, cls, computer, room) => !computer || tier < (START[cls] ?? 2) || !!room;
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -135,7 +150,7 @@ const OUT_PX = 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
-const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [] };
+const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [], room: false, wantRoom: false };
 // Effects that step down by their own cost (Rob's pick 3 of 2026-11-13). Before a slow game gives up
 // resolution, the effect that costs the chip most (by the GPU's own time for each pass, HD.info.gpuParts)
 // is drawn smaller: each has sizes (FXS), and only the size of its pictures changes, so no shader is built
@@ -144,8 +159,8 @@ const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0,
 // step, in FX_ORDER, before the resolution does. Climbing back is the other way round: once the resolution
 // is full again, the last effect stepped down comes back first. Where a game settles is kept with its tier
 // and resolution.
-const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5] };
-const FX_ORDER = ['light shafts', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
+const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5], 'sun mask': [1, .7, .5] };
+const FX_ORDER = ['light shafts', 'sun mask', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
 const FX_SHARE = .12, FX_MS = .5;
 let fxOn = new Set();   // the effects the last frame drew (the frame sets it)
 /** This effect's size now (1: as the tier has it). */
@@ -172,8 +187,10 @@ const fxSaved = () => Object.keys(Q.fx).length ? { ...Q.fx } : null;
 // a new game is on screen: start from where it settled last time, or from the phone's class
 // (and the resolution step it settled on, so a round doesn't start too sharp, stutter and step down again)
 function startGame(def) {
-  Q.game = def; const s = settledFor(def?.id);
-  Q.tier = Math.min(CAP, s?.tier ?? START[phoneClass()] ?? 2); Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
+  Q.game = def; let s = settledFor(def?.id);
+  Q.tier = startTier(s, phoneClass(), desktop); Q.room = !!s?.room;
+  if (s?.tier != null && Q.tier < Math.min(CAP, s.tier)) s = null;   // (a saved tier not taken up: its resolution and effects were for that tier)
+  Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
   Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
   for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
@@ -185,7 +202,7 @@ function startGame(def) {
 // here, both kinds, and divided by the frames drawn since: the GPU's time for a real frame and whatever
 // was made after it. (One read at a time: the answer comes back a frame or two later.)
 // HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
-// shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'bounce light', 'depth of field',
+// shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'sun mask' (finer sun shadows), 'bounce light', 'depth of field',
 // 'motion blur', 'screen effects' (gs.fx3d's), finish (under an upscaler: the small picture finished, with the
 // ambient occlusion and bloom laid on, graded and tone mapped), upscale (SGSR's own passes), effects (the other passes
 // drawn into pictures of their own), show (the last pass, onto the screen), compute, fg (frame generation's, or with its parts on
@@ -281,12 +298,34 @@ function chipOff() {
 }
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
 const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
+// The quality steps' own record, for the frame lab's report (Rob's MacBook Air M5, 2026-11-14: Long Shadow stuttered
+// for 26 s before anything was stepped down, and the report couldn't say why): each window of frames (performance.now(),
+// its average gap in ms, frames a refresh or more late, the verdict, what was done about it), the last 400, and the
+// frames not counted and why (pinned: HD.force; long: a gap of 100 ms or more; warming: drawn under the loading screen).
+const STEPS = { log: [], off: { pinned: 0, long: 0, warming: 0 } };
+function stepped(t, a, late, v, was) {
+  let did = '';
+  if (Q.lvl !== was.lvl) did = `resolution ${Math.round(LEVELS[was.lvl] * 100)}% to ${Math.round(LEVELS[Q.lvl] * 100)}%`;
+  else if (Q.fxLast.length > was.fx) did = `${Q.fxLast[Q.fxLast.length - 1]} smaller`;
+  else if (Q.fxLast.length < was.fx) did = 'an effect back';
+  else if (Q.want != null && Q.want !== was.want) did = `${TIERS[Q.want].name} wanted (from the next round)`;
+  else if (Q.game && fpsFor(Q.game) !== was.fps) did = `${Math.round(fpsFor(Q.game))} fps`;
+  else if (v === 'slow') did = Q.slow ? 'waits for a second slow window' : Q.want != null ? `${TIERS[Q.want].name} waits for the next round` : 'nothing left to step down';
+  else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), desktop, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
+  STEPS.log.push({ t: Math.round(t), avg: +a.toFixed(1), late, v, did }); if (STEPS.log.length > 400) STEPS.log.shift();
+}
 function adapt(gap) {
-  if (Q.force != null || !(gap > 0 && gap < 100)) return;
+  if (Q.force != null) { STEPS.off.pinned++; return; }
+  if (!(gap > 0 && gap < 100)) { if (gap >= 100) STEPS.off.long++; return; }
   const fps = Q.game ? fpsFor(Q.game) : 60, budget = 1000 / fps;
   Q.sum += gap; if (gap > budget * 1.5) Q.late++;   // a frame a whole refresh (or more) late: a stutter you can see
   if (++Q.cnt < 45) return;
-  const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget); Q.sum = Q.cnt = Q.late = 0;
+  const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget), late = Q.late; Q.sum = Q.cnt = Q.late = 0;
+  const was = { lvl: Q.lvl, fx: Q.fxLast.length, want: Q.want, fps };
+  decide(v, now, fps, budget);
+  stepped(now, a, late, v, was);
+}
+function decide(v, now, fps, budget) {
   // the GPU's own time per frame (WebGPU timestamps, where the phone has them): how much of a slow frame
   // is the graphics chip's. A frame that's slow while the GPU has room is held up by the CPU, and fewer
   // pixels wouldn't help it; a GPU with plenty of room can take sharpness back sooner (Unreal and
@@ -309,7 +348,7 @@ function adapt(gap) {
     Q.slow = 0; if (++Q.fast < (gpuRoom && Q.lvl > Q.ceil ? 3 : 8)) return; Q.fast = 0;
     if (Q.lvl > Q.ceil) { if (!(hot(now) && Q.lvl <= 1)) { Q.lvl--; Q.upT = now; } }
     else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
-    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP)) { Q.want = Q.tier + 1; Q.upT = now; }
+    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom)) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
@@ -328,12 +367,15 @@ function applyTier() {
   Q.capNow = hot() ? CAP - 1 : CAP;   // between rounds: one tier lower while hot
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
-  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl });
+  if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)
+  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, room: Q.room || undefined });
 }
 /** Current quality: { tier, name, res }. Set HD.force = 0..3 to pin a tier (tests, screenshots). */
 export const HD = {
   get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
+  /** The quality steps' record (the frame lab): { log: [{ t, avg, late, v, did }] each window of frames, off: frames not counted, by why }. */
+  get steps() { return STEPS; },
   /** The effects drawn smaller by their cost now (FXS): { name: size, 1 = as the tier has it }; {} when none is. */
   get fx() { const o = {}; for (const k in Q.fx) o[k] = fxK(k); return o; },
   /** Tests and the frame lab: draw this effect smaller by n of its steps now (0: full size), also under HD.force; until the next game. */
@@ -2645,6 +2687,30 @@ export class HDView {
   shadowsDirty() { this.shK?.clear(); this.shAll = true; return this; }
   // The WebGPU frame (render() decided this view fits): the same numbers as the WebGL chain, drawn by hd3d-gpu.js.
   // up: { pw, fw, fh, s1 } when the scene is drawn pw wide and upscaled to the canvas (fw x fh) by SGSR 2, or SGSR 1 if s1
+  // Finer sun shadows (WebGPU, sunmask-gpu.js): what this frame's sun mask holds, and whether materials read the last
+  // one. contact: v.contactShadows (by itself at ultra); far: v.farShadows (a map of heights round the camera,
+  // for shadows past the sun's own box); capsules: crowds' far members (gs.props.Crowd), whose shadows then leave the
+  // sun's map. Null when there is nothing to put in it.
+  sunMaskFrame(G, r, T, still, cut) {
+    const cs = this.cascade, sun = cs?.far?.parent ? cs.far : this.suns.find(l => l.visible && l.castShadow && l.parent);
+    const ok = !still && !this.clearBg && T.shadow > 0 && !!sun && HD.sunMask !== false;
+    const cw = this.contactShadows, contact = ok && (cw ?? HD.tier >= 3) ? { length: .3, thickness: .25, out: 40, ...(typeof cw === 'object' ? cw : {}) } : null;
+    const far = ok && !!this.farShadows;
+    this.gsCapsules = ok && HD.capsules !== false;
+    const list = this._capList ||= []; list.length = 0;
+    if (this.gsCapsules) for (const c of this.scene.userData.gsPosed || []) c.capsules?.(list, this.cam);
+    if (far) { const p = this.cam.getWorldPosition(SM_P); G.fx.farTiles(r, this.scene, p.x, p.y, p.z, this.cam.layers.mask, typeof this.farShadows === 'object' ? this.farShadows : {}); this._farOn = true; }
+    else if (this._farOn) { G.fx.farTilesOff(); this._farOn = false; }
+    if (!contact && !far && !list.length) { G.fx.sunMaskOn(false); HD.info.sunMask = null; return null; }
+    sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
+    const L = (this._sunL ||= new Vector3()).setFromMatrixPosition(sun.matrixWorld).sub(SM_P.setFromMatrixPosition(sun.target.matrixWorld)).normalize();
+    let caps = null;
+    if (list.length) { list.sort((a, b) => a[7] - b[7]); const { caps: cA, grid } = G.fx.sunCaps(); caps = binCapsules(list, [L.x, L.y, L.z], cA, grid, 40, ORIGIN); }
+    G.fx.sunMaskOn(!cut && G.fx.sunMaskOwner() === this);
+    HD.info.sunMask = { contact: !!contact, far, caps: caps?.n || 0, full: caps?.full || 0 };
+    const reach = typeof this.farShadows === 'object' && this.farShadows.reach;
+    return { owner: this, L, contact, far, farReach: reach || 0, box: sun.castShadow && sun.shadow.map ? sun.shadow.matrix : null, caps, k: fxK('sun mask') };
+  }
   drawGPU(G, r, T, baking, off, now, up, direct) {
     const s2 = up && !up.s1 ? up : null;
     // card pictures (bakes) draw with no upscaler and no frame generation, which the chain is built for: one
@@ -2839,13 +2905,15 @@ export class HDView {
     // the scene's pass writes each pixel's motion and the see-through mask while frame generation could
     // come on for this game (so it can start without rebuilding the chain) or SGSR 2 can use them
     o.live = live; o.mrt = live && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
+    // finer sun shadows: what goes into this frame's sun mask (drawn after the scene), and whether this frame reads the last one
+    if (pm >= 0) enter('3D: sun mask'); o.sunMask = this.sunMaskFrame(G, r, T, baking || off, cut); if (pm >= 0) leave(pm);
     // (effects spread over frames: a cut starts them from this frame alone)
     // (a card's picture is a frame of its own: it keeps nothing from the last one baked)
     o.spread = HD.spread === false ? false : typeof HD.spread === 'string' ? HD.spread : true; o.cut = cut || !!baking;
     o.aoBack = HD.aoBack !== false; o.aoDirect = HD.aoDirect;   // (ambient occlusion on bounce light only, and the share still on the whole picture: hd3d-gpu.js aoInShading)
     // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
     o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
-    if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); }
+    if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); if (o.sunMask) fxOn.add('sun mask'); }
     // fresh aim: made frames turned to where the camera points at the moment they're shown (v.aimNow, AR's own)
     ch.aim = live && fg && HD.aim !== false && (this.aimFn || this.freshAim) ? () => this.aimPose() : null;
     this._aimJit = s2 && fg ? fg.jit : null;   // the real frame is shown while SGSR 2's jitter is still on the camera
@@ -3011,7 +3079,7 @@ export class HDView {
       // adaptive quality: first resolution, then tier (and frame rate)
       // (a round getting ready behind the loading screen, getready.js: its frames build what the round needs and say
       // nothing about how fast the phone draws, so none of them count; the measuring starts with the round)
-      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; else adapt(gap); applyTier();
+      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) { Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; STEPS.off.warming++; } else adapt(gap); applyTier();
     }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
@@ -3207,6 +3275,7 @@ function gpuFor(v) {
 }
 // swap each view's parts between their WebGL and WebGPU versions (particles: points or sprites)
 const gpuLooked = new WeakSet(), gpuTwins = new WeakMap(), gpuLists = new WeakMap(), sunRoles = new WeakMap();
+const SM_P = new Vector3();   // (sunMaskFrame)
 // kit ShaderMaterials (GPU_TWINS) swapped for their node material twin on WebGPU, and back
 // A twin can have a close-up version (gs.models materials: the recipe worked out per pixel, fading to the
 // baked look pixel by pixel as the textures get fine enough): drawn while the thing is within its distance

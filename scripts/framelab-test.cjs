@@ -167,6 +167,7 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
   const sum3 = await p.evaluate(async () => (await __gs.lab(true)).summary());
   console.log('   ' + sum3.split('\n').join('\n   '));
   check(/avg [\d.]+ fps/.test(sum3), `${id3d}: recording summary`);
+  check(/\nQuality steps: (no window of frames counted|\d+ windows \(\d+ slow, \d+ ok, \d+ fast\))/.test(sum3), `${id3d}: the quality steps' windows and what they did are in the summary`);
   const html = await p.evaluate(async () => (await __gs.lab(true)).html());
   check(html.length > 5000 && html.includes('Frame lab report'), `report made (${(html.length / 1048576).toFixed(2)} MB)`);
   if (reportFile) fs.writeFileSync(reportFile, html);

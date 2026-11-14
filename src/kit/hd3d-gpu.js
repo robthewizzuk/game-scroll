@@ -70,6 +70,8 @@ import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
+import { sunMaskAt, sunMask } from './sunmask-gpu.js';
+export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -1393,7 +1395,8 @@ export function gpuSunLight(l, AIR, noise) {
   const shade = select(SKY.shadeOn.greaterThan(.5), cloudShadeAt(wp.add(ORG), S), flat);
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());
   const nearW = select(p.z.greaterThan(0).and(p.z.lessThan(1)), smoothstep(0, CASC.fade, min(e.x, e.y)), float(0));
-  l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1))));
+  // (and the finer shadows from last frame's sun mask: contact, far and capsule shadows, sunmask-gpu.js)
+  l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1)))).mul(sunMaskAt());
   return role;
 }
 
@@ -2454,6 +2457,7 @@ export class GpuChain {
     if (live) return this.realFrame(o, f);
     if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
+    if (o.sunMask && this.sp && !this.clear) sunMask(this.r, this.sp.getTextureNode('depth').value, this.cam, o.sunMask);
   }
 
   /* ---------- the game on screen: real frames, made frames, still frames ---------- */
@@ -2493,6 +2497,8 @@ export class GpuChain {
       try { this.pp.render(); } finally { r.setRenderTarget(was); }
       color = rt.texture;
     }
+    // the sun mask from this frame's depth, for the next frame's sun (sunmask-gpu.js; hd3d.js sunMaskFrame says what goes in it)
+    if (o.sunMask) sunMask(r, sp.getTextureNode('depth').value, cam, o.sunMask);
     this.vpLast.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.lastColor = color;
     if (o.still) (this.still ||= new StillCheck(r)).check(color, o.fw, o.fh);
