@@ -15,13 +15,16 @@
 //   update(dt) { wind.update(dt); cloth.update(dt); }
 //
 // Everything is in metres. A piece's pins can ride a moving thing (flag.ride(boat)), and cloth.ball / cloth.capsule
-// are solid things it drapes over and is pushed aside by.
+// are solid things it drapes over and is pushed aside by. With world: a gs.physics3d World3D, the bodies near the cloth
+// are such solids by themselves (a ball rolled into the washing, a kart through a banner, a crate under a sheet).
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, Matrix4, Mesh, MeshStandardMaterial, Vector3 } from 'three';
 import { webgpu } from './gpu.js';
 import { own } from './cleanup.js';
 import { timed } from './prof.js';
 
 const GRAV = -9.81, AIR = .6, SKIN = .12, GRIP = .6, MOVE = .01;
+// a direction turned by a quaternion { x, y, z, w }
+const turn = (q, v) => { const [x, y, z] = v, ix = q.w * x + q.y * z - q.z * y, iy = q.w * y + q.z * x - q.x * z, iz = q.w * z + q.x * y - q.y * x, iw = -q.x * x - q.y * y - q.z * z; return [ix * q.w + iw * -q.x + iy * -q.z - iz * -q.y, iy * q.w + iw * -q.y + iz * -q.x - ix * -q.z, iz * q.w + iw * -q.z + ix * -q.y - iy * -q.x]; };
 // (AIR: half the density of air: a sheet square to a wind of v metres a second is pushed AIR v² newtons a square metre. SKIN: what the wind
 // along a cloth that flaps drags it by, against that: a flag's drag is about an eighth of a board's square on, which is what flies it)
 const STEPS = 4;   // small steps a frame
@@ -76,8 +79,8 @@ export class Cloth {
    * view: an HDView (null: the numbers alone). wind: a gs.outdoors Wind, or { x, y, z } metres a second (a breeze of 3 by
    * default). fine: points across a metre (WebGPU 14, else 7). ground: a height (or (x, z) => height) the cloth lies on rather than going through.
    */
-  constructor(view, { wind = null, fine = null, ground = null, rough = .85, steps = STEPS } = {}) {
-    this.view = view; this.wind = wind; this.ground = ground; this.t = 0; this.steps = steps;
+  constructor(view, { wind = null, fine = null, ground = null, rough = .85, steps = STEPS, world = null } = {}) {
+    this.view = view; this.wind = wind; this.ground = ground; this.t = 0; this.steps = steps; this.world = world; this.felt = new Map();
     this.big = !!webgpu() && typeof view?.envFor === 'function' && typeof webgpu().fx?.gpuCloth === 'function';
     this.fine = fine ?? (this.big ? 14 : 7);
     this.pieces = []; this.solids = []; this.bodies = []; this.dirty = true; this.pinsMoved = false;
@@ -222,7 +225,7 @@ export class Cloth {
   }
   boneOf(on, name) { const b = on?.bones?.[name] || on?.rig?.parts?.[name]; if (!b) throw new Error(`gs.outdoors.Cloth: ${on?.name || 'that'} has no ${name} bone (a gs.models.human has)`); return b; }
   /** Takes every piece and solid away. */
-  clear() { this.pieces = []; this.solids = []; this.bodies = []; this.dirty = true; return this; }
+  clear() { this.pieces = []; this.solids = []; this.bodies = []; this.felt.clear(); this.dirty = true; return this; }
 
   // ---- the points and links of every piece, in one set (made again when pieces come or go)
   build() {
@@ -292,6 +295,7 @@ export class Cloth {
     if (!(dt > 0) || !this.N) return this;
     dt = Math.min(dt, 1 / 20); this.t += dt;
     for (const b of this.bodies) this.bodyNow(b);
+    if (this.world) this.fromWorld();
     this.pinsNow(dt);
     this.winds();
     if (this.mode === 'gpu') { this.pending += dt; return this; }
@@ -406,6 +410,36 @@ export class Cloth {
     }
     for (const s of this.solids) if (!s.ends && s.pa) most = Math.max(most, Math.hypot(s.a[0] - s.pa[0], s.a[1] - s.pa[1], s.a[2] - s.pa[2]), Math.hypot(s.b[0] - s.pb[0], s.b[1] - s.pb[1], s.b[2] - s.pb[2]));
     return this.lastSteps = Math.min(this.steps * 3, Math.max(this.steps, Math.ceil(most / MOVE)));
+  }
+  // the bodies of the physics world near the cloth, as solids it goes round (the nearest, as many as there is room for)
+  fromWorld() {
+    const W = this.world, P = this.P, N = this.N; if (!W.world || !N) { for (const s of this.felt.values()) s.remove(); this.felt.clear(); return; }
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let k = 0; k < N; k++) { const x = P[k * 3], y = P[k * 3 + 1], z = P[k * 3 + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+    const c = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2 }, reach = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + 1.5;
+    const room = SOLIDS_MAX - (this.solids.length - this.felt.size) - this.bodies.reduce((a, b) => a + b.solids.length, 0);
+    const R = W.R, near = [];
+    for (const t of W.near(c, reach)) {
+      const b = t.body, col = t.collider; if (!b || !col || b.isFixed() || col.isSensor()) continue;
+      const p = W.outer(b.translation()); near.push([Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z), t, p]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    const keep = new Set();
+    for (const [, t, p] of near.slice(0, Math.max(0, room))) {
+      const col = t.collider, type = col.shapeType(), q = t.body.rotation(), ST = R.ShapeType;
+      // the body's shape as a ball or a rod: a capsule along its axis, a box or a hull as a rod along its longest side
+      let r = .3, h = 0, ax = [0, 1, 0];
+      if (type === ST.Ball) r = col.radius();
+      else if (type === ST.Capsule) { r = col.radius(); h = col.halfHeight(); }
+      else if (type === ST.Cuboid || type === ST.RoundCuboid) {
+        const e = col.halfExtents(), k = e.x >= e.y && e.x >= e.z ? 'x' : e.y >= e.z ? 'y' : 'z', o = ['x', 'y', 'z'].filter(a => a !== k), rr = (type === ST.RoundCuboid ? col.roundRadius() : 0);
+        r = Math.min(e[o[0]], e[o[1]]) + rr; h = Math.max(0, e[k] + rr - r); ax = k === 'x' ? [1, 0, 0] : k === 'y' ? [0, 1, 0] : [0, 0, 1];
+      } else { const m = t.mesh?.geometry; if (m) { if (!m.boundingSphere) m.computeBoundingSphere(); r = m.boundingSphere.radius * .8; } }
+      const u = turn(q, ax), a = [p.x - u[0] * h, p.y - u[1] * h, p.z - u[2] * h], e2 = [p.x + u[0] * h, p.y + u[1] * h, p.z + u[2] * h];
+      let s = this.felt.get(t); if (!s) { s = this.capsule({ a, b: e2, r }); this.felt.set(t, s); } else { s.r = s.rb = r; s.set(a, e2); }
+      keep.add(t);
+    }
+    for (const [t, s] of this.felt) if (!keep.has(t)) { s.remove(); this.felt.delete(t); }
   }
   // for each piece, the solid things that might reach it this frame (a ball round its points against each solid's reach, half a metre spare)
   nearSolids() {

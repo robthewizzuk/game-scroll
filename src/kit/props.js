@@ -22,7 +22,7 @@
 
 import { timed } from './prof.js';
 import { sceneEdited } from './scene-list.js';
-import { Vector3, Box3, Color, Matrix4 } from 'three';
+import { Vector3, Box3, Color, Matrix4, Quaternion } from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { InstancedMesh2 } from '@three.ez/instanced-mesh';
@@ -81,7 +81,22 @@ export function simplify(geometry, keep = .5) {
  * that cast into view. Call it once the matrices (and colours) are set; returns the new mesh. Copies that
  * move every frame: keep a plain InstancedMesh.
  */
-const PM4 = new Matrix4(), PC = new Color();
+const PM4 = new Matrix4(), PC = new Color(), PV = new Vector3(), PQ = new Quaternion(), PS = new Vector3(), CM4 = new Matrix4();
+// one loose copy as World3D sees a mesh: the body moves it (sync sets position, then quaternion), and the copy's own
+// matrix is written only when it really moved (a sleeping crate leaves the set's shadows alone)
+class Copy {
+  constructor(set, id, p, q, s) {
+    this.set = set; this.id = id; this.scale = s.clone(); this.position = p.clone(); this.quaternion = q.clone(); this.last = null;
+    this.quaternion._onChange(() => this.write());
+  }
+  write() {
+    const p = this.position, q = this.quaternion, l = this.last, e = 1e-5;
+    if (l && Math.abs(l[0] - p.x) < e && Math.abs(l[1] - p.y) < e && Math.abs(l[2] - p.z) < e && Math.abs(l[3] - q.x) < e && Math.abs(l[4] - q.y) < e && Math.abs(l[5] - q.z) < e && Math.abs(l[6] - q.w) < e) return;
+    this.last = [p.x, p.y, p.z, q.x, q.y, q.z, q.w];
+    if (this.set.getActiveAt && !this.set.getActiveAt(this.id)) return;   // (removed meanwhile)
+    this.set.setMatrixAt(this.id, CM4.compose(p, q, this.scale));
+  }
+}
 export function perCopy(im, { renderer = null } = {}) {
   const n = im.count, m = watched(new InstancedMesh2(im.geometry, im.material, { capacity: Math.max(1, n), renderer: renderer || undefined }));
   for (const k of ['name', 'castShadow', 'receiveShadow', 'renderOrder', 'visible']) m[k] = im[k];
@@ -149,9 +164,57 @@ export class Props {
     const k = this.kinds.get(name), m = k.mesh;
     m.getMatrixAt(id, PM4); PM4.setPosition(x, y, z); m.setMatrixAt(id, PM4);
     k.items[id] = { x, y, z };
+    const S = k.solid; if (S) { const b = S.loose?.get(id); if (b) b.place(x, y, z); else if (S.body) { PM4.decompose(PV, PQ, PS); S.body.set(id, PV, S.upright ? null : PQ.clone()); } }
     return this;
   }
-  remove(name, id) { const k = this.kinds.get(name); if (!k) return this; k.mesh.removeInstances(id); delete k.items[id]; return this; }
+  remove(name, id) {
+    const k = this.kinds.get(name); if (!k) return this; k.mesh.removeInstances(id); delete k.items[id];
+    const S = k.solid; if (S) { const b = S.loose?.get(id); if (b) { b.remove(); S.loose.delete(id); } else S.body?.drop(id); }
+    return this;
+  }
+  /**
+   * Makes the copies of a kind solid in a gs.physics3d World3D (call after placing them; copies added later need solid()
+   * again). shape: 'box' (each copy's bounds: crates, rocks, cars), 'trunk' (an upright pole up its middle, r thick:
+   * trees, lamp posts, bollards; r 15% of its width by default), 'ball' or 'hull' (its outline: rocks, barrels).
+   * Still copies are one fixed body (thousands cost little; a ray's hit.part is { props, kind, id }). loose: true makes each
+   * copy a body of its own that falls, tumbles and gets knocked over (density; it draws where its body is by itself;
+   * best for tens, not thousands). Returns the body (still) or a Map of id to body (loose).
+   */
+  solid(world, name, { shape = 'box', r = null, loose = false, density = 1, tag = name, sound, friction, bounce } = {}) {
+    const k = this.kinds.get(name); if (!k) throw new Error(`No prop kind "${name}": call kind() first`);
+    this.unsolid(name);
+    const g = k.mesh.geometry; if (!g.boundingBox) g.computeBoundingBox();
+    const bb = g.boundingBox, size = bb.getSize(new Vector3()), mid = bb.getCenter(new Vector3());
+    let pts = null;
+    if (shape === 'hull') { const a = g.attributes.position, step = Math.max(1, Math.floor(a.count / 400)); pts = []; for (let i = 0; i < a.count; i += step) pts.push(new Vector3(a.getX(i), a.getY(i), a.getZ(i))); }
+    // the shape of one copy, about its own origin, and where its middle sits (off)
+    const spec = (sc) => {
+      if (shape === 'trunk') { const rr = (r ?? Math.min(size.x, size.z) * .15) * Math.max(sc.x, sc.z), h = size.y * sc.y; return { capsule: [rr, Math.max(h, rr * 2)], off: { x: 0, y: mid.y * sc.y, z: 0 }, upright: true }; }
+      if (shape === 'ball') return { ball: g.boundingSphere ? g.boundingSphere.radius * Math.max(sc.x, sc.y, sc.z) : size.length() / 2 * Math.max(sc.x, sc.y, sc.z), off: { x: mid.x * sc.x, y: mid.y * sc.y, z: mid.z * sc.z } };
+      if (shape === 'hull') return { hull: pts.map(p => ({ x: p.x * sc.x, y: p.y * sc.y, z: p.z * sc.z })), off: null };
+      return { box: [Math.max(.01, size.x * sc.x), Math.max(.01, size.y * sc.y), Math.max(.01, size.z * sc.z)], off: { x: mid.x * sc.x, y: mid.y * sc.y, z: mid.z * sc.z } };
+    };
+    const o = { tag, sound, friction, bounce, density };
+    if (!loose) {
+      const list = [];
+      k.items.forEach((it, id) => { if (!it) return; k.mesh.getMatrixAt(id, PM4); PM4.decompose(PV, PQ, PS); const s = spec(PS); list.push({ ...s, at: PV.clone(), turn: s.upright ? null : PQ.clone(), part: id }); });
+      const body = world.shapes(list, o);
+      // (hit.part: the copy, and whose)
+      for (const [id, c] of body.colliders) if (id !== null) c.userData = { props: this, kind: name, id };
+      k.solid = { world, body, upright: shape === 'trunk' };
+      return body;
+    }
+    const map = new Map();
+    k.items.forEach((it, id) => {
+      if (!it) return; k.mesh.getMatrixAt(id, PM4); PM4.decompose(PV, PQ, PS);
+      const s = spec(PS), stand = new Copy(k.mesh, id, PV, PQ, PS);
+      const b = world.shape(stand, { ...s, off: s.off }, o); b.part = { props: this, kind: name, id }; map.set(id, b);
+    });
+    k.solid = { world, loose: map };
+    return map;
+  }
+  /** Takes a kind's copies out of the physics world again (they stay drawn). */
+  unsolid(name) { const k = this.kinds.get(name), S = k?.solid; if (!S) return this; if (S.body) S.body.remove(); for (const b of S.loose?.values() || []) b.remove(); k.solid = null; return this; }
   hide(name, id, hidden = true) { this.kinds.get(name)?.mesh.setVisibilityAt(id, !hidden); return this; }
   /**
    * Scatters count of a kind over an area { x0, z0, x1, z1 } (or a function () => { x, z } for odd
@@ -185,7 +248,7 @@ export class Props {
   }
   /** How many of a kind (or of all). */
   count(name = null) { if (name) return this.kinds.get(name)?.mesh.instancesCount || 0; let n = 0; for (const k of this.kinds.values()) n += k.mesh.instancesCount; return n; }
-  clear() { for (const k of this.kinds.values()) { k.mesh.removeFromParent(); k.mesh.dispose?.(); } this.kinds.clear(); return this; }
+  clear() { for (const [name, k] of this.kinds) { this.unsolid(name); k.mesh.removeFromParent(); k.mesh.dispose?.(); } this.kinds.clear(); return this; }
 }
 
 /**

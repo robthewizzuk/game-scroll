@@ -122,6 +122,7 @@ export function prepareGPU() {
       freeUnbuilt(r);
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
+      fx.aoInShading(r);   // ambient occlusion on the light that bounces only, in each thing's own shading (hd3d-gpu.js)
       installPack(r);   // code-made textures packed into the chip's compressed formats (spark.js)
       r.backend.device?.lost?.then(info => { console.warn('WebGPU device lost:', info?.reason, info?.message); if (gpu?.r === r) { gpu = null; con = null; conLoad = null; conTried = false; } gpuLoad = null; });   // the GPU went away: back to WebGL
       return gpu = { r, W, fx };

@@ -51,7 +51,7 @@ const shown = (o, root) => { for (;;) { if (!o.visible) return false; if (o === 
 export function eachThing(scene, fn) { const T = listOf(scene); for (let i = 0; i < T.length; i++) fn(T[i]); }
 /** Each thing that is shown (it and all its parents up to the scene visible): scene.traverseVisible for them. */
 export function eachShown(scene, fn) { const T = listOf(scene); for (let i = 0; i < T.length; i++) if (shown(T[i], scene)) fn(T[i]); }
-/** The scene's list itself (what draws, and lights, in scene order): read it, don't change it. still.js goes through it. */
+/** The scene's list itself (what draws, and lights, in scene order; read only): a new array each time the scene was listed again, so a step can tell that something was added or taken out. still.js goes through it. */
 export const thingsOf = scene => listOf(scene);
 /** How many things the scene's list holds (tests). */
 export const thingCount = scene => listOf(scene).length;

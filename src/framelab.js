@@ -356,6 +356,7 @@ const PAIRS = {
   tier: { title: 'Low vs ultra tier', a: 'low', b: 'ultra', set: on => { HD.force = on ? 3 : 0; } },
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  aoBack: { title: 'Ambient occlusion on everything vs on bounce light only', a: 'on the whole picture (as before)', b: 'on the light that bounces only', set: on => { HD.aoBack = on; }, needs: () => HD?.info.backend === 'webgpu' && HD.tier >= 2, no: 'Ambient occlusion in the shading needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
@@ -368,7 +369,7 @@ function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -382,7 +383,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -688,7 +689,7 @@ function chipLine(R) {
   const n = R.chipN, d = R.draws, l = n ? Object.entries(R.chip || {}).map(([k, v]) => [k, v / n]).filter(([, a]) => a >= .05).sort((a, b) => b[1] - a[1]).slice(0, 10) : [];
   const draws = d?.n ? `${Math.round(d.calls / d.n)} draws, ${Math.round(d.tris / d.n / 1000)}k triangles a frame` : '';
   if (!l.length && !draws) return '';
-  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
+  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : HD?.info.gpuOff ? 'not used: this chip\'s own times don\'t fit its frames (they were left alone)' : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
 }
 let model = '';
 (async () => { try { const { Device } = await import('@capacitor/device'); const d = await Device.getInfo(); model = `${d.manufacturer || ''} ${d.model || ''}`.trim(); } catch (_) {} })();
@@ -859,7 +860,7 @@ function text(now) {
     const pct = i.ow ? Math.round(100 * i.rw / i.ow) : 0;
     L.push(`${i.backend} ${cfg.tier} (step ${Math.round(HD.res * 100)}%) · 3D ${i.rw}×${i.rh} → ${i.ow}×${i.oh} ${pct}% · ${i.upscaled || 'no upscaler'}${cfg.fx ? ` · smaller: ${cfg.fx}` : ''}`);
     L.push(`FG ${i.framegen ? `${i.framegen} ×${i.fgSteps} ${r1(i.fgMs)} ms` : 'off'} · ${frameGenStatus(d) || ''}`.slice(0, 120));
-    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}${i.bundled ? ` · ${i.bundled} in ${i.bundles} bundles` : ''}`);
+    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : i.gpuOff ? 'times don\'t fit (off)' : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}${i.bundled ? ` · ${i.bundled} in ${i.bundles} bundles` : ''}`);
   } else if (s) {
     L.push(`${cfg.backend} canvas ${s.canvas.width}×${s.canvas.height}${s.lite ? ' (eased: phone fell behind)' : ''} · CPU upd ${r2(last.upd)} draw ${r2(last.drw)} ms`);
   }
