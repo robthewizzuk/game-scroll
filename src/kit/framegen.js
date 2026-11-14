@@ -62,7 +62,7 @@ import {
 import {
   Fn, instanceIndex, uint, int, float, vec2, vec3, vec4, ivec2, uniform, storage, atomicMin, atomicStore, atomicAdd,
   textureStore, texture, If, select, clamp, abs, max, min, floor, dot, mix, length, floatBitsToUint, smoothstep,
-  mrt, output, velocity, diffuseColor, cameraProjectionMatrix, cameraViewMatrix, Loop, atomicLoad, atomicOr,
+  mrt, output, velocity, diffuseColor, cameraProjectionMatrix, cameraViewMatrix, Loop, atomicLoad, atomicOr, screenUV,
 } from 'three/tsl';
 import { halfFn, halfWanted, halfKey } from './half.js';
 import { whole, addUp, subgroupsWanted } from './subgroups.js';
@@ -83,6 +83,9 @@ const FLOW_PICK = .06;
 // nothing see-through, glowing or read from the optical flow is near, a made pixel is the two frames' mix
 // with none of the checks for the hard cases (they would come to the same answer)
 const EASY_MOST = .04, EASY_MEAN = .012;
+// a pixel that moves less than this (screen pixels) between the two real frames counts as still (a sharp read that
+// near a pixel's centre gives that pixel back to well within a step of the screen's 8 bits)
+const STILL_PX = 1 / 512;
 // the tile sort's marks: 1 the newest frame has something see-through or glowing near, 2 the last frame did,
 // 4 the optical flow is used near, 8 the two frames disagree (see EASY_*)
 const NEW_MARKS = 1 | 4 | 8, OLD_MARKS = 2;
@@ -186,6 +189,17 @@ const SHARP = halfFn('gsSharpAt', `(T: texture_2d<f32>, S: sampler, uv: vec2<f32
 }`);
 export const sharpAt = (T, uv, half = false) => SHARP({ T, S: T, uv }, half);
 
+// The made frame's pixel q with its gap filled: a gap (alpha 0) takes the finest level of the gap pyramid that has
+// surfaces round it (raw, pyr: texture nodes; in a compute pass or a pass that draws)
+const filledAt = (raw, pyr, U, q) => {
+  const c = raw.load(q), out = vec3(c.xyz).toVar();
+  If(c.w.lessThanEqual(0).and(U.fillOn.greaterThan(.5)), () => {
+    const u = vec2(q).add(.5).div(U.os), done = float(0).toVar();
+    for (const P of pyr) If(done.lessThan(.5), () => { const s = P.sample(u).level(0); If(s.w.greaterThan(1e-3), () => { out.assign(s.xyz.div(s.w)); done.assign(1); }); });
+  });
+  return out;
+};
+
 /**
  * One view's frame generator. The pictures it is given are three.js textures: color is the finished
  * frame at the screen's size (after SGSR 2), velocity is three's velocity MRT (NDC now minus NDC last
@@ -238,7 +252,9 @@ export class FrameGen {
     this.filled = st(rw, rh, FloatType);      // the holes' motion, filled from the background round them (written only at holes)
     this.filledBend = st(rw, rh);
     this.raw = st(ow, oh, colT, LinearFilter);   // the made frame before its gaps are filled (alpha: 0 a gap, else how far the surface is)
-    this.output = st(ow, oh, colT, LinearFilter);
+    // (the made frame with its gaps filled, this.output, is a picture and a pass of their own only for a caller that
+    // wants the picture: make(t) makes them when first asked. The app draws the made frame with shown() instead)
+    this.outMake = () => st(ow, oh, colT, LinearFilter);
     // optical flow (the second motion, read from the pictures: FSR 3's optical flow field), once per real
     // frame: both frames' brightness at 1/2 .. 1/16 of the screen (x the newest, y the last), and the flow
     // in blocks of 64, 32, 16 and 8 screen pixels (xy: uv from the newest back to the last; z: how well it
@@ -534,7 +550,7 @@ export class FrameGen {
       // samples: a plain linear sample between pixels softens the picture, so every made frame would look
       // a little blurrier than the real ones round it, which shows as a shimmer)
       // (only on a picture at the screen's size, as the app gives it: a smaller one is being magnified anyway)
-      const sharpOn = U.sharp.greaterThan(.5).and(length(vec2(col.size(int(0))).sub(U.os)).lessThan(.5));
+      const sized = length(vec2(col.size(int(0))).sub(U.os)).lessThan(.5), sharpOn = U.sharp.greaterThan(.5).and(sized);
       const pick = (T, v) => { const c = vec4(0).toVar(); If(sharpOn, () => { c.assign(sharpAt(T, clamp(v, 0, 1), half)); }).Else(() => { c.assign(T.sample(clamp(v, 0, 1)).level(0)); }); return c; };
       If(q.x.lessThan(OW).and(q.y.lessThan(OH)), () => {
         const pc = pixOf(u), m0 = motionOf(pc), e0 = bendOf(pc);   // nearest: motion never blends across an edge
@@ -551,8 +567,16 @@ export class FrameGen {
           .and(interp.not().or(in01(uP0))).and(tileAt(u).equal(uint(0))).and(tileAt(uN0).bitAnd(uint(NEW_MARKS)).equal(uint(0)))
           .and(interp.not().or(tileAt(uP0).bitAnd(uint(OLD_MARKS)).equal(uint(0)))).and(isCut().not());
         If(quick, () => {
-          const cN = pick(col, uN0), fin = vec4(cN).toVar();
-          If(interp, () => { fin.assign(mix(pick(pcol, uP0), cN, clamp(U.t, 0, 1))); });
+          const fin = vec4(0).toVar();
+          // a pixel that stays where it is (no motion, no bend: a still camera's still things) is each frame's own
+          // pixel here: read as it is, one read a frame where the sharp read takes five to come to the same pixel
+          If(sized.and(length(m0.xy.mul(U.os)).add(length(e0.mul(U.os))).lessThan(STILL_PX)), () => {
+            fin.assign(col.load(q));
+            If(interp, () => { fin.assign(mix(pcol.load(q), fin, clamp(U.t, 0, 1))); });
+          }).Else(() => {
+            fin.assign(pick(col, uN0));
+            If(interp, () => { fin.assign(mix(pick(pcol, uP0), fin, clamp(U.t, 0, 1))); });
+          });
           textureStore(this.raw, q, vec4(fin.xyz, clamp(lin(m0.z).div(40), .02, 1)));
         }).Else(() => {
           const m = vec4(m0).toVar(), e = vec2(e0).toVar();
@@ -681,15 +705,16 @@ export class FrameGen {
       for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const c = rawT.load(clamp(p.mul(2).add(ivec2(x, y)), ivec2(0, 0), hiO)); sum = sum.add(vec4(c.xyz.mul(c.w), c.w)); }
       textureStore(t, p, sum.mul(.25));
     })().compute(sz(k + 1)[0] * sz(k + 1)[1], [64]));
-    // 8 the finished frame: each gap takes the finest level of the pyramid that has surfaces round it
-    this.cInpaint = Fn(() => {
-      const i = int(instanceIndex), q = ivec2(i.mod(OW), i.div(OW)), u = vec2(q).add(.5).div(U.os), c = rawT.load(q), out = vec3(c.xyz).toVar();
-      If(c.w.lessThanEqual(0).and(U.fillOn.greaterThan(.5)), () => {
-        const done = float(0).toVar();
-        for (const P of pyrT) If(done.lessThan(.5), () => { const s = P.sample(u).level(0); If(s.w.greaterThan(1e-3), () => { out.assign(s.xyz.div(s.w)); done.assign(1); }); });
-      });
-      textureStore(this.output, q, vec4(out, 1));
+    // 8 the finished frame: each gap takes the finest level of the pyramid that has surfaces round it. The app's
+    // show pass does this as it draws the frame (shown() below: no pass and no picture for it); a caller that wants
+    // the finished frame as a picture (make(t)'s this.output: the tests) gets this pass, made when first asked for
+    this.inpaintMake = () => Fn(() => {
+      const i = int(instanceIndex), q = ivec2(i.mod(OW), i.div(OW));
+      textureStore(this.output, q, vec4(filledAt(rawT, pyrT, U, q), 1));
     })().compute(on, [64]);
+    this.cInpaint = null; this.output = null;
+    // (shown()'s pictures: the nodes stay, their pictures are this size's)
+    if (this.showRaw) { this.showRaw.value = this.raw; this.showPyr.forEach((n, k) => { n.value = this.pyr[k]; }); }
 
     // 6 keep the newest frame as next time's last frame (with its motion, for next time's curve)
     this.cKeepC = handed ? null : Fn(() => { const i = int(instanceIndex), q = ivec2(i.mod(OW), i.div(OW)); textureStore(this.prevColor, q, col.sample(vec2(q).add(.5).div(U.os)).level(0)); })().compute(on, [64]);
@@ -738,15 +763,38 @@ export class FrameGen {
     const c = new Uint32Array(await this.r.getArrayBufferAsync(this.cutAttr));
     return Math.min(1, c[69] / this.tileCount);
   }
+  /**
+   * The made frame (after make(t, false)) as a colour for a pass that draws it to the screen (TSL, vec4), its gaps
+   * filled on the way exactly as make(t)'s last step fills them into this.output. warp (a Matrix3 uniform, as
+   * warpUV takes): the picture turned on its way to the screen (fresh aim), read between four filled pixels as a
+   * linear read of this.output would be; only while this.showTurned.value is 1, else each pixel is its own.
+   */
+  shown(warp = null) {
+    const U = this.U, raw = this.showRaw ||= texture(this.raw || NO_REACTIVE), pyr = this.showPyr ||= [0, 1, 2, 3, 4].map(k => texture(this.pyr?.[k] || NO_REACTIVE));
+    const turned = this.showTurned ||= uniform(0), hi = () => ivec2(int(U.os.x).sub(1), int(U.os.y).sub(1));
+    return Fn(() => {
+      const out = vec3(0).toVar();
+      const one = () => { out.assign(filledAt(raw, pyr, U, clamp(ivec2(floor(screenUV.mul(U.os))), ivec2(0, 0), hi()))); };
+      if (!warp) one();
+      else If(turned.greaterThan(.5), () => {
+        const p = warpUV(screenUV, warp).mul(U.os).sub(.5), b = floor(p), f = p.sub(b), i = ivec2(b), at = (x, y) => filledAt(raw, pyr, U, clamp(i.add(ivec2(x, y)), ivec2(0, 0), hi()));
+        out.assign(mix(mix(at(0, 0), at(1, 0), f.x), mix(at(0, 1), at(1, 1), f.x), f.y));
+      }).Else(one);
+      return vec4(out, 1);
+    })();
+  }
   /** The camera's pose at t (0 the last real frame, 1 the newest, more is past it), into out. */
   poseAt(t, out = newPose()) { return this.frames >= 2 ? lerpPose(this.poses[1], this.poses[0], t, out) : copyPose(this.poses[0], out); }
   /**
    * Makes the frame at t into this.output (a StorageTexture at the screen's size): 0 < t < 1 between the
    * last two real frames (needs keep() to have run before the newest real frame), t > 1 past the newest.
-   * Returns false if there aren't two real frames yet.
+   * Returns false if there aren't two real frames yet. fill = false leaves the frame's gaps for the pass that
+   * draws it (shown(): the app's way, a whole pass over the screen and a screen-sized picture less for every
+   * made frame); this.output is then not made.
    */
-  make(t = .5) {
+  make(t = .5, fill = true) {
     if (!this.ready) return false;
+    if (fill && !this.cInpaint) { this.output = this.outMake(); this.cInpaint = this.inpaintMake(); }
     const r = this.r, t0 = performance.now(), U = this.U;
     U.t.value = t; U.interp.value = t <= 1 ? 1 : 0;
     homography(this.poses[0], this.poseAt(t, TP), U.Ht.value);
@@ -761,7 +809,7 @@ export class FrameGen {
       this.sorted = !!(U.flowOn.value && U.quick.value); if (this.sorted) motion.push(this.cMarkClear, this.cMark, this.cTiles);
     }
     U.go.value = this.sorted && U.quick.value ? 1 : 0;
-    const filling = U.fillOn.value ? [...this.cPyr, this.cInpaint] : [this.cInpaint];
+    const filling = [...(U.fillOn.value ? this.cPyr : []), ...(fill ? [this.cInpaint] : [])];
     // marked for the app's chip time (hd3d.js gpuTime): 'fg' as one pass; with parts on (the phone test tour),
     // each step its own pass, so the report says where a made frame's time goes
     if (this.parts) {
@@ -780,6 +828,7 @@ export class FrameGen {
     for (const k of ['cClear', 'cSplat', 'cResolve', 'cFill', 'cCompose', 'cKeepC', 'cKeepD', 'cCutClear', 'cCutDecide', 'cInpaint', 'cMarkClear', 'cMark', 'cTiles']) { this[k]?.dispose?.(); this[k] = null; }
     for (const k of ['cLum', 'cFlow', 'cPyr']) { for (const c of this[k] || []) c.dispose?.(); this[k] = null; }
     this.keysAttr = this.cutAttr = this.marksAttr = this.tilesAttr = this.prev = null; this.key = ''; this.flowFor = -1; this.sorted = false;
+    if (this.showRaw) { this.showRaw.value = NO_REACTIVE; for (const n of this.showPyr) n.value = NO_REACTIVE; }
   }
 }
 const TP = newPose();

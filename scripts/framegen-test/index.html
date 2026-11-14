@@ -205,6 +205,28 @@ async function grab(tex) {
   for (let y = 0; y < OH; y++) tight.set(px.subarray(y * row, y * row + OW * 4), y * OW * 4);
   return tight;
 }
+// the made frame as the app draws it: its gaps filled as it is drawn (fg.shown, after fg.make(t, false)), and the
+// same turned on its way to the screen (fresh aim: a small turn of the picture)
+const warpU = uniform(new THREE.Matrix3()), tight = px => {
+  if (px.length === OW * OH * 4) return px;
+  const row = px.length / OH, t = new Uint8Array(OW * OH * 4);
+  for (let y = 0; y < OH; y++) t.set(px.subarray(y * row, y * row + OW * 4), y * OW * 4);
+  return t;
+};
+async function grabShown(fg, turned = false) {
+  if (!fg.testQ) { const m = new THREE.NodeMaterial(); m.fragmentNode = fg.shown(warpU); fg.testQ = new THREE.QuadMesh(m); }
+  fg.showTurned.value = turned ? 1 : 0;
+  r.setRenderTarget(rt8); fg.testQ.render(r); r.setRenderTarget(null);
+  return tight(await r.readRenderTargetPixelsAsync(rt8, 0, 0, OW, OH));
+}
+// (what the app drew before: the finished picture, read with a linear read where the turn puts each pixel)
+const turnMat = new THREE.NodeMaterial(), turnSrc = texture(new THREE.Texture()); turnMat.fragmentNode = vec4(turnSrc.sample(warpUV(screenUV, warpU)).rgb, 1);
+const turnQuad = new THREE.QuadMesh(turnMat);
+async function grabTurned(tex) {
+  turnSrc.value = tex; r.setRenderTarget(rt8); turnQuad.render(r); r.setRenderTarget(null);
+  return tight(await r.readRenderTargetPixelsAsync(rt8, 0, 0, OW, OH));
+}
+const mostOff = (a, b) => { let m = 0; for (let i = 0; i < a.length; i++) { const d = Math.abs(a[i] - b[i]); if (d > m) m = d; } return m; };
 const mixMat = new THREE.NodeMaterial(), ma = texture(new THREE.Texture()), mb = texture(new THREE.Texture()); mixMat.fragmentNode = vec4(mix(ma.sample(uv()).rgb, mb.sample(uv()).rgb, .5), 1);
 const mixQuad = new THREE.QuadMesh(mixMat), mixRT = new THREE.RenderTarget(OW, OH, { type: THREE.HalfFloatType });
 const copyRT = (tex, rt) => { src.value = tex; r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(null); };
@@ -292,10 +314,22 @@ try {
     const before = await grab(prev.texture);
     ma.value = prev.texture; mb.value = colorOf(); r.setRenderTarget(mixRT); mixQuad.render(r); r.setRenderTarget(null);
     const blend = await grab(mixRT.texture);
-    const made = []; let easy = null;
+    // each frame is made the app's way (its gaps filled as it is drawn: fg.shown) and scored. The first is also made
+    // the other way (the finished picture, fg.output) and the two held together, as they are and turned on the way to
+    // the screen (fresh aim): they must be the same picture (same, turned: the most any channel of any pixel is off, of 255)
+    const made = []; let easy = null, same = null, turnedSame = null;
     for (const tm of TIMES) {
-      const ms0 = performance.now(); fg.make(tm); await r.backend.device.queue.onSubmittedWorkDone();
-      made.push({ tm, px: await grab(fg.output), ms: performance.now() - ms0 });
+      if (same == null) {
+        fg.make(tm); await r.backend.device.queue.onSubmittedWorkDone();
+        const whole = await grab(fg.output);
+        const pa = poseOf(S.cam), pb = poseOf(S.cam); pb.q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(.004, -.006, .002)));
+        homography(pb, pa, warpU.value);
+        const wholeTurned = await grabTurned(fg.output);
+        // (from the same making: a frame made twice is not the same frame twice when it is made ahead)
+        same = mostOff(whole, await grabShown(fg)); turnedSame = mostOff(wholeTurned, await grabShown(fg, true));
+      }
+      const ms0 = performance.now(); fg.make(tm, false); await r.backend.device.queue.onSubmittedWorkDone();
+      made.push({ tm, px: await grabShown(fg), ms: performance.now() - ms0 });
       easy ??= await fg.easyShare();   // (the tiles that took the quick way, sorted at the pair's first made frame)
       if (Q.has('cutinfo')) { const c = new Uint32Array(await r.getArrayBufferAsync(fg.cutAttr)); console.warn(`cut ${kind}: hist ${(c[67] / 4096).toFixed(3)} miss ${(c[68] / 4096).toFixed(3)} cut ${c[66]}`); }
     }
@@ -304,7 +338,7 @@ try {
     let bench = null;
     if (Q.has('bench')) {
       const n = +Q.get('bench') || 8, t = [];
-      for (let i = 0; i < n; i++) { const a = performance.now(); fg.make(TIMES[0]); await r.backend.device.queue.onSubmittedWorkDone(); t.push(performance.now() - a); }
+      for (let i = 0; i < n; i++) { const a = performance.now(); fg.make(TIMES[0], Q.has('whole')); if (!Q.has('whole')) { fg.showTurned.value = 0; r.setRenderTarget(rt8); fg.testQ.render(r); r.setRenderTarget(null); } await r.backend.device.queue.onSubmittedWorkDone(); t.push(performance.now() - a); }
       t.sort((a, b) => a - b); bench = +t[t.length >> 1].toFixed(1);
       // &probe: each of a made frame's steps on its own (software time, the middle of n)
       if (Q.has('probe')) {
@@ -327,7 +361,7 @@ try {
       if (Q.has('shots')) { const tag = `${kind}-${Math.round(m.tm * 100)}`; Object.assign(out.shots, { [tag + '-framegen']: shot(m.px), [tag + '-truth']: shot(truth) }); }
     }
     const avg = l => l.length ? { error: +(l.reduce((s, x) => s + x.error, 0) / l.length).toFixed(2), broken: Math.max(...l.map(x => x.broken)) } : null;
-    out.scenes[kind] = { framegen: avg(sum.framegen), repeat: avg(sum.repeat), mix: avg(sum.mix), ms: +(ms / made.length).toFixed(1), bench, easy: easy == null ? null : Math.round(easy * 100) };
+    out.scenes[kind] = { framegen: avg(sum.framegen), repeat: avg(sum.repeat), mix: avg(sum.mix), ms: +(ms / made.length).toFixed(1), bench, easy: easy == null ? null : Math.round(easy * 100), same, turned: turnedSame };
     if (Q.has('shots')) Object.assign(out.shots, { [kind + '-repeat']: shot(ahead ? last : before), [kind + '-mix']: shot(blend) });
     fg.dispose(); pp.dispose?.(); pps?.dispose?.(); prev.dispose();
   }
