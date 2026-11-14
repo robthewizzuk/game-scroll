@@ -389,6 +389,50 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   Kit code that moves objects from one view's scene into another's (gs.tabletop does, between the 3D
   room and AR) calls `view.release()` on the view they leave first: it returns merged pieces, and
   ones waiting for a shader, to drawing themselves.
+- Still scenery in render bundles (WebGPU, by itself; `src/kit/still.js`): for each thing it draws,
+  three's WebGPU renderer works out every frame which shader, buffers and uniforms it needs and records
+  the draw, about 30 microseconds a thing on the build machine. A render bundle is a list of draws
+  recorded once and replayed by the graphics chip, where a replayed thing costs three only its uniform
+  check. So a mesh that has kept still for about a second (walls, roofs, rocks, crates, lamp posts)
+  joins the bundle of its 16 m area (a bigger one gets its own), and each area the camera sees is
+  replayed whole (Babylon.js's snapshot rendering and three's `BundleGroup` do the same for a scene the
+  game marks; here it is per area and by itself). Each frame every bundled thing is checked against how
+  it was when it joined: the moment it moves, hides (or a parent does), takes another material or
+  geometry, changes its material (`needsUpdate`), its triangles drawn, its shadows or its layers, or
+  leaves the scene, it draws itself again that frame and its area is recorded again without it, so the
+  game never has to know. One that changed waits longer each time before it joins again (1 s, then 2,
+  4... up to 32 s more), so a mover never joins and a close-up material that flips now and then still
+  comes back. Colours and other uniforms changed without `needsUpdate` keep working: three checks each
+  replayed thing's uniforms as it would its own draw. A bundle is recorded again when the scene's
+  lights, environment or fog change shaders, and when a texture it holds is destroyed or its bindings
+  are made anew. Bundles are drawn after the sky (what doesn't test depth, or has a negative
+  `renderOrder`) and before every other thing, so decals and see-through things land on top of them.
+  Not in a bundle: see-through things, things with a `renderOrder` of their own (or in a group with
+  one), things that don't write or test depth, skinned, morphing, instanced and batched meshes, the
+  kit's twins and simpler copies (`gsLod`), objects with `onBeforeRender`, `frustumCulled = false`,
+  and `mesh.userData.noBundle = true`. Shadow maps and draws with an override material draw one by one.
+  An area is culled as a whole, so more triangles go to the chip (the town in the engine test scenes:
+  about a quarter more) for about 10 to 20% less CPU time in its 3D draw. Areas are drawn nearest
+  first, so what they cover further back fails the depth test before it is shaded. With occlusion on
+  (`HD.occlude`), an area whose every thing is hidden behind others is left out; one hidden in part is
+  replayed whole, its hidden things too.
+  `__hd.bundle = false` turns it off; `HD.info.bundled` and `HD.info.bundles` count the things and areas
+  in bundles last frame. The frame lab's Bundles button times the 3D draw's CPU and the chip with it off
+  and on while a round plays. `node scripts/detail-test.cjs --page bundles --webgpu` changes a yard in
+  every way a game changes things, then draws the town, village and street, each against every thing
+  drawn by itself (the same picture to the pixel). WebGL draws as before (static batching does this
+  job there).
+- Less picture memory (WebGPU, by itself; hd3d-gpu.js): shadow maps hold depth alone (three r187 gave
+  each a colour picture of the map's size that every shadow pass drew into and nothing read: 16 MB
+  for a 2048 sun map, and as much again for the kit's kept copy), and the full-size effect steps after
+  the scene pass (volumetric mix, depth of field, motion blur, the finishing pass under SGSR 2) take
+  turns in two pictures however many there are, as the big engines' render graphs share memory between
+  passes that never overlap (with depth of field and motion blur on, as Long Shadow has them, a
+  full-size half-float picture less: 10 MB at 1080 x 2340). Not with `v.lens` or gs.fx3d's screen
+  effects (pictures they keep). `HD.shadowColour = true` and `HD.shareTargets = false` put each back to
+  compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
+  --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
+  which could share, and draws the scene as before and as now: less memory, the same picture.
 - Smaller meshes (by itself): the dense meshes the kit makes itself (people, creatures and their fur
   shells, crowds, a fused train, buildings, city blocks, real surface detail) keep what goes with each
   point in fewer bytes: normals in one byte a part (two on a fused train's paint, which is shiny enough

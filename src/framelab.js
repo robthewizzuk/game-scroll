@@ -35,6 +35,8 @@
 //   FG check  while playing on WebGPU: grabs real, made, real triples and maps the made pixels that
 //             match neither real frame nearby (ghosting, smears, holes behind moving things)
 //   Half, Spread  while playing on WebGPU: the chip's time by pass with a switch off and on (runCheck)
+//   Bundles   while playing on WebGPU: the 3D draw's CPU time and the chip's with still scenery drawn one by one
+//             and from render bundles (src/kit/still.js, HD.bundle)
 //
 // Kit-free and game-free: it reads what the feed (src/main.js), the 3D kit (HD.info) and the phone
 // (src/kit/power.js) already know, plus browser APIs. Timing comes from requestAnimationFrame, which on
@@ -519,6 +521,8 @@ async function runFG() {
 //   Spread: ambient occlusion, volumetric light and bounce light with every sample every frame, and spread over frames
 //           (src/kit/hd3d-gpu-spread.js)
 //   Clouds: the sky's painted clouds, and real ones marched through with their shadow (src/kit/hd3d-gpu-sky.js)
+//   Bundles: still scenery drawn thing by thing, and from render bundles (src/kit/still.js); this one is about the CPU,
+//           so the 3D draw's own time is timed too (cpu), and it is reported even where the chip has no timer
 const CHECKS = {
   half: { title: 'Half precision check', name: 'Half check', key: 'half', off: 'full', on: 'half', can: halfCan, no: () => PAIRS.half.no, says: () => HD.info.half,
     note: 'in half: SGSR 2\'s upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare' },
@@ -526,12 +530,16 @@ const CHECKS = {
     note: 'spread over frames: ambient occlusion (a part of its directions a frame), volumetric light (a third of its steps) and bounce light (one slice at half size), the frames before filling in' },
   clouds: { title: 'Clouds check', name: 'Clouds check', key: 'clouds', off: 'painted', on: 'marched', can: cloudsCan, no: () => 'Marched clouds need WebGPU, a tier with ambient occlusion (high or ultra) and a game whose sky has clouds, so there is nothing to compare.', says: () => 'sky: ' + (HD.info.sky || 'as before'),
     note: 'marched: the clouds at a quarter of the pixels, filled in from the frames before, and their shadow a few times a second' },
+  bundle: { title: 'Bundles check', name: 'Bundles check', key: 'bundle', off: 'one by one', on: 'bundles', can: bundleCan, no: () => 'Still scenery in render bundles needs WebGPU, so there is nothing to compare.', says: () => `${HD.info.bundled || 0} still things in ${HD.info.bundles || 0} bundles`, cpu: true,
+    note: 'bundles: what keeps still (walls, roofs, rocks, props) recorded once per area and replayed, each area culled whole (more triangles sent, far less work for the CPU)' },
 };
+// still scenery in render bundles (src/kit/still.js) can be compared: WebGPU
+function bundleCan() { return HD?.info.backend === 'webgpu'; }
 async function runCheck(kind) {
   const C = CHECKS[kind], s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash(`${C.name} needs a Next Gen or AR game.`);
   if (!C.can()) return UI.flash(C.no());
   if (s.state !== 'playing') return UI.flash('Start a round first: the check times the chip while it plays.');
-  const keep = HD[C.key], was = frozen, sum = { off: { n: 0, ms: 0, by: {} }, on: { n: 0, ms: 0, by: {} } }; let pic = null, says = '';
+  const keep = HD[C.key], was = frozen, sum = { off: { n: 0, ms: 0, by: {}, cn: 0, cpu: 0, tris: 0 }, on: { n: 0, ms: 0, by: {}, cn: 0, cpu: 0, tris: 0 } }; let pic = null, says = '';
   setFrozen(false);
   try {
     for (const on of [false, true, false, true]) {
@@ -540,25 +548,31 @@ async function runCheck(kind) {
       const S = sum[on ? 'on' : 'off'], t0 = performance.now(); let seen = HD.info.gpuParts;
       while (performance.now() - t0 < 2500) {
         await new Promise(r => setTimeout(r, 50));
+        if (C.cpu) { S.cn++; S.cpu += HD.info.cpu || 0; S.tris += HD.info.tris || 0; }   // (the 3D draw's own time and triangles, one frame in three or so)
         const by = HD.info.gpuParts; if (!by || by === seen) continue;   // (a new one each time the chip's times are read)
         seen = by; S.n++; S.ms += HD.info.gpuMs; for (const k in by) S.by[k] = (S.by[k] || 0) + by[k];
       }
     }
     pic = await nextGrab(900); says = C.says();   // (switched on: the last run's)
   } finally { HD[C.key] = keep; setFrozen(was); UI.busy(''); }
-  if (!sum.off.n || !sum.on.n) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
   const F = sum.off, H = sum.on, pc = (f, h) => f > .005 ? ` (${h <= f ? '−' : '+'}${Math.abs(Math.round(100 * (h - f) / f))}%)` : '';
+  const cpuLine = C.cpu && F.cn && H.cn ? [`3D draw's CPU time a frame: ${C.off} ${r2(F.cpu / F.cn)} ms, ${C.on} ${r2(H.cpu / H.cn)} ms${pc(F.cpu / F.cn, H.cpu / H.cn)}; triangles ${Math.round(F.tris / F.cn / 1000)}k, ${Math.round(H.tris / H.cn / 1000)}k`] : [];
+  if (!F.n || !H.n) {
+    if (!cpuLine.length) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
+    const shot = { kind, title: C.title, game: s.def.id, notes: [...cpuLine, `(no chip times: this phone has no GPU timer) · ${says}`, `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh}; ${C.note}`], images: pic ? [{ label: C.on, cv: pic }] : [] };
+    shots.push(shot); viewer(shot); return;
+  }
   const parts = [...new Set([...Object.keys(F.by), ...Object.keys(H.by)])].map(k => ({ k, f: (F.by[k] || 0) / F.n, h: (H.by[k] || 0) / H.n })).sort((a, b) => b.f - a.f);
   const shot = {
     kind, title: C.title, game: s.def.id,
-    notes: [`chip time a frame: ${C.off} ${r2(F.ms / F.n)} ms, ${C.on} ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${says})`,
+    notes: [...cpuLine, `chip time a frame: ${C.off} ${r2(F.ms / F.n)} ms, ${C.on} ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${says})`,
       ...parts.map(p => `  ${p.k}: ${C.off} ${r2(p.f)} ms, ${C.on} ${r2(p.h)} ms${pc(p.f, p.h)}`),
       `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh} → ${HD.info.ow}x${HD.info.oh} · ${HD.info.upscaled || 'no upscaler'}; ${C.note}`],
     images: pic ? [{ label: C.on, cv: pic }] : [],
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runBundle = () => runCheck('bundle');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -799,7 +813,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="bundle">Bundles</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -822,6 +836,7 @@ function panel() {
       case 'half': runHalf(); break;
       case 'spread': runSpread(); break;
       case 'clouds': runClouds(); break;
+      case 'bundle': runBundle(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -880,7 +895,7 @@ function text(now) {
     const pct = i.ow ? Math.round(100 * i.rw / i.ow) : 0;
     L.push(`${i.backend} ${cfg.tier} (step ${Math.round(HD.res * 100)}%) · 3D ${i.rw}×${i.rh} → ${i.ow}×${i.oh} ${pct}% · ${i.upscaled || 'no upscaler'}${cfg.fx ? ` · smaller: ${cfg.fx}` : ''}`);
     L.push(`FG ${i.framegen ? `${i.framegen} ×${i.fgSteps} ${r1(i.fgMs)} ms` : 'off'} · ${frameGenStatus(d) || ''}`.slice(0, 120));
-    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : i.gpuOff ? 'times don\'t fit (off)' : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}`);
+    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : i.gpuOff ? 'times don\'t fit (off)' : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}${i.bundled ? ` · ${i.bundled} in ${i.bundles} bundles` : ''}`);
   } else if (s) {
     L.push(`${cfg.backend} canvas ${s.canvas.width}×${s.canvas.height}${s.lite ? ' (eased: phone fell behind)' : ''} · CPU upd ${r2(last.upd)} draw ${r2(last.drw)} ms`);
   }
@@ -919,7 +934,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, bundle: runBundle, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)

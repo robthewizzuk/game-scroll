@@ -33,6 +33,7 @@ import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
 import { eachShown, listPipeline } from './scene-list.js';
+import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
 import { RECIPES } from './models/recipes.js';
@@ -835,6 +836,20 @@ if (ClusteredLightsNode.prototype.shadowNode === undefined) ClusteredLightsNode.
 // over. With shadows off the node now answers "no shadow". look-compare's 'shadow-off' scene draws it.)
 const shadowSetup = ShadowNode.prototype.setup;
 ShadowNode.prototype.setup = function (builder) { return builder.renderer.shadowMap.enabled === false ? float(1) : shadowSetup.call(this, builder); };
+// Shadow maps that hold depth alone. three r187's shadow node makes its map with a colour picture of the map's
+// size beside the depth (RGBA, a byte a channel), which every shadow pass then draws into and nothing reads: only
+// coloured shadows through see-through things would (renderer.shadowMap.transmitted, not used here). A sun's
+// map is 2048 x 2048 on high, so that was 16 MB of the chip's memory for each map, and the chip writing 16 MB
+// more each time one was drawn. The pass now draws depth alone (a render target with no colour pictures,
+// which three draws as a depth-only pass). Point lights' cube maps keep theirs (their node has its own).
+// HD.shadowColour = true (before the light's first frame) keeps three's colour pictures, to compare.
+export const SHADOW_DEPTH = { on: true };
+const shadowTarget = ShadowNode.prototype.setupRenderTarget;
+ShadowNode.prototype.setupRenderTarget = function (shadow, builder) {
+  const o = shadowTarget.call(this, shadow, builder), map = o.shadowMap;
+  if (SHADOW_DEPTH.on && builder.renderer.shadowMap.transmitted !== true && !map.isCubeRenderTarget && map.textures.length === 1 && map.depthTexture) map.textures.length = 0;
+  return o;
+};
 // Blend shapes in the motion picture. (three r187 moves a morphing mesh's points by its shapes but leaves
 // where they were a frame ago unmoved by them, so the motion picture held each shape's whole offset every
 // frame, still or not: fur.js's shells, pushed out along the normal by a shape, said they were sinking back
@@ -923,7 +938,7 @@ export { takeCell as decalCell, giveCell as decalFree, refreshCell as decalRefre
 export function manyLights(r) { r.lighting = new KitLighting(256, 32, 24, 32); r.gsClustered = true; }
 // three's walk of the scene for each render (the picture, each shadow map), made over the scene's list (scene-list.js)
 let ListPipeline = null;
-export function listWalk(r) { ListPipeline ||= listPipeline({ StandardDrawingPipeline }); r.drawingPipeline = new ListPipeline(); }
+export function listWalk(r) { ListPipeline ||= listPipeline({ StandardDrawingPipeline }); r.drawingPipeline = new ListPipeline(); stillRenderer(r); }   // (and still scenery's render bundles: still.js)
 /* ---------- sharper textures under SGSR 2 ---------- */
 // A scene drawn smaller than the screen reads its textures for the small picture: a mip level too soft
 // for the screen SGSR 2 builds it up to. The usual answer (FSR 2 and DLSS ask for it too) is a mip bias
@@ -1138,8 +1153,8 @@ export function shadowOps(r) {
       let st = stands.get(map);
       if (!st) {
         const d = map.depthTexture;
-        st = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples });
-        st.texture.type = map.texture.type; st.texture.format = map.texture.format;
+        st = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples, count: colours(map) });   // (depth alone, as the map: SHADOW_DEPTH)
+        if (map.texture) { st.texture.type = map.texture.type; st.texture.format = map.texture.format; }
         if (d) { const z = st.depthTexture = new DepthTexture(4, 4, d.type); z.format = d.format; z.compareFunction = d.compareFunction; z.minFilter = d.minFilter; z.magFilter = d.magFilter; }
         r.initRenderTarget(st); stands.set(map, st);
       }
@@ -1150,7 +1165,8 @@ export function shadowOps(r) {
       finally { node.shadowMap = map; c.layers.mask = m0; node.gsPart = false; sh.updateMatrices(l); }
     },
     make(l) {
-      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
+      // (depth alone, as the map it keeps: no colour picture, see SHADOW_DEPTH)
+      const w = l.shadow.mapSize.x, h = l.shadow.mapSize.y, t = new RenderTarget(w, h, { depthBuffer: true, count: colours(l.shadow.map) }), was = r.getRenderTarget(); t.depthTexture = new DepthTexture(w, h); r.initRenderTarget(t);
       // (three empties a picture's depth the first time something is drawn into it without a clear: so it is emptied here, before anything is kept in it, and not under a part written into it later)
       r.setRenderTarget(t); r.clearDepth(); r.setRenderTarget(was);
       return t;
@@ -1220,13 +1236,13 @@ function shadowBlit(r) {
     ahead(map) {
       const d = map.depthTexture; if (!d) return;
       const like = f => {
-        const t = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples });
-        t.texture.type = map.texture.type; t.texture.format = map.texture.format;
+        const t = new RenderTarget(4, 4, { depthBuffer: true, stencilBuffer: map.stencilBuffer, samples: map.samples, count: colours(map) });
+        if (map.texture) { t.texture.type = map.texture.type; t.texture.format = map.texture.format; }
         const z = t.depthTexture = new DepthTexture(4, 4, d.type); z.format = d.format; z.compareFunction = d.compareFunction; z.minFilter = z.magFilter = f;
         r.initRenderTarget(t); return t;
       };
       const lin = like(LinearFilter), near = like(NearestFilter);
-      const copy = new RenderTarget(4, 4, { depthBuffer: true }); copy.depthTexture = new DepthTexture(4, 4); r.initRenderTarget(copy);   // (as shadowOps make)
+      const copy = new RenderTarget(4, 4, { depthBuffer: true, count: colours(map) }); copy.depthTexture = new DepthTexture(4, 4); r.initRenderTarget(copy);   // (as shadowOps make)
       U.off.value.set(0, 0); U.dz.value = 0; U.top.value = 3; quads(NONE, 1, 4);
       run(matFor(lin.depthTexture, true), copy); run(matFor(near.depthTexture, true), copy); run(matFor(copy.depthTexture, true), lin); run(farMat(), lin);
       (this.stand ||= []).push(lin, near, copy);
@@ -1234,6 +1250,8 @@ function shadowBlit(r) {
   };
 }
 const ALL2 = [null];
+// (how many colour pictures a shadow map has: none where the shadow node made it depth-only, SHADOW_DEPTH)
+const colours = map => map ? map.textures.length : SHADOW_DEPTH.on ? 0 : 1;
 
 
 /* ---------- gs.models material recipes on WebGPU (materials.js) ---------- */
@@ -1920,6 +1938,31 @@ ${S2_TAPS.map(([x, y], i) => `  { let c = hf3(c${i}); let o = s + hf2(${x.toFixe
   if (tuned > 0.5) { settled = select(clamp((held + upw - hf(1.0)) / hf(${(S2_HOLD - 1).toFixed(1)}), hf(0.0), hf(1.0)), hf(0.0), a > own + hf(1e-4)); }
   return vec4<f32>(vec3<f32>(mix(h, upc, a)), f32(settled));
 }`);
+// Render-target memory shared between passes that never overlap, as the big engines' render graphs alias the
+// pictures a frame uses for a while and lets go of. The full-size steps after the scene pass (the volumetric
+// mix, depth of field, motion blur, then the finishing pass under SGSR 2) each read the step just before them
+// and nothing reads a step after the next one has, so each step from the third on is drawn into the picture of
+// the step two back: two pictures for any number of steps. (three draws the pictures a pass reads in passes of
+// their own, sent to the chip before it, so the step two back has always been read by then.) With depth of field
+// and motion blur on, as Long Shadow has them, that is a full-size half-float picture less: 10 MB at 1080 x 2340
+// on high. Not with a real lens (v.lens, pictures of its own) or gs.fx3d's screen effects (trails keep theirs
+// from frame to frame). The chip's time by pass still goes to each step (partOf: the picture says whose pass it is
+// as each is drawn). SHARE.on: HD.shareTargets !== false (hd3d.js); the chain is built again when it changes.
+// (three draws an rtt() picture once a frame, and knows it has by the picture it draws into, updateReference: two
+// steps drawing into one picture would be one step to it, and the second would not be drawn at all. So each step
+// is known by itself.)
+export const SHARE = { on: true };
+function ownKey() { return this; }
+function sharePictures(steps) {
+  let n = 0;
+  for (const t of steps) if (t.gsPartOwn === undefined) { const up = t.updateBefore; t.gsPartOwn = t.renderTarget.gsPart || null; t.updateBefore = function (frame) { this.renderTarget.gsPart = this.gsPartOwn || undefined; return up.call(this, frame); }; t.updateReference = ownKey; }
+  for (let i = 2; i < steps.length; i++) {
+    const b = steps[i], rt = steps[i - 2].renderTarget;
+    if (b.renderTarget === rt) continue;
+    b.renderTarget.dispose(); b.renderTarget = rt; n++;
+  }
+  return n;
+}
 function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
     fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()) };
@@ -1976,7 +2019,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
   const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat);
   return {
-    U, key: '',
+    U, key: '', low,
     size(pw, ph, fw, fh) {
       const k = `${pw}x${ph}>${fw}x${fh}`; if (k === this.key) return; this.key = k;
       low.setSize(pw, ph); mdc.setSize(pw, ph); for (const t of H2) t.setSize(fw, fh);
@@ -2130,7 +2173,7 @@ export class GpuChain {
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
   build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}`;
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}|${SHARE.on}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     // (for the frame lab: what changed since the chain was last built, when it is built again)
@@ -2410,7 +2453,10 @@ export class GpuChain {
     }
     // live, the last touches go on as each refresh is shown (show()), not here
     const fin = live ? vec4(out.rgb, 1) : Fn(() => vec4(touches(U, out.rgb, U.t, float(1)), 1))();
-    if (s2) { this.s2 = sgsr2Gpu(fin, sp.getTextureNode('depth'), mrtOn ? { vel: sp.getTextureNode('velocity'), rea: sp.getTextureNode('reactive') } : null, s2 !== 'plain'); return; }
+    if (s2) this.s2 = sgsr2Gpu(fin, sp.getTextureNode('depth'), mrtOn ? { vel: sp.getTextureNode('velocity'), rea: sp.getTextureNode('reactive') } : null, s2 !== 'plain');
+    // the full-size steps after the scene pass, two pictures between them (sharePictures)
+    this.shared = SHARE.on && !lensOn && !this.fxSlots.length ? sharePictures([this.baseT, this.dofT, this.mbT, this.s2?.low].filter(Boolean)) : 0;
+    if (s2) return;
     if (s1) this.s1 = sgsr1Gpu(fin);
     this.pp.outputNode = s1 ? this.s1.node : fin; this.pp.needsUpdate = true;
   }

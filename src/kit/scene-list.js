@@ -10,6 +10,7 @@
 // scene's own order, and asks each one and its parents whether it is shown at that moment, as
 // traverseVisible would have.
 import { Object3D, Vector4 } from 'three';
+import { STILL, pushCells } from './still.js';
 
 const EDITS = new WeakMap(), LISTS = new WeakMap();
 /** How many times a scene was listed (tests, probes). */
@@ -50,7 +51,7 @@ const shown = (o, root) => { for (;;) { if (!o.visible) return false; if (o === 
 export function eachThing(scene, fn) { const T = listOf(scene); for (let i = 0; i < T.length; i++) fn(T[i]); }
 /** Each thing that is shown (it and all its parents up to the scene visible): scene.traverseVisible for them. */
 export function eachShown(scene, fn) { const T = listOf(scene); for (let i = 0; i < T.length; i++) if (shown(T[i], scene)) fn(T[i]); }
-/** The scene's list itself (read only): a new array each time the scene was listed again, so a step can tell that something was added or taken out. */
+/** The scene's list itself (what draws, and lights, in scene order; read only): a new array each time the scene was listed again, so a step can tell that something was added or taken out. still.js goes through it. */
 export const thingsOf = scene => listOf(scene);
 /** How many things the scene's list holds (tests). */
 export const thingCount = scene => listOf(scene).length;
@@ -73,9 +74,16 @@ export function listPipeline(W) {
       const L = listed(o);
       if (!L.plain) return super.project(o, camera, groupOrder, list, clip);
       if (o.visible === false) return;
-      const T = L.things, cl = camera.layers, sort = this.renderer.sortObjects === true, M = this._projScreenMatrix;
+      const T = L.things, cl = camera.layers, sort = this.renderer.sortObjects === true, M = this._projScreenMatrix, r = this.renderer;
+      // still scenery in render bundles (still.js): an area's things are drawn by its bundle, not one by one. Only for
+      // the plain draw of a scene through a camera that sees the first layer (not a shadow map's, with its own way
+      // to draw each thing, nor a draw with a material for everything)
+      let S = STILL.get(o) || null;
+      if (S) list.opaque.gsCells = false;
+      if (S && (S.pause || !S.list.length || groupOrder !== 0 || r._renderObjectFunction !== null || o.overrideMaterial || !(cl.mask & 1) || camera.isArrayCamera || !r.backend.beginBundle)) S = null;
       for (let i = 0; i < T.length; i++) {
         const t = T[i];
+        if (S !== null && t.gsStill && t.gsStill.S === S) continue;
         if (t.visible === false || !t.layers.test(cl)) continue;
         // its parents up to the scene all shown; on the way, the group order three's walk would have handed down to it
         let p = t.parent, g = groupOrder, got = false;
@@ -100,6 +108,7 @@ export function listPipeline(W) {
           }
         }
       }
+      if (S !== null && pushCells(this, S, o, camera, list, clip)) list.opaque.gsCells = true;
     }
   };
 }

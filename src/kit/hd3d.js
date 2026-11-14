@@ -69,6 +69,7 @@ import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutT
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { eachThing, eachShown, thingsOf } from './scene-list.js';
+import { stillFrame, stillOff, stillStats } from './still.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -389,6 +390,12 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
+  /** WebGPU: false gives each full-size effect step (volumetric mix, depth of field, motion blur, the finish under SGSR 2) a picture of its own, to compare; by default a step draws into the picture of the step two back. info.shared: pictures saved so. */
+  shareTargets: true,
+  /** WebGPU: true keeps three's colour picture beside each shadow map's depth (16 MB a 2048 map, never read), for maps made from then on, to compare. */
+  shadowColour: false,
+  /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
+  bundle: true,
   /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
   get lodFade() { return FADE.on; }, set lodFade(on) { FADE.on = on !== false; },
   /** How long one fade takes (seconds). */
@@ -2330,6 +2337,7 @@ export class HDView {
    */
   release() {
     if (this.batches?.list.length) unbatchAll(this);
+    stillOff(this.scene);
     detailDropAll(this);
     if (this.held?.size) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
     occludeDrop(this);
@@ -2876,6 +2884,8 @@ export class HDView {
     if (s2 && HD.sgsrTune !== false) o.msaa = 0;
     o.s2Plain = HD.sgsrTune === false;
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
+    if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
+    if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };
     // depth of field and sun shafts: in the chain from the first time the view uses them (high and ultra
@@ -2911,6 +2921,14 @@ export class HDView {
       }
     }
     if (!baking && !off) { autoLod(this, r.domElement.height); if (this.batches?.list.length) unbatchAll(this); }   // (static batching: WebGL only, see autoBatch)
+    // still scenery drawn from render bundles (HD.bundle, on by default; still.js): what has kept still for a second is
+    // recorded by area once and replayed, and what changed this frame goes back to drawing itself before anything is drawn
+    if (HD.bundle === false || !r.backend?.beginBundle) { stillOff(this.scene); HD.info.bundled = HD.info.bundles = 0; }
+    else if (!baking && !off) {
+      if (pm >= 0) enter('3D: still');
+      stillFrame(this.scene, thingsOf(this.scene), now, SH_BITS); HD.info.bundled = stillStats.things; HD.info.bundles = stillStats.cells;
+      if (pm >= 0) leave(pm);
+    }
     r.info.autoReset = false; r.info.reset();   // (HD.info counts the frame from here: the shadow maps drawn below as well, as on WebGL)
     // shadows: each light's map is drawn again only when it or a caster it sees moved (shadowLights)
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
@@ -2990,7 +3008,7 @@ export class HDView {
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
     fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
-    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
