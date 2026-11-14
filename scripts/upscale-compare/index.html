@@ -56,7 +56,7 @@ const shine = (f, on) => { lamp.intensity = on ? 9 : 0; lamp.position.x = -3 + f
 const MIP = Q.has('mip') ? +Q.get('mip') : null;
 const ONLY = Q.get('scenes')?.split(',');   // &scenes=textured: only the runs whose names start so
 const set = m => {
-  const mode = m.replace(/-plain|-soft|-x\d+/, ''); HD.sgsrTune = !m.endsWith('-plain'); HD.mipBias = m.endsWith('-soft') ? false : MIP;
+  const mode = m.replace(/-plain|-soft|-x\d+/g, ''); HD.sgsrTune = !m.endsWith('-plain'); HD.mipBias = m.endsWith('-soft') ? false : MIP;
   // (-x then digits, tests of FSR 3.1's tricks: HD.sgsrFsr, hd3d-gpu.js sgsr2Gpu U.fsr and U.fsr2)
   const x = m.match(/-x(\d+)/); HD.sgsrFsr = x ? [...x[1]].map((d, i) => i === 4 && +d ? 2 ** (d - 1) : +d) : null;   // (the shading change digit d: 2^(d-1) times as strong)
   HD.upscale = !['full', 'plain', 'native'].includes(mode); HD.upscaler = mode === 'sgsr1' ? 'sgsr1' : 'sgsr2';
@@ -78,6 +78,7 @@ const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/
   if (ONLY && !ONLY.some(s => name.startsWith(s))) return;
   const at = f => { pose(moveCam ? f : 0); place(moveBox ? f : 0); shine(moveLamp ? f : 0, moveLamp); };
   set('full'); at(frames - LAST); draw(); await tick(); await tick();   // (a resized WebGPU canvas shows the old picture until the next frame)
+  for (let i = 0; i < 120 && v.shadersLeft > 0; i++) { draw(); await tick(); }   // (and its shaders built: see below)
   const refs = [], thin = [], moving = [], B = moveBox || moveLamp ? 12 : 0, drawn = async () => { draw(); if (GPU) { await tick(); draw(); } return draw(); };
   for (let f = frames - LAST - B; f <= frames; f++) {
     at(f); const d = await drawn(); refs.push(d);
@@ -89,7 +90,10 @@ const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/
   let rf = 0, rt = 0; for (let i = 1; i < refs.length; i++) { rf += err(refs[i], refs[i - 1]) / LAST; rt += errM(refs[i], refs[i - 1], thin[i]) / LAST; }
   const res = { ref: { error: 0, flicker: +rf.toFixed(2), thin: 0, thinFlicker: +rt.toFixed(2), ms: 0, used: 'reference', backend: HD.info.backend } };
   for (const mode of modes) {
-    set(mode); v.cut(); let prev = null, flick = 0, e = 0, ms = 0, te = 0, tf = 0, me = 0;   // (a cut: every mode starts from a clean history, whatever ran before it)
+    // (first the mode's shaders: until they are built new things wait hidden (v.holdNew), for more frames on a
+    // slower machine, and a run would score a history that had fewer frames of them)
+    set(mode); pose(0); place(0); shine(0, moveLamp); let waited = 0; do { draw(); await tick(); } while (v.shadersLeft > 0 && ++waited < 120);
+    v.cut(); let prev = null, flick = 0, e = 0, ms = 0, te = 0, tf = 0, me = 0;   // (a cut: every mode starts from a clean history, whatever ran before it)
     pose(0); place(0); shine(0, moveLamp); for (let i = +(Q.get('warm') || 0); i > 0; i--) { draw(); await tick(); }
     for (let f = 0; f <= frames; f++) {
       at(f);
@@ -100,7 +104,7 @@ const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/
       }
       prev = d;
       if (f === frames) {
-        res[mode] = { error: +e.toFixed(2), flicker: +flick.toFixed(2), thin: +te.toFixed(2), thinFlicker: +tf.toFixed(2), ...(B ? { moving: +me.toFixed(2) } : {}), ms: +(ms / (frames + 1)).toFixed(1), used: HD.info.upscaled, backend: HD.info.backend };
+        res[mode] = { error: +e.toFixed(2), flicker: +flick.toFixed(2), thin: +te.toFixed(2), thinFlicker: +tf.toFixed(2), ...(B ? { moving: +me.toFixed(2) } : {}), waited, ms: +(ms / (frames + 1)).toFixed(1), used: HD.info.upscaled, backend: HD.info.backend };
         if (Q.has('shots')) shots[name + '.' + mode] = c.toDataURL();
       }
       await tick();

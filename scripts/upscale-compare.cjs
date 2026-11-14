@@ -30,14 +30,14 @@ const fs = require('fs'), path = require('path');
     : { args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] }), p = await b.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await p.goto(`${server.resolvedUrls.local[0]}scripts/upscale-compare/?scale=${scale}${shots ? '&shots' : ''}${gpu ? '&gpu' : ''}${['tier', 'warm', 'modes', 'grain', 'mip', 'scenes'].map(k => opt('--' + k) ? `&${k}=${opt('--' + k)}` : '').join('')}`);
-  await p.waitForFunction(() => window.result, null, { timeout: 600000 });
+  await p.waitForFunction(() => window.result, null, { timeout: 900000 });   // (the PR check's runner is about half as fast as this machine)
   const res = await p.evaluate(() => window.result);
   if (res.error || errs.length) { console.log('FAIL', res.error || errs.join('\n')); process.exit(1); }
   console.log(`drawn at 1/${res.scale} size and upscaled; error and flicker out of 255 (lower is better)`);
   for (const [name, r] of Object.entries(res.scenes)) {
     console.log(name);
     const n = v => String(v ?? '').padStart(5);
-    for (const [m, s] of Object.entries(r)) console.log(`  ${m.padEnd(11)} error ${n(s.error)}  flicker ${n(s.flicker)}  thin ${n(s.thin)} / ${n(s.thinFlicker)}${s.moving != null ? `  moving ${n(s.moving)}` : ''}  ${s.ms} ms  (${s.used || 'stretch'} on ${s.backend})`);
+    for (const [m, s] of Object.entries(r)) console.log(`  ${m.padEnd(11)} error ${n(s.error)}  flicker ${n(s.flicker)}  thin ${n(s.thin)} / ${n(s.thinFlicker)}${s.moving != null ? `  moving ${n(s.moving)}` : ''}  ${s.ms} ms${s.waited ? `  (${s.waited} frames for its shaders)` : ''}  (${s.used || 'stretch'} on ${s.backend})`);
   }
   if (shots) { fs.mkdirSync(shots, { recursive: true }); for (const [k, u] of Object.entries(res.shots)) fs.writeFileSync(path.join(shots, k + '.png'), Buffer.from(u.split(',')[1], 'base64')); console.log('shots in', shots); }
   // What must hold: the upscalers really ran; SGSR 2 is no further from the reference than a plain stretch;
