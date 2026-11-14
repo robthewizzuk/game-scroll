@@ -76,7 +76,10 @@ export function classify(name = '', mdl = '', cores = 8, mem = 8, phone = true, 
   let k = null, m;
   if ((m = n.match(/adreno[^\d]*(\d{3})/))) { const v = +m[1]; k = v >= 730 ? 'top' : v >= 640 ? 'mid' : 'low'; }
   else if (/immortalis|xclipse/.test(n)) k = 'top';
-  else if ((m = n.match(/mali-g(\d+)/))) { const v = +m[1]; k = v >= 715 ? 'top' : v >= 68 && v < 100 ? 'mid' : v >= 600 ? 'mid' : 'low'; }
+  // (a plain Mali-G715 is 'mid', not 'top': the chip of Google's Tensor G3 and G4. The first report from one, a Pixel 10a,
+  // 2026-11-14: the hall at the high tier, nothing switched on, 38 frames a second on a 60 Hz screen, and ray tracing
+  // lost its graphics chip. The Immortalis chips, the same family with more cores, are 'top' above; G720 and up are not measured yet)
+  else if ((m = n.match(/mali-g(\d+)/))) { const v = +m[1]; k = v >= 720 ? 'top' : v >= 68 && v < 100 ? 'mid' : v >= 600 ? 'mid' : 'low'; }
   else if (/mali|powervr|videocore|sgx/.test(n)) k = 'low';
   else if ((m = mdl.match(/^iPhone(\d+),/))) { const v = +m[1]; k = v >= 15 ? 'top' : v >= 13 ? 'mid' : 'low'; }   // iPhone15,x = iPhone 14 Pro (A16)
   else if ((m = mdl.match(/^iPad(\d+),/))) { const v = +m[1]; k = v >= 13 ? 'top' : v >= 8 ? 'mid' : 'low'; }

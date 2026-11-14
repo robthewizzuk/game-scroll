@@ -54,10 +54,11 @@ import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
-import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
+import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses, canvasShows, OPAQUE } from './gpu.js';
 import { packing } from './pack.js';
 import { ONE_SUBMIT, flushGPU, sendEarly } from './submit.js';
 import { steerFor } from './steering.js';
+import { traceDrew, traceMay, traceOff, traceLostChip, traceAgain } from './trace-guard.js';
 import { SLIM, isSlim, meshBytes, SKIN_POOLED } from './slim.js';
 import { makeRenderer } from './renderer.js';
 import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
@@ -478,6 +479,8 @@ export const HD = {
   shadowColour: false,
   /** WebGPU: a sun's shadow map and its kept copy hold 16-bit depth (8 MB for a 2048 map where it was 16: half the memory, and half of what every pass on it loads and stores), for maps made from then on. false: 24 bits in 32, as three makes them, to compare. Lamps and spots keep 24. */
   shadow16: true,
+  /** WebGPU: the effect steps' pictures (bloom, bounce light, reflections, the volumetric mix, depth of field, motion blur, screen effects, sun shafts) hold a colour in 4 bytes (rg11b10ufloat, where the chip can draw into it) and not 8; false: half floats of four channels, to compare. The chain is built again when it changes. */
+  hdrSmall: true,
   /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
   bundle: true,
   /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
@@ -550,6 +553,9 @@ export const HD = {
    * reflections then, as on every other phone. traceTris: triangles the traced copy of the level's still things
    * may hold (bigger meshes are simplified to fit). HD.info.trace says what it holds while it draws.
    * traceShow (tests): true draws the traced copy itself, lit as reflections light it, in place of the picture.
+   * A graphics chip lost while reflections were ray traced switches the tracing off for the rest of the session, whoever
+   * asks, and on this phone until the app is updated unless asked for outright (trace-guard.js; HD.info.traceOff says
+   * 'lost' or 'before'; traceAgain(), tests: as if it never had).
    * regen (Ray Regeneration, hd3d-gpu-trace.js regenStage): the traced picture made at the picture's full size from
    * the rays of this frame and the frames before (rays that start elsewhere in their pixels each frame, a rough
    * surface's sent one way of its cone a frame, each pixel's reflection kept and found again where it was). null or
@@ -559,6 +565,7 @@ export const HD = {
    * and every frame added to the ones before (another number starts it again).
    */
   traced: null, traceTris: 3e5, traceShow: false, regen: null, regenRef: false, traceScale: 0,
+  traceAgain() { traceAgain(); HD.info.traceOff = ''; },
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -583,6 +590,8 @@ export const HD = {
   oneSubmit: true,
   /** With oneSubmit: true (default) also sends what is held before the scene is drawn, after a shadow map drawn inside the scene's pass and when the scene's pass is encoded, so the chip works while the frame's code goes on (three or four sends a frame); false: one send when the frame's code ends, to compare. */
   submitEarly: true,
+  /** WebGPU: the 3D canvas is opaque to the page while the view fills it (every view but AR's, whose camera picture shows behind the 3D): the browser draws it without blending it over the card behind. false: blended always, as three sets it up, to compare. HD.info.canvas: 'opaque' or 'premultiplied' last frame. */
+  opaque: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
   subgroups: true,
   /**
@@ -629,8 +638,11 @@ export const HD = {
   /** Show the 3D canvas directly on the card (false: copy each frame into the card's canvas, as tests and screenshots need). */
   direct: typeof navigator === 'undefined' || !navigator.webdriver,
 };
-Object.defineProperty(HD, 'fxStep', { enumerable: false });   // (a test lever: left out of the read-only view games get)
+Object.defineProperty(HD, 'fxStep', { enumerable: false }); Object.defineProperty(HD, 'traceAgain', { enumerable: false });   // (a test lever: left out of the read-only view games get)
 const tier = () => TIERS[HD.tier];
+// Reflections ray traced: not switched off (HD.traced, the steering list), not after ray tracing lost this phone's
+// graphics chip (trace-guard.js), and on the best phones, or wherever it is asked for outright (HD.traced = true)
+const traceWanted = () => HD.traced !== false && steered().traced !== false && traceMay(HD.traced === true) && (HD.traced === true || phoneClass() === 'top');
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
@@ -2616,7 +2628,7 @@ export class HDView {
    */
   reflect(...meshes) {
     for (const m of meshes.flat()) if (m && !this.reflectors.includes(m)) { this.reflectors.push(m); m.userData.gsReflect = true; }
-    if (this.reflectors.length && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
+    if (this.reflectors.length && traceWanted()) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
     return this;
   }
   /**
@@ -2775,7 +2787,8 @@ export class HDView {
   /** Size the camera to the game's W x H (call from draw before render). */
   fit(W, H) { if (W !== this.W || H !== this.H || this.cam.aspect !== W / H) { this.W = W; this.H = H; this.cam.aspect = W / H; this.cam.updateProjectionMatrix(); } return this; }
   /** Logical screen position of a world point: [x, y, depth] (depth > 1 = behind the camera). */
-  toScreen(x, y, z) { const p = new Vector3(x, y, z).project(this.cam); return [(p.x + 1) / 2 * this.W, (1 - p.y) / 2 * this.H, p.z]; }
+  // (the third number: under 1 in front of the camera, over 1 behind it or nearer than its near plane, whichever way the renderer keeps depth: gpu.js REVERSED)
+  toScreen(x, y, z) { const p = new Vector3(x, y, z).project(this.cam); return [(p.x + 1) / 2 * this.W, (1 - p.y) / 2 * this.H, this.cam.reversedDepth ? 1 - p.z : p.z]; }
   /**
    * Compile every shader the scene can need now (hidden things too: muzzle flashes, explosions,
    * swapped materials), so nothing compiles mid-game and stutters. Call after building a level;
@@ -2997,6 +3010,9 @@ export class HDView {
     const live = direct && !baking && !off;
     if (live && this.stillSkip(ch, now)) { speed.between = null; HD.info.still = true; HD.info.cpu = performance.now() - now; return; }
     if (!baking && !off) HD.info.still = false;
+    // (the canvas is opaque unless this view lets what is behind it show, AR's camera picture: gpu.js canvasShows)
+    OPAQUE.on = HD.opaque !== false; { const m = canvasShows(r, !!this.clearBg); if (!baking && !off) HD.info.canvas = m; }
+    if (!baking && !off) HD.info.depth = r.reversedDepthBuffer ? 'reversed' : 'forward';   // (gpu.js REVERSED)
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
     ONE_SUBMIT.on = HD.oneSubmit !== false; ONE_SUBMIT.early = HD.submitEarly !== false; if (!baking && !off) { HD.info.submits = ONE_SUBMIT.sent - (HD.sentAt ?? ONE_SUBMIT.sent); HD.sentAt = ONE_SUBMIT.sent; }   // (submit.js: the frame before's)
@@ -3038,7 +3054,7 @@ export class HDView {
     const worldAuto = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;
     try {
     if (pm >= 0) enter('3D: occlusion');
-    const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg && !r.reversedDepthBuffer, pw, ph);
+    const occJob = baking || off ? (DETAIL.occ = null) : this.occludeStep(!this.clearBg, pw, ph);
     if (HD.occludeShow) DETAIL.occ = null;
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
@@ -3074,7 +3090,7 @@ export class HDView {
     const wantRefl = this.reflectors.length && T.ao > 0 && !this.clearBg;
     let tr = null;
     // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
-    const TK = wantRefl && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
+    const TK = wantRefl && traceWanted() && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
     if (TK) {
       if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) for (const p of e.parts) fn(e.o, p.twin); } }); }
       this._tracer.show = !!HD.traceShow;
@@ -3086,7 +3102,7 @@ export class HDView {
     // reference, a ray for every pixel and every frame kept)
     if (tr) { const t = this._traceRefl ||= { scale: .5, traced: null, regen: true, ref: false }; t.traced = tr; t.regen = HD.regen !== false; t.ref = t.regen ? HD.regenRef || 0 : 0; t.scale = HD.traceScale || .5; }
     o.refl = wantRefl ? (tr ? this._traceRefl : T.ssr ? REFL_FULL : REFL_HALF) : null;
-    HD.info.trace = tr ? tr.info : null; HD.info.refl = o.refl ? (tr ? 'traced' : 'screen') : '';
+    HD.info.trace = tr ? tr.info : null; HD.info.refl = o.refl ? (tr ? 'traced' : 'screen') : ''; HD.info.traceOff = traceOff(); if (!baking && !off) traceDrew(!!tr);
     // SGSR 2 smooths every edge from its history (also at full size, where it is the anti-aliasing), and the
     // picture measured the same with MSAA under it as without: so the scene is drawn without, which saves the
     // multisampled colour, depth and motion pictures and their resolves
@@ -3100,6 +3116,7 @@ export class HDView {
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     if (G.fx.SHADOW_16) G.fx.SHADOW_16.on = HD.shadow16 !== false;
     if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
+    if (G.fx.HDR_SMALL) G.fx.HDR_SMALL.on = HD.hdrSmall !== false;   // (the effect steps' pictures in 4 bytes a pixel, hd3d-gpu.js hdrPic: the chain is built again when it changes)
     if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };
@@ -3931,7 +3948,12 @@ function stillComing() {
 waitsOn(stillComing);
 // the canvases of renderers whose graphics chip was lost (gpu.js): taken off the card the next time a view mounts its own
 const LOST_CANVAS = new WeakSet();
-onGpuLoss(e => { if (e.kind === 'lost') for (const cv of e.canvases || []) LOST_CANVAS.add(cv); });
+onGpuLoss(e => {
+  if (e.kind !== 'lost') return;
+  for (const cv of e.canvases || []) LOST_CANVAS.add(cv);
+  // (lost while reflections were ray traced: the tracing is what the driver would not take, trace-guard.js)
+  if (traceLostChip()) { HD.info.traceOff = traceOff(); console.warn('3D: the graphics chip was lost while reflections were ray traced; they come from the screen from now on'); }
+});
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {

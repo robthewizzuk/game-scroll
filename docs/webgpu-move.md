@@ -105,6 +105,57 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   and a pass that loaded it again. The rectangles are drawn from a few meshes in turn: one mesh used twice
   in a frame had its rectangles uploaded under a pass still held (`submit.js`), which cost a send each time.
   The village walk of `--page shadows`: 2.03 passes a frame on the sun's map and its copy down to 1.12.
+- The effect steps draw into `rg11b10ufloat` (`HD.hdrSmall`, `hdrPic` in `hd3d-gpu.js`): 4 bytes a pixel for an
+  HDR colour where a half-float picture of four channels took 8, the fourth always 1. In three that is a render
+  target of `UnsignedInt101111Type` and `RGBFormat`; drawing into it needs the device feature
+  `rg11b10ufloat-renderable` (three asks for every feature the adapter has), and without it the pictures stay
+  half floats. It has no sign, so a picture that holds a move (motion blur's tiles) is `rg16float`, and one
+  number (the volumetric light) `r16float`. 6 bits of fraction in red and green and 5 in blue are about a
+  screen's 8 bits in a picture's mid tones. A chip given a number between two that the format has may take the
+  lower one (the test machine's does): each step came out half a step darker, a whole one in blue, and three
+  steps in a row made the flare look scene 2% darker and 5% less blue. So each step rounds its colour itself
+  (`hdrFit`): to one of the two numbers either side, with the odds of how near each is, by a noise pattern that
+  stays put. That is right on average whichever way the chip rounds, and leaves no bands where a sky shades
+  off; the look scenes then differ from half floats by 0.3 of 255 at most. three's afterimage node (gs.fx3d
+  trails) gives its own pictures the type of the picture it reads but not the format, and a trail that fades a
+  little each frame needs a half float's steps: its pictures stay half floats (`hd3d-gpu-fx.js`). `sharePictures` shares a picture only between steps of one
+  kind, so GSSR's small picture (four channels) no longer takes a step's. Not changed: the scene pass's
+  colour, anything in `hd3d-gpu-trace.js`, GSSR's and frame generation's pictures.
+- The 3D canvas is opaque to the page while a view fills it (`HD.opaque`, `canvasShows` in `src/kit/gpu.js`).
+  three makes the canvas see-through (`alphaMode: 'premultiplied'`), which AR needs for the camera picture
+  behind it; then the browser blends the whole 3D picture over what is behind it on every frame. Told the
+  picture is opaque, the browser draws it with no blending, skips what is under it, and the system may show
+  it on a display plane of its own. WebGPU lets a canvas be configured again between frames with the device
+  and everything on it kept, so the view says before each frame whether anything shows through: a view with
+  `clearBg` (AR) turns the canvas back to blended for its frames, and the next filled view turns it opaque.
+  three sets the canvas up anew after every change of size from the backend's `parameters.alpha`, so that
+  is kept in step; the renderer's own `alpha` (how it clears) is left as it was, and the picture is the same
+  to the bit: a filled view left no see-through pixel on the blended canvas either (the test page counts
+  them), so nothing on the page changes. The pictures of cards waiting in the feed are drawn before the
+  live view's frame, each the way its own view asks. WebGL's canvas is fixed when it is made and stays
+  blended. `HD.info.canvas` says which.
+- Depth is kept reversed, in 32-bit floats (`REVERSED` in `src/kit/gpu.js`, three's `reversedDepthBuffer`;
+  `HD.info.depth`). A perspective depth crowds the far world into the top of its range: with a near plane at
+  10 cm everything past 100 m is in the last thousandth, and 24 bits cannot tell two walls a metre apart at
+  3 km (the test page counts 864 of 1,008 pixels of the wall behind showing through the one in front). Kept
+  the other way round, 1 at the near plane and 0 at the far one, a float's fine steps near 0 land where the
+  depths are crowded: the same walls are clean at 8 km with the same near plane, and cards 2 mm apart at
+  arm's length are as they were. three turns its own side round: the cameras' projection matrices, the depth
+  tests and clears, polygon offsets, the shadow cameras and their compare, and its nodes that read depth
+  (`getViewPosition`, `perspectiveDepthToViewZ`, the ambient occlusion, reflection and denoise nodes). The
+  kit's own readers are turned by hand. In three's projection the reversed depth is exactly 1 minus the
+  forward one, so a shader that reads a depth picture takes `fwdDepth()` for the depth as it ran before or
+  `noDepth()` for where nothing was drawn (`src/kit/depth-gpu.js`): the depth meter for occlusion culling, the
+  volumetric light, depth of field and the lens, motion blur, smoke and fire, GSSR and frame generation. The
+  kept shadow map's copies and slides write depth themselves (far is 0, a slide deeper subtracts), and 3D
+  fog's test against the sun's map is turned. Code on the CPU that works depths out itself takes
+  `forwardProjection(camera)` (`occlusion.js`); GPU culling's frustum is told the camera is reversed.
+  `toScreen()` still gives a game a third number that grows with distance and is over 1 behind the camera.
+  The scene's depth picture is `depth32float` where it was `depth24plus`, 4 bytes a pixel either way on
+  phone chips. The Console renderer and WebGL keep depth as it was. `?depth=forward` in the address, or
+  `REVERSED.on = false` before the renderer is made, keeps depth forward to compare, and the steering list's
+  `depth: false` keeps it forward on a phone or driver that turns out to need it. The projection native
+  AR hands over is turned in `ar3d.js` (`projectNative`); that has not run on a phone.
 - A sun's shadow map and its kept copy are 16-bit depth (`depth16unorm`; `HD.shadow16`, `SHADOW_16` in
   `hd3d-gpu.js`): half the memory, and half of what each pass on them moves. three makes every shadow map
   `depth24plus`, 4 bytes a texel. An orthographic light's depth is even from near to far, so 65,536 steps

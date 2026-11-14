@@ -20,14 +20,14 @@
 //   app       a range for the app's build number ('<420': builds before 1.0.420)
 //   game      a game id or a list of them: the knobs hold for those games only (hide: those games are not shown)
 // do: the knobs (src/kit/steering.js): { webgpu: false, hdr: false, klass: 'mid', tier: 1, fps: 60, frameGen: false,
-//   traced: false, half: false, pack: false, submit: false, hide: true }.
+//   traced: false, half: false, pack: false, submit: false, depth: false, hide: true }.
 // node scripts/steer.mjs checks the list (the PR check runs it) and says what each rule would match.
 import { STEER, resetSteer } from './kit/steering.js';
 import { gpuName } from './kit/gpu.js';
 import { desktop } from './desktop.js';
 import BUILT_IN from './steer-list.js';
 
-export const KNOBS = { webgpu: 'bool', hdr: 'bool', klass: ['mid', 'low'], tier: [0, 1, 2, 3], fps: 'num', frameGen: 'bool', traced: 'bool', half: 'bool', pack: 'bool', submit: 'bool', hide: 'bool' };
+export const KNOBS = { webgpu: 'bool', hdr: 'bool', klass: ['mid', 'low'], tier: [0, 1, 2, 3], fps: 'num', frameGen: 'bool', traced: 'bool', half: 'bool', pack: 'bool', submit: 'bool', depth: 'bool', hide: 'bool' };
 export const WHEN = ['platform', 'model', 'chip', 'os', 'engine', 'driver', 'app', 'game'];
 export const PLATFORMS = ['android', 'ios', 'mac', 'windows', 'linux', 'web'];
 

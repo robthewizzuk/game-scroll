@@ -317,11 +317,11 @@ export function gpuCull(im, levels, group, pad = 0) {
       if (!im.matricesTexture?._data || !n) { U.n.value = 0; } else if (dirty || n !== sent) send(n);
       U.n.value = n ? n : 0;
       mainCam = cam;
-      cam.updateMatrixWorld(); PM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); F.setFromProjectionMatrix(PM, cam.coordinateSystem);
+      cam.updateMatrixWorld(); PM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); F.setFromProjectionMatrix(PM, cam.coordinateSystem, cam.reversedDepth);
       const P = U.planes.array; for (let k = 0; k < 6; k++) P[k].set(F.planes[k].normal.x, F.planes[k].normal.y, F.planes[k].normal.z, F.planes[k].constant);
       const all = im.castShadow && shadowCams ? shadowCams.length : 0, ns = Math.min(MAX_SHADOW, all);
       for (let j = 0; j < ns; j++) {
-        const c = shadowCams[j]; F.setFromProjectionMatrix(PM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse), c.coordinateSystem);
+        const c = shadowCams[j]; F.setFromProjectionMatrix(PM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse), c.coordinateSystem, c.reversedDepth);
         for (let k = 0; k < 6; k++) P[6 * (j + 1) + k].set(F.planes[k].normal.x, F.planes[k].normal.y, F.planes[k].normal.z, F.planes[k].constant);
       }
       U.ns.value = ns; U.extra.value = all > ns ? 1 : 0; U.cam.value.copy(cam.getWorldPosition(PV)); U.wm.value.copy(im.matrixWorld);

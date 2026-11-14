@@ -115,7 +115,10 @@ was reset after a hang, the system wanted the chip's memory back, or the browser
 crashed. The app pauses the round under "The graphics restarted. Getting them back…", makes a new
 device, builds the round's shaders again, and gives "Carry on" back once the round draws as before
 (`src/kit/gpu.js` `lostGPU`, `src/main.js` `mendStep`). The message gives the reason the browser
-named (`unknown` is the usual one for a crash, `test` is our own test script) and how it ended:
+named (`unknown` is the usual one for a crash, `test` is our own test script) and how it ended
+(`· ray tracing was on` after it: reflections were being ray traced when the device went, and the 3D
+kit has switched the tracing off on that phone, `src/kit/trace-guard.js`; several of those on one chip
+are a case for `traced: false` in the steering list):
 
 | Ending | What happened |
 | --- | --- |
@@ -188,6 +191,7 @@ And what it can set (each only turns something off or down):
 | `half: false` | the kit's passes stay in full precision |
 | `pack: false` | textures made in code are not packed into the chip's compressed formats |
 | `submit: false` | each WebGPU pass goes to the chip by itself, as three.js sends it, not a frame's passes together (`src/kit/submit.js`) |
+| `depth: false` | the 3D depth runs forward in 24 bits as it did, not reversed in 32-bit floats (`REVERSED` in `src/kit/gpu.js`) |
 | `hide: true` | (with `game`) the game is not shown on this device |
 
 The QA panel's report (tap the GAME SCROLL logo, then Copy report) says which rules matched this

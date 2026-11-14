@@ -583,7 +583,7 @@ function hall({ gs, HD, size, gpu, top = true }) {
   const traced = (key, name, regen) => ({ key, name, async enter(draw) {
     set(key, true, true, regen);
     const t0 = performance.now(); await draw(); await draw();
-    if (!HD.info.refl) return null;   // (a quality with no reflections at all: nothing to wait for)
+    if (!HD.info.refl || HD.info.traceOff === 'lost') return null;   // (a quality with no reflections at all, or ray tracing off after it lost the graphics chip, trace-guard.js: nothing to wait for)
     await until(draw, () => HD.info.refl === 'traced', 12000);   // (the ray tracing part is loaded the first time it is wanted)
     await until(draw, () => { const t = HD.info.trace; return !t || (t.builds > 0 && t.tris > 0 && !t.busy); }, 90000);
     for (let i = 0; i < 8; i++) await draw();   // (a chip that won't take the tracing says so in its first frames)
@@ -605,11 +605,12 @@ function hall({ gs, HD, size, gpu, top = true }) {
     tell() {
       const t = HD.info.trace;
       if (mode === 'none') return null;
-      if (!HD.info.refl) return 'this quality draws no reflections here';
+      // (WebGL draws reflections on ultra only: a run that began on WebGPU and lost its graphics chip for good ends there)
+      if (!HD.info.refl) return gpu && HD.info.backend === 'webgl' ? 'drawn with WebGL by the end, which draws no reflections at this quality' : 'this quality draws no reflections here';
       if (mode === 'screen') return null;
-      if (!t) return 'NOT ray traced: this phone would not take it, and drew reflections from the screen';
+      if (!t) return HD.info.traceOff === 'lost' ? 'NOT ray traced by the end: ray tracing lost this phone\'s graphics chip, so it was switched off and reflections came from the screen' : 'NOT ray traced: this phone would not take it, and drew reflections from the screen';
       if (mode === 'traced-was') return 'the rays laid over the picture as they were before Ray Regeneration';
-      return `traced copy ${num(t.tris)} triangles (${num(t.was)} before simplifying) of ${num(t.things)} things, ${t.movers} of them moving, ${num(t.other + t.left)} left to the screen · ${t.mb} MB on the chip${top ? '' : ' · on for this test only: by itself this phone keeps to reflections from the screen'}`;
+      return `traced copy ${num(t.tris)} triangles (${num(t.was)} before simplifying) of ${num(t.things)} things, ${t.movers} of them moving, ${num(t.other + t.left)} left to the screen · ${t.mb} MB on the chip${top && !HD.info.traceOff ? '' : ' · on for this test only: by itself this phone keeps to reflections from the screen'}`;
     },
     dispose() { HD.traced = was.traced; HD.regen = was.regen; clear(v); },
   };

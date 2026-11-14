@@ -94,6 +94,38 @@ const BIG_LIST = 268435456;   // the most asked of a chip for one list a shader 
 // of the screen by default and clears and keeps it every frame (4 bytes a pixel: 10 MB on a 1080 x 2340 screen, written
 // out each frame on a phone's chip for nothing). `on: true` before WebGPU starts brings it back (tests).
 export const SCREEN_DEPTH = { on: false };
+// The screen's picture is opaque while nothing behind it is meant to show (HD.opaque). three asks for a canvas the
+// page blends with what is behind it ('premultiplied'), which AR needs for the camera's picture under the 3D and
+// nothing else does: every other view fills its picture, and the browser still blended a full screen of it over
+// the card behind, each frame. Told the picture is opaque, the browser's compositor draws it without blending and
+// knows nothing behind it needs drawing, and the system may show it on a display plane of its own. WebGPU lets
+// a canvas be told again between frames (its next picture is made the new way, the device and everything else
+// kept); WebGL's canvas is fixed when it is made and stays as it was.
+export const OPAQUE = { on: true };
+/**
+ * Before a frame is drawn on r's canvas: through says something behind the canvas shows through this frame
+ * (AR's camera picture, a CSS backdrop). Returns the canvas's mode, or '' where it can't be told (WebGL, an older browser).
+ */
+export function canvasShows(r, through) {
+  const ctx = r?.backend?.isWebGPUBackend ? r.backend.context : null; if (!ctx?.configure || !ctx.getConfiguration) return '';
+  const mode = through || !OPAQUE.on ? 'premultiplied' : 'opaque';
+  if (r.gsAlpha === mode) return mode;
+  try {
+    const now = ctx.getConfiguration(); if (!now) return '';
+    if (now.alphaMode !== mode) { flushGPU('canvas'); ctx.configure({ ...now, alphaMode: mode }); }   // (what is held may draw into the picture the canvas has now: sent first)
+    r.backend.parameters.alpha = mode === 'premultiplied';   // (three sets the canvas up anew after every change of size, from this; its clearing and its shaders read the renderer's own alpha, which stays)
+    r.gsAlpha = mode;
+  } catch (e) { console.warn('canvas alpha mode:', e); r.gsAlpha = mode; return ''; }
+  return mode;
+}
+/**
+ * Reversed depth on the Next Gen WebGPU renderer (depth-gpu.js): 32-bit float depth that runs from 1 at the near
+ * plane to 0 at the far one, so far surfaces close together stay apart. Read when the renderer is made. Tests:
+ * `?depth=forward` in the page's address, or `on: false` before prepareGPU(), keeps 24-bit depth running forward,
+ * as three does by default; the steering list's `depth: false` does the same for a phone or driver that needs it.
+ * HD.info.depth says which.
+ */
+export const REVERSED = { on: !(typeof location !== 'undefined' && /[?&]depth=forward\b/.test(location.search)) };
 /** Tests: `on: false` before the Console WebGPU renderer is made draws its passes in 16-bit float pictures, as three does by default. */
 export const CONSOLE_8BIT = { on: true };
 /**
@@ -134,7 +166,7 @@ export function prepareGPU() {
       } catch (_) { /* stays 32 */ }
       const make = async (cv, bytes) => {
         const limits = { ...(bytes > 32 ? { maxColorAttachmentBytesPerSample: bytes } : {}), ...(pics > 16 ? { maxSampledTexturesPerShaderStage: pics } : {}), ...(list > 134217728 ? { maxStorageBufferBindingSize: list } : {}), ...(buf > 268435456 ? { maxBufferSize: buf } : {}) };
-        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, depth: SCREEN_DEPTH.on, powerPreference: 'high-performance', trackTimestamp: true, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
+        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, depth: SCREEN_DEPTH.on, powerPreference: 'high-performance', trackTimestamp: true, reversedDepthBuffer: REVERSED.on && STEER.depth !== false, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
         await r.init(); return r;
       };
       let r = null;
@@ -182,6 +214,18 @@ let hdrPick = null;
 /** Tests: true or false to pick HDR output before WebGPU starts; null (default): the screen decides. */
 export function setHdr(v) { hdrPick = v; }
 function hdrScreen() { try { return hdrPick ?? (STEER.hdr !== false && typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches); } catch (_) { return false; } }
+/**
+ * What the WebGPU device says of itself, for the reports (the phone test tour): { vendor, arch (as the browser names
+ * them: 'arm', 'valhall'), timing (the chip times its own passes: the timestamp-query feature), f16 (half floats in
+ * shaders), subgroups, compat (compatibility mode), fragLists (lists a pixel shader may read: ray tracing needs 4),
+ * pixelBytes (bytes a pixel the scene pass may write) }, or null (no WebGPU device now).
+ */
+export function gpuFacts() {
+  const be = gpu?.r?.backend, dev = be?.device; if (!dev) return null;
+  const ai = dev.adapterInfo || {}, l = dev.limits || {}, has = n => !!dev.features?.has?.(n);
+  return { vendor: String(ai.vendor || ''), arch: String(ai.architecture || ''), timing: !!be.trackTimestamp, f16: has('shader-f16'), subgroups: has('subgroups'), compat: !has('core-features-and-limits'),
+    fragLists: Math.min(l.maxStorageBuffersInFragmentStage ?? l.maxStorageBuffersPerShaderStage ?? 0, l.maxStorageBuffersPerShaderStage ?? 0), pixelBytes: l.maxColorAttachmentBytesPerSample || 32 };
+}
 /** The ready WebGPU setup { r (WebGPURenderer), W (three/webgpu), fx (hd3d-gpu.js) }, or null (not supported, not ready, or WebGL forced for a test). */
 export const webgpu = () => pick === 'webgpu' ? gpu : null;
 

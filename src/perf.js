@@ -32,6 +32,7 @@ import { memory, onMemory } from './kit/memory.js';
 import { appHealth, judgeExit, memoryNote } from './exits.js';
 import { desktop } from './desktop.js';
 import { gpuName, chipLabel, onGpuLoss } from './kit/gpu.js';
+import { TRACE } from './kit/trace-guard.js';
 
 const PENDING_KEY = 'gs_perf_pending', LOCAL_KEY = 'gs_perf_local', GLOBAL_KEY = 'gs_perf_global', OPEN_KEY = 'gs_perf_open';
 const EXIT_KEY = 'gs_perf_exit', BUILD_KEY = 'gs_perf_build';   // the newest exit record already looked at; the build that ran last
@@ -107,7 +108,9 @@ onGpuLoss(e => {
   if (e.kind === 'lost') { lossAt = { game: current, reason: e.reason, message: e.message }; return; }
   const l = lossAt; lossAt = null; if (!l) return;
   const end = e.backend === 'webgpu' ? 'back on WebGPU' : e.backend === 'webgl' ? 'WebGL from then on' : 'no 3D until the app restarted';
-  addError('gpu', l.game, `WebGPU device lost (${l.reason})${l.message ? ': ' + l.message.slice(0, 90) : ''} · ${end}`, [chipLabel(gpuName()), engine()].filter(Boolean).join(' · ').slice(0, 80));
+  // (lost while reflections were ray traced: the 3D kit has switched the tracing off, src/kit/trace-guard.js)
+  const rt = TRACE.told ? ' · ray tracing was on' : ''; TRACE.told = false;
+  addError('gpu', l.game, `WebGPU device lost (${l.reason})${l.message ? ': ' + l.message.slice(0, 90) : ''} · ${end}${rt}`, [chipLabel(gpuName()), engine()].filter(Boolean).join(' · ').slice(0, 80));
 });
 
 function openMarker() { store.set(OPEN_KEY, { game: current, ver: curVer, playing, app: BUILD, at: Date.now(), mem: memory.level }); }

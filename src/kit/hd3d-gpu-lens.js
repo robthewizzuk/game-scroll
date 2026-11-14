@@ -27,6 +27,7 @@ import {
   passTexture, texture, context, outputStruct, property, Loop, If, instanceIndex, varying, positionGeometry, screenUV, log2,
 } from 'three/tsl';
 import { AF_LOG } from './lens.js';
+import { fwdDepth, noDepth } from './depth-gpu.js';
 
 const Q = new QuadMesh(), CAM = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
 let RS;   // (three fills it in: undefined, not null, the first time)
@@ -38,16 +39,16 @@ const qmat = (node, name) => { const m = new NodeMaterial(); m.name = name; m.fr
 
 export class LensNode extends Node {
   static get type() { return 'LensNode'; }
-  /** src: the picture so far; ao: its ambient occlusion factor (or 1); depth: the scene's depth picture. */
-  constructor(src, ao, depth) {
+  /** src: the picture so far; ao: its ambient occlusion factor (or 1); depth: the scene's depth picture; pic: the options of the last step's picture; fit: its colour as that picture holds it (hd3d-gpu.js hdrFit). */
+  constructor(src, ao, depth, pic, fit) {
     super('vec4');
     this.updateBeforeType = NodeUpdateType.FRAME;
-    Object.assign(this, { src, ao, depth });
+    Object.assign(this, { src, ao, depth, fit: fit || null });
     // lens: K (half-size pixels of blur per dioptre), D (the focus, dioptres), the widest blur (half-size pixels), the highlight's brightness;
     // shape: blades (0 round), their turn, how strong the discs are, on (0: the picture passes through); near / far: the camera's
     this.U = { lens: uniform(new Vector4()), shape: uniform(new Vector4()), cn: uniform(.1), cf: uniform(1000), px: uniform(new Vector2(1, 1)), hpx: uniform(new Vector2(1, 1)), tpx: uniform(new Vector2(1, 1)),
       grid: uniform(new Vector2(1, 1)), af: uniform(new Vector4(.5, .5, .02, .02)) };
-    this.pre = rt({ count: 2 }); this.tile = rt(); this.dil = rt(); this.gat = rt({ count: 2 }); this.spr = rt(); this.out = rt(); this.afRT = new RenderTarget(3, 3, { depthBuffer: false, type: UnsignedByteType });
+    this.pre = rt({ count: 2 }); this.tile = rt(); this.dil = rt(); this.gat = rt({ count: 2 }); this.spr = rt(); this.out = rt(pic || {}); this.afRT = new RenderTarget(3, 3, { depthBuffer: false, type: UnsignedByteType });   // (out: the last step holds a colour alone, hd3d-gpu.js hdrPic)
     for (const t of [this.pre, this.tile, this.dil, this.gat, this.spr, this.out]) t.gsPart = 'depth of field';
     this.pre.textures[0].name = 'Lens colour'; this.pre.textures[1].name = 'Lens highlights'; this.gat.textures[0].name = 'Lens blur'; this.gat.textures[1].name = 'Lens near'; this.spr.texture.name = 'Lens bokeh'; this.out.texture.name = 'Lens';
     this.mats = {};
@@ -102,7 +103,7 @@ export class LensNode extends Node {
     const G0 = texture(this.gat.textures[0]), G1 = texture(this.gat.textures[1]), SP = texture(this.spr.texture);
     const L = U.lens, B = U.shape;
     // 1 / distance is a straight line in the depth picture's value; the sky is at no 1 / distance at all
-    const invZ = d => select(d.greaterThanEqual(1), float(0), float(1).div(U.cn).sub(d.mul(float(1).div(U.cn).sub(float(1).div(U.cf)))));
+    const invZ = d0 => { const d = fwdDepth(d0); return select(d.greaterThanEqual(1), float(0), float(1).div(U.cn).sub(d.mul(float(1).div(U.cn).sub(float(1).div(U.cf))))); };   // (fwdDepth: 0 near, 1 far, whichever way the renderer keeps it)
     const cocAt = d => clamp(L.x.mul(L.y.sub(invZ(d))), L.z.negate(), L.z);   // (half-size pixels, signed)
     // the aperture's outline: how far out its edge is at angle a (1 round; a polygon of `blades` sides, turned)
     const shapeAt = a => { const n = max(B.x, 3), s = float(Math.PI).div(n); return select(B.x.lessThan(3), float(1), cos(s).div(cos(mod(a.sub(B.y), s.mul(2)).sub(s)))); };
@@ -188,13 +189,13 @@ export class LensNode extends Node {
         const self = mix(base, g0.rgb, smoothstep(.25, 1, abs(coc)));
         out.assign(mix(self, g1.rgb, g0.a).add(SP.sample(q).rgb));
       });
-      return vec4(out, 1);
+      return vec4(this.fit ? this.fit(out) : out, 1);
     })(), 'Lens composite'));
     // the autofocus: the distance at nine points round the spot, as log2(metres) in two bytes, and the sky
     this.mats.af = own(qmat(Fn(() => {
       const q = uv(), p = U.af.xy.add(q.sub(.5).mul(2).mul(U.af.zw)), d = dT.sample(p).r, iz = invZ(d);
       const n = clamp(log2(float(1).div(max(iz, 1e-7))).sub(AF_LOG[0]).div(AF_LOG[1]), 0, 1).mul(65535), hi = floor(n.div(256));
-      return vec4(hi.div(255), n.sub(hi.mul(256)).div(255), select(d.greaterThanEqual(1), float(1), float(0)), 1);
+      return vec4(hi.div(255), n.sub(hi.mul(256)).div(255), select(noDepth(d), float(1), float(0)), 1);
     })(), 'Lens autofocus'));
     return this.outN;
   }

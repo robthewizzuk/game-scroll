@@ -398,8 +398,8 @@ export function traceStage(ch, sp, colT, tr) {
   if (tr.show) {
     ch.trH = null;
     return ch.trT = rtt(Fn(() => {
-      const q = uv(), ndc = vec2(q.x.mul(2).sub(1), q.y.oneMinus().mul(2).sub(1)), a = U.invProj.mul(vec4(ndc, 0, 1)), b = U.invProj.mul(vec4(ndc, 1, 1));
-      const rd = normalize(U.camWorld.mul(vec4(b.xyz.div(b.w).sub(a.xyz.div(a.w)), 0)).xyz).toVar(), ro = U.camPos;
+      const q = uv(), ndc = vec2(q.x.mul(2).sub(1), q.y.oneMinus().mul(2).sub(1)), b = U.invProj.mul(vec4(ndc, .5, 1));
+      const rd = normalize(U.camWorld.mul(vec4(b.xyz.div(b.w), 0)).xyz).toVar(), ro = U.camPos;   // (the way to a point of this pixel: the same whichever way depth runs)
       const H = S.hit(ro.add(ORG), rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), out = vec3(.02, .04, .1).toVar();
       If(H.element(int(2)).w.greaterThan(.5), () => { out.assign(shade(ro.add(rd.mul(hn.w)), hn.xyz, hl.xyz, hl.w, rd)); });
       return vec4(out, 1);

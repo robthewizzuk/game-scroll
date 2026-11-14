@@ -478,8 +478,21 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   bytes of the 24 bits in 32 three makes (8 MB for a 2048 map where it was 16, and half of what every pass
   on it loads and stores): a sun's light is a box, so its depth runs evenly from near to far, 1.8 mm a
   step over a `follow()`'s 119 m against a bias of 48 mm. Lamps and spots keep 24 bits (a cone's depth
-  crowds its steps up to the light). `HD.shadowColour = true`, `HD.shadow16 = false` (both before a
-  light's first frame) and `HD.shareTargets = false` put each back to
+  crowds its steps up to the light). The effect steps' pictures (the bloom's ten, bounce light, screen-space
+  reflections, the volumetric mix, depth of field, a real lens's last step, motion blur, gs.fx3d's screen
+  steps, the sun shafts) hold a colour in 4 bytes a pixel where they held 8: `rg11b10ufloat`, floats of 11, 11
+  and 10 bits with no fourth channel (it was always 1), where the chip can draw into that (most can; else they
+  stay half floats). The volumetric light's one number takes 2 bytes and motion blur's fastest move a tile 4.
+  In the town at 1080 x 2340 with depth of field, motion blur, beams and shafts on, those pictures go from
+  19.1 MB to 9.5 MB, and every pass that draws or reads one moves half the bytes. The scene's own picture,
+  GSSR's, frame generation's and traced reflections' keep four channels.
+  The 3D canvas is opaque to the page while a view fills it, so the browser
+  shows it without blending it over what is behind (AR views, which show the camera through it, turn that
+  off for their own frames; `HD.info.canvas`). Depth is kept reversed in 32-bit floats on WebGPU, so far
+  things that are close together stay apart: walls a metre apart are clean at 8 km with a near plane at
+  10 cm, where they flickered from about 1 km (nothing for a game to do; `HD.info.depth`). `HD.shadowColour = true`,
+  `HD.shadow16 = false` (both before a
+  light's first frame), `HD.hdrSmall = false`, `HD.opaque = false` and `HD.shareTargets = false` put each back to
   compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
   --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
   which could share, and draws the scene as before and as now: less memory, the same picture.
@@ -744,7 +757,11 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   - `__hd.traced = false` turns the tracing off (screen-space reflections then, as on other phones),
     `true` forces it on wherever the chip can; `__hd.info.trace` says what the copy holds
     (`{ tris, was, things, movers, other, left, ms, mb }`) and `__hd.traceShow = true` draws the copy
-    itself. A chip whose driver won't take the tracing goes back to screen-space reflections by itself.
+    itself. A chip whose driver won't take the tracing goes back to screen-space reflections by itself:
+    one that refuses the shader in its first frames, and one whose whole WebGPU device is lost while
+    reflections are ray traced (`src/kit/trace-guard.js`). After such a loss the tracing is off for the
+    rest of the session whoever asks, and by itself on that phone until the app is updated
+    (`__hd.info.traceOff`: `'lost'` or `'before'`; `__hd.traceAgain()` in tests forgets it).
   - Checked by `node scripts/detail-test.cjs --page traced --webgpu`, `--page regen --webgpu` (Ray
     Regeneration against the reference) and the kit test (the copy's lists
     are walked there the way the shader walks them, against three's own ray caster). On a phone: the

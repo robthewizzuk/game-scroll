@@ -8,7 +8,7 @@
 // hurt, smoothing), plus three's own GTAO for ambient occlusion and the outdoor air as a fog node.
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
-import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, UnsignedShortType, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
+import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, UnsignedShortType, UnsignedInt101111Type, RGBFormat, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
   MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
@@ -34,6 +34,7 @@ import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sk
 export { SKY };
 import { eachShown, listPipeline, RIDE } from './scene-list.js';
 import { sendEarly } from './submit.js';
+import { fwdDepth, noDepth } from './depth-gpu.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -1135,7 +1136,7 @@ export function depthMeter(r) {
       const lo = max(ivec2(floor(t.mul(U.blk))).sub(pad), ivec2(0)).toVar(), hi = min(ivec2(TSL.ceil(t.add(1).mul(U.blk))).sub(1).add(pad), top).toVar();
       const far = float(0).toVar(), near = float(1).toVar();
       Loop({ start: lo.y, end: hi.y, condition: '<=' }, { start: lo.x, end: hi.x, condition: '<=' }, ({ i, j }) => {
-        const d = dT.load(ivec2(j, i)).r; far.assign(max(far, d)); near.assign(min(near, d));
+        const d = fwdDepth(dT.load(ivec2(j, i)).r); far.assign(max(far, d)); near.assign(min(near, d));   // (0 near, 1 far, as occlusion.js works them out)
       });
       const none = far.greaterThanEqual(1);
       const q = select(none, float(16777215), min(float(16777214), TSL.ceil(far.mul(16777215)).add(1))).toVar();
@@ -1160,7 +1161,7 @@ export function depthMeter(r) {
      * Called in the frame a chain is made, which builds the chain's own shaders anyway.
      */
     warm(tex) {
-      if (!tex || !r.backend?.device || r.reversedDepthBuffer) return;
+      if (!tex || !r.backend?.device) return;
       const k = depthKind(r, tex); if (S.kinds.has(k)) return;
       const K = kindOf(tex), at = S.at ||= new RenderTarget(4, 4, { depthBuffer: false });
       U.blk.value.set(1, 1); U.size.value.set(1, 1); U.pk.value.set(1, 1); U.pad.value = 0;
@@ -1168,7 +1169,7 @@ export function depthMeter(r) {
     },
     /** Takes the picture of the depth just drawn (tex: the scene pass's depth texture). False when it could not. */
     read(tex, job, done) {
-      const device = r.backend?.device; if (!tex || !device || flying >= 2 || r.reversedDepthBuffer) return false;
+      const device = r.backend?.device; if (!tex || !device || flying >= 2) return false;
       const K = kindOf(tex);
       const { w, h } = job;
       if (!rt || rt.width !== w || rt.height !== h) { rt?.dispose(); rt = new RenderTarget(w, h, { depthBuffer: false }); }
@@ -1323,7 +1324,9 @@ function shadowBlit(r) {
   // (allowOverride: drawn as it is in a shadow map's pass too, not with the light's shadow material)
   const finish = m => { m.name = 'Shadow map copy'; m.vertexNode = vec4(positionGeometry.xy, 0, 1); m.fragmentNode = vec4(0); m.colorWrite = false; m.depthTest = true; m.depthFunc = AlwaysDepth; m.depthWrite = true; m.fog = false; m.lights = false; m.allowOverride = false; return m; };
   let far = null;
-  const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(1); finish(far); } return far; };
+  // (reversed depth, gpu.js REVERSED: a map's depths run 1 at the light's near plane to 0 at its far one, so "far" is 0 and deeper is less)
+  const rev = !!r.reversedDepthBuffer, FAR = rev ? 0 : 1;
+  const warmed = new WeakMap(), NONE = [[0, 0, 0, 0]], farMat = () => { if (!far) { far = new NodeMaterial(); far.depthNode = float(FAR); finish(far); } return far; };
   // materials made ahead for stand-ins (ahead), by the kind of depth picture they read: a real picture of that
   // kind takes one over (pointed at it) and its shader and pipeline are already made
   const spares = new Map(), kindOf = t => `${t.type}|${t.format}|${t.compareFunction}|${t.minFilter}|${t.magFilter}`;
@@ -1335,7 +1338,8 @@ function shadowBlit(r) {
     m.depthNode = Fn(() => {
       const p = ivec2(floor(screenCoordinate.xy)).add(ivec2(U.off)).toVar(), top = int(U.top);
       const inside = p.x.greaterThanEqual(0).and(p.x.lessThanEqual(top)).and(p.y.greaterThanEqual(0)).and(p.y.lessThanEqual(top));
-      const d = dT.load(clamp(p, ivec2(0), ivec2(top))).r.toVar(), moved = d.add(U.dz);
+      const d = dT.load(clamp(p, ivec2(0), ivec2(top))).r.toVar(), moved = rev ? d.sub(U.dz) : d.add(U.dz);
+      if (rev) return select(inside.and(d.greaterThan(0)).and(moved.greaterThan(0)).and(moved.lessThanEqual(1)), moved, float(0));
       return select(inside.and(d.lessThan(1)).and(moved.greaterThanEqual(0)).and(moved.lessThan(1)), moved, float(1));
     })();
     finish(m);
@@ -1507,9 +1511,10 @@ export function froxels() {
       const d = U.dens.x.mul(exp(max(p.y.sub(U.dens.y), 0).mul(U.dens.z).negate())).mul(mix(float(1), n.mul(1.8), U.dens.w)).toConst();
       // the sun, through its shadow map (read by texel: nearest is plenty at froxel size)
       const s4 = U.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
-      const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.lessThan(1));
+      const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.greaterThan(0)).and(sc.z.lessThan(1));
       const sd = shT.load(ivec2(vec2(sc.x, sc.y.oneMinus()).mul(U.shSize))).x;
-      const lit = select(inside, step(sc.z, sd), float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir)).mul(gasSunAt(p, U.sunDir));   // (and under the clouds' shadow, and gs.gas's smoke: sunmask-gpu.js)
+      const sunLit = Fn(b => b.renderer.reversedDepthBuffer === true ? step(sd, sc.z) : step(sc.z, sd))();   // (reversed depth: the light's near plane is 1)
+      const lit = select(inside, sunLit, float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir)).mul(gasSunAt(p, U.sunDir));   // (and under the clouds' shadow, and gs.gas's smoke: sunmask-gpu.js)
       const L = vec3(U.sunCol).mul(lit.mul(sunPh)).add(U.amb).toVar();
       // lamps: soft round falloff to their range, scattered evenly
       Loop({ start: 0, end: FLAMPS }, ({ i: j }) => {
@@ -1924,26 +1929,57 @@ export function gpuContact(cs) {
   };
 }
 
+/* ---------- smaller HDR pictures (HD.hdrSmall) ---------- */
+// The effect steps drew into half-float pictures of four channels: 8 bytes a pixel, the fourth channel always 1.
+// WebGPU has a packed HDR format with no fourth channel, rg11b10ufloat: 4 bytes a pixel, floats of 11, 11 and 10
+// bits with no sign (the same top brightness as a half float, 6 bits of fraction in red and green and 5 in blue,
+// where a screen's 8 bits show about as many steps in a picture's mid tones), which a phone chip loads into its
+// tile memory, stores and reads at half the cost. Drawing into it is an optional feature most chips have
+// ('rg11b10ufloat-renderable'); without it the pictures stay as they were. So: the bloom's ten pictures, bounce
+// light, screen-space reflections, the volumetric mix, depth of field (and the real lens's last step), motion blur,
+// gs.fx3d's screen steps and the sun shafts hold a colour in 4 bytes; the volumetric light's one number in 2
+// (r16float) and motion blur's fastest move a tile in 4 (rg16float: a move has a sign). The scene's own picture,
+// GSSR's and frame generation's keep four channels (see-through AR, history weights), and so does anything traced.
+// HDR_SMALL.on: HD.hdrSmall !== false (hd3d.js); the chain is built again when it changes.
+export const HDR_SMALL = { on: true };
+const HALF4 = { depthBuffer: false, type: HalfFloatType }, HDR3 = { depthBuffer: false, type: UnsignedInt101111Type, format: RGBFormat };
+const HALF1 = { depthBuffer: false, type: HalfFloatType, format: RedFormat }, HALF2 = { depthBuffer: false, type: HalfFloatType, format: RGFormat };
+// A colour as that format holds it. A chip that is given a number between two the format has may take the lower one
+// (the test machine's does): half a step darker on average, a whole one in blue, and again in every step after, so
+// three steps in a row turned a picture 2% darker and 5% less blue. So each step rounds its colour itself, to one of
+// the two numbers either side with the odds of how near each is (a pattern of noise that stays put, one for the
+// three channels): right on average whichever way the chip rounds, and no bands where a sky shades off.
+const Q3 = vec3(1 / 64, 1 / 64, 1 / 32);
+/** In a Fn: colour c (vec3) as rg11b10ufloat holds it, dithered. */
+export const hdrFit = c => {
+  const v = clamp(c, 0, 65000).toVar(), q = TSL.exp2(max(floor(log2(max(v, 1e-7))), -14)).mul(Q3).toVar();
+  return floor(v.div(q).add(interleavedGradientNoise(screenCoordinate))).mul(q);
+};
+/** A step's output (a vec4 node) for a picture made with options P: fitted to the format when it is the packed one. */
+export const hdrOut = (node, P) => P === HDR3 ? Fn(() => vec4(hdrFit(vec4(node).rgb), 1))() : node;
+/** The options of an effect step's picture: colour (3), two numbers (2) or one (1). */
+export const hdrPic = (r, n = 3) => !HDR_SMALL.on ? HALF4 : n === 1 ? HALF1 : n === 2 ? HALF2 : r?.hasFeature?.('rg11b10ufloat-renderable') ? HDR3 : HALF4;
+
 /* ---------- bloom (hd3d.js BRIGHT, DOWN, UP: the same small chain) ---------- */
 // The bright parts at the tier's bloom size (half the picture), shrunk four more times, then grown back
 // up, each step adding a softer copy. Three's own bloom node spreads much wider and lifts dark rooms,
 // so this is the WebGL chain step for step. size(w, h, scale) each frame; out is the sum at the top level.
 const NO_FXK = { reflections: 1, vol: 1, shafts: 1 };   // (render(o) without o.fxK: every effect at its tier's size)
-function bloomChain(src, aoF) {
+function bloomChain(src, aoF, P = HALF4) {
   const N = 5, px = [], M = [];
   const lvl = (fn, i) => { const p = uniform(new Vector2(1, 1)); px[i] = p; return fn(p); };
   // bright parts only (anything brighter than the threshold keeps its full colour, fading in just under it), 4 taps
-  M[0] = rtt(lvl(p => {
+  M[0] = rtt(hdrOut(lvl(p => {
     const pick = o => { const c = src.sample(uv().add(o.mul(p))).rgb.mul(aoF); return c.mul(smoothstep(.77, .87, dot(c, LUM))); };
     return vec4(pick(vec2(-1, -1)).add(pick(vec2(1, -1))).add(pick(vec2(-1, 1))).add(pick(vec2(1, 1))).mul(.25), 1);
-  }, 0), 1, 1, { depthBuffer: false });
+  }, 0), P), 1, 1, P);
   for (let i = 1; i < N; i++) {
     const t = M[i - 1];
-    M[i] = rtt(lvl(p => {
+    M[i] = rtt(hdrOut(lvl(p => {
       const c = t.sample(uv()).rgb.mul(4).add(t.sample(uv().add(vec2(p.x.negate(), p.y.negate()))).rgb).add(t.sample(uv().add(vec2(p.x, p.y.negate()))).rgb)
         .add(t.sample(uv().add(vec2(p.x.negate(), p.y))).rgb).add(t.sample(uv().add(p)).rgb);
       return vec4(c.div(8), 1);
-    }, i), 1, 1, { depthBuffer: false });
+    }, i), P), 1, 1, P);
   }
   const upPx = [], up = (t, i) => {
     const p = uniform(new Vector2(1, 1)); upPx[i] = p; const at = o => t.sample(uv().add(o)).rgb;
@@ -1954,7 +1990,7 @@ function bloomChain(src, aoF) {
   // grow back up: U[i] = M[i] + up(U[i + 1]); the top one is added straight into the final picture
   // (rtt with a size of its own: sized in size() below, not with the screen)
   const Us = []; let U = M[N - 1];
-  for (let i = N - 2; i >= 1; i--) U = Us[i] = rtt(vec4(M[i].sample(uv()).rgb.add(up(U, i)), 1), 1, 1, { depthBuffer: false });
+  for (let i = N - 2; i >= 1; i--) U = Us[i] = rtt(hdrOut(vec4(M[i].sample(uv()).rgb.add(up(U, i)), 1), P), 1, 1, P);
   const out = M[0].sample(uv()).rgb.add(up(U, 0));
   const nodes = [...M];
   for (const n of [...nodes, ...Us]) if (n?.renderTarget) n.renderTarget.gsPart = 'bloom';   // (hd3d.js gpuTime: the chip's time by pass)
@@ -2160,6 +2196,7 @@ function sharePictures(steps) {
   for (let i = 2; i < steps.length; i++) {
     const b = steps[i], rt = steps[i - 2].renderTarget;
     if (b.renderTarget === rt) continue;
+    if (b.renderTarget.texture.type !== rt.texture.type || b.renderTarget.texture.format !== rt.texture.format) continue;   // (a colour in 4 bytes and GSSR's four channels: not one picture)
     b.renderTarget.dispose(); b.renderTarget = rt; n++;
   }
   return n;
@@ -2194,7 +2231,9 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   const conv = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1);
     // (each of the 4 x 4 depths round the pixel read once: the nearest surface below is among them)
-    const seen = new Map(), D = (x, y) => { const k = x + ',' + y; if (!seen.has(k)) seen.set(k, depthT.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).x.toVar()); return seen.get(k); };
+    const seen = new Map(), D = (x, y) => { const k = x + ',' + y; if (!seen.has(k)) seen.set(k, fwdDepth(depthT.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).x).toVar()); return seen.get(k); };
+    // (D: 0 near, 1 far, as the comparisons below were written; raw() is that depth as the renderer keeps it, for the camera's own matrices: depth-gpu.js)
+    const raw = fwdDepth;
     // textureGather's order round the 2 x 2 texels from o: (0,1) (1,1) (1,0) (0,0)
     const G = (ox, oy) => ({ x: D(ox, oy + 1), y: D(ox + 1, oy + 1), z: D(ox + 1, oy), w: D(ox, oy) });
     const bl = G(-1, -1), br = G(1, -1), tl = G(-1, 1), tr = G(1, 1);
@@ -2205,7 +2244,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     const w = g => clamp(sep.div(abs(maxC.sub(min4(g))).add(1.19e-07)), 0, 1);
     const clip = select(maxC.lessThan(1 - 1e-5), clamp(float(1).sub(w(bl).add(w(br)).add(w(tl)).add(w(tr)).mul(.25)), 0, 1), float(0));
     const u = vec2(P).add(.5).div(U.rs), ndc = vec2(u.x.mul(2).sub(1), float(1).sub(u.y.mul(2)));
-    const pre = U.c2p.mul(vec4(ndc, bl9, 1)), camM = ndc.sub(pre.xy.div(pre.w));
+    const pre = U.c2p.mul(vec4(ndc, raw(bl9), 1)), camM = ndc.sub(pre.xy.div(pre.w));
     // the nearest surface in the 3 x 3 round it
     const at = (x, y) => clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi);
     const near = ivec2(P).toVar(), nz = float(D(0, 0)).toVar();
@@ -2220,7 +2259,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     // own depth where FSR builds it from this frame's): where last frame had something nearer at the place this
     // pixel came from, this surface was hidden behind it then, so the history there holds the thing in front
     if (!disOn) return vec4(M, clip, rea);
-    const own = D(0, 0), pr = U.c2p.mul(vec4(ndc, select(U.fsr.z.greaterThan(.5), own, nz), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
+    const own = D(0, 0), pr = U.c2p.mul(vec4(ndc, raw(select(U.fsr.z.greaterThan(.5), own, nz)), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
     // (last frame's pixels were drawn a jitter step apart from this frame's: read them where this one's point fell)
     const pu = vec2(u.x.sub(M.x.mul(.5)), u.y.add(M.y.mul(.5))), pp = pu.mul(U.rs).sub(.5).add(U.jm), b0 = ivec2(floor(pp)), fr = pp.sub(floor(pp));
     const K = float(1.37e-05).mul(length(U.rs.mul(.5)));
@@ -2558,7 +2597,7 @@ export class GpuChain {
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
   build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}|${SHARE.on}`;
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}|${SHARE.on}|${HDR_SMALL.on}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     // (for the frame lab: what changed since the chain was last built, when it is built again)
@@ -2610,7 +2649,7 @@ export class GpuChain {
     if (pics) { sp.setMRT(ownBlend(pics, Object.keys(nrm))); slimPictures(sp, { normals: !!nrm.normal, motion: mrtOn || mbOn }); }
     // (what reads the normals reads them through this: ambient occlusion and its smoothing, bounce light, reflections)
     this.nrmN = nrm.normal ? sceneNormals(sp) : null;
-    const U = this.U;
+    const U = this.U, P3 = this.pic3 = hdrPic(this.r); this.hdrOut = n => hdrOut(n, P3);   // (the effect steps' pictures: a colour in 4 bytes where the chip can draw into one, HDR_SMALL)
     let colT = sp.getTextureNode('output');
     // (OIT: the see-through things are blended over the scene by the pass node itself, so that's what's read on)
     if (oitOn) colT = rtt(sp, null, null, { type: HalfFloatType, depthBuffer: false });
@@ -2641,7 +2680,7 @@ export class GpuChain {
         if (spr('bounce')) { ownFrames(n, SP); n.sliceCount.value = 1; n.stepCount.value = 12; this.spGI = new SpreadNode(gt, dN, SP, { vel: velN, part: 'bounce light' }); gt = this.spGI.getTextureNode(); this.spread += ' bounce'; }
         g = Fn(() => vec4(C.sample(uv()).rgb.add(dif.sample(uv()).rgb.mul(gt.sample(uv()).rgb).mul(U.giK)), 1))();
       }
-      this.giT = rtt(g, 1, 1, { type: HalfFloatType, depthBuffer: false }); colT = this.giT; this.giT.renderTarget.gsPart = 'bounce light';
+      this.giT = rtt(hdrOut(g, P3), 1, 1, P3); colT = this.giT; this.giT.renderTarget.gsPart = 'bounce light';
     }
     // reflections: three's screen-space reflections on the things the game marked, added to the scene's colour
     // (after the bounce light, before the ambient occlusion and everything else the chain does to the picture)
@@ -2692,7 +2731,7 @@ export class GpuChain {
       this.volT = rtt(Fn(() => {
         const q = uv(), d = dT.sample(q).r, vp = getViewPosition(q, d, V.invProj), wp = V.camWorld.mul(vec4(vp, 1)).xyz;
         const rd0 = wp.sub(V.camPos), L0 = length(rd0), rd = rd0.div(max(L0, 1e-4)).toConst();
-        const L = select(d.greaterThanEqual(1), V.k.y, min(L0, V.k.y)).toConst(), dt = L.div(V.steps).toConst();
+        const L = select(noDepth(d), V.k.y, min(L0, V.k.y)).toConst(), dt = L.div(V.steps).toConst();
         const t = dt.mul(spr('vol') ? fract(interleavedGradientNoise(screenCoordinate).add(SP.turn)) : interleavedGradientNoise(screenCoordinate)).toVar(), sum = float(0).toVar(), g = V.k.z, spot = V.lt.x.greaterThan(.5);
         Loop({ start: 0, end: VOL_MAX }, ({ i }) => {
           If(float(i).greaterThanEqual(V.steps), () => { Break(); });
@@ -2709,26 +2748,26 @@ export class GpuChain {
         // blended in that, as a few steps' guesses averaged after the turn come out darker than the full number of steps)
         const x = V.k.x.mul(L).mul(sum).div(V.steps);
         return vec4(spr('vol') ? x : exp(x.negate()).oneMinus(), 0, 0, 1);
-      })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
+      })(), 1, 1, hdrPic(this.r, 1));
       let volT = this.volT; const vpx = this.volPx = uniform(new Vector2(1, 1)); volT.renderTarget.gsPart = 'volumetric light';
       // spread: a third of the steps along each ray (render() below), starting a different way along each frame
       if (spr('vol')) { this.spVol = new SpreadNode(volT, dT, SP, { vel: velN, one: true, hold: false, view: true, alpha: .2, keep: 16, part: 'volumetric light' }); volT = this.spVol.getTextureNode(); this.spread += ' vol'; }
       const shows = this.spVol ? p => exp(volT.sample(p).r.negate()).oneMinus() : p => volT.sample(p).r;
-      this.baseT = rtt(Fn(() => {
+      this.baseT = rtt(hdrOut(Fn(() => {
         const q = uv(), a = shows(q.add(vpx.mul(vec2(-1, -1)))).add(shows(q.add(vpx.mul(vec2(1, -1)))))
           .add(shows(q.add(vpx.mul(vec2(-1, 1))))).add(shows(q.add(vpx.mul(vec2(1, 1)))));
         return vec4(colT.sample(q).rgb.mul(aoF).add(V.tint.mul(a.mul(.25))), 1);
-      })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
+      })(), P3), 1, 1, P3);
       src = this.baseT; srcAo = float(1);   // (this full-size mix, which also lays the ambient occlusion on, counts as 'effects')
     }
     // a camera like a real lens (v.lens, hd3d-gpu-lens.js): bokeh from the aperture and the focus (it lets the picture
     // through while v.lens is null, as v.focus's blur below does while that is)
-    if (lensOn && aoOn) { this.lensN = new LensNode(src, srcAo, dT); src = this.lensN.getTextureNode(); srcAo = float(1); }
+    if (lensOn && aoOn) { this.lensN = new LensNode(src, srcAo, dT, P3, P3 === HDR3 ? hdrFit : null); src = this.lensN.getTextureNode(); srcAo = float(1); }
     // depth of field (v.focus; the views turn it on once they use it, so focusing doesn't rebuild the
     // chain): what's in focus stays, the rest is blurred by up to lens.w pixels, into a picture of its own
     if (dofOn) {
       const cn = U.cn, cf = U.cf, L = U.lens, S = src, SA = srcAo;
-      const dist = q => { const z = dT.sample(q).x; return select(z.greaterThanEqual(1), float(0), cn.mul(cf).div(cf.sub(z.mul(cf.sub(cn))))); };
+      const dist = q => { const z = fwdDepth(dT.sample(q).x); return select(z.greaterThanEqual(1), float(0), cn.mul(cf).div(cf.sub(z.mul(cf.sub(cn))))); };
       const coc = z => select(z.lessThanEqual(0), float(0), clamp(abs(z.sub(L.x)).sub(L.y).div(max(L.x.mul(L.z), 1e-3)), 0, 1));
       const dof = Fn(() => {
         const q = uv(), base = S.sample(q).rgb, z = dist(q), c = coc(z), out = vec3(base).toVar();
@@ -2743,7 +2782,7 @@ export class GpuChain {
         });
         return vec4(out.mul(SA), 1);
       })();
-      this.dofT = rtt(dof, 1, 1, { depthBuffer: false, type: HalfFloatType }); src = this.dofT; srcAo = float(1); this.dofT.renderTarget.gsPart = 'depth of field';
+      this.dofT = rtt(hdrOut(dof, P3), 1, 1, P3); src = this.dofT; srcAo = float(1); this.dofT.renderTarget.gsPart = 'depth of field';
     }
     // motion blur (v.motionBlur; hd3d.js MB): each pixel smeared along its move on screen as the camera moved
     if (mbOn) {
@@ -2756,11 +2795,11 @@ export class GpuChain {
         const q = uv(), best = vec2(0).toVar();
         for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const v = moveAt(q.add(MBT.mul(vec2((i + .5) / 4 - .5, (j + .5) / 4 - .5)))); If(dot(v, v).greaterThan(dot(best, best)), () => { best.assign(v); }); }
         return vec4(best, 0, 1);
-      })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
+      })(), 1, 1, hdrPic(this.r, 2));
       const tileT = this.mbTile;
-      this.mbT = rtt(Fn(() => {
+      this.mbT = rtt(hdrOut(Fn(() => {
         const q = uv(), base = S.sample(q).rgb.mul(SA), d = dT.sample(q).r, vp = getViewPosition(q, d, V.invProj);
-        const near = select(d.greaterThanEqual(1), float(1), smoothstep(mb.z, mb.z.mul(1.5).add(.01), vp.z.negate()));   // (mb.z: things this close stay sharp)
+        const near = select(noDepth(d), float(1), smoothstep(mb.z, mb.z.mul(1.5).add(.01), vp.z.negate()));   // (mb.z: things this close stay sharp)
         // the camera's move only (WebGL's way, and the frame after a cut)
         const pc = V.prevVP.mul(V.camWorld.mul(vec4(vp, 1))), pn = pc.xy.div(max(pc.w, 1e-4)), pu = vec2(pn.x.mul(.5).add(.5), pn.y.mul(-.5).add(.5));
         const v0 = q.sub(pu).mul(mb.x), l = length(v0.mul(vec2(mb.w, 1))), mx = mb.y.mul(mb.w);
@@ -2781,7 +2820,7 @@ export class GpuChain {
         }
         const perThing = select(length(dv.div(U.px)).lessThan(.75), base, acc.div(MB_N));
         return vec4(select(V.mbObj.greaterThan(.5), perThing, camOnly), 1);
-      })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
+      })(), P3), 1, 1, P3);
       src = this.mbT; srcAo = float(1); this.mbT.renderTarget.gsPart = this.mbTile.renderTarget.gsPart = 'motion blur';
     }
     // gs.fx3d's screen effects (outline, glitch, trails, pixelate), in the order the game added them
@@ -2789,21 +2828,21 @@ export class GpuChain {
     // sun shafts (v.shafts): the bright sky near the sun at quarter size, smeared towards the sun, added on top
     let shafts = vec3(0);
     if (shaftsOn) {
-      this.shM = rtt(Fn(() => {
+      this.shM = rtt(hdrOut(Fn(() => {
         const q = uv(), c0 = src.sample(q).rgb.mul(srcAo), l0 = dot(c0, LUM), k = q.sub(U.sunUV).mul(vec2(U.aspect, 1));
         const l = min(l0, U.shCap), c = c0.mul(l.div(max(l0, 1e-6))).mul(U.shGain);
         return vec4(c.mul(smoothstep(U.shThr, U.shHi, l)).mul(exp(dot(k, k).mul(-3))), 1);
-      })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
+      })(), P3), 1, 1, P3);
       const shM = this.shM;
-      this.shB = rtt(Fn(() => {
+      this.shB = rtt(hdrOut(Fn(() => {
         const q = uv(), dd = q.sub(U.sunUV).mul(.9 / 24); let sum = vec3(0), w = 1;
         for (let i = 1; i <= 24; i++) { sum = sum.add(shM.sample(q.sub(dd.mul(i))).rgb.mul(w)); w *= .955; }
         return vec4(sum.div(24).mul(2.2), 1);
-      })(), 1, 1, { depthBuffer: false, type: HalfFloatType });
+      })(), P3), 1, 1, P3);
       shafts = this.shB.sample(screenUV).rgb.mul(U.shaftTint).mul(U.shaft); this.shM.renderTarget.gsPart = this.shB.renderTarget.gsPart = 'light shafts';
     }
     if (src !== colT || shaftsOn) lit = src.sample(screenUV).rgb.mul(srcAo).add(shafts);
-    this.bloomN = bloomChain(src, srcAo); this.bloomK = uniform(.56);
+    this.bloomN = bloomChain(src, srcAo, P3); this.bloomK = uniform(.56);
     const uv0 = screenUV, d = uv0.sub(.5), r2 = dot(d, d), half = halfWanted();
     const graded = Fn(() => {
       const uv = uv0;

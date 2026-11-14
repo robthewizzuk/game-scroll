@@ -606,7 +606,11 @@ export class ARView extends HDView {
     if (!n.has || !r.width || !r.height) return;
     const sx = VW / r.width, ox = (VW - 2 * r.left - r.width) / r.width, sy = VH / r.height, oy = (r.height - VH + 2 * r.top) / r.height;
     mA.set(sx, 0, 0, ox, 0, sy, 0, oy, 0, 0, 1, 0, 0, 0, 0, 1);
-    this.cam.projectionMatrix.multiplyMatrices(mA, n.proj); this.cam.projectionMatrixInverse.copy(this.cam.projectionMatrix).invert();
+    this.cam.projectionMatrix.multiplyMatrices(mA, n.proj);
+    // (the phone's own projection has depth from -1 at the near plane to 1 at the far one; a renderer that keeps depth
+    // reversed, gpu.js REVERSED, wants 1 near to 0 far: z' = (w - z) / 2)
+    if (this.cam.reversedDepth) { const e = this.cam.projectionMatrix.elements; for (let k = 0; k < 16; k += 4) e[k + 2] = (e[k + 3] - e[k + 2]) / 2; }
+    this.cam.projectionMatrixInverse.copy(this.cam.projectionMatrix).invert();
     this.cam.fov = 2 * Math.atan(1 / this.cam.projectionMatrix.elements[5]) * 180 / Math.PI;   // games use fov for sizes
   }
 

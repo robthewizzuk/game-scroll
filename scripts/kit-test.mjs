@@ -2225,6 +2225,32 @@ console.log('physics ok');
   for (const [n, k] of Object.entries(DESK)) assert.equal(sp.classifyDesktop(n), k, n || '(no name)');
   assert.equal(sp.classify(Object.keys(DESK)[0], '', 8, 8, false, false), 'mid', 'the phone rule reads a Mac as a mid-range iPhone (why computers have their own)');
   assert.equal(sp.classify(Object.keys(DESK)[2], '', 4, 8, false, true), 'mid', 'a computer with four cores or less: one class lower');
+  // a phone's class from its chip: a plain Mali-G715 (the Pixel 10a's) is mid, the Immortalis chips of its family top
+  for (const [n, k] of [['Mali-G715', 'mid'], ['Mali-G710', 'mid'], ['Mali-G57', 'low'], ['Mali-G720', 'top'], ['Immortalis-G715', 'top'], ['Mali-G720-Immortalis MC12', 'top'], ['Adreno (TM) 830', 'top'], ['Adreno (TM) 650', 'mid']]) assert.equal(sp.classify(n, '', 8, 8, true, false), k, n);
+  // ray tracing that loses the graphics chip is put down to the tracing (src/kit/trace-guard.js): off for the session whoever
+  // asks, and noted on the phone for this build, so it does not trace by itself after the next start
+  {
+    const wasLS = globalThis.localStorage, m = new Map();
+    globalThis.localStorage = { getItem: k => m.has(k) ? m.get(k) : null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) };
+    try {
+      const tg = await import('../src/kit/trace-guard.js');
+      tg.traceAgain();
+      assert.ok(tg.traceMay(false) && tg.traceMay(true) && tg.traceOff() === '', 'a phone that never lost its chip may trace');
+      tg.traceDrew(false); assert.equal(tg.traceLostChip(), false, 'a chip lost while reflections came from the screen is not the tracing\'s doing');
+      assert.ok(tg.traceMay(false) && !m.has('gs_trace_lost'), 'and nothing is switched off or noted');
+      tg.traceDrew(true); assert.equal(tg.traceLostChip(), true, 'a chip lost while the last frame was ray traced is');
+      assert.ok(!tg.traceMay(false) && !tg.traceMay(true) && tg.traceOff() === 'lost' && tg.TRACE.told, 'tracing is off for the session, also for a test or the tour that asks for it');
+      assert.equal(tg.traceLostChip(), false, 'the next loss, with the tracing off, is not counted against it again');
+      const note = JSON.parse(m.get('gs_trace_lost')); assert.ok(note.build === 'dev' && note.n === 1 && note.at > 0, 'and it is noted on the phone for this build');
+      // the next start of the app: the session's switch is new, the note is still there
+      tg.TRACE.lost = tg.TRACE.told = false;
+      assert.ok(!tg.traceMay(false) && tg.traceMay(true) && tg.traceOff() === 'before', 'after a restart it does not trace by itself, and still tries when asked outright');
+      tg.traceDrew(true); tg.traceLostChip(); assert.equal(JSON.parse(m.get('gs_trace_lost')).n, 2, 'a second loss on the same build is counted');
+      tg.TRACE.lost = false; m.set('gs_trace_lost', JSON.stringify({ build: 'an older build', n: 3, at: 1 }));
+      assert.ok(tg.traceMay(false) && tg.traceOff() === '', 'an updated app tries again by itself');
+      tg.traceAgain();
+    } finally { globalThis.localStorage = wasLS; }
+  }
   const { chipLabel } = await import('../src/kit/gpu.js');
   assert.equal(chipLabel(Object.keys(DESK)[0]), 'Apple M2 Pro'); assert.equal(chipLabel(Object.keys(DESK)[2]), 'NVIDIA GeForce RTX 4070', 'the chip\'s name for the reports');
   for (const [f, want] of [[146, 144], [166, 165], [238, 240], [74.4, 75], [61, 60], [118, 120], [355, 360]]) assert.equal(sp.snapHz(f, true), want, `a computer's ${f} Hz`);

@@ -83,6 +83,11 @@ const STAGE = {
   // three.js's afterimage: each frame keeps the brighter of itself and a fading copy of the last
   trails(s, S, U, keep, scaled) {
     const damp = uniform(0), n = scaled(afterImage(S, damp));
+    // (three's node gives its two pictures the type of the picture it reads and not the format: a colour in 4 bytes,
+    // hd3d-gpu.js hdrPic, has three channels, and that type with four is no format at all. Its pictures stay half
+    // floats, which a trail fading a little each frame needs the steps of: the picture read says it is one while
+    // the node looks)
+    const ub = n.updateBefore; n.updateBefore = function (frame) { const map = this.textureNode.value, t = map?.type; if (map) map.type = HalfFloatType; try { return ub.call(this, frame); } finally { if (map) map.type = t; } };
     s.set = p => { damp.value = p ? Math.max(0, Math.min(1, +p.damp || 0)) : 0; };
     return n.getTextureNode();
   },
@@ -107,7 +112,7 @@ const STAGE = {
  * effects move pixels about.
  */
 export function fxStages(ch, src, ao, U) {
-  const keep = fn => { const t = rtt(fn, 1, 1, HALF); t.renderTarget.gsPart = 'screen effects'; ch.fxR.push(t); return t; };
+  const keep = fn => { const t = rtt(ch.hdrOut ? ch.hdrOut(fn) : fn, 1, 1, ch.pic3 || HALF); t.renderTarget.gsPart = 'screen effects'; ch.fxR.push(t); return t; };
   // (three's nodes size themselves from the canvas: scaled down with the scene when it's drawn small and upscaled)
   const scaled = n => { const set = n.setSize.bind(n); n.setSize = (w, h) => set(Math.max(1, Math.round(w * ch.fxK)), Math.max(1, Math.round(h * ch.fxK))); ch.fxN.push(n); return n; };
   if (ao) { const S = src; src = keep(Fn(() => vec4(S.sample(uv()).rgb.mul(ao), 1))()); }
@@ -139,7 +144,7 @@ export function reflStage(ch, sp, colT) {
   const n = ch.ssrN = ssr(C, sp.getTextureNode('depth'), ch.nrmN, { metalnessNode: R.r, roughnessNode: R.g, camera: ch.cam });
   n.maxDistance.value = 8; n.thickness.value = .05; n.intensity.value = .55; n.quality.value = .5;
   const hit = n.getTextureNode();
-  ch.ssrT = rtt(Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(), 1, 1, HALF);
+  { const sum = Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(); ch.ssrT = rtt(ch.hdrOut ? ch.hdrOut(sum) : sum, 1, 1, ch.pic3 || HALF); }
   ch.ssrT.renderTarget.gsPart = 'reflections';   // (hd3d.js gpuTime: the chip's time by pass; three's own SSR passes are found by name)
   return ch.ssrT;
 }
