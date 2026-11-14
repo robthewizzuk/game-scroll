@@ -76,7 +76,7 @@ try {
   // the picture once it has settled), over the mask and at its worst pixel; change: how far the picture before the
   // jump is from the settled one; last: what is left 24 frames on; fade: what is left frame by frame
   const jump = async mask => {
-    pose(0); mode('regen'); await settle(SETTLE);
+    pose(0); mode('regen'); v.cut(); await settle(SETTLE);   // (a cut: the rays' noise then runs the same every time)
     const before = draw().slice(); await nextFrame();
     box.position.x += 1.4; box.updateMatrixWorld();
     const seq = []; for (let i = 0; i < 24; i++) { const d = draw().slice(); await nextFrame(); seq.push(d); if (i === 9) shot('jump-10'); else if (Q.get('probe') && i < 8) shot('jump-0' + (i + 1)); }
@@ -91,8 +91,9 @@ try {
   if (Q.get('probe') === 'truth') { pose(1); mode('ref', 0); await settle(+(Q.get('wait') || 400)); shot('truth'); v.free(); HD.traced = null; HD.regen = null; HD.regenRef = false; window.result = { out, info, checks }; throw 0; }
   if (Q.get('probe')) {
     const ts = Array.from({ length: POSES }, (_, i) => (i + 1) / POSES);
-    pose(0); if (Q.get('pre')) { mode(Q.get('pre')); await settle(6); } mode(Q.get('probe')); await settle(+(Q.get('wait') || 10)); shot('probe-00');
+    pose(+(Q.get('at') || 0)); if (Q.get('pre')) { mode(Q.get('pre')); await settle(6); } mode(Q.get('probe')); v.cut(); await settle(+(Q.get('wait') || 10)); shot('probe-00');   // (a cut: the rays' noise then runs the same every time)
     for (const [i, t] of ts.entries()) { pose(t); draw(); await nextFrame(); shot('probe-' + String(i + 1).padStart(2, '0')); }
+    if (Q.get('hold')) { await settle(+Q.get('hold')); shot('probe-zheld'); }   // (&hold=60: and the last place once more after that many frames there)
     v.free(); HD.traced = null; HD.regen = null; HD.regenRef = false; HD.traceScale = 0;
     window.result = { out, info, checks }; throw 0;
   }
