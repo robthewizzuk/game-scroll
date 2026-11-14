@@ -417,6 +417,14 @@ export const HD = {
    */
   spread: true,
   /**
+   * WebGPU: ambient occlusion darkens the light that bounces (the sky's and the room's, and reflections by roughness), in each
+   * thing's own shading, as Filament, Godot, Bevy and Unity do, not the whole lit picture (hd3d-gpu.js aoInShading).
+   * false: the whole picture as before (the frame lab's A/B, tests). WebGL always lays it on the whole picture.
+   */
+  aoBack: true,
+  /** With aoBack: the share of the occlusion still laid on the whole picture, direct light included (0..1; Unity's "direct lighting strength"). */
+  aoDirect: .25,
+  /**
    * WebGPU: a gs.sky Sky's clouds marched through as real ones (high and ultra; hd3d-gpu-sky.js), shading the ground, the fog and
    * the light beams. false: the painted layer, as on WebGL. HD.info.sky says what the sky drew ('air', 'clouds', 'air + clouds').
    */
@@ -2744,6 +2752,7 @@ export class HDView {
     // (effects spread over frames: a cut starts them from this frame alone)
     // (a card's picture is a frame of its own: it keeps nothing from the last one baked)
     o.spread = HD.spread === false ? false : typeof HD.spread === 'string' ? HD.spread : true; o.cut = cut || !!baking;
+    o.aoBack = HD.aoBack !== false; o.aoDirect = HD.aoDirect;   // (ambient occlusion on bounce light only, and the share still on the whole picture: hd3d-gpu.js aoInShading)
     // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
     o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
     if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); }

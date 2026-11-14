@@ -81,7 +81,14 @@ Phones must stay smooth, so the kit adapts on its own:
 | low | 0.5 M | off | 2 | no | light FXAA |
 
 Ambient occlusion (the soft dark in corners and under things) on the high tier is worked out at half
-the picture's width and height, a quarter of the cost, and blended back at full size.
+the picture's width and height, a quarter of the cost, and blended back at full size. On WebGPU it
+darkens the light that bounces (the sky's and the room's, and reflections by roughness) in each
+thing's own shading, as Filament, Godot, Bevy and Unity do, and only a quarter of it still falls on
+the direct light, so sunlit corners stay clean while shaded ones go dark; bright surfaces take less
+(light bounces round a white corner more). It reads the last frame's occlusion where each point was
+then, so there is no extra pass. `HD.aoBack = false` puts it back on the whole picture (the frame
+lab's A/B has the switch), `HD.aoDirect` (0..1, default .25) is the share on direct light.
+WebGL always lays it on the whole picture.
 
 **Phone class and frame rate** (`src/kit/speed.js`). Each phone is sorted into top, mid or low from
 its graphics chip (Adreno 830, Mali-G720, ...), its model for iPhones, and its cores and memory.
