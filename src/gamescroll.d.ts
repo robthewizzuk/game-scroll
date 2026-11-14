@@ -1465,6 +1465,10 @@ export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; 
     max: number; n: number;
     emit(count: number, burst?: { at?: number[] | Loose; radius?: number; vel?: number[] | Loose; spread?: number; life?: number | [number, number]; size?: number | [number, number]; color?: Loose; to?: Loose; alpha?: number; fadeIn?: boolean; ease?: number }): Loose;
     update(dt: number): void; clear(): void; dispose(): void;
+    /** Draws them to a point (strength m/s² at 1 m, falling as 1/d² beyond and to nothing at radius), pushes them away (strength < 0) or swirls them round axis (swirl; give them drag to spiral in); those within take are gone. Change its fields each frame; null past 8. */
+    pull(at: number[] | Loose, o?: { strength?: number; radius?: number; swirl?: number; axis?: number[] | Loose; take?: number }): { at: number[] | Loose; strength: number; radius: number; swirl: number; axis: number[] | Loose; take: number; remove(): void } | null;
+    /** Moves them with a flow: fn(x, y, z) is the air's or water's velocity there, sampled into 16 x 16 x 16 cells over box ({ min, max } or a Box3); inside it they take it up at strength a second. update() samples again; one flow at a time. */
+    flow(fn: (x: number, y: number, z: number) => number[] | { x: number; y: number; z: number }, o?: { box?: { min: number[] | Loose; max: number[] | Loose }; strength?: number }): { strength: number; update(): Loose; remove(): void };
   };
   sun: Loose; spot: Loose; THREE: Loose;
   /** A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. */

@@ -1602,6 +1602,14 @@ export class Particles {
  * [r, g, b], above 1 glows; white), to (colour at the end; color), alpha (1), fadeIn (false), ease (fade curve, 1).
  * Up to 16 bursts a frame. Switching between WebGL and WebGPU starts them afresh (they are only for looks: the
  * game can't read where they are; use Particles for the few that must).
+ * p.pull(at, { strength, radius, swirl, axis, take }) draws them to a point (a portal, a magnet, a drain), pushes
+ * them away (strength below 0: a blast's wake, a fan) or turns them round it (swirl: a whirlwind), and takes those
+ * that come within take; it gives back the pull, whose fields can change each frame (pull.at, pull.strength...), and
+ * pull.remove(). Up to 8. strength and swirl are m/s² at 1 m (steady closer in, falling as 1/d² beyond, and to nothing at
+ * radius, if given); a swirl spins them up, so give the particles drag for them to spiral in rather than fly off. p.flow(fn, { box, strength }) moves them with a flow: fn(x, y, z) gives the air's or the
+ * water's velocity there ([x, y, z] or { x, y, z }), sampled into 16 x 16 x 16 cells over box ({ min, max }, or a
+ * THREE.Box3), which particles inside take up at strength a second; flow.update() samples it again, flow.remove().
+ * One flow at a time. (Babylon.js 9's attractors and flow maps, the engines review's option 11.)
  */
 const SPARK_CPU = { top: 12000, high: 6000, mid: 3000, low: 1500 };
 const GPC = new Color();
@@ -1610,7 +1618,7 @@ export class GPUParticles {
     this.maxGpu = Math.max(16, Math.min(262144, max | 0));
     this.max = this.maxGpu;
     Object.assign(this, { additive, gravity, drag, bounce, floor, turbulence, wind, view });
-    this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {};
+    this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {}; this.pulls = []; this.flowOn = null;
     this.cpuMax = Math.min(this.maxGpu, SPARK_CPU[phoneClass()] ?? 3000);
     const n = this.cpuMax, g = new BufferGeometry();
     this.P = new Float32Array(n * 4); this.V = new Float32Array(n * 4); this.C = new Float32Array(n * 4); this.E = new Float32Array(n * 4); this.S = new Float32Array(n * 4);
@@ -1621,7 +1629,7 @@ export class GPUParticles {
     this.mat = new ShaderMaterial({ vertexShader: PV, fragmentShader: PF, transparent: true, depthWrite: false, blending: additive ? AdditiveBlending : NormalBlending, uniforms: { scale: { value: 300 }, soft: { value: additive ? 0 : 1 } } });
     this.pts = new Points(g, this.mat); this.pts.frustumCulled = false; this.pts.renderOrder = 5; view.scene.add(this.pts); view.parts.push(this);
     this.pts.userData.gsTwin = true;
-    this.onGpu = false;
+    this.onGpu = null;   // (not known until the view first draws)
   }
   /** A burst of count particles (see the class notes for the fields). */
   emit(count, o = {}) {
@@ -1636,12 +1644,37 @@ export class GPUParticles {
     return this;
   }
   clear() { this.bursts.length = 0; for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.twin?.reset(); this.head = 0; }
+  /** Draws particles to a point, pushes them away (strength < 0) or swirls them round it; see the class notes. Null past 8. */
+  pull(at, { strength = 5, radius = 0, swirl = 0, axis = [0, 1, 0], take = 0 } = {}) {
+    if (this.pulls.length >= PULL_MAX) return null;
+    const list = this.pulls, h = { at, strength, radius, swirl, axis, take, remove() { const i = list.indexOf(h); if (i >= 0) list.splice(i, 1); } };
+    list.push(h); return h;
+  }
+  /** Moves particles with a flow field over a box; see the class notes. A new one replaces the last. */
+  flow(fn, { box, strength = 2 } = {}) {
+    const lo = v3(box?.min ?? [-5, -5, -5]), hi = v3(box?.max ?? [5, 5, 5]), N = FLOW_N;
+    const size = [Math.max(1e-3, hi[0] - lo[0]), Math.max(1e-3, hi[1] - lo[1]), Math.max(1e-3, hi[2] - lo[2])];
+    const f = { fn, min: lo, size, strength, cells: new Float32Array(N * N * N * 4), fresh: true,
+      update: () => {
+        for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+          const v = fn(lo[0] + size[0] * x / (N - 1), lo[1] + size[1] * y / (N - 1), lo[2] + size[2] * z / (N - 1)), j = (x + y * N + z * N * N) * 4;
+          f.cells[j] = v?.x ?? v?.[0] ?? 0; f.cells[j + 1] = v?.y ?? v?.[1] ?? 0; f.cells[j + 2] = v?.z ?? v?.[2] ?? 0;
+        }
+        f.fresh = true; return f;
+      },
+      remove: () => { if (this.flowOn === f) this.flowOn = null; } };
+    this.flowOn = f.update(); return f;
+  }
   update(dt) {
     dt = Math.min(dt, .1); this.time += dt;
-    const gpu = !!this.view._onGpu;
-    if (gpu !== this.onGpu) {   // moved between WebGL and WebGPU: what was flying is dropped, bursts already asked for still start
+    // (the view hasn't drawn yet, so it isn't known where they move: what was asked for waits for its first frame. Taken on
+    // the CPU here, the bursts of a system made before the view's first frame were lost on WebGPU, and the chip's copy was
+    // then started afresh as if moved from WebGL)
+    if (this.view._onGpu === undefined) { this.pendingDt += dt; return; }
+    const gpu = !!this.view._onGpu, was = this.onGpu;
+    if (gpu !== was) {   // moved between WebGL and WebGPU: what was flying is dropped, bursts already asked for still start
       this.onGpu = gpu; this.max = gpu ? this.maxGpu : this.cpuMax;
-      if (gpu) this.twin?.reset(); else { for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.head %= this.cpuMax; for (const b of this.bursts) { b.n = Math.min(b.n, this.cpuMax); b.start %= this.cpuMax; } }
+      if (was === null) { /* the first frame said where */ } else if (gpu) this.twin?.reset(); else { for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.head %= this.cpuMax; for (const b of this.bursts) { b.n = Math.min(b.n, this.cpuMax); b.start %= this.cpuMax; } }
     }
     if (gpu) { this.pendingDt += dt; return; }   // the WebGPU step runs at draw time (stepGpu)
     this.spawnCpu(); this.stepCpu(dt);
@@ -1667,12 +1700,26 @@ export class GPUParticles {
   stepCpu(dt) {
     const N = this.cpuMax, { P, V, C, E, S } = this, g = this.pts.geometry, PP = g.attributes.position.array, SS = g.attributes.size.array, TT = g.attributes.tint.array;
     const k = Math.max(0, 1 - this.drag * dt), gr = this.gravity, T = this.turbulence, ts = T?.strength ?? 0, tsc = T?.scale ?? 1, tt = this.time * (T?.speed ?? 1), w = this.windNow(), fl = this.floor;
+    const pulls = this.pulls.map(pl => ({ p: v3(pl.at), strength: +pl.strength || 0, radius: +pl.radius || 0, swirl: +pl.swirl || 0, ax: unit(v3(pl.axis ?? [0, 1, 0])), take: +pl.take || 0 })), fo = this.flowOn;
     let n = 0;
     for (let i = 0; i < N; i++) {
       const j = i * 4; if (!(P[j + 3] < V[j + 3])) continue;
       let vx = V[j] * k, vy = V[j + 1] * k - gr * dt, vz = V[j + 2] * k;
       if (ts) { const x = P[j] * tsc, y = P[j + 1] * tsc, z = P[j + 2] * tsc;
         vx += (Math.sin(y + tt) + Math.sin(z * 1.7 - tt)) * .5 * ts * dt; vy += (Math.sin(z + tt * 1.3) + Math.sin(x * 1.3 + tt)) * .5 * ts * dt; vz += (Math.sin(x + tt * .7) + Math.sin(y * 1.9 - tt)) * .5 * ts * dt; }
+      let took = false;
+      for (const pl of pulls) {   // (as the chip's step: particles-gpu.js)
+        const a = pl.p, dx = a[0] - P[j], dy = a[1] - P[j + 1], dz = a[2] - P[j + 2], dl = Math.max(1e-4, Math.hypot(dx, dy, dz)), nx = dx / dl, ny = dy / dl, nz = dz / dl;
+        const fall = (pl.radius > 0 ? 1 - smooth(pl.radius * .67, pl.radius, dl) : 1) / Math.max(dl * dl, 1), s = pl.strength * fall * dt, sw = pl.swirl * fall * dt, ax = pl.ax;
+        vx += nx * s + (ax[1] * nz - ax[2] * ny) * sw; vy += ny * s + (ax[2] * nx - ax[0] * nz) * sw; vz += nz * s + (ax[0] * ny - ax[1] * nx) * sw;
+        if (dl < pl.take) took = true;
+      }
+      if (fo) {
+        const qx = (P[j] - fo.min[0]) / fo.size[0], qy = (P[j + 1] - fo.min[1]) / fo.size[1], qz = (P[j + 2] - fo.min[2]) / fo.size[2];
+        const ew = smooth(0, .1, qx) * (1 - smooth(.9, 1, qx)) * smooth(0, .1, qy) * (1 - smooth(.9, 1, qy)) * smooth(0, .1, qz) * (1 - smooth(.9, 1, qz));
+        if (ew > 0) { const fv = flowAt(fo, qx, qy, qz), t = Math.min(fo.strength * dt, 1) * ew; vx += (fv[0] - vx) * t; vy += (fv[1] - vy) * t; vz += (fv[2] - vz) * t; }
+      }
+      if (took) P[j + 3] = V[j + 3];
       let x = P[j] + (vx + w[0]) * dt, y = P[j + 1] + vy * dt, z = P[j + 2] + (vz + w[2]) * dt;
       if (fl != null && y < fl) { y = fl; vy *= -this.bounce; vx *= .6; vz *= .6; }
       P[j] = x; P[j + 1] = y; P[j + 2] = z; P[j + 3] += dt; V[j] = vx; V[j + 1] = vy; V[j + 2] = vz;
@@ -1695,12 +1742,32 @@ export class GPUParticles {
       rows[r + 3].set(o.life[0], o.life[1], o.size[0], o.size[1]); rows[r + 4].set(o.col[0], o.col[1], o.col[2], o.a); rows[r + 5].set(o.to[0], o.to[1], o.to[2], o.ease); rows[r + 6].set(o.fadeIn, 0, 0, 0); }
     const T = this.turbulence, w = this.windNow();
     this._turb ||= new Vector4(); this._turb.set(T?.strength ?? 0, T?.scale ?? 1, T?.speed ?? 1, 0); this._wind ||= new Vector3(); this._wind.set(w[0], 0, w[2]);
-    t.step(G.r, { rows, count: B.length, dt: this.pendingDt, time: this.time, gravity: this.gravity, drag: this.drag, bounce: this.bounce, floor: this.floor, turb: this._turb, wind: this._wind });
+    const pr = this._pullRows ||= Array.from({ length: PULL_MAX * 3 }, () => new Vector4()), pk = this._pk ||= { rows: pr, count: 0 };
+    pk.count = this.pulls.length;
+    this.pulls.forEach((pl, i) => { const a = v3(pl.at), ax = unit(v3(pl.axis ?? [0, 1, 0])); pr[i * 3].set(a[0], a[1], a[2], +pl.strength || 0); pr[i * 3 + 1].set(ax[0], ax[1], ax[2], +pl.swirl || 0); pr[i * 3 + 2].set(+pl.radius || 0, +pl.take || 0, 0, 0); });
+    const fo = this.flowOn, fl = fo ? (this._fl ||= { min: new Vector3(), size: new Vector3() }) : null;
+    if (fo) { fl.min.fromArray(fo.min); fl.size.fromArray(fo.size); fl.strength = fo.strength; fl.cells = fo.cells; fl.fresh = fo.fresh; fo.fresh = false; }
+    t.step(G.r, { rows, count: B.length, dt: this.pendingDt, time: this.time, gravity: this.gravity, drag: this.drag, bounce: this.bounce, floor: this.floor, turb: this._turb, wind: this._wind, pulls: pk, flow: fl });
     B.length = 0; this.pendingDt = 0;
   }
   dispose() { this.pts.removeFromParent(); this.pts.geometry.dispose(); this.mat.dispose(); this.twin?.dispose(); this.twin?.sprite.removeFromParent(); const i = this.view.parts.indexOf(this); if (i >= 0) this.view.parts.splice(i, 1); }
 }
 const rgbOf = c => { if (Array.isArray(c)) return [c[0], c[1], c[2]]; const k = c.isColor ? c : GPC.set(c); return [k.r, k.g, k.b]; };
+// (pulls and flow fields: as many as particles-gpu.js's PULLS, its FLOW_N cells a side)
+const PULL_MAX = 8, FLOW_N = 16;
+const v3 = a => a?.isVector3 ? [a.x, a.y, a.z] : [+a?.[0] || 0, +a?.[1] || 0, +a?.[2] || 0];
+const unit = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+// the flow's velocity at a place in its box (0..1 a side), between its cells' as the chip reads it
+function flowAt(fo, qx, qy, qz) {
+  const N = FLOW_N, g = [qx, qy, qz].map(q => Math.min(1, Math.max(0, q)) * (N - 1)), b = g.map(v => Math.min(N - 2, Math.max(0, Math.floor(v)))), f = g.map((v, i) => v - b[i]), out = [0, 0, 0];
+  for (let c = 0; c < 8; c++) {
+    const o = [c & 1, (c >> 1) & 1, (c >> 2) & 1], j = ((b[0] + o[0]) + (b[1] + o[1]) * N + (b[2] + o[2]) * N * N) * 4;
+    const w = (o[0] ? f[0] : 1 - f[0]) * (o[1] ? f[1] : 1 - f[1]) * (o[2] ? f[2] : 1 - f[2]);
+    out[0] += fo.cells[j] * w; out[1] += fo.cells[j + 1] * w; out[2] += fo.cells[j + 2] * w;
+  }
+  return out;
+}
 function hashF(i, s, c) { const x = Math.sin(i * 12.9898 + s * 78.233 + c * 37.719) * 43758.5453; return x - Math.floor(x); }
 
 /* ---------- view ---------- */
