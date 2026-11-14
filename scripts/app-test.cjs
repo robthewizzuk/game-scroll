@@ -788,7 +788,7 @@ async function scenes(b) {
     'while they run the feed is empty, the scenes draw on a stage of their own with the 3D canvas under it, quality is pinned and the screen is kept on', JSON.stringify({ seen: sc.seen, steps: sc.steps }));
   check(!sc.after.stage && !sc.after.touring && sc.after.force == null && sc.after.active === 'bunker-breakout' && !sc.after.awake && !sc.after.msg,
     'afterwards the stage is gone, quality is the phone\'s own again and the feed is back on the game it was on', JSON.stringify(sc.after));
-  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · frame generation off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
+  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · GSFG off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
     && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms \([a-z ]+ [\d.]+(, [a-z ]+ [\d.]+)*\) · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
@@ -836,7 +836,7 @@ async function scenes(b) {
     'ray tracing alone flies only the hall, with the engine test scenes\' report', JSON.stringify(rt));
   // frame generation's runs need WebGPU: drawn with WebGL, the report says so and nothing is flown
   const noFg = await q.evaluate(async () => { const r = await __gs.tour({ scenes: true, framegen: true, seconds: 1, size: .1 }); return { n: r.scenes.length, note: r.note || '', text: r.text, active: __gs.active?.def.id }; });
-  check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
+  check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, GSFG frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
     'frame generation\'s runs, where the 3D is drawn with WebGL, say there was nothing to time', JSON.stringify(noFg));
   await q.done();
 }
@@ -864,7 +864,7 @@ async function framegenScenes() {
   check(M('before').pace === 'after' && ['first', 'after'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
     'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times', JSON.stringify(fg.modes));
   const told = !/chip time not told/.test(fg.text);
-  check(/^Game Scroll engine test scenes, frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · frame generation as each run says, for a \d+ Hz screen · /.test(fg.text)
+  check(/^Game Scroll engine test scenes, GSFG frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · GSFG as each run says, for a \d+ Hz screen · /.test(fg.text)
     && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · .*(each frame on a refresh of its own|the made frame on the real one's refresh) · .*code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
     && /\n  \d+ \+ \d+ blended before +\d+ pictures a second \(\d+ drawn\) · .*the made frame on the real one's refresh · /.test(fg.text)
     && (!told || (/\n  \d+ drawn, \d+ blended +.*chip [\d.]+ ms a drawn frame \(.*made frames [\d.]+.*\) · a made frame [\d.]+ ms \(.*picture [\d.]+.*\)/.test(fg.text)

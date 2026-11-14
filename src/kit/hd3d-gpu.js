@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -17,7 +17,7 @@ import {
   attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
   roughness, specularColor, specularColorBlended, specularF90, diffuseContribution, BRDF_GGX, BRDF_Lambert, F_Schlick,
-  modelViewProjection, acos, getParallaxCorrectNormal, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, sample, packNormalToRGB, unpackRGBToNormal, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
+  modelViewProjection, acos, getParallaxCorrectNormal, perspectiveDepthToViewZ, orthographicDepthToViewZ, sign, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, sample, packNormalToRGB, unpackRGBToNormal, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
 } from 'three/tsl';
 import * as TSL from 'three/tsl';
 import { lut3D } from 'three/examples/jsm/tsl/display/Lut3DNode.js';
@@ -100,7 +100,7 @@ export function traceFits(r) {
   const l = r.backend?.device?.limits; if (!l) return false;
   return Math.min(l.maxStorageBuffersInFragmentStage ?? l.maxStorageBuffersPerShaderStage ?? 0, l.maxStorageBuffersPerShaderStage ?? 0) >= 4;
 }
-import { S2_HOLD } from './sgsr2.js';
+import { S2_HOLD, FSR_X } from './sgsr2.js';
 import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
 // where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
 const ORG = uniform(ORIGIN);
@@ -1889,7 +1889,7 @@ function sgsr1Gpu(src) {
 // Each step is the same as the TSL it was written from, in the same order (the build machine's pictures
 // came out the same); only the smallest number divided by is bigger in half (HEPS).
 const S2_TAPS = [[0, 1], [1, 0], [-1, 0], [0, 0], [0, -1]];
-const S2_UP = halfFn('gsS2Up', `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32) -> vec4<f32> {
+const S2_UP = halfFn('gsS2Up', `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32, lockc: f32) -> vec4<f32> {
   let mlen = hf(min(m.x, 1e4)); let df = hf(m.y); let start = hf(m.z); let reset = hf(m.w);
   let biasmax = hf(sr.x); let biasmin = max(hf(1.0), biasmax * hf(0.3) + hf(0.3));
   let kb = mix(biasmax, biasmin, df * hf(0.25)) * hf(0.5); let kb2 = kb * kb;
@@ -1911,19 +1911,30 @@ ${S2_TAPS.map(([x, y], i) => `  { let c = hf3(c${i}); let o = s + hf2(${x.toFixe
   let lo = max(bmin, cen - vr * boxsize); let hi = min(bmax, cen + vr * boxsize);
   let clamped = clamp(hc, lo, hi);
   let outside = any(lo > hc) || any(hc > hi);
-  let lerpC = clamp(select(hf(1.0), start, outside), hf(0.0), hf(1.0));
+  let lerpC = clamp(select(hf(1.0), max(start, hf(lockc)), outside), hf(0.0), hf(1.0));
   let h = mix(clamped, hc, lerpC);
   let ba = mix(min(base, hf(0.1)), base, lerpC);
   let own = upw / max(hf(HEPS), ba + upw);
   let a = max(clamp(own + reset, hf(0.0), hf(1.0)), hf(see));
   var settled = hf(1.0);
   if (tuned > 0.5) { settled = select(clamp((held + upw - hf(1.0)) / hf(${(S2_HOLD - 1).toFixed(1)}), hf(0.0), hf(1.0)), hf(0.0), a > own + hf(1e-4)); }
+  if (tuned > 1.5) { settled = settled * (hf(1.0) - df); }
   return vec4<f32>(vec3<f32>(mix(h, upc, a)), f32(settled));
 }`);
 function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
   const U = { rs: uniform(new Vector2(1, 1)), os: uniform(new Vector2(1, 1)), jit: uniform(new Vector2()), sr: uniform(new Vector2(1, 1)),
-    fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()) };
+    fov: uniform(1), minLerp: uniform(0), reset: uniform(1), c2p: uniform(new Matrix4()), jd: uniform(new Vector2()),
+    nf: uniform(new Vector2(.1, 1000)), jm: uniform(new Vector2()), ortho: uniform(0), lockDec: uniform(.005), fsr: uniform(new Vector4(...FSR_X.slice(0, 4))), fsr2: uniform(new Vector4(...FSR_X.slice(4), 0)) };
   const low = rtt(fin, 1, 1, { depthBuffer: false }); low.renderTarget.gsPart = 'finish';   // (the finishing pass: hd3d.js gpuTime tells it apart from SGSR 2's own)
+  // at the render size, two of each taking turns as the history does: SD, how each small pixel changed since last
+  // frame (x: the change in brightness where it came from, y: its sign, z: whether it flickers, w: its depth as a
+  // distance from the camera, read by the next frame), with smaller copies (mipmaps) to read a patch's average;
+  // LH, each small pixel's brightness in the last four frames
+  const SD = [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: LinearMipmapLinearFilter }));
+  const LH = [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false }));
+  let sc = 0;
+  const prevD = texture(SD[1].texture), sdT = texture(SD[0].texture), lhT = texture(LH[1].texture);
+  const dist = d => select(U.ortho.greaterThan(.5), orthographicDepthToViewZ(d, U.nf.x, U.nf.y), perspectiveDepthToViewZ(d, U.nf.x, U.nf.y)).negate();
   // convert: motion back to last frame from the nearest depth and the camera's move, and the depth clip
   const conv = Fn(() => {
     const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1);
@@ -1939,60 +1950,163 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
     const clip = select(maxC.lessThan(1 - 1e-5), clamp(float(1).sub(w(bl).add(w(br)).add(w(tl)).add(w(tr)).mul(.25)), 0, 1), float(0));
     const u = vec2(P).add(.5).div(U.rs), ndc = vec2(u.x.mul(2).sub(1), float(1).sub(u.y.mul(2)));
     const pre = U.c2p.mul(vec4(ndc, bl9, 1)), camM = ndc.sub(pre.xy.div(pre.w));
-    if (!mo) return vec4(camM, clip, 0);
-    // the motion of the nearest surface in the 3 x 3 round it (edges move with what's in front), less the
-    // change in jitter; where nothing was drawn (the sky), the camera's move
+    // the nearest surface in the 3 x 3 round it
     const at = (x, y) => clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi);
     const near = ivec2(P).toVar(), nz = depthT.load(P).x.toVar();
     for (const [x, y] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
       const z = depthT.load(at(x, y)).x; If(z.lessThan(nz), () => { nz.assign(z); near.assign(at(x, y)); });
     }
-    const M = select(nz.lessThan(1 - 1e-6), mo.vel.load(near).xy.sub(U.jd), camM);
-    return vec4(M, clip, mo.rea.load(P).x);
+    let M = camM, rea = float(0);
+    // with each thing's own motion: that of the nearest surface round it (edges move with what's in front), less the
+    // change in jitter; where nothing was drawn (the sky), the camera's move
+    if (mo) { M = select(nz.lessThan(1 - 1e-6), mo.vel.load(near).xy.sub(U.jd), camM); rea = mo.rea.load(P).x; }
+    // disocclusion (FSR 3.1's, ffx_fsr3upscaler_prepare_reactivity.h ComputeDisocclusions, read from last frame's
+    // own depth where FSR builds it from this frame's): where last frame had something nearer at the place this
+    // pixel came from, this surface was hidden behind it then, so the history there holds the thing in front
+    const own = depthT.load(P).x, pr = U.c2p.mul(vec4(ndc, select(U.fsr.z.greaterThan(.5), own, nz), 1)), want = dist(clamp(pr.z.div(pr.w), 0, 1));   // how far this surface was then, had it stood still
+    // (last frame's pixels were drawn a jitter step apart from this frame's: read them where this one's point fell)
+    const pu = vec2(u.x.sub(M.x.mul(.5)), u.y.add(M.y.mul(.5))), pp = pu.mul(U.rs).sub(.5).add(U.jm), b0 = ivec2(floor(pp)), fr = pp.sub(floor(pp));
+    const K = float(1.37e-05).mul(length(U.rs.mul(.5)));
+    let all = float(1), acc = float(0), ws = float(0);
+    for (const [ox, oy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const q = b0.add(ivec2(ox, oy)), wt = (ox ? fr.x : float(1).sub(fr.x)).mul(oy ? fr.y : float(1).sub(fr.y));
+      const use = wt.greaterThan(1e-3).and(q.x.greaterThanEqual(0)).and(q.y.greaterThanEqual(0)).and(q.x.lessThanEqual(hi.x)).and(q.y.lessThanEqual(hi.y));
+      const was = prevD.load(clamp(q, ivec2(0, 0), hi)).w, diff = want.sub(was);
+      all = all.mul(select(use.and(diff.lessThanEqual(1e-6)), float(0), float(1)));
+      acc = acc.add(select(use, clamp(K.mul(max(want, was)).div(max(diff, 1e-6)), 0, 1).mul(wt), float(0))); ws = ws.add(select(use, wt, float(0)));
+    }
+    const dis = select(all.greaterThan(.5).and(ws.greaterThan(0)), clamp(float(1).sub(acc.div(max(ws, 1e-6))), 0, 1), float(0));
+    // (experiments: U.fsr.x 0 SGSR 2's depth clip, 1 the larger of the two, 2 disocclusion alone)
+    const df = select(U.fsr.x.lessThan(.5), clip, select(U.fsr.x.lessThan(1.5), max(clip, dis), dis));
+    return vec4(M, df, rea);
   })();
   const mdc = rtt(conv, 1, 1, { depthBuffer: false }); mdc.renderTarget.gsPart = 'upscale';
+  // FSR 3.1's shading change and luma instability, at the render size (ffx_fsr3upscaler_shading_change_pyramid.h,
+  // ffx_fsr3upscaler_luma_instability.h). Where this pixel came from last frame (its motion, and last frame's
+  // pixels a jitter step apart: U.jm), as a place among last frame's small pixels
+  const LUMV = vec3(.2126, .7152, .0722), lumOf = c => max(dot(c, LUMV), 1e-4);
+  const cameFrom = Fn(() => {
+    const P = ivec2(screenCoordinate.xy), M = mdc.load(P).xy;
+    const pu = vec2(P).add(.5).div(U.rs).add(vec2(M.x.mul(-.5), M.y.mul(.5)));
+    return vec4(pu.mul(U.rs).add(U.jm), select(pu.x.greaterThanEqual(0).and(pu.y.greaterThanEqual(0)).and(pu.x.lessThanEqual(1)).and(pu.y.lessThanEqual(1)).and(U.reset.lessThan(.5)), float(1), float(0)), length(M.mul(.5).mul(vec2(3840, 2160))));
+  });
+  // LH: this frame's brightness, then last frame's three (read where this pixel came from)
+  const lhMat = new NodeMaterial(); lhMat.name = 'GSSR brightness history';
+  lhMat.fragmentNode = Fn(() => {
+    const P = ivec2(screenCoordinate.xy), cf = cameFrom(), h = lhT.sample(cf.xy.div(U.rs)).mul(cf.z);
+    return vec4(lumOf(low.load(P).rgb), h.x, h.y, h.z);
+  })();
+  // SD: the change in brightness, as the smallest difference between this frame's five pixels round here and
+  // last frame's five round where it came from (a pixel stepping by a jitter step matches a neighbour: no change),
+  // with its sign; whether it flickers (brighter, then darker, then brighter again: it matches one of the three
+  // frames before last better than last frame's, on the same side); and this frame's depth for the next
+  const sdMat = new NodeMaterial(); sdMat.name = 'GSSR changes';
+  sdMat.fragmentNode = Fn(() => {
+    const P = ivec2(screenCoordinate.xy), hi = ivec2(U.rs).sub(1), cf = cameFrom(), Q = ivec2(floor(cf.xy));
+    const X = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+    const cur = X.map(([x, y]) => lumOf(low.load(clamp(P.add(ivec2(x, y)), ivec2(0, 0), hi)).rgb));
+    const was = X.map(([x, y]) => max(lhT.load(clamp(Q.add(ivec2(x, y)), ivec2(0, 0), hi)).x, 1e-4));
+    const rd = (a, b) => sign(a.sub(b)).mul(float(1).sub(min(a, b).div(max(a, b))));
+    let best = rd(cur[0], was[0]);
+    for (const a of cur) for (const b of was) { const d = rd(a, b); best = select(abs(d).lessThan(abs(best)), d, best); }
+    const diff = best.mul(cf.z);
+    // the flicker hold
+    const Lc = cur[0], h = lhT.sample(cf.xy.div(U.rs)), mdm = (a, b) => min(a, b).div(max(max(a, b), 1e-6));
+    const s0 = mdm(Lc, h.x), d0 = Lc.sub(h.x);
+    let ms = s0;
+    for (const k of ['y', 'z', 'w']) ms = select(sign(d0).equal(sign(Lc.sub(h[k]))), max(ms, mdm(Lc, h[k])), ms);
+    const m = mdc.load(P), inst = select(ms.greaterThan(s0).and(s0.lessThan(1)).and(h.w.greaterThan(0)), float(1), float(0))
+      .mul(cf.z).mul(float(1).sub(clamp(cf.w.div(20), 0, 1))).mul(float(1).sub(m.z)).mul(float(1).sub(clamp(m.w, 0, 1)));
+    return vec4(diff, select(diff.equal(0), float(0), sign(diff)), inst, dist(depthT.load(P).x));
+  })();
   // two history pictures taking turns: this frame's upscale is drawn into one while it reads last
   // frame's from the other. (Copying into a single history picture broke after a resize, like
   // unfolding a Fold: a picture that is only copied into keeps its old size on the GPU.)
-  const H2 = [0, 1].map(() => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false }));
+  // Each has a second picture: the lock of each pixel (FSR 3.1's: a thin thing found here stays held)
+  const H2 = [0, 1].map(() => { const t = new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, count: 2 }); t.textures[1].format = RedFormat; t.textures[1].name = 'lock'; return t; });
   let cur = 0, fresh = true;   // fresh: nothing drawn yet, so the first frame starts the history (as after a cut)
-  const histT = texture(H2[1].texture), outT = texture(H2[0].texture);
+  const histT = texture(H2[1].texture), outT = texture(H2[0].texture), lockT = texture(H2[1].textures[1]);
   // upscale: Lanczos of the 5 nearest small pixels, a colour box, history clamped to it, then blended
   const half = halfWanted();
+  let lockOut = null;
   const upscale = Fn(() => {
     const H = screenUV, J = clamp(H.add(U.jit.div(U.rs)), 0, 1), IP = ivec2(J.mul(U.rs)), hi = ivec2(U.rs).sub(1);
-    const mda = mdc.sample(J), M = mda.xy, df = mda.z, see = mo ? smoothstep(.1, .6, mda.w).mul(.9) : float(0);
-    const prevUV = clamp(vec2(M.x.mul(-.5).add(H.x), M.y.mul(.5).add(H.y)), 0, 1);
+    const mda = mdc.sample(J), M = mda.xy, see = mo ? smoothstep(.1, .6, mda.w).mul(.9) : float(0);
+    // shading change (FSR 3.1's): where a patch of the picture as a whole grew brighter or darker since last frame
+    // (a shadow or a light moving over it, something moving that has no motion of its own), the most of three
+    // patch sizes; counted as somewhere uncovered: the history there is no good
+    let shc = float(0); for (const k of [1, 2, 3]) { const v = sdT.sample(J).level(k); shc = max(shc, abs(v.x.mul(v.y))); }
+    shc = clamp(shc.mul(U.fsr2.x), 0, 1);
+    const df = max(mda.z, shc), inst = sdT.sample(J).level(0).z.mul(U.fsr2.y).mul(float(1).sub(df));
+    const pu = vec2(M.x.mul(-.5).add(H.x), M.y.mul(.5).add(H.y)), prevUV = clamp(pu, 0, 1);
     const hist = tuned ? sharpAt(histT, prevUV, half) : histT.sample(prevUV);
     const mlen = length(M.mul(U.os)), start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
     // where this pixel's centre falls among the small pixels (full precision: a place on the screen), the
     // five nearest small pixels, and the rest of the pass's maths in half where the chip has it (S2_UP)
     const so = vec2(IP).add(.5).sub(U.jit).sub(H.mul(U.rs));
-    const args = { so, hist, m: vec4(mlen, df, start, U.reset), sr: U.sr, see, tuned: float(tuned ? 1 : 0) };
-    S2_TAPS.forEach(([x, y], i) => { args['c' + i] = low.load(clamp(IP.add(ivec2(x, y)), ivec2(0, 0), hi)).rgb; });
+    const L = (x, y) => low.load(clamp(IP.add(ivec2(x, y)), ivec2(0, 0), hi)).rgb;
+    const args = { so, hist, m: vec4(mlen, df, start, U.reset), sr: U.sr, see, tuned: tuned ? float(1).add(U.fsr.w) : float(0), lockc: float(0) };
+    S2_TAPS.forEach(([x, y], i) => { args['c' + i] = L(x, y); });
+    if (tuned) {
+      // locks (FSR 3.1's, ffx_fsr3upscaler_accumulate.h UpdateLockStatus): a pixel of a thin thing (a ridge in
+      // brightness one small pixel wide: ComputeThinFeatureConfidence) gains a lock; while it holds, the
+      // history there is kept even where this frame's few pixels missed the thin thing. A lock wears off
+      // slowly, and at once where something uncovers the place or it is see-through
+      const inside = pu.x.greaterThanEqual(0).and(pu.y.greaterThanEqual(0)).and(pu.x.lessThanEqual(1)).and(pu.y.lessThanEqual(1));
+      const was = select(inside.and(U.reset.lessThan(.5)), lockT.sample(prevUV).x, float(0));
+      const dec = max(see, df), held = max(was.sub(dec.mul(2)), 0);
+      // (the flicker hold only where the pixel has settled, as FSR's only where it has gathered a few frames: not
+      // just behind something moving)
+      args.lockc = max(clamp(held.sub(1), 0, 1).mul(U.fsr.y), inst.mul(select(U.fsr2.z.greaterThan(.5), smoothstep(.25, .5, hist.a), float(1))));
+      const lum = c => dot(c, vec3(.2126, .7152, .0722));
+      const O = [[0, 0], [-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+      const Y = O.map(([x, y]) => { const i = S2_TAPS.findIndex(t => t[0] === x && t[1] === y); return lum(i >= 0 ? args['c' + i] : L(x, y)); });
+      let lo = Y[0], hi2 = Y[0]; for (const y of Y.slice(1)) { lo = min(lo, y); hi2 = max(hi2, y); }
+      const rng = max(hi2.sub(lo), 1e-6);
+      const sim = Y.map((y, i) => i ? abs(y.sub(Y[0])).div(rng).lessThan(.9) : null);
+      let dLo = float(1e9), dHi = float(0);
+      for (let i = 1; i < 9; i++) { dLo = select(sim[i], dLo, min(dLo, Y[i])); dHi = select(sim[i], dHi, max(dHi, Y[i])); }
+      const ridge = Y[0].greaterThan(dHi).or(Y[0].lessThan(dLo));
+      const quad = (a, b, c) => sim[a].and(sim[b]).and(sim[c]);
+      const flat = quad(1, 2, 4).or(quad(2, 3, 5)).or(quad(4, 6, 7)).or(quad(5, 7, 8));
+      const thin = select(ridge.and(flat.not()), float(1).sub(lo.div(max(hi2, 1e-6))), float(0));
+      // the lock goes on the screen pixel this frame's small pixel landed in (FSR: ComputeHrPosFromLrPos)
+      const here = abs(so.x).lessThanEqual(U.rs.x.div(U.os.x).mul(.5)).and(abs(so.y).lessThanEqual(U.rs.y.div(U.os.y).mul(.5)));
+      const add = select(here, thin, float(0)).mul(float(1).sub(see));
+      lockOut = max(min(held.add(add), 2).sub(U.lockDec.mul(float(1).sub(dec))), 0).mul(U.fsr.y);
+    }
     return S2_UP(args, half);
   })();
-  const upMat = new NodeMaterial(); upMat.fragmentNode = upscale; upMat.name = 'SGSR2';
+  const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(lockOut || float(0), 0, 0, 1)); upMat.name = 'SGSR2';
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
-  const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat);
+  const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat);
   return {
     U, key: '',
     size(pw, ph, fw, fh) {
       const k = `${pw}x${ph}>${fw}x${fh}`; if (k === this.key) return; this.key = k;
-      low.setSize(pw, ph); mdc.setSize(pw, ph); for (const t of H2) t.setSize(fw, fh);
+      low.setSize(pw, ph); mdc.setSize(pw, ph); for (const t of [...SD, ...LH]) t.setSize(pw, ph); for (const t of H2) t.setSize(fw, fh);
     },
     set(f) {
       U.rs.value.copy(f.renderSize); U.os.value.copy(f.outputSize); U.jit.value.copy(f.jitter); U.sr.value.copy(f.scaleRatio);
       U.fov.value = f.fovH; U.minLerp.value = f.minLerp; U.reset.value = fresh ? 1 : f.reset; fresh = false; U.c2p.value.copy(f.clipToPrevClip);
       if (f.jd) U.jd.value.set(f.jd[0], f.jd[1]);
+      U.nf.value.set(f.near, f.far); U.jm.value.copy(f.jitterMove); U.ortho.value = f.ortho ? 1 : 0; U.lockDec.value = .1 / f.jitters;
+      // (Qualcomm's shader as it was: none of FSR 3.1's tricks either)
+      if (!tuned) { U.fsr.value.set(0, 0, 0, 0); U.fsr2.value.set(0, 0, 0, 0); }
+      else if (f.fsr) { U.fsr.value.set(f.fsr[0], f.fsr[1], f.fsr[2] || 0, f.fsr[3] || 0); U.fsr2.value.set(f.fsr[4] || 0, f.fsr[5] || 0, f.fsr[6] || 0, 0); }
     },
     // draw (the scene and the small finished picture are drawn on the way, by the nodes the upscale reads);
     // show = false leaves the screen alone (frame generation shows it, or a made frame, itself)
     render(r, show = true) {
       const tm = r.toneMapping, cs = r.outputColorSpace; r.toneMapping = NoToneMapping; r.outputColorSpace = LinearSRGBColorSpace;
       try {
-        const into = H2[cur], from = H2[1 - cur]; histT.value = from.texture; outT.value = into.texture;
+        const into = H2[cur], from = H2[1 - cur]; histT.value = from.texture; lockT.value = from.textures[1]; outT.value = into.texture;
+        prevD.value = SD[1 - sc].texture; sdT.value = SD[sc].texture; lhT.value = LH[1 - sc].texture;
+        SD[sc].texture.generateMipmaps = U.fsr2.value.x > 0;   // (the smaller copies: only for the shading change)
+        r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
+        r.setRenderTarget(LH[sc]); qLh.render(r);
         r.setRenderTarget(into); qUp.render(r);
+        sc = 1 - sc;
         r.setRenderTarget(null); if (show) qCp.render(r);
         cur = 1 - cur;
       } finally { r.toneMapping = tm; r.outputColorSpace = cs; }
@@ -2001,7 +2115,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true) {
     last() { return H2[1 - cur].texture; },
     /** The picture the render before that made (it stays until the next render draws over it). */
     before() { return H2[cur].texture; },
-    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); upMat.dispose(); cpMat.dispose(); },
+    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); },
   };
 }
 

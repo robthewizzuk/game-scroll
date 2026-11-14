@@ -364,7 +364,7 @@ export function head(t, what, extra = '') {
     `Game Scroll ${what} · ${t.at.slice(0, 16).replace('T', ' ')} UTC · build ${p.build} · took ${Math.floor(t.took / 60)} min ${t.took % 60} s${extra}`,
     `\nPHONE: ${p.model} · ${p.os} · ${p.form} screen ${p.screen} · ${p.hz} Hz · ${p.chip} · WebGPU ${p.webgpu ? 'yes' : 'no'} (set to ${p.gpuPick}) · ${p.klass} class${p.cores ? ` · ${p.cores} cores` : ''}${p.memory ? ` · ${p.memory} GB` : ''}`,
     `POWER: ${battery(t.powerBefore)} then ${battery(t.powerAfter)} · ${heatWord(t.powerBefore.heat)} then ${heatWord(t.powerAfter.heat)}${t.powerAfter.saver ? ' · battery saver on' : ''}`,
-    `SETTINGS: frame rate ${p.fpsPick} · frame generation ${p.frameGenPick} · reduce motion ${p.reduceMotion ? 'on' : 'off'}`,
+    `SETTINGS: frame rate ${p.fpsPick} · GSFG ${p.frameGenPick} · reduce motion ${p.reduceMotion ? 'on' : 'off'}`,
   ];
 }
 /** The tour's result as the text to copy. */
@@ -409,7 +409,7 @@ export function openTour(driver) {
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
   // (not games: the Next Gen engine's detail systems, off and on; the ray tracing scene alone, the hall, three ways; and frame
   // generation five ways; src/detail-tour.js. The number in brackets is how many scenes.)
-  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', Array(18).fill(0)], [TRACED, 'Ray tracing only', [0]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', Array(18).fill(0)], [TRACED, 'Ray tracing only', [0]], [FRAMEGEN, 'GSFG frame generation', [1, 2, 3, 4]]);
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>
@@ -427,7 +427,7 @@ export function openTour(driver) {
   const paint = () => {
     for (const t of el.querySelectorAll('.tour-tick')) t.hidden = scenes();   // (full screen and sound are for games)
     // (twenty-nine runs where the forest flies four and the yard and the hall three each, on WebGPU; each has a few seconds of getting ready before it)
-    est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds five ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by frame generation, blended as before, blended as now and then ahead: about ${Math.max(1, Math.round((20 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
+    est.textContent = fg() ? `Four of the engine test scenes, each flown through for ${secs.value} seconds five ways: as many frames drawn as the phone draws a Next Gen game, half of them, and half with the rest made by GSFG (frame generation), blended as before, blended as now and then ahead: about ${Math.max(1, Math.round((20 * (+secs.value + 9) + 40) / 60))} min. Leave the phone on a table with the screen on.`
       // (the hall three times on WebGPU, with the traced copy of the hall made before the third)
       : rt() ? `The ray tracing scene alone: a polished hall, flown through for ${secs.value} seconds three ways, with no reflections, with reflections worked out from the screen and ray traced (the last needs WebGPU): about ${Math.max(1, Math.round((3 * (+secs.value + 8) + 20) / 60))} min, and longer the first time, while the traced copy of the hall is made. Leave the phone on a table with the screen on.`
       : scenes() ? `Eighteen scenes, each flown through for ${secs.value} seconds with one of the engine's systems off, then on: about ${Math.max(1, Math.round((37 * (+secs.value + 8) + 80) / 60))} min, and longer the first time, while the systems build what they need. Leave the phone on a table with the screen on.`
