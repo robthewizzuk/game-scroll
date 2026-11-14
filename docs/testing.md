@@ -64,6 +64,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | Detail levels for copies (`autoCopies` in hd3d.js, `buildLevels`, `gpuProps` in hd3d-gpu.js, `src/kit/props.js`) | `npm run kit-test` (the levels, `props.move`, which copies are sent), then `node scripts/detail-test.cjs --page copies` and again with `--webgpu`: a field of rocks and posts whole against levels from three cameras, a zoom, a hidden and a moved copy, and on WebGPU that only changed copies go to the chip. `--bench --q "forest=20000"` (add `&cpucull` on WebGPU for the path frame generation uses) gives triangles, draws, list time and KB sent a frame | about 40 s each |
 | Smaller meshes (`src/kit/slim.js`, `slim-core.js`, and where they are used: people, creatures, fur, crowds, fused trains, buildings, city blocks, real surface detail) | `npm run kit-test` (the number work: normals, bone weights, grid places, what is left alone), then `node scripts/detail-test.cjs --page slim` and again with `--webgpu`: two people, a furred dog, a fused train, a brick house with real surface detail and a crowd, made with plain floats and then kept small: six pictures compared, the bytes counted in memory and on the chip, the kinds of list, rays and sizes checked (`--q both=plain` or `both=small` draws the same thing twice, to see what differs between two runs anyway). `node scripts/mesh-memory.cjs [id ...] [--webgpu] --json before.json` before a change and `--vs before.json` after gives a game's mesh memory by list, by kind and by mesh | about 2 min each |
 | Ray traced reflections (`src/kit/hd3d-gpu-trace.js`, `trace-scene.js`, `trace-build.js`, `traceLights` in hd3d.js) | `npm run kit-test` (blocks, looks, what goes in, and the traced copy's lists walked the way the shader walks them, against three's own ray caster, through moves, hides, additions and bigger lists), then `node scripts/detail-test.cjs --page traced --webgpu [--shots dir]`: a yard whose floor must show a bar above the screen and whose chrome ball must show a wall behind the camera, a box moved, copies found on the screen, a glow changed and a thing added, against screen-space reflections, which can show none of it. `--bench` walks the engine test scenes' hall three ways | a second, then about 2 min |
+| Ray Regeneration (`regenStage` in `src/kit/hd3d-gpu-trace.js`, `HD.regen`) | `node scripts/detail-test.cjs --page regen --webgpu [--shots dir]`: a yard with a mirror floor, a little rough one and a rough one, two metal balls and thin bright poles, drawn with the rays laid over the picture as they were, regenerated, and regenerated from half the rays, each held against the truth (a ray for every pixel, every frame added to the ones before: `HD.regenRef`) with the camera still and moving; fails if regenerating is further from the truth than the pass as it was, with all the rays or half, or a still picture doesn't settle. `--q probe=regen` saves each frame of the moving camera alone, in a minute | about 8 min |
 | The world's centre moving with the camera (`src/kit/origin.js`, `originOn`/`originOff` in hd3d.js, `ORIGIN`/`gsOrigin` in the shaders, `World3D.centre()`) | `npm run kit-test` (the centre's steps; a ball and a walker 20 km out run exactly as at the centre once the world's centre is there; a shift leaves sleeping stacks, lifts, hinges and rays be; it follows the view), then `node scripts/detail-test.cjs --page origin` and again with `--webgpu`: each engine test scene drawn about the world's own centre and about a centre 768, -512 m off (`--q at=x,z`), which must be the same picture (`--q modes=all` for every mode, `scenes=valley,field`, `--shots dir` for the worst pair and their difference) | a second, then about 8 min each |
 | Lots of particles (`gs.hd.GPUParticles` in `src/kit/hd3d.js`, its WebGPU step `src/kit/particles-gpu.js`: bursts, pulls, flows) | `node scripts/detail-test.cjs --page particles` and again with `--webgpu` (`--shots dir` saves a portal and a flow to look at): a burst left alone, pulled in, pushed out, out of a pull's reach, taken, swirled, carried by a flow inside its box and not outside it, the flow sampled again; the first burst is asked for before the view has drawn (it must still start); on WebGPU, pulls and a flow added mid-run build no shader, and the positions are read back from the chip | about 30 s each |
 | Decals in the lamps' grid (`HDView.decal` in `src/kit/hd3d.js`, `src/kit/decals-gpu.js`, the lamps' loop in `src/kit/lamps-gpu.js`, `HD.gridDecals`) | `node scripts/detail-test.cjs --page decals --webgpu [--shots dir]`: marks on a floor, a wall and a thin panel as grid decals against the same marks as meshes (they must look alike), switched to meshes and back, the panel's back and a thing with `material.decals = false` left alone, a lamp's light between 60 marks as it was, no more draws with 60 marks and no shader when marks come and go, a mark's life, past 16 pictures the rest as meshes; then without `--webgpu` (every decal a mesh, as before) and `node scripts/look-compare.cjs check <dir> --webgpu` against main | about 2 min, then 15 min |
@@ -275,9 +276,11 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    on the height map alone (the walk goes over the spur), then with the rock on it (`land.rocks()`);
    that run says how many triangles the rock is, in how many pieces, and how long its numbers took. Last, a polished **hall** of 24 pillars and figures (half a million
    triangles, with banners and lanterns over the camera's head, glowing orbs and chrome balls moving
-   through it and a mirror at each end) is walked three times on WebGPU: with no reflections, with
-   reflections worked out from the screen, and ray traced (`src/kit/hd3d-gpu-trace.js`). The report sets
-   screen reflections against none and ray traced against screen, and says what the traced copy of the
+   through it and a mirror at each end) is walked four times on WebGPU: with no reflections, with
+   reflections worked out from the screen, ray traced with the rays laid over the picture as they were
+   before Ray Regeneration (`__hd.regen = false`), and ray traced as games get it
+   (`src/kit/hd3d-gpu-trace.js`). The report sets screen reflections against none, ray traced against
+   screen and `Ray Regeneration against ray traced without it`, and says what the traced copy of the
    hall holds, how long it took to make and how much memory it takes on the chip. The ray traced run is
    forced on for the test, and says so on a phone that would not trace by itself; on WebGL the hall is
    walked twice, without the ray traced run. Last of all a **parade**: eight people, each their own, a
@@ -343,7 +346,7 @@ and compare pictures; it can't say what a phone's graphics chip gains. The tour 
    the vent's smoke lit by the lamps near it and, on WebGPU, the smoke of the drum and the blasts (gs.gas) shading the sun's light
    (`gasSunAt` in `sunmask-gpu.js`). The second run says how many flashes were lit a frame, and on WebGPU in
    how many frames the smoke's shadow was drawn.
-   About 21 minutes at 20 seconds a run on WebGPU (42 runs), longer the
+   About 21 minutes at 20 seconds a run on WebGPU (43 runs), longer the
    first time: the systems build what they need in the background, which the report times, and keep it
    on the phone.
 3. The report, to copy and paste into chat, has the phone, the picture (WebGPU or WebGL, the quality,
@@ -393,9 +396,10 @@ counts, the stage, and that the feed comes back as it was. A new detail system g
 
 Under **Play**, **Ray tracing only** flies just the **hall**, the same way and with the same report as
 in the engine test scenes (its header says `engine test scenes, ray tracing`): with no reflections, with
-reflections worked out from the screen and ray traced, about 2 minutes at 20 seconds a run in place of
-the full tour's 15. Read `= ray traced against from the screen` for what tracing costs, and the
-`reflections` part of each run's chip time for the reflection passes themselves. On WebGL the hall is
+reflections worked out from the screen and ray traced without and with Ray Regeneration, about 2
+minutes at 20 seconds a run in place of the full tour's 15. Read `= ray traced against from the screen`
+for what tracing costs, `= Ray Regeneration against ray traced without it` for what the regenerating
+costs or saves, and the `reflections` part of each run's chip time for the reflection passes themselves. On WebGL the hall is
 walked twice, without the ray traced run, and the report says ray tracing needs WebGPU. In a test
 browser: `__gs.tour({ scenes: true, traced: true, seconds, size })`.
 

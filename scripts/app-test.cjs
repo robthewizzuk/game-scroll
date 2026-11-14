@@ -662,9 +662,9 @@ async function tour(b) {
   // and the ray tracing scene alone (the hall), started from the sheet: the bar names the hall, and Stop gives its report
   await p.selectOption('.tour-set', 'traced');
   const sheet4 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^The ray tracing scene alone: a polished hall, flown through for \d+ seconds three ways, with no reflections, with reflections worked out from the screen and ray traced .*: about [1-3] min/.test(sheet4.est) && sheet4.ticks.every(d => d === 'none'),
-    'the sheet also offers ray tracing alone: the hall, three ways, in a few minutes', JSON.stringify(sheet4));
-  await p.click('.tour-go'); await p.waitForFunction(() => /^1 of [23] · Hall/.test(document.querySelector('.tour-now')?.textContent || ''), null, { timeout: 60000 });
+  check(/^The ray tracing scene alone: a polished hall, flown through for \d+ seconds four ways, with no reflections, with reflections worked out from the screen and ray traced without and with Ray Regeneration .*: about [1-3] min/.test(sheet4.est) && sheet4.ticks.every(d => d === 'none'),
+    'the sheet also offers ray tracing alone: the hall, four ways, in a few minutes', JSON.stringify(sheet4));
+  await p.click('.tour-go'); await p.waitForFunction(() => /^1 of [234] · Hall/.test(document.querySelector('.tour-now')?.textContent || ''), null, { timeout: 60000 });
   await p.click('.tour-bar button'); await p.waitForSelector('dialog.tour[open] .tour-text', { timeout: 60000 });
   const rtRep = await p.evaluate(() => document.querySelector('.tour-text').value);
   check(/^Game Scroll engine test scenes, ray tracing · .* · STOPPED after 1 of 1 scenes\n/.test(rtRep) && /\nHALL · ray traced reflections · /.test(rtRep) && !/\n(VALLEY|FOREST|TOWN) · /.test(rtRep),
@@ -841,7 +841,7 @@ async function scenes(b) {
   await q.setViewportSize({ width: 240, height: 320 }); await q.waitForTimeout(400);
   const rt = await q.evaluate(async () => { const r = await __gs.tour({ scenes: true, traced: true, seconds: 1.5, size: .1 }); return { keys: r.scenes.map(s => s.key), modes: r.scenes[0]?.modes.map(m => m.key + ':' + m.frames + ':' + m.backend), error: r.scenes[0]?.error, note: r.note || '', text: r.text, active: __gs.active?.def.id }; });
   const rtGpu = /\nPICTURE: WebGPU/.test(rt.text);
-  check(rt.keys.join() === 'hall' && !rt.error && (rtGpu ? rt.modes.length === 3 && !rt.note : rt.modes.length === 2 && /^Ray tracing needs WebGPU/.test(rt.note) && rt.text.includes(rt.note)) && rt.modes.every(m => +m.split(':')[1] > 3)
+  check(rt.keys.join() === 'hall' && !rt.error && (rtGpu ? rt.modes.length === 4 && !rt.note : rt.modes.length === 2 && /^Ray tracing needs WebGPU/.test(rt.note) && rt.text.includes(rt.note)) && rt.modes.every(m => +m.split(':')[1] > 3)
     && /^Game Scroll engine test scenes, ray tracing · /.test(rt.text) && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, /.test(rt.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(rt.text) && rt.active === 'bunker-breakout',
     'ray tracing alone flies only the hall, with the engine test scenes\' report', JSON.stringify(rt));
   // frame generation's runs need WebGPU: drawn with WebGL, the report says so and nothing is flown

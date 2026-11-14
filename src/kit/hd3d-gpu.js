@@ -2580,6 +2580,9 @@ export class GpuChain {
     }
     // reflections: three's screen-space reflections on the things the game marked, added to the scene's colour
     // (after the bounce light, before the ambient occlusion and everything else the chain does to the picture)
+    // (Ray Regeneration, hd3d-gpu-trace.js regenStage: the rays rebuilt at the picture's size from the frames before; it
+    // follows things that move by themselves where the scene draws its motion)
+    this.trRegen = tr && this.regenOn ? { vel: mrtOn || mbOn ? sp.getTextureNode('velocity') : null } : null;
     if (reflOn) colT = tr ? TR.traceStage(this, sp, colT, tr) : reflStage(this, sp, colT);
     let lit = colT.rgb, aoF = float(1);
     if (aoOn) {
@@ -2839,7 +2842,7 @@ export class GpuChain {
     if (o.gi) { this.giRes = o.gi.res; this.giBox = o.gi.box; }
     // gs.fx3d's screen effects and reflections have a key of their own: the chain is built again when it changes
     // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
-    { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
+    { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') + (o.refl.regen ? 'r' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; this.regenOn = !!(tr && o.refl.regen); if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
     const fx = !this.clear && o.ao > 0;
     this.aoBack = fx && o.aoBack !== false;
     this.s2Net = o.s2Net || null;
@@ -2879,7 +2882,7 @@ export class GpuChain {
       U.px.value.set(1 / o.w, 1 / o.h);
       // (o.fxK: the effects hd3d.js's ladder draws smaller by their cost, FXS; only picture sizes change)
       const fk = o.fxK || NO_FXK, rs = o.refl ? o.refl.scale * fk.reflections : 0;
-      fxFrame(this, o.w, o.h, k); if (o.refl) { reflFrame(this, o.w, o.h, rs * k); if (this.tracer) TR.traceFrame(this, o.w, o.h, rs); }
+      fxFrame(this, o.w, o.h, k); if (o.refl) { reflFrame(this, o.w, o.h, rs * k); if (this.tracer) TR.traceFrame(this, o.w, o.h, rs, { cut: !!o.cut, f, ref: o.refl.ref || 0 }); }
       if (o.drops) { const D = this.D, v = o.drops.vecs; for (let i = 0; i < DROPS_N; i++) D.drops.array[i].copy(v[i]); D.dropN.value = o.drops.count; }
       if (o.flare) { const F = this.F, f = o.flare; F.tint.value.copy(f.tint); F.th.value = f.threshold; F.sp.value = f.spacing; F.fade.value = f.fade; F.k.value = f.strength; F.dk.value = f.dirt; F.dirt.value = f.dirtTex; }
       if (this.lutN) { this.lutN.lutNode.value = o.lut; this.lutN.size.value = o.lut.image.width; U.lutK.value = Math.min(1, o.lutK ?? 1); }

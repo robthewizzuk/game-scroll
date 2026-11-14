@@ -17,7 +17,8 @@
 //   cliff    land with cliffs, caves and overhangs (src/kit/land-rock.js, gs.outdoors land.rocks()): a walk along the foot of a cliff, through a
 //            cave under a spur, out and under an arch: once on the height map alone (over the spur), then with the rock
 //   hall     ray traced reflections (src/kit/hd3d-gpu-trace.js, v.reflect() on WebGPU): a polished hall with no reflections, with reflections
-//            found on the screen, and with rays sent through a copy of the hall (banners and lanterns over the camera's head show only in those)
+//            found on the screen, and with rays sent through a copy of the hall (banners and lanterns over the camera's head show only in those),
+//            first laid over the picture as they were and then with Ray Regeneration (HD.regen)
 //   parade   smaller meshes (src/kit/slim.js): people, a dog, a horse and a goods train close up, their points as plain floats and then kept small
 //   lineup   people that move (src/kit/stride.js, follow.js, human-face.js, human.js hands): eight people posed as drawn, then stepping, live faced and holding
 //   faces    people close up (gs.models.human look: 'real'): four faces in turn filling the screen, in the clean look and then the real one
@@ -531,7 +532,7 @@ function cliff({ gs, size }) {
 
 /* ---------- hall: ray traced reflections ---------- */
 function hall({ gs, HD, size, gpu, top = true }) {
-  const T = gs.THREE, pbr = gs.hd.pbr, n = Math.max(3, Math.round(12 * size)), L = n * 7, { v, sun } = view(gs, 260, .001), was = { traced: HD.traced };
+  const T = gs.THREE, pbr = gs.hd.pbr, n = Math.max(3, Math.round(12 * size)), L = n * 7, { v, sun } = view(gs, 260, .001), was = { traced: HD.traced, regen: HD.regen };
   const add = (g, m, x, y, z, shadow = true) => { const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = shadow; o.receiveShadow = true; v.scene.add(o); return o; };
   add(new T.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), pbr('#8a8478', { rough: .95 }), 0, -.3, 0, false);
   // a polished floor, with a polished panel standing at each end (they show what is behind the camera)
@@ -571,14 +572,16 @@ function hall({ gs, HD, size, gpu, top = true }) {
   let tris = 0; v.scene.traverse(o => { if (o.isMesh) tris += trisOf(o.geometry) * (o.isInstancedMesh ? o.count : 1); });
   const shiny = [floor, ...panels, ...balls], ahead = new T.Vector3();
   let mode = '';
-  const set = (key, traced, on) => { mode = key; HD.traced = traced; if (on) v.reflect(shiny); else { v.reflectors.length = 0; for (const o of shiny) o.userData.gsReflect = false; } };
+  const set = (key, traced, on, regen = null) => { mode = key; HD.traced = traced; HD.regen = regen; if (on) v.reflect(shiny); else { v.reflectors.length = 0; for (const o of shiny) o.userData.gsReflect = false; } };
   const modes = [
     { key: 'none', name: 'no reflections', enter() { set('none', false, false); } },
     { key: 'screen', name: 'from the screen', enter() { set('screen', false, true); } },
   ];
   // (WebGPU only: on WebGL the hall is walked without reflections and with the ones WebGL has)
-  if (gpu) modes.push({ key: 'traced', name: 'ray traced', async enter(draw) {
-    set('traced', true, true);
+  // (ray traced first as it was before Ray Regeneration, HD.regen = false, then with it: what the regenerating costs or
+  // saves on this chip, and the scene's last mode is the one games get)
+  const traced = (key, name, regen) => ({ key, name, async enter(draw) {
+    set(key, true, true, regen);
     const t0 = performance.now(); await draw(); await draw();
     if (!HD.info.refl) return null;   // (a quality with no reflections at all: nothing to wait for)
     await until(draw, () => HD.info.refl === 'traced', 12000);   // (the ray tracing part is loaded the first time it is wanted)
@@ -587,10 +590,11 @@ function hall({ gs, HD, size, gpu, top = true }) {
     const t = HD.info.trace;
     return t ? { build: performance.now() - t0, note: t.builds ? `the hall's traced copy made in ${num(t.ms)} ms` : 'the traced copy did not arrive in time' } : null;
   } });
+  if (gpu) modes.push(traced('traced-was', 'ray traced, not regenerated', false), traced('traced', 'ray traced', null));
   return {
     v, holds: `a polished hall of ${n * 2} pillars and figures, ${num(tris)} triangles, with ${orbs.length + balls.length} things moving`,
     modes,
-    pairs: gpu ? [['none', 'screen', 'reflections from the screen against none'], ['screen', 'traced', 'ray traced against from the screen']] : null,
+    pairs: gpu ? [['none', 'screen', 'reflections from the screen against none'], ['screen', 'traced', 'ray traced against from the screen'], ['traced-was', 'traced', 'Ray Regeneration against ray traced without it']] : null,
     // a walk down one side of the hall and back up the other, about 3 metres a second, looking a little down at the floor ahead
     path(t, cam) {
       const P = (u, p) => p.set(Math.sin(u) * 2.6, 1.7, Math.cos(u) * (L / 2 - 7)), a = t * 2.2 / (L * .3);
@@ -604,9 +608,10 @@ function hall({ gs, HD, size, gpu, top = true }) {
       if (!HD.info.refl) return 'this quality draws no reflections here';
       if (mode === 'screen') return null;
       if (!t) return 'NOT ray traced: this phone would not take it, and drew reflections from the screen';
+      if (mode === 'traced-was') return 'the rays laid over the picture as they were before Ray Regeneration';
       return `traced copy ${num(t.tris)} triangles (${num(t.was)} before simplifying) of ${num(t.things)} things, ${t.movers} of them moving, ${num(t.other + t.left)} left to the screen · ${t.mb} MB on the chip${top ? '' : ' · on for this test only: by itself this phone keeps to reflections from the screen'}`;
     },
-    dispose() { HD.traced = was.traced; clear(v); },
+    dispose() { HD.traced = was.traced; HD.regen = was.regen; clear(v); },
   };
 }
 

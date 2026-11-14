@@ -18,10 +18,11 @@
 // the reflected thing is, weighed as the material weighs its surroundings, and put in the place of
 // the sky's reflection there (a wall hides the sky; it doesn't shine through it).
 // Kit use only (hd3d-gpu.js's GpuChain builds the stage; hd3d.js decides when).
-import { DataTexture, DataUtils, RGBAFormat, HalfFloatType, NearestFilter, Matrix4, Vector2, Vector3, Vector4, Color, StorageBufferAttribute, StructTypeNode } from 'three/webgpu';
+import { DataTexture, DataUtils, RGBAFormat, HalfFloatType, NearestFilter, Matrix4, Vector2, Vector3, Vector4, Color, StorageBufferAttribute, StructTypeNode, Node, NodeMaterial, QuadMesh, RendererUtils, RenderTarget, RGFormat } from 'three/webgpu';
 import {
   storage, uniform, uniformArray, uv, rtt, Fn, vec2, vec3, vec4, float, int, ivec2, mix, max, min, abs, dot, reflect, normalize, length, clamp, exp, pow, sqrt, floor, sin, cos,
   If, Loop, Break, select, smoothstep, texture, getViewPosition, interleavedGradientNoise, screenCoordinate, pmremTexture, DFGLUT, perspectiveDepthToViewZ, roughness, specularColorBlended,
+  NodeUpdateType, passTexture, context, property, outputStruct, cross, fract,
 } from 'three/tsl';
 // (the library's own files, not its webgpu index: that pulls in its compute classes, which nothing here uses)
 import { rayStruct, rayIntersectionResultStruct, bvhNodeStruct, transformStruct } from 'three-mesh-bvh/src/webgpu/tsl/structs.js';
@@ -41,6 +42,12 @@ import { runTrace, canRunTrace } from './jobs.js';
 // block's, then the moving things'); TF: words a place (two matrices and whether it shows)
 const TLAS = 320, SLOTS = 129, TF = 36, LAMPS = 8, STEPS = 12, BOXES = 4, SCAN = 20, GAP = 1500, FAR_BOX = 3e30;
 const ROUGH_MAX = .65, ROUGH_FADE = .45;   // rougher than this a surface shows no reflection worth a ray
+// Ray Regeneration: smoother than ROUGH_SHARP a surface is a mirror (one direction); LOBE_KEEP: the share of a rough
+// surface's cone of directions that rays are sent into (the middle half: it measured closer to the truth than more
+// of the cone, whose few far rays are mostly noise); REGEN_TAPS: this frame's rays round a pixel that count for it
+const ROUGH_SHARP = .07, LOBE_KEEP = .5;
+const REGEN_TAPS = [[0, 0], [1, 0], [0, 1], [1, 1]];
+const REGEN_DISC = Array.from({ length: 4 }, (_, i) => { const r = Math.sqrt((i + .5) / 4), a = i * 2.399963; return [r * Math.cos(a), r * Math.sin(a)]; });
 // (the walk's stack: the tree over the blocks is at most 9 deep, a block's BLOCK_DEPTH)
 BVH_STACK_DEPTH.value = Math.min(BVH_STACK_DEPTH.value, BLOCK_DEPTH + 12);
 const CORNER = new StructTypeNode({ position: 'vec4f', normal: 'vec4f' }, 'bvh_GeometryStruct');
@@ -340,7 +347,14 @@ export function traceStage(ch, sp, colT, tr) {
   const U = ch.trU = {
     invProj: uniform(new Matrix4()), proj: uniform(new Matrix4()), camWorld: uniform(new Matrix4()), view: uniform(new Matrix4()), camPos: uniform(new Vector3()),
     half: uniform(new Vector2(1, 1)), nf: uniform(new Vector2(.05, 120)), focal: uniform(1),
+    // Ray Regeneration (regenStage below): where this frame's rays start inside their pixels (rj, in the rays' pixels),
+    // the turns of their noise, last frame's camera without the upscaler's jitter (prevVP, its inverse, where it stood),
+    // this frame's jitter (jn, as a part of the picture) and its change since last frame (jd, the same way: the motion
+    // picture includes it), a cut (1), the tests' reference (1)
+    rj: uniform(new Vector2()), turn: uniform(new Vector2()), prevVP: uniform(new Matrix4()), prevInv: uniform(new Matrix4()), prevCam: uniform(new Vector3()),
+    jn: uniform(new Vector2()), jd: uniform(new Vector2()), cut: uniform(1), ref: uniform(0),
   };
+  const regen = !!ch.trRegen && !tr.show;
   const L = tr.U, S = tr.S, dT = sp.getTextureNode('depth'), nT = ch.nrmN, R = sp.getTextureNode('gsRefl'), C = colT;
   const pal = texture(tr.pal);
   const zAt = q => perspectiveDepthToViewZ(dT.sample(q).r, U.nf.x, U.nf.y);   // (negative in front of the camera)
@@ -382,11 +396,34 @@ export function traceStage(ch, sp, colT, tr) {
   }
   // half size: a ray from each shiny pixel. rgb what it found, a how far along (-1: nothing: the sky; 0: no ray)
   const rays = ch.trH = rtt(Fn(() => {
-    const q = uv(), r4 = R.sample(q), out = vec4(0).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
+    // (regenerated: each ray starts at another place inside its pixel every frame, so over a few frames every pixel
+    // of the picture has had a ray of its own)
+    const q = regen ? clamp(uv().add(U.rj.div(U.half)), 0, 1).toVar() : uv(), r4 = R.sample(q), out = vec4(0).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
     If(f0.r.add(f0.g).add(f0.b).greaterThan(1e-3).and(smooth.greaterThan(1 + 1 / 64 - ROUGH_MAX)), () => {
       const vp = getViewPosition(q, dT.sample(q).r, U.invProj).toVar(), nv = normalize(nT.sample(q)).toVar();
       const wp = U.camWorld.mul(vec4(vp, 1)).xyz.toVar(), nw = normalize(U.camWorld.mul(vec4(nv, 0)).xyz).toVar();
-      const rd = normalize(reflect(normalize(wp.sub(U.camPos)), nw)).toVar(), lift = max(float(.004), length(vp).mul(.0025)), ro = wp.add(nw.mul(lift)).toVar();
+      const vdir = normalize(wp.sub(U.camPos)).toVar(), rd = normalize(reflect(vdir, nw)).toVar(), lift = max(float(.004), length(vp).mul(.0025)), ro = wp.add(nw.mul(lift)).toVar();
+      if (regen) {
+        // a rough surface reflects a cone of directions, not one: each frame's ray takes one of them (the facets the
+        // camera can see, by how many face each way: Heitz's sampling of GGX's visible normals), and the frames
+        // together are the blurred reflection, sharp where the reflected thing touches the surface and softer the
+        // further off it is, with no blurring of the picture
+        const rough = clamp(float(1 + 1 / 64).sub(smooth), 0, 1);
+        If(rough.greaterThan(ROUGH_SHARP), () => {
+          const al = rough.mul(rough), n1 = interleavedGradientNoise(screenCoordinate.xy), n2 = interleavedGradientNoise(screenCoordinate.xy.add(vec2(31.7, 17.3)));
+          // (the tail of the cone left out: the few rays far off the mirror direction are most of the noise)
+          const u1 = fract(n1.add(U.turn.x)).mul(mix(float(1), float(LOBE_KEEP), U.ref.oneMinus())), u2 = fract(n2.add(U.turn.y));
+          const tx = normalize(cross(select(abs(nw.y).lessThan(.99), vec3(0, 1, 0), vec3(1, 0, 0)), nw)).toVar(), ty = cross(nw, tx).toVar(), v = vdir.negate();
+          const vh = normalize(vec3(al.mul(dot(v, tx)), al.mul(dot(v, ty)), dot(v, nw))).toVar(), l2 = vh.x.mul(vh.x).add(vh.y.mul(vh.y));
+          const t1 = select(l2.greaterThan(1e-8), vec3(vh.y.negate(), vh.x, 0).div(sqrt(max(l2, 1e-8))), vec3(1, 0, 0)).toVar(), t2 = cross(vh, t1);
+          const rr = sqrt(u1), ph = u2.mul(6.2831853), a1 = rr.mul(cos(ph)).toVar(), sv = vh.z.add(1).mul(.5), a2 = mix(sqrt(max(float(1).sub(a1.mul(a1)), 0)), rr.mul(sin(ph)), sv).toVar();
+          const nh = t1.mul(a1).add(t2.mul(a2)).add(vh.mul(sqrt(max(float(1).sub(a1.mul(a1)).sub(a2.mul(a2)), 0)))).toVar();
+          const ne = normalize(vec3(al.mul(nh.x), al.mul(nh.y), max(nh.z, 1e-4))), hw = normalize(tx.mul(ne.x).add(ty.mul(ne.y)).add(nw.mul(ne.z)));
+          const d2 = reflect(vdir, hw);
+          // (a direction into the surface: the mirror's)
+          If(dot(d2, nw).greaterThan(.02), () => { rd.assign(normalize(d2)); });
+        });
+      }
       const H = S.hit(ro.add(ORG), rd, L.far).toVar(), hn = H.element(int(0)), hl = H.element(int(1)), did = H.element(int(2)).w.greaterThan(.5);
       const t = select(did, hn.w, L.far).toVar(), col = vec3(0).toVar(), got = float(0).toVar();
       // what the level leaves out (people, copies, see-through things): where the ray crosses a box round some
@@ -434,6 +471,7 @@ export function traceStage(ch, sp, colT, tr) {
     });
     return out;
   })(), 1, 1, HALF);
+  if (regen) return regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel: ch.trRegen.vel || null });
   // full size: the rays' picture laid over the scene's
   return ch.trT = rtt(Fn(() => {
     const q = uv(), c = C.sample(q), r4 = R.sample(q), out = vec3(c.rgb).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
@@ -466,14 +504,201 @@ export function traceStage(ch, sp, colT, tr) {
     return vec4(max(out, 0), c.a);
   })(), 1, 1, HALF);
 }
+/* ---------- Ray Regeneration ---------- */
+// Our own take on what AMD calls Ray Regeneration and Nvidia Ray Reconstruction: a few noisy rays a frame made into
+// a clean, full-size traced picture. Theirs is a trained network on a desktop card; this is the same job done the
+// way the big engines' denoisers did it before (ReBLUR, SVGF) and the way GSSR upscales, in one pass at the
+// picture's size:
+//   - the rays (at a part of the picture's size, as before) start at another place inside their pixels every
+//     frame, and a rough surface's ray takes one direction of its cone a frame;
+//   - each pixel keeps the reflection it has gathered (its history) and finds it again where that REFLECTION was
+//     last frame: not where the surface was, but where the thing seen in it was, which moves across a mirror as if
+//     it stood behind it, as far behind as the ray went. A rough surface's reflection is that mirror picture blurred
+//     and moves the same way (found by the surface's own move it leaves a ghost of the thing stuck to the floor);
+//     how far its rays went is kept per point of the surface from frame to frame, since each ray goes another way.
+//     The history counts only if the surface seen there then lies in this pixel's plane (not something that stood
+//     in front) and is as rough as this one, and, where the picture moves, if what it reflected stood about as far
+//     behind it as what this pixel reflects now (at the edge of a thing in a mirror the one side's history is not
+//     the other's);
+//   - this frame's rays round the pixel are weighed by how near they started to it and whether they are on its
+//     surface (a rough surface takes four more from a circle round it), the history is held to the range they span
+//     (wider the rougher: there a frame's rays are noise; narrower while the picture moves: what lags shows then),
+//     and the two are blended by how much each knows: a ray that started on this very pixel counts for most.
+// So a mirror comes out at the picture's full size from rays at a quarter of its pixels (no steps along reflected
+// edges), a rough surface's blur is the real one, and the rays can be fewer still for the same picture.
+// What is kept per pixel, in two sets taking turns: the picture with its reflections, the reflection as it is added
+// to the picture (less the sky the material drew there already) with how much it knows, how far the surface was and
+// how near what it reflects: 20 bytes a pixel of the picture each (the pass as it was: 8 in all).
+// HD.regen = false: the pass as it was.
+const RQ = new QuadMesh();
+let RRS;
+class Regen extends Node {
+  static get type() { return 'GsRegen'; }
+  constructor(deps, make) {
+    super('vec4');
+    this.updateBeforeType = NodeUpdateType.FRAME; this.deps = deps; this.make = make;
+    // two taking turns: [0] the scene with its reflections, [1] the reflection kept (rgb) and how much it knows (a), [2] how far the surface is (r) and how near what it reflects (g: one over how far)
+    const mk = () => { const t = new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false, count: 3 }); t.textures[2].format = RGFormat; t.textures[0].name = 'Regen out'; t.textures[1].name = 'Regen history'; t.textures[2].name = 'Regen distance'; t.gsPart = 'reflections'; return t; };
+    this.rt = [mk(), mk()]; this.cur = 0;
+    this.histN = texture(this.rt[1].textures[1]); this.distN = texture(this.rt[1].textures[2]);
+    this.out = passTexture(this, this.rt[0].textures[0]);
+    this.mat = new NodeMaterial(); this.mat.name = 'Regen';
+    this.fresh = true; this.f = 0; this.lastVP = new Matrix4(); this.lastCam = new Vector3();
+  }
+  get renderTarget() { return this.rt[0]; }
+  setSize(w, h) { if (this.rt[0].width !== w || this.rt[0].height !== h) { for (const t of this.rt) t.setSize(w, h); this.fresh = true; } }
+  updateBefore(frame) {
+    const r = frame.renderer, into = this.rt[this.cur], from = this.rt[1 - this.cur];
+    this.histN.value = from.textures[1]; this.distN.value = from.textures[2]; this.out.value = into.textures[0];
+    RRS = RendererUtils.resetRendererState(r, RRS);
+    try { r.setRenderTarget(into); RQ.material = this.mat; RQ.name = 'Regen'; RQ.render(r); } finally { RendererUtils.restoreRendererState(r, RRS); }
+    this.cur = 1 - this.cur;
+  }
+  setup(builder) {
+    // (what this reads is drawn first: the scene's pass, the rays)
+    for (const d of this.deps) d?.build(builder);
+    this.mat.contextNode = context(builder.getSharedContext());
+    const o0 = property('vec4'), o1 = property('vec4'), o2 = property('vec4');
+    this.mat.colorNode = this.make(this, o0, o1, o2); this.mat.outputNode = outputStruct(o0, o1, o2); this.mat.needsUpdate = true;
+    return this.out;
+  }
+  dispose() { super.dispose(); for (const t of this.rt) t.dispose(); this.mat.dispose(); }
+}
+function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
+  const G = ch.trG = new Regen([dT, nT, R, C, rays, vel], (G, o0, o1, o2) => Fn(() => {
+    const q = uv(), c = C.sample(q), r4 = R.sample(q), out = vec3(c.rgb).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
+    const keep = vec4(0).toVar(), far = float(0).toVar(), near = float(0).toVar();
+    If(f0.r.add(f0.g).add(f0.b).greaterThan(1e-3).and(smooth.greaterThan(1 + 1 / 64 - ROUGH_MAX)), () => {
+      const rough = clamp(float(1 + 1 / 64).sub(smooth), 0, 1).toVar(), soft = smoothstep(ROUGH_SHARP, .4, rough).toVar();
+      const vp = getViewPosition(q, dT.sample(q).r, U.invProj).toVar(), zc = vp.z, nv = normalize(nT.sample(q)).toVar(), vd = normalize(vp).negate(), nov = clamp(dot(nv, vd), 0, 1);
+      const wp = U.camWorld.mul(vec4(vp, 1)).xyz.toVar(), nw = normalize(U.camWorld.mul(vec4(nv, 0)).xyz).toVar(), len = length(vp).toVar();
+      // what the material drew there already: its surroundings along the mirror direction (as three.js reads them)
+      const rv = normalize(mix(reflect(vd.negate(), nv), nv, rough.mul(rough).mul(rough).mul(rough))), own = r4.r.add(r4.g).add(r4.b).lessThan(0);
+      const sky = select(own, vec3(0), envAt(normalize(U.camWorld.mul(vec4(rv, 0)).xyz), rough)).toVar();
+      // this frame's rays round the pixel: each by how near to this pixel's middle it started (sharply for a mirror: the
+      // ray that started here is this pixel's own; widely for a rough surface: its neighbours' rays are more of its
+      // cone) and whether it is on this pixel's surface. A ray that found a thing counts as that thing less the sky
+      // drawn there; one that found nothing leaves the sky. And the range they span, for the history
+      const top = ivec2(U.half).sub(1), hp = q.mul(U.half).sub(.5).sub(U.rj).toVar(), b = ivec2(floor(hp.add(1e-3))).toVar();
+      const kk = mix(float(8), float(1.2), soft).toVar();
+      const sum = vec3(0).toVar(), ws = float(0).toVar(), m1 = vec3(0).toVar(), m2 = vec3(0).toVar(), wb = float(0).toVar(), tn = float(-1).toVar(), wt = float(0).toVar(), us = float(0).toVar();
+      const tap = (px, w0) => {
+        const p = clamp(px, ivec2(0), top), s = rays.load(p), z = zAt(vec2(p).add(.5).add(U.rj).div(U.half));
+        const on = max(float(1).sub(abs(z.sub(zc)).div(abs(zc).mul(.04).add(.03))), 0).mul(select(s.a.equal(0), float(0), float(1))).toVar();
+        const val = select(s.a.greaterThan(0), s.rgb.sub(sky), vec3(0)).toVar(), w = w0.mul(on).toVar();
+        sum.addAssign(val.mul(w)); ws.addAssign(w); m1.addAssign(val.mul(on)); m2.addAssign(val.mul(val).mul(on)); wb.addAssign(on);
+        // (how near the things found are: one over how far each ray went, nothing found counting as endlessly far)
+        us.addAssign(select(s.a.greaterThan(0), w.div(max(s.a, 1e-3)), float(0)));
+        If(w.greaterThan(wt), () => { wt.assign(w); tn.assign(s.a); });
+      };
+      // the four nearest (the tests' reference: each pixel's own ray alone)
+      for (const [x, y] of REGEN_TAPS) { const d = vec2(b.add(ivec2(x, y))).sub(hp), d2 = dot(d, d); tap(b.add(ivec2(x, y)), exp(d2.mul(kk).negate()).mul(select(d2.lessThan(.01), float(1), U.ref.oneMinus()))); }
+      // how far behind the surface the reflected thing stands. A mirror: as far as the nearest ray went. A rough
+      // surface: each of its rays went another way and found another thing, so one frame's say little; the nearness
+      // they found is kept from frame to frame with the surface (read back where this point of it was) and this
+      // frame's added to it
+      const ps = U.prevVP.mul(vec4(wp, 1)).toVar(), sq = ps.xy.div(max(abs(ps.w), 1e-6)).mul(vec2(.5, -.5)).add(.5).add(U.jn).toVar();
+      const isRough = rough.greaterThan(ROUGH_SHARP), un = float(0).toVar(), had = float(0).toVar();
+      If(isRough, () => {
+        const k = G.distN.sample(sq);
+        If(sq.x.greaterThanEqual(0).and(sq.x.lessThanEqual(1)).and(sq.y.greaterThanEqual(0)).and(sq.y.lessThanEqual(1)).and(ps.w.greaterThan(0)).and(U.cut.lessThan(.5))
+          .and(abs(k.r.sub(length(wp.sub(U.prevCam)))).lessThan(len.mul(.03).add(.05))), () => { un.assign(k.g); had.assign(1); });
+      });
+      const uc = us.div(max(ws, 1e-5)), u1 = mix(uc, mix(un, uc, .2), had);
+      const tm = min(select(isRough, float(1).div(max(u1, 1e-4)), select(tn.greaterThan(0), tn, L.far)), L.far).toVar();
+      // where the reflection was last frame: the thing seen in a mirror moves over it as if it stood behind it, as far
+      // behind as the ray went (nothing found: very far, so only the camera's turn moves it). A rough surface's
+      // reflection is that mirror picture blurred, so it moves the same way, a little less far behind the rougher it
+      // is (its blur leans toward the surface's facing)
+      const dom = float(1).sub(rough).mul(sqrt(float(1).sub(rough)).add(rough));
+      const te = tm.mul(dom), pv = wp.add(normalize(wp.sub(U.camPos)).mul(te));
+      const pc = U.prevVP.mul(vec4(pv, 1)).toVar(), pq = pc.xy.div(max(abs(pc.w), 1e-6)).mul(vec2(.5, -.5)).add(.5).add(U.jn).toVar();
+      // (how far that is from where the surface itself was, in the rays' pixels: how much rests on how far the rays went)
+      const par = length(pq.sub(sq).mul(U.half));
+      // (a thing that moves by itself, where the scene draws its motion: its own move on top of the camera's)
+      if (vel) {
+        const cam = q.sub(sq), mv = vel.sample(q).xy.mul(vec2(.5, -.5)).sub(U.jd).sub(cam).toVar();
+        If(length(mv.mul(U.half)).greaterThan(.35), () => { pq.subAssign(mv); });
+      }
+      const h = G.histN.sample(pq), hk = G.distN.sample(pq), hl = hk.r;
+      // it counts if that place was on the picture and what was seen there then lies in this pixel's plane
+      const nd = vec2(pq.x.sub(U.jn.x).mul(2).sub(1), float(1).sub(pq.y.sub(U.jn.y).mul(2))), fp = U.prevInv.mul(vec4(nd, 1, 1)), pp = U.prevCam.add(normalize(fp.xyz.div(fp.w).sub(U.prevCam)).mul(hl));
+      const pn = U.proj.mul(U.view.mul(vec4(pp, 1))), there = pn.xy.div(max(abs(pn.w), 1e-6)).mul(vec2(.5, -.5)).add(.5);
+      const ok = pq.x.greaterThanEqual(0).and(pq.x.lessThanEqual(1)).and(pq.y.greaterThanEqual(0)).and(pq.y.lessThanEqual(1)).and(pc.w.greaterThan(0)).and(hl.greaterThan(0))
+        .and(abs(dot(pp.sub(wp), nw)).lessThan(len.mul(.02).add(.03))).and(U.cut.lessThan(.5))
+        // (and is as rough as this pixel: across the line between a polished floor and a dull one the one's reflection is
+        // not the other's. Read from this frame's picture, where that point of the surface is now)
+        .and(abs(float(1 + 1 / 64).sub(abs(R.sample(there).a)).sub(rough)).lessThan(.06));
+      // and what was reflected there then stood about as far behind the surface as what is reflected here now (at the
+      // edge of a thing in a mirror the one side's history is not the other's)
+      const cn = select(isRough, u1, float(1).div(tm)), same = float(1).sub(smoothstep(mix(float(.25), float(.42), soft), mix(float(.6), float(.84), soft), abs(hk.g.sub(cn)).div(max(max(hk.g, cn), 1e-3))));
+      // (only where the picture moves: with nothing moving the history is this pixel's own, and at an edge in a
+      // mirror its rays find the one side and the other in turn, which is what smooths the edge)
+      const went = length(pq.sub(q).mul(U.half)).toVar(), moved = clamp(went.mul(2), 0, 1);
+      const wh = select(ok, h.a.mul(mix(float(1), same, moved)), float(0)).toVar();
+      // a rough surface: more of this frame's rays from round the pixel, over a circle as wide as its blur is at the
+      // reflected thing's distance while little is gathered (just uncovered, a cut) and narrower as the frames fill
+      // in (their rays' own spread is the blur then), turned another way each frame
+      If(isRough.and(U.ref.lessThan(.5)), () => {
+        const rad = clamp(rough.mul(rough).mul(1.3).mul(tm.div(tm.add(len))).mul(U.focal).mul(mix(float(1), float(.45), clamp(wh.div(8), 0, 1))), 1.5, 14), ang = interleavedGradientNoise(screenCoordinate.xy).add(U.turn.x).mul(6.2832), cs = cos(ang), sn = sin(ang);
+        for (const [x, y] of REGEN_DISC) tap(ivec2(floor(hp.add(.5).add(vec2(cs.mul(x).sub(sn.mul(y)), sn.mul(x).add(cs.mul(y))).mul(rad)))), float(.5));
+      });
+      const ua = us.div(max(ws, 1e-5));
+      near.assign(select(isRough, mix(ua, mix(un, ua, .2), had), float(1).div(tm)));
+      const cur = sum.div(max(ws, 1e-5)), mean = m1.div(max(wb, 1e-5)), dev = sqrt(max(m2.div(max(wb, 1e-5)).sub(mean.mul(mean)), 0));
+      // the history held to this frame's range (a mirror's closely: what changed in it doesn't linger; a rough one's
+      // loosely: one frame's rays are a noisy few of the cone; less loosely while the picture moves), then the two blended by how much each knows
+      const box = dev.mul(mix(float(1.5), mix(float(3), float(1.25), moved), soft)).add(.02).add(U.ref.mul(1e4)), hc = clamp(h.rgb, mean.sub(box), mean.add(box));
+      // (less is kept the more rests on how far the rays went, and the faster the picture moves: what lags shows then,
+      // and noise doesn't)
+      const most = mix(mix(float(6), float(48).div(par.mul(.35).add(went.mul(.2)).add(1)), soft), float(1e4), U.ref), a = select(ws.add(wh).greaterThan(1e-4), ws.div(max(ws.add(wh), 1e-4)), float(1));
+      const d = mix(hc, cur, select(ws.greaterThan(1e-5), a, float(0))).toVar();
+      keep.assign(vec4(d, min(wh.add(ws), most))); far.assign(len);
+      const fab = DFGLUT({ roughness: rough, dotNV: nov }), W = f0.mul(fab.x).add(fab.y);
+      const fade = smoothstep(ROUGH_MAX, ROUGH_FADE, rough).mul(select(own, float(.6), float(1)));
+      out.addAssign(W.mul(d).mul(fade));
+    });
+    o0.assign(vec4(max(out, 0), c.a)); o1.assign(keep); o2.assign(vec4(far, near, 0, 1));
+    return float(0);
+  })());
+  ch.trT = G; return G.out;
+}
+
 /** This frame's sizes and camera for the stage (w x h: the scene's picture; scale: the rays' share of it). */
-export function traceFrame(ch, w, h, scale) {
+const halton = (i, b) => { let f = 1, r = 0; for (; i > 0; i = Math.floor(i / b)) { f /= b; r += f * (i % b); } return r; };
+const VPN = new Matrix4();
+/**
+ * This frame's sizes and camera for the stage (w x h: the scene's picture; scale: the rays' share of it).
+ * Ray Regeneration also takes more: cut (nothing from earlier frames belongs to this one), f (the upscaler's frame,
+ * sgsr2.js SgsrFrame, while it has its jitter on the camera; or nothing), ref (the tests' reference: a ray for every pixel
+ * of the picture, every frame added to the ones before with no end).
+ */
+export function traceFrame(ch, w, h, scale, { cut = false, f = null, ref = false } = {}) {
   if (!ch.trT) return;
   ch.trT.renderTarget.gsPart = 'reflections'; if (ch.trH) ch.trH.renderTarget.gsPart = 'reflections';   // (hd3d.js gpuTime: the chip's time by pass)
+  const G = ch.trG; if (G && ref) scale = 1;
   const U = ch.trU, cam = ch.cam, hw = Math.max(4, Math.round(w * scale)), hh = Math.max(4, Math.round(h * scale));
   ch.trT.setSize(w, h); ch.trH?.setSize(hw, hh); U.half.value.set(hw, hh);
   U.invProj.value.copy(cam.projectionMatrixInverse); U.proj.value.copy(cam.projectionMatrix); U.camWorld.value.copy(cam.matrixWorld); U.view.value.copy(cam.matrixWorld).invert();
   cam.getWorldPosition(U.camPos.value); U.nf.value.set(cam.near, cam.far); U.focal.value = cam.projectionMatrix.elements[5] * hh / 2;
+  if (G) {
+    // the camera without the upscaler's jitter, this frame and last (the history is read on the pixel grid: a still
+    // picture is then read where it was written, not a fraction of a pixel off and softer every frame)
+    VPN.multiplyMatrices(f ? f.saved : cam.projectionMatrix, cam.matrixWorldInverse);
+    const key = `${hw}x${hh}|${ref}`, fresh = cut || G.fresh || key !== G.key; G.key = key; G.fresh = false;
+    U.prevVP.value.copy(fresh ? VPN : G.lastVP); U.prevCam.value.copy(fresh ? U.camPos.value : G.lastCam); U.prevInv.value.copy(U.prevVP.value).invert();
+    G.lastVP.copy(VPN); G.lastCam.copy(U.camPos.value);
+    U.cut.value = fresh ? 1 : 0; U.ref.value = ref ? 1 : 0; G.f = fresh ? 0 : G.f + 1;
+    if (f) U.jn.value.set(f.jitter.x / w, f.jitter.y / h); else U.jn.value.set(0, 0);
+    if (f && f.jd && !fresh) U.jd.value.set(f.jd[0] * .5, -f.jd[1] * .5); else U.jd.value.set(0, 0);
+    // where the rays start inside their pixels: over the scene's pixels each covers, another every frame (at half size
+    // the four in turn; else points of a Halton sequence); none with a ray for every pixel
+    const n = G.f, per = w / hw;
+    if (per < 1.05) U.rj.value.set(0, 0);
+    else if (Math.abs(per - 2) < .05) { const k = [[-.25, -.25], [.25, .25], [.25, -.25], [-.25, .25]][n % 4]; U.rj.value.set(k[0], k[1]); }
+    else U.rj.value.set(halton(n % 8 + 1, 2) - .5, halton(n % 8 + 1, 3) - .5);
+    U.turn.value.set(n * .6180339887 % 1, n * .7548776662 % 1);
+  }
   const e = ch.scene.environment; if (e) for (const n of ch.trEnvs || []) if (n.value !== e) n.value = e;
 }
-export function traceDispose(ch) { ch.trH?.renderTarget?.dispose(); ch.trT?.renderTarget?.dispose(); ch.trH = ch.trT = ch.trU = ch.trEnvs = null; }
+export function traceDispose(ch) { ch.trH?.renderTarget?.dispose(); if (ch.trG) ch.trG.dispose(); else ch.trT?.renderTarget?.dispose(); ch.trH = ch.trT = ch.trG = ch.trU = ch.trEnvs = null; }

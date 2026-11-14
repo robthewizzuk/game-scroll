@@ -466,8 +466,15 @@ export const HD = {
    * reflections then, as on every other phone. traceTris: triangles the traced copy of the level's still things
    * may hold (bigger meshes are simplified to fit). HD.info.trace says what it holds while it draws.
    * traceShow (tests): true draws the traced copy itself, lit as reflections light it, in place of the picture.
+   * regen (Ray Regeneration, hd3d-gpu-trace.js regenStage): the traced picture made at the picture's full size from
+   * the rays of this frame and the frames before (rays that start elsewhere in their pixels each frame, a rough
+   * surface's sent one way of its cone a frame, each pixel's reflection kept and found again where it was). null or
+   * true: on with ray traced reflections; false: the rays laid over the picture with a blur, as they were.
+   * traceScale: the rays' share of the picture's size each way (0: a half, a quarter of the pixels; .35 is half as
+   * many rays again). regenRef (tests): a number draws the truth to hold the others against, a ray for every pixel
+   * and every frame added to the ones before (another number starts it again).
    */
-  traced: null, traceTris: 3e5, traceShow: false,
+  traced: null, traceTris: 3e5, traceShow: false, regen: null, regenRef: false, traceScale: 0,
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -2967,7 +2974,9 @@ export class HDView {
       if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) tr = this._tracer;
       if (pm >= 0) leave(pm);
     } else if (this._tracer) { this._tracer.dispose(); this._tracer = null; }
-    if (tr) (this._traceRefl ||= { scale: .5, traced: null }).traced = tr;
+    // (Ray Regeneration, HD.regen: the rays rebuilt at the picture's size from the frames before; HD.regenRef, tests: the
+    // reference, a ray for every pixel and every frame kept)
+    if (tr) { const t = this._traceRefl ||= { scale: .5, traced: null, regen: true, ref: false }; t.traced = tr; t.regen = HD.regen !== false; t.ref = t.regen ? HD.regenRef || 0 : 0; t.scale = HD.traceScale || .5; }
     o.refl = wantRefl ? (tr ? this._traceRefl : T.ssr ? REFL_FULL : REFL_HALF) : null;
     HD.info.trace = tr ? tr.info : null; HD.info.refl = o.refl ? (tr ? 'traced' : 'screen') : '';
     // SGSR 2 smooths every edge from its history (also at full size, where it is the anti-aliasing), and the
