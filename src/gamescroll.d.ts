@@ -1062,6 +1062,8 @@ export interface VoxelWorld {
   ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number, o?: { solidOnly?: boolean }): { x: number; y: number; z: number; id: number; nx: number; ny: number; nz: number; dist: number } | null;
   move(box: { x: number; y: number; z: number; w?: number; h?: number; d?: number }, dx: number, dy: number, dz: number, o?: { step?: number }): { x: boolean; y: boolean; z: boolean; ground: boolean; inWater: boolean };
   pack(): string; unpack(text: string): this; dispose(): void;
+  /** The blocks solid in a gs.physics3d World3D (a chunk's ground made again when it changes; water and glass stay open); null takes them out. */
+  physics(world: Loose | null): this;
 }
 export interface VoxelsPart {
   Voxels: new (o?: { size?: [number, number, number]; chunk?: number; scale?: number; shadows?: boolean; worker?: boolean; rough?: number }) => VoxelWorld;
@@ -1463,6 +1465,10 @@ export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; 
     max: number; n: number;
     emit(count: number, burst?: { at?: number[] | Loose; radius?: number; vel?: number[] | Loose; spread?: number; life?: number | [number, number]; size?: number | [number, number]; color?: Loose; to?: Loose; alpha?: number; fadeIn?: boolean; ease?: number }): Loose;
     update(dt: number): void; clear(): void; dispose(): void;
+    /** Draws them to a point (strength m/s² at 1 m, falling as 1/d² beyond and to nothing at radius), pushes them away (strength < 0) or swirls them round axis (swirl; give them drag to spiral in); those within take are gone. Change its fields each frame; null past 8. */
+    pull(at: number[] | Loose, o?: { strength?: number; radius?: number; swirl?: number; axis?: number[] | Loose; take?: number }): { at: number[] | Loose; strength: number; radius: number; swirl: number; axis: number[] | Loose; take: number; remove(): void } | null;
+    /** Moves them with a flow: fn(x, y, z) is the air's or water's velocity there, sampled into 16 x 16 x 16 cells over box ({ min, max } or a Box3); inside it they take it up at strength a second. update() samples again; one flow at a time. */
+    flow(fn: (x: number, y: number, z: number) => number[] | { x: number; y: number; z: number }, o?: { box?: { min: number[] | Loose; max: number[] | Loose }; strength?: number }): { strength: number; update(): Loose; remove(): void };
   };
   sun: Loose; spot: Loose; THREE: Loose;
   /** A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. */
@@ -2150,7 +2156,7 @@ export interface FlowPart {
   Streams: new (o?: { space?: '2d' | '3d' }) => On<Loose> & {
     list: Loose[]; river(path: Loose, o?: FlowOptions): FlowStream; pool(at: { x: number; y?: number; z?: number }, r: number, o?: FlowOptions & { w?: number; h?: number; spin?: number; pull?: number }): Loose;
     whirl(at: { x: number; y?: number; z?: number }, r: number, spin?: number, pull?: number, o?: FlowOptions): Loose; remove(s: Loose): Loose;
-    at(p: { x: number; y?: number; z?: number }): FlowHere; carry(obj: { x: number; y: number; z?: number }, dt: number, o?: { drag?: number }): FlowHere; hurt(obj: Loose, dt: number): number;
+    at(p: { x: number; y?: number; z?: number }): FlowHere; carry(obj: { x: number; y: number; z?: number } | Loose, dt: number, o?: { drag?: number }): FlowHere; hurt(obj: Loose, dt: number): number;
   };
   /** Shallow water that floods: spreads, runs downhill, fills hollows. */
   Flood: new (o?: { size?: number; cells?: number; x?: number; z?: number; y?: number | null; ground?: (x: number, z: number) => number; edges?: 'wall' | 'drain'; damp?: number; rate?: number }) => FloodPart;
@@ -2249,14 +2255,25 @@ interface WheelsBase {
   kick(seconds?: number): WheelsBase;
 }
 type WheelsOpts = { top?: number; reverse?: number; accel?: number; brakes?: number; roll?: number; turn?: number; grip?: number; driftGrip?: number; boostAfter?: number; boost?: number; boostTime?: number };
-export interface Car extends WheelsBase { x: number; y: number; angle: number; vx: number; vy: number; update(dt: number, input?: DriveInput): Car; bump(nx?: number, ny?: number, o?: { keep?: number }): Car; point(forward: number, right?: number): XY }
+export interface Car extends WheelsBase {
+  x: number; y: number; angle: number; vx: number; vy: number;
+  /** In a physics world: what it ran into this frame (a wall, a car; not the cones it shoves), else null. thing: its body there. */
+  crash: { thing: Loose; nx: number; ny: number; speed: number } | null; thing?: Loose;
+  update(dt: number, input?: DriveInput): Car; bump(nx?: number, ny?: number, o?: { keep?: number }): Car; point(forward: number, right?: number): XY;
+}
 export interface Kart extends WheelsBase {
   x: number; y: number; z: number; heading: number; vx: number; vy: number; vz: number; onGround: boolean; lean: number; pitch: number; airTime: number; landed: boolean; fell: boolean; impact?: number;
+  /** In a World3D: what it ran into this frame ({ thing, normal, point, speed }) or null; rider: its body there (a World3D rider). */
+  crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
   hop(): Kart; update(dt: number, input?: DriveInput, ground?: ((x: number, z: number) => number | null) | null): Kart; bump(nx?: number, nz?: number, o?: { keep?: number }): Kart; place(obj: Loose): Kart;
+  /** Puts it straight at x, y, z (its underside), turned to heading, with nothing in between. */
+  moveTo(x: number, y: number, z: number, heading?: number): Kart;
 }
 export interface VehiclesPart {
-  Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number }) => Car;
-  Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number }) => Kart;
+  /** world: a gs.physics Physics with no gravity (top-down) to drive in, solid; size: [length, width]; mass (kg: how hard it shoves). */
+  Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; world?: Loose; size?: [number, number]; mass?: number }) => Car;
+  /** world: a gs.physics3d World3D to drive in, solid; size: [width, height, length] (metres); clear: the gap under it (kerbs and ramp lips lower pass under); fall: the y it counts as fallen out. */
+  Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; world?: Loose; size?: [number, number, number]; clear?: number; fall?: number }) => Kart;
   Laps: new (points: Pt[], o?: { radius?: number; laps?: number }) => {
     points: Pt[]; laps: number; racers: Loose[]; join<T>(r: T): T; update<T>(r: T): T; places<T = Loose>(): T[]; aim(r: Loose, ahead?: number): { x: number; y: number; angle: number };
   };
@@ -2352,13 +2369,18 @@ export interface Health {
 }
 export interface CombatPart {
   Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number }) => Gun;
-  Shots: new (o?: { gravity?: number }) => { list: Loose[]; add(s: Shot, extra?: Loose): Loose; update(dt: number, hits: (shot: Loose, from: P3, to: P3) => Loose): Loose[] };
-  arc(from: P3, vel: P3, gravity?: number, o?: { steps?: number; dt?: number; ground?: (p: P3) => boolean }): P3[];
+  /** push: how hard a hit shoves a loose body (kg metres a second) when update is given a physics world. */
+  Shots: new (o?: { gravity?: number; push?: number }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
+    /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter). */
+    update(dt: number, hits: ((from: P3, to: P3, shot: Loose) => Loose) | Loose): { shot: Loose; hit: Loose; at: P3 }[] };
+  /** ground: (p) => true under the floor, or a physics world (World3D or 2D Physics): the arc stops where it first meets anything there (the last point has .hit); not: a body it passes. */
+  arc(from: P3, vel: P3, gravity?: number, o?: { steps?: number; dt?: number; ground?: ((p: P3) => boolean) | Loose; not?: Loose }): (P3 & { hit?: Loose })[];
   lob(from: P3, to: P3, time?: number, gravity?: number): P3;
   Health: new (o?: { max?: number; regen?: number; delay?: number; armour?: number; maxArmour?: number; absorb?: number; downed?: boolean; bleed?: number }) => Health;
   hitFrom(from: P3, at: P3, facing?: number): number;
   Markers: new () => { list: Loose[]; add(head?: boolean, kill?: boolean): Loose; update(dt: number): Loose; readonly showing: boolean };
-  Explosives: new (o?: { fuse?: number; radius?: number; damage?: number }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
+  /** world: a World3D or 2D Physics: each blast throws what is near it (b.push), and a barrel added with body: goes where its body goes and goes off when knocked harder than knock (m/s; 2D game units/s). */
+  Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose; knock?: number }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
 export interface TacticsPart {
@@ -2429,9 +2451,12 @@ export interface StealthPart {
 }
 type Pt2 = { x: number; y: number };
 export interface GadgetsPart {
-  Grapple: new (o?: { range?: number; reel?: number; swing?: boolean; flyTime?: number; min?: number }) => {
+  /** mass: the user's (kg): hooked onto a loose body in a World3D, the pull is shared by mass (a light crate comes to you, you go to a truck). */
+  Grapple: new (o?: { range?: number; reel?: number; swing?: boolean; flyTime?: number; min?: number; mass?: number }) => {
     attached: boolean; flying: number; point: P3 | null; length: number; arrived?: boolean; miss: { from: P3; to: P3 } | null;
-    fire(from: P3, dir: P3, ray: (from: P3, dir: P3, max: number) => { point: P3 } | null): boolean; update(dt: number, pos: P3, vel: P3, o?: { reel?: boolean }): P3; release(): Loose;
+    /** The body it hooked in a World3D (null for still things). */ thing: Loose | null;
+    /** ray: your own (from, dir, max) => { point } | null, or a World3D (not: the user's own body, which it passes). */
+    fire(from: P3, dir: P3, ray: ((from: P3, dir: P3, max: number) => { point: P3 } | null) | Loose, not?: Loose): boolean; update(dt: number, pos: P3, vel: P3, o?: { reel?: boolean }): P3; release(): Loose;
   };
   Zipline: new (a: P3, b: P3, o?: { gravity?: number; drag?: number; grab?: number; hang?: number }) => { riding: boolean; done?: boolean; t: number; speed: number; near(p: P3, handsUp?: number): boolean; ride(p?: P3 | null, speed?: number): Loose; update(dt: number): Loose; closest(p: P3): { t: number; point: P3; d: number }; readonly hands: P3; readonly pos: P3; readonly vel: P3 };
   Wires: new (cols?: number, rows?: number, o?: { seed?: number }) => { cols: number; rows: number; cells: number[]; moves: number; readonly solved: boolean; get(c: number, r: number): number; turn(c: number, r: number): Loose; lit(c: number, r: number): boolean };
@@ -2820,7 +2845,8 @@ export interface PosesPart {
 }
 export interface DestructionPart {
   shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; world?: Loose; push?: number; seed?: number; density?: number; radius?: number }): Loose[];
-  slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose }): Loose[];
+  /** world: a World3D: both halves become bodies going on as the mesh did (its own body there is given up); apart: m/s they part along the cut. */
+  slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose; world?: Loose; apart?: number; density?: number }): Loose[];
   Rubble: new (scene?: Loose, o?: { max?: number; life?: number; shrink?: number }) => { add(pieces: Loose | Loose[]): Loose; update(dt: number): Loose; clear(): Loose; readonly count: number };
   /**
    * A building that comes apart (Next Gen). It is made of pieces, and each knows what holds it up: shoot one away or set off a
@@ -2969,6 +2995,13 @@ export interface PropsPart {
     move(name: string, id: number, x: number, y: number, z: number): Loose; remove(name: string, id: number): Loose; hide(name: string, id: number, hidden?: boolean): Loose;
     scatter(name: string, count: number, area: { x0: number; z0: number; x1: number; z1: number } | ((rnd: () => number) => { x: number; z: number }), o?: { gap?: number; seed?: number; y?: (x: number, z: number) => number; keepOut?: (x: number, z: number) => boolean; scale?: [number, number]; spin?: boolean }): number[];
     done(o?: { margin?: number }): Loose; near(name: string, p: P3, r: number): { id: number; x: number; y: number; z: number; d: number }[]; count(name?: string): number; clear(): Loose;
+    /**
+     * Makes a kind's copies solid in a World3D: shape 'box' (bounds), 'trunk' (an upright pole r thick: trees, posts), 'ball', 'hull'. Still copies
+     * are one fixed body (a ray's hit.part is { props, kind, id }); loose: true makes each a body of its own that falls and is knocked over,
+     * drawn where its body is. Returns the body, or a Map of id to body.
+     */
+    solid(world: Loose, name: string, o?: { shape?: 'box' | 'trunk' | 'ball' | 'hull'; r?: number | null; loose?: boolean; density?: number; tag?: string; sound?: string; friction?: number; bounce?: number }): Loose;
+    unsolid(name: string): Loose;
   };
   Areas: new (o?: { depth?: number }) => { current: string | null; add(name: string, object: Loose, box?: Loose): Loose; link(a: string, b: string): Loose; at(p: P3): string | null; update(p: P3): Loose; readonly shown: string[] };
   Chunks: new (scene: Loose, o: { size?: number; radius?: number; make: (cx: number, cz: number) => Loose; drop?: (o: Loose, cx: number, cz: number) => void; perFrame?: number }) => { update(p: P3): Loose; ready(p: P3): boolean; clear(): Loose; readonly count: number };
@@ -3273,7 +3306,7 @@ export interface OutdoorsPart {
    * Make it and its pieces in make() (a piece added later starts as made); clear() in reset(); update(dt) each frame. wind: a gs.outdoors Wind (gusts
    * where each piece is) or { x, z } metres a second (3 along x without one); ground: a height or (x, z) => height; steps: small steps a frame (4).
    */
-  Cloth: new (view: Loose | null, o?: { wind?: WindPart | { x?: number; y?: number; z?: number } | null; fine?: number; ground?: number | ((x: number, z: number) => number) | null; rough?: number; steps?: number }) => ClothPart;
+  Cloth: new (view: Loose | null, o?: { wind?: WindPart | { x?: number; y?: number; z?: number } | null; fine?: number; ground?: number | ((x: number, z: number) => number) | null; rough?: number; steps?: number; /** a World3D: its bodies near the cloth are solids it goes round by themselves */ world?: Loose }) => ClothPart;
   /** One wind for a world: grass (land.wind), leaves, rain, particles, cloud shadows; at(x, z) for bullets and flags (and gs.outdoors.Cloth). */
   Wind: new (o?: { x?: number; z?: number; gust?: number; gustSize?: number; sway?: number; grass?: number }) => WindPart;
   /** Far stand-in for a tree: crossed cards with baked pictures of it (null without 3D). Use as a props lod level: [dist, imp.geometry, imp.material]. */
@@ -3513,25 +3546,30 @@ export interface CityWorld {
   /** Building boxes for occlusion culling (optionally only those within r of near). */
   occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[];
   walls(): Loose[];
-  /** Buildings and kerbs solid in a gs.physics3d World3D. */
-  solid(world: Loose): CityWorld;
+  /**
+   * The city solid in a gs.physics3d World3D: buildings and kerbs, street furniture (trunks, posts, benches, bins, roof tanks), parked cars,
+   * and bodies for the nearest `cars` and `people` that move with them (refreshed in update()): a car hit hard stops a moment and a
+   * person hit falls over by themselves. A hit body's .car or .person says which.
+   */
+  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityWorld;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water', string>> }): void;
   mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
   dispose(): void;
 }
 export interface CraftPart {
   /** Arcade-true flight. Events this frame in events[]: 'stall', 'land', 'touch', 'crash', 'takeoff'. */
-  Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number]; assist?: number; grip?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; gear?: number; crashSpeed?: number }) => {
-    pos: P3; vel: P3; quat: Loose; throttle: number; stalled: boolean; onGround: boolean; crashed: boolean; events: string[];
+  Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number]; assist?: number; grip?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; gear?: number; crashSpeed?: number; /** a World3D to fly in, solid: it lands on what is there and crashes into it */ world?: Loose; size?: [number, number, number] }) => {
+    pos: P3; vel: P3; quat: Loose; throttle: number; stalled: boolean; onGround: boolean; crashed: boolean; events: string[]; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
     readonly forward: P3; readonly up: P3; readonly right: P3; readonly speed: number; readonly altitude: number; readonly heading: number; readonly pitch: number; readonly bank: number;
     update(dt: number, i?: { throttle?: number; pitch?: number; roll?: number; yaw?: number; brake?: boolean }): Loose; reset(at: P3, heading?: number, speed?: number): Loose;
   };
-  Boat: new (water: { height(x: number, z: number): number; normal(x: number, z: number): P3 }, o?: { at?: P3; heading?: number; power?: number; top?: number; turn?: number; drift?: number; drag?: number; length?: number; width?: number; draft?: number }) => {
-    x: number; y: number; z: number; heading: number; vx: number; vz: number; quat: Loose; wake: Loose[]; air: number; readonly pos: P3; readonly speed: number; readonly forward: P3;
+  /** water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); world: a World3D, solid: it shoves floating crates and stops at docks; height: its hull's (m). */
+  Boat: new (water: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose }, o?: { at?: P3; heading?: number; power?: number; top?: number; turn?: number; drift?: number; drag?: number; length?: number; width?: number; draft?: number; world?: Loose; height?: number }) => {
+    x: number; y: number; z: number; heading: number; vx: number; vz: number; quat: Loose; wake: Loose[]; air: number; readonly pos: P3; readonly speed: number; readonly forward: P3; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
     update(dt: number, i?: { throttle?: number; steer?: number }): Loose;
   };
-  Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null }) => {
-    pos: P3; vel: P3; heading: number; quat: Loose; onGround: boolean; readonly speed: number; update(dt: number, i?: { x?: number; y?: number; up?: number; yaw?: number }): Loose;
+  Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; /** a World3D, solid */ world?: Loose; size?: [number, number, number] }) => {
+    pos: P3; vel: P3; heading: number; quat: Loose; onGround: boolean; readonly speed: number; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose; update(dt: number, i?: { x?: number; y?: number; up?: number; yaw?: number }): Loose;
   };
   /** Makes a physics3d body float on Water (or anything with height(x, z)). */
   Floater: new (body: Loose, water: Loose, o?: { size?: [number, number, number]; points?: P3[]; float?: number; drag?: number; spinDrag?: number; gravity?: number }) => { under: number; update(dt: number): Loose };
@@ -3539,7 +3577,8 @@ export interface CraftPart {
 export interface SoftPoint { x: number; y: number; z: number; px: number; py: number; pz: number; pinned: boolean; mass: number; r: number }
 export interface SoftBody { points: SoftPoint[]; sticks: Loose[]; [k: string]: Loose }
 export interface SoftPart {
-  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number }) => On<Loose> & {
+  /** world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. */
+  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; world?: Loose; weight?: number }) => On<Loose> & {
     points: SoftPoint[]; sticks: Loose[]; bodies: SoftBody[]; solids: Loose[];
     point(x: number, y: number, z?: number, o?: { pinned?: boolean; mass?: number; r?: number }): SoftPoint;
     stick(a: SoftPoint, b: SoftPoint, o?: { stiff?: number; len?: number | null; tear?: number; slack?: boolean }): Loose;
@@ -3552,7 +3591,7 @@ export interface SoftPart {
     centre(body: SoftBody): P3; toGeometry(body: SoftBody, geometry: Loose): Loose;
   };
   /** A simple 2D liquid (particles that pool and splash). */
-  Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: number; bounce?: number }) => {
+  Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: number; bounce?: number; /** a 2D gs.physics world the drops stay out of */ world?: Loose; /** kg a drop: pushes loose things (floats a ball) */ weight?: number }) => {
     list: { x: number; y: number; vx: number; vy: number }[]; solids: Loose[];
     add(x: number, y: number, vx?: number, vy?: number): Loose; pour(x: number, y: number, n?: number, spread?: number, vx?: number, vy?: number): Loose;
     circle(x: number, y: number, r: number): Loose; box(x: number, y: number, w: number, h: number): Loose; near(x: number, y: number, r: number): Loose[]; count(test?: (p: Loose) => boolean): number; update(dt: number): Loose;

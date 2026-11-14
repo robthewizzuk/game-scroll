@@ -108,38 +108,69 @@ export class Gun {
   load(d) { if (d) { this.ammo = d.a; this.reserve = d.r < 0 ? Infinity : d.r; } return this; }
 }
 
-/** Flying shots (rockets, arrows, plasma): add shots from Gun.pull with speed, update moves them, hits come back. */
+/**
+ * Flying shots (rockets, arrows, plasma): add shots from Gun.pull with speed, update moves them, hits come back.
+ * gravity: pull on them (arrows drop); push: how hard a hit shoves a loose body (kg metres a second: a rifle round
+ * about 4, a rocket 300) when update is given a physics world.
+ */
 export class Shots {
-  constructor({ gravity = 0 } = {}) { this.list = []; this.gravity = gravity; }
+  constructor({ gravity = 0, push = 0 } = {}) { this.list = []; this.gravity = gravity; this.push = push; }
+  /** extra: anything to keep on the shot (who fired it; not: their body in the physics world, which the shot passes). */
   add(s, extra = {}) { const v = { x: s.dir.x * s.speed, y: s.dir.y * s.speed, z: (s.dir.z || 0) * s.speed }; this.list.push({ ...extra, x: s.from.x, y: s.from.y, z: s.from.z || 0, v, left: s.range / Math.max(1, s.speed), shot: s }); return this; }
   /**
-   * Moves every shot. hits(from, to, shot) => what it hit (or null): give it your ray test. Returns
-   * [{ shot, hit, at }] for shots that hit this frame (they are removed).
+   * Moves every shot. hits(from, to, shot) => what it hit (or null): give it your ray test, or a physics world
+   * (a gs.physics3d World3D, or gs.physics' 2D Physics): each shot is then traced against everything in it, hits
+   * stop where they met it ({ thing, point, normal }) and shove what they hit. Returns [{ shot, hit, at }] for
+   * shots that hit this frame (they are removed).
    */
   update(dt, hits) {
-    const out = [];
+    const out = [], test = typeof hits === 'function' ? hits : hits?.ray ? traced(hits, this) : null;
     for (const p of this.list) {
       const from = { x: p.x, y: p.y, z: p.z };
       p.v.y += this.gravity * dt; p.x += p.v.x * dt; p.y += p.v.y * dt; p.z += p.v.z * dt; p.left -= dt;
-      const h = hits ? hits(from, { x: p.x, y: p.y, z: p.z }, p) : null;
-      if (h) { p.dead = true; out.push({ shot: p, hit: h, at: { x: p.x, y: p.y, z: p.z } }); } else if (p.left <= 0) p.dead = true;
+      const h = test ? test(from, { x: p.x, y: p.y, z: p.z }, p) : null;
+      if (h) { p.dead = true; const at = h.point ? { x: h.point.x, y: h.point.y, z: h.point.z ?? 0 } : { x: p.x, y: p.y, z: p.z }; out.push({ shot: p, hit: h, at }); } else if (p.left <= 0) p.dead = true;
     }
     this.list = this.list.filter(p => !p.dead);
     return out;
   }
 }
+// a ray test from a physics world for Shots: the first thing along each shot's path this frame (not the shooter's own
+// body), shoved along the shot. 3D: World3D.ray; 2D: Physics.ray(x1, y1, x2, y2), whose hits come back with a point.
+function traced(world, shots) {
+  const flat = world.ray.length >= 4;
+  return (a, b, p) => {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = (b.z || 0) - (a.z || 0), l = Math.hypot(dx, dy, dz); if (!l) return null;
+    const keep = t => t !== p.not && !t.collider?.isSensor?.();
+    const h = flat ? world.ray(a.x, a.y, b.x, b.y, keep) : world.ray(a, { x: dx, y: dy, z: dz }, l, keep);
+    if (!h) return null;
+    if (flat) h.point = { x: h.x, y: h.y, z: 0 };
+    const t = h.thing, k = (p.push ?? shots.push) / l;
+    if (k > 0 && t?.body && !t.fixed && !t.body.isKinematic()) {
+      if (flat) { const v = world.scale / t.body.mass(); t.push(dx * k * v, dy * k * v, h.x, h.y); }   // (kg m/s to game units a second)
+      else t.body.applyImpulseAtPoint({ x: dx * k, y: dy * k, z: dz * k }, world.inner(h.point), true);
+    }
+    return h;
+  };
+}
 
 /**
  * Where a thrown thing goes: points along the arc from `from` with velocity `vel` under gravity (a
  * number on y; negative is down in 3D, positive is down in 2D screen games). Stops when ground(p)
- * says it's under the floor. For the aim line before a throw and for grenades.
+ * says it's under the floor, or, with a physics world as ground (a gs.physics3d World3D or 2D Physics),
+ * where the arc first meets anything in it (a wall, a crate, the floor): the last point is there.
+ * For the aim line before a throw and for grenades.
  */
-export function arc(from, vel, gravity = -20, { steps = 40, dt = 1 / 20, ground = null } = {}) {
+export function arc(from, vel, gravity = -20, { steps = 40, dt = 1 / 20, ground = null, not = null } = {}) {
   const pts = []; let p = { x: from.x, y: from.y, z: from.z || 0 }, v = { x: vel.x, y: vel.y, z: vel.z || 0 };
+  const world = ground && typeof ground !== 'function' && ground.ray ? ground : null, flat = world && world.ray.length >= 4, keep = t => t !== not && !t.collider?.isSensor?.();
   for (let i = 0; i < steps; i++) {
     pts.push({ ...p });
     v = { ...v, y: v.y + gravity * dt }; const n = { x: p.x + v.x * dt, y: p.y + v.y * dt, z: p.z + v.z * dt };
-    if (ground && ground(n)) { pts.push(n); break; }
+    if (world) {
+      const d = { x: n.x - p.x, y: n.y - p.y, z: n.z - p.z }, l = Math.hypot(d.x, d.y, d.z), h = !l ? null : flat ? world.ray(p.x, p.y, n.x, n.y, keep) : world.ray(p, d, l, keep);
+      if (h) { pts.push(flat ? { x: h.x, y: h.y, z: 0, hit: h } : { ...h.point, hit: h }); break; }
+    } else if (ground && ground(n)) { pts.push(n); break; }
     p = n;
   }
   return pts;
@@ -210,11 +241,19 @@ export class Markers {
 /**
  * Explosive barrels, mines and gas tanks that set each other off. add({ x, y, z?, radius, damage,
  * fuse }) each one; boom(thing) sets one off now; update(dt) runs the chain: anything within a blast's
- * radius goes off after its own fuse. on('boom', b => ...) is your cue for effects, physics pushes
- * (World3D.blast / Physics.blast) and damage: b.hurt(p) gives damage at a point (less further out).
+ * radius goes off after its own fuse. on('boom', b => ...) is your cue for effects and damage: b.hurt(p)
+ * gives damage at a point (less further out).
+ * world: a gs.physics3d World3D or 2D Physics: each blast throws what is near it (b.push: how hard, metres a
+ * second at the middle, 3 x its radius by default; in 2D game units a second, 600 by default), a barrel added with body: (its body there) goes where the body
+ * goes and is set off by a knock harder than `knock` metres a second (9; 300 game units a second in 2D: a fall,
+ * a car, a crate thrown at it).
  */
 export class Explosives {
-  constructor({ fuse = .25, radius = 4, damage = 80 } = {}) { this.list = []; this.handlers = {}; this.d = { fuse, radius, damage }; }
+  constructor({ fuse = .25, radius = 4, damage = 80, world = null, knock = null } = {}) {
+    this.list = []; this.handlers = {}; this.d = { fuse, radius, damage }; this.world = world;
+    knock ??= world?.ray?.length >= 4 ? 300 : 9;   // (2D: game units a second)
+    if (world?.onHit) world.onHit((a, b, speed) => { if (speed < knock) return; for (const x of this.list) if (!x.gone && (x.body === a || x.body === b)) this.light(x); });
+  }
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
   add(o) { const b = { ...this.d, ...o, lit: -1, gone: false }; this.list.push(b); return b; }
   /** Lights one (it goes off after its fuse, or at once with now). */
@@ -223,11 +262,13 @@ export class Explosives {
   /** Things in range of a point (for a shot or a fire hitting barrels): lights them. */
   near(p, r = 0) { for (const b of this.list) if (!b.gone && Math.hypot(b.x - p.x, b.y - p.y, (b.z || 0) - (p.z || 0)) <= r + (b.size || .5)) this.light(b); return this; }
   update(dt) {
+    for (const b of this.list) if (b.body && !b.gone) { if (b.body.dead) { b.body = null; continue; } const p = b.body.pos ?? b.body; b.x = p.x; b.y = p.y; if (p.z != null) b.z = p.z; }   // (a barrel that rolls)
     for (const b of this.list) {
       if (b.gone || b.lit < 0) continue;
       b.lit -= dt; if (b.lit > 0) continue;
       b.gone = true;
       const e = { ...b, at: { x: b.x, y: b.y, z: b.z || 0 }, hurt: p => { const d = Math.hypot(p.x - b.x, p.y - b.y, (p.z || 0) - (b.z || 0)); return d >= b.radius ? 0 : Math.round(b.damage * (1 - d / b.radius)); } };
+      const W = this.world; if (W) { if (W.ray.length >= 4) W.blast(b.x, b.y, b.radius, b.push); else W.blast(e.at, b.radius, b.push ?? b.radius * 3); }   // (2D: game units a second, its own default)
       for (const f of this.handlers.boom || []) f(e, b);
       for (const o of this.list) if (!o.gone && o.lit < 0 && Math.hypot(o.x - b.x, o.y - b.y, (o.z || 0) - (b.z || 0)) <= b.radius) this.light(o);
     }

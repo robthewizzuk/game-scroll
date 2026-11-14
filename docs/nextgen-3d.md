@@ -81,7 +81,14 @@ Phones must stay smooth, so the kit adapts on its own:
 | low | 0.5 M | off | 2 | no | light FXAA |
 
 Ambient occlusion (the soft dark in corners and under things) on the high tier is worked out at half
-the picture's width and height, a quarter of the cost, and blended back at full size.
+the picture's width and height, a quarter of the cost, and blended back at full size. On WebGPU it
+darkens the light that bounces (the sky's and the room's, and reflections by roughness) in each
+thing's own shading, as Filament, Godot, Bevy and Unity do, and only a quarter of it still falls on
+the direct light, so sunlit corners stay clean while shaded ones go dark; bright surfaces take less
+(light bounces round a white corner more). It reads the last frame's occlusion where each point was
+then, so there is no extra pass. `HD.aoBack = false` puts it back on the whole picture (the frame
+lab's A/B has the switch), `HD.aoDirect` (0..1, default .25) is the share on direct light.
+WebGL always lays it on the whole picture.
 
 **Phone class and frame rate** (`src/kit/speed.js`). Each phone is sorted into top, mid or low from
 its graphics chip (Adreno 830, Mali-G720, ...), its model for iPhones, and its cores and memory.
@@ -925,6 +932,22 @@ Burst fields: `at`, `radius` (start anywhere in a ball), `vel`, `spread` (a rand
 `size` and `color`/`to` (start and end), `alpha`, `fadeIn`, `ease`. Up to 16 bursts a frame. They are for
 looks only (positions can't be read back); use `Particles` for the few the game must know about.
 
+Pulls and flows (as Babylon.js 9's attractors and flow maps; on the graphics chip with WebGPU, the same
+rules on the CPU with WebGL):
+
+```js
+const portal = sparks.pull([0, 1.5, 0], { strength: 60, swirl: 60, take: .3 });   // drawn in, round, and gone
+const blast = sparks.pull(at, { strength: -80, radius: 6 });                       // pushed away, only within 6 m
+dust.flow((x, y, z) => wind.at(x, z), { box: { min: [-20, 0, -20], max: [20, 8, 20] }, strength: 2 });
+portal.at = [x, y, z]; blast.remove();
+```
+
+`strength` and `swirl` are m/s² at 1 m (steady closer in, falling as 1/d² beyond, and to nothing at
+`radius` if given); a swirl spins them up, so give the particles `drag` for them to spiral in rather than
+fly off. Up to 8 pulls. A flow is sampled from your function into 16 x 16 x 16 cells over its box once
+(`flow.update()` samples it again, say from `gs.gas`'s `flowAt` or a river's current), and particles
+inside take up its speed at `strength` a second; one flow at a time.
+
 ## Glowing rings
 
 `gs.hd.pulse(material, { at, radius, strength, color, width, fill })` adds a glowing ring that
@@ -1000,6 +1023,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   picture is back, and in views where the last frame's depth can't be used (`{ max: 300 }` of the
   nearest are used). Most games need none. `gs.city` lists its buildings by itself (`occlude: false`
   to stop it). `v.occlusion.stats` says what the last frame tested and skipped.
+- People posed once a frame (WebGPU): three.js poses a mesh on bones in its vertex shader, so every pass that
+  draws a person (the picture, each shadow map, the motion picture's pose of the frame before) poses every point
+  again. On WebGPU one compute pass a frame poses every person in view or in a shadow's view into one list, and
+  every pass reads its points from there; the frame before's points are kept beside them, so motion costs no
+  second posing. People, creatures, their eyes, eye shadow and hair strips go in by themselves; meshes on blend
+  shapes (fur's shells, faces of blend shapes) and meshes with tangents are posed as before. Games don't change
+  anything. `__hd.gpuSkin = false` turns it off; `__hd.info.skin` says how many meshes were posed and how many
+  points. WebGL poses in the vertex shader as before.
 - GPU culling (WebGPU): a `gs.props` kind with 2,000 copies or more is culled on the graphics chip
   instead of the CPU. A compute pass tests every copy against the view and the lights' shadow views,
   picks its detail level by distance, and packs the ones that pass into a list drawn with one indirect

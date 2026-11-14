@@ -130,7 +130,12 @@ class Solid {
   }
   /** Puts it somewhere (and turns it: a three.js Quaternion). Call it each frame for a thing that moves. */
   set(x, y, z, turn = null) { this.x = x; this.y = y; this.z = z; if (turn) this.q.copy(turn); return this; }
-  track() { const f = this.follow; f.updateWorldMatrix?.(true, false); _m.copy(f.matrixWorld).decompose(_v3, this.q, _s3); this.x = _v3.x; this.y = _v3.y; this.z = _v3.z; }
+  // follow: a three.js object, or a body in a gs.physics3d World3D (a box, a rider, a kart's or a boat's .rider): it keeps to its middle
+  track() {
+    const f = this.follow, b = f.body?.translation ? f.body : null;
+    if (b) { const p = f.world?.outer ? f.world.outer(b.translation()) : b.translation(), r = b.rotation(); this.x = p.x; this.y = p.y; this.z = p.z; this.q.set(r.x, r.y, r.z, r.w); return; }
+    f.updateWorldMatrix?.(true, false); _m.copy(f.matrixWorld).decompose(_v3, this.q, _s3); this.x = _v3.x; this.y = _v3.y; this.z = _v3.z;
+  }
   // how it moved since the last update: its speed (units a second) and its spin (radians a second, round world axes)
   moved(dt) {
     if (this.follow) this.track();

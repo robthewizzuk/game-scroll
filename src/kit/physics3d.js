@@ -132,13 +132,126 @@ class Mover {
 }
 
 /**
+ * Something your own code moves (a kart, a boat, a drone, a plane, a lift that must not go through walls): a
+ * kinematic body of its shape that slides along walls, pushes loose things out of its way and says what it ran
+ * into. Rapier's character controller does the work, for any shape, so the arcade kits (gs.vehicles Kart, gs.craft
+ * Boat, Hover and Plane) take a `world` and become part of it: rays and other bodies meet them, crates get shoved,
+ * walls stop them. at: the middle of its underside (feet), like a Mover. lift: a gap under the shape (a car's
+ * clearance: kerbs and ramps lower than it pass under the body, and your code finds the ground itself, as
+ * gs.vehicles' Kart does with world.floorAt); with no lift it stands on the ground and climbs `step`s and `slope`s.
+ */
+class Rider {
+  constructor(world, { box = null, ball = null, capsule = null, round = null, at, turn = 0, lift = 0, step = 0, slope = 40, snap = 0, mass = 200, push = true, tag = 'rider', sound } = {}) {
+    this.world = world; this.mesh = null; this.kind = 'rider'; this.tag = tag; this.dead = false; this.owner = null;
+    let desc;
+    if (ball != null) { this.half = ball; desc = R.ColliderDesc.ball(ball); }
+    else if (capsule) { const [r, h] = capsule; this.half = h / 2; desc = R.ColliderDesc.capsule(Math.max(0, h / 2 - r), r); }
+    else {   // a box with rounded edges: a plain box catches on the seams of a flat floor and stops dead (measured: 44 of 60 frames)
+      const [w, h, l] = box || [1, 1, 1], r = round ?? Math.min(.1, h * .25, w * .25, l * .25); this.half = h / 2;
+      desc = R.ColliderDesc.roundCuboid(Math.max(.01, w / 2 - r), Math.max(.01, h / 2 - r), Math.max(.01, l / 2 - r), r);
+    }
+    this.lift = Math.max(GAP, lift);
+    const p = world.inner(at ? vec(at) : V());
+    this.body = world.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(p.x, p.y + this.half + this.lift, p.z).setRotation(yaw(turn)));
+    this.collider = world.world.createCollider(desc.setActiveEvents(R.ActiveEvents.COLLISION_EVENTS).setFriction(.3), this.body);
+    this.body.userData = this; if (sound) this.sound = sound;
+    const c = this.ctl = world.world.createCharacterController(GAP);
+    if (step > 0) c.enableAutostep(step, .1, false);
+    if (snap > 0) c.enableSnapToGround(snap); this.snapping = snap;
+    c.setMaxSlopeClimbAngle(slope * Math.PI / 180); c.setMinSlopeSlideAngle(Math.PI / 2);
+    c.setApplyImpulsesToDynamicBodies(!!push); if (push) c.setCharacterMass(mass);
+    this.from = this.body.translation(); this.to = null; this.q = yaw(turn);
+    this.grounded = false; this.hits = []; this.moved = V(); this.vel = V();
+    world.riders.push(this);
+  }
+  /** Its underside's middle (where you put its mesh), in the world's own numbers. */
+  get pos() {
+    const p = this.to || this.body.translation(), o = this.world.at, y = p.y - this.half - this.lift;
+    // on the ground: the ground itself (Rapier lets a shape sink a few centimetres into a big flat floor; the mesh shouldn't)
+    return V(p.x + o.x, this.grounded && this.floor != null && Math.abs(this.floor - y) < .15 ? this.floor : y, p.z + o.z);
+  }
+  /**
+   * Moves it by (dx, dy, dz) metres as far as the world lets it, turned `turn` radians about y (or a quaternion
+   * { x, y, z, w }). dt: the frame's seconds (how hard it shoves what it meets). After: pos (where it got to),
+   * moved (how far it went), grounded (standing on something), hits ([{ thing, normal, point }]: what it ran
+   * into this move, normal pointing out of the thing), wall (the first of those facing sideways). It goes there
+   * over the next world.step(), smoothly. Hitting something fast is a World3D.onHit(rider, thing, speed) too.
+   */
+  slide(dx, dy, dz, turn = null, dt = 1 / 60) {
+    if (this.dead) return this;
+    if (!this.world.steps) this.world.queries();   // (a world made this frame: its floor is not yet where rays look)
+    const W = this.world.world, t = this.body.translation(), from = this.to || t;
+    if (this.grounded && this.snapping && dy < 0 && dy > -this.snapping) dy = 0;   // (on the ground, pressing down into it makes Rapier's slide stick: the snap keeps it down instead)
+    if (turn != null) { this.q = typeof turn === 'number' ? yaw(turn) : turn; this.body.setRotation(this.q, false); }
+    if (from !== t) this.body.setTranslation(from, false);   // (a second move in one frame starts where the first ended)
+    const ts = W.timestep; W.timestep = Math.max(1 / 240, Math.min(dt, 1 / 15));
+    this.ctl.computeColliderMovement(this.collider, V(dx, dy, dz), R.QueryFilterFlags.EXCLUDE_SENSORS);
+    W.timestep = ts;
+    const m = this.ctl.computedMovement(); this.grounded = this.ctl.computedGrounded();
+    this.moved = V(m.x, m.y, m.z); const k = 1 / Math.max(1e-3, dt); this.vel = V(m.x * k, m.y * k, m.z * k);
+    this.hits = [];
+    for (let i = 0, n = this.ctl.numComputedCollisions(); i < n; i++) {
+      const c = this.ctl.computedCollision(i); if (!c) continue;
+      const thing = c.collider?.parent()?.userData || null, o = this.world.at;
+      this.hits.push({ thing, normal: V(c.normal1.x, c.normal1.y, c.normal1.z), point: V(c.witness1.x + o.x, c.witness1.y, c.witness1.z + o.z) });
+    }
+    this.from = from; this.to = V(from.x + m.x, from.y + m.y, from.z + m.z);
+    this.floor = this.grounded && this.lift <= GAP ? this.world.floorAt(this.to.x + this.world.at.x, this.to.y - this.half, this.to.z + this.world.at.z, .3, this) : null;
+    const met = this.met ||= new Map();   // (what it is touching, and for how many frames it hasn't been: a contact that flickers as it slides along a wall is one hit)
+    for (const [t, n] of met) if (n > 3) met.delete(t); else met.set(t, n + 1);
+    for (const h of this.hits) {
+      const t = h.thing; if (!t) continue;
+      const was = met.has(t); met.set(t, 0); if (was) continue;
+      const v = t.body && !t.fixed && t.vel ? t.vel : V(), n = h.normal, into = (dx * k - v.x) * -n.x + (dy * k - v.y) * -n.y + (dz * k - v.z) * -n.z;   // (as fast as it meant to go: what it got to was already cut short by the hit)
+      this.world.met.push([this, t, Math.max(0, into), { at: h.point, normal: h.normal }]);
+    }
+    return this;
+  }
+  /** slide() to a point (its underside) as far as the world lets it. */
+  move(x, y, z, turn = null, dt = 1 / 60) { const p = this.pos; return this.slide(x - p.x, y - p.y, z - p.z, turn, dt); }
+  /** The first thing it ran into that faces more sideways than up (a wall, a crate, a kart), or null. */
+  get wall() { for (const h of this.hits) if (Math.abs(h.normal.y) < .6) return h; return null; }
+  /** Puts it straight at (x, y, z), its underside, turned `turn` (radians about y), with nothing in between. */
+  place(x, y, z, turn = null) {
+    if (typeof x === 'object') turn = y ?? null;
+    const p = this.world.inner(typeof x === 'object' ? vec(x) : V(x, y, z)); p.y += this.half + this.lift;
+    if (turn != null) { this.q = typeof turn === 'number' ? yaw(turn) : turn; this.body.setRotation(this.q, true); }
+    this.body.setTranslation(p, true); this.body.setNextKinematicTranslation(p); this.from = p; this.to = null; this.vel = V(); this.grounded = false; return this;
+  }
+  // world.step(): a substep's share of the move, so what it meets is pushed at its real speed, not all in the first substep
+  sub(i, n) {
+    const a = this.from, b = this.to; if (!b) return;
+    const k = (i + 1) / n; this.body.setNextKinematicTranslation(V(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k));
+    this.body.setNextKinematicRotation(this.q);
+  }
+  stepped() { if (this.to) { this.from = this.to; this.to = null; } }
+  remove() { this.world.remove(this); }
+}
+const GAP = .02;
+// a collider description from a plain shape (World3D.shape, shapes): its own offset and turn in the body too
+function shapeDesc(s) {
+  const pts = h => h instanceof Float32Array ? h : new Float32Array(typeof h[0] === 'number' ? h : h.flatMap(p => [p.x, p.y, p.z]));
+  const d = s.box ? R.ColliderDesc.cuboid(s.box[0] / 2, s.box[1] / 2, s.box[2] / 2)
+    : s.ball != null ? R.ColliderDesc.ball(s.ball)
+    : s.capsule ? R.ColliderDesc.capsule(Math.max(0, s.capsule[1] / 2 - s.capsule[0]), s.capsule[0])
+    : s.hull ? R.ColliderDesc.convexHull(pts(s.hull)) : null;
+  if (!d) throw new Error('shape() needs { box }, { ball }, { capsule } or { hull } (a hull with some volume)');
+  if (s.off) { const f = vec(s.off); d.setTranslation(f.x || 0, f.y || 0, f.z || 0); }
+  if (s.turn && typeof s.turn === 'object') d.setRotation(s.turn);
+  return d;
+}
+const mulQ = (a, b) => ({ x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z });
+const turnBy = (q, v) => { const u = mulQ(mulQ(q, { x: v.x || 0, y: v.y || 0, z: v.z || 0, w: 0 }), { x: -q.x, y: -q.y, z: -q.z, w: q.w }); return V(u.x, u.y, u.z); };   // (the gap a mover or rider keeps from what it stands on)
+const yaw = a => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });
+
+/**
  * A car with real suspension (Rapier's ray-cast vehicle): the chassis is a dynamic box that can roll
  * over, bounce off things and land jumps; four (or more) wheels are rays under it. drive() each frame.
  * wheels: meshes to spin and steer (optional, in the order front-left, front-right, back-left, back-right).
  */
 class Vehicle3 {
   constructor(world, mesh, { w = 1.6, h = .5, l = 3, density = 1, wheels = [], radius = .38, rest = .35, travel = .3,
-    stiffness = 30, damping = 4, grip = 2.5, power = 12, brakes = .3, steer = .5, at, tag = 'car' } = {}) {
+    stiffness = 30, damping = 4, grip = 2.5, power = 12, brakes = .3, steer = .5, at, tag = 'car', dents = true } = {}) {
     this.world = world; this.mesh = mesh || null; this.wheelMeshes = wheels; this.power = power; this.brakes = brakes; this.maxSteer = steer;
     this.chassis = world.box(mesh, w, h, l, { density, at, tag, drag: .1, spinDrag: .6 });
     this.ctl = world.world.createVehicleController(this.chassis.body);
@@ -154,6 +267,12 @@ class Vehicle3 {
     }
     this.throttle = 0; this.steerNow = 0; this.braking = false; this.radius = radius;
     world.vehicles.push(this);
+    // a gs.models vehicle dents, cracks its glass and breaks its lamps where it hits things by itself (dents: false: your own)
+    if (dents && typeof mesh?.hit === 'function') world.onHit((a, b, speed, c) => {
+      const other = a === this.chassis ? b : b === this.chassis ? a : null; if (!other || this.chassis.dead || speed < 3) return;
+      if ((other.kind === 'floor' || other.tag === 'floor') && speed < 6) return;   // (a hard landing or a roll, not the road)
+      const at = c?.at; if (at) mesh.hit(at, { power: Math.min(1.5, (speed - 2) / 12) });
+    });
   }
   /** throttle -1..1, steer -1..1 (left is -1), brake true/false. Call every update. */
   drive(throttle = 0, steer = 0, brake = false) { this.throttle = throttle; this.steerTo = steer; this.braking = brake; return this; }
@@ -200,7 +319,7 @@ export class World3D {
     this.world = new R.World(this.gravity);
     this.events = new R.EventQueue(true);
     own(this);   // freed when the card leaves the feed (src/kit/cleanup.js)
-    this.bodies = []; this.movers = []; this.hits = []; this.joints = []; this.vehicles = []; this.dolls = [];
+    this.bodies = []; this.movers = []; this.riders = []; this.met = []; this.hits = []; this.joints = []; this.vehicles = []; this.dolls = [];
     this.smooth = !!smooth && onBlend(this);
     /** Where Rapier's own centre is in the world (x and z, metres; y is always 0): see centre(). */
     this.at = V();
@@ -225,14 +344,22 @@ export class World3D {
       b.setTranslation(V(t.x - dx, t.y, t.z - dz), false);
       if (n) keep.push([b, V(n.x - dx, n.y, n.z - dz)]);
     });
+    for (const r of this.riders) for (const k of ['from', 'to']) if (r[k]) r[k] = V(r[k].x - dx, r[k].y, r[k].z - dz);   // (where a rider is going this frame)
     o.x = x; o.z = z;
-    // Rapier finds things for rays and walking characters by boxes it only works out again as it steps: a step too short
-    // to move anything puts them where the bodies now are (a kinematic body is held where it is for it, not sent flying)
+    this.queries(keep, asleep);
+    this.recentred = (this.recentred || 0) + 1;
+    return this;
+  }
+  // Rapier finds things for rays and walking characters by boxes it only works out again as it steps: a step too short
+  // to move anything puts them where the bodies now are (a kinematic body is held where it is for it, not sent flying).
+  // Also for a world not stepped yet, whose first rider or mover would otherwise go through the floor it was made on.
+  queries(keep = null, asleep = null) {
+    const W = this.world;
+    if (!keep) { keep = []; asleep = []; W.forEachRigidBody(b => { if (b.isSleeping()) asleep.push(b); const n = b.isKinematic() && b.nextTranslation(); if (n) keep.push([b, n]); }); }
     const ts = W.timestep; W.timestep = 1e-9; W.step(this.events); W.timestep = ts; this.events.drainCollisionEvents(() => {});
     for (const [b, n] of keep) b.setNextKinematicTranslation(n);
     for (const b of asleep) b.sleep();   // (that step wakes everything)
-    this.recentred = (this.recentred || 0) + 1;
-    return this;
+    this.steps = (this.steps || 0) + 1;
   }
   // the view the bodies are drawn in (its scene is where a body's mesh is), whose centre the world follows
   // (looked for now and then until found: a mesh is often added to the scene after its body is made)
@@ -266,7 +393,7 @@ export class World3D {
   free() {
     if (!this.world) return;
     try { this.events.free(); } catch (_) { /* already gone */ }
-    for (const m of this.movers) if (m.ctl) try { this.world.removeCharacterController(m.ctl); } catch (_) { /* already gone */ }
+    for (const m of [...this.movers, ...this.riders]) if (m.ctl) try { this.world.removeCharacterController(m.ctl); } catch (_) { /* already gone */ }
     for (const v of this.vehicles) if (v.ctl) try { this.world.removeVehicleController(v.ctl); } catch (_) { /* already gone */ }
     this.world.free(); this.world = null;
   }
@@ -304,6 +431,45 @@ export class World3D {
     const desc = R.ColliderDesc.convexHull(vertices); if (!desc) throw new Error('hull() needs a mesh with some volume');
     return this.make(mesh, desc, o, 'hull');
   }
+  /**
+   * A body of a plain shape: { box: [w, h, d] } | { ball: r } | { capsule: [r, h] } | { hull: points ([x, y, z, ...] or
+   * [{ x, y, z }]) }, with off: { x, y, z } where the shape sits in the body and turn (a quaternion) how it is turned
+   * there. The body starts where the mesh is (or o.at); options as for any body. For things whose look is not one
+   * mesh: copies in gs.props, parts of a bigger model.
+   */
+  shape(mesh, spec, o = {}) { return this.make(mesh, shapeDesc(spec), o, spec.box ? 'box' : spec.ball != null ? 'ball' : spec.capsule ? 'capsule' : 'hull'); }
+  /**
+   * Many still shapes in one fixed body: a street's lamp posts, a forest's tree trunks, a yard of crates. list: shapes as for
+   * shape(), each with at: { x, y, z } (where it is in the world), turn (radians about y, or a quaternion) and part (anything
+   * of yours: ray() hits give it back as hit.part, and onHit / touching tell you the body). One body, so thousands cost
+   * little. Returns it, with add(shape) (returns its part), drop(part) and set(part, at, turn) to change it later.
+   */
+  shapes(list = [], o = {}) {
+    const p = this.inner(V()), body = this.world.createRigidBody((o.moving ? R.RigidBodyDesc.kinematicPositionBased() : R.RigidBodyDesc.fixed()).setTranslation(p.x, p.y, p.z));
+    const t = new Body3(this, body, null, 'shapes', null, o.tag ?? 'shapes'), by = new Map();
+    if (o.sound) t.sound = o.sound;
+    const place = (c, at, turn) => { const q = typeof turn === 'number' ? yaw(turn) : turn || { x: 0, y: 0, z: 0, w: 1 }, a = vec(at || V()), f = c.gsOff; const r = f ? turnBy(q, f) : V(); c.setTranslationWrtParent(V(a.x + r.x, a.y + r.y, a.z + r.z)); c.setRotationWrtParent(f?.turn ? mulQ(q, f.turn) : q); };
+    t.add = s => {
+      const d = shapeDesc({ ...s, off: null, turn: null }); if (!d) return null;
+      d.setDensity(o.density ?? 1).setFriction(s.friction ?? o.friction ?? .5).setRestitution(s.bounce ?? o.bounce ?? .1).setSensor(!!(s.sensor ?? o.sensor)).setActiveEvents(R.ActiveEvents.COLLISION_EVENTS);
+      const c = this.world.createCollider(d, body), part = s.part ?? by.size;
+      c.userData = part; c.gsOff = s.off ? { ...vec(s.off), turn: s.offTurn || null } : null; place(c, s.at, s.turn);
+      by.set(part, c);
+      if (t.gsStub) { this.world.removeCollider(t.gsStub, true); t.gsStub = null; t.collider = null; }
+      t.collider ??= c; return part;
+    };
+    t.drop = part => {
+      const c = by.get(part); if (!c) return t; by.delete(part);
+      if (t.collider === c) { const n = by.values().next().value; if (n) t.collider = n; else if (!t.dead) { const d = R.ColliderDesc.ball(.01).setSensor(true).setTranslation(0, -1e4, 0); t.collider = t.gsStub = this.world.createCollider(d, body); } }
+      if (!t.dead) this.world.removeCollider(c, true); return t;
+    };
+    t.set = (part, at, turn) => { const c = by.get(part); if (c) place(c, at, turn); return t; };
+    t.parts = null; t.colliders = by;
+    for (const s of list) t.add(s);
+    if (!t.collider) { const d = R.ColliderDesc.ball(.01).setSensor(true).setTranslation(0, -1e4, 0); t.collider = t.gsStub = this.world.createCollider(d, body); }   // (one to be filtered and found by until a shape is added: far below)
+    this.bodies.push(t);
+    return t;
+  }
   /** Makes a mesh (and everything inside it) solid and fixed: the level, floors, walls, ramps. */
   ground(mesh, o = {}) {
     mesh.updateMatrixWorld?.(true);
@@ -323,9 +489,26 @@ export class World3D {
     return this.make(null, R.ColliderDesc.heightfield(rows, cols, H, { x: width, y: 1, z: depth }), { ...o, fixed: true, at: V(x + width / 2, 0, z + depth / 2) }, 'ground');
   }
   /** A flat floor at height y (endless, invisible). */
-  floor(y = 0, o = {}) { return this.make(null, R.ColliderDesc.cuboid(1000, .5, 1000), { ...o, fixed: true, at: V(0, y - .5, 0) }, 'floor'); }
+  floor(y = 0, o = {}) { return this.make(null, new R.ColliderDesc(new R.HalfSpace(V(0, 1, 0))), { ...o, fixed: true, at: V(0, y, 0) }, 'floor'); }   // (a true plane: a huge box let walkers and riders sink a few cm and stall)
   /** A character controller (see Mover above): radius, height, step (tallest step it climbs), slope (degrees), at. */
   mover(mesh, o = {}) { return new Mover(this, mesh, o); }
+  /**
+   * Something your own code moves, solid in the world (see Rider above): one of box: [w, h, l] (rounded a little at the
+   * edges), ball: r, capsule: [r, h]; at (its underside), turn (radians about y), step (tallest kerb it climbs; 0 none),
+   * slope (degrees it drives up), snap (metres it keeps down to the ground over bumps; 0 for things that fly or float),
+   * mass (kg, how hard it shoves loose bodies), push (false: it doesn't), tag, sound. rider.slide(dx, dy, dz, turn, dt) each frame.
+   */
+  rider(o = {}) { return new Rider(this, o); }
+  /**
+   * The height of the first solid thing under (x, z) at or below y + reach (a floor, a crate's top, a ramp; a
+   * bridge over you is left out), or null if nothing is there. not: a body, mover or rider to look through (yours).
+   * So a World3D can be the `ground` of any kit that asks for one.
+   */
+  floorAt(x, y = 1e4, z = 0, reach = 1, not = null) {
+    if (!this.steps) this.queries();
+    const from = this.inner(V(x, y + reach, z)), hit = this.world.castRay(new R.Ray(from, V(0, -1, 0)), 1e4, true, R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, not?.body);
+    return hit ? from.y - hit.timeOfImpact : null;
+  }
   /** A car with suspension (see Vehicle3 above): w, h, l chassis size, wheels (meshes, children of mesh), power, grip, steer, at. */
   vehicle(mesh, o = {}) { return new Vehicle3(this, mesh, o); }
 
@@ -373,8 +556,9 @@ export class World3D {
     this.joints = this.joints.filter(j => j.a !== t && j.b !== t);
     this.world.removeRigidBody(t.body);
     this.bodies = this.bodies.filter(x => x !== t); this.movers = this.movers.filter(x => x !== t);
+    if (t instanceof Rider) { this.riders = this.riders.filter(x => x !== t); try { this.world.removeCharacterController(t.ctl); } catch (_) { /* already gone */ } }
   }
-  clear() { for (const d of [...this.dolls]) d.remove(); for (const t of [...this.bodies, ...this.movers]) this.remove(t); }
+  clear() { for (const d of [...this.dolls]) d.remove(); for (const t of [...this.bodies, ...this.movers, ...this.riders]) this.remove(t); }
 
 
   /**
@@ -432,15 +616,17 @@ export class World3D {
 
   /** First thing along a ray from `from` in direction `dir` (needn't be normalised), up to max metres. */
   ray(from, dir, max = 100, filter = t => !t.collider.isSensor()) {
+    if (!this.steps) this.queries();   // (a world not stepped yet: what is in it is not yet where rays look)
     const o = vec(from), d = vec(dir), l = Math.hypot(d.x, d.y, d.z) || 1, n = V(d.x / l, d.y / l, d.z / l);
     const hit = this.world.castRayAndGetNormal(new R.Ray(this.inner(o), n), max, true, undefined, undefined, undefined, undefined,
       c => { const t = c.parent()?.userData; return !!t && filter(t); });
     if (!hit) return null;
-    const s = hit.timeOfImpact, thing = hit.collider.parent()?.userData || null, point = V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s);
-    return { thing, point, normal: V(hit.normal.x, hit.normal.y, hit.normal.z), distance: s, get mesh() { return meshAt(thing, point); } };
+    const s = hit.timeOfImpact, thing = hit.collider.parent()?.userData || null, point = V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s), part = hit.collider.userData ?? null;
+    return { thing, point, normal: V(hit.normal.x, hit.normal.y, hit.normal.z), distance: s, part, get mesh() { return meshAt(thing, point); } };
   }
   /** Every body within radius of a point. */
   near(p, radius) {
+    if (!this.steps) this.queries();
     const out = new Set(), c = this.inner(vec(p));
     this.world.intersectionsWithShape(c, { x: 0, y: 0, z: 0, w: 1 }, new R.Ball(radius), col => { const t = col.parent()?.userData; if (t) out.add(t); return true; });
     return [...out];
@@ -454,37 +640,54 @@ export class World3D {
       if (k > 0) t.push(dx / d * k, dy / d * k, dz / d * k);
     }
   }
-  /** fn(a, b, speed) when two things start touching; speed is how fast they met (m/s). Safe to remove things in it. */
+  /**
+   * fn(a, b, speed, contact) when two things start touching; speed is how fast they met (m/s); contact.at is where (a
+   * point in the world, worked out when asked) and contact.normal the way from a to b. Safe to remove things in it.
+   */
   onHit(fn) { this.hits.push(fn); return this; }
+  /** Where two touching colliders meet now: { at, normal } (or null): the deepest of their contact points. */
+  contact(c1, c2) {
+    let out = null, deep = Infinity;
+    this.world.contactPair(c1, c2, (m, flipped) => {
+      const n = m.normal(), k = flipped ? -1 : 1;
+      for (let i = 0; i < m.numSolverContacts(); i++) { const d = m.solverContactDist(i); if (d < deep) { deep = d; const p = m.solverContactPoint(i); out = { at: this.outer(p), normal: V(n.x * k, n.y * k, n.z * k) }; } }
+    });
+    return out;
+  }
 
   step(dt) {
     if (!(dt > 0)) return;
+    this.steps = (this.steps || 0) + 1;
     this.follow();
     dt = Math.min(dt, 1 / 15);
     const n = Math.max(1, Math.ceil(dt * 60 - .01)), h = dt / n;
     const before = new Map();
-    if (this.hits.length) for (const t of this.bodies) if (!t.fixed) before.set(t, t.body.linvel());
+    if (this.hits.length) { for (const t of this.bodies) if (!t.fixed) before.set(t, t.body.linvel()); for (const r of this.riders) before.set(r, r.vel); }
     const started = [];
     if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._was = pose(t.body, this.at, t._was);
     this.world.timestep = h;
     for (let i = 0; i < n; i++) {
       for (const m of this.movers) m.move(h);
+      for (const r of this.riders) r.sub(i, n);
       for (const v of this.vehicles) v.step(h);
       for (const d of this.dolls) d.muscles?.();
       this.world.step(this.events);
       this.events.drainCollisionEvents((h1, h2, on) => { if (on) started.push([h1, h2]); });
     }
+    for (const r of this.riders) r.stepped();
     for (const t of this.bodies) t.sync();
     for (const d of this.dolls) d.sync();
     for (const m of this.movers) m.sync();
     for (const v of this.vehicles) v.sync();
     if (this.smooth) for (const t of [...this.bodies, ...this.movers]) if (t.mesh) t._now = pose(t.body, this.at, t._now);
+    for (const [a, b, speed, c] of this.met.splice(0)) if (!a.dead && !b.dead) for (const fn of this.hits) fn(a, b, speed, c);   // (riders' own: see Rider.slide)
     for (const [h1, h2] of started) {
       const c1 = this.world.getCollider(h1), c2 = this.world.getCollider(h2); if (!c1 || !c2) continue;
       const a = c1.parent()?.userData, b = c2.parent()?.userData; if (!a || !b || a.dead || b.dead) continue;
       const va = before.get(a) || V(), vb = before.get(b) || V();
       const speed = Math.hypot(vb.x - va.x, vb.y - va.y, vb.z - va.z);
-      for (const fn of this.hits) fn(a, b, speed);
+      let got = 0, c = null; const W = this, contact = { get at() { if (!got++) c = W.contact(c1, c2); return c?.at ?? null; }, get normal() { if (!got++) c = W.contact(c1, c2); return c?.normal ?? null; }, part: c1.userData ?? c2.userData ?? null };
+      for (const fn of this.hits) fn(a, b, speed, contact);
     }
     for (const t of [...this.bodies]) if (!t.fixed && Math.abs(t.pos.y) > 1e4) this.remove(t);
   }

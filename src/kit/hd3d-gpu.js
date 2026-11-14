@@ -9,9 +9,9 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping } from 'three/webgpu';
 import {
-  pass, mrt, output, velocity, normalView, uniform, texture, screenUV, screenCoordinate, screenSize, renderOutput, Fn,
+  pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
   attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
@@ -64,6 +64,7 @@ export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
 export { gpuCloth } from './cloth-gpu.js';
+export { skinPool } from './skin-gpu.js';   // (and, on import, the vertex stage that reads a mesh's points from the pool)
 import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
 import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting.js';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
@@ -1440,7 +1441,20 @@ const normalOut = skip => new PerMaterial(m => drawnOver(m) ? vec4(0) : vec4(pac
  */
 function slimPictures(sp, { normals, motion }) {
   if (normals) { const t = sp.getTexture('normal'); t.type = UnsignedByteType; t.colorSpace = NoColorSpace; }
-  if (motion) sp.getTexture('velocity').format = RGFormat;
+  if (motion) { const t = sp.getTexture('velocity'); t.format = RGFormat; t.userData.gsOut4 = true; }
+}
+// A see-through thing blends into the motion picture by its own blending (frame generation and motion blur: its motion
+// written with no weight, so the motion under it stays), which reads the alpha its shader writes. three gives a
+// shader as many outputs as its target has channels, so with the motion in two channels those pipelines were invalid
+// (WebGPU: "reading alpha but it is missing from fragment output") and three left the things out of every frame drawn
+// with motion: a real-look person's wet eyes, eye shadow, lashes and soft hair strips, and any other blended thing. A picture marked
+// gsOut4 keeps four outputs (WebGPU writes the channels its target has and the blend reads the fourth).
+const outType = NodeBuilder.prototype.getOutputType;
+if (!outType.gsOut4) {
+  NodeBuilder.prototype.getOutputType = function (index = 0) {
+    return this.renderer.getRenderTarget()?.textures[index]?.userData?.gsOut4 ? 'vec4' : outType.call(this, index);
+  };
+  NodeBuilder.prototype.getOutputType.gsOut4 = true;
 }
 /** The scene's normals as the readers want them (view space, -1..1; zero where nothing solid was drawn): a node that can be sampled anywhere. */
 function sceneNormals(sp) {
@@ -1939,6 +1953,62 @@ const GRADE = halfFn('gsGrade', `(col: vec3<f32>, sat: f32, con: f32, lo: vec3<f
 // volumetric light's stand-in shadow map while the light has none (its numbers say so: never read)
 const NO_LUT = new Data3DTexture(new Uint8Array(32).fill(255), 2, 2, 2); NO_LUT.needsUpdate = true;
 const NO_SHADOW = new DepthTexture(1, 1); NO_SHADOW.compareFunction = LessEqualCompare;
+
+// Ambient occlusion on the light that bounces only (the engines review, option 1, 2026-11-13). The chain used to
+// multiply the whole lit picture by the occlusion, sunlight, lamps and highlights included, which reads as dirt in
+// sunlit corners. Filament, Godot, Bevy and Unity lay it on the bounced light alone (the sky's and the room's), and
+// three's lighting already does that with any occlusion a material is given: the light from around by it, the
+// reflections by an amount that follows roughness and the angle (specular occlusion, Lagarde's). So each solid
+// thing's own shading is handed the occlusion here, as three's GTAO example does with builtinAOContext, but without
+// the extra pass that example draws first (every thing drawn twice): it reads the occlusion the chain worked out last
+// frame, at the point where this one was then on screen, and keeps only what was at the same distance (four texels,
+// each weighed by how near it is and dropped if it was something else then: an edge, a thing that has moved, what has
+// just come out from behind). Where nothing fits (just come into view, a cut, the first frame) the point takes none
+// for a frame. Bright surfaces take less (multi-bounce, Jimenez et al. 2016: light bounces inside a corner off a white
+// wall more than off a black one). What the ambient occlusion picture itself is and how it is smoothed don't change.
+// It is hooked into the renderer's own context once (aoInShading, from gpu.js as the renderer starts), not into the scene
+// pass's: three keeps each thing's shader by the context it was built in, and a context of the pass's own made every
+// material build a second shader for each view, and again whenever the chain was built anew (a quality step). What
+// changes from frame to frame and view to view is in three's per-render group (sent again for every render, things that
+// haven't changed included), and every view copies its last picture into one shared texture before its scene is drawn
+// (GpuChain.aoScene): a texture bound to a thing stays bound until the thing or its material changes.
+// AOB.k: the strength, 0 outside a view's scene pass (cube cameras, cards, other views' passes: no occlusion, no reads);
+// prevV, prevP: the view's camera when its last picture was drawn (jitter and all); size: that picture's size in texels
+// (the shared texture only grows); rt: the shared texture, red the occlusion and green the point's distance from the camera.
+const AOB = { k: uniform(0).setGroup(TSL.renderGroup), prevV: uniform(new Matrix4()).setGroup(TSL.renderGroup), prevP: uniform(new Matrix4()).setGroup(TSL.renderGroup), size: uniform(new Vector2(1, 1)).setGroup(TSL.renderGroup), rt: null };
+/** Ambient occlusion in each solid thing's own shading (see above). Once per WebGPU renderer, before anything is drawn (gpu.js). */
+export function aoInShading(r) {
+  AOB.rt ||= new RenderTarget(1, 1, { type: HalfFloatType, format: RGFormat, depthBuffer: false });
+  AOB.rt.texture.name = 'Ambient occlusion, last frame';
+  const T = texture(AOB.rt.texture), back = Fn(() => {
+    const a = float(1).toVar();
+    If(AOB.k.greaterThan(0), () => {
+      const sz = AOB.size;
+      const pv = AOB.prevV.mul(vec4(positionWorld, 1)).toConst(), pc = AOB.prevP.mul(pv).toConst(), was = pv.z.negate().toConst();
+      const q = pc.xy.div(max(abs(pc.w), 1e-6)).mul(vec2(.5, -.5)).add(.5).toConst();
+      const p = q.mul(sz).sub(.5).toConst(), b = floor(p).toConst(), f = p.sub(b).toConst();
+      const sum = float(0).toVar(), ws = float(0).toVar(), tol = was.mul(.06).add(.05).toConst();
+      for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const t = T.load(ivec2(clamp(b.add(vec2(i, j)), vec2(0), sz.sub(1)))).toConst();
+        const w = (i ? f.x : f.x.oneMinus()).mul(j ? f.y : f.y.oneMinus()).mul(select(abs(t.g.sub(was)).lessThan(tol), float(1), float(0)));
+        sum.addAssign(t.r.mul(w)); ws.addAssign(w);
+      }
+      const seen = pc.w.greaterThan(0).and(q.x.greaterThanEqual(0)).and(q.x.lessThanEqual(1)).and(q.y.greaterThanEqual(0)).and(q.y.lessThanEqual(1)).and(ws.greaterThan(.02));
+      const o = clamp(sum.div(max(ws, 1e-4)), 0, 1).toConst();
+      const alb = clamp(dot(diffuseColor.rgb, LUM), 0, 1).toConst();
+      const mb = max(o, o.mul(alb.mul(2.0404).sub(.3324)).add(alb.mul(-4.7951).add(.6417)).mul(o).add(alb.mul(2.7552).add(.6903)).mul(o));
+      a.assign(select(seen, mix(float(1), clamp(mb, 0, 1), AOB.k), float(1)));
+    });
+    return a;
+  });
+  // (see-through things, cut-out leaves and anything marked noAO take none, as the chain's mask leaves them out)
+  r.contextNode.value.getAO = (input, builder) => {
+    const m = builder.material;
+    if (!m || m.transparent === true || seeThrough(m) || m.mrtNode instanceof SoftMRT) return input;
+    const a = back();
+    return input !== null ? input.mul(a) : a;
+  };
+}
 const VOL_MAX = 48, MB_N = 8;   // (hd3d.js VOL_MAX and MB_N)
 export class GpuChain {
   constructor(r, scene, cam, clear) {
@@ -1967,6 +2037,11 @@ export class GpuChain {
       lDir: uniform(new Vector3(0, -1, 0)), lPos: uniform(new Vector3()), lt: uniform(new Vector4()), k: uniform(new Vector4()), steps: uniform(24), tint: uniform(new Color(0, 0, 0)),
       prevVP: uniform(new Matrix4()), mb: uniform(new Vector4()), mbObj: uniform(0),
     };
+    // ambient occlusion laid on in the shading (aoInShading): the share still laid on the whole picture, this frame's
+    // projection's inverse (for the distance kept with the picture), and for aoScene: the strength, the camera when the
+    // last picture was drawn, whether there was one, where the world's centre was then, a cut since
+    this.AO = { direct: uniform(.225).setGroup(TSL.renderGroup), invProj: uniform(new Matrix4()).setGroup(TSL.renderGroup), k: 1, lastV: new Matrix4(), lastP: new Matrix4(), had: false, ox: 0, oz: 0, cut: false };
+    this.aoBack = false;
     this.bloomN = null; this.aoN = null;
     // the game on screen (live): each real frame is drawn into a picture and shown by a copy that adds the
     // last touches, so the refreshes in between can show made frames (framegen.js), a still scene can be
@@ -1980,7 +2055,7 @@ export class GpuChain {
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
   build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}`;
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
@@ -2075,10 +2150,22 @@ export class GpuChain {
       // normals for every pixel of the full picture in the finishing pass, and again in the bloom's first pass. On the
       // Fold the finishing pass was the chip's biggest (2.6 ms of 9.3 in the town, 2026-11-13); the picture is read
       // back with one smooth read where the occlusion is laid on
-      this.dnT = rtt(vec4(this.dnN.r, 0, 0, 1), null, null, { depthBuffer: false, type: UnsignedByteType, format: RedFormat });
+      // (laid on in the shading, aoBack: the point's distance from the camera goes with it, in green, as the spread one's does,
+      // for next frame's check that a point is the same one: aoInShading)
+      const dq = uv(), dAt = this.aoBack ? getViewPosition(dq, sp.getTextureNode('depth').sample(dq).r, this.AO.invProj).z.negate() : float(0);
+      this.dnT = rtt(vec4(this.dnN.r, dAt, 0, 1), null, null, this.aoBack ? { depthBuffer: false, type: HalfFloatType, format: RGFormat } : { depthBuffer: false, type: UnsignedByteType, format: RedFormat });
       this.dnT.renderTarget.gsPart = 'ao'; aoT = this.dnT;
       }
-      aoF = mix(float(1), aoT.r, clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus().mul(.9)); lit = lit.mul(aoF);
+      // aoBack: the scene's own shading takes last frame's occlusion (aoInShading, aoScene), on the light that bounces only; what the
+      // picture is multiplied by here is only the share HD.aoDirect asks for (Unity's "direct lighting strength"), and keeps the
+      // occlusion's passes in the chain. The old way: the whole lit picture, at 90%
+      const mask = clamp(sp.getTextureNode('normal').a, 0, 1).oneMinus();
+      if (this.aoBack) {
+        const ub = sp.updateBefore; sp.updateBefore = frame => this.aoScene(frame, ub);
+        this.AO.had = false;
+        aoF = mix(float(1), aoT.r, mask.mul(this.AO.direct));
+      } else aoF = mix(float(1), aoT.r, mask.mul(.9));
+      lit = lit.mul(aoF);
     }
     let src = colT, srcAo = aoF;
     const V = this.V, dT = sp.getTextureNode('depth');
@@ -2266,6 +2353,27 @@ export class GpuChain {
     this._bf.mrt = sp.getMRT?.() ?? null;
     return this._bf;
   }
+  // The scene pass with ambient occlusion in its shading (aoInShading): this view's last picture of it into the shared
+  // texture, and its numbers into the shared uniforms, for this pass alone. Run as the pass draws, and only then: a frame
+  // that shows a held or made picture draws no scene, and the last picture is then still the one drawn with the camera kept
+  // here. Last frame's fits when there was one since the chain was built, with no cut and the world's centre where it was.
+  aoScene(frame, draw) {
+    const A = this.AO, r = this.r, cam = this.cam, src = this.spAO ? this.spAO.hist.texture : this.dnT?.renderTarget.texture;
+    const w = src?.image?.width | 0, h = src?.image?.height | 0;
+    const fits = A.had && !A.cut && ORIGIN.x === A.ox && ORIGIN.z === A.oz && w > 1 && h > 1;
+    if (fits) {
+      const rt = AOB.rt;
+      // (the shared texture only grows, in steps of 64, so views of other sizes don't make it anew each frame)
+      if (rt.width < w || rt.height < h) rt.setSize(Math.max(rt.width, Math.ceil(w / 64) * 64), Math.max(rt.height, Math.ceil(h / 64) * 64));
+      r.copyTextureToTexture(src, rt.texture);
+      AOB.prevV.value.copy(A.lastV); AOB.prevP.value.copy(A.lastP); AOB.size.value.set(w, h);
+    }
+    AOB.k.value = fits ? A.k : 0;
+    try { return draw.call(this.sp, frame); } finally {
+      AOB.k.value = 0;
+      A.lastV.copy(cam.matrixWorldInverse); A.lastP.copy(cam.projectionMatrix); A.ox = ORIGIN.x; A.oz = ORIGIN.z; A.had = true; A.cut = false;
+    }
+  }
   /** Sets the numbers from the view and tier, then draws. o: { ao (AO resolution, 0 = off), msaa, bloomScale, smooth, bloom, t, hurt, grade, glare, sunUV, sunCol, aspect,
    *  fg (frame generation: { mode: 'blend' | 'ahead', reset, jd: SGSR 2's jitter change in NDC }) }. With fg, returns what it showed ('real' | 'made'). */
   render(o) {
@@ -2280,6 +2388,7 @@ export class GpuChain {
     // (ray traced reflections: built again too when the traced level's lists on the chip are made anew, bigger)
     { const tr = o.refl?.traced || null, xk = this.clear ? '' : fxPlan(this, o.fx) + (o.refl ? (tr ? '|traced' + tr.gen + (tr.show ? 's' : '') : '|refl') : ''); this.reflOn = !!o.refl; this.tracer = tr; if (xk !== this.xKey) { this.xKey = xk; this.key = ''; } }
     const fx = !this.clear && o.ao > 0;
+    this.aoBack = fx && o.aoBack !== false;
     this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : true) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
     // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
     // again or the volumetric light's light moved, which change the picture though the camera didn't)
@@ -2294,6 +2403,8 @@ export class GpuChain {
         if (m.light !== this.volLight || id !== this.volId) { this.volLight = m.light; this.volId = id; this.spVol.fresh = true; } }
       this.SP.frame(this.cam, !!o.cut, stir, f ? f.jd : null);
     }
+    // ambient occlusion in the shading (aoInShading): its share on the whole picture, and a cut since the last scene pass (aoScene)
+    if (this.aoBack) { this.AO.direct.value = .9 * Math.max(0, Math.min(1, o.aoDirect ?? .25)); this.AO.invProj.value.copy(this.cam.projectionMatrixInverse); if (o.cut) this.AO.cut = true; }
     if (this.s1) this.s1.size(o.w, o.h);
     // the passes size themselves from the canvas: upscaled, the canvas is the screen's size, so scale them down
     const k = f || s1 ? (o.w + .5) / o.fw : 1;

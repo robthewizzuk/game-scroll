@@ -123,6 +123,7 @@ export function prepareGPU() {
       freeUnbuilt(r);
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
+      fx.aoInShading(r);   // ambient occlusion on the light that bounces only, in each thing's own shading (hd3d-gpu.js)
       installPack(r);   // code-made textures packed into the chip's compressed formats (spark.js)
       // the graphics chip went away (its driver restarted, the browser's GPU process crashed): three is told it is
       // lost (it stops drawing on it) and lostGPU() makes a new one (said here, not by three's own handler, which
