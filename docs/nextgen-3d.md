@@ -728,9 +728,17 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
     if it stood behind the mirror, as far behind as the ray went). So a mirror comes out at the
     picture's full size with smooth edges where half-size rays showed steps, and a rough surface's blur
     is the real one, sharp where the reflected thing touches the surface and softer the further off it
-    is, where it used to be a blur of the picture. Against a reference with a ray for every pixel the
-    error is about a third of what it was with the camera still and about three fifths with it moving fast;
-    a fast camera leaves some grain in rough reflections for a few frames. `__hd.regen = false` puts
+    is, where it used to be a blur of the picture. A rough surface's rays are a noisy few, so what it has
+    gathered is also smoothed a little over the pixels round it each frame (never wider than its own
+    blur), and is let go only when this frame's rays are further from it than they usually are there:
+    a thing that leaves a reflection is gone from it in a frame or two, and a frame whose rays all
+    missed doesn't throw the reflection away (that showed as specks). While the camera moves, a rough
+    surface keeps only as many frames as its reflection takes to slide by its own blur (longer, and a
+    near thing's reflection trails behind it, too strong). Against a reference with a ray for every
+    pixel the error is under a fifth of what it was with the camera still, about two fifths at a walk
+    and under half moving fast, with fewer specks than the old pass in each; a moving camera leaves a
+    fine grain on rough surfaces, and when a thing jumps aside the soft glow round its rough reflection
+    takes about twenty frames to follow. `__hd.regen = false` puts
     the old pass back; `__hd.traceScale = .35` sends half as many rays, which still measures closer to
     the reference than the old pass did with all of them.
   - `__hd.traced = false` turns the tracing off (screen-space reflections then, as on other phones),

@@ -23,7 +23,7 @@ const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: Strin
 try {
   if (!await prepareGPU()) throw new Error('WebGPU did not start in this browser');
   const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 300), H = +(Q.get('h') || 400);
-  const SETTLE = +(Q.get('frames') || 24), REFS = +(Q.get('refs') || 40), POSES = +(Q.get('poses') || 12);
+  const SETTLE = +(Q.get('frames') || 24), REFS = +(Q.get('refs') || 48), POSES = +(Q.get('poses') || 12);
   const nextFrame = () => new Promise(r => requestAnimationFrame(r));
   HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.occlude = false; HD.traced = true;
   for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }
@@ -38,7 +38,7 @@ try {
   const strips = [[-5.1, 7.8, .04], [0, 2.4, .25], [5.1, 7.8, .45]].map(([px, wide, rough]) => { const f = add(new T.PlaneGeometry(wide, 40).rotateX(-Math.PI / 2), gs.hd.pbr('#8d949c', { rough, metal: 1 }), px, 0, 0); f.castShadow = false; return f; });
   const ball = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8e8e8', { rough: .03, metal: 1 }), -2.6, .7, 2.6);
   const ball2 = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8c890', { rough: .3, metal: 1 }), 2.6, .7, 2.6);
-  add(new T.BoxGeometry(1, 1, 1), gs.hd.pbr('#c0392b', { rough: .6 }), -1.2, .5, -.5);
+  const box = add(new T.BoxGeometry(1, 1, 1), gs.hd.pbr('#c0392b', { rough: .6 }), -1.2, .5, -.5); box.userData.moves = true;   // (it jumps aside at the end)
   add(new T.BoxGeometry(1, 2.4, 1), gs.hd.pbr('#2f62b0', { rough: .6 }), 1.6, 1.2, -.8);
   add(new T.BoxGeometry(1.2, .8, 1.2), gs.hd.pbr('#d8b020', { rough: .6 }), 2.7, .4, -1.2);
   // thin bright poles, a little off upright: near-upright edges in the floor
@@ -54,6 +54,16 @@ try {
   const shot = name => { out[name] = c.toDataURL(); };
   // error and flicker over a mask (1 where it counts)
   const diff = (a, b, mask) => { let s = 0, n = 0; for (let i = 0; i < W * H; i++) if (mask[i]) { s += (Math.abs(a[i * 4] - b[i * 4]) + Math.abs(a[i * 4 + 1] - b[i * 4 + 1]) + Math.abs(a[i * 4 + 2] - b[i * 4 + 2])) / 3; n++; } return n ? +(s / n).toFixed(3) : 0; };
+  // specks: how grainy the error is (the error less its average over the 3 x 3 pixels round it; a picture that is
+  // only softer or a little off has none, one with stray bright and dark pixels has)
+  const specks = (a, b, mask) => {
+    const e = new Float32Array(W * H * 3); for (let i = 0; i < W * H; i++) for (let k = 0; k < 3; k++) e[i * 3 + k] = a[i * 4 + k] - b[i * 4 + k];
+    let s = 0, n = 0;
+    for (let y = 1; y < H - 1; y++) for (let x0 = 1; x0 < W - 1; x0++) { const i = y * W + x0; if (!mask[i]) continue;
+      for (let k = 0; k < 3; k++) { let m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) m += e[(i + dy * W + dx) * 3 + k]; s += Math.abs(e[i * 3 + k] - m / 9) / 3; }
+      n++; }
+    return n ? +(s / n).toFixed(3) : 0;
+  };
   const mode = (m, n = 0) => { HD.regen = m !== 'was'; HD.regenRef = m === 'ref' ? n + 1 : false; HD.traceScale = m === 'fewer' ? .35 : 0; };
 
   // wait for the traced level
@@ -62,17 +72,30 @@ try {
   const tr = HD.info.trace;
   check('the yard is drawn with ray traced reflections', !!tr && tr.tris > 0 && HD.info.refl === 'traced', tr ? `${tr.tris} triangles` : 'no tracer');
 
+  // the camera still and a thing that jumps aside: how much of it is left in the reflections ten frames on (against
+  // the picture once it has settled), over the mask and at its worst pixel; change: how far the picture before the
+  // jump is from the settled one; last: what is left 24 frames on; fade: what is left frame by frame
+  const jump = async mask => {
+    pose(0); mode('regen'); await settle(SETTLE);
+    const before = draw().slice(); await nextFrame();
+    box.position.x += 1.4; box.updateMatrixWorld();
+    const seq = []; for (let i = 0; i < 24; i++) { const d = draw().slice(); await nextFrame(); seq.push(d); if (i === 9) shot('jump-10'); else if (Q.get('probe') && i < 8) shot('jump-0' + (i + 1)); }
+    const ten = seq[9], after = (await settle(SETTLE + 20)).slice(); shot('jump-settled');
+    let worst = 0; for (let i = 0; i < W * H; i++) if (mask[i]) worst = Math.max(worst, (Math.abs(ten[i * 4] - after[i * 4]) + Math.abs(ten[i * 4 + 1] - after[i * 4 + 1]) + Math.abs(ten[i * 4 + 2] - after[i * 4 + 2])) / 3);
+    info.jump = { left: diff(ten, after, mask), change: diff(before, after, mask), last: diff(seq[23], after, mask), worst: +worst.toFixed(1), fade: seq.map(d => diff(d, after, mask)).join(' ') };
+  };
   // ?probe=regen: only that mode's moving frames, each one saved (to look at what a change does, in a minute)
+  if (Q.get('probe') === 'jump') { await jump(new Uint8Array(W * H).fill(1)); v.free(); HD.traced = null; HD.regen = null; window.result = { out, info, checks }; throw 0; }
   if (Q.get('probe')) {
     const ts = Array.from({ length: POSES }, (_, i) => (i + 1) / POSES);
-    pose(0); mode(Q.get('probe')); await settle(10); shot('probe-00');
+    pose(0); if (Q.get('pre')) { mode(Q.get('pre')); await settle(6); } mode(Q.get('probe')); await settle(+(Q.get('wait') || 10)); shot('probe-00');
     for (const [i, t] of ts.entries()) { pose(t); draw(); await nextFrame(); shot('probe-' + String(i + 1).padStart(2, '0')); }
     v.free(); HD.traced = null; HD.regen = null; HD.regenRef = false; HD.traceScale = 0;
     window.result = { out, info, checks }; throw 0;
   }
   // ----- the camera still -----
   // the truth, and where reflections are (the truth against the yard with none)
-  mode('ref', 100); const ref0 = (await settle(REFS)).slice(); shot('still-ref');
+  mode('ref', 100); const ref0 = (await settle(REFS * 4)).slice(); shot('still-ref');   // (the one every still number is held against: four times the frames)
   const none = await (async () => { const was = v.reflectors.slice(); v.reflectors.length = 0; for (const o of was) o.userData.gsReflect = false; const d = (await settle(6)).slice(); for (const o of was) { o.userData.gsReflect = true; v.reflectors.push(o); } return d; })(); shot('none');
   // (the traced level is still there, or is made again: either way wait for it)
   for (let i = 0; i < 400; i++) { draw(); const t = HD.info.trace; if (HD.info.refl === 'traced' && t && t.builds >= 1 && t.tris > 0 && !t.busy && i > 3) break; await nextFrame(); }
@@ -91,7 +114,7 @@ try {
     mode(m); await settle(6);   // (the chain is built again for the mode)
     const t0 = performance.now(); const d = (await settle(SETTLE)).slice(); const ms = (performance.now() - t0) / SETTLE;
     let fl = 0, last = d; for (let i = 0; i < 6; i++) { const n = draw().slice(); await nextFrame(); fl += diff(n, last, mask); last = n; }
-    still[m] = { error: diff(d, ref0, mask), steps: diff(d, ref0, steps), flicker: +(fl / 6).toFixed(3), ms: +ms.toFixed(0) };
+    still[m] = { error: diff(d, ref0, mask), specks: specks(d, ref0, mask), steps: diff(d, ref0, steps), flicker: +(fl / 6).toFixed(3), ms: +ms.toFixed(0) };
     shot('still-' + m);
   }
   info.still = still;
@@ -103,11 +126,24 @@ try {
   const moving = {};
   for (const m of ['was', 'regen', 'fewer']) {
     pose(0); mode(m); await settle(10);
-    let e = 0, st = 0;
-    for (const [i, t] of ts.entries()) { pose(t); const d = draw(); await nextFrame(); e += diff(d, truth[i], mask); st += diff(d, truth[i], steps); if (i === POSES - 1) shot('moving-' + m); }
-    moving[m] = { error: +(e / POSES).toFixed(3), steps: +(st / POSES).toFixed(3) };
+    let e = 0, st = 0, sp = 0;
+    for (const [i, t] of ts.entries()) { pose(t); const d = draw(); await nextFrame(); e += diff(d, truth[i], mask); sp += specks(d, truth[i], mask); st += diff(d, truth[i], steps); if (i === POSES - 1) shot('moving-' + m); }
+    moving[m] = { error: +(e / POSES).toFixed(3), specks: +(sp / POSES).toFixed(3), steps: +(st / POSES).toFixed(3) };
   }
   info.moving = moving;
+  // the same path at a third of the speed (a brisk walk where the other is a sprint): every third frame has its truth
+  const walk = {};
+  for (const m of ['was', 'regen', 'fewer']) {
+    pose(0); mode(m); await settle(10);
+    let e = 0, sp = 0;
+    for (let j = 0; j < POSES * 3; j++) {
+      pose((j + 1) / (POSES * 3)); const d = draw(); await nextFrame();
+      if (j % 3 === 2) { const i = (j - 2) / 3; e += diff(d, truth[i], mask); sp += specks(d, truth[i], mask); if (i === POSES - 1) shot('walk-' + m); }
+    }
+    walk[m] = { error: +(e / POSES).toFixed(3), specks: +(sp / POSES).toFixed(3) };
+  }
+  info.walk = walk;
+  await jump(mask);
   info.note = 'steps (moving) uses the still camera\'s mask of the poles\' reflections: a rough guide there';
 
   check('regenerated, a still picture is closer to the truth than the pass as it was', still.regen.error < still.was.error, `${still.regen.error} against ${still.was.error}`);
@@ -116,6 +152,13 @@ try {
   check('with half the rays it is still no further from the truth than the pass as it was: still', still.fewer.error <= still.was.error, `${still.fewer.error} against ${still.was.error}`);
   check('and moving', moving.fewer.error <= moving.was.error * 1.05, `${moving.fewer.error} against ${moving.was.error}`);
   check('a still regenerated picture settles (it changes less from frame to frame than a 255th)', still.regen.flicker < 1 && still.fewer.flicker < 1.5, `${still.regen.flicker}, with half the rays ${still.fewer.flicker}`);
+  check('it has no more specks than the pass as it was had: still', still.regen.specks <= still.was.specks * 1.1 + .05 && still.fewer.specks <= still.was.specks * 1.25 + .05, `${still.regen.specks}, with half the rays ${still.fewer.specks}, against ${still.was.specks}`);
+  check('and no more than half as many again at a walk', walk.regen.specks <= walk.was.specks * 1.5 + .05, `${walk.regen.specks} against ${walk.was.specks}`);
+  check('at a walk it is closer to the truth than the pass as it was', walk.regen.error < walk.was.error && walk.fewer.error < walk.was.error, `${walk.regen.error}, with half the rays ${walk.fewer.error}, against ${walk.was.error}`);
+  // (its reflection in the mirrors and its solid reflection on the rough floor go in a frame or two. What stays a while
+  // is the soft glow round a rough reflection, which a few rays a frame can only tell from noise over many frames:
+  // faint, and still going)
+  check('a thing that jumps aside is gone from the reflections ten frames on', info.jump.left < 1.25 && info.jump.left < info.jump.change * .25 && info.jump.last < info.jump.left * .8, `${info.jump.left} of 255 left over the reflections (the jump changed them by ${info.jump.change}; 24 frames on ${info.jump.last}), ${info.jump.worst} at the worst pixel`);
   v.free(); HD.traced = null; HD.regen = null; HD.regenRef = false; HD.traceScale = 0;
 } catch (e) { if (e !== 0) { window.result = { error: String(e?.stack || e) }; throw e; } }
 window.result ||= { out, info, checks };
