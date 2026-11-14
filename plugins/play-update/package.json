@@ -1,0 +1,12 @@
+{
+  "name": "play-update",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Updates from Google Play inside Game Scroll on Android: Google's in-app updates (a background download, then a restart; or Play's full-screen update for a version that can't wait). Only for copies installed from Play; read by src/update.js.",
+  "main": "index.js",
+  "files": ["index.js", "android/src/main", "android/build.gradle"],
+  "capacitor": {
+    "android": { "src": "android" }
+  },
+  "peerDependencies": { "@capacitor/core": "^8.0.0" }
+}

@@ -1,0 +1,44 @@
+// Updates from Google Play inside the app (see PlayUpdatePlugin.java).
+ext {
+    // Google's in-app updates library. https://developer.android.com/reference/com/google/android/play/core/release-notes-in_app_updates
+    // It shares com.google.android.play:core-common with Play Integrity (plugins/game-services) and Play
+    // Feature Delivery; Gradle takes the newest core-common any of them asks for.
+    playAppUpdateVersion = project.hasProperty('playAppUpdateVersion') ? rootProject.ext.playAppUpdateVersion : '2.1.0'
+    androidxAppCompatVersion = project.hasProperty('androidxAppCompatVersion') ? rootProject.ext.androidxAppCompatVersion : '1.7.1'
+}
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.0'
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace = "com.gamescroll.playupdate"
+    compileSdk = project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
+    defaultConfig {
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+    // getActivity() returns an AppCompatActivity, so javac needs it on the classpath
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "com.google.android.play:app-update:$playAppUpdateVersion"
+}

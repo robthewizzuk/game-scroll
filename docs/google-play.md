@@ -115,6 +115,53 @@ automatic upload says it can't publish the app, run it again later.
   because Play doesn't allow apps to download code. A later change moves them into a part that Play
   only sends to Snapdragon phones that can use it.
 
+## Updates inside the app
+
+A copy of the app installed from Google Play (internal testing included) asks Play for a newer version
+a few seconds after it opens, and again when the player comes back to it (at most every 2 minutes).
+It uses Google's in-app updates (`plugins/play-update`, `src/update.js`):
+
+- **Normal update** (priority 0 to 3): Play's own sheet asks *Update available?* If the player says yes,
+  Play downloads it in the background while they carry on, then a card at the bottom of the app says
+  **New version ready · Later · Restart**. It never covers a round being played. *No thanks* isn't
+  asked again for a day; Settings → Updates → **Check for updates** asks any time.
+- **Must update** (priority 4 or 5, or the copy is older than the catalogue's minimum): Play's
+  full-screen update straight away. Backing out of it leaves a *Time to update* card that can't be
+  closed, only updated from (it goes by itself if Play has nothing newer).
+- Nothing at all on the GitHub APK, iPhone, Mac/Windows or the web: Play can only update copies it installed.
+
+Settings → Updates also shows the installed version (`1.0.<run number>`).
+
+**Making an update a must:**
+
+- *This upload:* Actions → **Google Play** → **Run workflow** → *Update priority* **5**. Or put
+  `[urgent update]` in the merge commit's message (the PR title, for a squash merge). A release's
+  priority can't be changed later, and Play reports the newest release's, so the next normal upload
+  can lift it: for a must that lasts, also set the minimum below.
+- *Everyone on at least version N, whatever comes after:* set `android.min` in
+  `store/app-update.json` to that version code (each Google Play run's summary says its code) and merge.
+  The games workflow publishes it in the signed catalogue, with no app build; `0` turns it off.
+
+### Testing it on the internal testing track
+
+In-app updates only work for a copy that Play installed for a tester account, so:
+
+1. On the phone, uninstall the GitHub APK if it's there (different signature), open the internal
+   testing opt-in link with your tester account, and install Game Scroll from the Play Store.
+2. Get a newer version onto the track: merge anything to main, or **Run workflow** on Google Play.
+   Wait until the run says the version is live.
+3. Open the Play Store, find Game Scroll and leave its page open a moment (or **Manage apps & device**),
+   so the Play Store learns of the new version. It caches this, so this step matters.
+4. Open Game Scroll. After a few seconds Play's sheet offers the update. Say **Update**, keep
+   playing, and when the download finishes the **New version ready** card appears: **Restart**.
+   Settings → Updates shows the new version number afterwards.
+5. The must-update path: **Run workflow** with *Update priority* **5**, repeat 3 and 4. Play's
+   full-screen update appears instead; press back to see the *Time to update* card.
+
+If nothing appears: Settings → Updates says *Couldn't reach Google Play* (Play Store signed out or
+offline), or *didn't come from Google Play* (an APK copy). Said *No thanks* earlier? Use
+**Check for updates** there.
+
 ## When something goes wrong
 
 The run's log (Actions → Google Play → the run → *Upload to Google Play*) says what Play answered.

@@ -44,6 +44,9 @@ project(':phone-ai').projectDir = new File('../plugins/phone-ai/android')
 include ':phone-sensors'
 project(':phone-sensors').projectDir = new File('../plugins/phone-sensors/android')
 
+include ':play-update'
+project(':play-update').projectDir = new File('../plugins/play-update/android')
+
 include ':power-state'
 project(':power-state').projectDir = new File('../plugins/power-state/android')
 

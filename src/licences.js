@@ -77,4 +77,6 @@ export const OPEN_SOURCE = [
 export const OTHER_PARTS = [
   { name: 'Qualcomm AI Engine runtime (QNN)', for: "running models on the NPU of Snapdragon phones (Android); our test APKs download it from Qualcomm, only on phones that can use it", licence: "Qualcomm's AI Stack License", native: 'plugins/npu/android/build.gradle',
     notice: '© Qualcomm Technologies, Inc. Qualcomm and Snapdragon are trademarks of Qualcomm Incorporated.' },
+  { name: 'Google Play In-App Updates', for: 'getting the newest version from Google Play inside the app (Android, copies installed from Play only), by Google', licence: 'Play Core Software Development Kit Terms of Service', native: 'plugins/play-update/android/build.gradle',
+    notice: '© Google LLC' },
 ];
