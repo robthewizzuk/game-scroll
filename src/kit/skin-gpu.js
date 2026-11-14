@@ -102,8 +102,9 @@ class SkinPool {
     this.info = { meshes: 0, posed: 0, points: 0, bones: 0, kinds: 0, poolMB: 0 };
     this.growRest(1 << 16); this.growOut(1 << 17);
     this.reads = null; this.kernel = null;
-    this.cur = uniform(0, 'uint').onObjectUpdate(({ object }) => { const e = this.meshes.get(object); return e && e.out >= 0 ? e.out + e.half * e.n : 0; });
-    this.prev = uniform(0, 'uint').onObjectUpdate(({ object }) => { const e = this.meshes.get(object); return e && e.out >= 0 ? e.out + (1 - e.half) * e.n : 0; });
+    // (a cluster detail twin, detail.js cutTwin, reads the points of the mesh it stands in for: posed once for all its parts)
+    this.cur = uniform(0, 'uint').onObjectUpdate(({ object }) => { const e = this.meshes.get(object.userData.gsPoseOf || object); return e && e.out >= 0 ? e.out + e.half * e.n : 0; });
+    this.prev = uniform(0, 'uint').onObjectUpdate(({ object }) => { const e = this.meshes.get(object.userData.gsPoseOf || object); return e && e.out >= 0 ? e.out + (1 - e.half) * e.n : 0; });
   }
   // ------------------------------------------------------------ lists that grow (their contents carried over on the CPU side)
   growRest(n) {
@@ -213,7 +214,7 @@ class SkinPool {
     if (!this.on) return;
     if (!this.keyed) this.keyed = keyed(this.r);
     const L = this.shown ||= []; L.length = 0;
-    each(scene, o => { if (o.isSkinnedMesh) L.push(o); });
+    each(scene, o => { if (o.isSkinnedMesh && !o.userData.gsPoseOf) L.push(o); });   // (twins standing in for a mesh are posed through it: has())
     for (const o of L) {
       let e = this.meshes.get(o);
       if (e && e.o.geometry && this.rests.get(o.geometry) !== e.rest) { this.drop(o); e = null; }   // (it was given another geometry)
@@ -302,7 +303,7 @@ class SkinPool {
     this.on = on;
     if (!on) { for (const o of [...this.meshes.keys()]) this.drop(o); this.shown = null; }   // (each marked: three makes their own shaders again)
   }
-  has(o) { return this.on && this.meshes.has(o); }
+  has(o) { return this.on && this.meshes.has(o.userData?.gsPoseOf || o); }
 }
 
 // A shader made for a mesh in the pool is not the one for the same mesh posed in its vertex shader: three keeps a mesh's

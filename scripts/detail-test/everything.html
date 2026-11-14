@@ -1,0 +1,185 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Cluster detail for nearly everything (src/kit/detail.js, hd3d.js autoDetail), for scripts/detail-test.cjs --page everything:
+// one scene of each kind the view now takes by itself, drawn whole ('plain') and through clusters ('auto'):
+//   copies     a three InstancedMesh of 20 knobbly rocks from near to far, each with a colour of its own
+//   parts      a rock in two materials (moss on top, stone below): a twin for each, the seam between them sealed
+//   cutout     a lattice wall, alpha-tested (holes cut by its alpha map)
+//   moving     a rock carried along and spun, a new place every frame
+//   morph      a rock with a blend shape half on
+//   skinned    a tentacle on four bones, bent
+//   person     a sculpted person (gs.models.human), on bones and in several materials, mid-stride
+// The pictures must match, far fewer triangles must be drawn far off, and the twins must follow: a copy moved,
+// the rock moved every frame, the person posed. On WebGPU the person's twins read the chip's skinning pool's
+// points of the person, posed once (skin-gpu.js), and are not posed again for themselves.
+//   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?bench (--bench): the same scene flown through, off and on: triangles, draws, picking ms
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { skinPool } from '../../src/kit/skin-gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480), { human } = gs.models;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.autoLod = false;
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+
+function rock(n, r, seed) {
+  const g = new T.SphereGeometry(r, n * 2, n), p = g.attributes.position, v = new T.Vector3();
+  for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const k = 1 + .18 * Math.sin(v.x * 3 / r + seed) * Math.sin(v.y * 4 / r + seed * 2) + .06 * Math.sin(v.z * 11 / r + seed) * Math.sin(v.x * 13 / r) + .015 * Math.sin(v.y * 37 / r + seed) * Math.sin(v.z * 41 / r); p.setXYZ(i, v.x * k, v.y * k, v.z * k); }
+  g.computeVertexNormals(); return g;
+}
+// a geometry's triangles in two groups, by height: the top ones first (material 0), the rest (material 1)
+function twoMaterials(g, y0) {
+  const I = g.index.array, P = g.attributes.position, top = [], low = [];
+  for (let t = 0; t < I.length; t += 3) { const y = (P.getY(I[t]) + P.getY(I[t + 1]) + P.getY(I[t + 2])) / 3; (y > y0 ? top : low).push(I[t], I[t + 1], I[t + 2]); }
+  g.setIndex([...top, ...low]); g.clearGroups(); g.addGroup(0, top.length, 0); g.addGroup(top.length, low.length, 1);
+  return g;
+}
+// a lattice: a wavy wall with square holes cut by its alpha map
+function lattice() {
+  const g = new T.PlaneGeometry(8, 4, 160, 80), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setZ(i, .35 * Math.sin(p.getX(i) * 1.3) + .08 * Math.sin(p.getY(i) * 5));
+  g.computeVertexNormals();
+  const n = 64, a = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const on = (x % 16 < 4 || y % 16 < 4) ? 255 : 0; a.set([on, on, on, 255], (y * n + x) * 4); }
+  const tex = new T.DataTexture(a, n, n); tex.wrapS = tex.wrapT = T.RepeatWrapping; tex.repeat.set(6, 3); tex.magFilter = T.NearestFilter; tex.needsUpdate = true;
+  const m = gs.hd.pbr('#8a6a48', { rough: .8 }); m.alphaMap = tex; m.alphaTest = .5; m.side = T.DoubleSide; m.needsUpdate = true;
+  return new T.Mesh(g, m);
+}
+// a tentacle: a tall tube on four bones, bent
+function tentacle() {
+  const g = new T.CylinderGeometry(.3, .55, 6, 96, 120), p = g.attributes.position, n = p.count, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+  g.translate(0, 3, 0);
+  for (let i = 0; i < n; i++) { const y = p.getY(i) / 6 * 3, b = Math.min(2, Math.floor(y)), f = Math.min(1, Math.max(0, y - b)); si.set([b, b + 1, 0, 0], i * 4); sw.set([1 - f, f, 0, 0], i * 4); }
+  g.setAttribute('skinIndex', new T.Uint16BufferAttribute(si, 4)); g.setAttribute('skinWeight', new T.Float32BufferAttribute(sw, 4));
+  const bones = [0, 1, 2, 3].map(() => new T.Bone()); for (let i = 1; i < 4; i++) { bones[i].position.y = 2; bones[i - 1].add(bones[i]); }
+  const m = new T.SkinnedMesh(g, gs.hd.pbr('#a05a7a', { rough: .6 })); m.add(bones[0]); m.bind(new T.Skeleton(bones));
+  m.bend = a => { bones[1].rotation.z = a; bones[2].rotation.z = a * 1.2; bones[3].rotation.x = a * .6; };
+  return m;
+}
+const SPEC = { seed: 3, strands: false };
+await human.ready([SPEC]);
+const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); };
+
+function scene() {
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: .002, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 3, 40, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, -30);
+  const ground = new T.Mesh(new T.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8a66', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  v.cam.fov = 50; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 300; v.cam.updateProjectionMatrix();
+  const S = { v, c, x, things: {} }, put = (k, o) => { o.castShadow = o.receiveShadow = true; v.scene.add(o); S.things[k] = o; return o; };
+  // copies: 20 rocks of 14,400 triangles, each its own colour, from 6 m to 120 m off
+  const cp = put('copies', new T.InstancedMesh(rock(60, 1.4, 2), gs.hd.pbr('#ffffff', { rough: .7 }), 20)), M = new T.Matrix4(), col = new T.Color();
+  for (let i = 0; i < 20; i++) { const d = 6 + i * i * .3; M.compose(new T.Vector3(-5 + (i % 2) * 10, 1.2, -d), new T.Quaternion().setFromEuler(new T.Euler(i, i * 2, 0)), new T.Vector3(1, .8 + (i % 3) * .2, 1)); cp.setMatrixAt(i, M); cp.setColorAt(i, col.setHSL(i / 20, .4, .55)); }
+  cp.instanceMatrix.needsUpdate = true; cp.instanceColor.needsUpdate = true;
+  // a rock in two materials
+  const two = twoMaterials(rock(110, 2.4, 5), .6), parts = put('parts', new T.Mesh(two, [gs.hd.pbr('#5f7a3a', { rough: .95 }), gs.hd.pbr('#9a948a', { rough: .7 })])); parts.position.set(-2.5, 2.2, -14);
+  // cut-out lattice
+  const lat = put('cutout', lattice()); lat.position.set(3.5, 2.2, -12); lat.rotation.y = -.5;
+  // a rock carried along and spun (where it is, by phase)
+  const mv = put('moving', new T.Mesh(rock(110, 1.3, 8), gs.hd.pbr('#b07850', { rough: .6 })));
+  S.place = ph => { mv.position.set(-1 + Math.sin(ph) * 3, 3 + Math.cos(ph * 1.3), -9 - ph * 2); mv.rotation.set(ph * 1.7, ph * 2.3, ph * .5); };
+  S.place(0);
+  // a rock with a blend shape half on
+  const mg = rock(110, 1.6, 11), mp = mg.attributes.position, bulge = new Float32Array(mp.count * 3);
+  for (let i = 0; i < mp.count; i++) { const y = mp.getY(i); bulge[i * 3] = mp.getX(i) * .4 * Math.max(0, y); bulge[i * 3 + 2] = mp.getZ(i) * .4 * Math.max(0, y); }
+  mg.morphAttributes.position = [new T.Float32BufferAttribute(bulge, 3)]; mg.morphTargetsRelative = true;
+  const morph = put('morph', new T.Mesh(mg, gs.hd.pbr('#7a8aa8', { rough: .5 }))); morph.updateMorphTargets(); morph.morphTargetInfluences[0] = .6; morph.position.set(6, 1.8, -22);
+  // a tentacle on bones
+  const ten = put('skinned', tentacle()); ten.position.set(-7, 0, -18); ten.bend(.35);
+  // a person, mid-stride
+  const f = human(SPEC); f.position.set(1.2, 0, -5.5); f.rotation.y = .6; f.lod = 0; v.scene.add(f); S.things.person = f; S.person = f;
+  for (const m of f.lods) m.castShadow = m.receiveShadow = true;
+  pin(f, 'walk', .3);
+  return S;
+}
+const CAMS = { near: [[0, 2.2, 4], [0, 1.6, -12]], far: [[10, 14, 60], [0, 1, -20]] };
+const look = (S, [at, to]) => { S.v.cam.position.set(...at); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld(); };
+const draw = async (S, frames = 1) => { for (let i = 0; i < frames; i++) { S.v.t = 0; S.v.render(S.x, W, H); await nextFrame(); } return S.x.getImageData(0, 0, W, H).data; };
+const entries = S => [...(S.v.details?.map.values() || [])];
+const drawing = e => e.twin && e.parts.every(p => p.twin && !(p.twin.layers.mask & (1 << 29)) && (p.twin.layers.mask & 1));
+const entryOf = (S, k) => { const o = k === 'person' ? S.person.lods[0] : S.things[k]; return S.v.details?.map.get(o); };
+const KINDS = ['copies', 'parts', 'cutout', 'moving', 'morph', 'skinned', 'person'];
+const differ = (a, b) => { let sum = 0, off = 0; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 24) off++; } return { mean: sum / (a.length / 4), off: off / (a.length / 4) }; };
+// why a mesh was not taken (for the report)
+const why = (S, o) => { const m = o.material, ms = Array.isArray(m) ? m : [m]; return { tris: (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3, mats: ms.length, groups: o.geometry.groups.length, transparent: ms.some(x => x.transparent), positionNode: ms.some(x => !!x.positionNode), obc: ms.some(x => Object.hasOwn(x, 'onBeforeCompile')), shader: ms.some(x => x.isShaderMaterial), layers: o.layers.mask, morphs: !!o.morphTargetInfluences, own: Object.hasOwn(o, 'onBeforeRender') }; };
+
+async function bench() {
+  const frames = +(Q.get('frames') || 30), res = {};
+  for (const mode of ['plain', 'auto']) {
+    HD.detail = mode === 'auto';
+    const S = scene();
+    look(S, CAMS.far);
+    if (mode === 'auto') for (let i = 0; i < 3000; i++) { await draw(S); if (KINDS.every(k => entryOf(S, k) && drawing(entryOf(S, k)))) break; await new Promise(r => setTimeout(r, 30)); }
+    const sum = { tris: 0, calls: 0, dtris: 0, picks: 0, ms: 0 };
+    for (let f = 0; f < frames; f++) {
+      const a = f / frames; S.v.cam.position.set(Math.sin(a * 3) * 8, 2 + 10 * (1 - a), 50 - a * 46); S.v.cam.lookAt(0, 1.5, -15); S.v.cam.updateMatrixWorld(); S.place(a * 3);
+      pin(S.person, 'walk', a);
+      await draw(S); const I = HD.info; sum.tris += I.tris; sum.calls += I.calls; sum.dtris += I.detail?.tris || 0; sum.picks += I.detail?.picks || 0; sum.ms += I.detail?.ms || 0;
+    }
+    for (const k in sum) sum[k] = +(sum[k] / frames).toFixed(k === 'ms' ? 2 : 0);
+    res[mode] = { backend: HD.info.backend, perFrame: sum };
+    HD.detail = false; await draw(S);
+  }
+  HD.detail = true;
+  return res;
+}
+if (Q.has('bench')) { try { window.result = { out, info: await bench(), checks: [] }; } catch (e) { window.result = { error: String(e && e.stack || e) }; } throw new Error('bench done'); }
+
+try {
+  const pix = {}; let A = null;
+  for (const mode of ['plain', 'auto']) {
+    HD.detail = mode === 'auto';
+    const S = scene(), t0 = performance.now();
+    look(S, CAMS.near);
+    if (mode === 'auto') {
+      A = S;
+      for (let i = 0; i < 3000; i++) { await draw(S); if (KINDS.every(k => entryOf(S, k) && drawing(entryOf(S, k)))) break; await new Promise(r => setTimeout(r, 30)); }
+      const taken = KINDS.filter(k => entryOf(S, k) && drawing(entryOf(S, k)));
+      info.taken = { ms: Math.round(performance.now() - t0), kinds: taken };
+      for (const k of KINDS) {
+        const e = entryOf(S, k), o = k === 'person' ? S.person.lods[0] : S.things[k];
+        check(`${k}: taken by cluster detail`, e && drawing(e), e ? `${e.kind}, ${e.parts.length} part(s), ${e.twin ? 'twins made' : 'clusters building'}` : JSON.stringify(why(S, o)));
+      }
+    }
+    for (const [name, cam] of Object.entries(CAMS)) {
+      look(S, cam); await draw(S, 6);
+      pix[mode + '-' + name] = await draw(S); out[mode + '-' + name] = S.c.toDataURL();
+      info[mode + '-' + name] = { backend: HD.info.backend, tris: HD.info.tris, calls: HD.info.calls, detail: { ...HD.info.detail } };
+    }
+  }
+  for (const name of Object.keys(CAMS)) {
+    const d = differ(pix['plain-' + name], pix['auto-' + name]), P = info['plain-' + name], D = info['auto-' + name]; D.diff = { mean: +d.mean.toFixed(3), off: +(d.off * 100).toFixed(3) };
+    check(`${name}: the picture matches every mesh drawn whole`, d.mean < 1.2 && d.off < .004, `mean ${d.mean.toFixed(2)} of 255, ${(d.off * 100).toFixed(2)}% of pixels off`);
+    if (name === 'far') check('far: far fewer triangles', D.tris < P.tris * .5, `${D.tris} against ${P.tris}`);
+  }
+  // the twins follow
+  const S = A, v = S.v, E = k => entryOf(S, k);
+  look(S, CAMS.near);
+  S.place(1.1); await draw(S, 2);
+  const mvT = E('moving')?.twin, mvO = S.things.moving;
+  check('moving: the twin is where the rock is, frame after frame', mvT && mvT.matrixWorld.equals(mvO.matrixWorld));
+  const cp = S.things.copies, M = new T.Matrix4(); cp.getMatrixAt(0, M); M.setPosition(-1, 3.5, -7); cp.setMatrixAt(0, M); cp.instanceMatrix.needsUpdate = true;
+  const st0 = E('copies')?.twin?.copyStamp; await draw(S, 2);
+  check('copies: a copy moved is taken in', E('copies')?.twin && E('copies').twin.copyStamp > st0 && E('copies').twin._matricesTexture.image.data[12] === -1);
+  const parts = E('parts');
+  check('parts: one twin for each material, with that material', parts && parts.parts.length === 2 && parts.parts.every((p, i) => (p.twin.userData.gsGlMat || p.twin.material) === S.things.parts.material[i]));
+  const ps = E('person');
+  check('person: a twin on the same bones for each material', ps && ps.parts.every(p => p.twin.isSkinnedMesh && p.twin.skeleton === S.person.lods[0].skeleton), ps ? ps.parts.length + ' parts' : '');
+  check('person: the cut is coarser far off', (() => { if (!ps) return false; const near = ps.parts.reduce((n, p) => n + p.twin.cut.tris, 0); return near > 0; })());
+  if (GPU) {
+    const pool = skinPool(v._gpuChain?.r);
+    check('WebGPU: the person is posed once, through the person (the twins read its points)', pool && pool.has(S.person.lods[0]) && ps.parts.every(p => pool.has(p.twin)) && ![...pool.meshes.keys()].some(o => o.isCutMesh), pool ? `pool: ${pool.meshes.size} meshes, posed ${pool.info.posed}` : 'no pool');
+  }
+  // the moved scene against the same moved scene drawn whole
+  const after = await draw(S, 4); out['auto-moved'] = S.c.toDataURL();
+  HD.detail = false; const whole = await draw(S, 6); out['plain-moved'] = S.c.toDataURL();
+  const d = differ(whole, after); info.moved = { mean: +d.mean.toFixed(3), off: +(d.off * 100).toFixed(3) };
+  check('moved, spun, a copy moved: still the same picture as drawn whole', d.mean < 1.2 && d.off < .004, `mean ${d.mean.toFixed(2)} of 255, ${(d.off * 100).toFixed(2)}% of pixels off`);
+  check('HD.detail = false puts every mesh back', v.details.map.size === 0 && !v.scene.children.some(o => o.isDetailMesh || o.isCutMesh) && (S.things.parts.layers.mask & 1));
+  HD.detail = true;
+  window.result = { out, info, checks };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

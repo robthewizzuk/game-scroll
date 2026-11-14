@@ -1041,7 +1041,6 @@ function missionParts(v) {
     mark.receiveShadow = true; van.add(mark);
     tr.rotation.y = -Math.PI / 2; tr.position.set(TRAIN.W1 + van.position.z, TRAIN.TOP, 0);
     WD.train = new Group(); WD.train.add(tr); WD.train.visible = false; v.scene.add(WD.train); WD.train.updateMatrixWorld(true);
-    v.detail(tr, false);   // (she moves: drawn whole)
     TRAIN.RD = tr.radius; TRAIN.ROOF = van.points.roof.getWorldPosition(new Vector3()).y;
     r.on(() => { WD.train = WD.rail = null; });
   });

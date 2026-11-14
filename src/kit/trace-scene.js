@@ -109,7 +109,7 @@ export class TraceLevel {
     const hit = r => { if (r.moving) movers = true; else still = true; };
     eachShown(scene, o => {
       if (!o.isMesh) { if (o.isLight) lights.push(o); return; }
-      if (!traceable(o, bits)) { if (o.userData.gsTraced) o.userData.gsTraced = false; if ((o.layers.mask & bits) && !o.userData.noTrace && !o.isDetailMesh) { other++; if (others.length < OTHERS) others.push(o); } return; }
+      if (!traceable(o, bits)) { if (o.userData.gsTraced) o.userData.gsTraced = false; if ((o.layers.mask & bits) && !o.userData.noTrace && !o.isDetailMesh && !o.isCutMesh) { other++; if (others.length < OTHERS) others.push(o); } return; }
       const g = shapeOf(o), ver = g.attributes.position.version + (g.index ? g.index.version : 0), ms = mats(o), e = ownMatrix(o.matrixWorld.elements);
       let r = recs.get(o);
       if (!r) { const pin = !!o.userData.moves || gone.has(o); recs.set(o, r = { o, g, ver, ms, m: Float64Array.from(e), moving: pin, pin, still: 0, at: null, seen: n }); hit(r); }
