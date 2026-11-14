@@ -153,10 +153,49 @@ const LEVELS = [1, .85, .7, .55];
 // computer, from the first frame: a Retina window is three to six times a phone screen's pixels, and the effects
 // after the upscaler (bloom, motion blur, the finish) cost by the final picture's size, whatever the 3D's own is.
 const OUT_PX = 2.4e6;
+// The final picture follows the 3D's own size: the upscaler makes at most UPS[0] times the 3D's size each way (four
+// pixels from one: past that it has too little to go on and the picture breaks up), and the screen stretches the
+// rest. Its pass costs by the pixels it makes, whatever the 3D's own size is, so a resolution step used to leave
+// it as it was: Long Shadow on Rob's Fold, unfolded and hot (2026-11-14), ended at 486 x 311 blown up four times
+// to 1937 x 1239, the upscaler 5.9 ms of the chip's 11.6 a frame and the scene 3.0, at 46 frames a second, and it
+// "looked weird". Now the final picture shrinks with the 3D, and it has steps of its own (Q.out: 2, 1.7 and 1.45
+// times the 3D's size) that a slow game takes before the 3D gives up pixels, while the upscaler and the copy to
+// the screen take a real share of the chip's frame (pickSize). The 3D's own picture is never under MIN_PX (or the
+// tier's pixels, where those are fewer): below that a game is easier to read at a lower tier, or frame rate, than
+// at fewer pixels still.
+const UPS = [2, 1.7, 1.45], MIN_PX = .4e6, OUT_SHARE = .25;
+/**
+ * The sizes a frame is drawn at (pure: tests). cw, ch: the screen's pixels (the card's); px: the tier's; lvl: the
+ * resolution step (LEVELS); out: the final picture's step (UPS); capped: the final picture held to OUT_PX (a game
+ * that has stepped down, a computer). { pw, ph }: the 3D's own size; { fw, fh }: the final picture's, which the
+ * upscaler makes and the screen stretches.
+ */
+export function frameSizes(cw, ch, px, lvl = 0, out = 0, capped = false) {
+  let fw = cw, fh = ch;
+  if (capped && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
+  const q0 = Math.min(1, Math.sqrt(px / (fw * fh))), q = Math.max(q0 * LEVELS[lvl], Math.min(q0, Math.sqrt(MIN_PX / (fw * fh))));
+  const pw = Math.max(16, Math.round(fw * q)), ph = Math.max(16, Math.round(fh * q)), most = UPS[out];
+  if (fw > pw * most) { fh = Math.round(fh * pw * most / fw); fw = Math.round(pw * most); }
+  return { pw, ph, fw, fh };
+}
+/**
+ * Which size a slow game held up by the chip gives up next (pure: tests): 'out' the final picture, 'lvl' the 3D's
+ * own, or null (neither would get smaller). g: the chip's ms a frame (null where it doesn't say); parts:
+ * HD.info.gpuParts. The final picture first while its passes (upscale, show) take OUT_SHARE of the chip's frame
+ * and at least a millisecond; where the chip doesn't say, while it is over one and a half times the 3D's size.
+ */
+export function pickSize(cw, ch, px, lvl, out, g, parts) {
+  const now = frameSizes(cw, ch, px, lvl, out, lvl + out > 0 || desktop);
+  const o = out < UPS.length - 1 ? frameSizes(cw, ch, px, lvl, out + 1, true) : null, l = lvl < LEVELS.length - 1 ? frameSizes(cw, ch, px, lvl + 1, out, true) : null;
+  const canOut = !!o && o.fw * o.fh < now.fw * now.fh * .9, canLvl = !!l && l.pw * l.ph < now.pw * now.ph * .9;
+  if (!canOut || !canLvl) return canOut ? 'out' : canLvl ? 'lvl' : null;
+  if (g != null && parts) return (parts.upscale || 0) + (parts.show || 0) >= Math.max(1, g * OUT_SHARE) ? 'out' : 'lvl';
+  return now.fw > now.pw * 1.5 ? 'out' : 'lvl';
+}
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
-const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [], room: false, wantRoom: false };
+const Q = { gsum: 0, gcnt: 0, gmax: 0, tier: 2, lvl: 0, out: 0, outCeil: 0, cw: 0, ch: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [], room: false, wantRoom: false };
 // Effects that step down by their own cost (Rob's pick 3 of 2026-11-13). Before a slow game gives up
 // resolution, the effect that costs the chip most (by the GPU's own time for each pass, HD.info.gpuParts)
 // is drawn smaller: each has sizes (FXS), and only the size of its pictures changes, so no shader is built
@@ -197,7 +236,8 @@ function startGame(def) {
   Q.tier = startTier(s, phoneClass(), desktop); Q.room = !!s?.room;
   if (s?.tier != null && Q.tier < Math.min(CAP, s.tier)) s = null;   // (a saved tier not taken up: its resolution and effects were for that tier)
   Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
-  Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
+  Q.out = Math.min(UPS.length - 1, s?.out | 0); Q.outCeil = Q.out;
+  Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = Q.gmax = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
   Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
   for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
 }
@@ -293,7 +333,7 @@ function gpuTime(r, full = true) {
     let fg = 0; for (const k in by) if (k === 'fg' || k.startsWith('fg:')) fg += by[k];
     for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     const real = f - fg / n; HD.info.gpuReal = real; HD.info.fgGpu = fg / n; HD.info.madeMs = made && fg > 0 ? fg / made : null;
-    if (f < 100) { Q.gsum += f; Q.gcnt++; }
+    if (f < 100) { Q.gsum += f; Q.gcnt++; if (f > Q.gmax) Q.gmax = f; }
     // what frame generation's checks go by (speed.js frameGenFits, GpuChain.late): eased, for the game being played
     if (real > 0 && real < 100) chipCost(speed.game?.id, kept ? real : null, made && fg > 0 ? fg / made : null);
   }, () => {}).finally(() => { GT.busy = false; });
@@ -311,7 +351,8 @@ const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cos
 const STEPS = { log: [], off: { pinned: 0, long: 0, warming: 0 } };
 function stepped(t, a, late, v, was) {
   let did = '';
-  if (Q.lvl !== was.lvl) did = `resolution ${Math.round(LEVELS[was.lvl] * 100)}% to ${Math.round(LEVELS[Q.lvl] * 100)}%`;
+  if (Q.out !== was.out) did = `final picture ${UPS[was.out]}x to ${UPS[Q.out]}x the 3D's size`;
+  else if (Q.lvl !== was.lvl) did = `resolution ${Math.round(LEVELS[was.lvl] * 100)}% to ${Math.round(LEVELS[Q.lvl] * 100)}%`;
   else if (Q.fxLast.length > was.fx) did = `${Q.fxLast[Q.fxLast.length - 1]} smaller`;
   else if (Q.fxLast.length < was.fx) did = 'an effect back';
   else if (Q.want != null && Q.want !== was.want) did = `${TIERS[Q.want].name} wanted (from the next round)`;
@@ -328,7 +369,7 @@ function adapt(gap) {
   Q.sum += gap; if (gap > budget * 1.5) Q.late++;   // a frame a whole refresh (or more) late: a stutter you can see
   if (++Q.cnt < 45) return;
   const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget), late = Q.late; Q.sum = Q.cnt = Q.late = 0;
-  const was = { lvl: Q.lvl, fx: Q.fxLast.length, want: Q.want, fps };
+  const was = { lvl: Q.lvl, out: Q.out, fx: Q.fxLast.length, want: Q.want, fps };
   decide(v, now, fps, budget);
   stepped(now, a, late, v, was);
 }
@@ -337,10 +378,14 @@ function decide(v, now, fps, budget) {
   // is the graphics chip's. A frame that's slow while the GPU has room is held up by the CPU, and fewer
   // pixels wouldn't help it; a GPU with plenty of room can take sharpness back sooner (Unreal and
   // Unity's dynamic resolution work from GPU time the same way)
-  const g = Q.gcnt >= 5 ? Q.gsum / Q.gcnt : null; Q.gsum = Q.gcnt = 0;
-  const cpuBound = g != null && g < budget * .75, gpuRoom = g != null && g < budget * .6;
-  if (now - Q.ceilT > Q.hold) { Q.ceil = 0; Q.tierCeil = 3; }
-  const tier0 = Q.tier, lvl0 = Q.lvl, fx0 = Q.fxLast.length;
+  // (held up by the CPU: the chip's frames average well under the budget, and none of its reads in the window came
+  // near it. On a hot phone the chip's clock swings: the Fold's reads were 9.7 ms in the middle and 22 at the worst
+  // twentieth, 319 of 420 stutters with the chip over the beat, and by the average alone that counted as the CPU's
+  // for 34 s, 2026-11-14)
+  const g = Q.gcnt >= 5 ? Q.gsum / Q.gcnt : null, worst = Q.gmax; Q.gsum = Q.gcnt = Q.gmax = 0;
+  const cpuBound = g != null && g < budget * .75 && worst < budget * .9, gpuRoom = g != null && g < budget * .6 && worst < budget * .9;
+  if (now - Q.ceilT > Q.hold) { Q.ceil = 0; Q.outCeil = 0; Q.tierCeil = 3; }
+  const tier0 = Q.tier, lvl0 = Q.lvl, out0 = Q.out, fx0 = Q.fxLast.length;
   if (v === 'slow') {
     Q.fast = 0; Q.easy = 0; if (++Q.slow < 2) return; Q.slow = 0; Q.ceilT = now;
     if (now - Q.upT < 20000) Q.hold = Math.min(HOLD_MAX, Q.hold * 2);   // the last climb didn't hold
@@ -348,19 +393,51 @@ function decide(v, now, fps, budget) {
     // (and before the picture loses sharpness when frames made between would take over at 60 and fit: frameGenCould)
     if (fps > 60 && (Q.lvl >= 1 || cpuBound || frameGenCould(Q.game, 60)) && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
     else if (!cpuBound && fxDown(g)) { /* an effect drawn smaller first */ }
-    else if (Q.lvl < LEVELS.length - 1 && !cpuBound) { Q.lvl++; Q.ceil = Q.lvl; }
-    else if (Q.tier > 0) { if (Q.want == null) { Q.tierCeil = Q.tier - 1; Q.want = Q.tier - 1; } }
+    else if (!cpuBound && sizeDown(g)) { /* the final picture, or the 3D's own, smaller */ }
+    // (from the tier being drawn: while hot that is one under the game's own, HD.tier, and a step to the one it already draws would change nothing)
+    else if (HD.tier > 0) { if (Q.want == null) { Q.tierCeil = HD.tier - 1; Q.want = HD.tier - 1; } }
     else if (stepDown(Q.game)) { Q.lvl = 1; Q.fpsT = now; }
   } else if (v === 'fast') {
     Q.slow = 0; if (++Q.fast < (gpuRoom && Q.lvl > Q.ceil ? 3 : 8)) return; Q.fast = 0;
-    if (Q.lvl > Q.ceil) { if (!(hot(now) && Q.lvl <= 1)) { Q.lvl--; Q.upT = now; } }
+    // (while hot the 3D keeps its first step; the tier may still climb from there to what the heat allows, HD.tier:
+    // a hot phone used to stay on the tier it had fallen to for as long as it stayed hot)
+    const top = Q.lvl === 0 || (Q.lvl === 1 && hot(now));
+    if (Q.lvl > Q.ceil && !top) { Q.lvl--; Q.upT = now; }
+    else if (Q.out > Q.outCeil) { Q.out--; Q.upT = now; }
     else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
-    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom)) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
+    else if (top && Q.out === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, Q.capNow) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom)) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
   } else { Q.slow = 0; Q.fast = 0; }
-  if (Q.tier !== tier0 || Q.lvl !== lvl0 || Q.fxLast.length !== fx0) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, fx: fxSaved() });
+  if (Q.tier !== tier0 || Q.lvl !== lvl0 || Q.out !== out0 || Q.fxLast.length !== fx0) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, out: Q.out, fx: fxSaved() });
+}
+/** The slow verdict, GPU-bound, with no effect left to draw smaller: the final picture or the 3D's own a step down (pickSize). False if neither can. */
+function sizeDown(g) {
+  const k = Q.cw > 0 ? pickSize(Q.cw, Q.ch, TIERS[HD.tier].px, Q.lvl, Q.out, g, HD.info.gpuParts) : Q.lvl < LEVELS.length - 1 ? 'lvl' : null;
+  if (k === 'out') { Q.out++; Q.outCeil = Q.out; } else if (k === 'lvl') { Q.lvl++; Q.ceil = Q.lvl; }
+  return !!k;
+}
+/**
+ * Tests: the quality steps run over a list of windows of frames, each { v: 'slow' | 'fast' | 'ok', g: the chip's ms a
+ * frame (or none), worst: its longest reading, parts: HD.info.gpuParts }, for a screen of o.cw x o.ch on tier o.tier
+ * from steps o.lvl and o.out, with o.fx the effects drawn. Gives what each window did: 'out 1', 'lvl 2', 'fx',
+ * 'tier 1' (wanted, from the next round) or ''. The game being played is left as it was.
+ */
+export function stepsRun(list, o = {}) {
+  const keep = { ...Q, fx: { ...Q.fx }, fxLast: [...Q.fxLast] }, parts0 = HD.info.gpuParts, on0 = fxOn, did = [];
+  Object.assign(Q, { game: null, force: null, tier: o.tier ?? 2, capNow: CAP, lvl: o.lvl | 0, ceil: 0, out: o.out | 0, outCeil: 0, cw: o.cw, ch: o.ch, slow: 0, fast: 0, easy: 0, want: null, fx: {}, fxLast: [], ceilT: -1e9, upT: -1e9, hold: HOLD, tierCeil: 3 });
+  fxOn = new Set(o.fx || []);
+  try {
+    let now = performance.now();
+    for (const w of list) {
+      now += 750; Q.gcnt = w.g != null ? 9 : 0; Q.gsum = (w.g || 0) * 9; Q.gmax = w.worst ?? w.g ?? 0; HD.info.gpuParts = w.parts || null;
+      const was = { lvl: Q.lvl, out: Q.out, fx: Q.fxLast.length, want: Q.want };
+      decide(w.v, now, 60, 1000 / 60);
+      did.push(Q.out !== was.out ? 'out ' + Q.out : Q.lvl !== was.lvl ? 'lvl ' + Q.lvl : Q.fxLast.length !== was.fx ? 'fx' : Q.want !== was.want ? 'tier ' + Q.want : '');
+    }
+  } finally { Object.assign(Q, keep); HD.info.gpuParts = parts0; fxOn = on0; }
+  return did;
 }
 // A new tier changes which shaders every material needs (shadows, lights, edge smoothing), so three.js
 // rebuilds them all: a long stall. So a tier change waits until no round is being played (the
@@ -373,9 +450,9 @@ function applyTier() {
   }
   Q.capNow = hot() ? CAP - 1 : CAP;   // between rounds: one tier lower while hot
   if (Q.want == null) return;
-  const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
+  const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.out = Q.outCeil = 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
   if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)
-  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, room: Q.room || undefined });
+  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, out: Q.out, room: Q.room || undefined });
 }
 // what the phone and driver steering list says for this device and the game on screen (src/steer.js): a highest tier,
 // no ray tracing, no half precision, a game kept on WebGL
@@ -383,6 +460,8 @@ const steered = () => steerFor(speed.game?.id);
 /** Current quality: { tier, name, res }. Set HD.force = 0..3 to pin a tier (tests, screenshots). */
 export const HD = {
   get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow, steered().tier ?? 3); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
+  /** The most the final picture may be of the 3D's own size, each way (2, or less once it has stepped down itself: frameSizes). */
+  get out() { return Q.force != null ? UPS[0] : UPS[Q.out]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
   /** The quality steps' record (the frame lab): { log: [{ t, avg, late, v, did }] each window of frames, off: frames not counted, by why }. */
   get steps() { return STEPS; },
@@ -3002,7 +3081,11 @@ export class HDView {
     // multisampled colour, depth and motion pictures and their resolves
     if (s2 && HD.sgsrTune !== false) o.msaa = 0;
     o.s2Plain = HD.sgsrTune === false;
-    o.s2Net = s2 && !o.s2Plain ? netFor(HD.gssrNet) : null; HD.info.gssrNet = o.s2Net ? o.s2Net.id : '';
+    // (GSSR's learned blend on high and ultra, while the final picture is as the tier has it: below high, and once
+    // the final picture has stepped down, the hand-written blend, which is the lighter of the two. A pinned tier
+    // (tests, the frame lab's A/B) has what HD.gssrNet says.)
+    o.s2Net = s2 && !o.s2Plain && (Q.force != null || HD.tier >= 2) ? netFor(HD.gssrNet) : null;
+    o.s2Light = !!o.s2Net && Q.force == null && Q.out > 0; HD.info.gssrNet = o.s2Net && !o.s2Light ? o.s2Net.id : '';
     G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     if (G.fx.SHADOW_16) G.fx.SHADOW_16.on = HD.shadow16 !== false;
     if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
@@ -3292,13 +3375,16 @@ export class HDView {
     // screen (a foldable opened up) that's twice a phone's pixels and the resolution steps can't lighten it,
     // so once the game has had to step down (Q.lvl >= 1), it's also drawn at no more than OUT_PX and the
     // screen stretches it. A game keeping up is never touched on a phone; on a computer it always is.
+    // And it is never more than twice the 3D's own size each way, less once it has stepped down itself (frameSizes).
     let fw = c.canvas.width, fh = c.canvas.height;
-    if (!baking && !off && HD.scale == null && Q.force == null && (Q.lvl >= 1 || desktop) && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
+    const sized = !baking && !off && HD.scale == null && Q.force == null;
+    if (sized) { Q.cw = fw; Q.ch = fh; }
     // (Frame generation leaves the 3D's size as it is. It used to give each real frame 1.6 times the pixels, as its
     // two refreshes' time, but the made frames take some of that time, and the Fold is held back by its pixels:
     // the real frame got slower, which is the opposite of what frame generation is for.)
-    let pw = fw, ph = fh; const px = baking === 'small' ? Math.min(T.px, PIC_PX) : T.px, q = HD.scale ?? Math.min(1, Math.sqrt(px / (pw * ph))) * HD.res;
-    pw = Math.max(16, Math.round(pw * q)); ph = Math.max(16, Math.round(ph * q));
+    let pw = fw, ph = fh; const px = baking === 'small' ? Math.min(T.px, PIC_PX) : T.px;
+    if (sized) ({ pw, ph, fw, fh } = frameSizes(fw, fh, px, Q.lvl, Q.out, Q.lvl + Q.out > 0 || desktop));
+    else { const q = HD.scale ?? Math.min(1, Math.sqrt(px / (pw * ph))) * HD.res; pw = Math.max(16, Math.round(pw * q)); ph = Math.max(16, Math.round(ph * q)); }
     if (!baking && !off) { HD.info.rw = pw; HD.info.rh = ph; HD.info.ow = fw; HD.info.oh = fh; }   // the 3D's own size and the final picture's (the frame lab's resolution counter)
     // The 3D is drawn at pw x ph (fewer pixels on big screens and when the phone struggles). Below the
     // screen's size, Snapdragon GSR 2 (sgsr2.js, temporal: jitters the camera and builds on the frames

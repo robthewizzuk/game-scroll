@@ -147,10 +147,13 @@ function counters(s) {
     C.fx = fx;
     if (C.tier != null && tier !== C.tier) { pend.push(`quality tier change (${C.tier} → ${tier})`); event('Q', `quality tier ${C.tier} → ${tier}`); }
     if (C.res != null && res !== C.res) { pend.push(`resolution step change (${Math.round(C.res * 100)}% → ${Math.round(res * 100)}%)`); event('Q', `resolution step ${Math.round(C.res * 100)}% → ${Math.round(res * 100)}%`); }
-    C.tier = tier; C.res = res; C.rw = rw;
-  } else { C.tier = C.res = C.fx = null; }
+    // (the final picture's own steps, hd3d.js frameSizes: the upscaler's picture a step smaller or back with the 3D as it was)
+    const up = HD.out;
+    if (C.up != null && up !== C.up && res === C.res) { pend.push(`final picture step change (${C.up}x → ${up}x the 3D's size)`); event('Q', `final picture ${C.up}x → ${up}x the 3D's size`); }
+    C.tier = tier; C.res = res; C.rw = rw; C.up = up;
+  } else { C.tier = C.res = C.fx = C.up = null; }
   const id = d?.id || '', st = s?.state || '';
-  if (C.id && id !== C.id) { pend.push('card changed'); event('C', `card → ${id || 'none'}`); C.tier = C.res = C.fx = null; }
+  if (C.id && id !== C.id) { pend.push('card changed'); event('C', `card → ${id || 'none'}`); C.tier = C.res = C.fx = C.up = null; }
   else if (C.state && st !== C.state && st === 'playing') { pend.push('round started'); event('C', 'round started'); }
   C.id = id; C.state = st;
 }
