@@ -318,6 +318,40 @@ function cells(c) {
 const COUNT_HEADS = '<th class=n>Rounds</th><th class=n>Avg fps</th><th class=n>Slow</th><th class=n>Freezes</th><th class=n>Freezes/min</th><th class=n>Longest</th><th class=n>Busy</th><th class=n>Heat</th>';
 const KINDS = { browser: 'web browser', computer: 'computer (the Mac and Windows app)', emulator: 'emulator (a test machine)', robot: 'test robot', likely: 'probably a test robot' };
 
+// Lost graphics chips by chip and engine, on real phones and computers, with a steering rule where there were enough
+const STEER_MIN = 3;
+const slug = t => String(t).toLowerCase().replace(/\(tm\)|\(r\)/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const reEsc = t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function steerGroups(chips) {
+  const groups = new Map();
+  for (const e of chips) {
+    const real = e.phones.filter(p => !p.kind || p.kind === 'computer');
+    if (!real.length) continue;
+    const [chip = '', engine = ''] = String(e.place || '').split(' · ');
+    if (!chip) continue;
+    const platform = real[0].platform, k = platform + '|' + chip + '|' + engine;
+    let g = groups.get(k);
+    if (!g) groups.set(k, g = { platform, chip, engine, n: 0, games: new Set(), models: new Set(), back: 0, webgl: 0, none: 0 });
+    g.n += e.n; g.games.add(e.game); for (const p of real) g.models.add(p.model);
+    const end = /no 3D until/.test(e.msg) ? 'none' : /WebGL from then on/.test(e.msg) ? 'webgl' : 'back'; g[end] += e.n;
+  }
+  return [...groups.values()].sort((a, b) => b.n - a.n);
+}
+/** A rule for src/steer-list.js for one group (null: too few to go on). */
+export function steerRule(g, days = 14) {
+  if (g.n < STEER_MIN) return null;
+  const eng = /^(Chrome|Safari) (\d+)$/.exec(g.engine), when = { platform: g.platform, chip: reEsc(g.chip) };
+  if (eng) when.engine = `${eng[1]} <=${eng[2]}`;
+  return { id: [slug(g.chip), eng ? slug(g.engine) : '', 'webgpu'].filter(Boolean).join('-'), why: `WebGPU device lost ${g.n} times in ${g.games.size} game${g.games.size === 1 ? '' : 's'} on ${g.chip}${g.engine ? ' with ' + g.engine : ''} (${g.models.size} phone model${g.models.size === 1 ? '' : 's'}, the last ${days} days to ${new Date().toISOString().slice(0, 10)})`, when, do: { webgpu: false } };
+}
+function steerTable(chips, days) {
+  const list = steerGroups(chips);
+  if (!list.length) return '<p class=ok>No real phone or computer has lost its graphics chip.</p>';
+  return `<table><tr><th>Chip</th><th>Engine</th><th>On</th><th class=n>Times</th><th>Games</th><th>Phones</th><th>How it ended</th><th>Rule</th></tr>
+    ${list.map(g => { const r = steerRule(g, days); return `<tr><td>${esc(g.chip)}</td><td>${esc(g.engine || '?')}</td><td>${esc(g.platform)}</td><td class=n>${g.n}</td><td>${g.games.size}</td><td>${[...g.models].slice(0, 6).map(esc).join(', ')}</td>
+<td>${[g.back && `${g.back} back on WebGPU`, g.webgl && `${g.webgl} WebGL`, g.none && `<span class=bad>${g.none} no 3D</span>`].filter(Boolean).join(', ')}</td><td>${r ? `<code>${esc(JSON.stringify(r))},</code>` : '<span class=mute>too few to go on</span>'}</td></tr>`; }).join('')}</table>`;
+}
+
 /**
  * The report as a plain web page (no scripts), for reading on a computer or phone.
  * titles: the catalogue (id -> { hash, meta: { title } }); repo: the repository's address, for links to each build's commit.
@@ -343,6 +377,7 @@ export function perfPage({ days, at, game = '', phones = [], games = [], history
     : '<p class=ok>None reported.</p>';
   const crashes = errors.filter(r => r.kind === 'crash'), scripts = errors.filter(r => r.kind === 'error'), chips = errors.filter(r => r.kind === 'gpu');
   const total = list => list.reduce((a, r) => a + r.n, 0);
+  const steer = steerTable(chips, days);
 
   // Real phones first, then test machines; within each, whoever reported most recently.
   const order = [...phones].sort((a, b) => !!a.kind - !!b.kind || b.t1 - a.t1 || b.d1 - a.d1);
@@ -404,6 +439,9 @@ ${game ? '' : `<h2>Who is reporting</h2>
 <h2>Graphics chip lost (${total(chips)})</h2>
 <p>The phone’s or computer’s graphics chip went away mid-game (its driver restarted, or the browser’s graphics process crashed) and the app made a new one. “Where” is the chip and the browser engine; the end of “What” says whether WebGPU came back or the app drew with WebGL from then on. A chip or driver that shows up here often is one to steer away from in the steering list.</p>
 <div class=wrap>${errTable(chips)}</div>
+<h2>Chips and phones to steer</h2>
+<p>The lost graphics chips above by chip and browser engine, on real phones and computers (test machines left out). Where there were ${STEER_MIN} or more, a rule for the steering list (<code>src/steer-list.js</code>) that has that chip draw with WebGL from then on, for that engine and older ones: check it with <code>node scripts/steer.mjs</code>, narrow it if the reports show more (one phone model, a driver version), and take it out once the trouble is gone. Phones get it with the next catalogue, from their next start.</p>
+<div class=wrap>${steer}</div>
 <h2>Script errors (${total(scripts)})</h2>
 <p>A game threw an error. The app ends that round and carries on.</p>
 <div class=wrap>${errTable(scripts)}</div>

@@ -87,6 +87,33 @@ Console one, and checks the round comes back drawn as before, on WebGPU, with a 
 --how destroy` checks the move to WebGL, `--times 2` Chrome's block, `--when gate` and `--when feed`
 a loss before the round. The PR check runs it when `gpu.js`, `toon3d.js` or the script change.
 
+## Shaders a round made, made ahead next time
+
+`src/kit/pipes.js` (2026-11-14) notes the pipelines a round makes in play and makes them ahead the next
+time, as Unity's PSO tracing and Godot's shader baker do, without knowing anything about three.js:
+
+- `watchDevice(device)` (from `prepareGPU`) wraps the device's `createShaderModule`, bind group and
+  pipeline layouts and `createRenderPipeline(Async)` / `createComputePipeline(Async)`. Each pipeline's
+  description is written out as plain data (shader modules by a hash of their text, layouts by their
+  entries, labels left out) and hashed. One first made while a round is playing is noted for that game.
+- The notes are kept in IndexedDB (`gs-pipes`, gzipped, up to 96 a game and 40 games, the oldest
+  played forgotten first, dropped on a three.js update). When the game's card comes up (`primePipes`
+  in `setActive`), each is made again with `createRenderPipelineAsync` in the background, and the
+  loading gate waits a little for them (at most 4 s: the `Shaders` soft wait). Dawn keeps one pipeline
+  for each description while one is alive, so three's own ask in the round finds it already made
+  (on the test machine, 191 ms down to 4 ms).
+- A note the chip refuses is dropped; one not asked for in 3 rounds of 20 s or more is dropped too.
+- three writes the members of a shared uniform block in the order the material first used them, which
+  is not always the same from one launch to the next, so some of a game's notes (on the test machine,
+  about a fifth) never match three's own asks in a later launch: those are made ahead for nothing and
+  dropped after 3 rounds. Sorting the members by name when the text is written made every note match,
+  but three had already sized some uniform buffers by the old order ("bound with size 288 ... is too
+  small", a frame dropped), so it was taken out; doing it where three adds the members is a follow-up.
+
+`__gs.pipes.stats()` gives what was noted, primed, made and asked for; `node scripts/shader-replay.cjs`
+plays a game twice in two launches of the browser on one profile and fails if the second made none
+of what the first noted.
+
 ## What still keeps a view on WebGL (the move checklist)
 
 | Part | Where | What it needs for WebGPU |

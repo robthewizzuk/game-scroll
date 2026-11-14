@@ -7,7 +7,8 @@
 // downloaded game must use the app's instances, not its own.
 //
 // Output (CLI):  node scripts/build-games.mjs [outDir=dist-games]
-//   <outDir>/manifest.json            catalogue: id, file, hash, the shared exports each game needs, and its metadata
+//   <outDir>/manifest.json            catalogue: id, file, hash, the shared exports each game needs, and its metadata;
+//                                     and the phone and driver steering list (src/steer-list.js)
 //   <outDir>/games/<id>.<hash>.js     one file per game; the name changes whenever the code does
 //
 // vite.config.js calls buildGames() too, so the app knows the hash of the copy it ships with and
@@ -124,7 +125,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   rmSync(out, { recursive: true, force: true }); mkdirSync(join(out, 'games'), { recursive: true });
   const games = await buildGames({ withMeta: true });
   for (const g of games) writeFileSync(join(out, g.file), g.code);
-  const manifest = { v: 1, built: Date.now(), games: games.map(({ code, ...g }) => g) };
+  // the phone and driver steering list goes out with the catalogue (src/steer.js): a rule reaches phones without a new app
+  const steer = (await import(pathToFileURL(join(SRC, 'steer-list.js')).href)).default;
+  const manifest = { v: 1, built: Date.now(), games: games.map(({ code, ...g }) => g), steer };
   writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest));
   const kb = games.reduce((a, g) => a + g.bytes, 0) / 1024;
   console.log(`${games.length} games, ${kb.toFixed(0)} KB total, largest ${Math.max(...games.map(g => g.bytes)) / 1024 | 0} KB -> ${posix(relative(ROOT, out))}`);

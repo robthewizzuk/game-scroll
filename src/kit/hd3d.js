@@ -55,6 +55,7 @@ import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
 import { packing } from './pack.js';
+import { steerFor } from './steering.js';
 import { SLIM, isSlim, meshBytes } from './slim.js';
 import { makeRenderer } from './renderer.js';
 import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
@@ -370,9 +371,12 @@ function applyTier() {
   if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)
   settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, room: Q.room || undefined });
 }
+// what the phone and driver steering list says for this device and the game on screen (src/steer.js): a highest tier,
+// no ray tracing, no half precision, a game kept on WebGL
+const steered = () => steerFor(speed.game?.id);
 /** Current quality: { tier, name, res }. Set HD.force = 0..3 to pin a tier (tests, screenshots). */
 export const HD = {
-  get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
+  get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow, steered().tier ?? 3); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
   /** The quality steps' record (the frame lab): { log: [{ t, avg, late, v, did }] each window of frames, off: frames not counted, by why }. */
   get steps() { return STEPS; },
@@ -2454,7 +2458,7 @@ export class HDView {
    */
   reflect(...meshes) {
     for (const m of meshes.flat()) if (m && !this.reflectors.includes(m)) { this.reflectors.push(m); m.userData.gsReflect = true; }
-    if (this.reflectors.length && HD.traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
+    if (this.reflectors.length && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
     return this;
   }
   /**
@@ -2846,7 +2850,7 @@ export class HDView {
     const wantRefl = this.reflectors.length && T.ao > 0 && !this.clearBg;
     let tr = null;
     // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
-    const TK = wantRefl && HD.traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
+    const TK = wantRefl && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
     if (TK) {
       if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) fn(e.o, e.twin); } }); }
       this._tracer.show = !!HD.traceShow;
@@ -2862,7 +2866,7 @@ export class HDView {
     // multisampled colour, depth and motion pictures and their resolves
     if (s2 && HD.sgsrTune !== false) o.msaa = 0;
     o.s2Plain = HD.sgsrTune === false;
-    G.fx.HALF.on = HD.half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
+    G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };
     // depth of field and sun shafts: in the chain from the first time the view uses them (high and ultra
@@ -3300,6 +3304,7 @@ function materialFits(m) {
 }
 /** '' if every part of this view has a WebGPU version, else what keeps it on WebGL (HD.info.webgl). */
 export function gpuFits(v) {
+  if (steered().webgpu === false) return 'the steering list (' + (steered().rules.join(', ') || 'this game') + ')';
   const T = tier();
   // (gs.fx3d's own effects have WebGPU versions, hd3d-gpu-fx.js; a pass a game made itself hasn't)
   if (v.extras?.some(p => !p.gsFx)) return 'a screen effect of the game\'s own';
