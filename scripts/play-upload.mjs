@@ -4,9 +4,12 @@
 // sees the key. Used by .github/workflows/android-play.yml; setup is in docs/google-play.md.
 //
 //   PLAY_SERVICE_ACCOUNT_JSON='{...}' node scripts/play-upload.mjs app.aab \
-//     [--track internal] [--status completed] [--mapping mapping.txt] [--name "1.0.42"] [--package com.game_scroll.app]
+//     [--track internal] [--status completed] [--mapping mapping.txt] [--name "1.0.42"] [--package com.game_scroll.app] [--priority 0]
 //
 // --status: completed (testers get it now) or draft (waits in Play Console for you to roll it out).
+// --priority: how much the update matters, 0 (default) to 5. The app (src/update.js) has Play download
+//   0 to 3 in the background and offer a restart; 4 and 5 get Play's full-screen update at once, which
+//   the player can't skip. Play keeps a release's priority for good: it can't be changed afterwards.
 // Until Play has rolled out the app's first release, the API only takes drafts, so a "draft app"
 // refusal is retried as a draft automatically.
 import { createSign } from 'node:crypto';
@@ -21,9 +24,11 @@ const track = opt('track', 'internal');
 let status = opt('status', 'completed');
 const mapping = opt('mapping');
 const name = opt('name');
+const priority = Number(opt('priority', '0'));
 
 if (!aab) { console.error('Usage: node scripts/play-upload.mjs <app.aab> [--track internal] [--status completed|draft]'); process.exit(2); }
 if (!['completed', 'draft'].includes(status)) { console.error(`--status must be completed or draft, not ${status}`); process.exit(2); }
+if (!Number.isInteger(priority) || priority < 0 || priority > 5) { console.error(`--priority must be a whole number from 0 to 5, not ${opt('priority')}`); process.exit(2); }
 const raw = process.env.PLAY_SERVICE_ACCOUNT_JSON;
 if (!raw) { console.error('PLAY_SERVICE_ACCOUNT_JSON is not set (the service account key, see docs/google-play.md)'); process.exit(2); }
 let sa;
@@ -89,7 +94,7 @@ try {
     } catch (e) { console.log(`::warning::Couldn't upload the R8 mapping (${e.message}); releasing anyway`); }
   }
   const putTrack = () => call('PUT', `${API}/edits/${edit.id}/tracks/${track}`, { token, body: {
-    track, releases: [{ name: name || String(vc), versionCodes: [String(vc)], status }] } });
+    track, releases: [{ name: name || String(vc), versionCodes: [String(vc)], status, inAppUpdatePriority: priority }] } });
   try {
     await putTrack();
     await call('POST', `${API}/edits/${edit.id}:commit`, { body: {}, token });
@@ -100,11 +105,12 @@ try {
     await putTrack();
     await call('POST', `${API}/edits/${edit.id}:commit`, { body: {}, token });
   }
-  console.log(status === 'completed'
+  const urgent = priority >= 4 ? ` Update priority ${priority}: the app makes players update to it at once.` : priority ? ` Update priority ${priority}.` : '';
+  console.log((status === 'completed'
     ? `Done: version ${vc} is live on the ${track} track. Testers get it from the Play Store shortly.`
-    : `Done: version ${vc} is a draft on the ${track} track. Roll it out in Play Console → Test and release → Testing → ${track}.`);
+    : `Done: version ${vc} is a draft on the ${track} track. Roll it out in Play Console → Test and release → Testing → ${track}.`) + urgent);
   if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Google Play\nVersion code **${vc}** uploaded to the **${track}** track as **${status}**.\n`);
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Google Play\nVersion code **${vc}** uploaded to the **${track}** track as **${status}**.${urgent}\n`);
   }
 } catch (e) {
   console.error(e.message);

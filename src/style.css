@@ -384,7 +384,7 @@ dialog.info::backdrop{background:#000a;backdrop-filter:blur(3px)}
 .set-stat b{color:var(--text);font-size:18px}
 .set-toggle{display:flex;align-items:center;gap:10px;margin:0 16px 12px;font-size:15px;cursor:pointer}
 .set-toggle input{width:20px;height:20px;accent-color:var(--accent,#ff4d6d)}
-.set-clear:disabled{opacity:.5;cursor:default}
+.set-clear:disabled,.set-upd:disabled{opacity:.5;cursor:default}
 .set-note{margin:0 16px 12px;color:var(--accent);font-size:13px}
 .settings{overflow-y:auto}
 .set-row + .set-row{border-top:1px solid #ffffff10;padding-top:6px}
@@ -503,3 +503,23 @@ body:not(.fullscreen) .fs-pill{display:none}
 .retro.board .ov-bar i{background:linear-gradient(90deg,#d8b46a,#f0c878);box-shadow:0 0 10px #d8b46a88}
 .retro.console .ov-what,.retro.nextgen .ov-what{font:600 10px/1 var(--f-body);letter-spacing:.24em;text-transform:uppercase;color:#7f8ba3}
 @media (prefers-reduced-motion:reduce){.ov-bar::after{animation:none}.ov-bar i{transition:none}}
+
+/* Updates from Google Play (src/update.js): the "new version ready" card at the bottom, never over a round,
+   and the must-update card behind Play's own full-screen update (it borrows the how-to-play sheet's look) */
+.upd{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;transform:translate(-50%,24px);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;
+  display:flex;align-items:center;gap:10px;width:min(440px,calc(100vw - 24px));padding:10px 10px 10px 12px;
+  background:var(--panel);color:var(--text);border-radius:18px;box-shadow:0 12px 32px #000a,0 0 0 1px #ffffff12}
+.upd.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.upd-i{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:var(--accent);color:var(--ink)}
+.upd-i svg{width:20px;height:20px}
+.upd-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.upd-t b{font:700 14px/1.2 var(--f-body)}
+.upd-t span{font-size:12px;line-height:1.3;color:var(--muted)}
+.upd button{flex:none;font:700 13px/1 var(--f-body);border:0;border-radius:999px;padding:11px 14px;cursor:pointer}
+.upd-go{background:var(--accent);color:var(--ink)}
+.upd-go:disabled{opacity:.5;cursor:default}
+.upd-later{background:transparent;color:var(--muted)}
+.upd-wall .info-card{align-items:center;text-align:center;padding:28px 22px 22px}
+.upd-wall .info-card .tag{background:var(--accent);color:var(--ink)}
+.upd-wall::backdrop{background:#000d}
+@media (prefers-reduced-motion:reduce){.upd{transition:opacity .2s}}

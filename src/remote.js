@@ -78,6 +78,7 @@ const loaded = new Map();    // id -> { hash, def }
 const inflight = new Map();  // id -> Promise
 const failed = new Map();    // id -> time of the last failed download (skipped for a while, e.g. offline)
 let addGame = null, onChange = null;
+let appInfo = null;   // the catalogue's word on the app itself: { android: { min } } (store/app-update.json)
 const known = new Map();   // id -> the app's entry for it (metadata, likes)
 
 // Can this app run the game? It must only use shared exports this build actually has.
@@ -104,6 +105,7 @@ function apply(m) {
   const added = [], changed = [];
   if (!m || m.v !== 1 || !Array.isArray(m.games)) return { added, changed };
   if (Array.isArray(m.steer)) steerList = m.steer;
+  appInfo = m.app && typeof m.app === 'object' ? m.app : null;
   for (const g of m.games) {
     if (!g || !g.id || !g.file || !g.hash || !g.meta || g.meta.id !== g.id || !compatible(g)) continue;
     entries.set(g.id, g);
@@ -259,6 +261,10 @@ export const remote = {
     index = {}; saveIndex();
     try { await idb('readwrite', s => s.clear()); } catch (_) {}
   },
+
+  /** What the catalogue says about the app itself, e.g. { android: { min: 412 } }: the oldest Android
+   *  version code that may carry on (src/update.js gets older copies updated from Google Play). */
+  app() { return appInfo; },
 
   status() { return { host: BASE || null, signed: SIGNED, games: entries.size, loaded: [...loaded.keys()], cache: this.cacheInfo() }; },
 };

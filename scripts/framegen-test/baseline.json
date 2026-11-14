@@ -2,9 +2,9 @@
   "blend": {
     "still": {"error":0.14,"broken":0.08},
     "strafe": {"error":0.4,"broken":0.12},
-    "turn": {"error":1.43,"broken":0.18},
-    "pan": {"error":2.09,"broken":0.12},
-    "curve": {"error":0.37,"broken":0.1},
+    "turn": {"error":1.42,"broken":0.18},
+    "pan": {"error":2.08,"broken":0.1},
+    "curve": {"error":0.37,"broken":0.11},
     "aim": {"error":4.48,"broken":2.47}
   },
   "ahead": {
@@ -15,70 +15,81 @@
     "curve": {"error":0.62,"broken":0.29}
   },
   "hard": {
-    "glass": {"error":0.76,"broken":0.28},
-    "sparks": {"error":1.87,"broken":1.14},
-    "sparks-moving": {"error":1.99,"broken":1.27},
-    "smoke": {"error":1.03,"broken":0.23},
+    "glass": {"error":0.67,"broken":0.28},
+    "sparks": {"error":1.52,"broken":0.79},
+    "sparks-moving": {"error":1.68,"broken":0.95},
+    "smoke": {"error":0.68,"broken":0.12},
     "jitter": {"error":0.44,"broken":0.17}
   },
   "hard-ahead": {
-    "glass": {"error":0.98,"broken":0.43},
-    "sparks": {"error":2.3,"broken":1.51},
-    "sparks-moving": {"error":2.47,"broken":1.7},
-    "smoke": {"error":1.36,"broken":0.38},
+    "glass": {"error":0.92,"broken":0.46},
+    "sparks": {"error":2.17,"broken":1.37},
+    "sparks-moving": {"error":2.34,"broken":1.57},
+    "smoke": {"error":1.15,"broken":0.32},
     "jitter": {"error":0.75,"broken":0.42}
   },
   "thirds": {
-    "still": {"error":0.19,"broken":0.18},
-    "strafe": {"error":0.45,"broken":0.19},
+    "still": {"error":0.18,"broken":0.18},
+    "strafe": {"error":0.45,"broken":0.18},
     "turn": {"error":1.7,"broken":0.39},
-    "pan": {"error":1.98,"broken":0.19},
+    "pan": {"error":1.98,"broken":0.18},
     "curve": {"error":0.42,"broken":0.15}
   },
   "thirds-ahead": {
     "still": {"error":0.25,"broken":0.23},
     "strafe": {"error":0.96,"broken":0.5},
-    "turn": {"error":2.16,"broken":0.6},
-    "pan": {"error":4.63,"broken":3.6},
+    "turn": {"error":2.15,"broken":0.59},
+    "pan": {"error":4.63,"broken":3.59},
     "curve": {"error":0.94,"broken":0.49}
   },
   "upscaled": {
     "still": {"error":0.18,"broken":0.09},
     "strafe": {"error":0.55,"broken":0.12},
     "turn": {"error":1.18,"broken":0.14},
-    "pan": {"error":1.72,"broken":0.04},
+    "pan": {"error":1.73,"broken":0.05},
     "curve": {"error":0.52,"broken":0.13}
   },
   "upscaled-hard": {
-    "glass": {"error":0.83,"broken":0.22},
-    "sparks": {"error":1.95,"broken":1.07},
-    "sparks-moving": {"error":2.02,"broken":1.1},
-    "smoke": {"error":1.04,"broken":0.18},
+    "glass": {"error":0.78,"broken":0.23},
+    "sparks": {"error":1.65,"broken":0.78},
+    "sparks-moving": {"error":1.76,"broken":0.86},
+    "smoke": {"error":0.77,"broken":0.1},
     "jitter": {"error":0.44,"broken":0.14}
   },
   "flow": {
     "shadow": {"error":0.17,"broken":0.11},
-    "scroll": {"error":4.13,"broken":3.36},
+    "scroll": {"error":3.8,"broken":3.02},
     "cut": {"error":0.86,"broken":0.8}
   },
   "flow-ahead": {
     "shadow": {"error":0.22,"broken":0.15},
-    "scroll": {"error":7.62,"broken":7.47},
+    "scroll": {"error":7.52,"broken":7.37},
     "cut": {"error":0.83,"broken":0.53}
   },
   "flow-upscaled": {
-    "shadow": {"error":0.21,"broken":0.1},
-    "scroll": {"error":4.1,"broken":3.05},
+    "shadow": {"error":0.2,"broken":0.1},
+    "scroll": {"error":3.78,"broken":2.74},
     "cut": {"error":0.8,"broken":0.65}
+  },
+  "missed": {
+    "sweep": {"error":0.22,"broken":0.06},
+    "sweep-strafe": {"error":0.37,"broken":0.1},
+    "mirror": {"error":0.36,"broken":0.25},
+    "unmarked": {"error":0.08,"broken":0.05}
+  },
+  "missed-ahead": {
+    "sweep": {"error":0.35,"broken":0.1},
+    "sweep-strafe": {"error":0.65,"broken":0.31},
+    "mirror": {"error":0.55,"broken":0.52}
   },
   "handed": {
     "strafe": {"error":0.4,"broken":0.12},
-    "pan": {"error":2.09,"broken":0.12},
-    "curve": {"error":0.37,"broken":0.1}
+    "pan": {"error":2.08,"broken":0.1},
+    "curve": {"error":0.37,"broken":0.11}
   },
   "eight": {
     "strafe": {"error":0.4,"broken":0.12},
-    "pan": {"error":2.1,"broken":0.12},
+    "pan": {"error":2.09,"broken":0.1},
     "curve": {"error":0.37,"broken":0.11}
   },
   "copies": {
@@ -88,9 +99,9 @@
     "copies": {"error":0.69,"broken":0.26}
   },
   "shapes": {
-    "shapes": {"error":0.17,"broken":0.11}
+    "shapes": {"error":0.17,"broken":0.1}
   },
   "shapes-ahead": {
-    "shapes": {"error":0.3,"broken":0.24}
+    "shapes": {"error":0.37,"broken":0.33}
   }
 }

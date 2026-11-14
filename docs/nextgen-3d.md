@@ -826,11 +826,16 @@ round them. The method follows AMD FSR 3's frame interpolation (MIT) and Mob-FGS
 written fresh as WebGPU compute. It runs after SGSR 2 at the screen's size, takes SGSR 2's camera
 jitter back out of the motion, and costs a few milliseconds of compute instead of a whole extra frame.
 
-- **What motion vectors miss** (a shadow sliding over still ground, a scrolling texture, a reflection)
-  is read from the pictures too: an optical flow, worked out once per pair of real frames by matching
-  blocks coarse to fine, as FSR 3 does. It's used per pixel only where it matches both real frames
-  clearly better than the game's own motion and the surface's depth agrees, so a still floor under a
-  moving shadow isn't dragged along.
+- **What motion vectors miss** (a shadow sliding over still ground, a scrolling texture, a reflection,
+  a picture moving on a screen in the world) is read from the pictures too: an optical flow, worked out
+  once per pair of real frames by matching blocks coarse to fine, as FSR 3 does. It's only searched
+  where the game's own motion doesn't already match the picture (most of a frame does, so it costs
+  little), and to a screen pixel, so a small thing moving unlike what's round it is found. It's used per
+  pixel only where it matches both real frames clearly better than the game's own motion, with both ends
+  on the same surface. Where what it finds is a mix of the two real frames there (a shadow's soft edge
+  half way across a pixel), the made pixel is that mix, by how far the flow says the edge has got: a
+  still floor under a moving shadow keeps its texture exactly and isn't dragged along, only its light
+  moves.
 - **Cuts are found by themselves:** the same pass compares the two frames' brightness spread and how
   well anything matches; after a cut the made frames show the nearer real frame instead of mixing two
   scenes (the commonest frame gen complaint after ghosting).
@@ -901,11 +906,13 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   picture that changes in ways motion can't follow).
 - **See-through things** (transparent materials: glass, water, smoke) have no single motion, so the
   background's motion is kept under them and the made frame shows them from the newest real frame,
-  unmoved: they never smear or show twice. **Glowing sparks** (added-light particles that say how
+  unmoved, so they never smear or show twice, unless moving them with what's behind them matches the
+  last real frame clearly better (smoke as the camera moves past it: the ground seen through it keeps
+  moving with the rest of the ground). **Glowing sparks** (added-light particles that say how
   they move, as `GPUParticles` do) are moved along their own motion where the last frame shows the
   same spark where it came from, so sparks fly at the screen's rate; where sparks cross or flare up
-  they stay as drawn. Smoke stays as drawn: moving it dragged the ground behind it along, which looked
-  worse than leaving it.
+  they stay as drawn. Smoke isn't moved along its own motion: that dragged the ground behind it along,
+  which looked worse than leaving it.
 - **Still pictures:** when nothing on screen changed for three frames in a row (the GPU compares a
   sample of pixels; the camera, the hurt flash and the last touch are checked too), the 3D view shows
   its last picture again instead of drawing, and draws one frame in six to look again.
@@ -944,8 +951,10 @@ showed a still picture again. `node scripts/framegen-test.cjs [--mode ahead] [--
 scores made frames against the truth on test scenes (moving things, things going round in circles,
 a camera turning round the scene and on the spot, glass, sparks, smoke, SGSR 2's jitter; `--kinds shapes`
 for blend shapes (morph targets, as fur and faces use them) on still things; `--kinds
-shadow,scroll,cut` for a moving shadow, a scrolling texture and a cut, with `--query '&flow=0'`,
-`&fill=0` or `&sharp=0` to compare without the optical flow, the gap pyramid or the sharp filter), and
+shadow,scroll,cut` for a moving shadow, a scrolling texture and a cut, `--kinds sweep,sweep-strafe,mirror,unmarked`
+for a long shadow sweeping past, reflections in a pool and a picture moving on a screen, with `--query '&flow=0'`,
+`&fill=0` or `&sharp=0` to compare without the optical flow, the gap pyramid or the sharp filter, and `&tint` with
+`--shots dir` to see where the optical flow moved pixels), and
 `node scripts/framegen-test.cjs --check` runs every suite against `scripts/framegen-test/baseline.json`
 (the PR check does this when frame generation's code changes; `--save` after a change meant to move
 the numbers). `npm run build:bundled && node scripts/framegen-games.cjs [id ...] [--shots dir]` plays
@@ -1094,6 +1103,26 @@ works on instanced meshes and on WebGL and WebGPU alike.
   whatever had held that place, and a made frame smeared it across the screen: in the frame generation
   check's `copies` scene, where a zoom changes the level of every copy in the middle distance at once,
   3.2% of the made picture was broken, now 0.13% (a plain strafe: 0.12%).
+- Detail levels fade into each other instead of popping (`src/kit/lod-fade.js`), as Godot's and Bevy's
+  visibility ranges and Unity's LOD cross-fade do. While a person or an animal (`gs.models.human`,
+  `creature`) changes level, and on WebGPU while a `gs.props` copy does, both levels are drawn for 0.4 s,
+  each in a fine screen-space dither that is the other's exact complement: every pixel shows one level or
+  the other, nothing is drawn twice, and over the fade the new level's share goes from none to all. Under
+  SGSR 2 the dither moves each frame and the upscaler's history blends it into a smooth cross-fade;
+  without it the pattern stands still. Of the two levels the one with the larger share casts the shadow,
+  so a shadow changes once, half way. Only what is changing level pays for it: those meshes are drawn
+  for the frame with a twin of each material that has the dither in it (a discard), and everything else
+  keeps its own shader, early depth test and all. The twins' shaders are built in the background while
+  the people and copies stand on screen, never under the loading screen and never in a frame; a change
+  that comes before they are in waits a moment with the old level whole, then pops as before. A thing
+  that was not on screen last frame (new, out of a pool, shown again) takes its level at once, and a
+  change back while fading turns the fade round. Games don't change anything: `__hd.lodFade = false`
+  switches at once, `__hd.lodFadeTime` sets how long a fade takes (seconds), and `__hd.info.fading` counts
+  the people and animals fading now. Copies on WebGL keep the copies library's own levels, which switch
+  at once. On WebGPU GPU culling fades its copies too: the compute pass keeps each copy's level and fade
+  from frame to frame. (It now runs as a pass that picks each copy's level and one for each level's list,
+  so that no pass binds more than the eight storage buffers a phone's compute stage may have: a kind with
+  three levels and colours bound nine before, which a phone refuses.)
 - `v.shafts = 1` (0..2) adds sun shafts: the bright sky round the sun is smeared towards it at quarter
   size, so whatever blocks it (trees, window frames, a hill) leaves streaks of light. Set `v.sun` so
   it knows where the sun is. It's off on the lowest tier. A physical sky is far brighter round the sun;
@@ -1389,7 +1418,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   eyes and head go first into a turn, `rig.update(dt, { speed, toward })` to say where it means to go: "The eyes
   and the head go first"; it walks its own way, from its body and seed, with moods, `rig.manner.mood = 'sad'`: "A walk
   of one's own") in three levels of detail: call
-  `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
+  `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far); a change of
+  level on screen fades rather than pops (see "Detail levels fade into each other").
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after
   `rig.update()`), `person.touch({ handL, handR, footL, footR }, { palms, level, elbows, knees, blend })` puts

@@ -13,8 +13,11 @@ on:
   push:
     branches: [main]
     paths-ignore: ['docs/**', '**/*.md', 'site/**', 'workers/**', 'store/**', '.github/ISSUE_TEMPLATE/**']  # not in the app
+  # Pull requests skip it also when they change only games, kits or test scripts: the Game PR check builds
+  # those (npm run games, build:bundled) and nothing in them reaches Gradle, so the build can't break there.
   pull_request:
-    paths-ignore: ['docs/**', '**/*.md', 'site/**', 'workers/**', 'store/**', '.github/ISSUE_TEMPLATE/**']
+    paths: ['**', '!docs/**', '!**/*.md', '!site/**', '!workers/**', '!store/**', '!.github/ISSUE_TEMPLATE/**',
+            '!src/games/**', '!src/kit/**', '!scripts/**', 'scripts/qnn-pin.mjs', '!.github/workflows/game-pr-check.yml', '!.github/workflows/maths-probe.yml', '!.github/actions/**']
   workflow_dispatch:
     inputs:
       track:
@@ -27,6 +30,11 @@ on:
         type: choice
         options: [completed, draft]
         default: completed
+      priority:
+        description: "Update priority: 0-3 = the app downloads it in the background and offers a restart; 4-5 = players must update before carrying on (can't be changed later)"
+        type: choice
+        options: ['0', '1', '2', '3', '4', '5']
+        default: '0'
 
 permissions:
   contents: read
@@ -170,8 +178,12 @@ jobs:
           SIGNED: ${{ needs.bundle.outputs.signed }}
           TRACK: ${{ inputs.track || 'internal' }}
           STATUS: ${{ inputs.status || 'completed' }}
+          PRIORITY: ${{ inputs.priority || '0' }}
+          # A merge whose commit message says [urgent update] goes out at priority 5 (src/update.js).
+          URGENT: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[urgent update]') }}
         run: |
           if [ "$SIGNED" != true ]; then echo "::notice::Bundle is unsigned (no upload key yet): not uploading. Setup: docs/google-play.md"; exit 0; fi
           if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then echo "::notice::No PLAY_SERVICE_ACCOUNT_JSON secret yet: download game-scroll.aab from this run and upload it by hand. Setup: docs/google-play.md"; exit 0; fi
-          node scripts/play-upload.mjs game-scroll.aab --track "$TRACK" --status "$STATUS" \
+          if [ "$URGENT" = true ]; then PRIORITY=5; fi
+          node scripts/play-upload.mjs game-scroll.aab --track "$TRACK" --status "$STATUS" --priority "$PRIORITY" \
             --mapping mapping.txt --name "1.0.${GITHUB_RUN_NUMBER} (${GITHUB_SHA::7})"
