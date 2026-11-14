@@ -89,16 +89,19 @@ const NEW_MARKS = 1 | 4 | 8, OLD_MARKS = 2;
 /** True for a material drawn see-through or with added light (glass, water, smoke, sparks, glows). */
 export const seeThrough = m => !!m && (m.transparent === true || (m.blending !== NormalBlending && m.blending !== NoBlending));
 // Picks one of two outputs by the material being drawn (worked out once per material, when it compiles).
+// (whole: a see-through thing marked userData.reactive, whose pixels are taken from the new frame wherever it covers at all)
 class ByMaterial extends Node {
-  constructor(solid, see, moving = null) { super('vec4'); this.solid = solid; this.see = see; this.moving = moving; }
-  setup(builder) { const m = builder.material; return !seeThrough(m) ? this.solid : this.moving && m.userData?.fgMotion && m.blending === AdditiveBlending ? this.moving(m.userData.fgMotion) : this.see; }
+  constructor(solid, see, moving = null, whole = null) { super('vec4'); this.solid = solid; this.see = see; this.moving = moving; this.whole = whole; }
+  setup(builder) { const m = builder.material; return !seeThrough(m) ? this.solid : this.moving && m.userData?.fgMotion && m.blending === AdditiveBlending ? this.moving(m.userData.fgMotion) : this.whole && m.userData?.reactive ? this.whole : this.see; }
 }
 const BLEND = new BlendMode(MaterialBlending);
 /**
  * The scene pass's outputs for frame generation: the picture, motion (velocity) and the see-through
  * mask (reactive). Solid things write their motion; see-through things write motion with no weight
  * (alpha 0), so with their own blending the motion under them stays, and they add their coverage to
- * the mask (x). Particles that say how they move add their own motion (NDC, weighted by coverage) to
+ * the mask (x). A see-through material with userData.reactive (rain streaks, steam: faint things that move
+ * a long way between frames) marks its pixels whole however faint it is, so the upscaler (SGSR 2) takes
+ * them from the new frame and doesn't average them away into the frames before. Particles that say how they move add their own motion (NDC, weighted by coverage) to
  * the mask's y and z, so the motion of the particles at a pixel is (y, z) / x. Extra outputs can be passed in.
  */
 export function frameGenMRT(extra = {}) {
@@ -106,7 +109,7 @@ export function frameGenMRT(extra = {}) {
   const m = mrt({
     output,
     velocity: new ByMaterial(vec4(velocity, 0, 1), vec4(0)),
-    reactive: new ByMaterial(vec4(0, 0, 0, 1), vec4(1, 0, 0, a), mv => vec4(1, mv.x, mv.y, a)),
+    reactive: new ByMaterial(vec4(0, 0, 0, 1), vec4(1, 0, 0, a), mv => vec4(1, mv.x, mv.y, a), vec4(1, 0, 0, clamp(a.mul(50), 0, 1))),
     ...extra,
   });
   return m.setBlendMode('velocity', BLEND).setBlendMode('reactive', BLEND);

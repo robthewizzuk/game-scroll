@@ -1607,11 +1607,13 @@ const PF = `varying vec4 vT; uniform float soft; void main(){ vec2 d = gl_PointC
  * above 1 bloom), false for smoke and dust. p.emit({ x, y, z, vx, vy, vz, life, size, grow,
  * col: [r, g, b], a, drag, grav, blow }) then p.update(dt) once per frame. With { wind } (a gs.outdoors
  * Wind) they drift with it: blow is how much (1 = with the air, 0 = not at all; default the pool's blow).
+ * reactive: true for faint puffs that move fast across the picture (a train's steam): the upscaler takes them from the
+ * new frame instead of blending them into the frames before, where they fade to nothing (WebGPU).
  */
 const PART_ATTRS = [['position', 3], ['size', 1], ['tint', 4]];   // (made once, not every frame)
 export class Particles {
-  constructor(view, { max = 300, additive = true, wind = null, blow = 1 } = {}) {
-    this.max = max; this.list = []; this.wind = wind; this.blow = blow; this.wAt = {};
+  constructor(view, { max = 300, additive = true, wind = null, blow = 1, reactive = false } = {}) {
+    this.max = max; this.list = []; this.wind = wind; this.blow = blow; this.wAt = {}; this.reactive = reactive;
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(new Float32Array(max * 3), 3));
     g.setAttribute('size', new BufferAttribute(new Float32Array(max), 1));
