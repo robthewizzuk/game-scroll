@@ -32,7 +32,7 @@ import {
   WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry, LinearFilter, AdditiveBlending as ADD,
   OrthographicCamera, PlaneGeometry, MeshBasicMaterial, MeshDepthMaterial, Group, Vector4, DataTexture, RGBAFormat, ShaderChunk,
   LightProbe, CubeCamera, WebGLCubeRenderTarget, Euler, Matrix4, Quaternion, DepthTexture, WebGLCoordinateSystem, Box3, Sphere, UnsignedIntType,
-  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry,
+  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry, Frustum,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
@@ -66,7 +66,7 @@ import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occlu
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
-import { eachThing, eachShown } from './scene-list.js';
+import { eachThing, eachShown, thingsOf } from './scene-list.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -1967,7 +1967,9 @@ export class HDView {
     // the waiting starts from: what's there now draws at once
     if (this.holdBase !== true) {
       const all = this.holdBase === 'all'; this.holdBase = true;
-      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material) seen.add(shaderKey(o)); });
+      // (not a set of copies with none in it: the frame draws it not at all, so nothing of its was built, and later, with
+      // copies in it, it waits for its shader as a new thing does: Long Shadow's birds, 68 ms at the first shot)
+      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material && (all || !o.isInstancedMesh || o.count > 0 || !o.instanceMatrix?.count)) seen.add(shaderKey(o)); });
       return;
     }
     eachShown(this.scene, o => {
@@ -2007,8 +2009,19 @@ export class HDView {
     A.spent = 0;
     if (A.key !== ch.key || A.r !== r || this.aheadAgain) {
       A.key = ch.key; A.r = r; this.aheadAgain = false; A.done.clear(); A.list.length = 0;
-      this.scene.traverse(o => { if (aheadFits(o)) A.list.push(o); });
-      A.list.reverse();   // (taken from the end: in the scene's order)
+      // the nearest first, and before all what the camera carries (a first-person rifle shown once play starts): the
+      // list can take a minute to get through on a slow phone, well past the loading screen (Long Shadow's mission 2 on
+      // the build machine, 2026-11-13), and in the scene's order its rifle came up in play before its turn and made
+      // its shaders in that frame, 124 ms. (By where each was last drawn: worked out again, a deep scene's matrices
+      // took longer than the list.)
+      const cm = this.cam.matrixWorld.elements, cx = cm[12], cy = cm[13], cz = cm[14], far = new Map();
+      this.scene.traverse(o => {
+        if (!aheadFits(o)) return;
+        let d = -1; for (let p = o.parent; p; p = p.parent) if (p === this.cam) { d = -2; break; }
+        if (d === -1) { const e = o.matrixWorld.elements, x = e[12] - cx, y = e[13] - cy, z = e[14] - cz; d = x * x + y * y + z * z; }
+        far.set(o, d); A.list.push(o);
+      });
+      A.list.reverse(); A.list.sort((a, b) => far.get(b) - far.get(a));   // (taken from the end: the nearest first, and a tie in the scene's order)
     }
     if (all && !A.all) { let ok; A.all = new Promise(res => { ok = res; }); A.all.ok = ok; }
     const fin = () => { A.busy = false; if (!A.list.length && A.all) { const p = A.all; A.all = null; p.ok(); } };
@@ -2018,7 +2031,7 @@ export class HDView {
         if (A.key !== key || A.r !== r || !A.list.length || (!A.all && A.spent > AHEAD_MS)) return fin();   // (the rest next frame)
         const o = A.list.pop();
         if (!aheadFits(o) || !inScene(o, this.scene)) continue;
-        const k = shaderKey(o) + (o.receiveShadow ? '+r' : '');
+        const k = shaderKey(o);
         if (A.done.has(k)) continue;
         A.done.add(k); A.n++;
         const timed = go => { const t = performance.now(); try { return inReach(o, go); } finally { A.spent += performance.now() - t; } };
@@ -2037,8 +2050,79 @@ export class HDView {
    */
   newRenderer() {
     if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
-    this.shJobs?.clear(); this.shSeen?.clear(); this.shAhead = null;
+    this.shJobs?.clear(); this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
     this.holdBase = false; this.warmed = false; this.aheadAgain = true;
+  }
+  /**
+   * The shadow maps' shaders, ahead (WebGPU). A thing's shadow is drawn with a shader of its own (three's shadow
+   * material with the thing's skinning, bones, position and cut-out nodes), made in the frame the thing is first drawn
+   * into a map, and buildAhead builds the scene pass's alone. So a man's nearer level of detail, a thing switched
+   * on, or a kind of thing first coming into the sun's view made its shadow shader in the middle of play: 2 to 24 ms
+   * each on the build machine, 107 ms for the frame Long Shadow's bullet camera first came up close to the men
+   * (2026-11-13). Here each thing that casts a shadow, of a kind not drawn this way yet, is drawn once through each
+   * shadow light's own node into a 4 x 4 stand-in of its map (hd3d-gpu.js shadowOps pre), on a layer of its own and
+   * with it and its parents shown for the draw, which makes its shader and pipeline as the real draw will want them.
+   * all: everything waiting at once (the view's first frame, and a round getting ready under the loading screen);
+   * else a few kinds a frame, of what came into the scene since (taken from the scene's list each time it changes).
+   */
+  shadowAhead(r, G, all) {
+    const S = this.shPre ||= { seen: new Set(), looked: new WeakSet(), list: null, todo: [], sig: '' }, ops = G.shOps ||= G.fx.shadowOps(r);
+    const lights = [];
+    for (const l of this.shL) { const sh = l.shadow, node = sh.shadowNode; if (!l.isPointLight && sh.map && node?.gsSplit && node.shadowMap === sh.map) lights.push(l); }
+    if (!lights.length) return;
+    const sig = lights.map(l => l.id).join(','); if (sig !== S.sig) { S.sig = sig; S.seen.clear(); S.looked = new WeakSet(); S.list = null; }   // (another light: everything again)
+    // (what has been looked at is not listed again when the scene changes: a scene that changes every frame would otherwise only ever get to its first few hundred things)
+    const T = thingsOf(this.scene);
+    if (T !== S.list) { S.list = T; S.todo.length = 0; for (let i = T.length - 1; i >= 0; i--) { const o = T[i]; if (o.castShadow && !S.looked.has(o) && aheadFits(o)) S.todo.push(o); } }
+    const pick = [];
+    for (let looked = 0; S.todo.length && (all || (looked < PRE_LOOK && pick.length < PRE_N)); looked++) {
+      const o = S.todo.pop();
+      if (!o.castShadow || !aheadFits(o) || !inScene(o, this.scene)) continue;
+      S.looked.add(o);
+      const k = shaderKey(o) + '|' + (o.skeleton ? o.skeleton.bones.length : '');   // (three keys a skinned thing's shaders by its bones too)
+      if (S.seen.has(k)) continue;
+      S.seen.add(k); pick.push(o);
+    }
+    if (!pick.length) return;
+    const was = [], shown = [];
+    for (const o of pick) {
+      was.push(o.layers.mask, o.visible, o.frustumCulled);
+      o.layers.mask |= PRE_BIT; o.visible = true; o.frustumCulled = false;
+      for (let p = o.parent; p && p !== this.scene; p = p.parent) if (!p.visible) { p.visible = true; shown.push(p); }
+    }
+    ops.scene = this.scene; ops.camera = this.cam;
+    try { for (const l of lights) ops.pre(l, PRE_BIT); }
+    finally {
+      for (let i = 0; i < pick.length; i++) { const o = pick[i]; o.layers.mask = was[i * 3]; o.visible = was[i * 3 + 1]; o.frustumCulled = was[i * 3 + 2]; }
+      for (const p of shown) p.visible = false;
+      HD.info.shAhead = (HD.info.shAhead || 0) + pick.length;
+    }
+  }
+  /**
+   * three keys every lit shader by the scene's lights (how many of each kind, which cast shadows), its sky light and its
+   * fog as well as by the thing, and the kit's own key for a shader (shaderKey) has none of that. So when a game sets up
+   * other lights or another sky (Long Shadow's next mission, under the loading screen), what was built ahead for the
+   * hidden things before was taken as built, and each was made again in the frame it first showed: the rifle in your
+   * hands, built while the card sat in the feed, 124 ms in the first frame of mission 2's play. A setting of those not
+   * met before has them built again: buildAhead lists the scene again, and a thing hidden or out of view (whose kind
+   * nothing in view shares: what is in view was drawn, and so made, for them in this frame) is no longer taken as built,
+   * so if it shows before its turn it waits for its shader as a new thing does (holdNew). (Back to a setting met before: its shaders
+   * are still kept.)
+   */
+  envCheck(r) {
+    let k; try { k = r._nodes.getCacheKey(this.scene, r.lighting.getNode(this.scene)); } catch (e) { return; }
+    const E = this.envKeys ||= new Set();
+    if (E.has(k)) return;
+    E.add(k);
+    if (E.size < 2) return;
+    this.aheadAgain = true;
+    const seen = this.shSeen; if (!seen?.size) return;
+    // (shown and in the camera's view: a thing shown but out of view was not drawn, so not made for the new setting either)
+    const draws = o => (o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material, shown = new Set(), keys = new Set(), cam = this.cam;
+    VIEW_FR.setFromProjectionMatrix(VIEW_M.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse), cam.coordinateSystem, cam.reversedDepth);
+    const inView = o => { try { return !o.frustumCulled || VIEW_FR.intersectsObject(o); } catch (_) { return true; } };
+    eachShown(this.scene, o => { if (draws(o) && (o.layers.mask & 1) && inView(o)) { shown.add(o); keys.add(shaderKey(o)); } });
+    eachThing(this.scene, o => { if (draws(o) && !shown.has(o)) { const sk = shaderKey(o); if (!keys.has(sk)) seen.delete(sk); } });
   }
   /** Things whose shaders are still being built or still to look at (held back, close-up, and the rest of the scene). */
   get shadersLeft() { return (this.held?.size || 0) + (this.shJobs?.size || 0) + (this.shAhead ? this.shAhead.list.length + (this.shAhead.busy ? 1 : 0) : 0); }
@@ -2625,6 +2709,12 @@ export class HDView {
         sh.needsUpdate = false;
       }
       if (pm >= 0) leave(pm);
+      // (the shadow shaders of what these maps have not drawn yet: shadowAhead)
+      if (!baking && !off && HD.hold !== false) {
+        if (pm >= 0) enter('3D: shadows ahead');
+        this.shadowAhead(r, G, getready.warming || !this.warmed);
+        if (pm >= 0) leave(pm);
+      }
     }
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
@@ -2683,7 +2773,7 @@ export class HDView {
     const drawAt = performance.now();
     try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
-    if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
+    if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
@@ -3074,7 +3164,9 @@ const AHEAD_MS = 3;
 function aheadFits(o) {
   if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || !o.geometry) return false;
   if (o.isInstancedMesh2 || o._parentLOD || o.userData.gsTwin?.isInstancedMesh2) return false;   // (sets of copies are their library's to draw: gpuSwap, hideSets)
-  if (o.isInstancedMesh && (!o.count || !o.instanceMatrix?.count)) return false;   // (room for none: a buffer of no size, which WebGPU won't bind)
+  // (room for none: a buffer of no size, which WebGPU won't bind. One with room but none shown yet, a flock that only
+  // takes off at the first shot, is built: three builds its shader and pipeline whatever its count, and draws nothing)
+  if (o.isInstancedMesh && !o.instanceMatrix?.count) return false;
   const lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);
   return lm === 1 || lm === 0;   // (0: held back or hidden for this frame alone; the batch layer and a game's own layers are never drawn by the view's camera as they are)
 }
@@ -3870,6 +3962,10 @@ let SH_H = new Float64Array(40); const SH_S = new Sphere(), SH_P = new Vector3()
 const SH_STILL = 45, SH_STILL_BIT = 1 << 27, SH_MOVE_BIT = 1 << 28, SH_BITS = SH_STILL_BIT | SH_MOVE_BIT, SH_MIN_TRIS = 20000;
 // the layer things wait on while their shaders build (holdNew): nothing draws it
 const HOLD_LAYER = 29, HOLD_BIT = 1 << HOLD_LAYER;
+// envCheck: the camera's view (scratch)
+const VIEW_FR = new Frustum(), VIEW_M = new Matrix4();
+// shadowAhead: the layer things are drawn on for their shadow shaders (alone), and how many kinds a frame once the round is under way, among how many things looked at
+const PRE_BIT = 1 << 25, PRE_N = 6, PRE_LOOK = 400;
 // what makes a thing need its own shader: its materials (and their versions), its kind and its geometry's layout
 // (asked for every visible thing every frame: when nothing changed, the answer comes back without
 // building any strings, so it leaves no garbage)
@@ -3892,7 +3988,7 @@ const listKind = a => {
 };
 function shaderKey(o) {
   const mat = o.material, g = o.geometry, c = KEYS.get(o);
-  if (c && sameMats(c, mat, g)) return c.key;
+  if (c && c.rs === o.receiveShadow && sameMats(c, mat, g)) return c.key;
   const ms = Array.isArray(mat) ? mat : [mat];
   // (three draws a two-sided see-through material as back faces then front faces, marking it changed for each,
   // so its version climbs every frame: its shaders are the same, so the version is left out, or holdNew
@@ -3900,7 +3996,11 @@ function shaderKey(o) {
   const sig = ms.map(m => m.id + '.' + (m.transparent && m.side === DoubleSide && !m.forceSinglePass ? 'd' : m.version)).join(',') + '|' + (g?.id ?? '');
   if (c?.sig === sig) { remember(o, c.sig, c.key, mat, g); return c.key; }
   const key = sig.replace(/\|.*$/, '') + '|' + (o.isSkinnedMesh ? 's' : '') + (o.isInstancedMesh ? 'i' : '') + (o.isBatchedMesh ? 'b' : '') + (o.isPoints ? 'p' : o.isLine ? 'l' : o.isSprite ? 'S' : '') +
-    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '');
+    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '') +
+    // (three keys a shader by whether the thing takes shadows too: two things of one material and layout, one taking shadows,
+    // were one to the kit, so the second, built for neither, drew its shader in the frame it first showed: Long Shadow's
+    // mission 2 intro, two in its first frame, 126 and 69 ms on the build machine)
+    (o.receiveShadow ? '+r' : '');
   remember(o, sig, key, mat, g);
   return key;
 }
@@ -3908,17 +4008,17 @@ function shaderKey(o) {
 const KEYS_AS = new WeakMap();
 function shaderKeyAs(o, m) {
   const c = KEYS_AS.get(o), g = o.geometry?.id ?? '';
-  if (c && c.m === m && c.v === m.version && c.g === g) return c.key;
+  if (c && c.m === m && c.v === m.version && c.g === g && c.rs === o.receiveShadow) return c.key;
   const keep = o.material, was = KEYS.get(o);
   o.material = m; KEYS.delete(o);
   const key = shaderKey(o);
   o.material = keep; if (was) KEYS.set(o, was); else KEYS.delete(o);
-  KEYS_AS.set(o, { m, v: m.version, g, key });
+  KEYS_AS.set(o, { m, v: m.version, g, rs: o.receiveShadow, key });
   return key;
 }
 function remember(o, sig, key, mat, g) {
   const arr = Array.isArray(mat);
-  KEYS.set(o, { sig, key, g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
+  KEYS.set(o, { sig, key, rs: o.receiveShadow, g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
     ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(m => m.version) : null });
 }
 export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
