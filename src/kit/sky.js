@@ -30,6 +30,7 @@
 import { timed } from './prof.js';
 import { AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, MeshBasicMaterial, Points, PointsMaterial, Scene, ShaderMaterial, SphereGeometry, Vector3, Vector4 } from 'three';
 import { prefs } from './prefs.js';
+import { linksFor } from './links.js';
 import { HD, noiseTex, Particles } from './hd3d.js';
 import { Cover } from './cover.js';
 import { Spray } from './water.js';
@@ -91,6 +92,7 @@ export class Sky {
   constructor(view, { time = 12, speed = 0, day = DAY, stars = 400, physical = false, fog = true, light = true, sun = view.sun, hemi = view.hemi, tilt = .35,
     clouds = null, cloudLight = null, cloudDark = null, gap = 0, env = false, sunSize = 1 } = {}) {
     this.pq = {};
+    linksFor(view)?.join('sky', this);   // (links.js: a city made beside it lights up as this sky darkens)
     Object.assign(this, { view, time, speed, day, fog, light, sunLight: sun || null, hemi: hemi || null, tilt, physical, clouds: clouds ?? 0, gap, env, flash: 0 });
     this.base = { sun: sun?.intensity ?? 1, amb: hemi?.intensity ?? 1 };
     this.sunDir = new Vector3(); this.top = C('#000'); this.horizon = C('#000'); this.sunCol = C('#fff'); this.night = 0;
@@ -288,7 +290,10 @@ export class Sky {
  * drops land on the lens while the camera looks out under the open sky (lens: false keeps it dry; view.drops).
  */
 export class Weather {
-  constructor(view, { kind = 'rain', amount = 1, area, wind = [0, 0], max = 900, color, flake, level = null, ground = null, cover = null, water = null, soak = 20, dry = 90, settle = 40, melt = 150, deep = .25, hops = 96, lens = true } = {}) {
+  constructor(view, { kind = 'rain', amount = 1, area, wind = null, max = 900, color, flake, level = null, ground = null, cover = null, water = null, soak = 20, dry = 90, settle = 40, melt = 150, deep = .25, hops = 96, lens = true, link = true } = {}) {
+    // (links.js: with no wind given the game's Wind slants the rain, and with no water given the rain falls on every Water it made; false: none.
+    // The marks, the sounds and the blasts made beside it find this weather by themselves)
+    this.links = linksFor(view, link); this.links?.join('weather', this); this.seeksWater = water == null && !!this.links;
     this.view = view; this.wind = wind; this.max = max; this.area = area ?? Math.min(radiusOf(view.cam) * .35, (view.cam?.far ?? 100) > 1000 ? 400 : 30);
     this.flashLeft = 0; this.nextFlash = 3 + Math.random() * 5; this.flashI = 0; this.onFlash = null; this.t = 0;
     this.off = new Float32Array(max * 3); for (let i = 0; i < this.off.length; i++) this.off[i] = Math.random();
@@ -308,7 +313,7 @@ export class Weather {
     this.world = !!(level || ground || cover);
     this.ownCover = !cover?.at; this.cover = cover?.at ? cover : (level && level !== true) || ground || cover ? new Cover({ level, ground, ...(cover || {}) }) : null;   // (cover: one of your own to share, or its settings)
     Object.assign(this, { soak, dry, settle, melt, deep }); this.wet = 0; this.pools = 0; this.snow = 0; this.rain = 0; this.snowing = 0; this.runT = 0;
-    this.waters = water ? [].concat(water) : [];
+    this.given = water ? [].concat(water) : [];
     this.air = this.world && typeof view.air === 'function' && !isToon(view) ? view.air() : null;
     this.shown = { wet: 0, snow: 0, pools: 0, cover: this.cover, rain: 0, runT: 0 };   // (what the view's air draws: hd3d.js airUniforms)
     if (this.air) this.air.world = this.shown;
@@ -331,9 +336,10 @@ export class Weather {
   }
   update(dt) {
     this.t += dt; const cam = this.view.cam, A = this.area, n = Math.floor(this.max * this.amount);
-    const cx = cam?.position.x ?? 0, cy = cam?.position.y ?? 0, cz = cam?.position.z ?? 0, W = this.wind, wx = W.x ?? W[0] ?? 0, wz = W.z ?? W[1] ?? 0, o = this.off;
+    const cx = cam?.position.x ?? 0, cy = cam?.position.y ?? 0, cz = cam?.position.z ?? 0, W = this.wind || (this.wind === null && this.links?.one('wind')) || CALM, wx = W.x ?? W[0] ?? 0, wz = W.z ?? W[1] ?? 0, o = this.off;
     this.rain = this.rainMesh.visible ? this.amount : 0; this.snowing = this.snowMesh.visible ? this.amount : 0;
     if (this.world) this.soakIn(dt, cx, cy, cz);
+    else if (this.seeksWater) for (const w of this.waters) w.rain = this.rain;   // (weather that only falls still falls on the game's water)
     const cv = this.cover;
     if (this.rainMesh.visible) {
       const p = this.rainMesh.geometry.attributes.position, a = p.array, fall = A * 1.6, len = A * .03;
@@ -422,7 +428,7 @@ export class Weather {
   tyres(dt) {
     const M = this.mist, F = this.flung, fog = this.view.scene.fog?.color, col = this.mistCol ||= [.75, .78, .8];
     if (fog) { col[0] = Math.min(1, fog.r * 1.04 + .02); col[1] = Math.min(1, fog.g * 1.04 + .02); col[2] = Math.min(1, fog.b * 1.04 + .02); }   // (the colour of the air it hangs in)
-    const R = () => (this.seed = (this.seed * 16807) % 2147483647) / 2147483647, W = this.wind, wx = W.x ?? W[0] ?? 0, wz = W.z ?? W[1] ?? 0;
+    const R = () => (this.seed = (this.seed * 16807) % 2147483647) / 2147483647, W = this.wind || (this.wind === null && this.links?.one('wind')) || CALM, wx = W.x ?? W[0] ?? 0, wz = W.z ?? W[1] ?? 0;
     let road = 0, roads = 0;
     for (const w of this.watched) {
       const t = w.thing, obj = t.isObject3D ? t : t.mesh || t.chassis?.mesh; if (!obj || dt <= 0) continue;
@@ -469,18 +475,21 @@ export class Weather {
   snowAt(p) { return this.open(p) ? this.snow * this.deep : 0; }
   /** True for a moment during a lightning flash (to brighten your own sky or flash the screen). */
   get flashing() { return this.flashLeft > 0; }
+  /** The water the rain falls on: what it was given, or every Water the game made. */
+  get waters() { return this.seeksWater ? this.links.all('water') : this.given; }
   dispose() {
+    for (const w of this.waters) w.rain = 0;
+    this.links?.leave(this);
     for (const m of [this.rainMesh, this.snowMesh]) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); }
     for (const s of [this.hops, this.flung]) if (s) { s.mesh.removeFromParent(); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
     this.mist?.dispose(); this.mist = null; this.watched.length = 0;
     if (this.air?.world === this.shown) this.air.world = null;
     this.lens?.clear();
     if (this.cover && this.ownCover) this.cover.dispose();
-    for (const w of this.waters) w.rain = 0;
   }
 }
 
-const LOOK = new Vector3(), TP = new Vector3(), TQ = new Vector3(), TS = [];
+const LOOK = new Vector3(), TP = new Vector3(), TQ = new Vector3(), TS = [], CALM = [0, 0];
 // per-frame work, timed while the frame lab is open (prof.js)
 timed(Sky.prototype, 'update', 'sky and weather');
 timed(Weather.prototype, 'update', 'sky and weather');

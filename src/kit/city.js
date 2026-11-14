@@ -36,6 +36,7 @@
 // made up, with no map data.
 
 import { timed } from './prof.js';
+import { linksFor } from './links.js';
 import {
   BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, Color, CylinderGeometry, DynamicDrawUsage, Group,
   IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, LinearMipmapLinearFilter, Matrix4, Mesh,
@@ -907,9 +908,11 @@ export class City {
    * round the camera with no repeats (ground-paint.js; on by default on a Next Gen view). walls: posters, tags
    * and stains on the street walls (city-walls.js).
    */
-  constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = 0, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, ...over } = {}) {
-    this.view = view; this.seed = seed; this.sky = sky; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
+  constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = null, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, link = true, ...over } = {}) {
+    // (links.js: with no night and no sky given, the city follows the Sky the game made, until the game sets city.night itself)
+    this.links = linksFor(view, link); this.links?.join('city', this); this.seeksSky = sky == null && night == null && !!this.links; night ??= 0;
+    this.view = view; this.seed = seed; this.sky = sky || null; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
     this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown' };
     if (this.opts.crowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
@@ -925,7 +928,7 @@ export class City {
     const parkStyles = parked ? (CITY_CARS[this.opts.style] || CITY_CARS.downtown).slice(0, 3) : [], parkKits = parkStyles.map(carKit);   // (the three commonest styles park)
     if (occlude) view.occluders?.(this.occluders());   // what's behind the buildings isn't drawn (occlude: false to draw it all)
     this.group = new Group(); this.group.name = 'city'; view.scene.add(this.group);
-    this.t = 0; this._night = -1; this.night = night;
+    this.t = 0; this._night = -1; this.following = true; this.night = night; this.following = false;
     const scale = TIER[phoneClass()] ?? .65;
     // the ground: asphalt under the city, grass (or the harbour) round it
     // (the grass is a frame round the asphalt, not a sheet under it, so the two never fight over the same pixels)
@@ -1065,6 +1068,7 @@ export class City {
   /** How dark it is, 0 (day) to 1 (night): windows, shop signs, street lamps and car lights come on. */
   get night() { return this._night; }
   set night(k) {
+    if (!this.following) this.seeksSky = false;   // (the game's own say)
     k = Math.max(0, Math.min(1, k)); if (Math.abs(k - this._night) < .01) return; this._night = k; this.applyNight();
   }
   applyNight() {
@@ -1113,7 +1117,8 @@ export class City {
    */
   update(dt, focus = this.view.cam.position) {
     const f = { x: focus.x, z: focus.z ?? focus.y }; this.t += dt; this.focus = f;
-    if (this.sky) this.night = this.sky.night ?? 0;
+    const sky = this.sky || (this.seeksSky ? this.links.one('sky') : null);
+    if (sky) { this.following = true; this.night = sky.night ?? 0; this.following = false; }
     // build what's coming into range: nearest first, within about 4 ms a frame
     const t0 = performance.now(), want = this.allBuilt ? [] : [...this.chunks.values()].filter(c => !c.group).sort((a, b) => Math.hypot(a.x - f.x, a.z - f.z) - Math.hypot(b.x - f.x, b.z - f.z));
     for (const c of want) { this.build(c); if (performance.now() - t0 > 2.5) break; }
@@ -1140,7 +1145,7 @@ export class City {
 
   /* sound: a hum that swells with the traffic, horns from cars stuck behind something, birds in the parks by day */
   listen(dt, f) {
-    if (!this.hum) { this.hum = bed({ vol: .02, from: 380, q: .5, gusts: .3 }); this.ears = new Ears({ ref: 6, max: 140, hrtf: false }); this.birdT = 2; this.sirenT = 40 + this.cars.R() * 60; }
+    if (!this.hum) { this.hum = bed({ vol: .02, from: 380, q: .5, gusts: .3 }); this.ears = new Ears({ ref: 6, max: 140, hrtf: false, link: false }); this.birdT = 2; this.sirenT = 40 + this.cars.R() * 60; }
     const cam = this.view.cam; this.ears.place(cam.position, cam.getWorldDirection(_p));
     const busy = Math.min(1, (this.cars.noise || 0) / 300);
     this.hum.set({ vol: .012 + busy * .03 * (1 - this.night * .4), from: 260 + busy * 260 }, 1);

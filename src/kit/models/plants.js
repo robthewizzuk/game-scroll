@@ -314,11 +314,14 @@ function fanLeaf(out, at, dir, R0, Rr, { id, root, lead, len, droop }) {
 }
 
 /* ---------- materials and the plant itself ---------- */
-const mats = new Map(), made = new Map(), fieldIds = new WeakMap(); let fieldN = 0;
+// (made, grown: shapes by what was asked for, never by which Wind or Marks: those are new on every pass of a card's loading,
+// slices.js. Leaf materials are kept per Wind or field, and go when it does: trees.js)
+const mats = new Map(), matsOf = new WeakMap(), made = new Map(), fieldIds = new WeakMap(); let fieldN = 0;
+const shelf = (wind, part) => { const o = wind && typeof wind === 'object' ? wind : part; if (!o) return mats; let m = matsOf.get(o); if (!m) matsOf.set(o, m = new Map()); return m; };
 const fieldId = f => { if (!f) return 0; let i = fieldIds.get(f); if (!i) fieldIds.set(f, i = ++fieldN); return i; };
 const fieldOf = bend => bend ? (bend.grass?.texture ? bend.grass : bend.texture ? bend : null) : null;   // (a gs.outdoors.Marks, or its grass field)
 function leafMat(pic, colour, wind, clock, sway, part) {
-  const k = [pic, colour, typeof wind === 'number' ? wind : 'w' + fieldId(wind), sway, fieldId(part)].join('|');
+  const k = [pic, colour, typeof wind === 'number' ? wind : 'w' + fieldId(wind), sway, fieldId(part)].join('|'), mats = shelf(wind, part);
   if (mats.has(k)) return mats.get(k);
   const map = plantTexture(pic), m = new MeshStandardMaterial({ map, color: colour, alphaTest: .5, side: DoubleSide, roughness: .72, vertexColors: true });
   looks.fronds(m, { time: clock.lkTime, wind: wind ?? clock.lkWind, sway, glow: .45, atlas: map.userData.atlas, part });
@@ -338,7 +341,7 @@ const plain = (c, rough = .7) => { const k = c + rough; if (!plainMats.has(k)) {
  */
 export function plant(kind, o, clock, tick) {
   const K = KIND[kind], { seed = 0, height = K.height, leaves = K.leaves, bark = K.bark, wind, bend } = o, part = fieldOf(bend);
-  const key = JSON.stringify([kind, seed, height, leaves, bark, typeof wind === 'number' ? wind : !!wind, fieldId(part), o.lean, o.fronds, o.dead, o.fruit, o.skirt, o.trunk, o.branches, o.knees, o.moss, o.blades, o.cattails, o.stems, o.petals, o.pads, o.blooms, o.spread]);
+  const key = JSON.stringify([kind, seed, height, leaves, bark, o.lean, o.fronds, o.dead, o.fruit, o.skirt, o.trunk, o.branches, o.knees, o.moss, o.blades, o.cattails, o.stems, o.petals, o.pads, o.blooms, o.spread]);
   let parts = made.get(key);
   if (!parts) {
     pause('Models');   // (while a card loads, a frame may go by before each new plant: slices.js)
@@ -348,10 +351,10 @@ export function plant(kind, o, clock, tick) {
     parts = {
       list,
       trunk: P.trunk.empty ? null : [P.trunk.geometry(false), trunkMat],
-      leaves: [P.leaves.geometry(), leafMat(K.pic, leaves, wind, clock, K.sway, part)],
+      leaves: [P.leaves.geometry()],
       fruit: P.fruit.empty ? null : [P.fruit.geometry(false), plain(kind === 'reeds' ? '#4a3020' : '#5a4a22', .55)],
-      flowers: P.flowers.empty ? null : [P.flowers.geometry(), leafMat('petals', '#ffffff', wind, clock, K.sway, part)],
-      moss: P.moss.empty ? null : [P.moss.geometry(), leafMat('moss', typeof o.moss === 'string' ? o.moss : '#9aa684', wind, clock, .12, part)],
+      flowers: P.flowers.empty ? null : [P.flowers.geometry()],
+      moss: P.moss.empty ? null : [P.moss.geometry()],
     };
     if (made.size >= 48 && !loading()) made.delete(made.keys().next().value);
     made.set(key, parts); built();
@@ -359,7 +362,8 @@ export function plant(kind, o, clock, tick) {
   const out = new Group(); out.name = 'tree:' + kind; out.userData.tree = kind; out.userData.fronds = parts.list;
   for (const [name, part] of [['branches', parts.trunk], ['leaves', parts.leaves], ['fruit', parts.fruit], ['flowers', parts.flowers], ['moss', parts.moss]]) {
     if (!part) continue;
-    const m = new Mesh(part[0], part[1]); m.name = name; m.castShadow = kind !== 'lily'; m.receiveShadow = true;
+    const mat = name === 'leaves' ? leafMat(K.pic, leaves, wind, clock, K.sway, fieldOf(bend)) : name === 'flowers' ? leafMat('petals', '#ffffff', wind, clock, K.sway, fieldOf(bend)) : name === 'moss' ? leafMat('moss', typeof o.moss === 'string' ? o.moss : '#9aa684', wind, clock, .12, fieldOf(bend)) : part[1];
+    const m = new Mesh(part[0], mat); m.name = name; m.castShadow = kind !== 'lily'; m.receiveShadow = true;
     if (name !== 'branches' && name !== 'fruit') m.onBeforeRender = tick;
     out.add(m);
   }
@@ -385,7 +389,7 @@ export function ivy(targets, o = {}, clock, tick) {
   for (const t of [].concat(targets)) { t.updateMatrixWorld?.(true); t.traverse?.(m => { if (m.isMesh && m.geometry?.attributes.position) { const g = new BufferGeometry().setAttribute('position', m.geometry.attributes.position.clone()); if (m.geometry.index) g.setIndex(m.geometry.index.clone()); g.applyMatrix4(m.matrixWorld); const q = g.index ? g.toNonIndexed() : g; geos.push(q); n += q.attributes.position.count; } }); }
   const pos = new Float32Array(n * 3); let o3 = 0; for (const g of geos) { pos.set(g.attributes.position.array, o3); o3 += g.attributes.position.array.length; g.dispose(); }
   let sig = 0; for (let i = 0; i < pos.length; i += 7) sig = (sig * 31 + Math.round(pos[i] * 100)) | 0;
-  const key = JSON.stringify([n, sig, seed, roots, from, length, leaves, stem, size, density, up, typeof wind === 'number' ? wind : fieldId(wind), fieldId(part)]);
+  const key = JSON.stringify([n, sig, seed, roots, from, length, size, density, up]);
   let got = grown.get(key);
   if (!got) {
     pause('Models');

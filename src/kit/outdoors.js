@@ -25,6 +25,7 @@
 import { timed } from './prof.js';
 import { BufferAttribute, BufferGeometry, Color, DataTexture, Group, InstancedBufferAttribute, InstancedMesh, LinearFilter, RGBAFormat, ConeGeometry, CylinderGeometry, DodecahedronGeometry, DoubleSide, Float32BufferAttribute, IcosahedronGeometry, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, OrthographicCamera, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, Vector4, WebGLRenderTarget } from 'three';
 import { fbm } from './math.js';
+import { linksFor, linked } from './links.js';
 import { bakeRenderer as renderer } from './hd3d.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 export { looks, groundDetail, horizon } from './looks.js';
@@ -55,8 +56,9 @@ const KINDS = {
  * by height (your look); material: your own instead.
  */
 export class Land {
-  constructor({ kind = 'hills', size = 200, segments = 96, low = -5, high = 20, seed = 1, smooth = 1, steps = 0, colours = null, material = null, edge = 0 } = {}) {
+  constructor({ kind = 'hills', size = 200, segments = 96, low = -5, high = 20, seed = 1, smooth = 1, steps = 0, colours = null, material = null, edge = 0, link = true } = {}) {
     Object.assign(this, { size, segments, low, high });
+    this.links = linksFor(null, link); this.links?.join('land', this);   // (the weather, marks, cloth and sounds made beside it find the ground by themselves: links.js)
     const random = createSeededRandom(seed);
     const own = typeof kind === 'function' ? (g) => {
       // our own height function, in world metres (after the library's clamping, so it's exact)
@@ -307,12 +309,12 @@ export class Land {
   update(dt, camera = null) {
     this.time += dt;
     if (this.grassScene) {
-      const w = this.wind, k = w && camera ? w.at(camera.position.x, camera.position.z).gust : 1;
+      const w = linked(this.wind, this.links, 'wind'), k = w && camera ? w.at(camera.position.x, camera.position.z).gust : 1;
       this.grassScene.traverse(o => { if (!o.isMesh) return; updateGrass(o, this.time); const u = (o.userData.grassMaterial || o.material)?.userData?.grassUniforms; if (w && u?.windStrength) u.windStrength.value = w.speed * k * w.grass; });
       if (camera) updateGrassLOD(this.grassScene, camera, this.grassFar);
     }
     for (const mesh of this.meadows) {
-      const st = mesh.userData.meadow, u = st.look.uniforms, w = this.wind, p = camera?.position;
+      const st = mesh.userData.meadow, u = st.look.uniforms, w = linked(this.wind, this.links, 'wind'), p = camera?.position;
       u.lkTime.value = this.time;
       if (w) { u.lkBend.value = Math.min(.8, w.speed * (p ? w.at(p.x, p.z).gust : 1) * w.grass * .4); u.lkBendDir.value.copy(w.uniforms.lkWindDir.value); }
       // the square follows the camera, unless it is flying past too fast to see grass (the tufts left behind are
@@ -474,8 +476,9 @@ export class FloodWater {
  * plug into looks.leaves; wind.speed and wind.angle are the steady wind. Change x, z any time.
  */
 export class Wind {
-  constructor({ x = 3, z = 0, gust = .35, gustSize = 70, sway = .12, grass = 1.2 } = {}) {
+  constructor({ x = 3, z = 0, gust = .35, gustSize = 70, sway = .12, grass = 1.2, link = true } = {}) {
     Object.assign(this, { x, z, gust, gustSize, sway, grass }); this.t = 0;
+    linksFor(null, link)?.join('wind', this);   // (one wind for everything the game makes: the grass, the rain, cloth, smoke, the sea's swell, marks in sand)
     this.uniforms = { lkWind: { value: 0 }, lkWindDir: { value: new Vector2(1, 0) } };
     this.update(0);
   }

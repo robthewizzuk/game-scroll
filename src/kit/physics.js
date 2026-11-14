@@ -25,6 +25,7 @@ import { lazy } from './lazy.js';
 import { wasmSimd } from './simd.js';
 import { own } from './cleanup.js';
 import { tick } from './tick.js';
+import { linksFor } from './links.js';
 // The SIMD build where the phone has WebAssembly SIMD (faster: Neon on ARM phones), else the plain one.
 // Same engine and API; only one of the two is ever downloaded.
 const engine = lazy('The physics engine', () => (wasmSimd() ? import('@dimforge/rapier2d-simd-compat') : import('@dimforge/rapier2d-compat')).then(async m => {
@@ -114,8 +115,9 @@ export class Physics {
    * (30 suits most phone games: a 30 px crate behaves like a 1 m crate). walls: [x, y, w, h] puts
    * solid walls round that rectangle.
    */
-  constructor({ gravity = 900, scale = 30, walls = null } = {}) {
+  constructor({ gravity = 900, scale = 30, walls = null, link = true } = {}) {
     R = engine.get();
+    linksFor(null, link)?.join('world2d', this);   // (links.js: the 2D kits made beside it find it by themselves)
     this.R = R; this.scale = scale;
     const g = typeof gravity === 'number' ? { x: 0, y: gravity } : gravity;
     this.gravity = { x: g.x || 0, y: g.y || 0 };

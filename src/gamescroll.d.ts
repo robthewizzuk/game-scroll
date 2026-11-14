@@ -201,7 +201,7 @@ export interface SoundPart {
    * felt out with `rays` rays a frame. hard: 0 soft (carpet, snow, a forest) .. 1 bare stone; unit: level units
    * to a metre (16 for a map of 16-pixel tiles a metre across); auto: false to read `room` and set the echo yourself.
    */
-  Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number; level?: SoundLevel | null; hard?: number; unit?: number; auto?: boolean; rays?: number }) => {
+  Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number; /** What stands in the way of sound. Left out: the physics world the game made (a World3D; flat ears: its TileMap); false: nothing. */ level?: SoundLevel | null | false; hard?: number; unit?: number; auto?: boolean; rays?: number; /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean }) => {
     place(pos: { x: number; y: number; z?: number }, forward?: { x: number; y: number; z: number }, up?: { x: number; y: number; z: number }): Loose; place2d(x: number, y: number, facing?: number): Loose;
     /** What stands in the way of sound (null: nothing). Set it again when the level is another one. */
     level: SoundLevel | null;
@@ -311,11 +311,14 @@ export interface Foley {
   step(p: { x: number; y: number; z?: number }, on?: FoleyMaterial | null, o?: { weight?: number; run?: number; shoe?: 'boot' | 'bare' | 'paw' | 'hoof' }): string;
   /** A knock at p: something made of `of` hit at speed (metres a second). The harder and heavier, the louder; the bigger, the lower. */
   hit(p: { x: number; y: number; z?: number }, of?: FoleyMaterial, o?: { speed?: number; size?: number; mass?: number; soft?: boolean }): boolean;
+  /** Something landed in water at p. size: metres across (1); speed: how fast it hit, metres a second (4). (What lands in a Water the game made sounds by itself.) */
+  splash(p: { x: number; y: number; z?: number }, o?: { size?: number; speed?: number }): boolean;
   /** What is underfoot at p. by: what stands there (left out of the world's ray). */
   surface(p: { x: number; y: number; z?: number }, by?: Loose): FoleyMaterial;
 }
 export interface FoleyClass {
-  new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; ground?: ((x: number, z: number, y: number) => FoleyMaterial | string | null | undefined | void) | null; volume?: number; knocks?: boolean; under?: FoleyMaterial | null }): Foley;
+  /** ears, world, marks, weather, land: left out, each is the one the game made (found again when the game makes a new one, as a World3D each round); false: none. splashes: false, breaks: false: what lands in the game's Water and what breaks off its Structures is not sounded. */
+  new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; splashes?: boolean; breaks?: boolean; link?: boolean; ground?: ((x: number, z: number, y: number) => FoleyMaterial | string | null | undefined | void) | null; volume?: number; knocks?: boolean; under?: FoleyMaterial | null }): Foley;
   readonly materials: FoleyMaterial[];
   readonly engines: FoleyEngine[];
   /** What a mesh or group is made of, as Foley hears it (userData.sound, its material's recipe or name); null if nothing says. */
@@ -1129,7 +1132,7 @@ export interface FluidPart {
   /** A liquid in a box of your world: make it once with the scene, and clear() it each round. */
   Fluid: (new (view: Loose, o?: {
     box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: string | false;
-    thick?: number; rough?: number; glow?: number; gravity?: number | { x?: number; y?: number; z?: number }; drops?: number; size?: number; shadows?: boolean; gpu?: boolean; seed?: number;
+    thick?: number; rough?: number; glow?: number; gravity?: number | { x?: number; y?: number; z?: number }; drops?: number; size?: number; shadows?: boolean; gpu?: boolean; seed?: number; /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
   }) => FluidT) & {
     /** The most drops this phone runs well (on the graphics chip where it can). */
     max(): number;
@@ -1278,7 +1281,7 @@ export interface RegionsPart {
 export interface GasPart {
   /** Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. */
   Gas: (new (view: Loose, o?: GasLook & {
-    box?: [number, number, number, number, number, number]; open?: boolean; kind?: GasKind; wind?: { x?: number; y?: number; z?: number };
+    box?: [number, number, number, number, number, number]; open?: boolean; kind?: GasKind; /** Left out, out in the open: the Wind the game made leans on it; false: still air. */ wind?: { x?: number; y?: number; z?: number } | false; /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
     cells?: number; size?: number; lamp?: boolean | { strength?: number; distance?: number }; draw?: boolean; seed?: number; gpu?: boolean;
   }) => GasT) & {
     /** The most cells this phone runs well (on the graphics chip where it can). */
@@ -1549,7 +1552,7 @@ export interface Fx3dPart {
 }
 export type RigMode = 'chase' | 'shoulder' | 'first' | 'top' | 'side' | 'orbit' | 'rail' | 'fixed';
 export interface CameraPart {
-  CameraRig: new (view: Loose, o?: { mode?: RigMode; distance?: number; height?: number; side?: number; look?: number; lag?: number; lead?: number; fov?: number; walls?: Loose[]; pitchMin?: number; pitchMax?: number; rail?: Loose; at?: Loose }) => {
+  CameraRig: new (view: Loose, o?: { mode?: RigMode; distance?: number; height?: number; side?: number; look?: number; lag?: number; lead?: number; fov?: number; /** What the camera stays this side of: meshes, or a World3D (its still things, one ray). Left out: the physics world the game made; false: nothing. */ walls?: Loose[] | Loose | false; link?: boolean; pitchMin?: number; pitchMax?: number; rail?: Loose; at?: Loose }) => {
     yaw: number; pitch: number; mode: RigMode;
     update(dt: number, target: Loose): Loose; to(mode: RigMode, sec?: number, o?: Loose): Loose; set(o: Loose): Loose;
     shake(amount?: number): Loose; kick(deg?: number, sec?: number): Loose; forward(out?: Loose): Loose; right(out?: Loose): Loose;
@@ -1585,8 +1588,9 @@ export interface CharactersPart {
   Reactions: new (body: Loose, o?: ReactionsOptions) => ReactionsT;
 }
 export interface ReactionsOptions {
-  /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Without one they are acted. */
-  world?: Loose | null;
+  /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Left out: the one the game made; false, or none made: falls are acted. */
+  world?: Loose | null | false;
+  /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
   /** The World3D mover that walks the character: staggering respects walls, and it is put back where the body gets up. */
   mover?: Loose | null;
   /** Floor height at (x, z), for uneven ground and edges to fall off (-Infinity: a pit). */
@@ -2305,7 +2309,7 @@ export interface SkyPart {
   Weather: new (view: Loose, o?: WeatherOptions) => WeatherPart;
 }
 export interface WeatherOptions {
-  kind?: 'rain' | 'snow' | 'storm' | 'clear'; amount?: number; area?: number; /** [x, z] push, or a gs.outdoors.Wind to follow. */ wind?: number[] | { x?: number; z?: number; [k: string]: Loose }; max?: number; color?: string;
+  kind?: 'rain' | 'snow' | 'storm' | 'clear'; amount?: number; area?: number; /** [x, z] push, or a gs.outdoors.Wind to follow. Left out: the Wind the game made; false: none. */ wind?: number[] | { x?: number; z?: number; [k: string]: Loose } | false; max?: number; color?: string;
   /** How big a snowflake is drawn, in metres (with a level: .07 at most). */ flake?: number;
   /**
    * What stands in the weather, so it can change the world: a gs.physics3d World3D, a City, Voxels, a function
@@ -2316,7 +2320,8 @@ export interface WeatherOptions {
   /** (x, z) => the height of the land, for land that is not in the level (land.height). */ ground?: (x: number, z: number) => number;
   /** The map of what the sky can see: cells (128) of cell metres (.5) round the camera, rise and drop (80 m: how far above and below the camera it looks), rays (400 spots asked a frame at most), ms (1.5 at most). */
   cover?: { cells?: number; cell?: number; rise?: number; drop?: number; rays?: number; ms?: number; again?: number };
-  /** gs.outdoors.Water (one or a list): the rain falls on it too (it sets water.rain). */ water?: WaterPart | WaterPart[];
+  /** gs.outdoors.Water (one or a list): the rain falls on it too (it sets water.rain). Left out: every Water the game made; false: none. */ water?: WaterPart | WaterPart[] | false;
+  /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
   /** Seconds of full rain until everything is wet (20), and of no rain until it is dry again (90). Puddles take twice as long to fill and go last. */ soak?: number; dry?: number;
   /** Seconds of full snow until it has all settled (40), and until it has melted once the snow stops (150; rain washes it away six times as fast). */ settle?: number; melt?: number;
   /** How deep settled snow lies, in metres (.25): what snowAt() answers with. */ deep?: number;
@@ -2370,17 +2375,22 @@ export interface Health {
 export interface CombatPart {
   Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number }) => Gun;
   /** push: how hard a hit shoves a loose body (kg metres a second) when update is given a physics world. */
-  Shots: new (o?: { gravity?: number; push?: number }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
-    /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter). */
-    update(dt: number, hits: ((from: P3, to: P3, shot: Loose) => Loose) | Loose): { shot: Loose; hit: Loose; at: P3 }[] };
+  Shots: new (o?: { gravity?: number; push?: number; link?: boolean }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
+    /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter).
+     * Left out: the physics world the game made (false: nothing is asked); then a shot that goes into the game's Water (made with ripples) splashes there and its Foley sounds what was struck. */
+    update(dt: number, hits?: ((from: P3, to: P3, shot: Loose) => Loose) | Loose | false): { shot: Loose; hit: Loose; at: P3 }[] };
   /** ground: (p) => true under the floor, or a physics world (World3D or 2D Physics): the arc stops where it first meets anything there (the last point has .hit); not: a body it passes. */
   arc(from: P3, vel: P3, gravity?: number, o?: { steps?: number; dt?: number; ground?: ((p: P3) => boolean) | Loose; not?: Loose }): (P3 & { hit?: Loose })[];
   lob(from: P3, to: P3, time?: number, gravity?: number): P3;
   Health: new (o?: { max?: number; regen?: number; delay?: number; armour?: number; maxArmour?: number; absorb?: number; downed?: boolean; bleed?: number }) => Health;
   hitFrom(from: P3, at: P3, facing?: number): number;
   Markers: new () => { list: Loose[]; add(head?: boolean, kill?: boolean): Loose; update(dt: number): Loose; readonly showing: boolean };
-  /** world: a World3D or 2D Physics: each blast throws what is near it (b.push), and a barrel added with body: goes where its body goes and goes off when knocked harder than knock (m/s; 2D game units/s). */
-  Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose; knock?: number }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
+  /**
+   * world: a World3D or 2D Physics: each blast throws what is near it (b.push), and a barrel added with body: goes where its body goes and goes off when knocked harder than knock (m/s; 2D game units/s).
+   * Left out: the physics world the game made. A 3D blast is also felt by what else the game made: its Structures are blown in, its Gas bursts, its Fluid and its Water (made with ripples) are thrown, people with Reactions
+   * are knocked down, and soft ground (Marks) is dented; who is hurt and what scores stay yours (on('boom')). link: false: a blast keeps to itself.
+   */
+  Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose | false; knock?: number; link?: boolean }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
 export interface TacticsPart {
@@ -2872,8 +2882,9 @@ export interface StructureOptions {
   span?: number;
   /** Where its foot is ([x, y, z] or { x, y, z }) and its turn about y (radians). A building's door faces +z before the turn. */
   at?: number[] | XYZ; turn?: number;
-  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Without one, pieces fall and break up where they land. */
-  world?: Loose | null;
+  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Left out: the one the game made (reset() finds a new round's). false, or none made: pieces fall and break up where they land. */
+  world?: Loose | null | false;
+  /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
   /** The height rubble lands at, (x, z) => y. Default: flat at its foot. */
   ground?: ((x: number, z: number) => number) | null;
   /** How much small rubble is kept for each material (240; the oldest goes first). */
@@ -3070,9 +3081,10 @@ export interface LandRocks {
 }
 export interface MarksOptions {
   /** The gs.outdoors Land it lies on (its sheets follow the land's own triangles, and its meadows part); or ground: (x, z) => height for ground of your own; neither: flat at y = 0. */
-  land?: LandPart | null; ground?: ((x: number, z: number) => number) | null;
+  land?: LandPart | null | false; ground?: ((x: number, z: number) => number) | null;
+  /** Left out, the land, the weather and the wind are the ones the game made (a weather made later is found too); false: none. */ link?: boolean;
   /** A gs.sky.Weather made with the level: snow takes prints where it has settled, earth is soft where the rain has wet it, and fresh snow and rain take marks away. */
-  weather?: WeatherPart | null;
+  weather?: WeatherPart | null | false;
   /** Where the ground is bare earth, and where it is sand: (x, z) => 0..1 (the same functions that paint your ground). */
   mud?: ((x: number, z: number) => number) | null; sand?: ((x: number, z: number) => number) | null;
   /** Where grass grows: (x, z) => 0..1; true (the default): wherever the land's meadows grow; false: nowhere, and no grass field is kept. */
@@ -3160,13 +3172,17 @@ export interface WaterOptions {
   foam?: string | false;
   /** How many drops splashes and rain can throw at once (80). 0: no spray, and no rings from rain. */
   spray?: number;
+  /** The view it is drawn in (only needed for a water made outside make() and reset(), so the rest of what the game made finds it). */
+  view?: Loose;
+  /** false: the game's weather does not rain on it, its blasts and shots do not splash in it and its Foley does not hear it. */
+  link?: boolean;
 }
 export interface SeaOptions {
   /** The calm height (0). */
   level?: number;
-  /** The wind, metres a second (7): it sets the swell (longer and higher the stronger it blows), the fine waves and, from about 5, whitecaps. */
+  /** The wind, metres a second: it sets the swell (longer and higher the stronger it blows), the fine waves and, from about 5, whitecaps. Left out: what the Wind the game made blows at (else 7). */
   wind?: number;
-  /** The way it blows and the waves run, radians (0: +x, PI/2: +z). */
+  /** The way it blows and the waves run, radians (0: +x, PI/2: +z). Left out: the way the game's Wind blows (else 0). */
   dir?: number;
   /** How big the swell is for that wind (1), or your own list of waves as for Water. */
   waves?: number | { height: number; length: number; dir?: number; speed?: number }[];
@@ -3311,7 +3327,7 @@ export interface ClothPart {
 }
 export interface OutdoorsPart {
   /** Terrain (THREE.Terrain): kind 'hills' | 'mountains' | 'rolling' | 'islands' | 'bumps' | 'dunes' | 'cracked' | 'ridges' | 'smooth', or (x, z) => height. */
-  Land: new (o?: { kind?: string | ((x: number, z: number) => number); size?: number; segments?: number; low?: number; high?: number; seed?: number; smooth?: number; steps?: number; colours?: [number, string][]; material?: Loose; edge?: number }) => LandPart;
+  Land: new (o?: { kind?: string | ((x: number, z: number) => number); size?: number; segments?: number; low?: number; high?: number; seed?: number; smooth?: number; steps?: number; colours?: [number, string][]; material?: Loose; edge?: number; /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean }) => LandPart;
   /** Waves (a sum of sines) you can read anywhere: height, normal, depth. And water you can disturb: rings, splashes with spray and foam, wakes behind watched things, rain, shallows and shore foam over a `bed`, and the look from under the surface. */
   Water: new (o?: WaterOptions) => WaterPart;
   /**
@@ -3355,9 +3371,12 @@ export interface OutdoorsPart {
    * Make it and its pieces in make() (a piece added later starts as made); clear() in reset(); update(dt) each frame. wind: a gs.outdoors Wind (gusts
    * where each piece is) or { x, z } metres a second (3 along x without one); ground: a height or (x, z) => height; steps: small steps a frame (4).
    */
-  Cloth: new (view: Loose | null, o?: { wind?: WindPart | { x?: number; y?: number; z?: number } | null; fine?: number; ground?: number | ((x: number, z: number) => number) | null; rough?: number; steps?: number; /** a World3D: its bodies near the cloth are solids it goes round by themselves */ world?: Loose }) => ClothPart;
-  /** One wind for a world: grass (land.wind), leaves, rain, particles, cloud shadows; at(x, z) for bullets and flags (and gs.outdoors.Cloth). */
-  Wind: new (o?: { x?: number; z?: number; gust?: number; gustSize?: number; sway?: number; grass?: number }) => WindPart;
+  Cloth: new (view: Loose | null, o?: { /** Left out: the Wind the game made (else a breeze of 3). */ wind?: WindPart | { x?: number; y?: number; z?: number } | null; link?: boolean; fine?: number; ground?: number | ((x: number, z: number) => number) | null; rough?: number; steps?: number; /** a World3D: its bodies near the cloth are solids it goes round by themselves. Left out: the one the game made; false: none. */ world?: Loose | false }) => ClothPart;
+  /**
+   * One wind for a world: made in make() or reset(), everything else the game makes there is blown by it with nothing to pass: grass and meadows, trees and plants, rain and snow,
+   * flags and washing (Cloth), smoke in the open (Gas), particles, the sea's swell and prints in sand. at(x, z) for bullets and your own things.
+   */
+  Wind: new (o?: { x?: number; z?: number; gust?: number; gustSize?: number; sway?: number; grass?: number; /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean }) => WindPart;
   /** Far stand-in for a tree: crossed cards with baked pictures of it (null without 3D). Use as a props lod level: [dist, imp.geometry, imp.material]. */
   impostor(geometry: Loose, material: Loose, o?: { cards?: number; size?: number; round?: number; material?: Loose }): { geometry: Loose; material: Loose; texture: Loose; dispose(): void } | null;
   /** Tiling detail, normal and ripple textures for ground and rock, made in code (shared: clone() before changing repeat). */
@@ -3418,9 +3437,10 @@ export interface ModelsPart {
    * 'banana' (paddle leaves torn along their veins; fronds), 'fern' (trunk: metres for a tree fern; fronds), 'taro' (elephant ears; fronds), 'cypress' (a swamp cypress with a flared foot, knees and hanging moss; branches, knees, moss: false or a colour),
    * 'reeds' (blades and cattails; blades, cattails), 'flowers' (stems, petals: a colour or a list), 'lily' (pads on still water, the foot at the water's top; pads, blooms, petals, spread).
    * All: height (metres), seed, leaves / bark (colours), wind (.6, or a gs.outdoors Wind), bend (a gs.outdoors.Marks: leaves and bushes brushed aside by whoever it watches walking through).
+   * With wind or bend left out, a plant made in make() or reset() sways in the gs.outdoors Wind the game made there and is brushed aside through its Marks (made before the plant); false: a breeze of its own, nothing brushes it.
    * A plant's leaves bounce, flutter and lean downwind from where each grows; group.userData.fronds lists them ({ id, root, dir, len }).
    */
-  tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush' | 'palm' | 'fan' | 'banana' | 'fern' | 'taro' | 'cypress' | 'reeds' | 'flowers' | 'lily', o?: { size?: 'small' | 'medium' | 'large'; height?: number; seed?: number; leaves?: string; bark?: string; wind?: number | Loose; bend?: Loose;
+  tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush' | 'palm' | 'fan' | 'banana' | 'fern' | 'taro' | 'cypress' | 'reeds' | 'flowers' | 'lily', o?: { size?: 'small' | 'medium' | 'large'; height?: number; seed?: number; leaves?: string; bark?: string; wind?: number | Loose | false; bend?: Loose | false;
     lean?: number; fronds?: number; dead?: number; fruit?: boolean; skirt?: boolean; trunk?: number; branches?: number; knees?: number; moss?: false | string; blades?: number; cattails?: number; stems?: number; petals?: string | string[]; pads?: number; blooms?: number; spread?: number }): Loose;
   /**
    * Ivy grown over meshes (walls, a house, a stump, a statue; their world places as they are now): vines start at the foot of steep faces (or from: points) and climb, keeping to the surface, branching out sideways,
@@ -3428,12 +3448,12 @@ export interface ModelsPart {
    * density (leaf clusters per 10 cm: 1.2), up (how hard they climb: 1), leaves / stem (colours), seed, wind, bend. A Group in world metres ('branches', 'leaves'); userData.ivy { vines, metres, leaves }.
    * 30 to 150 ms, kept for the same targets and options: make it while loading.
    */
-  ivy(targets: Loose, o?: { seed?: number; roots?: number; from?: [number, number, number][]; length?: number; size?: number; density?: number; up?: number; leaves?: string; stem?: string; wind?: number | Loose; bend?: Loose }): Loose;
+  ivy(targets: Loose, o?: { seed?: number; roots?: number; from?: [number, number, number][]; length?: number; size?: number; density?: number; up?: number; leaves?: string; stem?: string; wind?: number | Loose | false; bend?: Loose | false }): Loose;
   /**
    * Weeds where nobody weeds, in one InstancedMesh (one draw): along cracks and kerbs (lines: [[[x, z], ...], ...] or points with y), at the foot of walls (walls: meshes; where their steep faces meet the ground)
    * and at spots ([[x, z] | [x, y, z], ...]). ground(x, z): the height to plant at. gap (metres along a line: .4), height (.22), colours ([green, green, dry]), seed, wind, bend, max (2000). userData.weeds: how many.
    */
-  weeds(o?: { lines?: ([number, number] | [number, number, number])[][]; walls?: Loose; spots?: number[][]; ground?: (x: number, z: number) => number; gap?: number; height?: number; colours?: string[]; seed?: number; wind?: number | Loose; bend?: Loose; max?: number }): Loose;
+  weeds(o?: { lines?: ([number, number] | [number, number, number])[][]; walls?: Loose; spots?: number[][]; ground?: (x: number, z: number) => number; gap?: number; height?: number; colours?: string[]; seed?: number; wind?: number | Loose | false; bend?: Loose | false; max?: number }): Loose;
   /** The tree and plant kinds. */
   readonly trees: readonly string[];
   /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear, materials (your own three.js materials in place of the style's). A Group centred on x/z, foot at y = 0, door facing +z. One that comes apart: gs.destruction.Structure. */
@@ -3551,7 +3571,7 @@ export interface CityPart {
    * your reset() and update(dt, player) each frame. Cars brake for what you pass to avoid().
    */
   City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: 'right' | 'left';
-    traffic?: number; people?: number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
+    traffic?: number; people?: number; night?: number; /** A gs.sky.Sky: the city lights up as it darkens. Left out (and no night given): the Sky the game made. */ sky?: Loose; link?: boolean; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
     /** Rooms behind every window (default true). */ rooms?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
     /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
     /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean;

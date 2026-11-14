@@ -18,6 +18,7 @@
 // The look is the game's: `broke` lists what happened each frame (where, how big, how fast) for your dust,
 // sound and shake. Kit use only: games reach it as gs.destruction.Structure.
 import { timed } from './prof.js';
+import { linksFor, linked } from './links.js';
 import { Group, Mesh, BufferGeometry, BufferAttribute, BoxGeometry, InstancedMesh, InstancedBufferAttribute, DynamicDrawUsage, Matrix4, Quaternion, Vector3, Euler } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { buildingPieces } from './models/buildings.js';
@@ -225,7 +226,9 @@ export class Structure {
    * crush (1: how hard falling pieces hit what they land on; 0: they break nothing), gravity, seed.
    */
   constructor(scene, o = {}) {
-    const { building = null, pieces = null, at = [0, 0, 0], turn = 0, world = null, ground = null, bits = 240, keep = 40, crush = 1, seed = 1 } = o;
+    const { building = null, pieces = null, at = [0, 0, 0], turn = 0, ground = null, bits = 240, keep = 40, crush = 1, seed = 1, link = true } = o;
+    // (links.js: with no world given, the game's physics world is found; its blasts reach this, and its sounds hear what breaks; world: false keeps it out)
+    const L = this.links = linksFor(null, link), world = linked(o.world, L, 'world'); this.seeks = o.world == null && !!L; L?.join('structure', this);
     this.src = pieces ? fromPieces(pieces, o) : buildingPieces(building || {});
     const S = this.S = survey(this.src), n = S.n;
     this.scene = scene; this.world = world; this.keep = keep; this.crush = crush; this.seed = seed;
@@ -532,12 +535,13 @@ export class Structure {
     if (this.body) { if (this.world?.world && !this.body.dead) this.world.remove(this.body); this.body = null; }
     for (let i = 0; i < this.S.n; i++) { if (this.state[i] > DUE) this.show(i, true); this.cols[i] = null; }
     this.state.fill(0); this.hurt.fill(0); this.due = 0; this.time = 0; this.spent = 0; this.broke = []; this.events = []; this.rnd = null;
-    if (o && 'world' in o) this.world = o.world;
+    if (o && 'world' in o) this.world = o.world; else if (this.seeks) this.world = this.links.one('world') ?? this.world;   // (a world made again each round is found each round)
     this.solid();
     return this;
   }
   /** Takes it out of the scene and the physics world. */
   remove() {
+    this.links?.leave(this);
     for (const L of [...this.loose]) this.done(L, false);
     if (this.body && this.world?.world && !this.body.dead) this.world.remove(this.body);
     this.body = null; this.bits.remove(); this.group.removeFromParent(); this.debris.removeFromParent();

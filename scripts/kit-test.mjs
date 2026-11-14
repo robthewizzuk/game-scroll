@@ -6699,5 +6699,135 @@ console.log('physics ok');
   console.log('light from effects: flashes before the lamps round them, one light for flashes alone on WebGL, their light on particles ok');
 }
 
+// kits that find each other (src/kit/links.js): what one game makes finds the rest of what it made
+{
+  const THREE = await import('three'), { Links, linksFor, linked, together } = await import('../src/kit/links.js'), { ownedBy, release } = await import('../src/kit/cleanup.js');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Wind, Land, Cloth, Marks, Water, Sea } = await import('../src/kit/outdoors.js'), { Weather, Sky } = await import('../src/kit/sky.js'), { Gas } = await import('../src/kit/gas.js'), { Fluid } = await import('../src/kit/fluid.js');
+  const { Foley } = await import('../src/kit/foley.js'), { Ears } = await import('../src/kit/sound.js'), { Explosives, Shots } = await import('../src/kit/combat.js'), { Structure } = await import('../src/kit/structure.js'), { CameraRig } = await import('../src/kit/camera.js');
+  const { Particles } = await import('../src/kit/hd3d.js');
+  globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
+  const view = () => ({ cam: { position: new THREE.Vector3(0, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, parts: [], _air: null, air() { return this._air ||= { wet: 0, world: null }; } });
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  // the set: one a card, the newest of a kind found, several of some kinds, gone with the card; none outside a card without a view
+  {
+    assert.equal(linksFor(null), null, 'outside a card, with no view: no set (a kit keeps to itself, as before)');
+    const v = view(), a = linksFor(v); assert.ok(a instanceof Links && linksFor(v) === a && linksFor(view()) !== a, 'outside a card: a set a view');
+    assert.equal(linksFor(v, false), null, 'link: false: no set');
+    const card = {}; let s1, s2;
+    ownedBy(card, () => { s1 = linksFor(null); s2 = linksFor(v); });
+    assert.ok(s1 && s1 === s2 && s1 !== a, 'in a card: the card\'s set, whatever the view');
+    assert.equal(linksFor(v), s1, 'and things made later with that view find the card\'s set');
+    { const { HDView } = await import('../src/kit/hd3d.js'); let hv, hs; ownedBy(card, () => { hv = new HDView(); hs = linksFor(null); }); assert.equal(linksFor(hv), hs, 'a Next Gen view made in a card: what is made with it later (in update()) finds what the card made'); }
+    const w1 = {}, w2 = {}; s1.join('wind', w1).join('wind', w2); assert.equal(s1.one('wind'), w2, 'the newest of a kind is the one found');
+    const p1 = {}, p2 = {}; s1.join('water', p1).join('water', p2).join('water', p1); assert.deepEqual(s1.all('water'), [p1, p2], 'kinds there can be several of keep them all, once each');
+    s1.leave(p1).leave(w2); assert.ok(s1.all('water').length === 1 && s1.one('wind') === null && s1.all('gas').length === 0, 'leave() takes a thing out');
+    assert.ok(linked(5, s1, 'wind') === 5 && linked(false, s1, 'water') === null && linked(null, null, 'wind') === null, 'what is given wins, false is none');
+    release(card); let s3; ownedBy(card, () => { s3 = linksFor(null); }); assert.ok(s3 !== s1, 'a card that is let go (or a pass of making that was dropped) starts a new set');
+    let t1, t2; together(() => { t1 = linksFor(null); }); together(() => { t2 = linksFor(null); }); assert.ok(t1 && t2 && t1 !== t2, 'together(): a set of its own');
+  }
+  // one wind: cloth, rain, smoke, the sea's swell, marks in sand, particles
+  together(() => {
+    const v = view(), wind = new Wind({ x: 0, z: 6, gust: 0 }), cloth = new Cloth(null), flag = cloth.flag({ at: [0, 6, 0], size: [1.8, 1.2] });
+    const lone = new Cloth(null, { link: false }), lf = lone.flag({ at: [0, 6, 0], size: [1.8, 1.2] }), still = new Cloth(null, { wind: { x: 0, z: 0 } }), sf = still.flag({ at: [0, 6, 0], size: [1.8, 1.2] });
+    for (let i = 0; i < 240; i++) { wind.update(1 / 60); cloth.update(1 / 60); lone.update(1 / 60); still.update(1 / 60); }
+    const end = (c, f) => { const k = (f.base + f.cols - 1 + (f.rows >> 1) * f.cols) * 3; return [c.P[k], c.P[k + 1], c.P[k + 2]]; };
+    const a = end(cloth, flag), b = end(lone, lf), c = end(still, sf);
+    assert.ok(a[2] > 1 && Math.abs(a[0]) < .5, `a flag flies the way the game's Wind blows (+z): ${a.map(n => n.toFixed(2))}`);
+    assert.ok(b[0] > 1 && Math.abs(b[2]) < .5, `link: false: its own breeze along x: ${b.map(n => n.toFixed(2))}`);
+    assert.ok(Math.hypot(c[0], c[2]) < .8, 'a wind that was given wins (still air)');
+    const rain = new Weather(v, { kind: 'rain' }), own = new Weather(v, { kind: 'rain', wind: [3, 0] }), dry = new Weather(v, { kind: 'rain', wind: false });
+    for (const w of [rain, own, dry]) w.update(1 / 60);
+    const lean = w => { const p = w.rainMesh.geometry.attributes.position.array; return [p[6] - p[0], p[8] - p[2]]; };   // (a streak's top against its foot)
+    const lr = lean(rain), lo = lean(own), ld = lean(dry);
+    assert.ok(Math.abs(lr[1]) > 1e-4 && Math.abs(lr[1]) > Math.abs(lr[0]) * 5, `rain slants with the game's Wind (z): ${lr}`);
+    assert.ok(Math.abs(lo[0]) > Math.abs(lo[1]) * 5 && Math.hypot(ld[0], ld[1]) < 1e-6, `a wind of its own (x), and none: ${lo} ${ld}`);
+    const gas = new Gas(v, { box: [-3, 0, -3, 3, 4, 3], kind: 'smoke' }), room = new Gas(v, { box: [-3, 0, -3, 3, 4, 3], open: false }), mine = new Gas(v, { box: [-3, 0, -3, 3, 4, 3], wind: { x: 1 } });
+    for (const g of [gas, room, mine]) g.update(1 / 60);
+    assert.ok(gas.wind.z === 6 && gas.wind.x === 0 && room.wind.z === 0 && mine.wind.x === 1 && mine.wind.z === 0, 'smoke in the open leans with the game\'s Wind; a closed room and a gas with its own wind do not');
+    const sea = new Sea({ far: 0 }), set = new Sea({ far: 0, wind: 9, dir: 0 });
+    assert.ok(sea.sea.wind === 6 && Math.abs(sea.sea.dir - Math.PI / 2) < 1e-9 && set.sea.wind === 9 && set.sea.dir === 0, 'the sea\'s swell is what the game\'s Wind has raised, running its way');
+    wind.z = 12.5; const marks = new Marks(v, { sand: () => 1, grass: false, blow: 20 }); marks.step(1, 1); marks.update(1 / 60); const deep = marks.at(1, 1); for (let i = 0; i < 150; i++) marks.update(1 / 60);
+    assert.ok(deep > 0 && marks.at(1, 1) < deep * .5, `the game's Wind blows prints out of sand: ${deep} to ${marks.at(1, 1)}`);
+    const P = new Particles(v, { max: 8 }); P.emit({ x: 0, y: 1, z: 0, life: 9 }); for (let i = 0; i < 60; i++) P.update(1 / 60);
+    const Q = new Particles(v, { max: 8, wind: false }); Q.emit({ x: 0, y: 1, z: 0, life: 9 }); for (let i = 0; i < 60; i++) Q.update(1 / 60);
+    assert.ok(P.list[0].z > 5 && Q.list[0].z === 0, `particles drift with the game's Wind: ${P.list[0].z.toFixed(1)}`);
+  });
+  // the land, the weather and the water: marks, rain on water, and sounds that know all of it
+  together(() => {
+    const v = view(), land = new Land({ kind: () => 2, size: 40, segments: 8 }), pond = new Water({ size: 10 }), lake = new Water({ size: 10, link: false });
+    assert.ok(new Marks(v, { ground: () => 5, grass: false }).land === null && new Marks(v, { land: false, grass: false }).land === null, 'a ground of its own, or land: false: no land');
+    const marks = new Marks(v, { mud: () => 1, grass: false }), world = new World3D(), foley = new Foley(), ears = new Ears();
+    assert.ok(marks.land === land && Math.abs(marks.kindAt(0, 0).y - 2) < 1e-6, 'marks find the land the game made');
+    { const only = new Weather(v, { kind: 'rain' }); marks.update(1 / 60); assert.equal(marks.weather, null, 'rain that only falls (no level) is not the marks\' weather: the ground stays as it was'); only.dispose(); }
+    const rain = new Weather(v, { kind: 'rain', level: true, soak: 1 });   // (made after the marks and the sounds)
+    for (let i = 0; i < 90; i++) { rain.update(1 / 60); marks.update(1 / 60); foley.update(1 / 60); }
+    assert.ok(marks.weather === rain && marks.kindAt(0, 0).kind === 'mud', 'marks find a weather made after them: rain softens the mud');
+    assert.ok(pond.rain === 1 && lake.rain === 0, 'the rain falls on the water the game made (not on one that keeps to itself)');
+    rain.set('clear'); rain.update(1 / 60); assert.equal(pond.rain, 0, 'and stops');
+    const plain = new Weather(v, { kind: 'rain' }); plain.update(1 / 60); assert.equal(pond.rain, 1, 'weather that only falls rains on the water too');
+    const given = new Water({ size: 4, link: false }), picky = new Weather(v, { kind: 'rain', water: given, level: true }); picky.update(1 / 60); assert.ok(given.rain === 1 && picky.waters.length === 1, 'a water that was given is the one rained on');
+    plain.dispose(); picky.dispose(); assert.ok(pond.rain === 0 && given.rain === 0, 'dispose() takes the rain off the water');
+    assert.ok(foley.world === world && foley.marks === marks && foley.weather === rain && foley.land === land && foley.ears === ears, 'Foley finds the world, the marks, the weather, the land and the ears');
+    assert.equal(foley.surface({ x: 0, y: 2, z: 0 }), 'mud', 'so it knows what is underfoot');
+    const next = new World3D(); foley.update(1 / 60); assert.equal(foley.world, next, 'a world made again (a new round) is found again');
+    const own = new Foley({ world: false, marks: false }); own.update(1 / 60); assert.ok(own.world === null && own.marks === null && own.land === land, 'false: none of that kind');
+    // what lands in the water and what breaks is heard
+    let heard = []; foley.at = (p, vol) => { heard.push([p.x, p.z, vol]); return true; };
+    pond.splash(1, 2, { size: 1, speed: 6 }); pond.update(1 / 60, { x: 0, y: 0, z: 0 }); foley.update(1 / 60);
+    assert.ok(heard.length === 1 && heard[0][0] === 1 && heard[0][1] === 2, 'a splash in the game\'s water sounds where it landed');
+    pond.update(1 / 60, { x: 0, y: 0, z: 0 }); foley.update(1 / 60); assert.equal(heard.length, 1, 'once');
+    const house = new Structure(null, { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials } });
+    assert.equal(house.world, next, 'a building that comes apart is solid in the game\'s physics world');
+    heard = []; house.hit({ x: -4, y: 1.5, z: 0 }, { radius: 1, power: 50 }); next.step(1 / 60); house.update(1 / 60); const broke = house.broke.filter(b => b.how === 'broke').length; foley.update(1 / 60);
+    assert.ok(broke > 0 && heard.length === broke, `what breaks is heard: ${broke} pieces, ${heard.length} sounds`);
+    next.free?.(); const third = new World3D(); house.reset(); assert.equal(house.world, third, 'and reset() finds the round\'s new world');
+    assert.equal(new Structure(null, { building: { style: 'brick', w: 5, d: 5, floors: 1, materials }, world: false }).world, null, 'world: false: none');
+    // the ears: the physics world is what stands in the way of sound
+    const e2 = new Ears(); assert.ok(e2.level === third && e2.cast, 'ears with no level take the game\'s physics world'); assert.ok(new Ears({ level: false }).level === null && new Ears({ link: false }).level === null, 'level: false and link: false: nothing stands in the way');
+  });
+  // a blast is felt by what else the game made; shots find the world, splash in the water and are heard
+  together(() => {
+    const v = view(), w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 3, y: .5, z: 0 }, density: 10 });
+    const house = new Structure(null, { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials }, at: [0, 0, -8] });
+    const gas = new Gas(v, { box: [-4, 0, -4, 4, 5, 4], kind: 'fire' }), far = new Gas(v, { box: [40, 0, 40, 44, 5, 44], kind: 'fire' }), fluid = new Fluid(v, { box: [-2, 0, -2, 2, 3, 2], volume: 1 });
+    const pond = new Water({ level: .2, size: 30, waves: 0, ripples: true }), calm = new Water({ level: .2, size: 30, waves: 0 }), marks = new Marks(v, { sand: () => 1, grass: false }), rain = new Weather(v, { kind: 'clear', level: w });
+    let touched = null; rain.cover.touch = (x, z, r) => { touched = [x, z, r]; };
+    const thrown = []; const person = { blast: (at, s, r) => thrown.push([at.x, s, r]) }; linksFor(null).join('reactions', person);
+    const ex = new Explosives({ radius: 6, damage: 120 }); assert.equal(ex.world, w, 'explosives find the game\'s physics world');
+    const b = ex.add({ x: 0, y: .5, z: -3, fuse: 0 }); ex.boom(b); ex.update(1 / 60); w.step(1 / 60);
+    for (let i = 0; i < 30; i++) { w.step(1 / 60); house.update(1 / 60); }
+    assert.ok(crate.pos.x > 3.05, 'a blast throws what is near it in the world: ' + crate.pos.x);
+    assert.ok(house.standing < 1, 'blows in the building beside it: standing ' + house.standing.toFixed(2));
+    assert.ok(gas.queue.length === 1 && far.queue.length === 0, 'bursts in the smoke it is in (not in a gas far away)');
+    assert.equal(fluid.blasts.length, 1, 'throws the liquid');
+    assert.ok(pond.pending.length + pond.splashes.length === 1, 'splashes the water it went off at');
+    assert.ok(calm.pending.length === 0 && !calm.rip, 'water made without ripples is left as it is (a blast makes no ripple field the game did not ask for)');
+    marks.update(1 / 60); assert.ok(marks.at(0, -3) > 0, 'dents the soft ground under it');
+    assert.ok(thrown.length === 1 && thrown[0][2] === 9, 'throws the people who react');
+    assert.deepEqual(touched, [0, -3, 6], 'and the weather looks again at what is still a roof');
+    const quiet = new Explosives({ link: false, radius: 6 }), q = quiet.add({ x: 0, y: .5, z: -3, fuse: 0 }); quiet.boom(q); quiet.update(1 / 60);
+    assert.ok(quiet.world === null && gas.queue.length === 1 && fluid.blasts.length === 1, 'link: false: a blast keeps to itself');
+    const flat = new Explosives({ radius: 40 }), f2 = flat.add({ x: 0, y: 0, fuse: 0 }); flat.boom(f2); flat.update(1 / 60); assert.equal(gas.queue.length, 1, 'a 2D blast (no z) is not felt by the 3D kits');
+    // shots
+    const foley = new Foley(); let knocks = 0; foley.hit = () => { knocks++; return true; };
+    const wall = w.box(null, 4, 4, .5, { at: { x: 0, y: 2, z: 12 }, fixed: true }), shots = new Shots(); w.step(1 / 60); knocks = 0;   // (the rubble's own knocks are the world's)
+    shots.add({ from: { x: 0, y: 1.5, z: 4 }, dir: { x: 0, y: 0, z: 1 }, speed: 80, range: 60 }); let got = null; for (let i = 0; i < 30 && !got; i++) got = shots.update(1 / 60)[0];
+    assert.ok(got?.hit.thing === wall && knocks === 1, 'a shot is traced in the game\'s world with nothing given, and what it struck sounds');
+    const n0 = pond.pending.length; shots.add({ from: { x: 5, y: 2, z: 5 }, dir: { x: 0, y: -1, z: 0 }, speed: 30, range: 20 }); for (let i = 0; i < 10; i++) shots.update(1 / 60);
+    assert.equal(pond.pending.length, n0 + 1, 'a shot that goes into the water splashes there, once');
+    const none = new Shots(); none.add({ from: { x: 0, y: 1.5, z: 4 }, dir: { x: 0, y: 0, z: 1 }, speed: 80, range: 60 }); let hit = 0; for (let i = 0; i < 30; i++) hit += none.update(1 / 60, false).length; assert.equal(hit, 0, 'hits: false: nothing is asked');
+    // the camera keeps out of the world's still things with one ray
+    const cam = new THREE.PerspectiveCamera(60, 1, .1, 200), rig = new CameraRig({ cam, scene: v.scene }, { mode: 'chase', distance: 8, height: 1, lag: 0 });
+    const hero = { position: new THREE.Vector3(0, 1, 10), yaw: Math.PI }; w.box(null, 6, 6, .5, { at: { x: 0, y: 3, z: 6 }, fixed: true }); w.step(1 / 60);
+    rig.update(1 / 60, hero); const open = new CameraRig({ cam: new THREE.PerspectiveCamera(), scene: v.scene }, { mode: 'chase', distance: 8, height: 1, lag: 0, walls: false }); open.update(1 / 60, hero);
+    assert.ok(Math.abs(open.cam.position.z - hero.position.z) > 7 && Math.abs(rig.cam.position.z - hero.position.z) < 4.2, `a camera rig stays this side of a wall in the game's world: ${rig.cam.position.z.toFixed(2)} against ${open.cam.position.z.toFixed(2)}`);
+  });
+  // kits' own private things stay out of the set
+  together(() => { const s = linksFor(null); new World3D({ link: false }); new Ears({ link: false }); new Wind({ link: false }); assert.ok(!s.one('world') && !s.one('ears') && !s.one('wind'), 'link: false things are not found'); });
+  console.log('kits that find each other: one set a card, one wind (cloth, rain, smoke, swell, sand, particles), land, weather and water, sounds that find it all, blasts felt by everything, shots, the camera and walls ok');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

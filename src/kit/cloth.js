@@ -21,6 +21,7 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, M
 import { webgpu } from './gpu.js';
 import { own } from './cleanup.js';
 import { timed } from './prof.js';
+import { linksFor } from './links.js';
 
 const GRAV = -9.81, AIR = .6, SKIN = .12, GRIP = .6, MOVE = .01;
 // a direction turned by a quaternion { x, y, z, w }
@@ -79,8 +80,10 @@ export class Cloth {
    * view: an HDView (null: the numbers alone). wind: a gs.outdoors Wind, or { x, y, z } metres a second (a breeze of 3 by
    * default). fine: points across a metre (WebGPU 14, else 7). ground: a height (or (x, z) => height) the cloth lies on rather than going through.
    */
-  constructor(view, { wind = null, fine = null, ground = null, rough = .85, steps = STEPS, world = null } = {}) {
+  constructor(view, { wind = null, fine = null, ground = null, rough = .85, steps = STEPS, world = null, link = true } = {}) {
     this.view = view; this.wind = wind; this.ground = ground; this.t = 0; this.steps = steps; this.world = world; this.felt = new Map();
+    // (links.js: with no wind or world given, the game's Wind blows it and it goes round the bodies of the game's physics world; false: neither)
+    this.links = linksFor(view, link); this.links?.join('cloth', this);
     this.big = !!webgpu() && typeof view?.envFor === 'function' && typeof webgpu().fx?.gpuCloth === 'function';
     this.fine = fine ?? (this.big ? 14 : 7);
     this.pieces = []; this.solids = []; this.bodies = []; this.dirty = true; this.pinsMoved = false;
@@ -295,6 +298,7 @@ export class Cloth {
     if (!(dt > 0) || !this.N) return this;
     dt = Math.min(dt, 1 / 20); this.t += dt;
     for (const b of this.bodies) this.bodyNow(b);
+    if (this.world === null && this.links) { const w = this.links.one('world'); if (w) this.world = w; }
     if (this.world) this.fromWorld();
     this.pinsNow(dt);
     this.winds();
@@ -329,7 +333,7 @@ export class Cloth {
   }
   // the wind at each piece now (a gust there)
   winds() {
-    const w = this.wind; let wx = 3, wy = 0, wz = 0;
+    const w = this.wind ?? this.links?.one('wind'); let wx = 3, wy = 0, wz = 0;
     if (w && typeof w.at !== 'function') { wx = w.x || 0; wy = w.y || 0; wz = w.z || 0; }
     for (const p of this.pieces) {
       if (w && typeof w.at === 'function') { const k = (p.base + (p.cols >> 1) + (p.rows >> 1) * p.cols) * 3, g = w.at(this.A[k] ?? 0, this.A[k + 2] ?? 0); p.wind[0] = g.x * p.open; p.wind[1] = 0; p.wind[2] = g.z * p.open; }

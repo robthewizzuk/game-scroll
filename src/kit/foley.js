@@ -27,6 +27,7 @@ import { audio, sound } from '../sfx.js';
 import { register } from './cleanup.js';
 import { timed } from './prof.js';
 import { muffleOf } from './acoustics.js';
+import { linksFor } from './links.js';
 
 const MATERIALS = ['wood', 'metal', 'stone', 'glass', 'plastic', 'rubber', 'cloth', 'body', 'dirt', 'grass', 'gravel', 'sand', 'snow', 'mud', 'water', 'ice', 'leaves', 'carpet'];
 const SOFT = new Set(['cloth', 'body', 'dirt', 'grass', 'sand', 'snow', 'mud', 'water', 'leaves', 'carpet', 'rubber']);
@@ -287,11 +288,15 @@ export class Foley {
    * is underfoot); ground: (x, z, y) => a material or nothing, the game's own say; volume: 0..1 (1); knocks: false to leave
    * the world's knocks alone; under: what is underfoot when nothing says (stone, or dirt on a land).
    */
-  constructor({ ears = null, world = null, marks = null, weather = null, land = null, ground = null, volume = 1, knocks = true, under = null } = {}) {
-    Object.assign(this, { ears, marks, weather, land, ground, volume, knocks, under });
+  constructor({ ears = null, world = null, marks = null, weather = null, land = null, ground = null, volume = 1, knocks = true, under = null, splashes = true, breaks = true, link = true } = {}) {
+    // (links.js: what was left out is found among what the game made, and found again when the game makes a new one; false: none)
+    this.links = linksFor(null, link); this.seeks = this.links ? Object.entries({ ears, world, marks, weather, land }).filter(e => e[1] == null).map(e => e[0]) : [];
+    Object.assign(this, { ears: ears || null, marks: marks || null, weather: weather || null, land: land || null, ground, volume, knocks, under, splashes, breaks });
     this.watching = []; this.hooked = new WeakSet(); this.budget = 0; this.budgetT = -1; this.last = new WeakMap(); this.made = new WeakMap();
-    this.world = world; all.add(this);
+    this.world = world; all.add(this); this.find(); this.links?.join('foley', this);
   }
+  // what the game made that this was not given (a World3D made again each round is found each round)
+  find() { const L = this.links; for (const k of this.seeks) { const x = L.one(k); if (x && this[k] !== x) this[k] = x; } }
   /** The World3D whose knocks sound by themselves (set it again for a new one each round). */
   set world(w) { this._world = w || null; if (w && !this.hooked.has(w) && typeof w.onHit === 'function') { this.hooked.add(w); w.onHit((a, b, speed) => { if (this._world === w && this.knocks) this.knock(a, b, speed); }); } }
   get world() { return this._world; }
@@ -317,7 +322,24 @@ export class Foley {
   update(dt) {
     if (!(dt > 0)) return;
     all.add(this);
+    const L = this.links;
+    if (L) {
+      this.find();
+      // what the game's water and its buildings that come apart did this frame (links.js): a splash for what landed in the water, a crack for what broke
+      if (this.splashes) for (const w of L.all('water')) if (w.splashes?.length) for (const sp of w.splashes) this.splash(sp, sp);
+      if (this.breaks) for (const st of L.all('structure')) if (st.broke?.length) for (const b of st.broke) if (b.how === 'broke' || (b.how === 'landed' && !st.world)) this.hit(b, b.kind === 'window' ? 'glass' : st.sound || 'stone', { speed: b.how === 'broke' ? 5 + (b.speed || 0) : b.speed || 3, size: b.size || .6, mass: b.mass });
+    }
     for (const w of this.watching) { if (w.engine) w.engine.update(dt); else this.feet(w, dt); }
+  }
+  /** Something landed in water at p. o: size (metres across, 1), speed (how fast it hit, metres a second: 4). */
+  splash(p, { size = 1, speed = 4 } = {}) {
+    const v = clamp(.25 + speed / 12, .2, 1.3) * clamp(size, .25, 2.5) ** .6, k = clamp(1 / Math.max(.2, size) ** .5, .5, 2);
+    return this.at(p.z === undefined ? { x: p.x, y: p.y } : XYZ(p), .09 * v, s => {
+      s.n(.09, { vol: .11 * v, from: 2400 * k, to: 500, filter: 'bandpass', q: .7 });                        // the slap
+      s.n(.3 + .2 * Math.min(2, size), { vol: .07 * v, from: 5200, to: 1500, filter: 'highpass', attack: .04, at: .03 });   // the spray falling back
+      s.t(170 * k, { len: .14, wave: 'sine', vol: .07 * v, slide: -70 * k });                                // the hollow it leaves
+      for (let i = 0; i < 3; i++) s.t(rnd(380, 700) * k, { len: .05, wave: 'sine', vol: .018 * v, slide: rnd(300, 700), at: rnd(.08, .3) });   // drips
+    }, .6);
   }
   feet(w, dt) {
     const t = w.thing, o = w.o, st = w.stride;

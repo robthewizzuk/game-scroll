@@ -156,6 +156,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
 - `gs.physics3d.World3D` (Rapier 3D; lazy): `ball`, `box`, `capsule`, `hull`, `ground(mesh)`,
   `floor`, `mover()` (walking character), `rider()` (something your code moves, solid: kerbs, walls, shoves), `shape(mesh, { box | ball | capsule | hull })`, `shapes(list)` (thousands of still shapes in one body), `floorAt`, `ragdoll(character)` (a jointed ragdoll on a `gs.poses` rig: joints that only turn as real ones do, `drive(pose, strength)` muscles), `ray`, joints, `step(dt)` syncs meshes.
   One world through the kits: `Platformer`/`TopDown`, `Car`/`Kart`, `Plane`/`Boat`/`Hover`, `Shots`/`arc`/`Explosives`, `Grapple`, `slice`, `props.solid`, `city.solid`, `voxels.physics`, `Cloth`, `Soft`/`Liquid` and `Streams.carry` all take it (`docs/maker-kit.md`, "One physics world through the kits").
+- **Kits find each other.** What a game makes in `make()` and `reset()` finds the rest of what it made, with nothing passed: one `Wind` blows the grass, trees, rain, `Cloth`, smoke, particles and the `Sea`'s swell; `Weather` rains on every `Water`; a `World3D` is found by `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley`, `Ears` and `CameraRig`; a 3D blast is felt by structures, smoke, liquid, water made with `ripples`, people who react and soft ground; `Foley` finds the ears, world, marks, weather and land. What you pass wins, `false` is none (`wind: false`), `link: false` keeps a kit to itself. Links are things the world does; who is hurt and what scores stay the game's (`docs/maker-kit.md`, "Kits that find each other").
 - `gs.ai`: `Crowd` (`add(x, y).chase(t) / flee / wander / follow(route) / flock / hunt(t, nav)`),
   `NavGrid` (`path`, `sees`), `Brain` (state machine), `Tree` (behaviour trees: mistreevous text, actions by name), `Choose`
   (utility AI: the highest-scoring want), `YUKA`, `Swarm({ count, w, h, speed })` (thousands of flockers on the
@@ -258,6 +259,7 @@ Add `/** @type {import('../gamescroll.js').GameDef} */` above `export default` t
 
 ## Common mistakes
 
+- Wiring the kits to each other by hand (the same `wind`, `world` or `weather` passed to each): made in `make()` or `reset()`, they find each other. Pass one only to choose a different one, or `false` for none.
 - Making the kits decide the look: kits give answers (hits, timings, where to aim or look); your game draws and sets the rules.
 
 - Round state set in `make()` instead of `reset()`, so "Play again" doesn't start clean.

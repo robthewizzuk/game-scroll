@@ -1,0 +1,80 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Kits that find each other (src/kit/links.js), filmed for scripts/links.cjs: one yard made twice with nothing passed from
+// kit to kit. Top row: as a game makes it (a Wind blowing along -x, rain, a flag, washing, smoke from a stack, trees, drifting
+// leaves, a pond, crates and a wall in a physics world, and a bomb that goes off part way through). Bottom row: the same
+// with link: false on everything, which is how it all behaved before: the flag flies in its own breeze, the rain falls
+// straight, the smoke rises straight, and the blast moves nothing.
+//   ?cols=6 &cell=360x250 &secs=4 &wind=8 &boom=1.6 (seconds in) &rows=linked|unlinked (one row only) &gpu (WebGPU)
+//   &drop=weather,cloth,gas,pond,marks: dispose() those between the rows too (on WebGPU that has, now and then, logged a failed pipeline for the
+//   second row: a geometry freed while its shader was still building; the page leaves them to the garbage collector by default)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { together } from '../../src/kit/links.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await gs.physics3d.loadPhysics3D();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const cols = +(Q.get('cols') || 6), [cw, ch] = (Q.get('cell') || '360x250').split('x').map(Number), secs = +(Q.get('secs') || 4), ws = +(Q.get('wind') || 8), boomAt = +(Q.get('boom') || 1.6);
+  window.__hd.force = 2; window.__hd.upscale = false;
+  const { Wind, Cloth, Water, Marks } = gs.outdoors, { Weather } = gs.sky, { Gas } = gs.gas, { World3D } = gs.physics3d, { Explosives } = gs.combat, { Structure } = gs.destruction, { Particles, pbr } = gs.hd;
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * 2; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const info = [], dt = 1 / 60, N = Math.round(secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((i + 1) / cols * N) - 1);
+  let backend = '';
+  for (const linked of Q.get('rows') === 'linked' ? [true] : Q.get('rows') === 'unlinked' ? [false] : [true, false]) {
+    const link = linked ? undefined : false, row = linked ? 0 : 1;
+    let S = null;
+    // (everything is made as a game makes it: in one go, nothing passed from one kit to the next)
+    together(() => {
+      const v = new gs.hd.HDView({ bg: '#8fa3b8', fog: .012, env: .4, amb: .35 });
+      const sun = gs.hd.sun('#fff2d8', 1.3, 10, [.4, .9, .5]); v.scene.add(sun, sun.target); v.sun = sun;
+      const box = (w, h, d, c, x, y, z) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), pbr(c, { rough: .9 })); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+      box(60, .2, 60, '#b9a57c', 0, -.1, 0);
+      box(.08, 5, .08, '#ccc', -3, 2.5, -2);                                              // the flagpole
+      box(.08, 2, .08, '#8a6a4a', 1, 1, -3.4); box(.08, 2, .08, '#8a6a4a', 4.6, 1, -3.4);   // the washing line's posts
+      box(.7, 1.6, .7, '#8a4a3a', 4, .8, .5);                                             // the stack the smoke comes from
+      const wind = new Wind({ x: -ws, z: -ws * .2, gust: .3, gustSize: 20, link });
+      const world = new World3D({ gravity: -9.81, link }); world.floor(0);
+      const weather = new Weather(v, { kind: 'rain', amount: 1, max: 1400, link });
+      const cloth = new Cloth(v, { ground: 0, link });
+      cloth.flag({ at: [-3, 4.95, -2], size: [1.8, 1.2], colours: ['#c33', '#f4f0e6', '#2a5cb0'] });
+      cloth.line({ from: [1, 1.95, -3.4], to: [4.6, 1.95, -3.4], items: 3 });
+      const gas = new Gas(v, { box: [0, 0, -3, 8, 7, 4], kind: 'smoke', link }); gas.smoke({ x: 4, y: 1.8, z: .5, size: .8, rate: 2, heat: 1 });
+      const pond = new Water({ level: .04, size: 7, segments: 28, waves: .05, ripples: true, reach: 4, colour: '#35607a', link }); v.scene.add(pond.mesh);
+      const marks = new Marks(v, { sand: () => 1, grass: false, link });
+      for (const [kind, x, z, o] of [['oak', -7, -5, { height: 6 }], ['palm', 7.5, -4.5, {}], ['bush', -.5, -5, {}], ['fern', -5.5, 1, {}]]) { const p = gs.models.tree(kind, { seed: 5, ...o, ...(linked ? {} : { link: false }) }); p.position.set(x, 0, z); v.scene.add(p); }
+      const leaves = new Particles(v, { max: 200, additive: false, ...(linked ? {} : { wind: false }) });
+      const crates = []; for (let i = 0; i < 6; i++) { const m = box(.6, .6, .6, i % 2 ? '#9a7040' : '#b08850', .4 + (i % 3) * .65, .3 + (i / 3 | 0) * .6, 2.6); crates.push(world.box(m, .6, .6, .6, { density: 300, sound: 'wood' })); }
+      const wall = new Structure(v.scene, { pieces: Array.from({ length: 18 }, (_, i) => ({ size: [.8, .5, .4], at: [(i % 6) * .8 - 2 + ((i / 6 | 0) % 2) * .4, .25 + (i / 6 | 0) * .5, 0], material: 'brick' })), materials: { brick: pbr('#9a5a44', { rough: .9 }) }, at: [-.6, 0, 4.4], link });
+      const bombs = new Explosives({ radius: 5, damage: 160, link }), bomb = bombs.add({ x: .9, y: .4, z: 3.5, fuse: 0 });
+      const barrel = box(.5, .7, .5, '#b33', .9, .35, 3.5);
+      const R = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+      let boomed = false;
+      S = { v, crates, wall, gas, pond, marks, cloth, weather,
+        step(i) {
+          const t = i * dt;
+          if (!boomed && t >= boomAt) { boomed = true; bombs.boom(bomb); barrel.visible = false; }
+          if (i % 3 === 0) leaves.emit({ x: 6 + R() * 3, y: 2.5 + R() * 2, z: -2 + R() * 6, vy: -.4, life: 5, size: .12, color: R() < .5 ? '#b5651d' : '#8a8f2a', grav: .3 });
+          wind.update(dt); bombs.update(dt); world.step(dt); wall.update(dt); weather.update(dt); cloth.update(dt); gas.update(dt); pond.update(dt, { x: -3.5, y: 0, z: 3.5 }); marks.update(dt); leaves.update(dt);
+        },
+        dispose() { for (const x of (Q.get('drop') || '').split(',')) try { ({ weather, cloth, gas, pond, marks })[x]?.dispose?.(); } catch (e) { /* a lab page */ } world.free?.(); v.scene.clear(); v.dispose?.(); } };
+    });
+    const v = S.v, x0 = S.crates.map(c => c.pos.x);
+    for (let i = 0; i < N; i++) {
+      S.step(i);
+      v.cam.fov = 44; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+      v.cam.position.set(1.5, 4.2, 12.5); v.cam.lookAt(0, 1.6, 0); v.cam.updateMatrixWorld(); v.t = i * dt; v.render(cx, cw, ch);
+      const k = shots.indexOf(i);
+      if (k >= 0) { await frame(); v.render(cx, cw, ch); sx.drawImage(cell, k * cw, row * ch); sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${((i + 1) * dt).toFixed(2)}s ${linked ? 'as made: the kits find each other' : 'link: false on everything'}`, k * cw + 4, row * ch + 12); }
+      if (i % 10 === 0) await frame();
+    }
+    const moved = Math.max(...S.crates.map((c, i) => Math.abs(c.pos.x - x0[i]) + Math.abs(c.pos.y - (.3 + (i / 3 | 0) * .6))));
+    info.push(`${linked ? 'as made' : 'link: false'}: smoke leans ${S.gas.wind.x.toFixed(1)} m/s, the pond takes rain ${S.pond.rain}, the furthest crate moved ${moved.toFixed(2)} m, the wall stands ${S.wall.standing.toFixed(2)}, a dent under the bomb ${(S.marks.at(.9, 3.5) * 100).toFixed(1)} cm, cloth on the ${S.cloth.mode === 'gpu' ? 'graphics chip' : 'CPU'}`);
+    backend = window.__hd.info.backend; S.dispose();
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

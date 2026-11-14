@@ -609,6 +609,57 @@ a flag wraps round a passing ball. Give the same world to each and step it once 
 | `gs.flow` `Streams` | `streams.carry(body, dt)` drifts a loose 2D body with the current |
 | `gs.fluid`, `gs.gas` | a solid's `follow` can be a physics body: the liquid and smoke go round it as it moves |
 
+A `World3D` made in `make()` or `reset()` is also found by the kits made beside it, with nothing passed: see the next section.
+
+## Kits that find each other
+
+What a game makes in `make()` and `reset()` finds the rest of what it made. A game that makes a wind, the
+weather, a physics world, a flag, a pond and the sounds gets a wind that slants the rain, flies the flag, leans
+the smoke and raises the sea's swell, rain that falls on the pond, and blasts that are heard, felt and seen by
+all of it, with nothing to wire:
+
+```js
+function make(api) {
+  const view = new HDView(api), wind = new Wind({ x: 6, gust: .5 }), land = new Land({ kind: 'hills' });
+  const weather = new Weather(view, { kind: 'rain' }), cloth = new Cloth(view), pond = new Water({ level: 1 });
+  const marks = new Marks(view, { mud: () => 1 }), foley = new Foley(), bombs = new Explosives({ radius: 5 });
+  let world;
+  return {
+    reset() { world = new World3D(); /* a new world each round is found again */ },
+    update(dt) { wind.update(dt); world.step(dt); weather.update(dt); cloth.update(dt); pond.update(dt, view.cam.position); marks.update(dt); bombs.update(dt); foley.update(dt); },
+  };
+}
+```
+
+| Made by the game | Found by, when their own option is left out |
+| --- | --- |
+| `gs.outdoors` `Wind` | `Land` grass and meadows, `gs.models` `tree`, `ivy`, `weeds`, `Weather` (rain and snow slant), `Cloth`, `gs.gas` in the open, `gs.hd` `Particles` and `GPUParticles`, `Sea` (the swell it has raised, running its way), `Marks` (prints blown out of sand) |
+| `gs.outdoors` `Land` | `Marks` (the ground they lie on), `Foley` (what is underfoot), `Reactions` (the ground people fall on) |
+| `gs.outdoors` `Marks` | `Foley` (steps sound like the ground they print), plants made after it (`bend`), blasts (soft ground is dented) |
+| `gs.sky` `Weather` | `Marks` (snow, wet earth: a weather made with a `level`), `Foley`; a blast makes it look again at what is still a roof |
+| `gs.sky` `Sky` | `gs.city` `City` (lights come on as it darkens) |
+| `gs.outdoors` `Water`, `Sea` | `Weather` rains on every one; a 3D blast or a shot going in splashes it, if it was made with `ripples`; `Foley` sounds what lands in it |
+| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray) |
+| `gs.physics` `Physics` (2D) | `Explosives`, `Shots` |
+| `gs.destruction` `Structure` | 3D blasts blow it in, `Foley` sounds what breaks off |
+| `gs.gas`, `gs.fluid` | 3D blasts burst in the smoke they are in and throw the liquid |
+| `gs.characters` `Reactions` | 3D blasts knock people down |
+| `gs.sound` `Ears`, `Foley` | `Foley` plays through the ears; `Shots` sound what they struck |
+
+The rules, the same in every kit:
+
+- **What you pass wins.** `new Cloth(view, { wind: myWind })` uses yours, as before.
+- **`false` is none.** `wind: false`, `world: false`, `level: false` keep that one link off, and `link: false`
+  keeps a kit to itself entirely (it finds nothing and is not found).
+- **One set a game.** Things find what the same game made in its `make()` and `reset()`; nothing crosses to
+  another card. Something made later (in `update()`) joins through its view, so give it one (`new Water({ view })`).
+- **The newest wins.** Make a new `World3D` each round and the kits follow it. Kinds a game may have several of
+  (water, gas, fluid, structures, people who react) are all told.
+- **What the world does, never the rules.** A link is wind on cloth, rain on water, a blast through smoke. Who is
+  hurt, what scores and what a shot does to what it hit stay your game's (`bombs.on('boom', ...)`, the hits
+  `shots.update()` returns). And nothing heavy switches itself on: weather changes the world only with a `level`,
+  a city is solid only with `city.solid(world)`.
+
 ## AI
 
 `const { Crowd, NavGrid, Brain } = gs.ai;` Steering and path finding from [Yuka](https://mugen87.github.io/yuka/),

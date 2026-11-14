@@ -24,6 +24,7 @@ import { Quaternion, Vector3 } from 'three';
 import { reach } from './characters.js';
 import { keys } from './poses.js';
 import { caster } from './acoustics.js';
+import { linksFor, linked } from './links.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), TAU = Math.PI * 2;
 const pair = v => Array.isArray(v) ? v : [v, v];
@@ -110,8 +111,12 @@ const SPRING = { hips: [90, 11], spine: [120, 11], head: [150, 12], armL: [55, 7
  * walls (false: no bracing against walls).
  */
 export class Reactions {
-  constructor(body, { rig = body.rig, world = null, mover = null, ground = null, level = world, steady = 1, rest = 1.4, walls = true } = {}) {
+  constructor(body, { rig = body.rig, world: given = null, mover = null, ground = null, level = undefined, steady = 1, rest = 1.4, walls = true, link = true } = {}) {
     if (!rig?.parts?.hips) throw new Error('Reactions: the character needs a gs.poses rig (figure(), person(), gs.models.human())');
+    // (links.js: with no world or ground given, the game's physics world and its land are found; the game's blasts throw this person; false: none)
+    const L = this.links = linksFor(null, link), world = linked(given, L, 'world'); L?.join('reactions', this);
+    if (ground == null) { const land = L?.one('land'); if (land) ground = (x, z) => land.height(x, z); }
+    ground ||= null; if (level === undefined) level = world;
     Object.assign(this, { body, rig, world, mover, ground, steady, rest, walls });
     this.cast = level ? caster(level) : null;
     this.state = 'steady'; this.stepped = this.landed = this.rose = false; this.impact = 0; this.limp = false;
