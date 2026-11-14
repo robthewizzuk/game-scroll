@@ -294,6 +294,7 @@ function square({ gs, HD, size, gpu }) {
     for (const w of who) {
       place(w, 0);
       const f = src[w.kind].twin(); f.scale.multiplyScalar(w.size); f.rig.play(w.move); folk.add(f); twins.push(f);
+      v.detail(f, false);   // (each at its own levels, as the crowd's members are at theirs: this weighs the crowd against skeletons, and cluster detail, which takes people on bones too, is weighed in the valley)
       members.push(crowd.add({ x: w.x, z: w.z, turn: w.turn, kind: w.kind, move: w.move, size: w.size }));
     }
     return performance.now() - t0;
