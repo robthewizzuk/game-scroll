@@ -1,0 +1,121 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Particles pulled, pushed, swirled, taken and carried by a flow (gs.hd.GPUParticles pull() and flow(): hd3d.js, and on
+// WebGPU particles-gpu.js) for scripts/detail-test.cjs --page particles [--webgpu]: each run starts the same burst and
+// steps it a fixed time a frame, then reads where the particles are (on WebGPU back from the chip) and checks what
+// each thing does against the burst left alone. Also that pulls and a flow added mid-run build no new shader.
+//   ?gpu  ?w=240&h=320
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320), DT = 1 / 30, N = 1200;
+HD.force = 2; HD.upscale = false; HD.still = false; HD.hold = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note });
+const r2 = v => Math.round(v * 100) / 100;
+try {
+  const v = new gs.hd.HDView({ bg: '#10131a', fog: 0 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  v.cam.position.set(0, 4, 12); v.cam.lookAt(0, 1, 0); v.cam.updateMatrixWorld();
+  // one run: a burst of N still particles in a ball, set up, stepped for secs; then each living one's place and velocity
+  async function run(at, secs, setup, mid) {
+    const p = new gs.hd.GPUParticles(v, { max: 2048, drag: .5 });
+    p.emit(N, { at, radius: .5, spread: 0, life: 30, size: .05, color: [2, 1.4, .6] });
+    setup?.(p);
+    const n = Math.round(secs / DT);
+    for (let i = 0; i < n; i++) { if (i === (n >> 1)) mid?.(p); p.update(DT); v.t = 0; v.render(x, W, H); await frame(); }
+    out[setup ? 'last' : 'still'] = c.toDataURL();
+    let P, V;
+    if (p.onGpu) ({ P, V } = await p.twin.read(G.r)); else ({ P, V } = p);
+    const live = [];
+    for (let i = 0; i < N; i++) { const j = i * 4; if (P[j + 3] < V[j + 3]) live.push([P[j], P[j + 1], P[j + 2], V[j], V[j + 1], V[j + 2]]); }
+    p.dispose();
+    return live;
+  }
+  const mean = (L, f) => L.reduce((s, q) => s + f(q), 0) / Math.max(1, L.length);
+  const dist = (q, a) => Math.hypot(q[0] - a[0], q[1] - a[1], q[2] - a[2]);
+  info.backend = HD.info.backend;
+
+  // left alone: they stay in their ball (no gravity, no speed). (This first run's burst is asked for before the view has ever
+  // drawn, as a game's in reset() is: it must still start)
+  const alone = await run([0, 1, 0], 1.5);
+  info.alone = { living: alone.length, meanX: r2(mean(alone, q => q[0])), fromStart: r2(mean(alone, q => dist(q, [0, 1, 0]))) };
+  check('left alone, the burst stays where it started', alone.length === N && Math.abs(info.alone.meanX) < .1 && info.alone.fromStart < .5, JSON.stringify(info.alone));
+
+  // a pull 4 m off draws them in
+  const A = [4, 1, 0];
+  const pulled = await run([0, 1, 0], 1.5, p => p.pull(A, { strength: 40 }));
+  info.pulled = { meanToPull: r2(mean(pulled, q => dist(q, A))), alone: r2(mean(alone, q => dist(q, A))) };
+  check('a pull draws them in', info.pulled.meanToPull < info.pulled.alone * .6, JSON.stringify(info.pulled));
+
+  // a push (strength below 0) from their middle spreads them out
+  const pushed = await run([0, 1, 0], 1.5, p => p.pull([0, 1, 0], { strength: -30 }));
+  info.pushed = { spread: r2(mean(pushed, q => dist(q, [0, 1, 0]))), alone: info.alone.fromStart };
+  check('a push spreads them out', info.pushed.spread > info.pushed.alone * 2, JSON.stringify(info.pushed));
+
+  // a reach: a pull reaching 2 m leaves a burst 4 m off alone
+  const far = await run([0, 1, 0], 1.5, p => p.pull(A, { strength: 40, radius: 2 }));
+  info.reach = { meanX: r2(mean(far, q => q[0])) };
+  check('a pull leaves what is beyond its reach alone', Math.abs(info.reach.meanX) < .1, JSON.stringify(info.reach));
+
+  // take: those that come within it are gone
+  const taken = await run([0, 1, 0], 3, p => p.pull([2, 1, 0], { strength: 60, take: .5 }));
+  info.taken = { living: taken.length, of: N };
+  check('a pull takes those that come close', taken.length < N * .5, JSON.stringify(info.taken));
+
+  // swirl: round the upright axis through the point (from +x towards +z)
+  const S = [0, 1, 0];
+  const swirled = await run([2, 1, 0], 1.5, p => p.pull(S, { strength: 0, swirl: 12 }));
+  const ang = q => Math.atan2(-(q[2] - S[2]), q[0] - S[0]);
+  info.swirl = { turned: r2(mean(swirled, ang)), radius: r2(mean(swirled, q => Math.hypot(q[0] - S[0], q[2] - S[2]))) };
+  check('a swirl turns them round its axis', Math.abs(info.swirl.turned) > .3, JSON.stringify(info.swirl));
+
+  // a flow: inside its box they take up its speed; a burst outside the box is left alone; updated, it turns them
+  let dir = 3;
+  const box = { min: [-4, -1, -4], max: [4, 3, 4] }, fn = () => [dir, 0, 0];
+  const inFlow = await run([0, 1, 0], .5, p => p.flow(fn, { box, strength: 4 }));
+  info.flow = { meanVx: r2(mean(inFlow, q => q[3])) };
+  check('in a flow, they take up its speed', info.flow.meanVx > 2 && info.flow.meanVx < 3.2, JSON.stringify(info.flow));
+  const outFlow = await run([12, 1, 0], .5, p => p.flow(fn, { box, strength: 4 }));
+  info.flowOut = { meanVx: r2(mean(outFlow, q => q[3])) };
+  check('outside the flow\'s box they are left alone', Math.abs(info.flowOut.meanVx) < .05, JSON.stringify(info.flowOut));
+  let fl = null;
+  const turned = await run([0, 1, 0], 1.2, p => { dir = 3; fl = p.flow(fn, { box, strength: 4 }); }, () => { dir = -3; fl.update(); });
+  info.flowUpdated = { meanVx: r2(mean(turned, q => q[3])) };
+  check('a flow sampled again moves them its new way', info.flowUpdated.meanVx < -1.5, JSON.stringify(info.flowUpdated));
+
+  // pulls and a flow added to a running burst build no new shader
+  if (G) {
+    const dev = G.r.backend.device, made = []; const cs = dev.createShaderModule.bind(dev);
+    dev.createShaderModule = d => { made.push(d.label || '?'); return cs(d); };
+    await run([0, 1, 0], .6, null, p => { p.pull([2, 1, 0], { strength: 10, swirl: 3 }); p.flow(() => [1, 0, 0], { box }); });
+    const after = made.length; dev.createShaderModule = cs;
+    // (the run's own new burst system builds its compute and sprite shaders once: the same with or without pulls)
+    const made0 = []; dev.createShaderModule = d => { made0.push(d.label || '?'); return cs(d); };
+    await run([0, 1, 0], .6);
+    dev.createShaderModule = cs;
+    info.shaders = { withPullsAddedMidRun: after, plain: made0.length };
+    check('pulls and a flow added mid-run build no new shader', after <= made0.length, JSON.stringify(info.shaders));
+  }
+  // a picture to look at (no check): sparks drawn round and into a portal, and dust carried up and over by a curling flow
+  {
+    v.cam.position.set(0, 7.5, 7.5); v.cam.lookAt(0, 1.2, 0); v.cam.updateMatrixWorld(); v.cut();
+    const sp = new gs.hd.GPUParticles(v, { max: 12000, drag: 2 }), dust = new gs.hd.GPUParticles(v, { max: 6000, additive: false, drag: .3 });
+    sp.pull([0, 1.5, 0], { strength: 60, swirl: 60, take: .3 });
+    dust.flow((px, py, pz) => [Math.sin(py * 1.3) * 2.2 + 1, Math.cos(px * .9) * 1.4 + .6, Math.sin(px * .7 + py) * 1.2], { box: { min: [-7, -1, -4], max: [7, 6, 4] }, strength: 3 });
+    for (let f = 0; f < 110; f++) {
+      for (let k = 0; k < 3; k++) { const a = f * .37 + k * 2.1; sp.emit(14, { at: [Math.cos(a) * 3.5, 1.5 + Math.sin(f * .2 + k) * .4, Math.sin(a) * 3.5], radius: .15, spread: .3, life: [1.5, 3], size: [.05, .015], color: [1.3, .6, 1.8], to: [.2, .8, 1.6] }); }
+      if (f % 3 === 0) dust.emit(50, { at: [-5.5, .3, 1.5], radius: .8, spread: .3, life: [3, 4.5], size: [.08, .22], color: '#c8b898', alpha: .5, fadeIn: true });
+      sp.update(DT); dust.update(DT); v.t = 0; v.render(x, W, H); await frame();
+    }
+    out.show = c.toDataURL();
+    sp.dispose(); dust.dispose();
+  }
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+window.result ||= { checks, info, out };
+</script>

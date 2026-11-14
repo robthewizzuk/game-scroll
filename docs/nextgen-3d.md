@@ -932,6 +932,22 @@ Burst fields: `at`, `radius` (start anywhere in a ball), `vel`, `spread` (a rand
 `size` and `color`/`to` (start and end), `alpha`, `fadeIn`, `ease`. Up to 16 bursts a frame. They are for
 looks only (positions can't be read back); use `Particles` for the few the game must know about.
 
+Pulls and flows (as Babylon.js 9's attractors and flow maps; on the graphics chip with WebGPU, the same
+rules on the CPU with WebGL):
+
+```js
+const portal = sparks.pull([0, 1.5, 0], { strength: 60, swirl: 60, take: .3 });   // drawn in, round, and gone
+const blast = sparks.pull(at, { strength: -80, radius: 6 });                       // pushed away, only within 6 m
+dust.flow((x, y, z) => wind.at(x, z), { box: { min: [-20, 0, -20], max: [20, 8, 20] }, strength: 2 });
+portal.at = [x, y, z]; blast.remove();
+```
+
+`strength` and `swirl` are m/s² at 1 m (steady closer in, falling as 1/d² beyond, and to nothing at
+`radius` if given); a swirl spins them up, so give the particles `drag` for them to spiral in rather than
+fly off. Up to 8 pulls. A flow is sampled from your function into 16 x 16 x 16 cells over its box once
+(`flow.update()` samples it again, say from `gs.gas`'s `flowAt` or a river's current), and particles
+inside take up its speed at `strength` a second; one flow at a time.
+
 ## Glowing rings
 
 `gs.hd.pulse(material, { at, radius, strength, color, width, fill })` adds a glowing ring that
