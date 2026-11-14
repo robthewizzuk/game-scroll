@@ -12,7 +12,7 @@
 // each piece is saved on the phone, so the next launch has them at once. People in the same cut of
 // clothes share their pieces whatever their colours; twin() makes another of the very same person for free.
 // Kit use only: games reach it as gs.models.human.
-import { AdditiveBlending, MeshBasicMaterial, MeshPhysicalMaterial, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RGFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
+import { AdditiveBlending, MeshBasicMaterial, MeshPhysicalMaterial, Bone, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, Color, DataTexture, Group, InterleavedBuffer, InterleavedBufferAttribute, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, Object3D, Quaternion, Raycaster, RGBAFormat, RepeatWrapping, SRGBColorSpace, Skeleton, SkinnedMesh, Sphere, UnsignedByteType, Vector3 } from 'three';
 import { lumps } from './field.js';
 import { BONES, PARENT, AT, BETWEEN, BULGE, PIVOT, HC, ARM, EYE, eyeOf, esOf, eyeRim, MOUTH, mouthHalf, lipLine, beardArea, faceBones, ss, bump, jobsFor, sculpt, mirrored, turned, handPlan, fingerBones, other, VERSION, hashOf } from './human-shapes.js';
 import { KIN } from './human-fit.js';
@@ -26,7 +26,7 @@ import { Breath, Grime } from './human-life.js';
 import { Idle } from './human-idle.js';
 import { reach } from '../characters.js';
 import { LiveFace, MOVES } from './human-face.js';
-import { FACE, FACE_REAL, FACE_WR, HAIR, IRIS, SEAM, CARD, faceUV, paintFace, paintDetail, paintWrinkles, paintHair, paintIris, paintSeams, paintCards } from './human-paint.js';
+import { FACE, FACE_REAL, LINES, HAIR, IRIS, SEAM, CARD, faceUV, paintFace, paintLines, paintHair, paintIris, paintSeams, paintCards } from './human-paint.js';
 import { stripsOn, easeEdge } from './human-hair.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
@@ -168,14 +168,13 @@ function skinOf(sp, pal, stubble) {
   t.colorSpace = SRGBColorSpace; t.channel = 1; t.wrapS = t.wrapT = ClampToEdgeWrapping; t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
   // (the soft red rim that stands for light under the skin follows the paint too: none of it on a brow or a lash)
   m = skinMat(!!sp.face.real); m.map = t; m.color.setScalar(1 / FACE.plain); m.sheenColorMap = t; m.sheen /= FACE.plain;
-  if (sp.face.real) {   // a real face's fine lines and oily skin, a picture laid on as the paint is: WebGPU bends the light by it (hd3d-gpu.js sss)
-    const d = new DataTexture(paintDetail({ face: sp.face }), FACE_REAL.w, FACE_REAL.h, RGFormat, UnsignedByteType);
-    d.channel = 1; d.wrapS = d.wrapT = ClampToEdgeWrapping; d.magFilter = LinearFilter; d.minFilter = LinearMipmapLinearFilter; d.generateMipmaps = true; d.needsUpdate = true; d.name = 'human:face-detail';
-    m.userData.faceDetail = d;
-    // and the lines that come and go with its expressions: WebGPU sinks each kind in as far as the person's live face shows it (human-face.js)
-    const w = new DataTexture(paintWrinkles({ face: sp.face }), FACE_WR.w, FACE_WR.h, RGBAFormat, UnsignedByteType);
-    w.channel = 1; w.wrapS = w.wrapT = ClampToEdgeWrapping; w.magFilter = LinearFilter; w.minFilter = LinearMipmapLinearFilter; w.generateMipmaps = true; w.needsUpdate = true; w.name = 'human:face-wrinkles';
-    m.userData.faceWrinkles = w;
+  if (sp.face.real) {
+    // a real face's fine lines and oily skin, and the lines that come and go with its expressions, in one picture laid on as the paint is
+    // (human-paint.js paintLines): WebGPU bends the light by the first and sinks each kind of the second in as far as the person's live
+    // face shows it (hd3d-gpu.js sss, human-face.js). One picture, not one each: a shader may read 16 and the lights and the air take 12.
+    const d = new DataTexture(paintLines({ face: sp.face }), FACE_REAL.w, FACE_REAL.h, RGBAFormat, UnsignedByteType);
+    d.channel = 1; d.wrapS = d.wrapT = ClampToEdgeWrapping; d.magFilter = LinearFilter; d.minFilter = LinearMipmapLinearFilter; d.generateMipmaps = true; d.needsUpdate = true; d.name = 'human:face-lines';
+    m.userData.faceLines = d; m.userData.faceLinesAt = LINES;   // (and where its kinds of line part)
   }
   looks.set(key, m); return m;
 }

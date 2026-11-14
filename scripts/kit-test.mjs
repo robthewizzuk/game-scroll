@@ -2441,6 +2441,8 @@ console.log('physics ok');
         assert.ok(Math.abs(a.h - b.h) < 1e-6 && Math.abs(a.rough - b.rough) < 1e-6 && a.col.every((v, j) => Math.abs(v - b.col[j]) < 1e-6), `${n} tiles at ${x}, ${y}`);
       }
       for (const v of [a.h, a.rough, a.metal, ...a.col]) assert.ok(Number.isFinite(v), `${n} gives numbers`);
+      // (a recipe not marked `metal` has none anywhere: its material is given no metal picture to read, materials.js)
+      if (!R.metal) assert.equal(a.metal, 0, `${n} is not marked metal, and has none at ${x}, ${y}`);
     }
   }
   console.log('gs.models: material recipes tile ok');
@@ -3159,7 +3161,8 @@ console.log('physics ok');
     assert.ok(out === 0 && proud > .00024 && proud < .00026, `the cornea stands ${(proud * 1000).toFixed(2)} mm proud of the ball (the lids pass a fifth of a millimetre over it) and nothing else does`);
     assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
   // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
-  { assert.ok(RECIPES.skin && RECIPES.palm && Object.keys(RECIPES).length === 19, 'a skin (and a palm trunk) among the recipes: ' + Object.keys(RECIPES).length); }
+  { assert.deepEqual(Object.keys(RECIPES).filter(n => RECIPES[n].metal), ['metal', 'rust', 'paint'], 'the recipes with metal in them');
+    assert.ok(RECIPES.skin && RECIPES.palm && Object.keys(RECIPES).length === 19, 'a skin (and a palm trunk) among the recipes: ' + Object.keys(RECIPES).length); }
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 
@@ -3270,7 +3273,29 @@ console.log('physics ok');
     assert.ok(fh[0] > 0 && fh[2] > .035 && fh[2] < .07 && gl[0] > 0 && gl[1] < .018 && gl[2] > -.02 && gl[2] < .03 && cf[0] > 0 && cf[1] > .04 && Math.abs(cf[2]) < .015 && nl[0] > 0 && nl[1] > .015 && nl[1] < .035 && nl[2] < -.04 && nl[2] > -.08 && old2[0] > cf[0] * 1.2,
       `expression lines where they belong, at 25 too: the forehead (${(fh[2] * 1000).toFixed(0)} mm over the eyes), between the brows and down the nose (${(gl[1] * 1000).toFixed(0)} mm out), crow's feet (${(cf[1] * 1000).toFixed(0)} mm out), nose to mouth (${(nl[2] * 1000).toFixed(0)} mm down); deeper at 70 (${(old2[0] / cf[0]).toFixed(2)}x)`);
     const wp = HP.paintWrinkles({ face: f(50) }), WW = HP.FACE_WR.w, WH = HP.FACE_WR.h, seen = [0, 0, 0, 0]; for (let i = 0; i < WW * WH; i++) for (let c = 0; c < 4; c++) if (wp[i * 4 + c] > 100) seen[c]++;
-    assert.ok(wp.length === WW * WH * 4 && seen.every(n => n > 20 && n < WW * WH * .08) && wp.slice(0, WW * 4).every(v => v === 0), `a picture of them, four kinds a dot (${seen.join(', ')} dots deep), its edges smooth`); }
+    assert.ok(wp.length === WW * WH * 4 && seen.every(n => n > 20 && n < WW * WH * .08) && wp.slice(0, WW * 4).every(v => v === 0), `a picture of them, four kinds a dot (${seen.join(', ')} dots deep), its edges smooth`);
+    // one picture for the skin's shader (paintLines: a shader may read only so many): the fine lines and the oil as they were, and the four
+    // kinds two to a number, told apart by where they are (LINES): no line of a pair may cross to the other's side, on any face
+    const faces = [f(20), f(50), f(80), realFace({ seed: 3, age: 30, gnm: true, heritage: 'european' }, false, base).f, realFace({ seed: 9, age: 66, gnm: true, heritage: 'african' }, false, base).f, realFace({ seed: 5, age: 41, sex: 'f', gnm: true, heritage: 'east-asian' }, true, base).f];
+    let crossed = 0, gap = 1e9, held = 0, lost = 0;
+    for (const face of faces) {
+      const q = HP.paintWrinkles({ face }), d = HP.paintDetail({ face }), L = HP.paintLines({ face }), jb = HP.LINES.brow * WH, jn = HP.LINES.nose * WH, near = [WH, WH];
+      for (let j = 0; j < WH; j++) for (let i = 0; i < WW; i++) {
+        const at = (j * WW + i) * 4, y = j + .5;
+        // (a dot off its side, or within a dot of the line between: the picture is read between its dots, so each side keeps a dot clear)
+        if (q[at] && y < jb + 1 || q[at + 2] && y > jb - 1 || q[at + 1] && y < jn + 1 || q[at + 3] && y > jn - 1) crossed++;
+        if (q[at] || q[at + 2]) near[0] = Math.min(near[0], Math.abs(y - jb)); if (q[at + 1] || q[at + 3]) near[1] = Math.min(near[1], Math.abs(y - jn));
+      }
+      gap = Math.min(gap, near[0], near[1]);
+      assert.equal(L.length, W * H * 4, 'the one picture: four numbers a dot, as fine as the paint');
+      for (let i = 0; i < W * H; i++) if (L[i * 4] !== d[i * 2] || L[i * 4 + 1] !== d[i * 2 + 1]) lost++;
+      // (each wrinkle dot's deepest kind of each pair is in the picture at the dots it covers, to within the rounding of reading between dots)
+      for (let j = 1; j < WH - 1; j++) for (let i = 1; i < WW - 1; i++) { const at = (j * WW + i) * 4, a = Math.max(q[at], q[at + 2]), b = Math.max(q[at + 1], q[at + 3]); if (a < 40 && b < 40) continue;
+        let ma = 0, mb = 0; for (let v = 0; v < 2; v++) for (let u = 0; u < 2; u++) { const k = ((j * 2 + v) * W + i * 2 + u) * 4; ma = Math.max(ma, L[k + 2]); mb = Math.max(mb, L[k + 3]); }
+        if (a >= 40 && ma < a * .6 || b >= 40 && mb < b * .6) lost++; else held++; }
+    }
+    assert.ok(crossed === 0 && gap >= 1 && lost === 0 && held > 500 && HP.LINES.brow > HP.LINES.nose && HP.LINES.brow < 1 && HP.LINES.nose > 0,
+      `one picture of a face's lines: its fine lines and oil as they were, the expression lines two kinds to a number with none over the line between them (${crossed} dots across on ${faces.length} faces, the nearest ${gap.toFixed(1)} dots off it; ${held} deep dots kept, ${lost} lost)`); }
   // ---- a real face's eyes (human-shapes.js realEyeball, human-head.js eyeParts): the iris a flat disc set back under where the cornea is, the
   // white shaded under the upper lid; lashes on both lids of both eyes (the upper ones longer, riding the upper lid, fewer with age) and a pink
   // mound in each inner corner, all in the close set of triangles only; the clean face has none of it
