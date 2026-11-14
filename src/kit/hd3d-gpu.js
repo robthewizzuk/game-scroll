@@ -28,6 +28,7 @@ export { fadeTwin } from './lod-fade-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
+import { built } from './prof.js';
 import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
@@ -2175,6 +2176,14 @@ export class GpuChain {
     const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}|${SHARE.on}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
+    // (for the frame lab: what changed since the chain was last built, when it is built again)
+    const NAMES = ['ao', 'smooth', 'msaa', 'clear', 'sgsr2', 'depth of field', 'shafts', 'live', 'sgsr1', 'volumetric light', 'motion blur', 'motion pictures', 'tone', 'lut', 'oit', 'flare', 'bounce light', 'spread', 'lens drops', 'lens', 'half', 'ao on bounce'];
+    if (this.builtKey) {
+      const a = this.builtKey.split('|'), b = key.split('|'), why = NAMES.filter((n, i) => a[i] !== b[i]);
+      if (this.builtX !== this.xKey) why.push('screen effects or reflections');
+      built('effects chain', why.join(', '));
+    }
+    this.builtKey = key; this.builtX = this.xKey;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
     this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();

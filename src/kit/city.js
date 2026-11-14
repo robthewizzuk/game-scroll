@@ -367,7 +367,7 @@ class Quads {
   // rooms: every quad also says which rooms are behind it (gsRoom: bay width and storey height in metres, the
   // building's seed, 1 where a facade's windows open into rooms: city-rooms.js); room() sets it for the quads after
   constructor(rooms = false) { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; this.r = rooms ? [] : null; this.rm = [0, 0, 0, 0]; }
-  room(w = 0, h = 0, seed = 0, on = 0) { this.rm = [w, h, seed, on]; return this; }
+  room(w = 0, h = 0, seed = 0, on = 0) { this.rm = [w, h, Math.round(seed * 8) / 8, on]; return this; }   // (the seed in eighths: the rooms' shaders round it back, city-rooms.js)
   // a, b, c, d: corners in order round the face (counter-clockwise seen from the front)
   quad(a, b, c, d, uv = [0, 0, 1, 0, 1, 1, 0, 1], col = null) {
     const k = this.p.length / 3;

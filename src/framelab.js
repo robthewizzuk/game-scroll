@@ -49,7 +49,7 @@ import { screen } from './kit/screenrate.js';
 import { webgpu, gpuPick, setGpuPick, prepareGPU, gpuName, glStats } from './kit/gpu.js';
 import { BUILD } from './perf.js';
 import { store } from './util.js';
-import { PROF, take } from './kit/prof.js';
+import { PROF, take, builtSince } from './kit/prof.js';
 
 const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250, FREEZE_MAX = 3000;
 const is3D = d => d && (d.era === 'nextgen' || d.era === 'ar' || d.era === 'board');
@@ -116,13 +116,26 @@ function event(k, text, t = performance.now(), ms = 0) {
 }
 
 /* ---------- counters ---------- */
+function builtNames(since) {
+  if (since == null) return '';
+  const n = new Map(), again = new Map(), why = [];
+  for (const e of builtSince(since)) {
+    if (e.what === 'effects chain') { why.push(`effects chain${e.why ? ' (' + e.why + ')' : ''}`); continue; }
+    const m = e.why === 'again' ? again : n; m.set(e.what, (m.get(e.what) || 0) + 1);
+  }
+  const list = m => [...m].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => c > 1 ? `${k} ${c}` : k).join(', ');
+  return [...why, n.size ? list(n) : '', again.size ? `made again: ${list(again)}` : ''].filter(Boolean).join('; ');
+}
 // the effects the 3D kit draws smaller by their cost (hd3d.js FXS), in words: 'bloom 70%, ao 50%' ('' when none)
 const fxText = () => Object.entries(HD?.fx || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ');
 function counters(s) {
   const G = webgpu(), d = s?.def;
   let progs = glStats.programs, tex = glStats.r?.info?.memory?.textures ?? 0;
   if (G && HD?.info.backend === 'webgpu' && is3D(d)) { progs += G.r.info?.memory?.programs ?? 0; tex += G.r.info?.memory?.textures ?? 0; }
-  if (C.progs >= 0 && progs > C.progs) { const n = progs - C.progs; pend.push(`shaders built (${n})`); event('S', `${n} shader${n > 1 ? 's' : ''} built`); }
+  // what was built since the last frame, by name: 'MeshStandardMaterial 3, ShadowNodeMaterial 2 (made again 1), effects chain (lens)'
+  const what = builtNames(C.bt); C.bt = performance.now();
+  if (C.progs >= 0 && progs > C.progs) { const n = progs - C.progs; pend.push(`shaders built (${n})`); event('S', `${n} shader${n > 1 ? 's' : ''} built${what ? ': ' + what : ''}`); }
+  else if (what && C.progs >= 0) event('S', `built: ${what}`);
   if (C.tex >= 0 && tex > C.tex + 0) { const n = tex - C.tex; pend.push(`textures uploaded (${n})`); if (n >= 2) event('X', `${n} textures uploaded`); }
   C.progs = progs; C.tex = tex;
   const h = performance.memory?.usedJSHeapSize || 0;

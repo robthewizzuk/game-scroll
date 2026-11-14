@@ -32,7 +32,7 @@ export function roomsLook(m, s, o, { afterColor, live }) {
         const bar = kind.lessThan(.5).or(near(kind, 2)).and(abs(g.x.sub(W.x.add(W.z).mul(.5))).lessThan(fw.mul(.45)));
         const transom = near(kind, 1).or(near(kind, 4)).and(abs(g.y.sub(W.y.add(W.w.sub(W.y).mul(.8)))).lessThan(fy.mul(.45)));
         If(frEdge.or(bar).or(transom), () => { code.assign(4); }).Else(() => {
-          const sd = R.z, r1 = hash(cell.add(sd.mul(7.13))), r2 = hash(cell.yx.mul(1.3).add(sd.mul(3.7)).add(11)), r3 = hash(cell.mul(1.7).add(sd).add(23)), r4 = hash(cell.mul(.7).add(sd.mul(1.9)).add(41));
+          const sd = floor(R.z.mul(8).add(.5)).div(8), r1 = hash(cell.add(sd.mul(7.13))), r2 = hash(cell.yx.mul(1.3).add(sd.mul(3.7)).add(11)), r3 = hash(cell.mul(1.7).add(sd).add(23)), r4 = hash(cell.mul(.7).add(sd.mul(1.9)).add(41));
           const shop = near(kind, 4), office = near(kind, 1);
           const lamp = em ? texture(em, floor(U).add(vec2(W.x.add(W.z).mul(.5), W.y.add(W.w).mul(.5))).div(SH.xy)).level(0).rgb : vec3(0);
           const lit = select(shop, float(1), step(.004, dot(lamp, vec3(.3, .59, .11))));

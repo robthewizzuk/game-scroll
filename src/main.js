@@ -35,7 +35,8 @@ import { nativeARProbe, nativeARSupported } from './kit/native-ar.js';
 import { hearts } from './hearts.js';
 import { playstats } from './playstats.js';
 import { boards, rankHTML, openBoard } from './boards.js';
-import { perf } from './perf.js';
+import { perf, BUILD, engine } from './perf.js';
+import { startSteer, steerState } from './steer.js';
 import { onMemory, forceMemory, memory } from './kit/memory.js';
 import { speed, fpsFor, tick as tickHz, screenHz, frameLate, screenWish, phoneClass, autoFps } from './kit/speed.js';
 import { keepAwake, awake } from './kit/awake.js';
@@ -54,7 +55,9 @@ import { show as showTweaks } from './kit/tweak.js';
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
 import { desktop } from './desktop.js';
+import { update } from './update.js';
 import { onGpuLoss, gpuMending } from './kit/gpu.js';
+import { primePipes, releasePipes, playingPipes, pipeStats, pipeNotes, savePipes, forgetPipes } from './kit/pipes.js';
 // (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
 const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
 import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
@@ -70,6 +73,10 @@ const playable = g => STREAM ? remote.def(g) : g;   // null while a streamed gam
 let booted = false;
 if (STREAM) remote.init(meta => { const g = { likes: 300 + hash(meta.id) % 6000, ...meta }; GAMES.push(g); return g; },
   (added, updated) => { if (booted) catalogueChanged(added, updated); });
+// The phone and driver steering list (src/steer.js): what this device is kept off (WebGPU, HDR, frame generation...),
+// matched once at start, from the saved catalogue's list or the app's own. The 3D kit waits for it before it makes
+// its device; a game it hides here leaves the feed if the feed was already up.
+startSteer(STREAM ? remote.steer() : null, BUILD, engine()).then(st => { if (booted && [...st.games.values()].some(g => g.hide)) rebuild(); });
 
 /* ---------- feed engine ---------- */
 const feed=document.getElementById('feed');
@@ -902,6 +909,8 @@ function setActive(s){
   if(prev&&prev.state==='over')funNote(prev,'left');
   if(prev&&prev.state==='playing')resetSlide(prev,true);
   else if(prev&&prev.state!=='ready')whenCalm(()=>{if(prev!==active&&prev.state!=='ready'&&!prev.dropped)resetSlide(prev)});
+  // what its rounds made in play before is made again, in the background, while it is on screen (src/kit/pipes.js)
+  if(prev)releasePipes(prev);if(usesHD(s.def)||s.def.era==='console')primePipes(s,s.def.id);
   finishCard(s);feed.classList.remove('locked');active=s;speed.game=s.def;s.dirty=true;if(STREAM)remote.touch(s.def.id);if(!guest)playstats.shown(s.def.id);perf.shown(s.def.id);showTweaks(s);
   whenCalm(()=>{if(s===active)soundtrack.ready(s.def)});   // a soundtrack with instruments: have them in before Play
   // the last card (playNow, a short feed): top up now, else when the swipe has settled
@@ -941,7 +950,7 @@ function pruneBehind(){
 }
 
 // A card leaves the feed for good: let the game tidy up, then free what its kits hold (physics worlds).
-function dropSlide(s){s.dropped=true;dropReady(s);io.unobserve(s.el);try{s.game.dispose?.()}catch(_){}release(s);s.el.remove()}
+function dropSlide(s){s.dropped=true;dropReady(s);releasePipes(s);io.unobserve(s.el);try{s.game.dispose?.()}catch(_){}release(s);s.el.remove()}
 let built=0;
 function rebuild(){
   built++;slides.forEach(dropSlide);feed.innerHTML='';slides=[];active=null;lastId=null;queue=[];feed.scrollTop=0;addBatch();if(slides[0])setActive(slides[0]);
@@ -1036,6 +1045,8 @@ function frame(now){
   const s=active;
   // the screen's rate for the game being played (src/kit/screenrate.js; the phone decides between rounds)
   screenWish(s&&s.state==='playing'&&!s.paused?s.def:null);
+  // the pipelines a round makes in play are noted for its game, and made ahead the next time (src/kit/pipes.js)
+  playingPipes(s&&s.state==='playing'&&!s.paused?s:null);
   // the screen stays on while a round is in play, so tilt, voice and camera games don't dim and lock (src/kit/awake.js)
   keepAwake(stay||!!s&&s.state==='playing'&&!s.paused,stay?now:s?Math.max(lastGameInput,s.startPerf||0):0,now);
   // Frame rate per game and phone (src/kit/speed.js): on a 120 Hz screen a 60 fps game skips every
@@ -1179,5 +1190,8 @@ start();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(remote.enabled)remote.refresh();if(active&&!guest)playstats.shown(active.def.id)}});
 // And every 5 minutes while the app is open, so newly published games join the feed without a restart.
 if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refresh()},5*60*1000);
+// New versions of the app from Google Play (only on Android copies that Play installed; src/update.js).
+// Its prompts wait for a round to end; the catalogue can name the oldest version that may carry on.
+update.init({busy:()=>!!active&&active.state==='playing',min:()=>+remote.app()?.android?.min||0});
 
-if(TEST)window.__gs={GAMES,remote,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
