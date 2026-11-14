@@ -264,6 +264,49 @@ console.log('physics ok');
   S.add(new THREE.Group()); eachShown(S, () => {}); assert.equal(listStats.built, b0 + 1, 'and made again once after a change');
   console.log(`scene list ok (${thingCount(S)} things after 400 changes; three's walk for each render made over it draws the same)`);
 }
+// still scenery in render bundles (still.js): what keeps still joins its area's bundle, what changes leaves it at once
+// (and says why), comes back later, and the walk hands three each area the camera sees in place of its things
+{
+  const THREE = await import('three');
+  const { stillFrame, stillOff, stillStats, STILL, pushCells } = await import('../src/kit/still.js');
+  const { thingsOf } = await import('../src/kit/scene-list.js');
+  const S = new THREE.Scene(), geo = new THREE.BoxGeometry(), mat = new THREE.MeshStandardMaterial(), boxes = [];
+  for (let i = 0; i < 40; i++) { const m = new THREE.Mesh(geo, mat); m.position.set((i % 8) * 6 - 20, 0, Math.floor(i / 8) * 6 - 12); S.add(m); boxes.push(m); }
+  const odd = [new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ transparent: true })), new THREE.Mesh(geo, mat), new THREE.InstancedMesh(geo, mat, 4), new THREE.Mesh(geo, mat)];
+  odd[1].renderOrder = 2; odd[3].userData.noBundle = true; for (const o of odd) S.add(o);
+  let now = 0; const tick = (n = 1) => { for (let i = 0; i < n; i++) { now += 300; S.updateMatrixWorld(); stillFrame(S, thingsOf(S), now); } };
+  tick(6);
+  assert.ok(stillStats.things === 40 && boxes.every(b => b.gsStill) && odd.every(o => !o.gsStill), `still boxes join, the see-through, ordered, instanced and noBundle ones don't: ${stillStats.things} in ${stillStats.cells} areas`);
+  const St = STILL.get(S), cellOf = b => b.gsStill.cell, why = k => stillStats.why[k] || 0;
+  assert.ok(St.list.every(c => c.things.length <= 160) && new Set(boxes.map(cellOf)).size === stillStats.cells, 'each thing in one area');
+  const w = { ...stillStats.why }, c3 = cellOf(boxes[3]), v3 = c3.v;
+  boxes[3].position.x += .01; boxes[4].visible = false; boxes[5].material = new THREE.MeshStandardMaterial(); boxes[6].removeFromParent(); tick();
+  assert.ok(!boxes[3].gsStill && c3.v > v3 && why('moved') === (w.moved || 0) + 1 && why('hidden') === (w.hidden || 0) + 1 && why('gone') === (w.gone || 0) + 1, 'a moved, a hidden and a removed box leave their areas, which are recorded again');
+  assert.ok(!boxes[5].gsStill && why('material') === (w.material || 0) + 1 && boxes.filter(b => b.gsStill).length === 36, 'a new material takes its thing out, and only the changed ones left');
+  mat.needsUpdate = true; tick();
+  assert.ok(boxes.filter(b => b.material === mat).every(b => !b.gsStill), 'a shared material changed takes all its things out');
+  tick(30); const back = boxes.filter(b => b.gsStill).length;
+  assert.ok(back >= 30 && !boxes[6].gsStill, `what changed once comes back after a while (${back} of 39 in the scene)`);
+  // the walk: an area the camera sees is handed to three as a bundle, one it doesn't is not
+  const cam = new THREE.PerspectiveCamera(40, 1, .1, 200); cam.position.set(0, 3, 40); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+  const pipe = { _frustum: new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)) }, got = [];
+  pushCells(pipe, St, S, cam, { pushBundle: e => got.push(e) }, null);
+  assert.ok(got.length > 0 && got.every(e => e.bundleGroup.isBundleGroup && e.renderList.opaque.length === e.bundleGroup.gsCell.things.length), `areas in view handed over whole (${got.length})`);
+  const far = e => e.bundleGroup.gsCell.sphere.center.distanceTo(cam.position);
+  assert.ok(got.every((e, i) => !i || far(got[i - 1]) <= far(e) + 1e-6), 'nearest areas first');
+  // an area all of whose things occlusion hid this frame (their first layer off) is left out; one partly hidden is not
+  const cA = got[0].bundleGroup.gsCell, cB = got[got.length - 1].bundleGroup.gsCell, n0 = got.length;
+  for (const t of cA.things) t.layers.mask = 1 << 30; cB.things[0].layers.mask = 1 << 30; got.length = 0;
+  pushCells(pipe, St, S, cam, { pushBundle: e => got.push(e) }, null);
+  assert.ok(got.length === n0 - 1 && !got.some(e => e.bundleGroup.gsCell === cA) && (cA === cB || got.some(e => e.bundleGroup.gsCell === cB)), 'an area hidden whole by occlusion is left out, one hidden in part is drawn');
+  for (const t of [...cA.things, ...cB.things]) t.layers.mask = 1;
+  cam.lookAt(0, 0, 100); cam.updateMatrixWorld(); pipe._frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)); got.length = 0;
+  pushCells(pipe, St, S, cam, { pushBundle: e => got.push(e) }, null);
+  assert.ok(got.length === 0, 'areas behind the camera are not');
+  stillOff(S);
+  assert.ok(!STILL.get(S) && boxes.every(b => !b.gsStill), 'stillOff puts every thing back');
+  console.log('still scenery in bundles ok (joins, leaves with a reason, comes back, areas culled whole)');
+}
 // camera rigs and living characters (three.js maths only)
 {
   const THREE = await import('three');
@@ -1523,6 +1566,93 @@ console.log('physics ok');
   }
   console.log('city dressing: its own random numbers, cars parked clear of the lanes, the junctions, the doors and each other ok');
 }
+// the city's cars up close (city-cars.js): seats behind see-through glass close by and none in the shapes further off, the
+// paint look on the cars drawn whole only, and the parked cars' glass drawn for those within the props' first distance
+{
+  const THREE = await import('three'), { carKit, Fleet, ParkedGlass } = await import('../src/kit/city-cars.js'), { vehicle } = await import('../src/kit/models/vehicles.js');
+  const { lookOf } = await import('../src/kit/models/vehicle-looks.js'), { looksOf } = await import('../src/kit/looks.js');
+  const tri = g => (g.index ? g.index.count : g.attributes.position.count) / 3, IN = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
+  const k = carKit('saloon'), v = vehicle('car', { style: 'saloon', seed: 3, colour: '#ffffff', finish: 'gloss' });
+  const inner = v.shell.children.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
+  assert.ok(inner > 1000 && k.glass && tri(k.whole) - tri(k.closed) === inner - tri(k.glass), 'a parked car close by has its inside (' + inner + ' triangles), further off dark glass and none');
+  const grp = new THREE.Group(), F = new Fleet(grp, ['saloon', 'hatch'], 4), list = [{ style: 0, x: 0, z: 3, heading: 0, v: 0, colour: '#aa2222' }, { style: 1, x: 200, z: 0, heading: 0, v: 0, colour: '#2244aa' }];
+  F.assign(list); F.focus = { x: 0, z: 0 }; F.draw(list, 0, 0);
+  const mats = F.close.get(list[0]).body.children.map(m => m.material);
+  assert.ok(F.close.size === 1 && mats.some(m => lookOf(m)?.gsCpA) && mats.some(m => m.transparent && lookOf(m)?.gsCgA.value.z > 0) && !looksOf(F.far[0].paint.material).length, 'a car drawn whole wears the paint look and see-through glass; far off, plain paint');
+  const pk = [{ style: 0, x: 4, y: 0, z: 0, heading: 0 }, { style: 0, x: 11, y: 0, z: 0, heading: 1 }, { style: 0, x: 30, y: 0, z: 0, heading: 0 }, { style: 1, x: 2, y: 0, z: 2, heading: 0 }];
+  const PG = new ParkedGlass(grp, ['saloon', 'hatch'], pk); PG.update(new THREE.Vector3(0, 1.6, 0));
+  assert.deepEqual(PG.meshes.map(m => m && m.count), [2, 1], 'the parked cars within 12 m have their glass');
+  F.dispose(); PG.dispose();
+  console.log('city cars up close: seats behind see-through glass close by, dark glass further off, the paint look on cars drawn whole, the parked cars\' glass ok');
+}
+// what the street walls wear (city-walls.js): the same for the same seed, flat on the walls that face the street, posters, tags and grime
+{
+  const { layout, FACADES } = await import('../src/kit/city.js'), { wallMarks, wallGeometry } = await import('../src/kit/city-walls.js');
+  const WIN = { punched: [.24, .22, .76, .8], curtain: [.04, .22, .96, .96], house: [.3, .25, .7, .75], shed: [.1, .68, .9, .9] };
+  for (const style of ['oldtown', 'harbour']) {
+    const p = layout({ seed: 5, blocks: [4, 4], style }), inside = (x, z) => p.buildings.some(b => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1);
+    const run = () => { const out = []; for (const b of p.buildings) { const F = FACADES[b.facade]; wallMarks(b, F, WIN[F.kind], .15 + (b.shops ? 4.6 : 0), .15, 5, (x, z) => !inside(x, z), 1, out); } return out; };
+    const M = run(), kinds = new Set(M.map(m => m.q.w === 2 && m.q.h === .5 ? 'grime' : m.q.h === .72 ? 'tag' : m.q.w === 2 ? 'piece' : m.q.y >= 3 ? 'streak' : 'poster'));
+    assert.equal(JSON.stringify(M), JSON.stringify(run()), style + ': the same seed, the same walls');
+    for (const m of M) assert.ok(!inside(m.x + m.nx * .5, m.z + m.nz * .5) && inside(m.x - m.nx * .5, m.z - m.nz * .5), style + ': a mark off a street wall');
+    assert.ok(kinds.has('grime') && kinds.has('tag') && kinds.has(style === 'harbour' ? 'piece' : 'poster'), style + ': grime, tags and ' + (style === 'harbour' ? 'pieces' : 'posters') + ' (' + [...kinds] + ')');
+    const g = wallGeometry(M); assert.ok(g.index.count === M.length * 6 && g.attributes.color.count === M.length * 4, style + ': one quad a mark');
+  }
+  console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
+}
+// the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
+// further out, land from where the city's ground ends, the camera made to see it, lit windows at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Skyline } = await import('../src/kit/city-far.js');
+  for (const style of ['downtown', 'harbour']) {
+    const p = layout({ seed: 3, blocks: [4, 4], style }), B = p.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
+    const make = () => { const cam = new THREE.PerspectiveCamera(60, 1, .2, 900), v = { scene: new THREE.Scene(), cam }; return [v, new Skyline(v, p, { seed: 3, colours: ['#a45a45', '#d8cdb8'], water: !!p.water })]; };
+    const [v, s] = make(), [, s2] = make(), pos = m => Array.from(m.geometry.attributes.position.array);
+    assert.equal(JSON.stringify(s.meshes.map(pos)), JSON.stringify(s2.meshes.map(pos)), style + ': the same seed, the same skyline');
+    assert.ok(s.count > 200 && s.meshes.length >= 6 && s.meshes.length <= 8, style + ': stand-ins in slices round the city (' + s.count + ' in ' + s.meshes.length + ')');
+    let wet = 0, inner = 0, coarse = 0;
+    for (const m of s.meshes) { const P = m.geometry.attributes.position.array;
+      for (let i = 0; i < P.length; i += 60) {   // (a box: 20 corners, its first wall's first corner at x0, z1 and the second wall's at x1)
+        const x0 = P[i], z1 = P[i + 2], x1 = P[i + 3], d = Math.hypot(x0 - cx, z1 - cz);
+        if (x0 > B.x0 - 60 && x0 < B.x1 + 60 && z1 > B.z0 - 60 && z1 < B.z1 + 60) inner++;
+        if (p.water && x0 > B.x0 - 40 && x1 < B.x1 + 40 && z1 > B.z1 && z1 < B.z1 + 3010) wet++;
+        if (d < 1200 && x1 - x0 > 90) coarse++;
+      } }
+    assert.ok(!inner && !wet && !coarse, style + ': none on the city\'s own ground, the water, or wider than its block near by (' + [inner, wet, coarse] + ')');
+    const L = s.land.geometry.attributes.position.array; let near = Infinity; for (let i = 0; i < L.length; i += 3) near = Math.min(near, Math.max(Math.abs(L[i] - cx) - (B.x1 - B.x0) / 2, Math.abs(L[i + 2] - cz) - (B.z1 - B.z0) / 2));
+    assert.ok(near > (p.water ? 2900 : 3030) && near < 3050, style + ': the land starts where the city\'s ground ends (' + near.toFixed(0) + ' m out)');
+    assert.ok(v.cam.far >= 10000 && s.triangles === s.count * 10 + s.pads.geometry.index.count / 3 + s.land.geometry.index.count / 3, style + ': the camera sees it, ten triangles a stand-in');
+    s.update(1); assert.ok(s.mat.emissiveIntensity > 1, 'its windows light at night'); s.update(0); assert.equal(s.mat.emissiveIntensity, 0, 'and not by day');
+    s.dispose(); s2.dispose(); assert.ok(!v.scene.children.includes(s.group), 'disposed: gone from the scene');
+  }
+  console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
+}
+// the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
+// pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
+{
+  const THREE = await import('three'), { GroundPaint } = await import('../src/kit/ground-paint.js'), { looksOf } = await import('../src/kit/looks.js');
+  const drawn = [], fake = { autoClear: true, getRenderTarget: () => null, setRenderTarget() {}, render(scene, cam) { drawn.push({ ...this.cur, l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, x: cam.position.x, z: cam.position.z }); } };
+  const view = { scene: new THREE.Scene(), _onGpu: false }, gp = new GroundPaint(view); gp.gl = fake;
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial()); road.updateMatrixWorld(true);
+  gp.add(road, 'asphalt', { base: '#333' });
+  assert.ok(looksOf(road.material).includes('groundpaint'), 'the road reads the ground paint');
+  const watch = L => { const rt = gp.target(L, null), set = rt.viewport.set.bind(rt.viewport); rt.viewport.set = (x, y, w, h) => { fake.cur = { x0: x, y0: y, w, h, L }; return set(x, y, w, h); }; };
+  for (const L of gp.levels) watch(L);
+  const at = new THREE.Vector3(.3, 1.6, -.2); gp.update(at);
+  const T = list => list.reduce((t, d) => t + d.w * d.h, 0);
+  assert.ok(T(drawn) === 2 * 1024 * 1024 && gp.U.gpOn.value === 1 && drawn.every(d => d.x0 >= 0 && d.y0 >= 0 && d.x0 + d.w <= 1024 && d.y0 + d.h <= 1024), 'both levels painted whole at first, in pieces inside the pictures');
+  // each piece's camera is over the world its texels stand for (columns along x, rows along -z, both wrapping round)
+  for (const d of drawn) { const S = d.L.size, N = d.L.px, c0 = (((d.x + d.l) / S * N) % N + N) % N, r0 = (((-(d.z + d.t)) / S * N) % N + N) % N; assert.ok(Math.abs(c0 - d.x0) < 1e-6 && Math.abs(r0 - d.y0) < 1e-6 && Math.abs((d.r - d.l) / S * N - d.w) < 1e-6, 'a piece over the world its texels stand for'); }
+  drawn.length = 0; at.x += 4.1; gp.update(at);
+  assert.ok(T(drawn) === 128 * 1024 && drawn.every(d => d.L === gp.levels[0]), 'a step along: only the fine level\'s uncovered strip is painted (' + T(drawn) + ' texels)');
+  drawn.length = 0; at.set(at.x + 200, 1.6, at.z - 300); gp.update(at);
+  assert.ok(T(drawn) === 2 * 1024 * 1024, 'a jump: both painted whole again');
+  drawn.length = 0; gp.update(at); assert.equal(drawn.length, 0, 'standing still paints nothing');
+  gp.stamp(at.x + 2, at.z + 1, 'oil', { size: .8 }); gp.stamp(at.x + 5000, at.z, 'skid', { size: 6 }); gp.update(at);
+  assert.ok(drawn.length >= 2 && drawn.length <= 8 && T(drawn) < 2 * 4096, 'a mark close by is painted on both levels; one far off is not (' + T(drawn) + ' texels)');
+  gp.dispose(); assert.equal(gp.U.gpOn.value, 0, 'disposed: the ground reads its own pictures again');
+  console.log('ground paint: painted whole, then only what a move uncovers, pieces over the right world, marks where they fall ok');
+}
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
 {
@@ -2188,7 +2318,7 @@ console.log('physics ok');
   // the list and the list's version after the draw.
   const lv = [{ object: { geometry: geo, material: im.material }, distance: 0, hysteresis: 0 }, { object: { geometry: geo, material: im.material }, distance: 15 * 15, hysteresis: 0 }];
   const tw2 = gpuProps({ ...im, LODinfo: { render: { levels: lv } } });
-  const chips = tw2.group.children.map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });
+  const chips = tw2.group.children.filter(m => m.userData.slots).map(m => { const prev = m.instanceMatrix.clone(); return { m, prev, sent: -1, chip: new Float32Array(prev.array.length) }; });   // (the levels' lists: not their lists of copies changing level)
   const draw = () => {
     let wrong = 0, drawn = 0;
     for (const g of chips) {
@@ -2210,6 +2340,66 @@ console.log('physics ok');
   cam.lookAt(2, 0, -20); tw2.sync(cam); const d5 = draw(); lv[1].distance = 15 * 15; tw2.sync(cam); const d6 = draw(); tw2.sync(cam); const d7 = draw();
   assert.equal(d5.wrong + d6.wrong + d7.wrong, 0, 'and through a turn and the change back');
   console.log('gs.props on WebGPU: only changed copies are sent, and each keeps its own motion ok');
+  // a copy changing level fades (lod-fade.js): out of both levels' own lists and into their lists of copies changing
+  // level, each with its share, until the fade ends; none of it until the dithered shaders are built (ready)
+  const { FADE } = await import('../src/kit/lod-fade.js'), s0 = FADE.s;
+  const lists = () => tw2.group.children.filter(m => m.userData.slots).map(m => m.userData.slots.owner.reduce((k, o) => k + (o ? 1 : 0), 0)), fl = () => tw2.fades().map(m => m.visible ? m.count : 0);
+  cam.lookAt(0, 0, -20); tw2.sync(cam, null, null, null, () => true); const was = lists();
+  FADE.s = 1e6; lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => false);
+  assert.ok(fl().every(n => n === 0) && lists()[0] > was[0], 'no fades while the dithered shaders are not built: the change is at once');
+  FADE.on = false; lv[1].distance = 15 * 15; tw2.sync(cam, null, null, null, () => true); FADE.on = true;
+  assert.ok(fl().every(n => n === 0) && lists().join() === was.join(), 'nor with fades off');
+  lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => true);
+  const f1 = fl(), mid = lists(), F0 = tw2.fades()[0].geometry.attributes.gsFade.array, F1 = tw2.fades()[1].geometry.attributes.gsFade.array;
+  assert.ok(f1[0] > 20 && f1[0] === f1[1] && mid[0] === was[0] && mid[1] === was[1] - f1[0], `the copies changing level are in both fading lists and neither level's own (${f1} fading; lists ${was} then ${mid})`);
+  assert.ok(F0[1] === 1 && F1[1] === -1 && F0[0] < .01 && F1[0] === F0[0], 'each with its share: coming in to the near level, going out of the far');
+  lv[1].distance = 15 * 15; tw2.sync(cam, null, null, null, () => true);
+  assert.deepEqual(fl(), [0, 0], 'a change back before the fade has gone anywhere is at once');
+  assert.deepEqual(lists(), was, 'and they are back in their lists');
+  lv[1].distance = 30 * 30; tw2.sync(cam, null, null, null, () => true); FADE.s = .01; await new Promise(r => setTimeout(r, 30)); tw2.sync(cam, null, null, null, () => true);   // (30 ms of a fade of 10)
+  const done = lists();
+  assert.ok(fl().every(n => n === 0) && done[0] === was[0] + f1[0] && done[1] === was[1] - f1[0], `at the end of the fade they are in the new level's list (${done})`);
+  FADE.s = s0; lv[1].distance = 15 * 15;
+  console.log('gs.props on WebGPU: copies changing level fade ok');
+}
+
+// Detail levels that fade into each other (lod-fade.js): when a thing fades, the shares each level is drawn with,
+// the shadow from one level at a time, a fade turned round, one waiting for its shaders, and things that switch at once
+{
+  const T = await import('three'), { FADE, FADING, fadeable, fadeLevels, fadeStep, fadesDone } = await import('../src/kit/lod-fade.js');
+  const scene = new T.Scene(), root = new T.Group(), mesh = () => new T.Mesh(new T.BoxGeometry(), new T.MeshBasicMaterial()), a = mesh(), b = mesh(), out = [];
+  b.visible = false; root.add(a, b); scene.add(root); fadeable(root);
+  let done = 0;
+  assert.equal(fadeLevels(root, [a], [b], () => done++), false, 'a thing no view has drawn changes level at once');
+  assert.ok(!a.visible && b.visible && done === 1 && !FADING.size);
+  fadeLevels(root, [b], [a]); fadeStep(scene, () => true, false, out);   // (a frame: it has been seen)
+  const s0 = FADE.s; FADE.s = 1e6;
+  assert.equal(fadeLevels(root, [a], [b], () => done++), true, 'one on screen fades');
+  assert.ok(a.visible && b.visible && done === 1, 'both shown while it fades, and done() not called yet');
+  fadeStep(scene, () => true, false, out);
+  assert.ok(out.length === 6 && out[0] === a && out[1].y === -1 && out[2] === true && out[3] === b && out[4].y === 1 && out[5] === false && out[4].x === out[1].x, 'the old level going out and casting the shadow, the new coming in with the same share');
+  FADING.get(root).t = .6; fadeStep(scene, () => true, false, out);
+  assert.ok(out[2] === false && out[5] === true, 'from half way the new level casts the shadow');
+  assert.equal(fadeLevels(root, [b], [a], () => done++), true, 'a change back turns the fade round');
+  assert.ok(Math.abs(FADING.get(root).t - .4) < 1e-6 && FADING.get(root).to[0] === a);
+  FADE.s = .01; await new Promise(r => setTimeout(r, 30)); fadeStep(scene, () => true, false, out);
+  assert.ok(!FADING.size && a.visible && !b.visible && done === 2 && !a.userData.gsFadeV, 'and it ends there');
+  // its shaders not built: the new level waits, hidden, then the change is made at once
+  FADE.s = 1e6; const w0 = FADE.wait; FADE.wait = 1e6;
+  fadeLevels(root, [a], [b], () => done++); fadeStep(scene, () => false, false, out);
+  assert.ok(out.length === 3 && out[0] === b && out[1] === null && FADING.get(root).t === 0, 'waiting for its shaders the new level is hidden and the old drawn whole');
+  assert.equal(fadeLevels(root, [b], [a], () => done++), false, 'turned back before it began, it just ends');
+  assert.ok(!FADING.size && a.visible && !b.visible && done === 3);
+  FADE.wait = 0; fadeLevels(root, [a], [b], () => done++); fadeStep(scene, () => false, false, out); fadeStep(scene, () => false, false, out);
+  assert.ok(!FADING.size && !a.visible && b.visible && done === 4, 'waited too long: the change made at once');
+  FADE.wait = w0;
+  // fades off, or hidden: at once
+  FADE.on = false; assert.equal(fadeLevels(root, [b], [a], () => done++), false); FADE.on = true;
+  root.visible = false; assert.equal(fadeLevels(root, [a], [b], () => done++), false); root.visible = true;
+  fadeLevels(root, [b], [a]); fadeLevels(root, [a], [b]); fadesDone();
+  assert.ok(!FADING.size && b.visible && !a.visible, 'fadesDone() ends every fade');
+  FADE.s = s0;
+  console.log('detail levels that fade: shares, shadows, turning round, waiting for shaders, at once when not seen ok');
 }
 
 // gs.models material recipes: each tiles seamlessly (the same at p and p + one tile), with finite numbers
@@ -2951,7 +3141,9 @@ console.log('physics ok');
   const F = await import('../src/kit/models/field.js'), HH = await import('../src/kit/models/human-head.js'), { realFace } = await import('../src/kit/models/human.js'), { Color } = await import('three');
   const { HC, RELIEF, reliefOf } = HH, base = { jaw: 1, chin: 1, brow: .82, nose: 1, lips: 1, cheeks: 1, eyes: 1, soft: 0 };
   // ---- the face from a seed: the same seed, the same face; age thins the lips, hoods the lids and greys the hair
-  { const a = realFace({ seed: 7, age: 25 }, false, base), b = realFace({ seed: 7, age: 25 }, false, base), c = realFace({ seed: 8, age: 25 }, false, base), old = realFace({ seed: 7, age: 75 }, false, base);
+  // (the sculpted face's measures: gnm: false; a real face is a GNM face unless the game says not)
+  assert.ok(realFace({ seed: 7 }, false, base).f.gnm && !realFace({ seed: 7, gnm: false }, false, base).f.gnm, 'a real face is a GNM face, the sculpted one with gnm: false');
+  { const a = realFace({ seed: 7, age: 25, gnm: false }, false, base), b = realFace({ seed: 7, age: 25, gnm: false }, false, base), c = realFace({ seed: 8, age: 25, gnm: false }, false, base), old = realFace({ seed: 7, age: 75, gnm: false }, false, base);
     assert.deepEqual(a, b, 'the same seed, the same face'); assert.notDeepEqual(a.f, c.f, 'another seed, another face');
     assert.ok(a.f.real === 1 && a.f.es === 1 && a.f.age === 25 && Object.values(a.f).every(v => typeof v !== 'number' || Math.round(v * 1e4) / 1e4 === v), 'life-size eyes, its age, every measure to four figures (the face names the saved shape)');
     assert.ok(old.f.lips < a.f.lips * .85 && old.f.lidFold > a.f.lidFold && old.f.eyes < a.f.eyes && old.f.ears > a.f.ears && old.f.nose > a.f.nose, `older: thinner lips (${a.f.lips} to ${old.f.lips}), lower lids, smaller eyes, bigger ears, a longer nose`);
@@ -3008,6 +3200,32 @@ console.log('physics ok');
     let drawn = 0; for (const [k, z] of fitW.front) if (plainW.front.has(k)) drawn = Math.min(drawn, z - plainW.front.get(k));
     assert.ok(fitW.w > plainW.w + .004, `a woman's face as wide at the mouth as a real one: ${(plainW.w * 2000).toFixed(0)} mm unfitted, ${(fitW.w * 2000).toFixed(0)} mm fitted`);
     assert.ok(drawn > -.001, `the throat under the chin never drawn in (at most ${(-drawn * 1000).toFixed(1)} mm)`); }
+  // ---- a GNM face (human({ gnm: true }), human-gnm.js): one of GNM Head's heads, drawn by sex and heritage from the seed, with the outlines
+  // the rest of the face is built along; its skin a field that is inside the head and outside round it, with no bubble of outside behind
+  // the lips (GNM's lips run on into each other: they are closed in a crease) and no pocket of inside by the neck (the sides of the far
+  // grid are worked out by regions, not handed on from node to node); the lips cut along one line where they meet
+  { const G = await import('../src/kit/models/human-gnm.js'), HS = await import('../src/kit/models/human-shapes.js'); await G.gnmReady();
+    const face = (seed, sex, heritage) => realFace({ seed, sex, heritage, gnm: true }, sex === 'f', base).f, k = face(4, 'f', 'east-asian'), g = k.gnm;
+    assert.deepEqual(face(4, 'f', 'east-asian').gnm.c, g.c, 'the same seed, the same head');
+    assert.ok(g.c.length === 32 && face(5, 'f', 'east-asian').gnm.c.some((v, i) => Math.abs(v - g.c[i]) > .3), 'another seed, another head');
+    const mean = (fem, kin) => G.gnmDraw(fem, kin), far = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
+    assert.ok(far(mean(true, { european: 1 }), mean(false, { european: 1 })) > 1 && far(mean(false, { african: 1 }), mean(false, { 'east-asian': 1 })) > 1, 'a woman\'s head and a man\'s, each background\'s, apart');
+    assert.ok(g.rim.w > .009 && g.rim.w < .014 && g.lip.half > .017 && g.lip.half < .029 && g.eye[0] > .026 && g.eye[0] < .035 && g.lip.up[0] > g.lip.line[0] && g.lip.dn[0] < g.lip.line[0],
+      `its outlines: an eye opening ${(g.rim.w * 2000).toFixed(0)} mm long, a mouth ${(g.lip.half * 2000).toFixed(0)} mm wide, the eyes ${(g.eye[0] * 2000).toFixed(0)} mm apart, each lip's red on its side of the line`);
+    const at = HH.Hd(0, HH.EYE[1], HH.EYE[2]), H = G.gnmHead(k, at), d = (x, y, z) => H.d(x, HC[1] + y, HC[2] + z);
+    assert.ok(d(0, 0, 0) < -.05 && d(0, .2, 0) > .05 && d(.15, 0, 0) > .03, 'inside the head, outside over it and beside it');
+    let bubble = -1; for (const x of [-.0145, .0145]) for (let z = .075; z < .094; z += .001) bubble = Math.max(bubble, d(x, -.066, z));
+    let pocket = 1; for (let x = .085; x < .12; x += .005) pocket = Math.min(pocket, d(x, -.093, -.053));
+    assert.ok(bubble < 0 && pocket > 0, `no bubble behind the lips (${(bubble * 1000).toFixed(1)} mm), no pocket beside the neck (${(pocket * 1000).toFixed(1)} mm)`);
+    let deep = 0, line = 0; HS.finish(HH.head({ face: k, neck: 1, hair: 'bald' }, []), { cell: .002, bones: () => [['head', 1]], keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01,
+      after: m => { const r = HH.partLips(m, k); line = r.line.length; for (const [u] of r.line) if (r.P[u * 3 + 2] - HC[2] < .09 && Math.abs(r.P[u * 3]) < .017) deep++; return r; } });
+    assert.ok(line > 30 && deep === 0, `the lips cut along where they meet (${line} points), never deep in the head (${deep})`);
+    // grown old (gnmAged): the same head at 78 has jowls over the line of the jaw and its lips sunk back
+    const aged = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 78 }, true, base).f, young = realFace({ seed: 4, sex: 'f', heritage: 'east-asian', gnm: true, age: 24 }, true, base).f;
+    const Ho = G.gnmHead(aged, at), Hy = G.gnmHead(young, at), front = (x, hy) => { let z = .2; while (z > 0 && Hy.d(x, HC[1] + hy, HC[2] + z) > 0) z -= .0002; return z; };
+    const jx = young.gnm.lip.half + .019, jy = young.gnm.lip.line[0] - .04, jz = front(jx, jy), ly = young.gnm.lip.line[0] + .003, lz = front(0, ly);
+    const jowl = -Ho.d(jx, HC[1] + jy, HC[2] + jz), sunk = Ho.d(0, HC[1] + ly, HC[2] + lz);
+    assert.ok(jowl > .001 && sunk > .0005, `grown old: jowls ${(jowl * 1000).toFixed(1)} mm out, lips ${(sunk * 1000).toFixed(1)} mm back`); }
   // ---- the fine detail of a real face's skin (human-paint.js): its lines come with age, oil in the middle of the face, freckles and spots in its paint
   { const HP = await import('../src/kit/models/human-paint.js'), f = age => ({ ...base, real: 1, es: 1, age, aseed: 2.5, freckles: 0 }), sum = (age, lips = false) => { const ff = f(age), rim = HH.rimOf(ff), q = [0, 0, 0]; let s = 0, most = 0; for (let x = 0; x < .08; x += .0005) for (let y = -.12; y < .085; y += .0005) { if ((x < .034 && y < -.045 && y > -.092 && HH.mouthAt(x, y, ff, q)[1] > 0) !== lips) continue; const v = HP.linesAt(x, y, ff, rim); s += v; most = Math.max(most, v); } return [s, most]; };   // (lips: on the lips alone, where the fine creases are at any age; else off them)
     const [y0, m0] = sum(22), [y1] = sum(45), [y2, m2] = sum(75);
@@ -5349,7 +5567,37 @@ console.log('physics ok');
     const pl = vehicle('plane'), blades = pl.parts.prop.children.find(m => m.name !== 'blur'), blur = pl.parts.prop.children.find(m => m.name === 'blur');
     assert.ok(blades.visible && !blur.visible && pl.gear > 1.5 && pl.sit > 0); for (let i = 0; i < 120; i++) pl.move(1 / 60, 50); assert.ok(!blades.visible && blur.visible && pl.parts.prop.rotation.z > 20 && pl.wheels[0].rotation.x === 0, 'a propeller spins up into a blur; wheels in the air keep still');
     const pb = vehicle('boat', { style: 'patrol' }); pb.move(.5, 6, { steer: 1 }); assert.ok(pb.parts.radar.rotation.y > 1 && pb.draft > 1 && pb.parts.gun && pb.aim(.2, .1).parts.turret.rotation.y === .2);
-    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, a goods train's wagons, loads and colours, a fused train in a third of the draws, propellers and radar ok`);
+    // cars up close: a closed car's inside behind see-through glass (none asked for: dark glass), the paint and glass looks
+    const { lookOf } = await import('../src/kit/models/vehicle-looks.js');
+    const slot = (car, n) => car.shell.children.find(m => m.name === n), IN = ['lining', 'liner', 'carpet', 'dash', 'dials', 'seat'];
+    const sal = vehicle('car', { style: 'saloon', seed: 3 }), shut = vehicle('car', { style: 'saloon', seed: 3, inside: false });
+    assert.ok(IN.every(n => slot(sal, n)) && slot(sal, 'glass').material.transparent && lookOf(slot(sal, 'glass').material).gsCgA.value.z > 0 && lookOf(slot(sal, 'paint').material)
+      && !IN.some(n => slot(shut, n)) && !slot(shut, 'glass').material.transparent && shut.tris < sal.tris && !slot(vehicle('car', { style: 'jeep' }), 'lining'),
+      'a closed car has seats, a dashboard and door cards behind see-through glass; inside: false, or an open car, has none');
+    // dirt and wet on the car's own materials (its twins keep theirs)
+    const dc = vehicle('car', { style: 'saloon', seed: 3 }), dPaint = slot(dc, 'paint'), dGlass = slot(dc, 'glass');
+    dc.dirt(.5).wet(1);
+    assert.ok(lookOf(dPaint.material).gsCpA.value.y === .5 && near(lookOf(dGlass.material).gsCgA.value.x, .375, 1e-9) && lookOf(dPaint.material).gsCpA.value.z === 1 && dPaint.material !== slot(dc.twin(), 'paint').material && lookOf(slot(sal, 'paint').material).gsCpA.value.y === 0,
+      'dirt and wet change this car only');
+    // a dent moves only what is near where it was hit, on a shape of its own, and scrapes the paint there
+    const hc = vehicle('car', { style: 'saloon', seed: 3 }), hold2 = new THREE.Scene(); hold2.add(hc);
+    const hp = slot(hc, 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
+    const what = hc.hit(at, { power: 1, dir: new THREE.Vector3(-1, 0, 0) }), after = hp.geometry.attributes.position.array;
+    let dMoved = 0, dFar = 0; for (let i = 0; i < after.length; i += 3) { const d = Math.hypot(after[i] - before[i], after[i + 1] - before[i + 1], after[i + 2] - before[i + 2]); if (d > 1e-6) { dMoved++; if (Math.hypot(before[i] - at.x, before[i + 1] - at.y, before[i + 2] - at.z) > .5 + 1e-6) dFar++; } }
+    assert.ok(hp.geometry !== shared0 && dMoved > 20 && dFar === 0 && hc.damage.dents === 1 && lookOf(hp.material).gsCpX.value[0].w > 0 && shared0.attributes.position.array.every((q, i) => q === before[i]),
+      'a dent: ' + dMoved + ' corners moved, all within its reach, on the car\'s own shape, a scrape in the paint');
+    // glass: a side window breaks (its bits fall and lie on the ground), the windscreen crazes, a lamp breaks and goes dark
+    const bits = () => hold2.children.find(o => o.name === 'glass bits');
+    assert.ok(what === 'window' && hc.damage.glass === 1 && bits()?.count > 10, 'a hard hit by a side window breaks it: ' + what);
+    for (let i = 0; i < 240; i++) hc.update(1 / 60);
+    const bm = new THREE.Matrix4(), bp = new THREE.Vector3(); let low = 0; for (let i = 0; i < bits().count; i++) { bits().getMatrixAt(i, bm); bp.setFromMatrixPosition(bm); if (bp.y < .05) low++; }
+    assert.ok(low === bits().count, 'the broken glass falls and lies on the road: ' + low + ' of ' + bits().count);
+    assert.equal(hc.smash(new THREE.Vector3(.2, hc.size.height * .82, -hc.size.length * .2), { power: .8 }), 'screen', 'the windscreen crazes');
+    const lampL = hc.points.lampL; lampL.updateMatrixWorld(true); const lw = lampL.getWorldPosition(new THREE.Vector3());
+    assert.ok(hc.hit(lw, { power: .6 }) === 'lamp' && hc.damage.lamps === 1, 'a knock on a head lamp breaks it');
+    hc.mend();
+    assert.ok(hp.geometry === shared0 && hc.damage.dents === 0 && hc.damage.glass === 0 && hc.damage.lamps === 0 && !bits() && slot(hc, 'glass').material === slot(sal, 'glass').material, 'mend(): the shared shapes and materials back, the bits gone');
+    console.log(`vehicles made in code: the shape tools (skins closed and facing out, rounded, slots, belts, wheels), ${plans.length} plans (${tris} triangles in ${ms.toFixed(0)} ms), cars roll, steer and lean, a tank's tracks and turret, a train along a curve, a goods train's wagons, loads and colours, a fused train in a third of the draws, propellers and radar, and cars up close: seats behind see-through glass, dirt and wet, dents, glass that breaks and falls, lamps that break, mend() ok`);
   }
 }
 
@@ -5969,6 +6217,28 @@ console.log('physics ok');
   console.log('gs.hd effects that step down by their own cost ok');
 }
 
+// the chip's own times are checked against the time its frames took (hd3d.js chipFits): Apple's chips time each pass
+// from stage boundaries, so a chain of passes overlap and add up to more than the frames take
+{
+  const { chipFits } = await import('../src/kit/hd3d.js');
+  assert.ok(chipFits(9, 16.7) && chipFits(16, 16.7) && chipFits(34, 16.7), 'a chip busy for its whole frame, or a read that lags a frame or overlaps on a software chip, fits');
+  assert.ok(!chipFits(225, 16.7) && !chipFits(70, 33.3), 'over twice the time the frames took does not (the MacBook Air M5: 225 ms a 16.7 ms frame)');
+  assert.ok(chipFits(2.3, .2) && !chipFits(2.5, .2), 'a tiny frame is given 2 ms of slack');
+  console.log('gs.hd chip times that don\'t fit their frames are spotted ok');
+  // where a game's tier starts and when it may climb (hd3d.js startTier, mayClimb): a computer goes above its class's start
+  // only on the chip's own say-so (Rob's MacBook Air M5, 2026-11-14: Long Shadow started on ultra again, settled there the run before)
+  const { startTier, mayClimb } = await import('../src/kit/hd3d.js');
+  assert.equal(startTier(null, 'top', false), 2); assert.equal(startTier(null, 'low', false), 1); assert.equal(startTier(null, 'top', true), 2, 'a top computer starts on high, as a top phone does');
+  assert.equal(startTier({ tier: 1 }, 'top', true), 1, 'a game that settled lower starts there');
+  assert.equal(startTier({ tier: 3 }, 'top', true), 2, 'a computer\'s ultra saved without the chip showing room (an earlier version, or a Mac) starts on high');
+  assert.equal(startTier({ tier: 3, room: true }, 'top', true), 3, 'ultra climbed to with room is taken up again');
+  assert.equal(startTier({ tier: 2 }, 'low', true), 1, 'a low computer\'s high, the same');
+  assert.equal(startTier({ tier: 3 }, 'top', false), 2, 'a phone never starts above high');
+  assert.ok(mayClimb(1, 'top', true, false) && !mayClimb(2, 'top', true, false) && mayClimb(2, 'top', true, true), 'a computer climbs past its start only with room');
+  assert.ok(mayClimb(1, 'low', false, false), 'a phone climbs by its frames alone, as before');
+  console.log('gs.hd tiers start and climb ok');
+}
+
 // gs.stats: stats with buffs, perks and debuffs that run out, pools that drain and refill, cooldowns with charges
 {
   const { Stats } = await import('../src/kit/stats.js');
@@ -6246,6 +6516,167 @@ console.log('physics ok');
   assert.ok(drawn === before, 'a slot nothing moved in is not drawn again');
   assert.ok(L(car).slot >= 0 && L(car).proj && L(car).texel > 0, 'a slotted lamp reads its slot through its matrix');
   console.log('night lights: shapes, a pool that keeps its lights, spot lights on WebGL only when wanted, tubes and signs, shadow slots for the nearest, a few drawn a frame ok');
+}
+
+// Rapier through the engine: riders, karts and craft that are solid, a floor that is a true plane, grapples, shots,
+// lobs and barrels in a world, broken things that keep going, props, voxel blocks and cloth round bodies, cars that dent,
+// rivers that carry bodies; in 2D, walkers and cars moved through a world, tile maps made solid, soft things that stay out
+{
+  const THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Kart, Car } = await import('../src/kit/vehicles.js'), { Hover } = await import('../src/kit/craft.js'), { Grapple } = await import('../src/kit/gadgets.js');
+  const { Shots, arc, Explosives } = await import('../src/kit/combat.js'), { shatter, slice } = await import('../src/kit/destruction.js');
+  const { Props } = await import('../src/kit/props.js'), { Voxels, BLOCKS } = await import('../src/kit/voxels.js'), { Cloth } = await import('../src/kit/cloth.js');
+  const { Streams } = await import('../src/kit/flow.js'), { Path } = await import('../src/kit/paths.js');
+  const t0 = performance.now(), run = (w, n, f) => { for (let i = 0; i < n; i++) { f?.(i); w.step(1 / 60); } };
+  // the floor is a plane: a walker goes the whole way and a rider sits on it, not in it
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0); const hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), r = w.rider({ box: [1.2, .6, 2], at: { x: 5, y: 0, z: 0 } });
+    run(w, 120, () => { hero.walk(0, -4); r.slide(0, -.005, -.1, 0, 1 / 60); });
+    assert.ok(Math.abs(hero.pos.z + 8) < .05, 'a walker on the floor goes the whole way: ' + hero.pos.z);
+    assert.ok(Math.abs(r.pos.z + 12) < .05 && Math.abs(r.body.translation().y - .32) < .01 && r.grounded, 'a rider slides along the floor at its height: ' + r.pos.z + ', ' + r.body.translation().y); }
+  // a kart: up a ramp, through a stack of crates, stopped by a wall, and onHit says so
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(4, .4, 6)); ramp.position.set(0, .4, -12); ramp.rotation.x = .25; w.ground(ramp);
+    const crates = [0, 1, 2].map(i => w.box(null, 1, 1, 1, { at: { x: 3, y: .5 + i * 1.02, z: -10 } }));
+    w.box(null, 8, 3, 1, { at: { x: -3, y: 1.5, z: -30 }, fixed: true, tag: 'wall' });
+    let walled = 0; w.onHit((a, b, sp) => { if ((a.tag === 'wall' || b.tag === 'wall') && sp > 3) walled++; });
+    const k = new Kart({ world: w, x: 0, z: 0 }), k2 = new Kart({ world: w, x: 3, z: 0 }); let top = 0;
+    run(w, 150, () => { k.update(1 / 60, { throttle: 1 }); k2.update(1 / 60, { throttle: 1 }); top = Math.max(top, k.y); });
+    assert.ok(top > .6, 'the kart drives up the ramp: ' + top);
+    assert.ok(crates[0].pos.z < -11, 'the kart shoves the crates out of its way: ' + crates[0].pos.z);
+    run(w, 150, () => { k.update(1 / 60, { throttle: 1 }); });
+    assert.ok(k.z > -29.6 && k.z < -27 && walled > 0, 'a wall stops it and onHit hears it: ' + k.z + ' ' + walled); }
+  // a hovercraft at a wall; a grapple pulls a crate in and pulls the hero to a heavy truck
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0); w.box(null, 1, 6, 10, { at: { x: 5, y: 3, z: 0 }, fixed: true });
+    const hv = new Hover({ world: w, at: { x: 0, y: 3, z: 0 } }); let crash = null;
+    run(w, 120, () => { hv.update(1 / 60, { x: 1 }); crash ||= hv.crash; });
+    assert.ok(hv.pos.x < 4.5 && hv.pos.x > 3 && crash, 'a drone stops at a wall and says it crashed: ' + hv.pos.x);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: -10 }, density: 20 }), hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), hook = new Grapple({ range: 20 }); run(w, 1);   // (rays see what was added once the world has stepped)
+    assert.ok(hook.fire({ x: 0, y: .5, z: 0 }, { x: 0, y: 0, z: -1 }, w, hero) && hook.thing === crate, 'a grapple hooks a crate in a world');
+    let v = { x: 0, y: 0, z: 0 }; run(w, 120, () => { v = hook.update(1 / 60, hero.pos, v, { reel: true }); hero.walk(v.x, v.z); v = { x: 0, y: 0, z: 0 }; });
+    assert.ok(crate.pos.z > -2, 'and pulls the light crate to the hero: ' + crate.pos.z); }
+  // shots shove what they hit and pass the shooter; a lob stops where it meets something; a knocked barrel goes off
+  { const w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const crate = w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: -10 }, density: 20 }), hero = w.mover(null, { at: { x: 0, y: 0, z: 0 } }), shots = new Shots({ push: 40 });
+    shots.add({ from: { x: 0, y: .8, z: 0 }, dir: { x: 0, y: 0, z: -1 }, speed: 60, range: 50 }, { not: hero }); let got = null;
+    run(w, 30, () => { got ||= shots.update(1 / 60, w)[0]; });
+    assert.ok(got?.hit.thing === crate && Math.abs(got.at.z + 9.5) < .05, 'a shot traced in the world hits the crate face');
+    run(w, 30); assert.ok(crate.pos.z < -10.2, 'and shoves it: ' + crate.pos.z);
+    const pts = arc({ x: 0, y: 1.5, z: 0 }, { x: 0, y: 3, z: -6 }, -9.8, { ground: w, not: hero }), end = pts[pts.length - 1];
+    assert.ok(end.hit && end.y < 1.1, 'a lob ends where it meets the world');
+    const w2 = new World3D({ gravity: -9.8 }); w2.floor(0);
+    const barrel = w2.box(null, .6, 1, .6, { at: { x: 0, y: .5, z: 0 }, density: 100 }), near = w2.box(null, 1, 1, 1, { at: { x: 3, y: .5, z: 0 }, density: 10 });
+    const ex = new Explosives({ world: w2, radius: 5 }); ex.add({ x: 0, y: .5, z: 0, body: barrel }); let booms = 0; ex.on('boom', () => booms++);
+    const rock = w2.box(null, .5, .5, .5, { at: { x: -6, y: .5, z: 0 }, density: 400 }); rock.push(14, 2, 0);
+    run(w2, 120, () => ex.update(1 / 60));
+    assert.ok(booms === 1 && near.pos.x > 6, 'a barrel knocked hard goes off and throws what is near it: ' + booms + ' ' + near.pos.x); }
+  // broken things keep going as they were; props, voxels, cloth, a car that dents, a river
+  { const scene = new THREE.Scene(), w = new World3D({ gravity: -9.8 }); w.floor(0);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()); m.position.set(0, 3, 0); scene.add(m);
+    const b = w.box(m, 1, 1, 1); b.setVel(5, 0, 0); run(w, 5);
+    const ps = shatter(m, { pieces: 6, world: w, push: 0 }), moving = ps.filter(p => p.body && p.body.vel.x > 3).length;
+    assert.ok(b.dead && moving >= 4, 'a thrown crate that shatters gives up its body and its pieces carry on: ' + moving);
+    const melon = new THREE.Mesh(new THREE.SphereGeometry(.4, 12, 8), new THREE.MeshStandardMaterial()); melon.position.set(0, 2, 5); scene.add(melon);
+    const mb = w.ball(melon, .4); mb.setVel(0, 0, -4); run(w, 1);
+    const halves = slice(melon, melon.position, { x: 1, y: 0, z: 0 }, { world: w, apart: 2 });
+    assert.ok(mb.dead && halves.length === 2 && halves.every(h => h.body && h.body.vel.z < -3) && halves[0].body.vel.x * halves[1].body.vel.x < 0, 'slice with a world: two bodies going on, parted along the cut');
+    const props = new Props(scene); props.kind('tree', new THREE.CylinderGeometry(1.5, 1.5, 6, 8).translate(0, 3, 0), new THREE.MeshStandardMaterial());
+    const t1 = props.add('tree', 0, 0, -5); props.add('tree', 3, 0, -5, { scale: 2 }); const trunks = props.solid(w, 'tree', { shape: 'trunk' }); run(w, 1);
+    const hit = w.ray({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 20);
+    assert.ok(hit?.thing === trunks && hit.part?.id === t1 && Math.abs(hit.point.z + 4.55) < .02 && !w.ray({ x: 1, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, 3), 'a forest of props as trunks: rays find the copy, and pass beside it');
+    props.kind('crate', new THREE.BoxGeometry(1, 1, 1).translate(0, .5, 0), new THREE.MeshStandardMaterial());
+    for (let i = 0; i < 3; i++) props.add('crate', 8, i * 1.05 + 1, 8);
+    const loose = props.solid(w, 'crate', { loose: true }); run(w, 90);
+    const M = new THREE.Matrix4(), P = new THREE.Vector3(), ys = [...loose.keys()].map(id => { props.mesh('crate').getMatrixAt(id, M); return P.setFromMatrixPosition(M).y; }).sort((a, b) => a - b);
+    assert.ok(loose.size === 3 && ys.every((y, i) => Math.abs(y - i) < .05), 'loose props fall, stack and are drawn where their bodies are: ' + ys.map(y => y.toFixed(2)));
+    const vox = new Voxels({ size: [32, 16, 32], worker: false }); vox.fill(0, 0, 0, 31, 3, 31, BLOCKS.stone); vox.build();
+    const w3 = new World3D({ gravity: -9.8 }); vox.physics(w3); const c3 = w3.box(null, 1, 1, 1, { at: { x: 10, y: 8, z: 10 } }); run(w3, 90);
+    assert.ok(Math.abs(c3.pos.y - 4.5) < .05, 'a crate lands on voxel blocks: ' + c3.pos.y);
+    vox.fill(9, 0, 9, 11, 3, 11, 0); vox.build(); run(w3, 60);
+    assert.ok(c3.pos.y < 2, 'and falls into a pit dug under it: ' + c3.pos.y);
+    const pushed = [];
+    for (const world of [null, true]) {
+      const wc = new World3D({ gravity: -9.8 }); wc.floor(0); const ball = wc.ball(null, .5, { at: { x: 0, y: .5, z: -2 } }); ball.setVel(0, 0, 4);
+      const cloth = new Cloth(null, world ? { world: wc } : {}), cur = cloth.sheet({ cols: 11, rows: 10, place: (i, j) => [-1 + i / 10 * 2, 2 - j / 9 * 1.8, 0], pins: [0, 10, 5] });
+      let most = -9; run(wc, 150, () => { cloth.update(1 / 60); const k = cur.base + 7 * 11 + 5; most = Math.max(most, cloth.P[k * 3 + 2]); }); pushed.push(most);
+    }
+    assert.ok(pushed[1] > pushed[0] + .4, 'cloth with a world is pushed aside by a ball rolling through it: ' + pushed.map(x => x.toFixed(2)));
+    const car = new THREE.Group(), dents = []; car.position.set(0, 1, 30); car.hit = (p, o) => dents.push(o.power);
+    const v3 = w.vehicle(car, { at: { x: 0, y: 1, z: 30 } }); w.box(null, 6, 3, 1, { at: { x: 0, y: 1.5, z: 15 }, fixed: true });
+    run(w, 180, () => v3.drive(1, 0));
+    assert.ok(dents.length >= 1 && dents[0] > .5, 'a model car dents itself where it hits a wall: ' + dents);
+    const S = w.shapes([{ box: [1, 1, 1], at: { x: 20, y: .5, z: 0 }, part: 'a' }]); S.add({ ball: .5, at: { x: 22, y: .5, z: 0 }, part: 'b' }); run(w, 1);
+    assert.ok(w.ray({ x: 22, y: 5, z: 0 }, { x: 0, y: -1, z: 0 }, 10)?.part === 'b', 'shapes: a shape added later is found');
+    S.drop('b'); S.set('a', { x: 22, y: .5, z: 0 }); run(w, 1);
+    assert.ok(w.ray({ x: 22, y: 5, z: 0 }, { x: 0, y: -1, z: 0 }, 10)?.part === 'a', 'shapes: dropped and moved');
+    const water = new Streams({ space: '3d' }); water.river(new Path([{ x: -50, y: 0, z: 40 }, { x: 50, y: 0, z: 40 }]), { width: 10, speed: 3 });
+    const log = w.box(null, 1, .4, .4, { at: { x: -20, y: 1, z: 40 }, density: .5, gravity: 0 }); run(w, 120, () => water.carry(log, 1 / 60));   // (afloat: gs.craft's Floater would hold it up)
+    assert.ok(log.pos.x > -17, 'a river carries a loose body downstream: ' + log.pos.x); }
+  // 2D: a tile level made solid, a platformer and a top-down walker moved through a world, a car, jelly and water
+  { const { Physics } = await import('../src/kit/physics.js'), { TileMap } = await import('../src/kit/tiles.js'), { Platformer, TopDown } = await import('../src/kit/movers.js'), { Soft, Liquid } = await import('../src/kit/soft.js');
+    const map = TileMap.fromText(['....................', '....................', '...........#........', 'P....../####\\.......', '####################'], { size: 16 });
+    const p = new Physics({ gravity: 900 }), lvl = p.tiles(map), crate = p.box(200, 0, 14, 14);
+    assert.ok(lvl.rects.length <= 4 && lvl.ramps.length === 2, 'a tile map as a few merged boxes and two ramps: ' + lvl.rects.length);
+    const s0 = map.find('P')[0], hero = new Platformer({ x: s0.x, y: s0.y, w: 12, h: 14, run: 90 }); let onTop = false, blocked = 0;
+    for (let f = 0; f < 150; f++) { hero.update(1 / 60, p, { x: 1 }); p.step(1 / 60); if (hero.onGround && Math.abs(hero.y - 41) < 1) onTop = true; if (hero.hit.right) blocked++; }
+    assert.ok(onTop && blocked > 0 && hero.x < 171, 'a platformer walks up the slope onto the block and is stopped by the wall: ' + hero.x + ',' + hero.y);
+    assert.ok(Math.abs(crate.y - 57) < 1.5, 'a crate lands on the level: ' + crate.y);
+    const q = new Physics({ gravity: 0 }); q.walls(0, 0, 400, 400);
+    const box = q.box(200, 100, 20, 20, { drag: 2 }), td = new TopDown({ x: 200, y: 300, w: 16, h: 16, speed: 120 });
+    for (let f = 0; f < 350; f++) { td.update(1 / 60, q, { x: 0, y: -1 }); q.step(1 / 60); }
+    assert.ok(box.y < 11 && td.y < 30, 'a top-down walker shoves a crate to the wall: ' + box.y + ' ' + td.y);
+    const cone = q.circle(100, 100, 6, { density: .5, drag: 3 }), car = new Car({ x: 100, y: 300, angle: -Math.PI / 2, world: q, top: 200 }); let crashed = null;
+    for (let f = 0; f < 200; f++) { car.update(1 / 60, { throttle: 1 }); q.step(1 / 60); }
+    assert.ok(cone.y < 10 && car.y > 20 && car.speed < 60, 'a car shoves a cone to the wall and is held there: ' + cone.y + ' ' + car.y + ' ' + car.speed);
+    const r = new Physics({ gravity: 0 }); r.walls(0, 0, 400, 400); const car2 = new Car({ x: 200, y: 300, angle: -Math.PI / 2, world: r, top: 200 });
+    for (let f = 0; f < 120 && !crashed; f++) { car2.update(1 / 60, { throttle: 1 }); r.step(1 / 60); crashed = car2.crash; }
+    assert.ok(crashed && crashed.ny > .9 && car2.speed < 100, 'a car hits a wall hard, says so and bounces off');
+    const ph = new Physics({ gravity: 900, walls: [0, 0, 360, 640] }), ledge = ph.box(180, 400, 200, 20, { fixed: true });
+    const soft = new Soft({ world: ph, bounds: [0, 0, 360, 640] }), blob = soft.jelly(180, 200, 30, 16);
+    for (let f = 0; f < 120; f++) { soft.update(1 / 60); ph.step(1 / 60); }
+    assert.ok(Math.abs(soft.centre(blob).y - 360) < 12 && !blob.points.some(pt => ledge.contains(pt.x, pt.y)), 'jelly lands on a ledge in the world: ' + soft.centre(blob).y);
+    const L = new Liquid({ world: ph, bounds: [0, 0, 360, 640] }); L.pour(180, 300, 80, 25);
+    for (let f = 0; f < 60; f++) { L.update(1 / 60); ph.step(1 / 60); }
+    assert.ok(!L.list.some(d => ledge.contains(d.x, d.y)), 'water poured on it stays out of it'); }
+  console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
+// finer sun shadows (sunmask.js): capsules for far people and their shadows, the grid they go in, the map of heights' tiles
+{
+  const { binCapsules, figureCapsule, capsuleShade, HeightTiles, CAPS, GRID, PER } = await import('../src/kit/sunmask.js');
+  const n = Math.hypot(-.5, .7, .35), L = [-.5 / n, .7 / n, .35 / n];
+  // a person stands up as a post as tall as they are; an animal on four legs lies along the way it faces
+  const man = figureCapsule(1.75, .3, 2, 0, 3, 0, 1, []);
+  assert.ok(man[0] === 2 && man[3] === 2 && man[2] === 3 && man[5] === 3 && Math.abs(man[1] - man[6]) < 1e-9 && Math.abs(man[4] + man[6] - 1.75) < 1e-9, 'a person: an upright post from their feet to the top of their head');
+  const dog = figureCapsule(.6, 1.2, 0, 0, 0, Math.PI / 2, 1, []);
+  assert.ok(Math.abs(dog[1] - dog[4]) < 1e-9 && Math.abs(dog[2] - dog[5]) < 1e-9 && dog[3] > dog[0], 'an animal: lying level, along the way it faces');
+  // its shadow: dark on the ground behind it (away from the sun), none beside it, on its sunny side or on itself
+  const at = k => capsuleShade(2 - L[0] * k, 0, 3 - L[2] * k, L, man);
+  assert.ok(at(.5) > .9 && at(1.5) > .9, 'dark on the ground behind a person, away from the sun');
+  const h = Math.hypot(L[0], L[2]), beside = capsuleShade(2 - L[2] / h * .5, 0, 3 + L[0] / h * .5, L, man);
+  assert.ok(at(-1) === 0 && beside === 0 && capsuleShade(2, 1, 3 + man[6] * 1.1, L, man) === 0, 'no shadow on their sunny side, half a metre beside them or on their own body');
+  assert.ok(at(2) > .9 && at(3) === 0, 'it ends about as far off as the sun makes a body 1.75 m tall throw it');
+  // the grid: each capsule in the squares its shadow falls across, and no more than PER a square
+  const caps = new Float32Array(CAPS * 8), grid = new Float32Array(GRID * GRID * 8), list = [];
+  for (let i = 0; i < 300; i++) list.push(figureCapsule(1.75, .3, (i % 20) * 3, 0, Math.floor(i / 20) * 3, 0, 1, []));
+  const b = binCapsules(list, L, caps, grid);
+  assert.ok(b.n === CAPS && caps[(CAPS - 1) * 8] === list[CAPS - 1][0] && caps[3] === Math.fround(man[6]), 'no more than CAPS capsules, kept in the order given (nearest first)');
+  const sq = (x, z) => Math.floor((z - b.z0) / b.cell) * GRID + Math.floor((x - b.x0) / b.cell), has = (s, i) => [...grid.slice(s * 8, s * 8 + PER)].includes(i + 1);
+  assert.ok(has(sq(list[0][0], list[0][2]), 0) && has(sq(list[0][0] - L[0], list[0][2] - L[2]), 0), 'a capsule sits in its own square and in the squares its shadow falls across');
+  let most = 0; for (let s = 0; s < GRID * GRID; s++) most = Math.max(most, grid.slice(s * 8, s * 8 + 8).filter(Boolean).length);
+  assert.ok(most <= PER && binCapsules([], L, caps, grid).n === 0 && grid.every(v => v === 0), 'no square holds more than PER; none at all leaves the grid empty');
+  const far = binCapsules([man], L, caps, grid, 40, { x: 2048, y: 0, z: -1024 });
+  assert.ok(caps[0] === 2 - 2048 && caps[2] === 3 + 1024 && far.x0 < 2 - 2048 && far.z0 < 3 + 1024, 'far from the world\'s centre: in the drawing\'s space, about the centre the frame is drawn round (origin.js)');
+  // the map of heights: tiles in a ring round the camera; only the tiles that come in are drawn first, then each again in turn
+  const H = new HeightTiles(512, 512, 4), came = H.at(10, 10), s0 = H.slot(0, 0), s4 = H.slot(4, 0);
+  assert.ok(came.length === 16 && !H.ready && s0.sx === s4.sx && s0.sy === s4.sy && s4.x0 === 512, 'sixteen tiles at first; a place\'s tile always sits at the same spot of the picture');
+  for (let i = 0; i < 16; i++) H.next();
+  assert.ok(H.ready && H.next() && H.at(40, 10).length === 0, 'all drawn after sixteen; a step of less than one tile moves nothing');
+  const step = H.at(10 + 128 * 1.2, 10);
+  assert.ok(step.length === 4 && !H.ready && step.every(s => s.tx === H.cx + 3) && step.includes(H.next()), 'a step of a tile brings in one column of four, drawn first');
+  for (let i = 0; i < 3; i++) H.next();
+  assert.ok(H.ready, 'then the window is whole again');
+  console.log('finer sun shadows: people and animals as capsules, their shadows behind them and none beside or on themselves, a grid of the squares they fall across, the map of heights\' tiles ok');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

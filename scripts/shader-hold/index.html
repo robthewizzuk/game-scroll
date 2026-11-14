@@ -32,13 +32,13 @@ if (dev) {
 }
 // ... and every shader whose text three wrote in the middle of a frame (its node builder: 10 to 30 ms of the frame's
 // own time for a big material). A build in the background writes it first, under a key the frame must find again.
-const built = [], ofScene = [], scenes = new Set([v.scene]); let drawing = false;   // (ofScene: written in a frame for the scenes' own things, not the views' full-screen passes; built: written outside one)
+const built = [], ofScene = [], passText = [], scenes = new Set([v.scene]); let drawing = false;   // (ofScene: written in a frame for the scenes' own things, not the views' full-screen passes; built: written outside one)
 if (G) {
   const N = G.r._nodes, nf = N.getForRender.bind(N), kept = N.nodeBuilderCache;
   // (a build in the background writes its text a stage at a time, letting frames be drawn in between: it is passed on as it came)
   N.getForRender = (ro, ...a) => {
     const name = ro.material?.name || ro.material?.type || '?', inFrame = drawing, own = scenes.has(ro.scene), key = N.getForRenderCacheKey(ro), had = kept.has(key);
-    const note = () => { if (had || !kept.has(key)) return; if (!inFrame) built.push(name); else if (own) ofScene.push(name); };
+    const note = () => { if (had || !kept.has(key)) return; if (!inFrame) built.push(name); else if (own) ofScene.push(name); else passText.push(name); };
     const out = nf(ro, ...a); if (out?.then) out.then(note, () => {}); else note(); return out;
   };
   const vr = gs.hd.HDView.prototype.render; gs.hd.HDView.prototype.render = function (...a) { drawing = true; try { return vr.apply(this, a); } finally { drawing = false; } };
@@ -50,7 +50,9 @@ const behind = kind('#44c', { iridescence: 1, anisotropy: .5 }); behind.name = '
 // a level's worth of still things that cast shadows (20,000 triangles and the kit keeps their shadows aside), and one that moves
 const level = new T.Mesh(new T.TorusKnotGeometry(.6, .2, 256, 48), gs.hd.pbr('#8a7a6a', { rough: .8 })); level.name = 'level'; level.material.name = 'level'; level.position.set(-3, 1, -2); level.castShadow = true;
 const mover = kind('#cc4', {}); mover.name = 'mover'; mover.material.name = 'mover'; mover.position.set(2, 1, 0); mover.castShadow = true;
-v.scene.add(hidden, behind, level, mover);
+// (and one kept hidden until the scene's lights have changed, near the end)
+const later = kind('#c4c', { clearcoat: .5 }); later.material.name = 'hidden through a change of lights'; later.position.set(2, 1, -2); later.visible = false;
+v.scene.add(hidden, behind, level, mover, later);
 // The first frame builds what is in view. The ones after it write no shader text for the scene's things. (Once the
 // level has stood still for 45 frames the kit draws the sun's shadow map itself, the still things kept aside. three's
 // clustered lights took that for a picture of the game: the lights' grid was made anew for the bigger map, which
@@ -114,9 +116,36 @@ if (G) {
   for (let i = 0; i < 400 && (i < 8 || (HD.info.held || 0) > 0 || (G && G.r.gsBuilding > 0)); i++) { v.render(x, 240, 320); await frame(); }
 }
 for (let i = 0; i < 4; i++) { v.render(x, 240, 320); await frame(); }
+// The scene's lights change (a game's next level, set up under its loading screen): three makes every lit shader again
+// for them, and what is shown is made so in that frame. A thing hidden till then was built for the old lights: it is not
+// taken as built when it shows, but built again in the background with the rest (v.envCheck)
+const settle = async () => { for (let i = 0; i < 400 && (i < 4 || v.shadersLeft > 0 || (G && G.r.gsBuilding > 0)); i++) { v.render(x, 240, 320); await frame(); } };
+await settle();   // (built ahead, for these lights)
+const fill = new T.DirectionalLight('#ffd8b0', .4); fill.position.set(-3, 4, 2); v.scene.add(fill);
+await settle(); ofScene.length = 0;
+later.visible = true; for (let i = 0; i < 6; i++) { v.render(x, 240, 320); await frame(); }
+const envSeen = ofScene.filter(n => n.startsWith('hidden through')); ofScene.length = 0;
+// A thing of a look already drawn, but taking shadows where that one does not: three makes it a shader of its own, so it
+// waits for that as a new thing does (taken for the one drawn, it made its shader in the frame it first showed: Long
+// Shadow's mission 2 intro, two in its first frame)
+const shade = new T.Mesh(new T.TorusKnotGeometry(.5, .16, 64, 12), mover.material); shade.name = 'takes shadows'; shade.position.set(-2, 1, -3); shade.receiveShadow = true;
+v.scene.add(shade); for (let i = 0; i < 400 && (i < 6 || (HD.info.held || 0) > 0); i++) { v.render(x, 240, 320); await frame(); }
+const shadeSeen = ofScene.filter(n => n === 'mover'); ofScene.length = 0;
+// The effects chain built again (a quality step does this: its key changed). Its passes write their text in that frame
+// and the next, and in none after. (three r187's passes took a new context each time the material they sit in was built,
+// so each pass wrote its text again in the frame after the one it sits in, a layer a frame: Long Shadow's chain on a Mac
+// wrote some 70 over eight frames, 200 to 550 ms each time; NodeMaterial's contextNode in hd3d-gpu.js.)
+let chainText = null;
+const chain = v._gpuChain;
+if (chain) {
+  for (let i = 0; i < 10; i++) { v.render(x, 240, 320); await frame(); }
+  chain.key = ''; for (let i = 0; i < 2; i++) { v.render(x, 240, 320); await frame(); }
+  passText.length = 0; for (let i = 0; i < 12; i++) { v.render(x, 240, 320); await frame(); }
+  chainText = passText.slice();
+}
 await new Promise(r => setTimeout(r, 200));
 // (a shadow map's own shader for a new kind of caster is still made in the frame: told apart, not counted)
 const own = a => a.filter(l => !/Shadow|Depth/i.test(l));
 window.result = { backend: HD.info.backend, first, heldAtFirst, shownAfter, waitMs, after: Math.max(...others), stillHeld: HD.info.held || 0,
-  gpu: !!dev, aheadFrames, late: own(late), lateShadow: late.length - own(late).length, shownMs, shownHeld, turnedMs, newInFrame: own(newPipes), newShadow: newPipes.length - own(newPipes).length, lateText: own(lateText), newText: own(newText), secondText: own(secondText), readyText, earlyText: own(earlyText), refused, freedWhileBuilding };
+  gpu: !!dev, envText: envSeen, shadeText: shadeSeen, aheadFrames, late: own(late), lateShadow: late.length - own(late).length, shownMs, shownHeld, turnedMs, newInFrame: own(newPipes), newShadow: newPipes.length - own(newPipes).length, lateText: own(lateText), newText: own(newText), secondText: own(secondText), readyText, earlyText: own(earlyText), refused, freedWhileBuilding, chainText };
 </script>

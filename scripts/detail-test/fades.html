@@ -1,0 +1,180 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Detail levels that fade into each other (src/kit/lod-fade.js), for scripts/detail-test.cjs --page fades.
+// 1. A person and a dog change level: half way through the fade every pixel shows one level or the other (the
+//    two dithers are each other's complement: no holes, nothing drawn twice), about half of each where the levels
+//    differ; the fade ends in the same picture a plain switch gives, in about the time asked for, with the right
+//    meshes shown; a fade turned round goes back; a thing not on screen last frame, or hidden, switches at once;
+//    HD.lodFade = false switches at once.
+// 2. WebGPU: gs.props copies at a level's distance (red close, blue far) as that distance is pulled in, with the copies
+//    picked on the CPU and then on the chip (GPU culling): half way, each copy changing level is half red, half
+//    blue, with no holes, and the fade ends where a plain switch does. (WebGL draws copies with the library's own
+//    levels: they switch at once, as before.)
+//   ?gpu  WebGPU    ?tier=2    ?w=480&h=360    ?only=copies
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { FADE, FADING } from '../../src/kit/lod-fade.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 480), H = +(Q.get('h') || 360), { human, creature } = gs.models, { Props } = gs.props;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false;
+FADE.wait = 60;   // (the software renderer builds shaders slowly: here a fade waits for them rather than popping)
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+const px = (a, i) => [a[i], a[i + 1], a[i + 2]], near = (a, b, i, tol) => Math.abs(a[i] - b[i]) <= tol && Math.abs(a[i + 1] - b[i + 1]) <= tol && Math.abs(a[i + 2] - b[i + 2]) <= tol;
+const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (!near(a, b, i, tol)) n++; return n; };
+function stage(bg = '#9ab4d0') {
+  const v = new gs.hd.HDView({ bg, fog: 0, amb: .4 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 2.6, 30, [-.45, 1, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const ground = new T.Mesh(new T.PlaneGeometry(300, 300).rotateX(-Math.PI / 2), gs.hd.pbr('#7d8a66', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  v.cam.fov = 40; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix();
+  return { v, c, x };
+}
+const look = (S, from, at) => { S.v.cam.position.set(...from); S.v.cam.lookAt(...at); S.v.cam.updateMatrixWorld(); };
+const frame = async S => { S.v.t = 0; S.v.render(S.x, W, H); await nextFrame(); return S.x.getImageData(0, 0, W, H).data; };
+// a picture once it has stopped changing (new shaders come in over a frame or two)
+const shot = async (S, most = 60) => {
+  let last = null, same = 0;
+  for (let i = 0; i < most && same < 2; i++) { const d = await frame(S); same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d; }
+  return last;
+};
+// frames until nothing is left to build (and a few more)
+const settle = async S => { for (let i = 0; i < 400 && (S.v.shadersLeft || i < 6); i++) { await frame(S); await wait(20); } await shot(S); };
+try {
+  /* ---------- 1. a person and a dog ---------- */
+  if (Q.get('only') !== 'copies') {
+  const SPEC = { seed: 1, strands: false }, DOG = { like: 'dog' };
+  await Promise.all([human.ready([SPEC]), creature.ready([DOG])]);
+  const S = stage(), man = human(SPEC), dog = creature(DOG);
+  man.position.set(-.6, 0, 0); man.rotation.y = .5; dog.position.set(.85, 0, .25); dog.rotation.y = -1;
+  for (const f of [man, dog]) { f.rig.update(0); S.v.scene.add(f); }
+  look(S, [0, 1.15, 3.6], [0, .75, 0]);
+  for (const f of [man, dog]) f.visible = false;
+  const E = await shot(S);
+  for (const f of [man, dog]) f.visible = true;
+  await settle(S);
+  for (let i = 0; i < 400 && !(S.v._fadeOk?.has(man) && S.v._fadeOk?.has(dog)); i++) { await frame(S); await wait(20); }   // (their dithered twins, built ahead)
+  const A0 = await shot(S); out['people-0'] = S.c.toDataURL();
+  // the change: frozen at the start (a fade of 10^6 s) to see it begin; its dithered shaders were built ahead while the two stood there
+  HD.lodFadeTime = 1e6;
+  man.lod = 1; dog.lod = 1;
+  let waited = 0;
+  for (; waited < 300 && !(FADING.get(man)?.t > 0 && FADING.get(dog)?.t > 0); waited++) { await frame(S); await wait(20); }
+  check('a change of level on screen fades', FADING.has(man) && FADING.has(dog), `${FADING.size} fading`);
+  check('the dithered shaders were built ahead: the fade starts with the next frame', waited <= 1, `${waited} frames before both had begun`);
+  const mid = async t => { for (const f of [man, dog]) { const k = FADING.get(f); if (k) k.t = t; } return shot(S); };
+  await mid(.25); out['people-quarter'] = S.c.toDataURL();
+  const M = await mid(.5); out['people-half'] = S.c.toDataURL();
+  await mid(.75); out['people-three-quarters'] = S.c.toDataURL();
+  await mid(.5);
+  // to the end at the usual pace
+  HD.lodFadeTime = .4;
+  const t0 = performance.now(); let frames = 0;
+  for (; frames < 100 && FADING.size; frames++) await frame(S);
+  const took = (performance.now() - t0) / 1000;
+  const A1 = await shot(S); out['people-1'] = S.c.toDataURL();
+  check('the fade ends in about the time asked for', !FADING.size && took < 2, `${frames} frames, ${took.toFixed(2)} s for the second half of a 0.4 s fade (a frame counts at most 0.25 s)`);
+  check('at its end only the new level is shown', !man.lods[0].visible && man.lods[1].visible && !man.lods[2].visible && !(man.wet?.visible) && !(man.eyeShadow?.visible) && man.strips.every(c => !c.visible) && !dog.lods[0].visible && dog.lods[1].visible,
+    `person ${man.lods.map(m => +m.visible).join('')}, wet eyes ${man.wet?.visible}, dog ${dog.lods.map(m => +m.visible).join('')}`);
+  check('at its end the far level\'s rig leaves the small bones out', man.rig.fine === false && man.rig.near === true);
+  // the same change made at once (fades off): the same picture as the fade's end
+  HD.lodFade = false; man.lod = 0; dog.lod = 0;
+  check('with HD.lodFade = false a change is at once', !FADING.size && man.lods[0].visible && !man.lods[1].visible && man.wet?.visible !== false);
+  await shot(S); man.lod = 1; dog.lod = 1;
+  const P1 = await shot(S); HD.lodFade = true;
+  const endOff = differ(A1, P1, 6);
+  check('a fade ends in the picture a plain switch gives', endOff <= 8, `${endOff} pixels differ`);
+  // half way: one level or the other at each pixel, about half of each
+  {
+    let region = 0, either = 0, covered = 0, holes = 0, both = 0, as0 = 0, as1 = 0;
+    for (let i = 0; i < M.length; i += 4) {
+      const in0 = !near(A0, E, i, 12), in1 = !near(P1, E, i, 12);
+      if (!in0 && !in1) continue;
+      region++;
+      if (near(M, A0, i, 12) || near(M, P1, i, 12)) either++;
+      if (!near(A0, E, i, 24) && !near(P1, E, i, 24)) { covered++; if (near(M, E, i, 6)) holes++; }
+      if (!near(A0, P1, i, 24)) { both++; const d0 = Math.abs(M[i] - A0[i]) + Math.abs(M[i + 1] - A0[i + 1]) + Math.abs(M[i + 2] - A0[i + 2]), d1 = Math.abs(M[i] - P1[i]) + Math.abs(M[i + 1] - P1[i + 1]) + Math.abs(M[i + 2] - P1[i + 2]); if (d0 < d1) as0++; else as1++; }
+    }
+    info.half = { region, either, covered, holes, differing: both, likeLevel0: as0, likeLevel1: as1 };
+    check('half way, each pixel shows one level or the other', region > 3000 && either >= region * .97, `${either} of ${region} pixels the two cover match one of them`);
+    check('half way, no holes where both levels cover', holes <= covered * .002, `${holes} of ${covered} pixels show the ground through them`);
+    check('half way, about half of each level shows where they differ', both > 200 && as0 > both * .3 && as1 > both * .3, `${as0} like the old level, ${as1} like the new, of ${both}`);
+    const moved = differ(M, A0, 12), moved1 = differ(M, P1, 12);
+    check('half way is neither level whole', moved > 100 && moved1 > 100, `${moved} pixels from the old, ${moved1} from the new`);
+  }
+  // turned round: back towards the level it came from half way, then on to it
+  {
+    HD.lodFadeTime = 1e6; man.lod = 0;
+    for (let i = 0; i < 300 && !(FADING.get(man)?.t > 0); i++) { await frame(S); await wait(20); }
+    FADING.get(man).t = .3; man.lod = 1;
+    const f = FADING.get(man);
+    check('a change back while fading turns the fade round', f && Math.abs(f.t - .7) < 1e-6 && f.to.includes(man.lods[1]) && f.from.includes(man.lods[0]), f ? `share ${f.t}` : 'no fade');
+    HD.lodFadeTime = .4; for (let i = 0; i < 100 && FADING.size; i++) await frame(S);
+    check('and ends at that level', !FADING.size && !man.lods[0].visible && man.lods[1].visible && man.lod === 1 && man.rig.fine === false);
+    // one that had not begun (its shaders building) turned back ends at once
+    FADE.on = true; HD.lodFadeTime = .4;
+  }
+  // one not on screen last frame (a new one, or one shown again) takes its level at once
+  {
+    const other = human(SPEC); other.position.set(-2, 0, -1); other.rig.update(0); S.v.scene.add(other);
+    other.lod = 2;
+    check('a new one changes level at once', !FADING.has(other) && other.lods[2].visible && !other.lods[0].visible);
+    await frame(S); other.visible = false; await frame(S); other.lod = 0; other.visible = true;
+    check('a hidden one changes level at once', !FADING.has(other) && other.lods[0].visible && !other.lods[2].visible);
+    S.v.scene.remove(other);
+  }
+  info.people = { backend: HD.info.backend, waitedFrames: waited, endFrames: frames };
+  }
+
+  /* ---------- 2. copies (WebGPU) ---------- */
+  if (GPU) {
+    const P = stage('#d8dde4'), props = new Props(P.v.scene), red = gs.hd.pbr('#d0301c', { rough: .8 }), blue = gs.hd.pbr('#1c48d0', { rough: .8 });
+    const box = new T.BoxGeometry(1.1, 1.1, 1.1).translate(0, .55, 0);
+    const kind = props.kind('box', box, red, { lod: [[30, box.clone(), blue]], capacity: 64 });   // (a geometry of its own: the library gives a level with the same one the other's material)
+    for (let k = 0; k < 24; k++) for (const x of [-1.6, 1.6]) props.add('box', x + (k % 2) * .4, 0, -12 - k * 1.5);
+    props.done();
+    info.copyLevels = kind.LODinfo?.render?.levels.map(l => `${Math.sqrt(l.distance).toFixed(1)} m: #${l.object.material.color?.getHexString()}`).join(', ');
+    const red_ = (a, i) => a[i] > a[i + 1] + 50 && a[i] > a[i + 2] + 50, blue_ = (a, i) => a[i + 2] > a[i] + 50 && a[i + 2] > a[i + 1] + 30;
+    const count = a => { let r = 0, b = 0; for (let i = 0; i < a.length; i += 4) { if (red_(a, i)) r++; else if (blue_(a, i)) b++; } return { red: r, blue: b }; };
+    // the far level's distance pulled in from 30 m to 24 m with the camera still, as a scope's zoom moves them: the copies between change level
+    const far = kind.LODinfo.render.levels[1], at = m => { far.distance = m * m; };
+    look(P, [0, 2.2, 0], [0, .5, -30]);
+    for (const cull of [false, true]) {
+      const tag = cull ? 'gpu-culled' : 'cpu-picked';
+      HD.gpuCull = cull; HD.lodFade = true; HD.lodFadeTime = .4; at(30);
+      await settle(P);
+      kind.userData.gpuWasVisible = false; const E = await shot(P); kind.userData.gpuWasVisible = true;   // (what is behind them: hd3d.js shows the copies' twins as the kind was)
+      const A = await shot(P); out[`copies-${tag}-before`] = P.c.toDataURL();
+      // a plain switch, for the end
+      HD.lodFade = false; at(24); const B = await shot(P); out[`copies-${tag}-after`] = P.c.toDataURL();
+      at(30); await shot(P); HD.lodFade = true;
+      for (let i = 0; i < 10; i++) { await frame(P); await wait(20); }   // (the fading lists' shaders built: they are asked for each frame)
+      // the change: five frames of a 1 s fade, each counted as a tenth of a second (the most a frame counts), then held there
+      HD.lodFadeTime = 1; at(24);
+      for (let i = 0; i < 5; i++) { await wait(130); await frame(P); }
+      HD.lodFadeTime = 1e6;
+      const M = await shot(P); out[`copies-${tag}-half`] = P.c.toDataURL();
+      const lists = (kind.userData.gpuTwin?.fades?.() || []).map(m => m.count), counts = lists.join('/');
+      HD.lodFadeTime = .4; for (let i = 0; i < 12; i++) { await wait(60); await frame(P); }
+      const F = await shot(P);
+      const cA = count(A), cB = count(B), cM = count(M);
+      let cross = 0, holes = 0, wasRed = 0;
+      for (let i = 0; i < M.length; i += 4) if (red_(A, i) && blue_(B, i)) { cross++; if (red_(M, i)) wasRed++; if (near(M, E, i, 10)) holes++; }
+      check(`${tag}: drawn the way asked for`, kind.userData.gpuTwin?.isGpu() === cull);
+      info[tag] = { before: cA, after: cB, half: cM, crossing: cross, halfRed: wasRed, holes, fadeLists: cull ? 'on the chip' : counts };
+      check(`${tag}: the far level's distance pulled in turns some copies from the near level to the far`, cross > 300 && cB.blue > cA.blue, `${cross} pixels go from red to blue`);
+      check(`${tag}: half way, the copies changing level are half one level, half the other`, wasRed > cross * .3 && wasRed < cross * .7, `${wasRed} of ${cross} still red`);
+      check(`${tag}: half way, no holes in them`, holes <= cross * .01, `${holes} of ${cross} pixels show what is behind them`);
+      if (!cull) check(`${tag}: the copies changing level are in both levels' fading lists`, lists.length === 2 && lists[0] > 0 && lists[0] === lists[1], counts);
+      const endOff = differ(F, B, 6);
+      check(`${tag}: the fade ends in the picture a plain switch gives`, endOff <= 8, `${endOff} pixels differ`);
+      HD.lodFade = false; at(30); await shot(P); HD.lodFade = true;
+    }
+    HD.gpuCull = 'auto';
+  } else info.copies = 'WebGL: copies use the library\'s own levels and switch at once';
+  window.result = { out, info, checks };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

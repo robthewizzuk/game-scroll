@@ -1,16 +1,22 @@
 # Checks pull requests. "check" runs the fast tests (game build, licences, types, how every game uses
 # gs (TypeScript), the starter templates, kits, Tiny Brains, feed ranking, website build). "plan" works out which games to play: the changed games, plus, when
 # shared code changes (kits, gamescroll.js, the app, three.js and other packages, the test scripts,
-# this file), the 3 games from each style that use the most engine parts, split across 2 parallel
+# this file), the 3 games from each style that use the most engine parts, split across 3 parallel
 # "play" jobs. Those play the games in a headless browser (smoke, streamed, fold, and sweep for
 # Console games and changed Next Gen games), plus the speed budget
 # and Tiny Brains check for changed games. "code-flags" flags game code that touches the network,
 # storage or native features (scripts/game-lint.mjs), and lists changed files outside src/games/ that
 # need a careful read, gives kit hints (advice) on changed games, and checks that changed games are not
-# near-copies of games already here (scripts/unique.mjs). Five more jobs: a mutation check of
-# the server and licence guards, a maths probe across JavaScript engines, a frame generation quality
-# check, the app and sound checks, and a shared game link check (each only when those parts change). Runs with read-only
-# permissions and no secrets, so it is safe for pull requests from forks. See CONTRIBUTING.md.
+# near-copies of games already here (scripts/unique.mjs). More jobs run only when their parts change: a
+# mutation check of the server and licence guards, frame generation quality ("framegen") and the upscalers
+# ("sgsr", three parts side by side), the app and sound checks ("app") and the engine test scenes
+# ("app-scenes"), and a shared game link check. The maths probe across JavaScript engines (a warning, never
+# red) runs after merging instead (maths-probe.yml). Runs with read-only permissions and no secrets, so it
+# is safe for pull requests from forks. See CONTRIBUTING.md and docs/testing.md ("The PR check").
+#
+# Speed: GitHub gives this repository about 20 machines at once, shared by every open pull request, so a
+# job that has nothing to do should cost seconds, and the slow browser checks are split so no one job
+# takes much over 8 minutes. The browser setup is in .github/actions/browser.
 name: Game PR check
 
 on:
@@ -42,11 +48,20 @@ jobs:
       - name: Build every game as a streamed file
         run: npm run games
 
+      # (the web app as the store apps carry it; the Android builds skip pull requests that change only
+      # games, kits or test scripts, so this is what shows such a change still builds for them)
+      - name: The store apps' web build
+        run: npm run build
+
       - name: Open-source list in Settings is up to date
         run: npm run licences
 
       - name: Types for gs cover every part
         run: npm run types-check
+
+      # (the phone and driver steering list, src/steer-list.js: a rule a phone would not understand does nothing there, silently)
+      - name: The phone and driver steering list is one the app understands
+        run: node scripts/steer.mjs
 
       # TypeScript reads every line of every game against src/gamescroll.d.ts (about a second): a kit,
       # method, option or definition field that doesn't exist. The self-test first makes sure it still sees them.
@@ -112,7 +127,7 @@ jobs:
           if [ -n "$shared" ]; then
             echo "Shared code changed, so the engine-heavy games are played too:"; echo "$shared" | sed 's/^/  /'
             all=$(echo $(node scripts/pick-games.mjs 3 --why) $changed | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')
-            SHARDS=2
+            SHARDS=3
           else
             all=$changed; SHARDS=1
           fi
@@ -150,31 +165,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install
-        run: npm ci
-
-      - name: Which Playwright
-        id: pw
-        run: echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the browser
-        id: pwcache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
-
-      - name: Install Playwright
-        env:
-          PW: ${{ steps.pw.outputs.version }}
-        run: |
-          npm i --no-save "playwright@$PW"
-          if [ "${{ steps.pwcache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps chromium; else npx playwright install --with-deps chromium; fi
+      - name: Node, packages and the test browser
+        uses: ./.github/actions/browser
 
       - name: Build the app with games inside
         id: build
@@ -251,6 +243,7 @@ jobs:
           { echo "### Changed outside src/games/ (review every line)"; echo; echo "$other" | sed 's/^/- `/; s/$/`/'; } >> "$GITHUB_STEP_SUMMARY"
           for f in $other; do echo "::warning file=$f::This pull request changes $f, which is outside src/games/. Shared code and CI files run for every game, so review it line by line."; done
 
+
   # Mutation check: puts each server and licence guard's defect back, one at a time, and makes sure a
   # test then fails (scripts/mutants.mjs). Runs when the Worker, the licence list or the check change.
   guards:
@@ -287,10 +280,10 @@ jobs:
 
   # Frame generation quality: made frames scored against the scene really drawn at that moment, in 13
   # suites (blend, ahead, two frames between, hard cases, upscaled...), each scene no worse than
-  # scripts/framegen-test/baseline.json. Then the upscalers against the same scene drawn at twice the
-  # size: SGSR 2 no worse than a plain stretch, and our changes to it no worse than Qualcomm's shader
-  # as it was. WebGPU in software (SwiftShader), so no GPU needed. Runs when frame generation, the 3D
-  # kit's WebGPU path, SGSR 2, the frame pacing or the checks change.
+  # scripts/framegen-test/baseline.json; recipe materials up close; a lost graphics chip coming back; and
+  # see-through things over the ground. WebGPU in software (SwiftShader), so no GPU needed. Runs when frame
+  # generation, the 3D kit's WebGPU path, SGSR 2, the frame pacing or the checks change. The upscalers'
+  # check, on the same changes, is "sgsr" below, on machines of its own.
   framegen:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -304,67 +297,82 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare)|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|src/kit/pipes\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss|shader-replay)|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
 
-      - uses: actions/setup-node@v7
+      - name: Node, packages and the test browser
         if: steps.changed.outputs.run
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install
-        if: steps.changed.outputs.run
-        run: npm ci
-
-      - name: Which Playwright
-        if: steps.changed.outputs.run
-        id: pw
-        run: echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the browser
-        if: steps.changed.outputs.run
-        id: pwcache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
-
-      - name: Install Playwright
-        if: steps.changed.outputs.run
-        env:
-          PW: ${{ steps.pw.outputs.version }}
-        run: |
-          npm i --no-save "playwright@$PW"
-          if [ "${{ steps.pwcache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps chromium; else npx playwright install --with-deps chromium; fi
+        uses: ./.github/actions/browser
 
       - name: Made frames no worse than the baseline
         if: steps.changed.outputs.run
         run: node scripts/framegen-test.cjs --check
 
-      - name: SGSR 2 no worse than a plain stretch, and our changes to it no worse than without
-        if: steps.changed.outputs.run
-        run: node scripts/upscale-compare.cjs --webgpu
-
-      # (the WebGL fallback's own SGSR 2 shader, sgsr2.js, once its history has settled)
-      - name: The same on WebGL
-        if: steps.changed.outputs.run
-        run: node scripts/upscale-compare.cjs --warm 80 --modes plain,sgsr2,sgsr2-plain
-
       # (gs.models.material's close-up look on WebGPU: never hidden while its shader comes in, steady far off, sharp up close)
       - name: Recipe materials up close
-        if: steps.changed.outputs.run
+        if: ${{ !cancelled() && steps.changed.outputs.run }}
         run: node scripts/close-up.cjs
+
+      # (the graphics chip lost mid-round, as a driver reset or a crashed GPU process does: the round pauses, a new WebGPU
+      # device is made, the round is drawn again on it under a cover and carries on, and the loss is reported; then the
+      # same while the card waits in the feed. scripts/gpu-loss.cjs)
+      - name: A lost graphics chip comes back
+        if: ${{ !cancelled() && steps.changed.outputs.run }}
+        run: npm run build:bundled && node scripts/gpu-loss.cjs gravity-grip bumper-bowl && node scripts/gpu-loss.cjs gravity-grip --when feed
+
+      # (the pipelines a round made in play, noted and made ahead the next time the game comes up: src/kit/pipes.js. Two
+      # launches of the browser on one profile; the second must make ahead what the first noted. scripts/shader-replay.cjs)
+      - name: Shaders a round made are made ahead next time
+        if: ${{ !cancelled() && steps.changed.outputs.run }}
+        run: node scripts/shader-replay.cjs paint-run bunker-breakout --runs 2
 
       # (dust, smoke and glows are drawn over the scene: the ground round each puff is shaded as it is without it,
       # with no square where the puff's corners are; the scene checks itself, scripts/look-compare/index.html dustScene)
       - name: See-through things leave the ground behind them alone
-        if: steps.changed.outputs.run
+        if: ${{ !cancelled() && steps.changed.outputs.run }}
         run: PICK=dust node scripts/look-compare.cjs save "$RUNNER_TEMP/look" --webgpu
 
+  # The upscalers against the same scene drawn at twice the size (scripts/upscale-compare.cjs): SGSR 2 no
+  # worse than a plain stretch, and our changes to it no worse than Qualcomm's shader as it was; on WebGPU
+  # also the sharper textures under it. The WebGPU run is split in two by scene (about 4 minutes each on
+  # GitHub's machines, 8 in one); the third part is the WebGL fallback's own shader (sgsr2.js). Runs on the
+  # same changes as framegen.
+  sgsr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { part: 'webgpu 1', args: '--webgpu --scenes still,camera-moves,box-moves' }
+          - { part: 'webgpu 2', args: '--webgpu --scenes anti-aliasing,textured' }
+          - { part: 'webgl', args: '--warm 80 --modes plain,sgsr2,sgsr2-plain' }
+    name: sgsr (${{ matrix.part }})
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Did frame generation or the upscalers change?
+        id: changed
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss)|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
+
+      - name: Node, packages and the test browser
+        if: steps.changed.outputs.run
+        uses: ./.github/actions/browser
+
+      - name: SGSR 2 no worse than a plain stretch, and our changes to it no worse than without
+        if: steps.changed.outputs.run
+        run: node scripts/upscale-compare.cjs ${{ matrix.args }}
+
   # The app around a game (screen kept on in a round, finer touch, even pixels and the LCD look, the
-  # one-line soundtrack, the phone-only save) and the sound itself (every ready-made sound is heard and
-  # none is too loud, the limiter holds, instrument sets are level, the music clock keeps the beat
-  # through a frozen frame), in a headless browser. Runs when the app shell, the sound or the checks change.
+  # one-line soundtrack, the phone-only save, the font library, 2D looks, the phone test tour, loading,
+  # getting a round ready, old WebViews, reports) and the sound itself (every ready-made sound is heard and
+  # none is too loud, the limiter holds, instrument sets are level, the music clock keeps the beat through
+  # a frozen frame), in a headless browser. Runs when the app shell, the sound or the checks change. The
+  # engine test scenes, the slowest part of the app test, are "app-scenes" below, on a machine of their own.
   app:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -378,102 +386,55 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|saves|soundtrack|sfx|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(sound|voice-fx|acoustics|instruments|compose|foley|awake|rhythm|lazy|cleanup|tick|progress|fontlib|font-files|pixel|gfx|materials2d|sketch|icons|icon-data)\.js|scripts/(app-test\.cjs|sound-test)|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No app shell or sound changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|saves|soundtrack|sfx|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill|update)\.js|src/kit/(sound|voice-fx|acoustics|instruments|compose|foley|awake|rhythm|lazy|cleanup|tick|progress|fontlib|font-files|pixel|gfx|materials2d|sketch|icons|icon-data)\.js|scripts/(app-test\.cjs|sound-test)|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No app shell or sound changes."; fi
 
-      - uses: actions/setup-node@v7
+      - name: Node, packages and the test browser
         if: steps.changed.outputs.run
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install
-        if: steps.changed.outputs.run
-        run: npm ci
-
-      - name: Which Playwright
-        if: steps.changed.outputs.run
-        id: pw
-        run: echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the browser
-        if: steps.changed.outputs.run
-        id: pwcache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
-
-      - name: Install Playwright
-        if: steps.changed.outputs.run
-        env:
-          PW: ${{ steps.pw.outputs.version }}
-        run: |
-          npm i --no-save "playwright@$PW"
-          if [ "${{ steps.pwcache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps chromium; else npx playwright install --with-deps chromium; fi
+        uses: ./.github/actions/browser
 
       - name: Build the app with games inside
         if: steps.changed.outputs.run
         id: build
         run: npm run build:bundled
 
-      - name: The app around a game (awake, touch, pixels, soundtrack, phone save)
+      - name: The app around a game (awake, touch, pixels, soundtrack, phone save, tour, loading...)
         if: steps.changed.outputs.run
-        run: node scripts/app-test.cjs
+        run: node scripts/app-test.cjs -scenes
 
       - name: Sound (ready-made sounds, limiter, instruments, music clock, shaped speech)
         if: ${{ !cancelled() && steps.changed.outputs.run && steps.build.outcome == 'success' }}
         run: node scripts/sound-test.cjs
 
-  # Maths probe: do V8 (Android, the Worker) and JavaScriptCore (iPhone) give the same bits for
-  # Math.sin, exp...? Informational (a warning, never red). Runs when the kits change.
-  maths:
+  # The engine test scenes (src/detail-tour.js) flown by the phone test tour, each detail system off and on:
+  # 18 scenes drawn small in software, one alone on a bigger screen with frames held over half a second, ray
+  # tracing alone (scripts/app-test.cjs scenes). About 6 minutes, so a machine of its own. Runs when the app
+  # shell, the tour or the scenes change (not for the sound and 2D look files that only "app" needs).
+  app-scenes:
     runs-on: ubuntu-24.04
-    # first run on a new Playwright version installs WebKit's system packages (over 10 minutes on a
-    # slow mirror); the browsers are cached after that
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Did the kits change?
+      - name: Did the app shell, the tour or the scenes change?
         id: changed
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/|scripts/math-probe\.cjs)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No kit changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|saves|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(awake|lazy|cleanup|tick|progress)\.js|scripts/app-test\.cjs|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No app shell, tour or scene changes."; fi
 
-      - uses: actions/setup-node@v7
+      - name: Node, packages and the test browser
         if: steps.changed.outputs.run
-        with:
-          node-version-file: .nvmrc
-          cache: npm
+        uses: ./.github/actions/browser
 
-      - name: Which Playwright
+      - name: Build the app with games inside
         if: steps.changed.outputs.run
-        id: pw
-        run: echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
+        run: npm run build:bundled
 
-      - name: Cache the browsers
+      - name: The engine test scenes
         if: steps.changed.outputs.run
-        id: pwcache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-webkit-${{ runner.os }}-${{ steps.pw.outputs.version }}
-
-      - name: Install Playwright with Chromium and WebKit
-        if: steps.changed.outputs.run
-        env:
-          PW: ${{ steps.pw.outputs.version }}
-        run: |
-          npm ci && npm i --no-save "playwright@$PW"
-          if [ "${{ steps.pwcache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps chromium webkit; else npx playwright install --with-deps chromium webkit; fi
-
-
-      - name: Same maths in every engine?
-        if: steps.changed.outputs.run
-        run: node scripts/math-probe.cjs
+        run: node scripts/app-test.cjs scenes
 
   # Shared game links: opens the streamed web app from a link to one game (?g=<id>) on quick, slow and
   # stale connections; that game must be the first card and the one Play starts, and a link to a game
@@ -492,38 +453,11 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|share|remote)\.js|scripts/(share-link|build-games)\.mjs|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/workflows/game-pr-check\.yml)'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No feed or link changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|share|remote)\.js|scripts/(share-link|build-games)\.mjs|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No feed or link changes."; fi
 
-      - uses: actions/setup-node@v7
+      - name: Node, packages and the test browser
         if: steps.changed.outputs.run
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install
-        if: steps.changed.outputs.run
-        run: npm ci
-
-      - name: Which Playwright
-        if: steps.changed.outputs.run
-        id: pw
-        run: echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the browser
-        if: steps.changed.outputs.run
-        id: pwcache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
-
-      - name: Install Playwright
-        if: steps.changed.outputs.run
-        env:
-          PW: ${{ steps.pw.outputs.version }}
-        run: |
-          npm i --no-save "playwright@$PW"
-          if [ "${{ steps.pwcache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps chromium; else npx playwright install --with-deps chromium; fi
+        uses: ./.github/actions/browser
 
       - name: A shared link opens that game
         if: steps.changed.outputs.run

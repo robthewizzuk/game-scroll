@@ -4,6 +4,12 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.os.Build;
 import com.getcapacitor.Logger;
+import com.google.android.play.core.splitinstall.SplitInstallManager;
+import com.google.android.play.core.splitinstall.SplitInstallManagerFactory;
+import com.google.android.play.core.splitinstall.SplitInstallRequest;
+import com.google.android.play.core.splitinstall.SplitInstallSessionState;
+import com.google.android.play.core.splitinstall.SplitInstallStateUpdatedListener;
+import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -25,16 +31,20 @@ import java.util.zip.InflaterInputStream;
 import org.json.JSONObject;
 
 /**
- * Qualcomm's NPU libraries (QNN, Qualcomm's AI Engine runtime): where they are on this phone, and in
- * the APKs we hand out ourselves, getting them.
+ * Qualcomm's NPU libraries (QNN, Qualcomm's AI Engine runtime): where they are on this phone, and getting
+ * them. They are never inside the app itself (they'd be about 57 MB of it), and they're only fetched on a
+ * phone whose chip is in assets/qnn-runtime.json, the first time a game asks for a model (want(): face,
+ * hand or sound tracking), on Wi-Fi. Until they're in, the models run on the CPU.
  *
- * Store (release) builds carry them inside the app, because Google Play doesn't let an app download
- * code. Our own APKs (debug builds) leave them out, which saves about 57 MB. On a phone whose chip is in
- * assets/qnn-runtime.json, the app downloads just the five files that phone needs (about 40 MB). They
- * come from Qualcomm's own release on Maven Central, once, on Wi-Fi, in the background. The app reads
- * only those files out of the release with range requests, unpacks them, and keeps each one only if its
- * SHA-256 is the one pinned in that JSON (scripts/qnn-pin.mjs). Any other file is thrown away and never
- * loaded. Until they're in, the models run on the CPU.
+ * Store (release) builds ask Google Play for the app's on-demand module that carries them (android/qnn),
+ * because Play doesn't let an app download code itself. Play installs it in the background; the app copies
+ * the phone's five files out of it into its own folder, each checked against the same SHA-256s as below,
+ * and gives the module back.
+ *
+ * Our own APKs (debug builds) download just the five files the phone needs (about 40 MB) from Qualcomm's
+ * own release on Maven Central, once, in the background. The app reads only those files out of the
+ * release with range requests, unpacks them, and keeps each one only if its SHA-256 is the one pinned in
+ * that JSON (scripts/qnn-pin.mjs). Any other file is thrown away and never loaded.
  *
  * All the files sit in one folder: ONNX Runtime loads libQnnHtp.so from there (backend_path) and
  * libQnnSystem.so next to it, QNN finds its other libraries through their own $ORIGIN run path, and the
@@ -48,7 +58,9 @@ final class QnnRuntime {
     private JSONObject pin;
     private volatile File dir;           // the folder holding QNN, once known
     private volatile String state = "";  // see state()
-    private boolean busy, gaveUp;
+    private boolean busy, gaveUp, asked;
+    /** The on-demand Play module with QNN in store builds (android/qnn). */
+    static final String MODULE = "qnn";
 
     QnnRuntime(Context c) { ctx = c.getApplicationContext(); }
 
@@ -64,7 +76,7 @@ final class QnnRuntime {
         if (!snapdragon()) { state = "none"; return null; }
         File own = new File(ctx.getApplicationInfo().nativeLibraryDir);
         if (new File(own, "libQnnHtp.so").exists()) { state = "bundled"; return dir = own; }
-        if (!BuildConfig.QNN_DOWNLOAD || arch() == 0) { state = "none"; return null; }
+        if (!(BuildConfig.QNN_DOWNLOAD || BuildConfig.QNN_MODULE) || arch() == 0) { state = "none"; return null; }
         File d = folder();
         if (d != null && ready(d)) { state = "ready"; return dir = d; }
         if (state.isEmpty() || "none".equals(state)) state = "missing";
@@ -72,20 +84,102 @@ final class QnnRuntime {
     }
 
     /**
-     * Where QNN stands, for available(): "bundled" (in the app), "ready" (downloaded), "downloading",
-     * "wifi" (waiting for Wi-Fi), "space" (phone too full), "failed" (tries again next start),
-     * "missing" (not fetched yet), "none" (no supported Qualcomm NPU: the CPU).
+     * Where QNN stands, for available(): "bundled" (in the app: a build that carries it), "installing NN%"
+     * / "installed" / "unpacking" (the Play module), "ready" (unpacked or downloaded), "downloading", "wifi" (waiting for Wi-Fi), "space" (phone too full), "failed"
+     * (tries again the next time the app starts and a game asks for a model), "missing" (not fetched yet:
+     * no game has asked for one), "none" (no supported Qualcomm NPU: the CPU).
      */
     String state() { dir(); return state; }
 
     /** The folders the NPU may load its half of QNN from: ours first, then the phone's own. */
     String adspPath() {
-        File d = BuildConfig.QNN_DOWNLOAD && arch() != 0 ? folder() : null;
+        File d = (BuildConfig.QNN_DOWNLOAD || BuildConfig.QNN_MODULE) && arch() != 0 ? folder() : null;
         return (d != null ? d.getAbsolutePath() + ";" : "") + ctx.getApplicationInfo().nativeLibraryDir
             + ";/vendor/lib/rfsa/adsp;/vendor/lib64/rfs/dsp/snap;/vendor/dsp/cdsp;/vendor/dsp;/system/lib/rfsa/adsp;/system/vendor/lib/rfsa/adsp;/dsp";
     }
 
-    /** In our own APKs on a supported phone: fetch QNN in the background (after delayMs) if it isn't here yet. */
+    /** A game wants a model (NPUPlugin.loadModel): get QNN if this phone can use it and it isn't here yet. */
+    synchronized void want() {
+        if (asked || dir() != null || arch() == 0) return;
+        if (BuildConfig.QNN_MODULE) { asked = true; requestModule(); }
+        else fetchSoon(0);
+    }
+
+    // Store builds: ask Google Play for the on-demand module, on Wi-Fi. Play downloads and installs it in the
+    // background without stopping the app. It carries QNN as files (assets/qnn/, not native libraries: those
+    // would have to come for every kind of CPU the app does), which unpack() copies into the same checked
+    // folder the download fills, then hands the module back to Play to free its space. This game stays on the CPU.
+    private void requestModule() {
+        try {
+            SplitInstallManager m = SplitInstallManagerFactory.create(ctx);
+            if (m.getInstalledModules().contains(MODULE)) { unpackSoon(); return; }
+            if (metered()) { state = "wifi"; asked = false; return; }   // asks again when a game next wants a model
+            state = "installing 0%";
+            m.registerListener(new SplitInstallStateUpdatedListener() {
+                @Override
+                public void onStateUpdate(SplitInstallSessionState s) {
+                    if (!s.moduleNames().contains(MODULE)) return;
+                    int st = s.status();
+                    if (st == SplitInstallSessionStatus.DOWNLOADING && s.totalBytesToDownload() > 0) state = "installing " + (100 * s.bytesDownloaded() / s.totalBytesToDownload()) + "%";
+                    else if (st == SplitInstallSessionStatus.INSTALLED) { state = "installed"; m.unregisterListener(this); unpackSoon(); }
+                    else if (st == SplitInstallSessionStatus.FAILED || st == SplitInstallSessionStatus.CANCELED || st == SplitInstallSessionStatus.REQUIRES_USER_CONFIRMATION) {
+                        state = "failed"; m.unregisterListener(this); Logger.warn("NPU", "QNN module: status " + st + ", error " + s.errorCode());
+                    }
+                }
+            });
+            m.startInstall(SplitInstallRequest.newBuilder().addModule(MODULE).build())
+                .addOnFailureListener(e -> { state = "failed"; Logger.warn("NPU", "QNN module: " + e.getMessage()); });
+        } catch (Exception e) { state = "failed"; Logger.warn("NPU", "QNN module: " + e.getMessage()); }
+    }
+
+    /** Store builds, at start and once the module is in: unpack it in the background if it's installed and not unpacked yet. */
+    synchronized void unpackSoon() {
+        if (!BuildConfig.QNN_MODULE || busy || dir() != null || arch() == 0) return;
+        try { if (!SplitInstallManagerFactory.create(ctx).getInstalledModules().contains(MODULE)) return; } catch (Exception e) { return; }
+        busy = true; state = "installed";
+        bg.execute(() -> {
+            try { unpack(); }
+            catch (Exception e) { Logger.warn("NPU", "QNN module: " + e.getMessage() + " (tries again next start)"); }
+            finally { synchronized (this) { busy = false; } }
+        });
+    }
+
+    private void unpack() throws Exception {
+        // the module's files: through a fresh look at the installed app, so a module Play put in during this run counts
+        android.content.res.AssetManager am;
+        try { am = ctx.createPackageContext(ctx.getPackageName(), 0).getAssets(); } catch (Exception e) { am = ctx.getAssets(); }
+        JSONObject files = pin().getJSONObject("files");
+        File d = folder();
+        if (d == null || (!d.isDirectory() && !d.mkdirs())) throw new Exception("no folder");
+        long total = 0;
+        for (String n : need()) total += files.getJSONObject(n).getLong("size");
+        if (d.getUsableSpace() < total + 200_000_000L) { state = "space"; return; }
+        state = "unpacking";
+        for (String n : need()) {
+            JSONObject f = files.getJSONObject(n);
+            File out = new File(d, n);
+            if (out.length() == f.getLong("size")) continue;
+            try (InputStream in = new BufferedInputStream(am.open("qnn/" + n), 1 << 16)) { keep(in, n, f, out); }
+        }
+        done(d, "unpacked from the Play module");
+        // the copy in the module isn't needed any more: Play takes it away later, freeing its space
+        try { SplitInstallManagerFactory.create(ctx).deferredUninstall(java.util.Collections.singletonList(MODULE)); } catch (Exception e) { Logger.warn("NPU", "QNN module: " + e.getMessage()); }
+    }
+
+    private void done(File d, String how) throws Exception {
+        try (OutputStream o = new FileOutputStream(new File(d, "ready"))) { o.write(mark().getBytes(StandardCharsets.UTF_8)); }
+        File[] all = d.getParentFile().listFiles();   // an older QNN from before an app update
+        if (all != null) for (File old : all) if (!old.equals(d)) wipe(old);
+        dir = d; state = "ready";
+        Logger.info("NPU", "QNN " + pin().optString("qnn") + " for V" + arch() + " " + how);
+    }
+
+    private boolean metered() {
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        return cm == null || cm.getActiveNetwork() == null || cm.isActiveNetworkMetered();
+    }
+
+    /** In our own APKs on a supported phone: fetch QNN in the background (after delayMs) if it isn't here yet. Called only when a game asks for a model (want()). */
     synchronized void fetchSoon(long delayMs) {
         if (busy || gaveUp || dir() != null || !BuildConfig.QNN_DOWNLOAD || arch() == 0) return;
         busy = true;
@@ -98,7 +192,7 @@ final class QnnRuntime {
             } catch (Exception e) {
                 state = "failed";
                 Logger.warn("NPU", "QNN download: " + e.getMessage());
-                synchronized (this) { gaveUp = true; }   // tries again next start, not on every model
+                synchronized (this) { gaveUp = true; }   // tries again after the next start, not on every model
             } finally { synchronized (this) { busy = false; } }
         });
     }
@@ -148,8 +242,7 @@ final class QnnRuntime {
 
     private void fetch() throws Exception {
         if (dir() != null) return;
-        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (cm == null || cm.getActiveNetwork() == null || cm.isActiveNetworkMetered()) { state = "wifi"; return; }   // tries again next start
+        if (metered()) { state = "wifi"; return; }   // tries again next start
         URL url = new URL(pin().getString("url"));
         if (!"https".equals(url.getProtocol()) || !HOST.equals(url.getHost())) throw new Exception("not Maven Central: " + url);
         JSONObject files = pin().getJSONObject("files");
@@ -165,28 +258,34 @@ final class QnnRuntime {
             if (out.length() == f.getLong("size")) continue;   // kept from a try that was cut short (each file is checked before it's kept)
             get(url, n, f, out);
         }
-        try (OutputStream o = new FileOutputStream(new File(d, "ready"))) { o.write(mark().getBytes(StandardCharsets.UTF_8)); }
-        File[] all = d.getParentFile().listFiles();   // an older QNN from before an app update
-        if (all != null) for (File old : all) if (!old.equals(d)) wipe(old);
-        dir = d; state = "ready";
-        Logger.info("NPU", "QNN " + pin().optString("qnn") + " for V" + arch() + " downloaded");
+        done(d, "downloaded");
     }
 
     // One file out of Qualcomm's release: just its bytes (a range request), unpacked and checked as they come
     private static void get(URL url, String name, JSONObject f, File out) throws Exception {
-        long at = f.getLong("at"), packed = f.getLong("packed"), size = f.getLong("size");
-        File tmp = new File(out.getPath() + ".part");
+        long at = f.getLong("at"), packed = f.getLong("packed");
         HttpURLConnection c = (HttpURLConnection) url.openConnection();
         c.setConnectTimeout(15000); c.setReadTimeout(30000);
         c.setRequestProperty("Range", "bytes=" + at + "-" + (at + packed - 1));
         Inflater inf = new Inflater(true);
-        MessageDigest md = MessageDigest.getInstance("SHA-256");
         try {
             if (c.getResponseCode() != 206) throw new Exception(name + ": Maven Central answered " + c.getResponseCode());
             InputStream raw = new BufferedInputStream(c.getInputStream(), 1 << 16);
             // a raw deflate stream wants one spare byte after it (java.util.zip.Inflater)
             InputStream in = f.optBoolean("deflate", true) ? new InflaterInputStream(new SequenceInputStream(raw, new ByteArrayInputStream(new byte[1])), inf, 1 << 16) : raw;
-            try (InputStream i = in; OutputStream o = new FileOutputStream(tmp)) {
+            try (InputStream i = in) { keep(i, name, f, out); }
+        } finally {
+            inf.end(); c.disconnect();
+        }
+    }
+
+    // Keeps a file only if it is exactly the one pinned (size and SHA-256): read-only, never half-written
+    private static void keep(InputStream i, String name, JSONObject f, File out) throws Exception {
+        long size = f.getLong("size");
+        File tmp = new File(out.getPath() + ".part");
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        try {
+            try (OutputStream o = new FileOutputStream(tmp)) {
                 byte[] b = new byte[1 << 16]; long n = 0; int k;
                 while ((k = i.read(b)) > 0) {
                     n += k;
@@ -198,9 +297,7 @@ final class QnnRuntime {
             if (!hex(md.digest()).equals(f.getString("sha256"))) throw new Exception(name + " is not the file the app expects");
             if (!tmp.renameTo(out)) throw new Exception("could not keep " + name);
             out.setWritable(false, false);   // loaded code stays read-only
-        } finally {
-            inf.end(); c.disconnect(); tmp.delete();
-        }
+        } finally { tmp.delete(); }
     }
 
     private static void wipe(File f) {

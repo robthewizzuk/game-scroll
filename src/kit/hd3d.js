@@ -32,7 +32,7 @@ import {
   WebGLRenderTarget, Vector2, Vector3, PMREMGenerator, LinearMipmapLinearFilter, Mesh, BoxGeometry, LinearFilter, AdditiveBlending as ADD,
   OrthographicCamera, PlaneGeometry, MeshBasicMaterial, MeshDepthMaterial, Group, Vector4, DataTexture, RGBAFormat, ShaderChunk,
   LightProbe, CubeCamera, WebGLCubeRenderTarget, Euler, Matrix4, Quaternion, DepthTexture, WebGLCoordinateSystem, Box3, Sphere, UnsignedIntType,
-  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry,
+  Data3DTexture, UnsignedByteType, RectAreaLight, DoubleSide, Raycaster, Object3D, Box2, CylinderGeometry, Frustum,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
@@ -49,29 +49,34 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SGSR } from './sgsr.js';
 import { SGSR2, SgsrFrame } from './sgsr2.js';
+import { netFor } from './gssr-net.js';
 import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
-import { copyFrame, webgpu, setGpuPick, prepareGPU } from './gpu.js';
+import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses } from './gpu.js';
 import { packing } from './pack.js';
-import { SLIM, isSlim, meshBytes } from './slim.js';
+import { steerFor } from './steering.js';
+import { SLIM, isSlim, meshBytes, SKIN_POOLED } from './slim.js';
 import { makeRenderer } from './renderer.js';
 import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
 import { LampPool } from './lamps.js';
-import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, depthBack, occludeDrop, DepthMeter } from './occlude.js';
-import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
+import { binCapsules } from './sunmask.js';
+import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, occlusionNow, depthBack, occludeDrop, DepthMeter } from './occlude.js';
+import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutTwin, cutUpdate, headsOf, drawnOf, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
-import { eachThing, eachShown } from './scene-list.js';
+import { eachThing, eachShown, thingsOf } from './scene-list.js';
+import { stillFrame, stillOff, stillStats } from './still.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
 import { lensFrame, afTake, AF_LOG } from './lens.js';
+import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadingCount } from './lod-fade.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
@@ -106,12 +111,26 @@ export const TIERS = [
 // Where a phone starts: top phones (Fold 8, recent iPhone Pro) on high, others on high or medium.
 // Play never climbs above high on a phone (Rob, 2026-11-10: the Fold got hot and throttled in every 3D game on
 // ultra, and then stuttered). Ultra stays for HD.force (tests, screenshots, the frame lab's A/B).
-// A computer (the Mac and Windows app, src/desktop.js) doesn't heat up in a hand: a 'top' one starts on ultra,
-// any of them may climb to it, and each tier draws more of a big window's pixels before the upscaler fills in
-// the rest (ultra about a 2560 x 1440 window's worth, where a phone's is a little over a 1080p screen's).
-const START = desktop ? { top: 3, mid: 2, low: 1 } : { top: 2, mid: 2, low: 1 };
+// A computer (the Mac and Windows app, src/desktop.js) starts where a phone of its class does and draws a tier's
+// pixels as a phone does; it doesn't heat up in a hand, so it may climb to ultra, but only when the chip's own
+// times show room (mayClimb): on a 60 Hz screen frames that keep up say nothing about how much more the chip could
+// take. A tier above the start saved by a game (settle) is only taken up again when it was climbed to that way
+// (startTier). (It used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's
+// MacBook Air M5, 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60;
+// with that fixed it still started on ultra, as the game had settled there the run before, 2026-11-14.)
+const START = { top: 2, mid: 2, low: 1 };
 const CAP = desktop ? 3 : 2;
-if (desktop) [.9e6, 1.5e6, 2.4e6, 3.7e6].forEach((px, i) => { TIERS[i].px = px; });
+/**
+ * The tier a game starts on (pure: tests). saved: where it settled last time (speed.js settledFor), cls: the
+ * phone's class, computer: the Mac and Windows app. A computer's saved tier above its class's start only counts
+ * with room: true (climbed to while the chip's own times showed room); else it starts at the class's start.
+ */
+export function startTier(saved, cls, computer) {
+  const start = START[cls] ?? 2, t = Math.min(computer ? 3 : 2, saved?.tier ?? start);
+  return computer && t > start && !saved?.room ? start : t;
+}
+/** May a game climb from this tier (pure: tests)? A phone may (up to CAP); a computer above its class's start only with room (the chip's times say so). */
+export const mayClimb = (tier, cls, computer, room) => !computer || tier < (START[cls] ?? 2) || !!room;
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
@@ -128,13 +147,14 @@ function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2
 // fps a struggling game first gives up a little resolution, then drops to 60 fps at full resolution
 // (keeping the picture); at the lowest tier and resolution it can drop to 30.
 const LEVELS = [1, .85, .7, .55];
-// Most pixels in the final picture once a game has stepped down (about a phone screen's worth, a 2560 x 1440
-// window's on a computer; see draw()).
-const OUT_PX = desktop ? 3.7e6 : 2.4e6;
+// Most pixels in the final picture once a game has stepped down (about a phone screen's worth; see draw()). On a
+// computer, from the first frame: a Retina window is three to six times a phone screen's pixels, and the effects
+// after the upscaler (bloom, motion blur, the finish) cost by the final picture's size, whatever the 3D's own is.
+const OUT_PX = 2.4e6;
 // A climb that turns out too slow again soon after doubles how long the step it fell back to holds
 // (30 s, 1, 2, 4 min), so a game that's on the edge doesn't keep stuttering every half a minute.
 const HOLD = 30000, HOLD_MAX = 240000;
-const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [] };
+const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0, fast: 0, lastT: 0, ceil: 0, ceilT: 0, tierCeil: 3, capNow: CAP, force: null, game: undefined, easy: 0, fpsT: 0, hold: HOLD, upT: -1e9, fpsHold: 60000, fpsUpT: -1e9, fx: {}, fxLast: [], room: false, wantRoom: false };
 // Effects that step down by their own cost (Rob's pick 3 of 2026-11-13). Before a slow game gives up
 // resolution, the effect that costs the chip most (by the GPU's own time for each pass, HD.info.gpuParts)
 // is drawn smaller: each has sizes (FXS), and only the size of its pictures changes, so no shader is built
@@ -143,8 +163,8 @@ const Q = { gsum: 0, gcnt: 0, tier: 2, lvl: 0, sum: 0, cnt: 0, late: 0, slow: 0,
 // step, in FX_ORDER, before the resolution does. Climbing back is the other way round: once the resolution
 // is full again, the last effect stepped down comes back first. Where a game settles is kept with its tier
 // and resolution.
-const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5] };
-const FX_ORDER = ['light shafts', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
+const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5], 'sun mask': [1, .7, .5] };
+const FX_ORDER = ['light shafts', 'sun mask', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
 const FX_SHARE = .12, FX_MS = .5;
 let fxOn = new Set();   // the effects the last frame drew (the frame sets it)
 /** This effect's size now (1: as the tier has it). */
@@ -171,8 +191,10 @@ const fxSaved = () => Object.keys(Q.fx).length ? { ...Q.fx } : null;
 // a new game is on screen: start from where it settled last time, or from the phone's class
 // (and the resolution step it settled on, so a round doesn't start too sharp, stutter and step down again)
 function startGame(def) {
-  Q.game = def; const s = settledFor(def?.id);
-  Q.tier = Math.min(CAP, s?.tier ?? START[phoneClass()] ?? 2); Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
+  Q.game = def; let s = settledFor(def?.id);
+  Q.tier = startTier(s, phoneClass(), desktop); Q.room = !!s?.room;
+  if (s?.tier != null && Q.tier < Math.min(CAP, s.tier)) s = null;   // (a saved tier not taken up: its resolution and effects were for that tier)
+  Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
   Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
   for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
@@ -184,7 +206,7 @@ function startGame(def) {
 // here, both kinds, and divided by the frames drawn since: the GPU's time for a real frame and whatever
 // was made after it. (One read at a time: the answer comes back a frame or two later.)
 // HD.info.gpuParts says where that time went, by what each pass is for: { scene (the game's things), shadows (the
-// shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'bounce light', 'depth of field',
+// shadow maps), ao, bloom, reflections, 'volumetric light', 'light shafts', 'sun mask' (finer sun shadows), 'bounce light', 'depth of field',
 // 'motion blur', 'screen effects' (gs.fx3d's), finish (under an upscaler: the small picture finished, with the
 // ambient occlusion and bloom laid on, graded and tone mapped), upscale (SGSR's own passes), effects (the other passes
 // drawn into pictures of their own), show (the last pass, onto the screen), compute, fg (frame generation's, or with its parts on
@@ -196,7 +218,18 @@ function startGame(def) {
 // counts only from frames the chip was kept busy for (drawn every refresh, or with frames made between): a phone
 // clocks its chip down at half rate (a real frame took 11.8 ms at 60 against 6.2 at 120 on the Fold, 2026-11-13),
 // and frame generation's checks need the time it takes once it is busy again (speed.cost).
-const GT = { n: 0, busy: false, full: true }, PARTS = new Map();
+// The chip can't take longer over its frames than the frames take to come: a chip whose times say it does is
+// timing something else. Apple's (the Mac app, Rob's MacBook Air M5, 2026-11-13) take each pass's start and end at
+// stage boundaries, so a chain of passes overlap (the next one's vertices start while the last is still drawing)
+// and added up they came to 225 ms a frame, bloom's chain of small passes 66 ms of it, while the frames came every
+// 16.7 ms. Each read is checked against the time its frames took; after BAD of the last 10 reads don't fit, the
+// chip's times are left alone for the rest of the session (HD.info.gpuOff: null, as on WebGL, and the quality
+// steps, the effects' sizes and the gas go by frame times). Twice the frames' time (and 2 ms) is let by, and reads
+// with made frames in them aren't judged: a software chip (the tests' SwiftShader) works on several threads, so
+// its times run past its frames now and then (up to 3.7x, 2026-11-13) and well past them while it makes frames.
+export const chipFits = (gpuMs, wallMs) => !(gpuMs > wallMs * 2 + 2);
+const BAD = 6;
+const GT = { n: 0, busy: false, full: true, at: 0, fits: [] }, PARTS = new Map();
 function partOf(o, rt) {
   if (rt?.gsPart) return rt.gsPart;   // (a picture marked by who made it: the bloom's, the upscaler's)
   if (o?.isScene) return o.name.startsWith('Shadow Map') ? 'shadows' : 'scene';   // (three names the scene so while it draws a shadow map)
@@ -229,10 +262,11 @@ function gpuTime(r, full = true) {
   codeParts(r);
   GT.n++; GT.full &&= full;
   const be = r.backend;
-  if (!be?.trackTimestamp) return;
+  if (!be?.trackTimestamp || HD.info.gpuOff) return;
   gpuParts(r);
   if (GT.busy) return;
-  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}; GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true;
+  const n = GT.n, made = r.gsMade || 0, kept = GT.full, by = {}, now = performance.now(), wall = GT.at ? (now - GT.at) / n : 0;
+  GT.n = 0; r.gsMade = 0; GT.full = true; GT.busy = true; GT.at = now;
   // (a read that brought nothing new leaves three's list as it was: its frames list is a new one after each real read)
   const read = type => {
     const pool = be.timestampQueryPool?.[type], was = pool?.frames;
@@ -247,8 +281,13 @@ function gpuTime(r, full = true) {
     });
   };
   Promise.all([read('render'), read('compute')]).then(([draw, comp]) => {
-    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; return; }   // nothing read: those frames count towards the next read
-    const f = (draw + comp) / n; HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    if (!(draw > 0)) { GT.n += n; r.gsMade = (r.gsMade || 0) + made; GT.full &&= kept; GT.at = now - wall * n; return; }   // nothing read: those frames count towards the next read
+    const f = (draw + comp) / n;
+    if (!made && wall > 0 && wall < 250) {
+      GT.fits.push(chipFits(f, wall)); if (GT.fits.length > 10) GT.fits.shift();
+      if (GT.fits.filter(x => !x).length >= BAD) { chipOff(); return; }
+    }
+    HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
     let fg = 0; for (const k in by) if (k === 'fg' || k.startsWith('fg:')) fg += by[k];
     for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     const real = f - fg / n; HD.info.gpuReal = real; HD.info.fgGpu = fg / n; HD.info.madeMs = made && fg > 0 ? fg / made : null;
@@ -257,14 +296,41 @@ function gpuTime(r, full = true) {
     if (real > 0 && real < 100) chipCost(speed.game?.id, kept ? real : null, made && fg > 0 ? fg / made : null);
   }, () => {}).finally(() => { GT.busy = false; });
 }
+function chipOff() {
+  const I = HD.info; I.gpuOff = true; I.gpuMs = I.gpuParts = I.gpuReal = I.fgGpu = I.madeMs = null; I.gpuCompute = 0; Q.gsum = Q.gcnt = 0;
+  console.warn('3D: the graphics chip\'s own times don\'t fit its frames here; the quality steps go by frame times');
+}
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
 const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
+// The quality steps' own record, for the frame lab's report (Rob's MacBook Air M5, 2026-11-14: Long Shadow stuttered
+// for 26 s before anything was stepped down, and the report couldn't say why): each window of frames (performance.now(),
+// its average gap in ms, frames a refresh or more late, the verdict, what was done about it), the last 400, and the
+// frames not counted and why (pinned: HD.force; long: a gap of 100 ms or more; warming: drawn under the loading screen).
+const STEPS = { log: [], off: { pinned: 0, long: 0, warming: 0 } };
+function stepped(t, a, late, v, was) {
+  let did = '';
+  if (Q.lvl !== was.lvl) did = `resolution ${Math.round(LEVELS[was.lvl] * 100)}% to ${Math.round(LEVELS[Q.lvl] * 100)}%`;
+  else if (Q.fxLast.length > was.fx) did = `${Q.fxLast[Q.fxLast.length - 1]} smaller`;
+  else if (Q.fxLast.length < was.fx) did = 'an effect back';
+  else if (Q.want != null && Q.want !== was.want) did = `${TIERS[Q.want].name} wanted (from the next round)`;
+  else if (Q.game && fpsFor(Q.game) !== was.fps) did = `${Math.round(fpsFor(Q.game))} fps`;
+  else if (v === 'slow') did = Q.slow ? 'waits for a second slow window' : Q.want != null ? `${TIERS[Q.want].name} waits for the next round` : 'nothing left to step down';
+  else if (v === 'ok') did = 'holds';
+  else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), desktop, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
+  STEPS.log.push({ t: Math.round(t), avg: +a.toFixed(1), late, v, did }); if (STEPS.log.length > 400) STEPS.log.shift();
+}
 function adapt(gap) {
-  if (Q.force != null || !(gap > 0 && gap < 100)) return;
+  if (Q.force != null) { STEPS.off.pinned++; return; }
+  if (!(gap > 0 && gap < 100)) { if (gap >= 100) STEPS.off.long++; return; }
   const fps = Q.game ? fpsFor(Q.game) : 60, budget = 1000 / fps;
   Q.sum += gap; if (gap > budget * 1.5) Q.late++;   // a frame a whole refresh (or more) late: a stutter you can see
   if (++Q.cnt < 45) return;
-  const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget); Q.sum = Q.cnt = Q.late = 0;
+  const a = Q.sum / Q.cnt, now = performance.now(), v = qualityVerdict(a, Q.late, budget), late = Q.late; Q.sum = Q.cnt = Q.late = 0;
+  const was = { lvl: Q.lvl, fx: Q.fxLast.length, want: Q.want, fps };
+  decide(v, now, fps, budget);
+  stepped(now, a, late, v, was);
+}
+function decide(v, now, fps, budget) {
   // the GPU's own time per frame (WebGPU timestamps, where the phone has them): how much of a slow frame
   // is the graphics chip's. A frame that's slow while the GPU has room is held up by the CPU, and fewer
   // pixels wouldn't help it; a GPU with plenty of room can take sharpness back sooner (Unreal and
@@ -287,7 +353,7 @@ function adapt(gap) {
     Q.slow = 0; if (++Q.fast < (gpuRoom && Q.lvl > Q.ceil ? 3 : 8)) return; Q.fast = 0;
     if (Q.lvl > Q.ceil) { if (!(hot(now) && Q.lvl <= 1)) { Q.lvl--; Q.upT = now; } }
     else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
-    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP)) { Q.want = Q.tier + 1; Q.upT = now; }
+    else if (Q.lvl === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, CAP) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom)) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
@@ -306,12 +372,18 @@ function applyTier() {
   Q.capNow = hot() ? CAP - 1 : CAP;   // between rounds: one tier lower while hot
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
-  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl });
+  if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)
+  settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, room: Q.room || undefined });
 }
+// what the phone and driver steering list says for this device and the game on screen (src/steer.js): a highest tier,
+// no ray tracing, no half precision, a game kept on WebGL
+const steered = () => steerFor(speed.game?.id);
 /** Current quality: { tier, name, res }. Set HD.force = 0..3 to pin a tier (tests, screenshots). */
 export const HD = {
-  get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
+  get tier() { return Q.force ?? Math.min(Q.tier, Q.capNow, steered().tier ?? 3); }, get name() { return TIERS[this.tier].name; }, get res() { return Q.force != null ? 1 : LEVELS[Q.lvl]; },
   set force(t) { Q.force = t; }, get force() { return Q.force; },
+  /** The quality steps' record (the frame lab): { log: [{ t, avg, late, v, did }] each window of frames, off: frames not counted, by why }. */
+  get steps() { return STEPS; },
   /** The effects drawn smaller by their cost now (FXS): { name: size, 1 = as the tier has it }; {} when none is. */
   get fx() { const o = {}; for (const k in Q.fx) o[k] = fxK(k); return o; },
   /** Tests and the frame lab: draw this effect smaller by n of its steps now (0: full size), also under HD.force; until the next game. */
@@ -319,6 +391,23 @@ export const HD = {
   /** Last frame: draw calls, triangles, milliseconds spent in render() on the CPU, and whether the shadows were redrawn. */
   /** GPU culling of gs.props copies on WebGPU: 'auto' (sets of GPU_CULL_MIN copies or more), true (every set), false (CPU). Off while frame generation runs. */
   gpuCull: 'auto',
+  /** WebGPU: false gives each full-size effect step (volumetric mix, depth of field, motion blur, the finish under SGSR 2) a picture of its own, to compare; by default a step draws into the picture of the step two back. info.shared: pictures saved so. */
+  shareTargets: true,
+  /** WebGPU: true keeps three's colour picture beside each shadow map's depth (16 MB a 2048 map, never read), for maps made from then on, to compare. */
+  shadowColour: false,
+  /** Still scenery drawn from render bundles on WebGPU (still.js): what keeps still is recorded by area once and replayed. false: every thing draws itself. info.bundled / info.bundles: things and areas in bundles last frame. */
+  bundle: true,
+  /** Detail levels fade into each other (lod-fade.js: people, animals, and gs.props copies on WebGPU) instead of popping; false: they switch at once. */
+  get lodFade() { return FADE.on; }, set lodFade(on) { FADE.on = on !== false; },
+  /** How long one fade takes (seconds). */
+  get lodFadeTime() { return FADE.s; }, set lodFadeTime(s) { FADE.s = Math.max(.01, +s || .4); },
+  /**
+   * People on bones posed once a frame on the graphics chip (WebGPU, skin-gpu.js): one compute pass poses every point of
+   * every mesh on bones in view, and the picture, the shadow maps and the motion picture all read it, instead of each
+   * posing them again in its vertex shader. false: posed in each pass, as three does (tests, the engine test square).
+   * info.skin: { meshes, posed, points, bones, kinds, poolMB } for the last frame (null when off or on WebGL).
+   */
+  gpuSkin: true,
   /**
    * The world's centre moved along with the camera (origin.js), so far-off places don't shake: how far in metres
    * the camera goes from it before it moves (0: never). originAt: { x, z } a centre given outright (tests, the frame lab).
@@ -326,7 +415,7 @@ export const HD = {
    */
   get origin() { return ORIGIN_SET.far; }, set origin(m) { ORIGIN_SET.far = Math.max(0, +m || 0); },
   get originAt() { return ORIGIN_SET.at; }, set originAt(p) { ORIGIN_SET.at = p || null; },
-  info: { gpuMs: null, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '' },
+  info: { skin: null, subgroups: '', gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '', gssrNet: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
@@ -339,8 +428,8 @@ export const HD = {
   get slim() { return SLIM.on; }, set slim(v) { SLIM.on = v !== false; }, get slimmed() { const S = SLIM.stats; return { meshes: S.meshes, wasMB: +(S.was / 1048576).toFixed(2), nowMB: +(S.now / 1048576).toFixed(2) }; },
   /** The bytes the geometries under a thing keep, each list once: { js, chip (worked out for the renderer in use), points } (tests, the engine test scenes). */
   meshBytes(root) { return meshBytes(root, this.info.backend === 'webgpu'); },
-  /** Cluster detail for big still meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is taken; detailPx: pixels its simpler parts may be out by. */
-  detail: true, detailMin: 20000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
+  /** Cluster detail for big meshes (autoDetail below): false draws every mesh whole. detailMin: triangles a mesh needs before it is tried (under DETAIL_SURE it stays only while it pays); detailPx: pixels its simpler parts may be out by. */
+  detail: true, detailMin: 8000, get detailPx() { return DETAIL.px; }, set detailPx(v) { DETAIL.px = Math.max(.1, +v || 1); },
   /**
    * Real surface detail (gs.models.relief): false draws those meshes flat, as they were. reliefPx: pixels its
    * simpler parts may be out by (2.5: the bumps' light and shade still come from the material's own picture,
@@ -385,8 +474,20 @@ export const HD = {
   grain: null,
   /** Tests and the frame lab's A/B: false draws SGSR 2 as Qualcomm's shader has it, without our changes (hd3d-gpu.js sgsr2Gpu, sgsr2.js), and on WebGPU with the tier's MSAA under it. */
   sgsrTune: true,
+  /** Tests: true has WebGPU's scene pass write each pixel's motion for SGSR 2 off the card too (screenshots, scripts/upscale-compare.cjs), as it does for the game on the card. */
+  motion: false,
+  /**
+   * GSSR's learned blend (gssr-net.js): a small trained network weighs the history pixel by pixel. true (the usual):
+   * on WebGPU, and the hand-written blend on WebGL (trained with each thing's own motion, which WebGL's GSSR hasn't:
+   * there it left a moving box's trail 30% longer); false is the hand-written GSSR everywhere; an object is a
+   * network of its own on both (scripts/gssr-train, upscale-compare --net). Not with sgsrTune false. HD.info.gssrNet
+   * says which ran.
+   */
+  gssrNet: true,
   /** The frame lab's switch and tests: false draws the kit's own WebGPU passes in full precision where the chip could do them in half (half.js). HD.info.half says which it is. */
   half: true,
+  /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
+  subgroups: true,
   /**
    * WebGPU: ambient occlusion, volumetric light and live bounce light take a part of their samples each frame, the
    * pattern turning from frame to frame, and the frames before fill in the rest (hd3d-gpu-spread.js). false: all of
@@ -394,6 +495,19 @@ export const HD = {
    * HD.info.spread says which are spread.
    */
   spread: true,
+  /**
+   * WebGPU: ambient occlusion darkens the light that bounces (the sky's and the room's, and reflections by roughness), in each
+   * thing's own shading, as Filament, Godot, Bevy and Unity do, not the whole lit picture (hd3d-gpu.js aoInShading).
+   * false: the whole picture as before (the frame lab's A/B, tests). WebGL always lays it on the whole picture.
+   */
+  aoBack: true,
+  /** With aoBack: the share of the occlusion still laid on the whole picture, direct light included (0..1; Unity's "direct lighting strength"). */
+  aoDirect: .25,
+  /**
+   * WebGPU: v.decal() marks are boxes in the lamps' grid with their pictures in one atlas (decals-gpu.js): no mesh and no draw
+   * each. false: a mesh cut from the surface for each, as on WebGL (the frame lab's A/B, tests); marks already made swap over.
+   */
+  gridDecals: true,
   /**
    * WebGPU: a gs.sky Sky's clouds marched through as real ones (high and ultra; hd3d-gpu-sky.js), shading the ground, the fog and
    * the light beams. false: the painted layer, as on WebGL. HD.info.sky says what the sky drew ('air', 'clouds', 'air + clouds').
@@ -423,7 +537,7 @@ const tier = () => TIERS[HD.tier];
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__gpu = { pick: setGpuPick, ready: prepareGPU }; }
+if (TEST) { window.__hd = HD; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
@@ -1517,11 +1631,13 @@ const PF = `varying vec4 vT; uniform float soft; void main(){ vec2 d = gl_PointC
  * above 1 bloom), false for smoke and dust. p.emit({ x, y, z, vx, vy, vz, life, size, grow,
  * col: [r, g, b], a, drag, grav, blow }) then p.update(dt) once per frame. With { wind } (a gs.outdoors
  * Wind) they drift with it: blow is how much (1 = with the air, 0 = not at all; default the pool's blow).
+ * reactive: true for faint puffs that move fast across the picture (a train's steam): the upscaler takes them from the
+ * new frame instead of blending them into the frames before, where they fade to nothing (WebGPU).
  */
 const PART_ATTRS = [['position', 3], ['size', 1], ['tint', 4]];   // (made once, not every frame)
 export class Particles {
-  constructor(view, { max = 300, additive = true, wind = null, blow = 1 } = {}) {
-    this.max = max; this.list = []; this.wind = wind; this.blow = blow; this.wAt = {};
+  constructor(view, { max = 300, additive = true, wind = null, blow = 1, reactive = false } = {}) {
+    this.max = max; this.list = []; this.wind = wind; this.blow = blow; this.wAt = {}; this.reactive = reactive;
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(new Float32Array(max * 3), 3));
     g.setAttribute('size', new BufferAttribute(new Float32Array(max), 1));
@@ -1572,6 +1688,14 @@ export class Particles {
  * [r, g, b], above 1 glows; white), to (colour at the end; color), alpha (1), fadeIn (false), ease (fade curve, 1).
  * Up to 16 bursts a frame. Switching between WebGL and WebGPU starts them afresh (they are only for looks: the
  * game can't read where they are; use Particles for the few that must).
+ * p.pull(at, { strength, radius, swirl, axis, take }) draws them to a point (a portal, a magnet, a drain), pushes
+ * them away (strength below 0: a blast's wake, a fan) or turns them round it (swirl: a whirlwind), and takes those
+ * that come within take; it gives back the pull, whose fields can change each frame (pull.at, pull.strength...), and
+ * pull.remove(). Up to 8. strength and swirl are m/s² at 1 m (steady closer in, falling as 1/d² beyond, and to nothing at
+ * radius, if given); a swirl spins them up, so give the particles drag for them to spiral in rather than fly off. p.flow(fn, { box, strength }) moves them with a flow: fn(x, y, z) gives the air's or the
+ * water's velocity there ([x, y, z] or { x, y, z }), sampled into 16 x 16 x 16 cells over box ({ min, max }, or a
+ * THREE.Box3), which particles inside take up at strength a second; flow.update() samples it again, flow.remove().
+ * One flow at a time. (Babylon.js 9's attractors and flow maps, the engines review's option 11.)
  */
 const SPARK_CPU = { top: 12000, high: 6000, mid: 3000, low: 1500 };
 const GPC = new Color();
@@ -1580,7 +1704,7 @@ export class GPUParticles {
     this.maxGpu = Math.max(16, Math.min(262144, max | 0));
     this.max = this.maxGpu;
     Object.assign(this, { additive, gravity, drag, bounce, floor, turbulence, wind, view });
-    this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {};
+    this.bursts = []; this.head = 0; this.time = 0; this.pendingDt = 0; this.seed = 1; this.n = 0; this.wAt = {}; this.pulls = []; this.flowOn = null;
     this.cpuMax = Math.min(this.maxGpu, SPARK_CPU[phoneClass()] ?? 3000);
     const n = this.cpuMax, g = new BufferGeometry();
     this.P = new Float32Array(n * 4); this.V = new Float32Array(n * 4); this.C = new Float32Array(n * 4); this.E = new Float32Array(n * 4); this.S = new Float32Array(n * 4);
@@ -1591,7 +1715,7 @@ export class GPUParticles {
     this.mat = new ShaderMaterial({ vertexShader: PV, fragmentShader: PF, transparent: true, depthWrite: false, blending: additive ? AdditiveBlending : NormalBlending, uniforms: { scale: { value: 300 }, soft: { value: additive ? 0 : 1 } } });
     this.pts = new Points(g, this.mat); this.pts.frustumCulled = false; this.pts.renderOrder = 5; view.scene.add(this.pts); view.parts.push(this);
     this.pts.userData.gsTwin = true;
-    this.onGpu = false;
+    this.onGpu = null;   // (not known until the view first draws)
   }
   /** A burst of count particles (see the class notes for the fields). */
   emit(count, o = {}) {
@@ -1606,12 +1730,37 @@ export class GPUParticles {
     return this;
   }
   clear() { this.bursts.length = 0; for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.twin?.reset(); this.head = 0; }
+  /** Draws particles to a point, pushes them away (strength < 0) or swirls them round it; see the class notes. Null past 8. */
+  pull(at, { strength = 5, radius = 0, swirl = 0, axis = [0, 1, 0], take = 0 } = {}) {
+    if (this.pulls.length >= PULL_MAX) return null;
+    const list = this.pulls, h = { at, strength, radius, swirl, axis, take, remove() { const i = list.indexOf(h); if (i >= 0) list.splice(i, 1); } };
+    list.push(h); return h;
+  }
+  /** Moves particles with a flow field over a box; see the class notes. A new one replaces the last. */
+  flow(fn, { box, strength = 2 } = {}) {
+    const lo = v3(box?.min ?? [-5, -5, -5]), hi = v3(box?.max ?? [5, 5, 5]), N = FLOW_N;
+    const size = [Math.max(1e-3, hi[0] - lo[0]), Math.max(1e-3, hi[1] - lo[1]), Math.max(1e-3, hi[2] - lo[2])];
+    const f = { fn, min: lo, size, strength, cells: new Float32Array(N * N * N * 4), fresh: true,
+      update: () => {
+        for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+          const v = fn(lo[0] + size[0] * x / (N - 1), lo[1] + size[1] * y / (N - 1), lo[2] + size[2] * z / (N - 1)), j = (x + y * N + z * N * N) * 4;
+          f.cells[j] = v?.x ?? v?.[0] ?? 0; f.cells[j + 1] = v?.y ?? v?.[1] ?? 0; f.cells[j + 2] = v?.z ?? v?.[2] ?? 0;
+        }
+        f.fresh = true; return f;
+      },
+      remove: () => { if (this.flowOn === f) this.flowOn = null; } };
+    this.flowOn = f.update(); return f;
+  }
   update(dt) {
     dt = Math.min(dt, .1); this.time += dt;
-    const gpu = !!this.view._onGpu;
-    if (gpu !== this.onGpu) {   // moved between WebGL and WebGPU: what was flying is dropped, bursts already asked for still start
+    // (the view hasn't drawn yet, so it isn't known where they move: what was asked for waits for its first frame. Taken on
+    // the CPU here, the bursts of a system made before the view's first frame were lost on WebGPU, and the chip's copy was
+    // then started afresh as if moved from WebGL)
+    if (this.view._onGpu === undefined) { this.pendingDt += dt; return; }
+    const gpu = !!this.view._onGpu, was = this.onGpu;
+    if (gpu !== was) {   // moved between WebGL and WebGPU: what was flying is dropped, bursts already asked for still start
       this.onGpu = gpu; this.max = gpu ? this.maxGpu : this.cpuMax;
-      if (gpu) this.twin?.reset(); else { for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.head %= this.cpuMax; for (const b of this.bursts) { b.n = Math.min(b.n, this.cpuMax); b.start %= this.cpuMax; } }
+      if (was === null) { /* the first frame said where */ } else if (gpu) this.twin?.reset(); else { for (let i = 0; i < this.cpuMax; i++) { this.P[i * 4 + 3] = 1; this.V[i * 4 + 3] = 0; } this.head %= this.cpuMax; for (const b of this.bursts) { b.n = Math.min(b.n, this.cpuMax); b.start %= this.cpuMax; } }
     }
     if (gpu) { this.pendingDt += dt; return; }   // the WebGPU step runs at draw time (stepGpu)
     this.spawnCpu(); this.stepCpu(dt);
@@ -1637,12 +1786,26 @@ export class GPUParticles {
   stepCpu(dt) {
     const N = this.cpuMax, { P, V, C, E, S } = this, g = this.pts.geometry, PP = g.attributes.position.array, SS = g.attributes.size.array, TT = g.attributes.tint.array;
     const k = Math.max(0, 1 - this.drag * dt), gr = this.gravity, T = this.turbulence, ts = T?.strength ?? 0, tsc = T?.scale ?? 1, tt = this.time * (T?.speed ?? 1), w = this.windNow(), fl = this.floor;
+    const pulls = this.pulls.map(pl => ({ p: v3(pl.at), strength: +pl.strength || 0, radius: +pl.radius || 0, swirl: +pl.swirl || 0, ax: unit(v3(pl.axis ?? [0, 1, 0])), take: +pl.take || 0 })), fo = this.flowOn;
     let n = 0;
     for (let i = 0; i < N; i++) {
       const j = i * 4; if (!(P[j + 3] < V[j + 3])) continue;
       let vx = V[j] * k, vy = V[j + 1] * k - gr * dt, vz = V[j + 2] * k;
       if (ts) { const x = P[j] * tsc, y = P[j + 1] * tsc, z = P[j + 2] * tsc;
         vx += (Math.sin(y + tt) + Math.sin(z * 1.7 - tt)) * .5 * ts * dt; vy += (Math.sin(z + tt * 1.3) + Math.sin(x * 1.3 + tt)) * .5 * ts * dt; vz += (Math.sin(x + tt * .7) + Math.sin(y * 1.9 - tt)) * .5 * ts * dt; }
+      let took = false;
+      for (const pl of pulls) {   // (as the chip's step: particles-gpu.js)
+        const a = pl.p, dx = a[0] - P[j], dy = a[1] - P[j + 1], dz = a[2] - P[j + 2], dl = Math.max(1e-4, Math.hypot(dx, dy, dz)), nx = dx / dl, ny = dy / dl, nz = dz / dl;
+        const fall = (pl.radius > 0 ? 1 - smooth(pl.radius * .67, pl.radius, dl) : 1) / Math.max(dl * dl, 1), s = pl.strength * fall * dt, sw = pl.swirl * fall * dt, ax = pl.ax;
+        vx += nx * s + (ax[1] * nz - ax[2] * ny) * sw; vy += ny * s + (ax[2] * nx - ax[0] * nz) * sw; vz += nz * s + (ax[0] * ny - ax[1] * nx) * sw;
+        if (dl < pl.take) took = true;
+      }
+      if (fo) {
+        const qx = (P[j] - fo.min[0]) / fo.size[0], qy = (P[j + 1] - fo.min[1]) / fo.size[1], qz = (P[j + 2] - fo.min[2]) / fo.size[2];
+        const ew = smooth(0, .1, qx) * (1 - smooth(.9, 1, qx)) * smooth(0, .1, qy) * (1 - smooth(.9, 1, qy)) * smooth(0, .1, qz) * (1 - smooth(.9, 1, qz));
+        if (ew > 0) { const fv = flowAt(fo, qx, qy, qz), t = Math.min(fo.strength * dt, 1) * ew; vx += (fv[0] - vx) * t; vy += (fv[1] - vy) * t; vz += (fv[2] - vz) * t; }
+      }
+      if (took) P[j + 3] = V[j + 3];
       let x = P[j] + (vx + w[0]) * dt, y = P[j + 1] + vy * dt, z = P[j + 2] + (vz + w[2]) * dt;
       if (fl != null && y < fl) { y = fl; vy *= -this.bounce; vx *= .6; vz *= .6; }
       P[j] = x; P[j + 1] = y; P[j + 2] = z; P[j + 3] += dt; V[j] = vx; V[j + 1] = vy; V[j + 2] = vz;
@@ -1665,12 +1828,32 @@ export class GPUParticles {
       rows[r + 3].set(o.life[0], o.life[1], o.size[0], o.size[1]); rows[r + 4].set(o.col[0], o.col[1], o.col[2], o.a); rows[r + 5].set(o.to[0], o.to[1], o.to[2], o.ease); rows[r + 6].set(o.fadeIn, 0, 0, 0); }
     const T = this.turbulence, w = this.windNow();
     this._turb ||= new Vector4(); this._turb.set(T?.strength ?? 0, T?.scale ?? 1, T?.speed ?? 1, 0); this._wind ||= new Vector3(); this._wind.set(w[0], 0, w[2]);
-    t.step(G.r, { rows, count: B.length, dt: this.pendingDt, time: this.time, gravity: this.gravity, drag: this.drag, bounce: this.bounce, floor: this.floor, turb: this._turb, wind: this._wind });
+    const pr = this._pullRows ||= Array.from({ length: PULL_MAX * 3 }, () => new Vector4()), pk = this._pk ||= { rows: pr, count: 0 };
+    pk.count = this.pulls.length;
+    this.pulls.forEach((pl, i) => { const a = v3(pl.at), ax = unit(v3(pl.axis ?? [0, 1, 0])); pr[i * 3].set(a[0], a[1], a[2], +pl.strength || 0); pr[i * 3 + 1].set(ax[0], ax[1], ax[2], +pl.swirl || 0); pr[i * 3 + 2].set(+pl.radius || 0, +pl.take || 0, 0, 0); });
+    const fo = this.flowOn, fl = fo ? (this._fl ||= { min: new Vector3(), size: new Vector3() }) : null;
+    if (fo) { fl.min.fromArray(fo.min); fl.size.fromArray(fo.size); fl.strength = fo.strength; fl.cells = fo.cells; fl.fresh = fo.fresh; fo.fresh = false; }
+    t.step(G.r, { rows, count: B.length, dt: this.pendingDt, time: this.time, gravity: this.gravity, drag: this.drag, bounce: this.bounce, floor: this.floor, turb: this._turb, wind: this._wind, pulls: pk, flow: fl });
     B.length = 0; this.pendingDt = 0;
   }
   dispose() { this.pts.removeFromParent(); this.pts.geometry.dispose(); this.mat.dispose(); this.twin?.dispose(); this.twin?.sprite.removeFromParent(); const i = this.view.parts.indexOf(this); if (i >= 0) this.view.parts.splice(i, 1); }
 }
 const rgbOf = c => { if (Array.isArray(c)) return [c[0], c[1], c[2]]; const k = c.isColor ? c : GPC.set(c); return [k.r, k.g, k.b]; };
+// (pulls and flow fields: as many as particles-gpu.js's PULLS, its FLOW_N cells a side)
+const PULL_MAX = 8, FLOW_N = 16;
+const v3 = a => a?.isVector3 ? [a.x, a.y, a.z] : [+a?.[0] || 0, +a?.[1] || 0, +a?.[2] || 0];
+const unit = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+// the flow's velocity at a place in its box (0..1 a side), between its cells' as the chip reads it
+function flowAt(fo, qx, qy, qz) {
+  const N = FLOW_N, g = [qx, qy, qz].map(q => Math.min(1, Math.max(0, q)) * (N - 1)), b = g.map(v => Math.min(N - 2, Math.max(0, Math.floor(v)))), f = g.map((v, i) => v - b[i]), out = [0, 0, 0];
+  for (let c = 0; c < 8; c++) {
+    const o = [c & 1, (c >> 1) & 1, (c >> 2) & 1], j = ((b[0] + o[0]) + (b[1] + o[1]) * N + (b[2] + o[2]) * N * N) * 4;
+    const w = (o[0] ? f[0] : 1 - f[0]) * (o[1] ? f[1] : 1 - f[1]) * (o[2] ? f[2] : 1 - f[2]);
+    out[0] += fo.cells[j] * w; out[1] += fo.cells[j + 1] * w; out[2] += fo.cells[j + 2] * w;
+  }
+  return out;
+}
 function hashF(i, s, c) { const x = Math.sin(i * 12.9898 + s * 78.233 + c * 37.719) * 43758.5453; return x - Math.floor(x); }
 
 /* ---------- view ---------- */
@@ -1694,6 +1877,8 @@ const toRGB = (c, out) => { if (c == null) out.set(1, 1, 1); else if (Array.isAr
 // decal pictures: drawn once per key and kept (a soft round mark by default)
 const decalTexs = new Map();
 const DEFAULT_DECAL = (c, s) => { const g = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2); g.addColorStop(0, '#fff'); g.addColorStop(.55, '#ddd'); g.addColorStop(1, '#000'); c.fillStyle = g; c.fillRect(0, 0, s, s); };
+// (the grid's soft mark: white, its shape in the alpha, tinted by the decal's colour)
+const SOFT_MARK = (c, s) => { const g = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.55, 'rgba(255,255,255,.87)'); g.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = g; c.fillRect(0, 0, s, s); };
 function decalTex(paint, key) {
   if (!paint) return null;
   const k = key || paint; let t = decalTexs.get(k); if (t) return t;
@@ -1750,41 +1935,84 @@ export class HDView {
   }
   /** The direction towards the sun this view uses for air, glare and cloud shadows. */
   /**
-   * A mark on a surface: a scorch, a bullet mark, a footprint, paint, a splat. It wraps over the
-   * mesh's shape where it lands (three's DecalGeometry). mesh: what was hit; point and normal: where
-   * and which way it faces (from a ray hit: hit.point, hit.normal). Options: size (metres, or
-   * [w, h, depth]), angle (turn round the normal; default random), colour, paint (c, s) => {} to
-   * draw your own mark on an s x s canvas (cached by key), rough, glow, life (seconds; 0 = stays),
-   * max (oldest go first; default 40). Returns the decal mesh (dispose() removes it early).
+   * A mark on a surface: a scorch, a bullet mark, a footprint, paint, a splat. mesh: what was hit; point and normal:
+   * where and which way it faces (from a ray hit: hit.point, hit.normal). Options: size (metres, or [w, h, depth]),
+   * angle (turn round the normal; default random), colour, paint (c, s) => {} to draw your own mark on an s x s canvas
+   * (cached by key), rough, glow, life (seconds; 0 = stays), max (oldest go first; default 40). Returns the decal
+   * (dispose() removes it early).
+   * On WebGPU it is no mesh and no draw: a box listed in the lamps' grid, whose picture every lit surface inside it
+   * takes on (facing the same way: decals-gpu.js), so hundreds cost a little per pixel where they lie. Things that move
+   * through it take it on too while inside, except people (bodies that bend), see-through things and a material
+   * given material.decals = false. On WebGL, and past the 16 pictures the grid holds at once, it wraps over the mesh's
+   * shape (three's DecalGeometry), one draw each.
    */
   decal(mesh, point, normal, { size = .3, angle = Math.random() * Math.PI * 2, colour = '#1a1410', paint = null, key = null, rough = .9, glow = 0, life = 0, max = 40, opacity = 1 } = {}) {
     if (!mesh?.isMesh) return null;
-    const P0 = point.isVector3 ? point : new Vector3(...point), N0 = (normal?.isVector3 ? normal.clone() : new Vector3(...(normal || [0, 1, 0]))).normalize();
-    mesh.updateMatrixWorld();
+    const P0 = point.isVector3 ? point.clone() : new Vector3(...point), N0 = (normal?.isVector3 ? normal.clone() : new Vector3(...(normal || [0, 1, 0]))).normalize();
     const look = new Matrix4().lookAt(P0.clone().add(N0), P0, Math.abs(N0.y) > .99 ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0));
-    const rot = new Euler().setFromQuaternion(new Quaternion().setFromRotationMatrix(look).multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), angle)));
+    const q = new Quaternion().setFromRotationMatrix(look).multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), angle));
     const sz = Array.isArray(size) ? new Vector3(size[0], size[1], size[2] ?? Math.max(size[0], size[1])) : new Vector3(size, size, size);
-    let geo; try { geo = new DecalGeometry(mesh, P0, rot, sz); } catch { return null; }
-    if (!geo.attributes.position?.count) { geo.dispose(); return null; }
-    const map = decalTex(paint, key);
-    const mat = new MeshStandardMaterial({ color: map ? '#ffffff' : colour, map, roughness: rough, metalness: 0, transparent: true, opacity, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, emissive: glow ? new Color(colour) : new Color(0), emissiveIntensity: glow });
-    if (!map) mat.alphaMap = decalTex(DEFAULT_DECAL, '_soft');
-    const d = new Mesh(geo, mat); d.userData.noAO = true; d.receiveShadow = true; d.renderOrder = 2;
-    d.userData.decal = { life, left: life, opacity };
-    this.scene.add(d); this.decals.push(d);
-    while (this.decals.length > max) this.dropDecal(this.decals[0]);
+    // the picture, painted now (not at the first frame it shows): the game's, or a soft round mark in its colour
+    const pic = paint ? decalTex(paint, key) : decalTex(SOFT_MARK, '_softA');
+    const c = new Color(colour);
+    const d = { target: mesh, at: P0, q, size: sz, paint: !!paint, key: key || paint || '_softA', pic, colour: c, rough, glow, life, left: life, opacity, alpha: opacity,
+      m: null, cell: -1, kind: '', inv: null, r: .5 * sz.length(), tint: paint ? [1, 1, 1] : [c.r, c.g, c.b], glowC: [c.r * glow, c.g * glow, c.b * glow] };
     d.dispose = () => this.dropDecal(d);
+    // where the view draws is known (it has drawn): made for it now; before its first frame, as a mesh (as on WebGL),
+    // swapped for the grid at that frame if it draws on WebGPU (syncDecals)
+    if (!(this._onGpu === true && this.gridDecal(d)) && !this.meshDecal(d)) return null;
+    this.decals.push(d); this._decalsDirty = true;
+    while (this.decals.length > max) this.dropDecal(this.decals[0]);
     return d;
   }
-  dropDecal(d) { const i = this.decals.indexOf(d); if (i >= 0) this.decals.splice(i, 1); d.removeFromParent(); d.geometry.dispose(); d.material.dispose(); }
+  /** (decal) In the lamps' grid on WebGPU: false when it can't be (WebGL, no grid, every picture square in use). */
+  gridDecal(d) {
+    const G = webgpu(); if (!G?.r.gsClustered || HD.gridDecals === false) return false;
+    const cell = G.fx.decalCell(G.r, d.key, d.pic); if (cell < 0) return false;
+    d.cell = cell; d.kind = 'grid'; d.fx = G.fx;
+    d.inv ||= new Matrix4().compose(d.at, d.q, d.size).invert();
+    return true;
+  }
+  /** (decal) A mesh wrapped over what it hit (three's DecalGeometry), one draw: false when nothing of it lies in the box. */
+  meshDecal(d) {
+    const mesh = d.target; mesh.updateMatrixWorld();
+    let geo; try { geo = new DecalGeometry(mesh, d.at, new Euler().setFromQuaternion(d.q), d.size); } catch { return false; }
+    if (!geo.attributes.position?.count) { geo.dispose(); return false; }
+    const map = d.paint ? d.pic : null;
+    const mat = new MeshStandardMaterial({ color: map ? '#ffffff' : d.colour, map, roughness: d.rough, metalness: 0, transparent: true, opacity: d.alpha, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, emissive: d.glow ? d.colour.clone() : new Color(0), emissiveIntensity: d.glow });
+    if (!map) mat.alphaMap = decalTex(DEFAULT_DECAL, '_soft');
+    const m = new Mesh(geo, mat); m.userData.noAO = true; m.receiveShadow = true; m.renderOrder = 2; m.userData.decal = d;
+    this.scene.add(m); d.m = m; d.kind = 'mesh';
+    return true;
+  }
+  /** Each frame, for where the view draws now: decals made for the other way made again for this one. */
+  syncDecals(G) {
+    const grid = !!G?.r.gsClustered && HD.gridDecals !== false;
+    if (!this._decalsDirty && this._decalGrid === grid) return;
+    this._decalGrid = grid; this._decalsDirty = false;
+    for (const d of [...this.decals]) {
+      if (grid ? d.kind === 'grid' : d.kind === 'mesh') continue;
+      if (grid && this.gridDecal(d)) { this.unmesh(d); continue; }
+      this.ungrid(d);
+      if (!d.m && !this.meshDecal(d)) this.dropDecal(d);   // (made again where its mesh is now)
+    }
+    this.gsGrid = this.decals.filter(d => d.kind === 'grid');
+  }
+  unmesh(d) { const m = d.m; if (!m) return; d.m = null; m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); }
+  ungrid(d) { if (d.cell >= 0) d.fx?.decalFree(d.cell); d.cell = -1; if (d.kind === 'grid') d.kind = ''; }
+  dropDecal(d) {
+    const i = this.decals.indexOf(d); if (i < 0) return;
+    this.decals.splice(i, 1); this.unmesh(d); this.ungrid(d); d.kind = ''; this._decalsDirty = true;
+  }
   /** Removes every decal. */
   clearDecals() { for (const d of [...this.decals]) this.dropDecal(d); }
   tickDecals(dt) {
     for (const d of [...this.decals]) {
-      const u = d.userData.decal; if (!u.life) continue;
-      u.left -= dt; if (u.left <= 0) { this.dropDecal(d); continue; }
-      d.material.opacity = u.opacity * Math.min(1, u.left / Math.min(1, u.life * .3));
+      if (!d.life) continue;
+      d.left -= dt; if (d.left <= 0) { this.dropDecal(d); continue; }
+      d.alpha = d.opacity * Math.min(1, d.left / Math.min(1, d.life * .3));
+      if (d.m) d.m.material.opacity = d.alpha;
     }
   }
   /**
@@ -1889,14 +2117,14 @@ export class HDView {
    */
   detail(meshes, o = {}) {
     const set = o === false ? false : typeof o.px === 'number' ? o.px : true;
-    for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh) x.userData.detail = set; });
+    for (const m of [meshes].flat(Infinity)) m?.traverse?.(x => { if (x.isMesh && !x.isDetailMesh && !x.isCutMesh) x.userData.detail = set; });
     return this;
   }
   /** Is cluster detail still getting ready: a big mesh not looked at yet or waiting for its clusters, or a twin waiting for its shader? (tests, the engine test scenes) */
   detailPending() {
     if (HD.detail === false) return false;
     const D = this.details;
-    if (D) for (const e of D.map.values()) if (!e.twin || (e.twin.layers.mask & HOLD_BIT)) return true;
+    if (D) for (const e of D.map.values()) if (!e.twin || e.parts.some(p => p.twin.layers.mask & HOLD_BIT)) return true;
     let more = false;
     eachShown(this.scene, o => { if (!more && !D?.map.has(o) && o.isMesh && (detailable(o) || (reliefBudget() > 0 && detailFits(o) && reliefReady(o, reliefOf(o))))) more = true; });
     return more;
@@ -1933,6 +2161,7 @@ export class HDView {
    */
   holdNew(r, skip, now, rt = null, mrt = null) {   // rt, mrt: the picture the scene is drawn into (shaders are built for it)
     const held = this.held ||= new Map(), seen = this.shSeen ||= new Set(), jobs = this.shJobs ||= new Map();
+    this._holdRT = rt;   // (and the fades' twins, on WebGL: fadeReady)
     // the ones whose shaders are ready (or waited long enough) come back. A thing something else draws in the
     // place of (a cluster twin: its mesh, detailShow) waits for its build however long that takes (j.keep): on
     // WebGPU three leaves a thing out of the frame while its pipeline is being made, so a twin let go early drew
@@ -1945,7 +2174,9 @@ export class HDView {
     // the waiting starts from: what's there now draws at once
     if (this.holdBase !== true) {
       const all = this.holdBase === 'all'; this.holdBase = true;
-      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material) seen.add(shaderKey(o)); });
+      // (not a set of copies with none in it: the frame draws it not at all, so nothing of its was built, and later, with
+      // copies in it, it waits for its shader as a new thing does: Long Shadow's birds, 68 ms at the first shot)
+      (all ? eachThing : eachShown)(this.scene, o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material && (all || !o.isInstancedMesh || o.count > 0 || !o.instanceMatrix?.count)) seen.add(shaderKey(o)); });
       return;
     }
     eachShown(this.scene, o => {
@@ -1967,7 +2198,7 @@ export class HDView {
         const onLayer = go => inReach(o, go);
         try { (r.isWebGPURenderer ? compileGPU(r, o, this.cam, this.scene, onLayer, this) : Promise.resolve(forPicture(() => r.compileAsync(o, this.cam, this.scene)))).then(fin, fin); } catch (_) { fin(); }
       }
-      if (!j.done) { if (o.isDetailMesh) j.keep = true; held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
+      if (!j.done) { if (o.isDetailMesh || o.isCutMesh) j.keep = true; held.set(o, j); o.layers.mask = (o.layers.mask & ~1) | (1 << HOLD_LAYER); }
     });
     HD.info.held = held.size;
   }
@@ -1985,8 +2216,19 @@ export class HDView {
     A.spent = 0;
     if (A.key !== ch.key || A.r !== r || this.aheadAgain) {
       A.key = ch.key; A.r = r; this.aheadAgain = false; A.done.clear(); A.list.length = 0;
-      this.scene.traverse(o => { if (aheadFits(o)) A.list.push(o); });
-      A.list.reverse();   // (taken from the end: in the scene's order)
+      // the nearest first, and before all what the camera carries (a first-person rifle shown once play starts): the
+      // list can take a minute to get through on a slow phone, well past the loading screen (Long Shadow's mission 2 on
+      // the build machine, 2026-11-13), and in the scene's order its rifle came up in play before its turn and made
+      // its shaders in that frame, 124 ms. (By where each was last drawn: worked out again, a deep scene's matrices
+      // took longer than the list.)
+      const cm = this.cam.matrixWorld.elements, cx = cm[12], cy = cm[13], cz = cm[14], far = new Map();
+      this.scene.traverse(o => {
+        if (!aheadFits(o)) return;
+        let d = -1; for (let p = o.parent; p; p = p.parent) if (p === this.cam) { d = -2; break; }
+        if (d === -1) { const e = o.matrixWorld.elements, x = e[12] - cx, y = e[13] - cy, z = e[14] - cz; d = x * x + y * y + z * z; }
+        far.set(o, d); A.list.push(o);
+      });
+      A.list.reverse(); A.list.sort((a, b) => far.get(b) - far.get(a));   // (taken from the end: the nearest first, and a tie in the scene's order)
     }
     if (all && !A.all) { let ok; A.all = new Promise(res => { ok = res; }); A.all.ok = ok; }
     const fin = () => { A.busy = false; if (!A.list.length && A.all) { const p = A.all; A.all = null; p.ok(); } };
@@ -1996,7 +2238,7 @@ export class HDView {
         if (A.key !== key || A.r !== r || !A.list.length || (!A.all && A.spent > AHEAD_MS)) return fin();   // (the rest next frame)
         const o = A.list.pop();
         if (!aheadFits(o) || !inScene(o, this.scene)) continue;
-        const k = shaderKey(o) + (o.receiveShadow ? '+r' : '');
+        const k = shaderKey(o);
         if (A.done.has(k)) continue;
         A.done.add(k); A.n++;
         const timed = go => { const t = performance.now(); try { return inReach(o, go); } finally { A.spent += performance.now() - t; } };
@@ -2007,6 +2249,87 @@ export class HDView {
     };
     if (!A.busy) { A.busy = true; step(); }
     return A.all || Promise.resolve();
+  }
+  /**
+   * The view now draws with another renderer than last frame: WebGL after WebGPU or back, or a new WebGPU device made
+   * after the last one was lost (gpu.js lostGPU). What it noted about built shaders was about the old one: the things
+   * held back for theirs are let go, and the scene is looked at afresh, as on a view's first frame.
+   */
+  newRenderer() {
+    if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
+    this.shJobs?.clear(); this._fadeFrames = 0; this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
+    this.holdBase = false; this.warmed = false; this.aheadAgain = true;
+  }
+  /**
+   * The shadow maps' shaders, ahead (WebGPU). A thing's shadow is drawn with a shader of its own (three's shadow
+   * material with the thing's skinning, bones, position and cut-out nodes), made in the frame the thing is first drawn
+   * into a map, and buildAhead builds the scene pass's alone. So a man's nearer level of detail, a thing switched
+   * on, or a kind of thing first coming into the sun's view made its shadow shader in the middle of play: 2 to 24 ms
+   * each on the build machine, 107 ms for the frame Long Shadow's bullet camera first came up close to the men
+   * (2026-11-13). Here each thing that casts a shadow, of a kind not drawn this way yet, is drawn once through each
+   * shadow light's own node into a 4 x 4 stand-in of its map (hd3d-gpu.js shadowOps pre), on a layer of its own and
+   * with it and its parents shown for the draw, which makes its shader and pipeline as the real draw will want them.
+   * all: everything waiting at once (the view's first frame, and a round getting ready under the loading screen);
+   * else a few kinds a frame, of what came into the scene since (taken from the scene's list each time it changes).
+   */
+  shadowAhead(r, G, all) {
+    const S = this.shPre ||= { seen: new Set(), looked: new WeakSet(), list: null, todo: [], sig: '' }, ops = G.shOps ||= G.fx.shadowOps(r);
+    const lights = [];
+    for (const l of this.shL) { const sh = l.shadow, node = sh.shadowNode; if (!l.isPointLight && sh.map && node?.gsSplit && node.shadowMap === sh.map) lights.push(l); }
+    if (!lights.length) return;
+    const sig = lights.map(l => l.id).join(','); if (sig !== S.sig) { S.sig = sig; S.seen.clear(); S.looked = new WeakSet(); S.list = null; }   // (another light: everything again)
+    // (what has been looked at is not listed again when the scene changes: a scene that changes every frame would otherwise only ever get to its first few hundred things)
+    const T = thingsOf(this.scene);
+    if (T !== S.list) { S.list = T; S.todo.length = 0; for (let i = T.length - 1; i >= 0; i--) { const o = T[i]; if (o.castShadow && !S.looked.has(o) && aheadFits(o)) S.todo.push(o); } }
+    const pick = [];
+    for (let looked = 0; S.todo.length && (all || (looked < PRE_LOOK && pick.length < PRE_N)); looked++) {
+      const o = S.todo.pop();
+      if (!o.castShadow || !aheadFits(o) || !inScene(o, this.scene)) continue;
+      S.looked.add(o);
+      const k = shaderKey(o) + '|' + (o.skeleton ? o.skeleton.bones.length : '');   // (three keys a skinned thing's shaders by its bones too)
+      if (S.seen.has(k)) continue;
+      S.seen.add(k); pick.push(o);
+    }
+    if (!pick.length) return;
+    const was = [], shown = [];
+    for (const o of pick) {
+      was.push(o.layers.mask, o.visible, o.frustumCulled);
+      o.layers.mask |= PRE_BIT; o.visible = true; o.frustumCulled = false;
+      for (let p = o.parent; p && p !== this.scene; p = p.parent) if (!p.visible) { p.visible = true; shown.push(p); }
+    }
+    ops.scene = this.scene; ops.camera = this.cam;
+    try { for (const l of lights) ops.pre(l, PRE_BIT); }
+    finally {
+      for (let i = 0; i < pick.length; i++) { const o = pick[i]; o.layers.mask = was[i * 3]; o.visible = was[i * 3 + 1]; o.frustumCulled = was[i * 3 + 2]; }
+      for (const p of shown) p.visible = false;
+      HD.info.shAhead = (HD.info.shAhead || 0) + pick.length;
+    }
+  }
+  /**
+   * three keys every lit shader by the scene's lights (how many of each kind, which cast shadows), its sky light and its
+   * fog as well as by the thing, and the kit's own key for a shader (shaderKey) has none of that. So when a game sets up
+   * other lights or another sky (Long Shadow's next mission, under the loading screen), what was built ahead for the
+   * hidden things before was taken as built, and each was made again in the frame it first showed: the rifle in your
+   * hands, built while the card sat in the feed, 124 ms in the first frame of mission 2's play. A setting of those not
+   * met before has them built again: buildAhead lists the scene again, and a thing hidden or out of view (whose kind
+   * nothing in view shares: what is in view was drawn, and so made, for them in this frame) is no longer taken as built,
+   * so if it shows before its turn it waits for its shader as a new thing does (holdNew). (Back to a setting met before: its shaders
+   * are still kept.)
+   */
+  envCheck(r) {
+    let k; try { k = r._nodes.getCacheKey(this.scene, r.lighting.getNode(this.scene)); } catch (e) { return; }
+    const E = this.envKeys ||= new Set();
+    if (E.has(k)) return;
+    E.add(k);
+    if (E.size < 2) return;
+    this.aheadAgain = true;
+    const seen = this.shSeen; if (!seen?.size) return;
+    // (shown and in the camera's view: a thing shown but out of view was not drawn, so not made for the new setting either)
+    const draws = o => (o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.material, shown = new Set(), keys = new Set(), cam = this.cam;
+    VIEW_FR.setFromProjectionMatrix(VIEW_M.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse), cam.coordinateSystem, cam.reversedDepth);
+    const inView = o => { try { return !o.frustumCulled || VIEW_FR.intersectsObject(o); } catch (_) { return true; } };
+    eachShown(this.scene, o => { if (draws(o) && (o.layers.mask & 1) && inView(o)) { shown.add(o); keys.add(shaderKey(o)); } });
+    eachThing(this.scene, o => { if (draws(o) && !shown.has(o)) { const sk = shaderKey(o); if (!keys.has(sk)) seen.delete(sk); } });
   }
   /** Things whose shaders are still being built or still to look at (held back, close-up, and the rest of the scene). */
   get shadersLeft() { return (this.held?.size || 0) + (this.shJobs?.size || 0) + (this.shAhead ? this.shAhead.list.length + (this.shAhead.busy ? 1 : 0) : 0); }
@@ -2029,6 +2352,7 @@ export class HDView {
    */
   release() {
     if (this.batches?.list.length) unbatchAll(this);
+    stillOff(this.scene);
     detailDropAll(this);
     if (this.held?.size) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
     occludeDrop(this);
@@ -2117,7 +2441,7 @@ export class HDView {
     swapTwins(S.scene, G, null, null, this._air);
     const bake = () => G.fx.envFrom(G.r, S.scene, S.o), rt = S.o.wrap ? S.o.wrap(bake) : bake();
     if (this._gpuEnvRT && this._gpuEnvRT !== rt) this._gpuEnvRT.dispose();
-    this._gpuEnvRT = rt; this.env = S.tex = rt.texture; this._gpuEnvN = S.n; return rt.texture;
+    this._gpuEnvRT = rt; this.env = S.tex = rt.texture; this._gpuEnvN = S.n; this._gpuEnvR = G.r; return rt.texture;
   }
   // the reflections for the renderer drawing this frame: the studio, or the view's own (envFrom),
   // made again for this renderer if they were last made on the other one
@@ -2125,7 +2449,7 @@ export class HDView {
     const S = this.envSrc;
     if (S && this.env !== S.tex) this.envSrc = null;   // the game set v.env itself (or back to null)
     if (this.envSrc) {
-      if (G) { if (this._gpuEnvN !== S.n) this.gpuEnvBake(G); else this.env = S.tex = this._gpuEnvRT.texture; }
+      if (G) { if (this._gpuEnvN !== S.n || this._gpuEnvR !== G.r) this.gpuEnvBake(G); else this.env = S.tex = this._gpuEnvRT.texture; }   // (made again on a new renderer: a lost device's pictures are gone)
       else if (this._glEnvN !== S.n) this.glEnvBake(); else this.env = S.tex = this.envRT.texture;
     }
     return G ? (this.envSrc ? this.env : gpuEnv(G)) : this.env || envTex;
@@ -2164,7 +2488,7 @@ export class HDView {
    */
   reflect(...meshes) {
     for (const m of meshes.flat()) if (m && !this.reflectors.includes(m)) { this.reflectors.push(m); m.userData.gsReflect = true; }
-    if (this.reflectors.length && HD.traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
+    if (this.reflectors.length && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
     return this;
   }
   /**
@@ -2384,6 +2708,7 @@ export class HDView {
       // (a gs.props set by how many copies it has, not by how many of them the last camera to draw it could see: that changes as the camera turns, and nothing about the shadows does)
       else if (o.isInstancedMesh2) { h += (((o._parentLOD || o).instancesCount ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = (o._parentLOD || o).instancesCount ?? 1; }
       else if (o.isInstancedMesh) { h += (o.instanceMatrix.version + o.count * 7) * w; wide = true; copies = o.count; }
+      else if (o.isDetailMesh && o.copySrc) { h += o.copyStamp * 7 * w; wide = true; copies = o._n; }   // (copies drawn in clusters: a count that goes up when one moves, or the set does)
       else if (o.isBatchedMesh && !o.isDetailMesh) { h += ((o.instanceCount ?? o.count ?? 0) * 7 + (o.matricesTexture?.version ?? 0)) * w; wide = true; copies = o.instanceCount ?? 1; }
       if (o.isSkinnedMesh && o.skeleton) {
         // a posed body: where its bones are says where it is (a ball round them, and as much again as a third of the body's own size for the flesh on them)
@@ -2403,7 +2728,7 @@ export class HDView {
       const still = rec.still >= (HD.shadowStill ?? SH_STILL) && !held, bit = held ? 0 : still ? SH_STILL_BIT : SH_MOVE_BIT;
       if ((o.layers.mask & SH_BITS) !== bit) o.layers.mask = (o.layers.mask & ~SH_BITS) | bit;
       const bs = !wide && !ball && g && (g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere));
-      const tris = o.isDetailMesh ? o.fullTris : g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
+      const tris = o.isDetailMesh ? o.fullTris * (o.copySrc ? o._n : 1) : g ? ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * copies : 0;
       if (bs) { SH_S.copy(bs).applyMatrix4(o.matrixWorld); ball = true; }
       for (let i = 0; i < n; i++) {
         const l = L[i];
@@ -2447,6 +2772,30 @@ export class HDView {
   shadowsDirty() { this.shK?.clear(); this.shAll = true; return this; }
   // The WebGPU frame (render() decided this view fits): the same numbers as the WebGL chain, drawn by hd3d-gpu.js.
   // up: { pw, fw, fh, s1 } when the scene is drawn pw wide and upscaled to the canvas (fw x fh) by SGSR 2, or SGSR 1 if s1
+  // Finer sun shadows (WebGPU, sunmask-gpu.js): what this frame's sun mask holds, and whether materials read the last
+  // one. contact: v.contactShadows (by itself at ultra); far: v.farShadows (a map of heights round the camera,
+  // for shadows past the sun's own box); capsules: crowds' far members (gs.props.Crowd), whose shadows then leave the
+  // sun's map. Null when there is nothing to put in it.
+  sunMaskFrame(G, r, T, still, cut) {
+    const cs = this.cascade, sun = cs?.far?.parent ? cs.far : this.suns.find(l => l.visible && l.castShadow && l.parent);
+    const ok = !still && !this.clearBg && T.shadow > 0 && !!sun && HD.sunMask !== false;
+    const cw = this.contactShadows, contact = ok && (cw ?? HD.tier >= 3) ? { length: .3, thickness: .25, out: 40, ...(typeof cw === 'object' ? cw : {}) } : null;
+    const far = ok && !!this.farShadows;
+    this.gsCapsules = ok && HD.capsules !== false;
+    const list = this._capList ||= []; list.length = 0;
+    if (this.gsCapsules) for (const c of this.scene.userData.gsPosed || []) c.capsules?.(list, this.cam);
+    if (far) { const p = this.cam.getWorldPosition(SM_P); G.fx.farTiles(r, this.scene, p.x, p.y, p.z, this.cam.layers.mask, typeof this.farShadows === 'object' ? this.farShadows : {}); this._farOn = true; }
+    else if (this._farOn) { G.fx.farTilesOff(); this._farOn = false; }
+    if (!contact && !far && !list.length) { G.fx.sunMaskOn(false); HD.info.sunMask = null; return null; }
+    sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
+    const L = (this._sunL ||= new Vector3()).setFromMatrixPosition(sun.matrixWorld).sub(SM_P.setFromMatrixPosition(sun.target.matrixWorld)).normalize();
+    let caps = null;
+    if (list.length) { list.sort((a, b) => a[7] - b[7]); const { caps: cA, grid } = G.fx.sunCaps(); caps = binCapsules(list, [L.x, L.y, L.z], cA, grid, 40, ORIGIN); }
+    G.fx.sunMaskOn(!cut && G.fx.sunMaskOwner() === this);
+    HD.info.sunMask = { contact: !!contact, far, caps: caps?.n || 0, full: caps?.full || 0 };
+    const reach = typeof this.farShadows === 'object' && this.farShadows.reach;
+    return { owner: this, L, contact, far, farReach: reach || 0, box: sun.castShadow && sun.shadow.map ? sun.shadow.matrix : null, caps, k: fxK('sun mask') };
+  }
   drawGPU(G, r, T, baking, off, now, up, direct) {
     const s2 = up && !up.s1 ? up : null;
     // card pictures (bakes) draw with no upscaler and no frame generation, which the chain is built for: one
@@ -2459,6 +2808,11 @@ export class HDView {
     const live = direct && !baking && !off;
     if (live && this.stillSkip(ch, now)) { speed.between = null; HD.info.still = true; HD.info.cpu = performance.now() - now; return; }
     if (!baking && !off) HD.info.still = false;
+    // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
+    // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
+    G.fx.SUB.on = HD.subgroups !== false; HD.info.subgroups = G.fx.subgroupsInfo(r);   // (subgroups.js: passes built from now on use them or not)
+    const SK = G.fx.skinPool(r);
+    if (SK) { SK.set(HD.gpuSkin !== false); SK.list(this.scene, eachShown); }
     try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ }
     this.scene.environment = this.envFor(G); this.scene.environmentIntensity = this.envI;
     let fogN = null;
@@ -2471,6 +2825,7 @@ export class HDView {
     G.fx.setCascade(casc ? cs.near : null, cs?.fade ?? .06);
     const ls = this.lensStep(baking || off);   // (v.lens: a real lens's focus and exposure, lens.js)
     r.toneMapping = TONES[this.tone] ?? ACESFilmicToneMapping; r.toneMappingExposure = this.exposure * this.eyeAt(baking || off) * (ls ? ls.exp : 1);
+    this.syncDecals(G);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (!baking && !off) this.t += 1 / 60;
     gpuSwap(this, G);
@@ -2497,18 +2852,22 @@ export class HDView {
     if (HD.occludeShow) DETAIL.occ = null;
     if (pm >= 0) { leave(pm); enter('3D: copies'); }
     const shc = this.shadowCams ||= []; shc.length = 0;
-    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) shc.push(o.shadow.camera); });
+    if (tier().shadow > 0) eachShown(this.scene, o => { if (o.isLight && o.castShadow && o.shadow?.camera) { shc.push(o.shadow.camera); if (o.isPointLight) o.shadow.camera.gsPoint = true; } });
     // the lamps' shadow slots (lamps.js): handed out now the lamps' matrices are this frame's, and their atlas made
     const LP = this.lampPool;
     if (LP?.gpu) {
-      LP.prepare(T, HD.tier);
+      LP.prepare(T, HD.tier); LP.pictures(G.fx, r);   // (signs lit with their own picture: their squares of the decals' atlas)
       const at = G.fx.lampAtlas(r, LP.cols, LP.rows, LP.slotPx, LP); LP.atlasGen = G.fx.lampAtlasInfo().gen;
       for (const p of LP.proxies()) { p.shadow.map = at; shc.push(p.shadow.camera); }
     }
     // GPU culling (HD.gpuCull): big sets of copies are picked on the chip, except while frame generation runs (it
     // needs each copy to keep its place in the list from frame to frame: hd3d-gpu.js gpuProps)
     const gc = HD.gpuCull, gcOk = gc !== false && !(live && frameGenFor(speed.game)), occ = !baking && !off && HD.occlude !== false && !HD.occludeShow;
-    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null);   // (the sets gpuSwap's walk found)
+    const ocNow = occ ? occlusionNow(this) : null;   // (GPU culling asks the same depth pyramid on the chip: props-gpu.js)
+    const fr = baking || off ? null : fadeReady(this, G, r, 'copy');   // (copies changing level fade: lod-fade.js)
+    for (const o of this.sets) if (o.userData.gpuHid) o.userData.gpuTwin.sync(this.cam, occ ? copiesHidden(this, o) : null, shc, gcOk && (gc === true || (o._instancesArrayCount || 0) >= GPU_CULL_MIN) ? r : null, fr, ocNow);   // (the sets gpuSwap's walk found)
+    if (pm >= 0) { leave(pm); enter('3D: skinning'); }
+    HD.info.skin = SK?.on ? (SK.run(this.cam, shc), SK.info) : null;
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
     for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
     if (pm >= 0) leave(pm);
@@ -2525,9 +2884,9 @@ export class HDView {
     const wantRefl = this.reflectors.length && T.ao > 0 && !this.clearBg;
     let tr = null;
     // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
-    const TK = wantRefl && HD.traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
+    const TK = wantRefl && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
     if (TK) {
-      if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) fn(e.o, e.twin); } }); }
+      if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) for (const p of e.parts) fn(e.o, p.twin); } }); }
       this._tracer.show = !!HD.traceShow;
       if (pm >= 0) enter('3D: traced reflections');
       if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) tr = this._tracer;
@@ -2541,7 +2900,10 @@ export class HDView {
     // multisampled colour, depth and motion pictures and their resolves
     if (s2 && HD.sgsrTune !== false) o.msaa = 0;
     o.s2Plain = HD.sgsrTune === false;
-    G.fx.HALF.on = HD.half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
+    o.s2Net = s2 && !o.s2Plain ? netFor(HD.gssrNet) : null; HD.info.gssrNet = o.s2Net ? o.s2Net.id : '';
+    G.fx.HALF.on = HD.half !== false && steered().half !== false; G.fx.HALF.pretend = !!HD.halfPretend; HD.info.half = G.fx.halfInfo();   // (the chain is built again when this changes: hd3d-gpu.js halfKey)
+    if (G.fx.SHADOW_DEPTH) G.fx.SHADOW_DEPTH.on = HD.shadowColour !== true;   // (shadow maps of depth alone, hd3d-gpu.js: for a light's map made from now on)
+    if (G.fx.SHARE) G.fx.SHARE.on = HD.shareTargets !== false;   // (the effect steps' pictures shared two apart, hd3d-gpu.js sharePictures: the chain is built again when it changes)
     const g = this.grade;
     if (g) o.grade = { sat: g.saturation ?? 1, con: g.contrast ?? 1, lo: toRGB(g.shadows, GL), hi: toRGB(g.highlights, GH) };
     // depth of field and sun shafts: in the chain from the first time the view uses them (high and ultra
@@ -2577,9 +2939,18 @@ export class HDView {
       }
     }
     if (!baking && !off) { autoLod(this, r.domElement.height); if (this.batches?.list.length) unbatchAll(this); }   // (static batching: WebGL only, see autoBatch)
+    // still scenery drawn from render bundles (HD.bundle, on by default; still.js): what has kept still for a second is
+    // recorded by area once and replayed, and what changed this frame goes back to drawing itself before anything is drawn
+    if (HD.bundle === false || !r.backend?.beginBundle) { stillOff(this.scene); HD.info.bundled = HD.info.bundles = 0; }
+    else if (!baking && !off) {
+      if (pm >= 0) enter('3D: still');
+      stillFrame(this.scene, thingsOf(this.scene), now, SH_BITS); HD.info.bundled = stillStats.things; HD.info.bundles = stillStats.cells;
+      if (pm >= 0) leave(pm);
+    }
     r.info.autoReset = false; r.info.reset();   // (HD.info counts the frame from here: the shadow maps drawn below as well, as on WebGL)
     // shadows: each light's map is drawn again only when it or a caster it sees moved (shadowLights)
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
+    let shAhead = null;
     if (T.shadow > 0) {
       if (pm >= 0) enter('3D: shadows');
       if ((o.shDrawn = !!this.shadowLights(lastView !== this || baking || off, true)) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
@@ -2593,6 +2964,8 @@ export class HDView {
         sh.needsUpdate = false;
       }
       if (pm >= 0) leave(pm);
+      // (the shadow shaders of what these maps have not drawn yet: shadowAhead, after the scene pass below, once this frame's uniforms are set)
+      if (!baking && !off && HD.hold !== false) shAhead = getready.warming || !this.warmed;
     }
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
@@ -2619,7 +2992,7 @@ export class HDView {
       fg = { mode: how, pace: HD.fgPace || frameGenPaceOf(speed.game, steps), quick: HD.fgQuick !== false, parts: !!HD.fgParts, drop: HD.fgDrop !== false, cost: speed.cost,
         reset: cut || m.jumped || now - (this._fgT || 0) > HD.fgGap, jd: [0, 0], jit: [0, 0], steps, hz: screenHz() }; this._fgT = now;
     } else this._fgCam = null;
-    if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); }   // WebGPU pictures count rows from the top
+    if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); o.s2.fsr = HD.sgsrFsr || null; }   // WebGPU pictures count rows from the top
     // SGSR 2 moves the camera by a fraction of a pixel each frame (its jitter) and three's motion picture
     // includes the change: SGSR 2 and frame generation take it back out (in NDC: x right, y up, so rows down are minus)
     if (s2) {
@@ -2628,13 +3001,16 @@ export class HDView {
     } else this._fgJ = null;
     // the scene's pass writes each pixel's motion and the see-through mask while frame generation could
     // come on for this game (so it can start without rebuilding the chain) or SGSR 2 can use them
-    o.live = live; o.mrt = live && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
+    o.live = live; o.mrt = (live || HD.motion === true) && (!!s2 || frameGenReady(speed.game)); o.still = live && HD.still !== false; o.fg = fg; o.now = now;
+    // finer sun shadows: what goes into this frame's sun mask (drawn after the scene), and whether this frame reads the last one
+    if (pm >= 0) enter('3D: sun mask'); o.sunMask = this.sunMaskFrame(G, r, T, baking || off, cut); if (pm >= 0) leave(pm);
     // (effects spread over frames: a cut starts them from this frame alone)
     // (a card's picture is a frame of its own: it keeps nothing from the last one baked)
     o.spread = HD.spread === false ? false : typeof HD.spread === 'string' ? HD.spread : true; o.cut = cut || !!baking;
+    o.aoBack = HD.aoBack !== false; o.aoDirect = HD.aoDirect;   // (ambient occlusion on bounce light only, and the share still on the whole picture: hd3d-gpu.js aoInShading)
     // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
     o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
-    if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); }
+    if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); if (o.sunMask) fxOn.add('sun mask'); }
     // fresh aim: made frames turned to where the camera points at the moment they're shown (v.aimNow, AR's own)
     ch.aim = live && fg && HD.aim !== false && (this.aimFn || this.freshAim) ? () => this.aimPose() : null;
     this._aimJit = s2 && fg ? fg.jit : null;   // the real frame is shown while SGSR 2's jitter is still on the camera
@@ -2649,10 +3025,13 @@ export class HDView {
     HD.info.sky = sky ? sky.info : '';
     if (pm >= 0) enter('3D: drawing');
     const drawAt = performance.now();
-    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; } finally { showAll(this); lodBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
-    if (!baking && !off && HD.hold !== false) this.buildAhead(r, ch);
+    if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
+    // (drawn after the scene pass: a look's per-frame colours (live uniforms) have no value until the pass has run once, and three reads them as it draws a shadow)
+    if (shAhead !== null) { if (pm >= 0) enter('3D: shadows ahead'); this.shadowAhead(r, G, shAhead); if (pm >= 0) leave(pm); }
     // this frame's depth, boiled down and read back for the frames to come (occlude.js; pad: the picture is drawn a fraction of a pixel off, or with several samples a pixel)
     // (three draws a scene's pass once a screen refresh: a view drawn again within one has the first draw's depth, not this camera's)
     const drawn = ch.occAt !== r.info.frame; ch.occAt = r.info.frame;
@@ -2688,7 +3067,7 @@ export class HDView {
   // Still frames: true when this refresh can show the last frame again instead of drawing (see drawGPU).
   stillSkip(ch, now) {
     const st = ch.still, S = this._still ||= { cam: new Float64Array(32), run: 0, seen: -1, skip: 0, hurt: 0 };
-    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for)
+    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor || FADING.size) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for; nor while a detail level fades)
     const cam = this.cam; cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
@@ -2762,7 +3141,13 @@ export class HDView {
   draw3d(c, w, h, baking) {
     this.fit(w, h);
     if (this.faceLit?.person) aimFaceLight(this);
-    const G = gpuFor(this), r = G ? G.r : renderer();
+    const G = gpuFor(this);
+    // the graphics chip was lost and a new one is on its way (gpu.js lostGPU): nothing is drawn meanwhile (on WebGL
+    // every shader of the scene would be built for one frame, and then built again on the new chip). The app has
+    // paused a round being played and covers it while the new chip catches up (src/main.js)
+    if (!G && gpuMending()) { if (!baking && !HD.direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); } return; }
+    const r = G ? G.r : renderer();
+    if (r && this._drawR !== r) { if (this._drawR) this.newRenderer(); this._drawR = r; }
     // WebGPU's depth runs 0..1 and WebGL's -1..1, so the camera's projection differs. three switches it
     // only when the camera's own setting disagrees, and the SGSR 2 jitter puts back the matrix it saved
     // before, so a switch made inside the frame was undone (on WebGPU the near clip sat at twice its
@@ -2794,16 +3179,16 @@ export class HDView {
       // adaptive quality: first resolution, then tier (and frame rate)
       // (a round getting ready behind the loading screen, getready.js: its frames build what the round needs and say
       // nothing about how fast the phone draws, so none of them count; the measuring starts with the round)
-      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; else adapt(gap); applyTier();
+      const gap = now - (Q.lastT || now); Q.lastT = now; if (getready.warming) { Q.sum = Q.cnt = Q.late = Q.gsum = Q.gcnt = 0; STEPS.off.warming++; } else adapt(gap); applyTier();
     }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
     // The final picture (upscaler, last effects, the copy onto the card) is the screen's own size. On a big
     // screen (a foldable opened up) that's twice a phone's pixels and the resolution steps can't lighten it,
     // so once the game has had to step down (Q.lvl >= 1), it's also drawn at no more than OUT_PX and the
-    // screen stretches it. A game keeping up is never touched.
+    // screen stretches it. A game keeping up is never touched on a phone; on a computer it always is.
     let fw = c.canvas.width, fh = c.canvas.height;
-    if (!baking && !off && HD.scale == null && Q.force == null && Q.lvl >= 1 && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
+    if (!baking && !off && HD.scale == null && Q.force == null && (Q.lvl >= 1 || desktop) && fw * fh > OUT_PX) { const k = Math.sqrt(OUT_PX / (fw * fh)); fw = Math.round(fw * k); fh = Math.round(fh * k); }
     // (Frame generation leaves the 3D's size as it is. It used to give each real frame 1.6 times the pixels, as its
     // two refreshes' time, but the made frames take some of that time, and the Fold is held back by its pixels:
     // the real frame got slower, which is the opposite of what frame generation is for.)
@@ -2824,7 +3209,7 @@ export class HDView {
     const cv = r.domElement; if (cv.width !== ow || cv.height !== oh) r.setSize(ow, oh, false);
     gridRoom(r, this);   // (before this view's first picture of any size: a small one for its card would set the lights' room)
     if (!baking && !off) speed.gpu = !!G;   // (frame generation needs the game on screen drawn with WebGPU)
-    autoDetail(this, now, !!(baking || off));
+    autoDetail(this, now, !!(baking || off), ph);
     autoCopies(this, ph, now, !!(baking || off));
     if (this.occHid?.size) showAll(this);   // (nothing stays hidden between frames: see occludeStep)
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
@@ -2856,6 +3241,7 @@ export class HDView {
       if (P.ssr.cw !== pw || P.ssr.ch !== ph) { P.ssr.setSize(pw, ph); P.ssr.cw = pw; P.ssr.ch = ph; }
     }
     for (const cs of this.contacts) cs.update(r, this.scene, T.contact);
+    this.syncDecals(null);
     if (this.decals.length && !baking && !off) this.tickDecals(Math.min(.1, (now - (this.decalT || now)) / 1000)); this.decalT = now;
     if (this.probes.length > 1) this.blendProbes();
     for (const p of this.parts) p.mat.uniforms.scale.value = ph / (2 * Math.tan(this.cam.fov * Math.PI / 360));
@@ -2924,10 +3310,11 @@ export class HDView {
     lastView = this; if (TEST) window.__hdView = this;
     r.info.autoReset = false; r.info.reset();
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
-    if (s2) { s2.tuned = HD.sgsrTune !== false; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
+    if (s2) { s2.tuned = HD.sgsrTune !== false; s2.fsr = HD.sgsrFsr || null; s2.net = HD.gssrNet === true ? null : netFor(HD.gssrNet); HD.info.gssrNet = s2.net ? s2.net.id : ''; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
-    try { cp.render(); } finally { showAll(this); lodBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
+    fadeOn(this, null, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
+    try { cp.render(); } finally { showAll(this); lodBack(this); fadeBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
     if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.half = ''; HD.info.refl = ssr ? 'screen' : ''; }
     }
     if (direct) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }
@@ -2949,6 +3336,8 @@ const PORTED_LOOKS = new Set(['air', 'pulse', 'ground', 'hills', 'rock', 'leaves
 PORTED_LOOKS.add('sdf');   // gs.fx3d's 3D text (text3d.js)
 PORTED_LOOKS.add('crowd');   // gs.props.Crowd (crowd.js, crowd-gpu.js)
 PORTED_LOOKS.add('rooms');   // gs.city's rooms behind the windows (city-rooms.js, city-gpu.js)
+PORTED_LOOKS.add('carpaint').add('carglass');   // gs.models.vehicle's paint and glass (models/vehicle-looks.js, models/vehicle-gpu.js)
+PORTED_LOOKS.add('groundpaint');   // gs.city's ground paint (ground-paint.js, ground-paint-gpu.js)
 // kit ShaderMaterials with a node material twin (hd3d-gpu.js gpuMaterials; material.userData.gsGpu)
 const GPU_TWINS = new Set(['skyDome']);
 // (gs.props' InstancedMesh2 puts a material's own onBeforeCompile back as an own property after each draw: not a shader of its own)
@@ -2961,6 +3350,7 @@ function materialFits(m) {
 }
 /** '' if every part of this view has a WebGPU version, else what keeps it on WebGL (HD.info.webgl). */
 export function gpuFits(v) {
+  if (steered().webgpu === false) return 'the steering list (' + (steered().rules.join(', ') || 'this game') + ')';
   const T = tier();
   // (gs.fx3d's own effects have WebGPU versions, hd3d-gpu-fx.js; a pass a game made itself hasn't)
   if (v.extras?.some(p => !p.gsFx)) return 'a screen effect of the game\'s own';
@@ -2988,6 +3378,7 @@ function gpuFor(v) {
 }
 // swap each view's parts between their WebGL and WebGPU versions (particles: points or sprites)
 const gpuLooked = new WeakSet(), gpuTwins = new WeakMap(), gpuLists = new WeakMap(), sunRoles = new WeakMap();
+const SM_P = new Vector3();   // (sunMaskFrame)
 // kit ShaderMaterials (GPU_TWINS) swapped for their node material twin on WebGPU, and back
 // A twin can have a close-up version (gs.models materials: the recipe worked out per pixel, fading to the
 // baked look pixel by pixel as the textures get fine enough): drawn while the thing is within its distance
@@ -3019,7 +3410,8 @@ function inReach(o, go) {
 // (said, not swallowed: a build that fails leaves its shaders to be made in the frames, which looks like nothing but a stutter)
 const buildFailed = e => { console.warn('3D: a background shader build failed', e); };
 function compileGPU(r, o, cam, scene, around = null, view = null) {
-  const go = () => { hideSets(o); return forPass(r, view, () => r.compileAsync(o, cam, scene)); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
+  // (a build that waited its turn on a renderer whose graphics chip has since been lost, gpu.js: nothing to build it on)
+  const go = () => { if (r._isDeviceLost) return; hideSets(o); return forPass(r, view, () => r.compileAsync(o, cam, scene)); }, p = (r.gsCompiling || Promise.resolve()).then(() => around ? around(go) : go());
   const done = () => { r.gsBuilding--; };
   r.gsBuilding = (r.gsBuilding || 0) + 1; p.then(done, done);
   r.gsCompiling = p.catch(() => {});
@@ -3033,7 +3425,9 @@ const AHEAD_MS = 3;
 function aheadFits(o) {
   if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || !o.geometry) return false;
   if (o.isInstancedMesh2 || o._parentLOD || o.userData.gsTwin?.isInstancedMesh2) return false;   // (sets of copies are their library's to draw: gpuSwap, hideSets)
-  if (o.isInstancedMesh && (!o.count || !o.instanceMatrix?.count)) return false;   // (room for none: a buffer of no size, which WebGPU won't bind)
+  // (room for none: a buffer of no size, which WebGPU won't bind. One with room but none shown yet, a flock that only
+  // takes off at the first shot, is built: three builds its shader and pipeline whatever its count, and draws nothing)
+  if (o.isInstancedMesh && !o.instanceMatrix?.count) return false;
   const lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);
   return lm === 1 || lm === 0;   // (0: held back or hidden for this frame alone; the batch layer and a game's own layers are never drawn by the view's camera as they are)
 }
@@ -3269,7 +3663,13 @@ function gpuSwap(v, G) {
   for (const s of v.sims || []) s.gpuStep(G, chipMs, frameMs);
   for (const p of v.parts) {
     if (G) {
-      const tw = p.gpuTwin?.r === G.r ? p.gpuTwin : (p.gpuTwin = { r: G.r, ...(p.makeTwin ? p.makeTwin(G) : G.fx.gpuParticles(p)) });
+      let tw = p.gpuTwin;
+      if (tw?.r !== G.r) {
+        // (a twin made for another renderer, a lost graphics chip's: the new one takes its place in the scene, or the old
+        // one's sprite stayed there, never swapped back for the points on WebGL, which can't draw it)
+        const old = tw; tw = p.gpuTwin = { r: G.r, ...(p.makeTwin ? p.makeTwin(G) : G.fx.gpuParticles(p)) };
+        if (old?.sprite.parent) { old.sprite.parent.add(tw.sprite); old.sprite.removeFromParent(); }
+      }
       if (p.pts.parent) { p.pts.parent.add(tw.sprite); p.pts.removeFromParent(); }
       if (p.stepGpu) p.stepGpu(G); else tw.sync(p.n || 0);
     } else if (p.gpuTwin?.sprite.parent) { p.gpuTwin.sprite.parent.add(p.pts); p.gpuTwin.sprite.removeFromParent(); }
@@ -3313,6 +3713,7 @@ function bakeLater(view, c) {
 const LIVE = new Set();   // the views drawn on the 3D canvas lately (a game can draw more than one)
 function liveView(v, now) { LIVE.add(v); if (LIVE.size > 1) for (const o of LIVE) if (now - o.drawnAt > 2000) LIVE.delete(o); }
 function stillComing() {
+  if (gpuMending()) return { hard: 1, soft: 0, what: 'Graphics' };   // (a lost graphics chip being made again: gpu.js)
   const now = performance.now(); let hard = 0, soft = 0, ahead = 0;
   for (const v of LIVE) {
     if (now - v.drawnAt > 1000) continue;
@@ -3325,6 +3726,9 @@ function stillComing() {
   return hard || soft || ahead || packs ? { hard, soft: soft + ahead + packs, what: hard || ahead ? 'Shaders' : soft ? 'Detail' : 'Textures' } : null;
 }
 waitsOn(stillComing);
+// the canvases of renderers whose graphics chip was lost (gpu.js): taken off the card the next time a view mounts its own
+const LOST_CANVAS = new WeakSet();
+onGpuLoss(e => { if (e.kind === 'lost') for (const cv of e.canvases || []) LOST_CANVAS.add(cv); });
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
@@ -3335,7 +3739,7 @@ function mount(cv, c, view) {
     old.canvas.classList.remove('hd-host');
   }
   // a view that moved between WebGL and WebGPU: take the other renderer's canvas off this card
-  const prev = hc.previousSibling; if (prev && prev !== cv && (prev === R?.domElement || prev === webgpu()?.r.domElement)) prev.remove();
+  const prev = hc.previousSibling; if (prev && prev !== cv && (prev === R?.domElement || prev === webgpu()?.r.domElement || LOST_CANVAS.has(prev))) prev.remove();
   if (hc.previousSibling !== cv) par.insertBefore(cv, hc);
   cv.classList.add('hd-layer'); hc.classList.add('hd-host');
   const u = view.under || null;
@@ -3455,6 +3859,123 @@ function lodBack(v) {
   list.length = 0;
 }
 const LOD_V = new Vector3();
+// Detail levels that fade into each other (lod-fade.js). Each frame, just before the scene is drawn: the people
+// and animals changing level are moved along their fades, and every mesh drawn dithered this frame (theirs, and
+// the lists of gs.props copies changing level) has its material(s) swapped for the dithered twins, put back as
+// soon as the frame is drawn (fadeBack), so nothing else (the walks over the scene, holdNew, the games) ever sees
+// a twin. A twin's shader is built in the background the first time it is wanted (fadeReady), one build at a
+// time for each renderer, and marked built for the view as holdNew's are; until then a change waits a moment
+// (lod-fade.js FADE.wait), then pops.
+const FADE_LIST = [], FADE_GPU = { object: new WeakMap(), copy: new WeakMap() }, fadeBusy = new WeakSet();
+function fadeTwinsOf(o, G, per) {
+  if (!G) return per === 'object' ? glTwins(o) : null;
+  return twinList(o, FADE_GPU[per], m => G.fx.fadeTwin(m, per, G.r));
+}
+function fadeReady(v, G, r, per) {
+  const seen = v.shSeen ||= new Set(), jobs = v.fadeJobs ||= new Set();
+  // one build at a time for each renderer, in the background: o as it will be drawn (with mats, its twins, if given;
+  // shown, on the camera's layer, and an empty list of copies given one), into the picture the scene is drawn into
+  const build = (o, k, mats) => {
+    if (jobs.has(k) || fadeBusy.has(r) || v.shJobs?.has(k)) return;   // (v.shJobs: holdNew is building it)
+    // (the view's own shaders first: builds wait their turn on a renderer, and things new on screen are held back until
+    // theirs are built, so a twin built in a view's first frames, or while the view builds, kept the whole view's copies
+    // from showing for that long)
+    if ((v._fadeFrames || 0) < FADE_SETTLE || v.shadersLeft > 0) return;
+    jobs.add(k); fadeBusy.add(r);
+    let fin = false;
+    const done = ok => { if (fin) return; fin = true; if (ok) seen.add(k); jobs.delete(k); fadeBusy.delete(r); clearTimeout(cap); }, cap = setTimeout(() => done(false), 4000);
+    const swap = go => { const keep = o.material, n = o.count; if (mats) o.material = mats; if (o.isInstancedMesh && !o.count) o.count = 1; try { return inReach(o, go); } finally { o.material = keep; if (o.isInstancedMesh) o.count = n; } };
+    const forPic = go => { const rt0 = r.getRenderTarget(); try { r.setRenderTarget(v._holdRT ?? null); return go(); } finally { r.setRenderTarget(rt0); } };
+    try {
+      const p = G ? compileGPU(r, o, v.cam, v.scene, swap, v) : Promise.resolve(swap(() => forPic(() => r.compileAsync(o, v.cam, v.scene))));
+      p.then(() => done(true), () => done(false));
+    } catch (e) { done(false); }
+  };
+  const SK = G?.fx.skinPool(r);
+  return o => {
+    if (HD.hold === false) return true;   // (holding off: built in the frame, as holdNew's are)
+    // a level on bones not shown yet is taken into the chip's pool now (skin-gpu.js), so its shaders are built as
+    // they will be drawn: posed from the pool, not in their own vertex stage
+    if (o.isSkinnedMesh) SK?.take(o);
+    // a level cluster detail draws through cut twins (detail.js cutTwin): the twins are what is drawn, theirs the shaders
+    // to build (their own ones are holdNew's), each with its part of the dithered twins
+    const e = o.userData.gsDetailed ? v.details?.map.get(o) : null;
+    if (e && per === 'object') {
+      const tw = fadeTwinsOf(o, G, per);
+      if (!tw || (Array.isArray(tw) && tw.some(t => !t))) return false;
+      for (const p of e.parts) {
+        const t = p.twin; if (!t?.isCutMesh) continue;
+        if (!(t.layers.mask & 1) && !o.userData.noHold) return false;   // (its own shader still building)
+        const m = partMaterial(tw, p); if (!m) continue;
+        const k = shaderKeyAs(t, m); if (!seen.has(k)) { build(t, k, m); return false; }
+      }
+      return true;
+    }
+    // a person's level coming in is drawn with its own shader once the fade ends: built too (on WebGL nothing else
+    // builds a hidden thing's ahead), and while holdNew has it back for that build, it waits
+    if (per === 'object' && !o.userData.noHold) {
+      if (!(o.layers.mask & 1)) return false;
+      const kb = shaderKey(o);
+      if (!seen.has(kb)) { build(o, kb, null); return false; }
+    }
+    const tw = fadeTwinsOf(o, G, per);
+    if (!tw || (Array.isArray(tw) && tw.some(t => !t))) return false;
+    const k = shaderKeyAs(o, tw);
+    if (seen.has(k)) return true;
+    build(o, k, tw);
+    return false;
+  };
+}
+const NOT_NOW = () => false;
+const FADE_SETTLE = 20;   // frames a view draws before twins are built (fadeReady)
+function fadeOn(v, G, r, smooth, still) {
+  v._fadeFrames = (v._fadeFrames || 0) + 1;
+  const keep = v._fadeKeep ||= []; keep.length = 0;
+  const ready = still ? NOT_NOW : fadeReady(v, G, r, 'object');
+  fadeStep(v.scene, ready, smooth, FADE_LIST);
+  if (!still && !fadeBusy.has(r) && !getready.warming) fadeAhead(v, r, ready);   // (not under a loading screen: it waits for no more than it did)
+  for (let i = 0; i < FADE_LIST.length; i += 3) {
+    const o = FADE_LIST[i], val = FADE_LIST[i + 1], casts = FADE_LIST[i + 2];
+    keep.push(o, o.material, o.visible, o.castShadow, o.onBeforeRender);
+    // (a level cluster detail draws through cut twins, detail.js cutTwin: the twins fade in its place, with its share)
+    const e = o.userData.gsDetailed ? v.details?.map.get(o) : null;
+    if (e) for (const p of e.parts) { const t = p.twin; if (t) keep.push(t, t.material, t.visible, t.castShadow, t.onBeforeRender); }
+    if (!val) { o.visible = false; if (e) for (const p of e.parts) if (p.twin) p.twin.visible = false; continue; }   // (a level waiting for its twins' shaders: not shown yet)
+    o.material = fadeTwinsOf(o, G, 'object');
+    if (!G) { hookGL(o); if (!casts) o.castShadow = false; }   // (WebGL: the value goes in before each draw; the shadow from one level at a time)
+    if (e) for (const p of e.parts) {
+      const t = p.twin; if (!t?.isCutMesh) continue;   // (a still mesh's clusters, DetailMesh: drawn as they are)
+      const m = partMaterial(o.material, p); if (!m) continue;
+      t.material = m; t.userData.gsFadeV = o.userData.gsFadeV;
+      if (!G) { hookGL(t); if (!casts) t.castShadow = false; }
+    }
+  }
+  if (G) for (const s of v.sets || []) {
+    const f = s.userData.gpuTwin?.fades?.(); if (!f) continue;
+    for (const m of f) if (m.visible) { const tw = fadeTwinsOf(m, G, 'copy'); keep.push(m, m.material, m.visible, m.castShadow, m.onBeforeRender); if (tw && !(Array.isArray(tw) && tw.some(t => !t))) m.material = tw; else m.visible = false; }
+  }
+  HD.info.fading = fadingCount();
+}
+// The twins of the people and animals on screen, built ahead in the background (one at a time, as the frames go),
+// so that their first change of level fades too rather than waiting for its shaders and popping
+function fadeAhead(v, r, ready) {
+  const ok = v._fadeOk ||= new WeakMap(), n = FADE.n;
+  fadeAheadList((root, parts) => {
+    if (ok.get(root) > n - 120) return true;   // (all built: looked at again now and then)
+    let all = true;
+    for (const p of parts) p?.traverse(m => { if (all !== null && m.isMesh && m.material && !ready(m)) all = fadeBusy.has(r) ? null : false; });
+    if (all) ok.set(root, n);
+    return all !== null;   // (a build started: the rest when it is done)
+  });
+}
+function fadeBack(v) {
+  const keep = v._fadeKeep; if (!keep?.length) return;
+  for (let i = keep.length - 5; i >= 0; i -= 5) {
+    const o = keep[i]; o.material = keep[i + 1]; o.visible = keep[i + 2]; o.castShadow = keep[i + 3];
+    if (o.onBeforeRender !== keep[i + 4]) { if (Object.hasOwn(o, 'onBeforeRender') && keep[i + 4] === Object.getPrototypeOf(o).onBeforeRender) delete o.onBeforeRender; else o.onBeforeRender = keep[i + 4]; }
+  }
+  keep.length = 0;
+}
 // Auto exposure (v.autoExposure): the eye adapting, as every big engine does. A light meter reads the
 // scene's brightness every few frames (a 16 x 16 grid of log brightness, read back without waiting:
 // readRenderTargetPixelsAsync), and the exposure drifts towards the one that puts the average at
@@ -3552,7 +4073,7 @@ function makeBatch(v, B, list) {
   mesh.name = 'gs-batch'; mesh.userData.noBatch = mesh.userData.noLod = mesh.userData.noHold = true;
   const b = { mesh, items: new Map() };
   for (const o of parts) { b.items.set(o, { g: o.geometry, m: ownMatrix(new Float64Array(16), o.matrixWorld.elements, se), mask: o.layers.mask }); o.layers.mask = BATCH_BIT; }   // off the camera's (and the shadow passes') layers, still in the scene
-  v.scene.add(mesh); B.list.push(b);
+  v.scene.add(mesh); mesh.updateMatrixWorld(true); B.list.push(b);   // (made after this frame's matrices were worked out: without its own, it drew its pieces about the world's centre for a frame)
   HD.info.batched = (HD.info.batched || 0) + parts.length; HD.info.batches = (HD.info.batches || 0) + 1;
 }
 function unbatch(B, b, se) {
@@ -3562,47 +4083,79 @@ function unbatch(B, b, se) {
 }
 function unbatchAll(v) { const B = v.batches; while (B.list.length) unbatch(B, B.list[0], v.scene.matrixWorld.elements); }
 // Cluster detail (HD.detail, on by default; detail.js): a Nanite-style level of detail for the game's big
-// still meshes (HD.detailMin triangles or more: a hillside, a cliff, a cathedral made in code). Where
+// meshes (HD.detailMin triangles or more: a hillside, a cliff, a cathedral made in code, a person close up). Where
 // automatic LOD above swaps a whole mesh for a simpler copy, here the mesh is cut into clusters of a few
 // hundred triangles with coarser and coarser versions of each neighbourhood, and every frame each part of
 // it is drawn only as finely as shows in the picture (within HD.detailPx pixels) and not at all where it
 // is out of view: the near end of a long wall at full detail, the far end at a fraction, with no cracks
 // between them. Shadow maps pick for themselves the same way. So a model can carry far more triangles
 // close up without costing more far away.
+// As Unreal's Nanite now does, it takes nearly everything solid: still or moving (a twin follows its mesh's
+// place every frame and is picked from where the camera is in the mesh's own space, so a mesh that is carried
+// about, spun or thrown is picked just as a still one), copies (a three InstancedMesh: each copy picked on
+// its own, a near copy fine and a far one from a few clusters), meshes in several materials (each material's
+// part built and drawn by a twin of its own, the seams between them kept still at every level so they never
+// crack), cut-out leaves and fences (alpha-tested: built without the rough merge that would melt their cards
+// together), and meshes on bones or with blend shapes (people, animals: one cut a frame from where the camera
+// is in the mesh's space at rest through the bone that carries most of it, written into an index list of the
+// twin's own; the twin is skinned as the mesh was, on WebGPU by the chip's skinning pool from the mesh's own
+// posed points; detail.js cutTwin).
 // The clusters take a second or so for each quarter of a million triangles, in a worker; the mesh draws
 // whole until they arrive (and until the cluster shader has built, in the background), and they are kept
 // by the mesh's content (memory, then IndexedDB), so the next round and the next visit have them at once.
 // The game's mesh stays in the scene, untouched, for the game and for raycasts, on the batch layer no
-// camera draws; a DetailMesh twin is drawn in its place and follows its place, material, shadows and
-// visibility. The moment the mesh's geometry or material stops fitting, or it leaves the scene, the twin
-// goes and the mesh draws as itself again. Not for: skinned, morphing, instanced, see-through,
-// alpha-tested, multi-material and moving-vertex meshes (leaves, grass, water), marked reflectors, and
-// mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
-const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6;
+// camera draws; twins are drawn in its place and follow its place, materials, shadows and visibility. The
+// moment the mesh's geometry or material stops fitting, or it leaves the scene, the twins go and the mesh
+// draws as itself again. Not for: see-through materials (drawn back to front), materials that move points
+// in the shader (water, wind in leaves: positionNode, displacement maps), meshes whose points the game
+// rewrites (their clusters would be of the old shape), copies on bones, gs.props sets (they have levels of
+// their own: autoCopies below), marked reflectors, and mesh.userData.detail = false. userData.detail = true takes a smaller mesh too (from DETAIL_OWN_TRIS).
+// A set of copies is taken from DETAIL_COPY_TRIS triangles a copy and HD.detailMin in all, up to
+// DETAIL_COPIES copies: each copy is a few draws of its own, so thousands of small ones are better whole.
+const DETAIL_OWN_TRIS = 2000, DETAIL_SCAN = 400, DETAIL_ASK = 2, DETAIL_WORTH = .6, DETAIL_COPY_TRIS = 2000, DETAIL_COPIES = 256;
+// Does a mesh pay? Triangles left out against the draws added. A mesh drawn whole is one draw; in clusters it is a
+// draw for each run of them, and its twins are looked after every frame. The rates are the Galaxy Z Fold 8's (2026-11-12
+// engine test scenes: 740,000 fewer triangles saved 6.9 ms of the chip; a run inside a mesh's own draws, the same shader and
+// lists, is far cheaper than a draw of a thing of its own, taken as a sixth of one). A mesh of DETAIL_SURE triangles or more
+// stays in (a big one saves plenty once it is a few metres off); a smaller one (HD.detailMin up to that) is tried, and one that
+// over DETAIL_TRY frames saves less than it costs goes back to drawing whole until DETAIL_AGAIN ms later.
+const DETAIL_SURE = 20000, TRI_MS = 9.3e-6, RUN_MS = .002, MESH_MS = .01, DETAIL_TRY = 90, DETAIL_AGAIN = 12000;
+const DETAIL_RESTS = new WeakMap();   // mesh -> when it may be tried again
+const DRAWN = [0, 0];
 const DETAIL_LOOKS = new Set(['air', 'pulse', 'room', 'ground', 'hills', 'rock', 'rooms']);   // kit looks that leave the points where they are
 const NO_DETAIL = new WeakSet();   // geometries that can't be clustered, aren't worth it, or keep changing
 let detailAsking = 0;
 const OBR = Object3D.prototype.onBeforeRender, OAR = Object3D.prototype.onAfterRender;
 function detailMaterial(m) {
-  if (!m || Array.isArray(m) || m.transparent || m.alphaTest > 0 || m.alphaHash || m.wireframe || m.displacementMap || m.positionNode || m.isShaderMaterial || m.isRawShaderMaterial) return false;
+  if (!m || Array.isArray(m) || m.transparent || m.wireframe || m.displacementMap || m.positionNode || m.isShaderMaterial || m.isRawShaderMaterial) return false;
   if (Object.hasOwn(m, 'onBeforeCompile') && m.onBeforeCompile !== BASE_OBC) { const l = looksOf(m); if (!l.length || !l.every(n => DETAIL_LOOKS.has(n))) return false; }
   return true;
 }
+// (a list of materials: every one of them, each drawn by a part of its own)
+const detailMaterials = m => (Array.isArray(m) ? m.length > 0 && m.every(detailMaterial) : detailMaterial(m));
+const cutOut = m => (Array.isArray(m) ? m.some(cutOut) : m.alphaTest > 0 || !!m.alphaHash);
 const detailVersion = g => g.attributes.position.version + (g.index ? g.index.version * 65537 : 0);
-// a mesh a twin can stand in for: still, drawn the ordinary way, on the ordinary layer
+// what kind of twin a mesh gets: 'cut' (on bones, or with blend shapes), 'copies' (an InstancedMesh) or 'mesh'
+const detailKind = o => (o.isSkinnedMesh || o.morphTargetInfluences?.length ? 'cut' : o.isInstancedMesh ? 'copies' : 'mesh');
+// a mesh twins can stand in for: drawn the ordinary way, on the ordinary layer
 function detailFits(o) {
-  if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isSkinnedMesh || o.morphTargetInfluences) return false;
+  if (!o.isMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isDetailMesh || o.isCutMesh) return false;
   const ud = o.userData; if (ud.detail === false || ud.gsTwin || ud.gsReflect || ud.decal) return false;
-  if (!detailMaterial(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
-  return (o.layers.mask & ~SH_BITS) === 1 && o.frustumCulled && o.onBeforeRender === OBR && o.onAfterRender === OAR;
+  if (o.isInstancedMesh && (o.isSkinnedMesh || o.morphTargetInfluences || o.count > DETAIL_COPIES || o.count < 1)) return false;
+  if (o.isSkinnedMesh && !o.skeleton) return false;
+  if (!detailMaterials(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
+  return (o.layers.mask & ~SH_BITS) === 1 && o.onBeforeRender === OBR && o.onAfterRender === OAR;
 }
 function detailable(o) {
   if (!detailFits(o)) return false;
   const ud = o.userData, g = ud.gsLod?.base || o.geometry;
   if (!g || NO_DETAIL.has(g)) return false;
-  if (g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;   // (a geometry's groups only matter with a list of materials, turned away above)
-  const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
-  return tris >= (ud.detail ? DETAIL_OWN_TRIS : HD.detailMin) && canCluster(g);
+  if (g.drawRange.start !== 0 || g.drawRange.count !== Infinity) return false;
+  const m = ud.gsGlMat || o.material;
+  if (Array.isArray(m) && (g.groups.length < 2 || g.groups.some(gr => !m[gr.materialIndex ?? 0]))) return false;   // (a list of materials draws by its groups: every group needs one)
+  const tris = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3, n = o.isInstancedMesh ? o.count : 1;
+  const enough = ud.detail ? tris >= DETAIL_OWN_TRIS : n > 1 ? tris >= DETAIL_COPY_TRIS && tris * n >= HD.detailMin : tris >= HD.detailMin;
+  return enough && canCluster(g, detailKind(o) === 'cut');
 }
 // Real surface detail (gs.models.relief, relief.js): a mesh whose relief has arrived is drawn by a twin
 // made from the relief's geometry, however few triangles the mesh itself has. The mesh keeps its own
@@ -3631,16 +4184,37 @@ const reliefBudget = () => (HD.relief === false ? 0 : Math.max(0, HD.reliefTris 
 function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
 function detailDrop(v, e, never = false) {
   const o = e.o, D = v.details;
-  D.map.delete(o); e.gone = true;
+  D.map.delete(o); e.gone = true; if (e.kind === 'cut' && e.shown) v._shAgain = 3;
   if (never && !e.relief) NO_DETAIL.add(e.g);
-  if (e.twin) { e.twin.removeFromParent(); e.twin.dispose(); e.twin = null; }
+  for (const p of e.parts) if (p.twin) { p.twin.removeFromParent(); if (p.twin.isDetailMesh) p.twin.dispose(); else p.twin.geometry.dispose(); p.twin = null; }
+  e.twin = null;
   if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
   if (o.userData.gsLod === null) o.userData.gsLod = undefined;   // (automatic LOD may have it again)
+  delete o.userData.gsDetailed;
 }
 function detailDropAll(v) { const D = v.details; if (D) for (const e of [...D.map.values()]) detailDrop(v, e); }
+// the parts of a mesh: one for each material of a list (detail.js partsOf), or the whole of it
+function detailParts(o, g) {
+  const m = o.userData.gsGlMat || o.material;
+  if (!Array.isArray(m)) return [{ g, material: -1, cl: null, twin: null }];
+  const ps = partsOf(g); return ps ? ps.map(p => ({ g: p.g, material: p.material, cl: null, twin: null })) : null;
+}
+// a part's material, as the mesh has it now
+const partMaterial = (m, p) => (p.material < 0 ? m : Array.isArray(m) ? m[p.material] : null);
+function detailEntry(o, g, R) {
+  if (R) return { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), kind: 'mesh', parts: [{ g: R.geometry, material: -1, cl: R.clusters, twin: null }], twin: null, failed: false, gone: false, relief: R, shown: false, mats: Array.isArray(o.material) };
+  const parts = detailParts(o, g); if (!parts) return null;
+  const tris = (g.index ? g.index.count : g.attributes.position.count) / 3, full = tris * (o.isInstancedMesh ? o.count : 1);
+  return { o, g, base: g, ver: detailVersion(g), kind: detailKind(o), parts, twin: null, failed: false, gone: false, relief: null, shown: false, mats: Array.isArray(o.userData.gsGlMat || o.material), cut: cutOut(o.userData.gsGlMat || o.material),
+    full, trial: full < DETAIL_SURE && o.userData.detail == null, wf: 0, gain: 0 };
+}
 // before the frame's other housekeeping: new big meshes are found and asked for, twins are made and follow their meshes
-function autoDetail(v, now, quiet) {
+function autoDetail(v, now, quiet, ph = 1080) {
   const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
+  // a body on bones (cut twins) shown in clusters or whole again: its shadow is drawn again over the next frames, until
+  // it is posed for every pass on the chip (skin-gpu.js), where a body that keeps still would otherwise keep a shadow
+  // drawn before then (the shadow cache sees nothing move)
+  if (v._shAgain > 0) { v._shAgain--; v.shadowsDirty(); }
   // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
   // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off. A step finer
   // that went over is not tried again (D.bad: the scale that went over) until the view is a quarter lighter or
@@ -3662,52 +4236,80 @@ function autoDetail(v, now, quiet) {
   const rpx = HD.reliefPx * D.rk;
   if (HD.detail === false) { if (D.map.size) detailDropAll(v); return; }
   for (const e of D.map.values()) {
-    const o = e.o, g = e.g, base = e.base, tw = e.twin, m0 = o.userData.gsGlMat || o.material, m = e.relief && m0 ? reliefMaterial(m0) : m0;
+    const o = e.o, base = e.base, m0 = o.userData.gsGlMat || o.material;
     // the game changed it: back to drawing as itself (a geometry whose points changed under us is left alone from then on)
     const changed = detailVersion(base) !== e.ver, R = reliefOf(o);
     const ud0 = o.userData, lm = o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT);   // (1: drawing as itself; BATCH_BIT: its twin is; anything else: the game moved it to a layer of its own)
-    if (changed || e.failed || (o.geometry !== base && ud0.gsLod?.base !== base) || ud0.detail === false || ud0.gsReflect || !detailMaterial(m0) || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || !o.frustumCulled || o.onBeforeRender !== OBR || !inScene(o, v.scene)) { detailDrop(v, e, changed || e.failed); continue; }
+    if (changed || e.failed || (o.geometry !== base && ud0.gsLod?.base !== base) || ud0.detail === false || ud0.gsReflect || !detailMaterials(m0) || Array.isArray(m0) !== e.mats || (lm !== 1 && lm !== BATCH_BIT && lm !== 0) || o.onBeforeRender !== OBR || !inScene(o, v.scene) ||
+      (e.kind === 'copies' && (o.count > DETAIL_COPIES || o.count < 1 || (e.twin && !!o.instanceColor !== !!e.twin._colorsTexture) || o.instanceMatrix.count > (e.twin?.copyMax ?? Infinity))) ||
+      (e.kind === 'cut' && o.isSkinnedMesh && !o.skeleton) || (!e.relief && cutOut(m0) !== e.cut)) { detailDrop(v, e, changed || e.failed); continue; }
     if (e.relief ? R !== e.relief || !reliefOn : R?.state === 'ready' && reliefOn) { detailDrop(v, e); D.t = 0; continue; }   // (its relief was taken off or turned off, or has just arrived: looked at again below)
-    if (!tw) {
-      if (!e.cl) continue;   // still being built
-      if (!e.relief && e.cl.coarseTris > e.cl.fullTris * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
+    if (!e.twin) {
+      if (e.parts.some(p => !p.cl)) continue;   // still being built
+      let coarse = 0, full = 0; for (const p of e.parts) { coarse += p.cl.coarseTris; full += p.cl.fullTris; }
+      if (!e.relief && coarse > full * DETAIL_WORTH) { detailDrop(v, e, true); continue; }   // (a mesh that won't simplify, all hard edges: nothing to gain)
       if (o.geometry !== base) o.geometry = base;
       o.userData.gsLod = null;
-      const t = e.twin = new DetailMesh(g, m, e.cl, { px: typeof o.userData.detail === 'number' ? o.userData.detail : e.relief ? rpx : null });
-      t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
-      if (g.userData.gsGrid) gridNormals(t, g.userData.gsGrid.scale);
-      // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
-      v.scene.add(t); const ch = v.scene.children; ch.unshift(ch.pop());
+      const px = typeof o.userData.detail === 'number' ? o.userData.detail : e.relief ? rpx : null;
+      for (const p of e.parts) {
+        const mt = partMaterial(e.relief && m0 ? reliefMaterial(m0) : m0, p);
+        const t = p.twin = e.kind === 'cut' ? cutTwin(o, p.g, mt, p.cl, { px }) : new DetailMesh(p.g, mt, p.cl, { px, copies: e.kind === 'copies' ? o : null });
+        t.name = 'gs-detail'; t.matrixAutoUpdate = false; t.raycast = NO_RAY; t.userData.noBatch = t.userData.noLod = true; t.visible = false;
+        if (p.g.userData.gsGrid) gridNormals(t, p.g.userData.gsGrid.scale);
+        // (first in the scene, so a close-up shader for its material is built for the twin, which draws, before the mesh, which doesn't: swapTwins builds for the first it meets)
+        v.scene.add(t); const ch = v.scene.children; ch.unshift(ch.pop());
+      }
+      e.twin = e.parts[0].twin;
     }
-    const t = e.twin, ud = o.userData, td = t.userData;
+    const ud = o.userData;
     o.updateWorldMatrix(true, false);
-    const grid = g.userData.gsGrid;   // (a relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix puts them back where the mesh is)
-    if (grid) t.matrix.multiplyMatrices(o.matrixWorld, grid.matrix); else t.matrix.copy(o.matrixWorld);
-    // (the twin sits right under the scene: its own matrix is where the mesh is in the world's numbers, and its world matrix the
-    // scene's times that, which while a view draws is a step back by the drawing's centre: origin.js)
-    { const te = t.matrix.elements, se = v.scene.matrixWorld.elements; te[12] -= se[12]; te[13] -= se[13]; te[14] -= se[14]; }
-    t.matrixWorld.multiplyMatrices(v.scene.matrixWorld, t.matrix);
-    t.visible = shownInScene(o, v.scene);
-    if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
-    t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder; t.px = typeof ud.detail === 'number' ? ud.detail : e.relief ? rpx : null;
-    // (once it has drawn it is never hidden for a shader again: its mesh would have to stand in with a shader of its own to build, and for a moment neither drew)
-    td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold || e.shown;
+    const se = v.scene.matrixWorld.elements, px = typeof ud.detail === 'number' ? ud.detail : e.relief ? rpx : null, shown = shownInScene(o, v.scene);
+    for (const p of e.parts) {
+      const t = p.twin, td = t.userData, m = partMaterial(e.relief && m0 ? reliefMaterial(m0) : m0, p);
+      const grid = p.g.userData.gsGrid;   // (a relief's places are on a 16-bit grid of its own, slim.js: the twin's matrix puts them back where the mesh is)
+      if (grid) t.matrix.multiplyMatrices(o.matrixWorld, grid.matrix); else t.matrix.copy(o.matrixWorld);
+      // (the twin sits right under the scene: its own matrix is where the mesh is in the world's numbers, and its world matrix the
+      // scene's times that, which while a view draws is a step back by the drawing's centre: origin.js)
+      { const te = t.matrix.elements; te[12] -= se[12]; te[13] -= se[13]; te[14] -= se[14]; }
+      t.matrixWorld.multiplyMatrices(v.scene.matrixWorld, t.matrix);
+      t.visible = shown;
+      if ((td.gsGlMat || t.material) !== m) { t.material = m; delete td.gsGlMat; }
+      t.castShadow = o.castShadow; t.receiveShadow = o.receiveShadow; t.renderOrder = o.renderOrder;
+      if (t.isDetailMesh) t.px = px; else t.cut.px = px;
+      // (once it has drawn it is never hidden for a shader again: its mesh would have to stand in with a shader of its own to build, and for a moment neither drew)
+      td.noAO = ud.noAO; td.noOcclude = ud.noOcclude; td.noContact = ud.noContact; td.noHold = ud.noHold || e.shown;
+      if (e.kind === 'copies') t.syncCopies();
+      else if (e.kind === 'cut' && shown && !quiet) cutUpdate(t, v.cam, ph);
+    }
+    // a smaller mesh on trial: what the last frame saved against what it cost (counted only while it was drawn)
+    if (e.trial && e.shown && !quiet && shown) {
+      let tris = 0, runs = 0; for (const p of e.parts) { drawnOf(p.twin, DRAWN); tris += DRAWN[0]; runs += DRAWN[1]; }
+      if (runs) { e.wf++; e.gain += (e.full - tris) * TRI_MS - Math.max(0, runs - 1) * RUN_MS - MESH_MS * e.parts.length; }
+      if (e.wf >= DETAIL_TRY) {
+        if (e.gain <= 0) { DETAIL_RESTS.set(o, now + DETAIL_AGAIN); detailDrop(v, e); HD.info.detailRested = (HD.info.detailRested || 0) + 1; continue; }
+        e.wf = 0; e.gain = 0;
+      }
+    }
   }
   // now and then: the scene's big meshes that aren't in yet (their clusters come from memory at once, or are asked for, a couple at a time)
   if (quiet || (now - D.t < DETAIL_SCAN && D.news === reliefNews.n)) return; D.t = now; D.news = reliefNews.n;
   eachShown(v.scene, o => {
     if (D.map.has(o)) return;
     const R = o.isMesh ? reliefOf(o) : undefined;
-    if (R && reliefOn && reliefReady(o, R)) { if (detailFits(o)) D.map.set(o, { o, g: R.geometry, base: R.base, ver: detailVersion(R.base), cl: R.clusters, twin: null, failed: false, gone: false, relief: R, shown: false }); return; }
+    if (R && reliefOn && reliefReady(o, R)) { if (detailFits(o) && !Array.isArray(o.material) && detailKind(o) === 'mesh') D.map.set(o, detailEntry(o, null, R)); return; }
     if (!detailable(o)) return;
-    const g = o.userData.gsLod?.base || o.geometry;
-    let cl = null; try { cl = clustersNow(g); } catch (e) { NO_DETAIL.add(g); return; }
-    if (!cl && detailAsking >= DETAIL_ASK) return;
-    const e = { o, g, base: g, ver: detailVersion(g), cl, twin: null, failed: false, gone: false, relief: null, shown: false };
+    const rest = DETAIL_RESTS.get(o); if (rest && now < rest) return;   // (tried a moment ago, and it did not pay)
+    const g = o.userData.gsLod?.base || o.geometry, e = detailEntry(o, g, null);
+    if (!e) { NO_DETAIL.add(g); return; }
+    // (cut-out leaves: never the rough merge; on bones or with blend shapes: measured in test poses too, detail.js moved)
+    const opts = { sloppy: !e.cut, heads: o.isSkinnedMesh ? headsOf(o) : null, morphs: !!o.morphTargetInfluences?.length };
+    let missing = 0;
+    for (const p of e.parts) { try { p.cl = clustersNow(p.g, opts); } catch (err) { NO_DETAIL.add(g); return; } if (!p.cl) missing++; }
+    if (missing && detailAsking >= DETAIL_ASK) return;
     D.map.set(o, e);
-    if (cl) return;
+    if (!missing) return;
     detailAsking++;
-    clustersFor(g).then(c => { e.cl = c; }, () => { e.failed = true; }).finally(() => { detailAsking--; });
+    Promise.all(e.parts.map(p => p.cl || clustersFor(p.g, opts).then(c => { p.cl = c; }))).catch(() => { e.failed = true; }).finally(() => { detailAsking--; });
   });
 }
 // Detail for copies (HD.copies, on by default): the same idea for things placed many times. A set of copies
@@ -3800,15 +4402,21 @@ function copiesAsk(C, o) {
   let p; try { p = levelsFor(e.g); } catch (err) { p = Promise.reject(err); }
   p.then(lv => { e.lv = lv; }, () => { e.failed = true; NO_LEVELS.add(e.g); }).finally(() => { copiesAsking--; });
 }
-// after the shader hold: a mesh hides once its twin is drawing (a twin whose shader is still building waits, and the mesh draws on)
+// after the shader hold: a mesh hides once its twins are drawing (a twin whose shader is still building waits, and the mesh draws on)
 function detailShow(v) {
   const D = v.details; if (!D?.map.size) return;
   for (const e of D.map.values()) {
-    const t = e.twin, o = e.o; if (!t) continue;
-    if (t.layers.mask & HOLD_BIT) {
+    const o = e.o; if (!e.twin) continue;
+    let held = false; for (const p of e.parts) if (p.twin.layers.mask & HOLD_BIT) held = true;
+    if (held) {
+      // (every part waits for the slowest: a person with their clothes drawn and their face not yet would be half there)
+      for (const p of e.parts) if (!(p.twin.layers.mask & HOLD_BIT) && (p.twin.layers.mask & 1)) p.twin.layers.mask &= ~1;
       if (o.layers.mask === BATCH_BIT) o.layers.mask = 1;
-      else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twin: it never waits as well)
-    } else { e.shown = true; if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); } }
+      else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twins: it never waits as well)
+    } else {
+      for (const p of e.parts) if (!(p.twin.layers.mask & 1)) p.twin.layers.mask |= 1;
+      e.shown = true; o.userData.gsDetailed = true; if (e.kind === 'cut') { v._shAgain = 3; v._fadeOk = null; } if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
+    }
   }
 }
 // shadowLights(): scratch (no garbage per frame)
@@ -3819,6 +4427,10 @@ let SH_H = new Float64Array(40); const SH_S = new Sphere(), SH_P = new Vector3()
 const SH_STILL = 45, SH_STILL_BIT = 1 << 27, SH_MOVE_BIT = 1 << 28, SH_BITS = SH_STILL_BIT | SH_MOVE_BIT, SH_MIN_TRIS = 20000;
 // the layer things wait on while their shaders build (holdNew): nothing draws it
 const HOLD_LAYER = 29, HOLD_BIT = 1 << HOLD_LAYER;
+// envCheck: the camera's view (scratch)
+const VIEW_FR = new Frustum(), VIEW_M = new Matrix4();
+// shadowAhead: the layer things are drawn on for their shadow shaders (alone), and how many kinds a frame once the round is under way, among how many things looked at
+const PRE_BIT = 1 << 25, PRE_N = 6, PRE_LOOK = 400;
 // what makes a thing need its own shader: its materials (and their versions), its kind and its geometry's layout
 // (asked for every visible thing every frame: when nothing changed, the answer comes back without
 // building any strings, so it leaves no garbage)
@@ -3840,34 +4452,38 @@ const listKind = a => {
   return ':' + name[0] + A.BYTES_PER_ELEMENT + (a.normalized ? 'n' : '') + (x ? 'x' : '');
 };
 function shaderKey(o) {
-  const mat = o.material, g = o.geometry, c = KEYS.get(o);
-  if (c && sameMats(c, mat, g)) return c.key;
+  const mat = o.material, g = o.geometry, c = KEYS.get(o), pk = SKIN_POOLED.has(o.userData.gsPoseOf || o);   // (pk: posed once a frame on the chip, skin-gpu.js: other shaders)
+  if (c && c.rs === o.receiveShadow && c.pk === pk && sameMats(c, mat, g)) return c.key;
   const ms = Array.isArray(mat) ? mat : [mat];
   // (three draws a two-sided see-through material as back faces then front faces, marking it changed for each,
   // so its version climbs every frame: its shaders are the same, so the version is left out, or holdNew
   // took it for a new shader every frame and kept it hidden for good)
   const sig = ms.map(m => m.id + '.' + (m.transparent && m.side === DoubleSide && !m.forceSinglePass ? 'd' : m.version)).join(',') + '|' + (g?.id ?? '');
-  if (c?.sig === sig) { remember(o, c.sig, c.key, mat, g); return c.key; }
+  if (c?.sig === sig && c.pk === pk) { remember(o, c.sig, c.key, mat, g); return c.key; }
   const key = sig.replace(/\|.*$/, '') + '|' + (o.isSkinnedMesh ? 's' : '') + (o.isInstancedMesh ? 'i' : '') + (o.isBatchedMesh ? 'b' : '') + (o.isPoints ? 'p' : o.isLine ? 'l' : o.isSprite ? 'S' : '') +
-    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '');
+    (o.morphTargetInfluences ? 'm' : '') + (g ? '|' + Object.keys(g.attributes).sort().map(k => k + listKind(g.attributes[k])).join(',') + (g.index ? '+i' : '') + '|' + Object.keys(g.morphAttributes || {}).join(',') : '') +
+    // (three keys a shader by whether the thing takes shadows too: two things of one material and layout, one taking shadows,
+    // were one to the kit, so the second, built for neither, drew its shader in the frame it first showed: Long Shadow's
+    // mission 2 intro, two in its first frame, 126 and 69 ms on the build machine)
+    (o.receiveShadow ? '+r' : '') + (pk ? '+k' : '');
   remember(o, sig, key, mat, g);
   return key;
 }
 // the key a thing would have with material m on it (its close-up twin, before that is swapped in), kept for each thing
 const KEYS_AS = new WeakMap();
 function shaderKeyAs(o, m) {
-  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '';
-  if (c && c.m === m && c.v === m.version && c.g === g) return c.key;
+  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '', pk = SKIN_POOLED.has(o.userData.gsPoseOf || o);
+  if (c && c.m === m && c.v === m.version && c.g === g && c.rs === o.receiveShadow && c.pk === pk) return c.key;
   const keep = o.material, was = KEYS.get(o);
   o.material = m; KEYS.delete(o);
   const key = shaderKey(o);
   o.material = keep; if (was) KEYS.set(o, was); else KEYS.delete(o);
-  KEYS_AS.set(o, { m, v: m.version, g, key });
+  KEYS_AS.set(o, { m, v: m.version, g, rs: o.receiveShadow, pk, key });
   return key;
 }
 function remember(o, sig, key, mat, g) {
   const arr = Array.isArray(mat);
-  KEYS.set(o, { sig, key, g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
+  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o.userData.gsPoseOf || o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
     ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(m => m.version) : null });
 }
 export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
@@ -4069,20 +4685,24 @@ export function neon(points, { colour = '#ff3d8b', thick = .025, glow = 5, i = 3
  * A glowing sign, w x h metres, facing +z (turn the group to aim it): paint(ctx, pw, ph) draws its face in a canvas
  * (text, a shape; what is bright glows), and it lights what is in front of it as a sign does (a rect light on WebGPU,
  * a lamp at its middle on WebGL). colour: its light's colour (the face's own colours glow as they are); glow, i,
- * reach, px (the canvas's pixels a metre). Pass s.spots() to v.placeLamps each frame.
+ * reach, px (the canvas's pixels a metre). picture: true lights with its own picture instead (a TV, a video wall, a
+ * stained window): each part of its light takes the colour of the part of the face it comes from (WebGPU; on WebGL
+ * the face's average colour), and colour, white by default, tints it. g.paint(fn) paints the face again (each frame
+ * for a screen that plays; the light follows). Pass s.spots() to v.placeLamps each frame.
  */
-export function sign(w, h, paint, { colour = '#ffd9a0', glow = 3, i = 4, reach = 7, px = 128 } = {}) {
+export function sign(w, h, paint, { picture = false, colour = picture ? '#ffffff' : '#ffd9a0', glow = 3, i = 4, reach = 7, px = 128 } = {}) {
   const cv = document.createElement('canvas'); cv.width = Math.max(8, Math.round(w * px)); cv.height = Math.max(8, Math.round(h * px));
   const c = cv.getContext('2d'); c.fillStyle = '#000'; c.fillRect(0, 0, cv.width, cv.height); paint?.(c, cv.width, cv.height);
   const tex = new CanvasTexture(cv); tex.colorSpace = SRGBColorSpace;
   const m = new MeshStandardMaterial({ color: '#111', emissive: '#fff', emissiveMap: tex, emissiveIntensity: glow, roughness: .4 });
   const g = new Group(), face = new Mesh(new PlaneGeometry(w, h), m); face.userData.noContact = true; face.userData.noLod = true; g.add(face); g.name = 'sign';
-  const s = { x: 0, y: 0, z: 0, col: colour, i, reach, rect: { w, h, normal: [0, 0, 1] } }, A = new Vector3(), N = new Vector3();
+  const s = { x: 0, y: 0, z: 0, col: colour, i, reach, rect: { w, h, normal: [0, 0, 1] }, picture: picture ? tex : undefined }, A = new Vector3(), N = new Vector3();
   g.spots = (list = []) => {
     g.updateWorldMatrix(true, false); A.setFromMatrixPosition(g.matrixWorld); N.set(0, 0, 1).transformDirection(g.matrixWorld);
     // (WebGL lights a sign from a lamp at its middle: a little in front, so the wall it hangs on is lit too)
     s.x = A.x + N.x * .05; s.y = A.y + N.y * .05; s.z = A.z + N.z * .05; s.rect.normal[0] = N.x; s.rect.normal[1] = N.y; s.rect.normal[2] = N.z; list.push(s); return list;
   };
+  g.paint = fn => { c.fillStyle = '#000'; c.fillRect(0, 0, cv.width, cv.height); fn?.(c, cv.width, cv.height); tex.needsUpdate = true; return g; };
   g.material = m; g.texture = tex;
   return g;
 }

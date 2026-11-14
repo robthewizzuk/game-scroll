@@ -13,15 +13,19 @@
 // don't and that do say how they move, smoke, and SGSR 2's camera jitter, where the picture is steady
 // but motion and depth shake), &plain (a plain ground), or shadow,scroll,cut (what the game's motion
 // doesn't describe: shadows of moving things on still ground, a scrolling texture, and a cut to a new
-// scene, where a made frame must never mix the two); &flow=0, &fill=0, &sharp=0: without the optical flow, the gap-filling pyramid, or the sharp sampling
+// scene, where a made frame must never mix the two), or sweep,sweep-strafe,mirror,unmarked (more of what it misses: a
+// lorry's long shadow sweeping over still ground, with the camera still and strafing, reflections in a still pool, and
+// balls bouncing on an in-world screen); &flow=0, &fill=0, &sharp=0: without the optical flow, the gap-filling pyramid,
+// or the sharp sampling; &tint: where the optical flow moved pixels, in magenta
 // shapes: blend shapes (morph targets) on still things, one held and one coming and going (fur shells, a talking face)
 // copies: a field of things drawn as copies the way gs.props are on WebGPU (hd3d-gpu.js gpuProps: a list
 // for each detail level), strafed past, with every copy between 12 and 30 m changing level at the newest
 // real frame (as a scope's zoom does): a copy's motion comes from what its place in the list held last frame
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, velocity, texture, uv, vec4, mix, uniform, screenUV } from 'three/tsl';
+import { pass, mrt, output, velocity, texture, uv, vec3, vec4, mix, uniform, screenUV, reflector } from 'three/tsl';
 import { FrameGen, frameGenMRT, particleMotion, fgPrevVP, poseOf, homography, warpUV } from '/src/kit/framegen.js';
 import { gpuProps } from '/src/kit/hd3d-gpu.js';
+import { SUB } from '/src/kit/subgroups.js';
 
 const Q = new URLSearchParams(location.search), OW = +(Q.get('w') || 512), OH = +(Q.get('h') || 640);
 const scale = +(Q.get('scale') || 1), RW = Math.round(OW / scale), RH = Math.round(OH / scale);
@@ -45,11 +49,21 @@ function checker(a, b, n = 8) {
 
 function makeScene(kind) {
   const scene = new THREE.Scene(); scene.background = new THREE.Color('#6a8fc0');
-  r.shadowMap.enabled = kind === 'shadow';
+  const sweep = kind === 'sweep' || kind === 'sweep-strafe';
+  r.shadowMap.enabled = kind === 'shadow' || sweep;
   const cam = new THREE.PerspectiveCamera(55, OW / OH, .1, 200);
   scene.add(new THREE.HemisphereLight('#ffffff', '#445566', 1.6)); const sun = new THREE.DirectionalLight('#fff4e0', 2.2); sun.position.set(3, 6, 2); scene.add(sun);
   // 'shadow': the things cast sharp shadows on the ground, which has no motion of its own
   if (kind === 'shadow') { sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: .5, far: 30 }); sun.shadow.camera.updateProjectionMatrix(); }
+  // 'sweep': a lorry-sized block drives across with the sun low behind it, so its long, sharp shadow sweeps over the
+  // ground in front of the camera fast (the ground has no motion of its own: only the pictures say the shadow moved).
+  // 'sweep-strafe': the same with the camera strafing, so the ground moves one way and the shadow over it another
+  let lorry = null;
+  if (sweep) {
+    sun.position.set(-2, 3.5, -10); sun.intensity = 3; sun.castShadow = true; scene.children[0].intensity = .6;   // (a sunny day's dark shadows) sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: .5, far: 40 }); sun.shadow.camera.updateProjectionMatrix();
+    lorry = new THREE.Mesh(new THREE.BoxGeometry(3, 2.5, 1.2), new THREE.MeshStandardMaterial({ color: '#c8c8d0' })); lorry.castShadow = true; scene.add(lorry);
+  }
   // &plain: a plain ground (what the moving sparks are lifted off is then easy to tell from the sparks)
   const gt = Q.has('plain') ? checker('#3a4038', '#3c4239') : checker('#d8d0c0', '#5a6a50'); gt.repeat.set(20, 20);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ map: gt })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
@@ -113,6 +127,32 @@ function makeScene(kind) {
     const mouth = new THREE.Mesh(blk, mat('#c04060')); mouth.position.set(1.5, 1.2, 2.5); scene.add(mouth);
     shaped = { mouth, bone };
   }
+  // 'mirror': a still pool of mirror-like water (three's planar reflector, as a game's reflections are drawn) under
+  // the things racing across: the reflections move, the pool they are in doesn't
+  if (kind === 'mirror') {
+    const refl = reflector({ resolutionScale: 1 }); refl.target.rotateX(-Math.PI / 2); refl.target.position.set(0, .02, -5); scene.add(refl.target);
+    const pm = new THREE.MeshBasicNodeMaterial(); pm.colorNode = refl.rgb.mul(.85).add(vec3(.02, .04, .07));
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(16, 10), pm); pool.rotation.x = -Math.PI / 2; pool.position.set(0, .02, -5); scene.add(pool);
+  }
+  // 'unmarked': a picture that moves on a still surface, with no motion told to frame generation: a screen on a
+  // stand showing balls bouncing about over a grid (a picture drawn into a texture each frame, as a game's in-world
+  // screen, a video or a minigame on a 3D telly would be)
+  let screen = null;
+  if (kind === 'unmarked') {
+    const c = document.createElement('canvas'); c.width = 320; c.height = 200; const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const sm = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 3.5), new THREE.MeshBasicMaterial({ map: tex })); sm.position.set(-.4, 2.3, 1); scene.add(sm);
+    const g = c.getContext('2d');
+    screen = t => {
+      g.fillStyle = '#10183a'; g.fillRect(0, 0, 320, 200); g.strokeStyle = '#3050a0'; g.lineWidth = 2;
+      for (let x = 0; x <= 320; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 200); g.stroke(); }
+      for (let y = 0; y <= 200; y += 32) { g.beginPath(); g.moveTo(0, y); g.lineTo(320, y); g.stroke(); }
+      [['#ffd040', 2.1, 1.3, 26], ['#ff5090', 1.4, 2.3, 20], ['#60f0a0', 2.9, 1.7, 16]].forEach(([col, a, b, rad], i) => {
+        const bx = 40 + (Math.sin(t * a + i) * .5 + .5) * 240, by = 30 + Math.abs(Math.sin(t * b + i * 2)) * 140;
+        g.fillStyle = col; g.beginPath(); g.arc(bx, by, rad, 0, Math.PI * 2); g.fill(); g.fillStyle = '#000'; g.fillRect(bx - rad * .5, by - 3, rad, 6);
+      });
+      tex.needsUpdate = true;
+    };
+  }
   const sparkAt = (i, t, v) => { const a = i * 2.4, r = 1 + (i % 7) * .5; return v.set(Math.cos(a + t * 3) * r, 1.5 + Math.sin(a * 3 + t * 4) * 1.2, 1 + Math.sin(a + t * 3) * r * .5); };
   const V = new THREE.Vector3();
   const set = t => {
@@ -126,6 +166,8 @@ function makeScene(kind) {
       m.rotation.set(t * 2 + i, t * 3 + i, 0);
     });
     if (glass) glass.position.set(Math.sin(t * 2.5) * 4, 1.6, 3.5);
+    if (lorry) lorry.position.set(Math.sin(t * 2.2 + 1) * 4.5, 1.25, -1);
+    if (screen) screen(t);
     // 'scroll': the ground's picture slides along (a conveyor, a river) while the ground itself stays put
     if (kind === 'scroll') { gt.offset.set(t * 1.5, t * .4); gt.updateMatrix(); }
     sparks.forEach((sp, i) => {
@@ -140,7 +182,7 @@ function makeScene(kind) {
       // 'cut': from the newest real frame on, the camera is somewhere else entirely
       cam.position.set(-7, 6, -14); cam.lookAt(2, 0, 2);
     } else {
-      const fixed = kind === 'still' || kind === 'shapes' || kind === 'turn' || kind === 'shadow' || kind === 'scroll' || kind === 'cut';
+      const fixed = ['still', 'shapes', 'turn', 'shadow', 'scroll', 'cut', 'sweep', 'mirror', 'unmarked'].includes(kind);
       const a = kind === 'turn' ? t * 1.2 : 0, sx = fixed ? 0 : Math.sin(t * 2) * 3;
       cam.position.set(sx + Math.sin(a) * 9, 3.2, Math.cos(a) * 9); cam.lookAt(sx, 1, -3);
     }
@@ -215,8 +257,10 @@ try {
     const halton = (i, b) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
     const steadyCam = jitter ? S.cam.clone() : null, steady = jitter ? pass(S.scene, steadyCam) : null;
     const pps = jitter ? new THREE.RenderPipeline(r) : null; if (pps) { pps.outputNode = steady; pps.outputColorTransform = false; }
+    if (Q.get('subgroups') === '0') SUB.on = false;   // (without subgroups where the chip has them: the counts must come out the same)
     const fg = new FrameGen(r, { flow: Q.get('flow') !== '0', fill: Q.get('fill') !== '0', sharp: Q.get('sharp') !== '0', quick: Q.get('quick') !== '0' });
     fg.parts = Q.get('parts') === '1';   // (each step its own pass, as the phone test tour times them: the same picture)
+    if (fg.U.tint) fg.U.tint.value = Q.has('tint') ? 1 : 0;   // (&tint: where the optical flow moved pixels, in magenta: for shots only)
     const prev = new THREE.RenderTarget(OW, OH, { type: THREE.HalfFloatType });
     // three's passes draw once per animation frame, so each real frame waits for the next one
     const t0 = 1.3, frame = async (t, shake = jitter) => {
@@ -264,7 +308,9 @@ try {
       t.sort((a, b) => a - b); bench = +t[t.length >> 1].toFixed(1);
       // &probe: each of a made frame's steps on its own (software time, the middle of n)
       if (Q.has('probe')) {
-        const each = { clear: fg.cClear, splat: fg.cSplat, resolve: fg.cResolve, fill: fg.cFill, compose: fg.cCompose, pyramid: fg.cPyr, inpaint: fg.cInpaint, empty: fg.cCutClear }, says = [];
+        // (and the pair's shared work: the optical flow with its brightness pictures and cut check, and the tile sort)
+        const each = { clear: fg.cClear, splat: fg.cSplat, resolve: fg.cResolve, fill: fg.cFill, compose: fg.cCompose, pyramid: fg.cPyr, inpaint: fg.cInpaint, empty: fg.cCutClear,
+          flow: [fg.cCutClear, ...fg.cLum, ...fg.cFlow, ...(fg.cFlowMore || []), fg.cCutDecide], tiles: [fg.cMarkClear, fg.cMark, fg.cTiles] }, says = [];
         for (const [k, c] of Object.entries(each)) { const z = []; for (let i = 0; i < n; i++) { const a = performance.now(); r.compute(c); await r.backend.device.queue.onSubmittedWorkDone(); z.push(performance.now() - a); } z.sort((a, b) => a - b); says.push(`${k} ${z[z.length >> 1].toFixed(1)}`); }
         console.warn(`${kind} steps (ms): ${says.join(', ')}`);
       }

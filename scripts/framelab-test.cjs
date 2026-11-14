@@ -1,5 +1,5 @@
 // Checks the frame lab (src/framelab.js): turns it on, plays a 2D game and a Next Gen game (on WebGPU where
-// the test browser has it), records, runs A/B, Shimmer, FG check and Half check, folds and unfolds (Galaxy Z Fold 8
+// the test browser has it), records, runs A/B, Shimmer, FG check, Half check and Subgroups check, folds and unfolds (Galaxy Z Fold 8
 // sizes) and makes the report. Fails on any page error or a tool that doesn't produce its result.
 //   npm run build:bundled && node scripts/framelab-test.cjs [--shots dir] [--report file.html] [2d-id] [3d-id]
 // Timings here are software 3D and mean nothing; this checks that the tools work, not how fast games are.
@@ -39,7 +39,17 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
   await p.evaluate(async () => (await __gs.lab(true)).rec(true));
   await play(3500);
   // a freeze (the page held for 400 ms in play): counted on its own, as the frame rate leaves gaps that long out
+  // (in play: a round that ended while it was played counts no hitches)
+  const inPlay = async () => { if (await p.evaluate(() => __gs.active.state) !== 'playing') { await p.evaluate(() => __gs.start()); await p.waitForTimeout(400); } };
+  await inPlay();
   await p.evaluate(() => { const t = performance.now(); while (performance.now() - t < 400); }); await p.waitForTimeout(400);
+  await inPlay();
+  // a frame whose own draw() takes 300 ms: the gap after it is put down to the game's CPU, not "no cause seen"
+  // (the gap that ends at a refresh was made by the frame before it)
+  await p.evaluate(() => { const g = __gs.active.game, d = g.draw; let once = true; g.draw = function (...a) { if (once) { once = false; const t = performance.now(); while (performance.now() - t < 300); } return d.apply(this, a); }; });
+  await p.waitForTimeout(600);
+  { const ev = await p.evaluate(async () => (await __gs.lab(true)).events.filter(e => e.k === 'H' && e.ms >= 250).map(e => e.text));
+    check(ev.some(t => /game CPU over the beat \(update [\d.]+ \+ draw (\d+)/.test(t) && +/draw (\d+)/.exec(t)[1] >= 250), `${id2d}: a 300 ms draw() is named as the cause of the gap after it (${ev.join(' | ') || 'no hitch'})`); }
   const sum2 = await p.evaluate(async () => { const L = await __gs.lab(true); L.rec(false); return L.summary(); });
   { const fz = /(\d+) freezes? of 250 ms or more \(worst (\d+) ms/.exec(sum2); check(fz && +fz[1] >= 1 && +fz[2] >= 300, `${id2d}: a 400 ms freeze in play is counted`); }
   console.log('   ' + sum2.split('\n').join('\n   '));
@@ -161,12 +171,24 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
       if (cc.notes.length) await shot('clouds-check');
       await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
     } else console.log('SKIP Clouds check (no marched clouds in this game at this tier: ' + JSON.stringify(sky) + ')');
+    // WebGPU subgroups in the kit's compute passes (src/kit/subgroups.js): the report says whether the chip has them, and the Subgroups check times plain against subgroups and puts the switch back
+    const sub = await p.evaluate(() => __hd.info.subgroups);
+    check(/^(on|off)/.test(sub || ''), 'the chip says whether it has subgroups: ' + sub);
+    if (/^on/.test(sub || '')) {
+      await p.evaluate(async () => (await __gs.lab(true)).subgroups());
+      const gc = await p.evaluate(async () => { const L = await __gs.lab(true); const s = L.shots[L.shots.length - 1]; return { notes: s && s.kind === 'subgroups' ? s.notes : [], on: __hd.subgroups }; });
+      console.log('   Subgroups check: ' + gc.notes.join(' | '));
+      check(/chip time a frame: plain [\d.]+ ms, subgroups [\d.]+ ms/.test(gc.notes[0] || '') && gc.on === true, 'Subgroups check times plain and subgroups and puts the switch back');
+      if (gc.notes.length) await shot('subgroups-check');
+      await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
+    } else console.log('SKIP Subgroups check (none on this chip: ' + JSON.stringify(sub) + ')');
   }
 
   await p.evaluate(async () => (await __gs.lab(true)).rec(false));
   const sum3 = await p.evaluate(async () => (await __gs.lab(true)).summary());
   console.log('   ' + sum3.split('\n').join('\n   '));
   check(/avg [\d.]+ fps/.test(sum3), `${id3d}: recording summary`);
+  check(/\nQuality steps: (no window of frames counted|\d+ windows \(\d+ slow, \d+ ok, \d+ fast\))/.test(sum3), `${id3d}: the quality steps' windows and what they did are in the summary`);
   const html = await p.evaluate(async () => (await __gs.lab(true)).html());
   check(html.length > 5000 && html.includes('Frame lab report'), `report made (${(html.length / 1048576).toFixed(2)} MB)`);
   if (reportFile) fs.writeFileSync(reportFile, html);

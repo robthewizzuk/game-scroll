@@ -4,18 +4,20 @@
 // the phone test tour (a bot that plays as a guest, the frame report, the plugin check, the engine test scenes), and loading a big
 // 3D game a little each frame (each pass on a fresh copy of the game's file), getting a 3D round ready behind
 // a loading screen after Play (its first frames and its first update, before the round starts), the fill-ins for
-// old WebViews, and that a test build sends no play stats or crash reports.
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|loading|ready|oldweb|reports]   (SHOTS=<dir> saves a picture of every font and look)
+// old WebViews, that a test build sends no play stats or crash reports, and updates from Google Play.
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|scenes|framegen|loading|ready|oldweb|reports|updates ...]
+//   (no names: every part; -scenes or any -name: every part but those; SHOTS=<dir> saves a picture of every font and look).
+//   scenes (the engine test scenes, about 6 of the 11 minutes on GitHub) runs as a job of its own there.
 const { chromium } = require('playwright');
 
 let failed = 0;
 const check = (ok, what, more = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${ok || !more ? '' : '\n     ' + more}`); };
 const PIXEL = 'arrow-maze', CASUAL = 'stack';
 
-async function open(b, { width = 390, height = 844, dpr = 3, before } = {}) {
+async function open(b, { width = 390, height = 844, dpr = 3, before, arg } = {}) {
   const ctx = await b.newContext({ viewport: { width, height }, hasTouch: true, isMobile: true, deviceScaleFactor: dpr });
   const p = await ctx.newPage(); p.errs = []; p.on('pageerror', e => p.errs.push(e.message));
-  if (before) await p.addInitScript(before);
+  if (before) await p.addInitScript(before, arg);
   await p.goto('http://localhost:4184/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(300);
   p.game = async (id, change) => {
     if (change) await p.evaluate(([id, change]) => Object.assign(__gs.GAMES.find(g => g.id === id), change), [id, change]);
@@ -301,6 +303,7 @@ async function fonts(b) {
     for (const f of F.list) for (const w of f.weights) if (!F.ready(f.name, w) || !document.fonts.check(`${w} 20px "${f.name}"`)) bad.push(f.name + ' ' + w);
     return bad;
   });
+  for (let i = 0; i < 20 && library().length < 22; i++) await p.waitForTimeout(100);   // (a file's request can reach the test a moment after the page has the font)
   check(!all.length && library().length === 22, 'every font and weight in the library loads (22 files)', JSON.stringify({ notLoaded: all, files: library().length }));
   check(library().every(u => u.startsWith('http://localhost:4184/')), 'and they come from inside the app, not the network');
   await p.done();
@@ -638,7 +641,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (14)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (18)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'GSFG frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -655,7 +658,7 @@ async function tour(b) {
   // the sheet also offers the engine test scenes, with their own time and without the boxes that are for games
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]'); await p.selectOption('.tour-set', 'scenes');
   const sheet2 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
-  check(/^Fifteen scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
+  check(/^Nineteen scenes, each flown through for \d+ seconds .* about \d+ min/.test(sheet2.est) && sheet2.ticks.every(d => d === 'none'), 'choosing the engine test scenes says what they are and hides the boxes that are for games', JSON.stringify(sheet2));
   // and the ray tracing scene alone (the hall), started from the sheet: the bar names the hall, and Stop gives its report
   await p.selectOption('.tour-set', 'traced');
   const sheet4 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display) }));
@@ -670,11 +673,15 @@ async function tour(b) {
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   await p.selectOption('.tour-set', 'framegen');
   const sheet3 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display), name: document.querySelector('.tour-set option[value="framegen"]')?.textContent }));
-  check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
+  check(sheet3.name === 'GSFG frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
     'the sheet also offers frame generation, timed in four of the engine test scenes', JSON.stringify(sheet3));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
+}
 
+/* ---------- the engine test scenes, flown by the tour (its own part: the slowest one, run as a job of its own on GitHub) ---------- */
+async function scenes(b) {
+  console.log('\nEngine test scenes');
   // the engine test scenes (src/detail-tour.js): each detail system off and on, on a stage over the app.
   // Small scenes on a small screen here: the software renderer draws the full ones at seconds a frame.
   const q = await open(b, { width: 240, height: 320, dpr: 1, before: () => {
@@ -693,8 +700,8 @@ async function tour(b) {
       after: { stage: !!document.querySelector('.tour-stage'), touring: document.body.classList.contains('touring'), force: window.__hd.force, active: __gs.active?.def.id, loading: !!__gs.active?.loading, awake: __gs.awake.on, msg: !!document.querySelector('.feed-msg') } };
   });
   const sby = Object.fromEntries(sc.scenes.map(s => [s.key, s])), M = (k, m) => sby[k]?.modes.find(x => x.key === m) || {};
-  check(sc.scenes.length === 15 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
-    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street, a street at night and a coast, each with its system off and then on', JSON.stringify(sc.scenes));
+  check(sc.scenes.length === 19 && sc.scenes.every(s => !s.error && s.modes.length >= 2 && s.modes.every(m => m.frames > 3 && m.tris > 0)) && !sc.stopped,
+    'the engine test scenes fly through a valley, a forest, a village, a town, a square, a field, a yard, along a cliff, a hall, a parade, a line-up, faces close up, a street, a street at night, parked cars, the ground and walls, a café by a square under a low sun, a skyline and a coast, each with its system off and then on', JSON.stringify(sc.scenes));
   // the hall: walked with no reflections and with the ones the picture has (ray traced too where it is drawn with WebGPU; WebGL at this quality has none, and says so)
   check(M('hall', 'none').frames > 3 && (M('hall', 'traced').frames ? /^traced copy [\d,]+ triangles \([\d,]+ before simplifying\) of \d+ things, 3 of them moving, /.test(M('hall', 'traced').tell) : M('hall', 'screen').backend === 'webgl' && M('hall', 'screen').tell === 'this quality draws no reflections here')
     && /\nHALL · ray traced reflections · a polished hall of 6 pillars and figures, [\d,]+ triangles, with 3 things moving · made in /.test(sc.text) && /\n  = (from the screen against no reflections|reflections from the screen against none): /.test(sc.text),
@@ -742,8 +749,9 @@ async function tour(b) {
   check(M('faces', 'clean').build > 0 && M('faces', 'real').build > 0 && /^posed in [\d.]+ ms a frame$/.test(M('faces', 'real').tell || '') && /\n  = the real look against the clean look: /.test(sc.text),
     'the faces are drawn close up in the clean look and then the real one', JSON.stringify(sby.faces));
   // the street: the city as it was (windows painted on, boxes for cars and people), then with rooms behind its windows, real cars and sculpted people
+  // (more than twice the triangles, not more draws: on a slow machine the draws of the two runs come out the same as often as not)
   const strt = /^the city's code [\d.]+ ms a frame · (\d+) cars drawn whole · ([\d,]+) parked · ([\d,]+) people drawn in (\d+) draws$/.exec(M('street', 'new').tell || '');
-  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3].replace(/,/g, '') >= 1 && +strt[4] >= 1 && M('street', 'new').calls > M('street', 'old').calls && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
+  check(strt && +strt[2].replace(/,/g, '') >= 1 && +strt[3].replace(/,/g, '') >= 1 && +strt[4] >= 1 && M('street', 'new').tris > M('street', 'old').tris * 2 && /^the city's code [\d.]+ ms a frame$/.test(M('street', 'old').tell || '')
     && /^\d+ buildings, \d+ cars, \d+ parked, \d+ people$/.test(M('street', 'new').note || '') && /\n  = rooms behind the windows, real and parked cars, sculpted people, the street dressed against windows painted on, boxes for cars and people: /.test(sc.text),
     'the street is walked as the city was and then with rooms behind its windows, real and parked cars, sculpted people and the street dressed', JSON.stringify(sby.street));
   // the night: a wet street with every lamp a plain round light, then with the nearest lamps' shadows (from the atlas on WebGPU, where
@@ -753,6 +761,27 @@ async function tour(b) {
   const nightLit = nightGpu ? 4 : 2;   // (WebGL: as many round lights as the quality allows, two at the least)
   check(litOf('off')[0] >= nightLit && litOf('off')[1] === null && nightOn[0] >= nightLit && (nightGpu ? nightOn[1] >= 1 && nightOn[2] > 0 : nightOn[1] === null) && /\n  = lamps with shadows, shaped headlights, neon against plain round lamps: /.test(sc.text),
     'the night street is lit by plain round lamps and then by lamps with shadows, shaped headlights and neon', JSON.stringify(sby.night));
+  // the cars: parked cars walked past as cars were (dark glass, plain paint), then with seats behind the glass, their paint's looks and one car hit
+  const carsT = /^(\d+) cars of ([\d,]+) triangles · (\d+) dents?, (\d+) panes? broken, (\d+) lamps? broken$/.exec(M('cars', 'new').tell || ''), carsO = /^(\d+) cars of ([\d,]+) triangles$/.exec(M('cars', 'old').tell || '');
+  check(carsT && carsO && +carsT[3] >= 1 && +carsT[4] >= 2 && +carsT[5] >= 1 && +carsT[2].replace(/,/g, '') > +carsO[2].replace(/,/g, '') && M('cars', 'new').calls > M('cars', 'old').calls
+    && /\n  = seats behind the glass, flaked and dirty paint, dents and broken glass against dark glass, plain paint: /.test(sc.text),
+    'the parked cars are walked past as cars were and then with seats behind their glass, their paint\'s looks, a dent and broken glass', JSON.stringify(sby.cars));
+  // the ground: driven over as the tiled pictures it was, then painted round the camera a strip at a time, with marks on it
+  const grd = /^the city's code [\d.]+ ms a frame · ([\d,]+) strips painted, ([\d,]+) texels a frame · ([\d,]+) marks · ([\d,]+) things on the walls$/.exec(M('ground', 'on').tell || '');
+  check(grd && +grd[1].replace(/,/g, '') >= 4 && +grd[2].replace(/,/g, '') > 0 && +grd[4].replace(/,/g, '') > 0 && /^the city's code [\d.]+ ms a frame$/.test(M('ground', 'off').tell || '')
+    && /\n  = the ground painted round the camera with no repeats, posters and stains on the walls against tiled ground, bare walls: /.test(sc.text),
+    'the ground is driven over as tiled pictures with bare walls, then painted round the camera a strip at a time with oil and skid marks, the walls wearing posters and stains', JSON.stringify(sby.ground));
+  // the shade: the sun's shadow maps alone, then with the sun mask (WebGPU, where the far people leave the sun's map as capsules; WebGL has
+  // no sun mask, and the second run says so)
+  const shadeOf = m => /^shadow maps [\d,]+ triangles in [\d,]+ draws a frame(?: · (no sun mask on WebGL|sun mask in (\d+)% of frames, ([\d,]+) capsules a frame))?$/.exec(M('shade', m).tell || '');
+  const shadeOff = shadeOf('off'), shadeOn = shadeOf('on'), shadeGpu = M('shade', 'on').backend === 'webgpu';
+  check(shadeOff && !shadeOff[1] && shadeOn && (shadeGpu ? +shadeOn[2] > 50 && +shadeOn[3].replace(/,/g, '') > 0 : shadeOn[1] === 'no sun mask on WebGL') && /\n  = short rays close up, far shadows, crowd capsules against the sun's shadow maps alone: /.test(sc.text),
+    'the café and the square are drawn with the sun\'s shadow maps alone and then with the sun mask', JSON.stringify(sby.shade));
+  // the skyline: the view from the tallest roof, the city alone and then going on to the horizon as stand-ins, far lights and hills
+  const sky = /^the city's code [\d.]+ ms a frame · ([\d,]+) stand-ins, ([\d,]+) far lamps, ([\d,]+) triangles in (\d+) draws$/.exec(M('skyline', 'on').tell || '');
+  check(sky && +sky[1].replace(/,/g, '') >= 50 && +sky[3].replace(/,/g, '') > 0 && +sky[4] >= 3 && /^the city's code [\d.]+ ms a frame$/.test(M('skyline', 'off').tell || '')
+    && M('skyline', 'on').tris > M('skyline', 'off').tris && /\n  = the city to the horizon: stand-ins, far lights and hills against the city alone: /.test(sc.text),
+    'the skyline is looked over from the tallest roof as the city alone and then going on to the horizon as stand-ins, far lights and hills', JSON.stringify(sby.skyline));
   // the coast: a beach in the rain with the plain water, then the sea and its shore, then rain on the lens and spray off the jeep's tyres
   const seaOf = m => /^(the plain water|the sea) and the rain worked out in [\d.]+ ms a frame$/.exec(M('coast', m).tell || '')?.[1];
   check(seaOf('water') === 'the plain water' && seaOf('sea') === 'the sea' && seaOf('runs') === 'the sea' && M('coast', 'sea').tris > M('coast', 'water').tris && /\nCOAST · the open sea and rain that runs · a beach in the rain: /.test(sc.text)
@@ -764,7 +793,7 @@ async function tour(b) {
     'while they run the feed is empty, the scenes draw on a stage of their own with the 3D canvas under it, quality is pinned and the screen is kept on', JSON.stringify({ seen: sc.seen, steps: sc.steps }));
   check(!sc.after.stage && !sc.after.touring && sc.after.force == null && sc.after.active === 'bunker-breakout' && !sc.after.awake && !sc.after.msg,
     'afterwards the stage is gone, quality is the phone\'s own again and the feed is back on the game it was on', JSON.stringify(sc.after));
-  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · frame generation off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
+  check(/^Game Scroll engine test scenes · \d{4}-\d\d-\d\d \d\d:\d\d UTC · build /.test(sc.text) && /\nPHONE: .* Hz · /.test(sc.text) && /\nPICTURE: WebG(L|PU).* · quality (medium|high), pinned · 3D drawn at \d+ x \d+, shown at \d+ x \d+.* · GSFG off · 1\.5 s a run · scenes at 0\.1 of full size/.test(sc.text)
     && /\nVALLEY · cluster detail · [\d,]+ triangles in 55 meshes · made in /.test(sc.text) && /\n  every triangle +\d+ fps · worst 1% \d+ fps · longest \d+ ms · chip .* · code [\d.]+ ms \([a-z ]+ [\d.]+(, [a-z ]+ [\d.]+)*\) · [\d,]+ triangles in [\d,]+ draws/.test(sc.text)
     && /\n  cluster detail +\d+ fps .* · ready in [\d.]+ (ms|s) · \d+ mesh(es)? drawn in clusters · /.test(sc.text) && /\n  = cluster detail against every triangle: .*[\d.]+ times fewer triangles/.test(sc.text) && /\nFOREST · detail for copies · /.test(sc.text) && /\nVILLAGE · real surface detail · /.test(sc.text),
     'the report names the phone, the picture and every run with its numbers', sc.text);
@@ -812,10 +841,9 @@ async function tour(b) {
     'ray tracing alone flies only the hall, with the engine test scenes\' report', JSON.stringify(rt));
   // frame generation's runs need WebGPU: drawn with WebGL, the report says so and nothing is flown
   const noFg = await q.evaluate(async () => { const r = await __gs.tour({ scenes: true, framegen: true, seconds: 1, size: .1 }); return { n: r.scenes.length, note: r.note || '', text: r.text, active: __gs.active?.def.id }; });
-  check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
+  check(noFg.n === 0 && /^Frame generation needs WebGPU/.test(noFg.note) && /^Game Scroll engine test scenes, GSFG frame generation · /.test(noFg.text) && noFg.text.includes(noFg.note) && noFg.active === 'bunker-breakout',
     'frame generation\'s runs, where the 3D is drawn with WebGL, say there was nothing to time', JSON.stringify(noFg));
   await q.done();
-  await framegenScenes();
 }
 
 // Frame generation's runs in the engine test scenes (src/detail-tour.js), on a browser with WebGPU on its
@@ -841,7 +869,7 @@ async function framegenScenes() {
   check(M('before').pace === 'after' && ['first', 'after'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
     'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times', JSON.stringify(fg.modes));
   const told = !/chip time not told/.test(fg.text);
-  check(/^Game Scroll engine test scenes, frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · frame generation as each run says, for a \d+ Hz screen · /.test(fg.text)
+  check(/^Game Scroll engine test scenes, GSFG frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · GSFG as each run says, for a \d+ Hz screen · /.test(fg.text)
     && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · .*(each frame on a refresh of its own|the made frame on the real one's refresh) · .*code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
     && /\n  \d+ \+ \d+ blended before +\d+ pictures a second \(\d+ drawn\) · .*the made frame on the real one's refresh · /.test(fg.text)
     && (!told || (/\n  \d+ drawn, \d+ blended +.*chip [\d.]+ ms a drawn frame \(.*made frames [\d.]+.*\) · a made frame [\d.]+ ms \(.*picture [\d.]+.*\)/.test(fg.text)
@@ -1139,11 +1167,112 @@ async function reports(b) {
   await q.done();
 }
 
+/* ---------- updates from Google Play (src/update.js), with a stand-in for the phone's plugin ---------- */
+// The stand-in answers check() with `answer` and start() with `result`, notes every call, and can send
+// the plugin's 'state' events. The app looks by itself 4 seconds after it opens.
+function fakePlay(o) {
+  const f = window.__gsPlayFake = { calls: [], answer: o.answer, result: o.result || 'accepted', on: [] };
+  f.check = async () => { f.calls.push('check'); return { ...f.answer }; };
+  f.start = async ({ type }) => { f.calls.push('start:' + type); return { result: f.result }; };
+  f.complete = async () => { f.calls.push('complete'); };
+  f.addListener = (name, fn) => { f.on.push(fn); return Promise.resolve({ remove() {} }); };
+  f.send = s => f.on.forEach(fn => fn(s));
+}
+async function updates(b) {
+  console.log('\nUpdates from Google Play');
+  const FROM_PLAY = { play: true, installer: 'com.android.vending', versionCode: 10, versionName: '1.0.10', available: 'yes', availableVersionCode: 12, priority: 0, staleDays: 1, immediate: true, flexible: true, status: 'none', bytes: 0, total: 0 };
+  const calls = p => p.evaluate(() => __gsPlayFake.calls.join(' '));
+  const looked = p => p.waitForFunction(() => __gsPlayFake.calls.includes('check'), null, { timeout: 15000 });
+  const shot = async (p, name) => { if (process.env.SHOTS) await p.screenshot({ path: require('path').join(process.env.SHOTS, name + '.png') }); };
+
+  // An APK from anywhere but Play: Play is never asked to do anything
+  let p = await open(b, { before: fakePlay, arg: { answer: { play: false, installer: 'com.google.android.packageinstaller', versionCode: 7, versionName: '1.0.7' } } });
+  await looked(p); await p.waitForTimeout(400);
+  let st = await p.evaluate(() => __gs.update.status());
+  check(await calls(p) === 'check' && !st.play && st.state === 'away' && st.version === '1.0.7', 'a copy not from Google Play looks once, offers nothing', JSON.stringify([await calls(p), st]));
+  await p.click('#settings'); await p.waitForTimeout(300);
+  const row = await p.evaluate(() => document.querySelector('.set-updates')?.innerText || '');
+  check(/Version\s*1\.0\.7/.test(row) && /didn’t come from Google Play/.test(row) && !/Check for updates/.test(row), 'and Settings says which version it is, with no update button', JSON.stringify(row));
+  await p.done();
+
+  // From Play: Play's sheet, a background download, then the restart card (never over a round)
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY } });
+  await p.game(CASUAL); await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:flexible', 'an update from Play: Play\'s own sheet offers it', await calls(p));
+  await p.evaluate(() => __gsPlayFake.send({ status: 'downloading', bytes: 40, total: 100 })); await p.waitForTimeout(50);
+  st = await p.evaluate(() => __gs.update.status());
+  const early = await p.evaluate(() => !!document.querySelector('.upd.on'));
+  check(st.state === 'downloading' && st.pct === 40 && !early, 'it downloads in the background with nothing on screen', JSON.stringify(st));
+  await p.evaluate(() => __gsPlayFake.send({ status: 'downloaded', bytes: 100, total: 100 })); await p.waitForTimeout(700);
+  check(await p.evaluate(() => !!document.querySelector('.upd.on')), 'once it is downloaded, a card offers to restart into it');
+  await shot(p, 'update-ready');
+  await p.evaluate(() => __gs.start()); await p.waitForTimeout(1400);
+  const during = await p.evaluate(() => [__gs.active.state, !!document.querySelector('.upd.on')]);
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(1400);
+  const after = await p.evaluate(() => !!document.querySelector('.upd.on'));
+  check(during[0] === 'playing' && !during[1] && after, 'the card steps aside while a round is played and comes back after', JSON.stringify({ during, after }));
+  await p.click('.upd-go'); await p.waitForTimeout(200);
+  check((await calls(p)).endsWith('complete'), 'Restart has Play install it', await calls(p));
+  await p.done();
+
+  // "No thanks" on Play's sheet: not asked again today, unless the player asks in Settings
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY, result: 'declined' } });
+  await looked(p); await p.waitForTimeout(300);
+  await p.evaluate(() => __gs.update.check(false)); await p.waitForTimeout(400);
+  const no = await p.evaluate(() => +localStorage.getItem('gs_update_no'));
+  check(await calls(p) === 'check start:flexible check' && no > 0, 'after No thanks it looks again but doesn\'t ask today', await calls(p));
+  await p.click('#settings'); await p.waitForTimeout(400);
+  await p.evaluate(() => document.querySelector('.set-upd').click()); await p.waitForTimeout(400);
+  check((await calls(p)).endsWith('check start:flexible'), 'Settings\' button asks again', await calls(p));
+  await p.done();
+
+  // Priority 4-5: Play's full-screen update; backing out leaves a card that can't be closed
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, priority: 5 }, result: 'declined' } });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate', 'a priority 5 update is Play\'s full-screen one', await calls(p));
+  const wall = () => p.evaluate(() => !!document.querySelector('dialog.upd-wall[open]'));
+  check(await wall(), 'backing out of it leaves the "Time to update" card');
+  await shot(p, 'update-wall');
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  check(await wall(), 'which Escape doesn\'t close');
+  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'none' }; }); await p.click('dialog.upd-wall .info-play'); await p.waitForTimeout(400);
+  check(!await wall(), 'and it goes once Play has nothing newer', await calls(p));
+  await p.done();
+
+  // The catalogue's minimum version, an interrupted full-screen update, and one downloaded earlier
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY } });
+  await p.evaluate(() => { __gs.remote.app = () => ({ android: { min: 11 } }); });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate' && !await p.evaluate(() => !!document.querySelector('dialog.upd-wall[open]')), 'a copy older than the catalogue\'s minimum gets the full-screen update', await calls(p));
+  await p.done();
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, available: 'resume', priority: 0 } } });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate', 'a full-screen update that was cut off carries on', await calls(p));
+  await p.done();
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, status: 'downloaded' } } });
+  await looked(p); await p.waitForTimeout(700);
+  check(await calls(p) === 'check' && await p.evaluate(() => !!document.querySelector('.upd.on')), 'one downloaded earlier goes straight to the restart card', await calls(p));
+  await p.done();
+
+  // A round being played holds the offer back until it ends
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, available: 'none' } } });
+  await p.game(CASUAL); await looked(p); await p.waitForTimeout(200);
+  await p.evaluate(() => __gs.start()); await p.waitForTimeout(300);
+  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'yes' }; __gs.update.check(); }); await p.waitForTimeout(1500);
+  const held = await calls(p);
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(3600);
+  check(held === 'check' && (await calls(p)) === 'check check start:flexible', 'an offer waits for the round to end', JSON.stringify([held, await calls(p)]));
+  await p.done();
+}
+
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, loading, ready, oldweb, reports };
-  for (const [name, fn] of Object.entries(parts)) if (!only.length || only.includes(name)) await fn(b);
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, scenes, framegen: framegenScenes, loading, ready, oldweb, reports, updates };
+  const unknown = only.map(n => n.replace(/^-/, '')).filter(n => !parts[n]);
+  if (unknown.length) { console.log(`no part called ${unknown.join(', ')}: the parts are ${Object.keys(parts).join(', ')}`); process.exit(1); }
+  const want = only.filter(n => !n.startsWith('-')), skip = only.filter(n => n.startsWith('-')).map(n => n.slice(1));
+  for (const [name, fn] of Object.entries(parts)) if ((!want.length || want.includes(name)) && !skip.includes(name)) await fn(b);
   await b.close(); server.httpServer.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall app checks passed'); process.exit(failed ? 1 : 0);
 })();

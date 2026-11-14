@@ -1,0 +1,136 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Decals in the lamps' grid (HDView.decal on WebGPU: decals-gpu.js, lamps-gpu.js) for scripts/detail-test.cjs --page
+// decals [--webgpu]: marks on a floor, a wall and a crate drawn as grid decals against the same marks as meshes cut from
+// the surfaces (DecalGeometry, as on WebGL), and checks that they look alike, that the grid draws nothing more and
+// builds no shader when marks come and go, that the back of a thin panel, a thing that asks for none and a lamp's light
+// beside them are left alone, that marks fade and go, and that past the atlas's 16 pictures the rest are meshes.
+//   ?gpu  ?w=240&h=320
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320);
+HD.force = 2; HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note });
+try {
+  const v = new gs.hd.HDView({ bg: '#8aa4c0', fog: 0, amb: .5 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff2d8', 2.6, 12, [.4, 1, .7]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const box = (w, h, d, col, px, py, pz, o = {}) => { const m = new T.Mesh(gs.hd.rbox(w, h, d), gs.hd.pbr(col, { rough: .8, ...o })); m.position.set(px, py, pz); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  const floor = box(12, .2, 12, '#c8bfae', 0, -.1, 0), wall = box(12, 3, .3, '#ddd4c4', 0, 1.5, -2);
+  const panel = box(1.6, 1.4, .06, '#b8c4cc', 2.2, .7, .4);   // (thin: a mark on its front reaches through to its back)
+  const shy = box(.6, .5, .6, '#c8a080', -2.2, .25, .6); shy.material.decals = false;   // (asks for none)
+  v.cam.position.set(0, 3.4, 5.6); v.cam.lookAt(0, .6, -.6); v.cam.updateMatrixWorld();
+  const draw = async () => { v.t = 0; v.render(x, W, H); x.getImageData(0, 0, 1, 1); await frame(); };
+  const settle = async n => { for (let i = 0; i < n; i++) await draw(); };
+  const grab = () => x.getImageData(0, 0, W, H).data.slice();
+  const pic = px => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H); im.data.set(px); g.putImageData(im, 0, 0); return cv.toDataURL(); };
+  // the mean difference where a mask is set, and over the rest
+  const diff = (a, b, mask) => { let si = 0, ni = 0, so = 0, no = 0; for (let i = 0, p = 0; i < a.length; i += 4, p++) { const d = (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3; if (!mask || mask[p]) { si += d; ni++; } else { so += d; no++; } } return { in: +(si / Math.max(1, ni)).toFixed(2), out: +(so / Math.max(1, no)).toFixed(2), n: ni }; };
+  // a mark: a dark red ring with a cross, fading out at its edge
+  const ring = (g, s) => { const m = s / 2; g.strokeStyle = 'rgba(120,20,16,.95)'; g.lineWidth = s * .12; g.beginPath(); g.arc(m, m, s * .3, 0, 7); g.stroke(); g.lineWidth = s * .06; g.beginPath(); g.moveTo(m - s * .3, m); g.lineTo(m + s * .3, m); g.moveTo(m, m - s * .3); g.lineTo(m, m + s * .3); g.stroke(); };
+  const spots = [[floor, [-1, 0, .6], [0, 1, 0]], [floor, [.4, 0, 1.4], [0, 1, 0]], [floor, [1.2, 0, -.4], [0, 1, 0]], [wall, [-1.2, 1.4, -1.85], [0, 0, 1]], [wall, [.6, 1, -1.85], [0, 0, 1]], [floor, [-2.2, .02, .6], [0, 1, 0]], [panel, [2.2, .7, .43], [0, 0, 1]]];
+  const put = (o = {}) => spots.map(([m, p, n], i) => v.decal(m, p, n, { size: i === 5 ? 1.3 : .8, angle: .3 * i, paint: ring, key: 'ring', ...o }));
+  const grid = () => v.decals.filter(d => d.kind === 'grid').length, meshes = () => v.decals.filter(d => d.kind === 'mesh').length;
+
+  await settle(10);   // (the view draws once: it knows where it draws)
+  const none = grab();
+  put(); await settle(8);
+  info.kinds = { grid: grid(), mesh: meshes() };
+  if (!GPU) {
+    check('on WebGL every decal is a mesh cut from the surface, as before', meshes() === spots.length && grid() === 0, JSON.stringify(info.kinds));
+  } else {
+    check('on WebGPU the decals are in the lamps\' grid', grid() === spots.length && meshes() === 0, JSON.stringify(info.kinds));
+    const withGrid = grab(); out.grid = pic(withGrid);
+    // the same marks as meshes
+    HD.gridDecals = false; await settle(8);
+    const withMesh = grab(); out.mesh = pic(withMesh);
+    info.switched = { grid: grid(), mesh: meshes() };
+    HD.gridDecals = true; await settle(8);
+    const back = grab();
+    // where a mark lies: pixels the meshes changed
+    const mask = new Uint8Array(W * H); let marked = 0;
+    for (let i = 0, p = 0; i < none.length; i += 4, p++) { const d = Math.abs(withMesh[i] - none[i]) + Math.abs(withMesh[i + 1] - none[i + 1]) + Math.abs(withMesh[i + 2] - none[i + 2]); if (d > 45) { mask[p] = 1; marked++; } }
+    info.look = { marked, gridVsMesh: diff(withGrid, withMesh, mask), gridVsNone: diff(withGrid, none, mask), backToGrid: diff(back, withGrid) };
+    check('a grid decal looks like the mesh one', marked > W * H * .01 && info.look.gridVsMesh.in < info.look.gridVsNone.in * .25 && info.look.gridVsMesh.out < 1.5, JSON.stringify(info.look));
+    check('switched to meshes and back, each decal is made again for where the view draws', info.switched.mesh === spots.length && grid() === spots.length && info.look.backToGrid.in < .5, JSON.stringify({ switched: info.switched, back: info.look.backToGrid }));
+
+    // the thing that asks for none: its top is left alone under the big floor mark (the floor round it is marked)
+    const at = (px, py) => { const i = (py * W + px) * 4; return [withGrid[i], withGrid[i + 1], withGrid[i + 2]]; };
+    const P = new T.Vector3(), sp = (wx, wy, wz) => { P.set(wx, wy, wz).project(v.cam); return [Math.round((P.x + 1) / 2 * W), Math.round((1 - P.y) / 2 * H)]; };
+    const top = sp(-2.2, .5, .6), was = (() => { const [px, py] = top, i = (py * W + px) * 4; return [none[i], none[i + 1], none[i + 2]]; })(), now = at(...top);
+    info.shy = { before: was, after: now };
+    check('a thing that asks for no decals is left alone inside a mark', Math.abs(now[0] - was[0]) + Math.abs(now[1] - was[1]) + Math.abs(now[2] - was[2]) < 12, JSON.stringify(info.shy));
+
+    // the back of the thin panel (the mark's box reaches through it): seen from behind, unmarked
+    v.cam.position.set(2.6, 1.2, -1.2); v.cam.lookAt(2.2, .7, .4); v.cam.updateMatrixWorld(); v.cut();
+    v.clearDecals(); await settle(8); const backNone = grab();
+    put(); await settle(8); const backMarked = grab(); out.back = pic(backMarked);
+    info.panelBack = diff(backMarked, backNone);
+    check('the back of a thin panel is not marked by a mark on its front', info.panelBack.in < 1, JSON.stringify(info.panelBack));
+    v.cam.position.set(0, 3.4, 5.6); v.cam.lookAt(0, .6, -.6); v.cam.updateMatrixWorld(); v.cut();
+
+    // a lamp's light beside the marks is the same with them (the lamps' loop stops at the decals in a cell, never before a lamp)
+    v.clearDecals(); v.lampLights(30);
+    const lamp = [{ x: .4, y: .9, z: .2, col: '#ffb070', i: 2.2, reach: 4 }];
+    for (let i = 0; i < 10; i++) { v.placeLamps(lamp, 0, 0, 0, 0); await draw(); }
+    const lit = grab();
+    const many = []; for (let i = 0; i < 60; i++) { const a = i * 2.4, r = 1.2 + (i % 5) * .5; many.push(v.decal(floor, [Math.cos(a) * r + .4, 0, Math.sin(a) * r * .6 + .2], [0, 1, 0], { size: .25, paint: ring, key: 'ring' })); }
+    for (let i = 0; i < 8; i++) { v.placeLamps(lamp, 0, 0, 0, 0); await draw(); }
+    const litMarked = grab(); out.lamp = pic(litMarked);
+    const lmask = new Uint8Array(W * H); for (let i = 0, p = 0; i < lit.length; i += 4, p++) lmask[p] = Math.abs(litMarked[i] - lit[i]) + Math.abs(litMarked[i + 1] - lit[i + 1]) + Math.abs(litMarked[i + 2] - lit[i + 2]) > 30 ? 1 : 0;
+    info.lamp = diff(litMarked, lit, lmask);
+    check('a lamp lights the floor between 60 marks as it did without them', info.lamp.n > 50 && info.lamp.out < .8, JSON.stringify(info.lamp));
+
+    // what is drawn: no more with 60 grid decals than with none, more with them as meshes
+    const calls = async () => { const I = G.r.info; I.autoReset = false; I.reset(); await draw(); const n = I.render.drawCalls; I.autoReset = true; return n; };
+    const c60 = await calls(); v.clearDecals(); await draw(); const c0 = await calls();
+    HD.gridDecals = false; for (let i = 0; i < 20; i++) v.decal(floor, [i * .2 - 2, 0, 1], [0, 1, 0], { size: .2, paint: ring, key: 'ring' }); await draw(); const cMesh = await calls(); v.clearDecals(); HD.gridDecals = true; await draw();
+    info.draws = { none: c0, grid60: c60, mesh20: cMesh };
+    check('60 decals in the grid draw nothing more; as meshes each is a draw', c60 === c0 && cMesh > c0, JSON.stringify(info.draws));
+
+    // marks come and go mid-run: no shader is made (the picture is copied in once)
+    await settle(4);
+    const dev = G.r.backend.device, made = [], cs = dev.createShaderModule.bind(dev);
+    dev.createShaderModule = d => { made.push(d.label || '?'); return cs(d); };
+    try {
+      for (let k = 0; k < 4; k++) { for (let i = 0; i < 25; i++) v.decal(i % 2 ? floor : wall, i % 2 ? [i * .2 - 2.5, 0, k * .3] : [i * .2 - 2.5, .5 + k * .3, -1.85], i % 2 ? [0, 1, 0] : [0, 0, 1], { size: .3, colour: '#202020', life: 2 }); await draw(); }
+      v.clearDecals(); await settle(3);
+    } finally { dev.createShaderModule = cs; }
+    info.shaders = made.length;
+    check('decals made and cleared mid-run build no shader', made.length === 0, made.length ? made.slice(0, 6).join(', ') : 'none');
+
+    // life: a mark fades, then it is gone
+    const d = v.decal(floor, [0, 0, .5], [0, 1, 0], { size: .6, colour: '#101010', life: 1 }); await draw();
+    const a0 = d.alpha; v.tickDecals(.8); const a1 = d.alpha; v.tickDecals(.3); await draw();
+    info.life = { start: a0, at08: +a1.toFixed(3), left: v.decals.length, inGrid: v.gsGrid?.length ?? -1 };
+    check('a mark with a life fades and then goes', a0 === 1 && a1 > 0 && a1 < .5 && v.decals.length === 0 && info.life.inGrid === 0, JSON.stringify(info.life));
+
+    // past the atlas's 16 pictures, the rest are meshes
+    const keep = [];
+    for (let k = 0; k < 18; k++) keep.push(v.decal(floor, [k * .3 - 2.5, 0, -1], [0, 1, 0], { size: .25, paint: (g, s) => { g.fillStyle = `hsla(${k * 20},70%,40%,.9)`; g.fillRect(s * .2, s * .2, s * .6, s * .6); }, key: 'pic' + k }));
+    await draw();
+    info.pictures = { grid: grid(), mesh: meshes() };
+    check('16 pictures in the grid at once, the rest as meshes', grid() === 16 && meshes() === 2, JSON.stringify(info.pictures));
+    v.clearDecals(); await draw();
+
+    // a picture to look at (no check): scorches, splats and posters on a lit street corner
+    v.lampLights(30);
+    const scorch = (g, s) => { const m = s / 2, r = g.createRadialGradient(m, m, 0, m, m, m); r.addColorStop(0, 'rgba(8,6,4,1)'); r.addColorStop(.45, 'rgba(30,22,16,.85)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, s, s); };
+    const splat = (g, s) => { g.fillStyle = 'rgba(40,150,220,.9)'; for (let i = 0; i < 9; i++) { const a = i * 2.4, r = s * (.1 + (i % 3) * .07); g.beginPath(); g.arc(s / 2 + Math.cos(a) * s * .18, s / 2 + Math.sin(a) * s * .18, r, 0, 7); g.fill(); } };
+    const poster = (g, s) => { g.fillStyle = '#f2e6c8'; g.fillRect(s * .1, s * .02, s * .8, s * .96); g.fillStyle = '#c03a28'; g.fillRect(s * .18, s * .1, s * .64, s * .3); g.fillStyle = '#28303a'; for (let i = 0; i < 5; i++) g.fillRect(s * .18, s * (.48 + i * .09), s * (.64 - (i % 2) * .2), s * .04); };
+    for (let i = 0; i < 40; i++) v.decal(floor, [Math.sin(i * 1.7) * 3, 0, Math.cos(i * 2.3) * 1.6 + .2], [0, 1, 0], { size: .3 + (i % 4) * .2, paint: i % 3 ? scorch : splat, key: i % 3 ? 'scorch' : 'splat' });
+    for (let i = 0; i < 4; i++) v.decal(wall, [-2.4 + i * 1.6, 1.5, -1.85], [0, 0, 1], { size: [.9, 1.2, .3], angle: 0, paint: poster, key: 'poster' });
+    for (let i = 0; i < 10; i++) { v.placeLamps([{ x: .4, y: 1.2, z: .4, col: '#ffb070', i: 2.4, reach: 5 }], 0, 0, 0, 0); await draw(); }
+    out.show = c.toDataURL();
+  }
+  info.backend = HD.info.backend;
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+window.result ||= { checks, info, out };
+</script>

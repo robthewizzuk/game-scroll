@@ -21,6 +21,11 @@
 // Neon and signs: a tube light (tube: [x, y, z], the far end) lights as the nearest point of the tube to each surface
 // does, so a long tube draws a long highlight on a wet road; a sign (rect: { w, h, normal }) lights from its face, on
 // its front side only. neon() and sign() make the glowing things to go with them. WebGL lights both from their middle.
+//
+// A sign that lights with its own picture (picture: a canvas or a CanvasTexture; live: true for a canvas redrawn every
+// frame, a texture is copied again when its version moves on): a TV, a video wall, a stained window. On WebGPU the
+// picture is a square of the decals' atlas (decals-gpu.js) and each part of the sign's light takes the colour of where
+// it comes from (lamps-gpu.js); on WebGL the lamp at its middle takes the picture's average colour.
 // Kit use only (hd3d.js).
 import { PointLight, SpotLight, Vector3, Matrix4, PerspectiveCamera, CanvasTexture, SRGBColorSpace, LinearMipmapLinearFilter } from 'three';
 
@@ -82,6 +87,35 @@ export function shapeTexture(name, size = 128) {
   ONE.set(name, t); return t;
 }
 
+/* ---------- a sign's own picture ---------- */
+// each picture a sign lights with, as a 128 x 128 picture (the decals' atlas square's size) and its average colour
+const PICS = new WeakMap(), PIC_PX = 128;
+function picOf(src, live) {
+  let p = PICS.get(src);
+  if (!p) {
+    const cv = canvas(PIC_PX, PIC_PX); if (!cv) return null;
+    const tex = new CanvasTexture(cv); tex.colorSpace = SRGBColorSpace; tex.minFilter = LinearMipmapLinearFilter; tex.name = 'sign picture';
+    p = { cv, c: cv.getContext('2d', { willReadFrequently: true }), tex, ver: null, dirty: false, mean: null, meanVer: null, small: null };
+    PICS.set(src, p);
+  }
+  const img = src.isTexture ? src.image : src, ver = src.isTexture ? src.version : live ? NaN : 0;
+  if (img && !(ver === p.ver)) {   // (NaN: every frame)
+    p.ver = ver; p.c.clearRect(0, 0, PIC_PX, PIC_PX); p.c.drawImage(img, 0, 0, PIC_PX, PIC_PX); p.tex.needsUpdate = true; p.dirty = true; p.meanVer = null;
+  }
+  return p;
+}
+// (WebGL) its average colour, halved down to 16 x 16 and read once each time it changes
+function meanOf(p) {
+  if (p.mean && p.meanVer === p.ver) return p.mean;   // (a live picture's version is NaN: read again every frame)
+  const s = p.small ||= canvas(64, 64), c = s.getContext('2d', { willReadFrequently: true });
+  c.clearRect(0, 0, 64, 64); c.drawImage(p.cv, 0, 0, 64, 64); c.drawImage(s, 0, 0, 64, 64, 0, 0, 32, 32); c.drawImage(s, 0, 0, 32, 32, 0, 0, 16, 16);
+  const d = c.getImageData(0, 0, 16, 16).data; let r = 0, g = 0, b = 0;
+  const lin = x => { x /= 255; return x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; };
+  for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; r += lin(d[i]) * a; g += lin(d[i + 1]) * a; b += lin(d[i + 2]) * a; }
+  const n = d.length / 4; (p.mean ||= [1, 1, 1]); p.mean[0] = r / n; p.mean[1] = g / n; p.mean[2] = b / n; p.meanVer = p.ver;
+  return p.mean;
+}
+
 /* ---------- the pool ---------- */
 // by tier (index: low, medium, high, ultra): shadow slots in the WebGPU atlas, slots drawn at most a frame, and on
 // WebGL the spot lights (for lamps with a dir or a shadow; with three's own shadows where the tier has shadows)
@@ -111,13 +145,13 @@ export class LampPool {
   }
   light(kind) {
     const l = kind === 'cone' ? new SpotLight('#ffd8a0', 0, this.dist, .6, .4, 1.6) : new PointLight('#ffd8a0', 0, this.dist, 1.6);
-    l.userData.gsLamp = { slot: -1, shape: -1, kind: 0, reach: this.dist, a: new Vector3(), ha: 0, b: new Vector3(), hb: 0, m: new Matrix4(), proj: false, texel: 0, want: false, slotOf: null };
+    l.userData.gsLamp = { slot: -1, shape: -1, kind: 0, reach: this.dist, a: new Vector3(), ha: 0, b: new Vector3(), hb: 0, m: new Matrix4(), proj: false, texel: 0, want: false, slotOf: null, pic: null, held: null, cell: -1 };
     if (l.isSpotLight) { this.view.scene.add(l.target); l.castShadow = false; }
     this.view.scene.add(l); this.view.lamps.push(l); (kind === 'cone' ? this.cones : this.points).push(l);
     return l;
   }
   /** The pool lights made by lampLights(): the round ones, made before any frame (they are what a game turns off by day). */
-  adopt(l) { l.userData.gsLamp ||= { slot: -1, shape: -1, kind: 0, reach: this.dist, a: new Vector3(), ha: 0, b: new Vector3(), hb: 0, m: new Matrix4(), proj: false, texel: 0, want: false, slotOf: null }; this.points.push(l); }
+  adopt(l) { l.userData.gsLamp ||= { slot: -1, shape: -1, kind: 0, reach: this.dist, a: new Vector3(), ha: 0, b: new Vector3(), hb: 0, m: new Matrix4(), proj: false, texel: 0, want: false, slotOf: null, pic: null, held: null, cell: -1 }; this.points.push(l); }
   /**
    * The frame's lamps (HDView.placeLamps). T: the tier (ti its index); many: clustered lights (WebGPU) light 8 times
    * as many; gpu: drawn on WebGPU (shadows in the atlas, shapes, tubes and signs) or WebGL (three's own lights).
@@ -174,7 +208,7 @@ export class LampPool {
       // fade the furthest light in/out so swapping which lamps are lit never pops
       const fade = i === n - 1 && fadeN != null ? Math.min(1, (fadeN - d2) * .6) : 1;
       l.intensity = (s.i ?? 6) * fl * fade; s.lit = fl;
-      L.reach = reach; L.shape = gpu ? shapeIndex(s.shape) : -1; L.kind = 0; L.ha = L.hb = 0; L.want = gpu && shadow; L.near = d2; L.zNear = s.near || 0;
+      L.reach = reach; L.shape = gpu ? shapeIndex(s.shape) : -1; L.kind = 0; L.ha = L.hb = 0; L.pic = null; L.want = gpu && shadow; L.near = d2; L.zNear = s.near || 0;
       if (s.tube) {
         // a tube: the light sits at its middle, and reaches as far past every part of it as a lamp would
         vec(s.tube, s.x, s.y, s.z); l.position.set((s.x + V.x) / 2, (s.y + V.y) / 2, (s.z + V.z) / 2);
@@ -188,6 +222,8 @@ export class LampPool {
         L.b.set(0, 1, 0); if (Math.abs(W.y) > .9) L.b.set(0, 0, -1);
         L.a.crossVectors(L.b, W).normalize(); L.b.crossVectors(W, L.a).normalize();
         L.ha = (r.w ?? 1) / 2; L.hb = (r.h ?? 1) / 2; L.kind = gpu ? KIND.rect : 0; l.distance = reach + (gpu ? Math.hypot(L.ha, L.hb) : 0);
+        // its own picture: on WebGPU read where each part of its light comes from (pictures(), lamps-gpu.js); on WebGL its average colour
+        if (s.picture) { L.pic = picOf(s.picture, s.live); if (L.pic && !gpu) { const m = meanOf(L.pic); l.color.r *= m[0]; l.color.g *= m[1]; l.color.b *= m[2]; } }
       } else { l.position.set(s.x, s.y, s.z); l.distance = reach; }
       if (l.isSpotLight) {
         l.target.position.copy(l.position).add(vec(s.dir || DOWN, 0, -1, 0).normalize());
@@ -207,11 +243,28 @@ export class LampPool {
     // (clustered lights coming and going build nothing)
     for (const l of v.lamps) {
       if (taken.has(l)) continue;
-      l.intensity = 0; const L = l.userData.gsLamp; if (L) { L.want = false; L.shape = -1; L.kind = 0; L.slot = -1; }
+      l.intensity = 0; const L = l.userData.gsLamp; if (L) { L.want = false; L.shape = -1; L.kind = 0; L.slot = -1; L.pic = null; }
       l.visible = !gpu && (l.isSpotLight || this.points.indexOf(l) < nMax);
     }
     // (WebGPU's spot lights carry neither: three would light them outside the clusters, each with a map and a shader of its own)
     for (const l of this.cones) { l.castShadow = !gpu && shadowOn; if (gpu && l.map) l.map = null; }
+  }
+  /**
+   * WebGPU, at drawing time: each sign lit with its own picture holds a square of the decals' atlas (fx: hd3d-gpu.js's
+   * decalCell, decalFree, decalRefresh), copied in when it is first shown and again each time the picture changes; a
+   * sign with no square left lights in its own colour.
+   */
+  pictures(fx, r) {
+    this.fx = fx;
+    for (const l of this.view.lamps) {
+      const L = l.userData.gsLamp; if (!L) continue;
+      const want = l.visible && l.intensity > 0 && L.kind === KIND.rect ? L.pic : null;
+      if (want !== L.held) {
+        if (L.cell >= 0) fx.decalFree(L.cell);
+        L.held = want; L.cell = want ? fx.decalCell(r, want, want.tex) : -1;
+        if (want) want.dirty = false;
+      } else if (want?.dirty && L.cell >= 0) { fx.decalRefresh(r, L.cell, want.tex); want.dirty = false; }
+    }
   }
   /**
    * WebGPU, at drawing time (the world's matrices worked out, origin.js's centre in place): hand the lamps that want a
@@ -276,7 +329,7 @@ export class LampPool {
       } else { L.slot = -1; L.proj = false; }
     }
   }
-  dispose() { for (const l of this.view.lamps) { l.removeFromParent(); l.target?.removeFromParent(); } this.view.lamps.length = 0; this.points.length = this.cones.length = 0; this.slots.length = 0; }
+  dispose() { for (const l of this.view.lamps) { const L = l.userData.gsLamp; if (L?.cell >= 0) { this.fx?.decalFree(L.cell); L.cell = -1; L.held = null; } l.removeFromParent(); l.target?.removeFromParent(); } this.view.lamps.length = 0; this.points.length = this.cones.length = 0; this.slots.length = 0; }
 }
 function newSlot(i) {
   const P = new SpotLight('#fff', 0, 10, SHADOW_ANGLE, 0, 1.6); P.castShadow = true; P.gsProxy = true; P.gsAt = new Vector3(); P.name = 'lamp shadow ' + i;

@@ -61,7 +61,9 @@ The numbers, over the last 5 seconds:
   **memory** (the memory guard's level, fine, tight, low or critical, and on Android the phone's free
   memory; see below), and **CPU speed**: a fixed bit of work timed every 2 seconds, as a share of its
   best time. When the phone throttles its clocks, this falls.
-- the last hitch and its causes.
+- the last hitch and its causes. A hitch is a long gap between two pictures, and it is put down to the
+  frame drawn before the gap (its update() and draw(), its biggest part, and the shaders, textures and
+  garbage counted with it): that frame's work is what held the next picture back.
 
 ### CPU by part
 
@@ -96,7 +98,10 @@ Every stutter during play is checked for what happened since the picture before 
 coming back to the front). The frame rate, lows and stutters leave gaps that long out (they look like a
 pause), so the recording's summary counts freezes on their own, with the worst.
 
-- shaders built (WebGL programs, WebGPU programs) and textures uploaded
+- shaders built (WebGL programs, WebGPU programs) and textures uploaded. On WebGPU the **S** event names what
+  was built: the materials whose pipelines the chip made (`MeshStandardMaterial 3, ShadowNodeMaterial`),
+  those made again after three let them go (`made again: ...`), and the effects chain when it was built
+  again, with what changed (`effects chain (depth of field, lens)`)
 - a garbage collection (the JavaScript heap fell by 1.5 MB or more; the browser rounds the heap
   size, so small ones are missed)
 - the browser's long animation frame report: which script held the frame (file and function) or
@@ -115,16 +120,17 @@ pause), so the recording's summary counts freezes on their own, with the worst.
 | **● Rec** | Records up to 60 s of every refresh, hitch and phone reading. Tap again to stop. |
 | **Freeze** | Stops the game's clock but keeps drawing: the picture settles and nothing moves. |
 | **Tint** | Tints the card magenta on every made frame, so you see frame generation working. |
-| **A/B** | On a frozen frame, two pictures with one setting changed: SGSR off vs on, SGSR 1 vs 2, SGSR 2 as Qualcomm has it vs with our changes, textures as drawn vs sharpened under SGSR 2 (WebGPU), WebGL vs WebGPU, half vs full resolution, low vs ultra tier, full vs half precision (the kit's own WebGPU passes in 16-bit numbers, on a chip that has them), every sample vs spread over frames (WebGPU, high and ultra: ambient occlusion, volumetric light and bounce light), the sky as before vs as the big engines draw it (WebGPU: Hillaire's air and marched clouds against the Preetham sky and painted clouds). Settings go back afterwards. |
-| **Shimmer** | On a frozen frame, 16 pictures in a row and a heat map of pixels that still change while nothing moves: shimmering edges, upscaler or anti-aliasing jitter. With SGSR 2 it then measures the same frame again as Qualcomm's shader has it, and the notes give both numbers. |
-| **FG check** | While you play a WebGPU game: grabs real, made, real frames and flags made pixels that match neither real frame nearby (ghosting, smears, holes behind moving things). Turns frame generation on for the check if it's off. |
-| **Half** | While you play a WebGPU game on a chip with half precision (`shader-f16`): the chip's own time a frame by pass with the kit's own passes in full precision, then in half, then both again (1 s to settle and 2.5 s of readings each; the chain is built again at each switch), and how much each pass saved. The passes in half: SGSR 2's upscale, the sharp picture reads in SGSR 2 and frame generation, smoke and fire, the grade and sun glare (`src/kit/half.js`). `HD.info.half` (in the report) says which precision is drawing and any function the chip would not compile in half. |
+| **A/B** | On a frozen frame, two pictures with one setting changed: upscaler off vs on, SGSR 1 vs GSSR (Game Scroll Super Resolution: our tuned SGSR 2), SGSR 2 as Qualcomm has it vs GSSR, textures as drawn vs sharpened under GSSR (WebGPU), WebGL vs WebGPU, half vs full resolution, low vs ultra tier, full vs half precision (the kit's own WebGPU passes in 16-bit numbers, on a chip that has them), every sample vs spread over frames (WebGPU, high and ultra: ambient occlusion, volumetric light and bounce light), the sky as before vs as the big engines draw it (WebGPU: Hillaire's air and marched clouds against the Preetham sky and painted clouds). Settings go back afterwards. |
+| **Shimmer** | On a frozen frame, 16 pictures in a row and a heat map of pixels that still change while nothing moves: shimmering edges, upscaler or anti-aliasing jitter. With GSSR it then measures the same frame again as Qualcomm's shader has it, and the notes give both numbers. |
+| **GSFG check** | While you play a WebGPU game: grabs real, made, real frames from GSFG (Game Scroll Frame Generation) and flags made pixels that match neither real frame nearby (ghosting, smears, holes behind moving things). Turns GSFG on for the check if it's off. |
+| **Half** | While you play a WebGPU game on a chip with half precision (`shader-f16`): the chip's own time a frame by pass with the kit's own passes in full precision, then in half, then both again (1 s to settle and 2.5 s of readings each; the chain is built again at each switch), and how much each pass saved. The passes in half: GSSR's upscale, the sharp picture reads in GSSR and GSFG, smoke and fire, the grade and sun glare (`src/kit/half.js`). `HD.info.half` (in the report) says which precision is drawing and any function the chip would not compile in half. |
 | **Spread** | While you play a WebGPU game on high or ultra: the chip's time a frame by pass with ambient occlusion, volumetric light and bounce light taking every sample every frame (`HD.spread = false`), then spread over frames (a part of their samples a frame, the frames before filling in: `src/kit/hd3d-gpu-spread.js`), then both again, timed the same way as Half. `HD.info.spread` (in the report) says which are spread. |
 | **Clouds** | While you play a WebGPU game on high or ultra whose sky has clouds: the chip's time a frame by pass with the sky's painted clouds (`HD.clouds = false`), then with real ones marched through (a quarter of the pixels a frame, the frames before filling in, and their shadow a few times a second: `src/kit/hd3d-gpu-sky.js`), then both again, timed the same way as Half. `HD.info.sky` (in the report) says what the sky draws. |
+| **Subgroups** | While you play a WebGPU game on a chip with subgroups (Chrome and Android from 144): the chip's time a frame by pass with the kit's compute passes built the plain way (`HD.subgroups = false`: one add on a shared counter per thread), then with subgroups (one per group of threads: GPU culling and its occlusion test, frame generation's counts; `src/kit/subgroups.js`), then both again, timed the same way as Half. `HD.info.subgroups` (in the report) says whether the chip has them and their size. |
 | **Report** | Shares a self-contained HTML report (Android and iPhone share sheet; a download on the web). |
 | **Copy** | Puts a text summary on the clipboard, to paste into chat. |
 
-The **viewer** (after A/B, Shimmer, FG check, Half, Spread or Clouds) has Wipe (a slider between the two), Side by side
+The **viewer** (after A/B, Shimmer, GSFG check, Half, Spread, Clouds or Subgroups) has Wipe (a slider between the two), Side by side
 (every picture shows the same part, for pixel peeping), Difference (four times the difference),
 Flip (tap to swap), Flags (the heat map over the picture, boxes where flagged pixels gather), and
 zoom 1x to 16x (or pinch, or the mouse wheel) with sharp pixels. Drag to move around.
@@ -143,7 +149,7 @@ One HTML file with everything in it, readable in any browser, phone or desktop:
 - the phone: CPU speed, heat, thermal headroom, battery and memory over time
 - frame times in screen refreshes (how many pictures took 1, 2, 3... refreshes)
 - every hitch and event with its causes, and the settings at the start and end
-- the pictures from A/B (with a wipe slider), Shimmer and FG check, and the Half and Spread checks' times
+- the pictures from A/B (with a wipe slider), Shimmer and GSFG check, and the Half and Spread checks' times
 
 To send one to Claude: Report, share it to yourself (Drive, email), and attach it in chat; or just
 Copy and paste the summary.
@@ -161,4 +167,4 @@ Timing comes from `requestAnimationFrame`, which on Android and iPhone runs on t
 browser doesn't say when a picture actually lit up, so a frame the compositor held back is not seen.
 
 `scripts/framelab-test.cjs` checks the lab itself in the test browser (2D and Next Gen, A/B, Shimmer,
-FG check, the Half check (the test browser has no half precision, so it pretends: `HD.halfPretend`), the Spread check, the Clouds check when the game's sky has clouds, fold and unfold, effects drawn smaller, memory, the report).
+GSFG check, the Half check (the test browser has no half precision, so it pretends: `HD.halfPretend`), the Spread check, the Clouds check when the game's sky has clouds, the Subgroups check when the chip has them, fold and unfold, effects drawn smaller, memory, the report).

@@ -34,6 +34,8 @@ import { HD, noiseTex, Particles } from './hd3d.js';
 import { Cover } from './cover.js';
 import { Spray } from './water.js';
 import { airOf, luts, skyLight, transmittance, RG, SKY_K } from './atmosphere.js';
+// A see-through material the upscaler takes from the new frame wherever it covers (frameGenMRT's reactive mask); its own shader key, as three's leaves userData out
+const reactive = m => { if (m.userData.reactive) return m; m.userData.reactive = true; const k = m.customProgramCacheKey; m.customProgramCacheKey = function () { return k.call(this) + '|reactive'; }; return m; };
 
 const C = c => new Color(c);
 // Preetham daylight (the same sums as three.js's Sky shader), worked out on the CPU for the colours the
@@ -299,7 +301,8 @@ export class Weather {
     this.rainMesh = new Mesh(g, new MeshBasicMaterial({ color: color ?? '#a8c0e0', transparent: true, opacity: .55, depthWrite: false, side: DoubleSide }));
     const pg = new BufferGeometry(); pg.setAttribute('position', new BufferAttribute(new Float32Array(max * 3), 3));
     this.snowMesh = new Points(pg, new PointsMaterial({ color: color ?? '#ffffff', size: flake ?? (level || ground || cover ? Math.min(.07, this.area * .012) : this.area * .012), transparent: true, opacity: .9, depthWrite: false }));
-    for (const m of [this.rainMesh, this.snowMesh]) { m.frustumCulled = false; m.renderOrder = 5; if (isToon(view)) m.layers.set(1); view.scene.add(m); }
+    // (streaks and flakes: faint, thin and somewhere new every frame, so the upscaler takes them from the new frame, framegen.js frameGenMRT)
+    for (const m of [this.rainMesh, this.snowMesh]) { reactive(m.material); m.frustumCulled = false; m.renderOrder = 5; if (isToon(view)) m.layers.set(1); view.scene.add(m); }
     this.hemiBase = view.hemi?.intensity ?? 1;
     // the world it changes: what the sky can see, and how wet and how white that is
     this.world = !!(level || ground || cover);

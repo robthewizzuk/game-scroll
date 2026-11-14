@@ -38,6 +38,7 @@ import { gpuName } from './gpu.js';
 import { power } from './power.js';
 import { screen, askRate, pickRate } from './screenrate.js';
 import { desktop } from '../desktop.js';
+import { steerFor, capKlass } from './steering.js';
 
 const PICK_KEY = 'gs_fps', SETTLE_KEY = 'gs_speed', FG_KEY = 'gs_fg', FG_HOW_KEY = 'gs_fg_how';
 const touchy = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
@@ -87,10 +88,10 @@ export function classify(name = '', mdl = '', cores = 8, mem = 8, phone = true, 
 /** This phone's class (cached once the model is known). */
 export function phoneClass() {
   if (speed.klass) return speed.klass;   // (pinned: tests)
-  if (klass) return klass;
+  if (klass) return capKlass(klass);   // (no better than the steering list allows: src/steer.js)
   const c = classify(chip(), model, navigator.hardwareConcurrency || 8, navigator.deviceMemory || 8, touchy, speed.desktop);
   if (model || !touchy || speed.desktop) klass = c;   // on a phone, wait for the model before caching
-  return c;
+  return capKlass(c);
 }
 
 /* ---------- the screen's refresh rate ---------- */
@@ -179,6 +180,7 @@ function heldFps(id) {
 function realFps(def) {
   let f = pick === 'auto' ? Math.min(autoFps(def), heldFps(def?.id)) : pick;
   if (def?.fps) f = Math.min(f, def.fps);
+  const most = steerFor(def?.id).fps; if (most) f = Math.min(f, most);   // (the steering list's highest rate for this device or game)
   return Math.max(30, Math.min(f, hz));
 }
 /** The frame rate a game runs its update and draw at now. Never above the screen's rate; lower while frame generation fills the rest. */
@@ -228,7 +230,7 @@ function fgRate(def) {
 /** Frame generation could come on for this game here (the 3D kit then has the scene write motion, so it can start without a rebuild). */
 export function frameGenReady(def) {
   if (!is3D(def) || def.frameGen === false) return false;
-  return !!speed.forceFrameGen || (fgPick !== 'off' && hz >= FG_HZ && pick === 'auto' && !fgFailed.has(def.id));
+  return !!speed.forceFrameGen || (steerFor(def.id).frameGen !== false && fgPick !== 'off' && hz >= FG_HZ && pick === 'auto' && !fgFailed.has(def.id));
 }
 /**
  * Whether the 3D kit makes frames between this game's real ones now: 'blend' | 'ahead' | false.
@@ -239,7 +241,7 @@ export function frameGenFor(def) {
   if (!is3D(def) || def.frameGen === false) return false;
   const how = fgHow !== 'game' ? fgHow : def.frameGen === 'ahead' ? 'ahead' : 'blend';
   if (speed.forceFrameGen) return speed.forceFrameGen === true ? how : speed.forceFrameGen;
-  if (fgPick === 'off' || !speed.gpu || hz < FG_HZ || fgFailed.has(def.id) || pick !== 'auto') return false;   // a pinned rate is what the screen shows
+  if (fgPick === 'off' || steerFor(def.id).frameGen === false || !speed.gpu || hz < FG_HZ || fgFailed.has(def.id) || pick !== 'auto') return false;   // a pinned rate is what the screen shows
   const real = fgRate(def);
   if (!real) return false;
   // Auto (not Always): only where a real frame and a made frame each fit a refresh by the chip's times

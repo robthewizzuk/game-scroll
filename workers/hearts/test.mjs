@@ -16,7 +16,7 @@ import { newChallenge, checkChallenge, newSession, readSession } from './src/ses
 import { cbor, b64u, sha256, concat } from './src/util.js';
 import { cleanBatch } from './src/stats.js';
 import { sharePage, shareGame, idFromPath } from './src/sharepage.js';
-import { cleanPerf, perfPage, perfReport } from './src/perf.js';
+import { cleanPerf, perfPage, perfReport, steerGroups, steerRule } from './src/perf.js';
 import { plausible, cleanSecs } from './src/scores.js';
 import { kept, left, forget } from './src/kept.js';
 
@@ -101,6 +101,8 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   assert.equal(cleanPerf({ info: { platform: 'mac' } }, known).info.platform, 'mac', 'the desktop app says which computer');
   assert.equal(cleanPerf({ info: { platform: 'windows' } }, known).info.platform, 'windows');
   assert.equal(cleanPerf({ info: { platform: 'linux' } }, known).info.platform, 'web');
+  assert.deepEqual(cleanPerf({ errors: [{ kind: 'gpu', game: 'mini-golf', msg: 'WebGPU device lost (unknown) · back on WebGPU', place: 'Adreno (TM) 830 · Chrome 142' }] }, known, T).errors,
+    [['gpu', 'mini-golf', 'WebGPU device lost (unknown) · back on WebGPU', 'Adreno (TM) 830 · Chrome 142', 1, '', 0]], 'a lost graphics chip is kept as its own kind');
   ok('perf batches drop unknown games, clean text and keep numbers consistent');
   const d = 20769, at = d * 86400 + 21 * 3600 + 44 * 60;   // 12 Nov 2026, 21:44 UTC
   const slow = { rounds: 3, frames: 600, ms: 12000, work: 6000, slow: 120, hitches: 9, worst: 210, heat: 12000, warm: 2000, hot: 9000 }, fine = { rounds: 1, frames: 600, ms: 10000, work: 2000, slow: 3, hitches: 0, worst: 40, heat: 10000, warm: 3000, hot: 0 };
@@ -114,9 +116,11 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
       { game: 'mini-golf', platform: 'android-robot', model: 'Pixel 9', form: 'phone', builds: 1, d0: d, all: fine, app: '1.0.7 abc1234', ver: 'bbbbbbbbbbbb', d1: d, t1: at, now: cool }],
     errors: [{ kind: 'error', game: 'mini-golf', msg: '<script>alert(1)</script>', place: 'x.js:1', n: 4, d0: d - 3, d1: d - 2, t0: at, t1: 0, phones: [{ platform: 'android', model: '<b>SM</b>' }, { platform: 'android', model: 'Robo' }, { platform: 'android-robot', model: 'Solo' }],
       apps: [{ app: '1.0.6 fedcba9', ver: 'bbbbbbbbbbbb', d1: d - 2, t1: 0 }, { app: 'local', ver: '', d1: d - 3, t1: 0 }], state: 'gone', newer: 2, rounds: 7 },
-    { kind: 'crash', game: '', msg: 'App closed while open', place: '', n: 1, d0: d, d1: d, t0: at, t1: at, phones: [{ platform: 'android', model: 'Robo' }], apps: [{ app: '1.0.7 abc1234', ver: '', d1: d, t1: at }], state: 'now', newer: 0 }] };
+    { kind: 'crash', game: '', msg: 'App closed while open', place: '', n: 1, d0: d, d1: d, t0: at, t1: at, phones: [{ platform: 'android', model: 'Robo' }], apps: [{ app: '1.0.7 abc1234', ver: '', d1: d, t1: at }], state: 'now', newer: 0 },
+    { kind: 'gpu', game: 'mini-golf', msg: 'WebGPU device lost (unknown) · back on WebGPU', place: 'Adreno (TM) 830 · Chrome 142', n: 2, d0: d, d1: d, t0: at, t1: at, phones: [{ platform: 'android', model: '<b>SM</b>' }], apps: [{ app: '1.0.7 abc1234', ver: '', d1: d, t1: at }], state: 'now', newer: 0 }] };
   const page = perfPage(report, known, 'https://github.com/x/y');
   assert.ok(!page.includes('<script>') && !page.includes('<b>SM') && !page.includes('<i>x'));
+  assert.match(page, /<h2>Graphics chip lost \(2\)<\/h2>/); assert.match(page, /Adreno \(TM\) 830 · Chrome 142/);
   assert.match(page, /<a href="\?game=mini-golf">Mini Golf<\/a>/); assert.ok(!page.includes('?game=old-game'), 'only games in the catalogue get a page');
   assert.match(page, /class="n bad">20\.0%/); assert.match(page, /class="n ok">0\.5%/);   // every build, and the newest
   assert.match(page, /href="https:\/\/github\.com\/x\/y\/commit\/abc1234"/); assert.match(page, /12 Nov 21:44/);
@@ -175,6 +179,21 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   assert.match(one, /Game Scroll performance: Mini Golf/); assert.match(one, /21:34 to 21:44/); assert.ok(!one.includes('?game='));
   assert.match(one, /<td class="n warn">hot 75%<\/td>/); assert.match(one, /<td class="n mute">–<\/td>/); assert.match(one, /game file aaaaaaaa \(current\)/);
   ok('perf report page escapes reported text, flags slow games and says when, on which build and game file, and how hot the phone was');
+
+  // chips to steer: lost graphics chips by chip and engine on real phones and computers, and a rule where there were enough
+  const lost = (n, model, kind, place = 'Adreno (TM) 830 · Chrome 142', msg = 'WebGPU device lost (unknown) · back on WebGPU', game = 'mini-golf') => ({ kind: 'gpu', game, msg, place, n, phones: [{ platform: 'android', model, kind }] });
+  const groups = steerGroups([lost(2, 'SM-S938B', ''), lost(2, 'SM-F971B', '', undefined, 'WebGPU device lost (unknown) · WebGL from then on', 'bunker-breakout'),
+    lost(9, 'Pixel 9', 'robot'), lost(5, 'Galaxy A56', 'likely'), lost(1, 'Moto', '', 'Mali-G715 · Chrome 141')]);
+  assert.deepEqual(groups.map(g => [g.chip, g.n, g.games.size, g.models.size, g.back, g.webgl]), [['Adreno (TM) 830', 4, 2, 2, 2, 2], ['Mali-G715', 1, 1, 1, 1, 0]], 'test machines are left out');
+  const rule = steerRule(groups[0]);
+  assert.equal(rule.id, 'adreno-830-chrome-142-webgpu'); assert.deepEqual(rule.do, { webgpu: false });
+  assert.deepEqual(rule.when, { platform: 'android', chip: 'Adreno \\(TM\\) 830', engine: 'Chrome <=142' });
+  assert.ok(new RegExp(rule.when.chip, 'i').test('Adreno (TM) 830') && !new RegExp(rule.when.chip, 'i').test('Adreno (TM) 730'));
+  assert.match(rule.why, /lost 4 times in 2 games on Adreno \(TM\) 830 with Chrome 142 \(2 phone models/);
+  assert.equal(steerRule(groups[1]), null, 'one loss is too few to go on');
+  const steerPage = perfPage({ ...report, errors: [lost(3, 'SM-S938B', '')].map(e => ({ ...e, d0: d, d1: d, t0: at, t1: at, apps: [], state: 'now', newer: 0 })) }, known);
+  assert.match(steerPage, /<h2>Chips and phones to steer<\/h2>/); assert.match(steerPage, /&quot;id&quot;:&quot;adreno-830-chrome-142-webgpu&quot;/);
+  ok('the report finds chips that lose WebGPU and writes the steering rule for them');
 }
 
 /* ---------- answers kept for every location ---------- */

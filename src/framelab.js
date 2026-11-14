@@ -32,9 +32,11 @@
 //             up to 16x with nearest-pixel scaling, and adds them to the report
 //   Shimmer   on a frozen frame: 16 pictures in a row, heat map of the pixels that still change
 //             (temporal instability: shimmering edges, upscaler or anti-aliasing jitter)
-//   FG check  while playing on WebGPU: grabs real, made, real triples and maps the made pixels that
+//   GSFG check  while playing on WebGPU: grabs real, made, real triples and maps the made pixels that
 //             match neither real frame nearby (ghosting, smears, holes behind moving things)
-//   Half, Spread  while playing on WebGPU: the chip's time by pass with a switch off and on (runCheck)
+//   Half, Spread, Clouds, Subgroups  while playing on WebGPU: the chip's time by pass with a switch off and on (runCheck)
+//   Bundles   while playing on WebGPU: the 3D draw's CPU time and the chip's with still scenery drawn one by one
+//             and from render bundles (src/kit/still.js, HD.bundle)
 //
 // Kit-free and game-free: it reads what the feed (src/main.js), the 3D kit (HD.info) and the phone
 // (src/kit/power.js) already know, plus browser APIs. Timing comes from requestAnimationFrame, which on
@@ -47,7 +49,7 @@ import { screen } from './kit/screenrate.js';
 import { webgpu, gpuPick, setGpuPick, prepareGPU, gpuName, glStats } from './kit/gpu.js';
 import { BUILD } from './perf.js';
 import { store } from './util.js';
-import { PROF, take } from './kit/prof.js';
+import { PROF, take, builtSince } from './kit/prof.js';
 
 const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250, FREEZE_MAX = 3000;
 const is3D = d => d && (d.era === 'nextgen' || d.era === 'ar' || d.era === 'board');
@@ -114,13 +116,26 @@ function event(k, text, t = performance.now(), ms = 0) {
 }
 
 /* ---------- counters ---------- */
+function builtNames(since) {
+  if (since == null) return '';
+  const n = new Map(), again = new Map(), why = [];
+  for (const e of builtSince(since)) {
+    if (e.what === 'effects chain') { why.push(`effects chain${e.why ? ' (' + e.why + ')' : ''}`); continue; }
+    const m = e.why === 'again' ? again : n; m.set(e.what, (m.get(e.what) || 0) + 1);
+  }
+  const list = m => [...m].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => c > 1 ? `${k} ${c}` : k).join(', ');
+  return [...why, n.size ? list(n) : '', again.size ? `made again: ${list(again)}` : ''].filter(Boolean).join('; ');
+}
 // the effects the 3D kit draws smaller by their cost (hd3d.js FXS), in words: 'bloom 70%, ao 50%' ('' when none)
 const fxText = () => Object.entries(HD?.fx || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ');
 function counters(s) {
   const G = webgpu(), d = s?.def;
   let progs = glStats.programs, tex = glStats.r?.info?.memory?.textures ?? 0;
   if (G && HD?.info.backend === 'webgpu' && is3D(d)) { progs += G.r.info?.memory?.programs ?? 0; tex += G.r.info?.memory?.textures ?? 0; }
-  if (C.progs >= 0 && progs > C.progs) { const n = progs - C.progs; pend.push(`shaders built (${n})`); event('S', `${n} shader${n > 1 ? 's' : ''} built`); }
+  // what was built since the last frame, by name: 'MeshStandardMaterial 3, ShadowNodeMaterial 2 (made again 1), effects chain (lens)'
+  const what = builtNames(C.bt); C.bt = performance.now();
+  if (C.progs >= 0 && progs > C.progs) { const n = progs - C.progs; pend.push(`shaders built (${n})`); event('S', `${n} shader${n > 1 ? 's' : ''} built${what ? ': ' + what : ''}`); }
+  else if (what && C.progs >= 0) event('S', `built: ${what}`);
   if (C.tex >= 0 && tex > C.tex + 0) { const n = tex - C.tex; pend.push(`textures uploaded (${n})`); if (n >= 2) event('X', `${n} textures uploaded`); }
   C.progs = progs; C.tex = tex;
   const h = performance.memory?.usedJSHeapSize || 0;
@@ -162,12 +177,15 @@ function tick(now, s, how, upd = 0, drw = 0) {
   }
   parts(k, upd, drw, playing);
   if (k) {
-    const iv = lastPresent ? now - lastPresent : 0;
-    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, upd, drw, k);
+    // `now` is when this refresh began, and this frame's update() and draw() (and the shaders, textures and garbage
+    // counted above) came after it: so the gap that ends now was made by the frame before, and is judged by its work
+    const iv = lastPresent ? now - lastPresent : 0, w = before;
+    if (playing && iv > 0 && iv < PAUSE_GAP && iv >= exp * 1.5 && iv - exp >= rf * .9) hitch(now, iv, exp, s, w);
     // a freeze: a quarter of a second or more between two pictures of play (not the app coming back to the front, not
     // a pause). The frame rate, the lows and the stutters leave out gaps this long, so freezes are counted on their own.
-    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, upd, drw, k);
-    lastPresent = now; lastPlay = playing; pend = [];
+    else if (playing && lastPlay && iv >= PAUSE_GAP && iv < FREEZE_MAX && now - C.hiddenAt > 1500) hitch(now, iv, exp, s, w);
+    lastPresent = now; lastPlay = playing;
+    before = { upd, drw, real: k === 1, big: k === 1 ? bigPart : null, why: pend }; pend = [];
     if (k === 1) { last.upd = last.upd * .9 + upd * .1; last.drw = last.drw * .9 + drw * .1; }
   }
   if (tint && tintEl) paintTint(s, k, now);
@@ -175,6 +193,8 @@ function tick(now, s, how, upd = 0, drw = 0) {
   if (fgArm && k) fgArm(k, s);
 }
 const last = { upd: 0, drw: 0 };
+// the work of the last frame shown: its update() and draw(), its biggest part and what was counted with it
+let before = { upd: 0, drw: 0, real: false, big: null, why: [] };
 // The chip's own time a frame by pass (HD.info.gpuParts, a new list each time the 3D kit reads the chip's
 // timestamps: every few frames, where the phone has them) and the draws and triangles a frame, while playing
 let chipSeen = null;
@@ -207,14 +227,14 @@ function parts(k, upd, drw, playing) {
 function partsText(list, n = 7) {
   return list.filter(([, v]) => v >= .05).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${v.toFixed(v < 1 ? 2 : 1)}`).join(' · ');
 }
-function hitch(now, iv, exp, s, upd, drw, k) {
-  const why = pend.slice();
+function hitch(now, iv, exp, s, w) {
+  const { upd, drw, big } = w, why = w.why.slice();
   if (now - C.resizeAt < 600) why.push('fold / resize');
   if (now - C.hiddenAt < 1500) why.push('app came back to the front');
   const lf = loafAt(now - iv, now); if (lf) why.push(lf);
   if (upd + drw > exp) why.push(`game CPU over the beat (update ${r1(upd)} + draw ${r1(drw)} ms)`);
   // (where that CPU time went, by part: the scene pass, physics, the game's own code...)
-  if (k === 1 && upd + drw > exp && bigPart && bigPart[1] > exp * .5) why.push(`most in ${bigPart[0]} (${r1(bigPart[1])} ms)`);
+  if (w.real && upd + drw > exp && big && big[1] > exp * .5) why.push(`most in ${big[0]} (${r1(big[1])} ms)`);
   // (the GPU's time is for a real frame and the frames made after it: with frame generation, that many refreshes)
   const gpu = HD?.info.gpuMs; if (gpu != null && gpu > exp * (HD.info.framegen ? HD.info.fgSteps || 2 : 1)) why.push(`GPU over the beat (${r1(gpu)} ms)`);
   if (!why.length) why.push(HD && is3D(s?.def) ? 'no cause seen (GPU / driver / system?)' : 'no cause seen (system?)');
@@ -264,9 +284,10 @@ function windowRows(ms) {
 function startRec(s) {
   rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0, chip: {}, chipN: 0, draws: { n: 0, calls: 0, tris: 0 } };
   rec.cfg.push(config(s)); sample();
+  rec.off0 = HD?.steps && is3D(s?.def) ? { ...HD.steps.off } : null;   // (3D games only: the quality steps are the 3D kit's)
 }
 function stopRec() {
-  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); lastRec = rec; rec = null;
+  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); keepSteps(rec); lastRec = rec; rec = null;
   UI.render?.(); UI.flash?.('Recorded. Report shares it, Copy puts a summary on the clipboard.');
 }
 let lastRec = null;
@@ -283,7 +304,7 @@ function config(s) {
     game: d?.id || '', era: d?.era || (d?.retro ? 'pocket' : 'phone'), hz: screenHz(), fps: d ? Math.round(fpsFor(d)) : 0, cls: phoneClass(), gpu: gpuName(),
     backend: hd ? i.backend : d?.era === 'console' ? 'webgl' : '2d', tier: hd ? HD.name : null, res: hd ? HD.res : null,
     rw: hd ? i.rw : s?.canvas?.width, rh: hd ? i.rh : s?.canvas?.height, ow: hd ? i.ow : s?.canvas?.width, oh: hd ? i.oh : s?.canvas?.height,
-    upscaler: hd ? i.upscaled || 'off' : null, fx: hd ? fxText() : '', fg: hd ? i.framegen || false : false, fgWhy: d && hd ? frameGenStatus(d) : '', lite: !!s?.lite,
+    upscaler: hd ? i.upscaled || 'off' : null, subgroups: hd && i.backend === 'webgpu' ? i.subgroups || null : null, fx: hd ? fxText() : '', fg: hd ? i.framegen || false : false, fgWhy: d && hd ? frameGenStatus(d) : '', lite: !!s?.lite,
     rates: screen.rates.join('/'), asked: screen.want, lifted: screen.lifted,
     view: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, form: Math.min(innerWidth, innerHeight) >= 600 ? 'wide' : 'phone',
   };
@@ -344,16 +365,20 @@ const nextGrab = (maxSide) => new Promise(res => {
 });
 
 /* ---------- A/B on a frozen frame ---------- */
+// the upscalers' names in the app (HD.upscaler's are the code's): ours is GSSR, Game Scroll Super Resolution
+const UPN = { sgsr2: 'GSSR', sgsr1: 'SGSR 1' };
 const PAIRS = {
-  sgsr: { title: 'Upscaler off vs on', a: 'SGSR off (stretched)', b: 'SGSR on', set: on => { HD.upscale = on; } },
-  sgsr12: { title: 'SGSR 1 vs SGSR 2', a: 'SGSR 1', b: 'SGSR 2', set: on => { HD.upscaler = on ? 'sgsr2' : 'sgsr1'; } },
-  sgsrTune: { title: 'SGSR 2 as it was vs tuned', a: 'SGSR 2 as Qualcomm has it', b: 'SGSR 2 with our changes', set: on => { HD.sgsrTune = on; } },
-  mip: { title: 'Textures as drawn vs sharpened', a: 'textures read for the small picture', b: 'textures read for the screen', set: on => { HD.mipBias = on ? null : false; }, needs: () => HD.info.backend === 'webgpu' && HD.info.upscaled === 'sgsr2' && HD.info.rw < HD.info.ow, no: 'Textures are sharpened only while SGSR 2 upscales on WebGPU, so there is nothing to compare.' },
+  sgsr: { title: 'Upscaler off vs on', a: 'upscaler off (stretched)', b: 'upscaler on', set: on => { HD.upscale = on; } },
+  sgsr12: { title: 'SGSR 1 vs GSSR', a: 'SGSR 1', b: 'GSSR', set: on => { HD.upscaler = on ? 'sgsr2' : 'sgsr1'; } },
+  sgsrTune: { title: 'SGSR 2 as it was vs GSSR', a: 'SGSR 2 as Qualcomm has it', b: 'GSSR (SGSR 2 with our changes)', set: on => { HD.sgsrTune = on; } },
+  mip: { title: 'Textures as drawn vs sharpened', a: 'textures read for the small picture', b: 'textures read for the screen', set: on => { HD.mipBias = on ? null : false; }, needs: () => HD.info.backend === 'webgpu' && HD.info.upscaled === 'sgsr2' && HD.info.rw < HD.info.ow, no: 'Textures are sharpened only while GSSR upscales on WebGPU, so there is nothing to compare.' },
   backend: { title: 'WebGL vs WebGPU', a: 'WebGL', b: 'WebGPU', set: async on => { setGpuPick(on ? 'webgpu' : 'webgl'); if (on) await prepareGPU(); }, needs: () => !!webgpu() || gpuPick() === 'webgl' },
   res: { title: 'Half vs full resolution', a: '50% of the 3D size', b: 'the tier\'s own size', set: on => { HD.scale = on ? null : HD.info.rw && HD.info.ow ? .5 * HD.info.rw / HD.info.ow : .5; } },
   tier: { title: 'Low vs ultra tier', a: 'low', b: 'ultra', set: on => { HD.force = on ? 3 : 0; } },
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  aoBack: { title: 'Ambient occlusion on everything vs on bounce light only', a: 'on the whole picture (as before)', b: 'on the light that bounces only', set: on => { HD.aoBack = on; }, needs: () => HD?.info.backend === 'webgpu' && HD.tier >= 2, no: 'Ambient occlusion in the shading needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  gridDecals: { title: 'Decals as meshes vs in the lamps\' grid', a: 'a mesh cut from the surface for each, one draw each (as before)', b: 'boxes in the lamps\' grid, no draws', set: on => { HD.gridDecals = on; }, needs: () => HD?.info.backend === 'webgpu', no: 'Decals in the lamps\' grid need WebGPU, so there is nothing to compare.' },
   sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
@@ -362,11 +387,13 @@ function halfCan() { return HD?.info.backend === 'webgpu' && !/no half/.test(HD.
 function spreadCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.spread || HD.spread === false); }
 // the sky on WebGPU (src/kit/hd3d-gpu-sky.js) can be compared: WebGPU, and the air or the clouds drawn (or switched off now)
 function skyCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.sky || HD.clouds === false || HD.atmosphere === false); }
+// WebGPU subgroups in the kit's compute passes (src/kit/subgroups.js) can be compared: WebGPU, and a chip that has them
+function subgroupsCan() { return HD?.info.backend === 'webgpu' && /subgroups/.test(HD.info.subgroups || '') && !/none on this chip/.test(HD.info.subgroups); }
 function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD.info.sky || '') || HD.clouds === false); }
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -380,7 +407,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -414,7 +441,7 @@ async function runShimmer() {
     // here (not while the 3D shows a still frame again: nothing is being redrawn to compare)
     let plain = null;
     if (HD && !still && HD.info.upscaled === 'sgsr2' && HD.sgsrTune !== false) {
-      UI.busy('Shimmer: again with SGSR 2 as it was…');
+      UI.busy('Shimmer: again with SGSR 2 as Qualcomm has it…');
       const keep = HD.still; HD.sgsrTune = false; HD.still = false;
       try { await waitFrames(45, 900); plain = (await measure()).share; } finally { HD.sgsrTune = true; HD.still = keep; }
     }
@@ -437,11 +464,11 @@ async function runShimmer() {
 // along: where it is far from all of them (5 x 5 around it in both), it's flagged.
 let fgArm = null;
 async function runFG() {
-  const s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash('FG check needs a Next Gen or AR game.');
+  const s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash('GSFG check needs a Next Gen or AR game.');
   if (s.state !== 'playing') return UI.flash('Start a round and keep moving: the check needs motion.');
-  if (HD.info.backend !== 'webgpu') return UI.flash('Frame generation runs on WebGPU only, and this game is on WebGL.');
+  if (HD.info.backend !== 'webgpu') return UI.flash('GSFG (frame generation) runs on WebGPU only, and this game is on WebGL.');
   const forced = !HD.info.framegen && HD.frameGen == null; if (forced) HD.frameGen = 'blend';
-  setFrozen(false); UI.busy('FG check: keep moving…');
+  setFrozen(false); UI.busy('GSFG check: keep moving…');
   const trip = [], prevTap = HD.fgTap; let cur = [], lastT = 0, done;
   const finish = new Promise(r => { done = r; });
   HD.fgTap = (kind, canvas, when) => {
@@ -457,8 +484,8 @@ async function runFG() {
   };
   setTimeout(() => done(), 8000);
   await finish; HD.fgTap = prevTap; if (forced) HD.frameGen = null;
-  if (!trip.length) { UI.busy(''); return UI.flash('No made frames came through. Is frame generation on (Settings › Frame generation) and the screen faster than the game?'); }
-  UI.busy('FG check: comparing…'); await new Promise(r => setTimeout(r, 30));
+  if (!trip.length) { UI.busy(''); return UI.flash('No made frames came through. Is GSFG on (Settings › GSFG frame generation) and the screen faster than the game?'); }
+  UI.busy('GSFG check: comparing…'); await new Promise(r => setTimeout(r, 30));
   let worst = null; const scores = [];
   for (const t of trip) {
     const A = pixels(t[0].cv), B = pixels(t[t.length - 1].cv), w = A.width, h = A.height;
@@ -481,10 +508,10 @@ async function runFG() {
   }
   const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
   const shot = {
-    kind: 'fg', title: 'Frame generation check', game: s.def.id,
+    kind: 'fg', title: 'GSFG check (frame generation)', game: s.def.id,
     heat: { cv: heatCanvas(worst.w, worst.h, worst.v), boxes: hotspots(worst.w, worst.h, worst.v, .15), on: 1 },
     notes: [`${scores.length} made frames checked: on average ${(avg * 100).toFixed(2)}% of pixels match neither real frame nearby; worst ${(worst.share * 100).toFixed(2)}% (shown, ${(worst.moving * 100).toFixed(0)}% of the picture moving)`,
-      `frame generation ${HD.info.framegen || (forced ? 'blend (turned on for the check)' : 'off')}, ${HD.info.fgMs ? r1(HD.info.fgMs) + ' ms a made frame' : ''}`],
+      `GSFG ${HD.info.framegen || (forced ? 'blend (turned on for the check)' : 'off')}, ${HD.info.fgMs ? r1(HD.info.fgMs) + ' ms a made frame' : ''}`],
     images: [{ label: 'real before', cv: worst.t[0].cv }, { label: 'made', cv: worst.m.cv }, { label: 'real after', cv: worst.t[worst.t.length - 1].cv }],
   };
   shots.push(shot); UI.busy(''); viewer(shot);
@@ -498,19 +525,28 @@ async function runFG() {
 //   Spread: ambient occlusion, volumetric light and bounce light with every sample every frame, and spread over frames
 //           (src/kit/hd3d-gpu-spread.js)
 //   Clouds: the sky's painted clouds, and real ones marched through with their shadow (src/kit/hd3d-gpu-sky.js)
+//   Subgroups: the kit's compute passes built without and with WebGPU subgroups (src/kit/subgroups.js)
+//   Bundles: still scenery drawn thing by thing, and from render bundles (src/kit/still.js); this one is about the CPU,
+//           so the 3D draw's own time is timed too (cpu), and it is reported even where the chip has no timer
 const CHECKS = {
   half: { title: 'Half precision check', name: 'Half check', key: 'half', off: 'full', on: 'half', can: halfCan, no: () => PAIRS.half.no, says: () => HD.info.half,
-    note: 'in half: SGSR 2\'s upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare' },
+    note: 'in half: GSSR\'s upscale, the sharp picture reads (GSSR, GSFG), smoke and fire, the grade and sun glare' },
   spread: { title: 'Spread check', name: 'Spread check', key: 'spread', off: 'every sample', on: 'spread', can: spreadCan, no: () => PAIRS.spread.no, says: () => 'spread: ' + (HD.info.spread || 'none'),
     note: 'spread over frames: ambient occlusion (a part of its directions a frame), volumetric light (a third of its steps) and bounce light (one slice at half size), the frames before filling in' },
   clouds: { title: 'Clouds check', name: 'Clouds check', key: 'clouds', off: 'painted', on: 'marched', can: cloudsCan, no: () => 'Marched clouds need WebGPU, a tier with ambient occlusion (high or ultra) and a game whose sky has clouds, so there is nothing to compare.', says: () => 'sky: ' + (HD.info.sky || 'as before'),
     note: 'marched: the clouds at a quarter of the pixels, filled in from the frames before, and their shadow a few times a second' },
+  subgroups: { title: 'Subgroups check', name: 'Subgroups check', key: 'subgroups', off: 'plain', on: 'subgroups', can: subgroupsCan, no: () => 'Subgroups need WebGPU and a graphics chip that has them (Android Chrome 144 or later; not iPhones yet), so there is nothing to compare.', says: () => 'subgroups: ' + (HD.info.subgroups || 'off'),
+    note: 'with subgroups: the copies picked on the chip (GPU culling and its occlusion test) and frame generation\'s counts take their places and add up a subgroup at a time' },
+  bundle: { title: 'Bundles check', name: 'Bundles check', key: 'bundle', off: 'one by one', on: 'bundles', can: bundleCan, no: () => 'Still scenery in render bundles needs WebGPU, so there is nothing to compare.', says: () => `${HD.info.bundled || 0} still things in ${HD.info.bundles || 0} bundles`, cpu: true,
+    note: 'bundles: what keeps still (walls, roofs, rocks, props) recorded once per area and replayed, each area culled whole (more triangles sent, far less work for the CPU)' },
 };
+// still scenery in render bundles (src/kit/still.js) can be compared: WebGPU
+function bundleCan() { return HD?.info.backend === 'webgpu'; }
 async function runCheck(kind) {
   const C = CHECKS[kind], s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash(`${C.name} needs a Next Gen or AR game.`);
   if (!C.can()) return UI.flash(C.no());
   if (s.state !== 'playing') return UI.flash('Start a round first: the check times the chip while it plays.');
-  const keep = HD[C.key], was = frozen, sum = { off: { n: 0, ms: 0, by: {} }, on: { n: 0, ms: 0, by: {} } }; let pic = null, says = '';
+  const keep = HD[C.key], was = frozen, sum = { off: { n: 0, ms: 0, by: {}, cn: 0, cpu: 0, tris: 0 }, on: { n: 0, ms: 0, by: {}, cn: 0, cpu: 0, tris: 0 } }; let pic = null, says = '';
   setFrozen(false);
   try {
     for (const on of [false, true, false, true]) {
@@ -519,25 +555,31 @@ async function runCheck(kind) {
       const S = sum[on ? 'on' : 'off'], t0 = performance.now(); let seen = HD.info.gpuParts;
       while (performance.now() - t0 < 2500) {
         await new Promise(r => setTimeout(r, 50));
+        if (C.cpu) { S.cn++; S.cpu += HD.info.cpu || 0; S.tris += HD.info.tris || 0; }   // (the 3D draw's own time and triangles, one frame in three or so)
         const by = HD.info.gpuParts; if (!by || by === seen) continue;   // (a new one each time the chip's times are read)
         seen = by; S.n++; S.ms += HD.info.gpuMs; for (const k in by) S.by[k] = (S.by[k] || 0) + by[k];
       }
     }
     pic = await nextGrab(900); says = C.says();   // (switched on: the last run's)
   } finally { HD[C.key] = keep; setFrozen(was); UI.busy(''); }
-  if (!sum.off.n || !sum.on.n) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
   const F = sum.off, H = sum.on, pc = (f, h) => f > .005 ? ` (${h <= f ? '−' : '+'}${Math.abs(Math.round(100 * (h - f) / f))}%)` : '';
+  const cpuLine = C.cpu && F.cn && H.cn ? [`3D draw's CPU time a frame: ${C.off} ${r2(F.cpu / F.cn)} ms, ${C.on} ${r2(H.cpu / H.cn)} ms${pc(F.cpu / F.cn, H.cpu / H.cn)}; triangles ${Math.round(F.tris / F.cn / 1000)}k, ${Math.round(H.tris / H.cn / 1000)}k`] : [];
+  if (!F.n || !H.n) {
+    if (!cpuLine.length) return UI.flash('The chip did not say how long its frames took (no GPU timer on this phone), so there is nothing to compare.');
+    const shot = { kind, title: C.title, game: s.def.id, notes: [...cpuLine, `(no chip times: this phone has no GPU timer) · ${says}`, `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh}; ${C.note}`], images: pic ? [{ label: C.on, cv: pic }] : [] };
+    shots.push(shot); viewer(shot); return;
+  }
   const parts = [...new Set([...Object.keys(F.by), ...Object.keys(H.by)])].map(k => ({ k, f: (F.by[k] || 0) / F.n, h: (H.by[k] || 0) / H.n })).sort((a, b) => b.f - a.f);
   const shot = {
     kind, title: C.title, game: s.def.id,
-    notes: [`chip time a frame: ${C.off} ${r2(F.ms / F.n)} ms, ${C.on} ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${says})`,
+    notes: [...cpuLine, `chip time a frame: ${C.off} ${r2(F.ms / F.n)} ms, ${C.on} ${r2(H.ms / H.n)} ms${pc(F.ms / F.n, H.ms / H.n)} (${F.n} and ${H.n} readings, ${says})`,
       ...parts.map(p => `  ${p.k}: ${C.off} ${r2(p.f)} ms, ${C.on} ${r2(p.h)} ms${pc(p.f, p.h)}`),
       `${config(s).tier} · 3D ${HD.info.rw}x${HD.info.rh} → ${HD.info.ow}x${HD.info.oh} · ${HD.info.upscaled || 'no upscaler'}; ${C.note}`],
     images: pic ? [{ label: C.on, cv: pic }] : [],
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runSubgroups = () => runCheck('subgroups'), runBundle = () => runCheck('bundle');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -633,17 +675,32 @@ export function summary(R = lastRec) {
   const S = R.samples, s0 = S[0], s1 = S[S.length - 1];
   const lines = [
     `Frame lab · ${R.title || R.game} · ${phoneLabel()} · build ${BUILD} · ${secs.toFixed(0)} s · ${c.view} (${c.form})`,
-    c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${c.upscaler} · frame gen ${c.fg || 'off'}${c.fx ? ` · effects smaller: ${c.fx}` : ''}${c1.tier !== c.tier || c1.rw !== c.rw || c1.fx !== c.fx ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}${c1.fx ? ` (smaller: ${c1.fx})` : ''}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
+    c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${UPN[c.upscaler] || c.upscaler} · GSFG ${c.fg || 'off'}${c.fx ? ` · effects smaller: ${c.fx}` : ''}${c1.tier !== c.tier || c1.rw !== c.rw || c1.fx !== c.fx ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}${c1.fx ? ` (smaller: ${c1.fx})` : ''}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
     `screen ${c.hz} Hz${c.rates ? ` (offers ${c.rates}, asked ${c.asked || 'none'})` : ''} · game ${c.fps} fps · phone class ${c.cls} · ${c.gpu || 'gpu ?'}`,
     m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}${fz.length ? ` · ${fz.length} freeze${fz.length > 1 ? 's' : ''} of ${PAUSE_GAP} ms or more (worst ${Math.max(...fz.map(e => e.ms)).toFixed(0)} ms; not in the numbers before)` : ''}` : 'not enough frames in play',
     cpuLine(R),
     sysLine(R),
     chipLine(R),
+    stepsLine(R),
     memLine(S),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
   ];
   return lines.filter(Boolean).join('\n');
+}
+// The quality steps over the recording (hd3d.js HD.steps): each window of frames as seconds into it, and the frames
+// not counted, by why. In the report: how many windows were slow, ok or fast, and what was done when.
+function keepSteps(R) {
+  const S = HD?.steps; if (!S || !R.off0) return;
+  R.steps = S.log.filter(e => e.t >= R.t0 && e.t <= R.t1).map(e => ({ ...e, t: r2(e.t - R.t0) }));
+  if (R.off0) { R.off = {}; for (const k in S.off) R.off[k] = S.off[k] - (R.off0[k] || 0); }
+}
+function stepsLine(R) {
+  const L = R.steps; if (!L) return '';
+  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => e.did && !/^(holds|waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
+  const held = L.find(e => /^stays on/.test(e.did)), off = Object.entries(R.off || {}).filter(([, v]) => v > 0);
+  return `Quality steps: ${!L.length ? 'no window of frames counted' : `${L.length} windows`}${L.length ? ` (${n('slow')} slow, ${n('ok')} ok, ${n('fast')} fast)` : ''}${!L.length ? '' : done.length ? ' · ' + done.slice(0, 8).map(e => `${e.did} at ${(e.t / 1000).toFixed(0)} s`).join(', ') + (done.length > 8 ? ` and ${done.length - 8} more` : '') : ' · nothing changed'}`
+    + (held ? ` · ${held.did}` : '') + (off.length ? ` · frames not counted: ${off.map(([k, v]) => `${v} ${{ pinned: 'with the tier pinned', long: 'after a gap of 100 ms or more', warming: 'under the loading screen' }[k] || k}`).join(', ')}` : '');
 }
 // CPU per real frame while playing, middle and 95th percentile: the game's update(), its draw() (which
 // includes the 3D kit's work on the CPU), the 3D render on its own, frame generation, GPU where known
@@ -651,7 +708,7 @@ function cpuLine(R) {
   const r = R.rows, pick = col => r.ft.map((ti, j) => r.p[ti] ? col[j] : null).filter(v => v != null).sort((a, b) => a - b);
   const q = (a, f) => a.length ? a[Math.min(a.length - 1, Math.floor(f * a.length))] : 0;
   const part = (name, col) => { const a = pick(col); return a.length && q(a, .95) > 0 ? `${name} ${q(a, .5).toFixed(1)}/${q(a, .95).toFixed(1)}` : ''; };
-  const parts = [part('update', r.upd), part('draw', r.drw), part('3D', r.cpu3d), part('frame gen', r.fg), part('GPU', r.gpu)].filter(Boolean);
+  const parts = [part('update', r.upd), part('draw', r.drw), part('3D', r.cpu3d), part('GSFG', r.fg), part('GPU', r.gpu)].filter(Boolean);
   return parts.length ? `CPU per frame in ms (middle/95%): ${parts.join(' · ')}` : '';
 }
 // The memory guard (src/kit/memory.js) over the recording: its level at the start and end and the worst,
@@ -674,7 +731,7 @@ function chipLine(R) {
   const n = R.chipN, d = R.draws, l = n ? Object.entries(R.chip || {}).map(([k, v]) => [k, v / n]).filter(([, a]) => a >= .05).sort((a, b) => b[1] - a[1]).slice(0, 10) : [];
   const draws = d?.n ? `${Math.round(d.calls / d.n)} draws, ${Math.round(d.tris / d.n / 1000)}k triangles a frame` : '';
   if (!l.length && !draws) return '';
-  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
+  return `Chip by pass in ms a frame (average): ${l.length ? l.map(([k, a]) => `${k} ${a.toFixed(a < 1 ? 2 : 1)}`).join(' · ') : HD?.info.gpuOff ? 'not used: this chip\'s own times don\'t fit its frames (they were left alone)' : 'not known on this phone'}${draws ? ' · ' + draws : ''}`;
 }
 let model = '';
 (async () => { try { const { Device } = await import('@capacitor/device'); const d = await Device.getInfo(); model = `${d.manufacturer || ''} ${d.model || ''}`.trim(); } catch (_) {} })();
@@ -684,7 +741,7 @@ function reportData(R = lastRec) {
   const all = shots.map(s => ({ kind: s.kind, title: s.title, game: s.game, notes: s.notes, images: s.images.filter(i => i.cv).map(i => ({ label: i.label, url: toURL(i.cv) })), heat: s.heat ? { url: toURL(s.heat.cv), boxes: s.heat.boxes } : null }));
   return {
     made: new Date().toISOString(), build: BUILD, phone: phoneLabel(), platform: Capacitor.getPlatform(), ua: navigator.userAgent, summary: summary(R),
-    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
+    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60), steps: R.steps || null, off: R.off || null } : null,
     shots: all,
   };
 }
@@ -709,7 +766,7 @@ const axes=(x,W,h,top,lab)=>{x.strokeStyle=C.line;x.fillStyle=C.mut;for(const [v
 const X=(t,W)=>36+(t/T)*(W-40);
 chart('Frame time (every picture shown)',220,(x,W,h)=>{const top=Math.max(E*3,50);axes(x,W,h,top,[[E,E.toFixed(1)],[E*2,(E*2).toFixed(1)],[top,top.toFixed(0)+'ms']]);for(const [t,iv,k,p] of pres){const y=h-20-Math.min(1,iv/top)*(h-36);x.fillStyle=!p?C.grey:iv>=E*1.5&&iv-E>=rf*.9?C.bad:k===2?C.made:C.real;x.fillRect(X(t,W),y,1.2,h-20-y)}for(const e of ev){x.fillStyle=col[e.k]||'#fff';x.fillRect(X(e.t-0,W),4,2,8)}x.fillStyle=C.mut;x.fillText('green real · magenta made · red stutter · ticks: orange shader, purple textures, yellow GC, blue quality, grey card',40,14)});
 chart('Frame rate (1 s windows) and 1% low',180,(x,W,h)=>{const top=(cfg.hz||60)*1.1;axes(x,W,h,top,[[30,'30'],[60,'60'],[cfg.hz||60,String(cfg.hz||60)]]);const pts=[],low=[];for(let s=0;s<T;s+=500){const w=pres.filter(p=>p[0]>s&&p[0]<=s+1000&&p[3]);if(w.length<3)continue;const sum=w.reduce((a,b)=>a+b[1],0),sorted=w.map(p=>p[1]).sort((a,b)=>a-b);pts.push([s+500,w.length/(sum/1000)]);low.push([s+500,1000/sorted[Math.floor(.99*(sorted.length-1))]])}for(const [arr,c] of [[pts,C.real],[low,C.bad]]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();arr.forEach(([t,v],i)=>{const y=h-20-(v/top)*(h-36);i?x.lineTo(X(t,W),y):x.moveTo(X(t,W),y)});x.stroke()}x.fillStyle=C.mut;x.fillText('green fps · red 1% low',40,14)});
-chart('CPU time per real frame',180,(x,W,h)=>{const top=Math.max(E*1.5,10);axes(x,W,h,top,[[E,'budget '+E.toFixed(1)],[top,top.toFixed(0)+'ms']]);for(let j=0;j<r.ft.length;j++){const t=r.t[r.ft[j]];let y0=h-20;for(const [v,c] of [[r.upd[j],'#22d3ee'],[r.drw[j],C.cpu],[r.fg[j],C.fg]]){const hh=Math.min(1,(v||0)/top)*(h-36);x.fillStyle=c;x.fillRect(X(t,W),y0-hh,1.2,hh);y0-=hh}if(r.gpu[j]!=null){x.fillStyle=C.gpu;x.fillRect(X(t,W),h-20-Math.min(1,r.gpu[j]/top)*(h-36),2,2)}}x.fillStyle=C.mut;x.fillText('cyan update · blue draw (incl. 3D) · magenta frame gen · yellow dots GPU',40,14)});
+chart('CPU time per real frame',180,(x,W,h)=>{const top=Math.max(E*1.5,10);axes(x,W,h,top,[[E,'budget '+E.toFixed(1)],[top,top.toFixed(0)+'ms']]);for(let j=0;j<r.ft.length;j++){const t=r.t[r.ft[j]];let y0=h-20;for(const [v,c] of [[r.upd[j],'#22d3ee'],[r.drw[j],C.cpu],[r.fg[j],C.fg]]){const hh=Math.min(1,(v||0)/top)*(h-36);x.fillStyle=c;x.fillRect(X(t,W),y0-hh,1.2,hh);y0-=hh}if(r.gpu[j]!=null){x.fillStyle=C.gpu;x.fillRect(X(t,W),h-20-Math.min(1,r.gpu[j]/top)*(h-36),2,2)}}x.fillStyle=C.mut;x.fillText('cyan update · blue draw (incl. 3D) · magenta GSFG · yellow dots GPU',40,14)});
 const S=R.samples;if(S.length>1)chart('Phone: CPU speed, heat, battery',160,(x,W,h)=>{axes(x,W,h,1,[[.5,'50%'],[1,'100%']]);for(const [f,c] of [[s=>s.cpu,'#22d3ee'],[s=>s.heat/2,'#f87171'],[s=>s.headroom!=null&&s.headroom>=0?Math.min(1,s.headroom):null,'#fb923c'],[s=>s.level,'#4ade80'],[s=>s.mem!=null?s.mem/3:null,'#a78bfa']]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();let st=0;for(const s of S){const v=f(s);if(v==null)continue;const y=h-20-v*(h-36);st++?x.lineTo(X(s.t,W),y):x.moveTo(X(s.t,W),y)}x.stroke()}x.fillStyle=C.mut;x.fillText('cyan CPU speed probe · red heat (0 cool, 1 hot) · orange thermal headroom · green battery · violet memory (0 fine, 1 critical)',40,14)});
 chart('Frame times in screen refreshes',120,(x,W,h)=>{const hist=R.stats?R.stats.hist:[0,0,0,0,0],tot=hist.reduce((a,b)=>a+b,0)||1;hist.forEach((v,i)=>{const bw=(W-40)/5,bh=(v/tot)*(h-36);x.fillStyle=i?C.bad:C.real;x.fillRect(40+i*bw+4,h-20-bh,bw-8,bh);x.fillStyle=C.mut;x.fillText((i+1)+(i===4?'+':'')+' refresh'+(i?'es':'')+' '+(100*v/tot).toFixed(1)+'%',44+i*bw,h-4)})});
 const hs=ev.filter(e=>e.k==='H');const t=document.getElementById('hitches');t.appendChild($('<h2>Hitches ('+hs.length+') and events</h2>'));t.appendChild($('<table><tr><th>at</th><th>ms</th><th>what</th></tr>'+ev.map(e=>'<tr><td>'+(e.t/1000).toFixed(2)+'s</td><td>'+(e.ms||'')+'</td><td><span style="color:'+(col[e.k]||'#fff')+'">'+e.k+'</span> '+e.text.replace(/</g,'&lt;')+'</td></tr>').join('')+'</table>'));
@@ -721,7 +778,7 @@ else{const row=$('<div class="row">'+s.images.map(i=>'<figure><img src="'+i.url+
 <\/script></body></html>`;
 }
 async function shareReport() {
-  const data = reportData(); if (!data.rec && !data.shots.length) return UI.flash('Nothing to report yet: Rec, or take an A/B, Shimmer or FG check first.');
+  const data = reportData(); if (!data.rec && !data.shots.length) return UI.flash('Nothing to report yet: Rec, or take an A/B, Shimmer or GSFG check first.');
   UI.busy('Making the report…'); await new Promise(r => setTimeout(r, 20));
   const html = reportHTML(data), name = `framelab-${(data.rec?.game || data.shots[0]?.game || 'app')}-${data.made.slice(0, 19).replace(/[:T]/g, '-')}.html`;
   try {
@@ -763,7 +820,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">GSFG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="subgroups">Subgroups</button><button data-a="bundle">Bundles</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -784,8 +841,10 @@ function panel() {
       case 'shimmer': runShimmer(); break;
       case 'fg': runFG(); break;
       case 'half': runHalf(); break;
+      case 'subgroups': runSubgroups(); break;
       case 'spread': runSpread(); break;
       case 'clouds': runClouds(); break;
+      case 'bundle': runBundle(); break;
       case 'report': shareReport(); break;
       case 'copy': copySummary(); break;
     }
@@ -843,8 +902,8 @@ function text(now) {
   if (hd) {
     const pct = i.ow ? Math.round(100 * i.rw / i.ow) : 0;
     L.push(`${i.backend} ${cfg.tier} (step ${Math.round(HD.res * 100)}%) · 3D ${i.rw}×${i.rh} → ${i.ow}×${i.oh} ${pct}% · ${i.upscaled || 'no upscaler'}${cfg.fx ? ` · smaller: ${cfg.fx}` : ''}`);
-    L.push(`FG ${i.framegen ? `${i.framegen} ×${i.fgSteps} ${r1(i.fgMs)} ms` : 'off'} · ${frameGenStatus(d) || ''}`.slice(0, 120));
-    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}`);
+    L.push(`GSFG ${i.framegen ? `${i.framegen} ×${i.fgSteps} ${r1(i.fgMs)} ms` : 'off'} · ${frameGenStatus(d) || ''}`.slice(0, 120));
+    L.push(`CPU upd ${r2(last.upd)} draw ${r2(last.drw)} 3D ${r2(i.cpu)} ms · GPU ${i.gpuMs != null ? r2(i.gpuMs) + ' ms' + (i.gpuCompute > .05 ? ` (${r2(i.gpuCompute)} compute)` : '') : i.gpuOff ? 'times don\'t fit (off)' : 'n/a'} · ${i.calls} calls ${(i.tris / 1000).toFixed(0)}k tris${i.still ? ' · still' : ''}${i.bundled ? ` · ${i.bundled} in ${i.bundles} bundles` : ''}`);
   } else if (s) {
     L.push(`${cfg.backend} canvas ${s.canvas.width}×${s.canvas.height}${s.lite ? ' (eased: phone fell behind)' : ''} · CPU upd ${r2(last.upd)} draw ${r2(last.drw)} ms`);
   }
@@ -883,7 +942,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, subgroups: runSubgroups, bundle: runBundle, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)

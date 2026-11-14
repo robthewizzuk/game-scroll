@@ -9,8 +9,11 @@ on:
   push:
     branches: [main]
     paths-ignore: ['docs/**', '**/*.md', 'site/**', 'workers/**', 'store/**', '.github/ISSUE_TEMPLATE/**']  # not in the app
+  # Pull requests skip it also when they change only games, kits or test scripts: the Game PR check builds
+  # those (npm run games, build:bundled) and nothing in them reaches Gradle, so the build can't break there.
   pull_request:
-    paths-ignore: ['docs/**', '**/*.md', 'site/**', 'workers/**', 'store/**', '.github/ISSUE_TEMPLATE/**']
+    paths: ['**', '!docs/**', '!**/*.md', '!site/**', '!workers/**', '!store/**', '!.github/ISSUE_TEMPLATE/**',
+            '!src/games/**', '!src/kit/**', '!scripts/**', 'scripts/qnn-pin.mjs', '!.github/workflows/game-pr-check.yml', '!.github/workflows/maths-probe.yml', '!.github/actions/**']
   workflow_dispatch:
 
 permissions:
@@ -52,12 +55,15 @@ jobs:
 
       - name: Build the APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        # (the app only: the qnn module is for the store build, android/qnn)
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Name the APK
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk game-scroll.apk
           ls -l game-scroll.apk
+          # Qualcomm's NPU libraries are never in our APK: it downloads them when a game first wants them (plugins/npu QnnRuntime.java)
+          if unzip -Z1 game-scroll.apk | grep libQnn; then echo "::error::QNN libraries in the APK (above)"; exit 1; fi
 
       - uses: actions/upload-artifact@v7
         with:

@@ -115,7 +115,7 @@ function boundsOf(o, b, kind) {
   }
   if (o.userData.gsMoved !== undefined) return 0;   // placed on the chip
   if (kind === 4 && !o.frustumCulled) return 0;   // (its maker says its box is not where it draws)
-  if (o.isBatchedMesh && !o.isDetailMesh) { o.computeBoundingBox(); if (!o.boundingBox || o.boundingBox.isEmpty()) return 2; boxUnder(b, o.boundingBox, o.matrixWorld.elements); return 1; }
+  if (o.isBatchedMesh && (!o.isDetailMesh || o.copySrc)) { o.computeBoundingBox(); if (!o.boundingBox || o.boundingBox.isEmpty()) return 2; boxUnder(b, o.boundingBox, o.matrixWorld.elements); return 1; }
   if (!g.boundingBox) g.computeBoundingBox();
   const bb = g.boundingBox; if (!bb || !(bb.min.x <= bb.max.x)) return 2;
   boxUnder(b, bb, o.matrixWorld.elements);
@@ -299,7 +299,7 @@ function occludeWork(view, cam, o, A) {
     r.f = f;
     if (set) {
       trackSet(set, r, oc, kind, fresh);
-      const C = r.cells; C.oc = oc; C.cam = cam; copies += C.hidN * C.tris * .3; C.hidN = 0; A.sets.push(C);
+      const C = r.cells; C.oc = oc; C.cam = cam; copies += (C.hidN * C.tris + (set.userData.gpuTwin?.occHidden?.() || 0)) * .3; C.hidN = 0; A.sets.push(C);   // (gpuTwin: the copies the chip hid itself, props-gpu.js)
       // WebGL: the set draws itself, copy by copy as its own culling lets each into view
       if (ob === set && !set.occWrapped) { const own = set.onFrustumEnter; set.occWrapped = true; set.onFrustumEnter = function (i, camera, ...a) { const Q = set.userData.occCells; return !(Q && Q.on && camera === Q.cam && copyHidden(Q, i)) && (!own || own.call(this, i, camera, ...a)); }; }
       set.userData.occCells = C;
@@ -348,6 +348,10 @@ export function copiesHidden(view, set) {
   const C = view.occAuto && set.userData.occCells; if (!C || !C.oc?.ready) return null;
   return C.fn ||= i => copyHidden(C, i);
 }
+/** The view's Occlusion when its culling is on this frame (for the WebGPU twins' test on the chip: props-gpu.js), or null. */
+export function occlusionNow(view) { const oc = view.occlusion; return view.occAuto && oc && DETAIL.occ === oc && oc.ready ? oc : null; }
+/** How far copies of these meshes may reach outside their bounds as their shaders move them (leaves: SWAY_PAD), or null when nobody knows (never hidden). */
+export function copiesPad(objs) { let k = 0; for (const o of objs) k = Math.max(k, objKind(o)); return k >= 4 ? null : k === 2 ? SWAY_PAD : 0; }
 /** A depth picture back from the chip (job: what occludeFrame() gave). */
 export function depthBack(job, px, flip) { const A = job.A; if (A.gen === job.gen && A.awake) { const t0 = performance.now(); job.tag.pad = job.pad | 0; job.oc.depth(px, job.w, job.h, job.tag, flip); A.cost += performance.now() - t0; } }
 /** The view stops drawing (or its things go to another view): nothing stays hidden or watched. */

@@ -14,7 +14,7 @@ name: Games (Cloudflare R2)
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'scripts/build-games.mjs', 'scripts/fetch-ml.mjs', 'scripts/sign-catalogue.mjs', '.env', '.github/workflows/games-r2.yml']
+    paths: ['src/**', 'scripts/build-games.mjs', 'scripts/fetch-ml.mjs', 'scripts/sign-catalogue.mjs', 'store/app-update.json', '.env', '.github/workflows/games-r2.yml']
   workflow_dispatch:
 
 permissions:
