@@ -23,7 +23,7 @@ import * as TSL from 'three/tsl';
 import { lut3D } from 'three/examples/jsm/tsl/display/Lut3DNode.js';
 import { tslOps } from './models/ops.js';
 import { gpuCull, gpuCullFits } from './props-gpu.js';
-import { OCC_LAYER } from './occlude.js';
+import { OCC_LAYER, copiesPad } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
 import { FROND } from './looks.js';
@@ -32,6 +32,7 @@ export { SKY };
 import { eachShown, listPipeline } from './scene-list.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
+export { SUB, subgroupsInfo } from './subgroups.js';
 import { RECIPES } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
@@ -1560,19 +1561,23 @@ export function gpuProps(im) {
   make();
   // GPU culling (props-gpu.js; hd3d.js says when): its own meshes, so the CPU lists keep their slots for switching back
   let gc = null, onGpu = false;
-  const useGpu = on => { if (on && !gc) gc = gpuCull(im, levels, group); if (on === onGpu) return; onGpu = on; for (const t of tw) t.visible = false; for (const m of gc?.meshes || []) m.visible = on; };
+  const useGpu = on => { if (on && !gc) gc = gpuCull(im, levels, group, copiesPad(levels.map(l => l.obj))); if (on === onGpu) return; onGpu = on; for (const t of tw) t.visible = false; for (const m of gc?.meshes || []) m.visible = on; };
   // a slot drawn as nothing: every point at the copy's own place
   const hide = (M, m0) => { const x = M[m0 + 12], y = M[m0 + 13], z = M[m0 + 14]; M.fill(0, m0, m0 + 16); M[m0 + 12] = x; M[m0 + 13] = y; M[m0 + 14] = z; M[m0 + 15] = 1; };
   return {
     group,
     /** Copies this many or more draw with GPU culling where allowed (HD.gpuCull 'auto'). */
-    gpuFits: gpuCullFits(levels),
+    gpuFits: gpuCullFits(levels, !!im.colorsTexture),
     isGpu: () => onGpu,   // (a function: the twin is copied with ...spread in hd3d.js)
     sends: () => gc?.sends() ?? 0,
-    sync(cam, occ = null, shadowCams = null, gpuR = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead
+    /** Triangles a frame the chip's own occlusion test leaves out (props-gpu.js; occlude.js counts them). */
+    occHidden: () => (onGpu && gc ? gc.hiddenTris : 0),
+    /** Tests: the chip's lists, { cam, all, hidden } copies by level (props-gpu.js counts). */
+    counts: r => (onGpu && gc ? gc.counts(r) : null),
+    sync(cam, occ = null, shadowCams = null, gpuR = null, oc = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead; oc: the view's Occlusion when its culling is on (the GPU's own test, which keeps shadows)
       dists();
-      useGpu(!!gpuR && this.gpuFits);
-      if (onGpu) { gc.sync(gpuR, cam, shadowCams); for (const m of gc.meshes) m.visible = true; return; }
+      useGpu(!!gpuR && gpuCullFits(levels, !!im.colorsTexture));   // (colours of their own take a buffer a level more: props-gpu.js)
+      if (onGpu) { gc.sync(gpuR, cam, shadowCams, oc); for (const m of gc.meshes) m.visible = true; return; }
       if ((im._capacity || 0) > cap) make();
       const n = Math.min(cap, im._instancesArrayCount || 0), D = im.matricesTexture?._data, C = im.colorsTexture?._data, wm = im.matrixWorld;
       if (!D) { for (const t of tw) { t.count = 0; t.userData.slots.top = 0; t.userData.slots.slotOf.fill(0); t.userData.slots.owner.fill(0); } stale = true; return; }

@@ -58,6 +58,7 @@ import {
   mrt, output, velocity, diffuseColor, cameraProjectionMatrix, cameraViewMatrix, Loop, atomicLoad, atomicOr,
 } from 'three/tsl';
 import { halfFn, halfWanted, halfKey } from './half.js';
+import { whole, addUp, subgroupsWanted } from './subgroups.js';
 
 const EMPTY = 0xffffffff;
 const LUMA = vec4(.299, .587, .114, 0);
@@ -195,7 +196,8 @@ export class FrameGen {
 
   /* (re)makes the buffers and the compute passes for a size */
   build(rw, rh, ow, oh, handed = false, eight = false) {
-    const key = `${rw}x${rh}>${ow}x${oh}${handed ? ' handed' : ''}${eight ? ' 8' : ''} ${halfKey()}`;
+    const sg = subgroupsWanted(this.r);   // (subgroups.js: the counts below add up a subgroup at a time where the chip can)
+    const key = `${rw}x${rh}>${ow}x${oh}${handed ? ' handed' : ''}${eight ? ' 8' : ''} ${halfKey()}${sg ? ' sg' : ''}`;
     if (key === this.key) return;
     const half = halfWanted();   // (half.js: the sharp reads' maths in half where the chip has it)
     this.dispose(); this.key = key; this.frames = 0; this.ready = false;
@@ -405,31 +407,40 @@ export class FrameGen {
       atomicStore(cut.element(67), uint(hd.mul(4096))); atomicStore(cut.element(68), uint(md.mul(4096)));
     })().compute(1, [1]);
     this.cFlow = [3, 2, 1, 0].map(k => Fn(() => {
-      const s = FS[k], g = ivec2(int(instanceIndex).mod(int(s.x)), int(instanceIndex).div(int(s.x))), px = LS[k];
-      const gm = gameAt(g, PIX[k] * 4), gc = miss(k, g, gm), best = float(gc).toVar(), bd = vec2(gm).toVar();
-      // a try replaces the best only if clearly better (flat areas match anything: they keep the game's motion)
-      const tryAt = d => { const c = miss(k, g, d); If(c.lessThan(best.mul(.9).sub(.001)), () => { best.assign(c); bd.assign(d); }); };
-      if (k === 3) {
-        Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fy' }, ({ fy }) => {
-          Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fx' }, ({ fx }) => { tryAt(vec2(float(fx), float(fy)).div(px)); });
-        });
-      } else {
-        tryAt(vec2(0));
-        const up = FS[k + 1], hiU = ivec2(int(up.x).sub(1), int(up.y).sub(1));
-        // (the coarser block over this one and the two beside it that are nearest: this block is a quarter of it)
-        const pg = g.div(2), side = g.sub(pg.mul(2)).mul(2).sub(1);
-        for (const o of [ivec2(0, 0), ivec2(side.x, 0), ivec2(0, side.y)]) tryAt(flowT[k + 1].load(clamp(pg.add(o), ivec2(0, 0), hiU)).xy);
-      }
-      // then a pixel either way of the best (the coarsest also diagonally)
-      const c0 = vec2(bd).toVar();
-      for (const [ox, oy] of k === 3 ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]] : [[-1, 0], [1, 0], [0, -1], [0, 1]]) tryAt(c0.add(vec2(ox, oy).div(px)));
-      // the coarsest level adds up how badly the whole screen matches: a cut to a new scene matches nowhere
-      if (k === 3) { atomicAdd(cut.element(0), uint(min(best, 1).mul(4096))); atomicAdd(cut.element(1), uint(1)); }
-      // finest: how much better than the game's motion pixel by pixel (0 where they're the same move, within a pixel)
-      // (a clear win only: the flow's match at most 40% as far off as the game's, so a texture that repeats
-      // or shimmers in the distance, which matches many ways a little better, keeps the game's motion)
-      const mg = missGame(g), gain = k ? gc : select(length(bd.sub(gm).mul(U.os)).greaterThan(.75).and(best.lessThan(mg.mul(.4))), mg.sub(best), float(0));
-      textureStore(this.flow[k], g, vec4(bd, best, gain));
+      // (the coarsest adds up how badly the whole screen matches: with subgroups a subgroup at a time, so every
+      // thread runs to the end, and the ones past the last block do nothing on the way: subgroups.js)
+      const subs = sg && k === 3, blocks = sz(k + 3)[0] * sz(k + 3)[1], off = uint(0).toVar(), one = uint(0).toVar();
+      whole(subs);
+      const flowBlock = () => {
+        const s = FS[k], g = ivec2(int(instanceIndex).mod(int(s.x)), int(instanceIndex).div(int(s.x))), px = LS[k];
+        const gm = gameAt(g, PIX[k] * 4), gc = miss(k, g, gm), best = float(gc).toVar(), bd = vec2(gm).toVar();
+        // a try replaces the best only if clearly better (flat areas match anything: they keep the game's motion)
+        const tryAt = d => { const c = miss(k, g, d); If(c.lessThan(best.mul(.9).sub(.001)), () => { best.assign(c); bd.assign(d); }); };
+        if (k === 3) {
+          Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fy' }, ({ fy }) => {
+            Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fx' }, ({ fx }) => { tryAt(vec2(float(fx), float(fy)).div(px)); });
+          });
+        } else {
+          tryAt(vec2(0));
+          const up = FS[k + 1], hiU = ivec2(int(up.x).sub(1), int(up.y).sub(1));
+          // (the coarser block over this one and the two beside it that are nearest: this block is a quarter of it)
+          const pg = g.div(2), side = g.sub(pg.mul(2)).mul(2).sub(1);
+          for (const o of [ivec2(0, 0), ivec2(side.x, 0), ivec2(0, side.y)]) tryAt(flowT[k + 1].load(clamp(pg.add(o), ivec2(0, 0), hiU)).xy);
+        }
+        // then a pixel either way of the best (the coarsest also diagonally)
+        const c0 = vec2(bd).toVar();
+        for (const [ox, oy] of k === 3 ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]] : [[-1, 0], [1, 0], [0, -1], [0, 1]]) tryAt(c0.add(vec2(ox, oy).div(px)));
+        // the coarsest level adds up how badly the whole screen matches: a cut to a new scene matches nowhere
+        if (k === 3 && subs) { off.assign(uint(min(best, 1).mul(4096))); one.assign(uint(1)); }
+        else if (k === 3) { atomicAdd(cut.element(0), uint(min(best, 1).mul(4096))); atomicAdd(cut.element(1), uint(1)); }
+        // finest: how much better than the game's motion pixel by pixel (0 where they're the same move, within a pixel)
+        // (a clear win only: the flow's match at most 40% as far off as the game's, so a texture that repeats
+        // or shimmers in the distance, which matches many ways a little better, keeps the game's motion)
+        const mg = missGame(g), gain = k ? gc : select(length(bd.sub(gm).mul(U.os)).greaterThan(.75).and(best.lessThan(mg.mul(.4))), mg.sub(best), float(0));
+        textureStore(this.flow[k], g, vec4(bd, best, gain));
+      };
+      if (subs) If(instanceIndex.lessThan(uint(blocks)), flowBlock); else flowBlock();
+      if (subs) { addUp(cut.element(0), off, true); addUp(cut.element(1), one, true); }
     })().compute(sz(k + 3)[0] * sz(k + 3)[1], [64]));
     const isCut = () => cutR.element(66).greaterThan(uint(0));
 
@@ -461,7 +472,8 @@ export class FrameGen {
     // round a pixel, so any of the nine round the tile that is used counts; and the newest frame is held against the
     // last one moved by the game's own motion, on the tile's 4 x 4 brightness pixels (a made pixel mixes such a pair)
     this.cTiles = Fn(() => {
-      const i = int(instanceIndex), g = ivec2(i.mod(TW), i.div(TW));
+      whole(sg);
+      const i = int(instanceIndex), g = ivec2(i.mod(TW), i.div(TW)), easy = uint(0).toVar();
       If(g.y.lessThan(int(TS.y)), () => {
         let fl = float(0);
         for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) fl = max(fl, flowT[0].load(clamp(g.add(ivec2(x, y)), ivec2(0, 0), hiT)).w);
@@ -475,8 +487,9 @@ export class FrameGen {
         const hard = atomicLoad(marks.element(i)).bitOr(select(fl.greaterThan(FLOW_GAIN), uint(4), uint(0)))
           .bitOr(select(most.greaterThan(EASY_MOST).or(sum.div(16).greaterThan(EASY_MEAN)), uint(8), uint(0)));
         tiles.element(i).assign(hard);
-        If(hard.equal(uint(0)), () => { atomicAdd(cut.element(69), uint(1)); });
+        easy.assign(select(hard.equal(uint(0)), uint(1), uint(0)));
       });
+      addUp(cut.element(69), easy, sg);   // (the easy tiles counted, a subgroup at a time where the chip can: subgroups.js)
     })().compute(nt, [64]);
 
     // 5 compose, at the screen's size: the newest frame from where each pixel was at t = 1 and the last
@@ -740,7 +753,7 @@ export function refreshesSince(S, now) {
 export class StillCheck {
   constructor(r) { this.r = r; this.key = ''; this.count = -1; this.busy = false; this.seen = 0; }
   build(w, h) {
-    const sw = Math.max(1, w >> 2), sh = Math.max(1, h >> 2), key = `${sw}x${sh}`;
+    const sw = Math.max(1, w >> 2), sh = Math.max(1, h >> 2), sg = subgroupsWanted(this.r), key = `${sw}x${sh}${sg ? ' sg' : ''}`;
     if (key === this.key) return;
     this.dispose(); this.key = key; this.n = sw * sh; this.fresh = true;
     this.lumA = new StorageBufferAttribute(new Float32Array(this.n), 1);
@@ -749,10 +762,15 @@ export class StillCheck {
     const col = this.colN = texture(NO_REACTIVE), sz = this.sz = uniform(new Vector2(1, 1)), SW = max(int(sz.x).shiftRight(2), int(1));   // (the size as a uniform: see FrameGen.build)
     this.cZero = Fn(() => { atomicStore(cnt.element(0), uint(0)); })().compute(1, [1]);
     this.cCmp = Fn(() => {
-      const i = int(instanceIndex), q = vec2(ivec2(i.mod(SW), i.div(SW))).mul(4).add(2).div(sz);
-      const l = dot(col.sample(q).level(0), LUMA), was = lum.element(i);
-      If(abs(l.sub(was)).greaterThan(2 / 255), () => { atomicAdd(cnt.element(0), uint(1)); });
-      lum.element(i).assign(l);
+      whole(sg);   // (the count adds up a subgroup at a time where the chip can: subgroups.js)
+      const i = int(instanceIndex), changed = uint(0).toVar();
+      If(i.lessThan(int(this.n)), () => {
+        const q = vec2(ivec2(i.mod(SW), i.div(SW))).mul(4).add(2).div(sz);
+        const l = dot(col.sample(q).level(0), LUMA), was = lum.element(i);
+        If(abs(l.sub(was)).greaterThan(2 / 255), () => { changed.assign(uint(1)); });
+        lum.element(i).assign(l);
+      });
+      addUp(cnt.element(0), changed, sg);
     })().compute(this.n, [64]);
   }
   check(color, w, h) {

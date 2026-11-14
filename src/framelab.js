@@ -34,7 +34,7 @@
 //             (temporal instability: shimmering edges, upscaler or anti-aliasing jitter)
 //   FG check  while playing on WebGPU: grabs real, made, real triples and maps the made pixels that
 //             match neither real frame nearby (ghosting, smears, holes behind moving things)
-//   Half, Spread  while playing on WebGPU: the chip's time by pass with a switch off and on (runCheck)
+//   Half, Spread, Clouds, Subgroups  while playing on WebGPU: the chip's time by pass with a switch off and on (runCheck)
 //
 // Kit-free and game-free: it reads what the feed (src/main.js), the 3D kit (HD.info) and the phone
 // (src/kit/power.js) already know, plus browser APIs. Timing comes from requestAnimationFrame, which on
@@ -283,7 +283,7 @@ function config(s) {
     game: d?.id || '', era: d?.era || (d?.retro ? 'pocket' : 'phone'), hz: screenHz(), fps: d ? Math.round(fpsFor(d)) : 0, cls: phoneClass(), gpu: gpuName(),
     backend: hd ? i.backend : d?.era === 'console' ? 'webgl' : '2d', tier: hd ? HD.name : null, res: hd ? HD.res : null,
     rw: hd ? i.rw : s?.canvas?.width, rh: hd ? i.rh : s?.canvas?.height, ow: hd ? i.ow : s?.canvas?.width, oh: hd ? i.oh : s?.canvas?.height,
-    upscaler: hd ? i.upscaled || 'off' : null, fx: hd ? fxText() : '', fg: hd ? i.framegen || false : false, fgWhy: d && hd ? frameGenStatus(d) : '', lite: !!s?.lite,
+    upscaler: hd ? i.upscaled || 'off' : null, subgroups: hd && i.backend === 'webgpu' ? i.subgroups || null : null, fx: hd ? fxText() : '', fg: hd ? i.framegen || false : false, fgWhy: d && hd ? frameGenStatus(d) : '', lite: !!s?.lite,
     rates: screen.rates.join('/'), asked: screen.want, lifted: screen.lifted,
     view: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, form: Math.min(innerWidth, innerHeight) >= 600 ? 'wide' : 'phone',
   };
@@ -363,6 +363,8 @@ function halfCan() { return HD?.info.backend === 'webgpu' && !/no half/.test(HD.
 function spreadCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.spread || HD.spread === false); }
 // the sky on WebGPU (src/kit/hd3d-gpu-sky.js) can be compared: WebGPU, and the air or the clouds drawn (or switched off now)
 function skyCan() { return HD?.info.backend === 'webgpu' && (!!HD.info.sky || HD.clouds === false || HD.atmosphere === false); }
+// WebGPU subgroups in the kit's compute passes (src/kit/subgroups.js) can be compared: WebGPU, and a chip that has them
+function subgroupsCan() { return HD?.info.backend === 'webgpu' && /subgroups/.test(HD.info.subgroups || '') && !/none on this chip/.test(HD.info.subgroups); }
 function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD.info.sky || '') || HD.clouds === false); }
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
@@ -499,6 +501,7 @@ async function runFG() {
 //   Spread: ambient occlusion, volumetric light and bounce light with every sample every frame, and spread over frames
 //           (src/kit/hd3d-gpu-spread.js)
 //   Clouds: the sky's painted clouds, and real ones marched through with their shadow (src/kit/hd3d-gpu-sky.js)
+//   Subgroups: the kit's compute passes built without and with WebGPU subgroups (src/kit/subgroups.js)
 const CHECKS = {
   half: { title: 'Half precision check', name: 'Half check', key: 'half', off: 'full', on: 'half', can: halfCan, no: () => PAIRS.half.no, says: () => HD.info.half,
     note: 'in half: SGSR 2\'s upscale, the sharp picture reads (SGSR 2, frame generation), smoke and fire, the grade and sun glare' },
@@ -506,6 +509,8 @@ const CHECKS = {
     note: 'spread over frames: ambient occlusion (a part of its directions a frame), volumetric light (a third of its steps) and bounce light (one slice at half size), the frames before filling in' },
   clouds: { title: 'Clouds check', name: 'Clouds check', key: 'clouds', off: 'painted', on: 'marched', can: cloudsCan, no: () => 'Marched clouds need WebGPU, a tier with ambient occlusion (high or ultra) and a game whose sky has clouds, so there is nothing to compare.', says: () => 'sky: ' + (HD.info.sky || 'as before'),
     note: 'marched: the clouds at a quarter of the pixels, filled in from the frames before, and their shadow a few times a second' },
+  subgroups: { title: 'Subgroups check', name: 'Subgroups check', key: 'subgroups', off: 'plain', on: 'subgroups', can: subgroupsCan, no: () => 'Subgroups need WebGPU and a graphics chip that has them (Android Chrome 144 or later; not iPhones yet), so there is nothing to compare.', says: () => 'subgroups: ' + (HD.info.subgroups || 'off'),
+    note: 'with subgroups: the copies picked on the chip (GPU culling and its occlusion test) and frame generation\'s counts take their places and add up a subgroup at a time' },
 };
 async function runCheck(kind) {
   const C = CHECKS[kind], s = UI.s; if (!s || !HD || !is3D(s.def)) return UI.flash(`${C.name} needs a Next Gen or AR game.`);
@@ -538,7 +543,7 @@ async function runCheck(kind) {
   };
   shots.push(shot); viewer(shot);
 }
-const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds');
+const runHalf = () => runCheck('half'), runSpread = () => runCheck('spread'), runClouds = () => runCheck('clouds'), runSubgroups = () => runCheck('subgroups');
 
 function setFrozen(v) { frozen = !!v; UI.render?.(); }
 
@@ -764,7 +769,7 @@ function panel() {
   const el = document.createElement('div'); el.className = 'fl' + (store.get(KEY + '_pos', '') === 'bottom' ? ' bottom' : '') + (store.get(KEY + '_short', false) ? ' short' : '');
   el.innerHTML = `<div class="fl-top"><b>FRAME LAB</b><span class="fl-sum"></span><button data-a="txt" aria-label="Show or hide the numbers">i</button><button data-a="min" aria-label="Fold the panel">–</button><button data-a="pos" aria-label="Move the panel">⇅</button><button data-a="close" aria-label="Turn the frame lab off">✕</button></div>
     <canvas></canvas><pre></pre><div class="fl-msg"></div>
-    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
+    <div class="fl-btns"><button data-a="rec" class="rec">● Rec</button><button data-a="freeze">Freeze</button><button data-a="tint">Tint</button><button data-a="ab">A/B</button><button data-a="shimmer">Shimmer</button><button data-a="fg">FG check</button><button data-a="half">Half</button><button data-a="spread">Spread</button><button data-a="clouds">Clouds</button><button data-a="subgroups">Subgroups</button><button data-a="report">Report</button><button data-a="copy">Copy</button></div>
     <div class="fl-menu" hidden>${Object.entries(PAIRS).map(([k, p]) => `<button data-ab="${k}">${p.title}</button>`).join('')}</div>`;
   document.body.appendChild(el); UI.el = el;
   tintEl = document.createElement('div'); tintEl.className = 'fl-tint'; document.body.appendChild(tintEl);
@@ -785,6 +790,7 @@ function panel() {
       case 'shimmer': runShimmer(); break;
       case 'fg': runFG(); break;
       case 'half': runHalf(); break;
+      case 'subgroups': runSubgroups(); break;
       case 'spread': runSpread(); break;
       case 'clouds': runClouds(); break;
       case 'report': shareReport(); break;
@@ -884,7 +890,7 @@ export function openLab(ctx = {}) {
     parts: () => Object.fromEntries(SYS), trace: v => { PROF.trace = v !== false; },
     /** the memory guard as it stands; memory(2) acts as if memory were low (null: back to the phone's readings) */
     memory: level => { if (level !== undefined) forceMemory(level); return { ...memory }; },
-    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, shots, events, measure,
+    freeze: setFrozen, ab: runAB, shimmer: runShimmer, fg: runFG, half: runHalf, spread: runSpread, clouds: runClouds, subgroups: runSubgroups, shots, events, measure,
     onClose: ctx.onClose,
   };
   // frame generation tells us whether each refresh showed a real or a made frame (its fgTap hook, kept for tests too)

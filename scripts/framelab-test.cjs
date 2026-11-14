@@ -1,5 +1,5 @@
 // Checks the frame lab (src/framelab.js): turns it on, plays a 2D game and a Next Gen game (on WebGPU where
-// the test browser has it), records, runs A/B, Shimmer, FG check and Half check, folds and unfolds (Galaxy Z Fold 8
+// the test browser has it), records, runs A/B, Shimmer, FG check, Half check and Subgroups check, folds and unfolds (Galaxy Z Fold 8
 // sizes) and makes the report. Fails on any page error or a tool that doesn't produce its result.
 //   npm run build:bundled && node scripts/framelab-test.cjs [--shots dir] [--report file.html] [2d-id] [3d-id]
 // Timings here are software 3D and mean nothing; this checks that the tools work, not how fast games are.
@@ -161,6 +161,17 @@ const SIZES = { cover: { width: 374, height: 591 }, inner: { width: 549, height:
       if (cc.notes.length) await shot('clouds-check');
       await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
     } else console.log('SKIP Clouds check (no marched clouds in this game at this tier: ' + JSON.stringify(sky) + ')');
+    // WebGPU subgroups in the kit's compute passes (src/kit/subgroups.js): the report says whether the chip has them, and the Subgroups check times plain against subgroups and puts the switch back
+    const sub = await p.evaluate(() => __hd.info.subgroups);
+    check(/^(on|off)/.test(sub || ''), 'the chip says whether it has subgroups: ' + sub);
+    if (/^on/.test(sub || '')) {
+      await p.evaluate(async () => (await __gs.lab(true)).subgroups());
+      const gc = await p.evaluate(async () => { const L = await __gs.lab(true); const s = L.shots[L.shots.length - 1]; return { notes: s && s.kind === 'subgroups' ? s.notes : [], on: __hd.subgroups }; });
+      console.log('   Subgroups check: ' + gc.notes.join(' | '));
+      check(/chip time a frame: plain [\d.]+ ms, subgroups [\d.]+ ms/.test(gc.notes[0] || '') && gc.on === true, 'Subgroups check times plain and subgroups and puts the switch back');
+      if (gc.notes.length) await shot('subgroups-check');
+      await p.evaluate(() => { document.querySelector('.fl-view [data-a="x"]')?.click(); });
+    } else console.log('SKIP Subgroups check (none on this chip: ' + JSON.stringify(sub) + ')');
   }
 
   await p.evaluate(async () => (await __gs.lab(true)).rec(false));

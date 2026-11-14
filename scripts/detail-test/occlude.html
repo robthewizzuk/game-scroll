@@ -10,6 +10,7 @@
 // first must draw far less, and nothing may stay hidden from a raycast. Then: a view too small to be
 // worth it and one where nothing is hidden go to sleep; boxes the game lists still work without depth.
 //   ?gpu  WebGPU    ?tier=2    ?w=360&h=480    ?frames=70
+//   ?cull (WebGPU): the barrels picked on the chip (GPU culling), which then asks the depth pyramid itself (props-gpu.js)
 //   ?bench: the walk with hiding off and on: triangles, draws and the time it takes a frame
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
@@ -20,7 +21,7 @@ await loadParts();
 if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
 const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480), FRAMES = +(Q.get('frames') || 70), { Props } = gs.props;
 const nextFrame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
-HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.detailMin = 8000; if (Q.has('nobatch')) HD.batch = false; if (Q.get('texels')) HD.occludeTexels = +Q.get('texels');
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.detailMin = 8000; if (Q.has('nobatch')) HD.batch = false; if (Q.has('cull')) HD.gpuCull = true; if (Q.has('noaoback')) HD.aoBack = false; if (Q.get('texels')) HD.occludeTexels = +Q.get('texels');
 const rng = gs.math.rng(11), R = (a, b) => a + (b - a) * rng();
 const out = {}, info = {}, checks = [];
 const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
@@ -129,7 +130,7 @@ try {
     }
     HD.occlude = true; Object.assign(info, res); window.result = { out, info, checks }; throw 'bench done';
   }
-  const tOn = [], tShow = [], cOn = [], cShow = [], hid = [], msA = [], bad = [], by = { run: [], glass: [], drive: [], stand: [], roofs: [] }, tris = { run: [0, 0], glass: [0, 0], drive: [0, 0], stand: [0, 0], roofs: [0, 0] }; let worst = 0, worstAt = -1, withDepth = 0, risen = true, rose = false, under = true, glass = true, layers = true, ray = true, clusters = 0, copies = 0, soft = 0;
+  const tOn = [], tShow = [], cOn = [], cShow = [], hid = [], msA = [], bad = [], by = { run: [], glass: [], drive: [], stand: [], roofs: [] }, tris = { run: [0, 0], glass: [0, 0], drive: [0, 0], stand: [0, 0], roofs: [0, 0] }; let worst = 0, worstAt = -1, withDepth = 0, risen = true, rose = false, under = true, glass = true, layers = true, ray = true, clusters = 0, copies = 0, soft = 0, chipSets = 0, chipHid = 0;
   const cast = new T.Raycaster(), wasHidden = new Set(), less = {};
   for (let i = +(Q.get('from') || 0); i < +(Q.get('to') || FRAMES); i++) {
     pose(S, i);
@@ -147,6 +148,7 @@ try {
     const batchOf = new Map(); for (const bt of S.v.batches?.list || []) for (const o of bt.items.keys()) batchOf.set(o, bt.mesh);
     const gone = o => list.has(o) || list.has(batchOf.get(o));
     clusters += on.detail?.hid || 0;
+    for (const o of S.v.sets || []) { const tw = o.userData.gpuTwin; if (tw?.isGpu?.()) { chipSets++; chipHid = Math.max(chipHid, tw.occHidden()); } }
     for (const o of [...S.balloons, ...S.behind, S.tower]) if (gone(o)) wasHidden.add(o);
     if (i === 3) out.on = S.c.toDataURL();
     // (WebGPU: three draws a scene's pass once a screen refresh, so the whole picture waits for the next one)
@@ -179,6 +181,7 @@ try {
   check('fewer triangles are drawn on the run and standing', mid(less.run) > 15000 && mid(less.stand) > 30000 && ratio('stand') < .93, mid(less.run) + ' and ' + mid(less.stand) + ' fewer a frame: ' + pc('run') + ' and ' + pc('stand') + ' of the whole frame, shadows and all');
   check('fewer draws', mean(cOn) < mean(cShow) * .95, Math.round(mean(cOn)) + ' against ' + Math.round(mean(cShow)));
   check('parts of the hill behind the wall are left out (cluster detail)', clusters > 0, Math.round(clusters / FRAMES) + ' triangles a frame');
+  if (GPU && Q.has('cull')) check('the barrels are picked on the chip, and the chip hides some of them itself', chipSets > 0 && chipHid > 0, chipSets + ' frames on the chip, up to ' + Math.round(chipHid) + ' triangles hidden a frame');
   check('the crates under the bridge are never hidden', under);
   check('nothing behind the glass, the fence or the swaying tree is hidden', glass);
   check('the tree is known to sway', soft > FRAMES * .5, soft + ' frames');

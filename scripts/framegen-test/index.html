@@ -22,6 +22,7 @@ import * as THREE from 'three/webgpu';
 import { pass, mrt, output, velocity, texture, uv, vec4, mix, uniform, screenUV } from 'three/tsl';
 import { FrameGen, frameGenMRT, particleMotion, fgPrevVP, poseOf, homography, warpUV } from '/src/kit/framegen.js';
 import { gpuProps } from '/src/kit/hd3d-gpu.js';
+import { SUB } from '/src/kit/subgroups.js';
 
 const Q = new URLSearchParams(location.search), OW = +(Q.get('w') || 512), OH = +(Q.get('h') || 640);
 const scale = +(Q.get('scale') || 1), RW = Math.round(OW / scale), RH = Math.round(OH / scale);
@@ -215,6 +216,7 @@ try {
     const halton = (i, b) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
     const steadyCam = jitter ? S.cam.clone() : null, steady = jitter ? pass(S.scene, steadyCam) : null;
     const pps = jitter ? new THREE.RenderPipeline(r) : null; if (pps) { pps.outputNode = steady; pps.outputColorTransform = false; }
+    if (Q.get('subgroups') === '0') SUB.on = false;   // (without subgroups where the chip has them: the counts must come out the same)
     const fg = new FrameGen(r, { flow: Q.get('flow') !== '0', fill: Q.get('fill') !== '0', sharp: Q.get('sharp') !== '0', quick: Q.get('quick') !== '0' });
     fg.parts = Q.get('parts') === '1';   // (each step its own pass, as the phone test tour times them: the same picture)
     const prev = new THREE.RenderTarget(OW, OH, { type: THREE.HalfFloatType });
