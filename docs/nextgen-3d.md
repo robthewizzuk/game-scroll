@@ -281,8 +281,8 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   in for the frame's drawing only: between frames `mesh.geometry` is always the game's own, so a game
   can reshape it, work out its normals again or build physics from it as usual. A mesh whose points
   or triangles change is drawn whole, and its copies are made again once it has kept still for a second.
-- Cluster detail (a Nanite-style level of detail, by itself): a big still mesh (20,000 triangles or
-  more: a hillside, a cliff, a hall made in code) is cut into clusters of a few hundred triangles with
+- Cluster detail (a Nanite-style level of detail, by itself): a big mesh (8,000 triangles or
+  more: a hillside, a cliff, a hall made in code, a train, a person close up) is cut into clusters of a few hundred triangles with
   coarser and coarser versions of each neighbourhood, and every frame each part of it is drawn only as
   finely as shows in the picture (within a pixel) and not at all where it is out of view. So the near
   end of a long wall is at full detail and the far end at a fraction, with no cracks where they meet,
@@ -297,9 +297,23 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
     visibility. The moment the mesh stops fitting (another geometry or material, taken out of the
     scene) it draws as itself again. A geometry whose points change after it was taken is left alone
     from then on.
-  - Taken: plain meshes with one solid material. Not taken: skinned, morphing and instanced meshes,
-    see-through and alpha-tested materials, materials that move their points (leaves, grass, water,
-    your own shader), multi-material meshes and `v.reflect()` ones. Those keep what they had.
+  - Taken: still and moving meshes (a moving one is picked again each frame where it is now, so a
+    train or a falling crate keeps its detail in motion), meshes with several materials (each part
+    is cut on its own, and the seams between parts are kept in place so they never crack open),
+    cut-out (alpha-tested) materials such as fences and leaf cards (built more carefully, so holes
+    keep their shape), sets of copies (an InstancedMesh of up to 256 copies of 2,000 triangles or
+    more: each copy is drawn only as finely as it shows from where it is, with its own colour), and
+    skinned and morphing meshes (people, creatures, faces: one cut a frame from the camera, posed by
+    the same skeleton and morphs as the game's mesh, and simplified so it still bends right in other
+    poses than the one it was built in; on WebGPU it is posed by the chip's skin pool once, with the
+    game's mesh).
+  - Not taken: see-through materials, materials that move their points (leaves, grass, water, your
+    own shader), meshes whose points the game rewrites, gs.props sets (they keep their own levels)
+    and `v.reflect()` ones. Those keep what they had.
+  - Under 20,000 triangles a mesh is tried for a second and a half and kept only if it saves more
+    than it costs (fewer triangles against more, smaller draws, with a phone's costs); one that does
+    not pay goes back to drawing whole and is tried again 12 seconds later, when the camera may be
+    elsewhere. `__hd.info.detailRested` counts them. From 20,000 it is kept.
   - `v.detail(meshes)` asks for it on smaller meshes too (from 2,000 triangles), `v.detail(meshes,
     { px: .5 })` makes them finer (pixels the simpler parts may be out by; default 1), and
     `v.detail(meshes, false)` or `mesh.userData.detail = false` draws them whole.
@@ -506,6 +520,13 @@ of detail too (`v.shadowAhead`); what comes into the scene later is done the sam
 there only gets textures and the canvas's own shaders ready and the first frame builds what it draws.
 The shader-hold script fails on WebGPU if a pipeline or a shader's text is made in the middle of a frame
 for a thing switched on, turned to or added, or for anything at all after a view's first frame.
+What a round still makes in play (an explosion's sparks, the next room's lamps) is noted, game by game, on
+the phone (`src/kit/pipes.js`, as Unity's PSO tracing and Godot's shader baker do): the next time the game's
+card comes up, those pipelines are made in the background while the card is on screen and under the loading
+screen, and three's own ask for them in the round finds them made (the chip keeps one made pipeline for every
+ask with the same description; three writes some shaders a little differently from one launch to the next, and
+those are still made in play). Nothing for a game to do; a game played more than its first round gains most. `__gs.pipes.stats()` says what was noted and made ahead, and `node scripts/shader-replay.cjs [ids]`
+plays a game twice in two launches of the browser and checks the second made ahead what the first made in play.
 `__hd.info` reports `{ calls, tris, cpu, shadows, upscaled, backend, framegen, refl }` for the last frame (`refl`: `'traced'`, `'screen'` or `''`, the reflections it drew). The 3D frame is rendered at the tier's pixel count (and lower while the phone struggles), then upscaled to the card's full resolution with **Snapdragon Game Super Resolution 2** (Qualcomm's temporal upscaler, `src/kit/sgsr2.js`): the camera is nudged by a fraction of a pixel each frame and each new small frame is blended into the full-size picture of the frames before, moved by the camera's own move. That gives a sharper, steadier picture than one frame can, and it also runs at full size as anti-aliasing (grass, leaves, wires and thin poles stop shimmering; FXAA is off then). Things that move fast across a still camera can leave a short soft trail (there are no per-object motion vectors), so a view can set `v.upscaler = 'sgsr1'` to use **SGSR 1** (`src/kit/sgsr.js`, one frame, edge-aware sharpening). AR views and frames with screen-space reflections use SGSR 1 too, and `HD.upscaler = 'sgsr1'` switches every view. `HD.upscale = false` shows the plain stretched picture for comparison, and `node scripts/upscale-compare.cjs` scores plain, SGSR 1 and SGSR 2 against a supersampled picture (`--webgpu` for the WebGPU path, which has its own TSL versions of both). SGSR 2 has two changes of ours to Qualcomm's upscale pass, on WebGPU (`hd3d-gpu.js` `sgsr2Gpu`) and on WebGL (`sgsr2.js`): the history is read sharply (Catmull-Rom) instead of bilinearly, which was softening it a little every frame the camera moved, and a pixel that stays put lets its history count for more (up to four times), so a still picture shimmers less. `__hd.sgsrTune = false` draws it as it was, and the comparison draws both and fails if ours comes out worse. On WebGPU, textures under SGSR 2 are read as the screen's size would read them, not as the small picture does (a mip bias of log2(drawn width / screen width), the value FSR 2 and DLSS ask for too): the small picture's mip level is too soft for the screen it is built up to, and the jitter and history settle the finer detail. WebGPU samplers have no bias, so each texture's node is given one through three.js's hook on the renderer's context (`hd3d-gpu.js` `sharpMips`), with no shader patched and nothing added to the cost of a texture read: every standard material's maps get it, and the kit's own shaders that read textures elsewhere (parallax, scattered and position-laid recipes) scale their gradients to match. On the comparison's textured scene the picture came out 8 to 9% closer to the true one at 1.5x and 10 to 11% at 1.8x, with a little more flicker when nothing moves; half a mip level sharper again was closer still with more shimmer, so it stops at the usual value. (Scaling every texture's uv gradients instead was 11 to 16% closer, but explicit gradients are a slower kind of texture read: 15 to 20% of a frame in the software renderer, not measured on a phone, so the bias it is. three has no hook for a bias, so it is handed to the texture's node for the one read three makes after asking for gradients; if a three.js update changes that, textures go back to being read as drawn and the comparison's textured runs fail.) `__hd.mipBias = false` reads textures as drawn (a number adds that many mip levels on top). WebGL keeps the textures as drawn: WebGL 2 has no sampler bias, and the only other way is patching three's shaders. The 2D HUD is always drawn at
 
 **Half precision (WebGPU).** On a graphics chip that has half precision (WebGPU's `shader-f16`: most phones' chips), the kit's own passes work their colour maths in 16-bit numbers, which take half the room in the chip's registers and run up to twice as fast on phone chips: SGSR 2's upscale, the sharp picture reads in SGSR 2's history and frame generation, smoke and fire (`gs.gas`), and the grade and sun glare. Places, depth, motion and texture positions stay in full precision. Qualcomm's own SGSR 2 shader works its upscale this way too (and the WebGL version, `sgsr2.js`, already did). three.js's shading language has only full-precision numbers, so these are WGSL functions in `src/kit/half.js` `halfFn`, written once: compiled with `f16` where the chip has it and with `f32` everywhere else (the build machine's WebGPU has none, so its pictures test the same maths in full). As WebGPU starts, each one is compiled on its own in half; one the chip won't compile is drawn in full and named in `HD.info.half` (`'half'`, `'half (but not: ...)'`, `'full (switched off)'`, `'full (no half on this chip)'`). `HD.half = false` draws everything in full (the frame lab's A/B and Half check switch it to compare pictures and the chip's time). Left in full on purpose: volumetric light (its march is mostly places in metres, which stay full anyway, and at the strongest `glow` the bright ring round a light came out 10% off in half), light shafts and frame generation's optical flow (reads, not maths: half saves nothing there), and three.js's own passes (AO, reflections, bloom: changing them means patching three's shaders). `node scripts/half-check.mjs` compiles every half function with naga in both precisions.

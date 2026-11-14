@@ -8,6 +8,8 @@
 // No three.js here (the app loads it only with the first 3D game): three's WebGPU build is a dynamic import.
 // Not for games: they get 3D through gs.toon, gs.hd and gs.ar.
 import { installPack } from './pack.js';
+import { watchDevice } from './pipes.js';
+import { STEER } from './steering.js';
 
 /** 'webgl' or 'webgpu' for a renderer from makeRenderer or webgpu(). */
 export const backend = r => r?.gsBackend || 'webgl';
@@ -93,6 +95,9 @@ export function prepareGPU() {
   if (pick !== 'webgpu' || LOSS.n > LOSS.most) return Promise.resolve(null);   // (lost too often this session: WebGL)
   return gpuLoad ||= (async () => {
     try {
+      // (the phone and driver steering list may keep this device on WebGL: src/steer.js, read at start; waited for at most a second)
+      await Promise.race([STEER.ready, new Promise(ok => setTimeout(ok, 1200))]);
+      if (pick === 'webgpu' && STEER.webgpu === false) { console.info('WebGPU: off on this device (steering list: ' + STEER.rules.join(', ') + ')'); return null; }
       if (!await hasWebGPU()) { console.warn('WebGPU: no adapter'); return null; }
       const [W, fx] = await Promise.all([import('three/webgpu'), import('./hd3d-gpu.js')]);
       const canvas = document.createElement('canvas');
@@ -117,6 +122,7 @@ export function prepareGPU() {
       r.gsHdr = hdr && (r.backend?.context?.getConfiguration?.()?.toneMapping?.mode ?? 'extended') === 'extended';
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path
       r.gsBackend = 'webgpu';
+      watchDevice(r.backend.device, W.REVISION);   // (pipelines a round makes are noted, and made ahead next time: pipes.js)
       fx.manyLights(r);
       fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
       freeUnbuilt(r);
@@ -151,7 +157,7 @@ function freeUnbuilt(r) {
 let hdrPick = null;
 /** Tests: true or false to pick HDR output before WebGPU starts; null (default): the screen decides. */
 export function setHdr(v) { hdrPick = v; }
-function hdrScreen() { try { return hdrPick ?? (typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches); } catch (_) { return false; } }
+function hdrScreen() { try { return hdrPick ?? (STEER.hdr !== false && typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches); } catch (_) { return false; } }
 /** The ready WebGPU setup { r (WebGPURenderer), W (three/webgpu), fx (hd3d-gpu.js) }, or null (not supported, not ready, or WebGL forced for a test). */
 export const webgpu = () => pick === 'webgpu' ? gpu : null;
 

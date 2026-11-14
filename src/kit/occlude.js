@@ -115,7 +115,7 @@ function boundsOf(o, b, kind) {
   }
   if (o.userData.gsMoved !== undefined) return 0;   // placed on the chip
   if (kind === 4 && !o.frustumCulled) return 0;   // (its maker says its box is not where it draws)
-  if (o.isBatchedMesh && !o.isDetailMesh) { o.computeBoundingBox(); if (!o.boundingBox || o.boundingBox.isEmpty()) return 2; boxUnder(b, o.boundingBox, o.matrixWorld.elements); return 1; }
+  if (o.isBatchedMesh && (!o.isDetailMesh || o.copySrc)) { o.computeBoundingBox(); if (!o.boundingBox || o.boundingBox.isEmpty()) return 2; boxUnder(b, o.boundingBox, o.matrixWorld.elements); return 1; }
   if (!g.boundingBox) g.computeBoundingBox();
   const bb = g.boundingBox; if (!bb || !(bb.min.x <= bb.max.x)) return 2;
   boxUnder(b, bb, o.matrixWorld.elements);

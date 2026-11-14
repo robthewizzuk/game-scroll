@@ -91,6 +91,11 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   of frames were slow, ok or fast, what was stepped and when, and frames that weren't counted and why (under
   the loading screen, after a gap of 100 ms or more). The report's data keeps every window (`rec.steps`).
 - Crash and stutter reports say `mac` or `windows`, with the graphics chip as the model ("Apple M2 Pro").
+- **The steering list** (docs/crash-reports.md, Chips and phones to steer) sees a computer as `mac`,
+  `windows` or `linux`, with its graphics chip as the model and the chip, and the graphics driver's version
+  (`gsDesktop.gpuInfo()`, from Electron's `app.getGPUInfo('basic')`: the active chip's vendor and driver) for
+  a rule's `driver` range, so a rule can steer one driver of one card (`driver: '<31.0.101.5186'`), as a
+  phone rule steers one browser version.
 
 **Where it runs.** The app is served from `https://localhost`, the Android app's own address, read straight
 from the app's files (`protocol.handle` in `desktop/main.cjs`): the games host, the API and the page's security

@@ -4,8 +4,8 @@
 // the phone test tour (a bot that plays as a guest, the frame report, the plugin check, the engine test scenes), and loading a big
 // 3D game a little each frame (each pass on a fresh copy of the game's file), getting a 3D round ready behind
 // a loading screen after Play (its first frames and its first update, before the round starts), the fill-ins for
-// old WebViews, and that a test build sends no play stats or crash reports.
-// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|scenes|framegen|loading|ready|oldweb|reports ...]
+// old WebViews, that a test build sends no play stats or crash reports, and updates from Google Play.
+// Usage: npm run build:bundled && node scripts/app-test.cjs [awake|touch|pixels|music|saves|fonts|looks|tour|scenes|framegen|loading|ready|oldweb|reports|updates ...]
 //   (no names: every part; -scenes or any -name: every part but those; SHOTS=<dir> saves a picture of every font and look).
 //   scenes (the engine test scenes, about 6 of the 11 minutes on GitHub) runs as a job of its own there.
 const { chromium } = require('playwright');
@@ -14,10 +14,10 @@ let failed = 0;
 const check = (ok, what, more = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${ok || !more ? '' : '\n     ' + more}`); };
 const PIXEL = 'arrow-maze', CASUAL = 'stack';
 
-async function open(b, { width = 390, height = 844, dpr = 3, before } = {}) {
+async function open(b, { width = 390, height = 844, dpr = 3, before, arg } = {}) {
   const ctx = await b.newContext({ viewport: { width, height }, hasTouch: true, isMobile: true, deviceScaleFactor: dpr });
   const p = await ctx.newPage(); p.errs = []; p.on('pageerror', e => p.errs.push(e.message));
-  if (before) await p.addInitScript(before);
+  if (before) await p.addInitScript(before, arg);
   await p.goto('http://localhost:4184/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(300);
   p.game = async (id, change) => {
     if (change) await p.evaluate(([id, change]) => Object.assign(__gs.GAMES.find(g => g.id === id), change), [id, change]);
@@ -1162,10 +1162,108 @@ async function reports(b) {
   await q.done();
 }
 
+/* ---------- updates from Google Play (src/update.js), with a stand-in for the phone's plugin ---------- */
+// The stand-in answers check() with `answer` and start() with `result`, notes every call, and can send
+// the plugin's 'state' events. The app looks by itself 4 seconds after it opens.
+function fakePlay(o) {
+  const f = window.__gsPlayFake = { calls: [], answer: o.answer, result: o.result || 'accepted', on: [] };
+  f.check = async () => { f.calls.push('check'); return { ...f.answer }; };
+  f.start = async ({ type }) => { f.calls.push('start:' + type); return { result: f.result }; };
+  f.complete = async () => { f.calls.push('complete'); };
+  f.addListener = (name, fn) => { f.on.push(fn); return Promise.resolve({ remove() {} }); };
+  f.send = s => f.on.forEach(fn => fn(s));
+}
+async function updates(b) {
+  console.log('\nUpdates from Google Play');
+  const FROM_PLAY = { play: true, installer: 'com.android.vending', versionCode: 10, versionName: '1.0.10', available: 'yes', availableVersionCode: 12, priority: 0, staleDays: 1, immediate: true, flexible: true, status: 'none', bytes: 0, total: 0 };
+  const calls = p => p.evaluate(() => __gsPlayFake.calls.join(' '));
+  const looked = p => p.waitForFunction(() => __gsPlayFake.calls.includes('check'), null, { timeout: 15000 });
+  const shot = async (p, name) => { if (process.env.SHOTS) await p.screenshot({ path: require('path').join(process.env.SHOTS, name + '.png') }); };
+
+  // An APK from anywhere but Play: Play is never asked to do anything
+  let p = await open(b, { before: fakePlay, arg: { answer: { play: false, installer: 'com.google.android.packageinstaller', versionCode: 7, versionName: '1.0.7' } } });
+  await looked(p); await p.waitForTimeout(400);
+  let st = await p.evaluate(() => __gs.update.status());
+  check(await calls(p) === 'check' && !st.play && st.state === 'away' && st.version === '1.0.7', 'a copy not from Google Play looks once, offers nothing', JSON.stringify([await calls(p), st]));
+  await p.click('#settings'); await p.waitForTimeout(300);
+  const row = await p.evaluate(() => document.querySelector('.set-updates')?.innerText || '');
+  check(/Version\s*1\.0\.7/.test(row) && /didn’t come from Google Play/.test(row) && !/Check for updates/.test(row), 'and Settings says which version it is, with no update button', JSON.stringify(row));
+  await p.done();
+
+  // From Play: Play's sheet, a background download, then the restart card (never over a round)
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY } });
+  await p.game(CASUAL); await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:flexible', 'an update from Play: Play\'s own sheet offers it', await calls(p));
+  await p.evaluate(() => __gsPlayFake.send({ status: 'downloading', bytes: 40, total: 100 })); await p.waitForTimeout(50);
+  st = await p.evaluate(() => __gs.update.status());
+  const early = await p.evaluate(() => !!document.querySelector('.upd.on'));
+  check(st.state === 'downloading' && st.pct === 40 && !early, 'it downloads in the background with nothing on screen', JSON.stringify(st));
+  await p.evaluate(() => __gsPlayFake.send({ status: 'downloaded', bytes: 100, total: 100 })); await p.waitForTimeout(700);
+  check(await p.evaluate(() => !!document.querySelector('.upd.on')), 'once it is downloaded, a card offers to restart into it');
+  await shot(p, 'update-ready');
+  await p.evaluate(() => __gs.start()); await p.waitForTimeout(1400);
+  const during = await p.evaluate(() => [__gs.active.state, !!document.querySelector('.upd.on')]);
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(1400);
+  const after = await p.evaluate(() => !!document.querySelector('.upd.on'));
+  check(during[0] === 'playing' && !during[1] && after, 'the card steps aside while a round is played and comes back after', JSON.stringify({ during, after }));
+  await p.click('.upd-go'); await p.waitForTimeout(200);
+  check((await calls(p)).endsWith('complete'), 'Restart has Play install it', await calls(p));
+  await p.done();
+
+  // "No thanks" on Play's sheet: not asked again today, unless the player asks in Settings
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY, result: 'declined' } });
+  await looked(p); await p.waitForTimeout(300);
+  await p.evaluate(() => __gs.update.check(false)); await p.waitForTimeout(400);
+  const no = await p.evaluate(() => +localStorage.getItem('gs_update_no'));
+  check(await calls(p) === 'check start:flexible check' && no > 0, 'after No thanks it looks again but doesn\'t ask today', await calls(p));
+  await p.click('#settings'); await p.waitForTimeout(400);
+  await p.evaluate(() => document.querySelector('.set-upd').click()); await p.waitForTimeout(400);
+  check((await calls(p)).endsWith('check start:flexible'), 'Settings\' button asks again', await calls(p));
+  await p.done();
+
+  // Priority 4-5: Play's full-screen update; backing out leaves a card that can't be closed
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, priority: 5 }, result: 'declined' } });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate', 'a priority 5 update is Play\'s full-screen one', await calls(p));
+  const wall = () => p.evaluate(() => !!document.querySelector('dialog.upd-wall[open]'));
+  check(await wall(), 'backing out of it leaves the "Time to update" card');
+  await shot(p, 'update-wall');
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  check(await wall(), 'which Escape doesn\'t close');
+  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'none' }; }); await p.click('dialog.upd-wall .info-play'); await p.waitForTimeout(400);
+  check(!await wall(), 'and it goes once Play has nothing newer', await calls(p));
+  await p.done();
+
+  // The catalogue's minimum version, an interrupted full-screen update, and one downloaded earlier
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY } });
+  await p.evaluate(() => { __gs.remote.app = () => ({ android: { min: 11 } }); });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate' && !await p.evaluate(() => !!document.querySelector('dialog.upd-wall[open]')), 'a copy older than the catalogue\'s minimum gets the full-screen update', await calls(p));
+  await p.done();
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, available: 'resume', priority: 0 } } });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate', 'a full-screen update that was cut off carries on', await calls(p));
+  await p.done();
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, status: 'downloaded' } } });
+  await looked(p); await p.waitForTimeout(700);
+  check(await calls(p) === 'check' && await p.evaluate(() => !!document.querySelector('.upd.on')), 'one downloaded earlier goes straight to the restart card', await calls(p));
+  await p.done();
+
+  // A round being played holds the offer back until it ends
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, available: 'none' } } });
+  await p.game(CASUAL); await looked(p); await p.waitForTimeout(200);
+  await p.evaluate(() => __gs.start()); await p.waitForTimeout(300);
+  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'yes' }; __gs.update.check(); }); await p.waitForTimeout(1500);
+  const held = await calls(p);
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(3600);
+  check(held === 'check' && (await calls(p)) === 'check check start:flexible', 'an offer waits for the round to end', JSON.stringify([held, await calls(p)]));
+  await p.done();
+}
+
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, scenes, framegen: framegenScenes, loading, ready, oldweb, reports };
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, scenes, framegen: framegenScenes, loading, ready, oldweb, reports, updates };
   const unknown = only.map(n => n.replace(/^-/, '')).filter(n => !parts[n]);
   if (unknown.length) { console.log(`no part called ${unknown.join(', ')}: the parts are ${Object.keys(parts).join(', ')}`); process.exit(1); }
   const want = only.filter(n => !n.startsWith('-')), skip = only.filter(n => n.startsWith('-')).map(n => n.slice(1));

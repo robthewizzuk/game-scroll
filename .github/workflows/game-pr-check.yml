@@ -59,6 +59,10 @@ jobs:
       - name: Types for gs cover every part
         run: npm run types-check
 
+      # (the phone and driver steering list, src/steer-list.js: a rule a phone would not understand does nothing there, silently)
+      - name: The phone and driver steering list is one the app understands
+        run: node scripts/steer.mjs
+
       # TypeScript reads every line of every game against src/gamescroll.d.ts (about a second): a kit,
       # method, option or definition field that doesn't exist. The self-test first makes sure it still sees them.
       - name: Games use gs the way its types describe
@@ -293,7 +297,7 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss)|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|src/kit/pipes\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss|shader-replay)|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
 
       - name: Node, packages and the test browser
         if: steps.changed.outputs.run
@@ -314,6 +318,12 @@ jobs:
       - name: A lost graphics chip comes back
         if: ${{ !cancelled() && steps.changed.outputs.run }}
         run: npm run build:bundled && node scripts/gpu-loss.cjs gravity-grip bumper-bowl && node scripts/gpu-loss.cjs gravity-grip --when feed
+
+      # (the pipelines a round made in play, noted and made ahead the next time the game comes up: src/kit/pipes.js. Two
+      # launches of the browser on one profile; the second must make ahead what the first noted. scripts/shader-replay.cjs)
+      - name: Shaders a round made are made ahead next time
+        if: ${{ !cancelled() && steps.changed.outputs.run }}
+        run: node scripts/shader-replay.cjs paint-run bunker-breakout --runs 2
 
       # (dust, smoke and glows are drawn over the scene: the ground round each puff is shaded as it is without it,
       # with no square where the puff's corners are; the scene checks itself, scripts/look-compare/index.html dustScene)
@@ -376,7 +386,7 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|saves|soundtrack|sfx|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(sound|voice-fx|acoustics|instruments|compose|foley|awake|rhythm|lazy|cleanup|tick|progress|fontlib|font-files|pixel|gfx|materials2d|sketch|icons|icon-data)\.js|scripts/(app-test\.cjs|sound-test)|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No app shell or sound changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/(main|saves|soundtrack|sfx|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill|update)\.js|src/kit/(sound|voice-fx|acoustics|instruments|compose|foley|awake|rhythm|lazy|cleanup|tick|progress|fontlib|font-files|pixel|gfx|materials2d|sketch|icons|icon-data)\.js|scripts/(app-test\.cjs|sound-test)|index\.html|vite\.config\.js|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No app shell or sound changes."; fi
 
       - name: Node, packages and the test browser
         if: steps.changed.outputs.run

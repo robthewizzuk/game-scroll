@@ -78,6 +78,7 @@ const loaded = new Map();    // id -> { hash, def }
 const inflight = new Map();  // id -> Promise
 const failed = new Map();    // id -> time of the last failed download (skipped for a while, e.g. offline)
 let addGame = null, onChange = null;
+let appInfo = null;   // the catalogue's word on the app itself: { android: { min } } (store/app-update.json)
 const known = new Map();   // id -> the app's entry for it (metadata, likes)
 
 // Can this app run the game? It must only use shared exports this build actually has.
@@ -97,9 +98,14 @@ function refreshMeta(e, meta) {
   return diff;
 }
 
+// the phone and driver steering list the catalogue carries (src/steer.js): the saved catalogue's is used from the start of
+// the app (null: none yet, so the one built into the app), a fresh one's from the next start
+let steerList = null, steerAtStart = null;
 function apply(m) {
   const added = [], changed = [];
   if (!m || m.v !== 1 || !Array.isArray(m.games)) return { added, changed };
+  if (Array.isArray(m.steer)) steerList = m.steer;
+  appInfo = m.app && typeof m.app === 'object' ? m.app : null;
   for (const g of m.games) {
     if (!g || !g.id || !g.file || !g.hash || !g.meta || g.meta.id !== g.id || !compatible(g)) continue;
     entries.set(g.id, g);
@@ -175,6 +181,8 @@ async function fetchCode(g) {
 
 export const remote = {
   enabled: !!BASE,
+  /** The catalogue's phone and driver steering list, as it was when the app started (null: none saved). */
+  steer: () => steerAtStart,
 
   /** add(meta): put a game into the app's list and return it.
    *  changed(added, updated): the fresh catalogue brought new games, or new metadata for listed ones. */
@@ -182,6 +190,7 @@ export const remote = {
     addGame = add; onChange = changed;
     // The saved copy was checked when it was saved (for a signed catalogue, the verified text).
     try { const m = JSON.parse(localStorage.getItem(MANIFEST_KEY) || 'null'); savedBuilt = +m?.built || 0; apply(m); } catch (_) {}
+    steerAtStart = steerList;
   },
 
   /** Fetch the latest catalogue. Resolves true if it got one. Runs at start-up and on return to the app. */
@@ -252,6 +261,10 @@ export const remote = {
     index = {}; saveIndex();
     try { await idb('readwrite', s => s.clear()); } catch (_) {}
   },
+
+  /** What the catalogue says about the app itself, e.g. { android: { min: 412 } }: the oldest Android
+   *  version code that may carry on (src/update.js gets older copies updated from Google Play). */
+  app() { return appInfo; },
 
   status() { return { host: BASE || null, signed: SIGNED, games: entries.size, loaded: [...loaded.keys()], cache: this.cacheInfo() }; },
 };

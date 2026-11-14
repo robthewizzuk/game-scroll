@@ -13,6 +13,8 @@ import { store } from './util.js';
 import { progress } from './kit/progress.js';
 import { playstats } from './playstats.js';
 import { perf } from './perf.js';
+import { STEER } from './kit/steering.js';
+import { steerState } from './steer.js';
 
 /** Hidden from the feed for everyone. Add an id here to pull a game without deleting its file. */
 // ar-lab is the native AR test scene: opened from Settings > AR test, never in the feed.
@@ -41,7 +43,8 @@ export function mergeRatings(other) {
   }
   save();
 }
-export const isHidden = id => BENCHED.has(id) || rating(id) === -1;
+// (a game the phone and driver steering list hides on this device, src/steer.js: it misbehaves here)
+export const isHidden = id => BENCHED.has(id) || rating(id) === -1 || STEER.games.get(id)?.hide === true;
 export function logRound(id, ms) { const x = row(id); x.plays++; x.secs = Math.round(x.secs + ms / 1000); save(); }
 
 /* ---------- toast with undo ---------- */
@@ -81,6 +84,7 @@ function perfReport(games) {
   const errs = (perf.global?.errors || []).slice(0, 15);
   const i = perf.info();
   return [
+    steerLine(),
     `\nSTUTTERS ON THIS PHONE (${i.model}, ${i.os || i.platform}, ${i.form} screen, build ${i.app}):`,
     ...(mine.length ? mine.map(([g, c]) => `${g.id} (${g.title}) · ${smooth(c)}, longest ${Math.round(c.x)} ms`) : ['none measured yet']),
     ...(perf.global ? [
@@ -91,6 +95,12 @@ function perfReport(games) {
       `Full table: ${perf.reportUrl}`,
     ] : []),
   ];
+}
+
+// what the phone and driver steering list did on this phone (src/steer.js; docs/crash-reports.md, Chips and phones to steer)
+function steerLine() {
+  const st = steerState(), games = Object.entries(st.games).map(([id, k]) => `${id} ${JSON.stringify(k)}`);
+  return `\nSTEERING LIST (the ${st.from === 'app' ? 'app\'s own' : 'catalogue\'s'}): ${st.rules.length ? `${st.rules.join(', ')} · ${JSON.stringify(st.knobs)}${games.length ? ' · ' + games.join(', ') : ''}` : 'no rules for this phone'}`;
 }
 
 /* ---------- report ---------- */

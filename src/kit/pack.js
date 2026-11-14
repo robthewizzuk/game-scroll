@@ -10,6 +10,8 @@
 // and masks). HD.pack = false turns it off (tests); WebGL draws the plain textures as before.
 // Kit use only (gpu.js installs it on the WebGPU renderer).
 
+import { STEER } from './steering.js';
+
 const packed = new WeakMap();   // texture source -> { gpu (GPUTexture) | null (failed), users: Set<Texture> } per renderer
 const stats = { packed: 0, saved: 0, failed: 0 };
 /** packed: textures packed now; saved: bytes of graphics memory saved; on: false turns packing off (HD.pack). */
@@ -64,7 +66,7 @@ export function installPack(r) {
     const update = textures.updateTexture.bind(textures);
     textures.updateTexture = (t, o = {}) => {
       const kind = t.userData?.gsPack, src = t.source;
-      if (!kind || !src || t.isRenderTargetTexture || !stats.on) return update(t, o);
+      if (!kind || !src || t.isRenderTargetTexture || !stats.on || STEER.pack === false) return update(t, o);   // (or the steering list keeps this device's textures plain: src/steer.js)
       let e = per.get(src);
       if (!e) per.set(src, e = { gpu: undefined, kind, users: new Set() });
       e.users.add(t);
