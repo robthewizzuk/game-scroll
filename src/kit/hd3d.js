@@ -3853,6 +3853,20 @@ function fadeReady(v, G, r, per) {
     // a level on bones not shown yet is taken into the chip's pool now (skin-gpu.js), so its shaders are built as
     // they will be drawn: posed from the pool, not in their own vertex stage
     if (o.isSkinnedMesh) SK?.take(o);
+    // a level cluster detail draws through cut twins (detail.js cutTwin): the twins are what is drawn, theirs the shaders
+    // to build (their own ones are holdNew's), each with its part of the dithered twins
+    const e = o.userData.gsDetailed ? v.details?.map.get(o) : null;
+    if (e && per === 'object') {
+      const tw = fadeTwinsOf(o, G, per);
+      if (!tw || (Array.isArray(tw) && tw.some(t => !t))) return false;
+      for (const p of e.parts) {
+        const t = p.twin; if (!t?.isCutMesh) continue;
+        if (!(t.layers.mask & 1) && !o.userData.noHold) return false;   // (its own shader still building)
+        const m = partMaterial(tw, p); if (!m) continue;
+        const k = shaderKeyAs(t, m); if (!seen.has(k)) { build(t, k, m); return false; }
+      }
+      return true;
+    }
     // a person's level coming in is drawn with its own shader once the fade ends: built too (on WebGL nothing else
     // builds a hidden thing's ahead), and while holdNew has it back for that build, it waits
     if (per === 'object' && !o.userData.noHold) {
@@ -3877,9 +3891,18 @@ function fadeOn(v, G, r, smooth, still) {
   for (let i = 0; i < FADE_LIST.length; i += 3) {
     const o = FADE_LIST[i], val = FADE_LIST[i + 1], casts = FADE_LIST[i + 2];
     keep.push(o, o.material, o.visible, o.castShadow, o.onBeforeRender);
-    if (!val) { o.visible = false; continue; }   // (a level waiting for its twins' shaders: not shown yet)
+    // (a level cluster detail draws through cut twins, detail.js cutTwin: the twins fade in its place, with its share)
+    const e = o.userData.gsDetailed ? v.details?.map.get(o) : null;
+    if (e) for (const p of e.parts) { const t = p.twin; if (t) keep.push(t, t.material, t.visible, t.castShadow, t.onBeforeRender); }
+    if (!val) { o.visible = false; if (e) for (const p of e.parts) if (p.twin) p.twin.visible = false; continue; }   // (a level waiting for its twins' shaders: not shown yet)
     o.material = fadeTwinsOf(o, G, 'object');
     if (!G) { hookGL(o); if (!casts) o.castShadow = false; }   // (WebGL: the value goes in before each draw; the shadow from one level at a time)
+    if (e) for (const p of e.parts) {
+      const t = p.twin; if (!t?.isCutMesh) continue;   // (a still mesh's clusters, DetailMesh: drawn as they are)
+      const m = partMaterial(o.material, p); if (!m) continue;
+      t.material = m; t.userData.gsFadeV = o.userData.gsFadeV;
+      if (!G) { hookGL(t); if (!casts) t.castShadow = false; }
+    }
   }
   if (G) for (const s of v.sets || []) {
     const f = s.userData.gpuTwin?.fades?.(); if (!f) continue;
@@ -4115,7 +4138,7 @@ const reliefBudget = () => (HD.relief === false ? 0 : Math.max(0, HD.reliefTris 
 function inScene(o, scene) { for (let x = o; x; x = x.parent) if (x === scene) return true; return false; }
 function detailDrop(v, e, never = false) {
   const o = e.o, D = v.details;
-  D.map.delete(o); e.gone = true;
+  D.map.delete(o); e.gone = true; if (e.kind === 'cut' && e.shown) v._shAgain = 3;
   if (never && !e.relief) NO_DETAIL.add(e.g);
   for (const p of e.parts) if (p.twin) { p.twin.removeFromParent(); if (p.twin.isDetailMesh) p.twin.dispose(); else p.twin.geometry.dispose(); p.twin = null; }
   e.twin = null;
@@ -4142,6 +4165,10 @@ function detailEntry(o, g, R) {
 // before the frame's other housekeeping: new big meshes are found and asked for, twins are made and follow their meshes
 function autoDetail(v, now, quiet, ph = 1080) {
   const D = v.details ||= { map: new Map(), t: 0, rk: 1 };
+  // a body on bones (cut twins) shown in clusters or whole again: its shadow is drawn again over the next frames, until
+  // it is posed for every pass on the chip (skin-gpu.js), where a body that keeps still would otherwise keep a shadow
+  // drawn before then (the shadow cache sees nothing move)
+  if (v._shAgain > 0) { v._shAgain--; v.shadowsDirty(); }
   // Real surface detail keeps to its triangles a frame (reliefBudget): what its twins drew last frame says how
   // much coarser than HD.reliefPx they must all be drawn (rk), eased back as the camera moves off. A step finer
   // that went over is not tried again (D.bad: the scale that went over) until the view is a quarter lighter or
@@ -4342,7 +4369,7 @@ function detailShow(v) {
       else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twins: it never waits as well)
     } else {
       for (const p of e.parts) if (!(p.twin.layers.mask & 1)) p.twin.layers.mask |= 1;
-      e.shown = true; o.userData.gsDetailed = true; if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
+      e.shown = true; o.userData.gsDetailed = true; if (e.kind === 'cut') { v._shAgain = 3; v._fadeOk = null; } if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
     }
   }
 }
@@ -4379,7 +4406,7 @@ const listKind = a => {
   return ':' + name[0] + A.BYTES_PER_ELEMENT + (a.normalized ? 'n' : '') + (x ? 'x' : '');
 };
 function shaderKey(o) {
-  const mat = o.material, g = o.geometry, c = KEYS.get(o), pk = SKIN_POOLED.has(o);   // (pk: posed once a frame on the chip, skin-gpu.js: other shaders)
+  const mat = o.material, g = o.geometry, c = KEYS.get(o), pk = SKIN_POOLED.has(o.userData.gsPoseOf || o);   // (pk: posed once a frame on the chip, skin-gpu.js: other shaders)
   if (c && c.rs === o.receiveShadow && c.pk === pk && sameMats(c, mat, g)) return c.key;
   const ms = Array.isArray(mat) ? mat : [mat];
   // (three draws a two-sided see-through material as back faces then front faces, marking it changed for each,
@@ -4399,7 +4426,7 @@ function shaderKey(o) {
 // the key a thing would have with material m on it (its close-up twin, before that is swapped in), kept for each thing
 const KEYS_AS = new WeakMap();
 function shaderKeyAs(o, m) {
-  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '', pk = SKIN_POOLED.has(o);
+  const c = KEYS_AS.get(o), g = o.geometry?.id ?? '', pk = SKIN_POOLED.has(o.userData.gsPoseOf || o);
   if (c && c.m === m && c.v === m.version && c.g === g && c.rs === o.receiveShadow && c.pk === pk) return c.key;
   const keep = o.material, was = KEYS.get(o);
   o.material = m; KEYS.delete(o);
@@ -4410,7 +4437,7 @@ function shaderKeyAs(o, m) {
 }
 function remember(o, sig, key, mat, g) {
   const arr = Array.isArray(mat);
-  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
+  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o.userData.gsPoseOf || o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
     ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(m => m.version) : null });
 }
 export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
