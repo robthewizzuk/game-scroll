@@ -64,7 +64,7 @@ function tapPage() {
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) errs.push(m.text().slice(0, 300)); });
   await p.addInitScript(tapPage);
   let run, out;
-  const read = () => p.evaluate(() => { const S = window.__gpuCalls; S.on = false; const d = (window.__probeGpu || window.__gpu?.now?.())?.r?.backend?.device || S.dev; return { big: S.big, frames: S.frames, n: S.n, bytes: S.bytes, last: S.last, uploads: [...S.uploads], binds: [...S.binds], features: d ? [...d.features] : [], limits: d ? { maxColorAttachmentBytesPerSample: d.limits.maxColorAttachmentBytesPerSample, maxStorageBuffersPerShaderStage: d.limits.maxStorageBuffersPerShaderStage, maxSampledTexturesPerShaderStage: d.limits.maxSampledTexturesPerShaderStage, maxStorageBufferBindingSize: d.limits.maxStorageBufferBindingSize, maxBufferSize: d.limits.maxBufferSize } : null, format: navigator.gpu.getPreferredCanvasFormat() }; });
+  const read = () => p.evaluate(() => { const S = window.__gpuCalls; S.on = false; const d = (window.__probeGpu || window.__gpu?.now?.())?.r?.backend?.device || S.dev; const H = d?.gsHold?.stats; return { hold: H ? { on: H.on, sent: H.sent - (S.sent0 || 0), held: H.held - (S.held0 || 0), why: H.why, names: H.names } : null, big: S.big, frames: S.frames, n: S.n, bytes: S.bytes, last: S.last, uploads: [...S.uploads], binds: [...S.binds], features: d ? [...d.features] : [], limits: d ? { maxColorAttachmentBytesPerSample: d.limits.maxColorAttachmentBytesPerSample, maxStorageBuffersPerShaderStage: d.limits.maxStorageBuffersPerShaderStage, maxSampledTexturesPerShaderStage: d.limits.maxSampledTexturesPerShaderStage, maxStorageBufferBindingSize: d.limits.maxStorageBufferBindingSize, maxBufferSize: d.limits.maxBufferSize } : null, format: navigator.gpu.getPreferredCanvasFormat() }; });
   if (game) {
     // a real game, played with no input for a few seconds (npm run build:bundled first)
     await p.goto(`http://localhost:${port}/`); await p.waitForFunction(() => window.__gs, null, { timeout: 30000 }); await p.waitForTimeout(400);
@@ -79,7 +79,7 @@ function tapPage() {
     const box = await p.evaluate(() => { const c = __gs.active.canvas.getBoundingClientRect(); return { x: c.x, y: c.y, w: c.width, h: c.height }; });
     const play = async ms => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await p.evaluate(() => __gs.active.state) !== 'playing') await p.evaluate(() => __gs.start()); await p.mouse.move(box.x + Math.random() * box.w, box.y + Math.random() * box.h); await p.mouse.down(); await p.mouse.move(box.x + Math.random() * box.w, box.y + Math.random() * box.h, { steps: 3 }); await p.waitForTimeout(60 + Math.random() * 120); await p.mouse.up(); } };
     await play(1500);
-    await p.evaluate(w => { const S = window.__gpuCalls; S.reset(); S.on = true; S.who = w; }, argv.includes('--who'));
+    await p.evaluate(w => { const S = window.__gpuCalls; S.reset(); S.on = true; S.who = w; const H = ((window.__probeGpu || window.__gpu?.now?.())?.r?.backend?.device || S.dev)?.gsHold?.stats; if (H) { H.trace = true; H.why = {}; H.names = {}; S.sent0 = H.sent; S.held0 = H.held; } }, argv.includes('--who'));
     await play(seconds * 1000);
     if (process.env.DEBUG_CALLS) console.log('debug', JSON.stringify(await p.evaluate(() => ({ on: window.__gpuCalls.on, keys: Object.keys(window.__gpuCalls.n).length, frames: window.__gpuCalls.frames, passes: window.__gpuCalls.passes.length, state: __gs.active.state, id: __gs.active.def?.id, t: performance.now() }))));
     out = await read();
@@ -90,7 +90,7 @@ function tapPage() {
     await p.waitForFunction(() => window.ready || window.result, null, { timeout: 600000 });
     const prep = await p.evaluate(() => window.prep());
     console.log('scene', JSON.stringify(prep));
-    await p.evaluate(w => { const S = window.__gpuCalls; S.reset(); S.on = true; S.who = w; }, argv.includes('--who'));
+    await p.evaluate(w => { const S = window.__gpuCalls; S.reset(); S.on = true; S.who = w; const H = ((window.__probeGpu || window.__gpu?.now?.())?.r?.backend?.device || S.dev)?.gsHold?.stats; if (H) { H.trace = true; H.why = {}; H.names = {}; S.sent0 = H.sent; S.held0 = H.held; } }, argv.includes('--who'));
     run = await p.evaluate(() => window.fly());
     out = await read();
   }
@@ -102,6 +102,8 @@ function tapPage() {
   for (const [k, v] of Object.entries(out.bytes).sort((a, c) => c[1] - a[1])) console.log(String((v / f / 1024).toFixed(1) + ' KB').padStart(12), k);
   if (argv.includes('--passes')) { console.log(`\nthe last frame's passes (${out.last.length}):`); out.last.forEach((s, i) => console.log(String(i).padStart(3), s.kind === 'compute' ? `compute  ${s.label}  dispatches ${s.dispatches}` : `render   ${s.label}  draws ${s.draws}${s.bundles ? ' bundles ' + s.bundles : ''}${s.who ? '   <- ' + s.who : ''}\n       ${s.colour.join('\n       ')}${s.depth ? '\n       depth ' + s.depth : ''}`)); }
   if (argv.includes('--uploads')) { console.log('\nbuffers written most (count, KB a frame, label [size]):'); for (const [k, u] of out.uploads.sort((a, c) => c[1].n - a[1].n).slice(0, 40)) console.log(String(per(u.n)).padStart(9), String((u.bytes / f / 1024).toFixed(2)).padStart(9), k); console.log('\nbind groups made most:'); for (const [k, n] of out.binds.sort((a, c) => c[1] - a[1]).slice(0, 20)) console.log(String(per(n)).padStart(9), k); }
+  // one submit a frame (src/kit/submit.js): what asked for each early send, and for which buffer or picture
+  if (out.hold) { console.log(`\nsubmits held and sent together (${out.hold.on ? 'on' : 'off'}): ${per(out.hold.sent)} sends a frame, ${per(out.hold.held)} command buffers a frame went with others; sent for:`); for (const [k, v] of Object.entries(out.hold.why).sort((a, c) => c[1] - a[1])) console.log(String(per(v)).padStart(9), k); if (argv.includes('--why')) for (const [k, v] of Object.entries(out.hold.names).sort((a, c) => c[1] - a[1]).slice(0, 40)) console.log(String(per(v)).padStart(9), '  ' + k); }
   if (out.big.length) { console.log('\nbig buffers made (48 MB and over):'); for (const l of out.big) console.log('  ' + l); }
   console.log('\ncanvas format the browser prefers:', out.format, '\nlimits:', JSON.stringify(out.limits), '\nfeatures:', out.features.sort().join(', '));
   if (arg('--json')) fs.writeFileSync(arg('--json'), JSON.stringify({ q, run, ...out }, null, 1));

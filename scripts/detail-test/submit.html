@@ -1,0 +1,137 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// One submit a frame (src/kit/submit.js, HD.oneSubmit) for scripts/detail-test.cjs --page submit --webgpu.
+// 1. The rules, on the kit's own device with plain WebGPU: what is submitted is held; an upload to a buffer or a
+//    picture that a held pass uses sends the held passes first (the pass sees what was there when it was made); so do
+//    a read back, a buffer freed, and a buffer reached through a bind group, a vertex buffer or a render bundle; an
+//    upload to something no held pass uses sends nothing; whatever is left goes by itself when the code ends.
+// 2. A scene with a sun's shadows, a lamp's, moving and see-through things, walked for some frames with each pass sent
+//    by itself (as three does) and with the frame's passes sent together: the same picture every frame, in far
+//    fewer sends.
+//   ?gpu  ?tier=2  ?w=240&h=320
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { ONE_SUBMIT, flushGPU } from '../../src/kit/submit.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  if (!GPU) { check('WebGL: nothing is held (there is no queue)', ONE_SUBMIT.sent === 0); window.result = { out, info, checks }; throw new Error('done'); }
+  const d = G.r.backend.device, q = d.queue, S = d.gsHold, U = GPUBufferUsage;
+  check('the device\'s queue holds what is submitted', !!S && ONE_SUBMIT.on);
+  flushGPU();
+  /* ---------- 1. the rules ---------- */
+  const f32 = (...v) => new Float32Array(v);
+  const buf = (usage, data) => { const b = d.createBuffer({ size: 16, usage }); if (data) q.writeBuffer(b, 0, data); return b; };
+  const read = async b => { await b.mapAsync(GPUMapMode.READ); const v = [...new Float32Array(b.getMappedRange().slice(0))]; b.unmap(); return v; };
+  const copy = (a, b) => { const e = d.createCommandEncoder(); e.copyBufferToBuffer(a, 0, b, 0, 16); q.submit([e.finish()]); };
+  const sent = () => ONE_SUBMIT.sent, held = () => S.list.length;
+  {
+    const A = buf(U.COPY_SRC | U.COPY_DST, f32(1, 1, 1, 1)), B = buf(U.COPY_DST | U.MAP_READ), C = buf(U.COPY_DST), n0 = sent();
+    copy(A, B);
+    check('a submit is held, not sent', held() === 1 && sent() === n0, `${held()} held, ${sent() - n0} sent`);
+    q.writeBuffer(C, 0, f32(9, 9, 9, 9));
+    check('an upload to a buffer no held pass uses sends nothing', held() === 1 && sent() === n0, `${held()} held, ${sent() - n0} sent`);
+    q.writeBuffer(A, 0, f32(2, 2, 2, 2));
+    check('an upload to a buffer a held pass reads sends the held pass first', held() === 0 && sent() === n0 + 1, `${held()} held, ${sent() - n0} sent`);
+    const v = await read(B);
+    check('the held pass copied what was in the buffer when it was made, not the upload after it', v[0] === 1, v.join(','));
+    copy(A, B); const n1 = sent(), v2 = await read(B);
+    check('a read back of a buffer a held pass writes sends it first, and reads what it wrote', sent() === n1 + 1 && v2[0] === 2, v2.join(','));
+    copy(A, B); const n2 = sent(); A.destroy(); const v3 = await read(B);
+    check('a buffer freed while a held pass uses it: the pass is sent first', sent() >= n2 + 1 && v3[0] === 2, v3.join(','));
+    B.destroy(); C.destroy();
+  }
+  // through a bind group: a compute pass that copies a uniform into a list; through a vertex buffer and a render bundle: a point drawn where the buffer says
+  {
+    const mod = d.createShaderModule({ code: `@group(0) @binding(0) var<uniform> u: vec4f; @group(0) @binding(1) var<storage, read_write> s: array<vec4f>; @compute @workgroup_size(1) fn main() { s[0] = u; }` });
+    const pipe = d.createComputePipeline({ layout: 'auto', compute: { module: mod, entryPoint: 'main' } });
+    const Ub = buf(U.UNIFORM | U.COPY_DST, f32(3, 3, 3, 3)), Sb = buf(U.STORAGE | U.COPY_SRC), B = buf(U.COPY_DST | U.MAP_READ);
+    const bg = d.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: Ub } }, { binding: 1, resource: { buffer: Sb } }] });
+    const run = () => { const e = d.createCommandEncoder(), p = e.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0, bg); p.dispatchWorkgroups(1); p.end(); e.copyBufferToBuffer(Sb, 0, B, 0, 16); q.submit([e.finish()]); };
+    run(); const n0 = sent(); q.writeBuffer(Ub, 0, f32(4, 4, 4, 4)); const v = await read(B);
+    check('an upload to a uniform a held compute pass reads through its bind group: the pass ran with the old value', sent() >= n0 + 1 && v[0] === 3, v.join(','));
+    run(); const v2 = await read(B);
+    check('and the next pass runs with the new one', v2[0] === 4, v2.join(','));
+    Ub.destroy(); Sb.destroy(); B.destroy();
+  }
+  {
+    const mod = d.createShaderModule({ code: `struct O { @builtin(position) p: vec4f, @location(0) c: vec4f } @vertex fn v(@location(0) a: vec4f) -> O { var o: O; o.p = vec4f(0, 0, 0, 1); o.c = a; return o; } @fragment fn f(i: O) -> @location(0) vec4f { return i.c; }` });
+    const pipe = d.createRenderPipeline({ layout: 'auto', vertex: { module: mod, entryPoint: 'v', buffers: [{ arrayStride: 16, stepMode: 'instance', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }] }, fragment: { module: mod, entryPoint: 'f', targets: [{ format: 'rgba8unorm' }] }, primitive: { topology: 'point-list' } });
+    const tex = d.createTexture({ size: [1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST }), view = tex.createView();
+    const Vb = buf(U.VERTEX | U.COPY_DST, f32(1, 0, 0, 1)), B = d.createBuffer({ size: 256, usage: U.COPY_DST | U.MAP_READ });
+    const px = async () => { await B.mapAsync(GPUMapMode.READ); const v = [...new Uint8Array(B.getMappedRange().slice(0, 4))]; B.unmap(); return v; };
+    const draw = bundle => {
+      const e = d.createCommandEncoder(), p = e.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] });
+      if (bundle) p.executeBundles([bundle]); else { p.setPipeline(pipe); p.setVertexBuffer(0, Vb); p.draw(1, 1); }
+      p.end(); e.copyTextureToBuffer({ texture: tex }, { buffer: B, bytesPerRow: 256 }, [1, 1]); q.submit([e.finish()]);
+    };
+    draw(); q.writeBuffer(Vb, 0, f32(0, 1, 0, 1)); const a = await px();
+    check('an upload to a vertex buffer a held pass draws from: the pass drew the old colour', a[0] === 255 && a[1] === 0, a.join(','));
+    const be = d.createRenderBundleEncoder({ colorFormats: ['rgba8unorm'] }); be.setPipeline(pipe); be.setVertexBuffer(0, Vb); be.draw(1, 1); const bundle = be.finish();
+    draw(bundle); q.writeBuffer(Vb, 0, f32(0, 0, 1, 1)); const b = await px();
+    check('the same through a render bundle', b[1] === 255 && b[2] === 0, b.join(','));
+    draw(); const n0 = sent(); q.writeTexture({ texture: tex }, new Uint8Array([9, 9, 9, 9]), {}, [1, 1]);
+    check('an upload to a picture a held pass draws into sends the pass first', sent() === n0 + 1 && held() === 0, `${sent() - n0} sent`);
+    const e = d.createCommandEncoder(); e.copyTextureToBuffer({ texture: tex }, { buffer: B, bytesPerRow: 256 }, [1, 1]); q.submit([e.finish()]); const c = await px();
+    check('and the upload is what the picture holds afterwards', c[0] === 9, c.join(','));
+    copyLeft: { const A = buf(U.COPY_SRC | U.COPY_DST, f32(5, 5, 5, 5)), B2 = buf(U.COPY_DST | U.MAP_READ); copy(A, B2); const n1 = sent(); await frame(); check('what is still held when the code ends goes by itself', held() === 0 && sent() === n1 + 1, `${held()} held, ${sent() - n1} sent`); const v = await read(B2); check('and was run', v[0] === 5, v.join(',')); A.destroy(); B2.destroy(); }
+    Vb.destroy(); B.destroy(); tex.destroy();
+  }
+  {
+    HD.oneSubmit = false; ONE_SUBMIT.on = false;
+    const A = buf(U.COPY_SRC | U.COPY_DST, f32(6, 6, 6, 6)), B = buf(U.COPY_DST | U.MAP_READ), n0 = sent(); copy(A, B);
+    check('switched off: a submit goes at once', held() === 0 && sent() === n0 + 1);
+    HD.oneSubmit = true; ONE_SUBMIT.on = true; A.destroy(); B.destroy();
+  }
+
+  /* ---------- 2. a scene, both ways ---------- */
+  const v = new gs.hd.HDView({ bg: '#8fa6c4', fog: .01, amb: .35 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff0d6', 2.4, 14, [-.5, 1, .3]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const ground = new T.Mesh(new T.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), gs.hd.pbr('#7b8468', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  const R = gs.math.rng(3), movers = [];
+  for (let i = 0; i < 24; i++) {
+    const m = new T.Mesh(i % 3 ? new T.BoxGeometry(.8, .6 + R() * 1.6, .8) : new T.SphereGeometry(.5, 20, 14), gs.hd.pbr(['#b8553d', '#3d7ab8', '#c9b458', '#6a9a5a'][i % 4], { rough: .3 + R() * .6, metal: i % 5 ? 0 : .9 }));
+    m.position.set((R() - .5) * 14, .5, (R() - .5) * 10 - 2); m.castShadow = m.receiveShadow = true; v.scene.add(m); if (i % 2) movers.push(m);
+  }
+  const glass = new T.Mesh(new T.BoxGeometry(2.4, 1.6, .1), gs.hd.pbr('#9fd0e8', { rough: .05, transparent: true, opacity: .4 })); glass.position.set(0, .9, 1.2); v.scene.add(glass);
+  const lamp = gs.hd.spot('#ffd9a0', 30, 14, .6); lamp.position.set(3, 4, 2); lamp.target.position.set(0, 0, -2); v.scene.add(lamp, lamp.target);
+  v.cam.fov = 45; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+  const FR = 14;
+  const walk = async on => {
+    HD.oneSubmit = on;
+    const pics = [], counts = [];
+    for (let i = 0; i < FR + 6; i++) {
+      const t = Math.max(0, i - 6) / FR;   // (six frames in place first: shaders, shadow maps and the frames-before pictures settle)
+      v.cam.position.set(-5 + 10 * t, 2.2, 8 - 2 * t); v.cam.lookAt(0, .8, -1); v.cam.updateMatrixWorld();
+      movers.forEach((m, k) => { m.position.y = .5 + Math.abs(Math.sin(t * 6 + k)) * 1.2; m.rotation.y = t * 3 + k; });
+      const n0 = ONE_SUBMIT.sent; v.t = i / 60; v.render(x, W, H); await frame();
+      if (i >= 6) { pics.push(x.getImageData(0, 0, W, H).data); counts.push(ONE_SUBMIT.sent - n0); }
+    }
+    return { pics, counts, url: c.toDataURL() };
+  };
+  // (walked once before either is kept: the first walk makes the shaders, and frames drawn while they are made differ)
+  await walk(true); v.cut?.();
+  const each = await walk(false); out.each = each.url; v.cut?.();
+  const one = await walk(true); out.one = one.url; v.cut?.();
+  const again = await walk(false);
+  const differ = (a, b, tol) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const worst = (A, B, tol) => Math.max(...A.pics.map((p, i) => differ(p, B.pics[i], tol)));
+  const mean = a => a.reduce((s, n) => s + n, 0) / a.length;
+  // (two walks sent the same way are the measure of what differs by itself: effects that fill in from the frames before)
+  const noise = worst(each, again, 2), off = worst(each, one, 2);
+  info.sends = { 'each pass by itself': +mean(each.counts).toFixed(1), together: +mean(one.counts).toFixed(1), why: { ...ONE_SUBMIT.why } };
+  check('every frame is the same picture sent together as with each pass sent by itself', off <= Math.max(noise, W * H * .0005), `${off} pixels differ by more than 2 of 255 in the worst frame (two walks sent the same way: ${noise})`);
+  check('the frame goes to the chip in a quarter of the sends or fewer', mean(one.counts) <= mean(each.counts) / 4 && mean(one.counts) <= 8, `${mean(one.counts).toFixed(1)} sends a frame against ${mean(each.counts).toFixed(1)}`);
+  check('the view says how many sends a frame took', HD.info.submits > 0 && HD.info.submits <= Math.max(...again.counts), `${HD.info.submits} in the last frame, each pass by itself (the most in that walk: ${Math.max(...again.counts)})`);
+  check('nothing is left held after a frame', S.list.length === 0);
+  window.result = { out, info, checks };
+} catch (e) { if (e.message !== 'done') { console.error(e); window.result = { error: String(e?.stack || e) }; } }
+</script>

@@ -10,6 +10,7 @@
 import { installPack } from './pack.js';
 import { watchDevice } from './pipes.js';
 import { STEER } from './steering.js';
+import { holdSubmits, watchSubmits, flushGPU } from './submit.js';
 
 /** 'webgl' or 'webgpu' for a renderer from makeRenderer or webgpu(). */
 export const backend = r => r?.gsBackend || 'webgl';
@@ -52,6 +53,7 @@ export function hasWebGPU() {
  * preserveDrawingBuffer) nor WebGPU keeps the picture after that.
  */
 export function copyFrame(r, c, sx, sy, sw, sh, dx, dy, dw, dh) {
+  flushGPU();   // (WebGPU: the frame's passes, held to go to the chip together, go now: submit.js)
   c.drawImage(r.domElement, sx, sy, sw, sh, dx, dy, dw, dh);
 }
 
@@ -108,6 +110,7 @@ export function prepareGPU() {
       if (pick === 'webgpu' && STEER.webgpu === false) { console.info('WebGPU: off on this device (steering list: ' + STEER.rules.join(', ') + ')'); return null; }
       if (!await hasWebGPU()) { console.warn('WebGPU: no adapter'); return null; }
       const [W, fx] = await Promise.all([import('three/webgpu'), import('./hd3d-gpu.js')]);
+      if (STEER.submit !== false) watchSubmits();   // (before the device makes anything: submit.js)
       const canvas = document.createElement('canvas');
       // trackTimestamp: three times each pass on the GPU where the phone allows it (hd3d.js reads it as HD.info.gpuMs)
       // HDR screens: a half-float canvas in extended range, so highlights can go brighter than paper white
@@ -143,6 +146,7 @@ export function prepareGPU() {
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path
       r.gsBackend = 'webgpu';
       watchDevice(r.backend.device, W.REVISION);   // (pipelines a round makes are noted, and made ahead next time: pipes.js)
+      if (STEER.submit !== false) holdSubmits(r.backend.device);   // (a frame's passes go to the chip in one submit: submit.js)
       fx.manyLights(r);
       fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
       freeUnbuilt(r);

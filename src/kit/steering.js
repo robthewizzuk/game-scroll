@@ -11,10 +11,11 @@
 //   traced    false: no ray traced reflections (hd3d.js)
 //   half      false: the kit's passes stay in full precision (hd3d.js, half.js)
 //   pack      false: code-made textures are not packed into the chip's compressed formats (pack.js)
+//   submit    false: each pass goes to the chip by itself as three sends it, not a frame's together (submit.js)
 //   hide      (for a game) the game is not shown on this device (src/main.js)
 // Rules for one game (when.game) are kept apart in games: steerFor(id) is the device's knobs with that game's
 // own on top.
-const BLANK = { webgpu: true, hdr: true, klass: null, tier: null, fps: null, frameGen: true, traced: true, half: true, pack: true, hide: false };
+const BLANK = { webgpu: true, hdr: true, klass: null, tier: null, fps: null, frameGen: true, traced: true, half: true, pack: true, submit: true, hide: false };
 export const STEER = {
   ...BLANK,
   games: new Map(),   // game id -> its own knobs (only the fields a rule set)
