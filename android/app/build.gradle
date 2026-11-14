@@ -67,8 +67,9 @@ android {
 
 // Our own APKs (debug builds, from GitHub) leave Qualcomm's NPU libraries out entirely: about 57 MB of
 // an 85 MB APK. On a phone with a supported Snapdragon NPU the app downloads the ~40 MB that phone needs
-// from Qualcomm's own release, on Wi-Fi, and checks every file (plugins/npu QnnRuntime.java). Store
-// (release) builds keep them, because Google Play doesn't let an app download code.
+// from Qualcomm's own release, only once a game first starts face, hand or sound tracking, on Wi-Fi, and
+// checks every file (plugins/npu QnnRuntime.java). Store (release) builds keep them, because Google Play
+// doesn't let an app download code (Play's on-demand feature modules are the way to leave them out there).
 androidComponents {
     onVariants(selector().withBuildType('debug')) { variant ->
         variant.packaging.jniLibs.excludes.add('**/libQnn*.so')

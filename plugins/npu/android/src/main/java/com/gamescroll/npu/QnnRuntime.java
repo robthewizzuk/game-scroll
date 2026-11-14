@@ -73,8 +73,8 @@ final class QnnRuntime {
 
     /**
      * Where QNN stands, for available(): "bundled" (in the app), "ready" (downloaded), "downloading",
-     * "wifi" (waiting for Wi-Fi), "space" (phone too full), "failed" (tries again next start),
-     * "missing" (not fetched yet), "none" (no supported Qualcomm NPU: the CPU).
+     * "wifi" (waiting for Wi-Fi), "space" (phone too full), "failed" (tries again the next time the app
+     * starts and a game asks for a model), "missing" (not fetched yet: no game has asked for one), "none" (no supported Qualcomm NPU: the CPU).
      */
     String state() { dir(); return state; }
 
@@ -85,7 +85,7 @@ final class QnnRuntime {
             + ";/vendor/lib/rfsa/adsp;/vendor/lib64/rfs/dsp/snap;/vendor/dsp/cdsp;/vendor/dsp;/system/lib/rfsa/adsp;/system/vendor/lib/rfsa/adsp;/dsp";
     }
 
-    /** In our own APKs on a supported phone: fetch QNN in the background (after delayMs) if it isn't here yet. */
+    /** In our own APKs on a supported phone: fetch QNN in the background (after delayMs) if it isn't here yet. Called only when a game asks for a model (NPUPlugin.loadModel). */
     synchronized void fetchSoon(long delayMs) {
         if (busy || gaveUp || dir() != null || !BuildConfig.QNN_DOWNLOAD || arch() == 0) return;
         busy = true;
@@ -98,7 +98,7 @@ final class QnnRuntime {
             } catch (Exception e) {
                 state = "failed";
                 Logger.warn("NPU", "QNN download: " + e.getMessage());
-                synchronized (this) { gaveUp = true; }   // tries again next start, not on every model
+                synchronized (this) { gaveUp = true; }   // tries again after the next start, not on every model
             } finally { synchronized (this) { busy = false; } }
         });
     }

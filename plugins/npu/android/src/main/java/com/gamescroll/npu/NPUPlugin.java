@@ -94,7 +94,7 @@ public class NPUPlugin extends Plugin {
     public void loadModel(PluginCall call) {
         String name = call.getString("name", ""), version = call.getString("version", ""), url = call.getString("url", ""), sha = call.getString("sha256", "");
         if (!name.matches("[a-z0-9-]+") || !version.matches("[a-z0-9.-]+") || !sha.matches("[0-9a-f]{64}")) { call.reject("bad name"); return; }
-        qnn.fetchSoon(0);   // a game wants the AI chip: fetch Qualcomm's libraries now if they're missing (the next game gets the NPU)
+        qnn.fetchSoon(0);   // a game wants the AI chip: fetch Qualcomm's libraries now if they're missing (the next game gets the NPU); the only place they're fetched
         work.execute(() -> {
             JSObject r = new JSObject();
             try {
@@ -153,9 +153,10 @@ public class NPUPlugin extends Plugin {
     // The NPU's half of QNN (the "skel" libraries) runs on the Hexagon DSP, which loads it from files on
     // disk: the downloaded QNN folder, our own native library folder (the app keeps its libraries
     // unpacked, see android/app/build.gradle) and the phone's DSP folders. QNN reads this path once, the
-    // first time it loads, so it is set when the plugin starts, before any model. Our own APKs then
-    // fetch QNN in the background a little after start (on a supported Snapdragon, on Wi-Fi), so it
-    // doesn't compete with the feed's first downloads.
+    // first time it loads, so it is set when the plugin starts, before any model. Our own APKs fetch QNN
+    // only when a game first asks for a model (loadModel: face, hand or sound tracking), on a supported
+    // Snapdragon and on Wi-Fi; that game runs on the CPU and the ones after it on the NPU. (They used to
+    // fetch it a little after every start, ~40 MB whether a game wanted it or not: Rob, 2026-11-14.)
     @Override
     public void load() {
         qnn = new QnnRuntime(getContext());
@@ -163,7 +164,6 @@ public class NPUPlugin extends Plugin {
         try {
             android.system.Os.setenv("ADSP_LIBRARY_PATH", qnn.adspPath(), true);
         } catch (Exception e) { Logger.warn("NPU", "ADSP_LIBRARY_PATH: " + e.getMessage()); }
-        qnn.fetchSoon(20000);
     }
 
     // On Snapdragon: the HTP (NPU) backend, float16 maths and burst speed. The first start compiles the
