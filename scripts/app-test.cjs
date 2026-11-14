@@ -14,10 +14,11 @@ let failed = 0;
 const check = (ok, what, more = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${ok || !more ? '' : '\n     ' + more}`); };
 const PIXEL = 'arrow-maze', CASUAL = 'stack';
 
-async function open(b, { width = 390, height = 844, dpr = 3, before, arg } = {}) {
+async function open(b, { width = 390, height = 844, dpr = 3, before, arg, listen } = {}) {
   const ctx = await b.newContext({ viewport: { width, height }, hasTouch: true, isMobile: true, deviceScaleFactor: dpr });
   const p = await ctx.newPage(); p.errs = []; p.on('pageerror', e => p.errs.push(e.message));
   if (before) await p.addInitScript(before, arg);
+  if (listen) listen(p);   // (what must hear the page from its first request)
   await p.goto('http://localhost:4184/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(300);
   p.game = async (id, change) => {
     if (change) await p.evaluate(([id, change]) => Object.assign(__gs.GAMES.find(g => g.id === id), change), [id, change]);
@@ -274,13 +275,17 @@ async function saves(b) {
 /* ---------- the font library ---------- */
 async function fonts(b) {
   console.log('\nFont library');
-  const p = await open(b);
-  const asked = []; p.on('request', r => { if (/\.woff2?(\?|$)/.test(r.url())) asked.push(r.url()); });
+  // (heard from the page's first request: the feed the app opens with is ranked with some chance in it, and when a game that
+  // names a font is among its first cards (Long Shadow: Courier Prime), that font's file is asked for before the page is handed back)
+  const asked = [], p = await open(b, { listen: p => p.on('request', r => { if (/\.woff2?(\?|$)/.test(r.url())) asked.push(r.url()); }) });
   await p.game(CASUAL);
   const list = await p.evaluate(() => __gs.kits.fonts.list.map(f => ({ ...f })));
   check(list.length === 19 && list.filter(f => f.pixel).length === 5 && list.every(f => f.name && f.look && f.weights.length), '19 fonts are listed: Rubik, 13 display fonts and 5 pixel fonts', list.map(f => f.name).join(', '));
   const library = () => asked.filter(u => !/rubik|press-start/.test(u));
-  check(library().length === 0, 'none of the library is fetched until a game names a font', library().join(' '));
+  // (a font a game named is a face the library put in document.fonts: one file each, and no file with no face)
+  const named = await p.evaluate(() => { const L = new Set(__gs.kits.fonts.list.map(f => f.name)); L.delete('Rubik'); L.delete('Press Start 2P'); return [...document.fonts].filter(f => L.has(f.family.replace(/["']/g, ''))).map(f => f.family + ' ' + f.weight); });
+  const early = library().length;
+  check(early === named.length, 'none of the library is fetched until a game names a font', JSON.stringify({ files: library(), named }));
   // a font named in draw(): the string for c.font at once, the file on first use, the fallback until it is in
   let s = await p.evaluate(() => {
     const F = __gs.kits.fonts, g = document.createElement('canvas').getContext('2d'), css = F.font('Bangers', 30);
@@ -289,7 +294,7 @@ async function fonts(b) {
   check(s.css === '400 30px "Bangers", Rubik, sans-serif' && !s.ready, 'font(name, size) gives the string for c.font before the font is in', JSON.stringify(s));
   await p.waitForFunction(() => __gs.kits.fonts.ready('Bangers'), null, { timeout: 15000 });
   let t = await p.evaluate(() => { const g = document.createElement('canvas').getContext('2d'); g.font = __gs.kits.fonts.font('Bangers', 30); return { w: g.measureText('KA-POW! 123').width, ok: document.fonts.check('30px "Bangers"') }; });
-  check(t.ok && Math.abs(t.w - s.w) > 4 && library().length === 1 && /bangers/.test(library()[0]), 'the font loads on first use (one file), and the text then draws in it', JSON.stringify({ before: s.w, after: t.w, files: library().length }));
+  check(t.ok && Math.abs(t.w - s.w) > 4 && library().length === early + 1 && /bangers/.test(library()[early]), 'the font loads on first use (one file), and the text then draws in it', JSON.stringify({ before: s.w, after: t.w, files: library().length - early }));
   // names: any case; the nearest weight the font has; an unknown name is Rubik
   s = await p.evaluate(() => { const F = __gs.kits.fonts; let threw = ''; try { F.use('Nope'); } catch (e) { threw = e.message; } return { a: F.font('orbitron', 20, 900), b: F.font('Nope', 20), c: F.font('Courier Prime', 12, 700), d: F.font('silkscreen', 8), threw }; });
   check(s.a === '800 20px "Orbitron", Rubik, sans-serif' && s.b === '400 20px "Rubik", sans-serif' && s.c === '700 12px "Courier Prime", monospace' && s.d === '400 8px "Silkscreen", monospace', 'names in any case, the nearest weight a font has, and Rubik for a name it does not know', JSON.stringify(s));

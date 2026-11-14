@@ -34,7 +34,7 @@ frame generation is on), the dotted line twice that. The **strip** above the bar
 screen refresh: green real, magenta made, dark nothing new, red a refresh the phone skipped. A 60 fps
 game on a 120 Hz screen shows green, dark, green, dark; a 60 fps game on a 90 Hz screen shows uneven
 gaps, and its pacing number drops. Letters over the graph mark events: **S** shaders built, **X**
-textures uploaded, **G** heap fell (garbage collection), **Q** quality tier or resolution step changed,
+textures uploaded, **G** heap fell (garbage collection), **Q** quality tier, resolution step or final picture step changed,
 **F** fold or resize, **C** card or round changed.
 
 The numbers, over the last 5 seconds:
@@ -106,7 +106,7 @@ pause), so the recording's summary counts freezes on their own, with the worst.
   size, so small ones are missed)
 - the browser's long animation frame report: which script held the frame (file and function) or
   whether it was layout
-- a quality tier, resolution step or effect size change, a fold or resize, the app coming back to the front,
+- a quality tier, resolution step, final picture step or effect size change, a fold or resize, the app coming back to the front,
   a card or round change, refreshes skipped
 - the game's own CPU time going over the beat (and the CPU part that took most of it: the scene pass,
   physics, the game's own code...), or GPU time going over it
@@ -127,7 +127,7 @@ pause), so the recording's summary counts freezes on their own, with the worst.
 | **Spread** | While you play a WebGPU game on high or ultra: the chip's time a frame by pass with ambient occlusion, volumetric light and bounce light taking every sample every frame (`HD.spread = false`), then spread over frames (a part of their samples a frame, the frames before filling in: `src/kit/hd3d-gpu-spread.js`), then both again, timed the same way as Half. `HD.info.spread` (in the report) says which are spread. |
 | **Clouds** | While you play a WebGPU game on high or ultra whose sky has clouds: the chip's time a frame by pass with the sky's painted clouds (`HD.clouds = false`), then with real ones marched through (a quarter of the pixels a frame, the frames before filling in, and their shadow a few times a second: `src/kit/hd3d-gpu-sky.js`), then both again, timed the same way as Half. `HD.info.sky` (in the report) says what the sky draws. |
 | **Subgroups** | While you play a WebGPU game on a chip with subgroups (Chrome and Android from 144): the chip's time a frame by pass with the kit's compute passes built the plain way (`HD.subgroups = false`: one add on a shared counter per thread), then with subgroups (one per group of threads: GPU culling and its occlusion test, frame generation's counts; `src/kit/subgroups.js`), then both again, timed the same way as Half. `HD.info.subgroups` (in the report) says whether the chip has them and their size. |
-| **Submits** | While you play a WebGPU game: the 3D draw's CPU time and the chip's time a frame with each pass sent to the chip by itself, as three.js does (`HD.oneSubmit = false`), then with the frame's passes held and sent together (`src/kit/submit.js`), then both again. `HD.info.submits` says how many sends the last frame took. The saving is in the browser's graphics process, which neither time shows, so compare the frame rate and the report's slow frames too. |
+| **Submits** | While you play a WebGPU game: the 3D draw's CPU time and the chip's time a frame with each pass sent to the chip by itself, as three.js does (`HD.oneSubmit = false`), then with the frame's passes held and sent in a few goes (`src/kit/submit.js`: before the scene, at the scene's pass and at the end, so the chip works while the code goes on; `HD.submitEarly = false` holds everything to the end), then both again. `HD.info.submits` says how many sends the last frame took. The saving is in the browser's graphics process, which neither time shows, so compare the frame rate and the report's slow frames too. |
 | **Shadow passes** | While you play a WebGPU game with shadows: the chip's time a frame by pass with a kept shadow map written a pass for each step, as it was (`HD.shadowOne = false`), then in as few passes as there can be, one on most frames (the kept copy put back and the moving things drawn over it together), then both again. Each pass loads the whole map into a phone chip's memory and stores it again, so look at "shadows". |
 | **Report** | Shares a self-contained HTML report (Android and iPhone share sheet; a download on the web). |
 | **Copy** | Puts a text summary on the clipboard, to paste into chat. |

@@ -33,6 +33,7 @@ import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
 import { eachShown, listPipeline, RIDE } from './scene-list.js';
+import { sendEarly } from './submit.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
@@ -1195,6 +1196,7 @@ export function depthMeter(r) {
 // The still/moving shadow split on WebGPU (hd3d.js shadowLights): the light gets three's own shadow
 // node, made here so the kit can draw its map when it wants to (shadowOps draw), and over what is already
 // there when told to keep it (three clears a shadow map each time it draws one).
+let kitShadow = false;   // (the kit is drawing a shadow map itself, shadowOps: a part, a wipe, one made ahead)
 export function splitShadowNode(l) {
   const node = shadowOf(l, l.shadow), base = node.renderShadow, update = node.updateShadow;
   node.gsSplit = true;
@@ -1210,7 +1212,9 @@ export function splitShadowNode(l) {
   // (HD.info: what the shadow maps cost this frame, as on WebGL)
   node.updateShadow = function (frame) {
     const I = frame.renderer.info.render, t0 = I.triangles, c0 = I.drawCalls;
-    try { return update.call(this, frame); } finally { SHADOW_COST[0] += I.triangles - t0; SHADOW_COST[1] += I.drawCalls - c0; }
+    // (a map three draws by itself, inside the scene's pass: sent now, to be drawn while the scene is encoded, submit.js;
+    // the kit's own are sent together before the scene, hd3d.js drawGPU)
+    try { return update.call(this, frame); } finally { SHADOW_COST[0] += I.triangles - t0; SHADOW_COST[1] += I.drawCalls - c0; if (!kitShadow) sendEarly('shadows'); }
   };
   return node;
 }
@@ -1239,9 +1243,9 @@ export function shadowOps(r) {
       if (back) ride = (blit ||= shadowBlit(r)).ride(from ? from.depthTexture : null, back, px, N, q);
       c.layers.mask = mask; node.gsKeep = keep || !!q; node.gsPart = !!q;
       const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
-      RIDE.mesh = ride; RIDE.scene = ride && ops.scene;
+      RIDE.mesh = ride; RIDE.scene = ride && ops.scene; kitShadow = true;
       try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
-      finally { RIDE.mesh = RIDE.scene = null; c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
+      finally { kitShadow = false; RIDE.mesh = RIDE.scene = null; c.layers.mask = m0; node.gsKeep = node.gsPart = false; if (q) { c.clearViewOffset(); map.viewport.set(0, 0, N, N); map.scissor.set(0, 0, N, N); map.scissorTest = false; sh.updateMatrices(l); } }
     },
     /** One pass (hd3d.js shadowTiles, shadowSplit): what is put back goes in the pass of the things drawn over it. */
     get one() { return SHADOW_ONE.on; },
@@ -1274,8 +1278,9 @@ export function shadowOps(r) {
       // (gsPart: drawn as a part of a map is, without three's resize of the map to the light's map size)
       node.shadowMap = st; c.layers.mask = bit; node.gsKeep = false; node.gsPart = true;
       const go = () => node.updateShadow({ renderer: r, scene: ops.scene, camera: ops.camera });
+      kitShadow = true;
       try { if (r.lighting?.shadowDraw) r.lighting.shadowDraw(ops.scene, go); else go(); }
-      finally { node.shadowMap = map; c.layers.mask = m0; node.gsPart = false; sh.updateMatrices(l); }
+      finally { kitShadow = false; node.shadowMap = map; c.layers.mask = m0; node.gsPart = false; sh.updateMatrices(l); }
     },
     make(l) {
       // (depth alone, as the map it keeps: no colour picture, see SHADOW_DEPTH)
@@ -2350,6 +2355,12 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   // the hand-written blend (S2_UP) or the learned one (s2Net)
   const upscale = net ? s2Net(net)(I.args, half) : S2_UP(I.args, half);
   const upMat = new NodeMaterial(); upMat.fragmentNode = new OutputStructNode(upscale, vec4(I.lock, 0, 0, 1)); upMat.name = 'SGSR2';
+  // Beside the learned blend, the hand-written one from the same inputs into the same pictures (light: hd3d.js asks
+  // for it once a game has had to step its final picture down: the network is some 500 multiply-adds for every pixel
+  // of that picture, on top of the pass's own sums). Picked frame by frame, so nothing is built again mid-round.
+  const upLight = net ? new NodeMaterial() : null;
+  if (upLight) { upLight.fragmentNode = new OutputStructNode(S2_UP(I.args, half), vec4(I.lock, 0, 0, 1)); upLight.name = 'SGSR2 hand'; }
+  const qLight = upLight ? new QuadMesh(upLight) : null; let warmed = false;
   const cpMat = new NodeMaterial(); cpMat.fragmentNode = vec4(outT.sample(screenUV).rgb, 1); cpMat.name = 'SGSR2 out';
   const qUp = new QuadMesh(upMat), qCp = new QuadMesh(cpMat), qSd = new QuadMesh(sdMat), qLh = new QuadMesh(lhMat), qFl = flMat ? new QuadMesh(flMat) : null;
   // the training numbers (scripts/gssr-train): drawn after each upscale while asked for, from the same inputs
@@ -2367,6 +2378,8 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
   };
   return {
     U, key: '', low, shape,
+    /** Draw with the hand-written blend where this was built with the learned one (the same history carries on). */
+    light: false,
     /** Training (scripts/gssr-train): on, each upscale also draws the network's numbers for every pixel; read() gives them. */
     get probe() { return !!probe; },
     set probe(on) { if (!on && probe) { probe.q?.forEach(q => q.material.dispose()); probe.t?.forEach(t => t.dispose()); } probe = on ? probe || {} : null; },
@@ -2402,7 +2415,10 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
           r.setRenderTarget(SD[sc]); qSd.render(r);   // (the small finished picture and the motion are drawn on the way)
           r.setRenderTarget(LH[sc]); qLh.render(r);
         } else if (qFl) { lhT.value = FL[1 - sc].texture; sdT.value = FL[sc].textures[1]; r.setRenderTarget(FL[sc]); qFl.render(r); }
-        r.setRenderTarget(into); qUp.render(r);
+        const q = this.light && qLight ? qLight : qUp;
+        // (the first frame, under the loading screen, draws the other blend first: its shader is made then, not at the switch)
+        if (qLight && !warmed) { warmed = true; r.setRenderTarget(into); (q === qUp ? qLight : qUp).render(r); }
+        r.setRenderTarget(into); q.render(r);
         probeDraw(r);
         sc = 1 - sc;
         r.setRenderTarget(null); if (show) qCp.render(r);
@@ -2413,7 +2429,7 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     last() { return H2[1 - cur].texture; },
     /** The picture the render before that made (it stays until the next render draws over it). */
     before() { return H2[cur].texture; },
-    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
+    dispose() { low.dispose(); mdc.dispose(); for (const t of H2) t.dispose(); for (const t of [...SD, ...LH, ...FL]) t.dispose(); upMat.dispose(); upLight?.dispose(); cpMat.dispose(); sdMat.dispose(); lhMat.dispose(); flMat?.dispose(); this.probe = false; },
   };
 }
 
@@ -2564,6 +2580,9 @@ export class GpuChain {
     // v.oit: three's weighted blended order-independent transparency (McGuire and Bavoil) in place of the plain
     // scene pass: see-through things blend right whatever order they're drawn in (glass behind glass, smoke in water)
     const sp = this.sp = (oitOn ? oitPass : pass)(this.scene, this.cam, { samples: msaa || 0 });
+    // (the scene's pass goes to the chip as soon as it is encoded, with what was held before it: the chip draws the scene
+    // while the code encodes the effects, submit.js)
+    { const draw = sp.updateBefore; sp.updateBefore = function (frame) { try { return draw.call(this, frame); } finally { sendEarly('scene'); } }; }
     // frame generation and SGSR 2: the scene's pass also writes each pixel's motion and where see-through things are
     if (mrtOn && this.clear) { sp.setMRT(frameGenMRT()); slimPictures(sp, { motion: true }); }
     if (this.clear) {
@@ -2951,7 +2970,7 @@ export class GpuChain {
   }
   present(o, f, live) {
     if (live) return this.realFrame(o, f);
-    if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
+    if (this.s2) { this.s2.light = !!o.s2Light; this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
     if (o.sunMask && this.sp && !this.clear) sunMask(this.r, this.sp.getTextureNode('depth').value, this.cam, o.sunMask);
   }
@@ -2982,7 +3001,7 @@ export class GpuChain {
     // the frame's picture, and the last frame's: two pictures taking turns (SGSR 2's own two, or ours), so
     // frame generation reads the last frame where it is instead of copying a screen-sized picture every frame
     let color, before;
-    if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(r, false); color = this.s2.last(); before = this.s2.before(); }
+    if (this.s2) { this.s2.light = !!o.s2Light; this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(r, false); color = this.s2.last(); before = this.s2.before(); }
     else {
       // (the second picture only once frame generation runs for this view)
       const mk = () => new RenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false }), two = this.fgRT ||= [mk()];

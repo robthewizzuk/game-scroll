@@ -43,6 +43,8 @@ const path = require('path'), fs = require('fs');
     const say = (ok, what, more = '') => { if (!ok) bad++; console.log(`${ok ? 'ok  ' : 'BAD '} ${what}${ok || !more ? '' : '\n       ' + String(more).slice(0, 900)}`); };
     try {
       await p.goto(URL); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 });
+      // (reports the app sends off, and here drops, before they are read are kept: see below)
+      await p.evaluate(() => { const P = __gs.perf, flush = P.flush; window.__gpuReps = []; P.flush = function (...a) { for (const e of P.waiting.errors) if (e.kind === 'gpu') window.__gpuReps.push({ ...e }); return flush.apply(this, a); }; });
       const gpu = await p.evaluate(async () => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick('webgpu'); return !!(await window.__gpu.ready()); });
       if (!gpu) throw new Error('no WebGPU in this browser');
       const r = await p.evaluate(async () => {
@@ -53,7 +55,7 @@ const path = require('path'), fs = require('fs');
         } });
         const hall = res.scenes[0], tr = hall?.modes.find(m => m.key === 'traced') || {};
         return { text: kit.reportText(res), at, L: window.__gpu.losses(), info: { refl: __hd.info.refl, backend: __hd.info.backend, off: __hd.info.traceOff }, tr: { lost: tr.lost, tell: tr.tell, backend: tr.backend, frames: tr.frames },
-          note: JSON.parse(localStorage.getItem('gs_trace_lost') || 'null'), rep: __gs.perf.waiting.errors.filter(e => e.kind === 'gpu').map(e => e.msg) };
+          note: JSON.parse(localStorage.getItem('gs_trace_lost') || 'null'), rep: [...window.__gpuReps, ...__gs.perf.waiting.errors.filter(e => e.kind === 'gpu')].map(e => e.msg) };
       });
       if (shots) { fs.mkdirSync(shots, { recursive: true }); fs.writeFileSync(path.join(shots, 'traced-report.txt'), r.text); }
       const line = (r.text.split('\n').find(l => /^  ray traced /.test(l)) || ''), head = r.text.split('\n').find(l => /^WEBGPU: /.test(l)) || '';
@@ -80,6 +82,10 @@ const path = require('path'), fs = require('fs');
     const lose = () => how === 'cdp' ? cdp.send('Browser.crashGpuProcess') : p.evaluate(() => window.__gpu.lose());
     try {
       await p.goto(URL); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 });
+      // (the app sends its waiting reports off every minute, and with nowhere to send them here, drops them: a report made
+      // before the minute and read after it would be gone, on a slow machine one run in a few. What is waiting at each
+      // send is kept for reps())
+      await p.evaluate(() => { const P = __gs.perf, flush = P.flush; window.__gpuReps = []; P.flush = function (...a) { for (const e of P.waiting.errors) if (e.kind === 'gpu') window.__gpuReps.push({ ...e }); return flush.apply(this, a); }; });
       await p.evaluate(id => __gs.only(id, true), id); await p.waitForTimeout(300);
       const gpu = await p.evaluate(async () => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick('webgpu'); return !!(await window.__gpu.ready()); });
       if (!gpu) throw new Error('no WebGPU in this browser');
@@ -93,7 +99,7 @@ const path = require('path'), fs = require('fs');
         if (when === 'gate') { await p.waitForFunction(() => __gs.active.starting && __gs.active.starting.phase !== 'load', null, { timeout: 60000 }); await lose(); }
         await p.waitForFunction(() => __gs.active.state === 'playing' && !__gs.active.starting, null, { timeout: 120000 });
         await p.waitForTimeout(2500);
-        const r = await p.evaluate(() => ({ back: window.__hd?.info.backend || window.__toon?.backend, L: window.__gpu.losses(), paused: __gs.active.paused, rep: __gs.perf.waiting.errors.filter(e => e.kind === 'gpu') }));
+        const r = await p.evaluate(() => ({ back: window.__hd?.info.backend || window.__toon?.backend, L: window.__gpu.losses(), paused: __gs.active.paused, rep: [...window.__gpuReps, ...__gs.perf.waiting.errors.filter(e => e.kind === 'gpu')] }));
         const fail = r.back !== 'webgpu' || r.L.last?.backend !== 'webgpu' || r.paused || !r.rep.length || errs.length;
         if (fail) bad++;
         console.log(`${fail ? 'BAD ' : 'ok  '} ${id.padEnd(16)} lost ${when === 'feed' ? 'in the feed' : 'under the loading screen'}: back in ${((r.L.last?.ms || 0) / 1000).toFixed(1)} s on ${r.L.last?.backend}, the round started${r.paused ? ' PAUSED' : ''} and drew with ${r.back} · report: ${r.rep.map(e => `"${e.msg}"`).join(', ') || 'NONE'}${known ? ` · ${known} error${known === 1 ? '' : 's'} logged by three at the loss` : ''}`);
@@ -130,7 +136,7 @@ const path = require('path'), fs = require('fs');
       for (let i = 0; i < after.px.length; i += 3) lit += after.px[i] + after.px[i + 1] + after.px[i + 2] > 30 ? 1 : 0;
       const last = out[out.length - 1];
       diff /= before.px.length; const blank = last.back !== 'none' && lit < after.px.length / 3 * .05;
-      const rep = await p.evaluate(() => __gs.perf.waiting.errors.filter(e => e.kind === 'gpu'));
+      const rep = await p.evaluate(() => [...window.__gpuReps, ...__gs.perf.waiting.errors.filter(e => e.kind === 'gpu')]);
       // the first loss comes back on WebGPU; later ones on whatever the browser still gives, drawn with that
       const okBack = out[0].L.last?.backend === 'webgpu' && out.every(o => o.back === o.L.last?.backend || era === 'console' && o.back === 'webgpu') && (last.back !== 'none' || /Restart the app/.test(last.note));
       const fail = !okBack || blank || !rep.length || errs.length || out.some(o => !o.held);
