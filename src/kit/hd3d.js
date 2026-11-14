@@ -2231,7 +2231,7 @@ export class HDView {
    */
   newRenderer() {
     if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
-    this.shJobs?.clear(); this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
+    this.shJobs?.clear(); this._fadeFrames = 0; this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
     this.holdBase = false; this.warmed = false; this.aheadAgain = true;
   }
   /**
@@ -3835,6 +3835,10 @@ function fadeReady(v, G, r, per) {
   // shown, on the camera's layer, and an empty list of copies given one), into the picture the scene is drawn into
   const build = (o, k, mats) => {
     if (jobs.has(k) || fadeBusy.has(r) || v.shJobs?.has(k)) return;   // (v.shJobs: holdNew is building it)
+    // (the view's own shaders first: builds wait their turn on a renderer, and things new on screen are held back until
+    // theirs are built, so a twin built in a view's first frames, or while the view builds, kept the whole view's copies
+    // from showing for that long)
+    if ((v._fadeFrames || 0) < FADE_SETTLE || v.shadersLeft > 0) return;
     jobs.add(k); fadeBusy.add(r);
     let fin = false;
     const done = ok => { if (fin) return; fin = true; if (ok) seen.add(k); jobs.delete(k); fadeBusy.delete(r); clearTimeout(cap); }, cap = setTimeout(() => done(false), 4000);
@@ -3867,7 +3871,9 @@ function fadeReady(v, G, r, per) {
   };
 }
 const NOT_NOW = () => false;
+const FADE_SETTLE = 20;   // frames a view draws before twins are built (fadeReady)
 function fadeOn(v, G, r, smooth, still) {
+  v._fadeFrames = (v._fadeFrames || 0) + 1;
   const keep = v._fadeKeep ||= []; keep.length = 0;
   const ready = still ? NOT_NOW : fadeReady(v, G, r, 'object');
   fadeStep(v.scene, ready, smooth, FADE_LIST);
