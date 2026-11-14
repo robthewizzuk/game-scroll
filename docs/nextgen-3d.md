@@ -55,9 +55,16 @@ ceilings), `neon-drift.js` (drift racer on a wet neon street circuit), `storm-ho
   - `tube: [x, y, z]` (a neon tube from the spot to there) and `rect: { w, h, normal }` (a lit sign's
     face): on WebGPU they light from their nearest point, and their highlight on a wet or shiny floor is
     their whole length and face, as a real tube's is; WebGL lights them from their middle.
+  - `picture` with `rect`: a sign that lights with its own picture (a canvas or a `CanvasTexture`): a
+    TV, a video wall, a stained window. On WebGPU each part of its light takes the colour of the part
+    of the face it comes from, so a red half of a screen lights the near wall red and a wet floor
+    shows the picture, sharp or blurred by its roughness; WebGL lights with the picture's average
+    colour. `live: true` for a canvas you redraw every frame (a `CanvasTexture` is read again whenever
+    you set its `needsUpdate`). A dark picture gives less light: raise `i` to match.
   `gs.hd.neon(points, { colour, i, reach })` and `gs.hd.sign(w, h, paint, { colour, i, reach })` make
   the glowing tube and sign to go with them: pass `n.spots()` / `s.spots()` to `placeLamps` with the
-  rest. A car's headlights: two spots at its nose each frame with `dir` along the car,
+  rest. `sign(w, h, paint, { picture: true })` lights with its face; `s.paint(fn)` paints it again
+  (each frame for a screen that plays). A car's headlights: two spots at its nose each frame with `dir` along the car,
   `shape: 'headlamp'`, `shadow: true`, `reach: 25`, `i: 45`. `v.lampShadows` says what the lamps'
   shadows did last frame (`slots`, `drawn`, `waiting`).
 - **Post-processing**, one shared chain: HDR render with MSAA (or a light FXAA on lower tiers), ground-truth ambient occlusion
@@ -129,10 +136,10 @@ game held up by the CPU above 60 fps (the graphics chip has room) goes straight 
 up a tier first.
 
 **Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
-(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, bounce light,
+(`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, sun mask, bounce light,
 depth of field, motion blur, screen effects, upscale...). When a game is slow and the graphics chip is the
 reason, the effect that costs it most is drawn smaller first: ambient occlusion, bloom, reflections (screen
-space or traced), volumetric light and sun shafts each have three sizes (100%, 70%, 50% of the tier's). An
+space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's). An
 effect is only stepped while it takes at least an eighth of the chip's frame (and half a millisecond), so a
 cheap effect is never made worse for nothing; when none does, the resolution steps as before. Only the size
 of the effect's pictures changes, so no shader is built again mid-round. Where the chip doesn't say (WebGL,
@@ -648,6 +655,27 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   - Checked by `node scripts/detail-test.cjs --page traced --webgpu` and the kit test (the copy's lists
     are walked there the way the shader walks them, against three's own ray caster). On a phone: the
     **Hall** in the engine test scenes. Nobody has seen it on a phone yet.
+- **Finer sun shadows (WebGPU).** The sun's shadow map is tens of metres across, so a cup on a table,
+  fingers on a rail or a nose throws next to nothing in it, and past its box nothing throws a shadow at all.
+  On WebGPU a half-size *sun mask* is worked out once a frame after the scene is drawn, and the sun's light
+  reads it the next frame (moved on by the camera's move, and checked by distance so nothing smears):
+  - `v.contactShadows = true | false | { length: .3, thickness: .25, out: 40 }`: short rays towards the sun
+    through the depth picture, for small things close by (cups, hands, a face's nose and jaw). On by
+    itself at ultra; `length` is how far the rays go (metres), `out` how far off they fade.
+  - `v.farShadows = { size: 768, px: 512, tiles: 4, reach }` (or `true`): shadows past the sun map's box,
+    from a map of heights round the camera (the top of every shadow caster seen from above, drawn one
+    tile a frame as the camera moves on): far hills and towers shade the land. Off by itself: turn it on
+    for wide views (a hill top, a plane, a long road). `size` is the metres it covers, `reach` how far a
+    ray goes (half of `size` by itself).
+  - Crowds (`gs.props.Crowd`) do it by themselves: members with nobody of their own level within 15 m of
+    the camera leave the sun's shadow map and throw the shadow of a rounded post (an animal's lies along
+    it) instead, which costs no triangles: in the engine test scene below, the sun map drew up to six times fewer
+    triangles with the far people as capsules.
+  - `__hd.capsules = false` keeps crowds in the sun's map; `__hd.sunMask = false` turns the whole mask
+    off; `__hd.info.sunMask` says what the last frame's held (`{ contact, far, caps, full }`). Its
+    passes are timed as `sun mask`, and a slow game draws it smaller like the effects above.
+  - WebGL draws none of it: the sun's map alone, crowds in it as always. Checked by `node scripts/finer.cjs`
+    (see docs/testing.md); on a phone, the **Shade** engine test scene.
 - `const cs = v.contact({ y: 0, size: 8 })` lays soft contact shadows on a floor (medium tier and up),
   so things look like they're standing on it even where real shadows are off. In a big level, keep it
   under the action with `cs.at(x, z)`.
@@ -1008,6 +1036,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   `paint: (c, s) => {}` draws your own mark on an `s` x `s` canvas (give it a `key` so it's drawn
   once), `life` fades it out after that many seconds, `max` (default 40) drops the oldest first, and
   `glow` makes it shine (lava, neon paint). `v.clearDecals()` removes them all.
+  On WebGPU a decal is no mesh and no draw: it is a box listed in the lamps' grid, and every lit
+  surface inside the box that faces the way the decal does takes on its picture (colour, roughness
+  and glow) before it is lit, so it is lit, shadowed and reflected like the surface. Hundreds cost a
+  little per pixel where they lie, so raise `max` freely. The pictures share one atlas of 16; past
+  that, or on WebGL, a decal is a mesh cut from the surface as before. Something moving through a
+  decal's box takes the mark on while inside, except people (bodies that bend), see-through things
+  and a material given `material.decals = false`. Keep the box thin with `size: [w, h, depth]` where
+  things pass close by. `__hd.gridDecals = false` (and the frame lab's switch) draws them as meshes.
 - `v.bakeLight([x, y, z], { radius: 10, strength: 1 })` bakes the light round a point into a light
   probe (the colour coming from every direction), so lit materials pick up a red wall, a blue
   window or green grass. Bake once the level is built, not every frame. Several probes blend as the
@@ -1095,6 +1131,26 @@ works on instanced meshes and on WebGL and WebGPU alike.
   whatever had held that place, and a made frame smeared it across the screen: in the frame generation
   check's `copies` scene, where a zoom changes the level of every copy in the middle distance at once,
   3.2% of the made picture was broken, now 0.13% (a plain strafe: 0.12%).
+- Detail levels fade into each other instead of popping (`src/kit/lod-fade.js`), as Godot's and Bevy's
+  visibility ranges and Unity's LOD cross-fade do. While a person or an animal (`gs.models.human`,
+  `creature`) changes level, and on WebGPU while a `gs.props` copy does, both levels are drawn for 0.4 s,
+  each in a fine screen-space dither that is the other's exact complement: every pixel shows one level or
+  the other, nothing is drawn twice, and over the fade the new level's share goes from none to all. Under
+  SGSR 2 the dither moves each frame and the upscaler's history blends it into a smooth cross-fade;
+  without it the pattern stands still. Of the two levels the one with the larger share casts the shadow,
+  so a shadow changes once, half way. Only what is changing level pays for it: those meshes are drawn
+  for the frame with a twin of each material that has the dither in it (a discard), and everything else
+  keeps its own shader, early depth test and all. The twins' shaders are built in the background while
+  the people and copies stand on screen, never under the loading screen and never in a frame; a change
+  that comes before they are in waits a moment with the old level whole, then pops as before. A thing
+  that was not on screen last frame (new, out of a pool, shown again) takes its level at once, and a
+  change back while fading turns the fade round. Games don't change anything: `__hd.lodFade = false`
+  switches at once, `__hd.lodFadeTime` sets how long a fade takes (seconds), and `__hd.info.fading` counts
+  the people and animals fading now. Copies on WebGL keep the copies library's own levels, which switch
+  at once. On WebGPU GPU culling fades its copies too: the compute pass keeps each copy's level and fade
+  from frame to frame. (It now runs as a pass that picks each copy's level and one for each level's list,
+  so that no pass binds more than the eight storage buffers a phone's compute stage may have: a kind with
+  three levels and colours bound nine before, which a phone refuses.)
 - `v.shafts = 1` (0..2) adds sun shafts: the bright sky round the sun is smeared towards it at quarter
   size, so whatever blocks it (trees, window frames, a hill) leaves streaks of light. Set `v.sun` so
   it knows where the sun is. It's off on the lowest tier. A physical sky is far brighter round the sun;
@@ -1390,7 +1446,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   eyes and head go first into a turn, `rig.update(dt, { speed, toward })` to say where it means to go: "The eyes
   and the head go first"; it walks its own way, from its body and seed, with moods, `rig.manner.mood = 'sad'`: "A walk
   of one's own") in three levels of detail: call
-  `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far).
+  `person.see(camera, screenHeightInPixels)` each frame, or set `person.lod` (0 close .. 2 far); a change of
+  level on screen fades rather than pops (see "Detail levels fade into each other").
   `person.twin()` is another of the same person for almost nothing (a squad from two or three faces),
   `person.hold(thing, rightPoint, leftPoint)` bends both arms to put the hands on something carried (after
   `rig.update()`), `person.touch({ handL, handR, footL, footR }, { palms, level, elbows, knees, blend })` puts

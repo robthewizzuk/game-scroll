@@ -25,7 +25,7 @@ import {
   WebGLRenderTarget, DepthTexture, UnsignedIntType, MeshNormalMaterial, ShaderChunk, CustomBlending, SrcAlphaFactor, OneMinusSrcAlphaFactor, ZeroFactor, OneFactor,
 } from 'three';
 
-import { copyFrame, consoleGPU, consoleWait, prepareConsoleGPU } from './gpu.js';
+import { copyFrame, consoleGPU, consoleWait, prepareConsoleGPU, gpuMending } from './gpu.js';
 import { makeRenderer } from './renderer.js';
 import { lookPatch, looksOf } from './looks.js';
 import { phoneClass } from './speed.js';
@@ -461,6 +461,8 @@ export class View {
     // WebGPU where the device has it and everything in the view has a WebGPU version (a view with something
     // that has none stays on WebGL from then on)
     let G = this.noGpu ? null : consoleGPU();
+    // (the graphics chip was lost and a new one is on its way, gpu.js: a view that drew on it waits for it, under the app's cover)
+    if (!G && this.onGpu && gpuMending()) return;
     const why = this.prep(G?.fx);
     if (G && why) { G = null; this.noGpu = true; this.gpuWhy = why; }
     this.onGpu = !!G; TOON.backend = G ? 'webgpu' : 'webgl'; TOON.why = G ? '' : this.gpuWhy || '';

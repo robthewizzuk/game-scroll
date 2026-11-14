@@ -41,6 +41,9 @@ function okThing(o) {
   if (Array.isArray(m)) { for (let i = 0; i < m.length; i++) if (m[i] && !okMat(m[i])) return false; return m.length > 0; }
   return okMat(m);
 }
+// part of a person or an animal whose detail levels fade into each other (lod-fade.js fadeable marks the root): its
+// meshes are drawn with a dithered twin of their material for the frames of a fade, put on after this frame's look
+function fades(o) { for (let p = o; p; p = p.parent) if (p.userData.gsSeen !== undefined) return true; return false; }
 // shown, and every parent up to the scene shown and in no group drawn in an order of its own
 function shownIn(o, scene) {
   if (!o.visible) return false;
@@ -143,7 +146,7 @@ export function stillFrame(scene, things, now, bits = 0) {
     if (!s) { S.snaps.set(o, s = snapOf()); take(o, s, se); s.t = now; continue; }
     if (!same(o, s, se)) { take(o, s, se); s.n = Math.min(s.n, 0); s.t = now; continue; }
     if (now - s.t < step) continue;
-    s.t = now; if (++s.n >= STEPS) { join(S, o, s); n++; }
+    s.t = now; if (++s.n >= STEPS) { if (fades(o)) { s.n = -1e9; continue; } join(S, o, s); n++; }
   }
   if (S.cursor > 1e9) S.cursor = 0;
   stillStats.things = n; stillStats.cells = S.list.reduce((a, c) => a + (c.things.length ? 1 : 0), 0);

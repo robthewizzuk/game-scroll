@@ -4,6 +4,8 @@
     <string name="title_activity_main">Game Scroll</string>
     <string name="package_name">com.game_scroll.app</string>
     <string name="custom_url_scheme">com.gamescroll.app</string>
+    <!-- the on-demand Play module with Qualcomm's NPU libraries (android/qnn) -->
+    <string name="title_qnn">AI chip support</string>
     <!-- Play Games Services project id from Play Console (Grow > Play Games Services > Setup).
          Leave as 0 until it exists: the app then keeps progress on the device only. -->
     <string name="game_services_project_id" translatable="false">0</string>

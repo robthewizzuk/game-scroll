@@ -1,4 +1,6 @@
 include ':app'
+// Qualcomm's NPU libraries as an on-demand Play module (qnn/build.gradle); not with -Pnpu.qnn=false
+if ((settings.hasProperty('npu.qnn') ? settings.getProperty('npu.qnn') : 'true').toString() != 'false') include ':qnn'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 

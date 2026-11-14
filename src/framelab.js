@@ -266,9 +266,10 @@ function windowRows(ms) {
 function startRec(s) {
   rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0, chip: {}, chipN: 0, draws: { n: 0, calls: 0, tris: 0 } };
   rec.cfg.push(config(s)); sample();
+  rec.off0 = HD?.steps && is3D(s?.def) ? { ...HD.steps.off } : null;   // (3D games only: the quality steps are the 3D kit's)
 }
 function stopRec() {
-  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); lastRec = rec; rec = null;
+  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); keepSteps(rec); lastRec = rec; rec = null;
   UI.render?.(); UI.flash?.('Recorded. Report shares it, Copy puts a summary on the clipboard.');
 }
 let lastRec = null;
@@ -357,6 +358,7 @@ const PAIRS = {
   half: { title: 'Full vs half precision', a: 'full precision', b: 'half precision', set: on => { HD.half = on; }, needs: halfCan, no: 'Half precision needs WebGPU and a graphics chip that has it (shader-f16), so there is nothing to compare.' },
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   aoBack: { title: 'Ambient occlusion on everything vs on bounce light only', a: 'on the whole picture (as before)', b: 'on the light that bounces only', set: on => { HD.aoBack = on; }, needs: () => HD?.info.backend === 'webgpu' && HD.tier >= 2, no: 'Ambient occlusion in the shading needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
+  gridDecals: { title: 'Decals as meshes vs in the lamps\' grid', a: 'a mesh cut from the surface for each, one draw each (as before)', b: 'boxes in the lamps\' grid, no draws', set: on => { HD.gridDecals = on; }, needs: () => HD?.info.backend === 'webgpu', no: 'Decals in the lamps\' grid need WebGPU, so there is nothing to compare.' },
   sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
@@ -369,7 +371,7 @@ function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -383,7 +385,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -654,11 +656,26 @@ export function summary(R = lastRec) {
     cpuLine(R),
     sysLine(R),
     chipLine(R),
+    stepsLine(R),
     memLine(S),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
   ];
   return lines.filter(Boolean).join('\n');
+}
+// The quality steps over the recording (hd3d.js HD.steps): each window of frames as seconds into it, and the frames
+// not counted, by why. In the report: how many windows were slow, ok or fast, and what was done when.
+function keepSteps(R) {
+  const S = HD?.steps; if (!S || !R.off0) return;
+  R.steps = S.log.filter(e => e.t >= R.t0 && e.t <= R.t1).map(e => ({ ...e, t: r2(e.t - R.t0) }));
+  if (R.off0) { R.off = {}; for (const k in S.off) R.off[k] = S.off[k] - (R.off0[k] || 0); }
+}
+function stepsLine(R) {
+  const L = R.steps; if (!L) return '';
+  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => !/^(waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
+  const held = L.find(e => /^stays on/.test(e.did)), off = Object.entries(R.off || {}).filter(([, v]) => v > 0);
+  return `Quality steps: ${!L.length ? 'no window of frames counted' : `${L.length} windows`}${L.length ? ` (${n('slow')} slow, ${n('ok')} ok, ${n('fast')} fast)` : ''}${!L.length ? '' : done.length ? ' · ' + done.slice(0, 8).map(e => `${e.did} at ${(e.t / 1000).toFixed(0)} s`).join(', ') + (done.length > 8 ? ` and ${done.length - 8} more` : '') : ' · nothing changed'}`
+    + (held ? ` · ${held.did}` : '') + (off.length ? ` · frames not counted: ${off.map(([k, v]) => `${v} ${{ pinned: 'with the tier pinned', long: 'after a gap of 100 ms or more', warming: 'under the loading screen' }[k] || k}`).join(', ')}` : '');
 }
 // CPU per real frame while playing, middle and 95th percentile: the game's update(), its draw() (which
 // includes the 3D kit's work on the CPU), the 3D render on its own, frame generation, GPU where known
@@ -699,7 +716,7 @@ function reportData(R = lastRec) {
   const all = shots.map(s => ({ kind: s.kind, title: s.title, game: s.game, notes: s.notes, images: s.images.filter(i => i.cv).map(i => ({ label: i.label, url: toURL(i.cv) })), heat: s.heat ? { url: toURL(s.heat.cv), boxes: s.heat.boxes } : null }));
   return {
     made: new Date().toISOString(), build: BUILD, phone: phoneLabel(), platform: Capacitor.getPlatform(), ua: navigator.userAgent, summary: summary(R),
-    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
+    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60), steps: R.steps || null, off: R.off || null } : null,
     shots: all,
   };
 }

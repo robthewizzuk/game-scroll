@@ -31,6 +31,9 @@
 //            past at arm's length in a low sun, once as cars were (dark glass, nothing inside, plain paint), then with seats and dashboards
 //            behind see-through glass, flaked paint with road grime and rain beading, and one car hit: a dent, a side window that breaks
 //            and drops its glass on the road, a crazed windscreen and a broken lamp
+//   shade    finer sun shadows (src/kit/sunmask.js, sunmask-gpu.js): a café table, a square of people and towers far off under a low sun:
+//            once with the sun's shadow maps alone, then with the sun mask (WebGPU): short rays for the cups, shadows past the map's box
+//            for the towers, and the crowd's far members as capsules, out of the sun's map
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -927,6 +930,95 @@ function night({ gs, size }) {
   };
 }
 
+/* ---------- shade: finer sun shadows ---------- */
+// A café table at the edge of a square late in the day, people crossing the square, and towers and hills far off over the open land
+// past it (src/kit/sunmask.js, sunmask-gpu.js): sat at the table looking at the cups, then up and out across the square toward the
+// towers. Off, the sun's shadow maps alone: a cup throws next to nothing in a map tens of metres across, the far towers none past the
+// map's box, and every person is drawn into the map. On, the sun mask (WebGPU): short rays in the depth picture for what is small and
+// close, shadows past the map's box from a map of heights round the camera, and the crowd's far members as capsules, left out of the
+// sun's map. WebGL has no sun mask: both runs draw the same there, and the second says so.
+function shade({ gs, HD, size, gpu }) {
+  const T = gs.THREE, hd = gs.hd, { human } = gs.models, N = Math.max(12, Math.round(160 * size));
+  const v = new hd.HDView({ bg: '#a9bcd2', fog: .0006, amb: .35 }); v.cam.far = 1500; v.cam.updateProjectionMatrix();
+  const sun = hd.sun('#ffe6c4', 3, 70, [-.75, .38, -.5]); v.scene.add(sun, sun.target); v.sun = sun;
+  const mk = (geo, mat, x, y, z, cast = true) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = cast; m.receiveShadow = true; v.scene.add(m); return m; };
+  const grass = hd.pbr('#7c8a5a', { rough: .95 }), paving = hd.pbr('#a59c8c', { rough: .9 }), stone = hd.pbr('#a49a88', { rough: .85 });
+  mk(new T.PlaneGeometry(3000, 3000).rotateX(-Math.PI / 2), grass, 0, -.08, 0, false);   // (a little under the square's paving: a long view's depth can't part two planes 2 cm apart)
+  mk(new T.PlaneGeometry(70, 66).rotateX(-Math.PI / 2), paving, 0, 0, -20, false);
+  mk(new T.BoxGeometry(70, 1.1, .5), stone, 0, .55, -53);
+  // the table: cups on saucers, a bottle, a book with a pen on it, two chairs
+  const wood = hd.pbr('#8a6440', { rough: .6 }), pot = hd.pbr('#e8e2d6', { rough: .3 }), glass = hd.pbr('#3f5a3a', { rough: .15 }), cover = hd.pbr('#7a2e2a', { rough: .7 }), dark = hd.pbr('#30343a', { rough: .5, metal: .6 });
+  mk(new T.BoxGeometry(1.2, .05, .8), wood, 0, .75, 10); mk(new T.CylinderGeometry(.04, .05, .72, 10), dark, 0, .36, 10);
+  for (const sx of [-1, 1]) { mk(new T.BoxGeometry(.45, .04, .45), wood, sx * .85, .46, 10); mk(new T.BoxGeometry(.45, .5, .04), wood, sx * .85, .7, 10 + sx * .22); }
+  for (const [x, z] of [[-.25, 10.05], [.12, 9.85], [.3, 10.2]]) {
+    mk(new T.CylinderGeometry(.075, .07, .012, 20), pot, x, .781, z); mk(new T.CylinderGeometry(.04, .035, .085, 20), pot, x, .83, z);
+    const h = mk(new T.TorusGeometry(.025, .007, 6, 14), pot, x + .045, .83, z); h.rotation.y = .3;
+  }
+  mk(new T.CylinderGeometry(.035, .035, .26, 14), glass, -.42, .905, 9.8);
+  const book = mk(new T.BoxGeometry(.2, .03, .27), cover, .1, .79, 10.22); book.rotation.y = .4;
+  const pen = mk(new T.CylinderGeometry(.005, .005, .14, 8).rotateZ(Math.PI / 2), dark, .12, .811, 10.2); pen.rotation.y = -.3;
+  // far off, past the sun's shadow box: towers and hills
+  const R = gs.math.rng(4);
+  for (let i = 0; i < 24; i++) { const x = (R() - .5) * 600, z = -110 - R() * 450, h = 15 + R() * 45, w = 8 + R() * 14; mk(new T.BoxGeometry(w, h, w), stone, x, h / 2, z); }
+  for (let i = 0; i < 6; i++) { const x = (R() - .5) * 800, z = -320 - R() * 300, h = 40 + R() * 60; mk(new T.ConeGeometry(h * 2, h, 24), grass, x, h / 2, z); }
+  // people crossing the square, each on a circle of its own (the square scene's two people, so a phone that ran it has them already)
+  const SPECS = [{ seed: 11, strands: false }, { seed: 12, sex: 'f', hairStyle: 'bun', body: '#8a3a3a', legs: '#30364a', strands: false }], who = [];
+  for (let i = 0; i < N; i++) { const idle = R() < .2, sp = idle ? 0 : 1.1 + R() * .4; who.push({ kind: i % 2, move: idle ? 'idle' : 'walk', sp, cx: (R() - .5) * 52, cz: -24 + (R() - .5) * 42, r: 3 + R() * 8, a0: R() * 6.283, dir: R() < .5 ? 1 : -1, size: .95 + R() * .1, m: null }); }
+  const place = (w, t) => { const a = w.a0 + w.dir * w.sp * t / w.r; w.m.x = w.cx + w.r * Math.sin(a); w.m.z = w.cz + w.r * Math.cos(a); w.m.turn = Math.atan2(w.dir * Math.cos(a), -w.dir * Math.sin(a)); };
+  let crowd = null, made = null, on = false;
+  const was = HD.capsules;
+  const make = draw => made ||= (async () => {
+    const t0 = performance.now(); let done = false, err = null;
+    human.ready(SPECS).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the people were not sculpted in time');
+    crowd = new gs.props.Crowd(v, { of: SPECS.map(s => human(s)), moves: ['idle', 'walk'] });
+    for (const w of who) { w.m = crowd.add({ x: 0, z: 0, turn: 0, kind: w.kind, move: w.move, size: w.size }); place(w, 0); }
+    return performance.now() - t0;
+  })();
+  const sum = { n: 0, tris: 0, draws: 0, caps: 0, mask: 0, t: 0, prev: null, prevD: 0 };
+  const enter = key => async draw => {
+    const first = !made, build = await make(draw); on = key === 'on';
+    v.contactShadows = on; v.farShadows = on ? { size: 768 } : false; HD.capsules = on ? was : false;
+    sum.n = sum.tris = sum.draws = sum.caps = sum.mask = sum.t = 0; sum.prev = null; crowd.update(0);
+    for (let i = 0; i < 4; i++) await draw();
+    return first ? { build, note: 'two people sculpted' } : null;
+  };
+  const A = new T.Vector3(), B = new T.Vector3(), LA = new T.Vector3(), LB = new T.Vector3(), ease = x => x * x * (3 - 2 * x);
+  return {
+    v, holds: `a table of cups, ${num(N)} people crossing a square and 30 towers and hills up to 600 m off, under a low sun`,
+    modes: [
+      { key: 'off', name: 'the sun\'s shadow maps alone', enter: enter('off') },
+      { key: 'on', name: 'short rays close up, far shadows, crowd capsules', enter: enter('on') },
+    ],
+    // twenty seconds round: six sat at the table looking at the cups, three getting up, six walking out across the square toward the
+    // towers, and five rising over it to look out across the land (the far towers' shadows on the hills, the crowd's from above)
+    path(t, cam) {
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0, I = HD.info, sh = I.shTris || 0, shd = I.shCalls || 0;
+      // (what the last frame's shadow maps took, and what its sun mask held: the counts run on from frame to frame, so a frame's share is what they rose by)
+      if (t < sum.t) { sum.n = sum.tris = sum.draws = sum.caps = sum.mask = 0; sum.prev = null; }
+      if (sum.prev != null) { sum.n++; sum.tris += sh - sum.prev; sum.draws += shd - sum.prevD; sum.caps += I.sunMask?.caps || 0; sum.mask += I.sunMask ? 1 : 0; }
+      sum.t = t; sum.prev = sh; sum.prevD = shd;
+      const u = t % 20;
+      if (u < dt + 1e-6 && t > 0) v.cut?.();
+      A.set(.38 + .05 * Math.sin(t * .4), 1.18, 10.62); LA.set(.02, .79, 10.02);
+      const w = Math.min(1, Math.max(0, (u - 9) / 6)), up = ease(Math.min(1, Math.max(0, (u - 15) / 5)));
+      B.set(.6, 1.7 + up * 30, 8 - w * 14 - up * 6); LB.set(-20 + w * 10, 6 - up * 20, B.z - 220);
+      const k = ease(Math.min(1, Math.max(0, (u - 6) / 3)));
+      cam.position.lerpVectors(A, B, k); cam.lookAt(LA.lerp(LB, k)); cam.updateMatrixWorld();
+      sun.follow(cam.position.x, 0, cam.position.z);
+      if (crowd) { for (const x of who) place(x, t); crowd.update(dt); }
+    },
+    tell() {
+      if (!sum.n) return null;
+      const maps = `shadow maps ${num(sum.tris / sum.n)} triangles in ${num(sum.draws / sum.n)} draws a frame`;
+      if (!on) return maps;
+      if (!gpu) return `${maps} · no sun mask on WebGL`;
+      return `${maps} · sun mask in ${Math.round(sum.mask / sum.n * 100)}% of frames, ${num(sum.caps / sum.n)} capsules a frame`;
+    },
+    dispose() { HD.capsules = was; crowd?.dispose(); clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 /* ---------- cars: cars up close ---------- */
 // A kerb of parked cars of the closed styles, walked past on the pavement at arm's length in a low sun. Off, the cars as cars were (dark
@@ -1045,6 +1137,54 @@ function ground({ gs, size }) {
   };
 }
 
+/* ---------- skyline: the city to the horizon ---------- */
+// The view from the tallest roof of a made-up downtown (src/kit/city-far.js), turning slowly round as dusk turns to night. Off, the
+// city stops at its last street and grass runs to the sky; on, a made-up city goes on past it as stand-ins in its own colours (blocks
+// of 90 m, then 180 m, then 360 m, thinning out into the country by 6 km), their windows lit at night, their street lights one batch
+// of dots, and land with hills round it all out to 10 km.
+function skyline({ gs, size }) {
+  const { City } = gs.city, v = new gs.hd.HDView({ bg: '#8a98b0', fog: .00012, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 10800; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .00025, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 19.4, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const blocks = size < .3 ? 2 : Math.max(3, Math.round(5 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.2, Math.min(.6, size));
+  let city = null, mode = '', roof = null;
+  const sum = { n: 0, ms: 0, t: 0 };
+  const enter = key => async draw => {
+    const t0 = performance.now(), opts = { seed: 5, blocks, style: 'downtown', sky, traffic: busy, people: busy, crowd: false, sound: false, far: key === 'on' };
+    let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+    await until(draw, () => done); if (err) throw err;
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; Object.assign(sum, { n: 0, ms: 0, t: 0 });
+    const o = city.plan.buildings.slice().sort((p, q) => q.h - p.h)[0]; roof = { x: (o.x0 + o.x1) / 2, z: (o.z0 + o.z1) / 2, y: o.h + 2.5 };
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    const F = city.far;
+    return { build, note: `${num(city.plan.buildings.length)} buildings${F ? `, ${num(F.count)} stand-ins past them, ${num(F.lampCount)} far lamps` : ''}` };
+  };
+  return {
+    v, holds: `the view from the tallest roof of a made-up downtown of ${blocks} blocks a side, turning slowly round as dusk turns to night`,
+    modes: [
+      { key: 'off', name: 'the city alone', enter: enter('off') },
+      { key: 'on', name: 'the city to the horizon: stand-ins, far lights and hills', enter: enter('on') },
+    ],
+    path(t, cam) {
+      if (!city) return;
+      const dt = t > sum.t ? Math.min(.1, t - sum.t) : 0; sum.t = t;
+      const a = t * .16;
+      cam.position.set(roof.x, roof.y, roof.z); cam.lookAt(roof.x + Math.cos(a) * 100, roof.y - 9, roof.z + Math.sin(a) * 100); cam.updateMatrixWorld();
+      sun.follow(roof.x, 0, roof.z); sky.time = 19.4 + Math.min(2, t * .1); sky.update(dt);
+      const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`, F = city.far;
+      return mode === 'off' || !F ? ms : `${ms} · ${num(F.count)} stand-ins, ${num(F.lampCount)} far lamps, ${num(F.triangles)} triangles in ${F.draws} draws`;
+    },
+    dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -1062,4 +1202,6 @@ export const SCENES = [
   ['night', 'Night', 'lamps with shadows, shaped headlights, neon', night],
   ['cars', 'Cars', 'cars up close: seats behind the glass, paint, dirt and rain, dents and broken glass', cars],
   ['ground', 'Ground', 'ground and walls with no repeats: the ground painted round the camera, posters and stains on the walls', ground],
+  ['shade', 'Shade', 'finer sun shadows: short ones close up, far ones, a crowd\'s', shade],
+  ['skyline', 'Skyline', 'the city to the horizon: stand-ins past the streets, far lights, hills', skyline],
 ];

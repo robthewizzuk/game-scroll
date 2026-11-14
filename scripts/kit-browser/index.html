@@ -290,7 +290,7 @@ try {
       const floor = new T3.Mesh(new T3.PlaneGeometry(20, 20).rotateX(-Math.PI / 2), gs.hd.pbr('#888')); dv.scene.add(floor);
       const red = new T3.Mesh(new T3.BoxGeometry(.2, 4, 4), new T3.MeshBasicMaterial({ color: '#f00' })); red.position.set(1.2, 1, 0); dv.scene.add(red);
       const d1 = dv.decal(floor, new T3.Vector3(0, 0, 0), new T3.Vector3(0, 1, 0), { size: 1, life: 1 });
-      ok(d1 && d1.geometry.attributes.position.count > 0 && dv.decals.length === 1, 'decal wraps the floor');
+      ok(d1 && (d1.kind === 'grid' || d1.m?.geometry.attributes.position.count > 0) && dv.decals.length === 1, 'decal wraps the floor (a mesh on WebGL, a box in the lamps\' grid on WebGPU)');
       for (let i = 0; i < 45; i++) dv.decal(floor, new T3.Vector3(i % 5, 0, 0), new T3.Vector3(0, 1, 0), { size: .4, paint: (c, s) => { c.fillStyle = '#fff'; c.fillRect(s / 4, s / 4, s / 2, s / 2); }, key: 'sq' });
       ok(dv.decals.length === 40, 'decals capped at max: ' + dv.decals.length);
       const p1 = await dv.bakeLight([0, 1, 0], { radius: 5 }); ok(p1 && dv.probe && dv.probe.sh.coefficients[0].x > dv.probe.sh.coefficients[0].z, 'light probe picks up the red wall');

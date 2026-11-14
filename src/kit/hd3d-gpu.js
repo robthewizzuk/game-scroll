@@ -23,6 +23,8 @@ import * as TSL from 'three/tsl';
 import { lut3D } from 'three/examples/jsm/tsl/display/Lut3DNode.js';
 import { tslOps } from './models/ops.js';
 import { gpuCull, gpuCullFits } from './props-gpu.js';
+import { FADE } from './lod-fade.js';
+export { fadeTwin } from './lod-fade-gpu.js';
 import { OCC_LAYER } from './occlude.js';
 import { sendUsed } from './gpu.js';
 import { ORIGIN } from './origin.js';
@@ -71,6 +73,8 @@ import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
+import { sunMaskAt, sunMask } from './sunmask-gpu.js';
+export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -920,7 +924,7 @@ class KitLighting extends ClusteredLighting {
   constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
   createNode(lights = []) { return new KitLampsNode(this.maxLights, this.tileSize, this.zSlices, this.maxLightsPerCluster).setLights(lights); }
   getNode(scene) {
-    if (scene !== this.gsShadowOf) return super.getNode(scene);
+    if (scene !== this.gsShadowOf) { const n = super.getNode(scene); n.gsScene = scene; return n; }   // (its view's decals: decals-gpu.js)
     let n = this.gsShadowNodes.get(scene);
     if (!n) { n = this.createNode(); this.gsShadowNodes.set(scene, n); this._track?.(n); }
     return n;
@@ -928,6 +932,8 @@ class KitLighting extends ClusteredLighting {
   /** go(), with every render of scene inside it taken for a shadow map's. */
   shadowDraw(scene, go) { const was = this.gsShadowOf; this.gsShadowOf = scene; try { return go(); } finally { this.gsShadowOf = was; } }
 }
+// decals in the lamps' grid (decals-gpu.js): the atlas's squares, for hd3d.js HDView.decal
+export { takeCell as decalCell, giveCell as decalFree, refreshCell as decalRefresh, cellRect as decalRect, cellsInfo as decalCells } from './decals-gpu.js';
 export function manyLights(r) { r.lighting = new KitLighting(256, 32, 24, 32); r.gsClustered = true; }
 // three's walk of the scene for each render (the picture, each shadow map), made over the scene's list (scene-list.js)
 let ListPipeline = null;
@@ -1411,7 +1417,8 @@ export function gpuSunLight(l, AIR, noise) {
   const shade = select(SKY.shadeOn.greaterThan(.5), cloudShadeAt(wp.add(ORG), S), flat);
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());
   const nearW = select(p.z.greaterThan(0).and(p.z.lessThan(1)), smoothstep(0, CASC.fade, min(e.x, e.y)), float(0));
-  l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1))));
+  // (and the finer shadows from last frame's sun mask: contact, far and capsule shadows, sunmask-gpu.js)
+  l.colorNode = col.mul(shade).mul(select(role.equal(1), nearW, select(role.equal(2), nearW.oneMinus(), float(1)))).mul(sunMaskAt());
   return role;
 }
 
@@ -1542,6 +1549,13 @@ function sendPrev(S, R) {
   if (!S.prev || !R.n) return;
   sendRanges(S.prev, R); S.prev.version = S.pv = Math.max(S.prev.version, S.pv + 1);
 }
+// A copy changing detail level fades from one to the other (lod-fade.js): for FADE.s seconds it is drawn in both
+// levels' short lists of copies changing level (fd), each copy with its share of the dither (gsFade: share, +1
+// coming in or -1 going out), not in either level's own list. Those lists are packed afresh each frame (a still
+// copy's motion is the camera's, so "last frame" is this frame's place); room for FADE_COPIES copies a level, and a
+// copy beyond that changes at once. They draw only once their dithered shaders are built (ready(mesh), hd3d.js):
+// until then a change pops, as before.
+const FADE_COPIES = 2048;
 export function gpuProps(im) {
   const levels = im.LODinfo?.render ? im.LODinfo.render.levels.map(l => ({ obj: l.object, lod: l, dist: 0 })) : [{ obj: im, lod: null, dist: 0 }];
   // (the library keeps distances squared; read each frame: a game moves them for a scope's zoom, and hd3d.js autoCopies for the picture's size)
@@ -1549,14 +1563,18 @@ export function gpuProps(im) {
   dists();
   const group = new Group(); group.name = im.name + ':webgpu';
   let cap = 0, tw = [], want = null, sph = null;
+  // fading: fd (a list a level), shownL (the level each copy is drawn at; -1 none), fromL (the one it is leaving), ft (how far: 1 settled)
+  let fd = [], shownL = null, fromL = null, ft = null, fadeAt = 0, fcap = 0; const fading = [];
   // stale: the game has moved or recoloured a copy since the lists were filled (every such write goes through the library's textures)
   let stale = true, mt = null, ct = null; const wmWas = new Float64Array(16);
   const hook = t => { if (!t) return; if (!t.gsHooked) { t.gsHooked = true; const own = t.enqueueUpdate; t.enqueueUpdate = function (i) { this.gsStale?.(); return own.call(this, i); }; } t.gsStale = () => { stale = true; }; };
   const watch = () => { if (im.matricesTexture !== mt) { mt = im.matricesTexture; hook(mt); stale = true; } if (im.colorsTexture !== ct) { ct = im.colorsTexture; hook(ct); stale = true; } };
   const make = () => {
     for (const t of tw) { t.removeFromParent(); t.dispose(); }
+    for (const t of fd) { t.removeFromParent(); t.dispose(); }
     cap = Math.max(16, im._capacity || im._instancesArrayCount || 16);
     want = new Int8Array(cap); sph = new Float32Array(cap * 4); stale = true;
+    shownL = new Int8Array(cap).fill(-1); fromL = new Int8Array(cap); ft = new Float32Array(cap).fill(1); fcap = Math.min(cap, FADE_COPIES);
     tw = levels.map(({ obj }) => {
       const src = obj.geometry, g = new BufferGeometry();   // the same buffers, without the library's index attribute
       for (const k in src.attributes) if (k !== 'instanceIndex') g.setAttribute(k, src.attributes[k]);
@@ -1574,11 +1592,62 @@ export function gpuProps(im) {
       const list = m.instanceMatrix, clone = list.clone; list.clone = function () { const c = clone.call(this); m.userData.slots.prev = c; return c; };
       group.add(m); return m;
     });
+    fd = levels.map(({ obj }, L) => {
+      const src = tw[L].geometry, g = new BufferGeometry();
+      for (const k in src.attributes) g.setAttribute(k, src.attributes[k]);
+      g.setIndex(src.index); g.groups = src.groups; g.boundingSphere = src.boundingSphere;
+      g.setAttribute('gsFade', new IBA(new Float32Array(fcap * 2), 2));
+      const m = new InstancedMesh(g, obj.material, fcap); m.count = 0; m.frustumCulled = false; m.visible = false;
+      m.castShadow = im.castShadow; m.receiveShadow = im.receiveShadow; m.name = (im.name || 'props') + ':fade' + L;
+      // (drawn only with its dithered twin, once that is built: holdNew and the shaders built ahead leave it alone)
+      m.userData.gsTwin = im; m.userData.noHold = true; m.userData.gsFadeCopies = true;
+      if (im.colorsTexture) m.instanceColor = new IBA(new Float32Array(fcap * 3), 3);
+      const list = m.instanceMatrix, clone = list.clone; list.clone = function () { const c = clone.call(this); m.userData.prev = c; return c; };
+      group.add(m); return m;
+    });
   };
   make();
+  // which copies change level this frame, and their fade along (want: -2 for a copy drawn in the fade lists)
+  const fadeCopies = (n, ready) => {
+    const now = performance.now(), dt = Math.min(.1, Math.max(0, (now - fadeAt) / 1000)); fadeAt = now;
+    // (asked each frame: the twins' shaders are built before the first change)
+    const ok = !!(FADE.on && ready && levels.length > 1 && fd.every(m => ready(m))), can = () => ok;
+    fading.length = 0;
+    for (let i = 0; i < n; i++) {
+      const w = want[i];
+      if (w < 0) { shownL[i] = -1; ft[i] = 1; continue; }
+      if (shownL[i] < 0) { shownL[i] = w; ft[i] = 1; continue; }   // (coming into view: at its level at once)
+      if (ft[i] >= 1) { if (w !== shownL[i]) { if (can()) { fromL[i] = shownL[i]; ft[i] = 0; } shownL[i] = w; } }
+      else if (w === fromL[i]) { fromL[i] = shownL[i]; shownL[i] = w; ft[i] = 1 - ft[i]; }   // (back where it came from: the fade turns round)
+      else if (w !== shownL[i]) { fromL[i] = shownL[i]; shownL[i] = w; ft[i] = 0; }
+      if (ft[i] < 1) { ft[i] += dt / Math.max(.01, FADE.s); if (ft[i] >= 1 || !can()) ft[i] = 1; }
+      if (ft[i] < 1) fading.push(i);
+    }
+    const D = im.matricesTexture._data, C = im.colorsTexture?._data;
+    for (const t of fd) t.count = 0;
+    const put = (t, i, v) => {
+      const s = t.count++, M = t.instanceMatrix.array, o = i * 16, m0 = s * 16, F = t.geometry.attributes.gsFade.array, A = t.instanceColor?.array;
+      for (let j = 0; j < 16; j++) M[m0 + j] = D[o + j];
+      F[s * 2] = ft[i]; F[s * 2 + 1] = v;
+      if (C && A) { const a0 = s * 3, c0 = i * 4; A[a0] = C[c0]; A[a0 + 1] = C[c0 + 1]; A[a0 + 2] = C[c0 + 2]; }
+    };
+    for (const i of fading) {
+      const a = fd[fromL[i]], b = fd[shownL[i]];
+      if (a.count >= fcap || b.count >= fcap) { ft[i] = 1; continue; }   // (no room: it changes at once)
+      put(a, i, -1); put(b, i, 1); want[i] = -2;
+    }
+    for (const t of fd) {
+      t.visible = t.count > 0; if (!t.visible) continue;
+      const P = t.userData.prev?.array, M = t.instanceMatrix.array, k = t.count * 16;
+      // (last frame's place for each is where it is now: the lists are packed afresh, a still copy moves with the camera alone. Its version always
+      // above the last sent, as sendPrev's: three sets it back to the list's own after each draw)
+      if (P) { const pr = t.userData.prev; for (let j = 0; j < k; j++) P[j] = M[j]; pr.clearUpdateRanges(); pr.addUpdateRange(0, k); pr.version = t.userData.pv = Math.max(pr.version, (t.userData.pv || 0) + 1); }
+      for (const a of [t.instanceMatrix, t.geometry.attributes.gsFade, t.instanceColor]) if (a) { a.clearUpdateRanges(); a.addUpdateRange(0, t.count * a.itemSize); a.needsUpdate = true; }
+    }
+  };
   // GPU culling (props-gpu.js; hd3d.js says when): its own meshes, so the CPU lists keep their slots for switching back
   let gc = null, onGpu = false;
-  const useGpu = on => { if (on && !gc) gc = gpuCull(im, levels, group); if (on === onGpu) return; onGpu = on; for (const t of tw) t.visible = false; for (const m of gc?.meshes || []) m.visible = on; };
+  const useGpu = on => { if (on && !gc) gc = gpuCull(im, levels, group); if (on === onGpu) return; onGpu = on; for (const t of tw) t.visible = false; for (const m of gc?.meshes || []) m.visible = on; shownL?.fill(-1); };
   // a slot drawn as nothing: every point at the copy's own place
   const hide = (M, m0) => { const x = M[m0 + 12], y = M[m0 + 13], z = M[m0 + 14]; M.fill(0, m0, m0 + 16); M[m0 + 12] = x; M[m0 + 13] = y; M[m0 + 14] = z; M[m0 + 15] = 1; };
   return {
@@ -1587,13 +1656,17 @@ export function gpuProps(im) {
     gpuFits: gpuCullFits(levels),
     isGpu: () => onGpu,   // (a function: the twin is copied with ...spread in hd3d.js)
     sends: () => gc?.sends() ?? 0,
-    sync(cam, occ = null, shadowCams = null, gpuR = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead
+    /** The lists of copies changing level drawn this frame (hd3d.js draws them with their dithered twins). */
+    fades: () => onGpu ? gc.fades : fd,
+    /** How many copies are changing level now. */
+    fadingNow: () => onGpu ? -1 : fading.length,
+    sync(cam, occ = null, shadowCams = null, gpuR = null, ready = null) {   // occ: occlusion culling, a function of the copy's number (occlude.js copiesHidden; only for props without shadows: one list feeds both here); shadowCams: the lights' shadow cameras (a copy off screen that casts into view is kept); gpuR: the renderer, to cull on the GPU instead; ready(mesh): are a fade list's dithered shaders built (lod-fade.js)
       dists();
       useGpu(!!gpuR && this.gpuFits);
-      if (onGpu) { gc.sync(gpuR, cam, shadowCams); for (const m of gc.meshes) m.visible = true; return; }
+      if (onGpu) { for (const t of fd) t.visible = false; gc.sync(gpuR, cam, shadowCams, ready); for (const m of gc.meshes) m.visible = true; return; }
       if ((im._capacity || 0) > cap) make();
       const n = Math.min(cap, im._instancesArrayCount || 0), D = im.matricesTexture?._data, C = im.colorsTexture?._data, wm = im.matrixWorld;
-      if (!D) { for (const t of tw) { t.count = 0; t.userData.slots.top = 0; t.userData.slots.slotOf.fill(0); t.userData.slots.owner.fill(0); } stale = true; return; }
+      if (!D) { for (const t of tw) { t.count = 0; t.userData.slots.top = 0; t.userData.slots.slotOf.fill(0); t.userData.slots.owner.fill(0); } for (const t of fd) { t.count = 0; t.visible = false; } shownL.fill(-1); stale = true; return; }
       cam.updateMatrixWorld(); PM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); PF.setFromProjectionMatrix(PM, cam.coordinateSystem);
       const nsf = im.castShadow && shadowCams ? shadowCams.length : 0;
       for (let j = 0; j < nsf; j++) { const c = shadowCams[j]; (SF[j] ||= new Frustum()).setFromProjectionMatrix(PM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse), c.coordinateSystem); }
@@ -1621,6 +1694,7 @@ export function gpuProps(im) {
         let L = 0; while (L + 1 < levels.length && d >= levels[L + 1].dist) L++;
         want[i] = L;
       }
+      fadeCopies(n, ready);
       for (let L = 0; L < tw.length; L++) {
         const t = tw[L], S = t.userData.slots, M = t.instanceMatrix.array, A = t.instanceColor?.array;
         // (copied number by number: a subarray view per copy per frame was garbage for the collector)
@@ -1632,7 +1706,7 @@ export function gpuProps(im) {
         for (let s = 0; s < S.top; s++) {
           const i = S.owner[s] - 1; if (i < 0) continue;
           if (i < n && want[i] === L) { if (all) put(s, i); S.idle[s] = 0; continue; }
-          if (i < n && want[i] < 0 && im.getActiveAndVisibilityAt(i) && ++S.idle[s] <= PROP_LINGER) continue;
+          if (i < n && want[i] === -1 && im.getActiveAndVisibilityAt(i) && ++S.idle[s] <= PROP_LINGER) continue;   // (one changing level, -2, leaves at once: it is in the fade lists)
           hide(M, s * 16); S.owner[s] = 0; S.slotOf[i] = 0; touchSlot(N, s);
         }
         // the copies new to this level: the lowest free slots
@@ -1652,7 +1726,7 @@ export function gpuProps(im) {
         t.visible = t.count > 0;
       }
     },
-    dispose() { for (const t of tw) t.dispose(); gc?.dispose(); },
+    dispose() { for (const t of tw) t.dispose(); for (const t of fd) t.dispose(); gc?.dispose(); },
   };
 }
 
@@ -2386,13 +2460,14 @@ export class GpuChain {
   buildFor() {
     const sp = this.sp, rt = sp?.renderTarget; if (!rt) return null;
     let sig = rt.samples + '|' + rt.depthBuffer + '|' + rt.stencilBuffer + '|' + (rt.depthTexture ? rt.depthTexture.format + ':' + rt.depthTexture.type : '');
-    for (const t of rt.textures) sig += '|' + t.format + ':' + t.type + ':' + t.colorSpace;
+    for (const t of rt.textures) sig += '|' + t.format + ':' + t.type + ':' + t.colorSpace + (t.userData.gsOut4 ? ':4' : '');
     const b = this._bf;
     if (b?.sig !== sig) {
       // (made afresh, not rt.clone(): a copy's pictures share the pass's own image sizes, and sizing the copy shrank the pass's)
+      // (gsOut4 too: the motion picture's shaders keep four outputs, or a see-through thing's built here is refused: slimPictures)
       b?.rt.dispose();
       const c = new RenderTarget(4, 4, { count: rt.textures.length, samples: rt.samples, depthBuffer: rt.depthBuffer, stencilBuffer: rt.stencilBuffer });
-      rt.textures.forEach((t, i) => { const q = c.textures[i]; q.format = t.format; q.type = t.type; q.colorSpace = t.colorSpace; q.name = t.name; q.generateMipmaps = false; });
+      rt.textures.forEach((t, i) => { const q = c.textures[i]; q.format = t.format; q.type = t.type; q.colorSpace = t.colorSpace; q.name = t.name; q.generateMipmaps = false; q.userData.gsOut4 = t.userData.gsOut4; });
       if (rt.depthTexture) { const d = new DepthTexture(4, 4, rt.depthTexture.type); d.format = rt.depthTexture.format; c.depthTexture = d; }
       this._bf = { sig, rt: c, mrt: null };
     }
@@ -2499,6 +2574,7 @@ export class GpuChain {
     if (live) return this.realFrame(o, f);
     if (this.s2) { this.s2.size(o.w, o.h, o.fw, o.fh); this.s2.set(f); this.s2.render(this.r); }
     else this.pp.render();
+    if (o.sunMask && this.sp && !this.clear) sunMask(this.r, this.sp.getTextureNode('depth').value, this.cam, o.sunMask);
   }
 
   /* ---------- the game on screen: real frames, made frames, still frames ---------- */
@@ -2538,6 +2614,8 @@ export class GpuChain {
       try { this.pp.render(); } finally { r.setRenderTarget(was); }
       color = rt.texture;
     }
+    // the sun mask from this frame's depth, for the next frame's sun (sunmask-gpu.js; hd3d.js sunMaskFrame says what goes in it)
+    if (o.sunMask) sunMask(r, sp.getTextureNode('depth').value, cam, o.sunMask);
     this.vpLast.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.lastColor = color;
     if (o.still) (this.still ||= new StillCheck(r)).check(color, o.fw, o.fh);
