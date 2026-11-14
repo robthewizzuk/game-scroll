@@ -33,6 +33,10 @@ sw('autoplay-policy', 'no-user-gesture-required');   // sound can start before t
 // Windows guesses when a window is covered and stops drawing it; overlays and some screen setups fool it
 // into freezing a window that is in plain view. (Minimised windows still stop.)
 if (win32) sw('disable-features', 'CalculateNativeWinOcclusion');
+// A graphics driver that resets, or Chromium's graphics process crashing, loses the page's WebGPU device; the engine
+// makes a new one and carries on (src/kit/gpu.js). Chromium itself would block the app's own address from WebGL and
+// WebGPU after a few of those, for good until the app restarted, leaving the 3D games blank.
+app.disableDomainBlockingFor3DAPIs();
 // Linux is only for the tests (scripts/desktop-test.cjs): WebGPU there is still behind a switch.
 if (process.platform === 'linux') { sw('enable-unsafe-webgpu'); sw('enable-features', 'Vulkan'); }
 

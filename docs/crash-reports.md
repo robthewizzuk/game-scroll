@@ -109,6 +109,24 @@ reason; on iPhone, which gives no reason, it is the best hint there is.
 **Script error** means a game threw an error. The app ends that round and carries on. Streamed
 games report as `games/<id>.js:<line>`, so the line points into that game's file.
 
+**Graphics chip lost** means the WebGPU device went away while the app was open (apps built from
+14 November 2026). A browser or graphics driver can take the device away at any time: the driver
+was reset after a hang, the system wanted the chip's memory back, or the browser's graphics process
+crashed. The app pauses the round under "The graphics restarted. Getting them back…", makes a new
+device, builds the round's shaders again, and gives "Carry on" back once the round draws as before
+(`src/kit/gpu.js` `lostGPU`, `src/main.js` `mendStep`). The message gives the reason the browser
+named (`unknown` is the usual one for a crash, `test` is our own test script) and how it ended:
+
+| Ending | What happened |
+| --- | --- |
+| back on WebGPU | A new device came, and the round went on with it. |
+| WebGL from then on | The fourth loss in a session: the app stops asking for WebGPU and draws 3D with WebGL until it starts again, as a chip that keeps failing should be. |
+| no 3D until the app restarted | The browser refused 3D altogether. Chrome blocks a page from WebGL and WebGPU once its graphics process has crashed twice on it; the Mac and Windows app turns that rule off, but Android's web view keeps it. The pause screen tells the player to restart the app. |
+
+The "Where" column names the chip (as in the smoothness table) and the browser engine with its
+version (`Adreno (TM) 830 · Chrome 142`), which is what a phone and driver steering rule would
+match on. A game that loses its chip often on one kind of phone is the thing to look for here.
+
 ## What is sent
 
 About once a minute while the app is open (and when it goes to the background):
@@ -118,7 +136,8 @@ About once a minute while the app is open (and when it goes to the background):
 - per game: the version of the game's file, rounds, frames, frame time, busy time, slow frames,
   freezes, longest frame, and how much of the frame time was with the phone warm or hot
 - up to 10 errors: kind, game and the version of its file, message (160 characters, URLs cut down
-  to the file name), file:line, and for a crash on Android the time the phone recorded
+  to the file name), file:line (for a lost graphics chip, the chip's name and the browser engine
+  instead), and for a crash on Android the time the phone recorded
 
 Only a real build sends: test builds, `npm run dev` and a browser driven by a test script count for
 themselves (the QA panel still shows "this phone") and send nothing.
