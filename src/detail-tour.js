@@ -76,7 +76,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   const t0 = Date.now(), list = SCENES.filter(s => only ? only.includes(s[0]) : framegen ? FG_SCENES.includes(s[0]) : !traced || TRACE_SCENES.includes(s[0])), stopped = () => !!signal.stop;
   const out = { kind: 'scenes', framegen: !!framegen, traced, at: new Date().toISOString(), seconds, size, asked: list.length, scenes: [], stopped: false };
   out.phone = await phone(); out.powerBefore = powerNow();
-  await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'gas', 'city', 'THREE']);
+  await loadParts(['hd', 'props', 'models', 'poses', 'outdoors', 'sky', 'gas', 'city', 'fx3d', 'THREE']);
   const { HD } = await import('./kit/hd3d.js');
   // the stage: a canvas over the whole app, as a card's is over its 3D picture
   const stage = document.createElement('div'); stage.className = 'tour-stage';

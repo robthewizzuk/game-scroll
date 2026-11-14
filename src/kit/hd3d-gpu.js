@@ -76,8 +76,8 @@ import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
-import { sunMaskAt, sunMask } from './sunmask-gpu.js';
-export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo } from './sunmask-gpu.js';
+import { sunMaskAt, sunMask, gasSunAt } from './sunmask-gpu.js';
+export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo, sunGas, gasSunAt } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -1454,7 +1454,7 @@ export function froxels() {
       const s4 = U.shM.mul(vec4(p, 1)), sc = s4.xyz.div(s4.w);
       const inside = U.shOn.greaterThan(.5).and(sc.x.greaterThan(0)).and(sc.x.lessThan(1)).and(sc.y.greaterThan(0)).and(sc.y.lessThan(1)).and(sc.z.lessThan(1));
       const sd = shT.load(ivec2(vec2(sc.x, sc.y.oneMinus()).mul(U.shSize))).x;
-      const lit = select(inside, step(sc.z, sd), float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir));   // (and under the clouds' shadow)
+      const lit = select(inside, step(sc.z, sd), float(1)).mul(cloudShadeAt(p.add(ORG), U.sunDir)).mul(gasSunAt(p, U.sunDir));   // (and under the clouds' shadow, and gs.gas's smoke: sunmask-gpu.js)
       const L = vec3(U.sunCol).mul(lit.mul(sunPh)).add(U.amb).toVar();
       // lamps: soft round falloff to their range, scattered evenly
       Loop({ start: 0, end: FLAMPS }, ({ i: j }) => {

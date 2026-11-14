@@ -36,6 +36,9 @@
 //            for the towers, and the crowd's far members as capsules, out of the sun's map
 //   coast    the open sea (src/kit/sea.js, sea-gpu.js, gs.outdoors.Sea) and rain that runs (lens-drops.js, gs.sky.Weather watch()): a beach in the
 //            rain followed behind a jeep: with the plain water, with the sea and its shore, then with drops on the lens and spray off the tyres
+//   embers   light from effects (hd3d.js flash, lamps.js lampLightAt, sunmask-gpu.js gasSunAt): a works yard at dusk with a burning drum,
+//            sparks, a turret firing, blasts and smoke: once lighting nothing, then lighting the yard, the smoke lit by the lamps, the
+//            drum's smoke shading the ground from the low sun (WebGPU)
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -1083,6 +1086,70 @@ function coast({ gs, size }) {
   };
 }
 
+/* ---------- embers: light from fire, sparks and explosions ---------- */
+// A works yard at dusk (hd3d.js flash, lamps.js lampLightAt, sunmask-gpu.js gasSunAt): a burning drum, a grinder
+// throwing sparks, a turret firing bursts, a blast every six seconds, a vent breathing smoke under a lamp, and the drum's
+// smoke and the cloud each blast leaves (gs.gas) drifting across the evening sun. Off (__hd.effectLights = false) the effects light nothing: fire and sparks
+// glow on their own, the smoke is the colour it was made, and the drum's smoke throws no shadow. On, each hands a
+// short-lived light to the lamps (the clustered lights, on WebGPU), the smoke and dust take the light of the lamps and
+// flashes round them, and on WebGPU the gas's smoke shades the sunlit ground past it (the yard's front, by the crate).
+function embers({ gs, HD, size, gpu }) {
+  const T = gs.THREE, hd = gs.hd, { Gas } = gs.gas;
+  const v = new hd.HDView({ bg: '#2a3350', fog: .012, env: .12, amb: .06, sky: '#3a4566', ground: '#141210' }).lampLights(12);
+  v.cam.far = 140; v.cam.updateProjectionMatrix(); v.bloom = .55;
+  const sun = hd.sun('#ff9e66', 1.4, 40, [-.8, .62, -.45]); v.scene.add(sun, sun.target); v.sun = sun;
+  const add = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  const stone = hd.pbr('#8d8a84', { rough: .9 }), iron = hd.pbr('#3a3d42', { rough: .5, metal: .7 }), brick = hd.pbr('#8a4a3a', { rough: .9 }), wood = hd.pbr('#6a4a2c', { rough: .85 });
+  add(new T.PlaneGeometry(90, 90).rotateX(-Math.PI / 2), hd.pbr('#7a756b', { rough: .85, wet: .15 }), 0, 0, 0).castShadow = false;
+  add(new T.BoxGeometry(16, 4, .5), brick, 0, 2, -7); add(new T.BoxGeometry(.5, 4, 14), brick, -8, 2, 0);
+  for (const [x, z, h] of [[-5.5, -4.5, 1], [-4.3, -4.8, .7], [-5.2, -3.2, .8], [3, 3.5, .9]]) add(new T.BoxGeometry(h, h, h), wood, x, h / 2, z);
+  add(new T.CylinderGeometry(.35, .35, 1, 16), iron, -1.6, .5, .4);   // the burning drum
+  add(new T.BoxGeometry(.8, .9, .6), iron, 2.6, .45, -3);   // the grinder
+  const turret = add(new T.BoxGeometry(.7, .5, 1.6), iron, -6, 1.2, 3); add(new T.CylinderGeometry(.05, .05, 1.4, 8).rotateX(Math.PI / 2), iron, -6, 1.3, 4.3);
+  add(new T.CylinderGeometry(.08, .1, 4.2, 8), iron, 1.2, 2.1, 1.8); add(new T.BoxGeometry(.9, .2, .2), iron, .8, 4.2, 1.8);   // a lamp post by the vent
+  const lamps = [{ x: .5, y: 4.05, z: 1.8, col: '#ffcf8a', i: 16, reach: 11 }, { x: -7.4, y: 3.4, z: -6.5, col: '#ffd9a8', i: 10, reach: 9 }];
+  const fx = new gs.fx3d.Particles3D(v.scene, { seed: 9 }), V3 = (x, y, z) => ({ x, y, z });
+  let drum = null, vent = null, gas = null;
+  const sum = { n: 0, flashes: 0, smoke: 0, t: 1e9, spark: 0, shot: 0, boom: 4 };
+  const start = () => {
+    fx.clear(); gas?.dispose(); gas = null;
+    drum = fx.fire(V3(-1.6, 1, .4), { size: 1 });
+    vent = fx.make(V3(.6, .3, 2.6), { loop: true, rate: 14, life: [2, 3.2], speed: [.25, .6], size: [.5, 1.1], colors: ['#8a8a8a', '#6a6a6a'], shape: 'cone', angle: .35, up: true, glow: false, grow: true });
+    // (the drum's smoke and the blasts' clouds: the evening sun is behind the yard's far corner, so smoke one to five
+    // metres up throws its shadow onto the ground between the camera and the drum)
+    gas = new Gas(v, { box: [-3.4, 0, -1.4, 1.6, 6.5, 4.2], kind: 'fire', cells: size >= 1 ? undefined : Math.round(Gas.max() * Math.max(.15, size)) });
+    gas.fire({ x: -1.6, y: 1, z: .4, size: .6, power: .8 }); gas.tube({ x: -1.6, y: .5, z: .4, r: .36, h: 1 });
+  };
+  const enter = key => async draw => { HD.effectLights = key === 'on'; start(); sum.n = sum.flashes = sum.smoke = 0; sum.t = 1e9; for (let i = 0; i < 6; i++) await draw(); };
+  return {
+    v, holds: 'a works yard at dusk: a burning drum, a grinder throwing sparks, a turret firing, a blast every six seconds, a smoking vent under a lamp, and the drum\'s and the blasts\' smoke across the evening sun',
+    modes: [
+      { key: 'off', name: 'effects that light nothing', enter: enter('off') },
+      { key: 'on', name: 'fire, sparks and blasts that light the yard', enter: enter('on') },
+    ],
+    // a slow swing round the yard's open side, the effects by the clock so every run sees the same ones
+    path(t, cam) {
+      const back = t < sum.t, dt = back ? 0 : Math.min(.1, t - sum.t), a = .55 + .5 * Math.sin(t * .2);
+      if (back) { sum.spark = 0; sum.shot = 0; sum.boom = 4; gas?.clear(); }
+      sum.t = t;
+      cam.position.set(Math.sin(a) * 11, 2.4 + .5 * Math.sin(t * .27), Math.cos(a) * 11); cam.lookAt(-1, 1.6, -1.5); cam.updateMatrixWorld(); sun.follow(0, 0, 0);
+      // the grinder's sparks, four a second; the turret, a burst of eight shots every three seconds; a blast every six
+      while (t >= sum.spark) { sum.spark += .25; fx.sparks(V3(2.6, 1, -2.65), { count: 18, power: .8 }); }
+      while (t >= sum.shot) { const k = Math.round(sum.shot * 8) % 24; sum.shot += 1 / 8; if (k < 8) v.flash(-6, 1.3, 5.1, { col: '#ffd27a', i: 40, reach: 7, life: .06 }); }
+      if (t >= sum.boom) { sum.boom += 6; fx.boom(V3(-1, .6, 2.5), { size: 1.4 }); gas?.puff(-1, 1, 2.5, { size: 1.6, amount: 1.5, heat: .3 }); }
+      fx.update(dt); gas?.update(dt);
+      v.placeLamps(lamps, cam.position.x, cam.position.y, cam.position.z, t);
+      sum.n++; sum.flashes += v.flashSpots?.length || 0; sum.smoke += HD.info.sunMask?.smoke ? 1 : 0;
+    },
+    tell() {
+      if (!sum.n) return null;
+      if (HD.effectLights === false) return 'no effect lights';
+      return `${(sum.flashes / sum.n).toFixed(1)} flashes lit a frame${gpu ? ` · the smoke's shadow in ${Math.round(sum.smoke / sum.n * 100)}% of frames` : ''}`;
+    },
+    dispose() { HD.effectLights = undefined; fx.dispose(); gas?.dispose(); gas = null; clear(v); },
+  };
+}
+
 /** The scenes, in the order they run: [key, name, what it tries, make({ gs, HD, size, gpu, top })] (gpu: drawn with WebGPU; top: one of the best phones). */
 /* ---------- cars: cars up close ---------- */
 // A kerb of parked cars of the closed styles, walked past on the pavement at arm's length in a low sun. Off, the cars as cars were (dark
@@ -1269,4 +1336,5 @@ export const SCENES = [
   ['shade', 'Shade', 'finer sun shadows: short ones close up, far ones, a crowd\'s', shade],
   ['skyline', 'Skyline', 'the city to the horizon: stand-ins past the streets, far lights, hills', skyline],
   ['coast', 'Coast', 'the open sea and rain that runs', coast],
+  ['embers', 'Embers', 'light from fire, sparks and explosions, lamp-lit smoke, smoke\'s shadow', embers],
 ];

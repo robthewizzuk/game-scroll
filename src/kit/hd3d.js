@@ -63,7 +63,7 @@ import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { Occlusion } from './occlusion.js';
 import { ShadowTiles, TILES } from './shadow-tiles.js';
-import { LampPool } from './lamps.js';
+import { LampPool, lampLightAt } from './lamps.js';
 import { binCapsules } from './sunmask.js';
 import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, occlusionNow, depthBack, occludeDrop, DepthMeter } from './occlude.js';
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutTwin, cutUpdate, headsOf, drawnOf, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
@@ -1635,6 +1635,7 @@ const PF = `varying vec4 vT; uniform float soft; void main(){ vec2 d = gl_PointC
  * new frame instead of blending them into the frames before, where they fade to nothing (WebGPU).
  */
 const PART_ATTRS = [['position', 3], ['size', 1], ['tint', 4]];   // (made once, not every frame)
+const PLL = [0, 0, 0];   // (Particles: the lamps' light on a soft one)
 export class Particles {
   constructor(view, { max = 300, additive = true, wind = null, blow = 1, reactive = false } = {}) {
     this.max = max; this.list = []; this.wind = wind; this.blow = blow; this.wAt = {}; this.reactive = reactive;
@@ -1645,13 +1646,14 @@ export class Particles {
     this.mat = new ShaderMaterial({ vertexShader: PV, fragmentShader: PF, transparent: true, depthWrite: false, blending: additive ? AdditiveBlending : NormalBlending, uniforms: { scale: { value: 300 }, soft: { value: additive ? 0 : 1 } } });
     this.pts = new Points(g, this.mat); this.pts.frustumCulled = false; this.pts.renderOrder = 5; view.scene.add(this.pts); view.parts.push(this);
     this.pts.userData.gsTwin = true;   // on WebGPU, hd3d-gpu.js draws them instead (gpuParticles)
-    this.view = view;
+    this.view = view; this.soft = !additive;   // (soft ones, smoke and dust, take the light of the lamps and flashes near them)
   }
   emit(o) { if (this.list.length >= this.max) this.list.shift(); this.list.push({ vx: 0, vy: 0, vz: 0, life: 1, size: .1, grow: 0, col: [1, 1, 1], a: 1, drag: 0, grav: 0, ...o, t: 0 }); }
   clear() { this.list.length = 0; }
   update(dt) {
     this.tick = (this.tick || 0) + 1;
     const L = this.list, g = this.pts.geometry, P = g.attributes.position.array, S = g.attributes.size.array, T = g.attributes.tint.array;
+    const lit = this.soft ? this.view.effectLit : null, lamps = lit?.n > 0;
     let n = 0;
     for (let i = 0; i < L.length; i++) {
       const p = L[i]; p.t += dt; if (p.t >= p.life) continue;
@@ -1662,6 +1664,7 @@ export class Particles {
       const f = p.t / p.life;
       P[n * 3] = p.x; P[n * 3 + 1] = p.y; P[n * 3 + 2] = p.z; S[n] = p.size * (1 + p.grow * f);
       T[n * 4] = p.col[0]; T[n * 4 + 1] = p.col[1]; T[n * 4 + 2] = p.col[2]; T[n * 4 + 3] = p.a * (p.fadeIn ? Math.min(1, f * 6) : 1) * (1 - f) ** (p.ease ?? 1);
+      if (lamps) { lampLightAt(lit, p.x, p.y, p.z, PLL); T[n * 4] *= 1 + PLL[0] * .3; T[n * 4 + 1] *= 1 + PLL[1] * .3; T[n * 4 + 2] *= 1 + PLL[2] * .3; }
       L[n++] = p;
     }
     L.length = n; g.setDrawRange(0, n); this.n = n;
@@ -1724,6 +1727,8 @@ export class GPUParticles {
     const at = o.at || [0, 0, 0], vel = o.vel || [0, 0, 0], V3 = a => a.isVector3 ? [a.x, a.y, a.z] : a;
     const life = Array.isArray(o.life) ? o.life : [o.life ?? 1, o.life ?? 1], size = Array.isArray(o.size) ? o.size : [o.size ?? .1, o.size ?? .1];
     const col = rgbOf(o.color ?? [1, 1, 1]), to = o.to != null ? rgbOf(o.to) : col;
+    // (flash: a light that goes off with the burst, true or { i, reach, life, col }: the view's flashes)
+    if (o.flash) { const F = o.flash === true ? {} : o.flash, a = V3(at), c = rgbOf(F.col ?? o.color ?? [1, .7, .4]); this.view.flash?.(a[0], a[1], a[2], { col: new Color(Math.min(1, c[0]), Math.min(1, c[1]), Math.min(1, c[2])), i: F.i ?? 20 * Math.sqrt(count / 50), reach: F.reach ?? 6, life: F.life ?? Math.min(.4, life[1] * .5) }); }
     this.bursts.push({ start: this.head, n: count, seed: (this.seed = (this.seed * 1103515245 + 12345) % 2147483648) / 2147483648 * 1000,
       at: V3(at), radius: o.radius ?? 0, vel: V3(vel), spread: o.spread ?? 1, life, size, col, a: o.alpha ?? 1, to, ease: o.ease ?? 1, fadeIn: o.fadeIn ? 1 : 0 });
     this.head = (this.head + count) % cap;
@@ -2356,6 +2361,7 @@ export class HDView {
     detailDropAll(this);
     if (this.held?.size) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
     occludeDrop(this);
+    if (this.flashes) this.flashes.length = 0;   // (their lights go out next frame)
     return this;
   }
   // bounce light and room reflections, baked by the renderer drawing this frame (G: WebGPU) when they need it
@@ -2509,11 +2515,16 @@ export class HDView {
    */
   lampLights(dist = 7) {
     this.lampDist = dist;
-    const P = this.lampPool ||= new LampPool(this, dist); P.dist = dist;
+    const P = this.lampPool ||= new LampPool(this, dist); P.dist = dist; P.only = 0;
     for (let i = 0; i < 4; i++) { const l = new PointLight('#ffd8a0', 0, dist, 1.6); this.scene.add(l); this.lamps.push(l); P.adopt(l); }
     return this;
   }
   placeLamps(spots, x, y, z, t = 0) {
+    // (kept, so the frame's flashes can be placed with them when the game doesn't place its lamps every frame)
+    this.gameLamps = spots; (this.gameLampsAt ||= [0, 0, 0, 0]).splice(0, 4, x, y, z, t); this.lampsPlaced = true;
+    this.putLamps(this.flashSpots?.length ? spots.concat(this.flashSpots) : spots, x, y, z, t);
+  }
+  putLamps(spots, x, y, z, t) {
     // on WebGPU, clustered lighting (hd3d-gpu.js manyLights) lights 8 times as many of the nearest lamps
     // for about the same cost; the pool grows as needed (WebGL keeps its few, and a few spot lights with shadows)
     const G = gpuFor(this), many = HD.manyLights !== false && !!G?.r.gsClustered;
@@ -2522,6 +2533,59 @@ export class HDView {
     // rebuilds all their shaders: a stutter each time a lamp came into or left range. So there the pooled
     // lights stay switched on (the tier sets how many) and a spare one just goes dark.
     P.place(spots, x, y, z, t, tier(), HD.tier, many, !!G);
+  }
+  /**
+   * A short-lived light: a muzzle flash, an explosion, sparks, lightning. v.flash(x, y, z, o) or v.flash(point, o), o:
+   * { col ('#ffb060'), i (strength, 30), reach (metres, 8), life (seconds it fades out over, .2), decay (1.6) }; or
+   * keep: true for one that stays until stop() (a fire, a flare), with flicker 0..1 for a flame's waver. It goes in with
+   * the lamps (v.placeLamps' pool), before the lamps round it: on WebGPU among the clustered lights, so many at once are
+   * cheap; on WebGL it takes one of the pool's few lights, or the one light of its own that v.wantFlashes() makes.
+   * gs.fx3d's fire, explosions and sparks, GPUParticles bursts with flash and gs.gas explosions make theirs by
+   * themselves. Returns { at(x, y, z) (or at(point)), stop(), on }.
+   */
+  flash(x, y, z, o = {}) {
+    if (typeof x === 'object' && x) { o = y || {}; z = x.z; y = x.y; x = x.x; }
+    const f = { s: { x, y, z, col: o.col || o.colour || '#ffb060', i: 0, reach: o.reach ?? 8, decay: o.decay ?? 1.6, rank: .05 }, i0: o.i ?? 30, life: Math.max(.016, o.life ?? .2), age: 0, keep: !!o.keep, flicker: o.flicker ?? 0, seed: Math.random() * 100, on: true };
+    f.at = (a, b, c) => { if (typeof a === 'object' && a) { c = a.z; b = a.y; a = a.x; } f.s.x = a; f.s.y = b; f.s.z = c; return f; };
+    f.stop = () => { f.on = false; return f; };
+    this.wantFlashes(); (this.flashes ||= []).push(f);
+    return f;
+  }
+  /**
+   * Ready for flashes before any is wanted (kits that make them call it when they are made, in make() or reset()): on WebGL a
+   * game with no lamps then has one light of its own for them from the start (a light added later would rebuild every shader).
+   */
+  wantFlashes() {
+    if (this.lampPool) return this;
+    const P = this.lampPool = new LampPool(this, this.lampDist ?? 7); P.only = 1;
+    const l = new PointLight('#ffb060', 0, 8, 1.6); this.scene.add(l); this.lamps.push(l); P.adopt(l);
+    return this;
+  }
+  /** What lamps and flashes lit last frame, for effects lit on the CPU (lamps.js lampLightAt), or null (__hd.effectLights = false). */
+  get effectLit() { return HD.effectLights === false ? null : this.lampPool?.lit || null; }
+  /** The light the lamps and flashes lit last frame shine on a point: [r, g, b] (for things a game lights itself, like sprites). */
+  lightAt(x, y, z, out = [0, 0, 0]) { return lampLightAt(this.lampPool?.lit, x, y, z, out); }
+  // The frame's flashes, faded by their age; placed with the game's lamps (or, when it placed none since the last frame,
+  // with the ones it placed last, from where it placed them), and once more when the last has gone, to put its light out.
+  flashFrame(now) {
+    const F = this.flashes; if (!F?.length && !this.flashLit) { this.lampsPlaced = false; return; }
+    const dt = Math.min(.1, Math.max(0, (now - (this.flashT ?? now)) / 1000)), on = HD.effectLights !== false; this.flashT = now;
+    const S = this.flashSpots ||= []; S.length = 0;
+    if (F) {
+      let n = 0;
+      for (const f of F) {
+        f.age += dt; if (!f.on || (!f.keep && f.age >= f.life)) continue;
+        F[n++] = f;
+        const k = f.keep ? 1 - f.flicker * (.25 + .25 * Math.sin(f.age * 13 + f.seed) * Math.sin(f.age * 4.1 + f.seed * 3)) : (1 - f.age / f.life) ** 2;
+        f.s.i = f.i0 * k; if (on) S.push(f.s);
+      }
+      F.length = n;
+    }
+    if (!this.lampsPlaced) {
+      const g = this.gameLampsAt, c = g ? null : this.cam.getWorldPosition(FLASH_P);
+      this.putLamps(this.gameLamps ? this.gameLamps.concat(S) : S, g ? g[0] : c.x, g ? g[1] : c.y, g ? g[2] : c.z, g ? g[3] : this.t);
+    }
+    this.lampsPlaced = false; this.flashLit = S.length > 0;
   }
   /** What the lamps' shadows did last frame (WebGPU): slots with a lamp, slots drawn, slots waiting their turn. */
   get lampShadows() { return this.lampPool?.stats || null; }
@@ -2775,24 +2839,27 @@ export class HDView {
   // Finer sun shadows (WebGPU, sunmask-gpu.js): what this frame's sun mask holds, and whether materials read the last
   // one. contact: v.contactShadows (by itself at ultra); far: v.farShadows (a map of heights round the camera,
   // for shadows past the sun's own box); capsules: crowds' far members (gs.props.Crowd), whose shadows then leave the
-  // sun's map. Null when there is nothing to put in it.
+  // sun's map; smoke: gs.gas's shadow. Null when there is nothing to put in it.
   sunMaskFrame(G, r, T, still, cut) {
     const cs = this.cascade, sun = cs?.far?.parent ? cs.far : this.suns.find(l => l.visible && l.castShadow && l.parent);
     const ok = !still && !this.clearBg && T.shadow > 0 && !!sun && HD.sunMask !== false;
     const cw = this.contactShadows, contact = ok && (cw ?? HD.tier >= 3) ? { length: .3, thickness: .25, out: 40, ...(typeof cw === 'object' ? cw : {}) } : null;
     const far = ok && !!this.farShadows;
+    // gs.gas's smoke: its shadow goes in the mask, and the froxel fog reads it too (so it is handed over even when the mask is off)
+    const lit = HD.effectLights !== false, gas = lit ? this.extras?.find(e => e.gsFx?.kind === 'gas')?.gas : null, smoke = !!(ok && gas?.draws && gas.twin?.lightT);
+    G.fx.sunGas(gas || null);
     this.gsCapsules = ok && HD.capsules !== false;
     const list = this._capList ||= []; list.length = 0;
     if (this.gsCapsules) for (const c of this.scene.userData.gsPosed || []) c.capsules?.(list, this.cam);
     if (far) { const p = this.cam.getWorldPosition(SM_P); G.fx.farTiles(r, this.scene, p.x, p.y, p.z, this.cam.layers.mask, typeof this.farShadows === 'object' ? this.farShadows : {}); this._farOn = true; }
     else if (this._farOn) { G.fx.farTilesOff(); this._farOn = false; }
-    if (!contact && !far && !list.length) { G.fx.sunMaskOn(false); HD.info.sunMask = null; return null; }
+    if (!contact && !far && !list.length && !smoke) { G.fx.sunMaskOn(false); HD.info.sunMask = null; return null; }
     sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
     const L = (this._sunL ||= new Vector3()).setFromMatrixPosition(sun.matrixWorld).sub(SM_P.setFromMatrixPosition(sun.target.matrixWorld)).normalize();
     let caps = null;
     if (list.length) { list.sort((a, b) => a[7] - b[7]); const { caps: cA, grid } = G.fx.sunCaps(); caps = binCapsules(list, [L.x, L.y, L.z], cA, grid, 40, ORIGIN); }
     G.fx.sunMaskOn(!cut && G.fx.sunMaskOwner() === this);
-    HD.info.sunMask = { contact: !!contact, far, caps: caps?.n || 0, full: caps?.full || 0 };
+    HD.info.sunMask = { contact: !!contact, far, caps: caps?.n || 0, full: caps?.full || 0, smoke };
     const reach = typeof this.farShadows === 'object' && this.farShadows.reach;
     return { owner: this, L, contact, far, farReach: reach || 0, box: sun.castShadow && sun.shadow.map ? sun.shadow.matrix : null, caps, k: fxK('sun mask') };
   }
@@ -3183,6 +3250,7 @@ export class HDView {
     }
     const T = tier();
     if (this.tierSeen !== HD.tier) { this.tierSeen = HD.tier; this.tierFn?.(T); }
+    if (!baking && !off) this.flashFrame(now);
     // The final picture (upscaler, last effects, the copy onto the card) is the screen's own size. On a big
     // screen (a foldable opened up) that's twice a phone's pixels and the resolution steps can't lighten it,
     // so once the game has had to step down (Q.lvl >= 1), it's also drawn at no more than OUT_PX and the
@@ -3378,7 +3446,7 @@ function gpuFor(v) {
 }
 // swap each view's parts between their WebGL and WebGPU versions (particles: points or sprites)
 const gpuLooked = new WeakSet(), gpuTwins = new WeakMap(), gpuLists = new WeakMap(), sunRoles = new WeakMap();
-const SM_P = new Vector3();   // (sunMaskFrame)
+const SM_P = new Vector3(), FLASH_P = new Vector3();   // (sunMaskFrame, flashFrame)
 // kit ShaderMaterials (GPU_TWINS) swapped for their node material twin on WebGPU, and back
 // A twin can have a close-up version (gs.models materials: the recipe worked out per pixel, fading to the
 // baked look pixel by pixel as the textures get fine enough): drawn while the thing is within its distance

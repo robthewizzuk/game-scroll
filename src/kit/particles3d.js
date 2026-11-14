@@ -2,7 +2,11 @@
 // WebGPU alike. The particles move here, and are drawn as soft dots that face the camera in two
 // meshes (glowing ones and soft ones) with three.js's own plain material, so there is no shader of
 // their own to port and no library to load. Kit use: games get this as gs.fx3d.Particles3D.
+// In a Next Gen view (gs.hd), fire, explosions and sparks light what is round them (the view's flashes:
+// short-lived lights among its lamps), and soft dots (smoke, dust, snow) take the light of the lamps and
+// flashes near them, worked out here for each dot.
 import { timed } from './prof.js';
+import { lampLightAt } from './lamps.js';
 import { Mesh, BufferGeometry, BufferAttribute, DynamicDrawUsage, MeshBasicMaterial, CanvasTexture, AdditiveBlending, NormalBlending, Color, Vector3 } from 'three';
 
 let dot = null;
@@ -20,6 +24,7 @@ const pair = v => Array.isArray(v) ? v : [v, v];
 // the same dice every time for a seed (mulberry32): a replay or a test gets the same particles
 const seeded = s => () => { s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 const MAX = 16384;   // dots in one mesh at most
+const LAMP_K = .3, LL = [0, 0, 0];   // (how much of a lamp's light a soft dot sends back: about a pale matt surface's)
 const STRIDE = 19;   // numbers kept per particle: place 3, speed 3, age, life, size, end size, red, green and blue (start, end), fade, gravity, its effect
 
 // one mesh of dots: additive (glow) or plain (smoke, snow)
@@ -52,9 +57,10 @@ class Dots {
     if (this.n >= this.cap && !this.grow(this.cap * 2)) return -1;
     return this.n++ * STRIDE;
   }
-  step(dt) {
+  step(dt, lit = null) {
     const P = this.P, g = this.mesh.geometry, pos = g.attributes.position.array, col = g.attributes.color.array;
     const rx = this.right.x, ry = this.right.y, rz = this.right.z, ux = this.up.x, uy = this.up.y, uz = this.up.z, add = this.additive;
+    const lamps = !add && lit?.n > 0;   // (soft dots under lamps: lit by them, LAMP_K of their light thrown back)
     let n = 0;
     for (let i = 0; i < this.n; i++) {
       const j = i * STRIDE, age = P[j + 6] + dt, life = P[j + 7];
@@ -66,7 +72,8 @@ class Dots {
       // size over the particle's life: a soft curve from its start size to end times it (0 shrinks away, 2 grows)
       const hs = P[o + 8] * .5 * (end === 1 ? 1 : u * u * u + 3 * u * u * f * .9 + 3 * u * f * f * .5 + f * f * f * end);
       const a = P[o + 16] ? u : 1, k = add ? a : 1;   // glowing dots fade by getting darker
-      const r = (P[o + 10] + (P[o + 11] - P[o + 10]) * f) * k, gg = (P[o + 12] + (P[o + 13] - P[o + 12]) * f) * k, b = (P[o + 14] + (P[o + 15] - P[o + 14]) * f) * k;
+      let r = (P[o + 10] + (P[o + 11] - P[o + 10]) * f) * k, gg = (P[o + 12] + (P[o + 13] - P[o + 12]) * f) * k, b = (P[o + 14] + (P[o + 15] - P[o + 14]) * f) * k;
+      if (lamps) { lampLightAt(lit, x, y, z, LL); r *= 1 + LL[0] * LAMP_K; gg *= 1 + LL[1] * LAMP_K; b *= 1 + LL[2] * LAMP_K; }
       const v = n * 12, ax = rx * hs, ay = ry * hs, az = rz * hs, bx = ux * hs, by = uy * hs, bz = uz * hs;
       pos[v] = x - ax - bx; pos[v + 1] = y - ay - by; pos[v + 2] = z - az - bz;
       pos[v + 3] = x + ax - bx; pos[v + 4] = y + ay - by; pos[v + 5] = z + az - bz;
@@ -88,10 +95,14 @@ class Dots {
  * flying finish), or take it away at once. { seed: 7 } gives the same particles every time.
  */
 export class Particles3D {
-  constructor(scene, { seed = null } = {}) {
+  constructor(scene, { seed = null, lights = true } = {}) {
     this.scene = scene; this.live = new Set(); this.ids = 0; this.rnd = seed == null ? Math.random : seeded(seed | 0);
     this.glow = new Dots(scene, true); this.soft = new Dots(scene, false);
+    // a Next Gen view's (gs.hd): its flashes and its lamps' light (lights: false for neither)
+    this.view = lights !== false && scene?.gsView?.flash ? scene.gsView : null; this.view?.wantFlashes();
   }
+  // a light for an effect (none outside a Next Gen view)
+  flash(pos, o) { return this.view ? this.view.flash(pos?.x || 0, pos?.y || 0, pos?.z || 0, o) : null; }
   /**
    * Your own effect. o: life [min, max] seconds, speed [min, max], size [min, max] (a dot's width),
    * colors [from, to], rate (per second, 0 for a burst only), burst (count at the start), loop,
@@ -107,8 +118,8 @@ export class Particles3D {
       c0: rgb((o.colors || ['#ffffff'])[0]), c1: rgb((o.colors || ['#ffffff', '#ffffff'])[1] ?? (o.colors || ['#ffffff'])[0]),
       shape: o.shape === 'cone' ? 2 : o.shape === 'point' ? 0 : 1, radius: o.radius ?? .1, angle: o.angle ?? .4, up: !!o.up,
       gravity: o.gravity || 0, end: o.shrink === false ? 1 : o.grow ? 2 : 0, fade: o.fade === false ? 0 : 1, dots: o.glow === false ? this.soft : this.glow,
-      id: ++this.ids, at: p => { fx.pos.set(p.x, p.y, p.z); return fx; }, stop: () => { fx.on = false; return fx; },
-      remove: () => { fx.on = false; this.live.delete(fx); const D = fx.dots, P = D.P; for (let i = 0; i < D.n; i++) if (P[i * STRIDE + 18] === fx.id) P[i * STRIDE + 6] = P[i * STRIDE + 7]; },
+      id: ++this.ids, light: null, at: p => { fx.pos.set(p.x, p.y, p.z); fx.light?.at(p.x, p.y + fx.lift, p.z); return fx; }, stop: () => { fx.on = false; fx.light?.stop(); return fx; }, lift: 0,
+      remove: () => { fx.on = false; fx.light?.stop(); this.live.delete(fx); const D = fx.dots, P = D.P; for (let i = 0; i < D.n; i++) if (P[i * STRIDE + 18] === fx.id) P[i * STRIDE + 6] = P[i * STRIDE + 7]; },
     };
     this.live.add(fx);
     return fx;
@@ -134,17 +145,25 @@ export class Particles3D {
     P[j + 10] = fx.c0[0]; P[j + 11] = fx.c1[0]; P[j + 12] = fx.c0[1]; P[j + 13] = fx.c1[1]; P[j + 14] = fx.c0[2]; P[j + 15] = fx.c1[2];
     P[j + 16] = fx.fade; P[j + 17] = fx.gravity; P[j + 18] = fx.id;
   }
-  /** A burning flame that keeps going (torches, campfires, rockets). */
-  fire(pos, { size = 1, color = '#ffb020', end = '#ff2000' } = {}) { return this.make(pos, { loop: true, rate: 40 * size, life: [.4, .8], speed: [.6 * size, 1.4 * size], size: [.25 * size, .5 * size], colors: [color, end], shape: 'cone', angle: .25, radius: .15 * size, up: true }); }
+  /** A burning flame that keeps going (torches, campfires, rockets); in a Next Gen view it lights what is round it, wavering. */
+  fire(pos, { size = 1, color = '#ffb020', end = '#ff2000' } = {}) {
+    const fx = this.make(pos, { loop: true, rate: 40 * size, life: [.4, .8], speed: [.6 * size, 1.4 * size], size: [.25 * size, .5 * size], colors: [color, end], shape: 'cone', angle: .25, radius: .15 * size, up: true });
+    fx.lift = .4 * size; fx.light = this.flash({ x: fx.pos.x, y: fx.pos.y + fx.lift, z: fx.pos.z }, { col: color, i: 10 * size, reach: 6 * size, keep: true, flicker: 1 });
+    return fx;
+  }
   /** Rising smoke (keeps going). */
   smoke(pos, { size = 1, color = '#777777' } = {}) { return this.make(pos, { loop: true, rate: 12 * size, life: [1.5, 2.5], speed: [.3, .7], size: [.4 * size, .8 * size], colors: [color, color], shape: 'cone', angle: .3, up: true, glow: false, grow: true }); }
-  /** A quick shower of sparks. */
-  sparks(pos, { color = '#ffe080', count = 30, power = 1 } = {}) { return this.make(pos, { burst: count, life: [.2, .5], speed: [3 * power, 7 * power], size: [.04, .1], colors: [color, '#ff6000'], gravity: -6 }); }
-  /** An explosion: a flash of fire, a puff of smoke and a shower of sparks. */
+  /** A quick shower of sparks (a quick flash of light in a Next Gen view). */
+  sparks(pos, { color = '#ffe080', count = 30, power = 1, light = true } = {}) {
+    if (light) this.flash(pos, { col: color, i: 6 * power, reach: 3 * power, life: .15 });
+    return this.make(pos, { burst: count, life: [.2, .5], speed: [3 * power, 7 * power], size: [.04, .1], colors: [color, '#ff6000'], gravity: -6 });
+  }
+  /** An explosion: a flash of fire (and of light, in a Next Gen view), a puff of smoke and a shower of sparks. */
   boom(pos, { size = 1 } = {}) {
+    this.flash(pos, { col: '#ffb060', i: 80 * size, reach: 12 * size, life: .45 });
     this.make(pos, { burst: 40, life: [.3, .7], speed: [2 * size, 6 * size], size: [.3 * size, .7 * size], colors: ['#fff2a0', '#ff3000'] });
     this.make(pos, { burst: 15, life: [.8, 1.5], speed: [.5, 1.5 * size], size: [.5 * size, 1 * size], colors: ['#555555', '#222222'], glow: false, grow: true });
-    return this.sparks(pos, { count: 20, power: size });
+    return this.sparks(pos, { count: 20, power: size, light: false });
   }
   /** Twinkly magic (keeps going): pickups, portals, spells. */
   magic(pos, { color = '#a070ff', end = '#40e0ff' } = {}) { return this.make(pos, { loop: true, rate: 25, life: [.6, 1.2], speed: [.2, .6], size: [.05, .15], colors: [color, end], radius: .4, gravity: .5 }); }
@@ -158,13 +177,13 @@ export class Particles3D {
       if (fx.on) {
         for (; fx.burst > 0; fx.burst--) this.spawn(fx);
         fx.acc += fx.rate * dt; while (fx.acc >= 1) { fx.acc--; this.spawn(fx); }
-        fx.t += dt; if (!fx.loop && fx.t >= fx.duration) fx.on = false;
+        fx.t += dt; if (!fx.loop && fx.t >= fx.duration) { fx.on = false; fx.light?.stop(); }
       } else this.live.delete(fx);   // (its particles fly on: they belong to the dots)
     }
-    this.glow.step(dt); this.soft.step(dt);
+    this.glow.step(dt); this.soft.step(dt, this.view?.effectLit);
   }
   /** Takes every effect and particle away. */
-  clear() { for (const fx of this.live) fx.on = false; this.live.clear(); this.glow.n = this.soft.n = 0; this.glow.step(0); this.soft.step(0); }
+  clear() { for (const fx of this.live) { fx.on = false; fx.light?.stop(); } this.live.clear(); this.glow.n = this.soft.n = 0; this.glow.step(0); this.soft.step(0); }
   dispose() { this.clear(); this.glow.dispose(); this.soft.dispose(); }
 }
 

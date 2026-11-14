@@ -8,19 +8,28 @@
 // 11 its shadow's texel size and the square of a sign's own picture (decals-gpu.js's atlas: a sign that lights with its picture).
 // The loop over a pixel's lamps is three's own (ClusteredLightsNode.setupLights) with those added.
 // Decals share the list and the grid, after the lamps (decals-gpu.js): a pixel lays its decals on before any light.
-import { DataTexture, FloatType, RGBAFormat, RenderTarget, DepthTexture, LessEqualCompare, GreaterEqualCompare, LinearFilter, NodeMaterial, NoBlending, LightsNode, Matrix4, Vector4, RendererUtils, Mesh, PlaneGeometry, OrthographicCamera, AlwaysDepth } from 'three/webgpu';
+import { DataTexture, FloatType, RGBAFormat, RenderTarget, DepthTexture, LessEqualCompare, GreaterEqualCompare, LinearFilter, NodeMaterial, NoBlending, LightsNode, LightingNode, Matrix4, Vector4, RendererUtils, Mesh, PlaneGeometry, OrthographicCamera, AlwaysDepth } from 'three/webgpu';
 import { Fn, Loop, If, Break, int, float, positionGeometry, vec2, vec3, vec4, ivec2, textureLoad, texture, uniform, positionView, normalView, normalViewGeometry, smoothstep, dot, clamp, max, min, mix, normalize, cross, directPointLight, select, roughness, abs, reflect, fract, floor, sin, exp, length, atan, step, sqrt, log2, getDistanceAttenuation, clearcoatRoughness, renderGroup } from 'three/tsl';
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { writeDecals, decalPass, pictureAt, PX as PIC_PX } from './decals-gpu.js';
 
 const ROW0 = 4, ROWS = 12;   // (three's rows are 0..3)
 const VM = new Matrix4();
-// one depth picture for every view's lamp shadows (the atlas), and a stand-in until there is one
-// (one picture for good, made bigger or smaller in place: a material that hasn't changed keeps the picture it was
-// first given, and three points it at the same picture's new size but not at another picture)
-const ATLAS = { rt: null, cols: 4, rows: 0, px: 512, gen: 0 };
+// one depth picture for every view's lamp shadows (the atlas), a single texel until a lamp has a shadow
+// (one picture for good, made bigger or smaller in place, the atlas's own from the start: made first for a material on
+// its own, then given to the atlas, three would make it again by its version, which still things never see)
+const ATLAS = { rt: new RenderTarget(1, 1, { depthBuffer: true }), cols: 4, rows: 0, px: 512, gen: 0, ready: false };
 const DEPTH = new DepthTexture(1, 1); DEPTH.compareFunction = LessEqualCompare; DEPTH.minFilter = DEPTH.magFilter = LinearFilter; DEPTH.name = 'lamp shadows';
+ATLAS.rt.depthTexture = DEPTH;
 const atlasTex = texture(DEPTH);
+// A stand-in among each lamp-lit material's lights that carries the atlas's size. three looks again at what a thing
+// drawn is bound to only when the thing, its material or its lights change, a shadow map made at a new size among them
+// (which is how three's own shadow maps are bound again); so the atlas made at a new size is that change for every
+// lamp-lit thing, still ones too, which would otherwise go on drawing with the picture three threw away (a frame the
+// chip refuses). Built into a material, it adds nothing to the light.
+class AtlasMark extends LightingNode { constructor() { super(); this.castShadow = true; this.shadow = { mapSize: { width: 1, height: 1 } }; } setup() {} }
+const MARK = new AtlasMark();
+const marked = () => { MARK.shadow.mapSize.width = ATLAS.rt.width; MARK.shadow.mapSize.height = ATLAS.rt.height; };
 const ATLAS_U = uniform(new Vector4(4, 1, 512, 0)).setGroup(renderGroup);   // cols, rows, slot texels, depth bias (read per render, as above)
 let reversed = false;
 
@@ -76,6 +85,7 @@ export class KitLampsNode extends ClusteredLightsNode {
     this.gsLampN = uniform(0, 'int').setGroup(renderGroup); this.gsDecalN = uniform(0, 'int').setGroup(renderGroup);
   }
   _isClusteredLight(l) { return !l.userData.gsFill && super._isClusteredLight(l); }
+  getBuiltinLights() { const a = this._gsBuiltin ||= []; a.length = 0; a.push(...super.getBuiltinLights(), MARK); return a; }   // (and the atlas's stand-in, above)
   _updateLightsTexture(camera) {
     super._updateLightsTexture(camera);
     const tex = this._lightsTexture, data = tex.image.data, line = tex.image.width * 4, order = this._lightSortOrder, n = order.length;
@@ -230,23 +240,32 @@ function farQuad(rev) {
  * lamp pool drawing into it (another view's pool drawing in between makes ATLAS.gen move on: every slot drawn again).
  */
 export function lampAtlas(r, cols, rows, px, owner) {
-  if (!rows) { dropAtlas(); return null; }
+  if (!rows) { dropAtlas(r); return null; }
   if (ATLAS.owner !== owner) { ATLAS.owner = owner; ATLAS.gen++; }
   const w = cols * px, h = rows * px;
-  if (!ATLAS.rt) {
-    reversed = !!r.reversedDepthBuffer; if (reversed) DEPTH.compareFunction = GreaterEqualCompare;
-    ATLAS.rt = new RenderTarget(w, h, { depthBuffer: true }); ATLAS.rt.depthTexture = DEPTH; DEPTH.image.width = w; DEPTH.image.height = h; ATLAS.gen++;
-  } else if (ATLAS.rt.width !== w || ATLAS.rt.height !== h) { ATLAS.rt.setSize(w, h); ATLAS.gen++; }
-  if (ATLAS.made !== ATLAS.gen) {
-    // (emptied now: three empties a picture's depth the first time it is drawn into without a clear)
-    ATLAS.made = ATLAS.gen; r.initRenderTarget(ATLAS.rt);
-    const was = r.getRenderTarget(); r.setRenderTarget(ATLAS.rt); r.clearDepth(); r.setRenderTarget(was);
-  }
+  if (!ATLAS.ready) { ATLAS.ready = true; reversed = !!r.reversedDepthBuffer; if (reversed) DEPTH.compareFunction = GreaterEqualCompare; }
+  if (ATLAS.rt.width !== w || ATLAS.rt.height !== h) { ATLAS.rt.setSize(w, h); ATLAS.gen++; marked(); }
+  if (ATLAS.made !== ATLAS.gen) { ATLAS.made = ATLAS.gen; empty(r); }
   ATLAS.cols = cols; ATLAS.rows = rows; ATLAS.px = px; ATLAS_U.value.set(cols, rows, px, reversed ? -2e-5 : 2e-5);
   return ATLAS.rt;
 }
-/** Shrinks the atlas to nothing (no lamp has a shadow). */
-export function dropAtlas() { if (ATLAS.rt && ATLAS.rt.width > 1) { ATLAS.rt.setSize(1, 1); ATLAS.gen++; ATLAS.rows = 0; } }
+/**
+ * Shrinks the atlas to nothing (no lamp has a shadow). r: the renderer, to make the small picture at once (materials
+ * with lamps keep the atlas bound whether or not a lamp has a slot, and a picture that was made smaller is thrown away
+ * until it is made again: drawn with as it is, the chip refuses the frame).
+ */
+export function dropAtlas(r) {
+  if (ATLAS.rt.width <= 1) return;
+  ATLAS.rt.setSize(1, 1); ATLAS.gen++; ATLAS.rows = 0; marked();
+  if (r) { ATLAS.made = ATLAS.gen; empty(r); }
+}
+// The atlas made for the chip (again, at its new size) and emptied: three empties a picture's depth only the first
+// time it is drawn into without a clear. (Never marked as changed by hand: three would make it again at the same size,
+// behind the stand-in's back and under the pass it keeps for drawing into it.)
+function empty(r) {
+  r.initRenderTarget(ATLAS.rt);
+  const was = r.getRenderTarget(); r.setRenderTarget(ATLAS.rt); r.clearDepth(); r.setRenderTarget(was);
+}
 /**
  * Draws one slot (lamps.js LampPool.finish): its stand-in light's shadow camera, into its square, emptied first.
  * mask: the camera's layers (the view camera's: what the frame draws).

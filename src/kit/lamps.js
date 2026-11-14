@@ -120,6 +120,22 @@ function meanOf(p) {
 // by tier (index: low, medium, high, ultra): shadow slots in the WebGPU atlas, slots drawn at most a frame, and on
 // WebGL the spot lights (for lamps with a dir or a shadow; with three's own shadows where the tier has shadows)
 export const SLOTS = [0, 4, 8, 16], SLOT_DRAWS = [0, 1, 3, 4], GL_CONES = [1, 2, 2, 4];
+const LIT_MAX = 64;   // lights a pool's lit list holds (lampLightAt)
+/**
+ * The light the pool's lit lamps (pool.lit, after place()) shine on a point, as three works a point light out (its
+ * intensity over its distance to the power of its decay, faded out to nothing at its reach): out = [r, g, b]. For things
+ * lit on the CPU, which three's lights don't reach (particles). lit may be null.
+ */
+export function lampLightAt(lit, x, y, z, out) {
+  let r = 0, g = 0, b = 0;
+  if (lit) for (let i = 0, a = lit.a; i < lit.n; i++) {
+    const o = i * 8, dx = x - a[o], dy = y - a[o + 1], dz = z - a[o + 2], d2 = dx * dx + dy * dy + dz * dz, R2 = a[o + 6] * a[o + 6];
+    if (d2 >= R2) continue;
+    const q = d2 / R2, w = (1 - q * q) * (1 - q * q) / Math.max(.01, Math.pow(d2, a[o + 7] * .5));
+    r += a[o + 3] * w; g += a[o + 4] * w; b += a[o + 5] * w;
+  }
+  out[0] = r; out[1] = g; out[2] = b; return out;
+}
 const DOWN = new Vector3(0, -1, 0), V = new Vector3(), W = new Vector3(), SHADOW_ANGLE = 1.15;
 const KIND = { point: 0, tube: 1, rect: 2 };
 const vec = (d, x, y, z) => Array.isArray(d) ? V.set(d[0], d[1], d[2]) : V.set(d.x ?? x, d.y ?? y, d.z ?? z);
@@ -158,9 +174,11 @@ export class LampPool {
    */
   place(spots, x, y, z, t, T, ti, many, gpu) {
     const v = this.view, shadowOn = T.shadow > 0; this.gpu = gpu;
-    const nMax = gpu && many ? T.lights * 8 : Math.min(T.lights, 4);
+    // (WebGL, a pool made only for flashes (HDView.wantFlashes): its one light, so a game with no lamps pays for one more light, not four)
+    const nMax = gpu && many ? T.lights * 8 : Math.min(T.lights, 4, !gpu && this.only ? this.only : 4);
+    // the nearest first, by how far each is (a spot's rank shrinks that: a flash goes before the lamps round it)
     const near = this.near ||= []; near.length = 0;
-    for (const s of spots) near.push([s, (s.x - x) ** 2 + (s.z - z) ** 2 + (s.y - y) ** 2]);
+    for (const s of spots) { const d2 = (s.x - x) ** 2 + (s.z - z) ** 2 + (s.y - y) ** 2; near.push([s, d2 * (s.rank ?? 1), d2]); }
     near.sort((a, b) => a[1] - b[1]);
     const n = Math.min(near.length, nMax);
     // WebGL: the pools made once at their tier's size, every light kept switched on (a light coming or going, or one
@@ -183,7 +201,7 @@ export class LampPool {
       let kind = 'point', shadow = !!s.shadow && shadowOn && !shaped;
       if (gpu) { if (s.dir && !shaped) kind = 'cone'; }
       else if ((shadow || s.dir) && !shaped && conesLeft > 0) { kind = 'cone'; conesLeft--; } else shadow = false;
-      want.push({ s, kind, shadow, d2: near[i][1], i, l: null });
+      want.push({ s, kind, shadow, d2: near[i][2], key: near[i][1], i, l: null });
     }
     // lights kept from last frame (a spot keeps its light while it stays among the nearest), then free ones, then new ones (WebGPU)
     [this.used, this.was] = [this.was, this.used]; const was = this.was, cur = this.used; cur.clear();
@@ -200,13 +218,13 @@ export class LampPool {
     }
     const fadeN = near[n] ? near[n][1] : null;
     for (const w of want) {
-      const { s, l, shadow, d2, i } = w; if (!l) continue;
+      const { s, l, shadow, d2, key, i } = w; if (!l) continue;
       cur.set(s, l);
       const L = l.userData.gsLamp, reach = s.reach ?? this.dist;
       l.color.set(s.col || '#ffd8a0'); l.decay = s.decay ?? 1.6;
       const fl = s.flick ? (Math.sin(t * 31 + s.x * 7) > .6 || Math.sin(t * 3.1 + s.z) > .95 ? .25 : 1) : 1;
       // fade the furthest light in/out so swapping which lamps are lit never pops
-      const fade = i === n - 1 && fadeN != null ? Math.min(1, (fadeN - d2) * .6) : 1;
+      const fade = i === n - 1 && fadeN != null ? Math.max(0, Math.min(1, (fadeN - key) * .6)) : 1;
       l.intensity = (s.i ?? 6) * fl * fade; s.lit = fl;
       L.reach = reach; L.shape = gpu ? shapeIndex(s.shape) : -1; L.kind = 0; L.ha = L.hb = 0; L.pic = null; L.want = gpu && shadow; L.near = d2; L.zNear = s.near || 0;
       if (s.tube) {
@@ -248,6 +266,13 @@ export class LampPool {
     }
     // (WebGPU's spot lights carry neither: three would light them outside the clusters, each with a map and a shader of its own)
     for (const l of this.cones) { l.castShadow = !gpu && shadowOn; if (gpu && l.map) l.map = null; }
+    // what is lit now, for things that light themselves by it on the CPU (particles: lampLightAt)
+    const lit = this.lit ||= { n: 0, a: new Float32Array(LIT_MAX * 8) }, a = lit.a; lit.n = 0;
+    for (const w of want) {
+      const l = w.l; if (!l || !(l.intensity > 0) || lit.n >= LIT_MAX) continue;
+      const o = lit.n++ * 8; a[o] = l.position.x; a[o + 1] = l.position.y; a[o + 2] = l.position.z;
+      a[o + 3] = l.color.r * l.intensity; a[o + 4] = l.color.g * l.intensity; a[o + 5] = l.color.b * l.intensity; a[o + 6] = l.distance || this.dist; a[o + 7] = l.decay;
+    }
   }
   /**
    * WebGPU, at drawing time: each sign lit with its own picture holds a square of the decals' atlas (fx: hd3d-gpu.js's
@@ -273,12 +298,14 @@ export class LampPool {
    * its lamp. ti: the tier's index.
    */
   prepare(T, ti) {
-    const K = T.shadow > 0 ? SLOTS[ti] : 0, px = Math.max(64, T.shadow >> 1), rows = Math.ceil(K / this.cols);
+    const lights = this._want ||= []; lights.length = 0;
+    for (const l of this.view.lamps) { const L = l.userData.gsLamp; if (L) L.slotOf = null; if (l.visible && l.intensity > 0 && L?.want) lights.push(l); }
+    // (no slots, and no atlas, until a lamp first wants a shadow: a pool of flashes, or lamps without shadows, has none)
+    if (lights.length) this.shadowy = true;
+    const K = T.shadow > 0 && this.shadowy ? SLOTS[ti] : 0, px = Math.max(64, T.shadow >> 1), rows = Math.ceil(K / this.cols);
     if (px !== this.slotPx || rows !== this.rows) { this.slotPx = px; this.rows = rows; }   // (atlasGen: the atlas's own, set after it is sized: lamps-gpu.js)
     while (this.slots.length < K) this.slots.push(newSlot(this.slots.length));
     this.slots.length = K;
-    const lights = this._want ||= []; lights.length = 0;
-    for (const l of this.view.lamps) { const L = l.userData.gsLamp; if (L) L.slotOf = null; if (l.visible && l.intensity > 0 && L?.want) lights.push(l); }
     lights.sort((a, b) => a.userData.gsLamp.near - b.userData.gsLamp.near);
     if (lights.length > K) lights.length = K;
     for (const s of this.slots) if (s.light && !lights.includes(s.light)) { s.light = null; s.ready = false; }

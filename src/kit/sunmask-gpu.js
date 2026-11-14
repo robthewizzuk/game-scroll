@@ -9,10 +9,12 @@
 //   far: past the sun's own shadow box, a ray towards the sun over a map of heights round the camera (the top of every
 //     shadow caster, drawn from above a tile a frame): hills and buildings shade the land far off;
 //   capsules: crowd members too far off to draw into the sun's map each throw a capsule's soft shadow, so a crowd
-//     walking across a square doesn't have the sun's map drawn again every frame.
+//     walking across a square doesn't have the sun's map drawn again every frame;
+//   smoke: gs.gas works out how much sun reaches each part of its box (gas-gpu.js, its light volume); a point under
+//     or in the smoke looks that up where its way to the sun enters the box (gasSunAt, which the froxel fog reads too).
 // Kit use only.
-import { RenderTarget, HalfFloatType, FloatType, RGFormat, RedFormat, RGBAFormat, NearestFilter, DataTexture, NodeMaterial, QuadMesh, Mesh, PlaneGeometry, OrthographicCamera, Matrix4, Vector2, Vector3, Vector4, RendererUtils, DoubleSide, AlwaysDepth, NoBlending } from 'three/webgpu';
-import { Fn, Loop, If, Break, float, int, vec2, vec4, ivec2, uniform, renderGroup, texture, uv, positionWorld, positionGeometry, select, smoothstep, clamp, min, max, abs, dot, length, mix, fract, floor, pow, getViewPosition, interleavedGradientNoise, screenCoordinate, dFdx, dFdy } from 'three/tsl';
+import { RenderTarget, HalfFloatType, FloatType, RGFormat, RedFormat, RGBAFormat, NearestFilter, DataTexture, Data3DTexture, NodeMaterial, QuadMesh, Mesh, PlaneGeometry, OrthographicCamera, Matrix4, Vector2, Vector3, Vector4, RendererUtils, DoubleSide, AlwaysDepth, NoBlending } from 'three/webgpu';
+import { Fn, Loop, If, Break, float, int, vec2, vec4, ivec2, uniform, renderGroup, texture, uv, positionWorld, positionGeometry, select, smoothstep, clamp, min, max, abs, dot, length, mix, fract, floor, pow, getViewPosition, interleavedGradientNoise, screenCoordinate, dFdx, dFdy, texture3D, vec3 } from 'three/tsl';
 import { CAPS, GRID, HeightTiles } from './sunmask.js';
 import { ORIGIN } from './origin.js';
 
@@ -28,6 +30,7 @@ const U = {
   box: uniform(new Matrix4()), boxOn: uniform(0),                    // the sun's own shadow map (inside it the far part is left out)
   caps: uniform(new Vector4()),                                      // how many capsules, the grid's corner x, z, a square's size
   rawPx: uniform(new Vector2(1, 1)),                                 // a texel of the raw mask, in its uv
+  gas: uniform(0), gasLo: uniform(new Vector3()), gasSize: uniform(new Vector3(1, 1, 1)), gasLk: uniform(new Vector3(.5, .5, .5)),   // gs.gas: on, its box (in the drawing's space), its light volume's scale
 };
 for (const u of Object.values(U)) u.setGroup(renderGroup);
 
@@ -51,6 +54,36 @@ const HT = { at: new Vector3(), rt: null, tiles: null, cam: new OrthographicCame
 HT.none.needsUpdate = true;
 const NOTHING = NOTHING_V;
 let state;   // (the renderer's state while a pass of ours draws)
+
+// gs.gas's light volume: each place that reads it has a node of its own, all pointed at the gas's volume each frame (sunGas)
+const NONE3 = new Data3DTexture(new Uint8Array([255, 0, 0, 255]), 1, 1, 1); NONE3.needsUpdate = true;
+const GAS_NODES = [];
+/**
+ * How much sun gets through gs.gas's smoke to a point p (in the drawing's space, as the camera is: origin.js): where the
+ * way from p to the sun (L, length 1) enters the gas's box, the gas's own light volume says how much smoke lies beyond
+ * that towards the sun. 1 with no gas, or where the way misses the box. One sample: the sun mask reads it, and the
+ * froxel fog's sun term can too.
+ */
+export function gasSunAt(p, L = U.sunW) {
+  const T3 = texture3D(NONE3); GAS_NODES.push(T3);
+  return Fn(() => {
+    const out = float(1).toVar();
+    If(U.gas.greaterThan(.5), () => {
+      const inv = select(L.greaterThanEqual(vec3(0)), vec3(1), vec3(-1)).div(max(abs(L), vec3(1e-5)));
+      const a = U.gasLo.sub(p).mul(inv), b = U.gasLo.add(U.gasSize).sub(p).mul(inv), t0 = min(a, b), t1 = max(a, b);
+      const tn = max(max(t0.x, t0.y), max(t0.z, float(0))), tf = min(min(t1.x, t1.y), t1.z);
+      If(tf.greaterThan(tn), () => { const w = p.add(L.mul(tn)).sub(U.gasLo).div(U.gasSize); out.assign(T3.sample(clamp(w, 0, 1).mul(U.gasLk)).level(0).x); });
+    });
+    return out;
+  })();
+}
+/** This frame's gas (gs.gas with its volume on the graphics chip: its twin), or null. */
+export function sunGas(F) {
+  const tw = F?.draws ? F.twin : null;
+  U.gas.value = tw?.lightT ? 1 : 0; if (!tw?.lightT) return;
+  U.gasLo.value.copy(tw.lo).sub(ORIGIN); U.gasSize.value.copy(tw.size); U.gasLk.value.copy(tw.lk);
+  for (const n of GAS_NODES) n.value = tw.lightT;
+}
 
 /** How much of the sun reaches this point, by the mask (1 where the mask has nothing to say). For the sun's light. */
 export function sunMaskAt() {
@@ -129,6 +162,8 @@ function maskMaterial(depthTex, rev) {
           vis.mulAssign(cv);
         });
       });
+      // smoke (gs.gas): what gets through it from the sun
+      vis.mulAssign(gasSunAt(W, L));
       out.assign(vec4(vis, dist, 0, 1));
     });
     return out;
