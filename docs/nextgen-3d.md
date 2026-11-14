@@ -394,6 +394,17 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   every way a game changes things, then draws the town, village and street, each against every thing
   drawn by itself (the same picture to the pixel). WebGL draws as before (static batching does this
   job there).
+- Less picture memory (WebGPU, by itself; hd3d-gpu.js): shadow maps hold depth alone (three r187 gave
+  each a colour picture of the map's size that every shadow pass drew into and nothing read: 16 MB
+  for a 2048 sun map, and as much again for the kit's kept copy), and the full-size effect steps after
+  the scene pass (volumetric mix, depth of field, motion blur, the finishing pass under SGSR 2) take
+  turns in two pictures however many there are, as the big engines' render graphs share memory between
+  passes that never overlap (with depth of field and motion blur on, as Long Shadow has them, a
+  full-size half-float picture less: 10 MB at 1080 x 2340). Not with `v.lens` or gs.fx3d's screen
+  effects (pictures they keep). `HD.shadowColour = true` and `HD.shareTargets = false` put each back to
+  compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
+  --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
+  which could share, and draws the scene as before and as now: less memory, the same picture.
 - Smaller meshes (by itself): the dense meshes the kit makes itself (people, creatures and their fur
   shells, crowds, a fused train, buildings, city blocks, real surface detail) keep what goes with each
   point in fewer bytes: normals in one byte a part (two on a fused train's paint, which is shiny enough
