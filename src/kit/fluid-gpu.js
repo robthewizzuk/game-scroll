@@ -223,6 +223,8 @@ export function gpuFluid(F) {
     Db.element(slot).assign(vec4(0, 0, 0, 1));
   })().compute(SPAWN, [64]);
   const passes = [clear, toGrid, weigh, press, move, toDrops];
+  // a frame's steps as one list (one compute pass and one submit to the chip, not one a step); a list for each count of steps, kept
+  const runs = [, passes], run = n => runs[n] ||= Array.from({ length: n * passes.length }, (_, i) => passes[i % passes.length]);
 
   /* ----- the drops, drawn as round cards that face the camera ----- */
   // Each card is lit as a ball, blended towards the way the liquid's skin faces there (from how the weight
@@ -276,7 +278,7 @@ export function gpuFluid(F) {
       }
       U.nk.value = Math.min(F.drains.length, SINKS); for (let i = 0; i < U.nk.value; i++) { const d = F.drains[i]; dk[i].set(d.gx, d.gy, d.gz, d.gr); }
       U.np.value = n ? Math.min(F.blasts.length, PUSHES) : 0; for (let i = 0; i < U.np.value; i++) { const b = F.blasts[i]; pu[i].set(b.x, b.y, b.z, b.r); pv[i].set(b.s, b.up, 0, 0); }
-      for (let k = 0; k < n; k++) r.compute(passes);
+      if (n > 0) r.compute(run(n));
       S.steps += n; U.moved.value = n; R.value = RAD * S.h * F.size; mesh.userData.gsMoved = S.steps;   // (hd3d.js draws its shadow again when it moves)
       FLUID.backend = 'gpu'; FLUID.drops = S.alive;
       // every few frames the drops are copied back for the fluid's questions and its drains

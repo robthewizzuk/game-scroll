@@ -58,6 +58,8 @@ export function gpuFlood(flood, look) {
   const mesh = new Mesh(look.geometry, m); mesh.frustumCulled = false; mesh.userData.gsTwin = true; mesh.userData.noAO = true; mesh.renderOrder = 2;
 
   let fresh = true, frame = 0, reading = null;
+  // a frame's steps as one list (one compute pass and one submit to the chip, not three a step); a list for each count of steps, kept
+  const runs = [], run = n => runs[n] ||= Array.from({ length: n * 3 }, (_, i) => [add, flux, move][i % 3]);
   return {
     mesh,
     upload() { Bb.value.array.set(flood.B); Db.value.array.set(flood.D); Fb.value.array.set(flood.F); for (const b of [Bb, Db, Fb]) b.value.needsUpdate = true; },
@@ -67,7 +69,7 @@ export function gpuFlood(flood, look) {
       h.value = 1 / flood.rate; rain.value = flood.rainRate;
       const src = flood.sources.slice(0, FLOOD_SOURCES); ns.value = src.length;
       for (let k = 0; k < src.length; k++) { const s = src[k], n = Math.max(1, look.cellsIn(s)); rows[k].set(s.x, s.z, Math.max(s.r, l * .5), s.rate / flood.rate / (n * A)); }
-      for (let k = 0; k < steps; k++) { r.compute(add); r.compute(flux); r.compute(move); flood.t += 1 / flood.rate; }
+      if (steps > 0) { r.compute(run(steps)); flood.t += steps / flood.rate; }
       if (++frame % 4 === 0 && !reading) {
         reading = Promise.all([r.getArrayBufferAsync(Db.value), r.getArrayBufferAsync(Fb.value)]).then(([d, f]) => {
           if (flood.gpu && !flood.gpu.dirty) { flood.D.set(new Float32Array(d)); flood.F.set(new Float32Array(f)); }

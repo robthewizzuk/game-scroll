@@ -1271,6 +1271,8 @@ export function shadowOps(r) {
 // Parts of one depth picture written into another (WebGPU copies a depth picture whole or not at all): the
 // parts are drawn as rectangles whose every texel takes its depth from the other picture, from off texels
 // away and dz deeper (what comes from outside it, or ends up outside the depth range, is "far": nothing there).
+/** Tests: `on: false` keeps (loads) the map under a whole-map slide, as before. */
+export const SHIFT_CLEAR = { on: true };
 function shadowBlit(r) {
   const U = { off: uniform(new Vector2()), dz: uniform(0), top: uniform(1) }, MAX = 64;
   const pos = new Float32Array(MAX * 18), geo = new BufferGeometry(), at = new BufferAttribute(pos, 3); geo.setAttribute('position', at);
@@ -1307,14 +1309,16 @@ function shadowBlit(r) {
     at.needsUpdate = true; geo.setDrawRange(0, n * 6);
   };
   const ALL = [[0, 0, 1, 1]];
-  const run = (m, to) => {
+  // whole: every texel is written, so what was in the picture is not read back first (it is cleared: on a
+  // phone's chip a pass that keeps a picture loads all of it into the chip's tile memory, a clear loads nothing)
+  const run = (m, to, whole = false) => {
     const was = r.getRenderTarget(), ac = r.autoClear, st = to.scissorTest; mesh.material = m;
-    r.autoClear = false; to.scissorTest = false; r.setRenderTarget(to);
+    r.autoClear = whole && SHIFT_CLEAR.on; to.scissorTest = false; r.setRenderTarget(to);
     try { r.render(mesh, cam); } finally { r.setRenderTarget(was); r.autoClear = ac; to.scissorTest = st; }
   };
   return {
     copy(tex, to, qs, px) { U.off.value.set(0, 0); U.dz.value = 0; U.top.value = to.width - 1; quads(qs, px, to.width); run(matFor(tex), to); },
-    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to); },
+    shift(tex, to, dx, dy, dz) { U.off.value.set(dx, -dy); U.dz.value = dz; U.top.value = to.width - 1; quads(ALL, to.width, to.width); run(matFor(tex), to, true); },
     wipe(to, q, px) { ALL2[0] = q; quads(ALL2, px, to.width); run(farMat(), to); },
     // each of the three drawn once with a rectangle of no size: nothing is written, the shaders and pipelines are made
     warm(map, cache) {

@@ -78,13 +78,13 @@ export class SeaFFT {
       textureStore(tex, uvec2(x, y), out.element(c).mul(sg)).toWriteOnly();
     })().compute(NN, [64]);
     this.evolve = evolve; this.buffers = [Sb, Kb, A, B];
+    // (all of a frame's passes as one list: one compute pass and one submit to the chip, not one for each of the 18)
+    this.all = [evolve, ...this.passes, this.write];
   }
   /** Moves the waves on to time t (seconds) and makes the tile: each frame, before the water is drawn. */
   step(r, t) {
     this.T.value = t;
-    r.compute(this.evolve);
-    for (const p of this.passes) r.compute(p);
-    r.compute(this.write);
+    r.compute(this.all);
   }
   dispose() {
     this.texture.dispose();

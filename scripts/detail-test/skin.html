@@ -220,6 +220,25 @@ try {
     check('a person taken out is no longer posed', P.info.posed < posed, JSON.stringify(P.info));
     S.v.scene.add(f); await shot(S);
     check('put back, they are posed again', P.info.posed === posed, JSON.stringify(P.info));
+    // a pool with no room left (a chip allows a list only so big; here what is free is held and the list may not grow):
+    // a person it cannot take is posed in their own vertex shader as before, everybody is drawn, and once there is
+    // room again they come in
+    {
+      const most = P.mostOut, held = []; P.mostOut = P.outSpans.n;
+      for (const k of [65536, 4096, 256, 16, 1]) for (let at; (at = P.outSpans.take(k)) >= 0;) held.push([at, k]);
+      const extra = src[0].twin(), mine = []; extra.position.set(0, 0, 1.6); extra.rotation.y = .4; pin(extra, 'walk', .5); if (extra.lods) extra.lod = 0; S.v.scene.add(extra);
+      const full = await shot(S); out.full = S.c.toDataURL();
+      extra.traverse(o => { if (o.isSkinnedMesh && o.visible) mine.push(o); });
+      const sh = shaders(S, mine), left = P.info.left, lineSh = shaders(S, all);
+      check('a pool with no room: the newcomer stays out, posed by its own shaders; those in it are read from it as before', left > 0 && HD.info.skin?.left === left && mine.length > 0 && mine.every(o => !P.has(o)) && sh.own > 0 && sh.pool === 0 && lineSh.pool > 0 && lineSh.own === 0 && P.outSpans.n === P.mostOut, `left out: ${left}; the newcomer's shaders ${JSON.stringify(sh)}, the line's ${JSON.stringify(lineSh)}`);
+      HD.gpuSkin = false; const plain = await shot(S); HD.gpuSkin = true;
+      check('a pool with no room: everybody is drawn, the same picture as with nobody in the pool', differ(full, plain, 12) <= W * H * .0015, differ(full, plain, 12) + ' pixels differ by more than 12 of 255');
+      for (const [at, k] of held) P.outSpans.give(at, k);
+      P.mostOut = most; HD.gpuSkin = false; await draw(S); HD.gpuSkin = true;   // (off and on: everybody leaves and asks again)
+      const roomy = await shot(S);
+      check('room again: nobody is left out, the newcomer is in the pool, and the picture is the same', P.info.left === 0 && mine.every(o => P.has(o)) && differ(roomy, plain, 12) <= W * H * .0015, `left out: ${P.info.left}; ${differ(roomy, plain, 12)} pixels differ by more than 12 of 255`);
+      extra.removeFromParent();
+    }
     info.pool = { ...P.info };
   }
   window.result = { out, info, checks };

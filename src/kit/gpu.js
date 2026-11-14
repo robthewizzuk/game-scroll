@@ -86,6 +86,14 @@ export const gpuPick = () => pick;
 export function setGpuPick(v) { pick = v === 'webgl' ? 'webgl' : 'webgpu'; if (pick === 'webgpu') prepareGPU(); }
 
 let gpu = null, gpuLoad = null;
+const BIG_LIST = 268435456;   // the most asked of a chip for one list a shader reads, and for one buffer (256 MB)
+// The screen's own picture has no depth picture beside it: every 3D view draws its scene into pictures of its own
+// (which have their depth) and only finished pictures, as flat rectangles, onto the screen. three makes one the size
+// of the screen by default and clears and keeps it every frame (4 bytes a pixel: 10 MB on a 1080 x 2340 screen, written
+// out each frame on a phone's chip for nothing). `on: true` before WebGPU starts brings it back (tests).
+export const SCREEN_DEPTH = { on: false };
+/** Tests: `on: false` before the Console WebGPU renderer is made draws its passes in 16-bit float pictures, as three does by default. */
+export const CONSOLE_8BIT = { on: true };
 /**
  * Gets WebGPU ready if the device has it: loads three's WebGPU build and the
  * Next Gen WebGPU effects (hd3d-gpu.js), and makes the shared WebGPURenderer. Never rejects; resolves
@@ -112,16 +120,24 @@ export function prepareGPU() {
       // Pictures one shader may read: WebGPU promises 16, and a close-up person's skin on the high tier reads
       // 17 with its shadows (on the test machine's chip, which allows 16, the pipeline was refused and the skin
       // not drawn); many chips allow more, which has to be asked for: as many as the chip has, up to 32
-      let room = 32, pics = 16;
-      try { const lim = (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance', featureLevel: 'compatibility' }))?.limits; room = Math.min(64, lim?.maxColorAttachmentBytesPerSample || 32); pics = Math.min(32, lim?.maxSampledTexturesPerShaderStage || 16); } catch (_) { /* stays 32 */ }
+      // Lists a shader may read: WebGPU promises one of 128 MB in a buffer of 256 MB, and the kit's biggest (the
+      // posed points of every person in view, skin-gpu.js) can be asked for more by a crowd of close-up people;
+      // most chips allow much more, which has to be asked for too: up to 256 MB (the kit's lists stop growing at
+      // whatever the device then says)
+      let room = 32, pics = 16, list = 0, buf = 0;
+      try {
+        const lim = (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance', featureLevel: 'compatibility' }))?.limits; room = Math.min(64, lim?.maxColorAttachmentBytesPerSample || 32); pics = Math.min(32, lim?.maxSampledTexturesPerShaderStage || 16);
+        list = Math.min(BIG_LIST, lim?.maxStorageBufferBindingSize || 0); buf = Math.min(BIG_LIST, lim?.maxBufferSize || 0);
+      } catch (_) { /* stays 32 */ }
       const make = async (cv, bytes) => {
-        const limits = { ...(bytes > 32 ? { maxColorAttachmentBytesPerSample: bytes } : {}), ...(pics > 16 ? { maxSampledTexturesPerShaderStage: pics } : {}) };
-        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, powerPreference: 'high-performance', trackTimestamp: true, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
+        const limits = { ...(bytes > 32 ? { maxColorAttachmentBytesPerSample: bytes } : {}), ...(pics > 16 ? { maxSampledTexturesPerShaderStage: pics } : {}), ...(list > 134217728 ? { maxStorageBufferBindingSize: list } : {}), ...(buf > 268435456 ? { maxBufferSize: buf } : {}) };
+        const r = new W.WebGPURenderer({ canvas: cv, alpha: true, antialias: false, depth: SCREEN_DEPTH.on, powerPreference: 'high-performance', trackTimestamp: true, ...(hdr ? { outputType: W.HalfFloatType } : {}), ...(Object.keys(limits).length ? { requiredLimits: limits } : {}) });
         await r.init(); return r;
       };
       let r = null;
-      try { r = await make(canvas, room); } catch (e) { if (room <= 32 && pics <= 16) throw e; }
-      if ((room > 32 || pics > 16) && !r?.backend?.isWebGPUBackend) { r?.dispose(); pics = 16; r = await make(document.createElement('canvas'), 32); }
+      const more = () => room > 32 || pics > 16 || list > 134217728 || buf > 268435456;
+      try { r = await make(canvas, room); } catch (e) { if (!more()) throw e; }
+      if (more() && !r?.backend?.isWebGPUBackend) { r?.dispose(); pics = 16; list = buf = 0; r = await make(document.createElement('canvas'), 32); }
       r.gsPixelBytes = r.backend?.device?.limits?.maxColorAttachmentBytesPerSample || 32;
       r.gsHdr = hdr && (r.backend?.context?.getConfiguration?.()?.toneMapping?.mode ?? 'extended') === 'extended';
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path
@@ -247,7 +263,10 @@ export function prepareConsoleGPU() {
     try {
       const G = await prepareGPU(); if (!G) return null;
       const fx = await import('./toon3d-gpu.js');
-      const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false });
+      // (outputBufferType: three gives every scene pass the renderer's own kind of picture, 16-bit float unless told, whatever
+      // the pass asked for: Console's passes ask for 8 bits, as its WebGL renderer draws, and without this were drawn in
+      // twice the bytes, four samples a pixel)
+      const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false, depth: SCREEN_DEPTH.on, ...(CONSOLE_8BIT.on ? { outputBufferType: G.W.UnsignedByteType } : {}) });
       await r.init();
       if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
       r.gsBackend = 'webgpu'; r.onDeviceLost = () => { r._isDeviceLost = true; }; freeUnbuilt(r); fx.setup(r); G.fx.listWalk(r);   // (its device is the Next Gen one's: lostGPU says when it goes)

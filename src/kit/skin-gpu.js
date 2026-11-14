@@ -27,6 +27,8 @@ import { floats, SKIN_POOLED } from './slim.js';
 const WG = 64;           // points a group (the compute shader's workgroup)
 const MESH = 10;         // vec4s a mesh in the table: (rest, points, first group, this half), (bones, other half to fill, 0, 0), bind, bind inverse
 const KEEP = 240;        // frames a mesh may go unseen before its posed points are let go
+/** The most bytes either of the pool's two lists may take, whatever the device allows (tests set it small). */
+export const SKIN_MOST = { bytes: 268435456 };
 const MARGIN = 2;        // metres round a mesh's bounding sphere when deciding whether a camera or shadow sees it
 
 // ---------------------------------------------------------------- spans of a list (first fit, joined when freed)
@@ -94,12 +96,21 @@ class SkinPool {
     this.meshes = new Map();        // mesh -> Entry
     this.rests = new Map();         // geometry -> { at, n, users, v (position version) }
     this.restSpans = new Spans(0); this.outSpans = new Spans(0);
+    // The most the two lists may hold: a list a shader reads is no bigger than the device allows (WebGPU promises
+    // 128 MB; gpu.js asks the chip for up to 256 MB), and no buffer is (three rounds a buffer up a little: 64 KB is
+    // left spare). A rest point takes 32 bytes, a posed one 16 (twice a mesh: this frame's and last frame's). A mesh
+    // that would take a list past that stays out of the pool and is posed in its own vertex shader, as on WebGL:
+    // 300 close-up people asked for a 512 MB list (270 MB of points, the list doubling as it grows), which WebGPU
+    // refused, and then nobody in the pool was drawn at all.
+    const lim = r.backend?.device?.limits, room = Math.min(lim?.maxStorageBufferBindingSize || 134217728, lim?.maxBufferSize || 268435456, SKIN_MOST.bytes) - 65536;
+    this.mostRest = Math.floor(room / 32); this.mostOut = Math.floor(room / 16);
+    this.full = new WeakSet(); this.fullN = 0;   // meshes left out for want of room (asked again once something leaves)
     this.R = null; this.O = null;   // rest points (2 x uvec4 a point) and posed points (uvec4 a point), StorageBufferAttributes
     this.B = new StorageBufferAttribute(new Float32Array(16 * 256), 4);      // bone matrices, four vec4 columns each
     this.T = new StorageBufferAttribute(new Float32Array(4 * MESH * 64), 4); // the table, a mesh a row
     this.G = new StorageBufferAttribute(new Uint32Array(1024), 1);          // the mesh of each group of 64 points
     this.groups = uniform(0, 'uint');
-    this.info = { meshes: 0, posed: 0, points: 0, bones: 0, kinds: 0, poolMB: 0 };
+    this.info = { meshes: 0, posed: 0, points: 0, bones: 0, kinds: 0, poolMB: 0, left: 0 };   // (left: meshes kept out for want of room)
     this.growRest(1 << 16); this.growOut(1 << 17);
     this.reads = null; this.kernel = null;
     // (a cluster detail twin, detail.js cutTwin, reads the points of the mesh it stands in for: posed once for all its parts)
@@ -108,15 +119,19 @@ class SkinPool {
   }
   // ------------------------------------------------------------ lists that grow (their contents carried over on the CPU side)
   growRest(n) {
+    n = Math.min(n, this.mostRest); if (n <= this.restSpans.n) return false;
     const old = this.R, a = new Uint32Array(n * 8); if (old) a.set(old.array);
     this.R = new StorageBufferAttribute(a, 4); this.restSpans.grow(n); this.restF = new Float32Array(a.buffer);
     if (this.rN) this.rN.value = this.R;
+    return true;
   }
   growOut(n) {
     // (the posed points live only on the chip: a bigger list starts empty, so every mesh is posed into both its halves again)
+    n = Math.min(n, this.mostOut); if (n <= this.outSpans.n) return false;
     this.O = new StorageBufferAttribute(new Uint32Array(n * 4), 4); this.outSpans.grow(n);
     if (this.oW) { this.oW.value = this.O; this.oR.value = this.O; }
     for (const e of this.meshes.values()) e.seen = -2;
+    return true;
   }
   fit(attr, n, items) { if (attr.array.length >= n * items) return attr; let m = attr.array.length / items; while (m < n) m *= 2; return new StorageBufferAttribute(new attr.array.constructor(m * items), attr.itemSize); }
   // ------------------------------------------------------------ a geometry's rest points, once for all its twins
@@ -127,7 +142,7 @@ class SkinPool {
     const n = P.count;
     if (!R) {
       let at = this.restSpans.take(n);
-      while (at < 0) { this.growRest(Math.max(this.restSpans.n * 2, this.restSpans.n + n)); at = this.restSpans.take(n); }
+      while (at < 0) { if (!this.growRest(Math.max(this.restSpans.n * 2, this.restSpans.n + n))) return null; at = this.restSpans.take(n); }   // (no room: the mesh stays out)
       R = { at, n, users: 0, v: -1 }; this.rests.set(g, R);
       const gone = () => { g.removeEventListener('dispose', gone); this.dropRest(g); };
       g.addEventListener('dispose', gone);
@@ -155,8 +170,16 @@ class SkinPool {
     R.v = A.position.version;
     this.R.addUpdateRange(o0, n * 8); this.R.needsUpdate = true;
   }
-  dropRest(g) { const R = this.rests.get(g); if (!R) return; this.rests.delete(g); this.restSpans.give(R.at, R.n); for (const e of [...this.meshes.values()]) if (e.rest === R) this.drop(e.o); }
-  join(o) { const e = new Entry(o, this.restOf(o.geometry), this.frame); this.meshes.set(o, e); this.place(e); SKIN_POOLED.add(o); this.marked(o); return e; }
+  dropRest(g) { const R = this.rests.get(g); if (!R) return; this.rests.delete(g); this.restSpans.give(R.at, R.n); this.roomAgain(); for (const e of [...this.meshes.values()]) if (e.rest === R) this.drop(e.o); }
+  // a mesh comes into the pool, or null where there is no room left for it (it is posed in its own vertex shader)
+  join(o) {
+    if (this.full.has(o)) return null;
+    const rest = this.restOf(o.geometry), e = rest && new Entry(o, rest, this.frame);
+    if (!e || !this.place(e)) { this.full.add(o); this.fullN++; this.info.left = this.fullN; return null; }
+    this.meshes.set(o, e); SKIN_POOLED.add(o); this.marked(o); return e;
+  }
+  // room came back (a mesh left, a geometry was freed): the ones left out may ask again
+  roomAgain() { if (this.fullN) { this.full = new WeakSet(); this.fullN = 0; this.info.left = 0; } }
   /**
    * Takes a mesh on bones into the pool before it is shown (a level about to fade in, its shaders built ahead: hd3d.js
    * fadeReady), so they are built as it will be drawn; it is posed once it is shown. Whether it is in the pool now.
@@ -166,16 +189,17 @@ class SkinPool {
     if (this.meshes.has(o)) return true;
     if (!skinFits(o)) return false;
     if (!this.keyed) this.keyed = keyed(this.r);
-    this.join(o); return true;
+    return !!this.join(o);
   }
-  drop(o) { const e = this.meshes.get(o); if (!e) return; this.meshes.delete(o); SKIN_POOLED.delete(o); if (e.out >= 0) this.outSpans.give(e.out, e.n * 2); e.out = -1; this.marked(o); }
+  drop(o) { const e = this.meshes.get(o); if (!e) return; this.meshes.delete(o); SKIN_POOLED.delete(o); if (e.out >= 0) { this.outSpans.give(e.out, e.n * 2); this.roomAgain(); } e.out = -1; this.marked(o); }
   // a mesh came into the pool or left it: its materials are marked changed, so three compares its shaders' key again
   marked(o) { const m = o.material; for (const x of Array.isArray(m) ? m : [m]) if (x) x.needsUpdate = true; }
   // a mesh's two halves, emptied (all its points at its middle: nothing drawn) until it is first posed
   place(e) {
     let at = this.outSpans.take(e.n * 2);
-    while (at < 0) { this.growOut(Math.max(this.outSpans.n * 2, this.outSpans.n + e.n * 2)); at = this.outSpans.take(e.n * 2); }
+    while (at < 0) { if (!this.growOut(Math.max(this.outSpans.n * 2, this.outSpans.n + e.n * 2))) return false; at = this.outSpans.take(e.n * 2); }
     e.out = at; e.seen = -2; this.O.addUpdateRange(at * 4, e.n * 8); this.O.needsUpdate = true;
+    return true;
   }
   // ------------------------------------------------------------ the shaders
   build() {
@@ -268,7 +292,7 @@ class SkinPool {
     const skels = this.skels ||= new Map(); skels.clear();
     for (const o of this.shown) {
       const e = this.meshes.get(o); if (!e || !seen(e)) continue;
-      if (e.out < 0) this.place(e);
+      if (e.out < 0 && !this.place(e)) { this.drop(o); this.full.add(o); this.fullN++; this.info.left = this.fullN; continue; }
       const sk = o.skeleton; if (!skels.has(sk)) { skels.set(sk, bones); bones += sk.bones.length; }
       todo.push(e); groups += Math.ceil(e.n / WG);
     }
