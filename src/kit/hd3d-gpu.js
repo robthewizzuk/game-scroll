@@ -1466,6 +1466,8 @@ export function gpuParticles(parts) {
   const soft = parts.mat.uniforms.soft.value > .5;
   const a = soft ? float(1).sub(r).mul(float(1).sub(r)) : smoothstep(1, .3, r);
   m.colorNode = tn.rgb; m.opacityNode = tn.a.mul(a).mul(select(r.greaterThan(1), float(0), float(1)));
+  // (Particles({ reactive: true }): taken from the new frame by the upscaler, frameGenMRT; its own shader key, as three's leaves userData out)
+  if (parts.reactive) { m.userData.reactive = true; const k = m.customProgramCacheKey; m.customProgramCacheKey = function () { return k.call(this) + '|reactive'; }; }
   const sp = new Sprite(m); sp.frustumCulled = false; sp.renderOrder = parts.pts.renderOrder; sp.count = 0;
   sp.userData.noAO = true;
   return { sprite: sp, sync(n) { for (const at of [pos, size, tint]) sendUsed(at, n); sp.count = n; } };
