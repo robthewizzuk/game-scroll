@@ -127,6 +127,72 @@ The "Where" column names the chip (as in the smoothness table) and the browser e
 version (`Adreno (TM) 830 · Chrome 142`), which is what a phone and driver steering rule would
 match on. A game that loses its chip often on one kind of phone is the thing to look for here.
 
+## Chips and phones to steer
+
+Some phones, graphics chips, drivers and browser versions misbehave with one part of the engine:
+WebGPU, an HDR screen, frame generation, ray traced reflections. The **steering list**
+(`src/steer-list.js`; how it works: `src/steer.js`) turns that part off on those devices only, as
+Unity 6.6's device filtering does. It is built into the app and sent out in the catalogue too, so a
+new rule reaches phones with the next catalogue, from their next start, without a new app.
+
+The report's **Chips and phones to steer** section groups the lost graphics chips above by chip and
+browser engine, on real phones and computers (test machines left out), with how each one ended.
+Where there were 3 or more, it writes a rule ready to paste into the list: that chip draws with
+WebGL from then on, for that engine version and older ones:
+
+```js
+{ id: 'adreno-830-chrome-142-webgpu', why: 'WebGPU device lost 5 times in 2 games on Adreno (TM) 830 with Chrome 142 (2 phone models, the last 14 days to 2026-11-14)',
+  when: { platform: 'android', chip: 'Adreno \\(TM\\) 830', engine: 'Chrome <=142' }, do: { webgpu: false } },
+```
+
+Before adding one:
+
+- **Keep it as narrow as the reports show.** One phone model (`model: '^SM-F9'`) if only that one
+  fails, a driver range on a computer (`driver: '<31.0.101.5186'`), one game (`game: 'long-shadow'`)
+  if only it does. A rule for every Adreno takes WebGPU from millions of phones that never had trouble.
+- **Turn off the least that fixes it.** `webgpu: false` is the big hammer; a crash that only comes
+  with ray tracing on is `traced: false`, a hot phone stuck at 30 fps may want `fps: 60` or `tier: 1`.
+- **Say why** in `why`: what the reports showed and when, so whoever reads the list later knows
+  whether the trouble is still there.
+- **Check it**: `node scripts/steer.mjs` (the PR check runs it) refuses a rule the app would not
+  understand (a misspelt field or knob does nothing on a phone, silently), and
+  `node scripts/steer.mjs --try platform=android chip="Adreno (TM) 830" engine="Chrome 142"` says
+  which rules a device with those facts gets and what they set.
+- **Take it out** once the reports show the trouble gone (a newer engine or driver), or the chip
+  stays steered for good.
+
+What a rule can match (all the fields given must match; a list matches any of its items):
+
+| Field | Matches | Example |
+| --- | --- | --- |
+| `platform` | `android`, `ios`, `mac`, `windows`, `linux`, `web` | `'android'` |
+| `model` | the phone model as the phone names it (a pattern, case ignored) | `'^SM-F9\\d\\dB$'`, `'^iPhone1[45],'` |
+| `chip` | the graphics chip as WebGL names it, or the WebGPU adapter's vendor and architecture | `'Adreno \\(TM\\) 6\\d\\d'`, `'Mali-G7[12]'`, `'Intel.*UHD'`, `'apple metal-3'` |
+| `os` | the system's version range | `'<14'`, `'>=13 <15'`, `'17.2'` (17.2 and its updates) |
+| `engine` | the browser engine (the web view, the desktop app's Chrome) and a range | `'Chrome <130'`, `'Safari 26'` |
+| `driver` | the graphics driver's version range (Mac and PC: the desktop app reads it) | `'<31.0.101.5186'` |
+| `app` | the app's build number range | `'<420'` (builds before 1.0.420) |
+| `game` | one game or a list: the knobs hold for those games only | `'long-shadow'` |
+
+And what it can set (each only turns something off or down):
+
+| Knob | Effect |
+| --- | --- |
+| `webgpu: false` | 3D draws with WebGL (for one game: that game's views) |
+| `hdr: false` | no HDR screen, the usual 8-bit one |
+| `klass: 'mid'` or `'low'` | the device counts as no better than that: frame rates, starting quality, what the kits turn on |
+| `tier: 0`..`3` | the Next Gen quality tier goes no higher (0 low, 3 ultra) |
+| `fps: 60` | no game runs faster than this (24 or more) |
+| `frameGen: false` | no frame generation |
+| `traced: false` | no ray traced reflections |
+| `half: false` | the kit's passes stay in full precision |
+| `pack: false` | textures made in code are not packed into the chip's compressed formats |
+| `hide: true` | (with `game`) the game is not shown on this device |
+
+The QA panel's report (tap the GAME SCROLL logo, then Copy report) says which rules matched this
+phone and what they set; `__gs.steer()` in tests also gives what the app read about the device.
+A rule with a field this app doesn't know matches nothing on it, so a rule for a newer app can go out without upsetting older ones.
+
 ## What is sent
 
 About once a minute while the app is open (and when it goes to the background):

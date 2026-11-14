@@ -98,7 +98,10 @@ Every stutter during play is checked for what happened since the picture before 
 coming back to the front). The frame rate, lows and stutters leave gaps that long out (they look like a
 pause), so the recording's summary counts freezes on their own, with the worst.
 
-- shaders built (WebGL programs, WebGPU programs) and textures uploaded
+- shaders built (WebGL programs, WebGPU programs) and textures uploaded. On WebGPU the **S** event names what
+  was built: the materials whose pipelines the chip made (`MeshStandardMaterial 3, ShadowNodeMaterial`),
+  those made again after three let them go (`made again: ...`), and the effects chain when it was built
+  again, with what changed (`effects chain (depth of field, lens)`)
 - a garbage collection (the JavaScript heap fell by 1.5 MB or more; the browser rounds the heap
   size, so small ones are missed)
 - the browser's long animation frame report: which script held the frame (file and function) or

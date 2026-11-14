@@ -65,5 +65,14 @@ export function take(into) {
   acc.clear(); const t = top; top = 0; return t;
 }
 
+// What the engine built while it ran (a pipeline the chip made, the effects chain made again, and why), so the frame
+// lab can name what a freeze built instead of only counting shaders. Kept always (a few dozen short entries), read with
+// builtSince(t).
+const BUILT = [];
+/** Notes something built now: what ('MeshStandardMaterial', 'effects chain') and, for the frame lab, a word on why. */
+export function built(what, why = '') { BUILT.push({ t: performance.now(), what, why }); if (BUILT.length > 96) BUILT.shift(); }
+/** What was built after time t (performance.now()). */
+export const builtSince = t => BUILT.filter(e => e.t > t);
+
 /** Tests: forget everything, close what is open. */
 export function resetProf() { acc.clear(); d = 0; top = 0; }

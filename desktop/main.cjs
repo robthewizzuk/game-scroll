@@ -166,6 +166,15 @@ const ALLOWED = new Set(['media', 'geolocation', 'geolocation-approximate', 'sen
 const ours = url => { try { return new URL(url).origin === ORIGIN; } catch (_) { return false; } };
 
 ipcMain.handle('gs:take-links', e => (e.sender === main?.webContents ? links.splice(0) : []));
+// the graphics chip in use and its driver, for the phone and driver steering list (src/steer.js): a rule can name a
+// driver version that misbehaves. Chromium's own basic list (quick: it doesn't start the full GPU survey)
+ipcMain.handle('gs:gpu', async e => {
+  if (e.sender !== main?.webContents) return null;
+  try {
+    const info = await app.getGPUInfo('basic'), list = info?.gpuDevice || [], d = list.find(x => x.active) || list[0];
+    return d ? { vendorId: d.vendorId, deviceId: d.deviceId, driverVendor: String(d.driverVendor || ''), driverVersion: String(d.driverVersion || ''), name: String(d.deviceString || '') } : null;
+  } catch (_) { return null; }
+});
 
 app.whenReady().then(() => {
   // https://localhost is the app's files; every other address goes out to the network untouched

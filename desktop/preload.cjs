@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('gsDesktop', Object.freeze({
   version: arg('gs-version'),
   chrome: process.versions.chrome,
   electron: process.versions.electron,
+  /** The graphics chip in use and its driver: a promise of { vendorId, deviceId, driverVendor, driverVersion, name } or null (src/steer.js). */
+  gpuInfo: () => ipcRenderer.invoke('gs:gpu').catch(() => null),
   /** fn(url) for each gamescroll:// link the app is opened with, the one it started from included. */
   onOpenUrl(fn) { if (typeof fn === 'function') { take = fn; pull(); } },
 }));
