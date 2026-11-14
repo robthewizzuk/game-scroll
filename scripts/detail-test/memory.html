@@ -1,0 +1,164 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// What the 3D view's pictures hold on WebGPU, for scripts/detail-test.cjs --page memory --webgpu: an engine test scene is
+// drawn at a phone's size and every picture the chip holds is listed by what it is for (the scene pass, ambient
+// occlusion, bloom, the upscaler...), with its size in bytes. Then one frame is followed pass by pass, which
+// pictures each pass draws into and which it reads, to find the pictures used in only a stretch of the frame:
+// two of one size and kind whose stretches never overlap could be one picture (render-target memory shared
+// between passes, as Frostbite's and Unreal's render graphs do). A picture read before it is drawn in a frame
+// holds something from the frame before (the upscaler's history, frame generation's last picture) and can't be.
+// Then the scene is made again as the view was before its memory savings (HD.shadowColour: three's colour picture
+// beside every shadow map's depth; HD.shareTargets = false: each effect step its own picture), and the two must draw
+// the same picture with less memory now.
+//   ?scene=town  ?tier=2  ?w=1080&h=2340  ?size=.35  ?fx=dof,mb,vol,shafts,lens (effects on)  ?set=spread:false (HD settings)
+//   ?swap (the run as now first)  ?was=shadowColour:false  ?now=shareTargets:false (one switch at a time)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+const Q = new URLSearchParams(location.search);
+// (which GPU texture each view is of, and what each pass draws into and reads, in the order the chip runs them: the
+// order command buffers are sent in, not the order passes are begun, since three begins a pass, then draws the
+// pictures it reads in passes of their own, sent first: hooked before anything is made)
+const VT = new WeakMap(), BGT = new WeakMap(), EV = { on: false, list: [] }, PASS = new WeakMap(), CB = new WeakMap();
+{
+  const cv = GPUTexture.prototype.createView; GPUTexture.prototype.createView = function (...a) { const vw = cv.apply(this, a); VT.set(vw, this); return vw; };
+  const cb = GPUDevice.prototype.createBindGroup; GPUDevice.prototype.createBindGroup = function (d) { const g = cb.call(this, d); const ts = []; for (const e of d.entries) { const t = VT.get(e.resource); if (t) ts.push(t); } BGT.set(g, ts); return g; };
+  const read = (enc, g) => { const p = PASS.get(enc); if (p) for (const t of BGT.get(g) || []) p.reads.add(t); };
+  for (const P of [GPURenderPassEncoder.prototype, GPUComputePassEncoder.prototype]) { const sb = P.setBindGroup; P.setBindGroup = function (i, g, ...a) { read(this, g); return sb.call(this, i, g, ...a); }; }
+  const add = (enc, p) => { (enc.gsPasses ||= []).push(p); return p; };
+  const brp = GPUCommandEncoder.prototype.beginRenderPass;
+  GPUCommandEncoder.prototype.beginRenderPass = function (d) {
+    const pe = brp.call(this, d), p = add(this, { kind: 'render', label: d.label || '', writes: new Set(), reads: new Set() }); PASS.set(pe, p);
+    for (const a of d.colorAttachments || []) { if (!a) continue; const t = VT.get(a.view); if (t) p.writes.add(t); const rt = a.resolveTarget && VT.get(a.resolveTarget); if (rt) p.writes.add(rt); }
+    const dt = d.depthStencilAttachment && VT.get(d.depthStencilAttachment.view); if (dt) p.writes.add(dt);
+    return pe;
+  };
+  const bcp = GPUCommandEncoder.prototype.beginComputePass;
+  GPUCommandEncoder.prototype.beginComputePass = function (d) { const pe = bcp.call(this, d); PASS.set(pe, add(this, { kind: 'compute', label: d?.label || '', writes: new Set(), reads: new Set() })); return pe; };
+  const ctt = GPUCommandEncoder.prototype.copyTextureToTexture;
+  GPUCommandEncoder.prototype.copyTextureToTexture = function (s, d, ...a) { add(this, { kind: 'copy', label: 'copy', reads: new Set([s.texture]), writes: new Set([d.texture]) }); return ctt.call(this, s, d, ...a); };
+  const fe = GPUCommandEncoder.prototype.finish; GPUCommandEncoder.prototype.finish = function (...a) { const b = fe.apply(this, a); CB.set(b, this.gsPasses || []); return b; };
+  const sub = GPUQueue.prototype.submit; GPUQueue.prototype.submit = function (list) { if (EV.on) for (const b of list) EV.list.push(...(CB.get(b) || [])); return sub.call(this, list); };
+  // (a bundle replayed reads what its draws bound: still.js's bundles of the scene)
+  const BR = new WeakMap(), fin = GPURenderBundleEncoder.prototype.finish, sbb = GPURenderBundleEncoder.prototype.setBindGroup, eb = GPURenderPassEncoder.prototype.executeBundles;
+  GPURenderBundleEncoder.prototype.setBindGroup = function (i, g, ...a) { (this.gsR ||= new Set()); for (const t of BGT.get(g) || []) this.gsR.add(t); return sbb.call(this, i, g, ...a); };
+  GPURenderBundleEncoder.prototype.finish = function (...a) { const b = fin.apply(this, a); BR.set(b, this.gsR || new Set()); return b; };
+  GPURenderPassEncoder.prototype.executeBundles = function (list) { const p = PASS.get(this); if (p) for (const b of list) for (const t of BR.get(b) || []) p.reads.add(t); return eb.call(this, list); };
+}
+setGpuPick('webgpu');
+await loadParts();
+await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
+if (!await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const G = webgpu(), r = G.r, HD = window.__hd, W = +(Q.get('w') || 1080), H = +(Q.get('h') || 2340);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = Q.has('noupscale') ? false : HD.upscale;
+if (Q.has('set')) for (const kv of Q.get('set').split(',')) { const [k, v] = kv.split(':'); HD[k] = v === 'true' ? true : v === 'false' ? false : isNaN(+v) ? v : +v; }
+// every texture three makes, and when it lets one go
+// (and which were made since this run began: what a run before left behind isn't this run's)
+const LIVE = new Set(), BORN = new Set(), info = r.info, ct = info.createTexture, dt = info.destroyTexture;
+info.createTexture = function (t) { LIVE.add(t); BORN.add(t); return ct.call(this, t); };
+info.destroyTexture = function (t) { LIVE.delete(t); BORN.delete(t); return dt.call(this, t); };
+const sets = k => { const o = {}; for (const kv of (Q.get(k) || '').split(',').filter(Boolean)) { const [a, b] = kv.split(':'); o[a] = b === 'true' ? true : b === 'false' ? false : +b; } return o; };
+const frame = () => new Promise(res => requestAnimationFrame(res));
+const c = document.createElement('canvas'); c.width = W; c.height = H; c.style.width = '200px'; document.body.appendChild(c);
+const x = c.getContext('2d', { willReadFrequently: true });
+const out = {}, checks = [], data = {};
+const grab = () => x.getImageData(0, 0, W, H).data.slice();
+function apart(a, b) {
+  let sum = 0, big = 0; const n = a.length / 4;
+  for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); sum += d; if (d > 40) big++; }
+  return { mean: +(sum / n).toFixed(3), big: +(big / n * 100).toFixed(3) };
+}
+function picture(px, diffWith) {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H);
+  for (let i = 0; i < px.length; i += 4) {
+    if (diffWith) { const d = Math.min(255, 4 * Math.max(Math.abs(px[i] - diffWith[i]), Math.abs(px[i + 1] - diffWith[i + 1]), Math.abs(px[i + 2] - diffWith[i + 2]))); im.data[i] = d; im.data[i + 1] = d >> 1; im.data[i + 2] = 0; }
+    else { im.data[i] = px[i]; im.data[i + 1] = px[i + 1]; im.data[i + 2] = px[i + 2]; }
+    im.data[i + 3] = 255;
+  }
+  g.putImageData(im, 0, 0); return cv.toDataURL('image/png');
+}
+const key = Q.get('scene') || 'town', size = +(Q.get('size') || .35), FX = (Q.get('fx') || '').split(',').filter(Boolean);
+// One run: the scene made afresh with HD's memory switches set so, drawn at a few places of its flight, then one frame
+// followed pass by pass; its pictures by what they are for, and the picture it drew
+async function run(label, set) {
+  Object.assign(HD, set); BORN.clear();
+  const S = SCENES.find(s => s[0] === key)[3]({ gs, HD, size, gpu: true }), v = S.v;
+  // effects a game turns on (?fx=dof,mb,vol,shafts,lens): depth of field, motion blur, volumetric light, sun shafts, a real lens
+  if (FX.includes('dof')) v.focus = { at: 25, range: 6, blur: 6 };
+  if (FX.includes('mb')) v.motionBlur = { amount: .5 };
+  if (FX.includes('vol')) v.beams = { strength: 1 };
+  if (FX.includes('shafts')) v.shafts = 1;
+  if (FX.includes('lens')) v.lens = { f: 2.8 };
+  const draw = () => { v.render(x, W, H); x.getImageData(0, 0, 1, 1); return frame(); };
+  for (const m of S.modes) { await m.enter(draw); if (m.key === (Q.get('mode') || 'new') || m.key === 'on') break; }
+  for (const t of [20, 6]) { S.path(t, v.cam); for (let i = 0; i < 12; i++) await draw(); }   // (the shadow maps drawn somewhere else first, then here)
+  const pic = grab(); await draw(); const pic2 = grab();
+  // who holds each picture: the chain's own fields (and what's inside its nodes, a few steps down), else the part three tells the inspector
+  const names = new Map(), seen = new WeakSet();
+  const walk = (o, path, depth) => {
+    if (!o || typeof o !== 'object' || seen.has(o) || depth > 3) return; seen.add(o);
+    if (o.isTexture && !names.has(o)) { names.set(o, path); return; }
+    if (o.isRenderTarget) { for (const t of o.textures || [o.texture]) if (t && !names.has(t)) names.set(t, path + (o.textures?.length > 1 ? '.' + (t.name || o.textures.indexOf(t)) : '')); if (o.depthTexture && !names.has(o.depthTexture)) names.set(o.depthTexture, path + '.depth'); return; }
+    if (Array.isArray(o)) { o.forEach((e, i) => walk(e, `${path}[${i}]`, depth + 1)); return; }
+    if (o.isScene || o.isCamera || o.isObject3D || o === r) return;
+    for (const k of Object.keys(o)) { if (k === 'parent' || k === 'r' || k === 'renderer' || k === 'scene' || k === 'cam' || k === 'view') continue; let val; try { val = o[k]; } catch { continue; } if (val && typeof val === 'object') walk(val, path ? `${path}.${k}` : k, depth + 1); }
+  };
+  walk(v._gpuChain, 'chain', 0); walk(v, 'view', 1);
+  const kind = t => `${t.isDepthTexture ? 'depth' : t.format}:${t.type}`;
+  // one frame followed pass by pass, from somewhere else on the flight, so the shadow maps are drawn in it too
+  S.path(20, v.cam); v.scene.traverse(o => { if (o.isLight && o.castShadow) o.shadow.needsUpdate = true; });
+  EV.list.length = 0; EV.on = true; await draw(); EV.on = false; await draw();
+  const passes = EV.list, gpuOf = t => G.r.backend.get(t)?.texture;
+  const rows = []; let left = 0;
+  for (const t of LIVE) {
+    const bytes = info.memoryMap.get(t) || 0, g = gpuOf(t), rt = t.renderTarget || null;
+    if (!bytes) continue;
+    // (one made before this run and not used in its frame was left behind by the run before)
+    if (!BORN.has(t) && !passes.some(p => p.writes.has(g) || p.reads.has(g))) { left += bytes; continue; }
+    let first = -1, last = -1, early = -1, wrote = -1;
+    passes.forEach((p, i) => { if (!g) return; const w = p.writes.has(g), rd = p.reads.has(g); if (rd && wrote < 0 && early < 0) early = i; if (w && wrote < 0) wrote = i; if (w || rd) { if (first < 0) first = i; last = i; } });
+    rows.push({ name: names.get(t) || (rt?.gsPart ? 'part:' + rt.gsPart : t.name || (t.isRenderTargetTexture ? 'picture' : 'texture')), rt: !!(t.isRenderTargetTexture || rt || t.isDepthTexture), w: t.image?.width || 0, h: t.image?.height || 0, kind: kind(t), samples: rt?.samples || 0, mb: +(bytes / 1048576).toFixed(2), first, last, early, wrote, part: rt?.gsPart || '' });
+  }
+  rows.sort((a, b) => b.mb - a.mb);
+  const pics = rows.filter(o => o.rt), tex = rows.filter(o => !o.rt), sum = a => +a.reduce((s, o) => s + o.mb, 0).toFixed(1);
+  // pictures used in only a stretch of this frame (drawn before they're read, and both in it), by size and kind:
+  // how few would do if each stretch took any free one (intervals coloured greedily, by start)
+  const spans = pics.filter(o => o.first >= 0 && o.early < 0), groups = {};
+  for (const o of spans) (groups[`${o.w}x${o.h} ${o.kind} s${o.samples}`] ||= []).push(o);
+  let save = 0; const share = [];
+  for (const [k, list] of Object.entries(groups)) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.first - b.first); const ends = [];
+    for (const o of list) { const i = ends.findIndex(e => e < o.first); if (i >= 0) ends[i] = o.last; else ends.push(o.last); }
+    const each = list[0].mb, saved = +((list.length - ends.length) * each).toFixed(2); save += saved;
+    if (saved) share.push({ size: k, pictures: list.length, would: ends.length, savedMB: saved, who: list.map(o => `${o.name} [${o.first}..${o.last}]`) });
+  }
+  const nameOf = new Map(); for (const t of LIVE) { const g = gpuOf(t); if (g) nameOf.set(g, (names.get(t) || (t.renderTarget?.gsPart ? 'part:' + t.renderTarget.gsPart : t.name || 'picture')) + ` ${t.image?.width || 0}x${t.image?.height || 0}`); }
+  const nm = set => [...set].map(g => nameOf.get(g) || `(not three's: ${g.label || g.width + 'x' + g.height})`).join(', ');
+  const R = {
+    label, set: { ...set }, picturesMB: sum(pics), texturesMB: sum(tex), leftFromBeforeMB: +(left / 1048576).toFixed(1), shared: HD.info.shared, rw: HD.info.rw, rh: HD.info.rh, ow: HD.info.ow, oh: HD.info.oh, upscaled: HD.info.upscaled,
+    shadowColour: pics.filter(o => o.name === 'ShadowMap').reduce((a, o) => a + o.mb, 0),
+    couldShare: { savedMB: +save.toFixed(1), groups: share },
+    persistent: pics.filter(o => o.early >= 0).map(o => `${o.name} ${o.mb} MB (read at pass ${o.early} before it's drawn)`),
+    pictures: pics.map(o => `${String(o.mb).padStart(6)} MB ${o.w}x${o.h} ${o.kind}${o.samples ? ' x' + o.samples : ''} ${o.name}${o.part ? ' (' + o.part + ')' : ''} ${o.first < 0 ? 'not used this frame' : `[${o.first}..${o.last}]${o.early >= 0 ? ' from the frame before' : ''}`}`),
+    passList: passes.map((p, i) => `${i} ${p.kind} ${p.label}: draws into ${nm(p.writes) || '-'}; reads ${nm(p.reads) || '-'}`),
+    pic, base: apart(pic, pic2),
+  };
+  S.dispose(); await frame(); await frame();
+  return R;
+}
+try {
+  // as before (each effect step its own picture, three's colour picture beside each shadow map), then as now
+  const wasSet = { shareTargets: false, shadowColour: true, ...sets('was') }, nowSet = { shareTargets: true, shadowColour: false, ...sets('now') };
+  let was, now;
+  if (Q.has('swap')) { now = await run('now', nowSet); was = await run('as before', wasSet); }
+  else { was = await run('as before', wasSet); now = await run('now', nowSet); }
+  const d = apart(now.pic, was.pic), slack = Math.max(was.base.mean, now.base.mean);
+  for (const R of [was, now]) { const { pic, ...rest } = R; data[R.label] = rest; }
+  data.compare = { picturesMB: [was.picturesMB, now.picturesMB], saved: +(was.picturesMB - now.picturesMB).toFixed(1), shadowColour: [was.shadowColour, now.shadowColour], sharedSteps: now.shared, d, frameToFrame: [was.base, now.base] };
+  checks.push({ name: `${key}${FX.length ? ' with ' + FX.join(', ') : ''} at tier ${HD.force}, ${W}x${H}: the view's pictures take less memory now`, ok: now.picturesMB < was.picturesMB || (!was.shadowColour && !FX.length), note: `${was.picturesMB} MB as before, ${now.picturesMB} MB now (shadow maps' colour ${was.shadowColour} MB -> ${now.shadowColour} MB, ${now.shared} effect steps sharing a picture)` });
+  checks.push({ name: 'the same picture as before', ok: d.mean <= slack * 1.5 + .05 && d.big <= .05, note: `mean ${d.mean} (frame to frame ${slack}), ${d.big}% off by 40+` });
+  out.before = picture(was.pic); out.now = picture(now.pic); out.diff = picture(now.pic, was.pic);
+  window.result = { checks, info: data, out };
+} catch (e) { window.result = { error: (e && e.stack) || String(e) }; }
+</script>
