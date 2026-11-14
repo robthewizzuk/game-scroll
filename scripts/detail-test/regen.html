@@ -86,6 +86,9 @@ try {
   };
   // ?probe=regen: only that mode's moving frames, each one saved (to look at what a change does, in a minute)
   if (Q.get('probe') === 'jump') { await jump(new Uint8Array(W * H).fill(1)); v.free(); HD.traced = null; HD.regen = null; window.result = { out, info, checks }; throw 0; }
+  // ?probe=truth&wait=400: the truth at the moving camera's last place alone, from that many frames (a finer one to
+  // hold probe frames against than the run's own)
+  if (Q.get('probe') === 'truth') { pose(1); mode('ref', 0); await settle(+(Q.get('wait') || 400)); shot('truth'); v.free(); HD.traced = null; HD.regen = null; HD.regenRef = false; window.result = { out, info, checks }; throw 0; }
   if (Q.get('probe')) {
     const ts = Array.from({ length: POSES }, (_, i) => (i + 1) / POSES);
     pose(0); if (Q.get('pre')) { mode(Q.get('pre')); await settle(6); } mode(Q.get('probe')); await settle(+(Q.get('wait') || 10)); shot('probe-00');

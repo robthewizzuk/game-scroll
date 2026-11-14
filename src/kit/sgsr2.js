@@ -526,6 +526,9 @@ export class SgsrFrame {
     this.reset = reset ? 1 : 0;
     // jitter: a Halton (2, 3) point inside the pixel, more of them the bigger the upscale
     const n = Math.min(32, Math.max(8, Math.ceil(8 * k * k)));
+    // (a new history starts the sequence again: its first points are the ones spread widest over the pixel, and what
+    // a cut is followed by does not hang on how many frames were drawn before it)
+    if (reset) this.frame = 0;
     this.frame = (this.frame % n) + 1; this.jitters = n;
     this.near = cam.near; this.far = cam.far; this.ortho = !cam.isPerspectiveCamera;
     const jx = halton(this.frame, 2) - .5, jy = halton(this.frame, 3) - .5;
