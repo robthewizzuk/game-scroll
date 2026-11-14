@@ -1,0 +1,53 @@
+# Node, the packages and a headless browser for the PR check's browser jobs, in one step each job shares.
+# Playwright isn't in package.json (the app doesn't need it), so the newest is installed here, with its
+# browsers kept in the Actions cache between runs. The runner image already has what Chromium needs, so
+# with the browser cached nothing more is installed; a first run (or WebKit) installs the system packages.
+name: Node and a test browser
+description: setup-node with the npm cache, npm ci, and Playwright with cached browsers
+inputs:
+  browsers:
+    description: which Playwright browsers (space separated)
+    default: chromium
+  install:
+    description: run npm ci (false when the job installs its own way)
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+
+    - name: Install
+      if: inputs.install == 'true'
+      shell: bash
+      run: npm ci --no-audit --no-fund
+
+    - name: Which Playwright
+      id: pw
+      shell: bash
+      env:
+        BROWSERS: ${{ inputs.browsers }}
+      run: |
+        echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
+        echo "names=$(echo $BROWSERS | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache the browsers
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ steps.pw.outputs.names }}-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+    - name: Install Playwright
+      shell: bash
+      env:
+        PW: ${{ steps.pw.outputs.version }}
+        BROWSERS: ${{ inputs.browsers }}
+        HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        npm i --no-save --no-audit --no-fund "playwright@$PW"
+        if [ "$HIT" != "true" ]; then npx playwright install --with-deps $BROWSERS
+        elif [ "$BROWSERS" != "chromium" ]; then npx playwright install-deps $BROWSERS
+        fi

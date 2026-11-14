@@ -1,0 +1,35 @@
+# Maths probe: do V8 (Android, the Worker) and JavaScriptCore (iPhone) give the same bits for
+# Math.sin, exp...? Informational (a warning, never red), so it runs after a kit change is merged rather
+# than on every pull request (where it took a machine for about two minutes, most of it installing WebKit).
+# "Run workflow" runs it on any branch.
+name: Maths probe
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/kit/**', 'scripts/math-probe.cjs', '.github/workflows/maths-probe.yml', '.github/actions/browser/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maths-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  maths:
+    runs-on: ubuntu-24.04
+    # first run on a new Playwright version installs WebKit's system packages (over 10 minutes on a
+    # slow mirror); the browsers are cached after that
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Node, packages, Chromium and WebKit
+        uses: ./.github/actions/browser
+        with:
+          browsers: chromium webkit
+
+      - name: Same maths in every engine?
+        run: node scripts/math-probe.cjs

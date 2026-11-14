@@ -61,7 +61,9 @@ The numbers, over the last 5 seconds:
   **memory** (the memory guard's level, fine, tight, low or critical, and on Android the phone's free
   memory; see below), and **CPU speed**: a fixed bit of work timed every 2 seconds, as a share of its
   best time. When the phone throttles its clocks, this falls.
-- the last hitch and its causes.
+- the last hitch and its causes. A hitch is a long gap between two pictures, and it is put down to the
+  frame drawn before the gap (its update() and draw(), its biggest part, and the shaders, textures and
+  garbage counted with it): that frame's work is what held the next picture back.
 
 ### CPU by part
 

@@ -35,13 +35,20 @@
 // newest real frame unmoved, so a glass edge never smears or shows twice. Glowing particles that say how
 // they move (particleMotion(), as gs.hd's GPU sparks do) are moved along their own motion instead, where
 // the last frame shows the same spark where it says it came from, so sparks move at the screen's rate
-// too. Smoke (ordinary see-through blending) stays as drawn: moving it dragged the ground behind it
-// along, which scored worse against the truth than leaving it (scripts/framegen-test.cjs --hard).
+// too. Smoke (ordinary see-through blending) isn't moved along its own motion: that dragged the ground
+// behind it along, which scored worse against the truth than leaving it (scripts/framegen-test.cjs --hard).
+// It and glass move with what is behind them where that matches the last frame better than standing still.
 //
 // What the game's motion doesn't describe (a shadow sliding over still ground, a scrolling texture, a
-// reflection) is read from the pictures: an optical flow, block matching coarse to fine once per pair of
-// real frames, used per pixel only where it matches both frames clearly better than the game's motion
-// and the surface's depth agrees (FSR 3 mixes its two motions more coarsely). The same pass checks for
+// reflection, a picture moving on a still screen) is read from the pictures: an optical flow, block matching
+// coarse to fine once per pair of real frames, searched only in the blocks the game's motion doesn't already
+// match (most of a picture: cheap), then to a pixel round what it found, so a small thing moving unlike what
+// is round it is found too. It is used per pixel only where it matches both frames clearly better than the
+// game's motion, with both ends on the same surface (FSR 3 mixes its two motions the same way, more coarsely),
+// and where what it shows is a mix of the two real frames' own pixels there (a shadow's edge half way across),
+// it is that mix, by how far the flow says the edge has got: the ground keeps its texture exactly, only its
+// light changes. See-through things move with what is behind them where that fits the last frame better
+// than leaving them be (smoke as the camera moves past it). The same pass checks for
 // a cut (the two frames' brightness histograms far apart, or nothing matching anywhere): then the made
 // frame is the nearer real frame, never two scenes mixed. Big gaps that open behind moving things are
 // filled from a pyramid of the made frame that favours the far side (the background), not smeared from
@@ -67,6 +74,10 @@ const LUMA = vec4(.299, .587, .114, 0);
 // before it is used there. A cut to a new scene: the two frames' brightness histograms this far apart
 // (0..2), or the best matches this far off (mean brightness difference), counted together
 const FLOW_R = 6, FLOW_GAIN = .012, CUT_HIST = .33, CUT_MISS = .05;
+// a block whose brightness the game's own motion matches this closely (mean difference) is not searched at all
+const FLOW_SKIP = .006;
+// where the flow's picture is this close to a mix of the two real frames' own pixels (mean of r, g, b), that mix is shown
+const FLOW_PICK = .06;
 // Easy tiles (8 x 8 screen pixels): where the two real frames, moved by the game's own motion, agree this
 // closely (brightness, 0..1: the most any pixel of the half-size brightness picture is off, and the mean) and
 // nothing see-through, glowing or read from the optical flow is near, a made pixel is the two frames' mix
@@ -187,6 +198,8 @@ export class FrameGen {
       flowOn: uniform(flow ? 1 : 0), fillOn: uniform(fill ? 1 : 0), sharp: uniform(sharp ? 1 : 0),
       // the quick way for easy tiles (see the tile sort below): on (1) or off (0); it needs the optical flow's pictures
       quick: uniform(quick ? 1 : 0), go: uniform(0),   // go: the tiles were sorted for this pair (make() sets it)
+      // tint (1): the pixels the optical flow moved are tinted magenta (tests and the frame lab: where it is used)
+      tint: uniform(0),
       // the camera's turn: newest -> last frame, last -> the one before, newest -> the moment made; 1 once three frames are in
       Hb: uniform(new Matrix3()), Hb2: uniform(new Matrix3()), Ht: uniform(new Matrix3()), hist: uniform(0),
     };
@@ -413,31 +426,41 @@ export class FrameGen {
       whole(subs);
       const flowBlock = () => {
         const s = FS[k], g = ivec2(int(instanceIndex).mod(int(s.x)), int(instanceIndex).div(int(s.x))), px = LS[k];
-        const gm = gameAt(g, PIX[k] * 4), gc = miss(k, g, gm), best = float(gc).toVar(), bd = vec2(gm).toVar();
+        const gm = gameAt(g, PIX[k] * 4), gc = miss(k, g, gm), best = float(gc).toVar(), bd = vec2(gm).toVar(), gain = float(0).toVar();
         // a try replaces the best only if clearly better (flat areas match anything: they keep the game's motion)
         const tryAt = d => { const c = miss(k, g, d); If(c.lessThan(best.mul(.9).sub(.001)), () => { best.assign(c); bd.assign(d); }); };
-        if (k === 3) {
-          Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fy' }, ({ fy }) => {
-            Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fx' }, ({ fx }) => { tryAt(vec2(float(fx), float(fy)).div(px)); });
-          });
-        } else {
-          tryAt(vec2(0));
-          const up = FS[k + 1], hiU = ivec2(int(up.x).sub(1), int(up.y).sub(1));
-          // (the coarser block over this one and the two beside it that are nearest: this block is a quarter of it)
-          const pg = g.div(2), side = g.sub(pg.mul(2)).mul(2).sub(1);
-          for (const o of [ivec2(0, 0), ivec2(side.x, 0), ivec2(0, side.y)]) tryAt(flowT[k + 1].load(clamp(pg.add(o), ivec2(0, 0), hiU)).xy);
-        }
-        // then a pixel either way of the best (the coarsest also diagonally)
-        const c0 = vec2(bd).toVar();
-        for (const [ox, oy] of k === 3 ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]] : [[-1, 0], [1, 0], [0, -1], [0, 1]]) tryAt(c0.add(vec2(ox, oy).div(px)));
+        // a block the game's own motion already matches (most of a picture, most of the time: everything the game
+        // says how it moves) has nothing to look for: no try could beat it clearly. Only the rest is searched, so the
+        // flow costs little where it isn't needed (FLOW_SKIP)
+        If(gc.greaterThanEqual(FLOW_SKIP), () => {
+          if (k === 3) {
+            Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fy' }, ({ fy }) => {
+              Loop({ start: int(-FLOW_R), end: int(FLOW_R), condition: '<=', name: 'fx' }, ({ fx }) => { tryAt(vec2(float(fx), float(fy)).div(px)); });
+            });
+          } else {
+            tryAt(vec2(0));
+            const up = FS[k + 1], hiU = ivec2(int(up.x).sub(1), int(up.y).sub(1));
+            // (the coarser block over this one and the two beside it that are nearest: this block is a quarter of it)
+            const pg = g.div(2), side = g.sub(pg.mul(2)).mul(2).sub(1);
+            for (const o of [ivec2(0, 0), ivec2(side.x, 0), ivec2(0, side.y)]) tryAt(flowT[k + 1].load(clamp(pg.add(o), ivec2(0, 0), hiU)).xy);
+          }
+          // then round the best: blocks of 16 screen pixels two of their pixels either way (a small thing that moves unlike
+          // what is round it, such as a shadow's edge, a reflection or a ball on a screen, is lost in the coarser blocks,
+          // which follow the ground: here it is found again, up to 8 screen pixels off), the rest one pixel either way
+          const c0 = vec2(bd).toVar(), R = k === 1 ? 2 : 1;
+          for (let oy = -R; oy <= R; oy++) for (let ox = -R; ox <= R; ox++) if ((ox || oy) && (k === 3 || R > 1 || !ox || !oy)) tryAt(c0.add(vec2(ox, oy).div(px)));
+          // and the finest to half its pixel (a screen pixel: its brightness is read between pixels), so the two frames
+          // a made pixel is mixed from line up to a pixel, edges and all
+          if (k === 0) { const c1 = vec2(bd).toVar(); for (const [ox, oy] of [[-.5, 0], [.5, 0], [0, -.5], [0, .5]]) tryAt(c1.add(vec2(ox, oy).div(px))); }
+          // finest: how much better than the game's motion pixel by pixel (0 where they're the same move, within a pixel)
+          // (a clear win only: the flow's match at most 40% as far off as the game's, so a texture that repeats
+          // or shimmers in the distance, which matches many ways a little better, keeps the game's motion)
+          if (k === 0) { const mg = missGame(g); If(length(bd.sub(gm).mul(U.os)).greaterThan(.75).and(best.lessThan(mg.mul(.4))), () => { gain.assign(mg.sub(best)); }); }
+        });
         // the coarsest level adds up how badly the whole screen matches: a cut to a new scene matches nowhere
         if (k === 3 && subs) { off.assign(uint(min(best, 1).mul(4096))); one.assign(uint(1)); }
         else if (k === 3) { atomicAdd(cut.element(0), uint(min(best, 1).mul(4096))); atomicAdd(cut.element(1), uint(1)); }
-        // finest: how much better than the game's motion pixel by pixel (0 where they're the same move, within a pixel)
-        // (a clear win only: the flow's match at most 40% as far off as the game's, so a texture that repeats
-        // or shimmers in the distance, which matches many ways a little better, keeps the game's motion)
-        const mg = missGame(g), gain = k ? gc : select(length(bd.sub(gm).mul(U.os)).greaterThan(.75).and(best.lessThan(mg.mul(.4))), mg.sub(best), float(0));
-        textureStore(this.flow[k], g, vec4(bd, best, gain));
+        textureStore(this.flow[k], g, vec4(bd, best, k ? gc : gain));
       };
       if (subs) If(instanceIndex.lessThan(uint(blocks)), flowBlock); else flowBlock();
       if (subs) { addUp(cut.element(0), off, true); addUp(cut.element(1), one, true); }
@@ -499,6 +522,7 @@ export class FrameGen {
     // none of the checks for the hard cases, which there come to the same answer. Each workgroup is one
     // tile, so a tile goes one way or the other as a whole.
     const OW = int(U.os.x), OH = int(U.os.y);
+    const differ3 = (a, b) => dot(abs(a.sub(b)).xyz, vec3(1 / 3));   // how far two colours are apart (the mean of r, g and b)
     const fromN = (u, m, e) => u.sub(m.xy.mul(float(1).sub(U.t))).sub(e), fromP = (u, m, e) => u.add(m.xy.mul(U.t)).sub(e);
     this.cCompose = Fn(() => {
       const i = int(instanceIndex), tl = i.shiftRight(6), lid = i.bitAnd(63);
@@ -560,21 +584,20 @@ export class FrameGen {
           // and the last frame still has it (else the edge row would be stretched into streaks)
           const lost = select(inN.not().and(inP), float(0), float(1));
           const wN = select(okN, select(okP, select(still.and(differ), float(1), U.t), float(1)), select(okP, float(0), lost));
-          const made = mix(cP, cN, clamp(wN, 0, 1)).toVar();
+          const made = mix(cP, cN, clamp(wN, 0, 1)).toVar(), flowed = float(0).toVar();
           // a gap: neither frame saw the surface that is here at t (it was hidden in both), though the newest
           // frame has a picture there (step 8 fills it from the pyramid)
           const gap = float(select(inN.and(okN.not()).and(okP.not()).and(isPart.not()), float(1), float(0))).toVar();
           // a moving particle followed from the last frame: its light then and now, by time
           If(isPart, () => { made.assign(select(in01(uP).and(U.interp.greaterThan(.5)), mix(cP, cN, U.t), cN)); });
           // optical flow: where a block of the picture moved in a way the game's motion doesn't say (a shadow
-          // crossing still ground, a scrolling texture, a reflection, a glow), on the same surface the game's
-          // motion found here, the move whose two frames agree best wins
+          // crossing still ground, a scrolling texture, a reflection, a glow, a picture on a screen), the move
+          // whose two frames agree best wins
           If(U.flowOn.greaterThan(.5).and(isPart.not()).and(okN), () => {
             const fs = FS[0], fq = u.mul(fs).sub(.5), f0 = ivec2(floor(fq)), hiF = ivec2(int(fs.x).sub(1), int(fs.y).sub(1));
             const C = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => flowT[0].load(clamp(f0.add(ivec2(x, y)), ivec2(0, 0), hiF)));
             const most = C.reduce((s, c) => max(s, c.w), float(0));
             const same = z => abs(z.sub(L)).lessThan(L.mul(.1).add(.05));
-            const differ3 = (a, b) => dot(abs(a.sub(b)).xyz, vec3(1 / 3));
             If(most.greaterThan(FLOW_GAIN), () => {
               // between two frames: against the game's motion, each flow round here (FSR 3 weighs its two motions the same way)
               // (only where the game's motion clearly fails: its two frames disagree here)
@@ -587,14 +610,25 @@ export class FrameGen {
                 const fs1 = FS[1], par = flowT[1].load(clamp(ivec2(floor(u.mul(fs1))), ivec2(0, 0), ivec2(int(fs1.x).sub(1), int(fs1.y).sub(1)))).xy;
                 const near = (a, b) => length(a.sub(b).mul(U.os)).lessThan(1.5);
                 const backed = (c, k) => C.reduce((s, o, j) => j === k ? s : s.or(o.w.greaterThan(FLOW_GAIN).and(near(o.xy, c.xy))), near(par, c.xy));
+                const fc = vec4(0).toVar();
                 for (const [k, c] of C.entries()) {
                   If(c.w.greaterThan(FLOW_GAIN).and(backed(c, k)).and(length(c.xy.sub(d).mul(U.os)).greaterThan(1)), () => {
                     const a = u.sub(c.xy.mul(float(1).sub(U.t))), b = u.add(c.xy.mul(U.t));
-                    const ok = in01(a).and(in01(b)).and(same(lin(dep.load(pixOf(a)).x))).and(same(lin(pdep.load(pixOf(b)).x)));
+                    // both ends the same surface, then and now (not always the game's surface here: a thing that moves with
+                    // no motion of its own, a ball on a screen, is in front of it at one end)
+                    const za = lin(dep.load(pixOf(a)).x), ok = in01(a).and(in01(b)).and(abs(lin(pdep.load(pixOf(b)).x).sub(za)).lessThan(za.mul(.1).add(.05)));
                     const ca = col.sample(clamp(a, 0, 1)).level(0), cb = pcol.sample(clamp(b, 0, 1)).level(0), d = differ3(ca, cb);
-                    If(ok.and(d.lessThan(best)), () => { best.assign(d); made.assign(mix(cb, ca, U.t)); });
+                    If(ok.and(d.lessThan(best)), () => { best.assign(d); fc.assign(mix(cb, ca, U.t)); flowed.assign(1); });
                   });
                 }
+                // what the flow found, as the picture: where it is a mix of the two real frames' own pixels here (a shadow's
+                // edge that has or hasn't reached this pixel yet, half way across its soft rim, a reflection), that mix of
+                // them, by how far the flow says it has got: the ground under the shadow keeps its texture exactly, only its
+                // light changes. Else the flow's own mix (a thing that is here at this moment and in neither frame here)
+                If(flowed.greaterThan(.5), () => {
+                  const g = cN.sub(cP), w = clamp(dot(fc.sub(cP).xyz, g.xyz).div(max(dot(g.xyz, g.xyz), 1e-6)), 0, 1), on = mix(cP, cN, w);
+                  made.assign(select(differ3(on, fc).lessThan(FLOW_PICK), on, fc));
+                });
               });
               // past the newest frame there is nothing to check a flow against: only inside a patch of it (all
               // four blocks round here moving alike, clearly unlike the game's motion), moved by their blend
@@ -602,7 +636,7 @@ export class FrameGen {
                 const all = C.slice(1).reduce((s, c) => s.and(c.w.greaterThan(FLOW_GAIN)).and(length(c.xy.sub(C[0].xy).mul(U.os)).lessThan(1)), C[0].w.greaterThan(FLOW_GAIN));
                 const fr = fq.sub(floor(fq)), fl = mix(mix(C[0].xy, C[1].xy, fr.x), mix(C[2].xy, C[3].xy, fr.x), fr.y);
                 const a = u.sub(fl.mul(float(1).sub(U.t)));
-                If(all.and(in01(a)).and(same(lin(dep.load(pixOf(a)).x))), () => { made.assign(col.sample(a).level(0)); });
+                If(all.and(in01(a)).and(same(lin(dep.load(pixOf(a)).x))), () => { made.assign(col.sample(a).level(0)); flowed.assign(1); });
               });
             });
           });
@@ -610,10 +644,24 @@ export class FrameGen {
           // from: the newest frame, unmoved (faint glass is mostly left to the motion, as what shows through it
           // moves with the background)
           const r0 = rea.sample(u).level(0), stat = (r, lift) => r.x.mul(float(1).sub(lift));
-          const re = select(isPart, float(0), max(stat(r0, liftAt(u)), stat(rN, liftN)));
-          const fin = mix(made, col.sample(u).level(0), smoothstep(.2, .7, re)).toVar();
+          const re = select(isPart, float(0), max(stat(r0, liftAt(u)), stat(rN, liftN))), wr = smoothstep(.2, .7, re);
+          // ...unless moving them with what is behind them (the game's motion there: smoke and glass draw none of their
+          // own) matches the last frame clearly better than leaving them be: smoke drifting across the view as the
+          // camera moves keeps the ground under it moving with the rest of the ground, instead of holding still
+          const asDrawn = col.sample(u).level(0).toVar();
+          If(wr.greaterThan(0).and(inN), () => {
+            const dU = differ3(asDrawn, pcol.sample(u).level(0));
+            If(U.interp.greaterThan(.5), () => {
+              If(in01(uP).and(differ3(cN, cP).lessThan(dU.mul(.8))), () => { asDrawn.assign(mix(cP, cN, clamp(U.t, 0, 1))); });
+            }).Else(() => {
+              const was = uN.add(d);
+              If(in01(was).and(differ3(cN, pcol.sample(was).level(0)).lessThan(dU.mul(.8))), () => { asDrawn.assign(cN); });
+            });
+          });
+          const fin = mix(made, asDrawn, wr).toVar();
           // a cut to a new scene (nothing matched anywhere): never a mix of the two, just a real frame, the one due
           If(U.flowOn.greaterThan(.5).and(isCut()), () => { fin.assign(select(U.interp.greaterThan(.5).and(U.t.lessThan(1)), pcol.sample(u).level(0), col.sample(u).level(0))); gap.assign(0); });
+          If(U.tint.greaterThan(.5).and(flowed.greaterThan(.5)), () => { fin.assign(mix(fin, vec4(1, 0, 1, 1), .6)); });
           // alpha for the pyramid: 0 a gap, else how far away the surface is (far counts more: what a gap
           // uncovers is the background, so it is filled mostly from the background round it, not the thing in front)
           textureStore(this.raw, q, vec4(fin.xyz, select(gap.greaterThan(.5), float(0), clamp(L.div(40), .02, 1))));
