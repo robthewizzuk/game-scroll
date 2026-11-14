@@ -641,7 +641,7 @@ async function tour(b) {
   // the sheet in the QA panel: choose, start, watch the bar, stop, read the report
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   const sheet = await p.evaluate(() => ({ opts: [...document.querySelectorAll('.tour-set option')].map(o => o.textContent), est: document.querySelector('.tour-est').textContent, qa: !!document.querySelector('dialog.qa-panel:not(.tour)'), full: document.querySelector('.tour-full').checked, loud: document.querySelector('.tour-loud').checked }));
-  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (18)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'Frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
+  check(sheet.opts.length === 6 && sheet.opts[3] === 'Engine test scenes (18)' && sheet.opts[4] === 'Ray tracing only (1)' && sheet.opts[5] === 'GSFG frame generation (4)' && sheet.full && !sheet.loud && /^3D games \(\d+\)$/.test(sheet.opts[0]) && /games, about \d+ min/.test(sheet.est) && !sheet.qa, 'the QA panel\'s Phone test tour button opens the sheet, with what it will play and how long it takes', JSON.stringify(sheet));
   if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/tour-sheet.png' });
   await p.selectOption('.tour-set', 'all'); await p.selectOption('.tour-secs', '10');
   const est = await p.evaluate(() => document.querySelector('.tour-est').textContent);
@@ -673,7 +673,7 @@ async function tour(b) {
   await p.click('.logo'); await p.click('.qa-tour'); await p.waitForSelector('dialog.tour[open]');
   await p.selectOption('.tour-set', 'framegen');
   const sheet3 = await p.evaluate(() => ({ est: document.querySelector('.tour-est').textContent, ticks: [...document.querySelectorAll('.tour-tick')].map(t => getComputedStyle(t).display), name: document.querySelector('.tour-set option[value="framegen"]')?.textContent }));
-  check(sheet3.name === 'Frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
+  check(sheet3.name === 'GSFG frame generation (4)' && /^Four of the engine test scenes, each flown through for \d+ seconds five ways: .* blended as before, blended as now and then ahead: about \d+ min/.test(sheet3.est) && sheet3.ticks.every(d => d === 'none'),
     'the sheet also offers frame generation, timed in four of the engine test scenes', JSON.stringify(sheet3));
   await p.click('dialog.tour[open] .qa-x');
   await p.done();
