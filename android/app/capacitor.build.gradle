@@ -23,6 +23,7 @@ dependencies {
     implementation project(':npu')
     implementation project(':phone-ai')
     implementation project(':phone-sensors')
+    implementation project(':play-update')
     implementation project(':power-state')
     implementation project(':rich-haptics')
     implementation project(':screen-rate')

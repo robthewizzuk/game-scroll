@@ -7,7 +7,9 @@
 // downloaded game must use the app's instances, not its own.
 //
 // Output (CLI):  node scripts/build-games.mjs [outDir=dist-games]
-//   <outDir>/manifest.json            catalogue: id, file, hash, the shared exports each game needs, and its metadata
+//   <outDir>/manifest.json            catalogue: id, file, hash, the shared exports each game needs, and its metadata;
+//                                     plus "app": what store/app-update.json says about the app itself (the oldest
+//                                     Android version that may carry on: src/update.js updates older copies from Play)
 //   <outDir>/games/<id>.<hash>.js     one file per game; the name changes whenever the code does
 //
 // vite.config.js calls buildGames() too, so the app knows the hash of the copy it ships with and
@@ -119,12 +121,23 @@ export async function buildGames({ withMeta = false } = {}) {
   return games;
 }
 
+/** store/app-update.json: { android: { min } }. min is a version code (Play Console lists them, and each
+ *  Google Play workflow run's summary says its own); copies older than it get Play's full-screen update.
+ *  Checked here so a typo can't publish a catalogue that stops every phone. */
+export function appUpdate() {
+  let j;
+  try { j = JSON.parse(readFileSync(join(ROOT, 'store', 'app-update.json'), 'utf8')); } catch (e) { if (e.code === 'ENOENT') return {}; throw new Error('store/app-update.json: ' + e.message); }
+  const min = j?.android?.min ?? 0;
+  if (!Number.isInteger(min) || min < 0 || min > 2100000000) throw new Error(`store/app-update.json: android.min must be a whole version code (0 = none), not ${JSON.stringify(min)}`);
+  return min ? { android: { min } } : {};
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const out = resolve(process.argv[2] || join(ROOT, 'dist-games'));
   rmSync(out, { recursive: true, force: true }); mkdirSync(join(out, 'games'), { recursive: true });
   const games = await buildGames({ withMeta: true });
   for (const g of games) writeFileSync(join(out, g.file), g.code);
-  const manifest = { v: 1, built: Date.now(), games: games.map(({ code, ...g }) => g) };
+  const manifest = { v: 1, built: Date.now(), app: appUpdate(), games: games.map(({ code, ...g }) => g) };
   writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest));
   const kb = games.reduce((a, g) => a + g.bytes, 0) / 1024;
   console.log(`${games.length} games, ${kb.toFixed(0)} KB total, largest ${Math.max(...games.map(g => g.bytes)) / 1024 | 0} KB -> ${posix(relative(ROOT, out))}`);

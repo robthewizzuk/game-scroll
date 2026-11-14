@@ -119,6 +119,7 @@
     "phone-ai": "file:plugins/phone-ai",
     "phone-sensors": "file:plugins/phone-sensors",
     "pitchy": "4.1.0",
+    "play-update": "file:plugins/play-update",
     "pixi-filters": "6.1.5",
     "pixi.js": "8.22.0",
     "pokersolver": "2.1.4",
