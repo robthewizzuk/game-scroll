@@ -409,7 +409,7 @@ export function openTour(driver) {
   const all = driver.games(), choice = sets(all).filter(([, , list]) => list.length), last = store.get(LAST_KEY, null);
   // (not games: the Next Gen engine's detail systems, off and on; the ray tracing scene alone, the hall, three ways; and frame
   // generation five ways; src/detail-tour.js. The number in brackets is how many scenes.)
-  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', Array(16).fill(0)], [TRACED, 'Ray tracing only', [0]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);
+  if (all.some(g => g.era === 'nextgen')) choice.push([SCENES, 'Engine test scenes', Array(17).fill(0)], [TRACED, 'Ray tracing only', [0]], [FRAMEGEN, 'Frame generation', [1, 2, 3, 4]]);
   const el = document.createElement('dialog'); el.className = 'qa-panel tour';
   el.innerHTML = `<div class="qa-head"><b>PHONE TEST TOUR</b><span></span><button class="qa-x" aria-label="Close">✕</button></div>
     <p class="qa-help">A bot plays each game on this phone and times every frame, then every native part of the app is asked whether it still answers. You get one report to copy. Nothing the bot does is kept: no saves, best scores, credits or leaderboard scores.</p>

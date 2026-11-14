@@ -264,9 +264,10 @@ function windowRows(ms) {
 function startRec(s) {
   rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0, chip: {}, chipN: 0, draws: { n: 0, calls: 0, tris: 0 } };
   rec.cfg.push(config(s)); sample();
+  rec.off0 = HD?.steps && is3D(s?.def) ? { ...HD.steps.off } : null;   // (3D games only: the quality steps are the 3D kit's)
 }
 function stopRec() {
-  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); lastRec = rec; rec = null;
+  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); keepSteps(rec); lastRec = rec; rec = null;
   UI.render?.(); UI.flash?.('Recorded. Report shares it, Copy puts a summary on the clipboard.');
 }
 let lastRec = null;
@@ -645,11 +646,26 @@ export function summary(R = lastRec) {
     cpuLine(R),
     sysLine(R),
     chipLine(R),
+    stepsLine(R),
     memLine(S),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
   ];
   return lines.filter(Boolean).join('\n');
+}
+// The quality steps over the recording (hd3d.js HD.steps): each window of frames as seconds into it, and the frames
+// not counted, by why. In the report: how many windows were slow, ok or fast, and what was done when.
+function keepSteps(R) {
+  const S = HD?.steps; if (!S || !R.off0) return;
+  R.steps = S.log.filter(e => e.t >= R.t0 && e.t <= R.t1).map(e => ({ ...e, t: r2(e.t - R.t0) }));
+  if (R.off0) { R.off = {}; for (const k in S.off) R.off[k] = S.off[k] - (R.off0[k] || 0); }
+}
+function stepsLine(R) {
+  const L = R.steps; if (!L) return '';
+  const n = v => L.filter(e => e.v === v).length, done = L.filter(e => !/^(waits for|nothing|stays on|\d+ fast in a row)/.test(e.did));
+  const held = L.find(e => /^stays on/.test(e.did)), off = Object.entries(R.off || {}).filter(([, v]) => v > 0);
+  return `Quality steps: ${!L.length ? 'no window of frames counted' : `${L.length} windows`}${L.length ? ` (${n('slow')} slow, ${n('ok')} ok, ${n('fast')} fast)` : ''}${!L.length ? '' : done.length ? ' · ' + done.slice(0, 8).map(e => `${e.did} at ${(e.t / 1000).toFixed(0)} s`).join(', ') + (done.length > 8 ? ` and ${done.length - 8} more` : '') : ' · nothing changed'}`
+    + (held ? ` · ${held.did}` : '') + (off.length ? ` · frames not counted: ${off.map(([k, v]) => `${v} ${{ pinned: 'with the tier pinned', long: 'after a gap of 100 ms or more', warming: 'under the loading screen' }[k] || k}`).join(', ')}` : '');
 }
 // CPU per real frame while playing, middle and 95th percentile: the game's update(), its draw() (which
 // includes the 3D kit's work on the CPU), the 3D render on its own, frame generation, GPU where known
@@ -690,7 +706,7 @@ function reportData(R = lastRec) {
   const all = shots.map(s => ({ kind: s.kind, title: s.title, game: s.game, notes: s.notes, images: s.images.filter(i => i.cv).map(i => ({ label: i.label, url: toURL(i.cv) })), heat: s.heat ? { url: toURL(s.heat.cv), boxes: s.heat.boxes } : null }));
   return {
     made: new Date().toISOString(), build: BUILD, phone: phoneLabel(), platform: Capacitor.getPlatform(), ua: navigator.userAgent, summary: summary(R),
-    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60) } : null,
+    rec: R ? { game: R.game, title: R.title, at: R.at, secs: ((R.t1 || performance.now()) - R.t0) / 1000, cfg: R.cfg, rows: R.rows, sys: R.sys, sysN: R.sysN, chip: R.chip, chipN: R.chipN, draws: R.draws, events: R.events, samples: R.samples.map(s => ({ ...s, t: r2(s.t - R.t0) })), stats: measure(recRows(R), R.cfg[0]?.hz || 60), steps: R.steps || null, off: R.off || null } : null,
     shots: all,
   };
 }
