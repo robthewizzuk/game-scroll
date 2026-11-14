@@ -33,8 +33,8 @@ import { ownedBy, release } from './kit/cleanup.js';
 import { power } from './kit/power.js';
 import { speed, fpsFor, screenHz, phoneClass } from './kit/speed.js';
 import { screen as display } from './kit/screenrate.js';
-import { webgpu } from './kit/gpu.js';
-import { PROF, take } from './kit/prof.js';
+import { webgpu, gpuFacts, gpuLosses } from './kit/gpu.js';
+import { PROF, take, builtSince } from './kit/prof.js';
 import { SCENES } from './detail-scenes.js';
 import { summarise, phone, powerNow, head, guestApi } from './tour.js';
 
@@ -43,6 +43,20 @@ const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
 const num = n => Math.round(n).toLocaleString('en-GB');
 const secs = ms => ms < 950 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 const TIER = ['low', 'medium', 'high', 'ultra'], STOP = {};   // STOP: thrown out of a build's wait when Stop is pressed
+const FREEZE_MS = 70;   // (a freeze: the line src/perf.js and the tour draw)
+// the scripts that held a frame up, as the browser tells them (long animation frames; where it does not, none are told)
+const loafs = [];
+let loafSeen = null;
+function watchLoafs() {
+  if (loafSeen || typeof PerformanceObserver !== 'function') return;
+  try { loafSeen = new PerformanceObserver(l => { for (const e of l.getEntries()) { loafs.push(e); if (loafs.length > 80) loafs.shift(); } }); loafSeen.observe({ type: 'long-animation-frame', buffered: false }); } catch (_) { loafSeen = null; }
+}
+// the longest script the browser saw run between two times, in ms (0: none told)
+function scriptIn(t0, t1) {
+  let ms = 0;
+  for (const e of loafs) if (e.startTime + e.duration >= t0 && e.startTime <= t1) for (const sc of e.scripts || []) ms = Math.max(ms, sc.duration || 0);
+  return ms;
+}
 // the scenes frame generation is flown through: houses and shadows, people walking, thin leaves, smoke and fire
 const FG_SCENES = ['town', 'square', 'forest', 'yard'];
 // the scenes ray tracing is set against reflections from the screen and none in (the tour's "Ray tracing only")
@@ -91,7 +105,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   };
   const was = { force: HD.force, fg: speed.forceFrameGen, hd: Object.fromEntries(FG_HD.map(k => [k, HD[k]])) };
   const hdBack = () => { for (const k of FG_HD) HD[k] = was.hd[k]; };
-  let S = null, hid = false;
+  let S = null, hid = false, lossN = gpuLosses().n;   // (lossN: the graphics chips lost before the tour, gpu.js)
   const hide = () => { if (document.visibilityState !== 'visible') hid = true; };   // the phone went to another app (see fly())
   const draw = () => { if (stopped()) throw STOP; if (!sized) fit(); S.v.render(ctx, W, H); return frame(); };
   // a refresh paced as the app paces a game (src/main.js frame()): a real frame when the game's beat is due, else
@@ -111,6 +125,9 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   // one timed run along the path (pace: frame generation's runs, see beat())
   const fly = async (pace = null) => {
     const dts = [], cpu = [], tris = [], calls = [], chip = [], by = {}, gaps = [], made = [], real = [], easy = [], paces = {}, budget = 1000 / screenHz();
+    // each freeze put down to what held it: the 3D kit's own code (and the part most of it went in), other code (a script the
+    // browser saw run long), or neither, the code done long before the frame came: the chip, or the phone
+    const frz = { n: 0, kit: 0, other: 0, chip: 0, built: 0, parts: {}, done: 0 }, one = {}, began = HD.info.backend;
     let last = 0, seen = null, away = 0, lastPic = 0, drawn = 0;
     HD.info.gpuMs = HD.info.madeMs = HD.info.fgEasy = null; hid = false;
     const drops0 = HD.info.fgDrops || 0;
@@ -133,7 +150,14 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
         else {
           dts.push(dt);
           if (isReal) {
-            drawn++; cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.fgPace) paces[I.fgPace] = (paces[I.fgPace] || 0) + 1; take(codeBy); codeN++; counted = true;
+            drawn++; cpu.push(I.cpu); tris.push(I.tris); calls.push(I.calls); if (I.fgPace) paces[I.fgPace] = (paces[I.fgPace] || 0) + 1;
+            for (const k in one) one[k] = 0; take(one); for (const k in one) codeBy[k] = (codeBy[k] || 0) + one[k]; codeN++; counted = true;
+            if (dt >= FREEZE_MS && !pace) {
+              frz.n++; if (builtSince(last).length) frz.built++;
+              if (I.cpu >= dt * .5) { frz.kit++; let big = '', ms = 0; for (const k in one) if (k.startsWith('3D') && one[k] > ms) { ms = one[k]; big = k; } if (big) frz.parts[big] = (frz.parts[big] || 0) + 1; }
+              else if (scriptIn(last, now) >= dt * .5) frz.other++;
+              else { frz.chip++; frz.done += I.cpu; }
+            }
             if (I.gpuMs != null && I.gpuMs !== seen && t > .5) {
               chip.push(seen = I.gpuMs); for (const k in I.gpuParts || {}) by[k] = (by[k] || 0) + I.gpuParts[k];
               if (I.gpuReal != null) real.push(I.gpuReal); if (I.madeMs != null) made.push(I.madeMs); if (I.fgEasy != null) easy.push(I.fgEasy);
@@ -149,7 +173,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     const I = HD.info;
     for (const k in by) by[k] /= chip.length;
     for (const k in codeBy) codeBy[k] /= codeN || 1;
-    const res = { ...summarise(dts, cpu, budget), chip: chip.length ? mean(chip) : null, chipBy: chip.length ? by : null, codeBy: codeN ? codeBy : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
+    const res = { ...summarise(dts, cpu, budget), frz: pace ? null : frz, began, chip: chip.length ? mean(chip) : null, chipBy: chip.length ? by : null, codeBy: codeN ? codeBy : null, tris: mean(tris), calls: mean(calls), backend: I.backend, why: I.webgl || '', rw: I.rw, rh: I.rh, ow: I.ow, oh: I.oh, upscaled: I.upscaled, heat: power.heat };
     // frame generation's runs: the frame rate is of the pictures that reached a refresh (drawn or made), and how
     // many of them were drawn; the refreshes the page got a second (fewer than the screen's when the phone held
     // them back); the code's time is each drawn frame's
@@ -168,6 +192,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     document.body.classList.add('touring'); addEventListener('resize', resized); document.addEventListener('visibilitychange', hide);
     driver.begin(guestApi); driver.clear();
     const gpu = !!webgpu(), top = phoneClass() === 'top';
+    out.gpu = gpuFacts(); watchLoafs(); lossN = gpuLosses().n;
     // frame generation: WebGPU only; its runs for the screen's fastest rate (what a game asks for while it makes frames)
     const fgTop = Math.max(display.top || 0, screenHz()), fg = framegen && gpu ? fgRuns(fgTop) : null;
     if (framegen) { out.fgTop = fgTop; if (!gpu) out.note = 'Frame generation needs WebGPU, and this phone draws the 3D with WebGL here, so there was nothing to time.'; }
@@ -197,6 +222,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
         for (const m of modes) {
           if (stopped()) break;
           say(m.name, 'getting ready');
+          const lost0 = gpuLosses().n;   // (a graphics chip lost from here on is this run's: gpu.js)
           const e = await m.enter(draw) || {};
           // the whole flight once, quickly, so every shader it needs is built before it is timed (with the
           // refreshes between real frames too, where frames are made, and then paced, while the screen changes rate)
@@ -205,7 +231,10 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
           if (stopped()) break;
           say(m.name, '0 s');
           const run = await fly(e.pace);
-          res.modes.push({ key: m.key, name: e.name?.() || m.name, build: e.build ?? null, note: e.note || '', tell: S.tell() || '', uncounted: !!S.uncounted?.(), ...run });
+          // (a graphics chip lost in the run, and its new one still on its way: waited for and drawn on, so what the run says last is how it ended)
+          if (gpuLosses().n > lost0) { for (const t1 = performance.now(); gpuLosses().mending && performance.now() - t1 < 20000 && !stopped();) await frame(); for (let i = 0; i < 8 && !stopped(); i++) { S.path(seconds, S.v.cam); await draw(); } }
+          const L = gpuLosses(), lost = L.n - lost0;
+          res.modes.push({ key: m.key, name: e.name?.() || m.name, build: e.build ?? null, note: e.note || '', tell: S.tell() || '', uncounted: !!S.uncounted?.(), lost, lostLast: lost ? L.last : null, ...run });
           done++;
         }
       } catch (e) { if (e !== STOP) { res.error = String(e?.stack || e?.message || e).split('\n').slice(0, 2).join(' '); console.error('engine test scene', key, e); } }
@@ -215,6 +244,7 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
   } finally {
     HD.force = was.force; if (framegen) { speed.game = speed.standIn = speed.between = null; speed.forceFrameGen = was.fg; hdBack(); } removeEventListener('resize', resized); document.removeEventListener('visibilitychange', hide); stage.remove(); document.body.classList.remove('touring'); driver.end();
     out.stopped = stopped(); out.took = Math.round((Date.now() - t0) / 1000); out.powerAfter = powerNow();
+    out.gpuOff = !!HD.info.gpuOff; out.traceOff = HD.info.traceOff || ''; { const L = gpuLosses(), n = L.n - lossN; out.losses = { n, last: n > 0 ? L.last : null }; }
   }
   out.text = scenesText(out);
   return out;
@@ -266,11 +296,27 @@ function codeBy(by) {
   const all = Object.entries(by).filter(([k, v]) => k.startsWith('3D') && v >= .05).map(([k, v]) => [k === '3D render' ? 'the rest' : k.replace(/^3D: /, ''), v]).sort((a, b) => b[1] - a[1]);
   return all.length ? ` (${all.slice(0, 7).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', ')})` : '';
 }
+// a run's freezes and what held each: "14 freezes of 70 ms or more (12 with the code done in 9.1 ms: the chip, or the phone; 2 in the engine's code, most in shadow maps)"
+function freezesSay(f) {
+  const bits = [];
+  if (f.chip) bits.push(`${f.chip} with the code done in ${(f.done / f.chip).toFixed(1)} ms: the chip, or the phone`);
+  if (f.kit) { const big = Object.entries(f.parts).sort((a, b) => b[1] - a[1])[0]; bits.push(`${f.kit} in the engine's code${big ? `, most in ${big[0] === '3D render' ? 'the rest' : big[0].replace(/^3D: /, '')}` : ''}`); }
+  if (f.other) bits.push(`${f.other} in other code`);
+  if (f.built) bits.push(`shaders were built in ${f.built}`);
+  return `${f.n} freeze${f.n === 1 ? '' : 's'} of ${FREEZE_MS} ms or more (${bits.join('; ')})`;
+}
+// a graphics chip lost during a run (gpu.js lostGPU): how often, what the browser said, and what drew afterwards
+function lostSay(m) {
+  const l = m.lostLast || {};
+  return `THE GRAPHICS CHIP WAS LOST ${m.lost === 1 ? 'once' : m.lost + ' times'} in this run (${l.reason || 'unknown'}${l.message ? `: "${l.message}"` : ''}), ${m.backend === 'webgpu' ? 'and a new one was made' : 'and the 3D went to WebGL'}: its numbers are not a fair run`;
+}
 function modeLine(m) {
   const parts = [`${Math.round(m.fps)} fps`, `worst 1% ${Math.round(m.low)} fps`, `longest ${Math.round(m.worst)} ms`, m.chip != null ? `chip ${m.chip.toFixed(1)} ms${chipBy(m.chipBy)}` : 'chip time not told', `code ${m.work.toFixed(1)} ms${codeBy(m.codeBy)}`, m.uncounted ? `${num(m.calls)} draws (the chip picks the copies, so their triangles are not counted)` : `${num(m.tris)} triangles in ${num(m.calls)} draws`];
   if (m.build != null) parts.push(`ready in ${secs(m.build)}`);
   if (m.note) parts.push(m.note);
   if (m.tell) parts.push(m.tell);
+  if (m.frz?.n) parts.push(freezesSay(m.frz));
+  if (m.lost) parts.push(lostSay(m)); else if (m.began && m.backend !== m.began) parts.push(`drawn with ${m.backend === 'webgpu' ? 'WebGPU' : 'WebGL'} by the end`);
   if (m.heat) parts.push(m.heat > 1 ? 'phone hot' : 'phone warm');
   return `  ${m.name.padEnd(26)} ${parts.join(' · ')}`;
 }
@@ -330,6 +376,9 @@ export function sceneLines(s, hz) {
   for (const [ka, kb, words] of s.pairs || [[s.modes[0]?.key, s.modes[1]?.key]]) {
     const a = of(ka), b = of(kb);
     if (!(a?.frames && b?.frames)) continue;
+    // (a run that lost the graphics chip, or ended on the other way of drawing, is not that system's run: nothing to compare)
+    const broke = [a, b].find(m => m.lost || (m.began && m.backend !== m.began)) || (a.backend !== b.backend ? b : null);
+    if (broke) { lines.push(`  = ${words || `${b.name} against ${a.name}`}: not compared (${broke.lost ? 'the graphics chip was lost' : `the 3D was drawn with ${broke.backend === 'webgpu' ? 'WebGPU' : 'WebGL'} by the end`} in the run "${broke.name}")`); continue; }
     const capped = Math.min(a.fps, b.fps) > hz * .95;
     const say = [capped ? `both keep the screen's ${hz} Hz` : times(b.fps, a.fps, 'the frame rate', 'slower', 'the same frame rate')];
     if (a.chip != null && b.chip != null) {
@@ -343,18 +392,32 @@ export function sceneLines(s, hz) {
   }
   return lines;
 }
+// what the WebGPU device says of itself (gpu.js gpuFacts), why the chip's times are not told where they are not, the
+// graphics chips lost in the tour, and ray tracing switched off after losing one (trace-guard.js)
+export function gpuLine(t) {
+  const g = t.gpu, yes = v => v ? 'yes' : 'no', L = t.losses, l = L?.last;
+  const parts = [`WEBGPU: ${[g.vendor, g.arch].filter(Boolean).join(' ') || 'the chip gives no name'}`,
+    `chip times ${!g.timing ? 'no: this chip does not offer them (timestamp-query)' : t.gpuOff ? 'no: left alone, they did not fit the frames (over twice a frame\'s own time)' : 'yes'}`,
+    `half floats ${yes(g.f16)}`, `subgroups ${yes(g.subgroups)}`, `${g.fragLists} lists in a pixel shader (ray tracing needs 4)`, `${g.pixelBytes} bytes a pixel`];
+  if (g.compat) parts.push('compatibility mode');
+  if (L?.n) parts.push(`graphics chip lost ${L.n === 1 ? 'once' : L.n + ' times'} in this tour${l ? ` (the last: ${l.reason || 'unknown'}${l.message ? `: "${l.message}"` : ''}, ${l.backend === 'webgpu' ? `a new one in ${secs(l.ms)}` : l.backend === 'webgl' ? 'WebGL from then on' : l.backend === 'none' ? 'no 3D until the app starts again' : 'a new one on its way'})` : ''}`);
+  if (t.traceOff === 'lost') parts.push('ray tracing lost the graphics chip, so it is off until the app starts again, and by itself until the app is updated');
+  else if (t.traceOff === 'before') parts.push('ray tracing lost the graphics chip in an earlier run of this build, so games keep to reflections from the screen (this test still tries it)');
+  return parts.join(' · ');
+}
 /** The scenes' result as the text to copy. */
 export function scenesText(t) {
   const m0 = t.scenes.flatMap(s => s.modes).find(m => m.frames), hz = t.phone.hz;
   const lines = head(t, t.framegen ? 'engine test scenes, GSFG frame generation' : t.traced ? 'engine test scenes, ray tracing' : 'engine test scenes', t.stopped ? ` · STOPPED after ${t.scenes.length} of ${t.asked} scenes` : '');
   lines.push(m0 ? `PICTURE: ${m0.backend === 'webgpu' ? 'WebGPU' : 'WebGL' + (m0.why ? ` (${m0.why})` : '')} · quality ${TIER[t.tier] || t.tier}, pinned · 3D drawn at ${m0.rw} x ${m0.rh}, shown at ${m0.ow} x ${m0.oh}${m0.upscaled ? ` (${m0.upscaled === 'sgsr2' ? 'GSSR' : 'SGSR 1'})` : ''} · ${t.framegen ? `GSFG as each run says, for a ${t.fgTop} Hz screen` : 'GSFG off'} · ${t.seconds} s a run${t.size !== 1 ? ` · scenes at ${t.size} of full size` : ''}`
     : 'PICTURE: no frames were timed');
+  if (t.gpu) lines.push(gpuLine(t));
   if (t.note) lines.push(t.note);
   for (const s of t.scenes) lines.push(...sceneLines(s, hz));
   if (t.framegen) {
     lines.push('\nEach scene is flown through with its system on, at a pinned quality, five ways: as many frames drawn as this class of phone draws a Next Gen game (every refresh on a top phone); half the screen\'s rate drawn and nothing made; and half drawn with the refreshes between made: blended (between the last two drawn frames) as before (each made frame on its real frame\'s refresh, every part of the picture the full way, none dropped), blended as now (each frame on a refresh of its own unless the chip has room for both, easy parts of the picture the quick way, a made frame that would come late dropped) and ahead (guessed past the newest). Frame generation is forced on or off for each run whatever Settings say, and the screen is asked for the rate a game drawn that way would get. pictures a second: the drawn and made frames that reached a refresh (a refresh that showed the same picture again is not counted), with how many of them were drawn; worst 1% and longest are of the gaps between them. chip: the graphics chip\'s time for each drawn frame with the frames made after it, where the phone tells it; a made frame: its own chip time, and where it went (moving: each pixel along its motion; motion: the optical flow and which tiles are easy, once a pair; picture: putting it together; holes: filling what was uncovered; keeping: the newest frame kept for the next pair); chip time a picture shares a drawn frame\'s time among the pictures it gave. (A phone clocks its chip down at half rate, so frames drawn with none made take it longer.) "the page got": fewer refreshes than the screen\'s rate, where the phone held them back because the chip was behind.');
     return lines.join('\n');
   }
-  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, reflections the passes that find what shiny things reflect (on the screen, or by sending rays through a copy of the scene), effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. code: the time the engine\'s own code took to draw a frame, and in brackets where it went: scene pass is three\'s work on the game\'s things (finding what is in view, sorting, setting up each draw), shadow maps the same for the shadows, passes the full-screen passes after the scene, the rest the 3D kit\'s own steps that are not named. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
+  lines.push('\nEach scene is flown through the same way with the system off, then on, at a pinned quality, so the runs can be compared. A frame rate cannot go above the screen\'s rate. chip: the graphics chip\'s time for a frame, where the phone tells it (WebGPU), and in brackets where it went: scene is the game\'s own things, shadows the shadow maps, AO the soft shading in corners, bloom the glow, finishing the pass that lays those on and grades the small picture, upscale the passes that make the full-size picture from it, reflections the passes that find what shiny things reflect (on the screen, or by sending rays through a copy of the scene), effects the other passes, to screen the last one. chip work: the chip\'s time measured against the passes that do the same work in every run (finishing, upscale, bloom, to screen), so a run in which the phone\'s chip slowed down (hot, or waiting on the code) is compared at the same speed; go by it where the two disagree. freezes: frames that took 70 ms or more, and what held each up: the engine\'s code (its own time for that frame was half the frame or more; with the part most went in), other code (a script the browser saw run that long), or neither: the code was done early and the frame came late all the same, which is the graphics chip or the phone itself. code: the time the engine\'s own code took to draw a frame, and in brackets where it went: scene pass is three\'s work on the game\'s things (finding what is in view, sorting, setting up each draw), shadow maps the same for the shadows, passes the full-screen passes after the scene, the rest the 3D kit\'s own steps that are not named. ready in: how long the system took to build what it needs (kept on the phone afterwards, so a second tour has it at once).');
   return lines.join('\n');
 }

@@ -706,7 +706,11 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   - `__hd.traced = false` turns the tracing off (screen-space reflections then, as on other phones),
     `true` forces it on wherever the chip can; `__hd.info.trace` says what the copy holds
     (`{ tris, was, things, movers, other, left, ms, mb }`) and `__hd.traceShow = true` draws the copy
-    itself. A chip whose driver won't take the tracing goes back to screen-space reflections by itself.
+    itself. A chip whose driver won't take the tracing goes back to screen-space reflections by itself:
+    one that refuses the shader in its first frames, and one whose whole WebGPU device is lost while
+    reflections are ray traced (`src/kit/trace-guard.js`). After such a loss the tracing is off for the
+    rest of the session whoever asks, and by itself on that phone until the app is updated
+    (`__hd.info.traceOff`: `'lost'` or `'before'`; `__hd.traceAgain()` in tests forgets it).
   - Checked by `node scripts/detail-test.cjs --page traced --webgpu` and the kit test (the copy's lists
     are walked there the way the shader walks them, against three's own ray caster). On a phone: the
     **Hall** in the engine test scenes. Nobody has seen it on a phone yet.

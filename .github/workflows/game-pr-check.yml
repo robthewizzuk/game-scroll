@@ -297,7 +297,7 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|src/kit/pipes\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss|shader-replay)|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(src/kit/(framegen|hd3d|hd3d-gpu|hd3d-gpu-trace|trace-guard|sgsr2|speed|particles-gpu|power|gpu|toon3d)\.js|src/detail-(tour|scenes)\.js|src/kit/models/(materials|recipes|recipe-paint|ops)\.js|src/kit/pipes\.js|scripts/(framegen-test|upscale-compare|close-up|look-compare|gpu-loss|shader-replay)|package(-lock)?\.json|\.github/(workflows/game-pr-check\.yml|actions/))'; then echo "run=1" >> "$GITHUB_OUTPUT"; else echo "No frame generation changes."; fi
 
       - name: Node, packages and the test browser
         if: steps.changed.outputs.run
@@ -314,10 +314,11 @@ jobs:
 
       # (the graphics chip lost mid-round, as a driver reset or a crashed GPU process does: the round pauses, a new WebGPU
       # device is made, the round is drawn again on it under a cover and carries on, and the loss is reported; then the
-      # same while the card waits in the feed. scripts/gpu-loss.cjs)
+      # same while the card waits in the feed; and lost while reflections are ray traced, which switches the tracing off and
+      # carries on with reflections from the screen, on WebGPU. scripts/gpu-loss.cjs)
       - name: A lost graphics chip comes back
         if: ${{ !cancelled() && steps.changed.outputs.run }}
-        run: npm run build:bundled && node scripts/gpu-loss.cjs gravity-grip bumper-bowl && node scripts/gpu-loss.cjs gravity-grip --when feed
+        run: npm run build:bundled && node scripts/gpu-loss.cjs gravity-grip bumper-bowl && node scripts/gpu-loss.cjs gravity-grip --when feed && node scripts/gpu-loss.cjs --when traced
 
       # (the pipelines a round made in play, noted and made ahead the next time the game comes up: src/kit/pipes.js. Two
       # launches of the browser on one profile; the second must make ahead what the first noted. scripts/shader-replay.cjs)

@@ -58,6 +58,7 @@ import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseG
 import { packing } from './pack.js';
 import { ONE_SUBMIT, flushGPU } from './submit.js';
 import { steerFor } from './steering.js';
+import { traceDrew, traceMay, traceOff, traceLostChip, traceAgain } from './trace-guard.js';
 import { SLIM, isSlim, meshBytes, SKIN_POOLED } from './slim.js';
 import { makeRenderer } from './renderer.js';
 import { LensDrops, DROPS_HEAD, DROPS_GLSL, DROPS_N } from './lens-drops.js';
@@ -471,8 +472,12 @@ export const HD = {
    * reflections then, as on every other phone. traceTris: triangles the traced copy of the level's still things
    * may hold (bigger meshes are simplified to fit). HD.info.trace says what it holds while it draws.
    * traceShow (tests): true draws the traced copy itself, lit as reflections light it, in place of the picture.
+   * A graphics chip lost while reflections were ray traced switches the tracing off for the rest of the session, whoever
+   * asks, and on this phone until the app is updated unless asked for outright (trace-guard.js; HD.info.traceOff says
+   * 'lost' or 'before'; traceAgain(), tests: as if it never had).
    */
   traced: null, traceTris: 3e5, traceShow: false,
+  traceAgain() { traceAgain(); HD.info.traceOff = ''; },
   /** Upscale when the 3D is drawn below the screen's size (false: plain stretch). */
   upscale: true,
   /** Which upscaler: 'sgsr2' (Snapdragon GSR 2, temporal; Next Gen without reflections) or 'sgsr1' (one frame). AR and the rest use SGSR 1. */
@@ -541,8 +546,11 @@ export const HD = {
   /** Show the 3D canvas directly on the card (false: copy each frame into the card's canvas, as tests and screenshots need). */
   direct: typeof navigator === 'undefined' || !navigator.webdriver,
 };
-Object.defineProperty(HD, 'fxStep', { enumerable: false });   // (a test lever: left out of the read-only view games get)
+Object.defineProperty(HD, 'fxStep', { enumerable: false }); Object.defineProperty(HD, 'traceAgain', { enumerable: false });   // (a test lever: left out of the read-only view games get)
 const tier = () => TIERS[HD.tier];
+// Reflections ray traced: not switched off (HD.traced, the steering list), not after ray tracing lost this phone's
+// graphics chip (trace-guard.js), and on the best phones, or wherever it is asked for outright (HD.traced = true)
+const traceWanted = () => HD.traced !== false && steered().traced !== false && traceMay(HD.traced === true) && (HD.traced === true || phoneClass() === 'top');
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
@@ -2528,7 +2536,7 @@ export class HDView {
    */
   reflect(...meshes) {
     for (const m of meshes.flat()) if (m && !this.reflectors.includes(m)) { this.reflectors.push(m); m.userData.gsReflect = true; }
-    if (this.reflectors.length && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top')) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
+    if (this.reflectors.length && traceWanted()) webgpu()?.fx?.traceKit?.();   // (the ray tracing part, on its way before the first frame)
     return this;
   }
   /**
@@ -2986,7 +2994,7 @@ export class HDView {
     const wantRefl = this.reflectors.length && T.ao > 0 && !this.clearBg;
     let tr = null;
     // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
-    const TK = wantRefl && HD.traced !== false && steered().traced !== false && (HD.traced === true || phoneClass() === 'top') && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
+    const TK = wantRefl && traceWanted() && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
     if (TK) {
       if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) for (const p of e.parts) fn(e.o, p.twin); } }); }
       this._tracer.show = !!HD.traceShow;
@@ -2996,7 +3004,7 @@ export class HDView {
     } else if (this._tracer) { this._tracer.dispose(); this._tracer = null; }
     if (tr) (this._traceRefl ||= { scale: .5, traced: null }).traced = tr;
     o.refl = wantRefl ? (tr ? this._traceRefl : T.ssr ? REFL_FULL : REFL_HALF) : null;
-    HD.info.trace = tr ? tr.info : null; HD.info.refl = o.refl ? (tr ? 'traced' : 'screen') : '';
+    HD.info.trace = tr ? tr.info : null; HD.info.refl = o.refl ? (tr ? 'traced' : 'screen') : ''; HD.info.traceOff = traceOff(); if (!baking && !off) traceDrew(!!tr);
     // SGSR 2 smooths every edge from its history (also at full size, where it is the anti-aliasing), and the
     // picture measured the same with MSAA under it as without: so the scene is drawn without, which saves the
     // multisampled colour, depth and motion pictures and their resolves
@@ -3833,7 +3841,12 @@ function stillComing() {
 waitsOn(stillComing);
 // the canvases of renderers whose graphics chip was lost (gpu.js): taken off the card the next time a view mounts its own
 const LOST_CANVAS = new WeakSet();
-onGpuLoss(e => { if (e.kind === 'lost') for (const cv of e.canvases || []) LOST_CANVAS.add(cv); });
+onGpuLoss(e => {
+  if (e.kind !== 'lost') return;
+  for (const cv of e.canvases || []) LOST_CANVAS.add(cv);
+  // (lost while reflections were ray traced: the tracing is what the driver would not take, trace-guard.js)
+  if (traceLostChip()) { HD.info.traceOff = traceOff(); console.warn('3D: the graphics chip was lost while reflections were ray traced; they come from the screen from now on'); }
+});
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
