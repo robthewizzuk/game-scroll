@@ -1296,6 +1296,9 @@ kit.held('R');                                                // 'sword' once it
 Spots: `hipL`, `hipR`, `back`, `backL`, `shield`, `quiver`, `bow`, `belt`, or your own `{ bone, at, dir,
 face, hand }` (in the person's own space as they stand). `grip`, `along`, `face` say how a thing of your own
 is made; `held` how the hand holds it if the usual grip doesn't suit it; `set(name, 'hand')` with no reach.
+A `gs.models.weapon` brings all that with it: `kit.add('shield', gs.models.weapon('shield', { style: 'heater' }), 'shield')`
+goes to the left hand held by its grip, a bow too, and a spear, a staff or a longsword has the other hand on it once drawn
+(`both: false` for one hand).
 
 ### People who react
 
@@ -2456,8 +2459,20 @@ weapon's own report, click when empty, reload, pump or bolt, swing, pin and draw
 lights an `Explosives` charge where it lands; a grenade is a `World3D` ball added to `Explosives` with `body` and lit
 (`ARSENAL.grenade.throw` has its speed and fuse; `arc` draws the throw line).
 
+**The old world's** (`gs.combat` and `gs.fight`): `ARSENAL` has `sword`, `longsword`, `dagger`, `axe`, `mace`, `spear`,
+`staff` (their `melee` is `gs.fight.ARMS[kind]`), `shield` (slot `'off'`: a `Loadout` wears it beside what is out, as
+`arms.off`) and `bow` (`arms.bow` is its `Bow`, its arrows out of the pouch). `new Bow({ pouch })`: each frame
+`bow.update(dt, { pull: held, from: eye, dir: aim, targets: foes })` draws while held (`bow.k` 0..1 over `draw` seconds:
+the longer, the faster and harder it flies; held at full past `tire` seconds the aim shakes), looses on letting go (barely
+drawn, it is let down), nocks the next; arrows drop as they fly, stop in the game's `World3D` (or your `hits` test) or in a
+target (anything with a position, `radius` and `height`; the top tenth is a head shot), stay stuck there and go along with
+who they are in (`stuck`; `gather(at)` picks them up). It returns `{ who, thing, at, dir, damage, head }` for each hit;
+`bow.show(view.scene, () => gs.models.weapon('arrow'))` keeps an arrow model on each. `weaponSound('bow', 'nock' | 'draw' |
+'fire' | 'thunk' | 'flesh')`, and `'clang'`, `'parry'` and `'bash'` for blades and shields.
+
 **Weapons you can see** (`gs.models` and `gs.fx3d`, Next Gen): `gs.models.weapon('rifle')` is one made in code, our own
-designs, a few draws each, with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
+designs, a few draws each (the old world's too: `sword`, `longsword`, `dagger`, `axe`, `mace`, `spear`, `staff`,
+`shield` in `style` `'round'`, `'heater'` or `'kite'` painted in `finish`, `bow`, `arrow`, `quiver`; held with `Carry`), with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
 `sight` and `stock`. `weapon.wield(person)` puts it in the hands of a `gs.models.human`, a `gs.poses` person or a figure:
 each frame after `rig.update()`, `held.update(dt, { how, pitch, yaw })` holds it `'aim'` (a long gun's stock in the
 shoulder, a pistol out in both hands, pointing where the body faces, turned about the shoulder by the aim), `'hip'`,
@@ -2518,6 +2533,23 @@ go to `rig.play(m.pose, { at: m.at, fade: .06 })` (gs.poses has `guard`, `jab`, 
 `moves: SWINGS` with `weapon: { reach, damage }` for a bat, a pipe or a stick. `Brawler({ skill })` is a ready-made
 foe: `think(dt, me, foe)` gives `{ walk, face, attack, block, dodge }`: it closes in, circles, throws combos when you
 are open, blocks or steps out of what it sees coming no faster than a person, and backs off when hurt.
+
+Swords, axes, spears and shields: `new Melee(body, { weapon: 'sword', shield: true, armour: 'auto' })`. The weapon
+(`gs.fight.ARMS`: `sword`, `longsword`, `dagger`, `axe`, `mace`, `spear`, `staff`, and the bat and friends) brings its
+move set: `BLADES` (`slash`, `cutBack`, `chop` on light, `thrust` heavy, `lowCut` low), `AXES` (`hack`, `hackBack`,
+`cleave` that puts them down, a `hook` on low that pulls the guard aside), `SPEARS` (quick `thrust`s that keep a foe
+out, a `lunge`, a `sweep` that trips, a shove with the `shaft`), `STAVES`; a dagger's are quicker and shorter. A
+shield's guard covers a wider arc, takes low blows too and lets nothing through, and `'push'` bashes with it, which
+can't be blocked and knocks a guard aside. A guard raised just before a blow lands (`parry` frames, 6; 10 with a
+shield) parries it: no damage, `hit.parried`, events `'parried'` / `'parry'`, and the one who swung is thrown off
+(`stun`) and left `open` a moment. `armour`: 0..1, `{ high, mid, low }`, or `'auto'`, which reads what a `gs.models.human`
+body wears (`body.armour.worn`) where the blow lands: plate takes most of a cut, less of a thrust (`edge: 'point'`) and
+much less of a mace (`'blunt'`); `hit.soaked` says how much. The guard's pose is `m.guardPose` (`armed`, `shieldUp`,
+`spearGuard`); gs.poses also has `slash`, `cutBack`, `chop`, `thrust`, `lowCut`, `bash`, `axeHook`, `spearThrust`,
+`spearLunge`, `spearSweep`, and `bowReady` and `bowDraw` (`{ at: bow.k }`: side on, the bow arm out along the body's
+forward, the string to the jaw). The things in the hands: `gs.models.weapon('sword')` and the rest (below) with a
+`gs.characters.Carry`, whose hand holds them through the poses; a bow model's `pull(bow.k)` draws its string, `load(arrow)`
+puts an arrow on it. A `Brawler` with a shield and skill parries some of what comes.
 
 **Climbing** (`gs.climb`): `Ledges.fromLevel(level3d)` finds every edge you can hang from (or `add()`
 your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up, leaps to the next
@@ -3010,11 +3042,15 @@ level: `lod: [[90, mid], [240, imp.geometry, imp.material]]` (a level can have a
 
 **Cities** (`gs.city`, 3D): `new City(view, { seed, blocks: 6, style: 'downtown' | 'oldtown' | 'harbour' | 'suburb' })`
 makes a made-up city from a seed: streets and junctions with traffic lights, buildings with lit windows,
-shops, roof tanks and fire escapes, parks, trees and lamps, cars that keep to their lanes and stop at
-red, and people who cross at the corners. `city.update(dt, player)` each frame; `city.avoid(player)`
-makes cars brake for you. It answers `collide`, `ray`, `route(a, b)` (a `gs.paths` Path along the
-roads), `spot('door' | 'rooftop' | ...)`, `cars.hit`, `people.scare`, and gives the plan as plain
-numbers for your own map. The full guide is [docs/city.md](city.md).
+shops, roof tanks and fire escapes, parks, trees and lamps, cars that keep to their lanes, stop at
+red, change lanes, overtake, swerve, pull over for sirens and crash (Rapier bodies after `city.solid(world)`),
+and people who cross at the corners, sit, phone, chat, gather at a crash and fall when hit. `city.update(dt, player)`
+each frame; `city.avoid(player)` makes cars brake and swerve for you. It answers `collide`, `ray`, `route(a, b)`
+(a `gs.paths` Path along the roads), `spot('door' | 'rooftop' | ...)`, `cars.hit`, `cars.chase(car, target)`,
+`cars.crash(car, push)`, `people.scare`, `people.knock`, `city.events`, and gives the plan as plain
+numbers for your own map. `new gs.city.Wanted(city, api)` is the police and a wanted level: stars from crimes
+seen or phoned in, police cars that chase, ram, cut you off and set roadblocks (a Tiny Brain picks the
+tactics and learns this player), officers on foot, searches, busted or escaped. The full guide is [docs/city.md](city.md).
 
 **Planes, boats and hover craft** (`gs.craft`): `Plane({ at, speed, ground })` flies like arcade games
 feel: it banks into turns, holds its height when level, stalls when slow, lands, touches down and

@@ -199,6 +199,7 @@ export const HIDDEN = {
   hd: ['FINAL_EFFECTS', 'gpuFits', 'pickEffect', 'chipFits', 'startTier', 'mayClimb', 'frameSizes', 'pickSize', 'stepsRun'],   // (pickEffect: the effects ladder's choice; chipFits: whether the chip's times fit its frames; startTier, mayClimb: where a tier starts and when it may climb; frameSizes, pickSize, stepsRun: the sizes a frame is drawn at, which of them a slow chip steps, and the steps over made-up windows; for the kit tests)
   toon: ['TOON', 'celReady'],   // test switches, and whether three's toon shader still has the lines the cel look changes
   props: ['simplifyReady'],
+  city: ['Traffic', 'People'],   // (the city's own: a game reaches them as city.cars and city.people)
   fluid: ['FLUID', 'RHO', 'K', 'G0', 'VMAX', 'LO', 'WALL', 'SOLIDS', 'SINKS', 'PUSHES', 'IN', 'RAD', 'SKIN', 'REACH', 'viscosity', 'bulk', 'thin', 'foamOf', 'GRAIN_G', 'GRIP', 'PACK0', 'grainOf'],   // the fluid's numbers (shared with its WebGPU twin) and test switches
   gas: ['GAS', 'SOURCES', 'SOLIDS', 'SOLID', 'WARM', 'IGNITE', 'HEAT', 'BURNS_AT', 'FLAME', 'QUENCH', 'SMOKE_MAX', 'HEAT_MAX', 'FUEL_MAX', 'VMAX', 'SHARP', 'NEAR', 'flameAt', 'emptyField', 'sample', 'CHEB', 'CHEB_W'],   // the gas's numbers (shared with its WebGPU twin) and test switches
   tabletop: ['loadChess'],

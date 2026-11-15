@@ -1882,7 +1882,7 @@ console.log('physics ok');
   // weapons: the arsenal's numbers, a pouch the guns share, a loadout, pickups; the models and two hands on them; hits and spent cases
   const { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } = await import('../src/kit/combat.js');
   const { weapon, WEAPON_KINDS, Wield } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js');
-  assert.deepEqual(Object.keys(ARSENAL).sort(), [...WEAPON_KINDS].sort(), 'a number for every weapon model');
+  assert.deepEqual(Object.keys(ARSENAL).sort(), WEAPON_KINDS.filter(k => k !== 'arrow' && k !== 'quiver').sort(), 'a number for every weapon model (an arrow and a quiver are only things)');
   const rifle = arm('rifle'); assert.ok(rifle.kind === 'rifle' && rifle.mag === 30 && rifle.auto && rifle.ammoType === 'rifle', 'arm() makes a gun from its numbers');
   const shotgun = arm('shotgun', { rng: () => .5 }); assert.equal(shotgun.pull({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }).length, 9, 'a shotgun throws pellets');
   const pouch = new Pouch({ rifle: 10 }), g = arm('rifle', { pouch }); g.ammo = 0; assert.ok(g.startReload() && g.spare === 10, 'reloads out of the pouch');
@@ -1972,6 +1972,86 @@ console.log('physics ok');
   for (let i = 0; i < 200; i++) { if (i % 9 === 0 && i < 60) ma.attack('light'); ma.update(1 / 60, [mb]); mb.update(1 / 60, [ma]); fa.position.z += ma.walk.z / 60; fb.rig.update(1 / 60, {}); rb.update(1 / 60); seen.add(rb.state); }
   assert.ok(seen.has('stagger') && seen.has('down'), 'a body with Reactions staggers and goes down under blows: ' + [...seen]);
   console.log('fight 3D: blows that step in and land, combos, guard, dodge, from behind, weapons, a ready-made brawler ok');
+}
+{
+  // the old world's weapons: swords, axes, spears and shields in gs.fight's Melee (parries, guards broken, armour that soaks), bows, the models
+  const { Melee, Brawler, BLADES, SPEARS, ARMS } = await import('../src/kit/fight.js');
+  const { Bow, Pouch, Loadout, ARSENAL } = await import('../src/kit/combat.js');
+  const { weapon } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js'), { Carry } = await import('../src/kit/carry.js');
+  const duel = (oa = {}, ob = {}) => {
+    const A = { x: 0, y: 0, z: 0, yaw: 0 }, B = { x: 0, y: 0, z: 1.5, yaw: Math.PI }, a = new Melee(A, oa), b = new Melee(B, ob), hits = [];
+    const run = (n, fa = () => {}, fb = () => {}) => { for (let i = 0; i < n; i++) { fa(i, a, b); fb(i, a, b); for (const h of [...a.update(1 / 60, [b]), ...b.update(1 / 60, [a])]) hits.push(h); for (const [m, P] of [[a, A], [b, B]]) { P.x += m.walk.x / 60; P.z += m.walk.z / 60; } } return hits; };
+    return { A, B, a, b, hits, run };
+  };
+  let d = duel({ weapon: 'sword' });
+  assert.ok(d.a.moves === BLADES && d.a.guardPose === 'armed', 'a sword fights with BLADES');
+  d.run(60, i => { if (i === 0) d.a.attack('light'); });
+  assert.ok(d.hits[0]?.name === 'slash' && !d.hits[0].blocked && d.hits[0].damage === 14, 'a slash lands: ' + JSON.stringify(d.hits.map(h => [h.name, h.damage])));
+  d = duel({ weapon: 'sword' }, { shield: true }); d.b.block(true); d.b.update(.5, []);   // (the guard up a while: a block, not a parry)
+  d.run(60, i => { if (i === 0) d.a.attack('low'); });
+  assert.ok(d.hits[0]?.blocked && !d.hits[0].parried && d.hits[0].shield && d.hits[0].damage === 0, 'a shield takes even a cut at the legs, nothing through it');
+  d = duel({ weapon: 'sword' }, { weapon: 'sword' }); let left = null; d.a.on('parried', () => { left = [d.a.stun, d.a.open, d.a.move]; });
+  d.run(60, i => { if (i === 0) d.a.attack('light'); }, (i, a, b) => { if (i === 5) b.block(true); });   // (raised just before the blow lands)
+  assert.ok(d.hits[0]?.parried && d.hits[0].damage === 0 && left[0] > 20 && left[1] > 0 && !left[2], 'a guard raised in time parries, the one who swung left open');
+  d = duel({ weapon: 'axe', shield: true }, { shield: true }); d.b.block(true); d.b.update(.5, []);
+  d.run(60, i => { if (i === 0) d.a.attack('push'); });
+  assert.ok(d.hits[0]?.name === 'bash' && !d.hits[0].blocked && d.hits[0].guardBroken, 'a shield bash knocks the guard aside');
+  d = duel({ weapon: 'axe' }, { shield: true }); d.b.block(true); d.b.update(.5, []);
+  d.run(60, i => { if (i === 0) d.a.attack('low'); });
+  assert.ok(d.hits[0]?.name === 'hook' && d.hits[0].guardBroken && !d.b.guard, "an axe's hook pulls the shield down");
+  // armour: what a gs.models.human body wears (its armour.worn), and plate takes more of a cut than of a blow from a mace
+  const plated = { x: 0, y: 0, z: 1.5, yaw: Math.PI, armour: { worn: { chest: 'plate', shoulders: 'plate', arms: 'plate', head: 'sallet' } } };
+  const m = new Melee(plated, { armour: 'auto' });
+  assert.ok(m.protect('high', 'cut') > .5 && m.protect('high', 'blunt') < m.protect('high', 'cut') * .5 && m.protect('low', 'cut') === 0, 'armour by where it lands and what lands: ' + [m.protect('high', 'cut'), m.protect('high', 'blunt'), m.protect('low', 'cut')].map(n => n.toFixed(2)));
+  d = duel({ weapon: 'sword' }); d.b.armour = 'auto'; d.B.armour = plated.armour;
+  d.run(60, i => { if (i === 0) d.a.attack('light'); });
+  assert.ok(d.hits[0] && d.hits[0].damage < 8 && d.hits[0].soaked > 6, 'a cut on plate does little: ' + d.hits[0]?.damage);
+  const dag = new Melee({ x: 0, z: 0 }, { weapon: 'dagger' }); assert.ok(dag.stats(BLADES.slash).start < BLADES.slash.start && dag.stats(BLADES.slash).reach < 1, 'a dagger is quicker and shorter');
+  const sp = new Melee({ x: 0, z: 0 }, { weapon: 'spear' }); assert.ok(sp.moves === SPEARS && sp.stats(SPEARS.thrust).reach > 2 && sp.guardPose === 'spearGuard', 'a spear keeps them out');
+  assert.ok(ARSENAL.sword.melee === ARMS.sword && ARSENAL.shield.slot === 'off', 'the arsenal has the same numbers');
+  // a skilled foe with a shield parries some of what comes, over a long fight
+  {
+    const P1 = { x: 0, y: 0, z: 0, yaw: 0 }, P2 = { x: 0, y: 0, z: 1.6, yaw: Math.PI }, me = new Melee(P1, { weapon: 'sword' }), them = new Melee(P2, { weapon: 'sword', shield: true });
+    const ai = new Brawler({ skill: .95, rng: (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(11) }); let parried = 0, blocked = 0;
+    for (let i = 0; i < 1800; i++) {
+      if (i % 50 === 0) me.attack(['light', 'heavy', 'light'][(i / 50) % 3]);
+      const t = ai.think(1 / 60, them, me); them.block(t.block); if (t.attack && i % 3 === 0) them.attack(t.attack);
+      for (const h of me.update(1 / 60, [them])) { if (h.parried) parried++; else if (h.blocked) blocked++; } them.update(1 / 60, [me]);
+      P2.x = 0; P2.z = 1.6; P1.x = 0; P1.z = 0;
+    }
+    assert.ok(parried > 0 && blocked + parried > 3, 'a Brawler with a shield blocks and parries: ' + blocked + ' blocked, ' + parried + ' parried');
+  }
+  // a bow: drawn over time, loosed on letting go, the arrow drops as it flies and stops in who it hits (and goes along with them)
+  const pouch = new Pouch({ arrows: 3 }), bow = new Bow({ pouch, sounds: false, rng: () => .5 }), foe = { position: { x: 0, y: 0, z: -30 }, radius: .35, height: 1.8, hp: 100, rotation: { y: 0 } };
+  const eye = { x: 0, y: 1.5, z: 0 }, dir = { x: 0, y: .04, z: -1 };
+  bow.update(.5, {}); assert.ok(bow.loaded && pouch.count('arrows') === 2, 'an arrow onto the string');
+  for (let i = 0; i < 30; i++) bow.update(1 / 60, { pull: true, from: eye, dir }); assert.ok(bow.k > .6 && bow.k < .7, 'drawn over time: ' + bow.k.toFixed(2));
+  for (let i = 0; i < 30; i++) bow.update(1 / 60, { pull: true, from: eye, dir }); assert.equal(bow.k, 1, 'to full draw');
+  let got = []; bow.update(1 / 60, { pull: false, from: eye, dir, targets: [foe] }); assert.ok(bow.flying.length === 1 && !bow.loaded && bow.k === 0, 'loosed');
+  let low = 9; for (let i = 0; i < 120 && !got.length; i++) { got = bow.update(1 / 60, { targets: [foe] }); if (bow.flying[0]) low = Math.min(low, bow.flying[0].v.y); }
+  assert.ok(got.length === 1 && got[0].who === foe && got[0].damage >= 40 && low < 0, 'it drops as it flies and hits who is there: ' + JSON.stringify(got.map(h => [h.damage, h.at.y.toFixed(2)])));
+  assert.ok(bow.stuck.length === 1 && bow.stuck[0].on === foe, 'and stays in them');
+  foe.position.x = 2; bow.update(1 / 60, {}); assert.ok(Math.abs(bow.stuck[0].x - 2) < .2, 'going along with them');
+  bow.update(.6, {}); for (let i = 0; i < 20; i++) bow.update(1 / 60, { pull: i < 5, from: eye, dir }); assert.ok(bow.loaded && bow.k === 0 && !bow.flying.length, 'barely drawn: let down, not loosed');
+  const wild = new Bow({ sounds: false, tire: 1 }); wild.loaded = true; wild.k = 1; const steady = wild.wobble; wild.full = 4; assert.ok(wild.wobble > steady * 5, 'held at full draw too long, it shakes');
+  // the loadout: a shield worn beside what is out, a bow with its own arrows
+  const kit = new Loadout({ sounds: false }); kit.give('sword'); kit.give('shield'); kit.give('bow');
+  assert.ok(kit.kind === 'sword' && kit.off === 'shield' && kit.has('bow') && kit.pouch.count('arrows') === 12, 'a shield worn as well as a sword: ' + kit.kind + ' ' + kit.off);
+  kit.next(); assert.ok(kit.kind === 'bow' && kit.bow instanceof Bow && kit.bow.pouch === kit.pouch, 'the bow out, its arrows from the pouch');
+  const back = new Loadout({ sounds: false }).load(JSON.parse(JSON.stringify(kit.save()))); assert.ok(back.off === 'shield' && back.kind === 'bow' && back.bow, 'saves and loads');
+  // the models: each made in code, with points; a bow that draws, an arrow that rides it; Carry knows a weapon's hand and hold
+  for (const k of ['sword', 'longsword', 'dagger', 'axe', 'mace', 'spear', 'staff', 'shield', 'bow', 'arrow', 'quiver']) { const w = weapon(k); assert.ok(w.points.grip && w.points.muzzle && w.userData.weapon.length > .3, k + ': a model'); }
+  assert.ok(weapon('shield', { style: 'round' }).children[0].geometry !== weapon('shield', { style: 'kite' }).children[0].geometry, 'shields in styles');
+  const bw = weapon('bow'), arrow = weapon('arrow'); bw.load(arrow); bw.pull(0); const z0 = bw.points.nock.position.z; bw.pull(1);
+  assert.ok(bw.points.nock.position.z - z0 > .5 && Math.abs(arrow.position.z - bw.points.nock.position.z) < 1e-6, 'a bow draws, the arrow on its string');
+  const man = figure(), carry = new Carry(man);
+  carry.add('shield', weapon('shield'), 'shield'); carry.add('spear', weapon('spear'), 'back');
+  assert.ok(carry.things.shield.hand === 'L' && carry.things.spear.hand === 'R' && carry.things.spear.both, 'a shield goes to the left hand, a spear in both');
+  carry.set('spear', 'hand'); for (let i = 0; i < 30; i++) { man.rig.play('spearGuard'); man.rig.update(1 / 60, {}); carry.update(1 / 60); }
+  man.updateMatrixWorld(true); const fore = carry.things.spear.fore.clone(); carry.things.spear.thing.localToWorld(fore);
+  const handL = man.rig.parts.foreL.localToWorld(fore.clone().set(0, -.26, 0));
+  assert.ok(handL.distanceTo(fore) < .12, 'the other hand on the spear: ' + handL.distanceTo(fore).toFixed(3));
+  console.log('fight 3D, the old world: swords, axes, spears, shields that block and bash, parries, armour that soaks, bows, the models ok');
 }
 {
   const { Ledges, Climber, Rope } = await import('../src/kit/climb.js');
@@ -2507,6 +2587,50 @@ console.log('physics ok');
     const g = wallGeometry(M); assert.ok(g.index.count === M.length * 6 && g.attributes.color.count === M.length * 4, style + ': one quad a mark');
   }
   console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
+}
+// gs.city's traffic off its lanes and its police (city-drive.js, city-police.js), on the plan alone: cars change lanes and
+// never sit in each other, a crashed car gets back into the traffic, a car sent across the city gets most of the way with
+// the traffic pulling over for its siren and goes back to its lanes when let go; the police come at 3 stars, never ram
+// below 3 or block below 4, and a player out of sight long enough gets away, one stopped beside them is caught
+{
+  const { layout, Traffic, City, Wanted } = await import('../src/kit/city.js'), { Group } = await import('three');
+  const plan = layout({ seed: 7, blocks: 6 });
+  const fake = { plan, seed: 7, opts: {}, group: new Group(), view: {}, t: 0, next: [], events: [], night: 0, signal: City.prototype.signal, signalLeft: City.prototype.signalLeft, honk() {},
+    event(e) { this.next.push(e); }, collide: () => null, ray: () => null, road: City.prototype.road, route: City.prototype.route, spot: City.prototype.spot, ground: () => 0,
+    people: { witness: () => [], report() {}, fromCar() {}, list: [] } };
+  const T = new Traffic(fake, 50); fake.cars = T; T.reset({ x: 0, z: 0 });
+  let t = 0; const step = (n, focus = { x: 0, z: 0 }) => { for (let i = 0; i < n; i++) { t += 1 / 60; fake.t = t; fake.events = fake.next; fake.next = []; T.update(1 / 60, focus, t); } };
+  step(60 * 30);
+  assert.ok(T.stats.laneChanges > 0, 'traffic: cars change lanes (' + T.stats.laneChanges + ')');
+  let overlap = 0; for (const a of T.list) for (const b of T.list) if (a !== b && a.mode === 'lane' && b.mode === 'lane' && !a.turn && !b.turn && Math.hypot(a.x - b.x, a.z - b.z) < 1.2) overlap++;
+  assert.equal(overlap, 0, 'traffic: no two cars in one place');
+  const hit = T.list.find(c => c.mode === 'lane' && c.v > 4); T.crash(hit, { x: 7, z: 3 }, { spin: 2 });
+  assert.equal(hit.mode, 'loose', 'traffic: a crashed car leaves its lane'); step(60 * 12);
+  assert.ok(hit.mode === 'lane' || hit.mode === 'wreck', 'traffic: a crashed car drives on or stays a wreck (' + hit.mode + ')');
+  const cop = T.add({ x: plan.bounds.x0 + 10, z: plan.bounds.z0 + 10, police: true, keep: true }), goal = { x: plan.bounds.x1 - 20, z: plan.bounds.z1 - 20 }, far = Math.hypot(cop.x - goal.x, cop.z - goal.z), y0 = T.stats.yields;
+  assert.ok(cop && cop.police, 'traffic: a police car of the game\'s own');
+  T.chase(cop, goal, { how: 'go', siren: true }); step(60 * 50, cop);
+  const left = Math.hypot(cop.x - goal.x, cop.z - goal.z);
+  assert.ok(left < far * .4, 'traffic: a chasing car crosses the city along the roads (' + far.toFixed(0) + ' m to ' + left.toFixed(0) + ' m)');
+  assert.ok(T.stats.yields > y0, 'traffic: cars pull over for a siren');
+  T.release(cop); step(60 * 5); assert.equal(cop.mode, 'lane', 'traffic: a released car is back in its lanes');
+  const law = new Wanted(fake, null, { officers: false }), s0 = fake.spot('street', { near: { x: 0, z: 0 } }), me = { x: s0.x, z: s0.z, heading: s0.heading, v: 0, car: true };
+  const lawStep = n => { for (let i = 0; i < n; i++) { step(1, me); law.update(1 / 60, me); } };
+  assert.equal(law.crime('theft', me), 'unseen', 'police: a crime nobody sees'); assert.equal(law.stars, 0, 'police: no stars for it');
+  // (the player's speed kept above a walk here, so a car that gets there fast doesn't make the arrest before the count)
+  me.v = 3; law.set(3); law.seenNow(me); lawStep(60 * 8);
+  // (one may already have crashed into the traffic on the way: loose, then back on the chase)
+  const chasing = law.units.filter(u => u.car.police && u.car.siren && u.car.mode === 'chase').length;
+  assert.ok(law.units.length >= 2 && chasing >= 2 && law.units.every(u => u.car.police && ['chase', 'loose', 'wreck'].includes(u.car.mode)), 'police: cars come with sirens at 3 stars (' + law.units.map(u => u.car.mode + (u.car.siren ? '+siren' : '')) + ')');
+  assert.equal(law.allow([.1, 0, .5, 2 / 5, 0, 0, 1], 'ram'), 'chase', 'police: no ramming below 3 stars');
+  assert.notEqual(law.allow([.5, .9, .5, 3 / 5, .25, 0, 1], 'block'), 'block', 'police: no roadblocks below 4 stars');
+  let esc = 0, bust = 0; law.on('escaped', () => esc++); law.on('busted', () => bust++);
+  fake.ray = () => ({ dist: 1 }); me.x = plan.bounds.x1 + 300; me.z = plan.bounds.z1 + 300; lawStep(60 * 60);
+  assert.ok(esc === 1 && law.stars === 0 && !law.units.length, 'police: out of sight long enough, the player gets away');
+  fake.ray = () => null; Object.assign(me, { x: s0.x, z: s0.z, v: 0 }); law.set(2); law.seenNow(me);
+  for (let i = 0; i < 60 * 60 && !bust; i++) lawStep(1);
+  assert.equal(bust, 1, 'police: stopped beside a police car, the player is caught');
+  console.log('city traffic and police: lane changes, crashes, chases across the city, sirens, the rules, escaping and being caught ok');
 }
 // the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
 // further out, land from where the city's ground ends, the camera made to see it, lit windows at night
