@@ -2333,7 +2333,35 @@ export interface Fighter {
   on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block', fn: (...a: Loose[]) => void): Fighter;
   canCancel(name: string): boolean; start(name: string): boolean; update(dt: number): Fighter; hitboxes(): { x: number; y: number; w: number; h: number }[]; hurtboxes(): { x: number; y: number; w: number; h: number }[];
 }
+/** A 3D melee move: frames (60ths) and where it lands. */
+export interface MeleeMove { button?: string; start: number; active: number; recover: number; reach: number; arc: number; height: 'high' | 'mid' | 'low'; damage: number; push: number; up?: number; stun?: number; lunge?: number; then?: Record<string, string>; knock?: boolean; trip?: boolean; unblockable?: boolean; pose?: string; armed?: boolean }
+export interface MeleeHit { who: Loose; by: MeleeT; move: MeleeMove; name: string; blocked: boolean; damage: number; at: P3; push: P3; knock: boolean; trip: boolean; combo: number; left?: number }
+export interface MeleeT {
+  body: Loose; moves: Record<string, MeleeMove>; radius: number; height: number; hp: number; maxHp: number; react: Loose; weapon: { reach?: number; damage?: number; arc?: number } | null;
+  move: MeleeMove | null; name: string | null; frame: number; stun: number; guard: boolean; target: Loose; combo: number; hits: MeleeHit[];
+  /** After update: metres a second to move the body by (stepping in, a dodge), the yaw to turn to (or null), the pose for gs.poses and how far through it (rig.play(m.pose, { at: m.at, fade: .06 })). */
+  walk: { x: number; z: number }; facing: number | null; pose: string | null; at: number;
+  readonly pos: P3; readonly yaw: number; readonly phase: 'start' | 'active' | 'recover' | 'stun' | 'dodge' | 'block' | 'idle'; readonly busy: boolean; readonly untouchable: boolean;
+  /** Presses a button ('light', 'heavy', 'low', 'push'): kept a moment, so a press early in a combo counts. */
+  attack(button: string | null | undefined): MeleeT; block(on?: boolean): MeleeT; dodge(dir: { x: number; z: number }): boolean;
+  pick(foes: Loose[]): Loose; start(name: string): boolean; stats(m: MeleeMove): MeleeMove; reset(): MeleeT;
+  /** Steps the frames, takes buffered presses, turns and steps in onto the foe locked on to, and returns what landed this frame. Hits on a Melee give it stun and take its hp; with react (Reactions) on the one hit, it staggers, trips or falls. */
+  update(dt: number, foes?: Loose[]): MeleeHit[];
+  on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block' | 'dodge', fn: (...a: Loose[]) => void): MeleeT;
+}
 export interface FightPart {
+  /**
+   * Melee between people in a 3D world: body an Object3D (position, rotation.y) or { x, y, z, yaw }. moves (FISTS, or SWINGS for something held
+   * in both hands); radius (.35), height (1.8), lock (3.5 m to lock on), turn (10 rad/s onto the target), react (a Reactions on this body),
+   * buffer (.25 s), weapon ({ reach, damage, arc } added to its moves), hp (100).
+   */
+  Melee: new (body: Loose, o?: { moves?: Record<string, MeleeMove>; radius?: number; height?: number; lock?: number; turn?: number; react?: Loose; buffer?: number; weapon?: { reach?: number; damage?: number; arc?: number } | null; hp?: number }) => MeleeT;
+  /** A ready-made 3D brawler: think(dt, me, foe) gives { walk, face, attack, block, dodge } for your game to do. skill 0..1 or a gs.brains Dial (result(playerWon) at the end). */
+  Brawler: new (o?: { skill?: Skill | number; speed?: number; rng?: () => number; mean?: number }) => { skill: Loose; think(dt: number, me: MeleeT, foe: MeleeT): { walk: { x: number; z: number }; face: number | null; attack: string | null; block: boolean; dodge: { x: number; z: number } | null }; result(playerWon: boolean): Loose };
+  /** Fists and feet: jab, cross, hook, uppercut (light chain), kick, knee (heavy), sweep (low: trips), shove (push: unblockable). */
+  FISTS: Record<string, MeleeMove>;
+  /** Swinging something held: swing, backhand, overhead, jabWith, sweep. */
+  SWINGS: Record<string, MeleeMove>;
   Reader: new (o?: { window?: number; buffer?: number; dead?: number }) => FightReader;
   Fighter: new (moves: Record<string, FightMove>, o?: { x?: number; y?: number; facing?: number; hurt?: FBox[]; hp?: number }) => Fighter;
   clash(a: Fighter, b: Fighter): { move: FightMove; name: string; blocked: boolean; x: number; y: number } | null;
@@ -2639,11 +2667,11 @@ export interface SkyCover {
 // ---------- round 7: action, stealth, traversal, missions, sport, big levels ----------
 export interface P3 { x: number; y: number; z?: number }
 type On<T> = { on(ev: string, fn: (...a: Loose[]) => void): T };
-export interface Shot { from: P3; dir: P3; range: number; speed: number; damageAt(distance: number, head?: boolean): number }
+export interface Shot { from: P3; dir: P3; range: number; speed: number; /** The speed of what it was fired from (a car), added to a flying shot's own. */ carry?: P3; damageAt(distance: number, head?: boolean): number }
 export interface Gun {
   damage: number; rate: number; mag: number; reserve: number; reload: number; ammo: number; kick: { pitch: number; yaw: number };
   justFired: boolean; empty: boolean; readonly reloading: number; readonly spreadNow: number;
-  pull(from: P3, dir: P3, pressed?: boolean): Shot[]; update(dt: number): Gun; startReload(): boolean; damageAt(distance?: number, head?: boolean): number;
+  pull(from: P3, dir: P3, pressed?: boolean): Shot[]; wobble(dir: P3, cone: number, is3?: boolean): P3; update(dt: number): Gun; startReload(): boolean; damageAt(distance?: number, head?: boolean): number;
   save(): Loose; load(d: Loose): Gun; [k: string]: Loose;
 }
 export interface Health {
@@ -2669,6 +2697,21 @@ export interface CombatPart {
    * are knocked down, and soft ground (Marks) is dented; who is hurt and what scores stay yours (on('boom')). link: false: a blast keeps to itself.
    */
   Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose | false; knock?: number; link?: boolean }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
+  /**
+   * Shooting from a seat in a car: out of the side window on its side, through the windscreen (front) or the back window (rear). car: a
+   * gs.models vehicle (points, size) or any Object3D, or { x, y, z, yaw } / a gs.vehicles Car (angle); nose along -z. seat: [x, y, z] in the
+   * car or a name in car.points ('driver'). width (car.size.width or 1.8), screen (.7), back (1.4), side (1.3 rad arc), up (.6), down (.5),
+   * lean (.3 m out of the window), eye (.55 over the seat), shake (1).
+   */
+  DriveBy: new (car?: Loose, o?: { seat?: string | number[] | P3; width?: number | null; screen?: number; back?: number; front?: boolean; rear?: boolean; side?: number; up?: number; down?: number; lean?: number; eye?: number; shake?: number }) => {
+    car: Loose; dir: P3; from: P3; through: 'left' | 'right' | 'front' | 'back'; glass: P3 | null; pose: 'carAimL' | 'carAimR' | 'carAimF'; turn: number; pitch: number; lean: number; spread: number; vel: P3; speed: number;
+    /** After the car moved: its speed and how much the ride throws the aim. */
+    update(dt: number): Loose;
+    /** Aims as near want (a world direction) as the seat lets it. */
+    aim(want: P3): Loose;
+    /** gun.pull from the gun along the aim, spread by the ride; flying shots carry the car's speed (shot.carry). */
+    fire(gun: Gun, pressed?: boolean): (Shot & { carry: P3; through: string; glass: P3 | null })[];
+  };
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
 export type SquadRole = 'suppress' | 'advance' | 'flank' | 'grenade' | 'retreat';
@@ -2691,7 +2734,53 @@ export interface TacticsPart {
     recalled(m: Loose): { action: SquadRole; not: boolean; like: number } | null;
   };
   Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: number, ally: P3, player: P3): Loose };
+  /**
+   * Cover in 3D found from the game's World3D with rays (walls, low walls, cars, crates, buildings: whatever is solid). world: left out, the
+   * one the game made. space (1 m between spots), radius (.35), crouch (.95: hides a crouched person), low (1.3: lower cover is shot over),
+   * cell (4 m squares looked over at a time), floors (3 storeys under a point), ms (1.2 a frame), top (60 m). Has CoverMap's find, take,
+   * free, peek, protects, avoid, so a Squad uses it (positions { x, y, z }, y up).
+   */
+  Cover3D: new (o?: { world?: Loose | false; space?: number; radius?: number; crouch?: number; low?: number; cell?: number; floors?: number; ms?: number; top?: number; link?: boolean }) => {
+    spots: Cover3DSpot[]; size: number; readonly world: Loose; rays: number;
+    /** Each frame: looks over the squares round a point it has not yet, nearest first. */
+    update(p: P3, o?: { reach?: number }): Loose;
+    /** Looks over everything within r metres now (while loading). */
+    around(p: P3, r?: number): Loose;
+    /** Forgets the spots near a point and looks again (something there moved or broke). */
+    touch(p: P3, r?: number): Loose; clear(): Loose;
+    /** Can a see b: eyes (eye 1.6 m over a's feet) to chest (1 m), nothing solid between. */
+    sees(a: P3, b: P3, o?: { eye?: number; chest?: number; not?: Loose }): boolean;
+    protects(spot: Cover3DSpot, threat: P3): boolean;
+    find(from: P3, threat: P3, o?: { near?: number; band?: [number, number]; flank?: number; who?: Loose; sees?: (a: P3, b: P3) => boolean }): Cover3DSpot | null;
+    take(spot: Cover3DSpot | null, who: Loose): Cover3DSpot | null; free(who: Loose): Loose;
+    avoid(spot: Cover3DSpot | P3, o?: { by?: number; near?: number }): Loose; forgive(): Loose;
+    /** Where to shoot from: up over low cover (over, eye), or out round the end nearer the threat (side -1 left, 1 right as you face out; 0: none, blind fire only). */
+    peek(spot: Cover3DSpot, threat?: P3): { x: number; y: number; z: number; over: boolean; side: -1 | 0 | 1; eye: number };
+    /** The nearest cover within reach (2.2 m) of someone's feet now, the way they face (yaw) first. */
+    snap(feet: P3, facing?: number | null, o?: { reach?: number }): Cover3DSpot | null;
+    /** The wall again d metres along from a spot (following it round a bend), or null at an end. */
+    slide(spot: Cover3DSpot, d: number): Cover3DSpot | null;
+    /** The next free cover from a spot the way someone pushes, within reach (7 m). */
+    next(spot: Cover3DSpot, dir: { x: number; z: number }, o?: { reach?: number; who?: Loose }): Cover3DSpot | null;
+    open(a: P3, b: P3): boolean;
+  };
+  /**
+   * The hero in cover: take(feet, facing) snaps to the nearest wall, then update(dt, input, feet) each frame slides along it, stops at its
+   * ends, leans out round them or pops up over it while aiming, fires blind, runs to the next cover when pushed on at an end (dash), and
+   * leaves when pulled away. Read walk (for your mover), facing (yaw), pose and upper (gs.poses: coverHighL/R, coverLowL/R, peekHighL/R,
+   * idle; upper aim, blindOver, blindSideL/R), muzzle, spread (extra aim cone), exposed (0..1 of the body showing). speed 2.4, run 5.5, peek .18 s, pull .35 s.
+   */
+  TakeCover: new (cover: Loose, o?: { speed?: number; run?: number; peek?: number; dash?: boolean; pull?: number }) => {
+    state: 'out' | 'moving' | 'in' | 'peek' | 'blind' | 'dash'; readonly busy: boolean; spot: Cover3DSpot | null; side: -1 | 1; out: number;
+    walk: { x: number; z: number }; facing: number; pose: string | null; upper: string | null; muzzle: P3 | null; spread: number; exposed: number;
+    /** One frame's news: 'enter' | 'arrive' | 'dash' | 'leave'. */
+    events: string[];
+    take(feet: P3, facing?: number | null, o?: { reach?: number }): boolean; enter(spot: Cover3DSpot, feet?: P3 | null): Loose; leave(): Loose; reset(): Loose;
+    update(dt: number, input?: { move?: { x: number; z: number } | null; aim?: boolean; blind?: boolean; threat?: P3 | null }, feet?: P3 | null): Loose;
+  };
 }
+/** A 3D cover spot: x, y (the floor), z where one stands; nx, nz out of the wall; top: the cover's height over the floor; left/right: metres to an end you can lean out of (null: none near). */
+export interface Cover3DSpot { x: number; y: number; z: number; nx: number; nz: number; low: boolean; top: number; left: number | null; right: number | null; by: Loose; bad: number }
 export interface ClimbPart {
   Ledges: { new (): { list: Loose[]; add(a: P3, b: P3, normal: { x: number; z: number }, o?: Loose): Loose; closest(p: P3, filter?: (l: Loose) => boolean): Loose }; fromLevel(level: Loose, o?: { min?: number }): Loose };
   Climber: new (ledges: Loose, o?: { height?: number; reach?: number; shimmy?: number; leap?: number; upTime?: number; leapTime?: number; out?: number }) => {
@@ -3055,7 +3144,8 @@ export interface RigT {
    * toward: where the person means to go, a point { x, z } in the world or a heading (radians, as the body's rotation.y): a person with lead (see
    * lead) looks there before the body turns. Left out, the turn is read from how the body is turning.
    */
-  update(dt: number, o?: { speed?: number; aim?: number; turn?: number; toward?: { x: number; z: number } | number | null }): RigT;
+  /** aim: up and down for an aiming upper pose (aim, carAimL/R/F); aimYaw: its turn at the waist (radians, left +: aiming from a seat). */
+  update(dt: number, o?: { speed?: number; aim?: number; aimYaw?: number; turn?: number; toward?: { x: number; z: number } | number | null }): RigT;
   /** A full skeleton (gs.models.human's): brings the joints in between into line (the waist with the rib cage, the neck with the head, a collar bone with each arm, the forearm's skin with the hand). update() does it; call it after turning joints yourself. Nothing on a plain figure. */
   fill(pose?: Record<string, number[]> | null): RigT;
   /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
@@ -3134,6 +3224,8 @@ export interface PosesPart {
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
   keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] };
+  /** A pose function mirrored, left for right: rig.add('waveL', mirror(rig.poses.wave.cycle)). */
+  mirror(fn: (phase: number) => Loose): (phase: number) => Loose;
   /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. body: the object the game moves (steps that are really taken, follow-through); momentum, follow, lead: see RigT (gs.models.human asks for all of them; lead comes with follow unless false). */
   Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: Loose; momentum?: boolean; follow?: boolean; lead?: boolean }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
