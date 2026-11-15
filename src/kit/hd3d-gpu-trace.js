@@ -46,7 +46,8 @@ const ROUGH_MAX = .65, ROUGH_FADE = .45;   // rougher than this a surface shows 
 // surface's cone of directions that rays are sent into (all but its far tail, whose few rays are mostly bright
 // specks; with only the middle half, reflections came out too strong: half the light comes from outside it);
 // REGEN_TAPS: this frame's rays round a pixel that count for it
-const ROUGH_SHARP = .07, LOBE_KEEP = .95;
+const ROUGH_SHARP = .07;
+let LOBE_KEEP = .95;
 // A surface only a little rougher than a mirror (ROUGH_SHARP to CONE_FULL: a polished floor) has a narrow cone: a
 // few pixels' blur, with no room in it for the many rays that smoothing scattered ones takes, and its history is
 // short while the camera moves. Scattered, its rays came out as grain round every bright thing reflected (first
@@ -63,7 +64,7 @@ const ROUGH_SHARP = .07, LOBE_KEEP = .95;
 // not noise: what the history holds outside them is what was there before the camera moved);
 // STILL_KEEP: the least frames' worth any rough surface keeps while nothing moves (a mirror keeps six: its rays are
 // exact; here each frame's are another few of the blur, and six of them shimmer)
-const CONE_FULL = .22, SHARE_WIDE = 1.9, SHARE_TAIL = .3, SHARE_THIN = .85, HOLD_STRAIGHT = 1, STILL_KEEP = 32;
+let CONE_FULL = .22, SHARE_WIDE = 1.9, SHARE_TAIL = .3, SHARE_THIN = .85, HOLD_STRAIGHT = 1, STILL_KEEP = 32;
 const REGEN_TAIL = [[2.6, 0], [3.1, 2.4], [4, 4.8], [5.6, 7.2]].map(([r, a]) => [r * Math.cos(a), r * Math.sin(a)]);
 const coneOf = (rough, U) => mix(smoothstep(ROUGH_SHARP, CONE_FULL, rough), float(1), U.ref);   // (the tests' reference: the whole cone)
 const REGEN_TAPS = [[0, 0], [1, 0], [0, 1], [1, 1]];
@@ -76,7 +77,19 @@ const REGEN_TAPS = [[0, 0], [1, 0], [0, 1], [1, 1]];
 // HIST_TURN: the furthest to either side the history is read on a curved surface, as the share of its blur's
 // angle that the surface may turn by on the way; HOLD_MOVING: how far outside this frame's rays the history may
 // be while the picture moves fast
-const HIST_WIDE = .5, HIST_FINE = .1, USUAL = .1, KEEP_ROUGH = 160, KEEP_SLIDE = 1.5, SLIDE_LEAST = .1, FILL_KEEPS = .85, HIST_TURN = .3, HOLD_MOVING = .15;
+let HIST_WIDE = .5, HIST_FINE = .1, USUAL = .1, KEEP_ROUGH = 160, KEEP_SLIDE = 1.5, SLIDE_LEAST = .1, FILL_KEEPS = .85, HIST_TURN = .3, HOLD_MOVING = .15;
+/**
+ * Ray Regeneration's settings above (none of them changes the tests' reference), for scripts/tune.cjs: its search
+ * against the reference sets others (o: any of them by name) for the next build of the effects chain. Returns the
+ * ones in use. Not on gs: games don't reach it.
+ */
+export function regenSettings(o) {
+  if (o) {
+    ({ LOBE_KEEP = LOBE_KEEP, CONE_FULL = CONE_FULL, SHARE_WIDE = SHARE_WIDE, SHARE_TAIL = SHARE_TAIL, SHARE_THIN = SHARE_THIN, HOLD_STRAIGHT = HOLD_STRAIGHT, STILL_KEEP = STILL_KEEP,
+      HIST_WIDE = HIST_WIDE, HIST_FINE = HIST_FINE, USUAL = USUAL, KEEP_ROUGH = KEEP_ROUGH, KEEP_SLIDE = KEEP_SLIDE, SLIDE_LEAST = SLIDE_LEAST, FILL_KEEPS = FILL_KEEPS, HIST_TURN = HIST_TURN, HOLD_MOVING = HOLD_MOVING } = o);
+  }
+  return { LOBE_KEEP, CONE_FULL, SHARE_WIDE, SHARE_TAIL, SHARE_THIN, HOLD_STRAIGHT, STILL_KEEP, HIST_WIDE, HIST_FINE, USUAL, KEEP_ROUGH, KEEP_SLIDE, SLIDE_LEAST, FILL_KEEPS, HIST_TURN, HOLD_MOVING };
+}
 const REGEN_DISC = Array.from({ length: 4 }, (_, i) => { const r = Math.sqrt((i + .5) / 4), a = i * 2.399963; return [r * Math.cos(a), r * Math.sin(a)]; });
 // (the walk's stack: the tree over the blocks is at most 9 deep, a block's BLOCK_DEPTH)
 BVH_STACK_DEPTH.value = Math.min(BVH_STACK_DEPTH.value, BLOCK_DEPTH + 12);
