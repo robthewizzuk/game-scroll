@@ -2,17 +2,20 @@
 // turn the whole stack so a gap slides under the ball and it drops to the next floor. Red tiles pop the
 // ball. Fall through three floors without a bounce and you're hot: you smash the next floor, red or not.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
 const { rnd } = gs.util;
+const { approach } = gs.juice;
 
 let W = 360, H = 640;
 const GAP = 130, SEGS = 12;
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const feel = new Feel();
-  let floors, rot, ball, cam, score, falls, t, last, bits, depth, started;
+  let floors, rot, ball, cam, score, falls, t, last, bits, depth;
 
   function floor(i) {
     // 12 tiles round the drum: some gaps, some red, the rest plain
@@ -25,7 +28,7 @@ function make(api) {
   const tileAt = f => { const w = W / SEGS * 1.0, x = ((W / 2 - rot) % W + W) % W; return f.tiles[Math.floor(x / w) % SEGS]; };
 
   return {
-    reset() { floors = []; for (let i = 0; i < 8; i++) floors.push(floor(i)); floors[0].tiles = floors[0].tiles.map(v => v === 2 ? 0 : v); floors[1].tiles = floors[1].tiles.map(v => v === 2 ? 0 : v); rot = 0; ball = { y: 150, vy: 0 }; cam = 0; score = 0; falls = 0; t = 0; last = null; bits = []; depth = 8; started = false; feel.clear(); },
+    reset() { floors = []; for (let i = 0; i < 8; i++) floors.push(floor(i)); floors[0].tiles = floors[0].tiles.map(v => v === 2 ? 0 : v); floors[1].tiles = floors[1].tiles.map(v => v === 2 ? 0 : v); rot = 0; ball = { y: 150, vy: 0 }; cam = 0; score = 0; falls = 0; t = 0; last = null; bits = []; depth = 8; ready.reset(); feel.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
@@ -37,7 +40,7 @@ function make(api) {
       for (const f of floors) {
         if (f.gone || prevY + 12 > f.y || ball.y + 12 < f.y) continue;
         const tile = tileAt(f);
-        if (started && (tile === 1 || falls >= 3)) {
+        if (ready.playing && (tile === 1 || falls >= 3)) {
           // through the gap (or smashing through when hot)
           f.gone = true; score++; api.score(score);
           if (tile !== 1) { feel.boom(W / 2, f.y - cam, { size: .5 }); haptic('heavy'); }
@@ -47,12 +50,12 @@ function make(api) {
           if (falls === 3) { notes('C5 E5 G5', { len: .05 }); feel.juice.pop(W / 2, ball.y - cam - 40, 'HOT!', { color: '#ff7b00' }); }
           continue;
         }
-        if (tile === 2 && started) { feel.hurt(W / 2, ball.y - cam); feel.lose(); haptic('error'); return api.over(); }
+        if (tile === 2 && ready.playing) { feel.hurt(W / 2, ball.y - cam); feel.lose(); haptic('error'); return api.over(); }
         // bounce
-        ball.y = f.y - 12; ball.vy = -560; falls = 0; sfx(260, .05, 'sine', .04); if (started) haptic('tick');
+        ball.y = f.y - 12; ball.vy = -560; falls = 0; sfx(260, .05, 'sine', .04); if (ready.playing) haptic('tick');
         break;
       }
-      cam += (ball.y - H * .35 - cam) * Math.min(1, dt * 6);
+      cam = approach(cam, ball.y - H * .35, 6, dt);
       floors = floors.filter(f => f.y > cam - 60);
       while (floors.length < 9) floors.push(floor(depth++));
     },
@@ -83,12 +86,12 @@ function make(api) {
       c.fillStyle = '#ffffff90'; c.beginPath(); c.arc(W / 2 - 4, ball.y - 4, 3, 0, 7); c.fill();
       c.restore();
       feel.end(c, W, H);
-      if (!started) { c.textAlign = 'center'; c.fillStyle = '#fff'; c.font = '700 17px Rubik, sans-serif'; c.fillText('Drag left and right to turn', W / 2, H - 80); c.font = '500 14px Rubik, sans-serif'; c.fillText('Drop through the gaps, miss the red', W / 2, H - 56); }
+      if (!ready.playing) { c.textAlign = 'center'; c.fillStyle = '#fff'; c.font = '700 17px Rubik, sans-serif'; c.fillText('Drag left and right to turn', W / 2, H - 80); c.font = '500 14px Rubik, sans-serif'; c.fillText('Drop through the gaps, miss the red', W / 2, H - 56); }
     },
-    down(x) { started = true; last = x; },
+    down(x) { ready.go(); last = x; },
     move(x, y, pr) { if (!pr || last == null) return; rot += (x - last) * 1.1; last = x; },
     up() { last = null; },
-    key(k, d) { if (!d) return; started = true; if (k === 'ArrowLeft') rot -= W / SEGS; if (k === 'ArrowRight') rot += W / SEGS; },
+    key(k, d) { if (!d) return; ready.go(); if (k === 'ArrowLeft') rot -= W / SEGS; if (k === 'ArrowRight') rot += W / SEGS; },
   };
 }
 

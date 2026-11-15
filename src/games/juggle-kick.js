@@ -60,11 +60,11 @@ function drawBall(c, roll, tumble) {
 
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
-  let ball, score, wind, windT, t, pops, kicks, dead, foot;
+  let ball, score, wind, windT, t, kicks, dead, foot;
   const self = {
-    reset() { ball = { x: W / 2, y: 260, vx: 0, vy: 0, rot: 0, tumble: .4, spin: 0, live: false }; score = 0; wind = 0; windT = 3; t = 0; pops = []; kicks = 0; dead = 0; foot = null; feel.clear(); },
+    reset() { ball = { x: W / 2, y: 260, vx: 0, vy: 0, rot: 0, tumble: .4, spin: 0, live: false }; score = 0; wind = 0; windT = 3; t = 0; kicks = 0; dead = 0; foot = null; feel.clear(); },
     update(dt) {
-      feel.update(dt); t += dt; for (const p of pops) p.l -= dt; pops = pops.filter(p => p.l > 0); if (foot) { foot.l -= dt; if (foot.l <= 0) foot = null; }
+      feel.update(dt); t += dt; if (foot) { foot.l -= dt; if (foot.l <= 0) foot = null; }
       if (!ball.live) { ball.y = 260 + Math.sin(t * 3) * 8; ball.rot += dt * .4; return; }
       if (kicks >= 10) { windT -= dt; if (windT <= 0) { windT = rnd(2, 4); wind = rnd(-1, 1) * Math.min(260, 60 + kicks * 6); } }
       ball.vx += wind * dt; ball.vy += G * dt; ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.rot += ball.vx * dt / R; ball.tumble += ball.spin * dt; ball.spin *= Math.pow(.6, dt);
@@ -84,7 +84,6 @@ function make(api) {
       if (foot) { c.globalAlpha = foot.l * 3; c.strokeStyle = '#ffffff'; c.lineWidth = 3; c.beginPath(); c.arc(foot.x, foot.y, 14 + (1 - foot.l * 3) * 20, 0, 7); c.stroke(); c.globalAlpha = 1; }
       feel.end(c, W, H);
       if (Math.abs(wind) > 20) { c.fillStyle = '#ffffffcc'; c.font = '400 9px "Press Start 2P", monospace'; c.textAlign = wind > 0 ? 'right' : 'left'; c.fillText(wind > 0 ? 'WIND >>' : '<< WIND', wind > 0 ? W - 12 : 12, 22); }
-      for (const p of pops) { c.globalAlpha = clamp(p.l * 2, 0, 1); c.fillStyle = '#1a3a6a'; c.font = '400 12px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(p.txt, p.x, p.y - (1 - p.l) * 40); c.globalAlpha = 1; }
       if (!ball.live) { c.fillStyle = '#1a3a6acc'; c.font = '600 14px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('tap the ball to kick it up', W / 2, 360); }
     },
     down(x, y) {
@@ -94,7 +93,7 @@ function make(api) {
       const pts = centre ? 2 : 1; score += pts; api.score(score);
       feel.juice.burst(x, y, { n: centre ? 14 : 6, speed: centre ? 200 : 130, life: .3, size: 3, color: centre ? ['#ffd34a', '#ffffff'] : '#ffffff', shape: 'spark' }); if (centre) feel.juice.shake(2);
       foot = { x, y, l: .3 }; haptic(centre ? 'medium' : 'light'); sfx(centre ? 660 : 440, .06, 'triangle', .06, 120);
-      if (centre) pops.push({ x: ball.x, y: ball.y - 50, txt: 'SWEET +2', l: .8 });
+      if (centre) feel.juice.pop(ball.x, ball.y - 50, 'SWEET +2', { color: '#1a3a6a', size: 12, font: '"Press Start 2P", monospace', life: .8, rise: 32 });
     },
     key(k, d) { if (d && k === ' ') self.down(ball.x + rnd(-5, 5), ball.y); },
   };

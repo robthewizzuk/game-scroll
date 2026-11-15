@@ -22,7 +22,7 @@ function play(lane) {
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the drums are the sound
   const ready = new Ready({ eat: false });                // the beat waits for the first tap
-  let notes, beat, bpm, score, combo, groove, t, flash, pop, songT, bars;
+  let notes, beat, bpm, score, combo, groove, t, flash, songT, bars;
   function addBar() {
     const lvl = Math.min(PATTERNS.length, 2 + Math.floor(bars / 2)), p = PATTERNS[Math.random() * lvl | 0];
     const steps = (p[0] + p[1]).split(''), stepT = 60 / bpm / 2;
@@ -30,16 +30,15 @@ function make(api) {
     songT += steps.length * stepT; bars++; bpm = Math.min(150, bpm + 2);
   }
   return {
-    reset() { notes = []; bpm = 92; score = 0; combo = 0; groove = 1; t = -1.5; flash = [0, 0, 0]; pop = []; songT = 0; bars = 0; feel.clear(); ready.reset(); addBar(); addBar(); },
+    reset() { notes = []; bpm = 92; score = 0; combo = 0; groove = 1; t = -1.5; flash = [0, 0, 0]; songT = 0; bars = 0; feel.clear(); ready.reset(); addBar(); addBar(); },
     fx(dt) { feel.update(dt); },
     update(dt) {
       feel.update(dt); for (let i = 0; i < 3; i++) flash[i] = Math.max(0, flash[i] - dt * 5);
       if (!ready.update(dt)) return;
       t += dt;
       while (songT - t < 3) addBar();
-      for (const n of notes) if (!n.hit && !n.miss && t - n.at > .16) { n.miss = true; combo = 0; groove -= .16; haptic('warning'); pop.push({ x: (n.lane + .5) * LW, txt: 'MISS', l: .6, c: '#ff6060' }); }
+      for (const n of notes) if (!n.hit && !n.miss && t - n.at > .16) { n.miss = true; combo = 0; groove -= .16; haptic('warning'); feel.juice.pop((n.lane + .5) * LW, HITY - 30, 'MISS', { color: '#ff6060', size: 11, font: '"Press Start 2P", monospace', life: .6, rise: 18 }); }
       notes = notes.filter(n => t - n.at < 1);
-      for (const p of pop) p.l -= dt; pop = pop.filter(p => p.l > 0);
       if (groove <= 0) { groove = 0; haptic('error'); feel.juice.shake(7); return api.over(); }
     },
     draw(c) {
@@ -67,7 +66,6 @@ function make(api) {
       // groove meter top-left
       c.fillStyle = '#ffffff22'; c.fillRect(12, 14, 100, 8); c.fillStyle = groove > .3 ? '#7dff9a' : '#ff6060'; c.fillRect(12, 14, 100 * groove, 8);
       if (combo > 4) { c.fillStyle = '#ffd34a'; c.font = '400 10px "Press Start 2P", monospace'; c.textAlign = 'right'; c.fillText(`x${combo}`, W - 12, 22); }
-      for (const p of pop) { c.globalAlpha = clamp(p.l * 2, 0, 1); c.fillStyle = p.c; c.font = '400 11px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(p.txt, p.x, HITY - 30 - (1 - p.l) * 30); c.globalAlpha = 1; }
       if (t < 1) { c.fillStyle = '#ffffffcc'; c.font = '600 14px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('tap the pad as notes cross the line', W / 2, 300); }
       ready.draw(c, W, H, { text: 'Tap a pad to start', y: 350 });
     },
@@ -83,7 +81,7 @@ function make(api) {
     feel.juice.burst((lane + .5) * LW, HITY, { n: perfect ? 12 : 6, speed: perfect ? 190 : 120, life: .35, size: 3.5, color: [COLS[lane], '#ffffff'] });
     if (combo && combo % 10 === 0) feel.juice.pop(W / 2, 250, `x${1 + combo / 10} BONUS`, { color: '#ffd34a', size: 18 });
     score += (perfect ? 3 : 1) * (1 + Math.floor(combo / 10)); api.score(score); groove = Math.min(1, groove + .04);
-    haptic(perfect ? 'medium' : 'light'); pop.push({ x: (lane + .5) * LW, txt: perfect ? 'PERFECT' : 'GOOD', l: .5, c: perfect ? '#ffd34a' : '#ffffff' });
+    haptic(perfect ? 'medium' : 'light'); feel.juice.pop((lane + .5) * LW, HITY - 30, perfect ? 'PERFECT' : 'GOOD', { color: perfect ? '#ffd34a' : '#ffffff', size: 11, font: '"Press Start 2P", monospace', life: .5, rise: 15 });
   }
 }
 

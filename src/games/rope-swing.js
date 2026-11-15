@@ -11,10 +11,10 @@ const W = 360, H = 640, G = 1300, FLOOR = H - 60;
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
   const ready = new Ready({ eat: false, text: 'Hold to swing' });   // hangs still until the first press
-  let p, hooks, rope, camX, best, t, dead, sparks;
+  let p, hooks, rope, camX, best, t, dead;
   function more() { let x = hooks.length ? hooks[hooks.length - 1].x : 120; while (x < camX + W * 2) { x += rnd(150, 230); hooks.push({ x, y: rnd(110, 210) }); } }
   return {
-    reset() { hooks = []; camX = 0; more(); p = { x: 60, y: 260, vx: 260, vy: -150 }; rope = null; { const k = hooks.filter(k => k.x > p.x - 20).sort((a, b) => a.x - b.x)[0]; if (k) rope = { x: k.x, y: k.y, len: clamp(Math.hypot(k.x - p.x, k.y - p.y), 60, 330) }; } best = 0; t = 0; dead = 0; sparks = []; feel.clear(); ready.reset(); },
+    reset() { hooks = []; camX = 0; more(); p = { x: 60, y: 260, vx: 260, vy: -150 }; rope = null; { const k = hooks.filter(k => k.x > p.x - 20).sort((a, b) => a.x - b.x)[0]; if (k) rope = { x: k.x, y: k.y, len: clamp(Math.hypot(k.x - p.x, k.y - p.y), 60, 330) }; } best = 0; t = 0; dead = 0; feel.clear(); ready.reset(); },
     update(dt) {
       feel.update(dt); t += dt; if (!ready.update(dt)) return;
       const steps = 3, h = dt / steps;
@@ -28,10 +28,9 @@ function make(api) {
       if (p.y < 20) { p.y = 20; p.vy = Math.abs(p.vy) * .3; }
       camX += ((p.x - 120) - camX) * Math.min(1, dt * 5); more(); hooks = hooks.filter(k => k.x > camX - 80);
       const dist = Math.floor(p.x / 20); if (dist > best) { best = dist; api.score(best); if (best % 50 === 0) feel.juice.pop(p.x, p.y - 30, `${best}`, { color: '#ffd34a', size: 16 }); }
-      for (const q of sparks) { q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; } sparks = sparks.filter(q => q.life > 0);
-      if (p.y > FLOOR - 10) { sfx(120, .4, 'sawtooth', .05, -60); haptic('error'); feel.juice.shake(8).flash('#ff5a36', .25); for (let i = 0; i < 16; i++) sparks.push({ x: p.x, y: FLOOR, vx: rnd(-150, 150), vy: rnd(-260, -60), life: rnd(.3, .7) }); return api.over(); }
+      if (p.y > FLOOR - 10) { sfx(120, .4, 'sawtooth', .05, -60); haptic('error'); feel.juice.shake(8).flash('#ff5a36', .25).burst(p.x, FLOOR, { n: 16, speed: 190, spread: .6, angle: -Math.PI / 2, arc: 2.2, life: .5, size: 4, shrink: false, shape: 'square', gravity: G * .5, drag: 0, color: '#ffb446' }); return api.over(); }
     },
-    fx(dt) { dead += dt; feel.update(dt); for (const q of sparks) { q.vy += G * .5 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; } sparks = sparks.filter(q => q.life > 0); },
+    fx(dt) { dead += dt; feel.update(dt); },
     draw(c) {
       const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0f3b4a'); g.addColorStop(1, '#0a1820'); c.fillStyle = g; c.fillRect(0, 0, W, H);
       // parallax city
@@ -44,7 +43,6 @@ function make(api) {
       for (const k of hooks) { c.fillStyle = k === near ? '#ffd34a' : '#9fd6e0'; c.beginPath(); c.arc(k.x, k.y, 7, 0, 7); c.fill(); c.strokeStyle = '#ffffff30'; c.lineWidth = 2; c.beginPath(); c.moveTo(k.x, 14); c.lineTo(k.x, k.y - 7); c.stroke(); }
       if (rope) { c.strokeStyle = '#f2e6c9'; c.lineWidth = 3; c.beginPath(); c.moveTo(rope.x, rope.y); c.lineTo(p.x, p.y); c.stroke(); }
       if (!dead || (dead * 10 | 0) % 2) { c.fillStyle = '#ffd34a'; c.beginPath(); c.arc(p.x, p.y, 11, 0, 7); c.fill(); c.fillStyle = '#0a1820'; const a = Math.atan2(p.vy, p.vx); c.fillRect(p.x + Math.cos(a) * 4 - 2, p.y + Math.sin(a) * 4 - 4, 3, 3); }
-      for (const q of sparks) { c.fillStyle = `rgba(255,180,70,${q.life * 1.5})`; c.fillRect(q.x, q.y, 4, 4); }
       feel.end(c, W + camX, H); c.restore();
       ready.draw(c, W, H, { y: 420 });
     },

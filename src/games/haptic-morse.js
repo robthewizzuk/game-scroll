@@ -2,6 +2,7 @@ import gs from '../gamescroll.js';
 const { Timers } = gs.math;
 const { sfx } = gs.sound;
 const { buzz, canBuzz, haptic } = gs.device;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Feel the code. Your phone buzzes a pattern of short and long pulses: pick the matching pattern
 // from four. Tap the hand to feel it again (costs time). Phones that can't vibrate flash the screen instead.
@@ -15,7 +16,7 @@ function make(api) {
   function next() {
     const len = Math.min(6, 2 + Math.floor(score / 3)); pat = rand(len); const set = new Set([key(pat)]); opts = [pat];
     while (opts.length < 4) { const o = Math.random() < .6 ? pat.map((v, i) => i === (Math.random() * len | 0) ? 1 - v : v) : rand(len); if (!set.has(key(o))) { set.add(key(o)); opts.push(o); } }
-    opts.sort(() => Math.random() - .5); time = 8; replays = 0; play();
+    opts = shuffle(opts); time = 8; replays = 0; play();
   }
   function play() {
     feel = canBuzz(); playing = buzz(pat, SHORT, LONG, GAP) / 1000 + .2; flashT = 0;
