@@ -72,7 +72,7 @@ import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutT
 import { own } from './cleanup.js';
 import { linksFor } from './links.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
-import { eachThing, eachShown, thingsOf } from './scene-list.js';
+import { eachThing, eachShown, thingsOf, BODY_BIT, BODY_LAYER } from './scene-list.js';
 import { stillFrame, stillOff, stillStats } from './still.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -496,6 +496,12 @@ export const HD = {
    * info.skin: { meshes, posed, points, bones, kinds, poolMB, left } for the last frame (null when off or on WebGL; left: meshes the pool had no room for, posed in their own shaders).
    */
   gpuSkin: true,
+  /**
+   * People's shadows from a stand-in body (gs.models.human: the far level's 2,200 triangles, on a layer only shadows draw)
+   * whatever level is shown, where each level drew its own (52,000 to 78,000 triangles close up, into every map and part
+   * of one). false: each level casts its own again (tests, the frame lab's before and after).
+   */
+  shadowBody: true,
   /**
    * The world's centre moved along with the camera (origin.js), so far-off places don't shake: how far in metres
    * the camera goes from it before it moves (0: never). originAt: { x, z } a centre given outright (tests, the frame lab).
@@ -2425,11 +2431,11 @@ export class HDView {
     const sig = lights.map(l => l.id).join(','); if (sig !== S.sig) { S.sig = sig; S.seen.clear(); S.looked = new WeakSet(); S.list = null; }   // (another light: everything again)
     // (what has been looked at is not listed again when the scene changes: a scene that changes every frame would otherwise only ever get to its first few hundred things)
     const T = thingsOf(this.scene);
-    if (T !== S.list) { S.list = T; S.todo.length = 0; for (let i = T.length - 1; i >= 0; i--) { const o = T[i]; if (o.castShadow && !S.looked.has(o) && aheadFits(o)) S.todo.push(o); } }
+    if (T !== S.list) { S.list = T; S.todo.length = 0; for (let i = T.length - 1; i >= 0; i--) { const o = T[i]; if (o.castShadow && !S.looked.has(o) && casterFits(o)) S.todo.push(o); } }
     const pick = [];
     for (let looked = 0; S.todo.length && (all || (looked < PRE_LOOK && pick.length < PRE_N)); looked++) {
       const o = S.todo.pop();
-      if (!o.castShadow || !aheadFits(o) || !inScene(o, this.scene)) continue;
+      if (!o.castShadow || !casterFits(o) || !inScene(o, this.scene)) continue;
       S.looked.add(o);
       const k = shaderKey(o) + '|' + (o.skeleton ? o.skeleton.bones.length : '');   // (three keys a skinned thing's shaders by its bones too)
       if (S.seen.has(k)) continue;
@@ -2887,8 +2893,12 @@ export class HDView {
     if (SH_H.length < n * 5) SH_H = new Float64Array(n * 10);
     const H = SH_H; H.fill(0, 0, n * 5);   // per light: [own, still sum, moving sum, still triangles, moving triangles]
     TL.length = n;
+    const cm = this.cam.layers.mask | BODY_BIT;
     for (let i = 0; i < n; i++) {
       const l = L[i], sh = l.shadow, c = sh.camera, e = l.matrixWorld.elements, t = l.target?.matrixWorld.elements;
+      // (a map three draws whole looks at the view camera's layers unless its own camera has more than the first: the
+      // shadow bodies are on one the view camera doesn't have, scene-list.js BODY_LAYER)
+      if ((c.layers.mask & cm) !== cm) c.layers.mask |= cm;
       if (!l.isPointLight) sh.updateMatrices(l);   // (three does the same as it draws; here it also gives the frustum)
       H[i * 5] = sh.mapSize.x + e[12] * 3.1 + e[13] * 3.7 + e[14] * 4.3 + (t ? t[12] * 5.3 + t[13] * 5.9 + t[14] * 6.1 : 0) + (l.angle || 0) * 11 + (l.distance || 0) * 13
         + (c.left ?? 0) * 17 + (c.right ?? 0) * 19 + (c.top ?? 0) * 23 + (c.bottom ?? 0) * 29 + c.near * 31 + c.far * 37 + (c.fov ?? 0) * 41 + sh.bias * 43 + (sh.map ? 0 : Math.random());
@@ -2901,6 +2911,9 @@ export class HDView {
     }
     eachShown(this.scene, o => {
       if (o.isLight || o.layers.mask === BATCH_BIT) return;   // (a merged piece: its group's mesh casts for it)
+      // (a person's shadow body casts for the levels shown, gs.models.human; HD.shadowBody = false: each level for itself again)
+      const sf = o.userData.gsShadowFor;
+      if (sf) { const on = HD.shadowBody !== false; if (o.castShadow !== on) { o.castShadow = on; for (let j = 0; j < sf.length; j++) sf[j].castShadow = !on; } }
       if (!o.castShadow) { if (o.layers.mask & SH_BITS) o.layers.mask &= ~SH_BITS; return; }
       const e = o.matrixWorld.elements, w = (o.id % 89) + 1, held = (o.layers.mask & HOLD_BIT) !== 0;
       let h = ((o.geometry?.id ?? 0) % 97 * .37 + e[0] * 1.3 + e[1] * 1.7 + e[2] * 2.3 + e[4] * 2.9 + e[5] * 3.1 + e[6] * 3.7 + e[8] * 4.1 + e[9] * 4.3 + e[10] * 4.7 + e[12] * 5.3 + e[13] * 5.9 + e[14] * 6.1 + (held ? .5 : 0)) * w;
@@ -2992,7 +3005,7 @@ export class HDView {
     this.gsCapsules = ok && HD.capsules !== false;
     const list = this._capList ||= []; list.length = 0;
     if (this.gsCapsules) for (const c of this.scene.userData.gsPosed || []) c.capsules?.(list, this.cam);
-    if (far) { const p = this.cam.getWorldPosition(SM_P); G.fx.farTiles(r, this.scene, p.x, p.y, p.z, this.cam.layers.mask, typeof this.farShadows === 'object' ? this.farShadows : {}); this._farOn = true; }
+    if (far) { const p = this.cam.getWorldPosition(SM_P); G.fx.farTiles(r, this.scene, p.x, p.y, p.z, this.cam.layers.mask | BODY_BIT, typeof this.farShadows === 'object' ? this.farShadows : {}); this._farOn = true; }
     else if (this._farOn) { G.fx.farTilesOff(); this._farOn = false; }
     if (!contact && !far && !list.length && !smoke) { G.fx.sunMaskOn(false); HD.info.sunMask = null; return null; }
     sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
@@ -3193,7 +3206,7 @@ export class HDView {
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
       if (pm >= 0) enter('3D: lamp shadows');
-      const mask = this.cam.layers.mask;
+      const mask = this.cam.layers.mask | BODY_BIT;   // (shadow bodies too: scene-list.js BODY_LAYER)
       LP.finish(T.shadow > 0 ? HD.tier : 0, s => G.fx.drawSlot(r, this.scene, s, mask));
       if (pm >= 0) leave(pm);
     }
@@ -3656,6 +3669,8 @@ function compileGPU(r, o, cam, scene, around = null, view = null) {
 // view, and each of those used to build its shader in the frame it first showed. AHEAD_MS: the time a frame
 // gives to starting such builds (making a shader's text is work on the main thread; the pipeline is the driver's).
 const AHEAD_MS = 3;
+// ...and for its shadow alone: that, or a thing only shadows draw (a person's shadow body, scene-list.js BODY_LAYER)
+const casterFits = o => aheadFits(o) || (o.layers.mask & ~(SH_BITS | HOLD_BIT | OCC_BIT | PRE_BIT)) === BODY_BIT;
 function aheadFits(o) {
   if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || !o.geometry) return false;
   if (o.isInstancedMesh2 || o._parentLOD || o.userData.gsTwin?.isInstancedMesh2) return false;   // (sets of copies are their library's to draw: gpuSwap, hideSets)
@@ -4967,6 +4982,7 @@ export class ContactShadows {
     this.plane = new Mesh(new PlaneGeometry(size, size).rotateX(Math.PI / 2), this.mat);
     this.plane.renderOrder = 1; this.plane.scale.y = -1; this.plane.userData.noContact = true; this.group.add(this.plane);
     this.cam = new OrthographicCamera(-size / 2, size / 2, size / 2, -size / 2, 0, height); this.cam.rotation.x = Math.PI / 2; this.group.add(this.cam);
+    this.cam.layers.enable(BODY_LAYER);   // (people's shadow bodies: scene-list.js)
     this.depth = new MeshDepthMaterial(); this.depth.depthTest = this.depth.depthWrite = false;
     this.depth.userData.dark = { value: darkness };
     this.depth.onBeforeCompile = sh => {
