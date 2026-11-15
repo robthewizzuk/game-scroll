@@ -194,12 +194,16 @@ allows (one under the cap) from the first resolution step.
 **Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
 (`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, sun mask, bounce light,
 depth of field, motion blur, screen effects, upscale...). When a game is slow and the graphics chip is the
-reason, the effect that costs it most is drawn smaller first: ambient occlusion, bloom, reflections (screen
-space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's). An
+reason, the effect whose next step saves the most chip time for the picture it costs is drawn smaller first (a
+video encoder's rate-distortion choice): ambient occlusion, bloom, reflections (screen
+space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's).
+What each step costs the picture was measured on eight test scenes with the camera still (`hd3d.js` `FX_SEEN`): every
+effect's smaller sizes were lost in the difference between two frames a moment apart except bloom's, which showed
+plainly where bloom is strong (two to ten times that difference), so bloom steps last, after cheaper-looking ones. An
 effect is only stepped while it takes at least an eighth of the chip's frame (and half a millisecond), so a
 cheap effect is never made worse for nothing; when none does, the resolution steps as before. Only the size
 of the effect's pictures changes, so no shader is built again mid-round. Where the chip doesn't say (WebGL,
-phones without timestamps) each effect in use gives one step, sun shafts first and ambient occlusion last,
+phones without timestamps) each effect in use gives one step, ambient occlusion first and bloom last,
 before the resolution. Climbing back is the other way round: once the resolution is full again, the effect
 stepped down last comes back first, and not within 30 s of a slow spell. Steps are remembered with the
 game's tier and resolution. `HD.fx` says what is drawn smaller now (`{ ao: .5, bloom: .7 }`); the frame lab

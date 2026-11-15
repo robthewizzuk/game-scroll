@@ -7749,7 +7749,7 @@ console.log('physics ok');
   console.log('memory guard: levels from the phone\'s readings and warnings, up at once, down after a calm spell ok');
 }
 
-// effects that step down by their own cost (hd3d.js pickEffect): the costliest effect that takes a real share of the chip
+// effects that step down by their own cost (hd3d.js pickEffect): the most chip time saved for the picture lost, among effects that take a real share of the chip
 {
   const { pickEffect } = await import('../src/kit/hd3d.js');
   const on = new Set(['ao', 'bloom', 'reflections', 'light shafts']);
@@ -7757,8 +7757,13 @@ console.log('physics ok');
   assert.equal(pickEffect(on, { ao: 2 }, 12, { scene: 6, ao: 2.5, bloom: 1.2, reflections: 1.8 }), 'reflections', 'one at its smallest is passed over');
   assert.equal(pickEffect(on, {}, 12, { scene: 11, ao: .4, bloom: .3 }), null, 'none takes a real share: the resolution steps instead');
   assert.equal(pickEffect(new Set(['bloom']), {}, 12, { scene: 6, ao: 3, bloom: 2 }), 'bloom', 'only an effect the frame drew');
-  assert.equal(pickEffect(on, {}, null, null), 'light shafts', 'where the chip doesn\'t say: a fixed order, what shows least first');
-  assert.equal(pickEffect(on, { 'light shafts': 1, bloom: 1 }, null, null), 'reflections', 'one step each');
+  assert.equal(pickEffect(on, {}, 12, { scene: 6, ao: 1.6, bloom: 3, reflections: 1.5 }), 'ao', 'bloom costs most but shows: one that shows nothing goes first');
+  assert.equal(pickEffect(on, { ao: 2, reflections: 2 }, 12, { scene: 6, ao: 1.6, bloom: 3, reflections: 1.5 }), 'bloom', 'and bloom once nothing else can step');
+  assert.equal(pickEffect(on, { reflections: 1 }, 12, { scene: 6, ao: 1.6, reflections: 1.5 }), 'ao', 'what a step saves: from 1 to .7 51% of its time, from .7 to .5 49% of what it takes at .7');
+  assert.equal(pickEffect(on, { reflections: 1 }, 12, { scene: 6, ao: 1.4, reflections: 1.5 }), 'reflections', 'so near enough the time it takes now');
+  assert.equal(pickEffect(on, {}, null, null), 'ao', 'where the chip doesn\'t say: a fixed order, the costliest that shows least first');
+  assert.equal(pickEffect(on, { ao: 1, reflections: 1 }, null, null), 'light shafts', 'one step each');
+  assert.equal(pickEffect(on, { ao: 1, reflections: 1, 'light shafts': 1 }, null, null), 'bloom', 'bloom last');
   assert.equal(pickEffect(new Set(['ao']), { ao: 1 }, null, null), null, 'then the resolution');
   console.log('gs.hd effects that step down by their own cost ok');
 }
