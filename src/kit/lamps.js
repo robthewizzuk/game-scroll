@@ -121,6 +121,8 @@ function meanOf(p) {
 // WebGL the spot lights (for lamps with a dir or a shadow; with three's own shadows where the tier has shadows)
 export const SLOTS = [0, 4, 8, 16], SLOT_DRAWS = [0, 1, 3, 4], GL_CONES = [1, 2, 2, 4];
 const LIT_MAX = 64;   // lights a pool's lit list holds (lampLightAt)
+const FADE_M = 4;   // metres over which the lights by the last one lit fade out (place())
+const FADE_S = .35;   // seconds a spot's light takes to come in or go out as it joins or leaves the lit ones (place())
 /**
  * The light the pool's lit lamps (pool.lit, after place()) shine on a point, as three works a point light out (its
  * intensity over its distance to the power of its decay, faded out to nothing at its reach): out = [r, g, b]. For things
@@ -178,7 +180,8 @@ export class LampPool {
     const nMax = gpu && many ? T.lights * 8 : Math.min(T.lights, 4, !gpu && this.only ? this.only : 4);
     // the nearest first, by how far each is (a spot's rank shrinks that: a flash goes before the lamps round it)
     const near = this.near ||= []; near.length = 0;
-    for (const s of spots) { const d2 = (s.x - x) ** 2 + (s.z - z) ** 2 + (s.y - y) ** 2; near.push([s, d2 * (s.rank ?? 1), d2]); }
+    // (a spot turned right down, i 0, takes no light: a car's headlights fading out as it goes past the cars drawn whole)
+    for (const s of spots) { if (s.i === 0) continue; const d2 = (s.x - x) ** 2 + (s.z - z) ** 2 + (s.y - y) ** 2; near.push([s, d2 * (s.rank ?? 1), d2]); }
     near.sort((a, b) => a[1] - b[1]);
     const n = Math.min(near.length, nMax);
     // WebGL: the pools made once at their tier's size, every light kept switched on (a light coming or going, or one
@@ -203,6 +206,20 @@ export class LampPool {
       else if ((shadow || s.dir) && !shaped && conesLeft > 0) { kind = 'cone'; conesLeft--; } else shadow = false;
       want.push({ s, kind, shadow, d2: near[i][2], key: near[i][1], i, l: null });
     }
+    // each spot's light eases in and out over a moment (FADE_S) as it joins or leaves the nearest, as well as by distance
+    // (below): a spot that comes in closer than the last lit one (a car's headlights as it comes near) moves the line,
+    // and the lamp it pushes out would otherwise go dark at once. On WebGPU one that drops out keeps its light while it
+    // fades (a few lights more for a moment). A pool not placed for a while (the first frame, a game that places its
+    // lamps once) puts them all straight in; flashes (rank under 1) come and go at once
+    // (by the game's own clock t where it runs, so a slow frame fades as far as the game moved; else by the real one)
+    const F = this.fades ||= new WeakMap(), now = performance.now(), tg = t - (this.placedT ?? -1e9), real = (now - (this.placedAt ?? -1e9)) / 1000;
+    const gap = tg > 0 && tg < 1 ? tg : real; this.placedAt = now; this.placedT = t;
+    const snap = gap > .5, step = Math.min(.1, Math.max(0, gap)) / FADE_S;
+    if (gpu && !snap) for (let i = n, extra = 0; i < near.length && extra < 8; i++) {
+      const s = near[i][0]; if (!(F.get(s) > 0) || !this.used.has(s)) continue;
+      const shaped = !!(s.tube || s.rect);
+      want.push({ s, kind: s.dir && !shaped ? 'cone' : 'point', shadow: !!s.shadow && shadowOn && !shaped, d2: near[i][2], key: near[i][1], i, l: null }); extra++;
+    }
     // lights kept from last frame (a spot keeps its light while it stays among the nearest), then free ones, then new ones (WebGPU)
     [this.used, this.was] = [this.was, this.used]; const was = this.was, cur = this.used; cur.clear();
     const taken = this.taken ||= new Set(); taken.clear();
@@ -216,15 +233,22 @@ export class LampPool {
       if (!l) continue;
       w.l = l; taken.add(l);
     }
-    const fadeN = near[n] ? near[n][1] : null;
+    // where the lights run out: the first spot left unlit, in metres (its rank counted in, as the order is)
+    const fadeN = near[n] ? Math.sqrt(near[n][1]) : null;
     for (const w of want) {
-      const { s, l, shadow, d2, key, i } = w; if (!l) continue;
+      const { s, l, shadow, d2, key } = w; if (!l) continue;
       cur.set(s, l);
       const L = l.userData.gsLamp, reach = s.reach ?? this.dist;
       l.color.set(s.col || '#ffd8a0'); l.decay = s.decay ?? 1.6;
       const fl = s.flick ? (Math.sin(t * 31 + s.x * 7) > .6 || Math.sin(t * 3.1 + s.z) > .95 ? .25 : 1) : 1;
-      // fade the furthest light in/out so swapping which lamps are lit never pops
-      const fade = i === n - 1 && fadeN != null ? Math.max(0, Math.min(1, (fadeN - key) * .6)) : 1;
+      // the lights nearly as far as the first one left unlit fade out towards it, so a lamp that moves past it (a car's
+      // headlights as it drives along, the lamps as the player goes down a street) dims to nothing before its light goes
+      // to another, which comes in from nothing: swapping which lamps are lit never pops. (This was once only the very
+      // furthest light, by squared distance: it faded over a few centimetres at 30 m, so every swap popped, and a car's
+      // two headlights side by side swapped with each other: Parcel Dash's car lights flickered on a Galaxy Z Fold.)
+      const flash = (s.rank ?? 1) < 1, near1 = w.i >= n ? 0 : fadeN != null && !flash ? Math.max(0, Math.min(1, (fadeN - Math.sqrt(key)) / FADE_M)) : 1, had = F.get(s);
+      const fade = snap || flash ? near1 : had == null ? Math.min(near1, step) : had + Math.max(-step, Math.min(step, near1 - had));
+      F.set(s, fade);
       l.intensity = (s.i ?? 6) * fl * fade; s.lit = fl;
       L.reach = reach; L.shape = gpu ? shapeIndex(s.shape) : -1; L.kind = 0; L.ha = L.hb = 0; L.pic = null; L.want = gpu && shadow; L.near = d2; L.zNear = s.near || 0;
       if (s.tube) {
@@ -257,6 +281,8 @@ export class LampPool {
       }
       l.visible = true;
     }
+    // (a spot that lost its light starts from dark when it gets one again)
+    for (const s of was.keys()) if (!cur.has(s)) F.set(s, 0);
     // lights with no spot this frame go dark; on WebGL they stay switched on (see above), on WebGPU they are hidden
     // (clustered lights coming and going build nothing)
     for (const l of v.lamps) {

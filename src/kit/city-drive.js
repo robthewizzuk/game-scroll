@@ -152,7 +152,12 @@ export function laneMove(T, c, target, dt) {
   c.lat += dl; if (Math.abs(c.latTo - c.lat) < .02) c.hurry = 0;
   c.s += c.v * dt;
   const e = c.edge, lv = dt > 0 ? dl / dt * T.LANE : 0, k = T.sideK;
-  c.heading = c.v > .2 || Math.abs(lv) > .05 ? Math.atan2(e.dx * c.v - e.dz * lv * k, e.dz * c.v + e.dx * lv * k) : Math.atan2(e.dx, e.dz);
+  // its nose along its lane, turned towards where it is moving across the road, but no more than its speed allows: a car
+  // that has stopped while it is still slid across (back into its lane after a knock) faces along the lane. (It once
+  // faced straight across the road when stopped, and turned round end to end each time the slide changed way: a car
+  // stood beside Parcel Dash's van flipped to and fro, its headlights with it.)
+  const side = clamp(lv * k, -c.v * .4, c.v * .4), vf = Math.max(c.v, .05);
+  c.heading = Math.atan2(e.dx * vf - e.dz * side, e.dz * vf + e.dx * side);
 }
 
 /**
