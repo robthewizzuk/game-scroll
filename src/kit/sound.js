@@ -476,11 +476,13 @@ const TUNE = Symbol.for('gs.sound.tune');
  * voices: { lead: 'bell', drums: 'kit' } swaps single parts (the names are in gs.sound.VOICES and KITS).
  * out: an audio node to play into instead of the music channel (it should end up there: gs.sound.Radio does this).
  */
+const STEPS = new Map();   // a part's text -> its steps
 export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'chip', voices = null, out = null, ...parts } = {}) {
   const tracks = [];
   for (const [name, line] of Object.entries(parts)) {
     if (typeof line !== 'string') continue;
-    tracks.push({ name, voice: name.replace(/\d+$/, ''), steps: line.trim().split(/\s+/), level: layers && layers[name] != null ? 0 : 1, to: layers && layers[name] != null ? 0 : 1, inst: voiceFor(set, name, voices) });
+    let steps = STEPS.get(line); if (!steps) { if (STEPS.size > 200) STEPS.clear(); STEPS.set(line, steps = line.trim().split(/\s+/)); }   // (read only: a radio plays the same songs again)
+    tracks.push({ name, voice: name.replace(/\d+$/, ''), steps, level: layers && layers[name] != null ? 0 : 1, to: layers && layers[name] != null ? 0 : 1, inst: voiceFor(set, name, voices) });
   }
   const wantsTone = tracks.some(tr => tr.inst);
   let intensity = 0;
@@ -516,7 +518,9 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
     }
   }
   function schedule(onClock = false) { const was = playBus; playBus = 'music'; try { scheduleNow(onClock); } finally { playBus = was; } }
-  const tick = () => schedule(true);
+  // (the clock writes the notes, the first ones too: start() is called from a game's update, and writing a tune's first
+  // half second there put a few milliseconds into that frame)
+  const tick = () => { if (timer) schedule(true); };
   function scheduleNow(onClock) {
     const a = audio(); if (!a) return;
     const now = a.ctx.currentTime;
@@ -548,7 +552,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   const m = {
     get playing() { return !!timer; },
     /** Starts from the top, or from step `at` (a car radio tuning in half way through a song). */
-    start(at = 0) { if (timer) return m; if (ahead) ahead = false; else close(); step = Math.max(0, at | 0); next = 0; schedule(); timer = setInterval(tick, TICK); playing.add(m); held.delete(m); return m; },
+    start(at = 0) { if (timer) return m; if (ahead) ahead = false; else close(); step = Math.max(0, at | 0); next = 0; timer = setInterval(tick, TICK); setTimeout(tick, 0); playing.add(m); held.delete(m); return m; },
     /** How many steps the tune takes before it repeats (its longest part). */
     get length() { return Math.max(1, ...tracks.map(tr => tr.steps.length)); },
     /** Seconds a step lasts now (an eighth note at the tempo and speed()). */
@@ -561,7 +565,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
       const now = audio()?.ctx.currentTime ?? 0, e = log.find(x => x[1] > now); if (e) step = e[0];
       clearInterval(timer); timer = 0; close(); playing.delete(m); held.add(m); return m;
     },
-    resume() { if (timer || !held.has(m)) return m; held.delete(m); next = 0; schedule(); timer = setInterval(tick, TICK); playing.add(m); return m; },
+    resume() { if (timer || !held.has(m)) return m; held.delete(m); next = 0; timer = setInterval(tick, TICK); setTimeout(tick, 0); playing.add(m); return m; },
     /** Plays faster (x > 1) or slower, for rising tension. */
     speed(x) { rate = Math.max(.25, Math.min(4, x)); return m; },
     /** Fades one part in or out: m.layer('drums', 1) or m.layer('lead2', 0, 2) (fade seconds). */

@@ -701,8 +701,7 @@ export class Traffic {
     const car = { id: this.nextId = (this.nextId || 0) + 1, kind, style, taxi, colour: o.colour ?? (taxi ? '#f2c21b' : R.pick(CAR_COLOURS)), edge: e, lane: k, lat: k, latTo: k, s, v: e.speed * .6, vmax: e.speed * (.8 + R() * .3),
       len: kit ? kit.length : kind === 'van' ? 4.6 : CAR_LEN, wid: kit ? kit.width : kind === 'van' ? 1.9 : 1.84, x: 0, y: 0, z: 0, heading: 0, braking: false, turn: null, plan: null, blocked: 0, stun: 0, honked: 0, odo: 0,
       mode: 'lane', why: null, stuck: 0, think: R(), laneT: 0, yieldT: 0, dodge: null, hurry: 0, damage: 0, empty: false, q: null, up: 1, vx: 0, vz: 0, spin: 0, still: 0, looseT: 0, body: null, chase: null, metT: 0, scrape: 0,
-      police: !!o.police, siren: false, keep: !!o.keep, by: null, hz: null };
-    if (keep) car.slot = keep.slot;
+      police: !!o.police, siren: false, keep: !!o.keep, by: null, hz: null, slot: keep ? keep.slot : null, paintCol: null, paintKey: null };   // (every field it gets later made here, so all cars have one shape)
     this.place(car); return car;
   }
   place(c) { if (c.turn || c.mode !== 'lane') return; const p = this.lanePos(c.edge, c.lat, c.s, this._at ||= {}); c.x = p.x; c.z = p.z; }
@@ -1026,7 +1025,7 @@ export class People {
       const d = Math.hypot(p.x - focus.x, p.z - focus.z); if (d > this.radius || d < min || (!min && R() > Math.exp(-d / this.spread))) continue;
       return { id: this.nextId = (this.nextId || 0) + 1, block: b, s, dir: R() < .5 ? 1 : -1, side: (R() - .5) * 1.4, speed: 1.1 + R() * .5, x: p.x, z: p.z, heading: 0, kind: keep?.kind ?? (R() * FOLK.length | 0),
         shirt: R.pick(SHIRTS), pants: R.pick(PANTS), skin: R.pick(SKIN), h: .92 + R() * .16, phase: R() * 6, wait: 0, cross: null, panic: 0, down: 0, fall: 0, fx: 0, fz: 0,
-        act: null, free: null, full: keep?.full ?? null, seat: null, calling: null, think: 2 + R() * 8, look: 0 };
+        act: null, free: null, full: keep?.full ?? null, seat: null, calling: null, think: 2 + R() * 8, look: 0, waitFor: null };
     }
     return null;
   }
