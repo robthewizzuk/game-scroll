@@ -25,7 +25,12 @@ import { waitsOn } from './getready.js';
 import { built } from './prof.js';
 
 const DB = 'gs-pipes', STORE = 'games', V = 1;
-export const PIPES = { MAX: 96, KEEP: 40, MISS: 3, playedMs: 20000, on: true };
+// free(): the app says whether making them may go on now. The card on screen's pipelines are made a few at a
+// time (BATCH, then the next frame), and only while the feed is still or the card is getting ready for its round:
+// all of them at once, as soon as the card came into view, was the graphics chip busy with them in the middle
+// of the swipe (each new shader and pipeline is work the chip's driver does where the feed's own frames are
+// drawn), and Next Gen cards made the feed stutter as they came past.
+export const PIPES = { MAX: 96, KEEP: 40, MISS: 3, playedMs: 20000, on: true, BATCH: 2, free: () => true };
 
 let dev = null, rev = '';
 const meta = new WeakMap();   // shader module -> { code, h }; bind group layout and pipeline layout -> { d: plain data }
@@ -127,10 +132,10 @@ function startPrime(card, H) {
   if (!dev || H.dev === dev) return;
   const d = H.dev = dev;
   H.left++;   // (reading the notes)
-  load(H.id).then(R => { if (R && cards.get(card) === H && H.dev === d) build(H, R, d); }).catch(() => {}).finally(() => { H.left--; });
+  load(H.id).then(R => { if (R && cards.get(card) === H && H.dev === d) build(card, H, R, d); }).catch(() => {}).finally(() => { H.left--; });
 }
 // plain data back into WebGPU objects, made with the device's own methods (not noted again), then the pipelines
-function build(H, R, d) {
+function build(card, H, R, d) {
   const o = d.gsPipes, mods = new Map(), bgls = new Map();
   const live = v => {
     if (v == null || typeof v !== 'object') return v;
@@ -140,19 +145,33 @@ function build(H, R, d) {
     if (v.$pl) return o.createPipelineLayout({ bindGroupLayouts: v.$pl.map(live) });
     const x = {}; for (const k in v) x[k] = live(v[k]); return x;
   };
-  for (const e of R.pipes) {
-    if (H.made.has(e.key) || e.bad) continue;
-    H.keys.add(e.key);
+  const todo = R.pipes.filter(e => !H.made.has(e.key) && !e.bad);
+  for (const e of todo) H.keys.add(e.key);
+  // (each one still to make counts as on its way, so a loading screen that comes meanwhile waits for them all)
+  H.left += todo.length;
+  const one = e => {
     let p = null;
     d.pushErrorScope('validation');
     try { const desc = live(e.d); p = e.kind === 'compute' ? o.createComputePipelineAsync(desc) : o.createRenderPipelineAsync(desc); } catch (err) { e.bad = true; }
     // (a note this device refuses is dropped; one that fails because the device went is not: the next device makes it)
     d.popErrorScope().then(err => { if (err) e.bad = true; }, () => {});
-    if (!p) { stats.failed++; continue; }
-    H.left++; stats.primed++;
+    if (!p) { stats.failed++; H.left--; return; }
+    stats.primed++;
     p.then(x => { stats.ready++; if (H.dev === d) H.made.set(e.key, x); }, err => { if (err?.reason === 'validation') e.bad = true; stats.failed++; }).finally(() => { H.left--; });
-  }
+  };
+  let i = 0;
+  const pump = () => {
+    // the card left the screen, or the device went (watchDevice starts its count again): the rest are not made here
+    if (cards.get(card) !== H || H.dev !== d) { if (H.dev === d) H.left -= todo.length - i; i = todo.length; return; }
+    let free = true; try { free = PIPES.free(); } catch (_) { /* made anyway */ }
+    if (!free) { setTimeout(pump, 100); return; }
+    for (let n = 0; n < PIPES.BATCH && i < todo.length; n++) one(todo[i++]);
+    if (i < todo.length) later(pump);
+  };
+  pump();
 }
+// the next frame (or soon, in a hidden page)
+const later = fn => { let done = false; const go = () => { if (!done) { done = true; fn(); } }; if (typeof requestAnimationFrame === 'function') requestAnimationFrame(go); setTimeout(go, 50); };
 
 /** The app: the card left the screen (or the feed). Its pipelines are let go, and its notes kept up to date. */
 export function releasePipes(card) {
