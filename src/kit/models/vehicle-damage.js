@@ -213,5 +213,6 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
     if (busy) place();
     return root;
   };
-  return state;
+  // (what vehicle-wreck.js builds on: its meshes, its own materials, the shell's space, the falling bits)
+  return { state, meshes, own, local, nearest, bits: (at, n, count, colour, speed) => bits(at, n, count, colour, speed) };
 }

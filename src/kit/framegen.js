@@ -177,8 +177,7 @@ export { warpUV };
  * sum in half precision where the chip has it (half.js; the places it reads stay full: they are on the
  * picture's pixels), as SGSR 2 and frame generation want.
  */
-const SHARP = halfFn('gsSharpAt', `(T: texture_2d<f32>, S: sampler, uv: vec2<f32>) -> vec4<f32> {
-  let ts = vec2<f32>(textureDimensions(T, 0)); let P = uv * ts; let c = floor(P - 0.5) + 0.5;
+const SHARP_BODY = `  let ts = vec2<f32>(textureDimensions(T, 0)); let P = uv * ts; let c = floor(P - 0.5) + 0.5;
   let f = hf2(P - c); let f2 = f * f; let f3 = f2 * f;
   let w0 = f3 * hf(-0.5) + f2 - f * hf(0.5); let w1 = f3 * hf(1.5) - f2 * hf(2.5) + hf(1.0);
   let w2 = f3 * hf(-1.5) + f2 * hf(2.0) + f * hf(0.5); let w3 = f3 * hf(0.5) - f2 * hf(0.5);
@@ -187,8 +186,18 @@ const SHARP = halfFn('gsSharpAt', `(T: texture_2d<f32>, S: sampler, uv: vec2<f32
   let sum = hf4(textureSampleLevel(T, S, vec2<f32>(t12.x, t0.y), 0.0)) * a + hf4(textureSampleLevel(T, S, vec2<f32>(t0.x, t12.y), 0.0)) * b
     + hf4(textureSampleLevel(T, S, t12, 0.0)) * m + hf4(textureSampleLevel(T, S, vec2<f32>(t3.x, t12.y), 0.0)) * d + hf4(textureSampleLevel(T, S, vec2<f32>(t12.x, t3.y), 0.0)) * e;
   return max(vec4<f32>(sum / (a + b + m + d + e)), vec4<f32>(0.0));
-}`);
+`;
+const SHARP = halfFn('gsSharpAt', `(T: texture_2d<f32>, S: sampler, uv: vec2<f32>) -> vec4<f32> {
+${SHARP_BODY}}`);
+// The same, with a quick way for a pixel that hasn't moved (still: 1): uv is then on a pixel's centre, where the curve gives
+// that pixel back exactly, so it is read once instead of five times. A real branch: where a whole patch of the screen
+// is still (a still camera), the chip skips the five reads there.
+const SHARP_STILL = halfFn('gsSharpStill', `(T: texture_2d<f32>, S: sampler, uv: vec2<f32>, still: f32) -> vec4<f32> {
+  if (still > 0.5) { let d = textureDimensions(T, 0); return max(textureLoad(T, min(vec2<u32>(uv * vec2<f32>(d)), d - vec2<u32>(1u)), 0), vec4<f32>(0.0)); }
+${SHARP_BODY}}`);
 export const sharpAt = (T, uv, half = false) => SHARP({ T, S: T, uv }, half);
+/** sharpAt, read once where still is 1 (a pixel that hasn't moved: uv on its centre). */
+export const sharpStill = (T, uv, still, half = false) => SHARP_STILL({ T, S: T, uv, still }, half);
 
 // The made frame's pixel q with its gap filled: a gap (alpha 0) takes the finest level of the gap pyramid that has
 // surfaces round it (raw, pyr: texture nodes; in a compute pass or a pass that draws)

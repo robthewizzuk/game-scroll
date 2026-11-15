@@ -252,8 +252,13 @@ const yaw = a => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });
  */
 class Vehicle3 {
   constructor(world, mesh, { w = 1.6, h = .5, l = 3, density = 1, wheels = [], radius = .38, rest = .35, travel = .3,
-    stiffness = 30, damping = 4, grip = 2.5, power = 12, brakes = .3, steer = .5, at, tag = 'car', dents = true, bike = false, fall = 8 } = {}) {
+    stiffness = 30, damping = 4, grip = 2.5, power = 12, brakes = .3, steer = .5, at, tag = 'car', dents = true, bike = false, fall = 8,
+    top = Infinity, steerFade = 0, slide = .35, coast = .015 } = {}) {
     this.world = world; this.mesh = mesh || null; this.wheelMeshes = wheels; this.power = power; this.brakes = brakes; this.maxSteer = steer;
+    // its weight on the road: top (metres a second its engine pulls it to: the push fades towards it), steerFade (the speed at which
+    // its wheels turn half as far, so it takes a fast bend wide), slide (the back wheels' sideways grip with the handbrake on, 0..1),
+    // coast (how fast it slows with nothing pressed, as engine braking and rolling do; metres per second² per tonne-ish)
+    this.top = top; this.steerFade = steerFade; this.slideGrip = slide; this.coast = coast; this.grip = grip; this.handbrake = false; this.got = [];
     // a motorbike (bike: true): its four rays close together under it, kept upright by its rider until it hits something at `fall`
     // metres a second or more or is tipped too far (then fallen is true, and it goes over); its mesh leans into the turn by itself
     this.bike = !!bike; this.fallAt = fall; this.fallen = false; this.h = 1 / 60;
@@ -282,10 +287,10 @@ class Vehicle3 {
       const at = c?.at; if (at) mesh.hit(at, { power: Math.min(1.5, (speed - 2) / 12) });
     });
   }
-  /** throttle -1..1, steer -1..1 (left is -1), brake true/false. Call every update. */
-  drive(throttle = 0, steer = 0, brake = false) { this.throttle = throttle; this.steerTo = steer; this.braking = brake; return this; }
+  /** throttle -1..1, steer -1..1 (left is -1), brake true/false, handbrake true/false (locks the back wheels: it slides round). Call every update. */
+  drive(throttle = 0, steer = 0, brake = false, handbrake = false) { this.throttle = throttle; this.steerTo = steer; this.braking = brake; this.handbrake = !!handbrake; return this; }
   /** Metres per second forward (negative going backwards). */
-  get speed() { return -this.ctl.currentVehicleSpeed(); }
+  get speed() { return this.chassis.body.isSleeping() ? 0 : -this.ctl.currentVehicleSpeed(); }   // (asleep, the controller's number is stale)
   /** True while any wheel touches the ground. */
   get grounded() { for (let i = 0; i < this.ctl.numWheels(); i++) if (this.ctl.wheelIsInContact(i)) return true; return false; }
   /** True when it's on its roof or side (offer a "flip back" button). */
@@ -294,13 +299,32 @@ class Vehicle3 {
   rightUp(lift = 1) { const p = this.chassis.pos, q = this.chassis.body.rotation(), y = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z)); this.chassis.place(p.x, p.y + lift, p.z, { x: 0, y: Math.sin(y / 2), z: 0, w: Math.cos(y / 2) }); this.chassis.setVel(0, 0, 0).setSpin(0, 0, 0); this.fallen = false; return this; }
   step(h) {
     this.h = h;
-    this.steerNow += ((this.steerTo || 0) * this.maxSteer - this.steerNow) * Math.min(1, h * 10);
+    if ((this.throttle || this.steerTo) && this.chassis.body.isSleeping()) this.chassis.body.wakeUp();   // (a parked car that fell asleep pulls away when told)
+    const v = this.speed, mass = this.chassis.body.mass(), M = this.mesh;
+    // the wheels turn less at speed (steerFade), and a heavier one turns into the bend a little slower
+    const fade = this.steerFade > 0 ? 1 / (1 + (v / this.steerFade) ** 2) : 1;
+    this.steerNow += ((this.steerTo || 0) * this.maxSteer * fade - this.steerNow) * Math.min(1, h * 10);
     if (this.bike && !this.fallen) this.upright(h);
-    for (let i = 0; i < this.ctl.numWheels(); i++) {
+    // what a gs.models vehicle says of itself after a crash (vehicle-wreck.js): its engine's pull left, its tyres
+    const engine = M?.engine ?? 1, tyres = M?.tyres, n = this.ctl.numWheels();
+    // the push fades as it nears its top speed (forwards or back)
+    const goingWith = this.throttle * v < 0 ? 0 : Math.abs(v), topK = this.top < Infinity ? Math.max(0, 1 - (goingWith / this.top) ** 2) : 1;
+    for (let i = 0; i < n; i++) {
       if (i < 2) this.ctl.setWheelSteering(i, -this.steerNow);
-      const driven = !this.bike || i >= 2, push = this.fallen ? 0 : -this.throttle * this.power * this.chassis.body.mass() / (this.bike ? 2 : 4);
+      const driven = !this.bike || i >= 2, push = this.fallen ? 0 : -this.throttle * this.power * engine * topK * mass / (this.bike ? 2 : 4);
       this.ctl.setWheelEngineForce(i, driven ? push : 0);   // power: metres per second² of push (a car's on all four wheels, a bike's on its back one)
-      this.ctl.setWheelBrake(i, this.braking ? this.brakes * this.chassis.body.mass() : 0);
+      const back = i >= 2, locked = this.handbrake && back;
+      // with nothing pulling it slows as engine braking and rolling do, and stands still once nearly stopped (no creeping on the flat)
+      const idle = !this.throttle || engine <= 0 || this.fallen;
+      this.ctl.setWheelBrake(i, this.braking ? this.brakes * mass : locked ? this.brakes * 1.5 * mass : idle ? (Math.abs(v) < 1 ? this.brakes * .5 : this.coast) * mass : 0);
+      // a flat tyre (its wheel's, a bike's front or back) sits lower and grips less; the handbrake lets the back slide
+      const t = tyres ? tyres[this.bike ? (back ? 1 : 0) : i] : null, flat = !!t?.flat, key = (flat ? 1 : 0) + (locked ? 2 : 0);
+      if (this.got[i] !== key) {
+        this.got[i] = key;
+        this.ctl.setWheelRadius(i, this.radius * (flat ? .84 : 1));
+        this.ctl.setWheelFrictionSlip(i, this.grip * (flat ? .45 : 1));
+        this.ctl.setWheelSideFrictionStiffness(i, locked ? this.slideGrip : flat ? .6 : 1);
+      }
     }
     // sensors are left out by flag: asking each collider from inside this call (c.isSensor()) goes back into the engine while it
     // holds the colliders, which left sensors in and the world unable to be freed. The controller skips its own chassis by itself.
@@ -658,13 +682,14 @@ export class World3D {
    * where its middle is, along move (a vector: how far it goes). Returns { thing, point (where they touch), normal (out
    * of what it met), distance, share (0..1 of the move), at (where the shape's middle is then) } or null. still: only what
    * never moves (the level: where a ball will bounce, whatever is driving about); not: a body, mover or rider to pass
-   * through (its own); turn: the shape's turn (a quaternion). For "where will this land" and "is there room to go there".
+   * through (its own); turn: the shape's turn (a quaternion); inside: false leaves out what it starts touching and moves away from (a body
+   * against a wall asking for room the other way). For "where will this land" and "is there room to go there".
    */
-  sweep(shape, from, move, { still = false, not = null, turn = null } = {}) {
+  sweep(shape, from, move, { still = false, not = null, turn = null, inside = true } = {}) {
     if (!this.steps) this.queries();
     const o = vec(from), m = vec(move), l = Math.hypot(m.x, m.y, m.z); if (!(l > 0)) return null;
     const S = shape.ball != null ? (this._ball?.radius === shape.ball ? this._ball : this._ball = new R.Ball(shape.ball)) : shapeDesc(shape).shape;
-    const F = R.QueryFilterFlags, hit = this.world.castShape(this.inner(o), turn || NOTURN, m, S, 0, 1, true, still ? F.EXCLUDE_SENSORS | F.ONLY_FIXED : F.EXCLUDE_SENSORS, undefined, undefined, not?.body);
+    const F = R.QueryFilterFlags, hit = this.world.castShape(this.inner(o), turn || NOTURN, m, S, 0, 1, inside, still ? F.EXCLUDE_SENSORS | F.ONLY_FIXED : F.EXCLUDE_SENSORS, undefined, undefined, not?.body);
     if (!hit) return null;
     const k = hit.time_of_impact, w = hit.witness1, n = hit.normal1;
     return { thing: hit.collider.parent()?.userData || null, point: this.outer(V(w.x, w.y, w.z)), normal: V(n.x, n.y, n.z), distance: k * l, share: k, at: V(o.x + m.x * k, o.y + m.y * k, o.z + m.z * k), part: hit.collider.userData ?? null };
@@ -732,7 +757,8 @@ export class World3D {
   }
   /**
    * fn(a, b, speed, contact) when two things start touching; speed is how fast they met (m/s); contact.at is where (a
-   * point in the world, worked out when asked) and contact.normal the way from a to b. Safe to remove things in it.
+   * point in the world, worked out when asked) and contact.normal the way from a to b; contact.va and contact.vb how a and
+   * b were moving before they met (what knocks a lamp post over hands back to the car). Safe to remove things in it.
    */
   onHit(fn) { this.hits.push(fn); return this; }
   /** Where two touching colliders meet now: { at, normal } (or null): the deepest of their contact points. */
@@ -776,7 +802,7 @@ export class World3D {
       const a = c1.parent()?.userData, b = c2.parent()?.userData; if (!a || !b || a.dead || b.dead) continue;
       const va = before.get(a) || V(), vb = before.get(b) || V();
       const speed = Math.hypot(vb.x - va.x, vb.y - va.y, vb.z - va.z);
-      let got = 0, c = null; const W = this, contact = { get at() { if (!got++) c = W.contact(c1, c2); return c?.at ?? null; }, get normal() { if (!got++) c = W.contact(c1, c2); return c?.normal ?? null; }, part: c1.userData ?? c2.userData ?? null };
+      let got = 0, c = null; const W = this, contact = { get at() { if (!got++) c = W.contact(c1, c2); return c?.at ?? null; }, get normal() { if (!got++) c = W.contact(c1, c2); return c?.normal ?? null; }, part: c1.userData ?? c2.userData ?? null, va, vb };
       for (const fn of this.hits) fn(a, b, speed, contact);
     }
     for (const t of [...this.bodies]) if (!t.fixed && Math.abs(t.pos.y) > 1e4) this.remove(t);

@@ -3,8 +3,8 @@
 Game Scroll is a phone app where you scroll a feed of quick mini games, like a short-video feed
 but every card is playable. Each game is **one file in `src/games/`**. These instructions are for
 AI tools (Claude Code, Codex, Gemini CLI, Copilot, Cursor...) helping someone make or fix a game.
-The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference is
-[docs/maker-kit.md](docs/maker-kit.md).
+The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); each part of `gs` has a short page in
+[docs/kits/](docs/kits/README.md) (the long reference is [docs/maker-kit.md](docs/maker-kit.md)).
 
 ## Making a game: the steps
 
@@ -12,8 +12,16 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference 
    `title`, `tag` and `hint`) and from `docs/game-ideas.md`. A new mechanic, not a reskin.
 2. Start from a template: `npm run new <id> --style <phone|pocket|color|advance|console|nextgen|ar|board>`.
    It writes `src/games/<id>.js`, a small working game. Then change it into the new game.
-3. Write the game (rules below). Use `gs` for everything shared.
-4. Check it, and fix whatever fails:
+3. Write the game (rules below). Use `gs` for everything shared. Keep the numbers that set how it feels in the
+   template's knobs block (`gs.tweak('Feel', { ... })`): a change asked for in words ("slower", "floatier")
+   is then one number, and [docs/feel-words.md](docs/feel-words.md) says which. Before using a part of `gs`, read its
+   page in [docs/kits/](docs/kits/README.md) (`npm run kit physics`). To see how a part is used in a real game,
+   `node scripts/examples.mjs <name>` (`rope`, `Physics.rope`, `Feel.coin`, `gs.physics`): the shortest games
+   that use it with the lines, plus its declaration in `src/gamescroll.d.ts` and its place in `docs/maker-kit.md`.
+4. Check it, and fix whatever fails: `node scripts/check.mjs <id>` runs all of the checks below in about
+   30 s and prints one report: each problem with the line in your file (a crash while playing is traced
+   back to your source line), the code on it and what to do (`--quick`: only the code checks, 2 s; `--no-speed`: without
+   the speed report; `--json` for tools). The checks one by one:
    ```bash
    node scripts/game-lint.mjs <id>          # forbidden code (network, storage, eval...); also kit hints (advice, not failures)
    node scripts/game-types.mjs <id>         # gs used the way its types describe (no kit, method, option or field that doesn't exist)
@@ -24,13 +32,21 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference 
    node scripts/fold.cjs <id>                # survives folding / unfolding the screen
    ```
    For Console, Next Gen and Board games also run `node scripts/sweep.cjs <id>`. `node scripts/playtest.cjs <id>`
-   has a bot try to reach the goal (warnings only). `node scripts/budget.cjs <id>`
-   checks frame time and memory on a slowed CPU (the PR check runs it too).
+   has a bot try to reach the goal (warnings only). `npm run speed <id>` (`node scripts/budget.cjs <id>`) is the speed
+   report, last in the check: frame time on a slowed CPU against the budget (over it fails, here and in the PR check), the
+   slowest lines in your file, garbage made a second and where, memory growth, and for 3D games draw calls, triangles and
+   shaders built mid-play against low, mid and top phones, each with what to do. Making a game run well on phones is
+   the maker's job: fix its warnings too. A frame lab recording from a phone (its Report file or Copy text) gets the
+   same advice: `node scripts/budget.cjs --lab <file>`.
    Which check fits which change, and how to keep testing fast (`--jobs`, software 3D): [docs/testing.md](docs/testing.md).
-5. Only change files in `src/games/` (and optionally tick the idea in `docs/game-ideas.md`). Shared
+5. Look at it, and at each change asked for: `npm run watch <id>` plays it with taps and saves a strip of frames with
+   the score over time, rounds and frame times; `npm run watch <id> gravity*0.8` plays before and after a knob change
+   from the same start (the file is not changed). The Game Scroll MCP server (`scripts/mcp.mjs`, set up by `.mcp.json`)
+   gives AI tools all of these as tools: [docs/ai-makers.md](docs/ai-makers.md#the-game-scroll-mcp-server).
+6. Only change files in `src/games/` (and optionally tick the idea in `docs/game-ideas.md`). Shared
    code (`src/kit/`, `src/gamescroll.js`, `src/main.js`...) ships inside the app: change it only when
    asked to, in a separate PR.
-6. **Adding a dependency** (a package in `package.json` `dependencies`, only for shared code): add it
+7. **Adding a dependency** (a package in `package.json` `dependencies`, only for shared code): add it
    to `src/licences.js` in the same PR so it shows under Settings › Licence › Open-source parts.
    `npm run licences` checks this, and the PR check fails until it's listed.
 
@@ -131,125 +147,132 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
 
 ## What's on `gs` (use it rather than writing your own)
 
-- `gs.effects.Feel`: `coin`, `hit`, `boom`, `hurt`, `jump`, `land`, `shoot`, `powerup`, `combo`,
-  `score`, `win`, `lose`, `click`: particles + shake + sound + haptics in one call.
-- `gs.juice`: `Juice` (particles, shake, pop-ups, flash, hit-stop, tweens), `Timeline` + `stagger` (anime.js; lazy), `ease`, `lerp`, `approach`, `pulse`.
-- `gs.sound`: `sfx(f, d, type, vol, slide)`, `sounds.coin()` etc. (98 ready-made: `step`, `slash`, `gem`, `door`, `fanfare`, `boing`...; the full list is in `docs/maker-kit.md` and the types), `noise()`, `tone()`, `notes('C5 E5 G5')`,
-  `music({ tempo, lead, bass, drums, set: 'chip'|'synth'|'band'|'orchestra' })`, `Radio()` (a car radio: stations of original songs, made-up DJs who talk between them, adverts, `news(text)` from the game, muffled outside the car: `on`, `next`, `listen({ inside, distance })`, `now`), `instrument('kalimba')` (one voice to play; lazy), `compose({ mood, seed })` (an original tune for music()), `zzfx(...numbers)`, `zsound()`, `Tone()` (Tone.js; lazy),
-  `mixer` (`volume`, `duck`, `room('cave')`, `muffle`, `voices(n)`: 32 sounds at once, the quietest give way), `Foley({ ears, world, marks, weather })` (the sounds a world makes by itself: World3D knocks by what things are made of (a body's `sound: 'wood'`, else its mesh), `watch(person)` footsteps by what is underfoot, `watch(vehicle)` engines through the gears; `update(dt)` each frame), `say(text, { pitch, rate, lang, voice, size, fx })` (text to speech; `voice: 'woman' | 'man' | { kind, lang, take }` casts a character from the phone's voices, `say(['Bold.', .3, 'Rectangular.'])` times a line with pauses, and `size: 1.15` (a bigger person) and `fx: 'radio' | 'tannoy' | 'phone' | 'megaphone' | 'box' | 'bright' | 'warm' | 'robot' | 'tiny'` shape the voice into a character and play it through the mixer in the apps; `shaped()`).
-- `gs.device`: `haptic('light'|'medium'|'heavy'|'tick'|'success'|'warning'|'error')`, `buzz()`,
-  `steps()`, `pressure()` (height change), `light()`, `near()`, `hasSensor(kind)` (null until running; keep a touch way),
-  `hapticPattern([{ at, len, strength, sharpness, to }] | 'heartbeat'|'explosion'|'charge'...)`,
-  `tilt()` + `want('motion')`, `calibrateTilt()`, `onShake(cb)`, `heading()`, `faceDown()`,
-  `startMic()` (`level()`, `pitch()`, `blow()`, `clapped()`, `whistle()`)/`stopMic()`, `startCamera()`/`stopCamera()`.
-- `gs.controls`: `Stick`, `Button`, `Gestures` (tap, doubleTap, hold, swipe), `TwoFingers` (pinch, twist, pan), `twoThumb(W, H)`, `Keys`, `route()`.
-- `gs.pad`: `pad()` (analog sticks, triggers, `pressed('a')`), `pads()`, `rumble()`. Pads also arrive as keys.
-- `gs.moves.Moves`: `on('swing'|'punch'|'throw'|'flip'|'twist'|'knock'|'shake', fn)`, `update()` each frame.
-- `gs.pixel`: `text(c, str, x, y, { size, font: 'small'|'big'|'tiny'|'silkscreen'|'jersey'|'terminal', align, color, outline })`,
-  `sprite(art, palette)`, `anim(frames, palette, fps)`, `tiles()`.
-- `gs.fonts`: `c.font = font('Bangers', 34)` (13 display fonts that look the same on every phone: `Bangers`, `Fredoka`, `Titan One`, `Bungee`,
-  `Orbitron`, `Creepster`, `Pirata One`, `Rye`, `Monoton`, `Black Ops One`, `Cinzel`, `Patrick Hand`, `Courier Prime`; plus `Rubik`), loaded on first use;
-  `use('Bangers')` in `make()` or `reset()` to have one in before the first frame. Not the phone's own fonts (`Arial`, `Courier New`, `Impact`...).
-- `gs.physics.Physics` (Rapier 2D; lazy): `circle`, `box`, `poly`, `line`, `walls`, `hinge`, `spring`,
-  `rope`, `ragdoll(x, y, { size })`, `weld`, `slider`, `wheel`, `grab`, `ray`, `at`, `blast`, `onHit`, `step(dt)`, `path(c, t)`,
-  `move(box, dx, dy)` (a hero walked through the world: steps, slopes, shoves crates), `tiles(map)` (a TileMap level made solid).
-- `gs.physics3d.World3D` (Rapier 3D; lazy): `ball`, `box`, `capsule`, `hull`, `ground(mesh)`,
-  `floor`, `mover()` (walking character), `rider()` (something your code moves, solid: kerbs, walls, shoves), `shape(mesh, { box | ball | capsule | hull })`, `shapes(list)` (thousands of still shapes in one body), `floorAt`, `sweep(shape, from, move)` (what a moved ball, box or capsule first touches), `ragdoll(character)` (a jointed ragdoll on a `gs.poses` rig: joints that only turn as real ones do, `drive(pose, strength)` muscles), `ray`, joints, `step(dt)` syncs meshes.
-  One world through the kits: `Platformer`/`TopDown`, `Car`/`Kart`, `Plane`/`Boat`/`Hover`, `Shots`/`arc`/`Explosives`, `Grapple`, `slice`, `props.solid`, `city.solid`, `voxels.physics`, `Cloth`, `Soft`/`Liquid` and `Streams.carry` all take it (`docs/maker-kit.md`, "One physics world through the kits").
-- **Kits find each other.** What a game makes in `make()` and `reset()` finds the rest of what it made, with nothing passed: one `Wind` blows the grass, trees, rain, `Cloth`, smoke, particles and the `Sea`'s swell; `Weather` rains on every `Water`; a `World3D` is found by `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley`, `Ears`, `CameraRig`, `Kart`, `Plane`, `Boat`, `Hover`, `Grapple`, `shatter`/`slice` and `Regions` (a 2D `Physics` by `Car`, `Soft`, `Liquid` and the movers; a 3D `Soft` finds the `World3D`); a `TileMap`, `NavGrid`, `Noises` and `CoverMap` are found by movers, `Senses`, hunting agents and `Squad`; a 3D blast is felt by structures, smoke, liquid, water made with `ripples`, people who react and soft ground; `Foley` finds the ears, world, marks, weather and land. What you pass wins, `false` is none (`wind: false`), `link: false` keeps a kit to itself. Links are things the world does; who is hurt and what scores stay the game's (`docs/maker-kit.md`, "Kits that find each other").
-- `gs.ai`: `Crowd` (`add(x, y).chase(t) / flee / wander / follow(route) / flock / hunt(t, nav)`),
-  `NavGrid` (`path`, `sees`), `Brain` (state machine), `Tree` (behaviour trees: mistreevous text, actions by name), `Choose`
-  (utility AI: the highest-scoring want), `YUKA`, `Swarm({ count, w, h, speed })` (thousands of flockers on the
-  graphics chip where the phone can: `pull(x, y, { strength, radius })`, `obstacle`, `near`, `kill`, `x`/`y` arrays; `Swarm.max()`).
-- `gs.things.Things` (game objects): `add(obj, tag)`, `hit(obj, tag)`, `hits(tagA, tagB, fn)`, `near`, `nearest`, `kill`, `reuse`, `each`, `all`.
-  `gs.things.Node`: parent and child places (`add`, `update()`, `wx`/`wy`/`wangle`, `toWorld`, `hit`, `pick`, `attach`, `draw`).
-- `gs.rounds`: `Ready` (wait for the first tap: `if (!ready.update(dt)) return;`, `if (ready.go()) return;` in `down`), `Scenes({ name: { enter, update, draw } }, start)` with `go(name, { fade })`, `cover`, `after()`; `Levels(list)`.
-- `gs.pacing`: `Spawner({ every, fastest, over })`, `Waves([...], { breather })`, `Director` (difficulty that eases off), `ramp`.
-- `gs.aim.AimAssist`: sticky aim, pull onto targets, auto fire (2D angle or 3D direction).
-- `gs.senses`: `Senses` (sight cones, hearing, memory; moods calm/suspicious/alert/searching), `Noises`.
-- `gs.camera.CameraRig` (3D): `chase`, `shoulder`, `first`, `top`, `side`, `orbit`, `rail`, `fixed`; walls, blends, `shake`, `kick`.
-- `gs.nav3d.NavMesh3D` (lazy): 3D paths made from your level meshes, `crowd()` agents.
-- `gs.characters`: `lookAt`, `reach` (two-bone IK), `Steps` (feet that plant), `Wobble`, `Face` (blend shapes, blinking, lip sync with `say(text)`), `shapes(geo, {...})`, `Reactions(character, { world, mover })` (people who react physically: `hit(push, at)`, `blast`, `trip`, `fall`, `brace`; they flinch, take steps to keep their balance, fall as a ragdoll and get up; steer only while `!react.busy`); ragdolls are `World3D.ragdoll()`.
-- `gs.camera2d.Camera2D`: follow with a dead zone, look-ahead, zoom, level bounds, `layer()` parallax, `toWorld()`.
-- `gs.tiles.TileMap.fromText(level)`: `#` walls, `-` one-way, `/` `\` slopes, letters as marks (`find('P')`);
-  `move(box, dx, dy)`, `ray`, `sees`, `walkable()`, `draw(c, fn, cam)`, `edges(tx, ty)` (auto-tiling: `mask`, `blob`).
-- `gs.paths`: `Path(points, { loop, kind })` (2D/3D; `at`, `offset`, `nearest`, `spaced`, `trace`), `Follower(path, { speed, end })`.
-- `gs.bones.Rig`: 2D bone characters (`bone`, `pose`, `blend`, `clip`/`play`, `reach` IK, `look`, `wobble`, `kick`, `draw`).
-- `gs.movers`: `Platformer` (coyote time, jump buffer, variable jump, wall jump, air jumps), `TopDown`.
-- `gs.anim.Animator`: sprite animation states with frame events (`on('step')`), one-shots with `then`.
-- `gs.story` (lazy): `Story(inkScript)` branching dialogue (`next()`, `choose(i)`, `vars`), `Typewriter`.
-- `gs.replay`: `Ghost` (record a run, `pack()` for `api.save`, race it), `Recorder` / `Replayer` (whole rounds).
-- `gs.look2d`: `Lights` (darkness, coloured lights, shadows off walls; `glow: true` works it out on the graphics chip: soft shadows, colours that mix, and whatever `emit(c)` paints in `draw(c, lights, { walls, emit, block })` glows and lights the room in its own shape), `Screen` (lazy: crt, bloom, grade,
-  glitch, film, shockwave...), `Batch` (lazy: thousands of WebGL sprites).
-- `gs.brains` (Tiny Brains): `Brain(api, { inputs, actions, teacher, limits, rules })` learns as you play with guard rails (`act`, `feel`, `result`; `correct(see, action)`: "here the right move was this", a couple of examples and it holds to it in spots like them; `avoid()`: "not that here"; `recalled`; a memory of which move made things exciting where, from each `feel()`, that switches itself on in games that call `feel()` after most decisions (`memory: true` from the start, `false` never); `remembered`), `Wave` (each enemy an experiment, `unsure(see)`), `Imagine` (tries moves ahead; `fixed: true` for replays), `Predict` (learns the player's habits: `see`, `guess`, `sure`), `Player` (one private profile across games: `skill`, `note`), `Dial` (the win-rate rail for any opponent: pass it as a kit's `skill`, `result(playerWon)` at the end), `Coach` (corrections for anything that decides by rules: `pick(see, usual)`, `correct('pass')`, `avoid()`; `Team`, `Squad`, `Choose` and `Tree` take `coach: true` or one of these, and `cover.avoid(spot)` is "not that cover"), `Examples` (teach by example: `add('rock', hand.shape)`, `guess(hand.shape)` gives `{ name, sure }` or null; `of: 'hand' | 'pose' | 'move' | 'sound'` for a hand's or body's `shape`, `new Moves({ learn })` + `teach(name)`, a `Sounds` `shape`), `Nemesis` (a rival who remembers you), `Shadow` (copies how you play; `pack()` for `start`), `tune()`; brain options `styles`, `tells`, `start`.
-- `gs.board.Board` (match, fall, refill, `slide` 2048-style, `flood`, `hint`), `gs.battle` (`Fighter`, `Battle`
-  turn order + types + statuses, `Bag`, `gainXp`, `loot`; `Opponent(api, { skill })` a ready-made enemy: `join(fight)`, then `fight.act(fight.turn, foe.pick())`, which plays turns ahead by the fight's own rules and learns how this player fights), `gs.stats.Stats` (real time: stats with buffs, perks and debuffs that run out (`buff`, `perk`, `is(tag)`, `cleanse`), pools that drain and refill (`change`, `spend`, `part`), cooldowns with charges (`cool`, `use`)), `gs.gen` (lazy: `dungeon`, `cave`, `maze`, `islands`,
-  `pattern`, `fov`, `proven` + `reach`; seeded, same text as TileMap), `gs.drag.Drag` (pieces, slots, snap, lists), `gs.history.History` (undo/redo: `push`, `undo`, `redo`, `merge`, `group`), `gs.items` (`Inventory` slots/stacks/equip slots, `Recipes` with `can`, `missing`, stations, timed making), `gs.adventure.Adventure` (point-and-click rooms, hotspots, use X on Y, exits, flags, auto-map), `gs.hex` (`HexMap`: x, y is its top left, `cx, cy` centres it; taps, neighbours, `reach` with terrain costs, `path`, `sees`; `Iso` views), `gs.rts` (`Select` tap/box/double tap, `formation`, `FlowField`, `BuildGrid`, tower `target`), `gs.fight` (`Reader` motion inputs + buffer, `Fighter` frame data, hit/hurt boxes, cancels, `clash`; `Opponent(api, { skill })` a ready-made enemy: `join(p2, p1)` each round, `think(dt)` gives `{ walk, block, move }` for your game to do; it reads its moves' frames, reacts no faster than a person and learns how this player attacks and guards; 3D street fights: `Melee(body, { react })` jab-cross-hook combos, kicks, sweeps, guard, dodge, lock-on and stepping in, hits passed to Reactions; `Brawler({ skill })` a ready-made foe; `FISTS`, `SWINGS` for a bat), `gs.bullets` (`Bullets` thousands in arrays, hit + graze, `Emitter` ring/spread/spiral/burst), `gs.sand` (`Sand` falling sand, liquids, fire, lava, `blast` holes in ground, `solid`, `picture`), `gs.flow` (`Streams`: rivers with current round rocks, waterfalls, whirlpools, lava/acid `hurt` zones; `Flood` shallow water that fills hollows), `gs.art` (seeded `creature`, `face`, `item` with rarity, `building`, pixel `sprite`, `name`), `gs.sports` (`Pitch`, `Team.think`: formations, chase, mark, support, shoot/pass/dribble), `gs.trivia` (lazy: `Quiz` of 2,700 questions, seeded, no repeats, `climb`, `fifty`; show `CREDIT`), `gs.idle`
-  (`cost`, `afford`, `short`, `Earner`; `api.away()` for time away), `gs.party` (`Turns` with hand-over, `Split`
-  screens), `gs.rhythm` (`Beat`, `Chart`, `Calibrate`), `gs.strokes` (`Stroke`, `Shapes` recogniser, `toPhysics`),
-  `gs.vehicles` (`Car`, `Kart`, `Laps`; `Driver(api, { skill })` a ready-made rival: `them.update(dt, rival.drive(dt, them, race))`, and `rival.watch(dt, me, race)` has it take the player's best lap as its line when that is quicker than its own; `World3D.vehicle()` for suspension), `gs.level3d.Level3D(text)`, `gs.sky`
-  (`Sky` time of day, `Weather` rain/snow/storm; `new Weather(view, { level: world, ground: land.height })` changes the world too: rain and snow stop at roofs, the open ground gets wet and puddled and dries, snow settles and melts, floors indoors stay dry, water runs down walls and glass, drops land on the lens (`view.drops`); `watch(car)` throws spray off its tyres; `wetAt(p)`, `snowAt(p)`, `open(p)`).
-- Action and adventure: `gs.combat` (`Gun`, `Shots`, `arc`/`lob`, `Health`, `Markers`, `Explosives`, `DriveBy`: shooting from a car's seat out of its windows; a ready-made arsenal: `ARSENAL` (numbers for pistol, revolver, smg, shotgun, rifle, sniper, launcher, grenade, bat, pipe, wrench, baton), `arm(kind)`, `Pouch` (ammo the guns share), `Loadout` (`give`, `next`, `fire` with its sound, `reload`), `Pickups` (`collect(dt, hero, arms)`), `weaponSound`), `gs.tactics`
-  (`CoverMap`, `Squad`, `Route`; `Cover3D`: cover found from the World3D with rays, which a Squad uses in 3D; `TakeCover`: the hero snaps to it, slides, peeks, pops up, fires blind, runs to the next), `gs.climb` (`Ledges`, `Climber`, `Rope`), `gs.poses` (`figure`, `person` skinned with a face, `Rig` with `blend`/`blend2` blend spaces and `plant` foot IK, `LIFELIKE` strides whose feet don't slide, `keys([...])` key-pose actions), `gs.missions`
-  (`Mission` scripts, `zone`, `timer`, `leash`; open world: `Jobs` (markers, pay, unlocks, `retry()` from a checkpoint mid-city at `mission.respawn`), `Phone` (calls that ring with the next job, texts), `WorldSave(api)` (the world's state in the 8 KB, Jobs, Phone and Radio kept by themselves)), `gs.cutscene`, `gs.prompts` (quick-time), `gs.destruction` (`shatter`, `slice`, `Rubble`; `Structure(scene, { building: { style, floors }, world })`: a building that comes apart: `hit(point, { power })`, `blast(point, radius)`, and what the broken pieces held up comes down; `broke` lists what happened for your dust and sound, `standing` 1..0; make it in make(), `reset()` each round),
-  `gs.stealth` (`lightAt`, `Takedown`, `Bodies`, `Floors`, `Disguise`), `gs.gadgets` (`Grapple`, `Zipline`, `Wires`, `Lock`,
-  `Code`), `gs.arena` (`Arena`, `BallCar`, `chaseBall`), `gs.magic` (`Magic({ book })` spells: `unit(body, { stats, team }).cast(name, { dir | at | target })`; bolts that home, pierce, chain and splash, areas that warn, linger or follow, beams, wards that soak or reflect, heals; mana and cooldowns through `gs.stats`; `STATUSES` that meet (`REACTIONS`: fire thaws ice, frost freezes the wet); `Looks(magic, particles)` for 3D), `gs.monsters` (`Moveset(body, { attacks: ['bite', 'tail', 'charge'] })` attack sets with telegraphs: `update(dt, target, targets)` gives walk, pose, move and hits, draw `now.shape`; `ATTACKS` to start from; `Hurt(creature)` flinch, stagger, knocked down, up again, dead; `Boss({ stats, moves, phases, poise, enrage })`), `gs.campaign.Campaign`, `gs.sound.Ears` (3D sound; `new Ears({ level: world })` muffles sounds behind walls and gives each place its own echo by itself) and
-  `music({ layers }).intensity()` + `follow(song)` (living music), `gs.props` (`Props` instancing + LOD (a kind with no `lod` gets simpler far shapes by itself), `perCopy(instancedMesh)` skips off-screen copies, `Areas`, `Chunks`, `simplify`; `Crowd(view, { of: [human(...), creature(...)], moves: ['idle', 'walk', 'run'] })` hundreds of animated people or animals in a few draws, nobody posed in JavaScript: `add({ x, z, turn, kind, move, size, tint })` gives a member to move as you like, `update(dt)` each frame, `near`, `ray` (a shot or a tap), `clear()` in `reset()`; no faces, hair strands or fur in a crowd, so swap the one the player is looking at for a real `human()`).
-- Cities: `gs.city.City(view, { seed, blocks, style: 'downtown'|'oldtown'|'harbour'|'suburb', traffic, people, sky })` (made-up streets, lit buildings
-  with rooms behind every window, traffic at the lights and people (on Next Gen real cars and sculpted people, sculpted the first time a phone meets them, and ground painted round the camera with no repeats; `far: true` goes on to the horizon as stand-ins, far lights and hills); `update(dt, player)`, `avoid`, `collide`, `ray`, `route`, `spot('door'|'rooftop'...)`, `cars.hit`, `people.scare`, `plan`, `drawMap`); guide `docs/city.md`.
-- Big worlds: `gs.regions` (`Regions(view, { world })`: a world in parts that are made a little each frame while wanted and freed behind (meshes, their geometry and pictures, bodies): `part(name, make)` + `want(name)` for levels built only when picked (in `reset()`: at once, under the loading screen; later: over the next frames, `has(name)` says when), `cells({ size, reach, make })` squares round the player, `land({ height, size, reach, solid })` ground in tiles, finer close by and solid near; `update(dt, at)` each frame, `ready`, `progress`; a make can be a generator function that `yield`s between pieces, and `yield r.wait(promise)` waits for background work; far out, the view draws and `World3D` simulates about a centre that follows the camera by itself, so places 20 km out stay steady and nothing changes for a game).
-- Things made in code (Next Gen; no image or model files): `gs.models` (`material(name)` 19 recipes like wood, brick, rust, fabric;
-  `wear(mesh)` worn edges, grime, moss, snow; `prop('crate'|'barrel'|...)` 18 props; `sculpt([{ ball }, { box, cut }...])`;
-  `tree('oak'|'pine'|'palm'|'fan'|'banana'|'fern'|'cypress'|'reeds'|'lily'|...)` (plants with leaves that sway from where they grow; `bend: marks` brushed aside by passers-by), `ivy(walls)` grown over meshes, `weeds({ lines, walls })` in cracks; `building({ style, floors })`; `relief(mesh)` a material's bumps (roof tiles, bark, stone) as real triangles, built in the background and drawn only as finely as shows; `human(opts)` a sculpted close-up person: face, hands, clothes, hats, kit, three detail levels, `twin()`, `hold()`, `touch()` (hands and feet onto a rung, a bar, a ledge; the fingers close round what a hand holds by themselves and lie relaxed when it holds nothing), feet that stay where they are put down however you move it (it steps round when turned on the spot, stops in two steps, and its eyes and head go first into a turn: `rig.update(dt, { speed, toward })` says where it means to go; a walk of its own from its body and seed, no two strides alike, slopes, and moods: `rig.manner.mood = 'tired'`), moves that take up the body's speed, and arms, head, pack and belt kit that swing on and settle when it starts, stops or turns (nothing to call; `rig.hang(thing)` for your own slung rifle), and a live face (`person.face`: it blinks and its eyes move by themselves; `look(point)`, `say(text)`, `set('angry', 1)`, `wince()`; no `update()` to call), skin with pores and eyes with a wet cornea close up (nothing to set); several kinds: `human.all([...])` first thing in make();
-  `creature({ like: 'deer', seed })` an animal or monster from a seed with gaits made for its own legs and wings: 35 to start from (`dog`, `horse`, `owl`, `shark`, `bee`, `spider`, `dragon`, `ogre`, `blob`...; kinds `quad`, `bird`, `fish`, `insect`, `monster`), `move(dt, speed, { fly })` each frame, `speeds`, `rig.play('eat')`, `twin()` for a herd, `creature.all([...])` first thing in make();
-  `fur(mesh, { length, kind: 'fur'|'hair', where, lean })` fur or hair in layers on any mesh, no texture files; creatures with a coat of fur wear it by themselves close up (`creature.fur.length = 1.5` stands it on end; `fur: false` leaves it off) and people's beards are strands, `beard: 0..1.5` (`person.hair`; `strands: true` for their hair too, `strands: false` for none);
-  `weapon('rifle'|'pistol'|'shotgun'|'bat'|...)` a weapon made in code with `points` (grip, fore, muzzle, eject), `weapon.wield(person)` then `held.update(dt, { how: 'aim'|'ready'|'hip'|'low'|'slung'|'none', pitch, yaw })` each frame after rig.update(): both hands on it, the stock in the shoulder;
-  `vehicle('car'|'truck'|'tank'|'train'|'boat'|'plane', { style, seed, colour, finish })` a vehicle with no model files, its nose along -z: 31 styles (`vehicle.kinds`: `jeep`, `pickup`, `tanker`, `heavy`, `steam`, `coach`, `rowboat`, `patrol`, `biplane`, `jet`...), `move(dt, speed, { steer })` each frame rolls and steers its wheels, runs its tracks and spins its propellers, `aim(turn, lift)` a turret, `points.driver` / `muzzle` / `exhaust`, `car.chassis()` for `World3D.vehicle`, cars that hold up close (seats behind see-through glass, flaked paint; `dirt(v)`, `wet(v)`, `hit(point, { power })` dents and broken glass that falls to the road, `update(dt)`, `damage`, `mend()`), a train's `cars: ['van', { style: 'open', load: 'coal', colour }, 'guard']` (loads `tarp`, `coal`, `crates`; `deflectors: true` on a steam engine, `polished: false` a working one with nothing bright) and `along(track, d)`, or `fuse: true` for a train that keeps to a straight line in a third of the draws, `twin()`); guide in `docs/nextgen-3d.md`.
-- Worlds, craft, soft things, cards and menus: `gs.outdoors` (`Land` terrain + `grass`/`scatter`/`meadow` (thick grass that keeps round the camera) + `rocks({ caves: [{ path, radius }], shapes: [{ arch | box | ball, at }] })` (real rock on the height map: cliffs with ledges and overhangs where it is steep, caves to walk through, arches; then `land.floor(x, y, z)` is what a thing stands on, `roof`, `sky` (how dark), `ray`), `Water` (waves to float on; with `ripples: true` it can be disturbed: `ring`, `splash`, `watch(boat)` for its wake and foam, `rain`, a `bed` for shallows and shore foam, `underwater(view)`), `Sea` (the open sea to the horizon: `new Sea({ wind, dir, bed: land.height, view })`, a swell the wind made that `height()` answers, fine waves (an FFT on the chip on WebGPU), whitecaps, and over a `bed` waves that break, a swash up the beach and wet sand; `update(dt, camera.position)`, `covered(x, z)`, `wetAt(x, z)`), `River` (water/lava look for gs.flow), `FloodWater` (GPU on WebGPU), `tree`, `rock`, `Wind`, `impostor`, `Marks` (ground that takes marks: `new Marks(view, { land, weather, mud: (x, z) => 0..1, sand })` in make(), `watch(person)` / `watch(vehicle)` / `watch(thing, { feet: 4, shape: 'paw' })` leave footprints and tyre tracks in snow, mud and sand and part the land's meadow, `update(dt)` each frame, `made` this frame's marks for sounds, `kindAt(x, z)`, `trail(x, z, r, { by })` to follow, `step` / `press` / `roll` by hand, `clear()` in reset()), `Cloth(view, { wind })` (flags, banners, awnings and washing lines in the wind, sheets that drape over `ball` / `capsule` solids: `flag`, `banner`, `awning`, `line`, `sheet`, `piece.ride(mast)`; clothes people wear: `skirt({ on: person })`, `cape({ on: person })` go round their legs and body and fly as they run; `update(dt)`, `clear()` in reset(); on the graphics chip on WebGPU)),
-  `gs.craft` (`Plane`, `Boat`, `Hover`, `Floater`), `gs.soft` (`Soft` cloth/rope/jelly with `grab`/`cut`, `Liquid`),
-  `gs.cards` (`Deck`, `total`, `groups`, `poker`, `winners`, `stacks`), `gs.dice` (`roll('4d6kh3')`, `odds`, `Dice`, `Dice3D`),
-  `gs.words` (lazy: `Words` dictionary, `compare`, `Bag`, `score`), `gs.ui` (lazy: `UI` flexbox layout and input with no look; you draw it).
-- `gs.solve`: `Puzzle` (`cell`, `allDiff`, `sum`, `rule`; `solve`, `unique`, `carve` to one-answer clues, `grade`, `hint`), `Search` (turn-based opponents: `best(state, { time, skill, mode: 'minimax'|'mcts' })`).
-- `gs.tick` (games with `tick: 60`): `alpha` (also `draw(c, alpha)`), `mix(before, now)`, `turn`, `rate`, `count`; Physics `sx`/`sy`/`sangle`, `World3D({ smooth: true })`.
-- `gs.voxels` (3D; lazy): `Voxels({ size })`: `generate({ seed, kind })`, `set`/`get`/`fill`/`sphere`, `update()` meshes changed chunks, `ray`, `move(box, ...)`, `pack`.
-- `gs.fluid` (3D): `Fluid(view, { box, volume, kind: 'water'|'lava'|'slime'|'honey'|'sand'|'snow'|'mud' })` real liquid to pour, splash and fill things with, and ground that behaves like the real thing (sand piles and slumps, snow packs and keeps footprints, mud oozes and settles; or your own `grain`, `holds`, `packs`) (tens of thousands of drops on WebGPU, a smaller version elsewhere; make it once, `clear()` in `reset()`):
-  `pour({ x, y, z, rate, speed })` taps, `fill({ y1 })`, `splash`, solid `ball`/`box`/`tube` (`hollow` cups and tanks, `set()` or `follow` to move), `ground(fn)`, `drain`, `push` (blast), `update(dt)`; `amount(box)`, `level(x, z)`, `wet(x, y, z)`, `full`. Cups and gaps at least six drops wide (`fluid.dropSize`); try `{ gpu: false, drops: 600 }` once, which is what slow phones run.
-- `gs.gas` (3D): `Gas(view, { box, kind: 'smoke'|'fire'|'steam'|'dust'|'toxic'|'magic', open: false (a closed room), lamp: true })` smoke and fire that flow: they rise, curl, spread under a ceiling, go round solid things and with the wind (a lit volume of hundreds of thousands of cells on WebGPU, soft puffs in a coarse grid elsewhere; make it once, `clear()` in `reset()`):
-  `fire({ x, y, z, size, power })` (with `dir`, `speed`: a torch, a jet), `smoke({ rate, heat })`, `fan({ dir, speed })`, `burst(x, y, z, { size })` an explosion, `puff` (dust, a smoke bomb), `wind`, solid `ball`/`box`/`tube` (`set()` or `follow` to move), `solid(fn)` walls, `ground(fn)`, `update(dt)`; `smokeAt`, `heatAt`, `flowAt`, `sees(a, b)` (how much shows through the smoke), `smokeIn(box)`, `glow`. Keep the box small; gaps at least three cells wide (`gas.cell`), fires at least half a unit; try `{ gpu: false, cells: 5000 }` once, which is what slow phones run.
-- `gs.tweak(name, { speed: 3, grip: [.8, 0, 1] })`: live sliders in `npm run dev` (starting values elsewhere); read fields where used.
-- `gs.prefs` (read only): the player's Reduce motion setting, `reduceMotion`, `motion`. Shake, flash and
-  camera kicks already follow it; scale your own big effects by `gs.prefs.motion`.
-- `gs.math`: `rng(seed)`, `daily(salt)`, `noise2`, `noise3`, `fbm`, `vec`, `overlap`, `Grid`, `Timers`, `angleDiff`, `wrap`.
-- `gs.util`: `clamp`, `rnd`, `pix`, `disc`, `hash`, `fmt`, `letter(i)` ('A' + i), `flickTracker`. `gs.palettes`: `PAL`, `SHELL`, `C16`.
-- `gs.gfx` (shaded 2D shapes, glow, backdrops; materials made in code: `material('paper'|'wood'|'stone'|'metal'|'cloth'|'water', { color, seed, scale, planks, blocks })` then `c.fillStyle = m.at(x, y)`,
-  `slab(c, x, y, w, h, m, { r, bevel, shadow })`, `water(c, x, y, w, h, t)`, `sticker(w, h, draw, { outline, glow, shadow })` then `.draw(c, x, y, { scale, angle })`), `gs.bricks` (toy bricks), `gs.geo` (location maths).
-- `gs.sketch` (hand-drawn looks): `Sketch({ stroke, roughness, boil })` `rect`/`circle`/`ellipse`/`line`/`poly`/`lines`/`curve`/`arc`/`path` with `{ fill, fillStyle: 'hachure'|'solid'|'cross-hatch'|'zigzag'|'dots' }`;
-  `Ink({ size, taper, color })` `add(x, y)`/`end()`/`draw(c)`/`hit(x, y)` for lines the player draws, `ink(c, points)`.
-- `gs.icons`: `icon(c, 'sword', x, y, size, { color, outline, angle, pixel })`: 528 icons that look the same on every phone (use these, not emoji); plain words (`heart`, `coin`, `key`, `star`, `skull`...) or `names`, `find('potion')`.
-- `gs.real` (real-world signals, no permission): `sun(place?)` (`up`, `height`, `compass`, `light` 0..1, `part`, `rise`/`set`, `hour` for gs.sky), `moon(place?)` (`phase`, `lit`, `name`), `battery()` (`level`, `charging`, `saver`), `headphones()`; null where the phone won't say, and never the only way to win.
-- `gs.toon` (Console 3D: `View` with real toon shadows and a rim of light, `{ retro: 'chunky'|'soft'|'tube' }` looks, `G`, `part`, `grp`, `blob`, `toon`, `dude`, `figure` (a jointed person with a `gs.poses` rig)), `gs.hd` (Next Gen: `HDView` with `decal`, `bounce` (bounce light), `room` (room reflections), `reflect(floor)` (marks shiny things for reflections; ray traced on the best phones, where a floor also shows what is off screen), `detail` (cluster detail: big meshes, still or moving, copies, skinned people, drawn only as finely as shows, by itself from 8,000 triangles), `occluders` (occlusion culling: what is behind other things is left out by itself; this adds boxes of your own), `farWorld` (the far world drawn into pictures round a camera that keeps still, and shown from them: a valley below a nest), `beams` (volumetric light), `motionBlur`, `lens` (a real camera: depth of field from the f-stop, bokeh discs, focus pulls and autofocus, exposure in stops), `bakeLight`, `shafts`, `lampLights` + `placeLamps` (many lamps: the nearest lit, with shadows, light shapes like a headlamp's beam or a window's bars, and neon tubes and signs from `neon` and `sign`), `contactShadows` and `farShadows` (finer sun shadows on WebGPU: cups, fingers and noses close up, far hills and towers; a crowd's far people throw capsule shadows by themselves), `flash` (a short-lived light: muzzle flashes; gs.fx3d fire, explosions and sparks and gs.gas blasts light the scene by themselves, and smoke takes the lamps' light),
-  `pbr`, `rbox`, `surface`, `speckle`, `Particles`, `sun`, `spot`), `gs.ar` (`ARView`, `FLOOR`, `arNote`; with native AR, `new ARView({ occlude: true, walls: true, light: 'real' })` lets real things hide virtual ones, maps walls and follows the room's light, `v.anchor(p, q)` holds a real spot and `v.marker(markerArt(seed))` finds a printed picture: all bonuses, never the only way to play), `gs.THREE`.
-- `gs.tabletop` (Board games; guide `docs/board-games.md`): `Table(api, { span, room, table, pitch, frame })` is the table in a 3D room and, on the AR
-  chip, on the player's floor: `board` (add pieces here, in board units), `update`/`draw`/`hud`, `down`/`move`/`up` (a tap, or `{ chip }`), `claim(id)`,
-  `pick`, `over`, `nearest`, `toScreen`; turns as promises (`run`, `hop`, `slide`, `drop`, `pop`, `tween`, `wait`, `until`, `busy`), `think(search, state)`
-  (a `gs.solve.Search` opponent, a little each frame), `dice(n, { tray })` (real dice: `roll({ keep })`, `park`), `crumble`, `puff`, `shake`, `lookAt`,
-  `strip`, `status`, `say`, `frame`, `tall`, `hidden`. Pieces made in code: `slab({ w, d, paint })`, `decal`, `pawn`, `disc`, `stone`, `die`, `chessman`,
-  `eyes`, `ring`, `dot`, `wood`, `fuse(group)`; `sounds`; `ROOMS`; `Chess` (rules + worker opponent: `moves`, `move`, `think({ level })`, `fen`).
-- `gs.fx3d` (lazy): `text3d()`, `Particles3D` (`fire`, `smoke`, `sparks`, `boom`, `magic`, `snow`), `Impacts(view)` (`hit(rayHit)` sparks, dust, splinters, glints, splashes and a mark by what was hit (no blood), `muzzle(at, dir)`, `shell(eject)` cases that bounce),
-  `outline`, `glitch`, `trails`, `focus`, `pixelate`.
-- `gs.vision` (lazy): `Face` (`x`, `y`, `yaw`, `mouth`, `smile`, `blink`...), `Hands` (`pinch`, `open`, `point`...),
-  `Body` (joints, `armsUp`, `lean`, `squat`, `jump`, `clap`), `CutOut` (the player cut out of the camera), `Signs` (thumbs up, victory...); runs on the phone's AI chip in the apps, so pass `{ preview: true }` if you draw `picture`.
-  Back camera: `Objects({ want: ['cup', 'banana'], shape: W / H })` spots 80 everyday things (`seen(name)` once each time one comes into view, `seeing`, `count`, `list` of boxes, `Objects.names`); `Scanner({ shape })` reads barcodes and QR codes (`scan()` gives `{ text, kind, seed }` once per code: the same code makes the same seed on every phone; `Scanner.seed(word)` for a typed word instead). Both: `start()` from a tap, `update()` each frame, draw `picture` (a canvas already cut to `shape`), positions 0..1 of it.
-- `gs.hear` (lazy): `Sounds({ want: ['Dog', 'Whistling'] })` (`start()` from a tap, `update(dt)`, `heard`, `hearing`, `top`),
-  `Voice({ words, also })` (`start()`, `said(word)`, `available`). `gs.doodle` (lazy): `Doodle` (`guess(strokes, { among })` of 200 things: pass `among`, the few your game cares about; `new Doodle(api)` + `learn(strokes, 'cat')` when the game knows what was drawn, and this player's way of drawing it counts from then on: `yours` on that guess).
-  `gs.phoneai`: `PhoneAI({ persona, words })` `ask(prompt, { fallback })` for flavour lines only; play must never depend on it.
+Every part of `gs` has a short guide in [docs/kits/](docs/kits/README.md): what it is, what to know, its types,
+the maker kit's examples and the shortest real games that use it. Read the line here, then the pages of the parts
+you use (`npm run kit <name>` prints one as it is now; `node scripts/examples.mjs <name>` finds every game using a
+part). A new part or method of `gs`: its types in `src/gamescroll.d.ts`, what to know in the top half of its page
+(`node scripts/kit-guides.mjs --new <kit>` starts one), then `node scripts/kit-guides.mjs` remakes the rest and this index.
+
+<!-- kit index: made by node scripts/kit-guides.mjs from the first line of each docs/kits page -->
+- [`gs.sound`](docs/kits/sound.md): Sound effects, 98 ready-made sounds, music and tunes made in code, the mixer, world sounds (Foley) and voices.
+- [`gs.device`](docs/kits/device.md): Haptics, tilt, shake, compass, mic, camera and the phone's other sensors, each with a touch fallback.
+- [`gs.util`](docs/kits/util.md): Small helpers: clamp, rnd, pix, disc, hash, fmt, letter, flick speed.
+- [`gs.math`](docs/kits/math.md): Seeded random, daily seeds, smooth noise, vectors, grids, timers that pause with the game.
+- [`gs.palettes`](docs/kits/palettes.md): The fixed colour sets of the pixel styles (PAL, SHELL, C16).
+- [`gs.juice`](docs/kits/juice.md): Particles, shake, pop-ups, flash, hit-stop and tweens by hand; Timeline for sequences.
+- [`gs.effects`](docs/kits/effects.md): Feel: coin, hit, boom, jump and more as particles, shake, sound and haptics in one call.
+- [`gs.controls`](docs/kits/controls.md): On-screen thumbsticks and buttons, taps, holds, swipes, two-finger gestures, keys.
+- [`gs.pad`](docs/kits/pad.md): Game controllers: analog sticks, triggers, buttons, rumble.
+- [`gs.moves`](docs/kits/moves.md): Motion moves with the phone: swing, punch, throw, flip, twist, knock, shake.
+- [`gs.pixel`](docs/kits/pixel.md): Crisp pixel text in pixel fonts, sprites and animations drawn from text, tiles.
+- [`gs.gfx`](docs/kits/gfx.md): Shaded 2D shapes, glows, backdrops and materials made in code (wood, stone, metal, water...).
+- [`gs.physics`](docs/kits/physics.md): Rapier 2D physics: shapes that tumble, joints, ropes, ragdolls, grabbing, walking a hero through the world.
+- [`gs.vision`](docs/kits/vision.md): The front camera: face, hands, body and hand signs; the back camera: everyday things and barcodes.
+- [`gs.geo`](docs/kits/geo.md): Location maths: distances and bearings between places.
+- [`gs.real`](docs/kits/real.md): Real-world signals with no permission: the sun, the moon, the battery, headphones.
+- [`gs.fonts`](docs/kits/fonts.md): 13 display fonts that look the same on every phone, loaded on first use.
+- [`gs.things`](docs/kits/things.md): Game objects: add, tag, hit tests between tags, near, nearest, reuse; parent and child Nodes.
+- [`gs.rounds`](docs/kits/rounds.md): Ready (wait for the first tap), Scenes with fades, Levels.
+- [`gs.pacing`](docs/kits/pacing.md): Spawners, waves, a director that eases off, difficulty ramps.
+- [`gs.aim`](docs/kits/aim.md): Aim assist: sticky aim, pull onto targets, auto fire, in 2D or 3D.
+- [`gs.senses`](docs/kits/senses.md): Enemy senses: sight cones, hearing, memory, moods from calm to searching; Noises.
+- [`gs.prefs`](docs/kits/prefs.md): The player's Reduce motion setting (read only), to scale your own big effects.
+- [`gs.tick`](docs/kits/tick.md): The fixed 60 Hz tick: how far between ticks a frame is, and smooth mixing for drawing.
+- [`gs.solve`](docs/kits/solve.md): Logic puzzles with one answer (make, solve, grade, hint) and turn-based opponents (minimax, MCTS).
+- [`gs.camera2d`](docs/kits/camera2d.md): A 2D camera: follow with a dead zone, look-ahead, zoom, level bounds, parallax layers.
+- [`gs.tiles`](docs/kits/tiles.md): Tile levels from text: walls, one-way floors, slopes, marks, moving through them, auto-tiling.
+- [`gs.movers`](docs/kits/movers.md): Platformer and top-down movement with coyote time, jump buffer, wall jumps and the rest.
+- [`gs.anim`](docs/kits/anim.md): Sprite animation states with frame events and one-shots.
+- [`gs.story`](docs/kits/story.md): Branching dialogue from ink scripts, played by people in 3D with camera shots, and a typewriter for text.
+- [`gs.replay`](docs/kits/replay.md): Ghosts to race, and whole rounds recorded and played back.
+- [`gs.look2d`](docs/kits/look2d.md): 2D lights and shadows (glowing on the graphics chip), screen effects, thousands of sprites.
+- [`gs.tweak`](docs/kits/tweak.md): Knobs: the numbers that set how a game feels, with live sliders in npm run dev.
+- [`gs.brains`](docs/kits/brains.md): Tiny Brains: on-device learning opponents and helpers, with guard rails, corrections and memories.
+- [`gs.board`](docs/kits/board.md): Grid puzzles: match, fall and refill, 2048 slides, flood fill, hints.
+- [`gs.battle`](docs/kits/battle.md): Turn-based fights: fighters, turn order, types, statuses, items, XP, loot, a ready-made opponent.
+- [`gs.stats`](docs/kits/stats.md): Real-time stats: buffs and perks that run out, pools that drain and refill, cooldowns with charges.
+- [`gs.rpg`](docs/kits/rpg.md): RPG story systems: levels and skill trees, reputation with factions, quests with stages and a journal, the world's flags.
+- [`gs.gen`](docs/kits/gen.md): Made levels from a seed: dungeons, caves, mazes, islands, patterns, field of view, levels proven playable.
+- [`gs.drag`](docs/kits/drag.md): Drag and drop: pieces, slots, snapping, reordering lists.
+- [`gs.idle`](docs/kits/idle.md): Idle game maths: rising prices, big numbers, money earned while away.
+- [`gs.history`](docs/kits/history.md): Undo and redo for moves.
+- [`gs.items`](docs/kits/items.md): Inventories (slots, stacks, equipment) and crafting recipes.
+- [`gs.town`](docs/kits/town.md): A living town: a world clock, a seeded town plan, townsfolk with daily routines, shops with hours, monsters at night.
+- [`gs.adventure`](docs/kits/adventure.md): Point-and-click adventures: rooms, hotspots, use X on Y, exits, flags, a map.
+- [`gs.hex`](docs/kits/hex.md): Hex maps (taps, neighbours, reach, paths, sight) and isometric views.
+- [`gs.rts`](docs/kits/rts.md): Strategy controls: selecting, formations, flow fields, building grids, tower targets.
+- [`gs.fight`](docs/kits/fight.md): Fighting games: motion inputs, frame data, hit boxes, cancels, 3D melee, a ready-made opponent.
+- [`gs.bullets`](docs/kits/bullets.md): Bullet patterns: thousands of bullets in arrays, grazes, emitters.
+- [`gs.sand`](docs/kits/sand.md): Falling sand: liquids, fire, lava, ground that blasts into holes.
+- [`gs.flow`](docs/kits/flow.md): Rivers with currents, waterfalls, whirlpools, lava and floods that fill hollows.
+- [`gs.art`](docs/kits/art.md): Seeded art made in code: creatures, faces, items, buildings, sprites, names.
+- [`gs.sports`](docs/kits/sports.md): Team sports AI: pitches, formations, marking, passing and shooting.
+- [`gs.party`](docs/kits/party.md): Pass-and-play turns, and split screens.
+- [`gs.rhythm`](docs/kits/rhythm.md): Rhythm games: a beat kept with the sound card, charts, calibration.
+- [`gs.strokes`](docs/kits/strokes.md): Drawn shapes: smoothed finger lines, a shape recogniser, lines into physics.
+- [`gs.vehicles`](docs/kits/vehicles.md): Arcade cars and karts that drift and boost, laps, a ready-made rival driver.
+- [`gs.paths`](docs/kits/paths.md): 2D and 3D paths to follow: points along, offsets, nearest, even spacing.
+- [`gs.bones`](docs/kits/bones.md): 2D bone characters: poses, blends, clips, IK, wobble.
+- [`gs.level3d`](docs/kits/level3d.md): 3D levels from text maps.
+- [`gs.sky`](docs/kits/sky.md): Time of day, and weather that changes the world: rain, puddles, snow that settles, storms.
+- [`gs.combat`](docs/kits/combat.md): Guns, shots, lobs, health, markers, explosives, weapons made in code, drive-bys.
+- [`gs.tactics`](docs/kits/tactics.md): Cover (2D and 3D), squads that use it, taking cover, routes.
+- [`gs.climb`](docs/kits/climb.md): Ledges, climbing, ropes and swimming.
+- [`gs.missions`](docs/kits/missions.md): Mission scripts, zones, objectives and markers, open-world jobs, phone calls, a world save.
+- [`gs.cutscene`](docs/kits/cutscene.md): Cutscenes: camera paths, lines, and actors who walk, turn, look, gesture and speak.
+- [`gs.prompts`](docs/kits/prompts.md): Quick-time prompts.
+- [`gs.stealth`](docs/kits/stealth.md): Stealth: how lit a spot is, takedowns, bodies, floors that make noise, disguises.
+- [`gs.gadgets`](docs/kits/gadgets.md): Grapples, ziplines, wires to cut, locks to pick, codes to crack.
+- [`gs.campaign`](docs/kits/campaign.md): A campaign of levels with progress.
+- [`gs.arena`](docs/kits/arena.md): Car football: an arena, a ball car, chasing the ball.
+- [`gs.magic`](docs/kits/magic.md): Spells with casts, mana and cooldowns: bolts, areas, beams, wards, heals and statuses that meet.
+- [`gs.monsters`](docs/kits/monsters.md): Monster attacks with telegraphs, hurt reactions (flinch, stagger, knocked down) and bosses with phases.
+- [`gs.companions`](docs/kits/companions.md): Up to three companions who follow, talk and fight as guard, healer, archer or caster, with an order wheel and approval.
+- [`gs.poses`](docs/kits/poses.md): Jointed 3D people: figures, skinned people with faces, blend spaces, foot IK, key-pose actions.
+- [`gs.destruction`](docs/kits/destruction.md): Things that break: shatter, slice, rubble, buildings that come apart.
+- [`gs.props`](docs/kits/props.md): Thousands of 3D props in few draws (instancing, LOD), areas, chunks, crowds of animated people.
+- [`gs.outdoors`](docs/kits/outdoors.md): Land, grass, rocks, cliffs and caves, water, the sea, rivers, trees, wind, ground marks, cloth.
+- [`gs.city`](docs/kits/city.md): Made-up cities: streets, lit buildings with rooms to walk into, traffic and people, police, one big streamed city of districts, routes, a GPS and maps.
+- [`gs.models`](docs/kits/models.md): Things made in code for Next Gen: materials, props, trees, buildings, people (and a character creator), creatures, fur, vehicles, weapons.
+- [`gs.voxels`](docs/kits/voxels.md): Voxel worlds: generate, edit, mesh, ray, move through.
+- [`gs.fluid`](docs/kits/fluid.md): Real 3D liquid to pour and splash, and sand, snow and mud that behave like the real thing.
+- [`gs.gas`](docs/kits/gas.md): Smoke and fire that flow: rise, curl, spread under ceilings, go round things.
+- [`gs.regions`](docs/kits/regions.md): Big worlds in parts, made a little each frame while wanted and freed behind.
+- [`gs.dungeon`](docs/kits/dungeon.md): Dungeons built in 3D from a gs.gen map: doors, keys, levers, traps, chests, secret walls, solid in the World3D.
+- [`gs.mounts`](docs/kits/mounts.md): A horse or a flying beast to ride: saddle and reins on any creature, getting on and off, gaits with stamina, jumps, flight, blows from the saddle.
+- [`gs.craft`](docs/kits/craft.md): Planes, boats, hovercraft and floating things.
+- [`gs.soft`](docs/kits/soft.md): Soft things: cloth, rope and jelly to grab and cut; 2D liquid.
+- [`gs.cards`](docs/kits/cards.md): Card decks, totals, groups, poker hands, winners, stacks.
+- [`gs.dice`](docs/kits/dice.md): Dice rolls in dice notation, odds, 2D and 3D dice.
+- [`gs.words`](docs/kits/words.md): A word dictionary, word comparison, letter bags, scoring.
+- [`gs.trivia`](docs/kits/trivia.md): About 2,700 quiz questions, seeded, with no repeats.
+- [`gs.ui`](docs/kits/ui.md): Flexbox layout and input for menus, with no look of its own.
+- [`gs.hear`](docs/kits/hear.md): Sounds the mic hears (a dog, whistling...) and spoken words.
+- [`gs.doodle`](docs/kits/doodle.md): Guesses what a player drew among 200 things, and learns their way of drawing.
+- [`gs.phoneai`](docs/kits/phoneai.md): The phone's own AI for flavour lines only; play never depends on it.
+- [`gs.sketch`](docs/kits/sketch.md): Hand-drawn looks (sketchy shapes) and ink lines the player draws.
+- [`gs.icons`](docs/kits/icons.md): 528 icons that look the same on every phone (use these, not emoji).
+- [`gs.toon`](docs/kits/toon.md): Classic Console 3D: a cel-shaded view, parts, figures.
+- [`gs.hd`](docs/kits/hd.md): Next Gen HD 3D: the view with shadows, bloom, reflections, lamps, lens, decals and more.
+- [`gs.ar`](docs/kits/ar.md): AR 3D: the camera and gyro view, the floor, anchors and markers.
+- [`gs.bricks`](docs/kits/bricks.md): Toy bricks in 3D.
+- [`gs.physics3d`](docs/kits/physics3d.md): Rapier 3D physics: bodies, level collisions, walking characters, ragdolls, vehicles.
+- [`gs.fx3d`](docs/kits/fx3d.md): 3D text, 3D particles (fire, smoke, sparks, booms), impacts, outlines, glitch, trails.
+- [`gs.tabletop`](docs/kits/tabletop.md): Board games: a table in a 3D room or on your floor in AR, pieces, dice, turns, opponents.
+- [`gs.camera`](docs/kits/camera.md): 3D camera rigs: chase, shoulder, first person, top, side, orbit, rail, fixed.
+- [`gs.nav3d`](docs/kits/nav3d.md): 3D paths from your level meshes, and crowds that walk them.
+- [`gs.characters`](docs/kits/characters.md): Living 3D characters: look at, reach, planted feet, wobble, faces, people who react.
+- [`gs.ai`](docs/kits/ai.md): Crowds that chase, flee, flock and hunt; grid paths; state machines, behaviour trees, utility AI; swarms.
+<!-- end of kit index -->
+
+**Kits find each other.** What a game makes in `make()` and `reset()` finds the rest of what it made, with nothing passed: one `Wind` blows the grass, trees, rain, `Cloth`, smoke, particles and the `Sea`'s swell; `Weather` rains on every `Water`; a `World3D` is found by `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley`, `Ears`, `CameraRig`, `Kart`, `Plane`, `Boat`, `Hover`, `Grapple`, `shatter`/`slice` and `Regions` (a 2D `Physics` by `Car`, `Soft`, `Liquid` and the movers; a 3D `Soft` finds the `World3D`); a `TileMap`, `NavGrid`, `Noises` and `CoverMap` are found by movers, `Senses`, hunting agents and `Squad`; a 3D blast is felt by structures, smoke, liquid, water made with `ripples`, people who react and soft ground; `Foley` finds the ears, world, marks, weather and land. What you pass wins, `false` is none (`wind: false`), `link: false` keeps a kit to itself. Links are things the world does; who is hurt and what scores stay the game's (`docs/maker-kit.md`, "Kits that find each other").
 
 **Lazy parts** (physics, physics3d, nav3d, fx3d, vision, Tone, `sound.instrument`, `api.loadLocal`, `tabletop.Chess`, `Table.dice()`, `story.Story`, `look2d.Screen`, `look2d.Batch`, `words.Words`, `trivia.Quiz`, `ui.UI`, `juice.Timeline`, `hear.Sounds`, `doodle.Doodle`, `fonts.use`): create them in `make()` or `reset()`, never
 later. The app shows "Loading…" and remakes the game once the library is in.
 A big 3D game is also made a little each frame while its card loads (the kit's builders stop the pass, each pass on a fresh copy of the game's file, and heavy number work goes to background workers), so `make()` and `reset()` may run several times
 before the first round: build the world there, and keep once-only things (a save, a sound) out of them.
-The 3D parts (`toon`, `hd`, `ar`, `bricks`, `physics3d`, `fx3d`, `camera`, `nav3d`, `characters`, `level3d`, `sky`, `poses`, `destruction`, `props`, `outdoors`, `city`, `models`, `voxels`, `fluid`, `gas`, `tabletop`, `regions`, `THREE`)
-and `ai`, plus the action kits (`combat`, `tactics`, `climb`, `missions`, `cutscene`, `prompts`, `stealth`, `gadgets`, `campaign`, `arena`) and play kits (`craft`, `soft`, `cards`, `dice`, `words`, `trivia`, `ui`) and smarts (`hear`, `doodle`, `phoneai`) and looks (`sketch`, `icons`), also load on first use, so the app opens fast. The app loads the ones a game uses before it
+The 3D parts (`toon`, `hd`, `ar`, `bricks`, `physics3d`, `fx3d`, `camera`, `nav3d`, `characters`, `level3d`, `sky`, `poses`, `destruction`, `props`, `outdoors`, `city`, `models`, `voxels`, `fluid`, `gas`, `tabletop`, `regions`, `dungeon`, `mounts`, `THREE`)
+and `ai`, plus the action kits (`combat`, `tactics`, `climb`, `missions`, `cutscene`, `prompts`, `stealth`, `gadgets`, `campaign`, `arena`, `magic`, `companions`) and play kits (`craft`, `soft`, `cards`, `dice`, `words`, `trivia`, `ui`) and smarts (`hear`, `doodle`, `phoneai`) and looks (`sketch`, `icons`), also load on first use, so the app opens fast. The app loads the ones a game uses before it
 runs, so read them as usual (`const { HDView } = gs.hd` at the top of the file is fine).
 
 **Sensors are worked out for you.** The build reads which camera, mic and motion parts a game uses and

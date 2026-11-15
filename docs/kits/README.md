@@ -1,0 +1,115 @@
+# Kit guides
+
+One short page for each part of `gs`: what it is, what to know, its types, the maker kit's examples and the
+shortest real games that use it. Read the line here, then the page you need. `npm run kit <name>` prints a page as it
+is now; `node scripts/examples.mjs <name>` finds every game that uses a part. The long form is [the maker kit](../maker-kit.md).
+
+- [`gs.sound`](sound.md): Sound effects, 98 ready-made sounds, music and tunes made in code, the mixer, world sounds (Foley) and voices.
+- [`gs.device`](device.md): Haptics, tilt, shake, compass, mic, camera and the phone's other sensors, each with a touch fallback.
+- [`gs.util`](util.md): Small helpers: clamp, rnd, pix, disc, hash, fmt, letter, flick speed.
+- [`gs.math`](math.md): Seeded random, daily seeds, smooth noise, vectors, grids, timers that pause with the game.
+- [`gs.palettes`](palettes.md): The fixed colour sets of the pixel styles (PAL, SHELL, C16).
+- [`gs.juice`](juice.md): Particles, shake, pop-ups, flash, hit-stop and tweens by hand; Timeline for sequences.
+- [`gs.effects`](effects.md): Feel: coin, hit, boom, jump and more as particles, shake, sound and haptics in one call.
+- [`gs.controls`](controls.md): On-screen thumbsticks and buttons, taps, holds, swipes, two-finger gestures, keys.
+- [`gs.pad`](pad.md): Game controllers: analog sticks, triggers, buttons, rumble.
+- [`gs.moves`](moves.md): Motion moves with the phone: swing, punch, throw, flip, twist, knock, shake.
+- [`gs.pixel`](pixel.md): Crisp pixel text in pixel fonts, sprites and animations drawn from text, tiles.
+- [`gs.gfx`](gfx.md): Shaded 2D shapes, glows, backdrops and materials made in code (wood, stone, metal, water...).
+- [`gs.physics`](physics.md): Rapier 2D physics: shapes that tumble, joints, ropes, ragdolls, grabbing, walking a hero through the world.
+- [`gs.vision`](vision.md): The front camera: face, hands, body and hand signs; the back camera: everyday things and barcodes.
+- [`gs.geo`](geo.md): Location maths: distances and bearings between places.
+- [`gs.real`](real.md): Real-world signals with no permission: the sun, the moon, the battery, headphones.
+- [`gs.fonts`](fonts.md): 13 display fonts that look the same on every phone, loaded on first use.
+- [`gs.things`](things.md): Game objects: add, tag, hit tests between tags, near, nearest, reuse; parent and child Nodes.
+- [`gs.rounds`](rounds.md): Ready (wait for the first tap), Scenes with fades, Levels.
+- [`gs.pacing`](pacing.md): Spawners, waves, a director that eases off, difficulty ramps.
+- [`gs.aim`](aim.md): Aim assist: sticky aim, pull onto targets, auto fire, in 2D or 3D.
+- [`gs.senses`](senses.md): Enemy senses: sight cones, hearing, memory, moods from calm to searching; Noises.
+- [`gs.prefs`](prefs.md): The player's Reduce motion setting (read only), to scale your own big effects.
+- [`gs.tick`](tick.md): The fixed 60 Hz tick: how far between ticks a frame is, and smooth mixing for drawing.
+- [`gs.solve`](solve.md): Logic puzzles with one answer (make, solve, grade, hint) and turn-based opponents (minimax, MCTS).
+- [`gs.camera2d`](camera2d.md): A 2D camera: follow with a dead zone, look-ahead, zoom, level bounds, parallax layers.
+- [`gs.tiles`](tiles.md): Tile levels from text: walls, one-way floors, slopes, marks, moving through them, auto-tiling.
+- [`gs.movers`](movers.md): Platformer and top-down movement with coyote time, jump buffer, wall jumps and the rest.
+- [`gs.anim`](anim.md): Sprite animation states with frame events and one-shots.
+- [`gs.story`](story.md): Branching dialogue from ink scripts, played by people in 3D with camera shots, and a typewriter for text.
+- [`gs.replay`](replay.md): Ghosts to race, and whole rounds recorded and played back.
+- [`gs.look2d`](look2d.md): 2D lights and shadows (glowing on the graphics chip), screen effects, thousands of sprites.
+- [`gs.tweak`](tweak.md): Knobs: the numbers that set how a game feels, with live sliders in npm run dev.
+- [`gs.brains`](brains.md): Tiny Brains: on-device learning opponents and helpers, with guard rails, corrections and memories.
+- [`gs.board`](board.md): Grid puzzles: match, fall and refill, 2048 slides, flood fill, hints.
+- [`gs.battle`](battle.md): Turn-based fights: fighters, turn order, types, statuses, items, XP, loot, a ready-made opponent.
+- [`gs.stats`](stats.md): Real-time stats: buffs and perks that run out, pools that drain and refill, cooldowns with charges.
+- [`gs.rpg`](rpg.md): RPG story systems: levels and skill trees, reputation with factions, quests with stages and a journal, the world's flags.
+- [`gs.gen`](gen.md): Made levels from a seed: dungeons, caves, mazes, islands, patterns, field of view, levels proven playable.
+- [`gs.drag`](drag.md): Drag and drop: pieces, slots, snapping, reordering lists.
+- [`gs.idle`](idle.md): Idle game maths: rising prices, big numbers, money earned while away.
+- [`gs.history`](history.md): Undo and redo for moves.
+- [`gs.items`](items.md): Inventories (slots, stacks, equipment) and crafting recipes.
+- [`gs.town`](town.md): A living town: a world clock, a seeded town plan, townsfolk with daily routines, shops with hours, monsters at night.
+- [`gs.adventure`](adventure.md): Point-and-click adventures: rooms, hotspots, use X on Y, exits, flags, a map.
+- [`gs.hex`](hex.md): Hex maps (taps, neighbours, reach, paths, sight) and isometric views.
+- [`gs.rts`](rts.md): Strategy controls: selecting, formations, flow fields, building grids, tower targets.
+- [`gs.fight`](fight.md): Fighting games: motion inputs, frame data, hit boxes, cancels, 3D melee, a ready-made opponent.
+- [`gs.bullets`](bullets.md): Bullet patterns: thousands of bullets in arrays, grazes, emitters.
+- [`gs.sand`](sand.md): Falling sand: liquids, fire, lava, ground that blasts into holes.
+- [`gs.flow`](flow.md): Rivers with currents, waterfalls, whirlpools, lava and floods that fill hollows.
+- [`gs.art`](art.md): Seeded art made in code: creatures, faces, items, buildings, sprites, names.
+- [`gs.sports`](sports.md): Team sports AI: pitches, formations, marking, passing and shooting.
+- [`gs.party`](party.md): Pass-and-play turns, and split screens.
+- [`gs.rhythm`](rhythm.md): Rhythm games: a beat kept with the sound card, charts, calibration.
+- [`gs.strokes`](strokes.md): Drawn shapes: smoothed finger lines, a shape recogniser, lines into physics.
+- [`gs.vehicles`](vehicles.md): Arcade cars and karts that drift and boost, laps, a ready-made rival driver.
+- [`gs.paths`](paths.md): 2D and 3D paths to follow: points along, offsets, nearest, even spacing.
+- [`gs.bones`](bones.md): 2D bone characters: poses, blends, clips, IK, wobble.
+- [`gs.level3d`](level3d.md): 3D levels from text maps.
+- [`gs.sky`](sky.md): Time of day, and weather that changes the world: rain, puddles, snow that settles, storms.
+- [`gs.combat`](combat.md): Guns, shots, lobs, health, markers, explosives, weapons made in code, drive-bys.
+- [`gs.tactics`](tactics.md): Cover (2D and 3D), squads that use it, taking cover, routes.
+- [`gs.climb`](climb.md): Ledges, climbing, ropes and swimming.
+- [`gs.missions`](missions.md): Mission scripts, zones, objectives and markers, open-world jobs, phone calls, a world save.
+- [`gs.cutscene`](cutscene.md): Cutscenes: camera paths, lines, and actors who walk, turn, look, gesture and speak.
+- [`gs.prompts`](prompts.md): Quick-time prompts.
+- [`gs.stealth`](stealth.md): Stealth: how lit a spot is, takedowns, bodies, floors that make noise, disguises.
+- [`gs.gadgets`](gadgets.md): Grapples, ziplines, wires to cut, locks to pick, codes to crack.
+- [`gs.campaign`](campaign.md): A campaign of levels with progress.
+- [`gs.arena`](arena.md): Car football: an arena, a ball car, chasing the ball.
+- [`gs.magic`](magic.md): Spells with casts, mana and cooldowns: bolts, areas, beams, wards, heals and statuses that meet.
+- [`gs.monsters`](monsters.md): Monster attacks with telegraphs, hurt reactions (flinch, stagger, knocked down) and bosses with phases.
+- [`gs.companions`](companions.md): Up to three companions who follow, talk and fight as guard, healer, archer or caster, with an order wheel and approval.
+- [`gs.poses`](poses.md): Jointed 3D people: figures, skinned people with faces, blend spaces, foot IK, key-pose actions.
+- [`gs.destruction`](destruction.md): Things that break: shatter, slice, rubble, buildings that come apart.
+- [`gs.props`](props.md): Thousands of 3D props in few draws (instancing, LOD), areas, chunks, crowds of animated people.
+- [`gs.outdoors`](outdoors.md): Land, grass, rocks, cliffs and caves, water, the sea, rivers, trees, wind, ground marks, cloth.
+- [`gs.city`](city.md): Made-up cities: streets, lit buildings with rooms to walk into, traffic and people, police, one big streamed city of districts, routes, a GPS and maps.
+- [`gs.models`](models.md): Things made in code for Next Gen: materials, props, trees, buildings, people (and a character creator), creatures, fur, vehicles, weapons.
+- [`gs.voxels`](voxels.md): Voxel worlds: generate, edit, mesh, ray, move through.
+- [`gs.fluid`](fluid.md): Real 3D liquid to pour and splash, and sand, snow and mud that behave like the real thing.
+- [`gs.gas`](gas.md): Smoke and fire that flow: rise, curl, spread under ceilings, go round things.
+- [`gs.regions`](regions.md): Big worlds in parts, made a little each frame while wanted and freed behind.
+- [`gs.dungeon`](dungeon.md): Dungeons built in 3D from a gs.gen map: doors, keys, levers, traps, chests, secret walls, solid in the World3D.
+- [`gs.mounts`](mounts.md): A horse or a flying beast to ride: saddle and reins on any creature, getting on and off, gaits with stamina, jumps, flight, blows from the saddle.
+- [`gs.craft`](craft.md): Planes, boats, hovercraft and floating things.
+- [`gs.soft`](soft.md): Soft things: cloth, rope and jelly to grab and cut; 2D liquid.
+- [`gs.cards`](cards.md): Card decks, totals, groups, poker hands, winners, stacks.
+- [`gs.dice`](dice.md): Dice rolls in dice notation, odds, 2D and 3D dice.
+- [`gs.words`](words.md): A word dictionary, word comparison, letter bags, scoring.
+- [`gs.trivia`](trivia.md): About 2,700 quiz questions, seeded, with no repeats.
+- [`gs.ui`](ui.md): Flexbox layout and input for menus, with no look of its own.
+- [`gs.hear`](hear.md): Sounds the mic hears (a dog, whistling...) and spoken words.
+- [`gs.doodle`](doodle.md): Guesses what a player drew among 200 things, and learns their way of drawing.
+- [`gs.phoneai`](phoneai.md): The phone's own AI for flavour lines only; play never depends on it.
+- [`gs.sketch`](sketch.md): Hand-drawn looks (sketchy shapes) and ink lines the player draws.
+- [`gs.icons`](icons.md): 528 icons that look the same on every phone (use these, not emoji).
+- [`gs.toon`](toon.md): Classic Console 3D: a cel-shaded view, parts, figures.
+- [`gs.hd`](hd.md): Next Gen HD 3D: the view with shadows, bloom, reflections, lamps, lens, decals and more.
+- [`gs.ar`](ar.md): AR 3D: the camera and gyro view, the floor, anchors and markers.
+- [`gs.bricks`](bricks.md): Toy bricks in 3D.
+- [`gs.physics3d`](physics3d.md): Rapier 3D physics: bodies, level collisions, walking characters, ragdolls, vehicles.
+- [`gs.fx3d`](fx3d.md): 3D text, 3D particles (fire, smoke, sparks, booms), impacts, outlines, glitch, trails.
+- [`gs.tabletop`](tabletop.md): Board games: a table in a 3D room or on your floor in AR, pieces, dice, turns, opponents.
+- [`gs.camera`](camera.md): 3D camera rigs: chase, shoulder, first person, top, side, orbit, rail, fixed.
+- [`gs.nav3d`](nav3d.md): 3D paths from your level meshes, and crowds that walk them.
+- [`gs.characters`](characters.md): Living 3D characters: look at, reach, planted feet, wobble, faces, people who react.
+- [`gs.ai`](ai.md): Crowds that chase, flee, flock and hunt; grid paths; state machines, behaviour trees, utility AI; swarms.

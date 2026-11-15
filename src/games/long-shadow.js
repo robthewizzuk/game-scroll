@@ -9,7 +9,10 @@
 // gs.sky (time of day, rain), gs.poses (soldiers), gs.combat (rifle, health, explosives), gs.tactics
 // (cover and squads), gs.ai (paths), gs.brains (the enemy commander learns how you play),
 // gs.stealth (bodies get found), gs.missions, gs.cutscene, gs.prompts, gs.gadgets (zip line),
-// gs.destruction (the watchtower), gs.campaign (stars and saves) and gs.models (Wren up close).
+// gs.destruction (the watchtower), gs.campaign (stars and saves), gs.models (Wren up close), and gs.physics3d with
+// gs.characters.Solid so nothing goes through what is solid: the village's walls, posts, carts and kerbs as Rapier shapes,
+// a dropped rifle, a helmet knocked off and the watchtower's pieces as real bodies that land against them, a man going down
+// where there is room and kept out of the wall beside him, and a rifle in a man's hands kept out of him and of the walls.
 import gs from '../gamescroll.js';
 const { sounds, noise, tone, space, bed, Ears, music, compose } = gs.sound;
 const { haptic, hapticPattern } = gs.device;
@@ -27,6 +30,8 @@ const { NavGrid } = gs.ai;
 const { Brain, Wave, Imagine, Nemesis } = gs.brains;
 const { Senses, Noises } = gs.senses;
 const { Bodies } = gs.stealth;
+const { World3D } = gs.physics3d;
+const { Solid } = gs.characters;
 const { Mission } = gs.missions;
 const { Cutscene } = gs.cutscene;
 const { Prompts } = gs.prompts;
@@ -345,6 +350,8 @@ function leafMat(atlas) {
 
 // ---- the village is built from boxes, slopes and cylinders merged into a few meshes, each part with
 // uvs in metres (so plaster, tiles, boards and stone keep their size) and a colour of its own
+// (while world() builds the valley, each box and upright cylinder is also kept as a shape for the physics: WD.coll)
+let COLLECT = null;
 function solid() {
   const P = [], N = [], U = [], C = [], I = [], e1 = new Vector3(), e2 = new Vector3(), n = new Vector3(), ax = new Vector3(), ay = new Vector3(), d = new Vector3();
   const b = {
@@ -363,6 +370,7 @@ function solid() {
       const p = [at(-hw, 0, hd), at(hw, 0, hd), at(hw, h, hd), at(-hw, h, hd), at(hw, 0, -hd), at(-hw, 0, -hd), at(-hw, h, -hd), at(hw, h, -hd)];
       b.face([p[0], p[1], p[2], p[3]], col, uv).face([p[4], p[5], p[6], p[7]], col, uv).face([p[1], p[4], p[7], p[2]], col, uv).face([p[5], p[0], p[3], p[6]], col, uv).face([p[3], p[2], p[7], p[6]], col, uv);
       if (under) b.face([p[5], p[4], p[1], p[0]], col, uv);
+      if (COLLECT && w > .03 && h > .03 && dd > .03) COLLECT.push({ box: [w, h, dd], at: { x, y: y0 + h / 2, z }, turn: ry });
       return b;
     },
     // a cylinder (or cone, r1 = 0) from centre c along unit axis a
@@ -372,6 +380,7 @@ function solid() {
       const lo = ring(r0, 0), hi = ring(r1 || 1e-4, h);
       for (let i = 0; i < seg; i++) { const j = (i + 1) % seg; b.face([lo[i], hi[i], hi[j], lo[j]], col, uv); }
       if (caps) { b.face([...lo], col, uv); if (r1 > 0) b.face([...hi].reverse(), col, uv); }
+      if (COLLECT && h > .05) { const r = (r0 + r1) / 2, m = c.clone().addScaledVector(a, h / 2); if (Math.abs(a.y) > .95) COLLECT.push({ box: [r * 1.8, h, r * 1.8], at: { x: m.x, y: m.y, z: m.z } }); else COLLECT.push({ capsule: [r, h + r * 2], at: { x: m.x, y: m.y, z: m.z }, turn: new THREE.Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), a) }); }
       return b;
     },
     // a pointed roof: seg flat sides from a ring of radius r up to a point h above its middle, tiles in rows along each eave
@@ -444,6 +453,7 @@ function villageTextures() {
 let WD = null;
 function world() {
   if (WD) return WD;
+  COLLECT = [];
   human.need(looksOf(LOOKS.both));   // the people first: if this phone hasn't sculpted them yet the app waits here, before anything else is built (each mission's own: see WD.regions)
   const v = new HDView({ bg: '#c9c3b2', env: .55, sky: '#c8d2e0', ground: '#4a4434', amb: .42, fov: 62 });
   v.cam.near = .3; v.cam.far = 1600; v.cam.updateProjectionMatrix();
@@ -468,6 +478,12 @@ function world() {
   v.scene.add(land.object);
   land.wind = AIR;
   v.scene.add(horizon(land, { inner: 300, outer: 1300, segments: 144, rings: 20, lower: (x, z) => z > 0 && Math.abs(x) < 400 ? .55 : 0 }));   // far hills, lower to the south
+  // the valley's light, baked by the phone itself the first time it is played (under the loading screen) and kept: the sky as
+  // each spot sees it and the sun bounced off what is round it, in probes over the valley (people pick it up as they move),
+  // and the ground's own light map (the dark foot of a wall, under a boulder); the sun and its shadows stay live
+  // (the probes stand over where the missions are played, from the valley floor to over the roofs; the far grid has the rest)
+  let lo = 1e9, hi = -1e9; for (let x = -215; x <= 245; x += 5) for (let z = -200; z <= 190; z += 5) { const y = land.height(x, z); lo = Math.min(lo, y); hi = Math.max(hi, y); }
+  v.bakeLight({ box: { min: [-215, lo - 1, -200], max: [245, hi + 22, 190] }, spacing: [10, 5, 10], most: 14000, maps: [land.mesh] });
 
   // the river and the lake: dark water with ripples that catch the sky
   const waterMat = (col, rep) => {
@@ -726,7 +742,14 @@ function world() {
         }
       }
       if (soffit(z0) != null && soffit(z1) != null) K.stone.face([P(bx - HW, b0, z0), P(bx + HW, b0, z0), P(bx + HW, b1, z1), P(bx - HW, b1, z1)], SC, .5);   // the arch's underside
-      if (Math.round(z0 * 2) % 8 === 0) { const zm = (z0 + z1) / 2, ym = deckY(zm); box(bx, ym - 2.2, zm, HW * 2, 2.2, 4, 'stone'); for (const sx of [-1, 1]) box(bx + sx * (HW - .2), ym, zm, .45, PAR, 4, 'low'); }
+      if (Math.round(z0 * 2) % 8 === 0) { const zm = (z0 + z1) / 2, ym = deckY(zm); box(bx, ym - 2.2, zm, HW * 2, 2.2, 4, 'stone'); solids.at(-1).deck = 1; for (const sx of [-1, 1]) { box(bx + sx * (HW - .2), ym, zm, .45, PAR, 4, 'low'); solids.at(-1).deck = 1; } }
+      // (what falls on it lies on it as drawn: the deck and its parapets as slabs a metre long that follow the hump, not the 4 m steps above)
+      if (COLLECT && Math.round(z0 * 2) % 2 === 0) {
+        const zb = Math.min(BRIDGE.z1, z0 + 1), yb = deckY(zb), L = Math.hypot(zb - z0, yb - y0) + .06, th = -Math.atan2(yb - y0, zb - z0), q = new THREE.Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), th);
+        const zm = (z0 + zb) / 2, ym = (y0 + yb) / 2, ny = Math.cos(th), nz = Math.sin(th), at = (x, up) => ({ x, y: ym + ny * up, z: zm + nz * up });
+        COLLECT.push({ box: [HW * 2, 1.2, L], at: at(bx, -.6), turn: q });
+        for (const sx of [-1, 1]) COLLECT.push({ box: [HW - IN, PAR + .42, L], at: at(bx + sx * (HW + IN) / 2, (PAR + .12) / 2 - .15), turn: q });
+      }
     }
     for (const ze of [BRIDGE.z0, BRIDGE.z1]) for (const sx of [-1, 1]) K.stone.box(bx + sx * (HW + IN) / 2, deckY(ze) - .2, ze, .62, PAR + .5, .62, 0, CAP, .5);   // end posts
     // the pier's cutwaters, pointing up and down the river
@@ -1020,6 +1043,7 @@ function world() {
     return coverAt(c, r) || land.slope(x, z) > .55;
   });
   WD.regions = missionParts(v);
+  WD.coll = COLLECT; COLLECT = null;
   return WD;
 }
 // ------------------------------------------------------------------ each mission's own things (WD.regions)
@@ -1432,7 +1456,7 @@ function man(look) {
 // pitch: how far above (or below) him his target is, radians: the muzzle rises about the butt in his shoulder.
 const _hp = new Vector3(), _hq = new THREE.Quaternion(), _hx = new Vector3(), _hb = new Vector3(), _hr = new THREE.Quaternion(), BUTT = [0, -.045, .36];
 const SLING = [-.17, .4, -.08], _sv = new Vector3(...SLING), _sp = new Vector3(), _sq = new THREE.Quaternion(), _se = new THREE.Euler();   // where the sling lies over his shoulder, in his chest's space
-function carry(m, h, dt, close, pitch = 0) {
+function carry(m, h, dt, close, pitch = 0, solid = null) {
   const u = m.userData, g = u.gun; if (!g || !g.visible) return;
   u.k += (h - u.k) * Math.min(1, dt * 6); u.pitch = (u.pitch || 0) + (pitch - (u.pitch || 0)) * Math.min(1, dt * 4);
   const a = m.rig.top === 'shoulder' ? m.rig.topW : 0, k = u.k < .02 ? 0 : u.k > .98 ? 1 : u.k;
@@ -1447,6 +1471,8 @@ function carry(m, h, dt, close, pitch = 0) {
     _sq.setFromEuler(_se.set(sl.x, 0, sl.z)); _sp.copy(HOLDS.slung.p).sub(_sv).applyQuaternion(_sq).add(_sv); _sp.y += sl.y;
     g.position.copy(_sp).lerp(_hp, k); g.quaternion.copy(_sq.multiply(HOLDS.slung.q)).slerp(_hq, k);
   } else { g.position.copy(HOLDS.slung.p).lerp(_hp, k); g.quaternion.copy(HOLDS.slung.q).slerp(_hq, k); }
+  // (in his hands and seen close: kept out of his own body and out of the wall he stands by, turned about the grip, before his hands go on it)
+  if (k > .5 && close && solid) { g.updateMatrixWorld(true); solid.keepOff(g, { pivot: GRIP, local: true, ahead: true }); }
   hands(m, k > .5 ? null : EASY);   // closed round the stock once the rifle is in his hands
   if (k > .5 && close) m.hold(g, GRIP, FORE);
 }
@@ -1520,6 +1546,53 @@ function make(api) {
   const gun = new Gun({ damage: 100, rate: .95, mag: 5, reload: 2.6, spread: 0, bloom: 0, recoil: .03, sideways: .3, recover: 3, auto: false, range: 600, head: 2 });
   const me = new Health({ max: 100, regen: 14, delay: 4 });
   const bodies = new Bodies({ range: 22 });
+  // What is solid, for this card (gs.physics3d, Rapier): the valley's walls, posts, carts and kerbs as world() built them (WD.coll), the
+  // game's own boxes that stop rounds (low walls, and a mission's sandbags), and the ground as a grid of heights. What the game lets go
+  // of (a dropped rifle, a helmet, the watchtower's pieces) is a body in it that lands against all that and is let be once it rests;
+  // men going down find room and are kept out of the walls (gs.characters.Solid), and so are the rifles in their hands. Nothing else
+  // moves in it, so it is only stepped while something falls.
+  const phys = new World3D({ gravity: -9.81, link: false }), loose = [];
+  let physMade = false, physTemp = null, physN = -1;
+  // (a box standing on the ground goes on down into it, a metre and a half: what is caught in its foot comes out of its side, not its bottom)
+  const rooted = list => list.map(q => { if (!q.box) return q; const bot = q.at.y - q.box[1] / 2; if (bot > groundAt(q.at.x, q.at.z) + .6) return q; return { ...q, box: [q.box[0], q.box[1] + 1.5, q.box[2]], at: { x: q.at.x, y: q.at.y - .75, z: q.at.z } }; });
+  const boxOf = b => ({ box: [b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0], at: { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z: (b.z0 + b.z1) / 2 } });
+  function physBuild() {
+    if (physMade) return; physMade = true;
+    phys.shapes(rooted(WD.coll), { tag: 'village', friction: .8, bounce: .05 });
+    phys.shapes(rooted(WD.solids.filter(b => !b.temp && !b.deck).map(boxOf)), { tag: 'walls', friction: .8, bounce: .05 });
+    WD.land.solid(phys, { friction: .9, bounce: .05 });   // (the land's own triangles: what lies on it lies on the ground that is drawn)
+  }
+  // a mission's own boxes (sandbags round a gun), when they change
+  function physTemps() {
+    if (WD.solids.length === physN) return; physN = WD.solids.length;
+    physTemp?.remove(); const t = WD.solids.filter(b => b.temp);
+    physTemp = t.length ? phys.shapes(rooted(t.map(boxOf)), { tag: 'bags' }) : null;
+  }
+  function physTick(dt) {
+    physTemps(); if (!loose.length) return;
+    phys.step(dt);
+    for (let i = loose.length - 1; i >= 0; i--) {
+      const l = loose[i], m = l.b.mesh; l.t += dt;
+      // (one that got under the ground somehow is put back on it, where it is)
+      const under = m && m.position.y < groundAt(m.position.x, m.position.z) - 1; if (under) m.position.y = groundAt(m.position.x, m.position.z) + .05;
+      if (under || (l.t > .5 && l.b.body.isSleeping()) || l.t > 8 || l.gone?.()) { l.b.remove(); loose.splice(i, 1); }   // (at rest: let be where it lies)
+    }
+  }
+  // a mesh of the game's let go of: a body of shape (as World3D.shape) with the speed and spin it left with
+  function letGo(mesh, shape, vel, spin, o = {}) {
+    for (let i = loose.length - 1; i >= 0; i--) if (loose[i].b.mesh === mesh) { loose[i].b.remove(); loose.splice(i, 1); }   // (a pooled one used again)
+    mesh.updateMatrixWorld(true);
+    // (let go of inside a wall (a rifle slung on a back to it): out of it first, the nearest way)
+    { const r = (shape.ball ?? Math.max(...shape.box) / 2), o = shape.off ? _gc.set(shape.off.x, shape.off.y, shape.off.z).applyQuaternion(mesh.quaternion).add(mesh.position) : _gc.copy(mesh.position), lo = { x: o.x - r, y: o.y - r, z: o.z - r }, hi = { x: o.x + r, y: o.y + r, z: o.z + r };
+      for (let k = 0; k < 3; k++) { const h = phys.outOf(o, Math.min(r, .12), phys.around(lo, hi).filter(q => !q.thin)); if (!h) break; mesh.position.x += h.x - o.x; mesh.position.y += Math.max(0, h.y - o.y); mesh.position.z += h.z - o.z; o.set(h.x, Math.max(o.y, h.y), h.z); } }
+    const b = phys.shape(mesh, shape, { vel, density: o.density ?? 400, friction: o.friction ?? .7, bounce: o.bounce ?? .15, spinDrag: .4, drag: .05 });
+    if (spin) b.setSpin(spin.x, spin.y, spin.z);
+    loose.push({ b, t: 0, gone: o.gone }); return b;
+  }
+  const solidOf = m => m.userData.solid ||= new Solid(m, { world: phys });
+  const _gb = new THREE.Box3(), _gc = new Vector3();
+  // the box round a mesh in its own space, and where its middle is: { box: [w, h, d], off }
+  const shapeOf = mesh => { if (mesh.userData.shapeOf) return mesh.userData.shapeOf; mesh.updateMatrixWorld(true); const inv = mesh.matrixWorld.clone().invert(); _gb.makeEmpty(); mesh.traverse(o => { if (!o.isMesh) return; if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); _gb.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld.clone().premultiply(inv))); }); const sz = _gb.getSize(new Vector3()), c = _gb.getCenter(_gc); return mesh.userData.shapeOf = { box: [Math.max(.03, sz.x), Math.max(.03, sz.y), Math.max(.03, sz.z)], off: { x: c.x, y: c.y, z: c.z } }; };
   bodies.on('found', (b, g) => { g.sus = 1; heat = Math.min(1.2, heat + .12); });
   // The Grey Order's field commander: starts from simple rules (the teacher) and learns how you play
   const boss = new Brain(api, {
@@ -1557,7 +1630,7 @@ function make(api) {
     streak: ['{streak} in a row. Who IS this?'],
   } });
   const MARR = 'COL. MARR · GREY ORDER';
-  let noises = new Noises(), guard = null, metMarr = false, marrSays = [], built = false, mistT = 0, mistK = 1, lensDrops = [], lensT = 0, lensAcc = 0, mirX = 0, mirT = 0;
+  let noises = new Noises(), guard = null, metMarr = false, marrSays = [], built = false, mistT = 0, mistK = 1, lensDrops = [], lensGrad = null, lensT = 0, lensAcc = 0, mirX = 0, mirT = 0;
   // The commander also thinks a few seconds ahead (Tiny Brains' Imagine) with a rough sketch of the
   // fight: [heat, your favourite nest, quiet, men left, your health, masked, alerted, time, how close
   // they are, mortar ready]. Pushing closes in but costs men while you're watching; flanking is slower
@@ -1684,7 +1757,10 @@ function make(api) {
     const order = Math.abs(rel) < .8 ? ['fallFront', 'fallLeft', 'fallRight', 'fallBack'] : Math.abs(rel) > 2.3 ? ['fallBack', 'fallRight', 'fallLeft', 'fallFront'] : rel > 0 ? ['fallLeft', 'fallBack', 'fallFront', 'fallRight'] : ['fallRight', 'fallBack', 'fallFront', 'fallLeft'];
     const at = (lx, lz, r) => [s.x + (lx * cy + lz * sy) * r, s.y + (-lx * sy + lz * cy) * r];
     if (m.gear.pack && m.userData.pack.visible) order.push(...order.splice(order.indexOf('fallBack'), 1));   // (with a pack on his back he goes over on his side or his face rather than lie on it)
-    const pick = order.find(n => { const [x, z] = at(...FALLS[n], 1.2); return !solidAt(x, z, WD.solids); }) || order[0];
+    // (the first way with room for him to go down in: a body's length from his hips, low walls and kerbs too; else the roomiest)
+    const room = {}, roomFor = n => room[n] ??= physMade ? solidOf(m).room({ x: FALLS[n][0] * cy + FALLS[n][1] * sy, z: -FALLS[n][0] * sy + FALLS[n][1] * cy }, 1.6) : solidAt(...at(...FALLS[n], 1.2), WD.solids) ? 0 : 9;
+    const pick = order.find(n => roomFor(n) >= 1.3) || order.reduce((b, n) => roomFor(n) > roomFor(b) + .05 ? n : b, order[0]);
+    s.fallDir = [FALLS[pick][0] * cy + FALLS[pick][1] * sy, -FALLS[pick][0] * sy + FALLS[pick][1] * cy];
     s.pins = s.crouch || s.low ? null : feetNow(m, m.userData.pins ||= {});   // where his feet stand: they stay there while his legs give
     // (a man on a knee or ducked is already half way down: his fall starts there, not from standing)
     m.rig.play(pick, { fade: s.crouch ? .16 : .1, again: true, from: s.low ? .36 : s.crouch ? .3 : 0 }); m.rig.upper(null);
@@ -1699,6 +1775,8 @@ function make(api) {
     m.rig.update(dt, { speed: 0 }); joltTick(s, dt);
     { const ph = m.rig.phase; if (ph < .7 && m.lod < 2) floorFeet(m, 1 - sm(.6, .7, ph), s.pins, 1 - sm(.3, .5, ph)); }
     if (s.tilt) { const k = sm(.3, .72, m.rig.phase); m.rotation.order = 'YXZ'; m.rotation.x = s.tilt[0] * k; m.rotation.z = s.tilt[1] * k; }
+    // (going down against a wall, a low wall or a cart, he slides off it rather than into it: a little each frame, along the ground)
+    if (physMade) { const k = solidOf(m).keepOut({ ground: false, up: false, most: .12 }); if (k) { s.x += k.x; s.y += k.z; } }
     if (!s.thud && m.rig.phase > .6) {   // he meets the ground: dust (mud in the rain) from under him
       s.thud = true; const [fx_, fz_] = FALLS[m.rig.state] || [0, 0], sy = Math.sin(s.yaw), cy = Math.cos(s.yaw), x = s.x + (fx_ * cy + fz_ * sy) * .5, z = s.y + (-fx_ * sy + fz_ * cy) * .5;
       if (s.deck == null) for (let i = 0; i < 7; i++) WD.dust.emit({ x: x + rnd(-.4, .4), y: s.gy + .08, z: z + rnd(-.4, .4), vx: rnd(-.9, .9), vy: rnd(.2, .9), vz: rnd(-.9, .9), life: rnd(.8, 1.4), size: .28, grow: 2.2, col: rain.amount > .2 ? [.3, .27, .21] : [.56, .49, .37], a: .32, drag: 2.2, fadeIn: true });
@@ -1739,12 +1817,17 @@ function make(api) {
   function dropRifle(s) {
     const g = s.m.userData.gun; if (!g || !g.visible) return; g.visible = false;
     const d = WD.dropped[WD.dropN++ % WD.dropped.length], a = s.yaw + rnd(.8, 1.6);
-    d.position.set(s.x + Math.sin(a) * .75, s.gy + .03, s.y + Math.cos(a) * .75); d.rotation.set(0, rnd(0, TAU), Math.PI / 2); d.visible = true;
+    if (!physMade) { d.position.set(s.x + Math.sin(a) * .75, s.gy + .03, s.y + Math.cos(a) * .75); d.rotation.set(0, rnd(0, TAU), Math.PI / 2); d.visible = true; return; }
+    // out of his hands as he goes: from where it was, a little out the way he falls and up, turning; it lands against what is there
+    g.updateMatrixWorld(true); g.matrixWorld.decompose(d.position, d.quaternion, _gc); d.scale.set(1, 1, 1); d.visible = true;
+    const [fx_, fz_] = s.fallDir || [Math.sin(a), Math.cos(a)];
+    letGo(d, shapeOf(d), { x: fx_ * rnd(.6, 1.4) + rnd(-.4, .4), y: rnd(.6, 1.6), z: fz_ * rnd(.6, 1.4) + rnd(-.4, .4) }, { x: rnd(-4, 4), y: rnd(-3, 3), z: rnd(-4, 4) });
   }
   function popHelmet(s) {
     const h = WD.helmets.find(q => q.life <= 0) || WD.helmets[0]; s.m.userData.helmet.visible = false;
     s.m.bones.head.localToWorld(tmpA.fromArray(h.m.userData.at));
     h.m.position.copy(tmpA); h.m.rotation.set(0, s.yaw, 0); h.m.visible = true; h.life = 4; h.vx = rnd(-1, 1); h.vy = 5; h.vz = rnd(-1, 1); h.spin = rnd(6, 12);
+    if (physMade) { const q = shapeOf(h.m); h.b = letGo(h.m, { ball: Math.max(...q.box) * .42, off: q.off }, { x: h.vx, y: h.vy, z: h.vz }, { x: h.spin, y: rnd(-3, 3), z: rnd(-2, 2) }, { density: 250, bounce: .35, gone: () => h.life <= 0 }); }
   }
   // (asked for every soldier near every bullet step: the three spheres are filled in place, not made anew)
   function hitSpheres(s, out) {
@@ -2355,23 +2438,27 @@ function make(api) {
     if (!m.passed && zip.t > ZIP_PASS) { m.passed = true; noise(.45, { vol: .09, from: 600, to: 2600, filter: 'bandpass', q: 2 }); noise(.5, { vol: .06, from: 2600, to: 500, filter: 'bandpass', q: 2, at: .25 }); haptic('light'); }
   }
   // does a straight line from a to b miss every wall and building?
+  // (the three axes one after another, with no lists made: it is asked about every man, many times a frame)
+  const SLAB = { t0: 0, t1: 1 };
+  function slab(p, d, lo, hi) {
+    if (Math.abs(d) < 1e-9) return p >= lo && p <= hi;
+    let u = (lo - p) / d, w = (hi - p) / d; if (u > w) { const k = u; u = w; w = k; }
+    if (u > SLAB.t0) SLAB.t0 = u; if (w < SLAB.t1) SLAB.t1 = w; return SLAB.t0 <= SLAB.t1;
+  }
   function clearLine(a, b) {
-    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-    for (const s of WD.solids) {
-      let t0 = 0, t1 = 1, hit = true;
-      for (const [p, d, lo, hi] of [[a.x, dx, s.x0, s.x1], [a.y, dy, s.y0, s.y1], [a.z, dz, s.z0, s.z1]]) {
-        if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { hit = false; break; } continue; }
-        let u = (lo - p) / d, w = (hi - p) / d; if (u > w) [u, w] = [w, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, w); if (t0 > t1) { hit = false; break; }
-      }
-      if (hit) return false;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, S = WD.solids;
+    for (let i = 0; i < S.length; i++) {
+      const s = S[i]; SLAB.t0 = 0; SLAB.t1 = 1;
+      if (slab(a.x, dx, s.x0, s.x1) && slab(a.y, dy, s.y0, s.y1) && slab(a.z, dz, s.z0, s.z1)) return false;
     }
     return true;
   }
   // Could a shot from the eye e reach this man? (walls and buildings, then the ground, as the bullets see it.)
   // His whole head must show: the top of a helmet over a parapet is no target, so a man like that counts as
   // hidden, and comes out. (Kneeling his head is at 1.2 m, right down behind cover under 1 m.)
+  const _sho = { x: 0, y: 0, z: 0 };
   function shootable(e, s) {
-    const p = { x: s.x, y: s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44), z: s.y };
+    const p = _sho; p.x = s.x; p.y = s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44); p.z = s.y;
     return clearLine(e, p) && overLand(e, p);
   }
   // the line from e to p stays above the ground all the way (sampled every two metres)
@@ -2384,7 +2471,7 @@ function make(api) {
   const _ins = { x: 0, y: 0, z: 0 };
   function inSight(e, s) {
     const top = s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44);
-    for (const y of [top, top - .42]) { _ins.x = s.x; _ins.y = y; _ins.z = s.y; if (clearLine(e, _ins) && overLand(e, _ins)) return true; }
+    for (let k = 0; k < 2; k++) { _ins.x = s.x; _ins.y = k ? top - .42 : top; _ins.z = s.y; if (clearLine(e, _ins) && overLand(e, _ins)) return true; }
     return false;
   }
   // the nearest open ground that a shot from e reaches (standing), not right under the nest, by the way he would
@@ -2465,9 +2552,12 @@ function make(api) {
     for (const s of men) if (!s.ko && Math.hypot(s.x - x, s.y - z) < e.radius) knockOut(s, false, 0, false);
     if (tower && !tower.down && Math.hypot(tower.x - x, tower.z - z) < 9) {
       tower.down = true; const pieces = [];
-      for (const m of [...tower.g.children]) { m.updateMatrixWorld(true); const ps = shatter(m, { pieces: 5, at: { x, y: y + 2, z }, inside: WD.M.wood, seed: 3 }); pieces.push(...ps); }
+      for (const m of [...tower.g.children]) { m.updateMatrixWorld(true); const ps = shatter(m, { pieces: 5, at: { x, y: y + 2, z }, inside: WD.M.wood, seed: 3, world: physMade ? phys : false }); pieces.push(...ps); }
       tower.g.removeFromParent();
-      for (const p of pieces) { p.castShadow = true; const dx = p.position.x - x, dz = p.position.z - z, l = Math.hypot(dx, dz) || 1; p.userData.v = { x: dx / l * rnd(3, 8), y: rnd(3, 9), z: dz / l * rnd(3, 8), r: rnd(-4, 4) }; }
+      for (const p of pieces) {
+        p.castShadow = true; const dx = p.position.x - x, dz = p.position.z - z, l = Math.hypot(dx, dz) || 1, v = { x: dx / l * rnd(3, 8), y: rnd(3, 9), z: dz / l * rnd(3, 8) };
+        if (p.body) { p.body.setVel(v.x, v.y, v.z); p.body.setSpin(rnd(-4, 4), rnd(-2, 2), rnd(-4, 4)); loose.push({ b: p.body, t: 0 }); } else p.userData.v = { ...v, r: rnd(-4, 4) };   // (a body: it lands against the yard and the huts, not through them)
+      }
       tower.pieces = pieces;
     }
     if (b?.mesh) b.mesh.visible = false;
@@ -2914,7 +3004,7 @@ function make(api) {
       if (!far || (frame + (s.x | 0)) % 3 === 0) {
         const step = far ? dt * 3 : dt, turn = clamp(angDiff(s.yaw, s.yawWas ?? s.yaw) / step, -6, 6); s.yawWas = s.yaw;   // (he leans into his turns)
         m.rig.update(step, { speed: s.av, aim: s.alert ? -.05 : 0, turn });
-        if (m.visible) { m.see(WD.v.cam, 1000); if (s.onGun) { const k = s.onGun === 'grips'; m.hold(s.gunG || mgNest.g, k ? MG.grip : MG.belt, k ? MG.stock : MG.feed); } else if (s.binos) binocs(s, m); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0); }
+        if (m.visible) { m.see(WD.v.cam, 1000); if (s.onGun) { const k = s.onGun === 'grips'; m.hold(s.gunG || mgNest.g, k ? MG.grip : MG.belt, k ? MG.stock : MG.feed); } else if (s.binos) binocs(s, m); if (armed) carry(m, s.kind === 'cs' || s.alert || m.rig.topOn || s.sus > .5 ? 1 : 0, far ? dt * 3 : dt, m.lod < 2, s.alert || s.kind === 'cs' ? clamp(Math.atan2(eye.y - s.gy - 1.45, Math.hypot(eye.x - s.x, eye.z - s.y)), -.35, .5) : 0, physMade ? solidOf(m) : null); }
       }
       // through the scope his feet meet the slope he stands on (foot IK), for the few men in view on the land (not a man
       // up on something, as Rook on the belfry floor: his feet reached for the ground 17 m below, and his hips sank the
@@ -3077,6 +3167,7 @@ function make(api) {
     // Wren himself, seen when he moves between nests
     WD.wren ||= wrenFigure(); WD.wren.visible = false; WD.wren.rig.follow?.reset();
     echoFor(missions[id]?.weather === 'rain');   // made here (silent) rather than in the first frame of play
+    for (const l of loose) l.b.remove(); loose.length = 0;
     tower?.g.removeFromParent(); for (const p of tower?.pieces || []) { p.removeFromParent(); p.geometry?.dispose(); }
     tower = null; drums = null; car = null; op = null; cs = null; boom.list.length = 0; if (WD.bags) WD.bags.visible = false;
     WD.solids = WD.solids.filter(b => !b.temp);
@@ -3270,7 +3361,7 @@ function make(api) {
   return {
     reset() {
       audioDown(); theme?.stop();
-      world(); layout();
+      world(); layout(); physBuild();
       // (one sky and one weather for the world, which every card of this game shares: a second card used to add its own dome)
       if (!WD.sky) { WD.sky = new Sky(WD.v, { time: MOODS.m1.time, tilt: MOODS.m1.tilt, stars: 300, sun: WD.sl, day: DAY_CLEAR, clouds: MOODS.m1.clouds, gap: MOODS.m1.gap, env: true, fog: false }); WD.rain = new Weather(WD.v, { kind: 'clear', amount: 0, wind: AIR, area: 30, max: 2400 }); if (WD.rain.rainMesh) { WD.rain.rainMesh.material.opacity = .28; WD.rain.rainMesh.material.color.set('#9aa8b8'); } }
       sky = WD.sky; rain = WD.rain; rain.onFlash = far => { storm = 1.6; thunder(far); };
@@ -3319,12 +3410,12 @@ function make(api) {
       if (state === 'intro' || state === 'outro') {
         cut.update(dt); audioTick(dt);
         if (state === 'intro' && cut.done) { state = 'play'; meetMarr(); marrOnAir(); const s = cut.shot; if (s?.look) { const dx = s.look.x - s.x, dy = s.look.y - s.y, dz = s.look.z - s.z; look.yaw = Math.atan2(-dx, -dz); look.pitch = clamp(Math.atan2(dy, Math.hypot(dx, dz)), -.5, .35); } }
-        updateMen(dt); updateAllies(dt); WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.steam.update(dt); WD.trail.update(dt);
+        updateMen(dt); updateAllies(dt); physTick(dt); WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.steam.update(dt); WD.trail.update(dt);
         if (state === 'outro') { mission.update(dt); trainUpdate(dt); if (mid === 'm1' && train.final) rideTrain(dt); }
         if (outroDone && state === 'outro') finish(true);
         return;
       }
-      if (state === 'fail' || state === 'won') { endT -= dtReal; updateMen(dt); WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); if (endT <= 0 && state) { const s0 = state; state = 'done'; if (s0) api.over(); } return; }
+      if (state === 'fail' || state === 'won') { endT -= dtReal; updateMen(dt); physTick(dt); WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); if (endT <= 0 && state) { const s0 = state; state = 'done'; if (s0) api.over(); } return; }
       if (state !== 'play') return;
 
       // climbing the belfry (mission 2 start)
@@ -3376,7 +3467,9 @@ function make(api) {
       if (car?.smoke) WD.smoke.emit({ x: car.x, y: WD.land.height(car.x, car.z) + 2.4, z: car.z, vx: rnd(-.3, .3), vy: 2, vz: rnd(-.3, .3), life: 3, size: 1.4, grow: 2, col: [.15, .14, .13], a: .7 });
       boom.update(dt);
       for (const p of tower?.pieces || []) { const u = p.userData.v; if (!u) continue; u.y -= 15 * dt; p.position.x += u.x * dt; p.position.y += u.y * dt; p.position.z += u.z * dt; p.rotation.x += u.r * dt; const g = WD.land.height(p.position.x, p.position.z); if (p.position.y < g) { p.position.y = g; u.x *= .5; u.z *= .5; u.y = Math.abs(u.y) * .2; u.r *= .5; if (Math.abs(u.y) < .5) p.userData.v = null; } }
-      for (const h of WD.helmets) if (h.life > 0) { h.life -= dt; h.vy -= 12 * dt; h.m.position.x += h.vx * dt; h.m.position.y += h.vy * dt; h.m.position.z += h.vz * dt; h.m.rotation.x += h.spin * dt; const g = WD.land.height(h.m.position.x, h.m.position.z); if (h.m.position.y < g + .07) { h.m.position.y = g + .07; h.vy = Math.abs(h.vy) * .35; h.vx *= .5; h.vz *= .5; h.spin *= .5; } if (h.life <= 0) h.m.visible = false; }
+      physTick(dt);
+      for (const h of WD.helmets) if (h.life > 0 && h.b && !h.b.dead) { h.life -= dt; if (h.life <= 0) h.m.visible = false; }   // (a body in the world: it lands against what is there)
+      else if (h.life > 0) { h.life -= dt; h.vy -= 12 * dt; h.m.position.x += h.vx * dt; h.m.position.y += h.vy * dt; h.m.position.z += h.vz * dt; h.m.rotation.x += h.spin * dt; const g = WD.land.height(h.m.position.x, h.m.position.z); if (h.m.position.y < g + .07) { h.m.position.y = g + .07; h.vy = Math.abs(h.vy) * .35; h.vx *= .5; h.vz *= .5; h.spin *= .5; } if (h.life <= 0) h.m.visible = false; }
       WD.dust.update(dt); WD.sparks.update(dt); WD.smoke.update(dt); WD.steam.update(dt); WD.trail.update(dt);
       // tagging with the glasses
       if (glass) {
@@ -3830,16 +3923,24 @@ function make(api) {
     for (; lensAcc >= 1; lensAcc--) if (lensDrops.length < 40) { const a = rnd(0, TAU), r = Math.sqrt(Math.random()) * R * .95; lensDrops.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, r: rnd(2, 5.5), life: rnd(4, 9), vy: 0 }); }
     if (!lensDrops.length) return;
     c.save(); c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.clip();
-    for (const d of lensDrops) {
+    // (one drop's shading made once, a drop wide round 0, 0, and each drop drawn with it moved and sized, its fading as
+    // globalAlpha: the same picture as a gradient and four colours made for every drop each frame, with nothing made)
+    const g = lensGrad?.c === c ? lensGrad.g : (lensGrad = { c, g: c.createRadialGradient(-.3, -.35, .1, 0, 0, 1) }).g;
+    if (!g.gsStops) { g.gsStops = true; g.addColorStop(0, 'rgba(255,255,250,.85)'); g.addColorStop(.25, 'rgba(220,228,236,.3)'); g.addColorStop(.7, 'rgba(120,130,140,.15)'); g.addColorStop(.88, 'rgba(6,8,12,.7)'); g.addColorStop(1, 'rgba(0,0,0,0)'); }
+    let n = 0;
+    for (let i = 0; i < lensDrops.length; i++) {
+      const d = lensDrops[i];
       d.life -= dt; if (d.r > 4.6) { d.vy = Math.min(d.vy + dt * 30, 45); d.y += d.vy * dt; d.r -= dt * .4; }
-      const x = cx + d.x, y = cy + d.y, a = clamp(d.life, 0, 1) * .8, g = c.createRadialGradient(x - d.r * .3, y - d.r * .35, d.r * .1, x, y, d.r);
-      g.addColorStop(0, `rgba(255,255,250,${.85 * a})`); g.addColorStop(.25, `rgba(220,228,236,${.3 * a})`); g.addColorStop(.7, `rgba(120,130,140,${.15 * a})`); g.addColorStop(.88, `rgba(6,8,12,${.7 * a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
-      c.fillStyle = g; c.beginPath(); c.arc(x, y, d.r, 0, TAU); c.fill();
-      c.fillStyle = `rgba(230,236,240,${.35 * a})`; c.beginPath(); c.arc(x + d.r * .25, y + d.r * .45, d.r * .28, 0, TAU); c.fill();   // light gathered at the bottom, as through a lens
-      if (d.vy > 4) { c.strokeStyle = `rgba(190,200,210,${.18 * a})`; c.lineWidth = d.r * .7; c.beginPath(); c.moveTo(x, y - d.r); c.lineTo(x, y - d.r - Math.min(30, d.vy * .8)); c.stroke(); }
+      const x = cx + d.x, y = cy + d.y, a = clamp(d.life, 0, 1) * .8;
+      c.save(); c.globalAlpha = a; c.translate(x, y); c.scale(d.r, d.r);
+      c.fillStyle = g; c.beginPath(); c.arc(0, 0, 1, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(230,236,240,.35)'; c.beginPath(); c.arc(.25, .45, .28, 0, TAU); c.fill();   // light gathered at the bottom, as through a lens
+      c.restore(); c.globalAlpha = a;
+      if (d.vy > 4) { c.strokeStyle = 'rgba(190,200,210,.18)'; c.lineWidth = d.r * .7; c.beginPath(); c.moveTo(x, y - d.r); c.lineTo(x, y - d.r - Math.min(30, d.vy * .8)); c.stroke(); }
+      if (d.life > 0 && d.y < R) lensDrops[n++] = d;
     }
-    c.restore();
-    lensDrops = lensDrops.filter(d => d.life > 0 && d.y < R);
+    lensDrops.length = n;
+    c.globalAlpha = 1; c.restore();
   }
   function scopeView(c, brass, red) {
     const cx = W / 2, cy = H / 2, R = Math.min(W, H) * .44, fovR = fovNow() * Math.PI / 180, px = H / fovR;   // units per radian

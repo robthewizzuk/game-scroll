@@ -93,6 +93,7 @@ export class Bulge extends Bone {
 // x; elbows bend negative x; a foot's toes point down with positive x. Hands and feet (handL, footL...)
 // are joints too where the figure has them.
 const P = (o, drop = 0) => ({ j: o, drop });
+const NO_POSE = Object.freeze({ j: Object.freeze({}), drop: 0 });   // (a pose a rig has not got: nothing)
 const cyc = (fn, rate) => ({ cycle: fn, rate });   // rate: cycles per metre
 export const POSES = {
   idle: cyc(p => P({ spine: [.03 + S(p * TAU) * .015, 0, 0], armL: [0, 0, -.08], armR: [0, 0, .08], foreL: [-.15, 0, 0], foreR: [-.15, 0, 0] }), 0),
@@ -168,8 +169,121 @@ Object.assign(POSES, {
   dodgeBack: cyc(keys([[0, GUARD], [.3, { spine: [-.25, 0, 0], head: [-.15, 0, 0], legL: [.1, 0, .06], shinL: [.5, 0, 0], legR: [.5, 0, -.06], shinR: [.6, 0, 0], drop: .1 }], [1, GUARD]]), 0),
 });
 POSES.dodgeR = cyc(mirror(POSES.dodgeL.cycle), 0);
+// Armed (gs.fight BLADES, AXES, SPEARS, STAVES; a sword, an axe or a mace in the right hand, a shield on the left arm, or
+// nothing in it). The guard: the blade up and forward, the shield (or the empty hand) out in front, side on, the left foot forward.
+const LEGS = { legL: [-.32, 0, .08], shinL: [.32, 0, 0], footL: [0, 0, 0], legR: [.22, 0, -.08], shinR: [.34, 0, 0], footR: [-.1, 0, 0] };
+const ARMED = { spine: [.1, -.3, 0], head: [-.05, .25, 0], armR: [-.4, 0, .25], foreR: [-1.25, 0, 0], handR: [.75, 0, 0], armL: [-.75, 0, -.15], foreL: [-1.0, 0, 0], handL: [0, 0, 0], ...LEGS, drop: .04 };
+// a blow: from the guard to the wind-up, through the strike (from at the active frames' start to the end of them) and back
+const cut = (f, wind, from, to, rec = null) => keys([[0, ARMED], [f[0] * .62, wind], [f[0], from], [f[1], to], ...(rec ? [[f[1] + (1 - f[1]) * .45, rec]] : []), [1, ARMED]]);
+const SPEAR = { spine: [.12, -.55, 0], head: [-.05, .5, 0], armR: [-.05, .4, .8], foreR: [-1.4, 0, 0], handR: [1.05, 0, 0], armL: [-.85, 0, -.1], foreL: [-.55, 0, 0], handL: [0, 0, 0], ...LEGS, drop: .05 };
+const jab = (f, wind, from, to) => keys([[0, SPEAR], [f[0] * .62, wind], [f[0], from], [f[1], to], [1, SPEAR]]);
+Object.assign(POSES, {
+  armed: cyc(p => { const k = S(p * TAU) * .012, { drop, ...j } = ARMED; return P({ ...j, spine: [.1 + k, -.3, 0] }, drop + k); }, 0),
+  // the shield up in front, the blade back over it ready to come round
+  shieldUp: cyc(p => { const k = S(p * TAU) * .01, { drop, ...j } = ARMED; return P({ ...j, spine: [.16 + k, -.35, 0], head: [.02, .3, 0], armL: [-1.15, 0, -.05], foreL: [-.75, 0, 0], armR: [-.6, 0, .45], foreR: [-1.6, 0, 0], handR: [.55, 0, 0] }, drop + .02 + k); }, 0),
+  // one-handed: across from the right, back from the left, down from overhead, a thrust, a cut at the legs. The blade runs on
+  // from the forearm (the wrist cocked), its edge leading (the forearm turned), and the arm sweeps it round with the body.
+  slash: cyc(cut(fr(8, 4, 12), { spine: [.05, -.7, 0], head: [0, .6, 0], armR: [-1.4, 0, -1.0], foreR: [-.7, 1.5, 0], handR: [1.0, 0, 0] },
+    { spine: [.12, -.15, 0], head: [0, .2, 0], armR: [-1.45, 0, -.45], foreR: [-.15, 1.5, 0], handR: [1.4, 0, 0], legR: [.32, 0, -.08] },
+    { spine: [.18, .5, 0], head: [0, -.35, 0], armR: [-1.4, 0, .7], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0], legR: [.3, -.3, -.08] },
+    { spine: [.14, .3, 0], armR: [-1.0, 0, .6], foreR: [-.9, .8, 0], handR: [1.0, 0, 0] }), 0),
+  cutBack: cyc(cut(fr(7, 4, 14), { spine: [.15, .55, 0], head: [0, -.35, 0], armR: [-1.5, 0, .9], foreR: [-1.1, 1.5, 0], handR: [1.0, 0, 0] },
+    { spine: [.14, .3, 0], head: [0, -.1, 0], armR: [-1.45, 0, .5], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0] },
+    { spine: [.1, -.45, 0], head: [0, .45, 0], armR: [-1.4, 0, -.8], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0] },
+    { spine: [.1, -.35, 0], armR: [-.9, 0, -.4], foreR: [-1.0, .8, 0], handR: [1.0, 0, 0] }), 0),
+  chop: cyc(cut(fr(13, 4, 20), { spine: [-.12, -.2, 0], head: [-.15, .2, 0], armR: [-2.9, 0, .2], foreR: [-1.4, 0, 0], handR: [.6, 0, 0], drop: .02 },
+    { spine: [.25, -.2, 0], armR: [-2.0, 0, .1], foreR: [-.2, 0, 0], handR: [1.2, 0, 0], legL: [-.5, 0, .08], shinL: [.55, 0, 0] },
+    { spine: [.45, -.2, 0], head: [.1, .2, 0], armR: [-1.15, 0, .1], foreR: [-.1, 0, 0], handR: [.9, 0, 0], legL: [-.55, 0, .08], shinL: [.7, 0, 0], drop: .09 }), 0),
+  thrust: cyc(cut(fr(10, 3, 16), { spine: [.05, -.55, 0], head: [0, .5, 0], armR: [.2, 0, .3], foreR: [-1.55, 0, 0], handR: [1.5, 0, 0], legR: [.35, 0, -.08] },
+    { spine: [.2, .15, 0], head: [-.05, -.1, 0], armR: [-1.4, 0, .05], foreR: [-.1, 0, 0], handR: [.95, 0, 0], legL: [-.7, 0, .08], shinL: [.75, 0, 0], legR: [.4, 0, -.08], shinR: [.1, 0, 0], drop: .1 },
+    { spine: [.24, .2, 0], armR: [-1.5, 0, 0], foreR: [-.05, 0, 0], handR: [.95, 0, 0], legL: [-.75, 0, .08], shinL: [.8, 0, 0], drop: .12 }), 0),
+  lowCut: cyc(cut(fr(9, 4, 16), { spine: [.3, -.7, 0], armR: [-.9, 0, -1.0], foreR: [-.9, 1.5, 0], handR: [1.0, 0, 0], drop: .08 },
+    { spine: [.55, -.1, 0], head: [-.3, .1, 0], armR: [-.7, 0, -.55], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0], legL: [-.8, 0, .1], shinL: [1.0, 0, 0], drop: .16 },
+    { spine: [.6, .55, 0], head: [-.3, -.3, 0], armR: [-.75, 0, .6], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0], legL: [-.85, 0, .1], shinL: [1.1, 0, 0], drop: .18 }), 0),
+  // the shield driven forward into them, the shoulder behind it
+  bash: cyc(cut(fr(6, 4, 14), { spine: [.05, -.6, 0], armL: [-.9, 0, -.15], foreL: [-1.3, 0, 0] },
+    { spine: [.3, .25, 0], armL: [-1.45, 0, -.1], foreL: [-.35, 0, 0], legL: [-.7, 0, .08], shinL: [.7, 0, 0], drop: .1 },
+    { spine: [.32, .3, 0], armL: [-1.5, 0, -.1], foreL: [-.25, 0, 0], legL: [-.72, 0, .08], shinL: [.72, 0, 0], drop: .1 }), 0),
+  // an axe's beard hooked over the guard and pulled down and back
+  axeHook: cyc(cut(fr(9, 4, 16), { spine: [.1, -.4, 0], armR: [-2.2, 0, .4], foreR: [-1.0, 0, 0], handR: [.3, 0, 0] },
+    { spine: [.2, .1, 0], armR: [-1.7, 0, .1], foreR: [-.5, 0, 0], handR: [.6, 0, 0] },
+    { spine: [.05, -.5, 0], armR: [-.6, 0, .3], foreR: [-1.3, 0, 0], handR: [.6, 0, 0], legR: [.45, 0, -.08], legL: [-.15, 0, .08] }), 0),
+  // a spear (or a staff's end) in both hands: the right hand back by the hip, the left forward along the shaft
+  spearGuard: cyc(p => { const k = S(p * TAU) * .012, { drop, ...j } = SPEAR; return P({ ...j, spine: [.12 + k, -.55, 0] }, drop + k); }, 0),
+  spearThrust: cyc(jab(fr(7, 3, 12), { spine: [.05, -.75, 0], armR: [.4, .4, .9], foreR: [-1.3, 0, 0], legR: [.35, 0, -.08] },
+    { spine: [.2, -.35, 0], armR: [-.6, .35, .6], foreR: [-.8, 0, 0], handR: [.7, 0, 0], legL: [-.6, 0, .08], shinL: [.6, 0, 0], drop: .09 },
+    { spine: [.22, -.3, 0], armR: [-.75, .3, .55], foreR: [-.6, 0, 0], handR: [.6, 0, 0], legL: [-.65, 0, .08], shinL: [.65, 0, 0], drop: .1 }), 0),
+  spearLunge: cyc(jab(fr(13, 4, 20), { spine: [-.05, -.85, 0], armR: [.5, .4, 1.0], foreR: [-1.5, 0, 0], legR: [.4, 0, -.08], drop: .02 },
+    { spine: [.3, -.2, 0], head: [-.15, .2, 0], armR: [-1.0, .3, .45], foreR: [-.35, 0, 0], legL: [-1.0, 0, .1], shinL: [1.0, 0, 0], legR: [.55, 0, -.08], shinR: [.1, 0, 0], drop: .18 },
+    { spine: [.32, -.15, 0], armR: [-1.1, .3, .4], foreR: [-.25, 0, 0], legL: [-1.05, 0, .1], shinL: [1.05, 0, 0], legR: [.58, 0, -.08], shinR: [.1, 0, 0], drop: .2 }), 0),
+  spearSweep: cyc(jab(fr(10, 4, 20), { spine: [.3, -1.0, 0], armR: [.2, 0, .2], foreR: [-1.0, 1.5, 0], handR: [1.2, 0, 0], drop: .1 },
+    { spine: [.5, -.4, 0], head: [-.3, .3, 0], armR: [-.5, 0, -.4], foreR: [-.4, 1.5, 0], handR: [1.4, 0, 0], legL: [-.8, 0, .1], shinL: [1.0, 0, 0], drop: .2 },
+    { spine: [.5, .4, 0], head: [-.3, -.3, 0], armR: [-.6, 0, .6], foreR: [-.4, 1.5, 0], handR: [1.4, 0, 0], legL: [-.85, 0, .1], shinL: [1.05, 0, 0], drop: .2 }), 0),
+  // a bow in the left hand: held low and ready, then drawn (at: how far, 0..1): side on, the bow arm out towards the mark (the
+  // body's forward), the right hand drawing the string back to the jaw, the head turned to look along the arrow
+  bowReady: cyc(p => P({ spine: [.06 + S(p * TAU) * .01, -.2, 0], head: [0, .2, 0], armL: [-.45, 0, -.15], foreL: [-.45, 0, 0], handL: [0, 0, 0], armR: [-.55, 0, .25], foreR: [-1.2, 0, 0], handR: [0, 0, 0], legL: [-.15, 0, .1], legR: [.12, 0, -.06], shinL: [.1, 0, 0], shinR: [.12, 0, 0] }), 0),
+  bowDraw: cyc(keys([[0, { hips: [0, -1.2, 0], spine: [.04, -.37, 0], head: [0, 1.45, 0], armL: [-1.57, 0, 1.57], foreL: [0, 0, 0], handL: [0, 0, 0], armR: [-1.4, 0, 1.15], foreR: [-.35, 0, 0], handR: [0, 0, 0], legL: [-.1, 0, .14], legR: [.1, 0, -.12], shinL: [.1, 0, 0], shinR: [.1, 0, 0] }],
+    [.5, { armR: [-.8, 0, -.4], foreR: [-1.9, 0, 0] }],
+    [1, { armR: [0, 0, -1.57], foreR: [-2.6, 0, 0] }]]), 0),
+});
+// In the water (gs.climb Swimmer): treading water upright (arms sculling out to the sides, legs turning), the front crawl lying
+// face down at the surface (hips turned through a quarter, the body rolling with each stroke, legs fluttering), swimming under
+// (a breaststroke, level, head down or head up) and pulling out onto an edge (rig.play('climbOut', { at })). Wading is a walk
+// with the arms up out of the water.
+const crawl = p => {
+  const a = p * TAU, s = S(a), fl = S(a * 3), arm = b => { const c = Math.cos(b), up = Math.max(0, -S(b)); return [[-1.6 - 1.45 * c, 0, -.45 * up], [-.25 - 1.3 * up, 0, 0]]; };
+  const [aL, fL] = arm(a), [aR, fR] = arm(a + Math.PI);
+  return P({ hips: [1.45, 0, 0], spine: [-.08, .3 * s, 0], head: [-.75, -.25 * s, 0], armL: aL, foreL: fL, armR: [aR[0], 0, -aR[2]], foreR: fR,
+    legL: [.14 * fl - .05, 0, -.04], shinL: [.1 + .18 * Math.max(0, S(a * 3 + 1)), 0, 0], footL: [.9, 0, 0], legR: [-.14 * fl - .05, 0, .04], shinR: [.1 + .18 * Math.max(0, -S(a * 3 + 1)), 0, 0], footR: [.9, 0, 0] });
+};
+const breast = tilt => keys([
+  [0, { hips: [tilt, 0, 0], spine: [-.1, 0, 0], head: [-.35 + (tilt - 1.45) * .3, 0, 0], armL: [-3.05, 0, -.1], foreL: [0, 0, 0], armR: [-3.05, 0, .1], foreR: [0, 0, 0], legL: [0, 0, -.06], shinL: [.05, 0, 0], footL: [.9, 0, 0], legR: [0, 0, .06], shinR: [.05, 0, 0], footR: [.9, 0, 0] }],
+  [.3, { armL: [-2.3, -.3, -.9], foreL: [-.6, 0, 0], armR: [-2.3, .3, .9], foreR: [-.6, 0, 0] }],
+  [.45, { armL: [-1.3, 0, -.25], foreL: [-1.9, 0, 0], armR: [-1.3, 0, .25], foreR: [-1.9, 0, 0], legL: [-.55, 0, -.35], shinL: [2.0, 0, 0], legR: [-.55, 0, .35], shinR: [2.0, 0, 0], footL: [-.2, 0, 0], footR: [-.2, 0, 0] }],
+  [.65, { armL: [-2.7, 0, -.1], foreL: [-.5, 0, 0], armR: [-2.7, 0, .1], foreR: [-.5, 0, 0], legL: [-.1, 0, -.25], shinL: [.4, 0, 0], legR: [-.1, 0, .25], shinR: [.4, 0, 0], footL: [.6, 0, 0], footR: [.6, 0, 0] }],
+  [1, { armL: [-3.05, 0, -.1], foreL: [0, 0, 0], armR: [-3.05, 0, .1], foreR: [0, 0, 0], legL: [0, 0, -.06], shinL: [.05, 0, 0], legR: [0, 0, .06], shinR: [.05, 0, 0], footL: [.9, 0, 0], footR: [.9, 0, 0] }],
+], { loop: true });
+Object.assign(POSES, {
+  tread: cyc(p => { const s = S(p * TAU), c = Math.cos(p * TAU); return P({ spine: [.12, 0, 0], head: [-.12, 0, 0], armL: [-.45, .35 * s, -1.05], foreL: [-.55, 0, 0], armR: [-.45, -.35 * s, 1.05], foreR: [-.55, 0, 0],
+    legL: [-.75 + .3 * s, 0, -.18], shinL: [1.35 + .35 * c, 0, 0], footL: [.35, 0, 0], legR: [-.75 - .3 * s, 0, .18], shinR: [1.35 - .35 * c, 0, 0], footR: [.35, 0, 0] }); }, 0),
+  swim: cyc(crawl, .7),
+  dive: cyc(breast(1.45), 0), diveDown: cyc(breast(2.25), 0), diveUp: cyc(breast(.75), 0),
+  wade: cyc(p => { const s = S(p * TAU); return P({ spine: [.15, 0, 0], legL: [-.5 * s - .15, 0, 0], legR: [.5 * s - .15, 0, 0], shinL: [.25 + Math.max(0, .9 * S(p * TAU + 1.2)), 0, 0], shinR: [.25 + Math.max(0, -.9 * S(p * TAU + 1.2)), 0, 0],
+    armL: [-.25 + .3 * s, 0, -.55], foreL: [-.7, 0, 0], armR: [-.25 - .3 * s, 0, .55], foreR: [-.7, 0, 0] }, .02); }, .6),
+  climbOut: cyc(keys([
+    [0, { spine: [.15, 0, 0], head: [-.2, 0, 0], armL: [-2.45, 0, .2], foreL: [-.35, 0, 0], armR: [-2.45, 0, -.2], foreR: [-.35, 0, 0], legL: [.15, 0, 0], shinL: [.4, 0, 0], legR: [.05, 0, 0], shinR: [.3, 0, 0], footL: [.5, 0, 0], footR: [.5, 0, 0] }],
+    [.45, { spine: [.55, 0, 0], head: [-.4, 0, 0], armL: [-.35, 0, -.2], foreL: [-.15, 0, 0], armR: [-.35, 0, .2], foreR: [-.15, 0, 0], legL: [.1, 0, 0], shinL: [.2, 0, 0], legR: [.1, 0, 0], shinR: [.2, 0, 0] }],
+    [.72, { spine: [.65, 0, 0], head: [-.45, 0, 0], armL: [-.6, 0, -.2], foreL: [-.3, 0, 0], armR: [-.6, 0, .2], foreR: [-.3, 0, 0], legR: [-1.75, 0, .05], shinR: [2.1, 0, 0], footR: [-.3, 0, 0], legL: [.1, 0, 0], shinL: [.3, 0, 0] }],
+    [1, { spine: [.04, 0, 0], head: [0, 0, 0], armL: [0, 0, -.08], foreL: [-.15, 0, 0], armR: [0, 0, .08], foreR: [-.15, 0, 0], legL: [0, 0, 0], shinL: [0, 0, 0], legR: [0, 0, 0], shinR: [0, 0, 0], footL: [0, 0, 0], footR: [0, 0, 0] }],
+  ]), 0),
+});
 const AIMED = new Set(['aim', 'carAimL', 'carAimR', 'carAimF']);   // upper poses the aim (up and down) and aimYaw turn
-const TIMED = { guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2, drive: .2, ride: .25 };
+const TIMED = { tread: .7, dive: .55, diveDown: .55, diveUp: .55, guard: .6, armed: .6, shieldUp: .6, spearGuard: .6, bowReady: .25, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2, drive: .2, ride: .25 };
+// Gestures for conversations and cutscenes (Rob's RPG pick 1, 2026-11-15): each plays once and ends where it
+// began, standing at ease (rig.play('nod'); rig.done when it is over). Upper body and head only move; the legs
+// stand as at ease. Signs: a head's +x looks down, +y turns it to its own left, +z tips it to its left; arms as above.
+const EASED = { hips: [0, 0, 0], spine: [.03, 0, 0], head: [0, 0, 0], armL: [0, 0, .06], foreL: [-.2, 0, 0], armR: [0, 0, -.06], foreR: [-.2, 0, 0], legL: [0, 0, 0], shinL: [.05, 0, 0], legR: [0, 0, 0], shinR: [.05, 0, 0] };
+const once = (time, list) => ({ cycle: keys(list), rate: 0, time, once: true });
+export const GESTURES = {
+  // yes: the head down and up, twice, the second smaller
+  nod: once(.9, [[0, EASED], [.2, { head: [.28, 0, 0] }], [.42, { head: [-.04, 0, 0] }], [.62, { head: [.2, 0, 0] }], [.82, { head: [0, 0, 0] }], [1, EASED]]),
+  // no: the head turned from side to side, each turn smaller
+  shake: once(1.1, [[0, EASED], [.16, { head: [.05, .34, 0] }], [.36, { head: [.05, -.3, 0] }], [.56, { head: [.05, .22, 0] }], [.76, { head: [.03, -.12, 0] }], [1, EASED]]),
+  // a bow from the waist, a hand to the chest, held a moment (an upper arm turned in, +y on the right and -y on the left, brings the forearm across the body)
+  bow: once(1.8, [[0, EASED], [.3, { spine: [.62, 0, 0], head: [.3, 0, 0], armR: [-.35, 1.0, .1], foreR: [-2.05, 0, 0], armL: [.05, 0, .1], foreL: [-.25, 0, 0] }], [.55, { spine: [.66, 0, 0], head: [.32, 0, 0] }], [.85, { spine: [.1, 0, 0], head: [.02, 0, 0], armR: [-.1, 0, -.02], foreR: [-.4, 0, 0] }], [1, EASED]]),
+  // who knows: the shoulders up, the forearms out with the palms up, the head tipped
+  shrug: once(1.3, [[0, EASED], [.3, { spine: [-.02, 0, 0], head: [.04, 0, .16], armL: [-.15, .2, .32], foreL: [-1.25, -.9, 0], armR: [-.15, -.2, -.32], foreR: [-1.25, .9, 0] }], [.6, { head: [.06, 0, .18] }], [1, EASED]]),
+  // that way: the right arm out ahead and a little across, the head after it
+  point: once(1.8, [[0, EASED], [.25, { spine: [.02, -.18, 0], head: [-.05, -.12, 0], armR: [-1.45, -.15, -.05], foreR: [-.08, 0, 0] }], [.7, { armR: [-1.42, -.15, -.05] }], [1, EASED]]),
+  // hooray: both arms flung up, a pump, and down
+  cheer: once(1.5, [[0, EASED], [.22, { spine: [-.14, 0, 0], head: [-.25, 0, 0], armL: [-2.75, 0, .45], foreL: [-.35, 0, 0], armR: [-2.75, 0, -.45], foreR: [-.35, 0, 0], drop: -.01 }], [.42, { armL: [-2.55, 0, .4], foreL: [-.9, 0, 0], armR: [-2.55, 0, -.4], foreR: [-.9, 0, 0], drop: .015 }], [.62, { armL: [-2.85, 0, .45], foreL: [-.25, 0, 0], armR: [-2.85, 0, -.45], foreR: [-.25, 0, 0], drop: -.01 }], [1, { ...EASED, drop: 0 }]]),
+  // a laugh: thrown back, then doubled up a little with a hand to the belly, the shoulders shaking
+  laugh: once(1.6, [[0, EASED], [.18, { spine: [-.16, 0, 0], head: [-.3, 0, 0] }], [.4, { spine: [.24, 0, 0], head: [.12, 0, 0], armL: [-.2, -1.1, -.1], foreL: [-1.65, 0, 0] }], [.5, { spine: [.18, 0, 0] }], [.6, { spine: [.26, 0, 0] }], [.7, { spine: [.17, 0, 0] }], [1, EASED]]),
+  // thinking: a hand to the chin, the head down a touch, the other arm across the waist
+  think: once(2.4, [[0, EASED], [.25, { head: [.14, .1, 0], armR: [-.65, .55, .15], foreR: [-2.45, 0, 0], armL: [-.15, -1.2, -.1], foreL: [-1.75, 0, 0] }], [.75, { head: [.18, .14, 0] }], [1, EASED]]),
+  // come here: the right forearm up and the hand drawn in, twice
+  beckon: once(1.4, [[0, EASED], [.2, { armR: [-1.0, 0, -.12], foreR: [-.5, 0, 0], head: [.04, 0, -.05] }], [.38, { foreR: [-1.7, 0, 0] }], [.55, { foreR: [-.6, 0, 0] }], [.72, { foreR: [-1.7, 0, 0] }], [1, EASED]]),
+};
 
 // ---- smooth curves and key poses
 // A curve through [when, value] points that never swings past a point (so a knee can't bend backwards
@@ -228,6 +342,7 @@ const table = (f, n = 72) => { const T = new Float32Array(n + 1); for (let i = 0
 // against the legs, and the body rises and falls twice a stride (drop, bob, bobAt). In a run the knee
 // drives the foot through high (carry, carryAt) and the legs fling less far out behind and in front (trail, pull).
 const LEG = [.435, .435, .955, .085, .06, .13, .094];   // thigh, shin, the hip joint's height, the ankle's, heel and ball from the ankle, the hip joint out from the middle
+const put = (o, x, y, z) => { o[0] = x; o[1] = y; o[2] = z; return o; };
 function gait(g) {
   const { stride, stance, reach, lift = .1, liftAt = .5, carry = 0, carryAt = .72, pull = 1, trail = 1, yaw = 0, list = 0, lean = 0, twist = 1, arm = 0, armMid = 0, elbow = .3, elbowSwing = 0, armIn = 0, armOut = 0, drop = 0, bob = 0, bobAt = 0, side = 0, nod = 0, crouch = 0, head = .7, wrist = .7 } = g;
   const [L1, L2, HJ, AH, HEEL, BALL, HX] = LEG, footW = spline(g.foot, true);
@@ -252,33 +367,40 @@ function gait(g) {
   const thigh = leg(0), knee = leg(1), foot = table(footW);
   // the toes lie flat while the heel comes up off them, and straighten once the foot is in the air
   const toes = table(p => Math.min(1.1, Math.max(0, footW(p))) * (p < stance ? 1 : 1 - sstep(0, .3, (p - stance) / (1 - stance))));
+  // (one answer, written over each time: Rig.update reads a sample straight into its own mix before it asks for another,
+  // so a walk or a run makes no new lists a frame for each person who is walking. The pose's cycle() is a copy of it,
+  // yours to keep: gaitOf)
+  const R = { j: {}, drop: 0, shift: undefined }, J = R.j, SH = [0, 0, 0];
+  for (const k of ['hips', 'spine', 'head', 'legL', 'shinL', 'footL', 'toeL', 'legR', 'shinR', 'footR', 'toeR', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR']) J[k] = [0, 0, 0];
   return p => {
     // (a person's own walk: how much the arms swing, each side's, how far the hips turn and sway and the shoulders against them, the rise
     // and fall, the arms out and bent, the toes out and the feet apart: manner.js)
     const M = MAN?.g, kA = M ? M.arm : 1, kH = M ? M.hips : 1, kT = M ? M.twist : 1, kB = M ? M.bob : 1, aO = M ? M.out : 0, eB = M ? M.elbow : 0, toe = M ? M.toe : 0, wd = M ? M.wide : 0, aL = M ? M.armL * kA : 1, aR = M ? M.armR * kA : 1;
     const a = p * TAU, c = Math.cos(a), hy = -yaw * kH * c, hz = list * kH * S(a + .6), pr = p + .5;
     const tl = thigh(p), tr = thigh(pr), kl = knee(p), kr = knee(pr), sw = Math.cos(a + .25);   // the arms trail the legs a touch
-    return { j: {
-      hips: [crouch, hy, hz],
-      spine: [lean, -hy * (1 + twist * kT), -hz * .8],
-      head: [-(lean + crouch) * head + nod * S(a * 2), hy * twist * kT * .8, -hz * .2],
-      legL: [tl - crouch, -hy + toe, -hz + wd], shinL: [kl, 0, 0], footL: [Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0], toeL: [-toes(p), 0, 0],
-      legR: [tr - crouch, -hy - toe, -hz - wd], shinR: [kr, 0, 0], footR: [Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0], toeR: [-toes(pr), 0, 0],
-      armL: [armMid + arm * aL * sw, -armIn, armOut + aO], foreL: [-(elbow + eB - elbowSwing * aL * sw), -wrist * .5, 0], handL: [-.12, -wrist * .5, 0],
-      armR: [armMid - arm * aR * sw, armIn, -armOut - aO], foreR: [-(elbow + eB + elbowSwing * aR * sw), wrist * .5, 0], handR: [-.12, wrist * .5, 0],
-    }, drop: drop + bob * kB * Math.cos(2 * a - bobAt), shift: side ? [side * kH * S(a + .6), 0, 0] : undefined };
+    put(J.hips, crouch, hy, hz);
+    put(J.spine, lean, -hy * (1 + twist * kT), -hz * .8);
+    put(J.head, -(lean + crouch) * head + nod * S(a * 2), hy * twist * kT * .8, -hz * .2);
+    put(J.legL, tl - crouch, -hy + toe, -hz + wd); put(J.shinL, kl, 0, 0); put(J.footL, Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0); put(J.toeL, -toes(p), 0, 0);
+    put(J.legR, tr - crouch, -hy - toe, -hz - wd); put(J.shinR, kr, 0, 0); put(J.footR, Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0); put(J.toeR, -toes(pr), 0, 0);
+    put(J.armL, armMid + arm * aL * sw, -armIn, armOut + aO); put(J.foreL, -(elbow + eB - elbowSwing * aL * sw), -wrist * .5, 0); put(J.handL, -.12, -wrist * .5, 0);
+    put(J.armR, armMid - arm * aR * sw, armIn, -armOut - aO); put(J.foreR, -(elbow + eB + elbowSwing * aR * sw), wrist * .5, 0); put(J.handR, -.12, wrist * .5, 0);
+    R.drop = drop + bob * kB * Math.cos(2 * a - bobAt); R.shift = side ? put(SH, side * kH * S(a + .6), 0, 0) : undefined;
+    return R;
   };
 }
 // standing easy: breathing, the weight on one leg and then the other, a look about
-const idleLife = p => {
-  const a = p * TAU, br = S(a * 3), w = S(a), look = S(a + 1.1) * .5 + S(a * 2 + .4) * .5;
-  return { j: {
-    hips: [0, .04 * w, .035 * w], spine: [.03 + .012 * br, -.03 * w, -.03 * w], head: [-.02 - .008 * br, .16 * look, -.01 * w],
-    // (the toes a little out; the arms hang a little out from the shoulders, so the hands lie beside the thighs and not in them)
-    legL: [-.03 - .04 * Math.max(0, -w), .1, -.035 * w + .03], shinL: [.06 + .16 * Math.max(0, -w), 0, 0], footL: [-.03 - .12 * Math.max(0, -w), 0, 0],
-    legR: [-.03 - .04 * Math.max(0, w), -.1, -.035 * w - .03], shinR: [.06 + .16 * Math.max(0, w), 0, 0], footR: [-.03 - .12 * Math.max(0, w), 0, 0],
-    armL: [.03 + .01 * br, 0, .065], armR: [.03 + .01 * br, 0, -.065], foreL: [-.24, -.35, 0], foreR: [-.24, .35, 0], handL: [-.15, -.35, 0], handR: [-.15, .35, 0],
-  }, drop: .004 + .003 * Math.abs(w), shift: [.022 * w, 0, 0] };
+const IDLE = { j: {}, drop: 0, shift: [0, 0, 0] };   // (one answer, written over each time, as gait()'s; LIFELIKE.idle.cycle copies it)
+for (const k of ['hips', 'spine', 'head', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR', 'armL', 'armR', 'foreL', 'foreR', 'handL', 'handR']) IDLE.j[k] = [0, 0, 0];
+const idleInto = p => {
+  const a = p * TAU, br = S(a * 3), w = S(a), look = S(a + 1.1) * .5 + S(a * 2 + .4) * .5, J = IDLE.j;
+  put(J.hips, 0, .04 * w, .035 * w); put(J.spine, .03 + .012 * br, -.03 * w, -.03 * w); put(J.head, -.02 - .008 * br, .16 * look, -.01 * w);
+  // (the toes a little out; the arms hang a little out from the shoulders, so the hands lie beside the thighs and not in them)
+  put(J.legL, -.03 - .04 * Math.max(0, -w), .1, -.035 * w + .03); put(J.shinL, .06 + .16 * Math.max(0, -w), 0, 0); put(J.footL, -.03 - .12 * Math.max(0, -w), 0, 0);
+  put(J.legR, -.03 - .04 * Math.max(0, w), -.1, -.035 * w - .03); put(J.shinR, .06 + .16 * Math.max(0, w), 0, 0); put(J.footR, -.03 - .12 * Math.max(0, w), 0, 0);
+  put(J.armL, .03 + .01 * br, 0, .065); put(J.armR, .03 + .01 * br, 0, -.065); put(J.foreL, -.24, -.35, 0); put(J.foreR, -.24, .35, 0); put(J.handL, -.15, -.35, 0); put(J.handR, -.15, .35, 0);
+  IDLE.drop = .004 + .003 * Math.abs(w); put(IDLE.shift, .022 * w, 0, 0);
+  return IDLE;
 };
 /**
  * Lifelike motion for a figure with feet and hands (gs.models.human people move with it): idle, walk, jog,
@@ -287,9 +409,12 @@ const idleLife = p => {
  * new Rig(parts, { poses: LIFELIKE, weight: 1 }). Speeds they suit (m/s): walk 1.4, jog 3.4, run 5.6, sprint 7.5,
  * sneak 1: rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, speed) moves between them in step.
  */
-const gaitOf = g => ({ ...cyc(gait(g), 1 / g.stride), stance: g.stance, ground: true });   // (ground: the feet stand on the ground, so they can be kept where they are put down: stride.js)
+// a pose's answer copied out of the one a reused sampler writes over (sample: what Rig.update asks, nothing made)
+const kept = s => { const j = {}; for (const k in s.j) j[k] = s.j[k].slice(); return { j, drop: s.drop, shift: s.shift ? s.shift.slice() : undefined }; };
+const gaitOf = g => { const into = gait(g); return { ...cyc(p => kept(into(p)), 1 / g.stride), sample: into, stance: g.stance, ground: true }; };
+const idleLife = p => kept(idleInto(p));   // (ground: the feet stand on the ground, so they can be kept where they are put down: stride.js)
 export const LIFELIKE = {
-  idle: { cycle: idleLife, rate: 0, time: 9, ground: true },
+  idle: { cycle: idleLife, sample: idleInto, rate: 0, time: 9, ground: true },
   walk: gaitOf({ stride: 1.36, stance: .62, reach: .3, lift: .075, liftAt: .4,
     foot: [[0, -.3], [.1, 0], [.42, 0], [.52, .3], [.62, .8], [.72, .5], [.84, -.05], [.94, -.3]],
     yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: .045, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
@@ -331,7 +456,7 @@ const grounded = (d, w, phase) => { if (!d?.ground || w <= 0) return; const G = 
  */
 export class Rig {
   constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false, lead = follow } = {}) {
-    this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses }; this.weight = weight; this.size = size; this.done = false;
+    this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...(parts.armL && parts.armR && parts.head ? GESTURES : {}), ...poses }; this.weight = weight; this.size = size; this.done = false;   // (gestures for figures with arms and a head: not a cat)
     this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
     // a full skeleton: the joints in between, which fill() works out (the waist under the rib cage, the neck under the head, each a
     // share of the bend and of the twist; a collar bone to each arm; the turn along each forearm)
@@ -448,7 +573,8 @@ export class Rig {
     });
     return this;
   }
-  sample(name, phase) { const def = this.poses[name]; if (!def) return { j: {}, drop: 0 }; return def.cycle(phase); }
+  // (a pose with a sample of its own gives an answer written over each time, read into the mix before the next is asked: LIFELIKE)
+  sample(name, phase) { const def = this.poses[name]; if (!def) return NO_POSE; return def.sample ? def.sample(phase) : def.cycle(phase); }
   /**
    * speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer (aim, carAimL/R/F);
    * aimYaw: turn at the waist for it (radians, to the left +: aiming from a seat); turn: how fast
@@ -500,7 +626,7 @@ export class Rig {
         if (s.shift) { bs[0] += s.shift[0] * w; bs[1] += s.shift[1] * w; bs[2] += s.shift[2] * w; }
         for (const j in s.j) { const a = s.j[j], o = mixd[j] ||= [0, 0, 0]; o[0] += a[0] * w; o[1] += a[1] * w; o[2] += a[2] * w; }
       }
-      for (const j of this.base.keys()) { const a = mixd[j]; if (!a && !out[j]) continue; const o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += ((a ? a[i] : 0) - o[i]) * k2; }
+      this.base.forEach((b, j) => { const a = mixd[j]; if (!a && !out[j]) return; const o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += ((a ? a[i] : 0) - o[i]) * k2; });
       drop += (bd - drop) * k2; for (let i = 0; i < 3; i++) shift[i] += (bs[i] - shift[i]) * k2;
       gw += (bg - gw) * k2; if (bg > 0 && k2 >= .5) gph = this.blendPhase;
       if (this.blendOn && k2 >= 1) {   // the layers underneath: just its strongest pose, in step with it (what a later play() fades from)
@@ -526,12 +652,13 @@ export class Rig {
     if (this.idle) this.idle.pose(dt, out, speed, this.fine !== false, this.near !== false);   // a person standing about (gs.models.human's person.idle): fidgets close up, the head after the eyes, glances, gestures
     if (this.lead) this.lead.pose(dt, out, toward);   // the eyes and the head go first into a turn
     this.phase = last.phase;
-    if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
-    else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
-      if (FILLED.has(j) || !this.fine && TOES.has(j)) continue; const a = out[j];
-      if (!a && TOES.has(j)) { if (this.still.has(j)) continue; this.still.add(j); } else if (a) this.still.delete(j);
+    // (forEach: a for...of over a Map's entries makes a list for each joint, each frame)
+    if (!this.chains) this.base.forEach((b, j) => { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); });
+    else this.base.forEach((b, j) => {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
+      if (FILLED.has(j) || !this.fine && TOES.has(j)) return; const a = out[j];
+      if (!a && TOES.has(j)) { if (this.still.has(j)) return; this.still.add(j); } else if (a) this.still.delete(j);
       const p = this.parts[j]; if (a) p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); else p.rotation.set(b[0], b[1], b[2]);
-    }
+    });
     if (this.parts.hips) { const k = this.height / 1.8; this.parts.hips.position.set(this.hipX + shift[0] * k, this.hip0 - drop * this.height + shift[1] * k, this.hipZ + shift[2] * k); }
     this.cur = out; if (this.chains) this.fill(out);
     if (this.stride) {   // steps that are really taken: how much of the pose stands on the ground, how much of it walks, and where in its stride it is

@@ -194,12 +194,16 @@ allows (one under the cap) from the first resolution step.
 **Effects step down by their own cost** before the resolution does. On WebGPU the chip times every pass
 (`HD.info.gpuParts`: scene, shadows, ao, bloom, reflections, volumetric light, light shafts, sun mask, bounce light,
 depth of field, motion blur, screen effects, upscale...). When a game is slow and the graphics chip is the
-reason, the effect that costs it most is drawn smaller first: ambient occlusion, bloom, reflections (screen
-space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's). An
+reason, the effect whose next step saves the most chip time for the picture it costs is drawn smaller first (a
+video encoder's rate-distortion choice): ambient occlusion, bloom, reflections (screen
+space or traced), volumetric light, sun shafts and the sun mask (finer sun shadows) each have three sizes (100%, 70%, 50% of the tier's).
+What each step costs the picture was measured on eight test scenes with the camera still (`hd3d.js` `FX_SEEN`): every
+effect's smaller sizes were lost in the difference between two frames a moment apart except bloom's, which showed
+plainly where bloom is strong (two to ten times that difference), so bloom steps last, after cheaper-looking ones. An
 effect is only stepped while it takes at least an eighth of the chip's frame (and half a millisecond), so a
 cheap effect is never made worse for nothing; when none does, the resolution steps as before. Only the size
 of the effect's pictures changes, so no shader is built again mid-round. Where the chip doesn't say (WebGL,
-phones without timestamps) each effect in use gives one step, sun shafts first and ambient occlusion last,
+phones without timestamps) each effect in use gives one step, ambient occlusion first and bloom last,
 before the resolution. Climbing back is the other way round: once the resolution is full again, the effect
 stepped down last comes back first, and not within 30 s of a slow spell. Steps are remembered with the
 game's tier and resolution. `HD.fx` says what is drawn smaller now (`{ ao: .5, bloom: .7 }`); the frame lab
@@ -699,6 +703,8 @@ those are still made in play). Nothing for a game to do; a game played more than
 plays a game twice in two launches of the browser and checks the second made ahead what the first made in play.
 `__hd.info` reports `{ calls, tris, cpu, shadows, upscaled, backend, framegen, refl }` for the last frame (`refl`: `'traced'`, `'screen'` or `''`, the reflections it drew). The 3D frame is rendered at the tier's pixel count (and lower while the phone struggles), then upscaled to the card's full resolution with **Snapdragon Game Super Resolution 2** (Qualcomm's temporal upscaler, `src/kit/sgsr2.js`): the camera is nudged by a fraction of a pixel each frame and each new small frame is blended into the full-size picture of the frames before, moved by the camera's own move. That gives a sharper, steadier picture than one frame can, and it also runs at full size as anti-aliasing (grass, leaves, wires and thin poles stop shimmering; FXAA is off then). Things that move fast across a still camera can leave a short soft trail (there are no per-object motion vectors), so a view can set `v.upscaler = 'sgsr1'` to use **SGSR 1** (`src/kit/sgsr.js`, one frame, edge-aware sharpening). AR views and frames with screen-space reflections use SGSR 1 too, and `HD.upscaler = 'sgsr1'` switches every view. `HD.upscale = false` shows the plain stretched picture for comparison, and `node scripts/upscale-compare.cjs` scores plain, SGSR 1 and SGSR 2 against a supersampled picture (`--webgpu` for the WebGPU path, which has its own TSL versions of both). SGSR 2 has two changes of ours to Qualcomm's upscale pass, on WebGPU (`hd3d-gpu.js` `sgsr2Gpu`) and on WebGL (`sgsr2.js`): the history is read sharply (Catmull-Rom) instead of bilinearly, which was softening it a little every frame the camera moved, and a pixel that stays put lets its history count for more (up to four times), so a still picture shimmers less. `__hd.sgsrTune = false` draws it as it was, and the comparison draws both and fails if ours comes out worse. In the app ours is called **GSSR** (Game Scroll Super Resolution; the code keeps `sgsr2`), and frame generation **GSFG** (Game Scroll Frame Generation). GSSR also has two of AMD FSR 3.1's tricks (MIT, FidelityFX SDK), on both backends: thin things (a ridge in brightness one small pixel wide) gain a **lock**, which keeps their history where this frame's few pixels missed them, and a **flicker hold**: a small pixel whose brightness goes up, down and up again (it matches one of the three frames before last better than last frame, on the same side) keeps its history once it has settled, as FSR's luma instability does. Measured with the comparison, camera still after 80 frames: thin things flicker 14% less (1.06 to 0.91), a moving box 3% less, no worse anywhere from a fresh start. Two more are built and measured but left off, as switches for tests: FSR 3.1's **disocclusion** (from last frame's depth, a jitter step apart) cut a settled picture's thin flicker by a quarter but made a fresh start's thin things 40% further from the true picture, and its **shading change** (the change in brightness of a patch since last frame) only stopped a moving light's trail when made so strong that jittering thin things flickered three times as much. `__hd.sgsrFsr = [clip, locks, own depth, unsettle, shading, flicker, gate]` sets them for a test (`sgsr2.js` `FSR_X` has the defaults; the comparison's `sgsr2-x0100011` modes are the same digits). GSSR also has a **learned blend** (`src/kit/gssr-net.js`): a small network (17 inputs, layers of 16 and 12, written into the shader as plain sums, about 500 multiply-adds a small pixel) decides, pixel by pixel, how much of the history to keep, how much raw history to keep outside the colour box, and how far to pull this frame's colour toward the box's middle, on top of the hand-written blend (its last layer starts at zero, so an untrained net draws the hand-written one). It sees what the hand-written blend sees (how far the pixel moved, depth change, how far the history sits outside the box, the box's size, how settled the pixel is, the subpixel offset, the lock) and was trained on the engine's own scenes against the same pictures drawn at twice the size: `node scripts/gssr-train.cjs --out dir [--seeds 60] [--net w.json]` draws scenes and writes samples (a round with `--net` draws with that net, so it learns from its own mistakes), and `python3 scripts/gssr-train.py dir [dir2] --out w.json --write` trains (numpy only) and writes the weights into `gssr-net.js`, checking itself on scenes it did not train on. Training also counts any change to a still pixel beyond the hand-written blend's change as a cost, so it does not buy accuracy with shimmer. On WebGPU, on scenes it never saw at 1.5x from a fresh start: a textured still picture 6% closer to the true one (4.99 to 4.71) and shimmering 43% less, a still plain one shimmering 43% less, a moving camera 6% closer, a moving box 2% closer, thin things 8 to 14% further off (the locks and flicker hold still apply), about 5% more upscale time in the software renderer. It is on for WebGPU and off on WebGL: it was trained with each thing's own motion, which WebGL's GSSR does not have, and there a moving box's trail came out 30% longer. `HD.gssrNet = false` draws the hand-written blend everywhere, an object (weights as the trainer writes them) uses that net on both, and `HD.info.gssrNet` names the net drawn (`''` for none). Building it found a bug in the locks: they were made in a lazily-built shader function and never written, so on WebGPU FSR 3.1's locks only started working with this change. On WebGPU, textures under SGSR 2 are read as the screen's size would read them, not as the small picture does (a mip bias of log2(drawn width / screen width), the value FSR 2 and DLSS ask for too): the small picture's mip level is too soft for the screen it is built up to, and the jitter and history settle the finer detail. WebGPU samplers have no bias, so each texture's node is given one through three.js's hook on the renderer's context (`hd3d-gpu.js` `sharpMips`), with no shader patched and nothing added to the cost of a texture read: every standard material's maps get it, and the kit's own shaders that read textures elsewhere (parallax, scattered and position-laid recipes) scale their gradients to match. On the comparison's textured scene the picture came out 8 to 9% closer to the true one at 1.5x and 10 to 11% at 1.8x, with a little more flicker when nothing moves; half a mip level sharper again was closer still with more shimmer, so it stops at the usual value. (Scaling every texture's uv gradients instead was 11 to 16% closer, but explicit gradients are a slower kind of texture read: 15 to 20% of a frame in the software renderer, not measured on a phone, so the bias it is. three has no hook for a bias, so it is handed to the texture's node for the one read three makes after asking for gradients; if a three.js update changes that, textures go back to being read as drawn and the comparison's textured runs fail.) `__hd.mipBias = false` reads textures as drawn (a number adds that many mip levels on top). WebGL keeps the textures as drawn: WebGL 2 has no sampler bias, and the only other way is patching three's shaders. The 2D HUD is always drawn at
 
+**Only the detail that shows** (WebGPU, `src/kit/detail-size.js`, `sunmask-gpu.js` `BUSY`). While GSSR is already building the picture up (the drawn picture under 90% of the screen's width), every twelfth frame a 32 × 32 read of the finished picture says how much fine detail it holds: each pixel against its 2 × 2 block, each 2 × 2 against its 4 × 4. Real pictures lose detail by a power law from one size to the next, so those two numbers foretell how much a smaller drawn picture would lose (in dB, against a target of 38), and a soft picture (fog, night, a plain wall close up) is drawn smaller, in steps of a tenth, down slowly and back up at once. Detail that doesn't fall off with size (brick at the pixel's own size) has no power law to go by, and the size stays. It never draws under the tier's least pixels or upscales more than 2.5 times each side; `HD.info.detailSize` is `{ k, want, db }` (null when it isn't sizing) and `HD.detailSize = false` turns it off. On the village test scene the foretold loss matched the drawn one to 1 to 2 dB where the gate lets it size. **Visual masking** uses the last frame too: a busy patch hides noise (the eye's threshold for a pattern rises with the contrast around it, as (C/c0)^0.7), so where the last frame at an eighth of its size is busy, contact shadows march fewer steps (12, at least 6) and soft sun shadows take fewer taps (at least 3 finds and 4 filters, only while their taps turn under GSSR's history). `HD.mask = false` turns it off.
+
 **Half precision (WebGPU).** On a graphics chip that has half precision (WebGPU's `shader-f16`: most phones' chips), the kit's own passes work their colour maths in 16-bit numbers, which take half the room in the chip's registers and run up to twice as fast on phone chips: SGSR 2's upscale, the sharp picture reads in SGSR 2's history and frame generation, smoke and fire (`gs.gas`), and the grade and sun glare. Places, depth, motion and texture positions stay in full precision. Qualcomm's own SGSR 2 shader works its upscale this way too (and the WebGL version, `sgsr2.js`, already did). three.js's shading language has only full-precision numbers, so these are WGSL functions in `src/kit/half.js` `halfFn`, written once: compiled with `f16` where the chip has it and with `f32` everywhere else (the build machine's WebGPU has none, so its pictures test the same maths in full). As WebGPU starts, each one is compiled on its own in half; one the chip won't compile is drawn in full and named in `HD.info.half` (`'half'`, `'half (but not: ...)'`, `'full (switched off)'`, `'full (no half on this chip)'`). `HD.half = false` draws everything in full (the frame lab's A/B and Half check switch it to compare pictures and the chip's time). Left in full on purpose: volumetric light (its march is mostly places in metres, which stay full anyway, and at the strongest `glow` the bright ring round a light came out 10% off in half), light shafts and frame generation's optical flow (reads, not maths: half saves nothing there), and three.js's own passes (AO, reflections, bloom: changing them means patching three's shaders). `node scripts/half-check.mjs` compiles every half function with naga in both precisions.
 full resolution on top. `v.onTier(T => ...)` lets a game react (for example `spotLight.setTier(T)`).
 
@@ -1102,7 +1108,9 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   takes about a whole 60 Hz refresh, like Long Shadow on the Fold), the game asks the screen for 120 Hz
   instead (`speed.js` `frameGenSlack`, remembered for it). It still makes one frame between each pair, shown
   on the middle refresh, or on the one after if the real frame's code ran over: still 60 different pictures
-  a second. Only then does it fall back to pace first, and after that off.
+  a second. If that misses too, it switches off for the game until the app restarts (pace first, a real
+  frame's work in one refresh, is only tried on a screen with no 120 Hz: at 120 that refresh is 8 ms).
+  Settings' GSFG line and the frame lab say what was tried before it went off.
 - **Screen rate:** phone screens pick their own rate (LTPO screens like the Fold's step between 120,
   60 and lower) and a web page can't ask for one, so the app asks through `plugins/screen-rate`
   (`src/kit/screenrate.js`, Android) while a round is played: the fastest rate that's a whole number of
@@ -1272,6 +1280,31 @@ works on instanced meshes and on WebGL and WebGPU alike.
   window or green grass. Bake once the level is built, not every frame. Several probes blend as the
   camera moves (or `v.probeAt`, such as the player). Lower the view's `amb` when using probes.
   `v.clearProbes()`.
+- `v.bakeLight({ box, spacing: 8, maps: [land.mesh] })` bakes the light of a whole level, on the phone, the first time
+  the game is played. Background workers send rays through a copy of the still scenery (people, vehicles and anything that
+  moves are left out) while the loading screen builds the shaders, so a first play waits little or no longer (the loading
+  screen waits at most `wait` ms, 5000, for it; the rest comes in after, fading in). What it works out is kept on the phone,
+  tile by tile under what the tile's scenery was, so later plays read it back and trace nothing. It gives:
+  - light probes over `box` (a `Box3`, `{ min, max }` or an Object3D; one every `spacing` metres, up to `most`, 6000): the
+    light bounced onto each spot, the sky's and the sun's (a sunlit wall lights the shade beside it, a red roof tints the
+    lane under it). Every lit material reads them (three's LightProbeGrid, WebGL and WebGPU), so people walking through take
+    the colour of the wall beside them. The probes add to the view's hemisphere light (`amb`), which stays as it is (three
+    lets a probe grid add light, not take it away). Its colours are the game's each frame (a `gs.sky.Sky` changing the time
+    of day changes them for nothing); the sun's direction is traced again once it has moved 4 degrees.
+  - light maps for `maps` (big still meshes whose UVs are laid out with no overlaps, like `Land`'s ground; `mapSize` 512):
+    how much of the sky each texel sees, in the material's `aoMap`, which darkens the hemisphere light and the probes' there
+    (the dark foot of a wall, a hollow, under a boulder). A material with an `aoMap` of its own is left alone. Only where the
+    graphics chip lets a material read more than 16 pictures (a material past its limit isn't drawn at all).
+  On WebGPU both need a chip that lets a material read more than 16 pictures: the kit's busiest materials (a surface with
+  relief, lit by lamps and the sun, with decals and far shadows) already read 16, so on a chip that allows only that (some
+  phones, software drawing) nothing is baked and the view looks as it would without it.
+  The sun and its shadows, lamps, flashes and moving things stay live. Vehicles (`gs.models.vehicle`) and the meadow's grass
+  are left out by themselves, and `mesh.userData.moves = true` (on it or any of its parents) or `userData.noBake = true`
+  leaves out one of yours. Something else that moves while the level is played is taken out of the bake and the tiles round
+  it baked again, and remembered on the phone, so next time it is left out from the start; `.rebake()` after a change it
+  can't see (a colour). `rays` (96 a probe), `reach` (150 m), `texelRays` (24), `texelReach` (40 m) and `bounce` (1, how strong the
+  bounced light is) tune it. Where `v.liveBounce = 'traced'` runs, its live grid takes the place of the probes (the light maps stay).
+  `__hd.baked = false` hides it (comparisons).
 - `v.bounce(box, { spacing: 1.5, bounces: 1 })` adds bounce light (baked global illumination) over a
   box (`{ min: [x, y, z], max }`, a `Box3`, or an Object3D to cover): a 3D grid of light probes, one
   every `spacing` metres, that light every lit material by where it is. A red wall tints the floor
@@ -1731,11 +1764,32 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `null` as sculpted; a number for the hand or one a finger, thumb first): it stays as set until
   `fingers({ R: 'auto' })` gives it back. At the middle and far levels the small bones (fingers, toes,
   forearm turn) stand still and cost nothing.
-  Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle`, `iris`, `lips`, `moustache`, `stubble`, `face`
+  Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle` (`'short'`, `'long'`, `'bun'`, `'curly'`, `'afro'`, `'bald'`), `hairTexture` (a real face's: `'straight'`, `'wavy'`, `'curly'`, `'coily'`; by heritage if left out), `iris`, `lips`, `moustache`, `stubble`, `face`
   (`{ jaw, chin, brow, nose, lips, cheeks, eyes }`, 1 is average), `hands: 'grip'`, and `outfit: { top, legs,
   feet, hat, belt, webbing, gloves, pack, extras }` (every option is listed above `human` in
   `src/kit/models/human.js`); `camo: [colour, colour]` on the top, legs or hat brushes blotches of those over
-  its colour. The plain options (`body`, `legs`, `shoes`: colours) still dress a simple person. Each arm is
+  its colour. The plain options (`body`, `legs`, `shoes`: colours) still dress a simple person.
+  **Armour and the old world's clothes.** `outfit.armour: { chest, shoulders, arms, hands, thighs, shins, feet }`
+  puts rigid pieces over the clothes, each a kind: `chest: 'plate' | 'leather' | 'brigandine'` (a breastplate
+  rounded out over the chest with a fauld of strips over the hips, boiled leather, or cloth over small plates with
+  rows of rivets), `shoulders`, `arms`, `hands`, `thighs`, `shins` `'plate' | 'leather'`, `feet: 'plate'`; and
+  `colour` (the steel), `leather`, `cloth`, `rivets`. A list of kinds (`chest: ['plate', 'leather']`) has them all
+  ready, the first worn: `person.armour.wear('chest', 'leather')` or `wear('shoulders', null)` changes what is
+  worn that frame, with nothing made or built (each piece rides a bone of its own). `person.armour.over(bone)`
+  says what a hit on that bone strikes (`'plate'`, `'leather'`, or null), for the damage. Helms are hats:
+  `hat: { kind: 'nasal' | 'kettle' | 'sallet' | 'great' | 'circlet' }`, in the armour's steel. Tops add
+  `'gambeson'` (a padded, quilted coat), legs `'hose'` (close-fitting, which greaves and cuisses fit over best),
+  and a robe or a long skirt is a `gs.outdoors` Cloth `skirt({ on: person, length })` over a tunic.
+  **Carried and drawn.** `new gs.characters.Carry(person)`: `add('sword', mesh, 'hipL', { sheath: true })`
+  hangs a thing at a spot (`hipL`, `hipR`, `back`, `backL`, `shield`, `quiver`, `bow`, `belt`, or your own on any
+  bone), `draw('sword')` sends the hand to it, takes it and brings it round into the hand, `sheathe('sword')` puts
+  it back; `update(dt)` after `rig.update()`, events `grab` (the sound), `drawn`, `stowed`. **Swords, shields and bows:**
+  `gs.models.weapon('sword' | 'longsword' | 'dagger' | 'axe' | 'mace' | 'spear' | 'staff' | 'shield' | 'bow' | 'arrow' |
+  'quiver')` are made in code (a shield `{ style: 'round' | 'heater' | 'kite', finish }`); `Carry` knows each one's hand
+  and hold (a shield and a bow in the left, a spear's other hand on its shaft); `gs.fight.Melee(body, { weapon: 'sword',
+  shield: true, armour: 'auto' })` fights with them and gs.poses has the cuts, the shield up, the spear and the bow draw
+  (`docs/maker-kit.md`, "Melee in 3D"); a bow model's `pull(bow.k)` draws its string. The lab: `node scripts/arms.cjs
+  out.png rows=knight:ss:slash@.4,archer:bow:bowDraw@1,models [--webgpu]`. Each arm is
   a piece of its own that turns in the shoulder, so any pose is safe: nothing stretches at the armpit.
   **A cut of clothes this phone hasn't made yet takes a second or two to sculpt, so it happens in the
   background**: the app shows "Loading…" and makes the game again, exactly as when a big library loads, and
@@ -1878,7 +1932,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
   themselves (`creature.fur`; `fur: false` to leave it off), and people's moustaches and beards are
   strands (`human({ beard: 1 })`, `person.hair`; `strands: true` for the hair of the head too, which is a
-  clean combed shape otherwise; `strands: false` for none). Close up
+  clean combed shape otherwise; `strands: false` for none; a real face's hair is single strands of its own on WebGPU close up, curling by
+  `hairTexture`: `hairStrands: false` leaves them off). Close up
   only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
   fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
   [Fur and hair](maker-kit.md#fur-and-hair).

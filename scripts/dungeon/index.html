@@ -1,0 +1,87 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.dungeon.Dungeon drawn to look over, for scripts/dungeon.cjs: a column for each camera, a row before and after.
+//   ?views=start,door,lever,gate,chest,trap,secret,top,map   &cell=480x360   &seed=3   &size=40x30   &gpu
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await gs.physics3d.loadPhysics3D(); await (await import('../../src/kit/gen.js')).loadGen();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const frame = () => new Promise(r => requestAnimationFrame(r));
+  const views = (Q.get('views') || 'start,door,lever,gate,chest,trap,secret,top,map').split(','), [cw, ch] = (Q.get('cell') || '480x360').split('x').map(Number);
+  const seed = +(Q.get('seed') || 3), [mw, mh] = (Q.get('size') || '40x30').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const rows = ['before', 'after'];
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * rows.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#050506', fog: .02, env: .08, sky: '#4a5060', ground: '#201a14', amb: .22, fov: 62 });
+  v.cam.near = .1; v.cam.far = 160; v.cam.updateProjectionMatrix();
+  const world = new gs.physics3d.World3D({ gravity: -20 });
+  const t0 = performance.now();
+  const map = gs.gen.dungeon(mw, mh, { seed });
+  const d = new gs.dungeon.Dungeon(v, { map, seed });
+  const made = performance.now() - t0, L = d.layout, S = L.size, things = d.things;
+  for (let i = 0; i < 30; i++) { world.step(1 / 60); d.update(1 / 60, d.start); }
+  const floorAt = (c, r) => { const k = L.grid[r]?.[c]; return k && k !== '#' && k !== ' '; };
+  const W = (c, r, y = 1.6) => [L.x0 + (c + .5) * S + d.at.x, y, L.z0 + (r + .5) * S + d.at.z];
+  // a camera a step or two out from a thing, on the floor side, looking at it
+  const outFrom = (t, steps = 2, up = 1.6, lookY = 1.2) => {
+    const dirs = t.face ? [t.face] : t.axis === 'x' ? [[1, 0], [-1, 0]] : t.axis === 'z' ? [[0, 1], [0, -1]] : [[0, 1], [1, 0], [0, -1], [-1, 0]];
+    const base = t.face && (t.kind === 'lever' || t.kind === 'torch') ? [t.col + t.face[0], t.row + t.face[1]] : [t.col, t.row];
+    let best = dirs[0], n = 0;
+    for (const [dx, dz] of dirs) { let k = 0; while (k < steps && floorAt(base[0] + dx * (k + 1), base[1] + dz * (k + 1))) k++; if (k > n) { n = k; best = [dx, dz]; } }
+    const p = W(base[0] + best[0] * n, base[1] + best[1] * n, up), sp = d.spot(t);
+    return [p, [sp.x, lookY, sp.z]];
+  };
+  const one = k => things.find(t => t.kind === k);
+  const VIEWS = {
+    start: () => { const s = L.start, q = L.rooms.find(r => s.col >= r.col && s.col < r.col + r.cols && s.row >= r.row && s.row < r.row + r.rows); const tc = q ? q.col + q.cols - 1 : s.col + 2, tr = q ? q.row + q.rows - 1 : s.row + 2; return [W(q ? q.col : s.col, q ? q.row : s.row, 1.7), W(tc, tr, 1.2)]; },
+    door: () => outFrom(one('locked') || one('door'), 2, 1.6, 1.3),
+    lever: () => { const t = things.find(x => x.kind === 'lever'); return outFrom(t, 3, 1.6, 1.25); },
+    gate: () => outFrom(one('gate'), 2, 1.6, 1.4),
+    chest: () => outFrom(one('chest'), 2, 1.5, .4),
+    trap: () => outFrom(one('trap'), 2, 1.5, .2),
+    secret: () => outFrom(one('secret'), 2, 1.6, 1.4),
+    top: () => [[d.at.x + L.cols * S * .05, L.rows * S * .62, d.at.z + L.rows * S * .62], [d.at.x, 0, d.at.z]],
+  };
+  const counts = {}; for (const t of things) counts[t.kind] = (counts[t.kind] || 0) + 1;
+  const info = [`dungeon ${mw}x${mh} seed ${seed}: made in ${made.toFixed(0)} ms, ${L.rooms.length} rooms, ${JSON.stringify(counts)}`];
+  const ev = []; for (const e of ['open', 'shut', 'unlock', 'lever', 'solved', 'trap', 'loot', 'secret']) d.on(e, () => ev.push(e));
+  const inv = { m: {}, has(i) { return this.m[i] > 0; }, take(i, n) { this.m[i] -= n; }, add(i, n) { this.m[i] = (this.m[i] || 0) + n; } };
+  const ceiling = d.group.getObjectByName('ceiling');
+  for (let r = 0; r < rows.length; r++) {
+    if (rows[r] === 'after') {
+      // open everything the way a player would: the key's chest first, then the doors, the levers right, the secret
+      for (const t of things.filter(t => t.kind === 'chest')) d.use(t, { inventory: inv });
+      for (const t of things.filter(t => t.kind === 'locked' || t.kind === 'door')) d.use(t, { inventory: inv });
+      for (const t of things.filter(t => t.kind === 'lever' && t.on !== t.want)) d.use(t);
+      for (const t of things.filter(t => t.kind === 'secret')) d.use(t);
+      for (const t of things.filter(t => t.kind === 'trap')) { const p = d.spot(t); d.update(1 / 60, p); }
+      for (let i = 0; i < 300; i++) { world.step(1 / 60); d.update(1 / 60, i < 30 ? d.spot(one('trap') || things[0]) : d.start); }
+      for (const t of things.filter(t => t.kind === 'trap')) { t.fired = .2; }
+      d.settle(1e3);
+      for (let rr = 0; rr < L.rows; rr++) for (let c = 0; c < L.cols; c++) if (floorAt(c, rr)) d.rules.see(L.x0 + (c + .5) * S, L.z0 + (rr + .5) * S);
+      info.push('events: ' + [...new Set(ev)].join(', ') + ` (${ev.length}); gate ${one('gate')?.open ? 'open' : 'shut'}; inventory ${JSON.stringify(inv.m)}`);
+    }
+    for (let c = 0; c < views.length; c++) {
+      if (views[c] === 'map') {
+        cx.clearRect(0, 0, cw, ch); d.drawMap(cx, 0, 0, cw, ch, { at: d.start, all: rows[r] === 'after' });
+      } else {
+        const V = VIEWS[views[c]]; if (!V) throw new Error('no view ' + views[c]);
+        const [at, look] = V();
+        if (ceiling) ceiling.visible = views[c] !== 'top';
+        v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld();
+        v.cut?.(); v.hemi.intensity = views[c] === 'top' ? .9 : .22; v.scene.fog.density = views[c] === 'top' ? 0 : .02;
+        const I = window.__hd.info;
+        for (let n = 0; n < 10; n++) { d.update(1 / 60); v.t = n / 60; I.shCalls = I.shTris = 0; v.render(cx, cw, ch); await frame(); }
+        info.push(`${views[c].padEnd(7)} ${rows[r].padEnd(6)} draws ${I.calls ?? '?'} triangles ${I.tris ?? '?'} (+ shadows ${I.shCalls ?? 0} draws)`);
+      }
+      sx.drawImage(cell, c * cw, r * ch);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(`${views[c]} ${rows[r]}`, c * cw + 5, r * ch + 14);
+    }
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

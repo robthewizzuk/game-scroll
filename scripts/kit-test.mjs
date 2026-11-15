@@ -514,6 +514,57 @@ console.log('physics ok');
   assert.ok(tw.done && ticks === 7, 'typewriter ' + ticks);
   console.log('story ok');
 }
+// a conversation played by people (Talk)
+{
+  const { Story, Talk } = await import('../src/kit/story.js');
+  const { Reputation } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const TALK = `
+  EXTERNAL did(deed)
+  EXTERNAL give(id, n)
+  VAR town_rank = "neutral"
+  VAR town = 0
+  #shot:two
+  Back again, are you? #who:mara #mood:frown
+  Just passing. #who:hero
+  * {town_rank == "loved"} [Ask for the key] Anything for you. #who:mara #mood:smile .5 #do:nod
+    ~ did("helped")
+    ~ give("key", 1)
+    -> END
+  * [Leave] Off you go then. #who:mara #wait:0
+    -> END`;
+  const face = () => ({ moods: {}, looked: null, said: [], set(n, a) { this.moods[n] = a; return this; }, look(t) { this.looked = t; return this; }, say(t) { this.said.push(t); return Promise.resolve(true); }, hush() {}, talking: false });
+  const at = (x, z) => ({ matrixWorld: { elements: [1,0,0,0, 0,1,0,0, 0,0,1,0, x, 1.6, z, 1] } });
+  const hero = { face: face(), bones: { head: at(0, 0) } }, mara = { face: face(), bones: { head: at(0, 2) } };
+  const cam = { position: { set(x, y, z) { Object.assign(this, { x, y, z }); } }, lookAt(x, y, z) { this.look = { x, y, z }; } };
+  let cuts = 0; const view = { cut: () => cuts++ };
+  for (const loved of [true, false]) {
+    const rep = new Reputation({ factions: { town: {} }, deeds: { helped: { town: 5, good: 5 } } }); if (loved) rep.move('town', 70);
+    const inv = new Inventory({ key: { stack: 1 } }, { slots: 2 });
+    hero.face = face(); mara.face = face();
+    const t = new Talk(new Story(TALK), { cast: { hero: { person: hero }, mara: { person: mara, name: 'Mara', voice: 'woman' } }, hero: 'hero', camera: cam, view, rep, inv });
+    const done = []; t.on('do', (m, w) => done.push(m + ':' + w)); t.on('end', () => done.push('end'));
+    t.start();
+    assert.equal(t.who, 'Mara'); assert.equal(t.text, 'Back again, are you?'); assert.equal(mara.face.moods.frown, 1); assert.equal(mara.face.said[0], 'Back again, are you?');
+    assert.ok(mara.face.looked === hero.bones.head && hero.face.looked === mara.bones.head, 'they look at each other');
+    assert.equal(t.shot.kind, 'two'); assert.ok(Math.abs(cam.position.x) > 1.5, 'two shot from the side ' + cam.position.x);
+    assert.equal(t.shown, ''); t.tap(); assert.equal(t.shown, t.text, 'first tap shows the line'); t.tap();
+    assert.equal(t.who, 'hero'); assert.equal(t.shot.kind, 'over'); assert.ok(cam.position.z > 2, 'over Mara\'s shoulder onto the hero: behind her ' + cam.position.z);
+    const side1 = Math.sign(cam.position.x);
+    t.update(10); assert.equal(t.choices.length, loved ? 2 : 1, 'choices by the town\'s feeling');
+    if (loved) {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Anything for you.'); assert.equal(mara.face.moods.smile, .5); assert.equal(mara.face.moods.frown, 0, 'the old mood goes');
+      assert.ok(cam.position.z < 0, 'over the hero\'s shoulder onto Mara ' + cam.position.z); assert.equal(Math.sign(cam.position.x), side1, 'same side of the line');
+      assert.deepEqual(done, ['nod:mara']);
+      t.update(10); t.tap(); assert.ok(t.ended && done.includes('end'));
+      assert.ok(rep.with('town') > 70 && inv.has('key'), 'the deed and the key reached the game');
+    } else {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Off you go then.'); t.update(1); t.update(.1); assert.ok(t.ended, 'a #wait line moves on by itself');
+    }
+  }
+  assert.ok(cuts >= 3, 'cuts ' + cuts);
+  console.log('story Talk: voices and moods on faces, eyes on each other, shots on one side of the line, cuts, choices by reputation, deeds and items through EXTERNAL functions, #wait ok');
+}
 
 // save versions: old saves go through migrate(), a newer save is kept safe
 {
@@ -1775,6 +1826,46 @@ console.log('physics ok');
   console.log('tactics 3D: cover from a world, snap, slide, dash, peek, blind fire, squads ok');
 }
 {
+  // swimming: a pool 3 m deep with a shallow end and a bank 30 cm over the water; wade, swim, dive with a breath that runs out, climb out
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Swimmer } = await import('../src/kit/climb.js');
+  const w = new World3D(), box = (x, y, z, sx, sy, sz) => w.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  box(-2, -3.5, 0, 14, 1, 20); box(-12, -.6, 0, 6, 1, 20); box(-8, -1.1, 0, 2, 1, 20); box(10, -1.35, 0, 10, 3.3, 20);   // the pool's floor (top -3), its shallow end (top -.1), a step (top -.6), the bank (top .3)
+  const hero = w.mover(null, { at: { x: -12, y: -.1, z: 0 } }); w.step(1 / 60);
+  const swim = new Swimmer({ water: 0, world: w, breath: 3, sounds: false }), seen = new Set(), events = new Set();
+  const frame = (input, walk = [0, 0]) => { hero.walk(walk[0], walk[1]); swim.update(1 / 60, input, hero); w.step(1 / 60); seen.add(swim.state); for (const e of swim.events) events.add(e); };
+  for (let i = 0; i < 20; i++) frame({}, [0, 0]);
+  frame({ move: { x: 1, z: 0 } }, [4, 0]);
+  assert.ok(swim.state === 'out' && Math.abs(hero.vx - 4) < .01, 'ankle deep: on foot as ever (' + swim.depth.toFixed(2) + ' m)');
+  hero.place(-8, -.6, 0); for (let i = 0; i < 10; i++) frame({}, [0, 0]);
+  frame({ move: { x: 1, z: 0 } }, [4, 0]);
+  assert.ok(swim.state === 'wade' && swim.slow < .9 && hero.vx < 3.8, 'knee deep and more: wading, slower: ' + swim.state + ' ' + swim.slow.toFixed(2));
+  hero.place(-3, -2, 0); for (let i = 0; i < 120; i++) frame({});
+  assert.ok(swim.state === 'swim' && swim.pose === 'tread' && Math.abs(hero.feet.y + 1.8 * .78) < .15 && hero.gravity === 0, 'deep water: treading, shoulders at the surface: ' + hero.feet.y.toFixed(2));
+  for (let i = 0; i < 60; i++) frame({ down: true });
+  assert.ok(swim.state === 'dive' && swim.under && swim.pose === 'diveDown' && swim.air < 1 && hero.feet.y < -2.2, 'dives under, the breath going: ' + swim.air.toFixed(2));
+  for (let i = 0; i < 160; i++) frame({ down: true });
+  assert.ok(events.has('low') && events.has('empty') && swim.hurt > 0, 'out of breath under water: it hurts');
+  events.clear(); for (let i = 0; i < 400 && swim.under; i++) frame({ up: true });
+  for (let i = 0; i < 30; i++) frame({});
+  assert.ok(!swim.under && events.has('surface') && events.has('gasp') && swim.state === 'swim', 'comes up for air, gasping');
+  for (let i = 0; i < 200; i++) frame({});
+  assert.ok(swim.air > .9, 'and gets the breath back: ' + swim.air.toFixed(2));
+  // the crawl to the bank, then out onto it
+  let climbed = false; for (let i = 0; i < 900 && !climbed; i++) { frame({ move: { x: 1, z: 0 } }); if (swim.state === 'climb') { assert.equal(swim.pose, 'climbOut'); climbed = true; } }
+  assert.ok(climbed && seen.has('swim'), 'swims to the bank and pulls out: ' + hero.feet.x.toFixed(2));
+  for (let i = 0; i < 90; i++) frame({}, [0, 0]);
+  assert.ok(swim.state === 'out' && hero.feet.x > 5 && Math.abs(hero.feet.y - .3) < .12 && hero.gravity < 0, 'on the bank, on foot: ' + JSON.stringify(hero.feet));
+  // a Water-like surface and the current of a stream
+  const sw = new Swimmer({ water: { height: () => 1, size: 0 }, sounds: false }), p = { x: 0, y: -1, z: 0 };
+  sw.update(1 / 60, { move: { x: 0, z: 1 } }, p); assert.ok(sw.state === 'swim' && sw.vel.z > 1 && sw.vel.y > 0 && sw.facing === 0, 'any { x, y, z } feet: read vel and move them yourself');
+  const { Water } = await import('../src/kit/water.js'), lake = new Water({ level: .5, waves: 0, size: 40, link: false }), sl = new Swimmer({ water: lake, sounds: false });
+  assert.ok(sl.waterAt(3, 4).y === .5 && sl.waterAt(30, 0).y === -Infinity, 'a gs.outdoors Water: its level, and none past its edge');
+  const flow = { at: () => ({ in: true, level: 0, current: { x: 1, z: 0 }, stream: { push: 2 } }) }, sc = new Swimmer({ water: flow, sounds: false });
+  sc.update(1 / 60, {}, { x: 0, y: -1.6, z: 0 }); assert.ok(sc.vel.x > .9, 'a stream\'s current carries them');
+  console.log('swimming: wade, tread, dive, breath, surface, climb out, currents ok');
+}
+{
   const { DriveBy, Gun } = await import('../src/kit/combat.js');
   const car = { position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, points: { driver: { position: { x: -.37, y: .6, z: .2 } } }, size: { width: 1.8 } };
   const d = new DriveBy(car);
@@ -1791,7 +1882,7 @@ console.log('physics ok');
   // weapons: the arsenal's numbers, a pouch the guns share, a loadout, pickups; the models and two hands on them; hits and spent cases
   const { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } = await import('../src/kit/combat.js');
   const { weapon, WEAPON_KINDS, Wield } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js');
-  assert.deepEqual(Object.keys(ARSENAL).sort(), [...WEAPON_KINDS].sort(), 'a number for every weapon model');
+  assert.deepEqual(Object.keys(ARSENAL).sort(), WEAPON_KINDS.filter(k => k !== 'arrow' && k !== 'quiver').sort(), 'a number for every weapon model (an arrow and a quiver are only things)');
   const rifle = arm('rifle'); assert.ok(rifle.kind === 'rifle' && rifle.mag === 30 && rifle.auto && rifle.ammoType === 'rifle', 'arm() makes a gun from its numbers');
   const shotgun = arm('shotgun', { rng: () => .5 }); assert.equal(shotgun.pull({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }).length, 9, 'a shotgun throws pellets');
   const pouch = new Pouch({ rifle: 10 }), g = arm('rifle', { pouch }); g.ammo = 0; assert.ok(g.startReload() && g.spare === 10, 'reloads out of the pouch');
@@ -1883,6 +1974,86 @@ console.log('physics ok');
   console.log('fight 3D: blows that step in and land, combos, guard, dodge, from behind, weapons, a ready-made brawler ok');
 }
 {
+  // the old world's weapons: swords, axes, spears and shields in gs.fight's Melee (parries, guards broken, armour that soaks), bows, the models
+  const { Melee, Brawler, BLADES, SPEARS, ARMS } = await import('../src/kit/fight.js');
+  const { Bow, Pouch, Loadout, ARSENAL } = await import('../src/kit/combat.js');
+  const { weapon } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js'), { Carry } = await import('../src/kit/carry.js');
+  const duel = (oa = {}, ob = {}) => {
+    const A = { x: 0, y: 0, z: 0, yaw: 0 }, B = { x: 0, y: 0, z: 1.5, yaw: Math.PI }, a = new Melee(A, oa), b = new Melee(B, ob), hits = [];
+    const run = (n, fa = () => {}, fb = () => {}) => { for (let i = 0; i < n; i++) { fa(i, a, b); fb(i, a, b); for (const h of [...a.update(1 / 60, [b]), ...b.update(1 / 60, [a])]) hits.push(h); for (const [m, P] of [[a, A], [b, B]]) { P.x += m.walk.x / 60; P.z += m.walk.z / 60; } } return hits; };
+    return { A, B, a, b, hits, run };
+  };
+  let d = duel({ weapon: 'sword' });
+  assert.ok(d.a.moves === BLADES && d.a.guardPose === 'armed', 'a sword fights with BLADES');
+  d.run(60, i => { if (i === 0) d.a.attack('light'); });
+  assert.ok(d.hits[0]?.name === 'slash' && !d.hits[0].blocked && d.hits[0].damage === 14, 'a slash lands: ' + JSON.stringify(d.hits.map(h => [h.name, h.damage])));
+  d = duel({ weapon: 'sword' }, { shield: true }); d.b.block(true); d.b.update(.5, []);   // (the guard up a while: a block, not a parry)
+  d.run(60, i => { if (i === 0) d.a.attack('low'); });
+  assert.ok(d.hits[0]?.blocked && !d.hits[0].parried && d.hits[0].shield && d.hits[0].damage === 0, 'a shield takes even a cut at the legs, nothing through it');
+  d = duel({ weapon: 'sword' }, { weapon: 'sword' }); let left = null; d.a.on('parried', () => { left = [d.a.stun, d.a.open, d.a.move]; });
+  d.run(60, i => { if (i === 0) d.a.attack('light'); }, (i, a, b) => { if (i === 5) b.block(true); });   // (raised just before the blow lands)
+  assert.ok(d.hits[0]?.parried && d.hits[0].damage === 0 && left[0] > 20 && left[1] > 0 && !left[2], 'a guard raised in time parries, the one who swung left open');
+  d = duel({ weapon: 'axe', shield: true }, { shield: true }); d.b.block(true); d.b.update(.5, []);
+  d.run(60, i => { if (i === 0) d.a.attack('push'); });
+  assert.ok(d.hits[0]?.name === 'bash' && !d.hits[0].blocked && d.hits[0].guardBroken, 'a shield bash knocks the guard aside');
+  d = duel({ weapon: 'axe' }, { shield: true }); d.b.block(true); d.b.update(.5, []);
+  d.run(60, i => { if (i === 0) d.a.attack('low'); });
+  assert.ok(d.hits[0]?.name === 'hook' && d.hits[0].guardBroken && !d.b.guard, "an axe's hook pulls the shield down");
+  // armour: what a gs.models.human body wears (its armour.worn), and plate takes more of a cut than of a blow from a mace
+  const plated = { x: 0, y: 0, z: 1.5, yaw: Math.PI, armour: { worn: { chest: 'plate', shoulders: 'plate', arms: 'plate', head: 'sallet' } } };
+  const m = new Melee(plated, { armour: 'auto' });
+  assert.ok(m.protect('high', 'cut') > .5 && m.protect('high', 'blunt') < m.protect('high', 'cut') * .5 && m.protect('low', 'cut') === 0, 'armour by where it lands and what lands: ' + [m.protect('high', 'cut'), m.protect('high', 'blunt'), m.protect('low', 'cut')].map(n => n.toFixed(2)));
+  d = duel({ weapon: 'sword' }); d.b.armour = 'auto'; d.B.armour = plated.armour;
+  d.run(60, i => { if (i === 0) d.a.attack('light'); });
+  assert.ok(d.hits[0] && d.hits[0].damage < 8 && d.hits[0].soaked > 6, 'a cut on plate does little: ' + d.hits[0]?.damage);
+  const dag = new Melee({ x: 0, z: 0 }, { weapon: 'dagger' }); assert.ok(dag.stats(BLADES.slash).start < BLADES.slash.start && dag.stats(BLADES.slash).reach < 1, 'a dagger is quicker and shorter');
+  const sp = new Melee({ x: 0, z: 0 }, { weapon: 'spear' }); assert.ok(sp.moves === SPEARS && sp.stats(SPEARS.thrust).reach > 2 && sp.guardPose === 'spearGuard', 'a spear keeps them out');
+  assert.ok(ARSENAL.sword.melee === ARMS.sword && ARSENAL.shield.slot === 'off', 'the arsenal has the same numbers');
+  // a skilled foe with a shield parries some of what comes, over a long fight
+  {
+    const P1 = { x: 0, y: 0, z: 0, yaw: 0 }, P2 = { x: 0, y: 0, z: 1.6, yaw: Math.PI }, me = new Melee(P1, { weapon: 'sword' }), them = new Melee(P2, { weapon: 'sword', shield: true });
+    const ai = new Brawler({ skill: .95, rng: (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(11) }); let parried = 0, blocked = 0;
+    for (let i = 0; i < 1800; i++) {
+      if (i % 50 === 0) me.attack(['light', 'heavy', 'light'][(i / 50) % 3]);
+      const t = ai.think(1 / 60, them, me); them.block(t.block); if (t.attack && i % 3 === 0) them.attack(t.attack);
+      for (const h of me.update(1 / 60, [them])) { if (h.parried) parried++; else if (h.blocked) blocked++; } them.update(1 / 60, [me]);
+      P2.x = 0; P2.z = 1.6; P1.x = 0; P1.z = 0;
+    }
+    assert.ok(parried > 0 && blocked + parried > 3, 'a Brawler with a shield blocks and parries: ' + blocked + ' blocked, ' + parried + ' parried');
+  }
+  // a bow: drawn over time, loosed on letting go, the arrow drops as it flies and stops in who it hits (and goes along with them)
+  const pouch = new Pouch({ arrows: 3 }), bow = new Bow({ pouch, sounds: false, rng: () => .5 }), foe = { position: { x: 0, y: 0, z: -30 }, radius: .35, height: 1.8, hp: 100, rotation: { y: 0 } };
+  const eye = { x: 0, y: 1.5, z: 0 }, dir = { x: 0, y: .04, z: -1 };
+  bow.update(.5, {}); assert.ok(bow.loaded && pouch.count('arrows') === 2, 'an arrow onto the string');
+  for (let i = 0; i < 30; i++) bow.update(1 / 60, { pull: true, from: eye, dir }); assert.ok(bow.k > .6 && bow.k < .7, 'drawn over time: ' + bow.k.toFixed(2));
+  for (let i = 0; i < 30; i++) bow.update(1 / 60, { pull: true, from: eye, dir }); assert.equal(bow.k, 1, 'to full draw');
+  let got = []; bow.update(1 / 60, { pull: false, from: eye, dir, targets: [foe] }); assert.ok(bow.flying.length === 1 && !bow.loaded && bow.k === 0, 'loosed');
+  let low = 9; for (let i = 0; i < 120 && !got.length; i++) { got = bow.update(1 / 60, { targets: [foe] }); if (bow.flying[0]) low = Math.min(low, bow.flying[0].v.y); }
+  assert.ok(got.length === 1 && got[0].who === foe && got[0].damage >= 40 && low < 0, 'it drops as it flies and hits who is there: ' + JSON.stringify(got.map(h => [h.damage, h.at.y.toFixed(2)])));
+  assert.ok(bow.stuck.length === 1 && bow.stuck[0].on === foe, 'and stays in them');
+  foe.position.x = 2; bow.update(1 / 60, {}); assert.ok(Math.abs(bow.stuck[0].x - 2) < .2, 'going along with them');
+  bow.update(.6, {}); for (let i = 0; i < 20; i++) bow.update(1 / 60, { pull: i < 5, from: eye, dir }); assert.ok(bow.loaded && bow.k === 0 && !bow.flying.length, 'barely drawn: let down, not loosed');
+  const wild = new Bow({ sounds: false, tire: 1 }); wild.loaded = true; wild.k = 1; const steady = wild.wobble; wild.full = 4; assert.ok(wild.wobble > steady * 5, 'held at full draw too long, it shakes');
+  // the loadout: a shield worn beside what is out, a bow with its own arrows
+  const kit = new Loadout({ sounds: false }); kit.give('sword'); kit.give('shield'); kit.give('bow');
+  assert.ok(kit.kind === 'sword' && kit.off === 'shield' && kit.has('bow') && kit.pouch.count('arrows') === 12, 'a shield worn as well as a sword: ' + kit.kind + ' ' + kit.off);
+  kit.next(); assert.ok(kit.kind === 'bow' && kit.bow instanceof Bow && kit.bow.pouch === kit.pouch, 'the bow out, its arrows from the pouch');
+  const back = new Loadout({ sounds: false }).load(JSON.parse(JSON.stringify(kit.save()))); assert.ok(back.off === 'shield' && back.kind === 'bow' && back.bow, 'saves and loads');
+  // the models: each made in code, with points; a bow that draws, an arrow that rides it; Carry knows a weapon's hand and hold
+  for (const k of ['sword', 'longsword', 'dagger', 'axe', 'mace', 'spear', 'staff', 'shield', 'bow', 'arrow', 'quiver']) { const w = weapon(k); assert.ok(w.points.grip && w.points.muzzle && w.userData.weapon.length > .3, k + ': a model'); }
+  assert.ok(weapon('shield', { style: 'round' }).children[0].geometry !== weapon('shield', { style: 'kite' }).children[0].geometry, 'shields in styles');
+  const bw = weapon('bow'), arrow = weapon('arrow'); bw.load(arrow); bw.pull(0); const z0 = bw.points.nock.position.z; bw.pull(1);
+  assert.ok(bw.points.nock.position.z - z0 > .5 && Math.abs(arrow.position.z - bw.points.nock.position.z) < 1e-6, 'a bow draws, the arrow on its string');
+  const man = figure(), carry = new Carry(man);
+  carry.add('shield', weapon('shield'), 'shield'); carry.add('spear', weapon('spear'), 'back');
+  assert.ok(carry.things.shield.hand === 'L' && carry.things.spear.hand === 'R' && carry.things.spear.both, 'a shield goes to the left hand, a spear in both');
+  carry.set('spear', 'hand'); for (let i = 0; i < 30; i++) { man.rig.play('spearGuard'); man.rig.update(1 / 60, {}); carry.update(1 / 60); }
+  man.updateMatrixWorld(true); const fore = carry.things.spear.fore.clone(); carry.things.spear.thing.localToWorld(fore);
+  const handL = man.rig.parts.foreL.localToWorld(fore.clone().set(0, -.26, 0));
+  assert.ok(handL.distanceTo(fore) < .12, 'the other hand on the spear: ' + handL.distanceTo(fore).toFixed(3));
+  console.log('fight 3D, the old world: swords, axes, spears, shields that block and bash, parries, armour that soaks, bows, the models ok');
+}
+{
   const { Ledges, Climber, Rope } = await import('../src/kit/climb.js');
   const L = new Ledges().add({ x: 0, y: 3, z: 0 }, { x: 4, y: 3, z: 0 }, { x: 0, z: 1 });
   const cl = new Climber(L); assert.ok(cl.grab({ x: 1, y: 1.4, z: .3 }, -1), 'grabs a ledge in reach');
@@ -1910,6 +2081,17 @@ console.log('physics ok');
   cs.on('say', () => lines++).on('end', () => ended++); for (let i = 0; i < 30; i++) cs.update(1 / 60); assert.ok(cs.shot && cs.shot.x > 0 && cs.shot.x < 10, 'camera moves along the path');
   cs.skip(); assert.ok(ended === 1 && !cs.playing, 'skip ends it');
   console.log('cutscene: camera path, lines, skip ok');
+  // actors: walk, gesture, mood, a line in their voice, turn; skip puts them where they were going
+  const played = [], p = { position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 }, rig: { play: n => played.push(n), blend() {} }, face: { look(t) { this.l = t; }, set(n, a) { this[n] = a; }, say(t) { this.s = t; return Promise.resolve(true); } } };
+  const c2 = new Cutscene([{ at: 0, actor: p, walk: { x: 2, z: 0 } }, { at: .5, actor: p, play: 'bow', mood: 'smile' }, { at: 1, actor: p, say: 'Hello.', who: 'M', look: { x: 0, y: 1, z: 0 } }, { at: 4, actor: p, turn: 0, time: 2 }]);
+  for (let i = 0; i < 30; i++) c2.update(1 / 60); assert.ok(c2.motion(p).speed > 0 && p.position.x > 0, 'walking');
+  for (let i = 0; i < 150; i++) c2.update(1 / 60);
+  assert.ok(Math.abs(p.position.x - 2) < .04 && Math.abs(p.rotation.y - Math.PI / 2) < .05, 'walked there, facing the way it went');
+  assert.ok(played.includes('bow') && played.includes('idle') && p.face.s === 'Hello.' && p.face.smile === 1 && p.face.l, 'gesture, stop, line in its voice, mood, eyes');
+  c2.skip(); assert.equal(p.rotation.y, 0, 'skip turns it as it was told');
+  const { GESTURES, Rig } = await import('../src/kit/poses.js');
+  for (const [n, g] of Object.entries(GESTURES)) { assert.ok(g.once && g.time > 0, n); const a = g.cycle(0).j, b = g.cycle(1).j; for (const k of Object.keys(a)) assert.ok(a[k].every((x, i) => Math.abs(x - b[k][i]) < 1e-9), n + ' ends where it began: ' + k); }
+  console.log('cutscene actors and gestures ok');
 }
 {
   const { Prompts } = await import('../src/kit/prompts.js');
@@ -2406,6 +2588,50 @@ console.log('physics ok');
   }
   console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
 }
+// gs.city's traffic off its lanes and its police (city-drive.js, city-police.js), on the plan alone: cars change lanes and
+// never sit in each other, a crashed car gets back into the traffic, a car sent across the city gets most of the way with
+// the traffic pulling over for its siren and goes back to its lanes when let go; the police come at 3 stars, never ram
+// below 3 or block below 4, and a player out of sight long enough gets away, one stopped beside them is caught
+{
+  const { layout, Traffic, City, Wanted } = await import('../src/kit/city.js'), { Group } = await import('three');
+  const plan = layout({ seed: 7, blocks: 6 });
+  const fake = { plan, seed: 7, opts: {}, group: new Group(), view: {}, t: 0, next: [], events: [], night: 0, signal: City.prototype.signal, signalLeft: City.prototype.signalLeft, honk() {},
+    event(e) { this.next.push(e); }, collide: () => null, ray: () => null, road: City.prototype.road, route: City.prototype.route, spot: City.prototype.spot, ground: () => 0,
+    people: { witness: () => [], report() {}, fromCar() {}, list: [] } };
+  const T = new Traffic(fake, 50); fake.cars = T; T.reset({ x: 0, z: 0 });
+  let t = 0; const step = (n, focus = { x: 0, z: 0 }) => { for (let i = 0; i < n; i++) { t += 1 / 60; fake.t = t; fake.events = fake.next; fake.next = []; T.update(1 / 60, focus, t); } };
+  step(60 * 30);
+  assert.ok(T.stats.laneChanges > 0, 'traffic: cars change lanes (' + T.stats.laneChanges + ')');
+  let overlap = 0; for (const a of T.list) for (const b of T.list) if (a !== b && a.mode === 'lane' && b.mode === 'lane' && !a.turn && !b.turn && Math.hypot(a.x - b.x, a.z - b.z) < 1.2) overlap++;
+  assert.equal(overlap, 0, 'traffic: no two cars in one place');
+  const hit = T.list.find(c => c.mode === 'lane' && c.v > 4); T.crash(hit, { x: 7, z: 3 }, { spin: 2 });
+  assert.equal(hit.mode, 'loose', 'traffic: a crashed car leaves its lane'); step(60 * 12);
+  assert.ok(hit.mode === 'lane' || hit.mode === 'wreck', 'traffic: a crashed car drives on or stays a wreck (' + hit.mode + ')');
+  const cop = T.add({ x: plan.bounds.x0 + 10, z: plan.bounds.z0 + 10, police: true, keep: true }), goal = { x: plan.bounds.x1 - 20, z: plan.bounds.z1 - 20 }, far = Math.hypot(cop.x - goal.x, cop.z - goal.z), y0 = T.stats.yields;
+  assert.ok(cop && cop.police, 'traffic: a police car of the game\'s own');
+  T.chase(cop, goal, { how: 'go', siren: true }); step(60 * 50, cop);
+  const left = Math.hypot(cop.x - goal.x, cop.z - goal.z);
+  assert.ok(left < far * .4, 'traffic: a chasing car crosses the city along the roads (' + far.toFixed(0) + ' m to ' + left.toFixed(0) + ' m)');
+  assert.ok(T.stats.yields > y0, 'traffic: cars pull over for a siren');
+  T.release(cop); step(60 * 5); assert.equal(cop.mode, 'lane', 'traffic: a released car is back in its lanes');
+  const law = new Wanted(fake, null, { officers: false }), s0 = fake.spot('street', { near: { x: 0, z: 0 } }), me = { x: s0.x, z: s0.z, heading: s0.heading, v: 0, car: true };
+  const lawStep = n => { for (let i = 0; i < n; i++) { step(1, me); law.update(1 / 60, me); } };
+  assert.equal(law.crime('theft', me), 'unseen', 'police: a crime nobody sees'); assert.equal(law.stars, 0, 'police: no stars for it');
+  // (the player's speed kept above a walk here, so a car that gets there fast doesn't make the arrest before the count)
+  me.v = 3; law.set(3); law.seenNow(me); lawStep(60 * 8);
+  // (one may already have crashed into the traffic on the way: loose, then back on the chase)
+  const chasing = law.units.filter(u => u.car.police && u.car.siren && u.car.mode === 'chase').length;
+  assert.ok(law.units.length >= 2 && chasing >= 2 && law.units.every(u => u.car.police && ['chase', 'loose', 'wreck'].includes(u.car.mode)), 'police: cars come with sirens at 3 stars (' + law.units.map(u => u.car.mode + (u.car.siren ? '+siren' : '')) + ')');
+  assert.equal(law.allow([.1, 0, .5, 2 / 5, 0, 0, 1], 'ram'), 'chase', 'police: no ramming below 3 stars');
+  assert.notEqual(law.allow([.5, .9, .5, 3 / 5, .25, 0, 1], 'block'), 'block', 'police: no roadblocks below 4 stars');
+  let esc = 0, bust = 0; law.on('escaped', () => esc++); law.on('busted', () => bust++);
+  fake.ray = () => ({ dist: 1 }); me.x = plan.bounds.x1 + 300; me.z = plan.bounds.z1 + 300; lawStep(60 * 60);
+  assert.ok(esc === 1 && law.stars === 0 && !law.units.length, 'police: out of sight long enough, the player gets away');
+  fake.ray = () => null; Object.assign(me, { x: s0.x, z: s0.z, v: 0 }); law.set(2); law.seenNow(me);
+  for (let i = 0; i < 60 * 60 && !bust; i++) lawStep(1);
+  assert.equal(bust, 1, 'police: stopped beside a police car, the player is caught');
+  console.log('city traffic and police: lane changes, crashes, chases across the city, sirens, the rules, escaping and being caught ok');
+}
 // the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
 // further out, land from where the city's ground ends, the camera made to see it, lit windows at night
 {
@@ -2432,6 +2658,149 @@ console.log('physics ok');
     s.dispose(); s2.dispose(); assert.ok(!v.scene.children.includes(s.group), 'disposed: gone from the scene');
   }
   console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
+}
+// districts side by side (layout centre) and the stand-ins for chunks not built (city-far.js Standins): a city moved is the
+// same city, every building as boxes of its own footprint and height in its chunk's one mesh, lit at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Standins } = await import('../src/kit/city-far.js');
+  const a = layout({ seed: 8, blocks: [4, 3], style: 'oldtown' }), b = layout({ seed: 8, blocks: [4, 3], style: 'oldtown', centre: [1200, -800] });
+  assert.ok(a.buildings.length === b.buildings.length && a.buildings.every((q, i) => Math.abs(b.buildings[i].x0 - q.x0 - 1200) < 1e-6 && Math.abs(b.buildings[i].z1 - q.z1 + 800) < 1e-6 && b.buildings[i].h === q.h), 'a city moved by centre is the same city, moved');
+  assert.ok(Math.abs(b.bounds.x0 - a.bounds.x0 - 1200) < 1e-6 && b.nodes.every((n, i) => n.out.join() === a.nodes[i].out.join()) && b.centre.join() === '1200,-800', 'its bounds, junctions and roads moved with it');
+  const chunks = new Map(); for (const k of b.blocks) { const key = (k.i >> 1) + ',' + (k.j >> 1); if (!chunks.has(key)) chunks.set(key, { key, blocks: [] }); chunks.get(key).blocks.push(k); }
+  const g = new THREE.Group(), S = new Standins(g, b, chunks, { colourOf: () => '#a45a45' });
+  const parts = b.buildings.reduce((n, q) => n + q.parts.length, 0), meshes = [...chunks.values()].filter(c => c.stand).map(c => c.stand);
+  assert.ok(S.count === b.buildings.length && meshes.length === g.children[0].children.length && meshes.reduce((n, m) => n + m.geometry.index.count / 3, 0) === parts * 10, 'every building stands in, ten triangles a part, one mesh a chunk');
+  for (const c of chunks.values()) if (c.stand) {
+    const P = c.stand.geometry.attributes.position.array, x0 = Math.min(...c.blocks.map(k => k.x0)) - .01, x1 = Math.max(...c.blocks.map(k => k.x1)) + .01, z0 = Math.min(...c.blocks.map(k => k.z0)) - .01, z1 = Math.max(...c.blocks.map(k => k.z1)) + .01;
+    for (let i = 0; i < P.length; i += 3) assert.ok(P[i] >= x0 && P[i] <= x1 && P[i + 2] >= z0 && P[i + 2] <= z1, 'a chunk\'s stand-ins stay on its own blocks');
+  }
+  S.night = 1; assert.ok(S.mat.emissiveIntensity > 1, 'their windows light at night'); S.dispose(); assert.equal(g.children.length, 0, 'disposed: gone');
+  console.log('city districts side by side and stand-ins for chunks not built ok');
+}
+// a big city of districts (city-metro.js) as plain numbers: the districts placed apart with land between and the harbour on the
+// south edge, all joined by roads between their outer junctions, and a route across them with no gaps on the driving side
+{
+  const { Metro, metroPlan } = await import('../src/kit/city-metro.js'), { routeOn } = await import('../src/kit/city.js');
+  const M = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'suburb', 'harbour', 'suburb'], between: [120, 240] }), D = M.districts, again = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'suburb', 'harbour', 'suburb'] });
+  const apart = (a, b) => Math.max(b.x0 - a.x1, a.x0 - b.x1, b.z0 - a.z1, a.z0 - b.z1);
+  assert.ok(D.length === 5 && D.every((d, i) => d.plan.buildings.length === again.districts[i].plan.buildings.length && d.rect.x0 === again.districts[i].rect.x0), 'the same seed places the same districts');
+  for (const a of D) for (const b of D) if (a !== b) assert.ok(apart(a.rect, b.rect) >= 118, `${a.name} and ${b.name} are ${apart(a.rect, b.rect).toFixed(0)} m apart`);
+  const H = D.find(d => d.harbour); assert.ok(D.every(d => d === H || d.rect.z1 < H.rect.z0) && H.plan.water && D[0].plan.centre.join() === '0,0', 'the harbour is south of every other district, the first in the middle');
+  assert.ok(D.filter(d => d.style === 'suburb').length === 2 && new Set(D.map(d => d.name)).size === 5, 'two suburbs, each named its own');
+  const { Ways, WayTraffic, RING } = await import('../src/kit/city-ways.js');
+  const m = Object.assign(Object.create(Metro.prototype), { districts: D, bounds: M.bounds, side: 'right', seed: 3 }); m.connectors = m.connect();
+  const w = new Ways(m, { seed: 3, hills: .8, river: M.river, highway: true, meshes: false }); m.ways = w; m.ring = w.ring; m.ramps = w.ramps;   // (the plan alone: no meshes)
+  const seen = new Set([D[0]]); for (let k = 0; k < D.length; k++) for (const r of m.connectors) { if (seen.has(r.a)) seen.add(r.b); if (seen.has(r.b)) seen.add(r.a); }
+  assert.ok(seen.size === D.length, 'every district is joined to the rest by road');
+  const outer = (P, n) => n.i === 0 || n.j === 0 || n.i === P.nx || n.j === P.nz;
+  for (const r of m.connectors) {
+    assert.ok(outer(r.a.plan, r.from) && outer(r.b.plan, r.to) && r.len > 100 && r.width >= 9, `road ${r.id} runs between outer junctions (${r.a.name} to ${r.b.name}, ${r.len.toFixed(0)} m)`);
+    for (const [x, z] of r.points.slice(2, -2)) for (const d of D) if (d !== r.a && d !== r.b) assert.ok(x < d.rect.x0 || x > d.rect.x1 || z < d.rect.z0 || z > d.rect.z1, `road ${r.id} keeps out of ${d.name}`);
+    const p = m.along(r, r.len / 2), q = m.lanePos(r, 0, r.len / 2), w = m.lanePos(r, 0, r.len / 2, true);
+    assert.ok((q.x - p.x) * -p.dz + (q.z - p.z) * p.dx > 1 && (w.x - p.x) * -p.dz + (w.z - p.z) * p.dx < -1, 'its lanes keep to the right, each way');
+    const on = m.road(p.x + 1, p.z); assert.ok(on.road === r && on.d < 4, 'a point on it is on that road');
+  }
+  const mid = d => { const cx = (d.rect.x0 + d.rect.x1) / 2, cz = (d.rect.z0 + d.rect.z1) / 2, n = d.plan.nodes.reduce((m, n) => Math.hypot(n.x - cx, n.z - cz) < Math.hypot(m.x - cx, m.z - cz) ? n : m); return { x: n.x + 30, z: n.z + 2 }; };   // (on a road near the middle)
+  for (const b of D.slice(1)) {
+    const r = m.route(mid(D[0]), mid(b)); let gap = 0; for (let i = 1; i < r.points.length; i++) gap = Math.max(gap, Math.hypot(r.points[i][0] - r.points[i - 1][0], r.points[i][1] - r.points[i - 1][1]));
+    assert.ok(r && r.legs.some(l => l.road) && r.legs[0].district === D[0] && r.legs.at(-1).district === b && gap < 130 && Math.hypot(r.points.at(-1)[0] - mid(b).x, r.points.at(-1)[1] - mid(b).z) < 20, `a route from ${D[0].name} to ${b.name}: ${r.legs.map(l => l.road ? 'road ' + l.road.id : l.district.name).join(', ')}, no step over ${gap.toFixed(0)} m`);
+  }
+  const inside = m.route(mid(D[1]), { x: D[1].rect.x0 + 30, z: D[1].rect.z0 + 30 }), alone = routeOn(D[1].plan, mid(D[1]), { x: D[1].rect.x0 + 30, z: D[1].rect.z0 + 30 });
+  assert.ok(inside.legs.length === 1 && Math.abs(inside.length - alone.path.length) < 1, 'a route inside one district is that district\'s own');
+  const r0 = m.connectors[0], half = m.along(r0, r0.len * .3), fromRoad = m.route({ x: half.x, z: half.z }, mid(r0.b));
+  assert.ok(fromRoad.legs[0].road === r0 && fromRoad.legs.at(-1).district === r0.b, 'a route from the road between districts starts along it');
+  console.log('a big city of districts: placed apart, joined by roads, routes across them ok');
+  // the ways between (city-ways.js): hills, a river, the roads' heights over them, the highway and its slip roads, the cars on them
+  assert.ok(M.river && D.every(d => (M.river.axis === 'z' ? d.rect.x1 < M.river.c - 100 || d.rect.x0 > M.river.c + 100 : d.rect.z1 < M.river.c - 100 || d.rect.z0 > M.river.c + 100)), 'a river runs between the districts, clear of them all');
+  assert.ok(w.ring && w.ramps.length >= 3, `a highway round the city and a slip road to most districts (${w.ramps.length})`);
+  for (const r of w.roads) {
+    const limit = r.ring ? .05 : r.ramp ? .065 : .07; let g = 0; for (let i = 1; i < r.y.length; i++) g = Math.max(g, Math.abs(r.y[i] - r.y[i - 1]) / (r.at[i] - r.at[i - 1]));
+    assert.ok(g <= limit + .002, `${r.id} climbs no steeper than ${limit * 100}% (${(g * 100).toFixed(1)}%)`);
+    if (!r.ring) assert.ok(r.y[0] === 0 && (r.ramp ? Math.abs(r.y.at(-1) - w.ringY(r.ringS)) < .01 : r.y.at(-1) === 0), `${r.id} meets its district level and its other end at its height`);
+    for (let i = 0; i < r.points.length; i += 3) {
+      const [x, z] = r.points[i], y = r.y[i], k = r.kind[i];
+      if (w.riverD(x, z) < 12 && w.riverE(x, z) > .9) assert.ok(k === 1 && y > 1, `${r.id} bridges the river (${y.toFixed(1)} m up)`);
+      if (k === 0 && !w.holes.some(h => x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1) && !(w.near(x, z, 40, q => q !== r)?.d < 34)) assert.ok(Math.abs(w.landAt(x, z) - (y - .08)) < .35, `the land is cut or filled to ${r.id} (${w.landAt(x, z).toFixed(2)} for ${y.toFixed(2)})`);
+      if (k === 2 && r.tunnels.every(t => Math.min(r.at[i] - t.s0, t.s1 - r.at[i]) > 12)) assert.ok(w.landAt(x, z) > y + 6.5, `the land covers ${r.id}'s tunnel (${w.landAt(x, z).toFixed(2)} over ${y.toFixed(2)} at ${r.at[i].toFixed(0)}, tunnels ${r.tunnels.map(t => t.s0.toFixed(0) + '-' + t.s1.toFixed(0))})`);
+      if (k === 1) { assert.ok(Math.abs(w.surface(x, z) - y - .05) < .1 && w.surface(x, z, y - 3) < y - 1, `on ${r.id}'s bridge the ground is the deck, under it the land (${w.surface(x, z).toFixed(2)} ${w.surface(x, z, y - 3).toFixed(2)} for ${y.toFixed(2)} at ${r.at[i].toFixed(0)} of ${r.len.toFixed(0)}, land ${w.landAt(x, z).toFixed(2)} natural ${w.natural(x, z).toFixed(2)})`); }
+    }
+  }
+  for (const q of w.ramps) assert.ok(outer(q.a.plan, q.from) && q.b === RING && Math.abs(w.near(q.to.x, q.to.z, 30, r => r.ring).d - (w.ring.width / 2 + 4.5)) < 1, `${q.id} runs from an outer junction to beside the highway`);
+  const hw = m.along(w.ring, w.ramps[0].ringS + 300), toHw = m.route(mid(w.ramps[0].a), { x: hw.x, z: hw.z });
+  assert.ok(toHw && toHw.legs.some(l => l.road === w.ramps[0]) && toHw.legs.at(-1).road === w.ring, 'a route onto the highway climbs a slip road');
+  const across = m.route(mid(w.ramps[0].a), mid(w.ramps.at(-1).a)); assert.ok(across && across.length > 100, 'routes still cross the whole city');
+  const T = new WayTraffic(w, 30), top = Math.max(...w.roads.map(r => r.speed)); let joined = 0, left = 0, fast = 0;
+  for (let f = 0; f < 2700; f++) { const before = T.list.map(c => c.r); T.update(1 / 30, { x: 0, z: 0 }); T.list.forEach((c, i) => { if (before[i] !== c.r && c.r.ring) joined++; if (before[i]?.ring && c.r.ramp) left++; if (c.v > top * 1.13) fast++; }); }
+  let close = 0; for (const a of T.list) for (const b of T.list) if (a !== b && a.r === b.r && a.back === b.back && a.k === b.k && Math.abs(a.u - b.u) < 4) close++;
+  assert.ok(joined > 0 && left > 0 && !fast && close === 0 && T.list.every(c => Number.isFinite(c.x + c.y + c.z) && c.u >= 0 && c.u <= c.r.len), `cars between districts keep their lanes and distance, join the highway (${joined}) and leave it (${left}); ${fast} too fast, ${close} too close`);
+  T.dispose();
+  console.log('the ways between districts: hills, a river bridged, cuttings and tunnels, a highway with slip roads, cars on them ok');
+}
+// finding the way round a city (city-gps.js): a route that follows the player and is worked out again when they leave it, the
+// next turn, arriving, where the route goes (the game's, the player's waypoint, a pinned marker), and the maps' sums
+{
+  const { Gps } = await import('../src/kit/city-gps.js'), { layout, routeOn, roadOn } = await import('../src/kit/city.js');
+  const P = layout({ seed: 5, blocks: 5 }), city = { plan: P, start: { x: 0, z: 0 }, route: (a, b) => routeOn(P, a, b), road: (x, z) => roadOn(P, x, z) };
+  const gps = new Gps(city), n = P.nodes, a = roadOn(P, n[1].x + 20, n[1].z), b = roadOn(P, n.at(-2).x - 20, n.at(-2).z);
+  assert.ok(gps.target === null && gps.update(.1, a).next === null, 'nowhere to go: no route');
+  gps.to(b); gps.update(.1, { x: a.x, z: a.z, heading: a.heading });
+  const r = gps.route; assert.ok(r && r.turns.length >= 1 && r.turns.every(t => t.turn === 'left' || t.turn === 'right') && Math.abs(gps.left - r.length) < 3 && gps.next.in > 0, `a route of ${r.length.toFixed(0)} m with ${r.turns.length} turns`);
+  const made = gps.routes; let lastLeft = Infinity, down = true, turns = new Set();
+  for (let s = 0; s <= r.path.length; s += 3) { const p = r.path.at(s); gps.update(.1, { x: p.x + .8, z: p.z }); down &&= gps.left <= lastLeft + .01; lastLeft = gps.left; turns.add(gps.next.turn); }
+  assert.ok(gps.routes === made && down && gps.arrived && gps.next.turn === 'arrive' && turns.has('arrive'), `driven along it: never worked out again, metres to go only fall, arrived (${[...turns].join(', ')})`);
+  const off = { x: a.x + 45, z: a.z + 45 }; for (let i = 0; i < 6; i++) gps.update(.1, off);
+  assert.ok(gps.routes === made + 1 && Math.hypot(gps.route.points[0][0] - off.x, gps.route.points[0][1] - off.z) < 40, 'off the route: it is worked out again from where the player is');
+  const ahead = gps.ahead(12); assert.ok(ahead && Math.hypot(ahead.x - off.x, ahead.z - off.z) < 60, 'a point ahead along it, for an arrow');
+  // where it goes: the game's to(), else the waypoint, else the first pinned marker (a watched list, read each frame)
+  const job = { at: { x: n[7].x, y: 0, z: n[7].z }, kind: 'job', pinned: true }, jobs = { markers: [{ at: { x: 1, y: 0, z: 2 }, kind: 'job' }, job] };
+  gps.to(null); gps.watch(jobs); assert.ok(gps.target === job.at && gps.all().length === 2, 'with nowhere set it goes to the pinned marker of what it watches');
+  gps.waypoint = { at: { x: n[3].x, z: n[3].z }, kind: 'waypoint', pinned: true }; assert.ok(gps.target === gps.waypoint.at && gps.all().length === 3, 'the player\'s waypoint before that');
+  gps.to(b); assert.ok(gps.target === b, 'and the game\'s own before both');
+  const moving = { x: n[2].x, z: n[2].z }; gps.to(moving); gps.update(.1, a); const before = gps.routes; moving.x += 60; gps.update(.1, a);
+  assert.ok(gps.routes === before + 1, 'a target that moves far is followed');
+  // the maps' sums: a city point to the canvas and back, turned
+  const M = { cx: 50, cy: 60, s: .5, turn: .7, at: { x: 10, z: -20 } }, q = gps.toMap(M, 130, 40), back = gps.fromMap(M, q[0], q[1]);
+  assert.ok(Math.abs(back.x - 130) < 1e-9 && Math.abs(back.z - 40) < 1e-9, 'a point on the map and back');
+  gps.clear(); assert.ok(gps.target === null && !gps.all().length, 'cleared');
+  console.log('finding the way: a route that follows the player, turns, arriving, waypoints and markers ok');
+}
+// the rooms behind the doors (city-inside.js): every building's door in a bay of its street wall, and the room behind it in
+// plain numbers: inside its building, the same every time, and the keeper, the counter and every seat reachable from the door
+{
+  const t0 = performance.now();
+  const { layout, STYLES, doorwayOf, FACADES } = await import('../src/kit/city.js'), { roomPlan, roomFree, roomKind, INSIDE_KINDS } = await import('../src/kit/city-inside.js');
+  const counts = {}, fails = {}; let rooms = 0;
+  const err = m => { fails[m] = (fails[m] || 0) + 1; };
+  for (const style of Object.keys(STYLES)) for (const b of layout({ seed: 2, blocks: [4, 3], style }).buildings) {
+    const h = b.doorway, P = b.parts[0];
+    if (!h) { err('no door'); continue; }
+    const again = doorwayOf(b); if (again.x !== h.x || again.z !== h.z) err('door moved');
+    // on its street wall, inside the wall's length, and its shape by the building
+    const along = h.s % 2 === 0 ? P.x1 - P.x0 : P.z1 - P.z0;
+    if (h.t0 < 0 || h.t1 > along || h.h <= 1.8 || h.h > h.storey) err('door off its wall');
+    if (FACADES[b.facade].kind === 'shed' ? !h.shed : h.shed) err('shed door');
+    if (Math.abs(h.x - (h.s === 1 ? P.x1 : h.s === 3 ? P.x0 : h.x)) > 1e-6 || Math.abs(h.z - (h.s === 0 ? P.z0 : h.s === 2 ? P.z1 : h.z)) > 1e-6) err('door not on the face');
+    for (const kind of [null, 'store', 'diner', 'bar', 'home', 'lobby', 'warehouse']) {
+      const r = roomPlan(b, { kind }); rooms++; counts[r.kind] = (counts[r.kind] || 0) + 1;
+      if (kind === null && r.kind !== roomKind(b) && !(roomKind(b) === 'store' && r.kind === 'diner')) err('kind');   // (a shop too narrow for aisles is a diner)
+      if (!(r.x0 >= P.x0 - 1e-6 && r.x1 <= P.x1 + 1e-6 && r.z0 >= P.z0 - 1e-6 && r.z1 <= P.z1 + 1e-6)) err('floor outside its building');
+      if (r.boxes.some(q => q.x0 < P.x0 - .21 || q.x1 > P.x1 + .21 || q.z0 < P.z0 - .21 || q.z1 > P.z1 + .21)) err('a wall outside its building');
+      if (!r.lamps.length || r.top <= r.y + 2) err('no lamps or a low ceiling');
+      // the floor flooded from the door: the keeper, the counter and the seats reachable, the places to stand free
+      const c = .2, nx = Math.ceil((r.x1 - r.x0) / c), nz = Math.ceil((r.z1 - r.z0) / c), seen = new Uint8Array(nx * nz), free = (i, j) => roomFree(r, r.x0 + (i + .5) * c, r.z0 + (j + .5) * c, .28);
+      const cell = q => [Math.floor((q.x - r.x0) / c), Math.floor((q.z - r.z0) / c)], [di, dj] = cell(r.spots.door);
+      if (!free(di, dj)) { err('the way in blocked'); continue; }
+      const st = [[di, dj]]; seen[dj * nx + di] = 1;
+      while (st.length) { const [i, j] = st.pop(); for (const [a, e] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const I = i + a, J = j + e; if (I < 0 || J < 0 || I >= nx || J >= nz || seen[J * nx + I] || !free(I, J)) continue; seen[J * nx + I] = 1; st.push([I, J]); } }
+      const reach = (q, name) => { const [i, j] = cell(q); for (let a = -5; a <= 5; a++) for (let e = -5; e <= 5; e++) { const I = i + a, J = j + e; if (I >= 0 && J >= 0 && I < nx && J < nz && seen[J * nx + I]) return; } err(name + ' out of reach'); };
+      if (r.spots.keeper) reach(r.spots.keeper, 'keeper'); if (r.spots.counter) reach(r.spots.counter, 'counter'); for (const q of r.spots.seats) reach(q, 'seat');
+      if (r.spots.stand.some(q => !roomFree(r, q.x, q.z, .28))) err('a place to stand blocked');
+      const twice = roomPlan(b, { kind }); if (twice.boxes.length !== r.boxes.length || twice.x0 !== r.x0) err('not the same twice');
+    }
+  }
+  assert.deepEqual(fails, {}, 'rooms: ' + JSON.stringify(fails));
+  assert.ok(Object.keys(INSIDE_KINDS).every(k => counts[k] > 0), 'every kind of room made');
+  console.log(`rooms behind the doors: a door on every street wall, ${rooms} rooms inside their buildings, the same every time, keeper, counter and seats reachable from the door ok (${(performance.now() - t0).toFixed(0)} ms)`);
 }
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
@@ -3074,9 +3443,9 @@ console.log('physics ok');
   assert.equal(sp.frameGenSlack(g4.id), true, 'the frames between came late: a spare refresh');
   assert.equal(sp.frameGenSlack(g4.id), false, 'once');
   assert.equal(sp.screenWant(g4), 120, 'so the screen is asked for 120');
-  assert.equal(sp.frameGenPaceOf(g4, 4), 'first', "after which the 'first' kept from before counts");
-  sp.settle(g4.id, { fgPace: null });
-  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', 'pace early on the faster screen');
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', "pace early on the faster screen, whatever 'first' was kept from before (Parcel Dash, Rob 2026-11-15: 'first' at 120 Hz gives a real frame one 8 ms refresh)");
+  assert.equal(sp.frameGenPace(g4.id, 'x'), false, "and no 'first' to fall back to there: off next");
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', 'still early');
   for (let i = 0, t = 60000; i < 80; i++) sp.tick(t += 1000 / 120);
   assert.equal(sp.fpsFor(g4), 30, 'still 30 real frames a second');
   assert.match(sp.frameGenStatus(g4), /makes 30 more \(blend, each real frame given two refreshes of the graphics chip, the screen at 120 Hz so the frame between has a spare refresh\)/, 'Settings says so');
@@ -3092,6 +3461,8 @@ console.log('physics ok');
     assert.deepEqual(run([1, 3]), [3], 'or the one after, when the middle one did not come');
     assert.deepEqual(run([2, 3, 4]), [2, 4], 'and the next real frame shown on time if it is late');
   }
+  sp.frameGenFailed(g4.id, '32% of the refreshes between didn’t come');
+  assert.match(sp.frameGenStatus(g4), /Off for .*32% of the refreshes between.*Before that: 120 Hz/, 'Settings says what was tried before it went off');
   screen.rates = []; screen.top = 0;
   for (let i = 0, t = 80000; i < 80; i++) sp.tick(t += 1000 / 60);
   sp.setFrameGenPick('auto');
@@ -4082,7 +4453,7 @@ console.log('physics ok');
     assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
   // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
   { assert.deepEqual(Object.keys(RECIPES).filter(n => RECIPES[n].metal), ['metal', 'rust', 'paint'], 'the recipes with metal in them');
-    assert.ok(RECIPES.skin && RECIPES.palm && Object.keys(RECIPES).length === 19, 'a skin (and a palm trunk) among the recipes: ' + Object.keys(RECIPES).length); }
+    assert.ok(RECIPES.skin && RECIPES.palm && RECIPES.thatch && Object.keys(RECIPES).length === 20, 'a skin (and a palm trunk and thatch) among the recipes: ' + Object.keys(RECIPES).length); }
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 
@@ -5795,7 +6166,7 @@ console.log('physics ok');
   const THREE = await import('three');
   const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
   const { Structure } = await import('../src/kit/structure.js'), { building, buildingPieces, BUILDING_STYLES } = await import('../src/kit/models/buildings.js');
-  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), beam: M(), glass: M(), lit: M(), floor: M() };
   const house = (o = {}, b = {}) => new Structure(new THREE.Group(), { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials, ...b }, ...o });
   const play = (h, secs, w = h.world === h.mine ? null : h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
   const up = (h, test) => { let n = 0; for (let i = 0; i < h.S.n; i++) if (h.state[i] <= 1 && test(h.S.C[i])) n++; return n; };
@@ -6641,6 +7012,61 @@ console.log('physics ok');
       assert.ok(mount.done && bk.who('rider') === rider && rider.rig.state === 'ride' && wp(rider.rig.parts.hips).distanceTo(wp(bk.points.rider)) < .16, 'on a bike: astride it, on the saddle');   // (hands go on the bars where the person has touch(): a sculpted one)
       assert.throws(() => car.enter(skeleton(), { seat: 'boot' }), /no seat 'boot'/);
     }
+    // a crash: health that runs down hit by hit, smoke, then fire, then a blast; tyres that burst; doors and bumpers loose, then off
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const scene = new THREE.Scene(), car = vehicle('car', { style: 'saloon' }), wp = o => o.getWorldPosition(new THREE.Vector3()); scene.add(car); car.updateMatrixWorld(true);
+      const seen = []; for (const ev of ['smoke', 'fire', 'blow', 'burst', 'off']) car.on(ev, () => seen.push(ev));
+      assert.ok(car.health === 1 && car.engine === 1 && !car.wrecked && car.tyres.length === 4 && car.parts.bumperF && car.parts.bumperR, 'a car starts whole: health, its engine, four tyres, bumpers of its own');
+      car.hit(new THREE.Vector3(.95, .6, .3), { power: .8 }); assert.ok(car.health < .9 && car.health > .8 && car.door('doorR').part.rotation.y === 0, 'a knock takes some health: ' + car.health.toFixed(2));
+      // a tyre right where a sharp hit lands bursts; the wheel sits lower and smaller
+      const w0 = wp(car.wheels[1]); car.hit(w0.clone().add(new THREE.Vector3(.1, 0, 0)), { power: .6 });
+      assert.ok(car.tyres[1].flat && !car.tyres[0].flat && car.wheels[1].children[0].scale.y < .9 && seen.includes('burst'), 'a shot at its tyre: flat');
+      // a door hit hard hangs loose and swings; hit again it comes off and falls to the road
+      const door = car.parts.doorR, dc = new THREE.Vector3(); door.children[0].geometry.computeBoundingSphere(); door.children[0].localToWorld(dc.copy(door.children[0].geometry.boundingSphere.center));
+      car.hit(dc, { power: 1 }); let swung = 0; for (let i = 0; i < 60; i++) { car.update(1 / 60); swung = Math.max(swung, Math.abs(door.rotation.y)); }
+      assert.ok(swung > .1 && door.parent !== scene && car.door('doorR').gone !== true, 'hit hard: the door hangs loose and swings open: ' + swung.toFixed(2));
+      car.hit(dc, { power: 1 }); for (let i = 0; i < 120; i++) car.update(1 / 60);
+      assert.ok(door.parent === scene && car.door('doorR').gone && seen.includes('off') && wp(door).y < .4, 'hit again: off, lying in the road at ' + wp(door).y.toFixed(2));
+      car.open('all'); for (let i = 0; i < 30; i++) car.update(1 / 60); assert.ok(door.parent === scene, 'a door that came off is not opened');
+      // more hits: smoke, black smoke, then fire, which blows it up when its fuse runs out
+      assert.ok(car.health > .4 && car.health < .55 && seen.includes('smoke') && !car.burning, 'four hard knocks: smoking, ' + car.health.toFixed(2)); car.harm(.1); assert.ok(car.health <= .55 && seen.includes('smoke') && car.engine < 1 && !car.burning, 'smoking: ' + car.health.toFixed(2) + ', its engine ' + car.engine.toFixed(2));
+      car.harm(.4); assert.ok(car.burning && seen.includes('fire'), 'on fire');
+      car.putOut(); assert.ok(!car.burning && car.health > .12, 'putOut(): it smokes on');
+      car.harm(.2); let t = 0; while (!car.wrecked && t < 12) { car.update(1 / 30); t += 1 / 30; }
+      assert.ok(car.wrecked && seen.includes('blow') && t > 4 && car.engine === 0 && car.health === 0, 'and blows up when the fire has burnt ' + t.toFixed(1) + ' s');
+      const glass = []; car.traverse(m => { if (m.isMesh && m.name === 'glass') glass.push(m); }); const paint = car.shell.children.find(m => m.name === 'paint');
+      assert.ok(glass.every(m => !m.visible) && paint.material.color.getHex() < 0x303030 && car.tyres.every(q => q.flat), 'a burnt-out shell: its glass gone, its paint black, its tyres flat');
+      car.mend(); assert.ok(car.health === 1 && !car.wrecked && door.parent !== scene && !car.door('doorR').gone && glass.every(m => m.visible) && car.tyres.every(q => !q.flat) && paint.material.color.getHex() > 0x303030, 'mend(): as new, its door back on');
+      // on gs.physics3d: a flat tyre sits low and grips less; a wreck has no pull; a part that comes off is a body that lands
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const pc = vehicle('car', { style: 'hatch' }), hold = new THREE.Scene(); hold.add(pc);
+      const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1.2, z: 0 } })); for (let i = 0; i < 60; i++) pw.step(1 / 60);
+      assert.ok(drv.top > 30 && drv.top < 60 && drv.steerFade > 0, 'chassis(): a car\'s top speed and how its steering fades: ' + drv.top);
+      const tilt = () => { pc.updateMatrixWorld(true); return new THREE.Vector3(1, 0, 0).applyQuaternion(pc.quaternion).y; }, before = tilt();
+      pc.burst(1); for (let i = 0; i < 60; i++) pw.step(1 / 60); assert.ok(tilt() < before - .01, 'a flat front right tyre: it sits lower on that side: ' + tilt().toFixed(3));
+      pc.mend(); for (let i = 0; i < 60; i++) pw.step(1 / 60); pc.blow(); for (let i = 0; i < 120; i++) { drv.drive(1, 0); pw.step(1 / 60); pc.update(1 / 60); }
+      assert.ok(Math.abs(drv.speed) < 2, 'a wreck does not drive: ' + drv.speed.toFixed(2));
+      pw.free();
+      // the handbrake: the back steps out in a turn
+      const hw = new World3D({ gravity: -9.81 }); hw.floor(0); const hc = vehicle('car', { style: 'saloon' }), h2 = new THREE.Scene(); h2.add(hc); const hd = hw.vehicle(hc, hc.chassis({ at: { x: 0, y: 1.2, z: 0 } }));
+      for (let i = 0; i < 150; i++) { hd.drive(1, 0); hw.step(1 / 60); } let spinWith = 0; for (let i = 0; i < 40; i++) { hd.drive(0, 1, false, true); hw.step(1 / 60); spinWith = Math.max(spinWith, Math.abs(hd.chassis.body.angvel().y)); }
+      assert.ok(spinWith > 1, 'handbrake in a turn: it slides round, ' + spinWith.toFixed(2) + ' rad/s'); hw.free();
+    }
+    // street props a car knocks over: a lamp post leaves the still body and falls; the car carries on; mend() stands it up again
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D(); const { Props } = await import('../src/kit/props.js');
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const scene = new THREE.Scene(), pr = new Props(scene);
+      pr.kind('lamp', new THREE.CylinderGeometry(.08, .1, 5, 8).translate(0, 2.5, 0), new THREE.MeshStandardMaterial()); pr.add('lamp', 0, 0, -10); pr.add('lamp', 3, 0, -10);
+      pr.solid(pw, 'lamp', { shape: 'trunk', r: .1, knock: 6, density: .8 });
+      const pc = vehicle('car', { style: 'saloon' }); scene.add(pc); const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1, z: 0 } }));
+      let top = 0; for (let i = 0; i < 240; i++) { drv.drive(1, 0); pw.step(1 / 60); top = Math.max(top, drv.speed); if (pc.position.z < -13) break; }
+      const m = new THREE.Matrix4(); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); const up = new THREE.Vector3(0, 1, 0).transformDirection(m);
+      assert.ok(pr.kinds.get('lamp').solid.knocked.has(0) && !pr.kinds.get('lamp').solid.knocked.has(1) && pc.position.z < -11 && drv.speed > top * .5, 'a car through a lamp post at ' + top.toFixed(1) + ' m/s knocks it over and carries on at ' + drv.speed.toFixed(1));
+      for (let i = 0; i < 90; i++) pw.step(1 / 60); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); up.set(0, 1, 0).transformDirection(m);
+      assert.ok(up.y < .8, 'the post goes over: ' + up.y.toFixed(2));
+      pr.mend(); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); up.set(0, 1, 0).transformDirection(m); assert.ok(up.y > .99 && !pr.kinds.get('lamp').solid.knocked.size && pr.kinds.get('lamp').solid.body.colliders.has(0), 'mend(): stood up and solid again');
+      pw.free();
+    }
     // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
@@ -7323,7 +7749,7 @@ console.log('physics ok');
   console.log('memory guard: levels from the phone\'s readings and warnings, up at once, down after a calm spell ok');
 }
 
-// effects that step down by their own cost (hd3d.js pickEffect): the costliest effect that takes a real share of the chip
+// effects that step down by their own cost (hd3d.js pickEffect): the most chip time saved for the picture lost, among effects that take a real share of the chip
 {
   const { pickEffect } = await import('../src/kit/hd3d.js');
   const on = new Set(['ao', 'bloom', 'reflections', 'light shafts']);
@@ -7331,8 +7757,13 @@ console.log('physics ok');
   assert.equal(pickEffect(on, { ao: 2 }, 12, { scene: 6, ao: 2.5, bloom: 1.2, reflections: 1.8 }), 'reflections', 'one at its smallest is passed over');
   assert.equal(pickEffect(on, {}, 12, { scene: 11, ao: .4, bloom: .3 }), null, 'none takes a real share: the resolution steps instead');
   assert.equal(pickEffect(new Set(['bloom']), {}, 12, { scene: 6, ao: 3, bloom: 2 }), 'bloom', 'only an effect the frame drew');
-  assert.equal(pickEffect(on, {}, null, null), 'light shafts', 'where the chip doesn\'t say: a fixed order, what shows least first');
-  assert.equal(pickEffect(on, { 'light shafts': 1, bloom: 1 }, null, null), 'reflections', 'one step each');
+  assert.equal(pickEffect(on, {}, 12, { scene: 6, ao: 1.6, bloom: 3, reflections: 1.5 }), 'ao', 'bloom costs most but shows: one that shows nothing goes first');
+  assert.equal(pickEffect(on, { ao: 2, reflections: 2 }, 12, { scene: 6, ao: 1.6, bloom: 3, reflections: 1.5 }), 'bloom', 'and bloom once nothing else can step');
+  assert.equal(pickEffect(on, { reflections: 1 }, 12, { scene: 6, ao: 1.6, reflections: 1.5 }), 'ao', 'what a step saves: from 1 to .7 51% of its time, from .7 to .5 49% of what it takes at .7');
+  assert.equal(pickEffect(on, { reflections: 1 }, 12, { scene: 6, ao: 1.4, reflections: 1.5 }), 'reflections', 'so near enough the time it takes now');
+  assert.equal(pickEffect(on, {}, null, null), 'ao', 'where the chip doesn\'t say: a fixed order, the costliest that shows least first');
+  assert.equal(pickEffect(on, { ao: 1, reflections: 1 }, null, null), 'light shafts', 'one step each');
+  assert.equal(pickEffect(on, { ao: 1, reflections: 1, 'light shafts': 1 }, null, null), 'bloom', 'bloom last');
   assert.equal(pickEffect(new Set(['ao']), { ao: 1 }, null, null), null, 'then the resolution');
   console.log('gs.hd effects that step down by their own cost ok');
 }
@@ -7375,6 +7806,41 @@ console.log('physics ok');
   assert.equal(pickSize(...FOLD, 1.3e6, 1, 2, 12, { upscale: 5, scene: 5 }), 'lvl', 'the final picture at its last step: the 3D');
   assert.equal(pickSize(...PHONE, .5e6, 0, 0, null, null), 'out', 'where the chip doesn\'t say: the final picture while it is over one and a half times the 3D\'s size');
   assert.equal(pickSize(...PHONE, 1.3e6, 0, 0, null, null), 'lvl', 'and the 3D where it is not');
+  // drawn only as big as the picture's detail needs (detail-size.js): the power law's sums, the size it picks, and
+  // how it moves (down slowly in tenths, up at once, never under its least)
+  {
+    const D = await import('../src/kit/detail-size.js'), { DS } = D, keep = { ...DS };
+    const close = (a, b, e, m) => assert.ok(Math.abs(a - b) < e, `${m}: ${a} vs ${b}`);
+    // an octave ratio of .5: each octave above the drawn one holds half the one below
+    close(D.missing(.01, .02, 1, 1), .01 * .5 / Math.log(2), 1e-9, 'drawn at half size, the octave just above it as the power law sums it (between e1 s and e1)');
+    close(D.missing(.01, .02, 30, 30), .01 / Math.log(2), 1e-6, 'drawn far smaller, all the octaves above: e1 / ln(1 / s)');
+    assert.equal(D.missing(.01, .02, 1, 0), 0, 'drawn at the final size, nothing is missed');
+    assert.ok(D.lossDb(.004, .01, .5, 1) < D.lossDb(.004, .01, .5, .5), 'drawn smaller than when measured, more is lost');
+    for (const [e1, e2, r] of [[2e-4, 6e-4, .85], [1e-3, 1.5e-3, .7], [5e-5, 4e-4, .6]]) {
+      const k = D.sizeFor(e1, e2, r, 36), n = Math.log2(1 / r);
+      if (k < 1) close(D.lossDb(e1, e2, n, Math.log2(1 / k)), 36, .01, 'the size picked misses just the target');
+    }
+    assert.ok(D.sizeFor(.02, .021, .5, 36) > .95, 'a picture full of detail at every octave: about the final size');
+    assert.ok(D.sizeFor(1e-6, 1e-4, .85, 36) < .3, 'a picture with almost none: far smaller');
+    assert.equal(D.sizeFor(0, 0, .8), .8, 'a flat picture (nothing measured): as drawn');
+    assert.equal(D.sizeFor(1e-3, 1e-3 / 1.19, .85, 36), 1, 'a pattern at the pixel\'s own size (the village\'s bricks: the finest octave holding more than the one below): the full size, the power law doesn\'t hold');
+    // the meter's bytes: 16-bit logs of e1 and e2, two bytes each
+    const enc = e => { const c = Math.min(1, Math.max(0, (Math.log2(Math.max(e, 2 ** -32)) + 32) / 32)) * 255; return [Math.floor(c), Math.round((c % 1) * 255)]; };
+    { const px = new Uint8Array(8); px.set([...enc(1e-3), ...enc(4e-3), ...enc(3e-3), ...enc(2e-3)]); const [a, b] = D.fromPixels(px);
+      close(a / 2e-3, 1, .01, 'e1 back as the mean over the blocks'); close(b / 3e-3, 1, .01, 'e2 back'); }
+    assert.deepEqual(D.fromPixels(new Uint8Array(4)), [0, 0], 'a flat block reads as none');
+    // moving: from the quality steps' full size, a picture with little detail is drawn smaller a step at a time
+    Object.assign(DS, { on: true, k: 1, use: 1, least: .6 });
+    const flat = [1e-5, 1e-3], seen = [];
+    for (let i = 0; i < 30; i++) seen.push(D.measured(...flat, .8 * DS.use, .8));
+    assert.ok(seen[0] === 1 && seen.every((v, i) => !i || v <= seen[i - 1]), 'down, never at once');
+    assert.ok(seen.every(v => Math.abs(v * 10 - Math.round(v * 10)) < 1e-9), 'in tenths, so the pictures behind are made again now and then');
+    assert.equal(seen.at(-1), .6, 'and never under the least share');
+    assert.equal(D.measured(.02, .021, .8 * .6, .8), 1, 'detail back: up at once');
+    DS.on = false; assert.equal(D.measured(...flat, .8, .8), 1, 'off: the quality steps\' size');
+    D.resetSize(); Object.assign(DS, keep);
+  }
+  console.log('gs.hd picture-led size ok');
   // the steps themselves (hd3d.js stepsRun): Rob's Fold run again, low at the first resolution step, the chip 11.6 ms a frame
   // in the middle and 22 at its worst, the upscaler 5.9 of it
   const { stepsRun } = await import('../src/kit/hd3d.js');
@@ -7455,6 +7921,104 @@ console.log('physics ok');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
 }
 
+// gs.rpg: a hero who grows (levels, attributes, skill tree, gear) and a world that remembers (reputation)
+{
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Growth, Reputation, xpTo } = await import('../src/kit/rpg.js');
+  const hero = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } });
+  const TREE = { cleave: { ranks: 3, perk: { mul: { damage: 1.1 } } }, whirl: { needs: ['cleave:2'], level: 4 }, ward: { perk: { add: { armour: 5 } }, excludes: ['frenzy'] }, frenzy: { perk: { mul: { speed: 1.2 } }, excludes: ['ward'] } };
+  const g = new Growth(hero, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } });
+  assert.equal(hero.get('damage'), 9); assert.equal(hero.max('hp'), 100); assert.equal(hero.get('hp'), 60);
+  let lv = []; g.on('level', l => lv.push(l));
+  assert.equal(xpTo(2), 100); assert.equal(g.gain(99), 0); assert.ok(Math.abs(g.part - .99) < 1e-9);
+  assert.equal(g.gain(300), 2); assert.deepEqual(lv, [2, 3]); assert.equal(hero.get('hp'), 100, 'filled on level');
+  assert.equal(g.points, 6); assert.equal(g.skillPoints, 2);
+  assert.ok(g.raise('might', 2)); assert.equal(hero.get('damage'), 11); assert.equal(hero.max('hp'), 116);
+  assert.equal(g.can('whirl').why, 'level'); assert.ok(g.learn('cleave')); assert.ok(Math.abs(hero.get('damage') - 12.1) < 1e-9);
+  assert.ok(g.learn('ward')); assert.equal(g.can('frenzy').why, 'ranks' === 0 ? '' : 'excluded'); assert.equal(hero.get('armour'), 5);
+  g.gain(1000); assert.equal(g.level, 6); assert.equal(g.can('whirl').why, 'needs'); assert.deepEqual(g.can('whirl').needs, ['cleave:2']);
+  assert.ok(g.learn('cleave')); assert.ok(g.learn('whirl')); assert.ok(g.has('whirl'));
+  assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9);
+  const inv = new Inventory({ sword: { stack: 1, kind: 'hand', stats: { add: { damage: 3 } } }, ring: { stack: 1, kind: 'ring', stats: { mul: { speed: 1.5 } } } }, { slots: 4, extra: { hand: 'hand', ring: 'ring' } });
+  g.wear(inv); inv.add('sword'); assert.ok(inv.move(0, 'hand')); assert.ok(Math.abs(hero.get('damage') - 14 * 1.21) < 1e-9, 'sword counts ' + hero.get('damage'));
+  assert.ok(inv.move('hand', 0)); assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9, 'sword off');
+  const p = g.pack(); const h2 = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } }); const g2 = new Growth(h2, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } }).unpack(JSON.parse(JSON.stringify(p)));
+  assert.equal(h2.get('damage'), hero.get('damage')); assert.equal(g2.level, 6);
+  g.respec(); assert.equal(g.rank('cleave'), 0); assert.equal(g.attr('might'), 5); assert.equal(g.points, 15); assert.equal(g.skillPoints, 5); assert.equal(hero.get('damage'), 9);
+  // standalone
+  const s = new Growth(null, { attributes: { might: 3 }, derive: { damage: a => a.might } }); assert.equal(s.value('damage', 1), 4);
+  // reputation
+  const r = new Reputation({ factions: { town: {}, guard: { law: true, allies: ['town'] }, bandits: { start: -20, rivals: ['town'], fights: true } },
+    deeds: { rescue: { good: 15, fame: 10, town: 20 }, steal: { good: -5, town: -15, crime: 50 } }, titles: [{ name: 'the Bright', good: [40, 100] }] });
+  assert.equal(r.mood('town'), 'ignore');
+  let out = r.did('rescue'); assert.equal(out.town, 20); assert.equal(out.bandits, -10); assert.equal(r.with('guard'), 10, 'ally moves with town');
+  assert.equal(r.rank('town'), 'liked'); r.did('rescue'); r.did('rescue'); assert.equal(r.with('town'), 60); assert.equal(r.rank('town'), 'loved'); assert.equal(r.mood('town'), 'bow');
+  assert.equal(r.title(), 'the Bright'); assert.equal(r.price(100, 'town'), 85); assert.equal(r.price(100, 'town', { sell: true }), 57);
+  out = r.did('steal', { seen: false }); assert.deepEqual(out, { good: -5 }); assert.equal(r.bounty('guard'), 0);
+  out = r.did('steal', { seen: ['guard'] }); assert.equal(r.bounty('guard'), 50); assert.equal(r.mood('guard'), 'arrest'); assert.equal(r.with('town'), 60, 'town did not see');
+  r.pay('guard'); assert.equal(r.bounty('guard'), 0); assert.equal(r.done('steal'), 2);
+  assert.equal(r.mood('bandits'), 'avoid'); r.move('bandits', -20); assert.equal(r.mood('bandits'), 'attack');
+  const r2 = new Reputation({ factions: { town: {}, guard: { law: true }, bandits: { start: -20, rivals: ['town'], fights: true } }, deeds: {} }).unpack(JSON.parse(JSON.stringify(r.pack())));
+  assert.equal(r2.with('town'), r.with('town')); assert.equal(r2.get('fame'), 30); assert.equal(r.vars().town_rank, 'loved', 'vars for a conversation');
+  assert.throws(() => new Reputation({ deeds: { x: { nope: 1 } } }));
+  console.log('gs.rpg: levels on a curve, attributes into stats, skill tree needs/excludes/ranks, gear from equip slots, respec, saving; reputation deeds seen and unseen, rivals and allies, bounties, moods, prices, titles ok');
+}
+// gs.rpg Quests and Flags: quests that branch, count, fail and reward; the journal; world flags; a conversation that moves a quest on
+{
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Story, Talk, loadStory } = await import('../src/kit/story.js');
+  const { together } = await import('../src/kit/links.js');
+  await loadStory();
+  const TABLE = { key: { name: 'The Gate Key', needs: ['flag:met_mara'], stages: {
+      ask: { text: 'Ask Mara about the gate key', at: { x: 0, z: 10 }, reach: 2, next: 'mill' },
+      mill: { text: 'Find the miller', at: [20, 0, 0], when: t => t > 1, next: 'flour' },
+      flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },
+      done: { end: 'helped', text: 'Mara gave you the key.' },
+      lost: { end: 'failed', text: 'Mara will never trust you now.' } },
+      rewards: { helped: { xp: 150, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true }, gold: 20 } } },
+    wolves: { name: 'Wolves', stages: { hunt: { text: 'Drive off five wolves', count: 5, next: 'paid' }, paid: { end: 'done', text: 'The farmer paid you.' } } } };
+  let made;
+  together(() => { made = { grow: new Growth(null, { attributes: { might: 1 } }), rep: new Reputation({ factions: { town: {} }, deeds: { helped: { town: 10 } } }), inv: new Inventory({ key: { stack: 1 }, flour: { stack: 9 } }, { slots: 4 }), flags: new Flags(), quests: new Quests(TABLE) }; });
+  const { grow, rep, inv, flags, quests } = made, ev = [];
+  for (const e of ['start', 'stage', 'end', 'fail', 'reward']) quests.on(e, (...a) => ev.push(e + ':' + a[0] + (e === 'stage' ? ':' + a[1] : '')));
+  assert.equal(quests.can('key'), false, 'needs met_mara'); assert.equal(quests.start('key'), false);
+  flags.set('met_mara'); assert.ok(quests.start('key')); assert.equal(quests.stage('key'), 'ask'); assert.ok(quests.start('wolves'));
+  assert.deepEqual(quests.markers.map(m => [m.quest, m.at.z]), [['key', 10]], 'a marker where the stage is');
+  quests.update(.5, { x: 0, z: 5 }); assert.equal(quests.stage('key'), 'ask'); quests.update(.5, { x: 0, y: 0, z: 8.5 }); assert.equal(quests.stage('key'), 'mill', 'reaching it moves on');
+  quests.update(.6); assert.equal(quests.stage('key'), 'mill'); quests.update(.6); assert.equal(quests.stage('key'), 'flour', 'when() moves on');
+  assert.equal(quests.count('wolf'), 0, 'not enough yet to move on'); assert.equal(quests.progress('wolves').n, 1, 'a stage counts what it names');
+  quests.count('flour', 2); assert.equal(quests.progress('key').n, 2); quests.count('flour'); assert.equal(quests.ended('key'), 'helped');
+  assert.ok(grow.level >= 2 && inv.has('key') && rep.with('town') === 10 && flags.has('mara_friend'), 'rewards reached the growth, inventory, reputation and flags it found');
+  assert.ok(ev.includes('reward:key') && ev.includes('end:key'));
+  assert.deepEqual(quests.journal.slice(0, 2).map(j => j.text), ['Mara gave you the key.', 'Bring Mara three sacks of flour']);
+  assert.deepEqual(quests.list().active.map(q => q.id), ['wolves']); assert.deepEqual(quests.list().done.map(q => q.id), ['key']);
+  assert.equal(quests.start('key'), false, 'not again unless it repeats'); assert.deepEqual(quests.vars(), { quest_key: 'helped', quest_wolves: 'hunt' });
+  quests.fail('wolves'); assert.ok(quests.failed('wolves') && ev.includes('fail:wolves'));
+  const saved = JSON.parse(JSON.stringify(quests.pack())); assert.ok(JSON.stringify(saved).length < 400, 'small: ' + JSON.stringify(saved).length);
+  const q2 = new Quests(TABLE, { link: false }).unpack(saved); assert.equal(q2.ended('key'), 'helped'); assert.equal(q2.journal[0].text, quests.journal[0].text);
+  assert.throws(() => new Quests({ x: { stages: { a: { next: 'nope' } } } }), /not one of its stages/);
+  // a conversation finds them all and moves a quest on
+  let talk;
+  together(() => {
+    const f = new Flags(), q = new Quests(TABLE);
+    talk = new Talk(new Story(`
+  EXTERNAL quest(id, stage)
+  EXTERNAL flag(name)
+  VAR quest_key = ""
+  VAR met_mara = false
+  {quest_key == "": Hello, stranger.|Back about the key?} #who:mara
+  ~ flag("met_mara")
+  ~ quest("key", "ask")
+  Ask me about the key, then. #who:mara
+  -> END`), { cast: { mara: {} }, voices: false });
+    talk.start(); assert.equal(talk.text, 'Hello, stranger.'); talk.tap(); talk.tap();
+    assert.ok(f.has('met_mara') && q.is('key', 'ask'), 'the talk set a flag and started the quest it found');
+    assert.equal(talk.text, 'Ask me about the key, then.');
+  });
+  console.log('gs.rpg Quests: stages moved on by reaching, waiting and counting, needs, rewards to the kits it found, the journal, markers, failing, saving; Flags; a Talk that sets a flag and starts a quest ok');
+}
 // gs.magic: casts, mana and cooldowns, bolts that home, pierce, chain and splash, areas that warn and linger, beams, wards, heals, statuses that meet
 {
   const { Magic, STATUSES, Looks } = await import('../src/kit/magic.js');
@@ -7640,6 +8204,45 @@ console.log('physics ok');
   bs.change('hp', -1000); bstep(.02); assert.ok(boss.dead && bev.some(e => e.type === 'dead'), 'dead');
   assert.throws(() => new Boss({ stats: new Stats({ speed: 1 }) }), /hp pool/); assert.throws(() => new Moveset(wolf, { attacks: ['nope'] }), /no attack 'nope'/);
   console.log('gs.monsters: telegraphed attacks picked by range, side and weight, tail sweeps, guards and dodges, broken windups, charges, pounces, breath, spit, spells, 2D; creatures that flinch, stagger, fall, get up and die; bosses in phases with poise and enrage ok');
+}
+
+// gs.models.human armour (human-armour.js): plate, leather and brigandine pieces sculpted on their own, each for a bone, the right flipped
+// from the left; helms as hats; a gambeson and hose; gs.characters.Carry: things at the hip or on the back, drawn to the hand and put back
+{
+  const F = await import('../src/kit/models/field.js'), HS = await import('../src/kit/models/human-shapes.js'), A = await import('../src/kit/models/human-armour.js'), HB = await import('../src/kit/models/human-body.js'); await F.thinReady;
+  const list = A.armourPieces({ chest: ['plate', 'leather'], arms: 'plate', feet: 'plate', colour: '#888' });
+  assert.ok(list.filter(q => q.slot === 'chest').length === 4 && list.filter(q => q.slot === 'chest' && q.worn).every(q => q.kind === 'plate'), 'a list of kinds: all made, the first worn');
+  assert.ok(list.some(q => q.piece === 'couter' && q.bone === 'elbowR') && list.some(q => q.piece === 'toecap' && q.bone === 'toeL'), 'pairs on both sides, each on its bone: ' + list.map(q => q.bone));
+  assert.throws(() => A.armourPieces({ chest: 'mithril' }), /no chest armour called 'mithril'/); assert.throws(() => A.armourPieces({ tail: 'plate' }), /no armour for 'tail'/);
+  const build = { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: .92, muscle: .45 };
+  const cu = HS.sculpt({ kind: 'armour', a: { piece: 'cuirass', kind: 'plate', side: 'L', build, top: 'tunic' } });
+  assert.ok(cu.n > 1000 && cu.slots.includes('plate') && cu.I[0].length > cu.I[1].length && cu.I[1].length > cu.I[2].length, 'a breastplate: steel, three levels: ' + cu.I.map(i => i.length / 3));
+  let zf = -1; for (let i = 0; i < cu.n; i++) if (Math.abs(cu.P[i * 3]) < .02 && Math.abs(cu.P[i * 3 + 1] - 1.25) < .02) zf = Math.max(zf, cu.P[i * 3 + 2]);
+  const T = HB.torsoOf(build, 'tunic'), chest = T.sec(1.25); assert.ok(zf > chest[2] + chest[1] + .02, 'it stands clear of the chest, rounded out: ' + zf.toFixed(3));
+  const vl = HS.sculpt({ kind: 'armour', a: { piece: 'vambrace', kind: 'plate', side: 'L', build } }), vr = HS.sculpt({ kind: 'armour', a: { piece: 'vambrace', kind: 'plate', side: 'R', build } });
+  const mx = p => { let a = 0; for (let i = 0; i < p.n; i++) a += p.P[i * 3]; return a / p.n; };
+  assert.ok(mx(vl) > .15 && Math.abs(mx(vl) + mx(vr)) < .01, 'the right arm\'s is the left\'s flipped: ' + mx(vl).toFixed(3) + ' ' + mx(vr).toFixed(3));
+  const br = HS.sculpt({ kind: 'armour', a: { piece: 'cuirass', kind: 'brigandine', side: 'L', build, top: 'tunic' } }); assert.ok(br.slots.includes('rivet') && br.slots.includes('padding'), 'a brigandine: cloth and rivets');
+  for (const kind of ['nasal', 'kettle', 'sallet', 'great', 'circlet']) { const h = HS.sculpt({ kind: 'hat', a: { kind, ridge: 1, strap: 1 } }); assert.ok(h.n > 200 && h.slots.includes('plate'), 'a ' + kind + ' helm'); }
+  const leg = HB.legRows(build, 1, HB.lowRows(build, 'boots')), hose = HB.hoseRows(leg);
+  assert.ok(hose.every((r, i) => r[1] <= leg[i][1]) && hose[1][1] < leg[1][1] * .8 && hose[hose.length - 1][1] === leg[leg.length - 1][1], 'hose: close at the shin, meeting the seat as trousers do');
+  // carried and drawn, on a gs.poses figure
+  const T3 = await import('three'), { figure } = await import('../src/kit/poses.js'), { Carry, SPOTS } = await import('../src/kit/carry.js');
+  const fig = figure(); fig.rig.play('idle'); fig.rig.update(1 / 60);
+  const sword = new T3.Mesh(new T3.BoxGeometry(.04, .8, .01)); sword.geometry.translate(0, .45, 0);
+  const kit = new Carry(fig), ev = []; kit.on('grab', e => ev.push('grab:' + e.to)).on('drawn', e => ev.push('drawn')).on('stowed', () => ev.push('stowed'));
+  const t = kit.add('sword', sword, 'hipL', { sheath: true }); assert.ok(sword.parent === fig.rig.parts.hips && t.sheath && t.sheath.parent === fig.rig.parts.hips, 'at the hip, in its scabbard');
+  fig.updateMatrixWorld(true); const at = sword.getWorldPosition(new T3.Vector3()); assert.ok(Math.abs(at.x - SPOTS.hipL.at[0]) < .05 && Math.abs(at.y - SPOTS.hipL.at[1]) < .12, 'its grip where the spot is: ' + at.toArray().map(v => v.toFixed(2)));
+  assert.ok(kit.draw('sword') && !kit.draw('sword') && kit.busy, 'drawn once at a time');
+  for (let i = 0; i < 40; i++) { fig.rig.update(1 / 60); kit.update(1 / 60); }
+  assert.ok(kit.held('R') === 'sword' && sword.parent === fig.rig.parts.foreR && !kit.busy && ev.join() === 'grab:hand,drawn', 'in the hand: ' + ev);
+  assert.ok(t.sheath.parent === fig.rig.parts.hips, 'the scabbard stays');
+  kit.sheathe('sword'); for (let i = 0; i < 40; i++) { fig.rig.update(1 / 60); kit.update(1 / 60); }
+  assert.ok(kit.held('R') === null && sword.parent === fig.rig.parts.hips && ev.slice(-2).join() === 'grab:spot,stowed', 'and back: ' + ev);
+  assert.ok(sword.position.distanceTo(t.restP) < 1e-6, 'where it was');
+  assert.throws(() => kit.add('x', new T3.Object3D(), 'pocket'), /no spot 'pocket'/);
+  kit.set('sword', 'hand'); assert.equal(kit.held('R'), 'sword'); kit.clear(); assert.ok(!sword.parent && !t.sheath.parent, 'cleared');
+  console.log('gs.models.human armour: plate, leather and brigandine pieces on their own bones, the right flipped from the left, helms, a gambeson and hose; gs.characters.Carry draws from the hip and puts back ok');
 }
 
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
@@ -7984,6 +8587,64 @@ console.log('physics ok');
   console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
 }
 
+// nothing goes through what is solid: cloth goes round the still things of the world (walls as boxes, posts, the ground as a mesh or a
+// grid of heights), and gs.characters.Solid keeps a posed body out of walls, finds the way with room to fall and keeps a held gun out of
+// its holder (src/kit/cloth.js, cloth-gpu.js, solid-body.js; weapon.wield uses it)
+{
+  const t0 = performance.now(), THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Cloth } = await import('../src/kit/cloth.js'), { Solid } = await import('../src/kit/solid-body.js'), { person, figure } = await import('../src/kit/poses.js');
+  const run = (w, n, f) => { for (let i = 0; i < n; i++) { f?.(i); w.step(1 / 60); } };
+  // a banner blown at a wall beside it stops at the wall's face (with the world; without it, it flies out through it)
+  const flies = [];
+  for (const world of [false, true]) {
+    const w = new World3D({ gravity: -9.8 }); w.floor(0); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .5 } }]);
+    const c = new Cloth(null, { wind: { x: 0, z: 6 }, world: world ? w : false }), b = c.banner({ from: [-1, 2.8, 0], to: [1, 2.8, 0], drop: 2.5 });
+    let most = -9; run(w, 200, () => { c.update(1 / 60); for (let k = b.base; k < b.base + b.cols * b.rows; k++) most = Math.max(most, c.P[k * 3 + 2]); });
+    flies.push(most); if (world) assert.ok(c.still.size === 1 && c.floor?.world, 'the wall is a box the cloth goes round, and the floor a grid of heights under it');
+  }
+  assert.ok(flies[0] > 1.5 && flies[1] < .36, 'a banner in the wind goes through a wall beside it with no world, and stops at its face (z .35) with one: ' + flies.map(v => v.toFixed(3)));
+  // a turned box of its own; a sheet dropped on a slope made of a grid of heights lies on it
+  { const c = new Cloth(null, { wind: { x: 0, z: 0 } }), s = c.sheet({ cols: 9, rows: 9, place: (i, j) => [-.6 + i * .15, 1.4, -.6 + j * .15] }); c.box({ at: [0, .5, 0], size: [.8, 1, .8], turn: .6 });
+    for (let i = 0; i < 180; i++) c.update(1 / 60);
+    let inside = 0; const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -.6);
+    for (let k = 0; k < c.N; k++) { const v = new THREE.Vector3(c.P[k * 3], c.P[k * 3 + 1] - .5, c.P[k * 3 + 2]).applyQuaternion(q); if (Math.abs(v.x) < .39 && Math.abs(v.y) < .49 && Math.abs(v.z) < .39) inside++; }
+    assert.ok(inside === 0 && c.P[(4 * 9 + 4) * 3 + 1] > .99, 'a sheet drapes over a turned box and none of it is inside: ' + inside); }
+  { const w = new World3D({ gravity: -9.8 }), n = 8, data = []; for (let r = 0; r <= n; r++) for (let q = 0; q <= n; q++) data.push(q * .5);
+    w.heights({ data, cols: n, rows: n, x: -4, z: -4, width: 8 });
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, world: w }); c.sheet({ cols: 8, rows: 8, place: (i, j) => [-.5 + i / 7, 4, -.5 + j / 7] }); run(w, 240, () => c.update(1 / 60));
+    let under = 0; for (let k = 0; k < c.N; k++) if (c.P[k * 3 + 1] < (c.P[k * 3] + 4) * .5 - .02) under++;
+    assert.ok(under === 0 && c.P[1] < 2.2, 'a sheet lies on sloping ground made of a grid of heights, none of it under: ' + under); }
+  // a sheet dropped on a hill (a mesh made solid) lies on it, though another piece of the same cloth hangs 12 m away: each has its own grid
+  { const w = new World3D({ gravity: -9.8 }), hg = new THREE.PlaneGeometry(4, 4, 24, 24); hg.rotateX(-Math.PI / 2); const hp = hg.attributes.position, hill = (x, z) => .9 * Math.exp(-(x * x + z * z) / 1.6);
+    for (let i = 0; i < hp.count; i++) hp.setY(i, hill(hp.getX(i), hp.getZ(i))); w.ground(new THREE.Mesh(hg)); w.floor(0);
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, world: w }); c.banner({ from: [-13, 3, 0], to: [-11, 3, 0], drop: 2 }); c.sheet({ cols: 11, rows: 11, place: (i, j) => [-.8 + i * .16, 1.4, -.8 + j * .16] });
+    run(w, 200, () => c.update(1 / 60)); let under = 0; const s = c.pieces[1];
+    for (let k = s.base; k < s.base + s.cols * s.rows; k++) if (c.P[k * 3 + 1] < hill(c.P[k * 3], c.P[k * 3 + 2]) - .05) under++;
+    assert.ok(under === 0 && c.floor.grids.length === 2 && c.P[(s.base + 60) * 3 + 1] > .85, 'a sheet lies over a hill with a banner far off, none of it under: ' + under + ', grids ' + c.floor.grids.length + ', top ' + c.P[(s.base + 60) * 3 + 1].toFixed(2)); }
+  // a person standing into a wall is put back to its face; the way with room to go down in
+  for (const make of [figure, person]) {
+    const w = new World3D({ gravity: -9.8 }); w.floor(0); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .2 } }]);
+    const scene = new THREE.Scene(), f = make(); scene.add(f); f.rig.update(1 / 60, { speed: 0 });
+    const s = new Solid(f, { world: w }), p = s.keepOut(); s.update();
+    assert.ok(p && p.z < -.05 && Math.abs(p.y) < 1e-6 && s.bounds().hi.z < .06 && f.position.z === p.z, make.name + ': standing into a wall, it is put back out of it (only along the ground): ' + JSON.stringify(p));
+    assert.ok(s.keepOut() === null, 'and then it is clear');
+    assert.ok(s.room({ x: 0, z: 1 }) < .1 && s.room({ x: 0, z: -1 }) > 1.7 && s.room([1, 0]) > 1.7, 'no room to fall into the wall, room the other ways');
+    // a stick held out through both thighs is turned out of them about its grip (its end, out at the side)
+    const stick = new THREE.Mesh(new THREE.BoxGeometry(.04, .04, 1)); scene.add(stick); stick.position.set(f.position.x, .7, f.position.z); stick.rotation.y = Math.PI / 2;
+    const turned = s.keepOff(stick, { pivot: [0, 0, .5], local: true, ahead: true, walls: false }), again = s.keepOff(stick, { pivot: [0, 0, .5], local: true, ahead: true, walls: false });
+    assert.ok(turned > .1 && again < .01, make.name + ': a stick held into the thighs is turned out (' + turned.toFixed(2) + ' rad), and then is clear');
+  }
+  // a held thing pointed at a wall is turned off it about the grip, and stays where the hand holds it
+  { const w = new World3D({ gravity: -9.8 }); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .9 } }]);
+    const scene = new THREE.Scene(), f = person(); scene.add(f); f.rig.update(1 / 60, { speed: 0 });
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(.05, .08, 1)); scene.add(gun); gun.position.set(.2, 1.3, .25); gun.updateMatrixWorld(true);
+    const s = new Solid(f, { world: w }), grip = new THREE.Vector3(0, 0, -.4).applyMatrix4(gun.matrixWorld), t = s.keepOff(gun, { pivot: grip, ahead: true });
+    const tip = new THREE.Vector3(0, 0, .5).applyMatrix4(gun.matrixWorld), held = new THREE.Vector3(0, 0, -.4).applyMatrix4(gun.matrixWorld);
+    assert.ok(t > .2 && tip.z < .74 && held.distanceTo(grip) < 1e-6, 'a gun pointed into a wall is turned off it about the grip: ' + t.toFixed(2) + ' rad, its end at z ' + tip.z.toFixed(3)); }
+  console.log('nothing through what is solid: cloth stops at walls, drapes on boxes and lies on ground made of heights; bodies kept out of walls, room to fall, held things kept out of the holder and of walls ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
 // no kit is a physics engine of its own: the simple 2D World, where an arena's ball goes and 3D soft things all ask Rapier
 // (physics2d.js, arena.js predict(), soft.js in 3D; World3D sweep(), around(), outOf())
 {
@@ -8140,6 +8801,31 @@ console.log('physics ok');
   P2.place([flash, { ...flash, x: 16 }], 15, 1, 0, 0, T, 2, true, true);
   assert.ok(v2.lamps.filter(l => l.intensity > 0).length === 2, 'WebGPU: every flash is lit (clustered lights)');
   console.log('light from effects: flashes before the lamps round them, one light for flashes alone on WebGL, their light on particles ok');
+  // lamps that swap which is lit ease in and out instead of popping (Parcel Dash's car lights flickered on a Galaxy Z Fold)
+  const v3 = view(), P3 = new LampPool(v3, 10), T3 = { lights: 1, shadow: 0 }, row3 = [0, 10, 20, 30, 40, 50, 60, 70, 80].map(x => ({ x, y: 2, z: 0, i: 6 }));
+  P3.place(row3, 0, 2, 0, 0, T3, 0, true, true);
+  const lit3 = s => P3.used.get(s)?.intensity ?? 0;
+  assert.ok(lit3(row3[0]) === 6 && lit3(row3[7]) === 6 && !P3.used.get(row3[8]), 'WebGPU: the first placing puts the nearest eight straight in');
+  const comer = { x: 5, y: 2, z: 0, i: 6 }, row4 = [comer, ...row3];
+  P3.place(row4, 0, 2, 0, 1 / 30, T3, 0, true, true);
+  assert.ok(lit3(comer) > 0 && lit3(comer) < 1.5 && lit3(row3[7]) > 4 && lit3(row3[7]) < 6, 'a lamp that comes in nearer eases in, and the one it pushes out keeps its light while it eases out');
+  for (let k = 2; k < 20; k++) P3.place(row4, 0, 2, 0, k / 30, T3, 0, true, true);
+  assert.ok(lit3(comer) === 6 && !P3.used.get(row3[7]) && v3.lamps.filter(l => l.intensity > 0).length === 8, 'a moment later: the new one full, the one pushed out dark and its light given back');
+  const lamp6 = row4[6]; P3.place(row4.filter(s => s !== row3[3]), 0, 2, 0, 21 / 30, T3, 0, true, true);
+  assert.ok(lit3(row3[7]) > 0 && lit3(row3[7]) < 1.5 && lit3(lamp6) > 0, 'one taken away: the next comes in from dark');
+  console.log('lamps that swap ease in and out: pushed out lights keep their light while they fade on WebGPU ok');
+}
+
+// a car in its lane faces along it when it has stopped, whatever slides it sideways (city-drive.js laneMove; a car stood
+// beside Parcel Dash's van turned end to end each time its slide back into its lane changed way)
+{
+  const { laneMove } = await import('../src/kit/city-drive.js'), T = { LANE: 3.4, sideK: 1 };
+  const c = { edge: { dx: 1, dz: 0 }, v: 0, lat: 0, latTo: 1, s: 0, hurry: 0 }, along = Math.atan2(1, 0);
+  laneMove(T, c, 0, 1 / 30); const h1 = c.heading; c.latTo = -1; laneMove(T, c, 0, 1 / 30);
+  assert.ok(Math.abs(h1 - along) < 1e-6 && Math.abs(c.heading - along) < 1e-6, 'stopped and sliding either way: nose along the lane');
+  c.v = 10; c.latTo = 2; laneMove(T, c, 10, 1 / 30); const off = c.heading - along;
+  assert.ok(Math.abs(off) > .01 && Math.abs(off) < .41, 'moving and changing lanes: turned a little towards where it goes');
+  console.log('lane cars face along their lane when stopped ok');
 }
 
 // kits that find each other (src/kit/links.js): what one game makes finds the rest of what it made
@@ -8151,7 +8837,7 @@ console.log('physics ok');
   const { Particles } = await import('../src/kit/hd3d.js');
   globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
   const view = () => ({ cam: { position: new THREE.Vector3(0, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, parts: [], _air: null, air() { return this._air ||= { wet: 0, world: null }; } });
-  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), beam: M(), glass: M(), lit: M(), floor: M() };
   // the set: one a card, the newest of a kind found, several of some kinds, gone with the card; none outside a card without a view
   {
     assert.equal(linksFor(null), null, 'outside a card, with no view: no set (a kit keeps to itself, as before)');
@@ -8539,6 +9225,44 @@ console.log('physics ok');
   console.warn = warn; radio.off(); (await import('../src/kit/sound.js')).stopTalking();   // (lines still waiting for the voice list must not speak in later tests)
   console.log('missions: open-world jobs, markers, phone calls, retry mid-city, world save in 8 KB ok');
 }
+// WorldSave for an RPG: the gs.rpg kits kept by themselves, a save soon after a quest moves on, parts on the phone, slots
+{
+  const { WorldSave } = await import('../src/kit/missions.js');
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { together } = await import('../src/kit/links.js');
+  let cloud = null, phone = null, writes = 0;
+  const api = { save: d => { cloud = JSON.parse(JSON.stringify(d)); writes++; return true; }, load: f => cloud ?? f,
+    saveLocal: d => { phone = JSON.parse(JSON.stringify(d)); return true; }, loadLocal: f => phone ?? f };
+  const TABLE = { gate: { name: 'The Gate', stages: { find: { text: 'Find the gate', next: 'open' }, open: { text: 'Open it', count: 2, next: 'won' }, won: { end: 'done', text: 'Open.' } }, rewards: { done: { xp: 120, deeds: ['brave'] } } } };
+  let k, crates;
+  const make = () => together(() => {
+    k = { grow: new Growth(null, { attributes: { might: 3 } }), rep: new Reputation({ factions: { town: {} }, deeds: { brave: { town: 10, fame: 5 } } }), flags: new Flags(), quests: new Quests(TABLE), inv: new Inventory({}, { slots: 2 }) };
+    crates = [[1, 2, 3]];
+    k.save = new WorldSave(api); k.save.keep('crates', () => crates, d => { crates = d; }, { local: true });
+  });
+  make(); assert.equal(k.save.load(), false, 'nothing saved yet');
+  k.quests.start('gate'); k.flags.set('met_gate');
+  k.save.update(.1); assert.equal(writes, 0); k.save.update(.5); assert.equal(writes, 1, 'a quest starting saves a moment later by itself');
+  assert.ok(cloud.Q && cloud.G && cloud.E && cloud.W && cloud._t >= 0, 'quests, growth, reputation and flags kept by themselves: ' + Object.keys(cloud));
+  assert.deepEqual(phone.w.crates, [[1, 2, 3]], 'a local part goes to the phone save');
+  assert.ok(!('crates' in cloud), 'and not to the 8 KB');
+  k.quests.to('gate', 'open'); k.quests.count('x', 2); k.save.update(.6);
+  assert.equal(cloud.Q.e.gate, 'done'); assert.equal(k.grow.level, 2);
+  crates = [[9, 9, 9]]; k.save.update(10);
+  assert.ok(k.save.slot(1, 'At the gate')); assert.deepEqual(k.save.slots.map(s => s && s.label), ['At the gate', null, null]);
+  k.flags.set('gate_smashed'); crates = []; k.save.now();
+  // a new phone with the same cloud save but no phone save
+  const keepPhone = phone; phone = null; make(); assert.ok(k.save.load());
+  assert.ok(k.quests.ended('gate') === 'done' && k.grow.level === 2 && k.rep.with('town') === 10 && k.flags.has('gate_smashed') && k.save.played > 10, 'the world comes back from the 8 KB');
+  assert.deepEqual(crates, [[1, 2, 3]], 'the phone-only part stays as made on a new phone');
+  phone = keepPhone; make(); k.save.load(); assert.deepEqual(crates, [], 'the phone save comes back on the same phone');
+  assert.ok(k.save.restore(1) && !k.flags.has('gate_smashed') && JSON.stringify(crates) === '[[9,9,9]]', 'a slot puts the world back as it was');
+  assert.ok(!cloud.W.gate_smashed, 'and becomes the save');
+  k.save.clear(1); assert.equal(k.save.slots[0], null);
+  assert.throws(() => k.save.slot(4), /slot 4/);
+  console.log('world save: gs.rpg quests, growth, reputation and flags kept by themselves, saved soon after a quest moves on, parts kept on the phone, save slots ok');
+}
 {
   // the car radio: stations that carry on, DJs, news, the car body, the phone AI's lines
   const { Radio } = await import('../src/kit/radio.js');
@@ -8564,6 +9288,299 @@ console.log('physics ok');
   assert.ok(none.station.after.parts.every(p => p.line && p.line.length > 5), 'no AI answer: the written lines stay');
   a.off(); c.off(); none.off(); (await import('../src/kit/sound.js')).stopTalking();
   console.log(`radio: ${a.stations.length} stations, DJs, news, outside the car, phone AI lines ok (${lines[0]})`);
+}
+// baked light (bake-trace.js, bake-grid.js; v.bakeLight({ ... }) in bake-light.js): the level's still triangles in one tree,
+// walked on the CPU. Every ray has to find what three-mesh-bvh's own ray caster finds; probes have to see the open sky as the
+// hemisphere light gives it, take colour from a sunlit wall, go dark under a roof and be filled in when inside something; the
+// grid's packing has to read back the way three's LightProbeGrid shader reads it; the ground's light map has to darken the
+// foot of a wall and nothing in the open.
+{
+  const THREE = await import('three');
+  const { MeshBVH } = await import('three-mesh-bvh');
+  const { buildScene, Rays, bakeReady, bakeProbes, bakeTexels, mapTexels, TRI } = await import('../src/kit/bake-trace.js');
+  const { gridOver, probeAt, fillIn, combine, hemisphereSH, shIrradiance, PROBE, packAtlas, atlasSize, aoBytes } = await import('../src/kit/bake-grid.js');
+  await bakeReady;
+  const I = Float32Array.from(new THREE.Matrix4().elements), at = (x, y, z, s = 1, sy = s) => Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(s, sy, s)).elements);
+  const geo = g => ({ pos: g.attributes.position.array, idx: g.index ? Uint32Array.from(g.index.array) : null, col: null });
+  // rolling ground and a few hundred boxes, against three-mesh-bvh
+  const land = new THREE.PlaneGeometry(200, 200, 64, 64).rotateX(-Math.PI / 2); { const P = land.attributes.position; for (let i = 0; i < P.count; i++) P.setY(i, 4 * Math.sin(P.getX(i) * .05) * Math.cos(P.getZ(i) * .04)); }
+  const cube = new THREE.BoxGeometry(1, 1, 1), R0 = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+  const ms = Array.from({ length: 300 }, () => at((R0() - .5) * 180, 2, (R0() - .5) * 180, 1 + R0() * 3, 1 + R0() * 6));
+  const sc = buildScene({ shapes: [geo(land), geo(cube)], items: [{ shape: 0, ms: [I], rgb: [.4, .5, .3] }, { shape: 1, ms, rgb: [.6, .5, .4] }] });
+  assert.equal(sc.n, 64 * 64 * 2 + 300 * 12, 'every triangle of every copy is in: ' + sc.n);
+  const rays = new Rays(sc), ref = (() => { const P = new Float32Array(sc.n * 9); for (let k = 0; k < sc.n; k++) for (let j = 0; j < 3; j++) { const o = k * TRI; P[k * 9 + j] = sc.T[o + j]; P[k * 9 + 3 + j] = sc.T[o + j] + sc.T[o + 3 + j]; P[k * 9 + 6 + j] = sc.T[o + j] + sc.T[o + 6 + j]; } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(P, 3)); return new MeshBVH(g); })();
+  const ray = new THREE.Ray(); let same = 0, hits = 0;
+  for (let i = 0; i < 4000; i++) {
+    const o = [(R0() - .5) * 160, 1 + R0() * 10, (R0() - .5) * 160], u = R0() * 2 - 1, a = R0() * 6.283, s = Math.sqrt(1 - u * u), d = [s * Math.cos(a), u, s * Math.sin(a)];
+    ray.origin.set(...o); ray.direction.set(...d); const h = ref.raycastFirst(ray, THREE.DoubleSide, 0, 60), t = rays.first(...o, ...d, 60);
+    if (h) hits++; if (h ? Math.abs(h.distance - t) < 1e-3 : t > 60) same++;
+  }
+  assert.ok(same === 4000 && hits > 800, `the flat walk finds what three-mesh-bvh finds: ${same}/4000 (${hits} hits)`);
+  // a probe in the open, one beside a red wall the sun shines on, one under a roof, one inside a box
+  const quad = new THREE.PlaneGeometry(1, 1), wallM = Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(0, 3, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0)), new THREE.Vector3(20, 6, 1)).elements);
+  const roofM = Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(30, 3, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)), new THREE.Vector3(10, 10, 1)).elements);
+  const flat = new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2);
+  const room = buildScene({ shapes: [geo(flat), geo(quad), geo(cube)], items: [{ shape: 0, ms: [I], rgb: [.5, .5, .5] }, { shape: 1, ms: [wallM], rgb: [.8, .05, .05] }, { shape: 1, ms: [roofM], rgb: [.5, .5, .5], both: true }, { shape: 2, ms: [at(-30, 2, 0, 4)], rgb: [.5, .5, .5] }] });
+  const rr = new Rays(room), sun = [Math.SQRT1_2, Math.SQRT1_2, 0];
+  const P = bakeProbes(rr, { at: new Float32Array([-60, 2, 40, .6, 1.5, 0, 30, 1.2, 0, -30, 2, 0]), rays: 256, sun, reach: 150 });
+  const up = (p, part = 0) => shIrradiance(P, p * PROBE + part, 1, 0, 1, 0) / Math.PI, toward = (p, ch, x) => shIrradiance(P, p * PROBE + 36 + ch * 9, 1, x, 0, 0);
+  assert.ok(Math.abs(up(0) - 1) < .04 && P[63] === 0, 'in the open a probe sees all the sky overhead: ' + up(0).toFixed(3));
+  assert.ok(toward(1, 0, -1) > 4 * toward(1, 1, -1) && toward(1, 0, -1) > .8, `beside a sunlit red wall the bounce is red: r ${toward(1, 0, -1).toFixed(2)} g ${toward(1, 1, -1).toFixed(2)}`);
+  assert.ok(up(2) < .2 && P[2 * PROBE + 63] < .05, 'under a two-sided roof little sky, and no backs seen: ' + up(2).toFixed(3));
+  assert.ok(P[3 * PROBE + 63] > .75, 'inside a box most rays hit a back: ' + P[3 * PROBE + 63].toFixed(2));
+  assert.deepEqual(Array.from(bakeProbes(rr, { at: new Float32Array([5, 2, 5]), rays: 64, sun })), Array.from(bakeProbes(rr, { at: new Float32Array([5, 2, 5]), rays: 64, sun })), 'the same probe bakes the same twice');
+  // put together: an open probe lights an upward face as the hemisphere light it stands in for did
+  const C = [.3, .35, .4], G0 = [.1, .08, .05], hs = hemisphereSH(C, G0), comb = combine(P, 4, C, [2, 2, 2]);
+  const lit = shIrradiance(comb, 0, 1, 0, 1, 0), hemi = shIrradiance(hs, 0, 1, 0, 1, 0);
+  assert.ok(Math.abs(lit - .3) < .02 && Math.abs(hemi - .3) < .01, `an open probe's light on an upward face is the sky's (C): ${lit.toFixed(3)}, the hemisphere's SH ${hemi.toFixed(3)}`);
+  assert.ok(shIrradiance(combine(P, 4, C, [2, 2, 2], { openSky: false }), 0, 1, 0, 1, 0) < .02, 'with the sky left to the hemisphere light, only bounce is left facing up');
+  // a grid: a probe inside the ground is filled from the one above it
+  const g = gridOver({ min: [-10, -1, -10], max: [10, 9, 10] }, [5, 2, 5]);
+  assert.deepEqual(g.res, [4, 5, 4], 'a probe every spacing: ' + g.res);
+  assert.deepEqual(probeAt(g, 0), [-7.5, 0, -7.5], 'probes in the middle of their cells, as three puts them');
+  const data = new Float32Array(g.count * PROBE); for (let p = 0; p < g.count; p++) { data[p * PROBE] = p >= 16 ? 2 : 0; data[p * PROBE + 63] = p < 16 ? .9 : 0; }
+  fillIn(g, data); assert.ok([...Array(16).keys()].every(p => data[p * PROBE] === 2), 'probes under the ground take the light of those above');
+  assert.ok(gridOver({ min: [0, 0, 0], max: [1000, 50, 1000] }, 5, 6000).count <= 6000, 'a grid spreads out to stay under its count');
+  // the atlas read back as three's LightProbeGridNode reads it (seven sub-volumes, a padding slice either side)
+  const g2 = gridOver({ min: [0, 0, 0], max: [3, 2, 2] }, 1), sh = Float32Array.from({ length: g2.count * 27 }, (_, i) => (i % 97) / 10 - 4), [w, h, d] = atlasSize(g2), A = packAtlas(g2, sh, new Uint16Array(w * h * d * 4));
+  const F = THREE.DataUtils.fromHalfFloat, texel = (x, y, z) => [0, 1, 2, 3].map(c => F(A[((z * h + y) * w + x) * 4 + c])), pad = g2.res[2] + 2;
+  let packed = true;
+  for (let p = 0; p < g2.count; p++) {
+    const ix = p % 3, iy = (p / 3 | 0) % 2, iz = p / 6 | 0, s = [0, 1, 2, 3, 4, 5, 6].map(t => texel(ix, iy, t * pad + 1 + iz));
+    const c = [[s[0][0], s[0][1], s[0][2]], [s[0][3], s[1][0], s[1][1]], [s[1][2], s[1][3], s[2][0]], [s[2][1], s[2][2], s[2][3]], [s[3][0], s[3][1], s[3][2]], [s[3][3], s[4][0], s[4][1]], [s[4][2], s[4][3], s[5][0]], [s[5][1], s[5][2], s[5][3]], [s[6][0], s[6][1], s[6][2]]];
+    for (let k = 0; k < 9; k++) for (let ch = 0; ch < 3; ch++) if (Math.abs(c[k][ch] - sh[p * 27 + ch * 9 + k]) > .01) packed = false;
+    if (iz === 0 && texel(ix, iy, 0).join() !== texel(ix, iy, 1).join()) packed = false;
+  }
+  assert.ok(packed, 'the atlas holds each probe\'s nine colours where three\'s shader reads them, padding copied');
+  // the ground's light map: dark at the foot of the wall, open ground left alone
+  const T = mapTexels({ pos: flat.attributes.position.array, nrm: flat.attributes.normal.array, uv: flat.attributes.uv.array, idx: Uint32Array.from(flat.index.array) }, I, 200);
+  assert.equal(T.at.length, 200 * 200, 'every texel of the ground found');
+  const near = [], far = []; for (let i = 0; i < T.at.length; i++) { const x = T.pos[i * 3], z = T.pos[i * 3 + 2]; if (Math.abs(x) < 1.2 && Math.abs(z) < 5) near.push(i); if (Math.hypot(x + 100, z - 100) < 3) far.push(i); }
+  const sel = idx => ({ pos: Float32Array.from(idx.flatMap(i => [...T.pos.subarray(i * 3, i * 3 + 3)])), nrm: Float32Array.from(idx.flatMap(i => [...T.nrm.subarray(i * 3, i * 3 + 3)])) });
+  const vN = bakeTexels(rr, { ...sel(near), rays: 32 }), vF = bakeTexels(rr, { ...sel(far), rays: 32 }), avg = a => a.reduce((s, x) => s + x, 0) / a.length;
+  assert.ok(avg(vN) < .8 && avg(vF) === 1, `the foot of a wall sees less sky (${avg(vN).toFixed(2)}), open ground all of it (${avg(vF)})`);
+  assert.ok(aoBytes(vF).every(x => x === 255) && aoBytes(vN).some(x => x < 200), 'the light map: open ground left alone, the foot of the wall darker');
+  console.log(`baked light: the flat walk matches three-mesh-bvh on 4,000 rays, open sky ${up(0).toFixed(2)}, red bounce by a sunlit wall, ${up(2).toFixed(2)} of the sky under a roof, probes inside things filled in, the atlas as three reads it, the foot of a wall ${avg(vN).toFixed(2)} of the sky`);
+}
+
+// towns that live (src/kit/town.js: gs.town): the clock, plans from a seed, folk by the clock, shops, the night
+{
+  const { Clock, plan, route, Folk, Shop, Night, between } = await import('../src/kit/town.js'), { Inventory } = await import('../src/kit/items.js');
+  // the clock: hours, days, dark, every(), wait() at once and over seconds
+  const c = new Clock({ hour: 22, speed: 1 });
+  assert.ok(c.night && c.dark === 1 && c.part === 'night' && between(23, 22, 6) && !between(12, 22, 6));
+  const fired = []; c.every('dawn', d => fired.push(d));
+  c.update(9); assert.ok(Math.abs(c.hour - 7) < 1e-9 && c.day === 2 && fired.join() === '2' && !c.night && c.dark === 0, 'a night passes: ' + c.hour + ' ' + c.day + ' ' + fired);
+  c.speed = 0; let done = false; c.wait(5, { over: 1 }).then(() => { done = true; });
+  for (let i = 0; i < 70; i++) c.update(1 / 60);
+  await null; assert.ok(done && !c.waiting && Math.abs(c.hour - 12) < 1e-6, 'wait(5) over a second: ' + c.hour);
+  c.sleep('dawn', { over: 0 }); assert.ok(Math.abs(c.hour - 6) < 1e-6 && c.day === 3 && fired.join() === '2,3', 'sleep at once till dawn, and dawn fires: ' + c.hour + ' ' + fired);
+  const c2 = new Clock().unpack(c.pack()); assert.ok(Math.abs(c2.time - c.time) < .01, 'packs');
+  // plans: the same seed the same town; buildings off the roads and off each other; the jobs a town needs; routes that join up
+  for (const kind of ['village', 'castle']) for (const seed of [1, 2, 3, 4]) {
+    const P = plan({ seed, kind, houses: 16 }), Q = plan({ seed, kind, houses: 16 });
+    assert.equal(JSON.stringify(P.buildings), JSON.stringify(Q.buildings), 'the same seed, the same town');
+    assert.ok(P.buildings.length >= 14, `${kind} ${seed}: ${P.buildings.length} buildings`);
+    for (const r of ['inn', 'smithy', 'store', ...(kind === 'castle' ? ['keep', 'barracks'] : [])]) assert.ok(P.buildings.some(b => b.role === r), `${kind} ${seed} has a ${r}`);
+    for (const a of P.buildings) for (const b of P.buildings) if (a !== b) assert.ok(Math.hypot(a.x - b.x, a.z - b.z) > Math.min(a.w, a.d) / 2 + Math.min(b.w, b.d) / 2, `${kind} ${seed}: buildings ${a.id} and ${b.id} overlap`);
+    for (const b of P.buildings) for (const rd of P.roads) for (const [x, z] of rd.points) {
+      const cs = Math.cos(b.turn), sn = Math.sin(b.turn), lx = (x - b.x) * cs - (z - b.z) * sn, lz = (x - b.x) * sn + (z - b.z) * cs;
+      assert.ok(Math.abs(lx) > b.w / 2 || Math.abs(lz) > b.d / 2, `${kind} ${seed}: a road runs through building ${b.id}`);
+    }
+    for (const b of P.buildings) { const fx = Math.sin(b.turn), fz = Math.cos(b.turn); assert.ok(Math.abs((b.front.x - b.x) * fx + (b.front.z - b.z) * fz - b.d / 2 - 1.4) < 1e-6, 'the front is outside the door'); }
+    const inn = P.buildings.find(b => b.role === 'inn'), far = P.buildings[P.buildings.length - 1], way = route(P, inn.front, far.front);
+    let len = 0; for (let i = 1; i < way.length; i++) len += Math.hypot(way[i].x - way[i - 1].x, way[i].z - way[i - 1].z);
+    assert.ok(way.length > 2 && len < Math.hypot(inn.x - far.x, inn.z - far.z) * 3 + 30, `${kind} ${seed}: a way from the inn along the roads (${len.toFixed(0)} m)`);
+    if (kind === 'castle') assert.ok(P.gates.length === 1 && P.walls.filter(w => w.kind === 'tower').length === 10 && P.buildings.every(b => Math.hypot(b.x, b.z) < P.radius - 2), 'a castle: one gate, ten towers, every building inside');
+  }
+  // folk: in bed at night, at work by day, at the inn in the evening; they walk the roads between; held to talk
+  {
+    const P = plan({ seed: 3, kind: 'castle', houses: 16 }), C = new Clock({ hour: 3, speed: 1 / 20 }), F = new Folk(P, { clock: C });
+    assert.ok(F.people.every(p => p.inside >= 0 || p.job === 'nightwatch'), '3 am: everyone indoors but the watch');
+    const smith = F.of('smith')[0], inn = P.buildings.find(b => b.role === 'inn');
+    let arrived = 0, walked = 0; F.on('arrive', () => arrived++);
+    for (let i = 0; i < 60 * 60 * 3; i++) { C.update(1 / 60); F.update(1 / 60); if (smith.moving) walked++; }   // to 12 noon
+    assert.ok(smith.doing === 'eat' || smith.doing === 'work' || smith.moving, 'noon: the smith works or goes to eat: ' + smith.doing);
+    assert.ok(arrived >= F.people.length * .6 && walked > 30, `they walk where their day takes them (${arrived} arrivals)`);
+    C.set(19.5); F.update(1 / 60); for (let i = 0; i < 60 * 60; i++) { C.update(0); F.update(1 / 60); }
+    assert.ok(smith.inside === inn.id && smith.doing === 'drink', 'evening: the smith is at the inn: ' + smith.doing + ' ' + smith.inside);
+    const near = F.people.find(p => p.inside < 0); F.hold(near, 2, { x: near.x + 1, z: near.z }); F.update(1 / 60);
+    assert.ok(near.doing === 'talk' && !near.moving); for (let i = 0; i < 150; i++) F.update(1 / 60); assert.ok(near.doing !== 'talk', 'and goes on after');
+  }
+  // shops: open hours, buying and selling with a wallet and an inventory, a keeper away shuts it, restocks next morning, a price of the game's
+  {
+    const C = new Clock({ hour: 9, speed: 0 }), inv = new Inventory({ bread: {}, sword: { stack: 1 } }, { slots: 4 }), wallet = { money: 20 };
+    const S = new Shop({ stock: { bread: { price: 3, count: 2 }, sword: { price: 50, count: 1 } }, clock: C });
+    assert.deepEqual(S.buy('bread', 2, wallet, inv), { ok: true, cost: 6 }); assert.ok(wallet.money === 14 && inv.count('bread') === 2);
+    assert.equal(S.buy('bread', 1, wallet).why, 'none'); assert.equal(S.buy('sword', 1, wallet).why, 'money');
+    assert.deepEqual(S.sell('bread', 1, wallet, inv), { ok: true, paid: 2 }); assert.equal(S.sell('apple', 1, wallet).why, 'unwanted');
+    C.set(20); assert.equal(S.buy('bread', 1, wallet).why, 'closed');
+    C.set(9, C.day + 1); assert.ok(S.buy('bread', 2, wallet).ok, 'restocked the next morning');
+    const keeper = { doing: 'sleep', moving: false, held: 0 }, K = new Shop({ stock: { bread: { price: 3 } }, clock: C, keeper }); assert.ok(!K.open, 'shut while the keeper sleeps'); keeper.doing = 'work'; assert.ok(K.open);
+    const cheap = new Shop({ stock: { bread: { price: 10 } }, clock: C, price: (b, { selling }) => selling ? b * 1.2 : b * .8 }); assert.ok(cheap.priceOf('bread') === 8 && cheap.priceOf('bread', { selling: true }) === 6, 'the game\'s own prices (reputation)');
+    const T = new Shop({ clock: C }).unpack(S.pack()); assert.equal(T.money, S.money);
+    // a shop of a faction prices by a gs.rpg Reputation's standing with it (given here; found by itself in a game)
+    const { Reputation } = await import('../src/kit/rpg.js');
+    const rep = new Reputation({ factions: { town: {} }, deeds: { help: { town: 40 }, rob: { town: -80 } }, link: false });
+    const R = new Shop({ stock: { bread: { price: 100, count: 9 } }, clock: C, faction: 'town', reputation: rep });
+    assert.ok(R.priceOf('bread') === 100 && R.priceOf('bread', { selling: true }) === 50, 'a stranger pays the list price');
+    rep.did('help'); const liked = [R.priceOf('bread'), R.priceOf('bread', { selling: true })];
+    rep.did('rob'); rep.did('rob'); const hated = [R.priceOf('bread'), R.priceOf('bread', { selling: true })];
+    assert.ok(liked[0] < 100 && liked[1] > 50 && hated[0] > 100 && hated[1] < 50, 'liked: cheaper and pays more; disliked: dearer and pays less ' + JSON.stringify({ liked, hated }));
+    assert.equal(new Shop({ stock: { bread: { price: 100 } }, clock: C, faction: 'town', reputation: rep, price: b => b }).priceOf('bread'), 100, 'the game\'s own price wins');
+  }
+  // the night: monsters come in from the edge after dusk, keep off torches, hunt a hero near, go at dawn; folk hide; no sleep with one near
+  {
+    const P = plan({ seed: 5, kind: 'village', houses: 14 }), C = new Clock({ hour: 21.5, speed: 1 / 60 }), N = new Night(P, { clock: C, every: 2, max: 4 }), F = new Folk(P, { clock: C, night: N });
+    const hero = { x: 0, z: 0 }; let came = 0, went = 0; N.on('spawn', () => came++).on('gone', () => went++);
+    for (let i = 0; i < 60 * 20; i++) { C.update(1 / 60); N.update(1 / 60, hero); F.update(1 / 60); }
+    assert.ok(came === 4 && N.monsters.length === 4 && N.active, 'four come: ' + came);
+    for (const m of N.monsters) assert.ok(Math.hypot(m.x - hero.x, m.z - hero.z) > 8, 'they appear away from the hero');
+    assert.ok(F.people.filter(p => p.job !== 'nightwatch').every(p => p.doing === 'hide' || p.doing === 'sleep' || p.inside >= 0 || p.moving), 'folk head home');
+    const m = N.monsters[0]; m.x = hero.x + 5; m.z = hero.z; const d0 = Math.hypot(m.x - hero.x, m.z - hero.z);
+    for (let i = 0; i < 30; i++) N.update(1 / 60, hero); assert.ok(m.state === 'hunt' && Math.hypot(m.x - hero.x, m.z - hero.z) < d0, 'one near hunts the hero');
+    assert.equal(F.rest('dawn', hero).why, 'danger', 'no sleeping with a monster near');
+    const L = P.lights[0]; m.x = L.x + 6; m.z = L.z; for (let i = 0; i < 240; i++) N.update(1 / 60, { x: L.x, z: L.z }); assert.ok(Math.hypot(m.x - L.x, m.z - L.z) >= N.light - .05, 'a torch keeps it off: ' + Math.hypot(m.x - L.x, m.z - L.z).toFixed(2));
+    C.set(6.5); for (let i = 0; i < 60 * 60; i++) { C.update(0); N.update(1 / 60, null); }
+    assert.ok(N.monsters.length === 0 && went === 4 && !N.active, 'gone by dawn: ' + N.monsters.length);
+    const r = F.rest(2, hero); assert.ok(r.ok && r.hours === 2);
+  }
+  console.log('town: clock, plans, folk, shops and the night');
+}
+
+{
+  // gs.dungeon's rules (dungeon.js: no three.js): a gs.gen map dressed, then played through by its rules
+  const { layout, DungeonRules } = await import('../src/kit/dungeon.js');
+  const { dungeon: dig, loadGen } = await import('../src/kit/gen.js'); await loadGen();
+  for (const seed of [1, 2, 3, 42]) {
+    const map = dig(40, 30, { seed }), L = layout(map, { seed }), R = new DungeonRules(L), k = t => L.things.filter(x => x.kind === t);
+    assert.ok(L.start && L.exit && k('gate').length === 1 && k('locked').length === 1 && k('lever').length >= 1 && k('torch').length > 5, 'dressed ' + seed);
+    assert.deepEqual(layout(map, { seed }).things.map(t => t.kind + t.col + ',' + t.row), L.things.map(t => t.kind + t.col + ',' + t.row), 'the same seed, the same dungeon');
+    const reach = () => { const seen = new Set([L.start.col + ',' + L.start.row]), q = [[L.start.col, L.start.row]]; while (q.length) { const [c, r] = q.pop(); for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) { const a = c + dx, b = r + dz; if (!seen.has(a + ',' + b) && R.open(a, b)) { seen.add(a + ',' + b); q.push([a, b]); } } } return seen; };
+    for (const t of k('door')) R.use(t);
+    const lk = k('locked')[0], gate = k('gate')[0], chest = L.things.find(t => t.kind === 'chest' && t.loot?.[0]?.id === lk.key), first = reach();
+    assert.ok(chest && first.has(chest.col + ',' + chest.row), 'the key is reachable before its door ' + seed);
+    for (const lv of k('lever')) assert.ok(first.has((lv.col + lv.face[0]) + ',' + (lv.row + lv.face[1])), 'a lever is reachable before its gate');
+    const bag = new Map(), inv = { has: i => bag.get(i) > 0, take: (i, n) => bag.set(i, bag.get(i) - n), add: (i, n) => bag.set(i, (bag.get(i) || 0) + n) };
+    assert.equal(R.use(lk, { inventory: inv }).why, 'locked');
+    assert.ok(R.use(chest, { inventory: inv }).ok && inv.has(lk.key) && R.use(lk, { inventory: inv }).ok && lk.open && !inv.has(lk.key), 'the key opens its door');
+    let solved = 0; R.on('solved', () => solved++);
+    for (const lv of k('lever')) if (lv.on !== lv.want) R.use(lv);
+    assert.ok(gate.open && solved === 1, 'the levers set right open the gate');
+    if (k('lever').length) { const lv = k('lever')[0]; R.use(lv); assert.ok(!gate.open, 'and a wrong one shuts it'); R.use(lv); }
+    assert.ok(reach().has(L.exit.col + ',' + L.exit.row), 'the exit can be reached ' + seed);
+    const sec = k('secret')[0]; if (sec) { assert.ok(!R.open(sec.col, sec.row)); R.use(sec); assert.ok(R.open(sec.col, sec.row), 'a found secret wall opens'); }
+    const saved = JSON.parse(JSON.stringify(R.pack())), L2 = layout(map, { seed }), R2 = new DungeonRules(L2).unpack(saved);
+    assert.ok(L2.things.every((t, i) => t.kind === L.things[i].kind && !!t.open === !!L.things[i].open && !!t.on === !!L.things[i].on), 'pack / unpack');
+  }
+  {
+    // traps fire once, wait, and arm again; plates press and let up; the map fills in where feet go
+    const L = layout('#######\n#S.X.O#\n#..G.E#\n#######', { dress: false }), R = new DungeonRules(L, { trapRearm: 1 });
+    const trap = L.things.find(t => t.kind === 'trap'), plate = L.things.find(t => t.kind === 'plate'), gate = L.things.find(t => t.kind === 'gate');
+    let fired = 0; R.on('trap', () => fired++);
+    R.step(.1, [trap]); R.step(.1, [trap]); assert.equal(fired, 1, 'once while stood on'); R.step(1.2, []); R.step(.1, [trap]); assert.equal(fired, 2, 'armed again');
+    assert.ok(plate.group === gate.group && !gate.open); R.step(.1, [plate]); assert.ok(plate.down && gate.open, 'a plate opens its gate'); R.step(.1, []); assert.ok(!gate.open);
+    assert.ok(R.seen.some(Boolean));
+  }
+  console.log('dungeon: maps dressed, keys, levers, gates, traps, plates, secrets, saves');
+}
+
+{
+  // person.looks (human-looks.js) on a bare skeleton and a small skin of our own: points move by their bones' share and come back
+  const T = await import('three'), { skeleton } = await import('../src/kit/models/human.js'), { Looks } = await import('../src/kit/models/human-looks.js');
+  const man = skeleton({ sex: 'm' }), skel = new T.Skeleton(Object.values(man.bones)), names = skel.bones.map(b => b.name);
+  const g = new T.SphereGeometry(.1, 12, 8), n = g.attributes.position.count, SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
+  // the top half on the belly, the bottom half on the jaw
+  for (let i = 0; i < n; i++) { SI[i * 4] = names.indexOf(g.attributes.position.getY(i) > 0 ? 'belly' : 'jaw'); SW[i * 4] = 1; }
+  g.setAttribute('skinIndex', new T.BufferAttribute(SI, 4)); g.setAttribute('skinWeight', new T.BufferAttribute(SW, 4)); g.addGroup(0, g.index.count, 0);
+  const mats = [0, 1, 2, 3, 4, 5, 6].map(() => new T.MeshStandardMaterial()), mesh = new T.SkinnedMesh(g, mats); man.add(mesh); mesh.bind(skel);
+  man.mesh = mesh; man.lods = [mesh];
+  const L = new Looks(man, { skin: '#c89878', hair: '#3a2a1e' }), before = g.attributes.position.array.slice();
+  L.set({ weight: 1 });
+  const P = mesh.geometry.attributes.position.array, moved = i => Math.hypot(P[i * 3] - before[i * 3], P[i * 3 + 1] - before[i * 3 + 1], P[i * 3 + 2] - before[i * 3 + 2]);
+  const top = [...Array(n).keys()].filter(i => before[i * 3 + 1] > .02), bottom = [...Array(n).keys()].filter(i => before[i * 3 + 1] < -.02);
+  assert.ok(mesh.geometry !== g && g.attributes.position.array[0] === before[0], 'the person gets its own points (twins keep theirs)');
+  assert.ok(top.every(i => Math.abs(moved(i) - .05) < 1e-4) && bottom.every(i => moved(i) < 1e-6), 'weight: the belly out by its measure, the jaw not at all');
+  L.set({ weight: 0, jaw: 1 }); assert.ok(top.every(i => moved(i) < 1e-6) && bottom.some(i => moved(i) > .001), 'back as made, and the jaw wider');
+  L.set({ jaw: 0, lean: -1, age: 1, skin: '#5c3a26' });
+  const skin = mesh.material[0]; assert.ok(skin !== mats[0] && skin.color.r < mats[0].color.r, 'its own skin, tinted');
+  const d = JSON.parse(JSON.stringify(L.pack())), L2 = new Looks(man, { skin: '#c89878' }); L2.unpack(d); assert.ok(L2.get('lean') === -1 && L2.get('skin') === '#5c3a26' && L2.get('age') === 1, 'pack / unpack');
+  console.log('looks: weight, the face, colours, saves');
+  // the creator: sliders show at once on the person's looks; a pick makes the person again in the background and swaps them in
+  const { Creator } = await import('../src/kit/models/human-looks.js'), made = [];
+  const fake = o => { const sets = [], p = new T.Group(); p.looks = { set: v => sets.push(v), marks: [], base: { height: 1 }, mark() {}, pack: () => ({ v: {} }) }; p.sets = sets; p.o = o; made.push(p); return p; };
+  fake.ready = () => Promise.resolve(true);
+  let swapped = null; const cr = new Creator(fake, { sex: 'm', seed: 2 }, { onSwap: (a, b) => { swapped = [a, b]; } });
+  cr.set('jaw', .5); assert.ok(cr.person.sets.some(v => v.jaw === .5) && !cr.busy, 'a live slider shows at once');
+  assert.throws(() => cr.set('hairStyle', 'mohawk')); cr.set('hairStyle', 'long'); assert.ok(cr.busy);
+  cr.update(.1); assert.equal(made.length, 1, 'waits for the last change'); cr.update(.5); await null; await null;
+  assert.ok(made.length === 2 && made[1].o.hairStyle === 'long' && swapped?.[1] === cr.person && cr.person.sets.some(v => v.jaw === .5), 'made again with the pick, and the looks kept');
+  assert.equal(cr.set('jaw', 9).value('jaw'), 1, 'sliders keep to their range');
+  console.log('creator: live sliders, picks made again in the background');
+}
+
+// gs.companions: follow, roles in a fight, the order wheel, tactics the coach corrects, approval from deeds
+{
+  const { Companions, ACTIONS } = await import('../src/kit/companions.js');
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Magic } = await import('../src/kit/magic.js');
+  const { together, linksFor } = await import('../src/kit/links.js');
+  together(() => {
+    const magic = new Magic({ book: { mend: { kind: 'heal', cost: 5, cool: 1, heal: 30 }, spark: { kind: 'bolt', cost: 4, cool: .5, speed: 30, damage: 6 } } });
+    const rep = { handlers: {}, on(e, f) { (this.handlers[e] ||= []).push(f); return this; }, did(id) { for (const f of this.handlers.deed || []) f(id, { seen: true }); } };
+    linksFor(null).join('reputation', rep);
+    const st = () => new Stats({ hp: { max: 100 }, mana: { max: 60, regen: 4 }, power: 1 });
+    const hero = { position: { x: 0, y: 0, z: 0 } }; hero.stats = st(); hero.unit = magic.unit(hero, { team: 'hero', stats: hero.stats });
+    const party = new Companions({ hero, coach: true, seed: 3, heroUnit: hero.unit });
+    const body = (x, z) => ({ position: { x, y: 0, z } });
+    const mk = (name, role, x, z, more = {}) => { const b = body(x, z), s = st(); return party.join(b, { name, role, stats: s, unit: magic.unit(b, { team: 'hero', stats: s }), ...more }); };
+    const bran = mk('Bran', 'guard', 2, -1, { likes: { rescue: 3, steal: -6 } });
+    const mira = mk('Mira', 'healer', -2, -2, { spells: { heal: 'mend', attack: 'spark' }, likes: { steal: 4 } });
+    const ilse = mk('Ilse', 'archer', 1, -3);
+    assert.equal(mk('Odo', 'caster', 0, -4), null, 'three at most');
+    const walk = (dt, speed = 1) => { for (const m of party.members) { const p = m.body.position, dx = m.goal.x - p.x, dz = m.goal.z - p.z, d = Math.hypot(dx, dz), v = (m.run ? 6 : 3) * dt * speed; if (d > .01) { p.x += dx / d * Math.min(d, v); p.z += dz / d * Math.min(d, v); } } };
+    // walking north: they keep their places round the hero
+    for (let i = 0; i < 300; i++) { hero.position.z += 3 / 60; party.update(1 / 60, { foes: [] }); walk(1 / 60); }
+    for (const m of party.members) { const p = m.body.position; assert.ok(Math.hypot(p.x - hero.position.x, p.z - hero.position.z) < 4 && p.z < hero.position.z + .5, m.name + ' follows behind the hero'); }
+    assert.ok(Math.abs(bran.body.position.x - ilse.body.position.x) > .5 || Math.abs(bran.body.position.z - ilse.body.position.z) > .5, 'not on top of each other');
+    // foes come: the guard closes in, the archer keeps away and shoots, the healer heals the hurt hero
+    const foes = [0, 1, 2].map(i => ({ position: { x: -2 + i * 2, y: 0, z: hero.position.z + 9 }, hp: 30, hpMax: 30, name: 'wolf' }));
+    hero.stats.change('hp', -60);
+    const seen = new Set(); let mended = 0;
+    for (let i = 0; i < 600; i++) {
+      for (const f of foes) if (f.hp > 0) { const dz = hero.position.z - f.position.z; if (Math.abs(dz) > 1.5) f.position.z += Math.sign(dz) * 2 / 60; }
+      const slow = party.update(1 / 60, { foes }); walk(1 / 60, slow); magic.update(1 / 60);
+      for (const e of party.events) { seen.add(e.type); if (e.type === 'swing' || e.type === 'shoot') e.target.hp -= 6; if (e.type === 'heal' && e.cast) mended++; }
+    }
+    assert.ok(seen.has('fight') && seen.has('swing') && seen.has('shoot') && seen.has('say'), 'a fight: swings, shots and lines: ' + [...seen]);
+    assert.ok(mended > 0 && hero.stats.part('hp') > .45, 'the healer mended the hero through gs.magic: ' + hero.stats.part('hp'));
+    assert.ok(foes.every(f => f.hp <= 0) && seen.has('calm'), 'the wolves fell and the fight ended');
+    // the wheel: slows the world while open, an order to hold is kept
+    party.wheel.open(); let sp = 1; for (let i = 0; i < 30; i++) sp = party.update(1 / 60, { foes: [] }); assert.ok(sp < .2, 'the wheel slows time: ' + sp);
+    assert.equal(party.wheel.at(0, -1).id, 'attack', 'the top item'); assert.equal(party.wheel.at(.05, .05), null, 'the middle is none');
+    const hold = party.wheel.items.find(x => x.id === 'hold'); assert.equal(party.wheel.at(Math.sin(hold.angle), -Math.cos(hold.angle)).id, 'hold');
+    party.wheel.pick(); for (let i = 0; i < 30; i++) sp = party.update(1 / 60, { foes: [] }); assert.ok(sp > .95 && !party.wheel.on, 'time back to full');
+    const at = { ...ilse.body.position }; for (let i = 0; i < 200; i++) { hero.position.z += 3 / 60; party.update(1 / 60, { foes: [] }); walk(1 / 60); }
+    assert.ok(Math.hypot(ilse.body.position.x - at.x, ilse.body.position.z - at.z) < .2 && ilse.act === 'hold', 'held where they stood');
+    party.command('follow'); party.update(1 / 60, { foes: [] }); assert.equal(ilse.act, 'follow');
+    // tactics: a passive guard keeps out; the coach's corrections win in spots like the one corrected
+    const wolf = { position: { x: hero.position.x + 1, y: 0, z: hero.position.z + 1.5 }, hp: 30, hpMax: 30 };
+    bran.body.position.x = hero.position.x + 1; bran.body.position.z = hero.position.z - 1;
+    party.update(1 / 60, { foes: [wolf] }); assert.ok(['guard', 'attack'].includes(bran.act), 'the guard steps in: ' + bran.act);
+    party.correct(bran, 'hold'); party.correct(bran, 'hold'); party.update(1 / 60, { foes: [wolf] });
+    assert.equal(bran.act, 'hold', 'corrected: here it holds'); party.coachFor('guard').uncorrect();
+    bran.tactics.stance = 'passive'; party.update(1 / 60, { foes: [wolf] }); assert.ok(['follow', 'retreat'].includes(bran.act), 'passive: keeps out of it');
+    assert.ok(ACTIONS.includes(bran.act));
+    // approval: a Reputation's deeds reach them by themselves; enough dislike and one leaves
+    rep.did('rescue'); assert.equal(bran.approval, 3, 'liked the rescue'); assert.equal(mira.approval, 0, 'Mira does not care');
+    rep.did('steal'); assert.equal(mira.approval, 4); assert.equal(bran.mood, 'easy');
+    for (let i = 0; i < 20; i++) rep.did('steal');
+    assert.ok(!party.members.includes(bran) && party.events.some(e => e.type === 'leave' && e.who === bran), 'Bran left over the thieving');
+    assert.equal(mira.mood, 'devoted');
+    // saves
+    const saved = JSON.parse(JSON.stringify(party.pack())); mira.approval = 0; party.unpack(saved); assert.ok(mira.approval > 60, 'approval saved');
+  });
+  console.log('companions: following, guard, healer and archer in a fight, the order wheel, the coach, approval from deeds, saves');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

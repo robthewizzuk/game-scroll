@@ -159,7 +159,9 @@ export function twinList(o, cache, make) {
   const src = o.material;
   if (!Array.isArray(src)) return make(src);
   let c = cache.get(o);
-  if (!c || c.src !== src || c.list.some((t, i) => t !== make(src[i]))) cache.set(o, c = { src, list: src.map(make) });
+  let same = !!c && c.src === src;
+  if (same) for (let i = 0; i < src.length; i++) if (c.list[i] !== make(src[i])) { same = false; break; }
+  if (!same) cache.set(o, c = { src, list: src.map(make) });
   return c.list;
 }
 // The value of the mesh being drawn into the twin's program (WebGL), just before its draw: three uploads it itself

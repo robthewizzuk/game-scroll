@@ -61,6 +61,10 @@ jobs:
       - name: Types for gs cover every part
         run: npm run types-check
 
+      # (docs/kits: a page for every part of gs and an index in step; pages behind the types are only a note)
+      - name: Every part of gs has a kit guide
+        run: node scripts/kit-guides.mjs --check
+
       # (the phone and driver steering list, src/steer-list.js: a rule a phone would not understand does nothing there, silently)
       - name: The phone and driver steering list is one the app understands
         run: node scripts/steer.mjs
@@ -70,11 +74,11 @@ jobs:
       - name: Games use gs the way its types describe
         run: npm run game-types -- --self-test && npm run game-types
 
-      - name: Starter templates make games that pass the lint and the types
+      - name: Starter templates make games that pass the lint and the types, and build as streamed files
         run: |
           ids=""
           for s in phone pocket color advance console nextgen ar board; do node scripts/new-game.mjs "zz-template-$s" --style "$s" --creator CI > /dev/null; ids="$ids zz-template-$s"; done
-          node scripts/game-lint.mjs $ids && node scripts/game-types.mjs $ids
+          node scripts/game-lint.mjs $ids && node scripts/game-types.mjs $ids && node scripts/build-games.mjs "$RUNNER_TEMP/zz-templates" > /dev/null
           for id in $ids; do rm "src/games/$id.js"; done
 
       # Game Scroll wants 1,000 games that all play differently. The self-test makes a reskin of three games

@@ -36,8 +36,11 @@ const target = (w, h, part, wrap = ClampToEdgeWrapping) => {
   t.texture.minFilter = t.texture.magFilter = LinearFilter; t.texture.wrapS = t.texture.wrapT = wrap; t.gsPart = part;
   return t;
 };
-const ONE = (() => { const t = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); t.needsUpdate = true; return t; })();
-const BLACK = (() => { const t = new DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); t.needsUpdate = true; return t; })();
+// (stand-ins until the real pictures are drawn: filtered as those are, so a shader written while it read one reads the
+// real picture the same way once it comes; a nearest-filtered stand-in is read without a sampler, by whole texels: ground-paint-gpu.js BLANK)
+const standIn = rgba => { const t = new DataTexture(new Uint8Array(rgba), 1, 1); t.minFilter = t.magFilter = LinearFilter; t.generateMipmaps = false; t.needsUpdate = true; return t; };
+const ONE = standIn([255, 255, 255, 255]);
+const BLACK = standIn([0, 0, 0, 255]);
 
 /* ---------- the air ---------- */
 // Read a table made by atmosphere.js at the place it keeps (r, mu): how much light gets through, 0 behind the planet

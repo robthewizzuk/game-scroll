@@ -23,8 +23,19 @@ const MASK = { object: keep(OBJ), copy: keep(COPY) }, SHADOW = { object: casts(O
 const SKIP = new Set(['uuid', 'id', 'type', 'name', 'version', 'userData', '_listeners', 'maskNode', 'maskShadowNode', 'onBeforeCompile', 'customProgramCacheKey']);
 const TWINS = { object: new WeakMap(), copy: new WeakMap() };
 
+// (what is copied, listed once for each material and again when its version moves on: a for...in over a material
+// each time made garbage, and a twin is asked for many times a frame, once for each person fading or built ahead)
+const KEYS = new WeakMap();
+function keysOf(base) {
+  let K = KEYS.get(base);
+  if (!K || K.v !== base.version) { const list = []; for (const k in base) if (!SKIP.has(k)) list.push(k); KEYS.set(base, K = { v: base.version, list }); }
+  return K.list;
+}
 function copyInto(t, base) {
-  for (const k in base) { if (SKIP.has(k)) continue; const v = base[k]; if (t[k] !== v && typeof v !== 'function') t[k] = v; }
+  if (t.gsCopied === FADE.n && t.gsBaseVersion === base.version) return;   // (copied already this frame)
+  t.gsCopied = FADE.n;
+  const K = keysOf(base);
+  for (let i = 0; i < K.length; i++) { const k = K[i], v = base[k]; if (t[k] !== v && typeof v !== 'function') t[k] = v; }
   if (t.gsBaseVersion !== base.version) { if (t.gsBaseVersion != null) t.needsUpdate = true; t.gsBaseVersion = base.version; }
 }
 
