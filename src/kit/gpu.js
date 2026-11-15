@@ -193,6 +193,7 @@ export function prepareGPU() {
       if (pick === 'webgpu' && STEER.webgpu === false) { console.info('WebGPU: off on this device (steering list: ' + STEER.rules.join(', ') + ')'); return null; }
       if (!await hasWebGPU()) { console.warn('WebGPU: no adapter'); return null; }
       const [W, fx] = await Promise.all([import('three/webgpu'), import('./hd3d-gpu.js')]);
+      quietThree(W);
       if (STEER.submit !== false) watchSubmits();   // (before the device makes anything: submit.js)
       const canvas = document.createElement('canvas');
       // trackTimestamp: three times each pass on the GPU where the phone allows it (hd3d.js reads it as HD.info.gpuMs)
@@ -303,6 +304,21 @@ if (typeof addEventListener === 'function') addEventListener('unhandledrejection
   const r = e.reason, msg = String(r?.message ?? r ?? '');
   if (LOST_ERR.test(msg)) e.preventDefault();
 });
+// three logs (not throws) what fails the same way: a pipeline built in the background while the device went ("Async
+// render pipeline creation failed (...): A valid external Instance reference no longer exists"). Stopped by the same
+// rule; everything else three says goes on to the console as before.
+let quieted = false;
+function quietThree(W) {
+  if (quieted || typeof W?.setConsoleFunction !== 'function') return;
+  quieted = true;
+  const was = W.getConsoleFunction?.() || null;
+  W.setConsoleFunction((kind, msg, ...p) => {
+    if (kind === 'error' && (LOSS.mending || performance.now() <= LOSS.quietTill) && LOST_ERR.test(String(msg) + ' ' + p.map(String).join(' '))) return;
+    if (was) return was(kind, msg, ...p);
+    const out = console[kind] || console.log;
+    if (p[0]?.isStackTrace) out(p[0].getError(msg)); else out(msg, ...p);
+  });
+}
 const lossFns = new Set();
 /**
  * Hear about lost graphics chips: fn({ kind: 'lost', reason, message, n, canvases (the lost renderers' own) }) at once, then
