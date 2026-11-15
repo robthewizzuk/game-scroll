@@ -2757,6 +2757,54 @@ console.log('physics ok');
   p.charging = true; assert.equal(judge(p, 30000), true, 'held a minute after the reason goes');
   assert.equal(judge(p, 62000), false, 'then lets go');
   p.saver = true; judge(p, 70000); assert.equal(p.why, 'battery saver is on');
+  { const q = { heat: 0, saver: false, level: .8, charging: true, saving: false, why: '', ahead: true }; judge(q, 200000); assert.equal(q.why, 'the phone is heating up', 'the heat model seeing it coming is a reason to save'); }
+  // the battery's draw: microamps or milliamps, either sign, nothing while charging
+  const { wattsOf } = await import('../src/kit/power.js');
+  assert.ok(Math.abs(wattsOf({ current: -1200000, voltage: 4000 }) - 4.8) < 1e-9, 'microamps draining (negative): 4.8 W');
+  assert.ok(Math.abs(wattsOf({ current: 1200, voltage: 4000 }) - 4.8) < 1e-9, 'milliamps (a Samsung) read the same');
+  assert.equal(wattsOf({ current: -1200000, voltage: 4000, charging: true }), null, 'nothing while charging');
+  assert.equal(wattsOf({ voltage: 4000 }), null, 'no current, no watts');
+
+  // the heat model (src/kit/heat.js): fitted from noisy headroom windows of a made-up phone, it finds where each load settles
+  {
+    const { HeatModel, holdable, heat, WARM, LOOK } = await import('../src/kit/heat.js');
+    const { power } = await import('../src/kit/power.js');
+    const real = { b: .25, a: .2, c: .1 };   // per minute: u 1 settles at 1.2, u .5 at .8, idle at .4; τ 4 min
+    const R = (() => { let s = 7; return () => { s = (s * 16807) % 2147483647; return s / 2147483647; }; })();
+    const gauss = () => Math.sqrt(-2 * Math.log(R() + 1e-12)) * Math.cos(2 * Math.PI * R());
+    const m = new HeatModel(); let h = .45, last = h;
+    for (let i = 0; i < 160; i++) {   // 40 minutes of 15 s windows, the load changing every 2 minutes
+      const u = [.4, 1, .7, 1.3, .2][Math.floor(i / 8) % 5];
+      for (let k = 0; k < 15; k++) h += (real.a * u - real.b * h + real.c) / 60;   // one second at a time
+      const seen = h + gauss() * .01; m.add(last, seen, u, 15); last = seen;
+    }
+    assert.ok(m.ok, `fitted: ${JSON.stringify(m.pack().th)}`);
+    for (const u of [.5, 1, 1.3]) assert.ok(Math.abs(m.steady(u) - (real.a * u + real.c) / real.b) < .08, `load ${u} settles near ${((real.a * u + real.c) / real.b).toFixed(2)}: ${m.steady(u).toFixed(3)}`);
+    assert.ok(Math.abs(1 / m.b - 4) < 1.2, `time constant near 4 min: ${(1 / m.b).toFixed(2)}`);
+    const t = m.secsTo(.5, 1, WARM); assert.ok(t > 0 && t < Infinity && Math.abs(m.at(.5, 1, t) - WARM) < 1e-6, 'the time to the warm line lands on it');
+    assert.equal(m.secsTo(.5, .3, WARM), Infinity, 'a light load never gets there');
+    // the holdable tier: CPU .3 and chip .6 on high (tier 2); each tier's chip work by its pixels
+    const px = [.5, .85, 1.3, 2], rel = t2 => px[t2] / px[2];
+    assert.equal(holdable(m, .15, .3, rel, 2), 2, 'high holds (settles near .76), ultra would not (.89)');
+    assert.equal(holdable(m, .1, .2, t2 => px[t2] / px[1], 1), 2, 'a light game on medium may climb to high, which it holds');
+    assert.equal(holdable(m, .6, 1, rel, 2), 1, 'never more than one tier under the one measured');
+    assert.equal(holdable(new HeatModel(), .3, .6, rel, 2), 3, 'not fitted yet: no cap');
+    // live: a phone heading for warm at full load is stepped down before it gets there, and stays down while full quality would heat it
+    heat.reset({ th: [real.b, real.a, real.c], P: [1e-4, 0, 0, 0, 1e-4, 0, 0, 0, 1e-4], n: 30 }); power.heat = 0;
+    let now = 1e6, hh = .55;
+    const win = u => { for (let k = 0; k < 15; k++) hh += (real.a * u - real.b * hh + real.c) / 60; now += 15000; heat.step({ h: hh, u, dt: 15, now }); };
+    let firstAhead = null;
+    for (let i = 0; i < 40 && firstAhead == null; i++) { win(1.4); if (heat.ahead) firstAhead = hh; }
+    assert.ok(firstAhead != null && firstAhead < WARM, `stepped down ahead, at headroom ${firstAhead?.toFixed(3)} (warm at ${WARM})`);
+    assert.ok(heat.secs < LOOK, 'it said when');
+    assert.equal(power.why, 'the phone is heating up', 'and frame generation saves power for it');
+    for (let i = 0; i < 4; i++) win(.6);   // the cut load: lighter, but full quality would still heat it
+    assert.ok(heat.ahead, 'held while full quality would still get warm soon');
+    for (let i = 0; i < 60; i++) win(.6);
+    assert.ok(heat.ahead === (heat.secs < LOOK), 'lets go only once full quality wouldn\'t reach warm for a while');
+    heat.reset(); power.heat = 0;
+    heat.oledForce = 1; assert.equal(heat.oled(), 1, 'OLED dimming pinned on'); heat.oledForce = null; heat.oled(1e12);
+  }
 
   // pacing: a 60 fps game on a 120 Hz screen whose refresh between real frames comes late, or not at all,
   // still shows the moment due by the clock (never back, never the same moment twice)

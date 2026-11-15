@@ -2039,6 +2039,26 @@ function bloomChain(src, aoF, P = HALF4) {
     dispose() { for (const n of [...nodes, ...Us]) n?.renderTarget?.dispose(); },
   };
 }
+// How bright each part of the screen is on the whole, for the OLED dimming (hd3d.js FINAL_EFFECTS oled): the picture
+// at a quarter and then a sixteenth of its size, each pixel the exact average of a 4 x 4 block (four bilinear reads
+// between texels), so a big bright area reads bright and a small highlight hardly at all, and nothing flickers as
+// things move. Two tiny passes (a sixteenth and a 256th of the pixels).
+function bigChain(src, aoF, P = HALF4) {
+  const px = [uniform(new Vector2(1, 1)), uniform(new Vector2(1, 1))], at = (t, p, x, y) => t.sample(uv().add(vec2(x, y).mul(p))).rgb;
+  const box = (t, p, k) => at(t, p, -1, -1).add(at(t, p, 1, -1)).add(at(t, p, -1, 1)).add(at(t, p, 1, 1)).mul(k);
+  const A = rtt(hdrOut(vec4(box(src, px[0], .25).mul(aoF), 1), P), 1, 1, P), B = rtt(hdrOut(vec4(box(A, px[1], .25), 1), P), 1, 1, P);
+  A.renderTarget.gsPart = B.renderTarget.gsPart = 'effects';
+  return {
+    wide: B,
+    size(w, h) {
+      if (this.key === `${w}x${h}`) return; this.key = `${w}x${h}`;
+      const aw = Math.max(1, Math.ceil(w / 4)), ah = Math.max(1, Math.ceil(h / 4));
+      A.setSize(aw, ah); B.setSize(Math.max(1, Math.ceil(aw / 4)), Math.max(1, Math.ceil(ah / 4)));
+      px[0].value.set(1 / w, 1 / h); px[1].value.set(1 / aw, 1 / ah);
+    },
+    dispose() { A.renderTarget?.dispose(); B.renderTarget?.dispose(); },
+  };
+}
 
 /* ---------- the screen effects ---------- */
 // The last touches on the finished picture: vignette, film grain and the hurt flash. t moves the
@@ -2593,6 +2613,8 @@ export class GpuChain {
       sunCol: uniform(new Color()), aspect: uniform(1), lutK: uniform(1),
       // HDR screens (gpu.js): how far past paper white the brightest highlights go (headroom - 1), and the exposure
       hdrK: uniform(0), hdrExp: uniform(1),
+      // big bright areas dimmer while saving power, on OLED screens (hd3d.js FINAL_EFFECTS oled, OLED_MAX): how much, the exposure
+      oled: uniform(0), oledExp: uniform(1),
       // depth of field (hd3d.js DOF): at, range, depth, blur in pixels; camera near and far; one pixel
       lens: uniform(new Vector4()), cn: uniform(.1), cf: uniform(1000), px: uniform(new Vector2(1, 1)),
       // sun shafts (hd3d.js SHAFT_*): strength x how much the sun shows, and the light's colour
@@ -2638,7 +2660,7 @@ export class GpuChain {
     }
     this.builtKey = key; this.builtX = this.xKey;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
-    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
+    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.bigN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
     for (const k of ['spAO', 'spVol', 'spGI', 'lensN']) { this[k]?.dispose(); this[k] = null; }
@@ -2871,7 +2893,7 @@ export class GpuChain {
       shafts = this.shB.sample(screenUV).rgb.mul(U.shaftTint).mul(U.shaft); this.shM.renderTarget.gsPart = this.shB.renderTarget.gsPart = 'light shafts';
     }
     if (src !== colT || shaftsOn) lit = src.sample(screenUV).rgb.mul(srcAo).add(shafts);
-    this.bloomN = bloomChain(src, srcAo, P3); this.bloomK = uniform(.56);
+    this.bloomN = bloomChain(src, srcAo, P3); this.bloomK = uniform(.56); this.bigN = bigChain(src, srcAo, P3);
     const uv0 = screenUV, d = uv0.sub(.5), r2 = dot(d, d), half = halfWanted();
     const graded = Fn(() => {
       const uv = uv0;
@@ -2909,6 +2931,13 @@ export class GpuChain {
     if (this.r.gsHdr) {
       const U = this.U, over = max(dot(graded, LUM).mul(U.hdrExp).sub(1), 0);
       out = vec4(out.rgb.mul(float(1).add(U.hdrK.mul(float(1).sub(exp(over.mul(-.6)))))), 1);
+    }
+    // OLED screens light each pixel, so a big bright area (a sky) costs power and heat: while the phone saves power it
+    // is a little dimmer, the blue most (hd3d.js FINAL_EFFECTS oled). By how bright the area round each pixel is on the
+    // whole (bigChain), so a small highlight keeps its full brightness; a uniform, so nothing is rebuilt as it eases in and out
+    {
+      const U = this.U, big = dot(this.bigN.wide.sample(screenUV).rgb.mul(U.oledExp), vec3(.2126, .7152, .0722));
+      out = vec4(out.rgb.mul(vec3(1).sub(vec3(.9, .9, 1.2).mul(U.oled.mul(smoothstep(.1, .7, big))))), 1);
     }
     // live, the last touches go on as each refresh is shown (show()), not here
     const fin = live ? vec4(out.rgb, 1) : Fn(() => vec4(touches(U, out.rgb, U.t, float(1)), 1))();
@@ -3004,9 +3033,10 @@ export class GpuChain {
       if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT?.setResolutionScale(o.ao * k); }
       // (three's SSGI sizes itself from the canvas, the screen's size under an upscaler: the picture's size, or half of it spread)
       if (this.giN && 'resolutionScale' in this.giN) this.giN.resolutionScale = (this.spGI ? .5 : 1) * k;
-      this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5);
+      this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5); this.bigN.size(o.w, o.h);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }
+      U.oled.value = o.oled || 0; U.oledExp.value = this.r.toneMappingExposure;
       const g = o.grade; U.gradeOn.value = g ? 1 : 0;
       if (g) { U.sat.value = g.sat; U.con.value = g.con; U.lo.value.copy(g.lo); U.hi.value.copy(g.hi); }
       if (this.giT) this.giT.setSize(o.w, o.h);
@@ -3204,7 +3234,7 @@ export class GpuChain {
   }
   dispose() {
     this.lensN?.dispose(); this.lensN = null;
-    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
+    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.bigN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.madeQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = this.madeQ = null; this.sched = null; this.lastColor = null;
     this._bf?.rt.dispose(); this._bf = null;
