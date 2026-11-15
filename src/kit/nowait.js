@@ -29,7 +29,7 @@
 // loading screen waits on, so a round still starts with everything its first frames draw.
 // Kit use only: games never see this.
 
-/** on: false draws as three does (builds in the frame). ms: main-thread time a turn of the queue takes before the next frame. most: times one thing is put off before it is drawn as three does. */
+/** on: false draws as three does (builds in the frame). ms: main-thread time a turn of the queue takes before the next frame. most: times in a row one thing is put off (for one camera, with no frame drawing it between) before it is drawn as three does. */
 export const NOWAIT = { on: true, ms: 6, most: 12 };
 /** Counts (tests, the frame lab): texts and pipelines put off from a frame, the queued builds done and failed, and draws built in the frame for a change of lights, sky or fog (env). */
 export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 0, frames: 0, env: 0, names: [] };
@@ -40,7 +40,7 @@ export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 
  */
 export function noWait(r) {
   if (!r || r.gsNoWait || typeof r._renderObjectDirect !== 'function' || !r._nodes || !r._pipelines) return;
-  const Q = r.gsNoWait = { on: 0, list: [], has: new Set(), sink: null, sync: false, env: new WeakMap(), frame: 0, running: false, inflight: 0, done: 0,
+  const Q = r.gsNoWait = { on: 0, list: [], has: new Set(), sink: null, sync: false, env: new WeakMap(), frame: 0, counted: new Set(), running: false, inflight: 0, done: 0,
     begin() { this.on++; }, end() { this.on = Math.max(0, this.on - 1); },
     /** things put off and not drawable yet (their text or pipeline still on its way) */
     get pending() { return this.list.length + this.inflight + (this.running ? 1 : 0); } };
@@ -66,11 +66,18 @@ export function noWait(r) {
     if (!e) Q.env.set(camera, { k: ek, at: -1 }); else if (ek !== null && e.k !== ek) { e.k = ek; e.at = Q.frame; }
     if (e && e.at === Q.frame) { NOWAIT_STATS.env++; return asIs(this, arguments); }
     const ro = this._objects.get(object, material, scene, camera, lightsNode, this._currentRenderContext, clippingContext, passId);
-    if (ro._nodeBuilderState || N.get(ro).nodeBuilderState !== undefined || N.nodeBuilderCache.has(N.getForRenderCacheKey(ro))) return direct.apply(this, arguments);
+    if (ro._nodeBuilderState || N.get(ro).nodeBuilderState !== undefined || N.nodeBuilderCache.has(N.getForRenderCacheKey(ro))) {
+      // (drawn: its count of times put off starts again, so a thing whose shader changes now and then, a person going in and
+      // out of the GPU skinning pool, is put off each time, not drawn as three does from its thirteenth change on)
+      if (Q.counted.size && Q.counted.has(object)) { const m = PUT_OFF.get(object); m?.delete(camera); if (!m?.size) { PUT_OFF.delete(object); Q.counted.delete(object); } }
+      return direct.apply(this, arguments);
+    }
     const bundle = () => { if (this._currentRenderBundle !== null) this.backend.get(this._currentRenderBundle).version = -1; };   // (a still scenery bundle is recorded again once it's there)
     if (Q.has.has(ro)) return bundle();
     // (a thing put off again and again, its shader's key changing from frame to frame: drawn as three does, or it never shows)
-    const k = (PUT_OFF.get(object) || 0) + 1; PUT_OFF.set(object, k);
+    // (counted for each camera that draws it: its shadow's key changing every frame while the thing itself draws still has it drawn)
+    let m = PUT_OFF.get(object); if (!m) PUT_OFF.set(object, m = new Map());
+    const k = (m.get(camera) || 0) + 1; m.set(camera, k); Q.counted.add(object);
     if (k > NOWAIT.most) return asIs(this, arguments);
     // the shader's text is not written yet: queued, as three's compileAsync queues a thing, and left out of this frame
     bundle();
@@ -80,7 +87,7 @@ export function noWait(r) {
     drain(r);
   };
 }
-// how many times a thing was put off (NOWAIT.most at most)
+// how many times a thing was put off for each camera since it was last drawn (NOWAIT.most at most)
 const PUT_OFF = new WeakMap();
 const top = o => { while (o.parent) o = o.parent; return o; };
 const glLook = m => (Array.isArray(m) ? m.some(glLook) : !!m && m.isShaderMaterial === true && !m.isNodeMaterial);
@@ -129,7 +136,7 @@ function drain(r) {
       if (r._isDeviceLost) { Q.list.length = 0; Q.has.clear(); break; }
       // (a thing taken out of what it was drawn in meanwhile: nothing to build for)
       // (or its material changed since: a kit's WebGL look swapped back in when the view left WebGPU, hd3d.js gpuSwap)
-      if (top(it.object) !== it.top || glLook(it.object.material) || glLook(it.material)) { NOWAIT_STATS.dropped++; Q.has.delete(it.ro); continue; }
+      if (top(it.object) !== it.top || glLook(it.object.material) || glLook(it.material)) { NOWAIT_STATS.dropped++; Q.has.delete(it.ro); Q.counted.delete(it.object); continue; }
       if (performance.now() - t0 >= NOWAIT.ms) { await nextFrame(); t0 = performance.now(); }
       const st = it.state;
       st.item = it; st.materialSide = null; back(r, st);
