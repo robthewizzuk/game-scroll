@@ -56,6 +56,7 @@ import { webgpu, gpuPick, setGpuPick, prepareGPU, gpuName, glStats } from './kit
 import { BUILD } from './perf.js';
 import { store } from './util.js';
 import { PROF, take, builtSince } from './kit/prof.js';
+import { NOWAIT_STATS } from './kit/nowait.js';
 
 const KEY = 'gs_lab', N = 8192, WIN = 4000, REC_MAX = 60000, PAUSE_GAP = 250, FREEZE_MAX = 3000;
 const is3D = d => d && (d.era === 'nextgen' || d.era === 'ar' || d.era === 'board');
@@ -292,12 +293,12 @@ function windowRows(ms) {
 
 /* ---------- recording ---------- */
 function startRec(s) {
-  rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0, chip: {}, chipN: 0, draws: { n: 0, calls: 0, tris: 0 } };
+  rec = { t0: performance.now(), at: new Date().toISOString(), game: s?.def?.id || '', title: s?.def?.title || '', rows: { t: [], k: [], p: [], upd: [], drw: [], cpu3d: [], fg: [], gpu: [], ft: [] }, events: [], samples: [], cfg: [], sys: {}, sysN: 0, chip: {}, chipN: 0, draws: { n: 0, calls: 0, tris: 0 }, nw0: { ...NOWAIT_STATS } };
   rec.cfg.push(config(s)); sample();
   rec.off0 = HD?.steps && is3D(s?.def) ? { ...HD.steps.off } : null;   // (3D games only: the quality steps are the 3D kit's)
 }
 function stopRec() {
-  if (!rec) return; rec.t1 = performance.now(); rec.cfg.push(config(UI.s)); keepSteps(rec); lastRec = rec; rec = null;
+  if (!rec) return; rec.t1 = performance.now(); rec.nw1 = { ...NOWAIT_STATS }; rec.cfg.push(config(UI.s)); keepSteps(rec); lastRec = rec; rec = null;
   UI.render?.(); UI.flash?.('Recorded. Report shares it, Copy puts a summary on the clipboard.');
 }
 let lastRec = null;
@@ -701,10 +702,18 @@ export function summary(R = lastRec) {
     memLine(S),
     energyLine(S, m),
     planLine(S),
+    nwLine(R),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
   ];
   return lines.filter(Boolean).join('\n');
+}
+// Shaders a frame would have built and the 3D kit built in the background instead (kit/nowait.js): the thing showed a few
+// frames later, the frame did not stop. Any still built in a frame are the "shaders built" hitches above.
+function nwLine(R) {
+  const a = R.nw0, z = R.nw1 || NOWAIT_STATS; if (!a) return '';
+  const t = z.texts - a.texts, p = z.pipes - a.pipes, f = z.failed - a.failed;
+  return t || p ? `Shaders put off from frames and built in the background: ${t} shader${t === 1 ? '' : 's'}, ${p} pipeline${p === 1 ? '' : 's'}${f ? ` (${f} failed)` : ''}` : '';
 }
 // The quality steps over the recording (hd3d.js HD.steps): each window of frames as seconds into it, and the frames
 // not counted, by why. In the report: how many windows were slow, ok or fast, and what was done when.
