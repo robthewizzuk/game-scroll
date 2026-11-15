@@ -196,6 +196,38 @@ export function paintWrinkles(o) {
 }
 
 /**
+ * Where the kinds of line part in a real face's one picture of its lines (paintLines), as heights up the picture (v): the rows across the
+ * forehead lie above `brow` and the crow's feet and the arcs under the lids below it; the frown's lines and those down the sides of the nose
+ * lie above `nose` and the fold from the nose to the mouth below it. (Each pair has clear skin between it, a few millimetres: kit-test
+ * checks that no line of either crosses.)
+ */
+export const LINES = { brow: (.023 - FACE_REAL.y0) / (FACE_REAL.y1 - FACE_REAL.y0), nose: (-.0235 - FACE_REAL.y0) / (FACE_REAL.y1 - FACE_REAL.y0) };
+/**
+ * A real face's lines in one picture (o as for paintFace), laid on as the paint is (FACE_REAL): [0] how high the skin is between its fine
+ * lines and [1] how oily it is (paintDetail), [2] the forehead's rows and the smiling eyes' lines, [3] the frown's and the fold from the nose
+ * to the mouth (paintWrinkles: two kinds to a number, told apart by where they are, LINES; half as fine as the rest, as they are broader).
+ * One picture where there were two, because a shader may only read so many: on WebGPU 16, and the lights and the air take most of them.
+ * Returns its bytes (RGBA, w * h * 4, the bottom row first).
+ */
+export function paintLines(o) {
+  const { w, h } = FACE_REAL, W = FACE_WR.w, H = FACE_WR.h, d = paintDetail(o), q = paintWrinkles(o), px = new Uint8Array(w * h * 4);
+  // (a wrinkle dot's two numbers: whichever of its pair lies on its side of the line between them)
+  const A = new Uint8Array(W * H), B = new Uint8Array(W * H), jb = LINES.brow * H, jn = LINES.nose * H;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const at = j * W + i; A[at] = q[at * 4 + (j + .5 > jb ? 0 : 2)]; B[at] = q[at * 4 + (j + .5 > jn ? 1 : 3)]; }
+  for (let j = 0; j < h; j++) {
+    // (twice as fine: each dot between the four wrinkle dots round it, as the chip would have read them)
+    const fy = (j + .5) * H / h - .5, j0 = mx(0, mn(H - 1, Math.floor(fy))), j1 = mn(H - 1, j0 + 1), ty = mx(0, mn(1, fy - j0));
+    for (let i = 0; i < w; i++) {
+      const fx = (i + .5) * W / w - .5, i0 = mx(0, mn(W - 1, Math.floor(fx))), i1 = mn(W - 1, i0 + 1), tx = mx(0, mn(1, fx - i0)), at = (j * w + i) * 4, s = (j * w + i) * 2;
+      const a00 = j0 * W + i0, a10 = j0 * W + i1, a01 = j1 * W + i0, a11 = j1 * W + i1, k00 = (1 - tx) * (1 - ty), k10 = tx * (1 - ty), k01 = (1 - tx) * ty, k11 = tx * ty;
+      px[at] = d[s]; px[at + 1] = d[s + 1];
+      px[at + 2] = Math.round(A[a00] * k00 + A[a10] * k10 + A[a01] * k01 + A[a11] * k11); px[at + 3] = Math.round(B[a00] * k00 + B[a10] * k10 + B[a01] * k01 + B[a11] * k11);
+    }
+  }
+  return px;
+}
+
+/**
  * Paints the picture for a look: { face (the spec's: eyes, lips, soft), fem, stubble (0..1), skin, brow, lips, lash, mouth (each [r, g, b]
  * as light, not sRGB) }. Returns its bytes (RGBA, w * h * 4, the bottom row first), to be read as sRGB.
  */
