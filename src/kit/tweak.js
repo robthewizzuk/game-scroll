@@ -114,7 +114,7 @@ async function build(card, p) {
 function copy(p) {
   const text = p.folders.map(({ name, spec, values }) => `gs.tweak('${name}', {\n` + Object.entries(spec).map(([k, v]) => {
     const x = values[k];
-    const val = isRange(v) ? `[${[+x.toFixed(4), ...v.slice(1)].map(e => typeof e === 'string' ? `'${e.replace(/'/g, "\\'")}'` : e).join(', ')}]` : isList(v) ? JSON.stringify([x, ...v.slice(1)]) : typeof v === 'function' ? null : JSON.stringify(typeof x === 'number' ? +x.toFixed(4) : x);
+    const val = isRange(v) ? `[${[+x.toFixed(4), ...v.slice(1)].map(e => typeof e === 'string' ? `'${e.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'` : e).join(', ')}]` : isList(v) ? JSON.stringify([x, ...v.slice(1)]) : typeof v === 'function' ? null : JSON.stringify(typeof x === 'number' ? +x.toFixed(4) : x);
     return val == null ? null : `  ${/^[a-z_$][\w$]*$/i.test(k) ? k : JSON.stringify(k)}: ${val},`;
   }).filter(Boolean).join('\n') + '\n});').join('\n');
   console.info(text);
