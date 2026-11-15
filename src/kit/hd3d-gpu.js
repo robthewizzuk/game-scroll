@@ -14,7 +14,7 @@ import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
-  attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
+  textureSize, attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
   roughness, specularColor, specularColorBlended, specularF90, diffuseContribution, BRDF_GGX, BRDF_Lambert, F_Schlick,
   modelViewProjection, acos, getParallaxCorrectNormal, perspectiveDepthToViewZ, orthographicDepthToViewZ, sign, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, sample, packNormalToRGB, unpackRGBToNormal, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
@@ -91,8 +91,8 @@ import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
-import { sunMaskAt, sunMask, gasSunAt } from './sunmask-gpu.js';
-export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo, sunGas, gasSunAt } from './sunmask-gpu.js';
+import { sunMaskAt, sunMask, gasSunAt, BUSY } from './sunmask-gpu.js';
+export { BUSY, sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo, sunGas, gasSunAt } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -1030,11 +1030,40 @@ export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
 // every pixel takes the same way, so it costs nothing on the chip and no shader is built again when they change.
 const PCSS_FIND = 8, PCSS_TAPS = 12, GOLDEN = 2.39996323;
 /** Taps (find, filter) a frame and the pattern's turn (0..1): hd3d.js pcssFrame() sets them. */
-export const PCSS = { n: uniform(new Vector2(PCSS_FIND, PCSS_TAPS)), turn: uniform(0), few: [5, 7], on: true };
+export const PCSS = { n: uniform(new Vector2(PCSS_FIND, PCSS_TAPS)), turn: uniform(0), busy: uniform(0), few: [5, 7], on: true };
 /** Called once a frame: history (the upscaler keeps one this frame), frame (a counter). */
 export function pcssFrame(history, frame) {
   const few = history && PCSS.on; PCSS.n.value.set(few ? PCSS.few[0] : PCSS_FIND, few ? PCSS.few[1] : PCSS_TAPS);
   PCSS.turn.value = few ? frame * .6180339887 % 1 : 0;
+  PCSS.busy.value = few && BUSY.on && BUSY.drawn ? 1 : 0;   // (fewer still where the picture is busy: sunmask-gpu.js BUSY)
+}
+// Visual masking (sunmask-gpu.js BUSY): how busy each block of 8 x 8 pixels of the last frame is, as the share of
+// the contact shadow's steps it needs there.
+export function busyMeter(r) {
+  const src = texture(new Texture()), U = { exp: uniform(1), c0: uniform(BUSY.c0), least: uniform(BUSY.least) }, mat = new NodeMaterial(), rt = BUSY.rt;
+  mat.fragmentNode = Fn(() => {
+    // 16 pixels of the block (every other one each way), their brightness as the screen shows it; its spread
+    const o = ivec2(floor(screenCoordinate.xy).mul(8)), top = ivec2(textureSize(src).sub(1)), a = float(0).toVar(), b = float(0).toVar();
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const l = max(dot(src.load(min(o.add(ivec2(x * 2, y * 2)), top)).rgb, vec3(.2126, .7152, .0722)).mul(U.exp), 0), g = pow(l.div(l.add(1)), 1 / 2.2);
+      a.addAssign(g); b.addAssign(g.mul(g));
+    }
+    const c = sqrt(max(b.div(16).sub(a.div(16).mul(a.div(16))), 0));
+    return vec4(clamp(pow(U.c0.div(max(c, 1e-4)), 1.4), U.least, 1), 0, 0, 1);
+  })();
+  const quad = new QuadMesh(mat);
+  return {
+    rt,
+    draw(tex, exposure = 1) {
+      const w = Math.max(1, Math.ceil((tex.image?.width || 8) / 8)), h = Math.max(1, Math.ceil((tex.image?.height || 8) / 8));
+      if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
+      src.value = tex; U.exp.value = exposure; U.c0.value = BUSY.c0; U.least.value = BUSY.least;
+      const was = r.getRenderTarget(); r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
+      BUSY.drawn = true; BUSY.k.value = BUSY.on ? 1 : 0;
+    },
+    off() { BUSY.drawn = false; BUSY.k.value = 0; },
+    dispose() { this.off(); mat.dispose(); },
+  };
 }
 const disc = (i, n, phi) => { const r = float(i + .5).div(n).sqrt(), a = phi.add(i * GOLDEN); return vec2(cos(a), sin(a)).mul(r); };
 export function pcss(light) {
@@ -1049,7 +1078,9 @@ export function pcss(light) {
     // (the raw depth by texel: the map's sampler is a comparing one, which can't read depths)
     const raw = u => { let t = texture(depthTexture).load(ivec2(u.div(TEXEL))); if (depthTexture.isArrayTexture) t = t.depth(depthLayer); return t.x; };
     const texel = TEXEL, z = shadowCoord.z, phi = fract(interleavedGradientNoise(screenCoordinate.xy).add(PCSS.turn)).mul(6.2831853).toVar();
-    const NF = PCSS.n.x, NT = PCSS.n.y;
+    // (fewer where the picture is busy enough to hide the noise: sunmask-gpu.js BUSY, its block read by position)
+    const bt = texture(BUSY.rt.texture), share = mix(float(1), bt.load(min(ivec2(screenCoordinate.xy.div(8)), ivec2(textureSize(bt)).sub(1))).r, PCSS.busy).toVar();
+    const NF = max(PCSS.n.x.mul(share).round(), min(PCSS.n.x, 3)).toVar(), NT = max(PCSS.n.y.mul(share).round(), min(PCSS.n.y, 4)).toVar();
     // 1: blockers in reach of the widest spread, their average depth
     const sum = float(0).toVar(), n = float(0).toVar();
     for (let i = 0; i < PCSS_FIND; i++) {
@@ -1163,6 +1194,41 @@ export function eyeMeter(r) {
       r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
       return r.readRenderTargetPixelsAsync(rt, 0, 0, 16, 16);
     },
+  };
+}
+// The picture's own detail (detail-size.js): 32 x 32 blocks of 4 x 4 pixels spread over the 3D as drawn, each
+// texel one block's two finest octaves (e1: each pixel against its 2 x 2's average; e2: those averages against the
+// block's), in brightness as the screen shows it (tone mapped, gamma), as 16-bit logs in bytes any phone reads
+// back without stalling (fromPixels decodes them).
+export function detailMeter(r) {
+  const N = 32, src = texture(new Texture()), U = { size: uniform(new Vector2(1, 1)), exp: uniform(1) }, mat = new NodeMaterial(), rt = new RenderTarget(N, N, { depthBuffer: false });
+  mat.fragmentNode = Fn(() => {
+    const o = ivec2(min(floor(uv().mul(U.size).div(4)).mul(4), U.size.sub(4)));
+    const g = []; for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const l = max(dot(src.load(o.add(ivec2(x, y))).rgb, vec3(.2126, .7152, .0722)).mul(U.exp), 0);
+      g.push(pow(l.div(l.add(1)), 1 / 2.2).toVar());
+    }
+    const at = (x, y) => g[y * 4 + x], e1 = float(0).toVar(), m = [];
+    for (let by = 0; by < 2; by++) for (let bx = 0; bx < 2; bx++) {
+      const q = [at(bx * 2, by * 2), at(bx * 2 + 1, by * 2), at(bx * 2, by * 2 + 1), at(bx * 2 + 1, by * 2 + 1)], a = q[0].add(q[1]).add(q[2]).add(q[3]).mul(.25).toVar();
+      for (const v of q) e1.addAssign(v.sub(a).mul(v.sub(a)));
+      m.push(a);
+    }
+    const mm = m[0].add(m[1]).add(m[2]).add(m[3]).mul(.25), e2 = float(0).toVar();
+    for (const a of m) e2.addAssign(a.sub(mm).mul(a.sub(mm)));
+    const code = e => clamp(log2(max(e, 2 ** -32)).add(32).div(32), 0, 1).mul(255);
+    const c1 = code(e1.div(16)), c2 = code(e2.div(4));
+    return vec4(floor(c1).div(255), fract(c1), floor(c2).div(255), fract(c2));
+  })();
+  const quad = new QuadMesh(mat);
+  return {
+    async read(tex, exposure = 1) {
+      src.value = tex; U.size.value.set(tex.image?.width || 1, tex.image?.height || 1); U.exp.value = exposure;
+      const was = r.getRenderTarget();
+      r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
+      return r.readRenderTargetPixelsAsync(rt, 0, 0, N, N);
+    },
+    dispose() { rt.dispose(); mat.dispose(); },
   };
 }
 // Occlusion culling's depth meter (occlude.js; the WebGL one is its DepthMeter): the frame's depth boiled
@@ -3298,6 +3364,7 @@ export class GpuChain {
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.madeQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = this.madeQ = null; this.sched = null; this.lastColor = null;
     this._bf?.rt.dispose(); this._bf = null;
+    this.busyM?.dispose(); this.dsM?.dispose(); this.busyM = this.dsM = null;   // (the visual masking map and the detail meter, hd3d.js)
   }
 }
 const AIM_POSE = newPose(), AIM_HOLD = 150;   // fresh aim: the pose a frame was made for; ms the input counts as turning the camera after it last did

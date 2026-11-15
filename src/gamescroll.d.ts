@@ -1671,6 +1671,30 @@ export interface CharactersPart {
    * Call update(dt) each frame after rig.update(dt), and steer the character only while `busy` is false.
    */
   Reactions: new (body: Loose, o?: ReactionsOptions) => ReactionsT;
+  /**
+   * Things carried on the body and drawn to the hand: a sword at the hip, a greatsword or a shield on the back, a quiver, a dagger at the belt.
+   * add(name, thing, spot, { grip, along, face, hand, held, sheath }) puts it at a spot (SPOTS, or your own); draw(name) sends the hand to it,
+   * takes it and brings it round into the hand, sheathe(name) puts it back; update(dt) after rig.update() each frame. On a gs.models.human the
+   * hand closes round the grip. A thing's own frame: its grip at `grip`, its length along `along` (+y), its flat along `face` (+z).
+   */
+  Carry: new (person: Loose, o?: { spots?: Record<string, CarrySpot>; time?: number }) => CarryT;
+  /** Where things are carried: hipL, hipR, back, backL, shield, quiver, bow, belt. */
+  SPOTS: Record<string, CarrySpot>;
+}
+export interface CarrySpot { bone: string; /** where the grip sits, in the person's own space as they stand (1.8 m, facing +z, the left at +x) */ at: P3; /** which way its length points */ dir: P3; /** which way its flat faces */ face: P3; /** the hand that draws it */ hand?: 'L' | 'R' }
+export interface CarryT {
+  person: Loose; things: Record<string, Loose>; readonly busy: boolean;
+  add(name: string, thing: Loose, spot: string | CarrySpot, o?: { grip?: P3; along?: P3; face?: P3; hand?: 'L' | 'R'; held?: { at: P3; dir: P3; face: P3 }; /** a scabbard that stays on the body: true (sized to the thing) or its size */ sheath?: boolean | { length?: number; radius?: number; colour?: string } }): Loose;
+  /** The hand goes to it, takes it ('grab') and brings it round ('drawn'). false if it is already in hand or that hand is busy. */
+  draw(name: string, o?: { time?: number }): boolean;
+  sheathe(name: string, o?: { time?: number }): boolean;
+  /** Straight to the hand or the spot, no reach (a round's start). */
+  set(name: string, where: 'hand' | 'spot'): boolean;
+  /** The name of what is in a hand, or null. */
+  held(hand?: 'L' | 'R'): string | null;
+  on(ev: 'grab' | 'drawn' | 'stowed', fn: (e: { name: string; to?: string }) => void): CarryT;
+  update(dt: number): void;
+  clear(): void;
 }
 export interface ReactionsOptions {
   /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Left out: the one the game made; false, or none made: falls are acted. */
@@ -3112,6 +3136,26 @@ export interface ClimbPart {
     grab(feet: P3, vy?: number): boolean; update(dt: number, input?: { x?: number; y?: number; jump?: boolean }): Loose; leapOrKick(x: number, y: number): Loose; letGo(up?: number, kick?: boolean): Loose; swing(rope: Loose, vel?: P3): Loose;
   };
   Rope: new (anchor: P3, length?: number, o?: { gravity?: number; pump?: number; damping?: number }) => { anchor: P3; length: number; catch(feet: P3, vel: P3, height?: number): Loose; update(dt: number, push?: number): Loose; readonly hands: P3; feet(height?: number): P3; release(): P3 };
+  /**
+   * Swimming: wading in the shallows (slower the deeper), swimming at the surface, treading water, diving under with a breath that runs
+   * out, coming up for air, and climbing out onto an edge up to `climb` metres over the water. water: left out, every gs.outdoors Water
+   * and Sea the game made; a number (a level); (x, z) => height or null; anything with height(x, z); a gs.flow Streams (its current carries
+   * them). body: a World3D mover (call after your own walk(): in the water it takes over) or { x, y, z } feet you move by vel.
+   */
+  Swimmer: new (o?: { height?: number; breath?: number; speed?: number; fast?: number; dive?: number; wade?: number; deep?: number | null; hurt?: number; climb?: number; water?: Loose; world?: Loose; sounds?: boolean; link?: boolean }) => {
+    state: 'out' | 'wade' | 'swim' | 'dive' | 'climb';
+    /** For rig.play: 'wade' | 'tread' | 'swim' | 'dive' | 'diveDown' | 'diveUp' | 'climbOut' (null: on foot, your own), with at (climbOut's progress). */
+    pose: 'wade' | 'tread' | 'swim' | 'dive' | 'diveDown' | 'diveUp' | 'climbOut' | null; at: number | null;
+    /** The way they swim (yaw), null when not moving. */ facing: number | null;
+    vel: P3; depth: number; surface: number; under: boolean; slow: number; tilt: number;
+    /** Seconds of breath left; air 0..1. */ left: number; readonly air: number;
+    /** Damage this frame from being out of breath under water. */ hurt: number;
+    /** This frame's: 'in', 'out', 'swim', 'under', 'surface', 'gasp', 'low', 'empty', 'climb'. */ events: string[];
+    update(dt: number, input?: { move?: { x: number; z?: number; y?: number } | null; up?: boolean; down?: boolean; fast?: boolean }, body?: Loose): Loose;
+    /** The water's surface over (x, z), and its current: y -Infinity where there is none. */
+    waterAt(x: number, z: number, y?: number): { y: number; current: { x: number; z: number } | null };
+    reset(): Loose;
+  };
 }
 /** A place: x, z on the ground in 3D (y is optional), or x, y in 2D. */
 export interface Spot { x: number; y?: number; z?: number }
@@ -3368,6 +3412,9 @@ export type VehicleT = Loose & {
    * A motorbike: `world.vehicle(bike, bike.chassis())` (it says bike: true): its rider keeps it upright and it leans into turns by itself, until it hits something at 8 m/s or more (fall) and goes over (`fallen`; rightUp() stands it again).
    */
   chassis?(o?: Record<string, Loose>): Record<string, Loose>;
+  // (chassis() also gives how each drives: density (its weight against what it hits), power, top (the speed its pull fades to), steerFade (the speed its
+  // wheels turn half as far), brakes, grip; a lorry or a bus is heavy and slow to turn, a sports car quick. On the World3D.vehicle it makes:
+  // drive(throttle, steer, brake, handbrake): the handbrake locks the back wheels so it slides round.)
   /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops); a fire engine's turntable and ladder (up to 1.25). */
   aim(turn?: number, lift?: number): VehicleT;
   /** Its lamps on or off (a taxi's roof sign too). */
@@ -3417,12 +3464,44 @@ export type VehicleT = Loose & {
   smash?(point: Loose, o?: { power?: number }): 'lamp' | 'screen' | 'crack' | 'window' | null;
   /** A knock: dent(), then smash() as well when power is over .25. */
   hit?(point: Loose, o?: { power?: number; dir?: Loose }): 'lamp' | 'screen' | 'crack' | 'window' | null;
-  /** Mended: its shapes and materials shared again, the broken glass gone (its dirt and wet stay). */
+  /** Mended: its shapes and materials shared again, the broken glass gone, health back, fire out, tyres whole, doors and bumpers back on (its dirt and wet stay). */
   mend?(): VehicleT;
   /** Each frame (move() calls it): falling glass, doors swinging, flashing lamps, and the people in it or getting in and out. */
   update?(dt: number): VehicleT;
   /** What it has taken: dents, panes of glass broken or crazed, lamps broken. */
   readonly damage?: { dents: number; glass: number; lamps: number };
+  /**
+   * A car's, a truck's, a bus's, a motorbike's crashes. How much more it can take, 1 (new) .. 0: each hit() takes some (a hard knock about a sixth of a
+   * car's; a lorry or a bus takes about half that), so World3D.vehicle crashes wear it down by themselves. Under .55 its engine smokes, under .3 black
+   * smoke, under .12 it is on fire, and some seconds later it blows up (blow()).
+   */
+  readonly health?: number;
+  /** How much of its engine's pull is left, 0..1: less as it smokes, none once it has blown up (World3D.vehicle reads it). */
+  readonly engine?: number;
+  /** True once it has blown up: a burnt-out shell. */
+  readonly wrecked?: boolean;
+  /** True while it is on fire. */
+  readonly burning?: boolean;
+  /** Takes health off for the game's own reasons (shots, a fire, a fall): amount as a hit takes it (.16 a hard knock for a car). */
+  harm?(amount?: number): VehicleT;
+  /** Puts its fire out: it smokes on and needs another hit to catch again. */
+  putOut?(): VehicleT;
+  /**
+   * Blows it up now: a fireball, its paint charred, its glass blown out, most doors and bumpers thrown off, its tyres burnt flat; the blast is felt
+   * round it as an Explosives blast is (the World3D's bodies, people who react, smoke, buildings that come apart, other vehicles, which may catch fire).
+   * on('blow', e => ...) gets where (e.at), how far (e.radius) and e.hurt(point) 0..1 for the game's own damage.
+   */
+  blow?(o?: { power?: number }): VehicleT;
+  /** Its tyres, as its wheels: flat once burst (a sharp hit() on a tyre bursts it by itself). World3D.vehicle sits a flat one lower and lets it grip less. */
+  readonly tyres?: { wheel: Loose; flat: boolean; i: number }[];
+  /** Bursts a tyre: a wheel's number, or the one nearest a point in the world. */
+  burst?(which?: number | Loose): VehicleT;
+  /** Knocks a door or bumper loose ('doorL', 'bumperF'...): a door hangs and swings, a bumper droops. A hard hit() there does it by itself, and the next takes it off. */
+  loosen?(name: string): VehicleT;
+  /** A door or bumper comes off and falls into the road (a body of its own in the game's World3D when it has one), flung by push (m/s, in the world; out from it by default). mend() puts it back. */
+  detach?(name: string, o?: { push?: Loose }): VehicleT;
+  /** fn(e) when it starts to smoke ('smoke'), catches fire ('fire'), blows up ('blow': e.at, e.radius, e.hurt(point)), a tyre bursts ('burst': e.tyre) or a part comes off ('off': e.name, e.part). */
+  on?(event: 'smoke' | 'fire' | 'blow' | 'burst' | 'off', fn: (e: Loose) => void): VehicleT;
   /** Another just like it, sharing its shapes and materials. */
   twin(): VehicleT;
 };
@@ -3836,7 +3915,11 @@ export interface PropsPart {
      * are one fixed body (a ray's hit.part is { props, kind, id }); loose: true makes each a body of its own that falls and is knocked over,
      * drawn where its body is. Returns the body, or a Map of id to body.
      */
-    solid(world: Loose, name: string, o?: { shape?: 'box' | 'trunk' | 'ball' | 'hull'; r?: number | null; loose?: boolean; density?: number; tag?: string; sound?: string; friction?: number; bounce?: number }): Loose;
+    solid(world: Loose, name: string, o?: { shape?: 'box' | 'trunk' | 'ball' | 'hull'; r?: number | null; loose?: boolean; density?: number; tag?: string; sound?: string; friction?: number; bounce?: number; /** Still copies: something moving at least this fast (m/s) knocks one over (it falls as a body of its own; what hit it carries on, a little slower). */ knock?: number }): Loose;
+    /** Knocks a still copy over now (solid() with knock does it by itself): by, what hit it, gets most of its speed (was: how it moved before). Returns the copy's body. */
+    knock(name: string, id: number, by?: Loose, was?: Loose): Loose;
+    /** Stands the copies that were knocked over back up, solid again (one kind, or all). */
+    mend(name?: string | null): Loose;
     unsolid(name: string): Loose;
   };
   Areas: new (o?: { depth?: number }) => { current: string | null; add(name: string, object: Loose, box?: Loose): Loose; link(a: string, b: string): Loose; at(p: P3): string | null; update(p: P3): Loose; readonly shown: string[] };
@@ -4308,7 +4391,7 @@ export interface ModelsPart {
   };
   /**
    * A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail.
-   * Returns a Group with rig, bones, mesh, lods, shadowBody (what casts its shadow: its far level on a layer only shadows draw; null with shadows: false), lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level, round }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each; round: the radius of the bar a hand closes its fingers round, metres, or { L, R }), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), fingers({ L: 0..1, R: [thumb, index, middle, ring, little] }) (how far each hand is closed: 0 flat, 1 a fist, null as sculpted; they stay as set until 'auto' gives a hand back: left to themselves hands lie relaxed, and close round what hold() or touch() puts them on, each finger until it meets it), face.
+   * Returns a Group with rig, bones, mesh, lods, shadowBody (what casts its shadow: its far level on a layer only shadows draw; null with shadows: false), lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level, round }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each; round: the radius of the bar a hand closes its fingers round, metres, or { L, R }), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), armour (outfit.armour: { chest: 'plate' | 'leather' | 'brigandine' | [kinds ready], shoulders, arms, hands, thighs, shins, feet, colour, leather, cloth, rivets }: armour.wear(part, kind | null) at once, armour.worn, armour.kinds(part), armour.over(bone) for what a hit there strikes; helms are hats: 'nasal' | 'kettle' | 'sallet' | 'great' | 'circlet'; tops add 'gambeson', legs 'hose'), fingers({ L: 0..1, R: [thumb, index, middle, ring, little] }) (how far each hand is closed: 0 flat, 1 a fist, null as sculpted; they stay as set until 'auto' gives a hand back: left to themselves hands lie relaxed, and close round what hold() or touch() puts them on, each finger until it meets it), face.
    * The skeleton: the joints poses turn (hips, spine (the rib cage), head, armL/R, foreL/R, handL/R, legL/R, shinL/R, footL/R) and, between them, a waist, a neck, a collar bone to each arm, the turn along each forearm, toes and three joints a finger, which the rig sets by itself (rig.fill() after turning joints yourself). Further off the small ones stand still and cost nothing.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
    * A painted face and combed hair, with no texture files: brows, lashes, the line of the lids and the lips are painted in a small picture the engine makes itself for each look, and the hair is a clean sculpted shape with a crisp hairline and combed strands in a second picture, laid round the head from the crown. Nothing to set, and the same on WebGL and WebGPU.
@@ -4472,7 +4555,7 @@ export interface CityWorld {
    * and bodies for the nearest `cars` and `people` that move with them (refreshed in update()): a car hit hard stops a moment and a
    * person hit falls over by themselves. A hit body's .car or .person says which.
    */
-  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityWorld;
+  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over (city.props.mend() stands them up). */ knock?: boolean }): CityWorld;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water', string>> }): void;
   mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
   dispose(): void;
