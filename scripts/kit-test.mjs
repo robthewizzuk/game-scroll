@@ -7286,6 +7286,50 @@ console.log('physics ok');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
 }
 
+// gs.rpg: a hero who grows (levels, attributes, skill tree, gear) and a world that remembers (reputation)
+{
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Growth, Reputation, xpTo } = await import('../src/kit/rpg.js');
+  const hero = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } });
+  const TREE = { cleave: { ranks: 3, perk: { mul: { damage: 1.1 } } }, whirl: { needs: ['cleave:2'], level: 4 }, ward: { perk: { add: { armour: 5 } }, excludes: ['frenzy'] }, frenzy: { perk: { mul: { speed: 1.2 } }, excludes: ['ward'] } };
+  const g = new Growth(hero, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } });
+  assert.equal(hero.get('damage'), 9); assert.equal(hero.max('hp'), 100); assert.equal(hero.get('hp'), 60);
+  let lv = []; g.on('level', l => lv.push(l));
+  assert.equal(xpTo(2), 100); assert.equal(g.gain(99), 0); assert.ok(Math.abs(g.part - .99) < 1e-9);
+  assert.equal(g.gain(300), 2); assert.deepEqual(lv, [2, 3]); assert.equal(hero.get('hp'), 100, 'filled on level');
+  assert.equal(g.points, 6); assert.equal(g.skillPoints, 2);
+  assert.ok(g.raise('might', 2)); assert.equal(hero.get('damage'), 11); assert.equal(hero.max('hp'), 116);
+  assert.equal(g.can('whirl').why, 'level'); assert.ok(g.learn('cleave')); assert.ok(Math.abs(hero.get('damage') - 12.1) < 1e-9);
+  assert.ok(g.learn('ward')); assert.equal(g.can('frenzy').why, 'ranks' === 0 ? '' : 'excluded'); assert.equal(hero.get('armour'), 5);
+  g.gain(1000); assert.equal(g.level, 6); assert.equal(g.can('whirl').why, 'needs'); assert.deepEqual(g.can('whirl').needs, ['cleave:2']);
+  assert.ok(g.learn('cleave')); assert.ok(g.learn('whirl')); assert.ok(g.has('whirl'));
+  assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9);
+  const inv = new Inventory({ sword: { stack: 1, kind: 'hand', stats: { add: { damage: 3 } } }, ring: { stack: 1, kind: 'ring', stats: { mul: { speed: 1.5 } } } }, { slots: 4, extra: { hand: 'hand', ring: 'ring' } });
+  g.wear(inv); inv.add('sword'); assert.ok(inv.move(0, 'hand')); assert.ok(Math.abs(hero.get('damage') - 14 * 1.21) < 1e-9, 'sword counts ' + hero.get('damage'));
+  assert.ok(inv.move('hand', 0)); assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9, 'sword off');
+  const p = g.pack(); const h2 = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } }); const g2 = new Growth(h2, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } }).unpack(JSON.parse(JSON.stringify(p)));
+  assert.equal(h2.get('damage'), hero.get('damage')); assert.equal(g2.level, 6);
+  g.respec(); assert.equal(g.rank('cleave'), 0); assert.equal(g.attr('might'), 5); assert.equal(g.points, 15); assert.equal(g.skillPoints, 5); assert.equal(hero.get('damage'), 9);
+  // standalone
+  const s = new Growth(null, { attributes: { might: 3 }, derive: { damage: a => a.might } }); assert.equal(s.value('damage', 1), 4);
+  // reputation
+  const r = new Reputation({ factions: { town: {}, guard: { law: true, allies: ['town'] }, bandits: { start: -20, rivals: ['town'], fights: true } },
+    deeds: { rescue: { good: 15, fame: 10, town: 20 }, steal: { good: -5, town: -15, crime: 50 } }, titles: [{ name: 'the Bright', good: [40, 100] }] });
+  assert.equal(r.mood('town'), 'ignore');
+  let out = r.did('rescue'); assert.equal(out.town, 20); assert.equal(out.bandits, -10); assert.equal(r.with('guard'), 10, 'ally moves with town');
+  assert.equal(r.rank('town'), 'liked'); r.did('rescue'); r.did('rescue'); assert.equal(r.with('town'), 60); assert.equal(r.rank('town'), 'loved'); assert.equal(r.mood('town'), 'bow');
+  assert.equal(r.title(), 'the Bright'); assert.equal(r.price(100, 'town'), 85); assert.equal(r.price(100, 'town', { sell: true }), 57);
+  out = r.did('steal', { seen: false }); assert.deepEqual(out, { good: -5 }); assert.equal(r.bounty('guard'), 0);
+  out = r.did('steal', { seen: ['guard'] }); assert.equal(r.bounty('guard'), 50); assert.equal(r.mood('guard'), 'arrest'); assert.equal(r.with('town'), 60, 'town did not see');
+  r.pay('guard'); assert.equal(r.bounty('guard'), 0); assert.equal(r.done('steal'), 2);
+  assert.equal(r.mood('bandits'), 'avoid'); r.move('bandits', -20); assert.equal(r.mood('bandits'), 'attack');
+  const r2 = new Reputation({ factions: { town: {}, guard: { law: true }, bandits: { start: -20, rivals: ['town'], fights: true } }, deeds: {} }).unpack(JSON.parse(JSON.stringify(r.pack())));
+  assert.equal(r2.with('town'), r.with('town')); assert.equal(r2.get('fame'), 30); assert.equal(r.vars().town_rank, 'loved', 'vars for a conversation');
+  assert.throws(() => new Reputation({ deeds: { x: { nope: 1 } } }));
+  console.log('gs.rpg: levels on a curve, attributes into stats, skill tree needs/excludes/ranks, gear from equip slots, respec, saving; reputation deeds seen and unseen, rivals and allies, bounties, moods, prices, titles ok');
+}
+
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
 {
   const THREE = await import('three');

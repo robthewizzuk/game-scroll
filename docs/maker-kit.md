@@ -48,6 +48,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Match-3, 2048 sliding, flood fill on a grid | `gs.board` | [Game kits](#game-kits) |
 | Turn-based fights, items, XP and loot | `gs.battle` | [Game kits](#game-kits) |
 | Buffs, perks, poison over time, mana that refills, cooldowns with charges (real time) | `gs.stats` | [Game kits](#game-kits) |
+| RPG levels, attributes, skill trees, gear that counts; fame, good and evil, factions, bounties | `gs.rpg` | [Game kits](#game-kits) |
 | Dungeons, caves, mazes, islands, tile patterns | `gs.gen` (rot.js, WaveFunctionCollapse) | [Game kits](#game-kits) |
 | Drag pieces into slots, reorder a list | `gs.drag` | [Game kits](#game-kits) |
 | Undo and redo moves | `gs.history` | [Game kits](#game-kits) |
@@ -2061,6 +2062,40 @@ off). `buffs` lists what is on with `left` and `part` for icons and rings. Coold
 then `use('dash')` (false while waiting), `ready`, `left`, `charges`, `part('dash', 'cool')`, `hurry`. Events:
 `on('buff' | 'end' | 'tick' | 'change' | 'empty' | 'full' | 'ready' | 'blocked', fn)`. Call `update(dt)` each
 frame, make it in `reset()` (or `clear()` it there), and `pack()` / `unpack()` with `api.save()`.
+
+**Role-playing** (`gs.rpg`): a hero who grows, and a world that remembers what they did. Your game
+decides what a skill does and draws the bars, tree and people; the kit keeps the numbers.
+`new Growth(stats, { attributes: { might: 5, grace: 5 }, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might }, tree })`
+on a `gs.stats` Stats (or `null`, then read `value(stat, base)`). `gain(xp)` returns the levels gained on a curve
+(`xpTo(level)`: 100 x (level - 1)^1.5; `curve: { base, power }` or your own function, `cap` 50), each level
+gives `points` (3) for `raise('might')` and `skills` (1) for `learn('cleave')`, and fills the pools. `part` is
+the bar to the next level. A tree skill: `{ ranks, cost, level, needs: ['cleave:2'], excludes: ['frenzy'], perk: { add, mul } }`
+(the perk goes on the Stats once a rank); `can(id)` says `{ ok, why, needs }` ('ranks', 'level', 'needs',
+'excluded', 'points'), `has('whirl')`, `rank(id)`, `nodes` for drawing it, `respec()`. Gear: `wear(inv)`
+follows a `gs.items` Inventory, and whatever sits in its equip slots counts from its def's `stats: { add, mul }`
+(or `gear(slot, spec)` by hand). Events `xp`, `level`, `raise`, `learn`, `respec`; `pack()` / `unpack()`.
+
+```js
+const { Growth, Reputation } = gs.rpg;
+rep = new Reputation({
+  factions: { town: {}, guard: { law: true, allies: ['town'] }, bandits: { start: -20, rivals: ['town'], fights: true } },
+  deeds: { rescue: { good: 15, fame: 10, town: 20 }, steal: { good: -5, town: -15, crime: 50 } },
+  titles: [{ name: 'the Bright', good: [50, 100], fame: [40, 100] }],
+});
+rep.did('rescue');                          // town +20, guard +10 (ally), bandits -10 (rival), good +15, fame +10
+rep.did('steal', { seen: ['guard'] });      // only the guard saw: a 50 bounty, and good -5 (the hero knows)
+rep.did('steal', { seen: false });          // nobody saw: good -5 only
+rep.mood('guard')                           // 'arrest' while there's a bounty; rep.pay('guard')
+rep.price(100, 'town')                      // 85 when the town loves you, 125 when it hates you
+```
+
+`Reputation` has axes (`good` -100..100 and `fame` 0..100 by default; your own as `{ min, max, start, fade }`)
+and factions (-100..100, `rank(f)` 'hated' .. 'loved'). A deed moves the `inner` axes (`['good']`, the
+hero's conscience) whoever saw it; fame, factions and bounties only when someone did. Rivals move the other
+way by `share` (.5), allies the same way, named on either side. `mood(f)`: 'arrest', 'attack' or 'flee'
+(`fights`), 'avoid', 'ignore', 'stare' (a famous stranger), 'greet', 'bow', 'cheer'; a `timid` faction
+flees a famous villain. `title()`, `done(id)` (times a deed was done), `log`, `update(dt)` (factions and axes
+with `fade` drift back), `vars()` (every number flat for a conversation) and `pack()` / `unpack()`.
 
 **Made levels** (`gs.gen`, rot.js and WaveFunctionCollapse, loaded on first use: call them in `make()` or
 `reset()`): `dungeon`, `cave`, `maze`, `islands`, `heightmap` and `pattern(sample)` (new maps that look

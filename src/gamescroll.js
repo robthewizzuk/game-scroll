@@ -45,6 +45,7 @@
 //   gs.board     grid boards: match, fall and refill, slide and merge, flood fill, hints
 //   gs.battle    turn-based battles: fighters, moves, types, status effects, items (Bag), XP and loot
 //   gs.stats     real-time stats: buffs that run out, perks, debuffs over time, pools that drain and refill, cooldowns with charges
+//   gs.rpg       role-playing: Growth (levels, attributes, skill trees, gear that counts) and Reputation (fame, good and evil, factions, bounties, prices, moods)
 //   gs.gen       levels made by code: dungeons, caves, mazes, islands, heightmaps, tile patterns, field of view
 //   gs.drag      drag, drop and snap pieces into slots; reorderable lists
 //   gs.history   undo and redo: each step of the round, back and forward, undos counted
@@ -142,6 +143,7 @@ import * as brains from './kit/brains.js';
 import * as board from './kit/board.js';
 import * as battle from './kit/battle.js';
 import * as stats from './kit/stats.js';
+import * as rpg from './kit/rpg.js';
 import * as gen from './kit/gen.js';
 import * as drag from './kit/drag.js';
 import * as idle from './kit/idle.js';
@@ -313,6 +315,7 @@ const core = {
   board: pick('board', board),
   battle: pick('battle', battle),
   stats: pick('stats', stats),
+  rpg: pick('rpg', rpg),
   gen: pick('gen', gen),
   drag: pick('drag', drag),
   idle: pick('idle', idle),

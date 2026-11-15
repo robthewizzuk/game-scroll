@@ -2216,6 +2216,60 @@ export interface StatsPart {
   Stats: new (stats?: Record<string, number | { base: number; min?: number; max?: number } | { max: number; regen?: number; delay?: number; start?: number; min?: number }>, o?: { buffs?: Record<string, StatBuff> }) => Stats;
 }
 
+export interface GrowthSkill {
+  name?: string; /** Most ranks (1). */ ranks?: number; /** Skill points a rank (1). */ cost?: number; /** Level it opens at. */ level?: number;
+  /** Skills needed first: 'id' or 'id:rank'. */ needs?: string[]; /** Skills that rule this one out. */ excludes?: string[];
+  /** Put on the Stats once a rank: add (times the rank) and mul (to the power of the rank). */ perk?: { add?: Record<string, number>; mul?: Record<string, number> };
+  /** Where to draw it in your tree. */ at?: Loose; tags?: string[];
+}
+export interface GrowthNode { id: string; name: string; rank: number; ranks: number; ok: boolean; why: string | null; needs: { id: string; rank: number }[]; at: Loose; tags: string[] }
+export interface Growth {
+  stats: Stats | null; level: number; xp: number; /** Unspent attribute points. */ points: number; /** Unspent skill points. */ skillPoints: number;
+  attrs: Record<string, number>; ranks: Record<string, number>; cap: number;
+  on(ev: 'xp' | 'level' | 'raise' | 'learn' | 'respec', fn: (...a: Loose[]) => void): this;
+  /** XP needed in all for a level. */ need(level: number): number;
+  /** XP in all for the next level (Infinity at the cap). */ readonly next: number;
+  /** 0..1 of the way to the next level. */ readonly part: number;
+  /** Gives XP; returns the levels gained (pools filled on a level up unless refill: false). */ gain(n: number, why?: string | null): number;
+  attr(name: string): number; /** Spends points on an attribute; false if short or at its top. */ raise(name: string, n?: number): boolean;
+  rank(id: string): number; has(id: string, rank?: number): boolean;
+  can(id: string): { ok: boolean; why: 'ranks' | 'level' | 'needs' | 'excluded' | 'points' | null; needs: string[]; cost: number };
+  /** Learns a skill's next rank; false if can() says no. */ learn(id: string): boolean;
+  /** Every skill, for drawing the tree. */ readonly nodes: GrowthNode[];
+  /** Gives back every point spent (keep: 'attributes' keeps those). */ respec(o?: { keep?: 'attributes' | null }): this;
+  /** A piece of gear's numbers on a slot, or null to take them off. */ gear(slot: string, spec: { add?: Record<string, number>; mul?: Record<string, number>; tags?: string[] } | null): this;
+  /** Follows a gs.items Inventory: what is in its equip slots counts, from its defs' stats: { add, mul }. */ wear(inv: Inventory): this;
+  /** What attributes, skills and gear add to a stat and multiply it by. */ parts(stat: string): { add: number; mul: number };
+  /** A stat now (the Stats' own, or worked out from base with no Stats). */ value(stat: string, base?: number): number;
+  restart(level?: number, xp?: number | null): this; pack(): Loose; unpack(d: Loose): this;
+}
+export interface RepFaction { start?: number; /** Move the other way by share (both ways). */ rivals?: string[]; /** Move the same way by share (both ways). */ allies?: string[]; /** Puts bounties on crimes it sees; mood 'arrest'. */ law?: boolean; /** Attacks when it hates the hero (else flees). */ fights?: boolean; /** Runs from a famous villain. */ timid?: boolean; /** Points a second back to its start. */ fade?: number }
+export type RepMood = 'arrest' | 'attack' | 'flee' | 'avoid' | 'ignore' | 'stare' | 'greet' | 'bow' | 'cheer';
+export interface Reputation {
+  on(ev: 'change' | 'rank' | 'deed' | 'paid', fn: (...a: Loose[]) => void): this;
+  get(axis: string): number; /** An axis -1..1 (0..1 for one that starts at its bottom). */ lean(axis: string): number;
+  /** A faction's standing, -100..100. */ with(faction: string): number;
+  /** 'hated' | 'disliked' | 'neutral' | 'liked' | 'loved' (or your ranks). */ rank(faction: string): string;
+  bounty(faction: string): number; /** Pays a bounty off; returns it. */ pay(faction: string): number;
+  /** Times a deed was done. */ done(id: string): number;
+  move(key: string, by: number, why?: string | null): this;
+  /** The hero did a deed. seen: true (everyone), false (nobody: only inner axes move) or the factions that saw. Returns what moved. */
+  did(id: string, o?: { seen?: boolean | string[]; by?: number; spec?: Record<string, number> | null }): Record<string, number>;
+  update(dt: number): void;
+  /** How someone of a faction meets the hero. */ mood(faction: string): RepMood;
+  /** A price from a faction (dearer when disliked, cheaper when liked); sell: what they pay the hero. */ price(base: number, faction?: string | null, o?: { sell?: boolean; spread?: number }): number;
+  title(): string | null; /** Every number flat, for a conversation's variables. */ vars(): Record<string, number | string>;
+  log: { id: string; seen: boolean }[]; restart(): this; pack(): Loose; unpack(d: Loose): this;
+}
+export interface RpgPart {
+  /** XP needed in all to reach a level: base * (level - 1)^power (100, 1.5). */
+  xpTo(level: number, o?: { base?: number; power?: number }): number;
+  /** new Growth(stats, { attributes, derive, tree, curve, cap, points, skills, most, refill }) in reset(). */
+  Growth: new (stats?: Stats | null, o?: { attributes?: Record<string, number>; derive?: Record<string, (attrs: Record<string, number>, g: Growth) => number>; tree?: Record<string, GrowthSkill>; curve?: { base?: number; power?: number } | ((level: number) => number); cap?: number; points?: number; skills?: number; most?: number | Record<string, number>; refill?: boolean; level?: number; xp?: number | null }) => Growth;
+  /** new Reputation({ axes, factions, deeds, share, inner, good, fame, titles, ranks }) in reset(). */
+  Reputation: new (o?: { axes?: Record<string, [number, number, number?] | { min?: number; max?: number; start?: number; fade?: number }>; factions?: Record<string, RepFaction>; deeds?: Record<string, Record<string, number>>; share?: number; inner?: string[]; good?: string; fame?: string; titles?: ({ name: string } & Record<string, Loose>)[]; ranks?: [number, string][]; keep?: number }) => Reputation;
+}
+
 export interface GenMap { grid: string[]; readonly text: string; w: number; h: number }
 export interface GenPart {
   dungeon(w?: number, h?: number, o?: { seed?: number | string; kind?: 'digger' | 'uniform' | 'rogue'; doors?: boolean; dug?: number }): GenMap & { rooms: { x: number; y: number; w: number; h: number; cx: number; cy: number }[]; start: { col: number; row: number }; end: { col: number; row: number } };
@@ -4189,7 +4243,7 @@ export interface GS {
   things: ThingsPart; rounds: RoundsPart; pacing: PacingPart; aim: AimPart; senses: SensesPart; prefs: PrefsPart; tick: TickPart; solve: SolvePart;
   camera2d: Camera2dPart; tiles: TilesPart; movers: MoversPart; anim: AnimPart; story: StoryPart; replay: ReplayPart; look2d: Look2dPart;
   tweak: TweakFn; brains: BrainsPart;
-  board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
+  board: BoardPart; battle: BattlePart; stats: StatsPart; rpg: RpgPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
