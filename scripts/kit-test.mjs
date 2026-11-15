@@ -4899,10 +4899,36 @@ console.log('physics ok');
     const A = mk(7), B = mk(7), C = mk(8); assert.ok(A.every((v, i) => v === B[i]) && A.some((v, i) => v !== C[i]), 'the same seed makes the same liquid, drop for drop');
     const n0 = f.view.sims.length; f.dispose(); assert.ok(f.view.sims.length === n0 - 1 && !f.mesh.parent, 'dispose()');
   }
+  {
+    // grains, snow and mud: a foot pressed into a layer and lifted. Water fills its print back in; snow keeps
+    // its print and has packed under it (no rim); mud keeps its print and shoves up a rim; sand slumps back.
+    // A column of sand falls into a pile that stands still at a slope instead of spreading flat.
+    FLUID.force = 8000;
+    const print = kind => {
+      const f = new Fluid(view(), { box: [-1, 0, -.6, 1, 1, .6], volume: .45, kind }); f.fill({ y1: .3 }); run(f, 90);
+      const before = f.level(0, 0), foot = f.box({ x: 0, y: .6, z: 0, w: .22, h: .2, d: .3 });
+      run(f, 60, i => foot.set(0, .6 - .5 * Math.min(1, i / 48), 0)); const rim = Math.max(...[.16, .2, .25, .3, .35].flatMap(x => [f.level(-x, 0), f.level(x, 0)]));
+      run(f, 36, i => foot.set(0, .1 + i / 60, 0)); foot.set(0, 3, 0); run(f, 120);
+      return { before, after: f.level(0, 0), rim, f };
+    };
+    const w = print('water'), sn = print('snow'), sa = print('sand'), mu = print('mud');
+    assert.ok(Math.abs(w.after - w.before) < .04, `water fills a print back in: ${w.before.toFixed(2)} then ${w.after.toFixed(2)}`);
+    assert.ok(sn.before - sn.after > .1 && sn.rim - sn.before < .02, `snow keeps a print, packed down with no rim: ${sn.before.toFixed(2)} then ${sn.after.toFixed(2)}, beside it ${sn.rim.toFixed(2)}`);
+    assert.ok(Math.max(...sn.f.sim.E.filter((v, i) => i % 8 === 3)) > 1.3, 'snow under the foot packed denser');
+    assert.ok(mu.before - mu.after > .05 && mu.rim > mu.before + .02, `mud keeps a print and shoves up a rim: ${mu.before.toFixed(2)} then ${mu.after.toFixed(2)}, rim ${mu.rim.toFixed(2)}`);
+    assert.ok(sa.after > sn.after + .05 && sa.rim > sa.before + .02, `sand is shoved aside and slumps back into the print: ${sa.before.toFixed(2)} then ${sa.after.toFixed(2)}, rim ${sa.rim.toFixed(2)}`);
+    const pile = new Fluid(view(), { box: [-2, 0, -1, 2, 2, 1], volume: 1.2, kind: 'sand' }); pile.fill({ x0: -.35, x1: .35, y1: 1.6 }); run(pile, 240);
+    const top = pile.level(0, 0), half = pile.level(.6, 0), at4 = [-.9, -.6, .6, .9].map(x => pile.level(x, 0)); run(pile, 240);
+    const drift = Math.max(...[-.9, -.6, .6, .9].map((x, i) => Math.abs((pile.level(x, 0) ?? 0) - (at4[i] ?? 0))));
+    const slope = Math.atan((top - half) / .6) * 180 / Math.PI;
+    assert.ok(slope > 15 && pile.level(1.6, 0) === null && drift < .05, `a sand pile stands at ${slope.toFixed(0)} degrees and stays (moved ${drift.toFixed(3)} in 4 s)`);
+    assert.ok(F.grainOf(KINDS.water) === null && F.grainOf(KINDS.snow).packs > 0, 'liquids have no grain');
+    FLUID.force = 0;
+  }
   FLUID.klass = null;
   const { HIDDEN } = await import('../src/gamescroll.js');
   assert.deepEqual(Object.keys(F).filter(k => !HIDDEN.fluid.includes(k)).sort(), ['Fluid', 'KINDS'], 'gs.fluid is Fluid and KINDS: the numbers and test switches stay off it');
-  console.log('gs.fluid: pools, taps, drains, a dam break, cups, a ball, blasts, ground, an open box, sideways gravity, resizing, copies back, seeds ok');
+  console.log('gs.fluid: pools, taps, drains, a dam break, cups, a ball, blasts, ground, an open box, sideways gravity, resizing, copies back, seeds, prints in snow, mud and sand, a sand pile ok');
 }
 
 // gs.gas (smoke and fire that flow): the version phones without WebGPU run, which is also what the graphics

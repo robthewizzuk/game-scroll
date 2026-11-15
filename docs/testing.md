@@ -571,6 +571,8 @@ instead of a normal one.
   break round a cup with a tap, a ball, a blast and a drain on the graphics chip, with the JavaScript
   version beside it, and fails if the two part by more than a hundredth of a cell or liquid is lost;
   without `--webgpu` it draws the JavaScript version. `npm run kit-test` has the liquid's rules.
+  `PICK=gpu-grains` does the same for snow, sand and mud: a foot pressed into each and lifted, sand poured
+  into a pile, the foot in above and the print it left below; it fails if snow or mud keep no print.
 - Smoke and fire (`gs.gas`): `PICK=gpu-gas node scripts/look-compare.cjs save <dir> --webgpu` burns a fire and
   a smoke maker under a ball on the graphics chip with the JavaScript version beside it, given the same grid
   and the same steps, and fails if their cells part by more than a hundredth of the smoke or the answers
