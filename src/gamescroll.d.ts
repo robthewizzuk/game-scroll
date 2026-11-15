@@ -525,8 +525,15 @@ export interface ControlsPart {
 export interface PadState { [k: string]: Loose; pressed(button: string): boolean }
 export interface PadPart { pad(i?: number): PadState | null; pads(): PadState[]; rumble(strength?: number, ms?: number, i?: number): void; padConnected(): boolean }
 
-export type MoveType = 'swing' | 'punch' | 'throw' | 'flip' | 'twist' | 'knock' | 'shake' | 'any';
-export interface MovesPart { Moves: new (o?: { sensitivity?: number }) => { on(type: MoveType, fn: (m: { type: string; dir?: string; power?: number }) => void): Loose; update(): void; stop(): void } }
+export type MoveType = 'swing' | 'punch' | 'throw' | 'flip' | 'twist' | 'knock' | 'shake' | 'any' | 'motion' | 'taught';
+export interface MovesPart { Moves: new (o?: { sensitivity?: number; /** A gs.brains.Examples (of: 'move'): moves of your own, or the player's, fire under the names it knows. */ learn?: Examples | null }) => {
+  /** A built-in move, 'any', 'motion' (every burst of movement: m.shape is 49 numbers, m.time its length), 'taught' (an example was taken: m.name, m.count), or a name the learner knows (m.sure). */
+  on(type: MoveType | (string & {}), fn: (m: { type: string; dir?: string; power?: number; shape?: number[]; time?: number; name?: string; count?: number; sure?: number }) => void): Loose;
+  /** The next burst of movement becomes an example of this name for the learner (null stops waiting). */
+  teach(name: string | null): Loose;
+  /** The name teach() is waiting for a move of, or null. */
+  teaching: string | null;
+  update(): void; stop(): void } }
 
 /** The fonts gs.pixel.text draws. */
 export type PixelFontName = 'small' | 'big' | 'silkscreen' | 'silkscreen bold' | 'tiny' | 'jersey' | 'terminal';
@@ -698,11 +705,15 @@ export interface PhysicsPart { Physics: new (o?: { gravity?: number; walls?: num
  *  (backend 'npu'), where the camera picture never reaches the game: pass `preview: true` if the game draws `picture`. */
 export interface VisionPart {
   Face: new (o?: { preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HTMLVideoElement | null; x: number; y: number; size: number; yaw: number; pitch: number; roll: number; mouth: number; smile: number; blink: boolean; winkLeft: boolean; winkRight: boolean; brows: number; [k: string]: Loose };
+  /** Each hand in list: x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points, and shape: the hand as 40 numbers for
+   *  gs.brains.Examples (of: 'hand'), the same wherever the hand is, however near, and with either hand: signs of the game's or the player's own. */
   Hands: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HTMLVideoElement | null; list: Loose[]; first: Loose | null };
   /** The whole body (stand back): joints by name, armsUp, leftUp, rightUp, lean, squat, jump, clap. Web view only. */
   Body: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; picture: HTMLVideoElement | null; x: number; y: number;
     joints: Record<'nose' | 'leftShoulder' | 'rightShoulder' | 'leftElbow' | 'rightElbow' | 'leftHand' | 'rightHand' | 'leftHip' | 'rightHip' | 'leftKnee' | 'rightKnee' | 'leftFoot' | 'rightFoot', { x: number; y: number; seen: number }>;
-    armsUp: boolean; leftUp: boolean; rightUp: boolean; lean: number; squat: number; jump: boolean; clap: boolean; people: Loose[]; points: Loose[] };
+    armsUp: boolean; leftUp: boolean; rightUp: boolean; lean: number; squat: number; jump: boolean; clap: boolean; people: Loose[]; points: Loose[];
+    /** The pose as 26 numbers for gs.brains.Examples (of: 'pose'): poses of the game's or the player's own. Null with nobody there. */
+    readonly shape: number[] | null };
   /** The player cut out of the camera picture: draw cut.picture (a canvas, see-through round the person). */
   CutOut: new (o?: { soft?: number; size?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; amount: number; soft: number; picture: HTMLCanvasElement | null };
   /** Hand signs: thumbs-up, thumbs-down, victory, open-palm, fist, point-up, love. */
@@ -1915,6 +1926,48 @@ export interface DialOptions {
   /** Start at the player's usual level and add to their profile (true). */
   profile?: boolean;
 }
+/**
+ * Teach by example: show it a thing a few times under a name, and it says which name a new thing looks
+ * like, or that it looks like none. For any list of numbers: a hand's shape (gs.vision Hands), a pose
+ * (Body), a move made with the phone (gs.moves), a sound (gs.hear Sounds).
+ */
+export declare class Examples {
+  constructor(api: GameApi | null, opts?: ExamplesOptions);
+  constructor(opts?: ExamplesOptions);
+  name: string;
+  /** One more example of a name (the newest 12 of each are kept). False when the numbers aren't the length of the ones before. */
+  add(name: string, numbers: ArrayLike<number>): boolean;
+  /** Which name these numbers look like, or null when they look like none. sure: how clear of the other names and of "none" (0..1); like: how close to that name's examples (0..1). */
+  guess(numbers: ArrayLike<number> | null, o?: { among?: string[] | null }): { name: string; sure: number; like: number } | null;
+  /** Takes back the last example added (a bad take). */
+  undo(): this;
+  /** Forgets the examples given while running (all, or one name's); the maker's own stay. */
+  forget(name?: string): this;
+  /** The names it has examples of. */
+  readonly names: string[];
+  /** How many examples a name has (all of them when left out). */
+  count(name?: string): number;
+  /** Every example as text, for the start option. */
+  pack(): string;
+}
+export interface ExamplesOptions {
+  /** Its name in the game's saved brains (default 'examples'). */
+  name?: string;
+  /** What the numbers are, when they are one of the kits' shapes: sets spread and strict to suit. */
+  of?: 'hand' | 'pose' | 'move' | 'sound';
+  /** How far a number wobbles between two takes of the same thing, before it has seen any (.12; numbers about -1..1). */
+  spread?: number;
+  /** How picky it is about what counts (1; higher is pickier, lower more forgiving). */
+  strict?: number;
+  /** How many numbers an example has (taken from the first example when left out). */
+  inputs?: number;
+  /** The newest this many examples of each name are kept (12). */
+  keep?: number;
+  /** The maker's own examples, which come with the game: pack()'s text, or { name: [numbers, ...] }. */
+  start?: string | Record<string, ArrayLike<number>[]>;
+  /** Keep the examples given while running with the game's brains (true). */
+  save?: boolean;
+}
 /** A rival who remembers you between sessions. */
 export declare class Nemesis {
   constructor(api: GameApi | null, opts: { name?: string; moves: number | string[]; target?: number; lines?: Partial<Record<'first' | 'back' | 'long' | 'habit' | 'won' | 'lost' | 'streak', string[]>> });
@@ -1957,6 +2010,7 @@ export interface BrainsPart {
   Predict: typeof Predict;
   Player: typeof Player;
   Dial: typeof Dial;
+  Examples: typeof Examples;
   Nemesis: typeof Nemesis;
   Shadow: typeof Shadow;
   /** Finds game-feel numbers whose trial result is closest to want (for makers, not players' phones). */
@@ -3818,6 +3872,8 @@ export interface HearPart {
     heard(name: string): boolean;
     /** How sure it is that the sound is going on now, 0..1. */
     hearing(name: string): number;
+    /** What is heard now as 32 numbers for gs.brains.Examples (of: 'sound'): sounds under names of your own. Null in silence. */
+    shape: number[] | null;
   };
   /** Spoken commands. available is false on phones that can't listen on the phone itself: use touch then. */
   Voice: new (o?: { words?: string[]; also?: Record<string, string[]>; language?: string }) => {

@@ -1071,6 +1071,11 @@ Moves: `swing` (`dir` left / right / up / down), `punch`, `throw`, `flip` (forwa
 `twist` (left / right), `knock`, `shake`, and `any`. Each has `power` 0..1. `new Moves({ sensitivity: 1.3 })`
 fires more easily. On iPhones the player is asked for motion access when they tap Play.
 
+Moves of your own, or the player's: `new Moves({ learn: new gs.brains.Examples(api, { name: 'moves', of: 'move' }) })`,
+then `moves.teach('stir')` takes the next move made as an example and `moves.on('stir', fn)` fires for
+moves like it. `moves.on('motion', m => m.shape)` gets every burst of movement
+([Teach by example](#teach-by-example-signs-poses-moves-and-sounds-of-your-own)).
+
 ## Game objects
 
 `const { Things } = gs.things;` A light list of your game's objects with tags, so collisions and
@@ -1364,7 +1369,8 @@ update(dt) {
 
 - `Face`: `found`, `x`, `y` (0..1, mirrored like a selfie), `size`, `yaw`, `pitch`, `roll`, `mouth`,
   `smile`, `blink`, `winkLeft`, `winkRight`, `brows`, `points` (478), `shapes` (52 expressions by name).
-- `Hands`: `list` of `{ x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points }`, `first`.
+- `Hands`: `list` of `{ x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points, shape }`, `first`.
+  `shape` is the hand as numbers for `gs.brains.Examples`: signs of your own ([Teach by example](#teach-by-example-signs-poses-moves-and-sounds-of-your-own)).
 - `ready` is true once the camera and model are running; `failed` holds the error if the player
   said no to the camera. The app stops the camera when the round ends. `backend` says where it runs
   (`'npu'` on the AI chip).
@@ -1590,6 +1596,49 @@ function make(api) {
   number in sums (`1 - dial`, `dial > .4`), so it works for your own opponent too.
 - It is saved with the game's brains in a few bytes. Give each opponent its own `name`.
 - A game with no winner (an endless runner) can use the score: `dial.result(score >= goal)`.
+
+### Teach by example: signs, poses, moves and sounds of your own
+
+`gs.brains.Examples` learns a thing from a few examples and says which one a new thing looks like, or
+that it looks like none of them. The kits give the numbers: a hand's shape, a body's pose, a move made
+with the phone, a sound. So a game can have its own hand signs, or let the player make up theirs.
+
+```js
+const { Examples } = gs.brains, { Hands } = gs.vision;
+function make(api) {
+  const hands = new Hands(), signs = new Examples(api, { name: 'signs', of: 'hand' });
+  ...
+  // teaching ("show me your rock"): when the player taps, take what the camera sees
+  if (hands.first) signs.add('rock', hands.first.shape);
+  // playing
+  const g = hands.first && signs.guess(hands.first.shape);       // { name, sure, like } or null: none of them
+  if (g && g.sure > .6) play(g.name);
+}
+```
+
+| What | The numbers | The learner |
+| --- | --- | --- |
+| A hand sign | `hand.shape` (each hand in `hands.list`): the same wherever the hand is, however near, with either hand; which way it points counts | `of: 'hand'` |
+| A pose | `body.shape` (`gs.vision.Body`) | `of: 'pose'` |
+| A move with the phone | `new Moves({ learn })`, then `moves.teach('stir')` takes the next move as an example and `moves.on('stir', fn)` fires for moves like it | `of: 'move'` |
+| A sound | `ears.shape` (`gs.hear.Sounds`): the mix of everyday sounds it is made of, so it tells apart sounds the list tells apart, under names of your own | `of: 'sound'` |
+| Anything else | your own list of numbers, about -1..1, always the same length | `spread`, `strict` |
+
+- **One example is enough to start, three make it dependable.** With made-up hands that wobble like
+  real takes, six signs a finger apart are known again 88% of the time from one example each, 94%
+  from three and 97% from five, and almost never taken for another (the kit test measures it).
+- **It works out which numbers matter** for each name (where its examples agree) and how much this
+  player's takes vary, by leaving each example out in turn. A name can be two kinds of thing.
+- **"None of them" is an answer.** A sign it was never shown is usually nothing; one that is a finger
+  away from a taught sign is sometimes taken for it, so teach that one too, or check `sure`.
+- `signs.undo()` takes back a bad take, `forget(name)` a whole name, `names` and `count(name)` say
+  what it knows, `guess(x, { among: ['rock', 'paper'] })` asks about a few.
+- **The maker's own examples come with the game**: teach it in `npm run dev`, press **B** in the debug
+  overlay to copy `signs.pack()`, and pass it as `start`. The player's examples are saved with the
+  game's brains (about 25 of a hand's shape, the newest kept).
+- A guess takes a few microseconds, and nothing is downloaded beyond what the tracker already needs.
+- Sensors still need a touch way to play. These shapes come from the camera, the mic and the motion
+  sensors, so the card says so before Play like any other sensor game.
 
 ### Nemesis, Shadow and teaching by playing
 
@@ -2461,7 +2510,8 @@ update(dt) { ears.update(dt); if (ears.heard('Dog')) scareCats(); }
 ```
 
 `heard(name)` is true once each time the sound starts, `hearing(name)` is how sure it is right now
-(0..1) and `top` is the surest sound. Options: `sure` (.3) and `every` (seconds between looks, .25).
+(0..1) and `top` is the surest sound. `shape` is what is heard as numbers for `gs.brains.Examples`:
+sounds under names of your own ([Teach by example](#teach-by-example-signs-poses-moves-and-sounds-of-your-own)). Options: `sure` (.3) and `every` (seconds between looks, .25).
 Some names: `'Speech'`, `'Singing'`, `'Whistling'`, `'Clapping'`, `'Finger snapping'`, `'Laughter'`,
 `'Dog'`, `'Cat'`, `'Bird'`, `'Knock'`, `'Bell'`, `'Cough'`, `'Snoring'`, `'Music'`. In the phone apps YAMNet
 runs on the phone's AI chip with the mic read natively (a 5 MB model); on the web the MediaPipe engine
