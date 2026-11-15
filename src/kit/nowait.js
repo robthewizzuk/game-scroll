@@ -31,8 +31,8 @@
 
 /** on: false draws as three does (builds in the frame). ms: main-thread time a turn of the queue takes before the next frame. most: times in a row one thing is put off (for one camera, with no frame drawing it between) before it is drawn as three does. */
 export const NOWAIT = { on: true, ms: 6, most: 12 };
-/** Counts (tests, the frame lab): texts and pipelines put off from a frame, the queued builds done and failed, and draws built in the frame for a change of lights, sky or fog (env). */
-export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 0, frames: 0, env: 0, names: [] };
+/** Counts (tests, the frame lab): texts and pipelines put off from a frame, the queued builds done and failed, draws built in the frame for a change of lights, sky or fog (env), and the shader programs the queued builds made (programs: the frame lab leaves them out of its "shaders built" in a frame). */
+export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 0, frames: 0, env: 0, programs: 0, names: [] };
 
 /**
  * Installs the deferral on a WebGPU renderer (gpu.js, once it is made). It acts only between r.gsNoWait.begin() and
@@ -150,7 +150,7 @@ function drain(r) {
       if (performance.now() - t0 >= NOWAIT.ms) { await nextFrame(); t0 = performance.now(); }
       const st = it.state;
       st.item = it; st.materialSide = null; back(r, st);
-      const promises = [];
+      const promises = [], p0 = r.info.memory.programs;
       begin(r, st);
       let ok = false;
       try {
@@ -169,7 +169,7 @@ function drain(r) {
         ok = true;
       } catch (e) {
         if (e !== LOST) { NOWAIT_STATS.failed++; console.warn('3D: a shader put off from a frame failed to build', e); }
-      } finally { if (r._precompilationState) finish(r); Q.has.delete(it.ro); it.unwatch(); }
+      } finally { if (r._precompilationState) finish(r); Q.has.delete(it.ro); it.unwatch(); NOWAIT_STATS.programs += Math.max(0, r.info.memory.programs - p0); }
       if (ok) NOWAIT_STATS.built++;
       if (!promises.length) Q.done++;
       for (const p of promises) { const end = () => { pipes.delete(q); Q.done++; }, q = p.then(end, end); pipes.add(q); }

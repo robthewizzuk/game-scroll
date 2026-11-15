@@ -139,7 +139,8 @@ const fxText = () => Object.entries(HD?.fx || {}).map(([k, v]) => `${k} ${Math.r
 function counters(s) {
   const G = webgpu(), d = s?.def;
   let progs = glStats.programs, tex = glStats.r?.info?.memory?.textures ?? 0;
-  if (G && HD?.info.backend === 'webgpu' && is3D(d)) { progs += G.r.info?.memory?.programs ?? 0; tex += G.r.info?.memory?.textures ?? 0; }
+  // (less the ones the kit built in the background for things put off from a frame, kit/nowait.js: no frame waited for those)
+  if (G && HD?.info.backend === 'webgpu' && is3D(d)) { progs += (G.r.info?.memory?.programs ?? 0) - NOWAIT_STATS.programs; tex += G.r.info?.memory?.textures ?? 0; }
   // what was built since the last frame, by name: 'MeshStandardMaterial 3, ShadowNodeMaterial 2 (made again 1), effects chain (lens)'
   const what = builtNames(C.bt); C.bt = performance.now();
   if (C.progs >= 0 && progs > C.progs) { const n = progs - C.progs; pend.push(`shaders built (${n})`); event('S', `${n} shader${n > 1 ? 's' : ''} built${what ? ': ' + what : ''}`); }
