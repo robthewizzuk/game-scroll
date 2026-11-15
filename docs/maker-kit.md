@@ -2591,6 +2591,28 @@ hero = magic.unit(heroMesh, { team: 'hero', stats: new Stats({ hp: { max: 100 },
 // update(dt): for (const e of magic.update(dt)) if (e.type === 'hit') feel.hit(...); looks.update(dt);
 ```
 
+**Monsters** (`gs.monsters`, 2D or 3D): `new Moveset(body, { attacks: ['bite', 'claw', 'pounce'], radius, stats })`
+is what a monster fights with. Each attack is data (`ATTACKS` has `bite`, `claw`, `swipe`, `tail`,
+`sweep`, `stomp`, `slam`, `charge`, `pounce`, `breath`, `spit` and `roar` to start from): a `shape`
+(`cone`, `circle`, `ring`, `rear` behind it, `line` for a dash), the `range` and `side` it is picked
+from, a `windup` you can see coming, an `active` moment it hurts, a `recover` to punish, `damage`,
+`push`, `status`, `cool` and `weight`; `track` turns it after you while it winds up, `spin` sweeps it
+round, `dash` and `leap` carry it (a charge, a pounce), `every` hurts again and again (breath), `spell`
+casts a gs.magic spell from its `unit`. `moves.update(dt, target, targets)` gives `{ walk, speed, face,
+pose, move, hits, shots }`: walk it in between, play `pose` (`{ name, at }`) on its rig, add `move`
+to its position. Draw the telegraph from `moves.now.shape` (red while it winds up, by `now.phaseT`).
+Targets with `stats` lose health, with `react` (people who react, or a Hurt) are shoved, with
+`blocks(attack, from)` take a chip, `dodging` are missed. `moves.hurt(power)` breaks a windup on a hard
+hit; `skill` (a number or a gs.brains `Dial`) shortens the windups and the rests. `new Hurt(creature, {
+ground })` is how a `gs.models.creature` (or anything on a gs.poses rig) takes a hit, over whatever its
+rig is doing: `hurt.hit(push, { power })` is a flinch away from the blow, a stagger back, or knocked off
+its feet onto its side to get up again; `hurt.die(push)` falls dead and stays; `hurt.busy` says when it
+can't act; call `hurt.update(dt)` after the rig. `new Boss({ stats, moves, phases: [{ below: 1, attacks
+}, { below: .6, attacks, buff, pause, summon }], poise: { max, stun }, enrage: 120 })` changes the fight
+as its health falls: new attacks and buffs, a roar between when it takes no harm (`invulnerable`), a
+`summon` event for adds, a poise meter its hits fill that breaks into a stagger, and a rage when time is
+up; `boss.update(dt)` gives `phase`, `staggered`, `summon`, `calm`, `enraged` and `dead`.
+
 **Campaigns** (`gs.campaign`): `Campaign(chapters, { extras }).attach(api)` keeps which missions are
 open (in order, or by stars), up to three stars each (score targets or named challenges), best
 scores, collectibles and extras that unlock at a star count, saved compactly with `api.save()`.

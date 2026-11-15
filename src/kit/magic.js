@@ -400,6 +400,7 @@ export class Magic {
       dmg *= 1 - Math.max(-1, Math.min(1, st.get('resist.' + el)));
     }
     if (dmg > 0 && st) dmg = Math.max(dmg > 0 ? 1 : 0, dmg - st.get('armour') * (s.pierceArmour ? 0 : .5));
+    if (st?.is('invulnerable')) dmg = 0;   // (a boss between its phases, a dodge's moment)
     // wards first
     for (const w of t.wards) { if (dmg <= 0) break; if (w.element && w.element !== el) continue; const k = Math.min(w.amount, dmg); w.amount -= k; dmg -= k; e.absorbed += k; if (w.amount <= 0) this.emit({ type: 'broken', by: w.by, who: t, spell: w.spell, at: e.at }); }
     if (e.absorbed) this.emit({ type: 'absorb', by, who: t, spell: name, amount: e.absorbed, at: e.at });

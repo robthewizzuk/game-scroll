@@ -85,6 +85,7 @@
 //   gs.stealth   light meter, takedowns, bodies, noisy floors, disguises
 //   gs.gadgets   grappling hook, zip line, wire / lock / code puzzles   gs.campaign  chapters, stars, collectibles, unlocks
 //   gs.arena     ball games with cars: arena, goals, boost, flips, ball prediction, replays
+//   gs.monsters  monster attack sets with telegraphs, creatures that flinch, stagger, fall and die, bosses in phases
 //   gs.magic     spells: casts, mana and cooldowns, bolts, areas, beams, wards, heals, statuses that meet, ready 3D looks
 //   gs.props     thousands of props with culling and detail levels (InstancedMesh2), rooms, chunked worlds
 //   gs.regions   big worlds in parts: levels made when picked, squares and land tiles round the player, freed behind
@@ -241,7 +242,7 @@ const GROUPS = {
       characters: pick('characters', m.characters, m.reactions), level3d: pick('level3d', m.level3d), sky: pick('sky', m.sky),
       poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), THREE: m.THREE })) },
   ai: { parts: ['ai'], load: () => import('./kit/ai.js').then(m => ({ ai: pick('ai', m) })) },
-  action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena', 'magic'],
+  action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena', 'magic', 'monsters'],
     load: () => import('./gs-action.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
   play: { parts: ['craft', 'soft', 'cards', 'dice', 'words', 'trivia', 'ui'],
     load: () => import('./gs-play.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },

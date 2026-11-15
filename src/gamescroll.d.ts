@@ -2293,6 +2293,66 @@ export interface MagicPart {
   Looks: new (magic: Magic, fx: Loose, o?: { colours?: Record<string, [string, string]>; lights?: boolean; size?: number }) => { update(dt: number): void; clear(): Loose };
 }
 
+/** A monster's attack (gs.monsters ATTACKS, or your own). Times in seconds. */
+export interface MonsterAttack {
+  name?: string;
+  /** Where it hurts: 'cone' (reach, angle), 'circle' (radius, ahead), 'ring' (radius, inner), 'rear' (a cone behind), 'line' (a dash: width), 'none' (a spit or a spell). */
+  shape?: 'cone' | 'circle' | 'ring' | 'rear' | 'line' | 'none'; reach?: number; angle?: number; radius?: number; ahead?: number; inner?: number; width?: number;
+  /** [nearest, furthest] (edge to edge) it is picked from; side: where the target must be. */
+  range?: [number, number]; side?: 'front' | 'back' | 'any';
+  /** The telegraph, the moment it hurts, the opening after. */
+  windup?: number; active?: number; recover?: number;
+  damage?: number; push?: number; up?: number; status?: string; element?: string; chip?: number;
+  cool?: number; weight?: number; track?: number; hpBelow?: number; armour?: boolean;
+  /** The rig pose and where in it: [name, windupStart, active, recoverEnd]. */
+  pose?: [string, number, number, number];
+  spin?: number; dash?: number; leap?: number; every?: number; spell?: string; shoot?: { speed?: number; size?: number; height?: number };
+  [k: string]: Loose;
+}
+/** An attack's shape now, for the telegraph: x and z (y in 2D) of its middle or start, dir (yaw), radius, angle, inner, width. */
+export interface AttackShape { kind: string; flat: boolean; x: number; z: number; y: number; dir: number; radius: number; angle: number; inner: number; width: number; part: number; phase: 'windup' | 'active' | 'recover' }
+export interface AttackNow { attack: MonsterAttack; name: string; phase: 'windup' | 'active' | 'recover'; t: number; part: number; phaseT: number; shape: AttackShape | null; target: Loose }
+export interface MonsterHit { who: Loose; attack: MonsterAttack; name: string; damage: number; push: P3; at: P3; blocked: boolean; by: Moveset }
+export interface Moveset {
+  list: MonsterAttack[]; radius: number; reach: number; keep: number; skill: Skill | number; stats: Stats | null; unit: MagicUnit | null; face: number; cools: Record<string, number>;
+  /** The attack under way (phase, part, shape for the telegraph), or null. */
+  readonly now: AttackNow | null; readonly pos: P3;
+  set(attacks: (string | MonsterAttack)[]): this;
+  on(ev: 'start' | 'active' | 'recover' | 'end' | 'stop' | 'hit' | 'blocked' | 'miss' | 'shoot' | 'fail', fn: (e: Loose) => void): this;
+  can(name: string, target?: Loose): true | 'unknown' | 'busy' | 'cooling' | 'range' | 'side' | 'health';
+  start(name: string, target?: Loose): AttackNow; stop(why?: string): boolean;
+  /** It was hit (power 0..1): a hard enough one breaks a windup. */
+  hurt(power?: number, o?: { poise?: number }): boolean; stunFor(seconds: number): void;
+  /** Thinks, moves the attack on and hits. targets: { body | x, y, z, radius, stats, react, blocks(attack, from), dodging }. */
+  update(dt: number, target?: Loose, targets?: Loose[]): { walk: P3; speed: number; face: number; pose: { name: string; at: number } | null; move: P3; attack: AttackNow | null; hits: MonsterHit[]; shots: { from: P3; dir: P3; speed: number; size: number; attack: MonsterAttack; damage: number }[] };
+}
+export interface CreatureHurt {
+  state: 'steady' | 'flinch' | 'stagger' | 'down' | 'rising' | 'dead'; readonly busy: boolean; readonly dead: boolean; slide: P3; weight: number; poise: number; sturdy: number;
+  on(ev: 'hit' | 'down' | 'up' | 'dead', fn: (e: Loose) => void): this;
+  /** A hit: push in metres a second along the blow, power 0..1 (a flinch, a stagger back, knocked down). */
+  hit(push?: P3, o?: { power?: number | null }): this; die(push?: P3): this; reset(): this;
+  /** After the rig's own update each frame. */
+  update(dt: number): this;
+}
+export interface Boss {
+  stats: Stats; phases: { below?: number; name?: string; attacks?: (string | MonsterAttack)[]; buff?: StatBuff; pause?: number; summon?: { count: number; kind?: string }; [k: string]: Loose }[]; moves: Moveset | null;
+  readonly index: number; readonly phase: { below?: number; name?: string; [k: string]: Loose }; readonly part: number; readonly poiseLeft: number; readonly changing: boolean; readonly enraged: boolean; readonly dead: boolean; readonly t: number;
+  on(ev: 'phase' | 'staggered' | 'enraged' | 'summon' | 'calm' | 'dead', fn: (e: Loose) => void): this;
+  poise(n: number): this;
+  update(dt: number): { type: 'phase' | 'staggered' | 'enraged' | 'summon' | 'calm' | 'dead'; [k: string]: Loose }[];
+}
+export interface MonstersPart {
+  /** A monster's attacks: names from ATTACKS or specs. radius, reach, keep (hold off at), rest ([min, max] between attacks), skill (0..1 or a Dial: shorter windups), stats, unit (gs.magic, for spells), rng, apply (false: only say who was hit). */
+  Moveset: new (body: Loose, o?: { attacks?: (string | MonsterAttack)[]; radius?: number; reach?: number | null; keep?: number; rest?: [number, number]; skill?: Skill | number; stats?: Stats | null; unit?: MagicUnit | null; rng?: () => number; apply?: boolean }) => Moveset;
+  /** How a creature (gs.models.creature, or anything on a gs.poses Rig) takes a hit, over its rig's own pose. */
+  Hurt: new (creature: Loose, o?: { ground?: ((x: number, z: number) => number) | null; weight?: number; poise?: number; sturdy?: number; move?: boolean; getUp?: number; down?: string; flinch?: string }) => CreatureHurt;
+  /** A boss fight in phases by health, with a roar between, poise that breaks into a stagger and an enrage timer. */
+  Boss: new (o: { stats: Stats; phases?: Boss['phases']; moves?: Moveset | null; poise?: { max?: number; recover?: number; stun?: number } | null; enrage?: number; rage?: StatBuff; hurt?: CreatureHurt | null }) => Boss;
+  /** bite, claw, swipe, tail, sweep, stomp, slam, charge, pounce, breath, spit, roar. */
+  ATTACKS: Readonly<Record<string, MonsterAttack>>;
+  inShape(shape: Partial<AttackShape>, x: number, z: number, r?: number): boolean;
+}
+
 export interface GenMap { grid: string[]; readonly text: string; w: number; h: number }
 export interface GenPart {
   dungeon(w?: number, h?: number, o?: { seed?: number | string; kind?: 'digger' | 'uniform' | 'rogue'; doors?: boolean; dug?: number }): GenMap & { rooms: { x: number; y: number; w: number; h: number; cx: number; cy: number }[]; start: { col: number; row: number }; end: { col: number; row: number } };
@@ -4269,7 +4329,7 @@ export interface GS {
   board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
-  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
+  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
   outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;

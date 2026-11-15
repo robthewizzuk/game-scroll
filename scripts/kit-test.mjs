@@ -7389,6 +7389,90 @@ console.log('physics ok');
   console.log('gs.magic: casts, mana, cooldowns, homing, piercing, chains, warned and lingering areas, cones, beams, wards, mirrors, heals, buffs, statuses that meet, 2D, looks ok');
 }
 
+// gs.monsters: attack sets with telegraphs (picked by range and side, cooldowns, charges, leaps, breath, spit, spells),
+// a creature that flinches, staggers, is knocked down and gets up, falls dead; bosses in phases with poise and enrage
+{
+  const { Moveset, Hurt, Boss, ATTACKS, inShape } = await import('../src/kit/monsters.js');
+  const { Stats } = await import('../src/kit/stats.js'), { creature } = await import('../src/kit/models/creature.js');
+  let seed = 3; const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const hero = { x: 0, y: 0, z: 1.6, radius: .4, stats: new Stats({ hp: { max: 200 } }) };
+  const wolf = { x: 0, y: 0, z: 0, yaw: 0 }, run = (m, s, t = hero, ts = [t], dt = 1 / 60) => { const outs = []; for (let i = 0; i * dt < s - 1e-9; i++) { const o = m.update(dt, t, ts); wolf.x += o.move.x; wolf.z += o.move.z; wolf.y += o.move.y; wolf.yaw = o.face; outs.push(o); } return outs; };
+  // a bite: a windup to see coming, then it hurts once, then an opening
+  const bites = new Moveset(wolf, { attacks: ['bite'], radius: .5, rest: [0, 0], rng });
+  let o = run(bites, .05).at(-1); assert.ok(o.attack?.phase === 'windup' && o.attack.shape.kind === 'cone' && o.hits.length === 0, 'in range: it winds up a bite');
+  assert.ok(o.pose?.name === 'attack' && o.pose.at < .25, 'and plays its attack pose from the start');
+  const outs = run(bites, 1.2); const hits = outs.flatMap(x => x.hits);
+  assert.ok(hits.length === 1 && hits[0].damage === 12 && hero.stats.get('hp') === 188 && Math.abs(hits[0].push.z - 2) < 1e-6, 'one bite, 12 off, a shove away: ' + hits.length);
+  assert.ok(outs.some(x => x.attack?.phase === 'recover') && bites.cools.bite > 0, 'then it recovers, and the bite cools down');
+  // out of range: it walks in; behind it: a tail sweep, not a bite
+  const set = new Moveset(wolf, { attacks: ['bite', 'tail'], radius: .5, rest: [0, 0], rng }), far = { x: 0, y: 0, z: 6, radius: .4 };
+  o = run(set, .1, far).at(-1); assert.ok(!o.attack && o.walk.z > .5 && o.speed > 0, 'out of range: it closes in');
+  wolf.yaw = 0; set.face = 0; const behind = { x: 0, y: 0, z: -1.6, radius: .4, stats: new Stats({ hp: { max: 50 } }) };
+  assert.equal(set.can('bite', behind), 'side', 'no biting what is behind it'); assert.equal(set.can('tail', behind), true, 'but its tail can');
+  set.start('tail', behind); run(set, .8, behind); assert.ok(behind.stats.get('hp') === 34, 'the tail sweeps behind: ' + behind.stats.get('hp'));
+  // a guard takes most of it off; dodging, all of it
+  const guard = { x: 0, y: 0, z: 1.4, radius: .4, stats: new Stats({ hp: { max: 50 } }), blocks: () => true }; wolf.x = wolf.z = 0; wolf.yaw = 0;
+  const g = new Moveset(wolf, { attacks: ['claw'], radius: .5, rest: [0, 0], rng }); g.face = 0; let hit = run(g, 1, guard).flatMap(x => x.hits)[0];
+  assert.ok(hit.blocked && hit.damage === 2 && guard.stats.get('hp') === 48, 'blocked: only a chip of it');
+  const dodger = { x: 0, y: 0, z: 1.4, radius: .4, stats: new Stats({ hp: { max: 50 } }), dodging: true }; const g2 = new Moveset(wolf, { attacks: ['claw'], radius: .5, rest: [0, 0], rng }); g2.face = 0;
+  assert.ok(run(g2, 1, dodger).flatMap(x => x.hits).length === 0 && dodger.stats.get('hp') === 50, 'dodging: nothing');
+  // a hard hit breaks a windup; a stun holds it
+  const h1 = new Moveset(wolf, { attacks: ['slam'], radius: .5, rest: [0, 0], rng }); h1.face = 0; run(h1, .1, { x: 0, y: 0, z: 2.4, radius: .4 });
+  assert.ok(h1.now?.phase === 'windup' && h1.hurt(.2) === false && h1.hurt(.6) === true && !h1.now, 'a light hit does not break a windup, a hard one does');
+  h1.stunFor(1); o = run(h1, .5, { x: 0, y: 0, z: 2.4, radius: .4 }).at(-1); assert.ok(!o.attack && o.speed === 0, 'stunned: nothing');
+  // a charge carries it along and hits what it runs into; a pounce leaps
+  wolf.x = wolf.y = wolf.z = 0; const target = { x: 0, y: 0, z: 7, radius: .4, stats: new Stats({ hp: { max: 100 } }) };
+  const ch = new Moveset(wolf, { attacks: ['charge'], radius: .5, rest: [0, 0], rng }); ch.face = 0; const co = run(ch, 2.6, target);
+  assert.ok(wolf.z > 6 && target.stats.get('hp') === 78 && co.some(x => x.attack?.shape?.kind === 'line'), 'a charge: it runs ' + wolf.z.toFixed(1) + ' m and rams: ' + target.stats.get('hp'));
+  wolf.x = wolf.y = wolf.z = 0; target.z = 4; const pn = new Moveset(wolf, { attacks: ['pounce'], radius: .5, rest: [0, 0], rng }); pn.face = 0; let top = 0;
+  for (const x of run(pn, .7, target)) top = Math.max(top, wolf.y); run(pn, 1, target);
+  assert.ok(top > 1 && Math.abs(wolf.y) < 1e-6 && wolf.z > 3, 'a pounce leaps up and comes down where it was going: ' + [top, wolf.y, wolf.z].map(v => v.toFixed(3)));
+  // breath hurts again and again while it lasts; a spit throws a shot
+  wolf.x = wolf.y = wolf.z = 0; const br = new Moveset(wolf, { attacks: ['breath'], radius: .5, rest: [0, 0], rng }); br.face = 0; const burnt = { x: 0, y: 0, z: 3, radius: .4, stats: new Stats({ hp: { max: 100 } }) };
+  const bh = run(br, 3, burnt).flatMap(x => x.hits); assert.ok(bh.length >= 6 && burnt.stats.has('burn'), 'breath: hit after hit, and it burns: ' + bh.length);
+  const sp = new Moveset(wolf, { attacks: ['spit'], radius: .5, rest: [0, 0], rng }); sp.face = 0; const shots = run(sp, 1, { x: 0, y: 0, z: 8, radius: .4 }).flatMap(x => x.shots);
+  assert.ok(shots.length === 1 && shots[0].dir.z > .9 && shots[0].speed === 14, 'spit: one shot at the target');
+  // with a gs.magic unit, an attack can be a spell
+  { const { Magic } = await import('../src/kit/magic.js'), magic = new Magic({ book: { fireball: { kind: 'bolt', element: 'fire', speed: 20, damage: 9 } }, link: false });
+    const me = magic.unit(wolf, { team: 'm', stats: new Stats({ hp: { max: 50 } }) }), you = magic.unit({ x: 0, y: 0, z: 6 }, { team: 'h', stats: new Stats({ hp: { max: 50 } }) });
+    const ms = new Moveset(wolf, { attacks: [{ name: 'fireball', shape: 'none', range: [0, 10], windup: .3, active: .1, recover: .3, spell: 'fireball' }], unit: me, rest: [0, 0], rng }); ms.face = 0;
+    for (let i = 0; i < 90; i++) { ms.update(1 / 60, { body: you.body, unit: you, radius: .4 }); magic.update(1 / 60); }
+    assert.equal(you.stats.get('hp'), 41, 'an attack that casts a spell'); }
+  // choosing: weighted, only what fits, power from its stats
+  wolf.x = wolf.y = wolf.z = 0; const ch2 = new Moveset(wolf, { attacks: ['bite', { name: 'claw', weight: 0 }, 'slam'], radius: .5, rng, stats: new Stats({ power: 2 }) }); ch2.face = 0; const picks = {}; ch2.on('start', n => { picks[n.name] = (picks[n.name] || 0) + 1; });
+  const dummy = { x: 0, y: 0, z: 1.4, radius: .4, stats: new Stats({ hp: { max: 9999 } }) }; const dh = run(ch2, 30, dummy).flatMap(x => x.hits);
+  assert.ok(picks.bite > 3 && !picks.claw && dh.some(x => x.damage === 24), 'it picks among what fits by weight, and its power doubles a bite: ' + JSON.stringify(picks));
+  assert.ok(inShape({ kind: 'cone', x: 0, z: 0, dir: 0, radius: 2, angle: .5 }, 0, 1.5) && !inShape({ kind: 'cone', x: 0, z: 0, dir: 0, radius: 2, angle: .5 }, 1.5, .2) && inShape({ kind: 'line', x: 0, z: 0, dir: Math.PI / 2, radius: 5, width: 1 }, 3, .2), 'shapes');
+  // on the flat (2D): +x is ahead
+  const bug = { x: 0, y: 0, angle: 0 }, flatSet = new Moveset(bug, { attacks: ['bite'], radius: 5, rest: [0, 0], rng }), prey = { x: 10.5, y: 0, radius: 5, stats: new Stats({ hp: { max: 50 } }) };
+  for (let i = 0; i < 90; i++) flatSet.update(1 / 60, prey); assert.equal(prey.stats.get('hp'), 38, '2D: a bite on the flat');
+  // Hurt: a creature flinches away from a light hit, staggers back from a harder one, is knocked down and gets up, dies
+  const cat = creature({ like: 'cat', now: true, fur: false }), hurt = new Hurt(cat, { ground: () => 0 }), ev = []; for (const k of ['hit', 'down', 'up', 'dead']) hurt.on(k, e => ev.push(k + (e.kind ? ':' + e.kind : '')));
+  const step = s => { for (let i = 0; i * (1 / 60) < s; i++) { cat.move(1 / 60, 0); hurt.update(1 / 60); } };
+  step(.2); const head0 = cat.bones.head.getWorldPosition(new (await import('three')).Vector3()).clone();
+  hurt.hit({ x: 0, y: 0, z: -1 }, { power: .1 }); step(.06); cat.updateMatrixWorld(true); const head1 = cat.bones.head.getWorldPosition(head0.clone());
+  assert.ok(hurt.state === 'flinch' && !hurt.busy && head1.distanceTo(head0) > .002, 'a light hit: it flinches (the head jerks ' + (head1.distanceTo(head0) * 1000).toFixed(1) + ' mm) and is not held up');
+  step(.6); assert.equal(hurt.state, 'steady', 'and settles');
+  const x0 = cat.position.z; hurt.hit({ x: 0, y: 0, z: -5 }, { power: .5 }); assert.ok(hurt.state === 'stagger' && hurt.busy, 'harder: a stagger'); step(.8); assert.ok(cat.position.z < x0 - .3 && hurt.state === 'steady', 'it is shoved back ' + (x0 - cat.position.z).toFixed(2) + ' m and finds its feet');
+  const hip0 = cat.bones.hips.rotation.z; hurt.hit({ x: 6, y: 0, z: 0 }, { power: .9 }); step(.4); assert.ok(hurt.state === 'down' && Math.abs(cat.bones.hips.rotation.z - hip0) > 1, 'knocked off its feet: on its side');
+  step(1.8); assert.ok(hurt.state === 'steady' && Math.abs(cat.bones.hips.rotation.z - hip0) < .2 && ev.includes('up'), 'and up again');
+  hurt.die({ x: 0, y: 0, z: 2 }); step(1); assert.ok(hurt.dead && hurt.busy && Math.abs(cat.bones.hips.rotation.z - hip0) > 1 && ev.includes('dead'), 'dead: down and staying down'); hurt.hit({ x: 1, y: 0, z: 0 }); assert.equal(hurt.state, 'dead', 'nothing moves the dead');
+  // Boss: phases by health, a roar between when nothing hurts, poise that breaks, enrage
+  const bs = new Stats({ hp: { max: 1000 }, power: 1, attackSpeed: 1 }), bm = new Moveset(wolf, { attacks: ['bite'], rest: [0, 0], rng });
+  const boss = new Boss({ stats: bs, moves: bm, phases: [{ below: 1, name: 'one', attacks: ['bite'] }, { below: .6, name: 'two', attacks: ['bite', 'stomp'], buff: { mul: { attackSpeed: 1.25 } }, pause: 1.5, summon: { count: 3, kind: 'pup' } }, { below: .25, name: 'three', attacks: ['breath'], pause: 1 }], poise: { max: 100, recover: 5, stun: 2 }, enrage: 60 });
+  const bev = []; const bstep = s => { for (let i = 0; i * (1 / 60) < s; i++) bev.push(...boss.update(1 / 60)); };
+  assert.equal(boss.phase.name, 'one', 'it starts in its first phase');
+  bs.change('hp', -450); bstep(.05); assert.ok(boss.phase.name === 'two' && boss.changing && bs.is('invulnerable') && bm.list.some(a => a.name === 'stomp') && bs.get('attackSpeed') === 1.25, 'under 60%: phase two, a roar, new attacks, faster');
+  assert.ok(bev.some(e => e.type === 'phase' && e.from === 0) && bev.some(e => e.type === 'summon' && e.count === 3), 'it says so, and calls for help');
+  bstep(1.6); assert.ok(!boss.changing && bev.some(e => e.type === 'calm'), 'then fights on');
+  bs.change('hp', -60); bs.change('hp', -50); bstep(.02); assert.ok(bev.some(e => e.type === 'staggered') && bs.is('stunned') && bm.stun > 1, 'poise broken: staggered');
+  bs.change('hp', -300); bstep(.05); assert.ok(boss.phase.name === 'three' && bs.get('attackSpeed') === 1 && bm.list[0].name === 'breath', 'phase three: its own attacks, the last phase\'s buff off');
+  bstep(60); assert.ok(boss.enraged && bs.get('power') === 1.4 && bev.some(e => e.type === 'enraged'), 'enraged after a minute');
+  bs.change('hp', -1000); bstep(.02); assert.ok(boss.dead && bev.some(e => e.type === 'dead'), 'dead');
+  assert.throws(() => new Boss({ stats: new Stats({ speed: 1 }) }), /hp pool/); assert.throws(() => new Moveset(wolf, { attacks: ['nope'] }), /no attack 'nope'/);
+  console.log('gs.monsters: telegraphed attacks picked by range, side and weight, tail sweeps, guards and dodges, broken windups, charges, pounces, breath, spit, spells, 2D; creatures that flinch, stagger, fall, get up and die; bosses in phases with poise and enrage ok');
+}
+
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
 {
   const THREE = await import('three');
