@@ -1288,6 +1288,14 @@ works on instanced meshes and on WebGL and WebGPU alike.
   shapes (fur's shells, faces of blend shapes) and meshes with tangents are posed as before. Games don't change
   anything. `__hd.gpuSkin = false` turns it off; `__hd.info.skin` says how many meshes were posed and how many
   points. WebGL poses in the vertex shader as before.
+- People's shadows from a shadow body (both backends): a `gs.models.human` casts its shadow from its far level
+  (about 2,200 triangles, one material, only the points it uses) whatever level is shown, on a layer only the
+  passes that draw shadows have, so the picture, reflections and shots never see it. Close up a person was 52,000
+  to 78,000 triangles in every shadow map and every part of one, to fill a few hundred texels; now the maps take
+  about a quarter of the triangles and a sixth of the draws for people, and look the same (the sun's normal
+  bias is 4 cm). Contact shadows still come from what the picture shows (a nose on a cheek). The middle and far
+  levels also pose only their own points (they posed the whole close-up list). `person.shadowBody` is the mesh;
+  `__hd.shadowBody = false` has each level cast its own again. `human({ shadows: false })` has none.
 - GPU culling (WebGPU): a `gs.props` kind with 2,000 copies or more is culled on the graphics chip
   instead of the CPU. A compute pass tests every copy against the view and the lights' shadow views,
   picks its detail level by distance, and packs the ones that pass into a list drawn with one indirect

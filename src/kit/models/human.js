@@ -30,10 +30,10 @@ import { FACE, FACE_REAL, LINES, HAIR, IRIS, SEAM, CARD, faceUV, paintFace, pain
 import { stripsOn, easeEdge } from './human-hair.js';
 import { pbr, HD } from '../hd3d.js';
 import { StillLoading } from '../lazy.js';
-import { sceneEdited } from '../scene-list.js';
+import { sceneEdited, BODY_LAYER } from '../scene-list.js';
 import { fadeable, fadeLevels } from '../lod-fade.js';
 import { fur } from './fur.js';
-import { slimShared, floatsOf } from '../slim.js';
+import { slimShared, floatsOf, pickLists } from '../slim.js';
 
 const PI = Math.PI, abs = Math.abs;
 
@@ -317,6 +317,22 @@ function frameOf(sp) {
 }
 // people move the lifelike way: feet that roll, hips and shoulders that turn, a back and a neck that bend along their length
 // (and breathe: the chest and belly bones rise and fall, the belly settles behind the hips; the rig steps it)
+// A level's triangles over only the points they use, in lists of its own kept the way the person's are (slim.js), its
+// groups (materials) as they were. Shared by every twin of the person.
+function ownPoints(g) {
+  const I = g.index.array, at = new Int32Array(g.attributes.position.count).fill(-1), src = [], J = new Uint32Array(I.length);
+  for (let i = 0; i < I.length; i++) { const v = I[i]; let k = at[v]; if (k < 0) { k = at[v] = src.length; src.push(v); } J[i] = k; }
+  const out = new BufferGeometry(), L = pickLists(g, Object.keys(g.attributes), src);
+  for (const k in L) out.setAttribute(k, L[k]);
+  out.setIndex(new BufferAttribute(src.length > 65535 ? J : Uint16Array.from(J), 1));
+  for (const gr of g.groups) out.addGroup(gr.start, gr.count, gr.materialIndex);
+  out.boundingSphere = g.boundingSphere.clone(); out.userData = { ...g.userData };
+  return out;
+}
+// what it is drawn with: one material for every person's body, so their shadows share one shader (only its depth is ever drawn)
+let BODY_MAT = null;
+const bodyMat = () => BODY_MAT ||= Object.assign(pbr('#808080', { rough: 1 }), { name: 'human shadow body' });
+
 const rigOf = (B, scale, body, sp, n = 0) => {
   const rig = new Rig(B, { height: 1.8, poses: LIFELIKE, weight: 1, size: scale, full: true, body, momentum: true, follow: true }); rig.feet = [B.footL, B.footR];
   if (sp && B.chest) rig.breath = new Breath(B, { fem: sp.fem, fat: sp.face.fat ?? (sp.build.waist > 1.05 ? .7 : .5), muscle: sp.build.muscle ?? .45 });
@@ -681,6 +697,9 @@ export function human(o = {}) {
     g.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.3); return g;
   });
   slimShared(geos);   // (normals, colours and bone weights in fewer bytes: slim.js; gsThin and uv1 share one list and stay as floats)
+  // (the middle and far levels with only the points their own triangles use: the far level drew 2,200 triangles of a list of 35,000 to
+  // 52,000 points, and the chip posed every one of them each frame, skin-gpu.js; the far level is the shadow body too, see stand())
+  geos[1] = ownPoints(geos[1]); geos[2] = ownPoints(geos[2]);
 
   // ---- hair in strands (fur.js): layers of them over the sculpted hair, streaming from the crown of the head (from the
   // bun, for hair tied back), a moustache of them and a beard on the jaw; close up only. The layers are made in stand()
@@ -775,6 +794,23 @@ export function human(o = {}) {
       if (this.boneTexture !== null) this.boneTexture.needsUpdate = true;
     };
     const lods = geos.map((g, L) => { const m = new SkinnedMesh(g, matsFor[L]); m.castShadow = m.receiveShadow = sh; m.name = 'human' + L; m.frustumCulled = true; m.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(m); m.bind(L ? far : skel, new Matrix4()); m.visible = L === 0; return m; });
+    // The shadow body. Each level drew its own shadow: close up 52,000 to 78,000 triangles a person went into every shadow
+    // map and every part of one again (HD.info.shTris: twelve people close by, 513,000 a frame), to fill a few hundred
+    // texels each, a texel being 2 to 5 cm across. The far level (2,200 triangles, one material) is as good a shadow at
+    // that size (the sun's normal bias alone is 4 cm), so it casts for every level: its own triangles and only the
+    // points they use (posed once a frame like the rest, skin-gpu.js), on a layer only the passes that draw shadows have
+    // (scene-list.js BODY_LAYER), so the picture, reflections and rays never see it. The levels shown cast nothing then.
+    // Contact shadows (the sun mask's short rays) still come from what the picture shows: a nose on a cheek, a hand on a
+    // cup. HD.shadowBody = false: each level casts its own again (hd3d.js shadowLights).
+    const body = sh ? new SkinnedMesh(geos[2], bodyMat()) : null;
+    if (body) {
+      body.name = 'human:shadow body'; body.castShadow = true; body.receiveShadow = false; body.layers.set(BODY_LAYER); body.userData.noAO = true;
+      body.frustumCulled = true; body.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(body); body.bind(far, new Matrix4());
+      body.userData.gsShadowFor = lods;
+      for (const m of lods) m.castShadow = false;
+      // (WebGL poses the far bones only for a mesh the picture draws: close up, none of those is on them, so the shadow's own pass does)
+      body.onBeforeShadow = r => { const f = r.info?.render?.frame; if (f === undefined || far.gsFrame !== f) { far.gsFrame = f; far.update(); } };
+    }
     // (a real face's wet eyes: their own see-through mesh on the same bones, close up only)
     const wet = wetGeo ? new SkinnedMesh(wetGeo, M.wet) : null;
     if (wet) { wet.name = 'human:wet'; wet.castShadow = wet.receiveShadow = false; wet.userData.noAO = true; wet.frustumCulled = true; wet.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(wet); wet.bind(skel, new Matrix4()); }
@@ -783,7 +819,7 @@ export function human(o = {}) {
     // (a real head of hair's strips, twice over: solid, then see-through; close up only. The sculpted hair under them casts the shadow)
     const strips = cardGeo ? [M.cards, M.cardsSoft].map((mt, k) => { const c = new SkinnedMesh(cardGeo, mt); c.name = k ? 'human:hair strips (soft)' : 'human:hair strips'; c.castShadow = false; c.receiveShadow = sh; c.boundingSphere = new Sphere(new Vector3(0, .95, 0), 1.7); root.add(c); c.bind(skel, new Matrix4()); return c; }) : [];
     root.scale.setScalar(scale);
-    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.bones = B; root.wet = wet; root.eyeShadow = occ; root.strips = strips;
+    root.name = 'human'; root.mesh = lods[0]; root.lods = lods; root.shadowBody = body; root.bones = B; root.wet = wet; root.eyeShadow = occ; root.strips = strips;
     root.rig = rigOf(B, scale, root, sp, n);
     root.grime = root.rig.grime = new Grime(B, jointAt);   // (how wet, muddy, dusty and snowy, and the elbows' and knees' bends: what the clothes' and skin's look reads on WebGPU)
     for (const m of lods) { m.userData.gsGrime = root.grime.v; m.userData.gsBends = root.grime.bends; }
