@@ -12,8 +12,13 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference 
    `title`, `tag` and `hint`) and from `docs/game-ideas.md`. A new mechanic, not a reskin.
 2. Start from a template: `npm run new <id> --style <phone|pocket|color|advance|console|nextgen|ar|board>`.
    It writes `src/games/<id>.js`, a small working game. Then change it into the new game.
-3. Write the game (rules below). Use `gs` for everything shared.
-4. Check it, and fix whatever fails:
+3. Write the game (rules below). Use `gs` for everything shared. To see how a part is used in a real game,
+   `node scripts/examples.mjs <name>` (`rope`, `Physics.rope`, `Feel.coin`, `gs.physics`): the shortest games
+   that use it with the lines, plus its declaration in `src/gamescroll.d.ts` and its place in `docs/maker-kit.md`.
+4. Check it, and fix whatever fails: `node scripts/check.mjs <id>` runs all of the checks below in about
+   30 s and prints one report: each problem with the line in your file (a crash while playing is traced
+   back to your source line), the code on it and what to do (`--quick`: only the code checks, 2 s; `--full`: also the
+   speed budget; `--json` for tools). The checks one by one:
    ```bash
    node scripts/game-lint.mjs <id>          # forbidden code (network, storage, eval...); also kit hints (advice, not failures)
    node scripts/game-types.mjs <id>         # gs used the way its types describe (no kit, method, option or field that doesn't exist)
