@@ -38,6 +38,10 @@
 // The app also tells every brain how fun each round looked (played again, hearted, left in a hurry),
 // and the brain leans its pressure towards what this player enjoys, always inside the win-rate rail.
 //
+// Corrections: bot.correct(see, 'flee') is "in this spot the right move was flee". A brain holds to
+// it from a couple of examples, at once and without retraining, in spots like the ones it was shown
+// (see Fixes below).
+//
 // Runs on the phone's CPU in plain JavaScript (a decision takes microseconds).
 
 import { timed } from './prof.js';
@@ -215,6 +219,144 @@ export class Player {
   clear() { this.store.clear && this.store.clear(); return this; }
 }
 
+// ---------------------------------------------------------------- corrections
+
+// A few examples that stick: "in this spot the right move was flee". The method is the corrections
+// of TinyDecide (by REZOR, Apache 2.0, huggingface.co/TheREZOR/TinyDecide: corrections.js), a small
+// model that answers questions about text: keep the average of the examples given for each answer,
+// lean a decision towards the answer whose examples it looks most like, measured against the centre
+// of everything seen, and work out how far to trust the examples by leaving each one out in turn and
+// asking how well the rest predict it. Only the method is used here: no model, nothing to download.
+//
+// What is different for a Tiny Brain (each choice measured: scripts/kit-test.mjs has the test):
+// - Likeness is judged on the brain's inputs, not inside its network. A brain that copied its
+//   teacher only keeps what the teacher looks at, so inside it a spot the teacher gets wrong looks
+//   like every other spot (corrections there changed nearly half of all other decisions).
+// - Each input is judged by itself: where an action's examples agree on an input it matters, where
+//   they are as spread as that input usually is it doesn't ("whatever dx is"). The lean is how much
+//   more a spot looks like an action's examples than like what the brain usually sees (log odds),
+//   and never pushes an action away, so spots unlike any example are left alone.
+// - A brain can be far surer of itself than a text model, so its own certainty counts for at most
+//   FIX_GAP against a correction (and the teacher's choice counts for the same).
+// - Trust starts full and only falls when examples contradict each other.
+const FIX_KEEP = 12;                       // examples kept per action (the newest)
+const FIX_GAP = 3;                         // the most the brain's own certainty weighs against a correction
+const FIX_TRUSTS = [2, 1, .5, .25, 0];     // how far the examples are trusted: the first that fits them best
+const FIX_SAME = .02;                      // inputs this close are the same spot
+const FIX_BYTES = 480;                     // the most a brain's saved corrections take
+const FIX_FLOOR = .01;                     // an input that never changes still has this much spread
+
+class Fixes {
+  constructor(n, acts) {
+    this.n = n; this.acts = acts;
+    this.lists = Array.from({ length: acts }, () => []);   // per action: examples the game gave while running (saved)
+    this.given = Array.from({ length: acts }, () => []);   // the maker's own (opts.corrections): not saved, never forgotten
+    this.c = new Float32Array(n); this.v = new Float32Array(n).fill(1 / 3); this.seen = 0;   // what the brain usually sees
+    this.t = new Float32Array(acts);       // the lean per action for the last spot asked about
+    this.count = 0; this.trust = FIX_TRUSTS[0]; this.fits = null; this.dirty = true; this.age = 0;
+  }
+  read(see) { const x = new Float32Array(this.n); for (let i = 0; i < this.n; i++) x[i] = clamp(+see[i] || 0, -4, 4); return x; }
+  /** One more spot the brain has seen: the usual value and spread of each input (inputs are about -1..1 before any). */
+  note(see) {
+    const k = 1 / Math.min(++this.seen + 30, 2000), c = this.c, v = this.v;
+    for (let i = 0; i < this.n; i++) { const x = clamp(+see[i] || 0, -4, 4), d = x - c[i]; c[i] += d * k; v[i] += (d * (x - c[i]) - v[i]) * k; }
+    this.age++;
+  }
+  same(a, b) { for (let i = 0; i < this.n; i++) if (Math.abs(a[i] - b[i]) > FIX_SAME) return false; return true; }
+  /** An example: on these inputs, this action. The newest word on a spot wins. */
+  add(see, a, given = false) {
+    if (!(a >= 0 && a < this.acts)) return;
+    const x = this.read(see);
+    if (given) { if (!this.given[a].some(e => this.same(e, x))) this.given[a].push(x); }
+    else {
+      for (let k = 0; k < this.acts; k++) this.lists[k] = this.lists[k].filter(e => !this.same(e, x));
+      this.lists[a].push(x); if (this.lists[a].length > FIX_KEEP) this.lists[a].shift();
+    }
+    this.dirty = true; this.tally();
+  }
+  tally() { this.count = 0; for (let k = 0; k < this.acts; k++) this.count += this.lists[k].length + this.given[k].length; }
+  /** Forgets the examples given while running (all, or one action's). */
+  clear(a = -1) { for (let k = 0; k < this.acts; k++) if (a < 0 || a === k) this.lists[k] = []; this.dirty = true; this.tally(); }
+  all(k) { return this.given[k].length ? this.given[k].concat(this.lists[k]) : this.lists[k]; }
+  // an action's examples as a centre and a spread per input: as tight as the examples where they
+  // agree, never wider than that input usually is, and one example alone is half the usual spread
+  fit(list) {
+    const n = this.n, m = new Float32Array(n), s = new Float32Array(n);
+    for (const e of list) for (let i = 0; i < n; i++) m[i] += e[i] / list.length;
+    for (let i = 0; i < n; i++) {
+      const V = Math.max(this.v[i], FIX_FLOOR); let q = 0; for (const e of list) q += (e[i] - m[i]) ** 2;
+      s[i] = Math.max(1e-3, Math.min(V, (q + V) / (list.length + 1)));
+    }
+    return { m, s };
+  }
+  // how much more x looks like those examples than like what the brain usually sees (log odds)
+  odds(x, g) {
+    let t = 0;
+    for (let i = 0; i < this.n; i++) { const V = Math.max(this.v[i], FIX_FLOOR), a = x[i] - g.m[i], b = x[i] - this.c[i]; t += b * b / (2 * V) - a * a / (2 * g.s[i]) - .5 * Math.log(g.s[i] / V); }
+    return t;
+  }
+  lean1(x, g) { return g ? clamp(this.odds(x, g) + 1, 0, 8) : 0; }
+  /** Works out the fits, and how far the examples are trusted (logOf: a spot -> the brain's own log chances, capped). */
+  build(logOf) {
+    const L = []; for (let k = 0; k < this.acts; k++) L.push(this.all(k));
+    this.fits = L.map(l => (l.length ? this.fit(l) : null));
+    this.dirty = false; this.age = 0; this.trust = FIX_TRUSTS[0];
+    // leave each example out in turn: do the rest still say its action? (an action with one example
+    // has no rest to ask, so it takes no part)
+    const tests = [];
+    L.forEach((l, k) => { if (l.length > 1) l.forEach((e, j) => { const t = new Float32Array(this.acts), rest = this.fit(l.filter((_, i) => i !== j)); for (let a = 0; a < this.acts; a++) t[a] = this.lean1(e, a === k ? rest : this.fits[a]); tests.push([k, t, logOf(e)]); }); });
+    if (tests.length < 2) return;
+    let best = -Infinity;
+    for (const lam of FIX_TRUSTS) {
+      let ll = 0;
+      for (const [k, t, z] of tests) { let m = -Infinity; for (let a = 0; a < this.acts; a++) m = Math.max(m, z[a] + lam * t[a]); let sum = 0; for (let a = 0; a < this.acts; a++) sum += Math.exp(z[a] + lam * t[a] - m); ll += z[k] + lam * t[k] - m - Math.log(sum); }
+      if (ll > best + 1e-6) { best = ll; this.trust = lam; }
+    }
+  }
+  /** The lean per action for this spot (in this.t); false when no example is like it. */
+  lean(see, logOf) {
+    if (!this.count) return false;
+    if (this.dirty || this.age > 256) this.build(logOf);   // now and then: what the brain usually sees moves, and so does the brain
+    if (!this.trust) return false;
+    const x = this.xb || (this.xb = new Float32Array(this.n)); for (let i = 0; i < this.n; i++) x[i] = clamp(+see[i] || 0, -4, 4);
+    let any = false;
+    for (let a = 0; a < this.acts; a++) { const t = this.t[a] = this.lean1(x, this.fits[a]) * this.trust; if (t > 0) any = true; }
+    return any;
+  }
+  /** The examples given while running, as short text (1 byte per input), the newest kept when they don't all fit. */
+  pack() {
+    const rows = []; this.lists.forEach((l, k) => l.forEach(e => rows.push([k, e])));
+    if (!rows.length) return '';
+    const per = this.n + 1, keep = rows.slice(-Math.max(1, Math.floor(FIX_BYTES / per)));
+    let bin = '';
+    for (const [k, e] of keep) { bin += String.fromCharCode(k & 255); for (let i = 0; i < this.n; i++) bin += String.fromCharCode((Math.round(e[i] / 4 * 127) + 256) & 255); }
+    return `${this.n}:${btoa(bin)}`;
+  }
+  unpack(text, usual) {
+    const m = /^(\d+):([A-Za-z0-9+/=]+)$/.exec(String(text || '')); if (!m || +m[1] !== this.n) return;
+    let bin; try { bin = atob(m[2]); } catch (_) { return; }
+    const per = this.n + 1; if (bin.length % per) return;
+    for (let o = 0; o < bin.length; o += per) {
+      const k = bin.charCodeAt(o); if (k >= this.acts) continue;
+      const e = new Float32Array(this.n); for (let i = 0; i < this.n; i++) { const b = bin.charCodeAt(o + 1 + i); e[i] = (b > 127 ? b - 256 : b) / 127 * 4; }
+      this.lists[k].push(e); if (this.lists[k].length > FIX_KEEP) this.lists[k].shift();
+    }
+    if (Array.isArray(usual) && usual.length === 1 + this.n * 2) {
+      this.seen = Math.max(0, usual[0] | 0);
+      for (let i = 0; i < this.n; i++) { this.c[i] = clamp(+usual[1 + i] || 0, -4, 4); this.v[i] = clamp(+usual[1 + this.n + i] || 0, 0, 16); }
+    }
+    this.dirty = true; this.tally();
+  }
+  usual() { return [this.seen, ...Array.from(this.c, v => +v.toFixed(3)), ...Array.from(this.v, v => +v.toFixed(3))]; }
+}
+// a brain's chances with the lean added: its own certainty counts for FIX_GAP at most
+function leanOn(p, t) {
+  let m = 0; for (const v of p) if (v > m) m = v;
+  const floor = m * Math.exp(-FIX_GAP); let z = 0;
+  for (let j = 0; j < p.length; j++) z += p[j] = Math.max(p[j], floor) * Math.exp(t[j]);
+  for (let j = 0; j < p.length; j++) p[j] /= z;
+}
+
 // ---------------------------------------------------------------- Brain
 
 /**
@@ -246,6 +388,8 @@ export class Player {
  *               teacher: see "teach by playing" in docs/maker-kit.md
  *   fun         lean towards what this player finds fun, from the app's signals (true)
  *   profile     start a fresh brain at the player's usual level and add to it (true)
+ *   corrections the maker's own corrections, [[see, action], ...]: spots where the right move is known
+ *               (kept through reset(); brain.correct() adds more while the game runs)
  */
 export class Brain {
   constructor(api, opts = {}) {
@@ -267,6 +411,9 @@ export class Brain {
     this.styles = Array.isArray(opts.styles) && opts.styles.length ? opts.styles.map(String) : null;
     if (this.styles) { this.net = new Net([(opts.inputs | 0 || 1) + this.styles.length, ...(opts.hidden || [12]), nAct], hashName(this.name)); this.sv = new Float32Array(this.styles.length); this.sv[0] = 1; this.styleName = this.styles[0]; }
     this.xbuf = null;
+    this.fix = new Fixes(opts.inputs | 0 || 1, nAct); this.lastSee = null;
+    this.logOf = e => { const p = this.net.run(this.input(e)), z = new Float32Array(p.length); let m = 0; for (const v of p) if (v > m) m = v; for (let j = 0; j < p.length; j++) z[j] = Math.log(Math.max(p[j], m * Math.exp(-FIX_GAP))); return z; };
+    for (const c of Array.isArray(opts.corrections) ? opts.corrections : []) if (c && c[0]) this.fix.add(c[0], this.which(c[1]), true);
     const t = opts.tells; this.tells = t ? { windup: .2, unsure: 1, ...(t === true ? {} : t) } : null;
     this.slot = slot(api, this.name);
     this.player = opts.profile === false ? null : new Player(api);
@@ -314,6 +461,7 @@ export class Brain {
     this.unsure = 0;              // how torn the last decision was (0 sure .. 1 torn)
     this.tellNext = -1; this.tellLeft = 0; this.tellLen = 0;
     this.started = false;
+    this.fix.clear();             // corrections given while running (the maker's own stay)
     // a starting brain from the maker's own play
     const st = this.opts.start ? Net.unpack(this.opts.start) : null;
     if (st && st.shape === this.net.shape) { this.net = st; this.net.even = this.even; this.anchor = st.copy(); this.trust = this.teacher ? .6 : 1; this.started = true; }
@@ -332,6 +480,34 @@ export class Brain {
    * The same imitation the teacher gives, so the guard rails still apply.
    */
   watch(see, action, amount = .05) { this.net.learn(this.input(see), this.index(action), amount * this.rate); this.guard(this.net); return this; }
+  /**
+   * "In this spot the right move was this": correct(see, action), or correct(action) for the spot it
+   * last decided on. Unlike watch(), which is one small step of learning, a correction is kept as an
+   * example and counts from the next decision: a couple of examples that agree and the brain does
+   * that move in spots like them, whatever its teacher or its network say, and nowhere else. One
+   * example alone is a lean. Where an action's examples differ on an input, that input stops
+   * mattering, so show it the move in a few different spots of the same kind. The newest 12 per action are
+   * kept and saved with the brain; the newest word on a spot wins. The limits, the randomness and
+   * the game's rules still apply to what it then does.
+   */
+  correct(see, action) {
+    if (action === undefined) { action = see; see = this.lastSee; }
+    if (!see || see.length === undefined) return this;
+    this.fix.add(see, this.which(action)); this.saveIn = Math.min(this.saveIn, 30);
+    return this;
+  }
+  // an action's number, or -1 for one it doesn't have (index() takes those as the first)
+  which(a) { return typeof a === 'number' ? a | 0 : this.names ? this.names.indexOf(a) : -1; }
+  /** Forgets the corrections given while running: all of them, or one action's. */
+  uncorrect(action) { this.fix.clear(action === undefined ? -1 : this.index(action)); this.saveIn = Math.min(this.saveIn, 30); return this; }
+  /** Every correction it holds, as [see, action] pairs (copy them into opts.corrections to keep them in the game). */
+  get corrections() {
+    const out = [];
+    for (let k = 0; k < this.fix.acts; k++) for (const e of this.fix.all(k)) out.push([Array.from(e, v => +v.toFixed(2)), this.names ? this.names[k] : k]);
+    return out;
+  }
+  /** How far it trusts its corrections, 0..2: full (2) while they agree, less when examples close together name different moves. */
+  get heed() { const f = this.fix; if (!f.count) return 0; if (f.dirty) f.build(this.logOf); return f.trust; }
   // which way pressure should go: the win-rate rail, plus a lean towards what this player enjoys
   // (never more pressure while they're losing more than they should)
   push() {
@@ -376,9 +552,21 @@ export class Brain {
       net.learn(see, teach, copy, true);
       net.run(see);
     }
+    // corrections: lean towards the action whose examples this spot looks like
+    const fix = this.fix; fix.note(raw);
+    if (!this.lastSee) this.lastSee = new Float32Array(fix.n);
+    for (let i = 0; i < fix.n; i++) this.lastSee[i] = +raw[i] || 0;
+    let lean = null;
+    if (fix.count) {
+      const like = fix.lean(raw, this.logOf);
+      if (fix.age === 0) net.run(see);   // it just worked its examples out again, which ran the network on them
+      if (like) { lean = fix.t; leanOn(p, lean); }
+    }
     // choose: the teacher or the brain, then a little randomness, then the game's rules
     this.ledByNet = this.r() < this.trust;
     let a = this.ledByNet || teach < 0 ? sample(p, this.r, 1.6 - this.skill * 1.2) : teach;
+    // the teacher's choice counts for as much as a sure brain's: a correction that outweighs it wins
+    if (lean && !this.ledByNet && teach >= 0) { let top = FIX_GAP + lean[teach]; for (let j = 0; j < lean.length; j++) if (lean[j] > top) { top = lean[j]; a = j; } }
     const noise = Math.max(this.limits.minNoise, (1 - this.skill) * .25);
     if (this.r() < noise) a = Math.floor(this.r() * p.length);
     if (this.rules) a = this.index(this.rules(raw, this.names ? this.names[a] : a, this.styleName) ?? a);
@@ -487,7 +675,10 @@ export class Brain {
   persist() {
     const s = JSON.stringify({ w: this.net.pack(), a: this.anchor ? this.anchor.pack() : '', t: +this.trust.toFixed(3), k: +this.skill.toFixed(3),
       r: +this.winRate.toFixed(3), g: +this.agree.toFixed(3), n: this.steps, q: this.rounds, f: +this.lean.toFixed(3), ...(this.useOdds ? { o: Array.from(this.odds, v => +v.toFixed(2)) } : {}) });
-    try { this.slot.save(s); } catch (_) {}
+    // corrections ride along when there is room: a full slot keeps the brain and drops them
+    const c = this.fix.pack(); let ok;
+    try { ok = this.slot.save(c ? s.slice(0, -1) + ',' + JSON.stringify({ c, u: this.fix.usual() }).slice(1) : s); } catch (_) { ok = false; }
+    if (ok === false && c) { try { this.slot.save(s); } catch (_) {} }
   }
   restore(text) {
     if (!text) return;
@@ -499,6 +690,7 @@ export class Brain {
     this.agree = clamp(+d.g || 0, 0, 1); this.steps = d.n | 0; this.rounds = Math.max(0, d.q | 0); this.lean = clamp(+d.f || 0, -.3, .3);
     this.net.even = this.even;
     if (Array.isArray(d.o) && d.o.length === this.odds.length) d.o.forEach((v, i) => { this.odds[i] = clamp(+v || 0, 0, 1e4); });
+    if (d.c) this.fix.unpack(d.c, d.u);
   }
   adoptShared(text) {
     if (!text || this.steps >= 200) return;

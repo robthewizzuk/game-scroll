@@ -23,14 +23,14 @@ function brainLines(s) {
     if (!b.target) return `${b.name}  copies you ${pct(b.like)}  seen ${b.seen}${b.ready ? '  ready' : ''}`;
     const t = b.telling;
     return `${b.name}${b.style ? ' (' + b.style + ')' : ''}  skill ${pct(b.skill)}  win ${pct(b.winRate)}/${pct(b.target)}\n` +
-      `  trust ${pct(b.trust)}  lean ${b.lean >= 0 ? '+' : ''}${b.lean.toFixed(2)}  torn ${pct(b.unsure)}${t ? '  tell ' + t.action : ''}`;
+      `  trust ${pct(b.trust)}  lean ${b.lean >= 0 ? '+' : ''}${b.lean.toFixed(2)}  torn ${pct(b.unsure)}${t ? '  tell ' + t.action : ''}${b.fix && b.fix.count ? `  corrections ${b.fix.count} (heeds ${b.heed})` : ''}`;
   });
 }
 function copyBrains(s) {
-  const packs = liveBrains(s).filter(b => b.pack).map(b => `${b.name}: '${b.pack()}'`);
+  const packs = liveBrains(s).filter(b => b.pack).map(b => `${b.name}: '${b.pack()}'` + (b.fix && b.fix.count ? `\n${b.name} corrections: ${JSON.stringify(b.corrections)}` : ''));
   if (!packs.length) { console.info('[debug] this game has no Tiny Brains'); return; }
   const text = packs.join('\n');
-  console.info('[debug] starting brains (use as new Brain(api, { start: ... })):\n' + text);
+  console.info('[debug] starting brains (use as new Brain(api, { start: ... }); corrections as { corrections: [...] }):\n' + text);
   try { navigator.clipboard?.writeText(text); } catch (_) {}
 }
 

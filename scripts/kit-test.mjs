@@ -756,6 +756,89 @@ console.log('physics ok');
   console.log('brains 2: profile, fun lean, styles, tells, start + watch, Nemesis, Shadow, tune ok');
 }
 
+// Tiny Brains corrections: a few examples that stick (the method of TinyDecide's corrections, on a brain's inputs)
+{
+  const { Brain, Wave } = await import('../src/kit/brains.js');
+  let sd = 5; const rand = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+  const spot = () => [rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1];
+  const teacher = s => (s[0] < 0 ? 'left' : 'right');
+  const opts = name => ({ name, inputs: 4, actions: ['left', 'right', 'jump', 'flee'], teacher, limits: { react: 0, perSecond: 1e4, minNoise: 0 }, share: false, profile: false });
+  // the game's own AI chases; the exception it doesn't know: hurt (input 2 low) with the player near (input 3 high), flee
+  const hurt = s => s[2] < -.4 && s[3] > 0, hurtSpot = () => [rand() * 2 - 1, rand() * 2 - 1, -.4 - rand() * .6, rand()];
+  const made = name => { const b = new Brain(opts(name)); for (let i = 0; i < 2500; i++) b.act(spot(), 1 / 60); b.skill = 1; return b; };
+  const rates = b => {
+    let fixed = 0, n = 0, same = 0, m = 0; const trust = b.trust;
+    for (let i = 0; i < 1200; i++) { const x = i % 3 ? spot() : hurtSpot(); b.act(x, 1 / 60); b.trust = trust; if (hurt(x)) { n++; fixed += b.action === 'flee'; } else { m++; same += b.action === teacher(x); } }
+    return [fixed / n, same / m];
+  };
+  for (const lead of ['teacher', 'brain']) {
+    const b = made('fix-' + lead); b.trust = lead === 'teacher' ? 0 : 1;
+    assert.ok(b.heed === 0 && b.corrections.length === 0, 'no corrections to start with');
+    const [f0, s0] = rates(b); assert.ok(f0 < .05 && s0 > .95, `${lead} leads, before: flees ${f0.toFixed(2)}, plays as taught ${s0.toFixed(2)}`);
+    for (let k = 0; k < 8; k++) b.correct(hurtSpot(), 'flee');
+    const [f1, s1] = rates(b);
+    assert.ok(f1 > .6, `${lead} leads: eight examples fix most of the spots like them: ${f1.toFixed(2)}`);
+    assert.ok(s1 > .9, `${lead} leads: and leave the rest alone: ${s1.toFixed(2)}`);
+    assert.equal(b.heed, 2, 'examples that agree are trusted in full');
+    b.uncorrect(); const [f2, s2] = rates(b); assert.ok(f2 < .05 && s2 > .95 && b.corrections.length === 0, 'uncorrect() forgets them');
+  }
+  // one example is a lean, two that agree are a fix, at that spot and at once
+  const one = made('fix-one'); one.trust = 0;
+  const here = [.3, -.2, .5, .1];
+  one.act(here, 1 / 60); assert.equal(one.action, 'right');
+  one.correct('jump');                                   // "what you just saw: the right move was jump"
+  assert.deepEqual(one.corrections, [[[.3, -.2, .5, .1], 'jump']], 'correct(action) is about the spot it last decided on');
+  one.correct([.34, -.16, .46, .14], 'jump');
+  one.act(here, 1 / 60); assert.equal(one.action, 'jump', 'two examples that agree: it does the move there');
+  one.act([-.6, .7, -.5, -.6], 1 / 60); assert.equal(one.action, 'left', 'and not somewhere else');
+  // the newest word on a spot wins; examples close together that name different moves are trusted less
+  one.correct(here, 'flee');
+  assert.ok(!one.corrections.some(c => c[1] === 'jump' && c[0][0] === .3), 'a new word on the same spot replaces the old one');
+  const torn = made('fix-torn'); torn.trust = 0;
+  for (let k = 0; k < 6; k++) { const x = [.5 + rand() * .1, .5 + rand() * .1, rand() * 2 - 1, rand() * 2 - 1]; torn.correct(x, k % 2 ? 'jump' : 'flee'); }
+  assert.ok(torn.heed < 2, 'examples that contradict each other are trusted less: ' + torn.heed);
+  // unknown actions and spots are ignored; the newest twelve per action are kept
+  torn.correct(here, 'fly'); torn.correct(null, 'jump'); assert.equal(torn.corrections.length, 6, 'ignores a move it does not have');
+  const many = made('fix-many'); for (let k = 0; k < 30; k++) many.correct(hurtSpot(), 'flee');
+  assert.equal(many.corrections.length, 12, 'keeps the newest twelve per action');
+  // the guard rails still apply: the game's rules, and the limit on changes of mind
+  const ruled = new Brain({ ...opts('fix-ruled'), rules: (see, a) => (a === 'flee' ? 'left' : a) });
+  for (let k = 0; k < 8; k++) ruled.correct(hurtSpot(), 'flee');
+  ruled.trust = 0; ruled.skill = 1;
+  for (let i = 0; i < 300; i++) { ruled.act(hurtSpot(), 1 / 60); assert.notEqual(ruled.action, 'flee', 'the game\'s rules still win'); }
+  const slow = new Brain({ ...opts('fix-slow'), limits: { react: 0, perSecond: 2, minNoise: 0 } });
+  for (let k = 0; k < 8; k++) slow.correct(hurtSpot(), 'flee');
+  slow.trust = 0; let changes = 0, lastA = null;
+  for (let i = 0; i < 600; i++) { slow.act(i % 2 ? hurtSpot() : [.5, 0, .8, -.8], 1 / 60); if (slow.action !== lastA) { changes++; lastA = slow.action; } }
+  assert.ok(changes <= 22, 'no more changes of mind a second than the limit: ' + changes + ' in 10 s');
+  // the maker's own corrections come with the game and stay through reset(); the rest are saved with the brain
+  const slots = new Map(), api = { brains: { load: k => slots.get(k) ?? null, save: (k, v) => { slots.set(k, v); return true; } } };
+  const mine = [[[0, 0, -.8, .6], 'flee'], [[.4, -.3, -.7, .5], 'flee'], [[-.5, .5, -.9, .7], 'flee']];
+  const s1 = new Brain(api, { ...opts('fix-saved'), corrections: mine });
+  for (let i = 0; i < 400; i++) s1.act(spot(), 1 / 60);
+  s1.correct([.8, .8, .8, .8], 'jump').correct([.75, .82, .78, .84], 'jump'); s1.persist();
+  assert.ok(slots.get('fix-saved').length < 1200 && JSON.parse(slots.get('fix-saved')).c, 'corrections given while running are saved with the brain');
+  const s2 = new Brain(api, { ...opts('fix-saved'), corrections: mine });
+  assert.equal(s2.corrections.length, 5, 'and come back, beside the maker\'s own (not twice)');
+  s2.trust = 0; s2.skill = 1;
+  s2.act([.79, .8, .8, .81], 1 / 60); assert.equal(s2.action, 'jump', 'a saved correction still counts');
+  s2.act([.1, .1, -.8, .6], 1 / 60); assert.equal(s2.action, 'flee', 'the maker\'s corrections count');
+  s2.reset(); assert.equal(s2.corrections.length, 3, 'reset() forgets what it was shown while running, not the maker\'s own');
+  // a slot with no room keeps the brain and drops the corrections
+  const tight = new Map(), tapi = { brains: { load: k => tight.get(k) ?? null, save: (k, v) => (v.includes('"c":') ? false : (tight.set(k, v), true)) } };
+  const tb = new Brain(tapi, opts('fix-tight')); tb.correct(here, 'jump'); tb.persist();
+  assert.ok(tight.get('fix-tight') && !JSON.parse(tight.get('fix-tight')).c, 'a full slot keeps the brain without its corrections');
+  // a brain with numbered actions, a personality, and a wave of minds
+  const num = new Brain({ name: 'fix-num', inputs: 2, actions: 3, styles: ['calm', 'bold'], limits: { react: 0, perSecond: 1e4, minNoise: 0 }, share: false, profile: false });
+  num.correct([.5, .5], 2).correct([.52, .48], 2); num.skill = 1;
+  let twos = 0; for (let i = 0; i < 50; i++) twos += num.act([.5, .5], 1 / 60) === 2;
+  assert.ok(twos > 40, 'numbered actions and personalities: ' + twos + '/50');
+  const wave = new Wave(num), mind = wave.mind({ style: 'bold' }); let m2 = 0; for (let i = 0; i < 50; i++) m2 += mind.act([.5, .5], 1 / 60) === 2;
+  assert.ok(m2 > 40, 'every mind in a wave holds to them too: ' + m2 + '/50');
+  assert.ok(num.net.w.every(Number.isFinite) && one.net.w.every(Number.isFinite), 'numbers stay finite');
+  console.log('brains 3: corrections fix the spots like their examples and leave the rest, lean then fix, newest word wins, trust, rules + limits, saved, reset ok');
+}
+
 // ---- round 6 game kits
 {
   const { Board } = await import('../src/kit/board.js');

@@ -1813,6 +1813,8 @@ export interface BrainOptions {
   fun?: boolean;
   /** Start a fresh brain at the player's usual level, and add to the profile (true). */
   profile?: boolean;
+  /** The maker's own corrections: spots where the right move is known, as [see, action] pairs. They come with the game and stay through reset(). */
+  corrections?: [number[], number | string][];
 }
 /** A Tiny Brain that learns as you play, with guard rails. */
 export declare class Brain {
@@ -1840,6 +1842,20 @@ export declare class Brain {
   fun: number; lean: number; rounds: number;
   /** Learns from a move someone showed it (teach by playing). */
   watch(see: number[], action: number | string, amount?: number): this;
+  /**
+   * "In this spot the right move was this": correct(see, action), or correct(action) for the spot it last
+   * decided on. Kept as an example and counted from the next decision: one is a lean, a couple that agree
+   * and it does that move in spots like them and nowhere else. The newest 12 per action are saved with the
+   * brain. The limits, the randomness and the game's rules still apply.
+   */
+  correct(see: ArrayLike<number>, action: number | string): this;
+  correct(action: number | string): this;
+  /** Forgets the corrections given while running (all, or one action's); the maker's own stay. */
+  uncorrect(action?: number | string): this;
+  /** Every correction it holds, as [see, action] pairs (copy them into the corrections option to keep them in the game). */
+  readonly corrections: [number[], number | string][];
+  /** How far it trusts its corrections, 0..2: full while they agree, less when examples close together name different moves. */
+  readonly heed: number;
   /** The brain as text (for start). */
   pack(): string;
 }
