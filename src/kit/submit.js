@@ -25,11 +25,21 @@
 // go together at the end: three or four sends a frame, and the chip is never idle while there is work for it.
 // ONE_SUBMIT.early = false (HD.submitEarly): one send at the end, to compare.
 //
+// Sends put off past the refresh (deferSends: frame generation's 'early' pace, 30 → 60). A refresh's picture reaches the
+// screen once all the work sent before the frame's code ended is done (one queue on the chip), so a real frame drawn on
+// the same refresh as the picture shown holds that picture back until it is done too. With deferSends() the frame's
+// passes from then on are sent in a task after the browser has handed the refresh's picture over: the picture shown
+// (sent before) goes out on time and the real frame has that refresh and the next on the chip. What would have sent
+// the held passes early keeps its place in the line instead: an upload to a buffer or picture a held pass uses is
+// copied and done after those passes, a read back (mapAsync), onSubmittedWorkDone or a buffer freed waits for them, in
+// the order the code asked. A picture copied from an image (copyExternalImageToTexture), popErrorScope and flushGPU()
+// send everything at once, in order, as before. The next refresh's code sends what is still waiting first.
+//
 // The patches are on WebGPU's own prototypes (the passes and encoders are made new each frame); they only keep
 // lists, and only a device given to holdSubmits() holds anything.
 
 /** Tests and the frame lab: `on: false` submits each pass by itself, as three does. sent: real submits so far; held: command buffers that went with others; why: what asked for each early flush (trace: true also keeps the buffer's or picture's label). */
-export const ONE_SUBMIT = { on: true, early: true, sent: 0, held: 0, why: {}, trace: false, names: {} };
+export const ONE_SUBMIT = { on: true, early: true, sent: 0, held: 0, why: {}, trace: false, names: {}, deferred: 0, waited: 0 };
 
 let patched = false, states = [];
 
@@ -90,15 +100,61 @@ function patch() {
       b.gsR = R; return b;
     });
   }
-  // what asks for a flush: a read back, or the end of a buffer or picture that held passes use
-  const hazard = (C, k, why) => wrap(C, k, o => function () { if (this.gsH > 0) flushFor(this, why); return o.apply(this, arguments); });
-  hazard(GPUBuffer, 'mapAsync', 'read back'); hazard(GPUBuffer, 'destroy', 'freed'); hazard(GPUTexture, 'destroy', 'freed');
+  // what asks for a flush: a read back, or the end of a buffer or picture that held passes use (while sends are put
+  // off past the refresh: they wait their turn instead)
+  const hazard = (C, k, why, later) => wrap(C, k, o => function () { if (this.gsH > 0) { if (D && later) return later(o, this, arguments); flushFor(this, why); } return o.apply(this, arguments); });
+  hazard(GPUBuffer, 'mapAsync', 'read back', waitFor); hazard(GPUBuffer, 'destroy', 'freed', doLater); hazard(GPUTexture, 'destroy', 'freed', doLater);
 }
 
 function flushFor(r, why) {
   if (ONE_SUBMIT.trace) { const k = why + ': ' + name(r); ONE_SUBMIT.names[k] = (ONE_SUBMIT.names[k] || 0) + 1; }
+  if (D) runDeferred(why);
   for (const S of states) if (S.list.length) send(S, why);
 }
+
+/* ---------- sends put off past the refresh ---------- */
+// D: { S, items }: items in order, each a list of command buffers to send or a call to make after them
+let D = null;
+const post = typeof MessageChannel === 'function' ? (() => { const ch = new MessageChannel(); let fn = null; ch.port1.onmessage = () => { const f = fn; fn = null; f?.(); }; return f => { fn = f; ch.port2.postMessage(0); }; })() : f => setTimeout(f, 0);
+// a call made after what is held now (its arguments as they are now)
+function defer(fn) {
+  const S = D.S; if (S.list.length) { D.items.push(S.list); S.list = []; }
+  D.items.push(fn);
+}
+const doLater = (o, self, args) => { const a = [...args]; defer(() => o.apply(self, a)); };
+// a promise that waits for the held passes before asking (mapAsync, onSubmittedWorkDone)
+const waitFor = (o, self, args) => { const a = [...args]; return new Promise((res, rej) => defer(() => { try { o.apply(self, a).then(res, rej); } catch (e) { rej(e); } })); };
+// the data of an upload as it is now (the caller may change its array before the upload is done)
+const copyData = d => ArrayBuffer.isView(d) ? (d instanceof DataView ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength).slice() : d.slice()) : d?.slice ? d.slice(0) : d;
+/** Runs what was put off past the refresh, in order (the task after the refresh, or anything that needs it all sent now). */
+function runDeferred(why = 'task') {
+  const d = D; if (!d) return; D = null;
+  const S = d.S; if (S.lost) return;
+  if (why !== 'task') { ONE_SUBMIT.waited++; ONE_SUBMIT.why['deferred: ' + why] = (ONE_SUBMIT.why['deferred: ' + why] || 0) + 1; }
+  const rest = S.list; S.list = [];
+  for (const it of d.items) {
+    if (typeof it === 'function') { try { it(); } catch (e) { console.warn('3D: a call put off past the refresh', e); } continue; }
+    for (let i = 0; i < it.length; i++) count(it[i], -1);
+    ONE_SUBMIT.sent++; ONE_SUBMIT.held += it.length - 1; S.submit(it);
+  }
+  if (rest.length) { S.list = rest; send(S, 'deferred'); }
+}
+/**
+ * From now until the frame's code ends, what is sent to the chip goes after the browser hands this refresh's picture
+ * over (see the top of this file). What is held now (the picture shown) is sent first, with this refresh. False where
+ * nothing is held this way (one submit a frame off, or no device): then nothing changes.
+ */
+export function deferSends() {
+  if (!ONE_SUBMIT.on) return false;
+  const S = states.find(s => !s.lost); if (!S) return false;
+  if (D) runDeferred('again');
+  if (S.list.length) send(S, 'before deferring');
+  D = { S, items: [] }; ONE_SUBMIT.deferred++;
+  post(() => runDeferred('task'));
+  return true;
+}
+/** Sends are put off past the refresh now (deferSends) and haven't gone yet. */
+export const deferring = () => !!D;
 function send(S, why) {
   const L = S.list; if (!L.length) return;
   S.list = [];
@@ -116,22 +172,35 @@ export function holdSubmits(dev) {
   patch();
   const S = dev.gsHold = { dev, list: [], submit: q.submit.bind(q), due: false, stats: ONE_SUBMIT };
   states = states.filter(s => !s.lost); states.push(S);
-  dev.lost?.then(() => { S.lost = true; S.list = []; states = states.filter(s => s !== S); });
-  const later = () => { S.due = false; send(S, 'frame'); };
+  dev.lost?.then(() => { S.lost = true; S.list = []; if (D?.S === S) D = null; states = states.filter(s => s !== S); });
+  // (while sends are put off past the refresh, the end of the frame's code leaves them for the task)
+  const later = () => { S.due = false; if (D?.S !== S) send(S, 'frame'); };
   q.submit = function (bufs) {
-    if (!ONE_SUBMIT.on || S.lost) { if (S.list.length) send(S, 'off'); ONE_SUBMIT.sent++; return S.submit(bufs); }
+    if (!ONE_SUBMIT.on || S.lost) { if (D?.S === S) runDeferred('off'); if (S.list.length) send(S, 'off'); ONE_SUBMIT.sent++; return S.submit(bufs); }
     for (const cb of bufs) { count(cb, 1); S.list.push(cb); }
     if (!S.due) { S.due = true; queueMicrotask(later); }
   };
-  const before = (o, k, pick, why) => { const f = o[k]; if (typeof f === 'function') o[k] = function (...a) { if (S.list.length) { const r = pick ? pick(a) : null; if (!pick || r?.gsH > 0) { if (ONE_SUBMIT.trace) { const n = why + ': ' + name(r); ONE_SUBMIT.names[n] = (ONE_SUBMIT.names[n] || 0) + 1; } send(S, why); } } return f.apply(this, a); }; };
-  before(q, 'writeBuffer', a => a[0], 'upload');
-  before(q, 'writeTexture', a => a[0]?.texture, 'picture upload');
+  // (put off past the refresh: an upload a held pass is waiting on is copied and done after it, `wait` waits its turn;
+  // the rest send everything now, in order)
+  const before = (o, k, pick, why, wait) => { const f = o[k]; if (typeof f === 'function') o[k] = function (...a) {
+    if (D?.S === S && (S.list.length || D.items.length)) {
+      const r = pick ? pick(a) : null;
+      if (!pick || r?.gsH > 0) {
+        if (wait === 'data') { const b = [...a], i = k === 'writeBuffer' ? 2 : 1; b[i] = copyData(a[i]); defer(() => f.apply(this, b)); return; }
+        if (wait) return waitFor(f, this, a);
+        runDeferred(why);
+      }
+    }
+    if (S.list.length) { const r = pick ? pick(a) : null; if (!pick || r?.gsH > 0) { if (ONE_SUBMIT.trace) { const n = why + ': ' + name(r); ONE_SUBMIT.names[n] = (ONE_SUBMIT.names[n] || 0) + 1; } send(S, why); } } return f.apply(this, a); }; };
+  before(q, 'writeBuffer', a => a[0], 'upload', 'data');
+  before(q, 'writeTexture', a => a[0]?.texture, 'picture upload', 'data');
   before(q, 'copyExternalImageToTexture', a => a[1]?.texture, 'picture upload');
-  before(q, 'onSubmittedWorkDone', null, 'done');
+  before(q, 'onSubmittedWorkDone', null, 'done', true);
   before(dev, 'popErrorScope', null, 'errors');
 }
 
 /** Sends what is held now (before the canvas is read: copied to a card, or looked at by a test). */
-export function flushGPU(why = 'copy') { for (const S of states) if (S.list.length) send(S, why); }
+export function flushGPU(why = 'copy') { if (D) runDeferred(why); for (const S of states) if (S.list.length) send(S, why); }
 /** Sends what is held now so the chip can start on it while the frame's code goes on (see the top of this file); nothing with ONE_SUBMIT.early off. */
-export function sendEarly(why) { if (ONE_SUBMIT.early) for (const S of states) if (S.list.length) send(S, why); }
+// (not while sends are put off past the refresh: those go together after it)
+export function sendEarly(why) { if (ONE_SUBMIT.early && !D) for (const S of states) if (S.list.length) send(S, why); }

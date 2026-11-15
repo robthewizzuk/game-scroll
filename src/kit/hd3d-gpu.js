@@ -33,7 +33,7 @@ import { FROND } from './looks.js';
 import { SkyGpu, SKY, skyAt, cloudShadeAt, knee, cloudKnee } from './hd3d-gpu-sky.js';
 export { SKY };
 import { eachShown, listPipeline, RIDE } from './scene-list.js';
-import { sendEarly } from './submit.js';
+import { sendEarly, deferSends } from './submit.js';
 import { fwdDepth, noDepth } from './depth-gpu.js';
 import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
@@ -3061,12 +3061,18 @@ export class GpuChain {
   // frame on the refreshes between, so no refresh holds more than one frame's work, a refresh later. A
   // refresh's picture reaches the screen only once all the work sent in it is done (one queue on the
   // chip), so what counts is the work in each refresh, not in each pair.
+  // 'early' (30 → 60) is 'first' with the real frame's refresh shown before the real frame is drawn (the last real
+  // frame needs nothing from it), and the real frame's work sent once that refresh's picture is handed over
+  // (submit.js deferSends): it has that refresh and the next on the chip, where 'first' gives it one.
   realFrame(o, f) {
     const r = this.r, sp = this.sp, fgo = o.mrt ? o.fg : null, cam = this.cam;
     if (!fgo && this.fg?.frames) { this.fg.reset(); this.sched = null; }
     // the last pair's newest frame becomes the next pair's last (when no refresh between did it)
     if (fgo && this.owe && !fgo.reset) this.fg.keep();
     this.owe = false;
+    // early: the last real frame on this refresh now (as 'first' shows it), then the real frame's work after the refresh
+    const early = !!fgo && fgo.pace === 'early' && fgo.mode !== 'ahead' && !fgo.reset && this.fgMode === 'blend' && !!this.sched && !!this.fg?.ready && !!this.lastColor;
+    if (early) { this.showFrame(this.lastColor, 1); this.early = deferSends(); } else this.early = false;
     // particles' own motion is measured from the camera as the last real frame drew it
     fgPrevVP.value.copy(this.vpLast ||= cam.projectionMatrix.clone().multiply(cam.matrixWorldInverse));
     // the frame's picture, and the last frame's: two pictures taking turns (SGSR 2's own two, or ours), so
@@ -3104,12 +3110,13 @@ export class GpuChain {
     let gap = S ? Math.round((o.now - S.at) / ms) : 0;
     if (!(gap >= 1 && gap <= 6)) gap = Math.max(1, Math.round(steps));
     if (S) { this.fgWin.real++; if (S.k < gap - 1) this.fgWin.missed++; }   // refreshes in that gap showed nothing new
-    const n = Math.max(1, Math.ceil(steps - .01)), first = mode === 'blend' && fgo.pace === 'first';
+    const n = Math.max(1, Math.ceil(steps - .01)), first = mode === 'blend' && (fgo.pace === 'first' || fgo.pace === 'early');
     this.sched = { at: o.now, ms, gap, k: 0, first, D: mode === 'ahead' ? 0 : first ? n : Math.max(1, n - 1) };
     this.owe = true;
     // fresh aim: where the input pointed the camera for this frame (a later change is the finger's own)
     const base = this.aim && fg.ready ? this.aim() : null; if (base) copyPose(base, this.aimBase);
-    return this.showAt(0);
+    // (early: this refresh already shows the last real frame)
+    return early ? 'real' : this.showAt(0);
   }
   // the moment due k refreshes after the newest real frame: the newest, the last, or a made one
   showAt(k) {

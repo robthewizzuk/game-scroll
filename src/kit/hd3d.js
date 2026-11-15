@@ -56,7 +56,7 @@ import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses, canvasShows, OPAQUE, SEND_CHANGED, ONE_WRITE } from './gpu.js';
 import { packing } from './pack.js';
-import { ONE_SUBMIT, flushGPU, sendEarly } from './submit.js';
+import { ONE_SUBMIT, flushGPU, sendEarly, deferring } from './submit.js';
 import { steerFor } from './steering.js';
 import { traceDrew, traceMay, traceOff, traceLostChip, traceAgain } from './trace-guard.js';
 import { SLIM, isSlim, meshBytes, SKIN_POOLED } from './slim.js';
@@ -652,7 +652,7 @@ const traceWanted = () => HD.traced !== false && steered().traced !== false && t
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
+if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
@@ -3271,16 +3271,16 @@ export class HDView {
     // refresh one frame's work); then stop for this game. (Not while it is forced on: a test, or the engine test
     // scenes' frame generation runs, which time it as it is.)
     if (made && ch.fgWin.real >= 90 && !speed.forceFrameGen) {
-      const { miss, dropped } = ch.missRate(), id = speed.game?.id, after = how === 'blend' && fg.pace === 'after';
+      const { miss, dropped } = ch.missRate(), id = speed.game?.id, after = how === 'blend' && (fg.pace === 'after' || fg.pace === 'early');
       if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id)))) { if (!speed.shield) { frameGenFailed(id); console.info('Frame generation off for this game: the phone is too busy for the frames between'); } }
-      else if (miss > .08) console.info('Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full');
+      else if (miss > .08) console.info(fg.pace === 'early' ? 'Frame generation: real frames back to one refresh of the chip for this game, its frames came late with two' : 'Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full');
     }
     if (made) ch.sent(drawAt, 1000 / screenHz());
     if (!baking && !off) {
       gpuTime(r, !!how || fpsFor(speed.game) >= screenHz() * .9);
       { const C = G.fx.SHADOW_COST; HD.info.shTris = (HD.info.shTris || 0) + C[0]; HD.info.shCalls = (HD.info.shCalls || 0) + C[1]; C[0] = C[1] = 0; }
       HD.info.calls = r.info.render.drawCalls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = T.shadow > 0; HD.info.upscaled = s2 ? 'sgsr2' : up ? 'sgsr1' : false; HD.info.backend = 'webgpu'; HD.info.hdr = !!r.gsHdr; HD.info.detail = detailStats;
-      HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0; HD.info.fgPace = made && how === 'blend' ? fg.pace : null; HD.info.fgDrops = ch.drops || 0;
+      HD.info.framegen = made ? how : false; HD.info.fgMs = made ? ch.fg.stats.ms : 0; HD.info.fgSteps = made ? steps : 0; HD.info.fgPace = made && how === 'blend' ? (fg.pace === 'early' && !ch.early ? 'first' : fg.pace) : null; HD.info.fgDrops = ch.drops || 0;
       // (the phone test tour: the share of tiles that took the quick way, read back now and then)
       if (made && HD.fgParts && (this._fgEasyN = (this._fgEasyN || 0) + 1) % 30 === 0) ch.fg.easyShare().then(v => { if (v != null) HD.info.fgEasy = v; }, () => {});
     }
@@ -3549,7 +3549,7 @@ export class HDView {
     try { cp.render(); } finally { showAll(this); lodBack(this); fadeBack(this); this.scene.matrixWorldAutoUpdate = mwa; s2?.end(this.cam); if (pm >= 0) leave(pm); }
     if (!baking && !off) { HD.info.calls = r.info.render.calls; HD.info.tris = r.info.render.triangles; (this.drew ||= [0, 0])[0] = HD.info.tris; this.drew[1] = HD.info.calls; HD.info.cpu = performance.now() - now; HD.info.shadows = shadows; HD.info.upscaled = s2 ? 'sgsr2' : up && 'sgsr1'; HD.info.backend = 'webgl'; HD.info.webgl = this._gpuWhy || ''; HD.info.detail = detailStats; HD.info.trace = null; HD.info.half = ''; HD.info.refl = ssr ? 'screen' : ''; }
     }
-    if (direct) { flushGPU('frame'); c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }   // (the frame's passes go to the chip now, together: submit.js)
+    if (direct) { if (!deferring()) flushGPU('frame'); c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore(); return; }   // (the frame's passes go to the chip now, together: submit.js; unless they are put off past the refresh, 30 → 60's early pace)
     c.save(); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
     if (baking) { c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-over'; copyFrame(r, c, 0, 0, ow, oh, 0, 0, c.canvas.width, c.canvas.height); }
     else copyFrame(r, c, 0, 0, ow, oh, 0, 0, w, h);
