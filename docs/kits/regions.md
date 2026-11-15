@@ -8,22 +8,22 @@ Big worlds in parts, made a little each frame while wanted and freed behind.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RegionsPart`, line 1401), where every option and field is described.
+From `src/gamescroll.d.ts` (`RegionsPart`, line 1406), where every option and field is described.
 
-- `Regions: new (view: Loose, o?: { /** A World3D: solid ground and bodies freed with their parts. Left out: the one the game made before this; false: none. */ world?: Lo…` A big world in parts that are made as they're wanted and let go of behind: named parts (levels made only when picked), squares round the player, land in tiles. (:1407)
-  - `part(name: string, make: RegionMake): this` A named part (a level, a district, the inside of a house): make(r) builds it, all at once or as a generator function that yields between pieces. (:1377)
-  - `want(...names: (string | string[])[]): this` These parts are wanted, and no others. (:1379)
-  - `has(name: string): boolean` Is this part made? has(x, z): is the square under x, z made in every layer? (:1381)
-  - `has(x: number, z: number): boolean` (:1382)
-  - `readonly ready: boolean` Every wanted part made, and the squares round the player. (:1384)
-  - `readonly progress: number` 0..1: how much of what is wanted is made. (:1386)
-  - `cells(o: { size?: number; reach?: number; make: RegionMake; level?: (ring: number) => number; seed?: number }): RegionLayer` Squares round the player: make(r) builds one (r.cx, r.cz, r.x0, r.z0, r.size, r.seed). (:1388)
-  - `land(o: { height: (x: number, z: number) => number; size?: number; reach?: number; segments?: number; solid?: number; material?: Loose; colour?: (x: number, y: number,…` Ground in tiles from height(x, z): finer close by, solid in the regions' world within `solid` squares, skirts so tiles meet. (:1390)
-  - `update(dt?: number, at?: { x: number; y?: number; z?: number } | null): this` Each frame: builds a little of what is wanted (budget ms) and lets go of what is behind. (:1393)
-  - `clear(): this` Lets go of every part and square (they're made again as they're wanted). (:1395)
-  - `dispose(): void` (:1396)
-  - `readonly info: { parts: string[]; cells: number; making: number; ms: number; made: number; dropped: number }` What is in now: parts made, squares made, how many are being made, and this frame's building time in ms. (:1398)
-  - `budget: number` (:1399)
+- `Regions: new (view: Loose, o?: { /** A World3D: solid ground and bodies freed with their parts. Left out: the one the game made before this; false: none. */ world?: Lo…` A big world in parts that are made as they're wanted and let go of behind: named parts (levels made only when picked), squares round the player, land in tiles. (:1412)
+  - `part(name: string, make: RegionMake): this` A named part (a level, a district, the inside of a house): make(r) builds it, all at once or as a generator function that yields between pieces. (:1382)
+  - `want(...names: (string | string[])[]): this` These parts are wanted, and no others. (:1384)
+  - `has(name: string): boolean` Is this part made? has(x, z): is the square under x, z made in every layer? (:1386)
+  - `has(x: number, z: number): boolean` (:1387)
+  - `readonly ready: boolean` Every wanted part made, and the squares round the player. (:1389)
+  - `readonly progress: number` 0..1: how much of what is wanted is made. (:1391)
+  - `cells(o: { size?: number; reach?: number; make: RegionMake; level?: (ring: number) => number; seed?: number }): RegionLayer` Squares round the player: make(r) builds one (r.cx, r.cz, r.x0, r.z0, r.size, r.seed). (:1393)
+  - `land(o: { height: (x: number, z: number) => number; size?: number; reach?: number; segments?: number; solid?: number; material?: Loose; colour?: (x: number, y: number,…` Ground in tiles from height(x, z): finer close by, solid in the regions' world within `solid` squares, skirts so tiles meet. (:1395)
+  - `update(dt?: number, at?: { x: number; y?: number; z?: number } | null): this` Each frame: builds a little of what is wanted (budget ms) and lets go of what is behind. (:1398)
+  - `clear(): this` Lets go of every part and square (they're made again as they're wanted). (:1400)
+  - `dispose(): void` (:1401)
+  - `readonly info: { parts: string[]; cells: number; making: number; ms: number; made: number; dropped: number }` What is in now: parts made, squares made, how many are being made, and this frame's building time in ms. (:1403)
+  - `budget: number` (:1404)
 
 ## From the maker kit
 
@@ -104,7 +104,7 @@ From [Dungeons](../maker-kit.md#dungeons):
 
 1 game uses it (`node scripts/examples.mjs gs.regions` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Props } = gs.props;

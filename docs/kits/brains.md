@@ -8,99 +8,99 @@ Tiny Brains: on-device learning opponents and helpers, with guard rails, correct
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`BrainsPart`, line 2379), where every option and field is described.
+From `src/gamescroll.d.ts` (`BrainsPart`, line 2384), where every option and field is described.
 
-- `Net: typeof TinyNet` (:2380)
-  - `constructor(sizes: number[], seed?: number)` (:2111)
-  - `readonly sizes: number[]` (:2112)
-  - `readonly shape: string` (:2112)
-  - `readonly length: number` (:2112)
-  - `w: Float32Array` (:2112)
-  - `run(x: ArrayLike<number>): Float32Array` Probabilities for inputs x (reused array). (:2114)
-  - `learn(x: ArrayLike<number>, toward: number, amount: number, ran?: boolean): this` Makes `toward` more likely for x by `amount` (negative: less likely). (:2116)
-  - `copy(): TinyNet` (:2117)
-  - `pack(): string` (:2118)
-  - `static unpack(s: string): TinyNet | null` (:2119)
-- `Brain: typeof Brain` (:2381)
-  - `constructor(api: GameApi | null, opts: BrainOptions)` (:2166)
-  - `net: TinyNet` (:2167)
-  - `skill: number` (:2167)
-  - `trust: number` (:2167)
-  - `winRate: number` (:2167)
-  - `steps: number` (:2167)
-  - `readonly action: number | string` The last action (its name when actions is a list). (:2169)
-  - `act(see: number[], dt?: number): number` Picks an action for what it sees (numbers about -1..1), every frame. (:2171)
-  - `feel(x?: number): void` A moment that made the round exciting (about -1..1). (:2173)
-  - `result(playerWon: boolean): void` End of a duel or round: did the player win? (:2175)
-  - `winChance(skill?: number): number` The player's learned chance of winning a round at a skill level (default: the current one). (:2177)
-  - `reset(): this` Forgets what it learned. (:2179)
-  - `style: string | Record<string, number> | undefined` The personality it's playing; set a name or a mix ({ bold: .7, sneaky: .3 }). (:2181)
-  - `readonly telling: { action: number | string; left: number; t: number } | null` During a wind-up (tells): what it's about to do. (:2183)
-  - `unsure: number` How torn its last decision was, 0..1. (:2185)
-  - `fun: number` How fun rounds have looked lately (-1..1), and its learned lean (-0.3..0.3). (:2187)
-  - `lean: number` (:2187)
-  - `rounds: number` (:2187)
-  - `watch(see: number[], action: number | string, amount?: number): this` Learns from a move someone showed it (teach by playing). (:2189)
-  - `correct(see: ArrayLike<number>, action: number | string): this` "In this spot the right move was this": correct(see, action), or correct(action) for the spot it last decided on. (:2196)
-  - `correct(action: number | string): this` (:2197)
-  - `avoid(see: ArrayLike<number>, action: number | string): this` "In this spot, not that": avoid(see, action), avoid(action) for the spot it last decided on, or avoid() for whatever it just did there. (:2203)
-  - `avoid(action?: number | string): this` (:2204)
-  - `readonly recalled: { action: number | string; not: boolean; like: number } | null` After act(): the correction that shaped the move it just chose ({ action, not: it leaned away, like: 0..1 how alike the spot was }), or null. (:2206)
-  - `readonly remembered: { action: number | string; better: number } | null` After act(), with the memory option: the move its memory chose over the one it would have made ({ action, better: how much more exciting it expects, in typical feel()s }), or null. (:2208)
-  - `uncorrect(action?: number | string): this` Forgets the corrections given while running (all, or one action's); the maker's own stay. (:2210)
-  - `readonly corrections: ([number[], number | string] | [number[], number | string, false])[]` Every correction it holds, as [see, action] ("not this": [see, action, false]); copy them into the corrections option to keep them in the game. (:2212)
-  - `readonly heed: number` How far it trusts its corrections, 0..2: full while they agree, less when examples close together name different moves. (:2214)
-  - `pack(): string` The brain as text (for start). (:2216)
-- `Wave: new (brain: Brain, o?: { change?: number }) => { mind(o?: { style?: string }): BrainMind; /** How much the live minds disagree on these inputs, 0..1. */ unsure(s…` Every enemy in a wave is an experiment: wave.mind() per enemy (each with its own reaction time and action), mind.done() when it leaves. (:2383)
-- `Predict: typeof Predict` Learns the player's habits and guesses their next move (board, card, rhythm, turn games). (:2385)
-  - `constructor(api: GameApi | null, opts: { moves: number | string[]; name?: string; learn?: number })` (:2362)
-  - `see(move: number | string): this` The player made a move. (:2364)
-  - `guess(): number | string | null` The most likely next move, or null before any moves. (:2366)
-  - `chances(): Float64Array` A chance for each move (adds up to 1). (:2368)
-  - `readonly sure: number` How sure the guess is, 0..1. (:2370)
-  - `right: number` How often its guesses came true lately, 0..1. (:2372)
-  - `seen: number` Moves seen. (:2374)
-  - `forget(): this` Forgets every habit. (:2376)
-- `Player: typeof Player` (:2386)
-  - `constructor(api: GameApi | null)` (:2220)
-  - `readonly skill: number` (:2221)
-  - `readonly reaction: number` (:2221)
-  - `readonly aim: number` (:2221)
-  - `get(kind: string, fallback?: number): number` (:2222)
-  - `count(kind: string): number` (:2222)
-  - `note(kind: string, value: number): this` (:2222)
-  - `clear(): this` (:2222)
-- `Dial: typeof Dial` (:2387)
-  - `constructor(api: GameApi | null, opts?: DialOptions)` (:2232)
-  - `constructor(opts?: DialOptions)` (:2233)
-  - `name: string` (:2234)
-  - `skill: number` The dial, 0..1 (within range). (:2236)
-  - `winRate: number` The player's win rate, smoothed, and the rate it steers to. (:2238)
-  - `readonly target: number` (:2238)
-  - `rounds: number` Results seen. (:2240)
-  - `valueOf(): number` (:2241)
-  - `level(n?: number): number` The dial as a level 1..n (default 5). (:2243)
-  - `result(playerWon: boolean | 'draw' | number): this` The end of a game or round: did the player win? (:2245)
-  - `winChance(skill?: number): number` The player's learned chance of winning at a skill (default: the current one). (:2247)
-  - `forget(): this` Forgets what it learned about this player. (:2249)
-- `Coach: typeof Coach` (:2388)
-  - `constructor(api: GameApi | null, opts?: CoachOptions)` (:2272)
-  - `constructor(opts?: CoachOptions)` (:2273)
-  - `name: string` (:2274)
-  - `shape(inputs: number, actions: string[] | number): this` What it looks at and what it can say. (:2276)
-  - `pick<T extends number | string>(see: ArrayLike<number>, usual: T | T[]): T` The move to make on inputs `see`: `usual` (the rules' choice; or a list, best first, of the moves that can be made here), unless corrections in spots like this one say otherwise. (:2278)
-  - `correct(action: number | string): this` "In this spot the right move was this": for the spot it last picked on, or one of your own. (:2280)
-  - `correct(see: ArrayLike<number>, action: number | string): this` (:2280)
-  - `avoid(action?: number | string): this` "In this spot, not that": avoid() is about what it last picked (so name the move when teaching the same thing twice). (:2282)
-  - `avoid(see: ArrayLike<number>, action: number | string): this` (:2282)
-  - `readonly recalled: { action: number | string; not: boolean; like: number } | null` After pick(): the correction that shaped it, or null. (:2284)
-  - `uncorrect(action?: number | string): this` Forgets the corrections given while running (all, or one action's); the maker's own stay. (:2286)
-  - `readonly corrections: ([number[], number | string] | [number[], number | string, false])[]` Every correction it holds, as [see, action] ("not this": [see, action, false]). (:2288)
-  - `readonly heed: number` How far it trusts its corrections, 0..2. (:2290)
-  - `lean(see: ArrayLike<number>): Float32Array | null` What its examples say about a spot, per action: above 0 towards it, below 0 away (null: nothing like it). (:2292)
-- `Examples: typeof Examples` (:2389)
-  - `constructor(api: GameApi | null, opts?: ExamplesOptions)` (:2310)
-- …more: `BrainsPart` at src/gamescroll.d.ts:2379
+- `Net: typeof TinyNet` (:2385)
+  - `constructor(sizes: number[], seed?: number)` (:2116)
+  - `readonly sizes: number[]` (:2117)
+  - `readonly shape: string` (:2117)
+  - `readonly length: number` (:2117)
+  - `w: Float32Array` (:2117)
+  - `run(x: ArrayLike<number>): Float32Array` Probabilities for inputs x (reused array). (:2119)
+  - `learn(x: ArrayLike<number>, toward: number, amount: number, ran?: boolean): this` Makes `toward` more likely for x by `amount` (negative: less likely). (:2121)
+  - `copy(): TinyNet` (:2122)
+  - `pack(): string` (:2123)
+  - `static unpack(s: string): TinyNet | null` (:2124)
+- `Brain: typeof Brain` (:2386)
+  - `constructor(api: GameApi | null, opts: BrainOptions)` (:2171)
+  - `net: TinyNet` (:2172)
+  - `skill: number` (:2172)
+  - `trust: number` (:2172)
+  - `winRate: number` (:2172)
+  - `steps: number` (:2172)
+  - `readonly action: number | string` The last action (its name when actions is a list). (:2174)
+  - `act(see: number[], dt?: number): number` Picks an action for what it sees (numbers about -1..1), every frame. (:2176)
+  - `feel(x?: number): void` A moment that made the round exciting (about -1..1). (:2178)
+  - `result(playerWon: boolean): void` End of a duel or round: did the player win? (:2180)
+  - `winChance(skill?: number): number` The player's learned chance of winning a round at a skill level (default: the current one). (:2182)
+  - `reset(): this` Forgets what it learned. (:2184)
+  - `style: string | Record<string, number> | undefined` The personality it's playing; set a name or a mix ({ bold: .7, sneaky: .3 }). (:2186)
+  - `readonly telling: { action: number | string; left: number; t: number } | null` During a wind-up (tells): what it's about to do. (:2188)
+  - `unsure: number` How torn its last decision was, 0..1. (:2190)
+  - `fun: number` How fun rounds have looked lately (-1..1), and its learned lean (-0.3..0.3). (:2192)
+  - `lean: number` (:2192)
+  - `rounds: number` (:2192)
+  - `watch(see: number[], action: number | string, amount?: number): this` Learns from a move someone showed it (teach by playing). (:2194)
+  - `correct(see: ArrayLike<number>, action: number | string): this` "In this spot the right move was this": correct(see, action), or correct(action) for the spot it last decided on. (:2201)
+  - `correct(action: number | string): this` (:2202)
+  - `avoid(see: ArrayLike<number>, action: number | string): this` "In this spot, not that": avoid(see, action), avoid(action) for the spot it last decided on, or avoid() for whatever it just did there. (:2208)
+  - `avoid(action?: number | string): this` (:2209)
+  - `readonly recalled: { action: number | string; not: boolean; like: number } | null` After act(): the correction that shaped the move it just chose ({ action, not: it leaned away, like: 0..1 how alike the spot was }), or null. (:2211)
+  - `readonly remembered: { action: number | string; better: number } | null` After act(), with the memory option: the move its memory chose over the one it would have made ({ action, better: how much more exciting it expects, in typical feel()s }), or null. (:2213)
+  - `uncorrect(action?: number | string): this` Forgets the corrections given while running (all, or one action's); the maker's own stay. (:2215)
+  - `readonly corrections: ([number[], number | string] | [number[], number | string, false])[]` Every correction it holds, as [see, action] ("not this": [see, action, false]); copy them into the corrections option to keep them in the game. (:2217)
+  - `readonly heed: number` How far it trusts its corrections, 0..2: full while they agree, less when examples close together name different moves. (:2219)
+  - `pack(): string` The brain as text (for start). (:2221)
+- `Wave: new (brain: Brain, o?: { change?: number }) => { mind(o?: { style?: string }): BrainMind; /** How much the live minds disagree on these inputs, 0..1. */ unsure(s…` Every enemy in a wave is an experiment: wave.mind() per enemy (each with its own reaction time and action), mind.done() when it leaves. (:2388)
+- `Predict: typeof Predict` Learns the player's habits and guesses their next move (board, card, rhythm, turn games). (:2390)
+  - `constructor(api: GameApi | null, opts: { moves: number | string[]; name?: string; learn?: number })` (:2367)
+  - `see(move: number | string): this` The player made a move. (:2369)
+  - `guess(): number | string | null` The most likely next move, or null before any moves. (:2371)
+  - `chances(): Float64Array` A chance for each move (adds up to 1). (:2373)
+  - `readonly sure: number` How sure the guess is, 0..1. (:2375)
+  - `right: number` How often its guesses came true lately, 0..1. (:2377)
+  - `seen: number` Moves seen. (:2379)
+  - `forget(): this` Forgets every habit. (:2381)
+- `Player: typeof Player` (:2391)
+  - `constructor(api: GameApi | null)` (:2225)
+  - `readonly skill: number` (:2226)
+  - `readonly reaction: number` (:2226)
+  - `readonly aim: number` (:2226)
+  - `get(kind: string, fallback?: number): number` (:2227)
+  - `count(kind: string): number` (:2227)
+  - `note(kind: string, value: number): this` (:2227)
+  - `clear(): this` (:2227)
+- `Dial: typeof Dial` (:2392)
+  - `constructor(api: GameApi | null, opts?: DialOptions)` (:2237)
+  - `constructor(opts?: DialOptions)` (:2238)
+  - `name: string` (:2239)
+  - `skill: number` The dial, 0..1 (within range). (:2241)
+  - `winRate: number` The player's win rate, smoothed, and the rate it steers to. (:2243)
+  - `readonly target: number` (:2243)
+  - `rounds: number` Results seen. (:2245)
+  - `valueOf(): number` (:2246)
+  - `level(n?: number): number` The dial as a level 1..n (default 5). (:2248)
+  - `result(playerWon: boolean | 'draw' | number): this` The end of a game or round: did the player win? (:2250)
+  - `winChance(skill?: number): number` The player's learned chance of winning at a skill (default: the current one). (:2252)
+  - `forget(): this` Forgets what it learned about this player. (:2254)
+- `Coach: typeof Coach` (:2393)
+  - `constructor(api: GameApi | null, opts?: CoachOptions)` (:2277)
+  - `constructor(opts?: CoachOptions)` (:2278)
+  - `name: string` (:2279)
+  - `shape(inputs: number, actions: string[] | number): this` What it looks at and what it can say. (:2281)
+  - `pick<T extends number | string>(see: ArrayLike<number>, usual: T | T[]): T` The move to make on inputs `see`: `usual` (the rules' choice; or a list, best first, of the moves that can be made here), unless corrections in spots like this one say otherwise. (:2283)
+  - `correct(action: number | string): this` "In this spot the right move was this": for the spot it last picked on, or one of your own. (:2285)
+  - `correct(see: ArrayLike<number>, action: number | string): this` (:2285)
+  - `avoid(action?: number | string): this` "In this spot, not that": avoid() is about what it last picked (so name the move when teaching the same thing twice). (:2287)
+  - `avoid(see: ArrayLike<number>, action: number | string): this` (:2287)
+  - `readonly recalled: { action: number | string; not: boolean; like: number } | null` After pick(): the correction that shaped it, or null. (:2289)
+  - `uncorrect(action?: number | string): this` Forgets the corrections given while running (all, or one action's); the maker's own stay. (:2291)
+  - `readonly corrections: ([number[], number | string] | [number[], number | string, false])[]` Every correction it holds, as [see, action] ("not this": [see, action, false]). (:2293)
+  - `readonly heed: number` How far it trusts its corrections, 0..2. (:2295)
+  - `lean(see: ArrayLike<number>): Float32Array | null` What its examples say about a spot, per action: above 0 towards it, below 0 away (null: nothing like it). (:2297)
+- `Examples: typeof Examples` (:2394)
+  - `constructor(api: GameApi | null, opts?: ExamplesOptions)` (:2315)
+- …more: `BrainsPart` at src/gamescroll.d.ts:2384
 
 ## From the maker kit
 
@@ -248,18 +248,46 @@ More in docs/maker-kit.md: "Tiny Brains", "The player, fun, personalities and te
 
 ## In real games
 
-3 games use it (`node scripts/examples.mjs gs.brains` lists them). The shortest:
+17 games use it (`node scripts/examples.mjs gs.brains` lists them). The shortest:
 
-`src/games/mud-pie-duel.js` (Mud Pie Duel, Casual · Duel, 264 lines):
+`src/games/rock-paper.js` (Rock Paper Duel, Pocket · Strategy, 89 lines):
 
 ```js
-import gs from '../gamescroll.js';
-const { Feel } = gs.effects, { Ready } = gs.rounds, { Brain } = gs.brains, { icon } = gs.icons, { font, use } = gs.fonts;
+const { Feel } = gs.effects;
+const { Predict, Dial } = gs.brains;
+// …
+  let style, me, op, res, wins, lives, score, t, show;
+  const habits = new Predict(api, { name: 'rock-paper-you', moves: 3 }), dial = new Dial(api, { name: 'rock-paper-owl' });
+// …
+  // OWL plays what beats your likely next move, when it trusts its read (else anything)
+  const OWL = { name: 'OWL', pick: () => { const g = habits.guess(); return g != null && habits.sure > .3 && Math.random() < .45 + .5 * dial ? beats(g
+// …
+    if (show) return;
+    const o = style.pick(me, op, res); me.push(m); op.push(o); habits.see(m);
+// …
+      feel.update(dt); t += dt;
+      if (show) { show.l -= dt; if (show.l <= 0) { show = null; if (lives <= 0) { if (style === OWL) dial.result(false); return api.over(); } if (wins
 ```
 
-`src/games/pup-school.js` (Pup School, Casual · Pet, 360 lines):
+`src/games/thumb-duel.js` (Thumb Duel, Casual · Party, 125 lines):
 
 ```js
-import gs from '../gamescroll.js';
-const { Feel } = gs.effects, { Ready } = gs.rounds, { Coach } = gs.brains, { icon } = gs.icons, { font, use } = gs.fonts;
+const { rnd, clamp } = gs.util;
+const { Brain } = gs.brains;
+// …
+  const see = () => [style.quick, style.jumpy, (you - them) / 5, clamp(rounds / 8, 0, 1) * 2 - 1];
+  const robot = new Brain(api, {
+// …
+    if (two) { const n = Math.random() * 3 | 0; for (let i = 0; i < n; i++) fakes.push(fake(['yellow', 'flicker', 'cough'][Math.random() * 3 | 0], rnd
+    robot.act(see(), 1);
+// …
+    if (two) return;
+    if (early) { robot.feel(.4); style.jumpy += (1 - style.jumpy) * .25; }
+// …
+      style.jumpy += (-1 - style.jumpy) * .1;
+      if (who === 'you') { const gap = botAt - goT; robot.feel(gap < .06 ? 1 : gap < .14 ? .3 : -.3); style.quick += (clamp((.4 - goT) / .15, -1, 1) -
+      else robot.feel(.2);
+// …
+    }
+    robot.result(who === 'you');
 ```

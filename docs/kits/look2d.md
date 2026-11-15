@@ -8,11 +8,11 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Look2dPart`, line 1551), where every option and field is described.
+From `src/gamescroll.d.ts` (`Look2dPart`, line 1556), where every option and field is described.
 
-- `Screen: new (effects?: Partial<Record<ScreenEffect, object | boolean | null>>) => { set(effects: Partial<Record<ScreenEffect, object | boolean | null>>): Loose; filter…` Whole-screen effects with pixi-filters (lazy). (:1556)
-- `Batch: new (w: number, h: number, o?: { pixel?: boolean }) => { texture(src: Loose, w?: number, h?: number): Loose; add(tex: Loose, x?: number, y?: number, o?: { scale…` Fast WebGL sprites with PixiJS (lazy). (:1558)
-- `loadLook2D(): Promise<Loose>` (:1559)
+- `Screen: new (effects?: Partial<Record<ScreenEffect, object | boolean | null>>) => { set(effects: Partial<Record<ScreenEffect, object | boolean | null>>): Loose; filter…` Whole-screen effects with pixi-filters (lazy). (:1561)
+- `Batch: new (w: number, h: number, o?: { pixel?: boolean }) => { texture(src: Loose, w?: number, h?: number): Loose; add(tex: Loose, x?: number, y?: number, o?: { scale…` Fast WebGL sprites with PixiJS (lazy). (:1563)
+- `loadLook2D(): Promise<Loose>` (:1564)
 
 ## From the maker kit
 

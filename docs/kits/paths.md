@@ -8,29 +8,29 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PathsPart`, line 1570), where every option and field is described.
+From `src/gamescroll.d.ts` (`PathsPart`, line 1575), where every option and field is described.
 
-- `Path: typeof Path` (:1571)
-  - `constructor(points: (number[] | { x: number; y: number; z?: number })[], o?: { loop?: boolean; kind?: 'smooth' | 'line' | 'bezier'; tension?: number; detail?: number })` (:1564)
-  - `pts: { x: number; y: number; z: number }[]` (:1565)
-  - `readonly length: number` (:1565)
-  - `loop: boolean` (:1565)
-  - `at(d: number, out?: object): PathPoint` (:1566)
-  - `offset(d: number, side: number, out?: object): PathPoint` (:1566)
-  - `nearest(x: number, y: number, z?: number): { d: number; x: number; y: number; z: number; dist: number }` (:1567)
-  - `spaced(step: number): PathPoint[]` (:1568)
-  - `trace(c: Ctx, from?: number, to?: number): this` (:1568)
-  - `build(): this` (:1568)
-  - `points3(V: Loose, step?: number): Loose[]` (:1568)
-- `Follower: new (path: Path, o?: { speed?: number; end?: 'loop' | 'pingpong' | 'stop'; d?: number; side?: number }) => PathPoint & { speed: number; side: number; lap: nu…` Moves along a path at a steady speed: x, y, z, angle, d, lap, done. (:1573)
-  - `x: number` (:1562)
-  - `y: number` (:1562)
-  - `z: number` (:1562)
-  - `angle: number` (:1562)
-  - `dx: number` (:1562)
-  - `dy: number` (:1562)
-  - `dz: number` (:1562)
-  - `d: number` (:1562)
+- `Path: typeof Path` (:1576)
+  - `constructor(points: (number[] | { x: number; y: number; z?: number })[], o?: { loop?: boolean; kind?: 'smooth' | 'line' | 'bezier'; tension?: number; detail?: number })` (:1569)
+  - `pts: { x: number; y: number; z: number }[]` (:1570)
+  - `readonly length: number` (:1570)
+  - `loop: boolean` (:1570)
+  - `at(d: number, out?: object): PathPoint` (:1571)
+  - `offset(d: number, side: number, out?: object): PathPoint` (:1571)
+  - `nearest(x: number, y: number, z?: number): { d: number; x: number; y: number; z: number; dist: number }` (:1572)
+  - `spaced(step: number): PathPoint[]` (:1573)
+  - `trace(c: Ctx, from?: number, to?: number): this` (:1573)
+  - `build(): this` (:1573)
+  - `points3(V: Loose, step?: number): Loose[]` (:1573)
+- `Follower: new (path: Path, o?: { speed?: number; end?: 'loop' | 'pingpong' | 'stop'; d?: number; side?: number }) => PathPoint & { speed: number; side: number; lap: nu…` Moves along a path at a steady speed: x, y, z, angle, d, lap, done. (:1578)
+  - `x: number` (:1567)
+  - `y: number` (:1567)
+  - `z: number` (:1567)
+  - `angle: number` (:1567)
+  - `dx: number` (:1567)
+  - `dy: number` (:1567)
+  - `dz: number` (:1567)
+  - `d: number` (:1567)
 
 ## From the maker kit
 

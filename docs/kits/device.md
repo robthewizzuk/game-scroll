@@ -8,31 +8,31 @@ Haptics, tilt, shake, compass, mic, camera and the phone's other sensors, each w
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`DevicePart`, line 393), where every option and field is described.
+From `src/gamescroll.d.ts` (`DevicePart`, line 397), where every option and field is described.
 
-- `steps(): { count: number; new: number; perMinute: number } | null` Steps walked since the round started (null until the step counter runs and the player allowed it). (:395)
-- `pressure(): { hPa: number; height: number } | null` Air pressure and height change (metres) since the round started. (:397)
-- `light(): { lux: number; dark: boolean } | null` The room's light (Android; some browsers). (:399)
-- `near(): boolean | null` Something right over the top of the phone (Android). (:401)
-- `hasSensor(kind: 'steps' | 'pressure' | 'light' | 'near'): boolean | null` Does this phone have it? (:403)
-- `haptic(kind?: HapticKind): void` (:404)
-- `buzz(pattern: (number | boolean)[], short?: number, long?: number, gap?: number): void` Morse-like buzz pattern: 0 short, 1 long. (:406)
-- `canBuzz(): boolean` (:407)
-- `hapticPattern(events: HapticEvent[] | keyof typeof HAPTIC_NAMES | string, o?: { len?: number; strength?: number }): number` Rich haptics: taps (no len) and buzzes (len s) with strength and sharpness 0..1, `to` fades a buzz, at in seconds. (:409)
-- `HAPTICS: Readonly<Record<string, (o: { len?: number; strength?: number }) => HapticEvent[]>>` Ready-made patterns: tap, thud, heartbeat, explosion, charge, engine, rain, rumble, success, fail. (:411)
-- `stopHaptics(): void` (:412)
-- `want(feature: string): void` Ask for a sensor before Play: 'motion', 'mic', 'camera'... (:414)
-- `tilt(): XY | null` Tilt -1..1 on each axis, or null when there's no sensor (give a touch fallback). (:416)
-- `calibrateTilt(): void` (:417)
-- `onMotion(cb: (m: Loose) => void): () => void` (:418)
-- `onShake(cb: (strength: number) => void): () => void` cb(strength) on each shake: about 28 (a light shake) to 70 and more (a hard one). (:420)
-- `orientation(): Loose` (:421)
-- `heading(): number | null` Compass heading in degrees, or null. (:423)
-- `faceDown(): boolean | null` (:424)
-- `startMic(): Promise<Mic | null>` The mic (call from a tap): level(), pitch() -> { hz, note, midi, clarity } | null, blow(), clapped(), whistle(), stop(); or null if refused. (:426)
-- `stopMic(): void` (:427)
-- `startCamera(): Promise<Loose>` (:428)
-- `stopCamera(): void` (:429)
+- `steps(): { count: number; new: number; perMinute: number } | null` Steps walked since the round started (null until the step counter runs and the player allowed it). (:399)
+- `pressure(): { hPa: number; height: number } | null` Air pressure and height change (metres) since the round started. (:401)
+- `light(): { lux: number; dark: boolean } | null` The room's light (Android; some browsers). (:403)
+- `near(): boolean | null` Something right over the top of the phone (Android). (:405)
+- `hasSensor(kind: 'steps' | 'pressure' | 'light' | 'near'): boolean | null` Does this phone have it? (:407)
+- `haptic(kind?: HapticKind): void` (:408)
+- `buzz(pattern: (number | boolean)[], short?: number, long?: number, gap?: number): void` Morse-like buzz pattern: 0 short, 1 long. (:410)
+- `canBuzz(): boolean` (:411)
+- `hapticPattern(events: HapticEvent[] | keyof typeof HAPTIC_NAMES | string, o?: { len?: number; strength?: number }): number` Rich haptics: taps (no len) and buzzes (len s) with strength and sharpness 0..1, `to` fades a buzz, at in seconds. (:413)
+- `HAPTICS: Readonly<Record<string, (o: { len?: number; strength?: number }) => HapticEvent[]>>` Ready-made patterns: tap, thud, heartbeat, explosion, charge, engine, rain, rumble, success, fail. (:415)
+- `stopHaptics(): void` (:416)
+- `want(feature: string): void` Ask for a sensor before Play: 'motion', 'mic', 'camera'... (:418)
+- `tilt(): XY | null` Tilt -1..1 on each axis, or null when there's no sensor (give a touch fallback). (:420)
+- `calibrateTilt(): void` (:421)
+- `onMotion(cb: (m: Loose) => void): () => void` (:422)
+- `onShake(cb: (strength: number) => void): () => void` cb(strength) on each shake: about 28 (a light shake) to 70 and more (a hard one). (:424)
+- `orientation(): Loose` (:425)
+- `heading(): number | null` Compass heading in degrees, or null. (:427)
+- `faceDown(): boolean | null` (:428)
+- `startMic(): Promise<Mic | null>` The mic (call from a tap): level(), pitch() -> { hz, note, midi, clarity } | null, blow(), clapped(), whistle(), stop(); or null if refused. (:430)
+- `stopMic(): void` (:431)
+- `startCamera(): Promise<Loose>` (:432)
+- `stopCamera(): void` (:433)
 
 ## From the maker kit
 
@@ -132,7 +132,7 @@ More in docs/maker-kit.md: "Feel, sound, touch and 2D animation (round 9)", "Ste
 
 ## In real games
 
-257 games use it (`node scripts/examples.mjs gs.device` lists them). The shortest:
+248 games use it (`node scripts/examples.mjs gs.device` lists them). The shortest:
 
 `src/games/colour-flood.js` (Colour Flood, Pocket · Puzzle, 47 lines):
 

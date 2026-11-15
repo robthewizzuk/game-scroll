@@ -8,30 +8,30 @@ Rivers with currents, waterfalls, whirlpools, lava and floods that fill hollows.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FlowPart`, line 3214), where every option and field is described.
+From `src/gamescroll.d.ts` (`FlowPart`, line 3219), where every option and field is described.
 
-- `Streams: new (o?: { space?: '2d' | '3d' }) => On<Loose> & { list: Loose[]; river(path: Loose, o?: FlowOptions): FlowStream; pool(at: { x: number; y?: number; z?: numbe…` Rivers, pools, whirlpools: current that carries things, waterfalls, lava and acid that hurt. (:3216)
-- `Flood: new (o?: { size?: number; cells?: number; x?: number; z?: number; y?: number | null; ground?: (x: number, z: number) => number; edges?: 'wall' | 'drain'; damp?:…` Shallow water that floods: spreads, runs downhill, fills hollows. (:3222)
-  - `N: number` (:3209)
-  - `size: number` (:3209)
-  - `l: number` (:3209)
-  - `D: Float32Array` (:3209)
-  - `B: Float32Array` (:3209)
-  - `edges: 'wall' | 'drain'` (:3209)
-  - `rate: number` (:3209)
-  - `ground(fn: (x: number, z: number) => number): FloodPart` (:3210)
-  - `pour(x: number, z: number, rate?: number, r?: number): { x: number; z: number; rate: number; r: number }` (:3210)
-  - `drain(x: number, z: number, rate?: number, r?: number): Loose` (:3210)
-  - `remove(src: Loose): FloodPart` (:3210)
-  - `rain(rate: number): FloodPart` (:3211)
-  - `add(x: number, z: number, volume: number, r?: number): FloodPart` (:3211)
-  - `depth(x: number, z: number): number` (:3211)
-  - `wet(x: number, z: number, deep?: number): boolean` (:3211)
-  - `level(x: number, z: number): number` (:3211)
-  - `current(x: number, z: number): { x: number; z: number; speed: number }` (:3212)
-  - `volume(): number` (:3212)
-  - `update(dt: number): FloodPart` (:3212)
-  - `step(h: number): void` (:3212)
+- `Streams: new (o?: { space?: '2d' | '3d' }) => On<Loose> & { list: Loose[]; river(path: Loose, o?: FlowOptions): FlowStream; pool(at: { x: number; y?: number; z?: numbe…` Rivers, pools, whirlpools: current that carries things, waterfalls, lava and acid that hurt. (:3221)
+- `Flood: new (o?: { size?: number; cells?: number; x?: number; z?: number; y?: number | null; ground?: (x: number, z: number) => number; edges?: 'wall' | 'drain'; damp?:…` Shallow water that floods: spreads, runs downhill, fills hollows. (:3227)
+  - `N: number` (:3214)
+  - `size: number` (:3214)
+  - `l: number` (:3214)
+  - `D: Float32Array` (:3214)
+  - `B: Float32Array` (:3214)
+  - `edges: 'wall' | 'drain'` (:3214)
+  - `rate: number` (:3214)
+  - `ground(fn: (x: number, z: number) => number): FloodPart` (:3215)
+  - `pour(x: number, z: number, rate?: number, r?: number): { x: number; z: number; rate: number; r: number }` (:3215)
+  - `drain(x: number, z: number, rate?: number, r?: number): Loose` (:3215)
+  - `remove(src: Loose): FloodPart` (:3215)
+  - `rain(rate: number): FloodPart` (:3216)
+  - `add(x: number, z: number, volume: number, r?: number): FloodPart` (:3216)
+  - `depth(x: number, z: number): number` (:3216)
+  - `wet(x: number, z: number, deep?: number): boolean` (:3216)
+  - `level(x: number, z: number): number` (:3216)
+  - `current(x: number, z: number): { x: number; z: number; speed: number }` (:3217)
+  - `volume(): number` (:3217)
+  - `update(dt: number): FloodPart` (:3217)
+  - `step(h: number): void` (:3217)
 
 ## From the maker kit
 

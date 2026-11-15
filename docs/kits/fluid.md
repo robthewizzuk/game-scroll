@@ -8,10 +8,10 @@ Real 3D liquid to pour and splash, and sand, snow and mud that behave like the r
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FluidPart`, line 1259), where every option and field is described.
+From `src/gamescroll.d.ts` (`FluidPart`, line 1264), where every option and field is described.
 
-- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1261)
-- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1268)
+- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1266)
+- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1273)
 
 ## From the maker kit
 

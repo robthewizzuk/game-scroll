@@ -10,29 +10,29 @@ Guide: [Next Gen 3D guide](../nextgen-3d.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`HdPart`, line 1613), where every option and field is described.
+From `src/gamescroll.d.ts` (`HdPart`, line 1618), where every option and field is described.
 
-- `ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose` (:1613)
-- `HDView: new (...a: Loose[]) => Loose` (:1613)
-- `HD: Loose` (:1613)
-- `TIERS: Loose` (:1613)
-- `hasHD(): boolean` (:1613)
-- `pbr: Loose` (:1613)
-- `rbox: Loose` (:1613)
-- `surface: Loose` (:1613)
-- `speckle: Loose` (:1613)
-- `panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose` panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). (:1613)
-- `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1613)
-- `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1613)
-- `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1613)
-- `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1613)
-- `Particles: Loose` (:1613)
-- `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1615)
-- `sun: Loose` (:1624)
-- `spot: Loose` (:1624)
-- `THREE: Loose` (:1624)
-- `noiseTex(): Loose` A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. (:1626)
-- `bakeRenderer(): Loose` The shared WebGL renderer for kit bakes (gs.outdoors impostor()); null without 3D. (:1628)
+- `ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose` (:1618)
+- `HDView: new (...a: Loose[]) => Loose` (:1618)
+- `HD: Loose` (:1618)
+- `TIERS: Loose` (:1618)
+- `hasHD(): boolean` (:1618)
+- `pbr: Loose` (:1618)
+- `rbox: Loose` (:1618)
+- `surface: Loose` (:1618)
+- `speckle: Loose` (:1618)
+- `panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose` panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). (:1618)
+- `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1618)
+- `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1618)
+- `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1618)
+- `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1618)
+- `Particles: Loose` (:1618)
+- `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1620)
+- `sun: Loose` (:1629)
+- `spot: Loose` (:1629)
+- `THREE: Loose` (:1629)
+- `noiseTex(): Loose` A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. (:1631)
+- `bakeRenderer(): Loose` The shared WebGL renderer for kit bakes (gs.outdoors impostor()); null without 3D. (:1633)
 
 ## From the maker kit
 

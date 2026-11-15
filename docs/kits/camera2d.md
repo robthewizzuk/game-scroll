@@ -8,28 +8,28 @@ A 2D camera: follow with a dead zone, look-ahead, zoom, level bounds, parallax l
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Camera2dPart`, line 1449), where every option and field is described.
+From `src/gamescroll.d.ts` (`Camera2dPart`, line 1454), where every option and field is described.
 
-- `Camera2D: typeof Camera2D` (:1449)
-  - `constructor(w: number, h: number, o?: { deadzone?: [number, number]; lag?: number; lead?: number; zoom?: number; bounds?: [number, number, number, number] | null; pixe…` (:1435)
-  - `x: number` The world point at the centre of the screen. (:1437)
-  - `y: number` (:1437)
-  - `zoom: number` (:1437)
-  - `deadzone: [number, number]` (:1437)
-  - `lag: number` (:1437)
-  - `lead: number` (:1437)
-  - `bounds: [number, number, number, number] | null` (:1437)
-  - `readonly view: { x: number; y: number; w: number; h: number }` (:1438)
-  - `update(dt: number, target?: { x: number; y: number; vx?: number; vy?: number }): this` (:1439)
-  - `snap(x: number, y: number): this` (:1440)
-  - `zoomIn(z: number, sec?: number): this` (:1441)
-  - `begin(c: Ctx): this` (:1442)
-  - `end(c: Ctx): this` (:1442)
-  - `layer(c: Ctx, f: number, draw: (c: Ctx) => void, o?: { repeat?: [number, number] | null }): this` A background layer moving at factor f of the camera (0 fixed, 1 with the world). (:1444)
-  - `toWorld(sx: number, sy: number): XY` (:1445)
-  - `toScreen(wx: number, wy: number): XY` (:1445)
-  - `sees(x: number, y: number, w?: number, h?: number, margin?: number): boolean` (:1446)
-  - `offset(f?: number): [number, number]` (:1447)
+- `Camera2D: typeof Camera2D` (:1454)
+  - `constructor(w: number, h: number, o?: { deadzone?: [number, number]; lag?: number; lead?: number; zoom?: number; bounds?: [number, number, number, number] | null; pixe…` (:1440)
+  - `x: number` The world point at the centre of the screen. (:1442)
+  - `y: number` (:1442)
+  - `zoom: number` (:1442)
+  - `deadzone: [number, number]` (:1442)
+  - `lag: number` (:1442)
+  - `lead: number` (:1442)
+  - `bounds: [number, number, number, number] | null` (:1442)
+  - `readonly view: { x: number; y: number; w: number; h: number }` (:1443)
+  - `update(dt: number, target?: { x: number; y: number; vx?: number; vy?: number }): this` (:1444)
+  - `snap(x: number, y: number): this` (:1445)
+  - `zoomIn(z: number, sec?: number): this` (:1446)
+  - `begin(c: Ctx): this` (:1447)
+  - `end(c: Ctx): this` (:1447)
+  - `layer(c: Ctx, f: number, draw: (c: Ctx) => void, o?: { repeat?: [number, number] | null }): this` A background layer moving at factor f of the camera (0 fixed, 1 with the world). (:1449)
+  - `toWorld(sx: number, sy: number): XY` (:1450)
+  - `toScreen(wx: number, wy: number): XY` (:1450)
+  - `sees(x: number, y: number, w?: number, h?: number, margin?: number): boolean` (:1451)
+  - `offset(f?: number): [number, number]` (:1452)
 
 ## From the maker kit
 
@@ -55,4 +55,32 @@ and effects. `TopDown` is eight-way walking that slides along walls.
 
 ## In real games
 
-No game uses `gs.camera2d` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.camera2d` lists them). The shortest:
+
+`src/games/critter-quest.js` (Critter Quest, Advance · RPG, 1254 lines):
+
+```js
+const { rng, makeNoise } = gs.math;
+const { Camera2D } = gs.camera2d;
+// …
+  function tapWorld(sx, sy) {
+    const w = cam.toWorld(sx, sy), tx = Math.floor(w.x / T), ty = Math.floor(w.y / T), n = thingAt(tx, ty);
+// …
+      hero = new TopDown({ x: 12 * T + 8, y: 53 * T + 8, w: 9, h: 7, speed: K.walk, accel: 900, stop: 1400 }); hero.dir = { x: 0, y: -1 };
+      cam = new Camera2D(W, H, { pixel: true, bounds: [0, 0, WW, WH], lag: .12, deadzone: [10, 8] }); cam.snap(hero.x, hero.y);
+// …
+    },
+    resize(w, h) { W = w; H = h; if (cam) { const x = cam.x, y = cam.y; cam = new Camera2D(W, H, { pixel: true, bounds: [0, 0, WW, WH], lag: .12, dead
+// …
+      tryWalkInto(dt);
+      cam.update(dt, hero);
+// …
+    c.fillStyle = '#183018'; c.fillRect(0, 0, W, H);
+    cam.begin(c); feel.begin(c);
+// …
+    drawAmbient(c, v);
+    feel.end(c, W, H); cam.end(c);
+// …
+  function drawDark(c) {
+    const s = cam.toScreen(hero.x, hero.y), g = c.createRadialGradient(s.x, s.y, 20, s.x, s.y, Math.max(W, H) * .75);
+```

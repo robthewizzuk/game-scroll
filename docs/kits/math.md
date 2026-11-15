@@ -8,22 +8,22 @@ Seeded random, daily seeds, smooth noise, vectors, grids, timers that pause with
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`MathPart`, line 447), where every option and field is described.
+From `src/gamescroll.d.ts` (`MathPart`, line 451), where every option and field is described.
 
-- `rng(seed?: number | string): Rng` Seeded random numbers (same seed, same run). (:449)
-- `daily(salt?: string, date?: Date): number` A seed that's the same for everyone today. (:451)
-- `seedOf(s: string): number` (:452)
-- `noise2(x: number, y: number): number` (:453)
-- `noise3(x: number, y: number, z: number): number` (:454)
-- `noiseSeed(seed: number | string): void` (:455)
-- `makeNoise(seed: number | string): (x: number, y: number, z?: number) => number` (:456)
-- `fbm(x: number, y: number, octaves?: number): number` (:457)
-- `vec: Loose` (:458)
-- `overlap(a: Loose, b: Loose): boolean` (:459)
-- `angleDiff(a: number, b: number): number` (:460)
-- `wrap(v: number, max: number): number` (:461)
-- `Grid: new (w: number, h: number, fill?: Loose) => Loose` (:462)
-- `Timers: new () => { after(sec: number, fn: () => void): Timer; every(sec: number, fn: () => void): Timer; update(dt: number): void; clear(): void }` Game timing that pauses with the game: timers.after(1.5, fn); timers.update(dt) each frame. (:464)
+- `rng(seed?: number | string): Rng` Seeded random numbers (same seed, same run). (:453)
+- `daily(salt?: string, date?: Date): number` A seed that's the same for everyone today. (:455)
+- `seedOf(s: string): number` (:456)
+- `noise2(x: number, y: number): number` (:457)
+- `noise3(x: number, y: number, z: number): number` (:458)
+- `noiseSeed(seed: number | string): void` (:459)
+- `makeNoise(seed: number | string): (x: number, y: number, z?: number) => number` (:460)
+- `fbm(x: number, y: number, octaves?: number): number` (:461)
+- `vec: Loose` (:462)
+- `overlap(a: Loose, b: Loose): boolean` (:463)
+- `angleDiff(a: number, b: number): number` (:464)
+- `wrap(v: number, max: number): number` (:465)
+- `Grid: new (w: number, h: number, fill?: Loose) => Loose` (:466)
+- `Timers: new () => { after(sec: number, fn: () => void): Timer; every(sec: number, fn: () => void): Timer; update(dt: number): void; clear(): void }` Game timing that pauses with the game: timers.after(1.5, fn); timers.update(dt) each frame. (:468)
 
 ## From the maker kit
 
@@ -133,28 +133,18 @@ if (!regions.has('fort')) drawLoading(regions.progress);
 
 ## In real games
 
-22 games use it (`node scripts/examples.mjs gs.math` lists them). The shortest:
+48 games use it (`node scripts/examples.mjs gs.math` lists them). The shortest:
 
-`src/games/haptic-morse.js` (Buzz Code, Casual · Haptics, 69 lines):
+`src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 
 ```js
-import gs from '../gamescroll.js';
-const { Timers } = gs.math;
-// …
-function make(api) {
-  const timers = new Timers(), later = (fn, ms) => timers.after(ms / 1000, fn);   // game-time delays: they pause with the game
-// …
-  return {
-    reset() { timers.clear(); score = 0; lives = 3; t = 0; msg = null; next(); },
-    update(dt) { timers.update(dt);
+const { Feel } = gs.effects;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle
 ```
 
-`src/games/buzz-wire.js` (Buzz Wire, Casual · Skill, 84 lines):
+`src/games/colour-word.js` (Colour Word Trap, Casual · Brain, 63 lines):
 
 ```js
-const { approach } = gs.juice;
-const { noise2 } = gs.math;
-// …
-  let x, target, dist, score, fuse, t, touching, speed, hum, sparks, held;
-  const wire = y => W / 2 + noise2(y * .0035, 1.7) * W * .32 + Math.sin(y * .011) * W * .06 * Math.min(1, dist / 3000);
+const { icon } = gs.icons;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 ```

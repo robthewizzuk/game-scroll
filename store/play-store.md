@@ -43,7 +43,7 @@ Heart the games you love and the feed brings you more like them. Tap Meh and you
 • AR · 3D: games in your real room through the camera. Zap saucers swooping past your sofa, flick paper balls into a bin on your floor, fly a drone through hoops
 
 ★ USES YOUR WHOLE PHONE
-Tilt to steer, shake to roll, shout to launch, walk to explore, look through the camera, and feel every hit through vibration. Every game also plays with touch alone.
+Tilt to steer, shake to roll, blow to sail, walk to explore, look through the camera, and feel every hit through vibration. Every game also plays with touch alone.
 
 ★ WIN CREDITS, UNLOCK STUFF
 Win any game to earn credits, then spend them on boosts and unlocks. Earn achievements and climb leaderboards with Google Play Games, and keep your progress when you change phones.
@@ -117,5 +117,5 @@ Google Play Games data is handled by Google under its own policy.
 | --- | --- |
 | Location (coarse and fine, foreground only) | A few games build their level from the player's area (rounded to about 1 km), and walk-around games use about 10 m. Asked only when the player starts such a game, only used during play, never in the background, never stored or sent. Games still play with a made-up spot if refused, and Settings has a switch to turn it off. |
 | Camera | AR games show 3D objects over the camera picture, and a few games use it as a control. Nothing is saved or sent. |
-| Microphone (record audio) | A few games react to loudness, like shouting to launch a rocket. Audio is never recorded or sent. |
+| Microphone (record audio) | A few games react to loudness, like blowing to fill a sail. Audio is never recorded or sent. |
 | Vibrate | Haptic feedback in games. |
