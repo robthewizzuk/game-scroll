@@ -1,7 +1,11 @@
 # Node, the packages and a headless browser for the PR check's browser jobs, in one step each job shares.
-# Playwright isn't in package.json (the app doesn't need it), so the newest is installed here, with its
-# browsers kept in the Actions cache between runs. The runner image already has what Chromium needs, so
-# with the browser cached nothing more is installed; a first run (or WebKit) installs the system packages.
+# Playwright isn't in package.json (the app doesn't need it), so it is installed here at the version below,
+# with its browsers kept in the Actions cache between runs. The runner image already has what Chromium needs,
+# so with the browser cached nothing more is installed; a first run (or WebKit) installs the system packages.
+# The version is pinned (it used to be the newest on npm): a new release missed the cache in every job at once
+# (each then downloaded the browser and installed system packages, and all but one failed to save it), and a
+# new browser can move the picture checks' numbers (framegen-test's baseline, upscale-compare). Move it on in a
+# pull request of its own.
 name: Node and a test browser
 description: setup-node with the npm cache, npm ci, and Playwright with cached browsers
 inputs:
@@ -11,6 +15,9 @@ inputs:
   install:
     description: run npm ci (false when the job installs its own way)
     default: 'true'
+  playwright:
+    description: the Playwright version (and so the browser build) the checks run on
+    default: '1.65.1'
 runs:
   using: composite
   steps:
@@ -29,8 +36,9 @@ runs:
       shell: bash
       env:
         BROWSERS: ${{ inputs.browsers }}
+        PW: ${{ inputs.playwright }}
       run: |
-        echo "version=$(npm view playwright version)" >> "$GITHUB_OUTPUT"
+        echo "version=$PW" >> "$GITHUB_OUTPUT"
         echo "names=$(echo $BROWSERS | tr ' ' '-')" >> "$GITHUB_OUTPUT"
 
     - name: Cache the browsers

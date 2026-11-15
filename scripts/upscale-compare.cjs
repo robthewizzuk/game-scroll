@@ -16,7 +16,7 @@
 // and the run fails if the learned one comes out worse than the hand-written one (once trained weights are in).
 //   node scripts/upscale-compare.cjs [--scale 1.5] [--webgpu] [--tier 0..3] [--warm 80] [--modes plain,sgsr2] [--grain .035] [--scenes textured] [--mip -.5] [--shots dir] [--net weights.json]
 //   --tier: the quality tier (2 and 3 have MSAA); --warm: frames with nothing moving before each run;
-//   --scenes: only the runs whose names start so; --mip: that many mip levels more (negative: sharper) on
+//   --scenes: only the runs whose names start so (=name: only that run); --mip: that many mip levels more (negative: sharper) on
 //   top of the usual sharper textures; --net: the learned blend with those weights (scripts/gssr-train.py --out)
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
@@ -32,7 +32,7 @@ const fs = require('fs'), path = require('path');
     : { args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] }), p = await b.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   if (opt('--net')) await p.addInitScript(n => { window.__gssrNet = n; }, JSON.parse(fs.readFileSync(opt('--net'), 'utf8')));
-  await p.goto(`${server.resolvedUrls.local[0]}scripts/upscale-compare/?scale=${scale}${shots ? '&shots' : ''}${gpu ? '&gpu' : ''}${['tier', 'warm', 'modes', 'grain', 'mip', 'scenes'].map(k => opt('--' + k) ? `&${k}=${opt('--' + k)}` : '').join('')}`);
+  await p.goto(`${server.resolvedUrls.local[0]}scripts/upscale-compare/?scale=${scale}${shots ? '&shots' : ''}${gpu ? '&gpu' : ''}${['tier', 'warm', 'modes', 'grain', 'mip', 'scenes'].map(k => opt('--' + k) ? `&${k}=${encodeURIComponent(opt('--' + k))}` : '').join('')}`);
   await p.waitForFunction(() => window.result, null, { timeout: 900000 });   // (the PR check's runner is about half as fast as this machine)
   const res = await p.evaluate(() => window.result);
   if (res.error || errs.length) { console.log('FAIL', res.error || errs.join('\n')); process.exit(1); }
