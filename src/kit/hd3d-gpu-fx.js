@@ -138,11 +138,18 @@ const SHINY = uniform(0).onObjectUpdate(({ object }) => (object?.userData?.gsRef
 const ROUGH = uniform(1).onObjectUpdate(({ material }) => material?.roughness ?? 1);
 /** The extra picture for the scene pass's MRT (name it gsRefl). */
 export const reflMRT = () => vec4(SHINY, ROUGH, 0, 1);
+/**
+ * three's screen-space reflections' settings: how far a ray marches (metres), how thick a thing on the screen is taken
+ * to be, how strong the reflections are, how many steps (quality: the cost), how wide the fade at the screen's edges
+ * is, the brightest a reflection may be. For scripts/tune.cjs, whose search against the ray traced reference sets
+ * others before the effects chain is built again. Not on gs: games don't reach it.
+ */
+export const SSR_SETTINGS = { maxDistance: 8, thickness: .05, intensity: .55, quality: .5, screenEdgeFade: .2, maxLuminance: 10 };
 /** The scene's colour with the reflections added (a picture node). */
 export function reflStage(ch, sp, colT) {
   const R = sp.getTextureNode('gsRefl'), C = colT;
   const n = ch.ssrN = ssr(C, sp.getTextureNode('depth'), ch.nrmN, { metalnessNode: R.r, roughnessNode: R.g, camera: ch.cam });
-  n.maxDistance.value = 8; n.thickness.value = .05; n.intensity.value = .55; n.quality.value = .5;
+  for (const [k, val] of Object.entries(SSR_SETTINGS)) n[k].value = val;
   const hit = n.getTextureNode();
   { const sum = Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(); ch.ssrT = rtt(ch.hdrOut ? ch.hdrOut(sum) : sum, 1, 1, ch.pic3 || HALF); }
   ch.ssrT.renderTarget.gsPart = 'reflections';   // (hd3d.js gpuTime: the chip's time by pass; three's own SSR passes are found by name)
