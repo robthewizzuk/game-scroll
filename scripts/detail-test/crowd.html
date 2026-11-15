@@ -152,8 +152,9 @@ try {
   }
   // shadows
   {
-    crowd.update(0); const a = await shot(S); for (const k of crowd.kinds) for (const l of k.levels) l.mesh.castShadow = false;
-    const b = await shot(S); for (const k of crowd.kinds) for (const l of k.levels) l.mesh.castShadow = true;
+    // (each kind's shadow body casts for the levels shown: crowd.js fillBody; with HD.shadowBody = false the levels do)
+    crowd.update(0); const a = await shot(S); for (const k of crowd.kinds) { for (const l of k.levels) l.mesh.castShadow = false; if (k.body) k.body.mesh.castShadow = false; }
+    const b = await shot(S); for (const k of crowd.kinds) if (k.body) k.body.mesh.castShadow = true; crowd.update(0);
     const off = differ(a, b, 10);
     check('members cast shadows', off > 300, `${off} pixels are darker with their shadows`);
   }
