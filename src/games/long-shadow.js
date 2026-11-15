@@ -1580,11 +1580,23 @@ function make(api) {
     score: q => (1 - q[4]) * 1.4 + q[3] * .9 + (1 - q[8]) * .25 + Math.min(1, q[0]) * .2,
   });
   const endMind = (s, feel = 0) => { if (!s.mind) return; if (feel) s.mind.feel(feel); s.mind.done(); s.mind = null; };
+  // The riflemen learn from the men who fell (Tiny Brains corrections). One dropped as he rose from cover to shoot, before he
+  // got a round off, tells them all "not that, in a spot like this"; when a few fell in spots alike (the same range, as sure
+  // of where you are), the rest stop showing themselves there and come at you another way, and one of them says so on the
+  // radio. Only the newest FELL_KEPT falls are remembered (on this phone, from one session to the next), so they know where you caught
+  // them last without ever giving up shooting from cover: falls with nothing in common teach them little.
+  const FELL_KEPT = 4;
+  const fewFell = () => {
+    const not = rifleman.corrections.filter(c => c[1] === 'peek' && c[2] === false);
+    if (not.length <= FELL_KEPT) return;
+    rifleman.uncorrect('peek'); for (const c of not.slice(-FELL_KEPT)) rifleman.avoid(c[0], 'peek');
+  };
   // what they shout to each other (on the radio, with a crackle); never over your own side's orders
   const CALLS = {
     contact: ['Contact! Sniper!', 'Sniper! Get down!'], flanking: ['Going round the side!', 'Flanking. Keep him busy!', 'I\'ll get round behind him!'],
     'falling back': ['Fall back!', 'Back, back! Find cover!'], 'man down': ['Man down!', 'They got Brenner!', 'Vogt is hit!'], grenade: ['Grenade! Cover me!', 'Throwing!'],
     covering: ['Covering fire!', 'Keep his head down!'], moving: ['Move up! Go!', 'Moving!'], 'heads down': ['Stay low, he\'s watching!', 'Heads down!'],
+    wary: ['Don\'t show yourself there! He\'s waiting.', 'Not from there. That\'s how he got the others!', 'He\'s got that spot. Find another way!'],
   };
   let lastCall = -99;
   function callout(who, what) {
@@ -1696,6 +1708,8 @@ function make(api) {
     if (warming) return;
     if (s.ko) return;
     s.ko = true; fall(s, from); dropRifle(s); faceOf(s.m, 'hit');
+    // dropped by a round as he rose from cover to shoot, before he got one off: the others learn from it (see fewFell)
+    if (from && s.alert && s.mind && s.plan === 'peek' && s.mind.action === 'peek' && s.order?.do === 'shoot' && s.order.spot && !s.peekShots) { s.mind.avoid('peek'); fewFell(); }
     // a long duel was a good fight; dropping in the open in his first seconds was a dull one
     endMind(s, s.alert ? (s.alertT > 7 ? .5 : s.alertT < 2 && s.plan !== 'hold' ? -.2 : 0) : 0);
     for (const o of men) if (o !== s && !o.ko && Math.hypot(o.x - s.x, o.y - s.y) < 16) { o.shaken = Math.max(o.shaken || 0, .75); if (Math.hypot(o.x - s.x, o.y - s.y) < 7) flinch(o); }
@@ -2711,6 +2725,8 @@ function make(api) {
     s.mind.act(see, s.thinkDt); s.thinkDt = 0;
     const a = s.mind.action, moving = o.do === 'move' && !o.arrived, at = { x: tgt.x, y: tgt.y };
     if (a === 'hold' && quietT > 20) s.mind.feel(-.1);           // a dull lull: nobody shooting, him sat in cover
+    // he'd have shown himself here, but men fell doing that in spots like this one: he says so (now and then) and does something else
+    if (a !== 'peek' && squad.t - (squad.waryAt ?? -99) > 25) { const r = s.mind.recalled; if (r && r.not && r.action === 'peek' && r.like > .4) { squad.waryAt = squad.t; squad.call(s, 'wary'); } }
     // close to a nest you're staying in: a grenade (two a mission, not too often)
     if ((a === 'rush' || a === 'flank') && nest && !move && d < 40 && squad.grenades > 0 && squad.t - squad.lastGrenade > 9) {
       squad.grenades--; squad.lastGrenade = squad.t; s.order = { do: 'throw', at }; s.plan = 'grenade'; squad.call(s, 'grenade'); return;
@@ -2725,7 +2741,7 @@ function make(api) {
       squad.call(s, 'moving');
     } else if (a === 'flank') { squad.lastFlank = squad.t; squad.order(s, 'flank', tgt, { flank: 1.3, near: 16 * C, band: [3 * C, Math.max(4 * C, d)] }); squad.call(s, 'flanking'); }
     else if (a === 'fallback') { squad.order(s, 'retreat', tgt, { near: 12 * C, band: [d + 2 * C, d + 30 * C] }); squad.call(s, 'falling back'); }
-    else if (a === 'peek') { s.order = { do: 'shoot', at: { x: tgt.x, y: tgt.y }, spot: inCover > 0 ? sp : null, from: inCover > 0 ? WD.cover.peek(sp, tgt) : null }; s.fireT = Math.max(s.fireT, rnd(.9, 1.6)); if (Math.random() < .3) squad.call(s, 'covering'); }
+    else if (a === 'peek') { s.order = { do: 'shoot', at: { x: tgt.x, y: tgt.y }, spot: inCover > 0 ? sp : null, from: inCover > 0 ? WD.cover.peek(sp, tgt) : null }; s.fireT = Math.max(s.fireT, rnd(.9, 1.6)); s.peekShots = 0; if (Math.random() < .3) squad.call(s, 'covering'); }
     else {
       const spot = inCover > 0 ? sp : WD.cover.find(s, tgt, { who: s, near: 6 * C, band: [3 * C, d + 8 * C], sees: squad.sees });
       if (spot && inCover < 0) { WD.cover.take(spot, s); s.order = { do: 'move', role: 'hold', to: { x: spot.x, y: spot.y }, spot, at: { x: tgt.x, y: tgt.y } }; }
@@ -2840,7 +2856,7 @@ function make(api) {
           const up = !o.spot || s.fireT < .9 || t - (s.shotAt ?? -9) < .6, p = (up ? o.from : o.spot) || { x: s.x, y: s.y };
           if (Math.hypot(p.x - s.x, p.y - s.y) > .4) { if (walk(s, p.x, p.y, 2.2, dt) === 'stuck') o.from = o.spot = null; else speed = 2.2; }
           s.crouch = !up; s.yaw = turnTo(s.yaw, Math.atan2(o.at.x - s.x, o.at.y - s.y), dt * 4);
-          if ((s.fireT -= dt) <= 0 && !speed) { s.fireT = rnd(1.8, 3.2); s.shotAt = t; const ally = allies && nearestAlly(s); if (ally) enemyShot(s, ally, 'rifle'); else if (located && nest && !move) enemyShot(s, 'me', 'rifle'); }
+          if ((s.fireT -= dt) <= 0 && !speed) { s.fireT = rnd(1.8, 3.2); s.shotAt = t; s.peekShots = (s.peekShots | 0) + 1; const ally = allies && nearestAlly(s); if (ally) enemyShot(s, ally, 'rifle'); else if (located && nest && !move) enemyShot(s, 'me', 'rifle'); }
         } else if (o.do === 'throw') {
           s.order = { do: 'hold' };
           if (nest && !move && Math.hypot(s.x - nest.x, s.y - nest.z) < 40) { const e = nestEye(nest); setTimeout0(2, () => { if (nestId && !move && nest && Math.hypot(e.x - nest.x, e.z - nest.z) < 1) { hurtMe(24, { x: s.x, y: s.gy, z: s.y }); fx.shake(8); noise(.8, { vol: .4, from: 800, to: 60 }); } }); say('Grenade!', null, 1.2); }
