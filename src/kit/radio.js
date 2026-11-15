@@ -19,7 +19,7 @@
 // made up. It plays on the music channel, so the player's Sound settings (sound, volume, music) rule it;
 // with music off, the DJs are quiet too.
 import { compose } from './compose.js';
-import { music, say, talking, stopTalking, tone, noise, kitBus } from './sound.js';
+import { music, say, talking, stopTalking, tone, noise, kitBus, expectTune } from './sound.js';
 import { audio, sound } from '../sfx.js';
 import { rng } from './math.js';
 import { linksFor } from './links.js';
@@ -118,6 +118,8 @@ export class Radio {
     this.stations = stations.map((s, i) => ({ talk: .7, ...s, seed: `${seed}|${s.name}|${i}`, dj: { voice: 'woman', take: 0, pitch: 1, rate: 1, persona: 'a friendly radio DJ', sign: [], ...(s.dj || {}) } }));
     this.index = Math.max(0, Math.min(this.stations.length - 1, station | 0));
     for (const st of this.stations) this.prime(st);
+    // the stations' instruments, made under the round's loading screen (a song, or the bed under a break)
+    for (const st of this.stations) { const s = st.seg.kind === 'song' ? st.seg.song : st.after.song; expectTune({ ...s.tune, set: st.set || 'chip', voices: st.voices || null }); expectTune({ pad: s.tune.pad || 'C4', pad2: 'C4', set: st.set || 'chip' }); }
     own(this);
   }
   // ---- a station's own clock: a song, a break, a song... each made one step ahead

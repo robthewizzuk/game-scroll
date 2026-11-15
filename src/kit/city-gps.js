@@ -229,7 +229,7 @@ export class Gps {
     g.setAttribute('position', new BufferAttribute(new Float32Array(n * 2 * 3), 3)); g.setAttribute('uv', new BufferAttribute(new Float32Array(n * 2 * 2), 2));
     const idx = []; for (let i = 0; i < n - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); } g.setIndex(idx);
     const mat = new MeshBasicMaterial({ map: arrows(), color: colour, transparent: true, opacity, depthWrite: false, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, toneMapped: false });
-    const m = new Mesh(g, mat); m.name = 'gps way'; m.frustumCulled = false; m.renderOrder = 2; view.scene.add(m);
+    const m = new Mesh(g, mat); m.name = 'gps way'; m.frustumCulled = false; m.renderOrder = 2; Object.assign(m.userData, { noLod: true, detail: false, noOcclude: true, noBatch: true, noContact: true, noAO: true }); view.scene.add(m);
     this.line = { mesh: m, n, reach, width, view }; this.lineDirty = true; this.road();
     return this;
   }

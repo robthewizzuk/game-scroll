@@ -412,6 +412,55 @@ const VOICE = { lead: ['square', .028], bass: ['triangle', .07], pad: ['sine', .
 // tune stays on the beat, where a rhythm game's Beat expects it.
 const AHEAD = .45, TICK = 50, FIRST = .03;
 let toneRetry = 0;   // (a tune asks for Tone.js on its clock: after a failed load, not again for a few seconds)
+// Instruments a finished tune leaves for the next one. Building a Tone.js instrument takes a few milliseconds on a
+// phone, a band of them a whole frame or more, and a car radio starts a new tune at every song, break and turn of
+// the dial: a tune takes what is spare first and builds the rest one a tick. Each waits, silent, until the notes
+// its old tune wrote ahead and their tails are over (READY seconds) before it plays again.
+const spare = new Map(), SPARE = 2, READY = 2.5;   // 'voice:<name>' | 'kit:<name>' -> [{ inst, ctx, at }]
+function takeSpare(key, ctx) {
+  const l = spare.get(key); if (!l) return null;
+  for (let i = 0; i < l.length; i++) {
+    const e = l[i];
+    if (e.ctx !== ctx) { l.splice(i--, 1); try { e.inst.dispose(); } catch { /* gone */ } continue; }
+    if (ctx.currentTime >= e.at) { l.splice(i, 1); return e.inst; }
+  }
+  return null;
+}
+// Instruments a game will want later (a car radio's stations), made as spares by prepareTunes() under a
+// loading screen (the app calls it as a round gets ready), so not even the first of them is built in play.
+const wanted = new Map();   // key -> how many
+const keyFor = (part, inst) => (part.replace(/\d+$/, '') === 'drums' ? 'kit:' : 'voice:') + inst;
+/** Says a tune like this one will play later (music()'s options): its instruments are made ahead, as spares. */
+export function expectTune({ set = 'chip', voices = null, ...parts } = {}) {
+  const n = new Map();
+  for (const [name, line] of Object.entries(parts)) {
+    if (typeof line !== 'string') continue;
+    const inst = voiceFor(set, name, voices); if (!inst) continue;
+    const k = keyFor(name, inst); n.set(k, (n.get(k) || 0) + 1);
+  }
+  for (const [k, c] of n) wanted.set(k, Math.min(SPARE, Math.max(wanted.get(k) || 0, c)));
+  if (n.size) warm();
+}
+/** Makes the instruments expectTune() asked for (the app, behind a round's loading screen). */
+export function prepareTunes() {
+  const a = wanted.size ? audio() : null; if (!a || !toneLib.ready) return;   // (the list stays: a later prepare may manage)
+  const T = toneLib.get(), ctx = a.ctx, sink = ctx.createGain();   // (a spare plays nowhere until a tune takes it)
+  for (const [key, want] of wanted) {
+    const l = spare.get(key) || [], [kind, name] = key.split(':'); spare.set(key, l);
+    for (let have = l.filter(e => e.ctx === ctx).length; have < want; have++) {
+      let i = null;
+      try { i = kind === 'kit' ? makeKit(T, name, sink) : makeVoice(T, name, sink); } catch (e) { console.warn('[music]', name, e); }
+      if (!i) break;
+      l.push({ inst: i, ctx, at: 0 });
+    }
+  }
+  wanted.clear();
+}
+function keepSpare(key, inst, ctx) {
+  const l = spare.get(key) || []; spare.set(key, l);
+  if (l.length >= SPARE || !inst.route) { try { inst.dispose(); } catch { /* gone */ } return; }
+  inst.hush(ctx.currentTime); l.push({ inst, ctx, at: ctx.currentTime + READY });
+}
 // The app only (src/soundtrack.js): song[TUNE]() builds a tune's instruments now, without a sound, so that its
 // start() has nothing left to make. A round's soundtrack is tuned like this behind the loading screen; a tune
 // that is never started must still be stopped, which lets them go. Not part of gs: games just start().
@@ -436,30 +485,43 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   const wantsTone = tracks.some(tr => tr.inst);
   let intensity = 0;
   let timer = 0, step = 0, next = 0, rate = 1, ahead = false;   // (ahead: its instruments were built before start(), by the app: TUNE above)
-  let gate = null, band = null, log = [];   // this run's output, its Tone instruments, and [step, time] of what's written
+  let gate = null, band = null, log = [], built = false;   // this run's output, its Tone instruments (built: all of them in), and [step, time] of what's written
   const stepLen = () => 60 / tempo / 2 / rate;
   function noteLen(tr, i) { let n = 1; while (tr.steps[(i + n) % tr.steps.length] === '-' && n < tr.steps.length) n++; return n; }
   // Notes written ahead can't be taken back, so each run plays through its own gate: closing it is what stops them.
   function open(a) { gate = a.ctx.createGain(); gate.connect(out || busIn('music')); }
   function close() {
-    const g = gate, b = band; gate = null; band = null; log = [];
+    const g = gate, b = band; gate = null; band = null; built = false; log = [];
     if (!g) return;
     try { g.gain.setTargetAtTime(0, g.context.currentTime, .012); } catch { /* gone */ }
-    setTimeout(() => { try { g.disconnect(); } catch { /* gone */ } if (b) for (const i of b.values()) i.dispose(); }, 250);
+    // (the gate is shut: what the instruments still play goes nowhere, and they wait as spares for the next tune)
+    setTimeout(() => { try { g.disconnect(); } catch { /* gone */ } if (b) for (const [tr, i] of b) if (i) keepSpare(keyOf(tr), i, g.context); }, 250);
   }
-  // the set's instruments, once Tone.js is in (until then, and if one fails, the part plays in the chip sound)
-  function tuneUp() {
-    if (band || !wantsTone || !gate) return;
+  const keyOf = tr => keyFor(tr.voice, tr.inst);
+  // the set's instruments, once Tone.js is in (until then, and if one fails, the part plays in the chip sound):
+  // spares from an earlier tune at once, and one new one a tick of its own clock, never in the game's frame
+  // (start() is called from a game's update): all, every one now (the app, under a loading screen)
+  function tuneUp(all = false, build = false) {
+    if (built || !wantsTone || !gate) return;
     if (!toneLib.ready) { const at = Date.now(); if (at > toneRetry) { toneRetry = at + 8000; toneLib.load().then(() => { toneRetry = 0; }, () => {}); } return; }
-    const T = toneLib.get(); band = new Map();
-    for (const tr of tracks) if (tr.inst) try { const i = tr.voice === 'drums' ? makeKit(T, tr.inst, gate) : makeVoice(T, tr.inst, gate); if (i) band.set(tr, i); } catch (e) { console.warn('[music]', tr.inst, e); }
+    const T = toneLib.get(), ctx = gate.context; band ||= new Map();
+    let made = 0; built = true;
+    for (const tr of tracks) {
+      if (!tr.inst || band.has(tr)) continue;
+      const old = takeSpare(keyOf(tr), ctx);
+      if (old) { old.route(gate); band.set(tr, old); continue; }
+      if (!all && (made || !build)) { built = false; continue; }
+      made++;
+      try { const i = tr.voice === 'drums' ? makeKit(T, tr.inst, gate) : makeVoice(T, tr.inst, gate); band.set(tr, i || null); } catch (e) { band.set(tr, null); console.warn('[music]', tr.inst, e); }
+    }
   }
-  function schedule() { const was = playBus; playBus = 'music'; try { scheduleNow(); } finally { playBus = was; } }
-  function scheduleNow() {
+  function schedule(onClock = false) { const was = playBus; playBus = 'music'; try { scheduleNow(onClock); } finally { playBus = was; } }
+  const tick = () => schedule(true);
+  function scheduleNow(onClock) {
     const a = audio(); if (!a) return;
     const now = a.ctx.currentTime;
     if (!gate) open(a);
-    tuneUp();
+    tuneUp(false, onClock);
     if (!next) next = now + FIRST;
     else if (next < now + .01) { const k = Math.ceil((now + FIRST - next) / stepLen()); step += k; next += k * stepLen(); }   // fell behind: skip, stay on the beat
     while (next < now + AHEAD) {
@@ -470,12 +532,12 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
         if (tok === '.' || tok === '-' || tr.level < .02) continue;
         const lv = vol * tr.level, inst = band && band.get(tr);
         if (tr.voice === 'drums') {
-          for (const d of tok) { if (inst) try { inst.hit(d, when, lv); continue; } catch (e) { band.delete(tr); inst.dispose(); console.warn('[music]', tr.inst, e); } DRUM[d]?.(when, lv, gate); }
+          for (const d of tok) { if (inst) try { inst.hit(d, when, lv); continue; } catch (e) { band.set(tr, null); inst.dispose(); console.warn('[music]', tr.inst, e); } DRUM[d]?.(when, lv, gate); }
           continue;
         }
         const len = stepLen() * noteLen(tr, step % tr.steps.length) * .9, hz = freq(tok);
         if (!hz) continue;
-        if (inst) try { inst.play(hz, len, when, lv); continue; } catch (e) { band.delete(tr); inst.dispose(); console.warn('[music]', tr.inst, e); }
+        if (inst) try { inst.play(hz, len, when, lv); continue; } catch (e) { band.set(tr, null); inst.dispose(); console.warn('[music]', tr.inst, e); }
         const [wave, v] = VOICE[tr.voice] || VOICE.lead;
         tone(tok, { len, wave, vol: v * lv, when, attack: tr.voice === 'pad' ? .05 : .005, out: gate });
       }
@@ -486,7 +548,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   const m = {
     get playing() { return !!timer; },
     /** Starts from the top, or from step `at` (a car radio tuning in half way through a song). */
-    start(at = 0) { if (timer) return m; if (ahead) ahead = false; else close(); step = Math.max(0, at | 0); next = 0; schedule(); timer = setInterval(schedule, TICK); playing.add(m); held.delete(m); return m; },
+    start(at = 0) { if (timer) return m; if (ahead) ahead = false; else close(); step = Math.max(0, at | 0); next = 0; schedule(); timer = setInterval(tick, TICK); playing.add(m); held.delete(m); return m; },
     /** How many steps the tune takes before it repeats (its longest part). */
     get length() { return Math.max(1, ...tracks.map(tr => tr.steps.length)); },
     /** Seconds a step lasts now (an eighth note at the tempo and speed()). */
@@ -499,7 +561,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
       const now = audio()?.ctx.currentTime ?? 0, e = log.find(x => x[1] > now); if (e) step = e[0];
       clearInterval(timer); timer = 0; close(); playing.delete(m); held.add(m); return m;
     },
-    resume() { if (timer || !held.has(m)) return m; held.delete(m); next = 0; schedule(); timer = setInterval(schedule, TICK); playing.add(m); return m; },
+    resume() { if (timer || !held.has(m)) return m; held.delete(m); next = 0; schedule(); timer = setInterval(tick, TICK); playing.add(m); return m; },
     /** Plays faster (x > 1) or slower, for rising tension. */
     speed(x) { rate = Math.max(.25, Math.min(4, x)); return m; },
     /** Fades one part in or out: m.layer('drums', 1) or m.layer('lead2', 0, 2) (fade seconds). */
@@ -522,9 +584,9 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
       return e ? e[0] + Math.min(1, (t - e[1]) / stepLen()) : -1;
     },
     /** True once the set's instruments are in (a tune started before then plays in the chip sound until they are). */
-    get tuned() { return !wantsTone || !!band; },
+    get tuned() { return !wantsTone || built; },
   };
-  Object.defineProperty(m, TUNE, { value() { if (timer || gate) return; const a = audio(); if (!a) return; open(a); tuneUp(); ahead = true; } });
+  Object.defineProperty(m, TUNE, { value() { if (timer || gate) return; const a = audio(); if (!a) return; open(a); tuneUp(true); ahead = true; } });
   return m;
 }
 /**

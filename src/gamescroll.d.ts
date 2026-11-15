@@ -267,6 +267,10 @@ export interface SoundPart {
   zsound(...params: number[]): () => void;
   /** Tone.js (lazy: call it in make() or reset()). */
   Tone(): Loose;
+  /** Says a tune like this (music()'s options) will play later, so its instruments are made ahead under the round's loading screen (a car radio's stations do this). */
+  expectTune(o?: { set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; [part: string]: Loose }): void;
+  /** Makes the instruments expectTune() asked for now (the app calls it behind a round's loading screen). */
+  prepareTunes(): void;
   /** One instrument to play yourself (lazy: make it in make() or reset()): instrument('epiano').play('C4', { len: .4 }). */
   instrument(name: VoiceName, o?: { vol?: number }): { name: string; play(note: string | number, o?: { len?: number; vol?: number; at?: number }): Loose; free(): void };
   /** Which voice plays each part in each set, and the voices and drum kits themselves (their settings, read only). */

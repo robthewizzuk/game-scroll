@@ -10,7 +10,7 @@
 // The instruments (set) follow the style unless the game names them: pocket styles play the chip sound,
 // the others a synth group, a band or an orchestra to suit the mood. A game with its own music() calls
 // leaves `music` out. The player's Music switch (Sound & haptics) turns it off like any other tune.
-import { music, follow, warm } from './kit/sound.js';
+import { music, follow, warm, prepareTunes } from './kit/sound.js';
 import { compose, MOODS } from './kit/compose.js';
 
 const MOOD_SET = { happy: 'band', calm: 'band', tense: 'synth', spooky: 'orchestra', heroic: 'orchestra', sad: 'orchestra', silly: 'band', chase: 'synth', puzzle: 'band' };
@@ -48,6 +48,7 @@ export const soundtrack = {
     if (made && made.id === def.id) return;
     if (made) { try { made.song.stop(); } catch { /* gone */ } made = null; }
     try { made = tuneFor(def); made?.song[Symbol.for('gs.sound.tune')]?.(); } catch (e) { console.warn('[soundtrack]', def.id, e); made = null; }
+    try { prepareTunes(); } catch (e) { console.warn('[soundtrack]', def.id, e); }   // (the game's own tunes to come: a car radio's stations)
   },
   /** A round began. */
   start(def) {
