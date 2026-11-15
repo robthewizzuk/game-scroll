@@ -36,6 +36,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Seeded random, daily seed, smooth noise, timers | `gs.math` | [Maths](#maths) |
 | 3D text, 3D particles, outlines, glitch, trails | `gs.fx3d` | [3D extras](#3d-extras) |
 | Enemies that plan: behaviour trees, "what do I want most" | `gs.ai.Tree` (mistreevous), `gs.ai.Choose` | [Behaviour trees and wants](#behaviour-trees-and-wants) |
+| A sword at the hip or a shield on the back, drawn to the hand | `gs.characters.Carry` | [Carried and drawn](#carried-and-drawn) |
 | People who stumble, brace, fall and get up when hit, shoved, tripped or blown up | `gs.characters.Reactions`, `phys.ragdoll(character)` | [People who react](#people-who-react) |
 | 3D people that bend smoothly, walk-to-run blends, feet on slopes, faces that talk | `gs.poses.person`, `rig.blend`, `rig.plant`, `gs.characters.Face` | [Skinned people, faces and lip sync](#skinned-people-faces-and-lip-sync) |
 | Thousands of fish, bats or zombies that flock | `gs.ai.Swarm` (WebGPU compute, CPU fallback) | [Swarms](#swarms-thousands-of-flockers) |
@@ -1274,6 +1275,26 @@ and the character stays one skinned mesh whose bones follow them. `rag.push(x, y
 turns its joints towards a pose (the rig's angles from rest; strength 0 limp to 1 firm), so a falling body can
 throw its arms out; `rag.relax()` lets go. A character you built from loose parts with no rig:
 `phys.ragdoll(guard, { limbs: [head, armL, armR, legL, legR], push })` (each limb swings at its origin).
+
+### Carried and drawn
+
+`const { Carry } = gs.characters;` Things worn on the body until they are wanted: a sword at the hip, a
+greatsword or a bow across the back, a shield slung behind, a quiver, a dagger at the belt (or a torch, a
+tool). One for each person with a rig (`gs.models.human()` best: its hand closes round the grip).
+
+```js
+const kit = new Carry(hero);
+kit.add('sword', swordMesh, 'hipL', { sheath: true });       // its grip at its origin, its blade up its +y
+kit.add('shield', shieldMesh, 'shield');                      // flat on the back, face out
+kit.on('grab', e => sounds.slash());
+kit.draw('sword');                                            // the right hand goes to the hilt and brings it round
+hero.rig.update(dt); kit.update(dt);                          // after the rig, each frame
+kit.held('R');                                                // 'sword' once it is in hand; kit.sheathe('sword') puts it back
+```
+
+Spots: `hipL`, `hipR`, `back`, `backL`, `shield`, `quiver`, `bow`, `belt`, or your own `{ bone, at, dir,
+face, hand }` (in the person's own space as they stand). `grip`, `along`, `face` say how a thing of your own
+is made; `held` how the hand holds it if the usual grip doesn't suit it; `set(name, 'hand')` with no reach.
 
 ### People who react
 
