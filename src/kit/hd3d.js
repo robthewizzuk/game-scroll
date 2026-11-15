@@ -2082,7 +2082,7 @@ export class HDView {
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
   /** Called when the card leaves the feed (cleanup.js): lets go of what this view holds on the graphics chip for cluster detail. */
-  free() { detailDropAll(this); this._tracer?.dispose(); this._tracer = null; }
+  free() { detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; }
   /**
    * Outdoor air for every lit material in the scene: haze (how thick the air is: .001 is about 1 km of
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
@@ -2533,6 +2533,50 @@ export class HDView {
     occludeDrop(this);
     if (this.flashes) this.flashes.length = 0;   // (their lights go out next frame)
     return this;
+  }
+  // live bounce light from traced rays (v.liveBounce = 'traced', WebGPU; hd3d-gpu-bounce.js): the grid of probes in the
+  // scene and where it stands this frame (spec null: none). A grid over spec.box stays put; otherwise it follows the
+  // camera in whole steps of its probes, two at a time, and says how far it moved (the probes keep what they found)
+  bounceGrid(G, spec) {
+    let b = this._tb;
+    if (!spec) { if (b) { b.grid.removeFromParent(); b.grid.dispose(); b.run?.dispose(); this._tb = null; } if (HD.info.bounce) HD.info.bounce = null; return; }
+    const follow = !spec.box;
+    let sp, res, min = null;
+    if (follow) {
+      sp = Math.max(.25, spec.spacing ?? 2); res = (spec.res || [12, 6, 12]).map(n => Math.max(2, Math.min(32, Math.round(n))));
+    } else {
+      const bx = boxOf(spec.box), d = bx.getSize(GV); sp = Math.max(.25, spec.spacing ?? 1.5);
+      const count = k => Math.max(2, Math.round(k / sp)); while (count(d.x) * count(d.y) * count(d.z) > 2048) sp *= 1.15;
+      res = [count(d.x), count(d.y), count(d.z)]; min = bx.min.clone();
+    }
+    const key = res.join('x') + (follow ? '@' + sp : '|' + min.toArray().join(',') + '|' + sp);
+    if (b && b.key !== key) { this.bounceGrid(G, null); b = null; }
+    if (!b) {
+      const dims = follow ? new Vector3(res[0] * sp, res[1] * sp, res[2] * sp) : boxOf(spec.box).getSize(new Vector3());
+      const grid = G.fx.bounceGrid(dims.x, dims.y, dims.z, ...res); grid.matrixAutoUpdate = false; this.scene.add(grid);
+      grid.priority = 1;   // (three picks one grid a pixel, the highest: this live one over a baked one, v.bounce(), which lights where this doesn't run)
+      b = this._tb = { grid, key, follow, res, dims, sp: new Vector3(dims.x / res[0], dims.y / res[1], dims.z / res[2]), minW: min || new Vector3(), cell: null, shift: new Vector3(), run: null };
+    }
+    b.shift.set(0, 0, 0);
+    if (follow) {
+      // the probe step a quarter of the grid ahead of the camera (what it looks at matters most), in the world's own numbers;
+      // the grid moves when that is two steps off its middle
+      this.cam.getWorldDirection(GP); GP.y = 0; if (GP.lengthSq() > 1e-6) GP.normalize();
+      const c = this.cam.getWorldPosition(GW).add(ORIGIN), cx = Math.floor(c.x / sp + GP.x * res[0] / 4), cy = Math.floor(c.y / sp), cz = Math.floor(c.z / sp + GP.z * res[2] / 4);
+      if (!b.cell) b.cell = new Vector3(cx, cy, cz);
+      else if (Math.abs(cx - b.cell.x) >= 2 || Math.abs(cy - b.cell.y) >= 2 || Math.abs(cz - b.cell.z) >= 2) { b.shift.set(cx - b.cell.x, cy - b.cell.y, cz - b.cell.z); b.cell.set(cx, cy, cz); }
+      b.minW.set((b.cell.x - (res[0] >> 1)) * sp, (b.cell.y - (res[1] >> 1)) * sp, (b.cell.z - (res[2] >> 1)) * sp);
+    }
+    // (the grid's box where the drawing has it: originOff puts it back in the world's own numbers)
+    const bb = b.grid.boundingBox; bb.min.copy(b.minW).sub(ORIGIN); bb.max.copy(bb.min).add(b.dims);
+    b.grid.intensity = spec.strength ?? 1;
+  }
+  bounceRun(TK, r, spec) {
+    const b = this._tb; if (!b) return;
+    if (b.run?.r !== r) { b.run?.dispose(); b.run = new TK.TracedBounce(r, b.grid, { rays: spec.rays ?? 64, batch: spec.batch ?? 96, follow: b.follow }); }
+    const ok = b.run.frame(this._tracer, b.minW, b.sp, b.shift, this.scene.environment);
+    if (b.run.failed) { this._tbFailed = true; this.bounceGrid(null, null); return; }
+    HD.info.bounce = { ...b.run.info, on: ok, follow: b.follow, spacing: +b.sp.x.toFixed(2) };
   }
   // bounce light and room reflections, baked by the renderer drawing this frame (G: WebGPU) when they need it
   bakeExtras(G, r) {
@@ -3129,12 +3173,21 @@ export class HDView {
     const wantRefl = this.reflectors.length && T.ao > 0 && !this.clearBg;
     let tr = null;
     // (the tracing part loads the first time it is wanted: until it is in, and on a chip that can't, reflections come from the screen)
-    const TK = wantRefl && traceWanted() && this.scene.environment && G.fx.traceFits(r) ? G.fx.traceKit() : null;
+    const traceable = traceWanted() && this.scene.environment && G.fx.traceFits(r);
+    // live bounce light from the same rays (v.liveBounce = 'traced', hd3d-gpu-bounce.js): its grid stands in the scene from the
+    // first frame it is wanted, before the tracing part is in, so no material is built again when the light starts
+    const lbs = this.liveBounce, lbSpec = lbs && (typeof lbs === 'string' ? { kind: lbs } : lbs);
+    const wantBounce = lbSpec?.kind === 'traced' && T.ao > 0 && !this.clearBg && traceable && HD.tracedBounce !== false && !this._tbFailed;
+    this.bounceGrid(G, wantBounce ? lbSpec : null);
+    const TK = (wantRefl && traceable) || wantBounce ? G.fx.traceKit() : null;
     if (TK) {
       if (this._tracer?.r !== r) { this._tracer?.dispose(); this._tracer = new TK.Tracer(r, this.scene, { bits: 1 | BATCH_BIT | HOLD_BIT | OCC_BIT, budget: HD.traceTris, twins: fn => { const D = this.details; if (D) for (const e of D.map.values()) for (const p of e.parts) fn(e.o, p.twin); } }); }
       this._tracer.show = !!HD.traceShow;
       if (pm >= 0) enter('3D: traced reflections');
-      if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) tr = this._tracer;
+      if (this._tracer.frame(now, this._trLights ||= list => traceLights(this, list))) {
+        if (wantRefl) tr = this._tracer;
+        if (wantBounce && !baking && !off) { if (pm >= 0) { leave(pm); enter('3D: traced bounce light'); } this.bounceRun(TK, r, lbSpec); }
+      }
       if (pm >= 0) leave(pm);
     } else if (this._tracer) { this._tracer.dispose(); this._tracer = null; }
     // (Ray Regeneration, HD.regen: the rays rebuilt at the picture's size from the frames before; HD.regenRef, tests: the
@@ -3479,6 +3532,7 @@ export class HDView {
     if (this.occHid?.size) showAll(this);   // (nothing stays hidden between frames: see occludeStep)
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
     else {
+    if (this._tb) this.bounceGrid(null, null);   // (traced bounce light is WebGPU's: its grid leaves a WebGL frame's scene)
     if (!baking && !off) { speed.between = null; HD.info.framegen = false; }   // (frame generation is WebGPU only)
     gpuSwap(this, null);
     const cp = this.clearBg ? seeThrough(r, pw, ph) : chain(r, pw, ph); if (cp.cw !== pw || cp.ch !== ph) { cp.setSize(pw, ph); cp.cw = pw; cp.ch = ph; }

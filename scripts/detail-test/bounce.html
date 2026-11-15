@@ -1,0 +1,123 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// Bounce light from traced rays (v.liveBounce = 'traced'; src/kit/hd3d-gpu-bounce.js) for scripts/detail-test.cjs --page bounce
+// --webgpu: a white room with a red wall on the left and a green one on the right, the sun coming in through a gap in
+// its roof onto the floor. Drawn with no bounce light, with the traced kind (a grid over the room, and one that follows
+// the camera) and with three's screen-space kind (SSGI). Checks that the shaded ceiling is lit by the sunlit floor, that
+// each coloured wall tints the white beside it with its own colour, that the light follows the sun going in, that a
+// grid that follows the camera moves with it and keeps its light, that no material is built again when the light
+// starts, and how much of the chip's frame it takes (by part). WebGL: the same scene draws as with no bounce light.
+//   ?gpu  ?tier=2  ?w=240&h=320  ?rays=64&batch=96
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false; HD.traced = true;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note: String(note ?? '') });
+// shader text written for the scene's own things (not full-screen passes), as shader-hold counts it
+const written = []; let scene = null;
+if (G) {
+  const N = G.r._nodes, nf = N.getForRender.bind(N), kept = N.nodeBuilderCache;
+  N.getForRender = (ro, ...a) => {
+    const key = N.getForRenderCacheKey(ro), had = kept.has(key), own = ro.scene === scene, name = ro.material?.name || ro.material?.type || '?';
+    const note = () => { if (own && !had && kept.has(key)) written.push(name + (ro.camera?.isOrthographicCamera ? ' (shadow map)' : '')); };
+    const o = nf(ro, ...a); if (o?.then) o.then(note, () => {}); else note(); return o;
+  };
+}
+function room(kind) {
+  const v = new gs.hd.HDView({ bg: '#a8c0d8', fog: 0, env: .05, amb: .03 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d', { willReadFrequently: true }); scene = v.scene;
+  v.cam.fov = 60; v.cam.position.set(0, 1.5, 4.5); v.cam.lookAt(0, 1.2, 0); v.cam.updateProjectionMatrix(); v.cam.updateMatrixWorld();
+  const sun = gs.hd.sun('#fff2d8', 5, 6, [.3, 1, .5]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const box = (w, h, d, col, px, py, pz, name) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), gs.hd.pbr(col, { rough: .9 })); m.material.name = name; m.position.set(px, py, pz); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
+  box(4, .1, 4, '#e8e4dc', 0, -.05, 0, 'floor'); box(.1, 3, 4, '#c0392b', -2, 1.5, 0, 'red wall'); box(.1, 3, 4, '#2e9e4f', 2, 1.5, 0, 'green wall'); box(4, 3, .1, '#e8e4dc', 0, 1.5, -2, 'back wall');
+  box(4, .1, 2.6, '#e8e4dc', 0, 3, -.7, 'roof');   // (a gap at the front lets the sun in)
+  box(.8, .8, .8, '#e8e4dc', .5, .4, -.6, 'crate');
+  if (kind === 'traced') v.liveBounce = { kind: 'traced', strength: 1.5, box: new T.Box3(new T.Vector3(-2, 0, -2), new T.Vector3(2, 3, 2)), spacing: .5, rays: +(Q.get('rays') || 64), batch: +(Q.get('batch') || 96) };
+  else if (kind === 'follow') v.liveBounce = { kind: 'traced', strength: 1.5, spacing: .5, res: [12, 8, 20] };
+  else if (kind) v.liveBounce = { kind, strength: 1.5 };
+  return { v, c, x, sun };
+}
+const draw = S => { S.v.t = 0; S.v.render(S.x, W, H); return S.x.getImageData(0, 0, W, H).data; };
+const at = (S, p) => { const q = new T.Vector3(...p).project(S.v.cam); return [Math.round((q.x * .5 + .5) * W), Math.round((.5 - q.y * .5) * H)]; };
+const px = (d, [x, y], r = 3) => { let a = [0, 0, 0], n = 0; for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= W || Y >= H) continue; const o = (Y * W + X) * 4; a[0] += d[o]; a[1] += d[o + 1]; a[2] += d[o + 2]; n++; } return a.map(v => Math.round(v / Math.max(1, n))); };
+const lum = p => .2126 * p[0] + .7152 * p[1] + .0722 * p[2];
+// the places looked at: the shaded ceiling (the roof's underside), the white back wall beside each coloured wall, the shaded floor
+const SPOTS = { ceiling: [0, 2.94, -.9], backLeft: [-1.75, 1.6, -1.94], backRight: [1.75, 1.6, -1.94], floorBack: [0, .01, -1.6] };
+const look = d => Object.fromEntries(Object.entries(SPOTS).map(([k, p]) => [k, px(d, at(S0, p))]));
+const settle = async (S, n) => { let d; for (let i = 0; i < n; i++) { d = draw(S); await frame(); } return d; };
+let S0 = null;
+const flicker = async S => { const ls = []; for (let i = 0; i < 16; i++) { ls.push(lum(px(draw(S), at(S, SPOTS.ceiling)))); await frame(); } const m = ls.reduce((a, b) => a + b) / ls.length; return { mean: +m.toFixed(1), sd: +Math.sqrt(ls.reduce((a, b) => a + (b - m) ** 2, 0) / ls.length).toFixed(2) }; };
+try {
+  // ----- none -----
+  let S = S0 = room(null), d = await settle(S, 30); const none = look(d); out.none = S.c.toDataURL(); info.none = none; if (GPU) info.noneFlicker = await flicker(S); S.v.free();
+  if (!GPU) {
+    S = room('traced'); d = await settle(S, 8); const gl = look(d); out.traced = S.c.toDataURL();
+    check('WebGL draws the room as with no bounce light (traced bounce light is WebGPU\'s)', Object.keys(gl).every(k => gl[k].every((v, i) => Math.abs(v - none[k][i]) <= 2)) && !HD.info.bounce, JSON.stringify(gl));
+    S.v.free(); throw 0;
+  }
+  // ----- traced, a grid over the room -----
+  S = S0 = room('traced'); written.length = 0;
+  const t0 = performance.now(); let k = 0;
+  for (; k < 400; k++) { d = draw(S); const b = HD.info.bounce; if (b?.on && b.frames >= b.round * 6) break; await frame(); }
+  const b = HD.info.bounce; info.bounce = b; info.ready = { frames: k, ms: Math.round(performance.now() - t0) };
+  check('the room is lit by traced bounce light', b?.on && b.frames > 0, b ? `${b.probes} probes (${b.grid.join(' x ')}), ${b.rays} rays a frame, all of them every ${b.round} frames; ${b.frames} frames after ${k}` : 'none: ' + JSON.stringify(HD.info.trace));
+  const shadersAt = written.length;
+  d = await settle(S, 6); const tr = look(d); out.traced = S.c.toDataURL(); info.traced = tr;
+  // how much the bounce light flickers with the camera still (each frame's rays are a few dozen a probe): the ceiling's brightness frame to frame
+  info.flicker = await flicker(S);
+  check('it holds still while nothing moves (the ceiling\'s brightness wobbles under 1% of white from frame to frame, more than the room with none)', info.flicker.sd < info.noneFlicker.sd + 2.55, `${JSON.stringify(info.flicker)}, with none ${JSON.stringify(info.noneFlicker)}`);
+  const lift = lum(tr.ceiling) / Math.max(1, lum(none.ceiling));
+  check('the shaded ceiling is lit by the sunlit floor', lift > 1.4, `${none.ceiling.join(',')} to ${tr.ceiling.join(',')} (${lift.toFixed(2)}x)`);
+  const redL = tr.backLeft[0] / Math.max(1, tr.backLeft[1]), redR = tr.backRight[0] / Math.max(1, tr.backRight[1]), n0L = none.backLeft[0] / Math.max(1, none.backLeft[1]), n0R = none.backRight[0] / Math.max(1, none.backRight[1]);
+  check('each coloured wall tints the white wall beside it with its own colour', redL - n0L > .08 && (redL - n0L) - (redR - n0R) > .1, `beside red r/g ${n0L.toFixed(2)} to ${redL.toFixed(2)}, beside green ${n0R.toFixed(2)} to ${redR.toFixed(2)}`);
+  const white = (() => { for (let i = 0; i < d.length; i += 4) if (d[i] === 255 && d[i + 1] === 255 && d[i + 2] === 255) return false; return true; })();
+  check('no spot blows out to white (nothing runs away bouncing)', white && lum(tr.floorBack) < 250, tr.floorBack.join(','));
+  // (the chip's time by part, from the frames the view timed: the reflections' rays are what this is measured against)
+  for (let i = 0; i < 12; i++) { draw(S); await frame(); }
+  info.chip = { all: HD.info.gpuMs, parts: HD.info.gpuParts, compute: HD.info.gpuCompute };
+  // the sun goes in: the bounce light goes with it, down to what the sky's light alone bounces in this white room (the
+  // probes' own light read back: the picture's brightness is the tone mapper's, which squeezes the top)
+  const held = async () => { const run = S.v._tb.run, a = await G.r.readRenderTargetPixelsAsync(run.store[run.cur], 0, 0, 9, run.N); let s = 0; for (let p = 0; p < run.N; p++) s += a[p * 36] + a[p * 36 + 1] + a[p * 36 + 2]; return s / run.N; };
+  const lightOn = await held(); S.sun.intensity = 0; info.sunGone = []; const heldGone = [];
+  for (let i = 0; i < 10; i++) { d = await settle(S, b.round); info.sunGone.push(Math.round(lum(look(d).ceiling))); heldGone.push(+(await held()).toFixed(3)); }
+  out.sunGone = S.c.toDataURL();
+  const sky = heldGone[heldGone.length - 1], way = (heldGone[1] - sky) / Math.max(1e-6, lightOn - sky); info.heldGone = { on: +lightOn.toFixed(3), rounds: heldGone };
+  check('the light follows the sun going in (live, not baked): two rounds of the probes on, it is down to the sky\'s own bounce light', way < .2 && sky < lightOn * .7, `the probes held ${lightOn.toFixed(2)}, ${heldGone[1]} two rounds on, ${sky} settled (${(way * 100).toFixed(0)}% of the way left)`);
+  S.sun.intensity = 5; d = await settle(S, b.round * 8);
+  check('no material is built again once the light has started', written.length === shadersAt, written.slice(shadersAt).join(', ') || 'none');
+  info.written = written.slice(0, 16);
+  S.v.free();
+  // ----- traced, a grid that follows the camera -----
+  S = S0 = room('follow'); for (k = 0; k < 400; k++) { d = draw(S); const f = HD.info.bounce; if (f?.on && f.frames >= f.round * 6) break; await frame(); }
+  d = await settle(S, 4); const fol = look(d); out.follow = S.c.toDataURL(); info.follow = { ...HD.info.bounce, spots: fol };
+  check('a grid that follows the camera lights the room as well', lum(fol.ceiling) / Math.max(1, lum(none.ceiling)) > 1.3, `ceiling ${fol.ceiling.join(',')}`);
+  // walked 1.5 m to the side and back: the grid moves in whole steps and keeps what it found
+  const p0 = S.v.cam.position.clone();
+  for (let i = 1; i <= 6; i++) { S.v.cam.position.x = p0.x + 1.5 * i / 6; S.v.cam.updateMatrixWorld(); draw(S); await frame(); }
+  for (let i = 5; i >= 0; i--) { S.v.cam.position.x = p0.x + 1.5 * i / 6; S.v.cam.updateMatrixWorld(); draw(S); await frame(); }
+  d = draw(S); const back = look(d); out.followBack = S.c.toDataURL();
+  check('it moves with the camera and keeps its light (no flash to dark and back)', Math.abs(lum(back.ceiling) - lum(fol.ceiling)) < Math.max(12, lum(fol.ceiling) * .1), `ceiling ${fol.ceiling.join(',')} then ${back.ceiling.join(',')}`);
+  S.v.free();
+  // ----- ray traced reflections in a polished floor, no bounce light: what a reflection ray costs here, to compare -----
+  S = S0 = room(null); S.v.scene.children.find(o => o.material?.name === 'floor').material.roughness = .1;
+  S.v.reflect(S.v.scene.children.find(o => o.material?.name === 'floor'));
+  for (k = 0; k < 300; k++) { draw(S); const t = HD.info.trace; if (HD.info.refl === 'traced' && t && !t.busy && t.builds > 0 && k > 20) break; await frame(); }
+  for (let i = 0; i < 12; i++) { draw(S); await frame(); }
+  info.reflChip = { all: HD.info.gpuMs, parts: HD.info.gpuParts, refl: HD.info.refl };
+  S.v.free();
+  // ----- screen-space bounce light (three's SSGI), to compare -----
+  S = S0 = room('screen'); d = await settle(S, 40); info.screen = look(d); out.screen = S.c.toDataURL();
+  info.screenChip = { all: HD.info.gpuMs, parts: HD.info.gpuParts };
+  S.v.free();
+  info.backend = HD.info.backend;
+} catch (e) { if (e !== 0) window.result = { error: String(e && e.stack || e) }; }
+HD.traced = null;
+window.result ||= { checks, info, out };
+</script>
