@@ -12,13 +12,16 @@
 //   a shell lands:  house.blast(point, 3);              a bullet:  house.hit(point, { power: .3 });
 //   update(dt) { phys.step(dt); house.update(dt); for (const b of house.broke) if (b.how === 'landed') dust(b.x, b.y, b.z, b.size); }
 //
-// With a gs.physics3d world the walls are solid (movers, rays, sound that knows the level), what falls is
-// real tumbling bodies that pile up, and what they land on can break in turn. Without one the pieces fall
-// and break up where they land. Either way the small rubble is cheap: boxes drawn as copies, not bodies.
+// In the game's gs.physics3d world the walls are solid (movers, rays, sound that knows the level), what falls
+// is real tumbling bodies that pile up, and what they land on can break in turn. A game with no world gets the
+// same collapse: the building then keeps a small physics world of its own (its walls, the ground under it and
+// what has fallen) and steps it itself, only while something is falling. Either way the small rubble is cheap:
+// boxes drawn as copies, not bodies (hundreds of them, there for a moment).
 // The look is the game's: `broke` lists what happened each frame (where, how big, how fast) for your dust,
 // sound and shake. Kit use only: games reach it as gs.destruction.Structure.
 import { timed } from './prof.js';
 import { linksFor, linked } from './links.js';
+import { World3D } from './physics3d.js';
 import { Group, Mesh, BufferGeometry, BufferAttribute, BoxGeometry, InstancedMesh, InstancedBufferAttribute, DynamicDrawUsage, Matrix4, Quaternion, Vector3, Euler } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { buildingPieces } from './models/buildings.js';
@@ -220,8 +223,9 @@ export class Structure {
    * style, w, d, floors, roof, seed, materials...) or pieces (your own boxes: [{ size: [w, h, d], at: [x, y, z]
    * (the box's centre), material ('brick', 'planks'... or a three.js material), strength, fixed (true: it never
    * moves and holds the rest up, as the ground does) }], with materials { name: a material } and span); at ([x, y, z] of
-   * its foot), turn (radians about y); world (a gs.physics3d World3D: solid walls, and what falls tumbles and
-   * piles up); ground ((x, z) => the height rubble lands at; flat at its foot otherwise); bits (240: how
+   * its foot), turn (radians about y); world (the gs.physics3d World3D it stands in: left out, the one the game
+   * made, else a small one of its own; false: its own); ground ((x, z) => the height rubble lands at; flat at
+   * its foot otherwise); bits (240: how
    * much small rubble a material keeps), keep (40: how many fallen pieces stay as bodies; the oldest break up),
    * crush (1: how hard falling pieces hit what they land on; 0: they break nothing), gravity, seed.
    */
@@ -231,10 +235,11 @@ export class Structure {
     const L = this.links = linksFor(null, link), world = linked(o.world, L, 'world'); this.seeks = o.world == null && !!L; L?.join('structure', this);
     this.src = pieces ? fromPieces(pieces, o) : buildingPieces(building || {});
     const S = this.S = survey(this.src), n = S.n;
-    this.scene = scene; this.world = world; this.keep = keep; this.crush = crush; this.seed = seed;
+    this.scene = scene; this.keep = keep; this.crush = crush; this.seed = seed;
     this.at = Array.isArray(at) ? [...at] : [at.x, at.y, at.z]; this.turn = turn; this.cos = Math.cos(turn); this.sin = Math.sin(turn);
-    this.ground = ground || (() => this.at[1]);
-    this.gravity = o.gravity ?? world?.gravity?.y ?? -9.81;
+    this.ground = ground || (() => this.at[1]); this.flat = !ground; this.pull = o.gravity ?? null;
+    this.mine = null; this.stir = 0; this.changed = -1; this.enter(world);   // (first: while the physics engine is still loading this throws, and nothing has been put in the scene)
+    this.gravity = this.pull ?? this.world.gravity.y;
     this.group = new Group(); this.group.name = 'structure'; this.group.position.set(...this.at); this.group.rotation.y = turn;
     this.debris = new Group(); this.debris.name = 'structure:debris';
     // its meshes: the building's own points, with a list of triangles of its own so a piece can be taken out of the picture
@@ -261,13 +266,36 @@ export class Structure {
   out(x, y, z, v = new Vector3()) { return v.set(this.at[0] + x * this.cos + z * this.sin, this.at[1] + y, this.at[2] - x * this.sin + z * this.cos); }
   in(p, v = new Vector3()) { const x = (p.x ?? p[0]) - this.at[0], z = (p.z ?? p[2]) - this.at[2]; return v.set(x * this.cos - z * this.sin, (p.y ?? p[1]) - this.at[1], x * this.sin + z * this.cos); }
 
-  // physics: one fixed body, a box for every solid part of every standing piece
+  // The physics world it stands in: the game's, else one of its own (no part of the game's set: nothing else finds
+  // it). Its own holds the ground under it: flat at its foot, or the game's ground function as a grid of heights
+  // for as far round it as rubble is thrown.
+  enter(world) {
+    if (world?.world) { if (this.mine) { this.mine.free(); this.mine = null; } this.world = world; return; }
+    if (!this.mine?.world) {
+      const w = this.mine = new World3D({ gravity: this.pull ?? -9.81, link: false });
+      if (this.flat) w.floor(this.at[1], { friction: .75, tag: 'ground' });
+      else {
+        const G = this.S.grid, m = 16, r = Math.hypot(Math.max(-G.x0, G.x1), Math.max(-G.z0, G.z1)) + m, n = Math.min(96, Math.ceil(r * 2)), x = this.at[0] - r, z = this.at[2] - r, data = new Float32Array((n + 1) * (n + 1));
+        for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) { const h = this.ground(x + i * r * 2 / n, z + j * r * 2 / n); data[j * (n + 1) + i] = h > -1e4 ? h : this.at[1] - 60; }   // (a pit: far down)
+        w.heights({ data, cols: n, rows: n, x, z, width: r * 2 }, { friction: .75, tag: 'ground' });
+      }
+    }
+    this.world = this.mine;
+  }
+  // a world the game freed (its bodies went with it) and did not replace with reset({ world }): into the one the game has now, or its own
+  sure() {
+    if (this.world?.world) return;
+    for (const L of [...this.loose]) this.done(L, false);
+    this.body = null; this.cols.fill(null);
+    this.enter(this.seeks ? this.links.one('world') : null); this.solid();
+  }
+  // physics: one fixed body, a box for every solid part of every standing piece (each knows its piece: a ray says which it hit)
   solid() {
-    const w = this.world; if (!w?.world) return;
-    const R = w.R;
+    const w = this.world, R = w.R;
     this.body = w.make(this.group, R.ColliderDesc.ball(.01).setTranslation(0, -500, 0), { fixed: true, tag: 'structure' }, 'structure');
     this.body.structure = this; this.body.mesh = null;   // (it never moves: nothing to follow)
-    for (let i = 0; i < this.S.n; i++) if (this.state[i] <= DUE) this.cols[i] = this.shapes(i).map(d => w.world.createCollider(d, this.body.body));
+    for (let i = 0; i < this.S.n; i++) if (this.state[i] <= DUE) this.cols[i] = this.shapes(i).map(d => { const c = w.world.createCollider(d, this.body.body); c.userData = i; return c; });
+    this.changed = w.steps || 0;
   }
   // the collider of each solid box of piece i, placed from `from` (its balance point) for a loose piece: those a
   // touch smaller, or a piece with standing ones on both sides is gripped by them and hangs in the air
@@ -280,7 +308,7 @@ export class Structure {
       return d.setDensity(dens).setFriction(.75).setRestitution(.02);
     });
   }
-  unsolid(i) { const cs = this.cols[i]; if (!cs) return; this.cols[i] = null; if (this.world?.world && this.body && !this.body.dead) for (const c of cs) this.world.world.removeCollider(c, true); }
+  unsolid(i) { const cs = this.cols[i]; if (!cs) return; this.cols[i] = null; this.stir = 1; if (this.world?.world && this.body && !this.body.dead) { for (const c of cs) this.world.world.removeCollider(c, true); this.changed = this.world.steps || 0; } }
 
   // drawing: a piece's triangles taken out of (or put back into) the building's meshes
   show(i, on) {
@@ -346,16 +374,15 @@ export class Structure {
   drop(i, vx = 0, vy = 0, vz = 0, spin = .5) {
     if (this.state[i] > DUE) return;
     if (this.loose.length >= this.keep * 1.5) return this.smash(i, vx, vy, vz);   // (too many bodies at once: this one goes straight to rubble)
+    this.sure();
     const C = this.S.C[i], g = this.lift(i), r = this.rnd ||= rngOf(this.seed + 5);
     this.leave(i); this.state[i] = LOOSE; this.debris.add(g);
-    const L = { i, g, body: null, v: new Vector3(vx, vy, vz), w: new Vector3((r() - .5) * spin, (r() - .5) * spin * .4, (r() - .5) * spin), v0: 0, top: 0, topT: 0, age: 0, still: 0, rest: false, hy: (C.max[1] - C.min[1]) / 2 };
-    if (this.world?.world) {
-      const ds = this.shapes(i, C.com);
-      L.body = this.world.make(g, ds[0], { density: ds[0].density, friction: .75, bounce: .02, spinDrag: .3, vel: [vx, vy, vz], tag: 'rubble' }, 'piece');
-      for (const d of ds.slice(1)) this.world.world.createCollider(d, L.body.body);
-      L.body.structure = this; L.body.setSpin(L.w.x, L.w.y, L.w.z);
-    }
-    this.loose.push(L); this.note('fell', i, g.position.x, g.position.y, g.position.z, 0);
+    const L = { i, g, body: null, v: new Vector3(vx, vy, vz), v0: 0, top: 0, topT: 0, age: 0, still: 0, rest: false };
+    const ds = this.shapes(i, C.com);   // a real body in the world, tumbling
+    L.body = this.world.make(g, ds[0], { density: ds[0].density, friction: .75, bounce: .02, spinDrag: .3, vel: [vx, vy, vz], tag: 'rubble' }, 'piece');
+    for (const d of ds.slice(1)) this.world.world.createCollider(d, L.body.body);
+    L.body.structure = this; L.body.setSpin((r() - .5) * spin, (r() - .5) * spin * .4, (r() - .5) * spin);
+    this.loose.push(L); this.stir = 1; this.note('fell', i, g.position.x, g.position.y, g.position.z, 0);
   }
   // a fallen piece is done with: it breaks up (or just goes)
   done(L, bits = true) {
@@ -424,36 +451,17 @@ export class Structure {
       else this.drop(i, v.x * .7, v.y * .7, v.z * .7, 3);
     });
   }
-  /** The first standing piece along a ray (for shots, with no physics world): { point, normal, distance, kind } or null. */
+  /**
+   * The first standing piece along a ray (a shot): { point, normal, distance, kind, piece } or null. The physics
+   * world answers (the game's own ray there finds it too: hit.thing.structure is this, hit.part the piece).
+   */
   ray(from, dir, max = 100) {
-    const o = this.in(from), dw = V2.set(dir.x ?? dir[0], dir.y ?? dir[1], dir.z ?? dir[2]).normalize(), d = new Vector3(dw.x * this.cos - dw.z * this.sin, dw.y, dw.x * this.sin + dw.z * this.cos);
-    // a ray against a box: where it goes in (t) and through which face (axis), or -1
-    const slab = (O, D, h, far) => {
-      let t0 = 0, t1 = far, ax = 0;
-      for (let k = 0; k < 3; k++) {
-        const ok = O.getComponent(k), dk = D.getComponent(k);
-        if (Math.abs(dk) < 1e-9) { if (Math.abs(ok) > h[k]) return -1; continue; }
-        let a = (-h[k] - ok) / dk, b = (h[k] - ok) / dk; if (a > b) [a, b] = [b, a];
-        if (a > t0) { t0 = a; ax = k; } if (b < t1) t1 = b;
-        if (t0 > t1) return -1;
-      }
-      axis = ax; return t0;
-    };
-    let best = max, hit = -1, axis = 0; const n = new Vector3(), O = new Vector3(), D = new Vector3(), half = [0, 0, 0];
-    for (let i = 0; i < this.S.n; i++) {
-      if (this.state[i] > DUE) continue;
-      const c = this.S.C[i];
-      for (let k = 0; k < 3; k++) half[k] = (c.max[k] - c.min[k]) / 2 + .2;
-      if (slab(O.set(o.x - (c.min[0] + c.max[0]) / 2, o.y - (c.min[1] + c.max[1]) / 2, o.z - (c.min[2] + c.max[2]) / 2), d, half, best) < 0) continue;   // (not even near it)
-      for (const b of c.solids) {
-        O.set(o.x - b.c[0], o.y - b.c[1], o.z - b.c[2]); D.copy(d);
-        if (b.q) { Q.copy(b.q).invert(); O.applyQuaternion(Q); D.applyQuaternion(Q); }
-        const t = slab(O, D, b.h, best);
-        if (t >= 0 && t < best) { best = t; hit = i; n.set(0, 0, 0).setComponent(axis, -Math.sign(D.getComponent(axis))); if (b.q) n.applyQuaternion(b.q); }
-      }
-    }
-    if (hit < 0) return null;
-    return { point: this.out(o.x + d.x * best, o.y + d.y * best, o.z + d.z * best), normal: new Vector3(n.x * this.cos + n.z * this.sin, n.y, -n.x * this.sin + n.z * this.cos), distance: best, kind: this.S.C[hit].kind, piece: hit };
+    this.sure(); const W = this.world;
+    if (this.changed === (W.steps || 0)) W.queries();   // (pieces came or went since the world last stepped: rays look again)
+    const o = { x: from.x ?? from[0], y: from.y ?? from[1], z: from.z ?? from[2] }, d = { x: dir.x ?? dir[0], y: dir.y ?? dir[1], z: dir.z ?? dir[2] };
+    let h = W.ray(o, d, max); if (h && h.thing !== this.body) h = W.ray(o, d, max, this.only ||= t => t === this.body);   // (something of the game's in front of it: past that)
+    if (!h || h.part == null) return null;
+    return { point: new Vector3(h.point.x, h.point.y, h.point.z), normal: new Vector3(h.normal.x, h.normal.y, h.normal.z), distance: h.distance, kind: this.S.C[h.part].kind, piece: h.part };
   }
 
   // where rubble lands under a world point: the ground, or the top of a standing piece below it
@@ -469,10 +477,10 @@ export class Structure {
   // a falling piece has hit something at `speed`: what is under it is hurt, and it breaks up if its stuff does
   landed(L, speed) {
     const C = this.S.C[L.i], p = L.g.position;
-    const breaks = !L.body || (C.crumble > 0 && speed >= C.crumble);
+    const breaks = C.crumble > 0 && speed >= C.crumble;
     this.note('landed', L.i, p.x, p.y, p.z, speed, { crumbled: breaks });
     if (this.crush > 0 && speed > 2.5) {
-      const q = this.in(p), v = L.body ? L.body.vel : L.v;
+      const q = this.in(p), v = L.body.dead ? L.v : L.body.vel;
       this.harm(q, Math.min(1.3, C.size * .35 + .3), Math.min(C.mass, 2.5) * speed * .1 * this.crush, i => this.drop(i, v.x * .3, -1 - speed * .25, v.z * .3, 1), q.y + .1);
     }
     if (breaks) this.done(L);
@@ -481,7 +489,9 @@ export class Structure {
   /** Each frame, after the physics step. Fills `broke`: [{ how: 'broke' | 'fell' | 'landed', kind, x, y, z, size, mass, speed, crumbled }]. */
   update(dt) {
     if (!(dt > 0)) { this.broke = this.events; this.events = []; return this; }
-    this.time += dt;
+    this.time += dt; this.sure();
+    // its own world: stepped here, while something is falling or has just come away (what has come to rest sleeps, and costs nothing)
+    if (this.world === this.mine && this.loose.length) { if (this.stir > 0 || this.loose.some(L => !L.body.sleeping)) this.mine.step(dt); this.stir = Math.max(0, this.stir - dt); }
     const { C, n } = this.S, r = this.rnd ||= rngOf(this.seed + 5);
     if (this.due) for (let i = 0; i < n; i++) if (this.state[i] === DUE && this.fallAt[i] <= this.time) {   // pieces with nothing left under them let go
       const c = C[i].com, o = this.out(c[0], 0, c[2]).sub(V.set(...this.at)), l = Math.hypot(o.x, o.z) || 1;
@@ -490,7 +500,7 @@ export class Structure {
     const out = { on: -1 };
     for (const L of [...this.loose]) {
       L.age += dt;
-      if (L.body) {
+      {
         if (L.body.dead) { this.done(L, false); continue; }   // (the game cleared the world)
         // it has landed when it loses most of its speed at once (its fastest in the last moment against now)
         const v = L.body.vel, sp = Math.hypot(v.x, v.y, v.z);
@@ -504,12 +514,6 @@ export class Structure {
           L.rest = true;
         }
         if (L.g.position.y < this.ground(L.g.position.x, L.g.position.z) - 30) this.done(L, false);   // (fell out of the world)
-      } else {
-        // no physics: it falls, turning, until it meets the ground or a piece that still stands
-        L.v.y += this.gravity * dt; L.g.position.addScaledVector(L.v, dt);
-        const a = L.w.length(); if (a > 1e-6) L.g.quaternion.premultiply(Q.setFromAxisAngle(V.copy(L.w).divideScalar(a), a * dt));
-        const p = L.g.position, gy = this.floor(p.x, p.y - L.hy + .25, p.z, out);
-        if (p.y - L.hy <= gy) { p.y = gy + L.hy; this.landed(L, Math.hypot(L.v.x, L.v.y, L.v.z)); }
       }
     }
     // more fallen pieces than are kept: the oldest that has come to rest breaks up
@@ -535,8 +539,9 @@ export class Structure {
     if (this.body) { if (this.world?.world && !this.body.dead) this.world.remove(this.body); this.body = null; }
     for (let i = 0; i < this.S.n; i++) { if (this.state[i] > DUE) this.show(i, true); this.cols[i] = null; }
     this.state.fill(0); this.hurt.fill(0); this.due = 0; this.time = 0; this.spent = 0; this.broke = []; this.events = []; this.rnd = null;
-    if (o && 'world' in o) this.world = o.world; else if (this.seeks) this.world = this.links.one('world') ?? this.world;   // (a world made again each round is found each round)
-    this.solid();
+    if (o && 'world' in o) this.seeks = o.world == null && !!this.links;
+    this.enter(o && 'world' in o && o.world ? o.world : this.seeks ? this.links.one('world') : this.world === this.mine ? null : this.world);   // (a world made again each round is found each round)
+    this.stir = 0; this.solid();
     return this;
   }
   /** Takes it out of the scene and the physics world. */
@@ -544,7 +549,8 @@ export class Structure {
     this.links?.leave(this);
     for (const L of [...this.loose]) this.done(L, false);
     if (this.body && this.world?.world && !this.body.dead) this.world.remove(this.body);
-    this.body = null; this.bits.remove(); this.group.removeFromParent(); this.debris.removeFromParent();
+    this.body = null; if (this.mine) { this.mine.free(); this.mine = null; } this.world = null;
+    this.bits.remove(); this.group.removeFromParent(); this.debris.removeFromParent();
     for (const m of this.meshes) m.geometry.dispose();   // (its own triangle lists; the points are shared with other copies)
   }
 }

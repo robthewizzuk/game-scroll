@@ -23,7 +23,7 @@
 //   gs.icons     528 game icons that look the same on every phone (game-icons.net); lazy
 //   gs.real      the real world: where the sun and moon are for the player, the battery, headphones
 //   gs.bricks    toy-brick drawing, 2D and 3D
-//   gs.physics   2D physics (Rapier): spinning shapes, hinges, ropes, springs. Also the simple World/Body.
+//   gs.physics   2D physics (Rapier): spinning shapes, hinges, ropes, springs. Also the simple World (the same engine, fewer names).
 //   gs.physics3d 3D physics (Rapier): bodies, level collisions, ray casts, a character mover
 //   gs.ai        steering, flocking, path finding, state machines (Yuka)
 //   gs.toon      Classic Console 3D (cel-shaded)       gs.hd   Next Gen 3D (PBR, bloom, shadows; upscaling and frame generation built in)

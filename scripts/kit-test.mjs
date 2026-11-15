@@ -5113,7 +5113,7 @@ console.log('physics ok');
   const { Structure } = await import('../src/kit/structure.js'), { building, buildingPieces, BUILDING_STYLES } = await import('../src/kit/models/buildings.js');
   const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
   const house = (o = {}, b = {}) => new Structure(new THREE.Group(), { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials, ...b }, ...o });
-  const play = (h, secs, w = h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
+  const play = (h, secs, w = h.world === h.mine ? null : h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
   const up = (h, test) => { let n = 0; for (let i = 0; i < h.S.n; i++) if (h.state[i] <= 1 && test(h.S.C[i])) n++; return n; };
   // the building cut into pieces: every point is in exactly one piece, it fills the same space as the whole one, and whole it holds itself up
   for (const style of Object.keys(BUILDING_STYLES)) for (const [w, d, floors] of [[8, 6, 2], [13, 9, 3], [5, 5, 1]]) {
@@ -5154,7 +5154,8 @@ console.log('physics ok');
   // a big bomb flattens it: nothing left but rubble, within what is kept
   {
     const h = house({ bits: 120 }); h.blast({ x: 0, y: 1.5, z: 0 }, 6.5, { power: 7, push: 12 }); const ev = play(h, 7);
-    assert.ok(h.standing === 0 && h.left === 1 && ev.broke > 100 && !h.busy && h.loose.length === 0, 'flat: ' + h.standing + ' ' + JSON.stringify(ev));
+    assert.ok(h.standing === 0 && h.left === 1 && ev.broke > 100 && !h.busy && h.loose.length <= h.keep, 'flat: ' + h.standing + ' ' + JSON.stringify(ev) + ' ' + h.busy + ' ' + h.loose.length);
+    for (const L of h.loose) assert.ok(L.rest && L.g.position.y > 0 && L.g.position.y < 2.5, 'what did not break up lies on the ground: y ' + L.g.position.y.toFixed(2));
     let lying = 0, low = 9; for (const s of h.bits.sets.values()) for (let i = 0; i < s.n; i++) if (s.st[i]) { assert.equal(s.st[i], 2, 'every bit has stopped'); lying++; low = Math.min(low, s.P[i * 3 + 1]); }
     assert.ok(lying > 150 && low > 0 && low < .2, 'its rubble lies on the ground: ' + lying + ' bits, the lowest at ' + low.toFixed(3));
     h.reset(); assert.ok(h.standing === 1 && h.left === h.pieces && h.meshes.every(m => m.geometry.index.array.every((v, i) => v === i)), 'reset: whole again');
@@ -5184,6 +5185,35 @@ console.log('physics ok');
     const run = () => { const h = house(); h.blast({ x: 4, y: .8, z: 3 }, 2.4); const ev = play(h, 5); return JSON.stringify([ev, h.left, h.standing.toFixed(4)]); };
     assert.equal(run(), run(), 'the same shell, the same ruin');
   }
+  // with no world of the game's it keeps a small one of its own (the same engine): what falls is bodies there too, it is stepped only
+  // while something is moving, a world given later takes its place, and a world freed with no word sends it back to its own
+  {
+    const h = house(), blow = () => h.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6);
+    assert.ok(h.world === h.mine && h.mine instanceof World3D && h.mine.bodies.length === 2 && !h.mine.links, 'a world of its own: the ground and the building, and not one the game\'s kits find');
+    let n = h.mine.steps || 0; play(h, 1); assert.equal(h.mine.steps || 0, n, 'whole, its world is not stepped');
+    blow(); const ev = play(h, 6);
+    assert.ok(ev.fell >= 6 && ev.landed >= 6 && !h.busy && h.loose.length > 0 && h.mine.bodies.length === 2 + h.loose.length, 'pieces fall as bodies and land: ' + JSON.stringify(ev) + ', ' + h.loose.length + ' lie there');
+    for (const L of h.loose) assert.ok(L.rest && L.body.sleeping && L.g.position.y < 3.6 && L.g.position.y > 0, 'a fallen piece lies at rest, not in the air: y ' + L.g.position.y.toFixed(2));
+    n = h.mine.steps; play(h, 1); assert.equal(h.mine.steps, n, 'at rest again, its world is not stepped');
+    const hole = h.ray({ x: .4, y: 1.2, z: 12 }, { x: 0, y: 0, z: -1 }), old = h.mine;
+    assert.ok(!hole || hole.point.z < 2.5, 'its ray goes in through the hole: ' + hole?.point.z.toFixed(2));
+    const w = new World3D({ gravity: -9.81 }); w.floor(0); h.reset({ world: w });
+    assert.ok(h.world === w && h.mine === null && !old.world && w.bodies.length === 2 && h.standing === 1, 'a world given at reset: it stands in that, its own freed');
+    blow(); play(h, .5); assert.ok(h.loose.length > 0 && w.bodies.length === 2 + h.loose.length); w.free(); h.update(1 / 60);
+    assert.ok(h.world === h.mine && h.mine.world && h.loose.length === 0 && h.mine.bodies.length === 2, 'the game frees its world with no word: back in one of its own, what was falling gone');
+    const wall = h.ray({ x: 3.3, y: 1, z: 12 }, { x: 0, y: 0, z: -1 }); assert.ok(wall && wall.kind === 'wall' && Math.abs(wall.point.z - 3) < .25, 'and solid there: ' + wall?.point.z.toFixed(2));
+    const mine = h.mine; h.remove(); assert.ok(!mine.world && h.mine === null, 'removed, its world is freed');
+    // on the game's ground (a slope): its own world has that ground, and what falls lies on it
+    const slope = (x, z) => z * .2, s = house({ ground: slope }); s.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6); const es = play(s, 6);
+    assert.ok(es.landed >= 6 && !s.busy && s.loose.length > 0, 'on a slope: ' + JSON.stringify(es));
+    for (const L of s.loose) { const p = L.g.position, up = p.y - slope(p.x, p.z); assert.ok(up > -.05 && up < 3.6, 'a fallen piece lies on the slope: ' + up.toFixed(2) + ' above it at z ' + p.z.toFixed(1)); }
+    // made while the engine loads, it throws StillLoading before it has put anything in the scene (the app then makes the game again)
+    // (in a Node of its own: here the engine is already in)
+    const { execFileSync } = await import('node:child_process'), code = `const THREE = await import('three'), { Structure } = await import('./src/kit/structure.js'); const g = new THREE.Group(), M = () => new THREE.MeshBasicMaterial();
+      let e = null; try { new Structure(g, { building: { style: 'brick', w: 8, d: 6, floors: 2, materials: { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() } } }); } catch (x) { e = x; }
+      console.log(!!e?.kitLoading, g.children.length); process.exit(0);`;
+    assert.equal(execFileSync(process.execPath, ['--input-type=module', '-e', code], { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'true 0', 'still loading: it throws with nothing left in the scene');
+  }
   // the game's own boxes: two posts and a beam in three lengths, and a block the game holds up with two more hung under it.
   // The middle of the beam out, the ends stay; a post out, its end of the beam falls and the rest hangs from the other post
   {
@@ -5195,10 +5225,11 @@ console.log('physics ok');
     const a = mk(); assert.ok(a.pieces === 8 && a.S.loose === 0 && a.S.C[5].anchor && !a.S.C[6].anchor && a.S.C[2].strength < a.S.C[0].strength, 'posts, a beam, and a block the game holds up');
     assert.equal(a.hit([0, 3.2, 0], out), 1); play(a, 2); assert.deepEqual([...a.state], [0, 0, 0, 3, 0, 0, 0, 0], 'the middle of the beam out: its ends stay on their posts');
     assert.equal(a.hit([0, 9, 0], out), 0, 'a fixed block does not break');
-    const b = mk(); b.hit([-2, 1.5, 0], out); play(b, 3); assert.deepEqual([...b.state], [3, 0, 3, 0, 0, 0, 0, 0], 'a post out: its end of the beam falls, the rest hangs on');
-    b.hit([0, 8, 0], out); play(b, 3); assert.deepEqual([...b.state].slice(5), [0, 3, 3], 'and what hung from a piece falls when that goes');
+    const b = mk(); b.hit([-2, 1.5, 0], out); play(b, 3); assert.deepEqual([...b.state], [3, 0, 2, 0, 0, 0, 0, 0], 'a post out: its end of the beam falls, the rest hangs on');
+    const plank = b.loose[0]; assert.ok(b.loose.length === 1 && plank.i === 2 && plank.rest && plank.body.sleeping && Math.abs(plank.g.position.y - .25) < .1 && !b.busy, 'and lies on the ground, a body at rest in the building\'s own world: y ' + plank.g.position.y.toFixed(2));
+    b.hit([0, 8, 0], out); play(b, 3); assert.ok(b.state[5] === 0 && b.state[6] === 3 && b.state[7] >= 2, 'and what hung from a piece falls when that goes: ' + [...b.state].slice(5));
   }
-  console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics, reset and your own boxes ok');
+  console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics (in a world of the game or one of its own), reset and your own boxes ok');
 }
 
 // water you can disturb (src/kit/water.js: gs.outdoors.Water)
@@ -6996,6 +7027,106 @@ console.log('physics ok');
   console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
 }
 
+// no kit is a physics engine of its own: the simple 2D World, where an arena's ball goes and 3D soft things all ask Rapier
+// (physics2d.js, arena.js predict(), soft.js in 3D; World3D sweep(), around(), outOf())
+{
+  const t0 = performance.now(), THREE = await import('three');
+  const { Physics, Body } = await import('../src/kit/physics.js'), { World } = await import('../src/kit/physics2d.js');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Arena } = await import('../src/kit/arena.js'), { Soft } = await import('../src/kit/soft.js');
+  // the simple 2D world, with the names and numbers it always had
+  {
+    const w = new World({ gravity: 900, walls: [0, 0, 360, 640] });
+    const ball = w.circle(100, 50, 12, { bounce: .6 }), floor = w.box(180, 630, 360, 20, { fixed: true }), crate = w.box(200, 100, 30, 30, { tag: 'crate' }), heavy = w.circle(300, 300, 10, { mass: 7 });
+    assert.ok(w instanceof Physics && ball instanceof Body && crate instanceof Body, 'it is a Physics, and what it makes are its bodies');
+    assert.ok(Math.abs(ball.mass - Math.PI * 144 * .01) < .01 && Math.abs(crate.mass - 9) < .01 && Math.abs(heavy.mass - 7) < .01 && floor.fixed, 'mass by size in game units, or as given: ' + [ball.mass, crate.mass, heavy.mass].map(m => m.toFixed(2)));
+    assert.ok(w.bodies.length === 4 && !w.bodies.includes(w.edge) && ball.kind === 'circle' && Math.abs(ball.bounce - .6) < 1e-6 && crate.tag === 'crate', 'bodies lists them, not the walls');
+    assert.deepEqual(crate.bounds.map(Math.round), [185, 85, 215, 115]); assert.deepEqual(ball.bounds.map(Math.round), [88, 38, 112, 62]);
+    const hits = []; w.onHit((a, b, speed) => hits.push([a, b, speed]));
+    for (let i = 0; i < 240; i++) w.step(1 / 60);
+    assert.ok(Math.abs(crate.y - 605) < 1 && crate.angle === 0 && crate.sleeping, 'a crate rests upright on the floor: ' + crate.y.toFixed(1));
+    assert.ok(Math.abs(ball.y - 608) < 2 && hits.some(h => h[0] === ball && h[1] === floor && h[2] > 300) && hits.every(h => h[2] > 30), 'the ball bounces to rest on it, and the hits are told: ' + ball.y.toFixed(1));
+    const v0 = crate.vx; crate.push(30, 0); assert.ok(Math.abs(crate.vx - v0 - 30) < .01, 'push is a kick: ' + crate.vx);
+    assert.deepEqual(w.near(200, 600, 10), [crate]); assert.equal(w.near(100, 300, 10).length, 0); assert.equal(w.at(100, 608), ball);
+    hits.length = 0; ball.x = 20; ball.vx = -400; for (let i = 0; i < 30; i++) w.step(1 / 60);
+    assert.ok(ball.x > 11.5 && hits.some(h => h[0] === ball && h[1] === null), 'the walls hold it, and a wall hit has b null');
+    // the less bouncy of the two decides: a bouncy ball on a dead floor stays down, on a bouncy one it comes back up
+    const dead = w.box(60, 500, 80, 10, { fixed: true, bounce: 0 }), live = w.box(300, 500, 80, 10, { fixed: true, bounce: .9 }), b1 = w.circle(60, 380, 8, { bounce: .9 }), b2 = w.circle(300, 380, 8, { bounce: .9 });
+    let up1 = 0, up2 = 0; for (let i = 0; i < 90; i++) { w.step(1 / 60); up1 = Math.max(up1, -b1.vy); up2 = Math.max(up2, -b2.vy); }
+    assert.ok(up1 < 40 && up2 > 250, 'bounce is the lesser of the two: ' + up1.toFixed(0) + ' against ' + up2.toFixed(0));
+    // a sensor reports and does not push; a body that floats; fields set later
+    const gate = w.box(180, 300, 60, 60, { fixed: true, sensor: true }), drop = w.circle(180, 240, 6), floaty = w.circle(40, 100, 6, { gravity: 0 }); hits.length = 0; drop.vy = 5;
+    for (let i = 0; i < 40; i++) w.step(1 / 60);
+    assert.ok(gate.sensor && drop.y > 340 && hits.some(h => (h[0] === gate || h[1] === gate) && (h[0] === drop || h[1] === drop)) && Math.abs(floaty.y - 100) < .01, 'a sensor says who came in and lets it through; gravity: 0 floats');
+    gate.sensor = false; b2.bounce = .1; b2.friction = .9; assert.ok(!gate.sensor && Math.abs(b2.bounce - .1) < 1e-6 && Math.abs(b2.friction - .9) < 1e-6, 'bounce, friction and sensor can be set');
+    crate.vy = 0; w.blast(200, 612, 80, 500); assert.ok(crate.vy < -100, 'a blast throws it: ' + crate.vy);
+    w.remove(ball); assert.ok(ball.dead && !w.bodies.includes(ball)); w.clear(); assert.equal(w.bodies.length, 0);
+    const open = new World({ gravity: { x: 0, y: 0 } }); assert.ok(open.edge === null && open.bodies.length === 0, 'no walls unless asked');
+    // and, being a Physics, the rest works in it: a hinge, a ray
+    const arm = open.box(100, 100, 60, 8), pin = open.hinge(arm, null, 70, 100), seen = (open.step(1 / 60), open.ray(100, 0, 100, 200)); assert.ok(pin && seen?.thing === arm, 'a hinge and a ray in the simple world');
+  }
+  // a shape swept through the 3D world: what it would first touch, where, and how far along
+  {
+    const w = new World3D(); w.floor(0); const wall = w.box(null, 1, 4, 10, { fixed: true, at: { x: 5, y: 2, z: 0 } }), crate = w.box(null, 1, 1, 1, { at: { x: 2, y: .5, z: 0 } }), ball = { ball: .5 };
+    let h = w.sweep(ball, { x: 0, y: 3, z: 0 }, { x: 0, y: -10, z: 0 });
+    assert.ok(h && Math.abs(h.distance - 2.5) < .01 && Math.abs(h.share - .25) < .001 && h.normal.y > .99 && Math.abs(h.at.y - .5) < .01 && Math.abs(h.point.y) < .01, 'a ball dropped at the floor: ' + JSON.stringify(h && [h.distance, h.share, h.at.y]));
+    h = w.sweep(ball, { x: 0, y: .6, z: 0 }, { x: 10, y: 0, z: 0 }); assert.ok(h.thing === crate && Math.abs(h.distance - 1) < .01 && h.normal.x < -.99, 'along the ground: the crate first');
+    h = w.sweep(ball, { x: 0, y: .6, z: 0 }, { x: 10, y: 0, z: 0 }, { still: true }); assert.ok(h.thing === wall && Math.abs(h.distance - 4) < .01, 'still: true: only what never moves (the wall)');
+    h = w.sweep(ball, { x: 0, y: .6, z: 0 }, { x: 10, y: 0, z: 0 }, { not: crate }); assert.ok(h.thing === wall, 'not: leaves one thing out');
+    assert.equal(w.sweep(ball, { x: 0, y: 3, z: 0 }, { x: 0, y: 2, z: 0 }), null, 'nothing in the way: null'); assert.equal(w.sweep(ball, { x: 0, y: 3, z: 0 }, { x: 0, y: 0, z: 0 }), null);
+    h = w.sweep({ box: [1, 1, 1] }, { x: -3, y: 4, z: 0 }, { x: 0, y: -10, z: 0 }); assert.ok(Math.abs(h.at.y - .5) < .01, 'a box swept down stops with its underside on the floor: ' + h.at.y.toFixed(3));
+    h = w.sweep(ball, { x: -3, y: .5, z: 0 }, { x: .3, y: -.01, z: 0 }, { still: true }); assert.ok(h && h.share < 1e-3 && h.normal.y > .99, 'already touching: met at once');
+    w.free();
+  }
+  // where an arena's ball will go: the world is asked (its real floor, walls, ramps and goals), so it lands where the ball does
+  {
+    const far = (vel, at, secs = 2) => {
+      const w = new World3D(), a = new Arena(w, { time: 0 }); a.ball.place(at, { x: 0, y: 0, z: 0, w: 1 }); a.ball.setVel(vel.x, vel.y, vel.z);
+      const path = a.predict(secs), first = path.find(q => q.bounce); let sum = 0, land = 0;
+      for (const q of path) { w.step(1 / 60); w.step(1 / 60); const b = a.ball.pos, d = Math.hypot(b.x - q.x, b.y - q.y, b.z - q.z); sum += d; if (q === first) land = d; }
+      w.free(); return { mean: sum / path.length, land, n: path.length, first };
+    };
+    const drop = far({ x: 0, y: 0, z: 0 }, { x: 0, y: 6, z: 0 }), lob = far({ x: 6, y: 8, z: 10 }, { x: 0, y: 2, z: 0 }), ramp = far({ x: 14, y: 0, z: 0 }, { x: 5, y: 1.15, z: 0 }, 2.5), goal = far({ x: 0, y: 2, z: 30 }, { x: 0, y: 2, z: 5 });
+    assert.ok(drop.n === 60 && drop.first && drop.mean < .15 && drop.land < .15, 'a dropped ball: ' + JSON.stringify(drop));
+    assert.ok(lob.first && lob.mean < .3 && lob.land < .3, 'a lob lands where it said, and rolls on as it said: ' + lob.mean.toFixed(2) + ' m off on average, ' + lob.land.toFixed(2) + ' at the bounce');
+    assert.ok(ramp.mean < .5, 'up the curved ramp at the side: ' + ramp.mean.toFixed(2)); assert.ok(goal.mean < 1, 'into the goal and round its back: ' + goal.mean.toFixed(2));
+    // once a frame however many ask; a longer look carries on from a shorter; a new frame or a touch on the ball starts again
+    const w = new World3D(), a = new Arena(w, { time: 0 }); a.ball.place({ x: 0, y: 4, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }); a.ball.setVel(5, 3, 8); w.step(1 / 60);
+    let asked = 0; const sweep = w.sweep; w.sweep = function (...x) { asked++; return sweep.apply(this, x); };
+    const one = a.predict(1), n1 = asked, again = a.predict(1), short = a.predict(.5), n2 = asked, long = a.predict(2), n3 = asked, fresh = new Arena(new World3D(), { time: 0 });
+    assert.ok(one.length === 30 && again === one && n2 === n1 && short.length === 15 && short[14] === one[14], 'asked again in the same frame: the same path, nothing worked out: ' + [one.length, again === one, n1, n2, short.length, short[14] === one[14]]);
+    assert.ok(long.length === 60 && long[29] === one[29] && one.length === 30 && n3 - n2 >= 30 && n3 - n2 < 30 + n1, 'a longer look carries on from the shorter one (which stays as it was)');
+    assert.ok(a.danger(2) === -1 && a.predict(2) === long && asked === n3, 'danger() reads the same path');
+    a.ball.setVel(0, 0, 0); const still = a.predict(1); assert.ok(still !== long && Math.abs(still[5].x - a.ball.pos.x) < .01, 'the ball is touched: worked out again');
+    w.step(1 / 60); assert.ok(a.predict(1) !== still, 'and each frame');
+    fresh.world.free(); w.free();
+  }
+  // 3D soft things are kept out of the 3D world's bodies: a rope over a crate, a sheet over a ball, a rope on ground that is only a surface
+  {
+    const w = new World3D(); w.floor(0); w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: 0 }, fixed: true }); const ball = w.ball(null, .3, { at: { x: 3, y: .3, z: 0 }, fixed: true }), cup = w.ball(null, .2, { at: { x: -3, y: .2, z: 3 }, sensor: true, fixed: true });
+    const soft = new Soft({ dims: 3, world: w }), rope = soft.rope({ x: -2, y: 2, z: 0 }, { x: 2, y: 2, z: 0 }, 24, { pinA: false }), sheet = soft.cloth(2.5, 1.5, 1, 1, 8, 8, { pin: 'none', plane: 'xz', z: -.5 });
+    assert.ok(Math.abs(rope.points[0].r - .04) < 1e-9, 'a 3D point is centimetres thick, not the 2D world\'s two units');
+    for (let i = 0; i < 240; i++) { w.step(1 / 60); soft.update(1 / 60); }
+    const ys = rope.points.map(p => p.y), top = Math.max(...ys);
+    assert.ok(rope.points.every(p => p.y > .03 && !(Math.abs(p.x) < .49 && p.y < .99 && Math.abs(p.z) < .49)) && top > 1 && top < 1.1 && Math.min(...ys) < .06, 'a rope lies over the crate and down to the floor each side: top ' + top.toFixed(2));
+    assert.ok(sheet.points.every(p => p.y > .03 && Math.hypot(p.x - 3, p.y - .3, p.z) > .3) && Math.max(...sheet.points.map(p => p.y)) > .55, 'a sheet lies over the ball, not in it');
+    const near = w.around({ x: -4, y: 0, z: 2 }, { x: -2, y: 1, z: 4 }); assert.ok(near.every(s => s.thing !== cup) && near.length === 1 && near[0].reach === Infinity, 'around(): the shapes in a box (not sensors): here only the floor');
+    const by = w.around({ x: 2.5, y: 0, z: -.5 }, { x: 3.5, y: 1, z: .5 }).filter(s => s.thing === ball), o = w.outOf({ x: 3, y: .5, z: 0 }, .05, by);
+    assert.ok(by.length === 1 && Math.abs(by[0].reach - .3) < 1e-6 && o && Math.abs(o.y - .65) < .001 && o.ny > .99 && Math.abs(o.depth - .15) < .001 && o.thing === ball, 'outOf(): a point inside a ball is put on its skin: ' + JSON.stringify(o && [o.y, o.depth]));
+    assert.equal(w.outOf({ x: 3, y: 1.5, z: 0 }, .05, by), null, 'and one clear of it is left alone');
+    const light = w.ball(null, .3, { at: { x: 6, y: .3, z: 0 } }), s2 = new Soft({ dims: 3, world: w, weight: .0005 }); s2.cloth(5.4, .9, 1.2, 1.2, 6, 6, { pin: 'none', plane: 'xz', z: -.6 });
+    for (let i = 0; i < 120; i++) { w.step(1 / 60); s2.update(1 / 60); }
+    assert.ok(light.speed < 2 && Math.abs(light.pos.x - 6) < 1 && light.pos.y > .25, 'a sheet that lands on a loose ball presses on it and does not fling it: ' + light.speed.toFixed(2));
+    w.free();
+    const w2 = new World3D(), g = new THREE.Mesh(new THREE.PlaneGeometry(20, 20, 8, 8).rotateX(-Math.PI / 2)); g.position.y = 1; g.updateMatrixWorld(); w2.ground(g);
+    const s3 = new Soft({ dims: 3, world: w2 }), r3 = s3.rope({ x: -1, y: 3, z: 0 }, { x: 1, y: 3, z: 0 }, 10, { pinA: false });
+    for (let i = 0; i < 180; i++) { w2.step(1 / 60); s3.update(1 / 60); }
+    assert.ok(r3.points.every(p => p.y > 1.02 && p.y < 1.08), 'a rope dropped on a ground mesh (a surface with no inside) stays on top of it: ' + r3.points.map(p => p.y.toFixed(2)).join(' '));
+    w2.free(); s3.update(1 / 60); assert.ok(r3.points.every(p => Number.isFinite(p.y)), 'a world the game freed: the soft thing carries on without it');
+  }
+  console.log('no kit is its own physics engine: the simple 2D world, a swept shape, the arena ball\'s path and 3D soft things ask Rapier ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
 // finer sun shadows (sunmask.js): capsules for far people and their shadows, the grid they go in, the map of heights' tiles
 {
   const { binCapsules, figureCapsule, capsuleShade, HeightTiles, CAPS, GRID, PER } = await import('../src/kit/sunmask.js');
@@ -7137,7 +7268,9 @@ console.log('physics ok');
     heard = []; house.hit({ x: -4, y: 1.5, z: 0 }, { radius: 1, power: 50 }); next.step(1 / 60); house.update(1 / 60); const broke = house.broke.filter(b => b.how === 'broke').length; foley.update(1 / 60);
     assert.ok(broke > 0 && heard.length === broke, `what breaks is heard: ${broke} pieces, ${heard.length} sounds`);
     next.free?.(); const third = new World3D(); house.reset(); assert.equal(house.world, third, 'and reset() finds the round\'s new world');
-    assert.equal(new Structure(null, { building: { style: 'brick', w: 5, d: 5, floors: 1, materials }, world: false }).world, null, 'world: false: none');
+    const alone = new Structure(null, { building: { style: 'brick', w: 5, d: 5, floors: 1, materials }, world: false });
+    assert.ok(alone.world === alone.mine && alone.world !== third && !third.bodies.includes(alone.body), 'world: false: not in the game\'s world, but a small one of its own');
+    alone.reset(); assert.ok(alone.world === alone.mine, 'and reset() keeps it out');
     // the ears: the physics world is what stands in the way of sound
     const e2 = new Ears(); assert.ok(e2.level === third && e2.cast, 'ears with no level take the game\'s physics world'); assert.ok(new Ears({ level: false }).level === null && new Ears({ link: false }).level === null, 'level: false and link: false: nothing stands in the way');
   });
@@ -7198,10 +7331,11 @@ console.log('physics ok');
       const bits = ownedBy(null, () => shatter(pane, { pieces: 4, seed: 2 })); assert.ok(bits.length >= 2 && bits.every(b => b.body), 'a thing shattered during play (outside make() and reset()): its pieces are bodies in the game\'s world');
       const loose = new THREE.Mesh(new THREE.BoxGeometry(1, 1, .1), new THREE.MeshBasicMaterial()); v.scene.add(loose); assert.ok(ownedBy(null, () => shatter(loose, { pieces: 4, seed: 2, world: false })).every(b => !b.body), 'world: false: pieces that are only meshes');
       assert.equal(new Regions(v).world, w, 'regions free their bodies in the game\'s world');
+      assert.ok(new Soft({ dims: 3 }).world === w && new Soft().world === null && new Soft({ dims: 3, world: false }).world === null, 'a 3D soft thing is kept out of the game\'s 3D physics world (a 2D one is not: that is the 2D world\'s)');
     });
     together(() => {
       const p = new Physics({ gravity: 900 }), soft = new Soft(), drops = new Liquid(), cloth3 = new Soft({ dims: 3 }), car = new Car(), free = new Car({ world: false });
-      assert.ok(soft.world === p && drops.world === p && cloth3.world === null && car.world === p && !free.world, 'soft things, liquid and a 2D car find the game\'s 2D physics world (3D soft things do not)');
+      assert.ok(soft.world === p && drops.world === p && cloth3.world === null && car.world === p && !free.world, 'soft things, liquid and a 2D car find the game\'s 2D physics world (a 3D soft thing looks for the 3D one)');
       const hero = new Platformer({ x: 50, y: 50 }); p.box(50, 200, 300, 20, { fixed: true }); for (let i = 0; i < 90; i++) { hero.update(1 / 60, undefined, {}); p.step(1 / 60); }
       assert.ok(hero.onGround && hero.y < 200, 'a platformer with no level given walks the game\'s 2D physics world: ' + hero.y.toFixed(1));
     });

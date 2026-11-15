@@ -41,7 +41,8 @@ export class Arena {
     this.goal = { w: 9, h: 3.6, d: 3.5, ...goal };
     this.handlers = {}; this.cars = []; this.score = [0, 0]; this.walls = [];
     this.build(segments);
-    this.ball = world.ball(ball, ballR, { bounce, friction: .4, density: .25, drag: .12, spinDrag: .3, bullet: true, tag: 'ball', at: V(0, ballR + 2, 0) });
+    this.ballDrag = .12; this.ballSpinDrag = .3; this.path = null;
+    this.ball = world.ball(ball, ballR, { bounce, friction: .4, density: .25, drag: this.ballDrag, spinDrag: this.ballSpinDrag, bullet: true, tag: 'ball', at: V(0, ballR + 2, 0) });
     this.frames = []; this.keep = Math.round(replay * 30); this.rec = 0;
     this.pads = pads ? this.makePads() : [];
     this.spawns = [-1, 1].map(s => [V(0, .6, s * l * .38), V(-w * .22, .6, s * l * .42), V(w * .22, .6, s * l * .42)].map(p => ({ ...p, facing: s > 0 ? 0 : Math.PI })));
@@ -167,21 +168,45 @@ export class Arena {
   get replayLength() { return this.frames.length / 30; }
 
   /**
-   * Where the ball will be over the next `seconds`, ignoring cars: [{ x, y, z, t, bounce }] every
-   * `step` seconds; bounce marks a point where it hits floor, wall or ceiling.
+   * Where the ball will be over the next `seconds`, ignoring cars: [{ x, y, z, t, bounce }] every `step` seconds;
+   * bounce marks a point where it hits floor, wall, ramp or ceiling. The physics world is asked where the ball
+   * next meets the arena (its real walls, curved ramps and goals, and how bouncy each is), so the marker lands
+   * where the ball will. It is worked out once a frame however many ask (the landing marker, every computer car).
    */
   predict(seconds = 2, step = 1 / 30) {
-    const g = this.world.gravity.y, r = this.ballR, out = [], drag = .12, e = .65, W = this.w / 2 - r, L = this.l / 2 - r, H = this.h - r;
-    const p = { ...this.ball.pos }, v = { ...this.ball.vel };
-    for (let t = step; t <= seconds + 1e-6; t += step) {
-      v.y += g * step; const k = Math.max(0, 1 - drag * step); v.x *= k; v.y *= k; v.z *= k;
-      p.x += v.x * step; p.y += v.y * step; p.z += v.z * step;
-      let bounce = false;
-      if (p.y < r) { p.y = r; if (v.y < 0) { v.y = -v.y * e; bounce = Math.abs(v.y) > .5; } }
-      if (p.y > H) { p.y = H; v.y = -Math.abs(v.y) * e; bounce = true; }
-      if (Math.abs(p.x) > W) { p.x = Math.sign(p.x) * W; v.x = -v.x * e; bounce = true; }
-      if (Math.abs(p.z) > L && !(Math.abs(p.x) < this.goal.w / 2 - r && p.y < this.goal.h - r)) { p.z = Math.sign(p.z) * L; v.z = -v.z * e; bounce = true; }
-      out.push({ x: p.x, y: p.y, z: p.z, t, bounce });
+    const W = this.world, b = this.ball, at = b.pos, sp = b.vel, want = Math.floor(seconds / step + 1e-6); let c = this.path;
+    if (!c || c.steps !== W.steps || c.step !== step || c.p0.x !== at.x || c.p0.y !== at.y || c.p0.z !== at.z || c.v0.x !== sp.x || c.v0.y !== sp.y || c.v0.z !== sp.z)
+      c = this.path = { steps: W.steps, step, list: [], p0: { ...at }, v0: { ...sp }, p: { ...at }, v: { ...sp }, w: { ...b.spin } };
+    if (c.list.length >= want) return c.list.length === want ? c.list : c.list.slice(0, want);
+    const out = c.list = c.list.slice();   // (a longer look than the last one this frame carries on from where that ended, in a list of its own: the shorter one a caller holds stays as it was)
+    const g = W.gravity, r = this.ballR, drag = this.ballDrag, sdrag = this.ballSpinDrag, col = b.collider, e0 = col.restitution(), f0 = col.friction();
+    const shape = this.ballShape ||= { ball: r }, mv = V(), opt = this.still ||= { still: true }, { p, v, w } = c;
+    // the ball meets something (the world says where, and its normal n): off it as the two together bounce, and their grip
+    // turns sliding into rolling (a ball that lands with no spin loses 2/7 of its speed along the ground as it takes it up)
+    const meet = (hit, h) => {
+      const n = hit.normal, into = -(v.x * n.x + v.y * n.y + v.z * n.z); if (into <= 0) return -1;   // (touching it and on its way off)
+      const o = hit.thing?.collider, e = (e0 + (o?.restitution() ?? e0)) / 2, mu = (f0 + (o?.friction() ?? f0)) / 2, j = (1 + e) * into;
+      v.x += n.x * j; v.y += n.y * j; v.z += n.z * j;
+      // how fast the ball's skin slides over what it touches: v + spin × (-r n), along the surface
+      let ux = v.x - r * (w.y * n.z - w.z * n.y), uy = v.y - r * (w.z * n.x - w.x * n.z), uz = v.z - r * (w.x * n.y - w.y * n.x); const un = ux * n.x + uy * n.y + uz * n.z;
+      ux -= un * n.x; uy -= un * n.y; uz -= un * n.z; const u = Math.hypot(ux, uy, uz);
+      if (u > 1e-6) {
+        const k = Math.min(mu * Math.max(j, -(g.x * n.x + g.y * n.y + g.z * n.z) * h), u * 2 / 7) / u, dx = -ux * k, dy = -uy * k, dz = -uz * k, s = 2.5 / r;   // (a solid ball: I = 2/5 m r²)
+        v.x += dx; v.y += dy; v.z += dz; w.x -= s * (n.y * dz - n.z * dy); w.y -= s * (n.z * dx - n.x * dz); w.z -= s * (n.x * dy - n.y * dx);
+      }
+      return into * e;
+    };
+    for (let i = out.length; i < want; i++) {
+      const k = 1 / (1 + drag * step), ks = 1 / (1 + sdrag * step); v.x = (v.x + g.x * step) * k; v.y = (v.y + g.y * step) * k; v.z = (v.z + g.z * step) * k; w.x *= ks; w.y *= ks; w.z *= ks;   // (as the physics slows it)
+      let left = step, bounce = false;
+      for (let pass = 0; pass < 3 && left > 1e-5; pass++) {   // to where it next meets the arena, off that, and on with what is left of the step
+        mv.x = v.x * left; mv.y = v.y * left; mv.z = v.z * left;
+        const hit = W.sweep(shape, p, mv, opt), up = hit ? meet(hit, left) : -1;
+        if (up < 0) { p.x += mv.x; p.y += mv.y; p.z += mv.z; break; }
+        p.x = hit.at.x; p.y = hit.at.y; p.z = hit.at.z; left *= 1 - hit.share; if (up > .5) bounce = true;
+        if (hit.share < 1e-4 && pass) break;
+      }
+      out.push({ x: p.x, y: p.y, z: p.z, t: (i + 1) * step, bounce });
     }
     return out;
   }

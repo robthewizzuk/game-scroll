@@ -545,7 +545,8 @@ debug(c) { phys.debugDraw(c); }
 - **Things that aren't bodies** (your own particles, `gs.soft`'s points): `near(x0, y0, x1, y1)` gives the shapes in a
   box and `outOf(x, y, r, shapes)` says where a point of radius `r` must go to be out of them (`null` when it's clear).
 - The raw engine is there too: `phys.R` and `phys.world` (Rapier works in metres: `phys.toWorld(px)`).
-- The old simple engine is still there as `gs.physics.World` (balls and upright boxes, no joints).
+- The simple world, `gs.physics.World` (balls and upright boxes, mass by size in game units, `bodies`, `near(x, y, r)`,
+  `onHit` with `b` null for a wall), is this same engine with those few names kept: every `Physics` method works in it.
 
 ## 3D physics
 
@@ -605,11 +606,31 @@ a flag wraps round a passing ball. Give the same world to each and step it once 
 | `gs.city` | `city.solid(world, { furniture, parked, cars, people })`: buildings, kerbs, posts and benches, parked cars, and bodies that follow the nearest traffic and people (a car hit hard stops, a person hit falls) |
 | `gs.voxels` | `vox.physics(world)`: the solid blocks as ground, made again as chunks change |
 | `gs.outdoors` `Cloth` | `new Cloth(view, { world })`: goes round the bodies near it by itself |
-| `gs.soft` `Soft`, `Liquid` | `{ world, weight }` (2D): points and drops stay out of its shapes and push loose things back (a ball floats) |
+| `gs.soft` `Soft`, `Liquid` | `{ world, weight }`: points and drops stay out of its shapes and push loose things back (a ball floats); a `Soft({ dims: 3 })` rope or sheet does the same in a `World3D` (it lies over crates, balls and the ground) |
+| `gs.destruction` `Structure` | solid in the world, what falls is bodies in it; with no world it keeps a small one of its own |
+| `gs.arena` `Arena` | `predict()` asks the world where the ball next meets the arena |
 | `gs.flow` `Streams` | `streams.carry(body, dt)` drifts a loose 2D body with the current |
 | `gs.fluid`, `gs.gas` | a solid's `follow` can be a physics body: the liquid and smoke go round it as it moves |
 
 A `World3D` made in `make()` or `reset()` is also found by the kits made beside it, with nothing passed: see the next section.
+
+For your own things that are not bodies, a `World3D` answers the same questions the kits ask it:
+`sweep(shape, from, move, { still, not })` is a ball, box or capsule moved through the world (`{ thing, point,
+normal, distance, share, at }` for what it first touches, or `null`; `still: true` looks only at what never
+moves), `around(lo, hi)` the shapes in a box and `outOf(p, r, shapes, from)` where a point of radius `r` must go to
+be out of them.
+
+**What is not on Rapier, and why.** Anything rigid that moves and collides asks the physics engine. These keep a
+cheaper way of their own, on purpose:
+
+| What | Why it stays |
+| --- | --- |
+| Cloth, rope, jelly, liquid, fluid, gas, sand, rivers, the sea (`gs.soft`, `Cloth`, `gs.fluid`, `gs.gas`, `gs.sand`, `gs.flow`, `Sea`) | Rapier is a rigid-body engine with no solver for these; several run on the graphics chip. They collide with the world's bodies and push them |
+| Particles, `Bullets`, `Swarm`, a `Structure`'s small rubble, `Table.crumble` | Hundreds or thousands of tiny things there for a moment: a body each would cost far more than the look is worth. (`crumble` would also load the engine into every board game) |
+| `TileMap.move`/`ray`, `Voxels.move`/`ray`, `Land.floor`/`ray`, `Level3D.height`, `City.collide`/`ray`, `Crowd.ray` | Exact answers read straight from the kit's own grid or height map, with no engine to load. Each makes itself solid in a world when the game has one (`phys.tiles(map)`, `vox.physics(world)`, `land.solid`, `level.solid`, `city.solid`, `props.solid`) |
+| How a `Car`, `Kart`, `Plane`, `Boat`, `Hover`, `Platformer` or `TopDown` handles | Drift, lift, coyote time and the like are game feel, not collisions. What they run into is the world's, whenever the game has one |
+| `climb.Rope`, `Zipline`, the `Grapple` rope, `arc`/`lob`, `Shots` | Maths for a hero the game moves (a pendulum, a parabola, a ray); with a world, the rays and what they land on are the world's |
+| `Reactions`' acted falls, planted feet, `Things` overlaps, steering | Animation and game logic. With a world a knocked-down person is a jointed ragdoll in it |
 
 ## Kits that find each other
 
@@ -639,7 +660,7 @@ function make(api) {
 | `gs.sky` `Weather` | `Marks` (snow, wet earth: a weather made with a `level`), `Foley`; a blast makes it look again at what is still a roof |
 | `gs.sky` `Sky` | `gs.city` `City` (lights come on as it darkens); a storm's lightning lights its clouds |
 | `gs.outdoors` `Water`, `Sea` | `Weather` rains on every one; a 3D blast or a shot going in splashes it, if it was made with `ripples`; `Foley` sounds what lands in it; a `Boat` or `Floater` given no water floats on the newest (`new Boat({ power: 9 })`) |
-| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray), `Kart`, `Plane`, `Boat`, `Hover` (solid in it), `Grapple` (`fire(from, dir)`), `shatter` and `slice` (the pieces are bodies), `Regions` |
+| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray), `Kart`, `Plane`, `Boat`, `Hover` (solid in it), `Grapple` (`fire(from, dir)`), `shatter` and `slice` (the pieces are bodies), `Regions`, a `Soft({ dims: 3 })` (its ropes and sheets stay out of the bodies) |
 | `gs.physics` `Physics` (2D) | `Explosives`, `Shots`, `Car`, `Soft`, `Liquid`, `Platformer` and `TopDown` (`hero.update(dt, undefined, input)`) |
 | `gs.tiles` `TileMap` | `Platformer` and `TopDown` (`hero.update(dt, undefined, input)`), guards' sight (`Senses`), flat `Ears` |
 | `gs.ai` `NavGrid` | `Senses` (sight stops at its walls), agents that hunt (`agent.hunt(target)`) |
@@ -2316,7 +2337,8 @@ gap, pin by pin) and `Code` (repeat the sequence).
 
 **Ball games with cars** (`gs.arena`, Rapier through `gs.physics3d`): `Arena(world, { w, l, goal, ball })`
 builds the walls, curved ramps, ceiling and goals, keeps the score and clock (with overtime), adds
-punch to touches, has boost pads, `predict()`s the ball's path for a landing marker, and keeps a
+punch to touches, has boost pads, `predict()`s the ball's path for a landing marker (the physics world is
+asked where the ball next meets the real floor, walls, ramps and goals, once a frame however many ask), and keeps a
 few seconds of replay (`playback(t)`). `BallCar` is a real suspension car with boost, jump, a second
 jump that flips you the way you push, and air control. `chaseBall(car, arena)` is a simple
 opponent to start from.
@@ -2515,7 +2537,8 @@ body bob on the water (crates, buoys, barrels).
 along the top, tears if you like), `rope()`, `jelly()` (a pressure blob that squashes and springs
 back), with round and box `solids` to hit. `grab(x, y)` lets a finger pull a point, `cut()` slices
 everything a swipe crosses, `push()` blasts and `wind()` blows. Draw the points your way, or send a
-3D cloth to a mesh with `toGeometry()`. `Liquid()` is a simple 2D liquid of particles that pools,
+3D cloth to a mesh with `toGeometry()`. In a game with a physics world (2D or 3D) the points stay out of
+its shapes and press on loose ones. `Liquid()` is a simple 2D liquid of particles that pools,
 splashes and pours (`pour()`, `near()`, `count()`) for water and goo puzzles.
 
 **Cards** (`gs.cards`): `Deck({ seed, jokers, decks })` shuffles, deals, draws (reshuffling the discards
@@ -3198,8 +3221,10 @@ house.blast(shell.position, 3);                                      // an explo
 - **With a physics world** (`world: phys`, or `reset({ world })`) the walls are solid for movers, rays and
   `gs.sound.Ears`, a hole lets them through, and what falls is real tumbling bodies that pile up and can
   break what they land on (`crush: 0` turns that off). `phys.ray()` gives `hit.thing.structure` for the
-  building it struck. **Without one** pieces fall and break up where they land, the same way every time,
-  and `house.ray(from, dir)` finds the piece a shot strikes (`{ point, normal, distance, kind }`).
+  building it struck. **Without one** the building keeps a small physics
+  world of its own (its walls, the ground under it and what has fallen), so the collapse is the same one, the
+  same way every time; it steps that world itself, only while something is falling. Either way
+  `house.ray(from, dir)` finds the piece a shot strikes (`{ point, normal, distance, kind, piece }`).
 - Small rubble is cheap: boxes drawn as copies, in the building's own materials, that land on the ground
   (`ground: (x, z) => height`) or on what still stands. `bits` (240) is how many a material keeps and `keep`
   (40) how many fallen pieces stay as bodies; the oldest go first.
