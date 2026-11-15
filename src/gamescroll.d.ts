@@ -2472,6 +2472,69 @@ export interface Recipes {
   can(inv: Loose, at?: string | null): Recipe[]; times(id: string, inv: Loose, at?: string | null): number; uses(item: string): Recipe[]; make(id: string, inv: Loose, at?: string | null): Recipe | null;
   timer: { jobs: CraftJob[]; on(ev: 'done', fn: (r: Recipe, over: number) => void): Loose; progress(job: CraftJob): number; update(dt: number): void; clear(): void };
 }
+export interface TownPlanOptions { seed?: number; kind?: 'village' | 'castle'; houses?: number; name?: string }
+export interface TownBuilding { id: number; role: 'inn' | 'smithy' | 'store' | 'bakery' | 'hall' | 'home' | 'house' | 'keep' | 'barracks'; style: string; floors: number; x: number; z: number; turn: number; w: number; d: number; door: { x: number; z: number }; front: { x: number; z: number }; name: string | null; beds: number; [k: string]: Loose }
+export interface TownPlan {
+  name: string; seed: number; kind: 'village' | 'castle'; heading: number; radius: number;
+  roads: { kind: 'main' | 'lane'; points: [number, number][]; width: number }[]; square: { x: number; z: number; r: number };
+  buildings: TownBuilding[]; props: { kind: string; x: number; y?: number; z: number; turn: number; at?: number; [k: string]: Loose }[];
+  walls: { kind: 'wall' | 'tower' | 'gate'; x: number; z: number; turn: number; length?: number; width?: number }[]; gates: { x: number; z: number; turn: number }[];
+  lights: { x: number; y: number; z: number; turn: number; building: number }[]; fields: { x: number; z: number; w: number; d: number; turn: number }[];
+  edge: { x: number; z: number }[]; wander: { x: number; z: number }[]; nodes: { x: number; z: number; tag: string }[]; links: [number, number][][];
+}
+export interface TownSlot { from: number; to: number; at: 'home' | 'work' | 'inn' | 'square' | 'wander' | 'field' | 'patrol' | 'gate' | number | { x: number; z: number }; do: string }
+export interface TownPerson { id: number; name: string; job: string; home: number; work: number; routine: TownSlot[]; x: number; z: number; turn: number; moving: boolean; doing: string; inside: number; slot: TownSlot | null; held: number; member: Loose; data: Record<string, Loose> }
+export interface WorldClock {
+  time: number; speed: number; dawn: number; dusk: number; readonly waiting: boolean; hour: number; readonly day: number; readonly night: boolean; readonly dark: number;
+  readonly part: 'night' | 'dawn' | 'morning' | 'noon' | 'afternoon' | 'evening';
+  set(hour: number, day?: number): WorldClock; until(hour: number | 'dawn' | 'dusk'): number;
+  wait(hours: number, o?: { over?: number }): Promise<WorldClock>; sleep(hour?: number | 'dawn' | 'dusk', o?: { over?: number }): Promise<WorldClock>;
+  every(hour: number | 'dawn' | 'dusk', fn: (day: number) => void): () => void; update(dt: number): WorldClock; pack(): Loose; unpack(d: Loose): WorldClock;
+}
+export interface TownFolk {
+  people: TownPerson[]; town: TownPlan; speed: number;
+  update(dt: number): TownFolk; settle(): TownFolk; hold(p: TownPerson, seconds?: number, face?: { x: number; z: number } | null): TownPerson;
+  near(x: number, z: number, r?: number): TownPerson[]; at(building: number | TownBuilding): TownPerson[]; of(job: string): TownPerson[];
+  rest(hours?: number | 'dawn' | 'dusk', where?: { x: number; z: number } | null): { ok: boolean; why?: string; hours?: number; done?: Promise<WorldClock> };
+  on(ev: 'arrive' | 'slot', fn: (p: TownPerson) => void): TownFolk; pack(): Loose; unpack(d: Loose): TownFolk;
+}
+export interface TownShop {
+  name: string; money: number; stock: Record<string, { price: number; count: number; restock: number }>; readonly open: boolean; keeper: TownPerson | null;
+  priceOf(id: string, o?: { selling?: boolean }): number | null; restock(): TownShop;
+  buy(id: string, n?: number, wallet?: { money: number }, inventory?: Inventory | null): { ok: boolean; cost?: number; why?: string };
+  sell(id: string, n?: number, wallet?: { money: number }, inventory?: Inventory | null): { ok: boolean; paid?: number; why?: string };
+  pack(): Loose; unpack(d: Loose): TownShop;
+}
+export interface NightMonster { id: number; kind: string; x: number; z: number; turn: number; state: 'prowl' | 'hunt' | 'flee'; speed: number; sense: number; data: Record<string, Loose> }
+export interface TownNight {
+  monsters: NightMonster[]; readonly active: boolean; readonly time: boolean;
+  update(dt: number, hero?: { x: number; z: number } | null): TownNight; near(x: number, z: number, r?: number): NightMonster[]; lit(x: number, z: number): boolean;
+  spawn(hero?: { x: number; z: number } | null): NightMonster | null; kill(m: NightMonster): TownNight; clear(): TownNight;
+  on(ev: 'spawn' | 'gone', fn: (m: NightMonster) => void): TownNight; pack(): Loose; unpack(d: Loose): TownNight;
+}
+export interface Town3D {
+  plan: TownPlan; group: Loose; buildings: (TownBuilding & { mesh: Loose; y: number })[]; walls: Loose[]; gate: Loose | null; solid: Loose; dark: number;
+  update(dt?: number): Town3D; open(k?: number): Town3D; buildingAt(x: number, z: number): (TownBuilding & { mesh: Loose }) | null;
+  drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z: number }; range?: number; turn?: number; colours?: Record<string, string> }): void; remove(): void;
+}
+export interface TownPart {
+  /** The world's time of day: hour, day, night, dark (0..1), wait()/sleep() to pass time, every(hour, fn). Drives the game's Sky by itself. */
+  Clock: new (o?: { hour?: number; day?: number; speed?: number; dawn?: number; dusk?: number; sky?: Loose | false; link?: boolean }) => WorldClock;
+  /** A village or a castle town laid out from a seed, as plain data (gs.city.Town builds it in 3D). */
+  plan(o?: TownPlanOptions): TownPlan;
+  /** A way through a town along its roads, from one spot to another. */
+  route(plan: TownPlan, from: { x: number; z: number }, to: { x: number; z: number }): { x: number; z: number }[];
+  /** Townsfolk who live their day by the clock: sleep, work, eat, drink at the inn, chat on the square; they hide when monsters are about. */
+  Folk: new (plan: TownPlan, o?: { count?: number; clock?: WorldClock; seed?: number; speed?: number; crowd?: Loose; moves?: { walk?: string; idle?: string; sit?: string; work?: string }; night?: TownNight; routines?: Record<string, TownSlot[]>; ground?: (x: number, z: number) => number; link?: boolean }) => TownFolk;
+  /** A shop with opening hours, stock that restocks each morning, buying and selling; price: your own (rep.price). */
+  Shop: new (o?: { name?: string; stock?: Record<string, { price: number; count?: number; restock?: number }>; hours?: [number, number]; clock?: WorldClock; keeper?: TownPerson | null; money?: number; buys?: boolean | string[] | ((id: string) => number | null); sells?: number; price?: (base: number, o: { id: string; selling: boolean }) => number; link?: boolean }) => TownShop;
+  /** Monsters that come in from the wild at night, keep off torches, hunt the hero when near and go at dawn. */
+  Night: new (plan: TownPlan, o?: { clock?: WorldClock; kinds?: (string | { kind: string; weight?: number; speed?: number; sense?: number })[]; every?: number; max?: number; from?: number; to?: number; away?: number; light?: number | false; seed?: number; steer?: boolean; link?: boolean }) => TownNight;
+  /** Each kind of townsperson's day. */
+  readonly ROUTINES: Record<string, TownSlot[]>;
+  /** Is hour h in [a, b), wrapping midnight? */
+  between(h: number, a: number, b: number): boolean;
+}
 export interface ItemsPart {
   Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number }) => Inventory;
   Recipes: new (defs?: Record<string, ItemDef>) => Recipes;
@@ -3660,9 +3723,9 @@ export interface DestructionPart {
   Structure: new (scene?: Loose | null, o?: StructureOptions) => StructureT;
 }
 export interface BuildingOptions {
-  style?: 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' | Record<string, Loose>; w?: number; d?: number; floors?: number; roof?: 'flat' | 'gable'; floor?: number; bay?: number; win?: [number, number]; lit?: number; colour?: string; color?: string; door?: boolean; seed?: number; wear?: false | Record<string, Loose>;
+  style?: 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' | 'cottage' | 'timberframe' | 'keep' | Record<string, Loose>; w?: number; d?: number; floors?: number; roof?: 'flat' | 'gable' | 'thatch' | 'battlement'; floor?: number; bay?: number; win?: [number, number]; lit?: number; colour?: string; color?: string; door?: boolean; seed?: number; wear?: false | Record<string, Loose>;
   /** three.js materials of your own in place of the style's recipes: any of wall, trim, frame, roof, door, glass, lit, floor. */
-  materials?: { wall?: Loose; trim?: Loose; frame?: Loose; roof?: Loose; door?: Loose; glass?: Loose; lit?: Loose; floor?: Loose };
+  materials?: { wall?: Loose; trim?: Loose; frame?: Loose; roof?: Loose; door?: Loose; beam?: Loose; glass?: Loose; lit?: Loose; floor?: Loose };
 }
 export interface StructureOptions {
   /** What gs.models.building() takes (style, w, d, floors, roof, seed, materials...): the building, cut into pieces. */
@@ -4255,7 +4318,7 @@ export interface ModelsPart {
   /** Ages a mesh in place (and returns it), from its own shape: outer edges rubbed lighter, creases and the part near the ground grimy, moss or snow on what faces up. Baked once into vertex colours (free to draw). edges, dirt, moss, snow 0..1; ground: metres up from its bottom that get dirty (.4); edgeColour, dirtColour, mossColour; seed; split (false: don't add corners first). */
   wear<M = Loose>(mesh: M, o?: { edges?: number; edgeColour?: string; dirt?: number; dirtColour?: string; ground?: number; moss?: number; mossColour?: string; snow?: number; seed?: number; split?: boolean }): M;
   /** An everyday thing built in code from the recipes and aged with wear(): a Group (one mesh per material), foot at y = 0, facing +z. seed (small differences), size (its main measure, metres), colour (main material), wear (wear() options, or false), tile (metres per texture repeat), lit (lamp brightness). The same options again give a copy sharing shapes and materials. */
-  prop(name: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' | 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe', o?: { seed?: number; size?: number; colour?: string; color?: string; wear?: false | Record<string, Loose>; tile?: number; lit?: number }): Loose;
+  prop(name: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' | 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe' | 'stall' | 'well' | 'anvil' | 'torch' | 'lever' | 'bed' | 'hay' | 'signboard', o?: { seed?: number; size?: number; colour?: string; color?: string; wear?: false | Record<string, Loose>; tile?: number; lit?: number }): Loose;
   /** The prop names. */
   readonly props: readonly string[];
   /** A mesh from soft shapes melted together or carved away, made with surface nets: each { ball: r } | { box: [w, h, d], round } | { cylinder: [r, h], round } | { torus: [R, r] } | { cone: [r, h] } | { capsule: [[x, y, z], [x, y, z]], r }, with at, rot, scale, blend (metres), cut, colour (vertex colours: use a material with vertexColors). Or a distance function (x, y, z) => d with o.bounds. Options: blend (.08), res (48, up to 128), colour. Returns a BufferGeometry (shared for the same shapes: clone before changing). */
@@ -4288,6 +4351,14 @@ export interface ModelsPart {
   readonly trees: readonly string[];
   /** A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials, aged. style 'brick' | 'plaster' | 'concrete' | 'stone' | 'timber' (or an object like gs.models.buildings' own), w, d (metres, 8 x 6), floors (2), roof 'flat' | 'gable', floor (storey height), bay (metres per window), win [w, h], lit (0..1 of windows glowing), colour (walls), door (false: none), seed, wear, materials (your own three.js materials in place of the style's). A Group centred on x/z, foot at y = 0, door facing +z. One that comes apart: gs.destruction.Structure. */
   building(o?: BuildingOptions): Loose;
+  /**
+   * A piece of a castle: kind 'wall' (length 12, height 7, thick 2.6: a curtain wall along x, walk and battlements on top, its outside +z), 'tower' (radius 3; roof: true a slate cone),
+   * 'gate' (width of the way through 3.4: a gatehouse with a tower each side and a portcullis, the child named 'portcullis', userData.lift metres up to open it). colour, seed, wear,
+   * materials ({ wall, trim, roof, wood, iron }). userData.solid: [{ at, size }] boxes for physics in its own frame; userData.walk: the height of its wall walk.
+   */
+  fort(o?: { kind?: 'wall' | 'tower' | 'gate'; length?: number; height?: number; thick?: number; radius?: number; width?: number; roof?: boolean; colour?: string; color?: string; seed?: number; wear?: false | Record<string, Loose>; materials?: Record<string, Loose> }): Loose;
+  /** The castle pieces fort() makes. */
+  readonly forts: readonly string[];
   /** The building styles (copy one and change it: { ...gs.models.buildings.brick, bay: 3 }). */
   readonly buildings: Record<string, Record<string, Loose>>;
   /**
@@ -4450,6 +4521,11 @@ export interface CityPart {
   CRIMES: Record<string, number>;
   /** What a police car can do: chase, ram, cutoff, block, hang. */
   TACTICS: string[];
+  /**
+   * A gs.town plan built in a Next Gen view: its buildings, a castle's walls, towers and gate, the square's well and stalls, torches by the doors, roads and fields, solid in the
+   * game's World3D (found by itself). Windows glow and torches light the streets at night, following the game's Clock or Sky (found by themselves). update(dt) each frame.
+   */
+  Town: new (view: Loose, o?: { plan?: TownPlan | TownPlanOptions; seed?: number; kind?: 'village' | 'castle'; houses?: number; name?: string; ground?: (x: number, z: number) => number; world?: Loose | false; floor?: boolean; clock?: Loose; sky?: Loose; lamps?: boolean; materials?: { road?: Loose; square?: Loose; field?: Loose; grass?: Loose }; link?: boolean }) => Town3D;
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
@@ -4710,7 +4786,7 @@ export interface GS {
   things: ThingsPart; rounds: RoundsPart; pacing: PacingPart; aim: AimPart; senses: SensesPart; prefs: PrefsPart; tick: TickPart; solve: SolvePart;
   camera2d: Camera2dPart; tiles: TilesPart; movers: MoversPart; anim: AnimPart; story: StoryPart; replay: ReplayPart; look2d: Look2dPart;
   tweak: TweakFn; brains: BrainsPart;
-  board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
+  board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;

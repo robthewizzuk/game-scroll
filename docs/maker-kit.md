@@ -4356,3 +4356,51 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   feathers and scales are still painted.
 - To look it over: `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey
   cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [--webgpu]`.
+
+## Towns that live
+
+`gs.town` is a village or a castle town as rules: a world clock, a layout from a seed, townsfolk who live their
+day by the clock, shops and monsters that come at night. It is plain data, so a 2D game can use it too;
+`gs.city.Town` builds the same plan in a Next Gen view. Reputation is the `gs.rpg` kit's: pass `rep.price` to a
+shop and read `rep.mood(faction)` for how a townsperson meets the hero.
+
+```js
+const { Clock, Folk, Shop, Night } = gs.town, { Town } = gs.city;
+make() {
+  sky = new gs.sky.Sky(view, { physical: true });
+  clock = new Clock({ hour: 8, speed: 1 / 30 });              // a day in 12 minutes; drives the Sky by itself
+  town = new Town(view, { seed: 7, kind: 'castle', houses: 16 });   // solid in the game's World3D by itself
+  folk = new Folk(town.plan, { crowd });                      // a gs.props.Crowd of human() kinds: moved by itself
+  night = new Night(town.plan, { kinds: ['ghoul', { kind: 'wolf', speed: 2.4 }] });
+  inn = new Shop({ stock: { stew: { price: 4, count: 6 }, room: { price: 10, count: 3 } }, keeper: folk.of('innkeeper')[0], price: (p, o) => rep.price(p, 'town', { sell: o.selling }) });
+}
+update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt, hero); }
+```
+
+- The clock: `hour`, `day`, `night`, `dark` (0..1 over an hour at dawn and dusk), `part`; `clock.wait(3)` passes
+  three hours over 2.5 seconds (`{ over: 0 }`: at once) and `clock.sleep('dawn')` waits till dawn; both are promises.
+  `clock.every(18, day => ...)` calls each day as the clock passes six in the evening, waiting or not.
+- The plan: `roads` (a main road and lanes that bend), `square`, `buildings` (role `inn`, `smithy`, `store`,
+  `bakery`, `hall`, `home`, `house`, `keep`, `barracks`; each with `door`, `front` (on the road outside) and its
+  `turn`: the door faces `(sin turn, cos turn)`), `props` (the well, market stalls, the anvil...), `walls` and
+  `gates` (castle), `lights` (torches by doors), `fields` (village), `edge` (where the wild begins) and the walking
+  graph; `gs.town.route(plan, from, to)` walks it.
+- Folk: each person has a job (`smith`, `keeper`, `baker`, `innkeeper`, `farmer`, `guard`, `nightwatch`, `elder`,
+  `idler`), a home and a routine (`gs.town.ROUTINES`, or yours: `routines: { smith: [{ from: 6, to: 12, at: 'work',
+  do: 'work' }, ...] }`). Read `doing`, `moving`, `inside` (a building id: indoors), `x`, `z`, `turn`.
+  `folk.hold(person, 6, hero)` stops one to talk, `folk.near(x, z, r)`, `folk.at(building)`, `folk.of(job)`.
+  After a wait everyone is where the clock says.
+- Sleep and wait: `folk.rest('dawn', hero)` gives `{ ok, done }`, or `{ ok: false, why: 'danger' }` with a monster
+  within 30 m. Fade the screen while `clock.waiting`.
+- Shops: `open` by their hours and their keeper (shut while the keeper is away or hiding), `buy(id, n, wallet,
+  inventory)` and `sell(...)` with a wallet `{ money }` and a `gs.items` Inventory, restocked each morning.
+- The night: monsters come in from the edge after dusk, prowl the roads to the square, keep out of the torches'
+  light, hunt the hero inside `sense` metres and go back at dawn; townsfolk go home while any are about. The kit
+  moves them (`steer: false`: you do); the game draws them and decides who is hurt (`night.kill(m)`).
+- Buildings in code: `gs.models.building({ style: 'cottage' | 'timberframe' | 'keep' })` (daub between oak beams
+  under thatch, a timber-framed house under slate, a stone keep with battlements; roofs `thatch` and `battlement`),
+  `gs.models.fort({ kind: 'wall' | 'tower' | 'gate' })` and the props `stall`, `well`, `anvil`, `torch`, `lever`,
+  `bed`, `hay` and `signboard`. All of them come apart in `gs.destruction.Structure` too.
+- Saving: `clock`, `folk`, each `Shop` and `night` have `pack()` / `unpack(d)` (for `WorldSave.keep`).
+- To look it over: `node scripts/town.cjs sheet.png [kind=castle] [views=square,street,cottage,inn,gate,keep,high,map]
+  [times=10,21.5] [seed=7] [--webgpu]` (`map` shows each townsperson where the hour has them).

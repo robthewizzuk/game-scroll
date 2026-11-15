@@ -12,6 +12,7 @@ export { prop, PROP_NAMES as props } from './models/props.js';
 export { sculpt } from './models/sculpt.js';
 export { tree, ivy, weeds, TREE_KINDS as trees } from './models/trees.js';
 export { building, BUILDING_STYLES as buildings } from './models/buildings.js';
+export { fort, FORT_KINDS as forts } from './models/castle.js';
 export { human } from './models/human.js';
 export { creature } from './models/creature.js';
 export { vehicle } from './models/vehicles.js';
