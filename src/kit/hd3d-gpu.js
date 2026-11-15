@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, UnsignedShortType, UnsignedInt101111Type, RGBFormat, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture, RGBAFormat, ClampToEdgeWrapping } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -67,6 +67,17 @@ function denoiseNoise() {
 // v.tone (hd3d.js): three.js's own tone mappers
 const TONE = { aces: ACESFilmicToneMapping, neutral: NeutralToneMapping, agx: AgXToneMapping };
 export { LightProbeGrid };
+// live bounce light from traced rays (v.liveBounce = 'traced', hd3d-gpu-bounce.js): three's grid, its picture written by
+// a compute pass (a picture of seven parts of nz slices, one more at each end, as three's bake packs it). Made before
+// the ray tracing part has loaded, so materials are built with it from the first frame and not again when it starts.
+export function bounceGrid(w, h, d, nx, ny, nz) {
+  const g = new LightProbeGrid(w, h, d, nx, ny, nz); g._renderTarget.dispose();
+  const t = new Storage3DTexture(nx, ny, 7 * (nz + 2));
+  t.name = 'bounce light'; t.type = HalfFloatType; t.format = RGBAFormat; t.generateMipmaps = false;
+  t.minFilter = t.magFilter = LinearFilter; t.wrapS = t.wrapT = t.wrapR = ClampToEdgeWrapping;
+  g.texture = t; g._renderTarget = { texture: t, dispose: () => t.dispose() }; g.name = 'traced bounce light';
+  return g;
+}
 export { bakeProbe };   // v.bakeLight() on this renderer
 export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
