@@ -13,7 +13,7 @@
 // trust (how often it decides instead of its teacher), the fun lean, how torn it is, and any tell.
 // The panel shows frames per second, how long update() and draw() take, the game's size, score and
 // state. Hitboxes: give your game object a debug(c) method that outlines whatever you like, in game
-// units (physics2d's world.debugDraw(c) outlines every body); it's drawn on top while H is on.
+// units (a gs.physics world's debugDraw(c) outlines every body); it's drawn on top while H is on.
 import { liveBrains } from './kit/brains.js';
 const SPEEDS = [.1, .25, .5, 1, 2];
 const pct = v => (v * 100).toFixed(0).padStart(3) + '%';

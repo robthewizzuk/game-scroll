@@ -74,6 +74,24 @@ class Thing {
   get fixed() { return this.body.isFixed(); }
   get sleeping() { return this.body.isSleeping(); }
   get mass() { return this.body.mass(); }
+  /** How bouncy (0..1) and how grippy (0..1) it is, and whether it only reports hits (a sensor): read or set. */
+  get bounce() { return this.collider?.restitution() ?? 0; }
+  set bounce(v) { this.collider?.setRestitution(v); }
+  get friction() { return this.collider?.friction() ?? 0; }
+  set friction(v) { this.collider?.setFriction(v); }
+  get sensor() { return !!this.collider?.isSensor(); }
+  set sensor(v) { this.collider?.setSensor(!!v); }
+  /** The box round it now: [left, top, right, bottom] (game units). */
+  get bounds() {
+    const x = this.x, y = this.y;
+    if (this.kind === 'circle') return [x - this.r, y - this.r, x + this.r, y + this.r];
+    const a = this.angle, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+    if (this.kind === 'box') { const hw = (this.w * c + this.h * s) / 2, hh = (this.w * s + this.h * c) / 2; return [x - hw, y - hh, x + hw, y + hh]; }
+    if (!this.points) return [x, y, x, y];
+    const co = Math.cos(a), si = Math.sin(a), rel = this.kind !== 'line'; let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const [px, py] of this.points) { const qx = rel ? x + px * co - py * si : px, qy = rel ? y + px * si + py * co : py; if (qx < l) l = qx; if (qx > r) r = qx; if (qy < t) t = qy; if (qy > b) b = qy; }
+    return [l, t, r, b];
+  }
   /** Moves it straight to (x, y), optionally turned to angle. */
   place(x, y, angle = this.angle) {
     const s = this.phys.scale;
@@ -108,6 +126,7 @@ class Thing {
   }
   remove() { this.phys.remove(this); }
 }
+export { Thing as Body };   // (the class of everything a Physics makes: for `instanceof`, not for `new`)
 
 export class Physics {
   /**

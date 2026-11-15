@@ -699,7 +699,14 @@ export interface IconsPart {
 }
 
 /** Rapier 2D (lazy: make it in make() or reset()). */
-export interface PhysicsPart { Physics: new (o?: { gravity?: number; walls?: number[]; [k: string]: Loose }) => Loose; Body: Loose; World: Loose; loadPhysics(): Promise<Loose>; physicsReady(): boolean }
+export interface PhysicsPart {
+  Physics: new (o?: { gravity?: number; walls?: number[]; [k: string]: Loose }) => Loose;
+  /** What a Physics makes (for instanceof). Fields to read or set: x, y, vx, vy, angle, spin, bounce, friction, sensor, tag; to read: mass, fixed, sleeping, kind, bounds ([left, top, right, bottom]). */
+  Body: Loose;
+  /** The simple world: a Physics (the same engine, every method) with a few names of its own: balls and upright boxes whose mass goes by their size in game units, `bodies`, `near(x, y, r)`, `onHit((a, b, speed) => ...)` with b null for a wall. */
+  World: new (o?: { gravity?: number | { x: number; y: number }; walls?: number[] | null; wallBounce?: number; wallFriction?: number; link?: boolean }) => Loose;
+  loadPhysics(): Promise<Loose>; physicsReady(): boolean;
+}
 
 /** Face and hand tracking (lazy). Positions are 0..1, mirrored like a selfie. In the phone apps it runs on the phone's AI chip
  *  (backend 'npu'), where the camera picture never reaches the game: pass `preview: true` if the game draws `picture`. */
@@ -2675,7 +2682,7 @@ export interface BallCar {
 export interface ArenaPart {
   Arena: new (world: Loose, o?: { w?: number; l?: number; h?: number; curve?: number; segments?: number; goal?: { w?: number; h?: number; d?: number }; ball?: Loose; ballR?: number; bounce?: number; time?: number; punch?: number; replay?: number; pads?: boolean }) => On<Loose> & {
     ball: Loose; cars: Loose[]; score: [number, number]; clock: number; overtime: boolean; over: boolean; wait: number; pads: { x: number; z: number; big: boolean; wait: number }[]; spawns: (P3 & { facing: number })[][]; lastTouch: Loose; frames: Loose[];
-    restart(): Loose; kickoff(countdown?: number): Loose; inGoal(p: P3): number; update(dt: number): Loose; predict(seconds?: number, step?: number): (P3 & { t: number; bounce: boolean })[]; danger(seconds?: number): number;
+    restart(): Loose; kickoff(countdown?: number): Loose; inGoal(p: P3): number; update(dt: number): Loose; /** Where the ball will be, ignoring cars: the physics world is asked where it next meets the arena. Worked out once a frame however many ask. */ predict(seconds?: number, step?: number): (P3 & { t: number; bounce: boolean })[]; danger(seconds?: number): number;
     playback(t: number): { p: P3; q: Loose }[] | null; readonly replayLength: number; readonly clockText: string;
   };
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
@@ -3066,7 +3073,7 @@ export interface StructureOptions {
   span?: number;
   /** Where its foot is ([x, y, z] or { x, y, z }) and its turn about y (radians). A building's door faces +z before the turn. */
   at?: number[] | XYZ; turn?: number;
-  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Left out: the one the game made (reset() finds a new round's). false, or none made: pieces fall and break up where they land. */
+  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Left out: the one the game made (reset() finds a new round's). false, or none made: it keeps a small physics world of its own (its walls, the ground under it, what has fallen), stepped by update() only while something is falling. */
   world?: Loose | null | false;
   /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
   /** The height rubble lands at, (x, z) => y. Default: flat at its foot. */
@@ -3835,7 +3842,7 @@ export interface SoftPoint { x: number; y: number; z: number; px: number; py: nu
 export interface SoftBody { points: SoftPoint[]; sticks: Loose[]; [k: string]: Loose }
 export interface SoftPart {
   /** world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. */
-  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; /** A 2D Physics the points stay out of. Left out (2D): the one the game made before this; false: none. */ world?: Loose | false; weight?: number; link?: boolean }) => On<Loose> & {
+  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; /** A physics world the points stay out of, pressing on its loose things by `weight`: a 2D Physics, or with dims: 3 a World3D. Left out: the one the game made before this; false: none. */ world?: Loose | false; weight?: number; link?: boolean }) => On<Loose> & {
     points: SoftPoint[]; sticks: Loose[]; bodies: SoftBody[]; solids: Loose[];
     point(x: number, y: number, z?: number, o?: { pinned?: boolean; mass?: number; r?: number }): SoftPoint;
     stick(a: SoftPoint, b: SoftPoint, o?: { stiff?: number; len?: number | null; tear?: number; slack?: boolean }): Loose;

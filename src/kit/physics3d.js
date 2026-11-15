@@ -228,7 +228,7 @@ class Rider {
   stepped() { if (this.to) { this.from = this.to; this.to = null; } }
   remove() { this.world.remove(this); }
 }
-const GAP = .02;
+const GAP = .02, NOTURN = { x: 0, y: 0, z: 0, w: 1 };
 // a collider description from a plain shape (World3D.shape, shapes): its own offset and turn in the body too
 function shapeDesc(s) {
   const pts = h => h instanceof Float32Array ? h : new Float32Array(typeof h[0] === 'number' ? h : h.flatMap(p => [p.x, p.y, p.z]));
@@ -628,6 +628,67 @@ export class World3D {
     if (!hit) return null;
     const s = hit.timeOfImpact;
     return new RayHit(hit.collider.parent()?.userData || null, V(o.x + n.x * s, o.y + n.y * s, o.z + n.z * s), V(hit.normal.x, hit.normal.y, hit.normal.z), s, hit.collider.userData ?? null);
+  }
+  /**
+   * The first thing a shape meets as it moves: shape is { ball: r }, { box: [w, h, d] } or { capsule: [r, h] }, from
+   * where its middle is, along move (a vector: how far it goes). Returns { thing, point (where they touch), normal (out
+   * of what it met), distance, share (0..1 of the move), at (where the shape's middle is then) } or null. still: only what
+   * never moves (the level: where a ball will bounce, whatever is driving about); not: a body, mover or rider to pass
+   * through (its own); turn: the shape's turn (a quaternion). For "where will this land" and "is there room to go there".
+   */
+  sweep(shape, from, move, { still = false, not = null, turn = null } = {}) {
+    if (!this.steps) this.queries();
+    const o = vec(from), m = vec(move), l = Math.hypot(m.x, m.y, m.z); if (!(l > 0)) return null;
+    const S = shape.ball != null ? (this._ball?.radius === shape.ball ? this._ball : this._ball = new R.Ball(shape.ball)) : shapeDesc(shape).shape;
+    const F = R.QueryFilterFlags, hit = this.world.castShape(this.inner(o), turn || NOTURN, m, S, 0, 1, true, still ? F.EXCLUDE_SENSORS | F.ONLY_FIXED : F.EXCLUDE_SENSORS, undefined, undefined, not?.body);
+    if (!hit) return null;
+    const k = hit.time_of_impact, w = hit.witness1, n = hit.normal1;
+    return { thing: hit.collider.parent()?.userData || null, point: this.outer(V(w.x, w.y, w.z)), normal: V(n.x, n.y, n.z), distance: k * l, share: k, at: V(o.x + m.x * k, o.y + m.y * k, o.z + m.z * k), part: hit.collider.userData ?? null };
+  }
+  /**
+   * The shapes in a box of the world (its low and high corners), for things that aren't bodies (gs.soft's cloth and
+   * ropes in 3D, your own particles) to stay out of: pass the list to outOf().
+   */
+  around(lo, hi, pad = .2) {
+    if (!this.steps) this.queries();
+    const out = [], c = this.inner(V((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2)), T = R.ShapeType;
+    this.world.collidersWithAabbIntersectingAabb(c, V((hi.x - lo.x) / 2 + pad, (hi.y - lo.y) / 2 + pad, (hi.z - lo.z) / 2 + pad), col => {
+      if (col.isSensor()) return true;
+      const t = col.shapeType(), he = t === T.Cuboid || t === T.RoundCuboid ? col.halfExtents() : null;
+      // (how far it reaches from its middle, where that is quick to say: a point further off than that is not asked about)
+      const reach = t === T.Ball ? col.radius() : he ? Math.hypot(he.x, he.y, he.z) + (t === T.RoundCuboid ? col.roundRadius() : 0) : t === T.Capsule ? col.halfHeight() + col.radius() : Infinity;
+      out.push({ c: col, thing: col.parent()?.userData || null, thin: t === T.TriMesh || t === T.HeightField, reach, mid: reach < Infinity ? col.translation() : null }); return true;
+    });
+    return out;
+  }
+  /**
+   * Keeps a point of radius r out of the shapes from around(): null if it is clear, else { x, y, z (where it should
+   * be), nx, ny, nz (the way out), depth, thing }. from: where the point was a moment ago, so it cannot go through
+   * ground that has no inside (a mesh, a grid of heights): it is put back on the side it came from.
+   */
+  outOf(p, r, shapes, from = null) {
+    const o = this.at, q = V(p.x - o.x, p.y, p.z - o.z); let best = null;
+    for (const s of shapes) {
+      if (s.mid) { const m = s.mid, far = s.reach + r, dx = q.x - m.x, dy = q.y - m.y, dz = q.z - m.z; if (dx * dx + dy * dy + dz * dz > far * far) continue; }
+      if (s.thin && from) {   // through the surface since `from`: back to where it crossed, on that side
+        const dx = p.x - from.x, dy = p.y - from.y, dz = p.z - from.z, l = Math.hypot(dx, dy, dz); if (l < 1e-9) continue;
+        const h = s.c.castRayAndGetNormal(new R.Ray(V(from.x - o.x, from.y, from.z - o.z), V(dx / l, dy / l, dz / l)), l + r, false); if (!h) continue;
+        const n = h.normal, k = h.timeOfImpact, depth = l + r - k;
+        if (!best || depth > best.depth) best = { x: from.x + dx / l * k + n.x * r, y: from.y + dy / l * k + n.y * r, z: from.z + dz / l * k + n.z * r, nx: n.x, ny: n.y, nz: n.z, depth, thing: s.thing };
+        continue;
+      }
+      const pr = s.c.projectPoint(q, true); if (!pr) continue;
+      if (pr.isInside) {   // (inside: out the nearest way, past the surface)
+        const sp = s.c.projectPoint(q, false); if (!sp) continue;
+        const ex = sp.point.x - q.x, ey = sp.point.y - q.y, ez = sp.point.z - q.z, e = Math.hypot(ex, ey, ez) || 1e-6, depth = e + r;
+        if (!best || depth > best.depth) best = { x: sp.point.x + o.x + ex / e * r, y: sp.point.y + ey / e * r, z: sp.point.z + o.z + ez / e * r, nx: ex / e, ny: ey / e, nz: ez / e, depth, thing: s.thing };
+      } else {
+        const dx = q.x - pr.point.x, dy = q.y - pr.point.y, dz = q.z - pr.point.z, d = Math.hypot(dx, dy, dz); if (d >= r) continue;
+        const nx = d > 1e-6 ? dx / d : 0, ny = d > 1e-6 ? dy / d : 1, nz = d > 1e-6 ? dz / d : 0, depth = r - d;
+        if (!best || depth > best.depth) best = { x: pr.point.x + o.x + nx * r, y: pr.point.y + ny * r, z: pr.point.z + o.z + nz * r, nx, ny, nz, depth, thing: s.thing };
+      }
+    }
+    return best;
   }
   /** Every body within radius of a point. */
   near(p, radius) {
