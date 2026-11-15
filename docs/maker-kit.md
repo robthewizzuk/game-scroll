@@ -2418,9 +2418,20 @@ your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up,
 handhold the way you push, drops or kicks off. `Rope` is a swing you pump higher. `climber.pos` and
 `climber.state` drive your character and its poses.
 
+**Swimming** (`gs.climb`): `Swimmer()` takes the hero into the water the game made (every `gs.outdoors` `Water` and
+`Sea` is found by itself; or `water:` a level, a function of x and z, or a `gs.flow` `Streams` whose current carries
+them). Call `swim.update(dt, { move, up, down, fast }, hero)` after your own `hero.walk()`: ankle deep nothing changes;
+deeper it wades (`swim.slow`: the walk slows to about half by the waist); out of its depth it swims at the surface
+(`pose` `'swim'`, the front crawl, or `'tread'` when the stick is let go, shoulders at the surface) with the mover's
+gravity off; `down` dives under (`'diveDown'`, `'dive'`, `'diveUp'`) and the breath runs out (`swim.air`, events
+`'low'`, `'empty'`; `swim.hurt` is the damage from then on until they come up, gasping); pushing into a bank, a jetty or a
+pool's edge up to `climb` metres (.9) over the water pulls them out onto it (`'climbOut'` with `swim.at`). A Water made
+with ripples splashes and leaves a wake by itself. Then `rig.play(swim.pose, { at: swim.at })` when there is one and
+face `swim.facing`. With no mover, move `{ x, y, z }` feet by `swim.vel`.
+
 **Poses** (`gs.poses`, 3D): `figure()` builds a simple jointed person and `Rig` blends poses on it:
 idle, walk, run, sprint, crouch, sneak, aim, jump, fall, land, hang, shimmy, climb, swing, cover,
-punch, takedown, downed, wave, sit, in cover with the back to the wall (`coverHighL`, `coverLowL` and their `R`
+punch, takedown, downed, wave, sit, in the water (`tread`, `swim`, `dive`, `diveDown`, `diveUp`, `wade`, `climbOut`), in cover with the back to the wall (`coverHighL`, `coverLowL` and their `R`
 sides, `peekHighL` leaning out round an end, upper `blindOver` and `blindSideL` firing blind), shooting from a seat
 (upper `carAimL`, `carAimR`, `carAimF`, turned at the waist by `rig.update(dt, { aimYaw })`), or your own;
 `mirror(fn)` makes the other side of a pose of your own. Walk and run cycles follow `speed` so feet don't

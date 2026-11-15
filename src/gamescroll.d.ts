@@ -3008,6 +3008,26 @@ export interface ClimbPart {
     grab(feet: P3, vy?: number): boolean; update(dt: number, input?: { x?: number; y?: number; jump?: boolean }): Loose; leapOrKick(x: number, y: number): Loose; letGo(up?: number, kick?: boolean): Loose; swing(rope: Loose, vel?: P3): Loose;
   };
   Rope: new (anchor: P3, length?: number, o?: { gravity?: number; pump?: number; damping?: number }) => { anchor: P3; length: number; catch(feet: P3, vel: P3, height?: number): Loose; update(dt: number, push?: number): Loose; readonly hands: P3; feet(height?: number): P3; release(): P3 };
+  /**
+   * Swimming: wading in the shallows (slower the deeper), swimming at the surface, treading water, diving under with a breath that runs
+   * out, coming up for air, and climbing out onto an edge up to `climb` metres over the water. water: left out, every gs.outdoors Water
+   * and Sea the game made; a number (a level); (x, z) => height or null; anything with height(x, z); a gs.flow Streams (its current carries
+   * them). body: a World3D mover (call after your own walk(): in the water it takes over) or { x, y, z } feet you move by vel.
+   */
+  Swimmer: new (o?: { height?: number; breath?: number; speed?: number; fast?: number; dive?: number; wade?: number; deep?: number | null; hurt?: number; climb?: number; water?: Loose; world?: Loose; sounds?: boolean; link?: boolean }) => {
+    state: 'out' | 'wade' | 'swim' | 'dive' | 'climb';
+    /** For rig.play: 'wade' | 'tread' | 'swim' | 'dive' | 'diveDown' | 'diveUp' | 'climbOut' (null: on foot, your own), with at (climbOut's progress). */
+    pose: 'wade' | 'tread' | 'swim' | 'dive' | 'diveDown' | 'diveUp' | 'climbOut' | null; at: number | null;
+    /** The way they swim (yaw), null when not moving. */ facing: number | null;
+    vel: P3; depth: number; surface: number; under: boolean; slow: number; tilt: number;
+    /** Seconds of breath left; air 0..1. */ left: number; readonly air: number;
+    /** Damage this frame from being out of breath under water. */ hurt: number;
+    /** This frame's: 'in', 'out', 'swim', 'under', 'surface', 'gasp', 'low', 'empty', 'climb'. */ events: string[];
+    update(dt: number, input?: { move?: { x: number; z?: number; y?: number } | null; up?: boolean; down?: boolean; fast?: boolean }, body?: Loose): Loose;
+    /** The water's surface over (x, z), and its current: y -Infinity where there is none. */
+    waterAt(x: number, z: number, y?: number): { y: number; current: { x: number; z: number } | null };
+    reset(): Loose;
+  };
 }
 /** A place: x, z on the ground in 3D (y is optional), or x, y in 2D. */
 export interface Spot { x: number; y?: number; z?: number }

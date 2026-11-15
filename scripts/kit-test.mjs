@@ -1775,6 +1775,46 @@ console.log('physics ok');
   console.log('tactics 3D: cover from a world, snap, slide, dash, peek, blind fire, squads ok');
 }
 {
+  // swimming: a pool 3 m deep with a shallow end and a bank 30 cm over the water; wade, swim, dive with a breath that runs out, climb out
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Swimmer } = await import('../src/kit/climb.js');
+  const w = new World3D(), box = (x, y, z, sx, sy, sz) => w.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  box(-2, -3.5, 0, 14, 1, 20); box(-12, -.6, 0, 6, 1, 20); box(-8, -1.1, 0, 2, 1, 20); box(10, -1.35, 0, 10, 3.3, 20);   // the pool's floor (top -3), its shallow end (top -.1), a step (top -.6), the bank (top .3)
+  const hero = w.mover(null, { at: { x: -12, y: -.1, z: 0 } }); w.step(1 / 60);
+  const swim = new Swimmer({ water: 0, world: w, breath: 3, sounds: false }), seen = new Set(), events = new Set();
+  const frame = (input, walk = [0, 0]) => { hero.walk(walk[0], walk[1]); swim.update(1 / 60, input, hero); w.step(1 / 60); seen.add(swim.state); for (const e of swim.events) events.add(e); };
+  for (let i = 0; i < 20; i++) frame({}, [0, 0]);
+  frame({ move: { x: 1, z: 0 } }, [4, 0]);
+  assert.ok(swim.state === 'out' && Math.abs(hero.vx - 4) < .01, 'ankle deep: on foot as ever (' + swim.depth.toFixed(2) + ' m)');
+  hero.place(-8, -.6, 0); for (let i = 0; i < 10; i++) frame({}, [0, 0]);
+  frame({ move: { x: 1, z: 0 } }, [4, 0]);
+  assert.ok(swim.state === 'wade' && swim.slow < .9 && hero.vx < 3.8, 'knee deep and more: wading, slower: ' + swim.state + ' ' + swim.slow.toFixed(2));
+  hero.place(-3, -2, 0); for (let i = 0; i < 120; i++) frame({});
+  assert.ok(swim.state === 'swim' && swim.pose === 'tread' && Math.abs(hero.feet.y + 1.8 * .78) < .15 && hero.gravity === 0, 'deep water: treading, shoulders at the surface: ' + hero.feet.y.toFixed(2));
+  for (let i = 0; i < 60; i++) frame({ down: true });
+  assert.ok(swim.state === 'dive' && swim.under && swim.pose === 'diveDown' && swim.air < 1 && hero.feet.y < -2.2, 'dives under, the breath going: ' + swim.air.toFixed(2));
+  for (let i = 0; i < 160; i++) frame({ down: true });
+  assert.ok(events.has('low') && events.has('empty') && swim.hurt > 0, 'out of breath under water: it hurts');
+  events.clear(); for (let i = 0; i < 400 && swim.under; i++) frame({ up: true });
+  for (let i = 0; i < 30; i++) frame({});
+  assert.ok(!swim.under && events.has('surface') && events.has('gasp') && swim.state === 'swim', 'comes up for air, gasping');
+  for (let i = 0; i < 200; i++) frame({});
+  assert.ok(swim.air > .9, 'and gets the breath back: ' + swim.air.toFixed(2));
+  // the crawl to the bank, then out onto it
+  let climbed = false; for (let i = 0; i < 900 && !climbed; i++) { frame({ move: { x: 1, z: 0 } }); if (swim.state === 'climb') { assert.equal(swim.pose, 'climbOut'); climbed = true; } }
+  assert.ok(climbed && seen.has('swim'), 'swims to the bank and pulls out: ' + hero.feet.x.toFixed(2));
+  for (let i = 0; i < 90; i++) frame({}, [0, 0]);
+  assert.ok(swim.state === 'out' && hero.feet.x > 5 && Math.abs(hero.feet.y - .3) < .12 && hero.gravity < 0, 'on the bank, on foot: ' + JSON.stringify(hero.feet));
+  // a Water-like surface and the current of a stream
+  const sw = new Swimmer({ water: { height: () => 1, size: 0 }, sounds: false }), p = { x: 0, y: -1, z: 0 };
+  sw.update(1 / 60, { move: { x: 0, z: 1 } }, p); assert.ok(sw.state === 'swim' && sw.vel.z > 1 && sw.vel.y > 0 && sw.facing === 0, 'any { x, y, z } feet: read vel and move them yourself');
+  const { Water } = await import('../src/kit/water.js'), lake = new Water({ level: .5, waves: 0, size: 40, link: false }), sl = new Swimmer({ water: lake, sounds: false });
+  assert.ok(sl.waterAt(3, 4).y === .5 && sl.waterAt(30, 0).y === -Infinity, 'a gs.outdoors Water: its level, and none past its edge');
+  const flow = { at: () => ({ in: true, level: 0, current: { x: 1, z: 0 }, stream: { push: 2 } }) }, sc = new Swimmer({ water: flow, sounds: false });
+  sc.update(1 / 60, {}, { x: 0, y: -1.6, z: 0 }); assert.ok(sc.vel.x > .9, 'a stream\'s current carries them');
+  console.log('swimming: wade, tread, dive, breath, surface, climb out, currents ok');
+}
+{
   const { DriveBy, Gun } = await import('../src/kit/combat.js');
   const car = { position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, points: { driver: { position: { x: -.37, y: .6, z: .2 } } }, size: { width: 1.8 } };
   const d = new DriveBy(car);
