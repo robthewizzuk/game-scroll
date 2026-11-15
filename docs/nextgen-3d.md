@@ -555,6 +555,19 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   parts, mirrored through the middle of the picture (three.js's LensflareNode, the same maths on WebGL),
   and lens dirt (smudges, dust and wipe marks drawn in code) lit where bright light falls on it.
   `dirt` (.5) is how dirty the lens is, 0 for none. Needs bloom; off by default.
+- `v.film = true | 'film' | 'anamorphic' | 'old' | { halation, grain, grainSize, grainColour, fringe, streaks,
+  streakLength, flicker, halationTint, streakTint }`: a film camera's finish, the same on WebGL and WebGPU.
+  **Halation** (.3) is the warm red glow film gives round what is bright (light through the film and back off
+  its base); **grain** (times the usual fine grain, 1.8) follows the brightness, most in the mid tones and
+  least in deep shadow and highlights, comes in clumps of `grainSize` drawn pixels (1.5) and has a touch of
+  colour (`grainColour` 0..1, .3); **fringe** is the lens fringing at the edges (.02; the view's usual is
+  .012); **streaks** (0) smear what is bright sideways, as an anamorphic lens does, `streakLength` a part of
+  the picture's width each way (.2); **flicker** (0) wavers the exposure from frame to frame like old film.
+  `'anamorphic'` adds streaks, `'old'` heavy grain, strong halation and flicker; an object starts from
+  `'film'`. Halation and streaks are made from the bloom's pictures, so they need bloom (the tiers that
+  draw it); grain and flicker go on as each refresh is shown, so with frame generation they stay fresh.
+  Off by default: each game picks its own look. Pair it with `v.lut = 'film'` and `v.tone = 'aces'` for a
+  whole film look.
 - `v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box }` (WebGPU, high and ultra): light
   bounced off walls and floors onto what's near them, worked out every frame, so it follows a moving
   sun, a lamp switched on or a door opened (`v.bounce()` instead bakes it once, on every renderer).
@@ -1031,6 +1044,10 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   phone is warm, in battery saver, or under 20% battery and not charging (`src/kit/power.js` asks the
   phone every 15 seconds; it holds a minute after the reason goes); then the game draws half the
   frames, which keeps the phone cooler. Always does that all the time; Off. A pinned frame rate turns it off.
+  **30 → 60** plays 3D games the way consoles do: about 30 real frames a second (a whole number of
+  refreshes apart: 28.8 on a 144 Hz screen) and a made frame between each pair, on a 60 Hz screen too
+  (the only pick that fills one), and a faster screen is asked for 60 Hz. Each real frame is given two
+  refreshes of the graphics chip (pace **early**, below), so a game can draw more per frame than at 60.
 - **Screen rate:** phone screens pick their own rate (LTPO screens like the Fold's step between 120,
   60 and lower) and a web page can't ask for one, so the app asks through `plugins/screen-rate`
   (`src/kit/screenrate.js`, Android) while a round is played: the fastest rate that's a whole number of
@@ -1049,7 +1066,15 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   (the chip has one queue), so what counts is the work in each refresh, not in each pair. Blend has two
   paces (`speed.js` `frameGenPaceOf`): **after** makes a frame on the real frame's own refresh (the least
   delay, where the chip has room for both, by its timestamps), **first** shows the last real frame there
-  and makes every frame on a refresh of its own (a refresh later). Unknown times start on first. A made
+  and makes every frame on a refresh of its own (a refresh later). **early** (30 → 60's) is first with the
+  last real frame shown on the real frame's refresh *before* the new one is drawn, and the new one's work
+  sent to the chip in a task after the browser has handed that refresh's picture over (`submit.js`
+  `deferSends`): the picture shown goes out on time, and the real frame has that refresh and the next,
+  shared with the frame made after it, instead of one. Uploads, read backs and `onSubmittedWorkDone` that
+  would have sent its passes early wait their turn instead, in order; the next refresh's code sends
+  whatever still waits first. A game whose frames come late that way goes back to first, and the quality
+  steps take the two refreshes as the real frame's room (`frameGenRoom`). The CPU still has one refresh
+  for a real frame's code (the made frame's refresh needs the main thread too). Unknown times start on first. A made
   frame that can't be ready for the next refresh (the chip is still on the real frame) is dropped, so it
   never holds up the next real frame; a real frame is never dropped.
 - **Only where it fits:** Auto makes frames only where a real frame and a made frame each fit a refresh

@@ -219,6 +219,20 @@ async function flareScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
+// film finishing (v.film): bright lamps for halation and anamorphic streaks, a grey ramp for grain that follows the
+// brightness, coloured cards at the edges for the lens fringing
+async function filmScene(look = 'anamorphic') {
+  window.__hd.force = 2;
+  const v = new HV({ bg: '#0b0d12', fog: 0, env: .2, amb: .25 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; const x = c.getContext('2d');
+  v.cam.position.set(0, 1.2, 4); v.cam.lookAt(0, 1.2, 0); v.cam.updateMatrixWorld(); v.film = look;
+  const floor = new T.Mesh(new T.PlaneGeometry(20, 20).rotateX(-Math.PI / 2), gs.hd.pbr('#40444c', { rough: .6 })); v.scene.add(floor);
+  for (let i = 0; i < 6; i++) { const m = new T.Mesh(new T.BoxGeometry(.5, .5, .1), gs.hd.pbr(new T.Color().setScalar(i / 5), { rough: .9 })); m.position.set((i - 2.5) * .55, .6, 0); v.scene.add(m); }
+  [['#ff3030', -1.5], ['#3060ff', 1.5]].forEach(([col, px]) => { const m = new T.Mesh(new T.BoxGeometry(.4, 1.6, .1), gs.hd.pbr(col, { rough: .5 })); m.position.set(px, 1.3, .3); v.scene.add(m); });
+  [[-.8, 2.1, '#ffd8a0'], [.9, 1.7, '#ffffff']].forEach(([px, py, col]) => { const m = new T.Mesh(new T.SphereGeometry(.1, 16, 12), gs.hd.pbr(col, { glow: 12 })); m.position.set(px, py, 0); v.scene.add(m); });
+  for (let i = 0; i < 4; i++) { v.t = 0; v.render(x, 240, 320); await frame(); }
+  v.t = 0; v.render(x, 240, 320);
+  return [c.toDataURL(), window.__hd.info.backend];
+}
 // parallax occlusion mapping (pbr { tex, depth }, WebGPU): a cobbled floor and a brick wall seen at a slant
 async function pomScene() {
   window.__hd.force = 2;
@@ -901,7 +915,7 @@ async function shadowOffScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
-const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), 'gpu-gas': () => gasScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), rain: () => rainScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
+const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), 'gpu-gas': () => gasScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), film: () => filmScene(), 'film-old': () => filmScene('old'), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), rain: () => rainScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
 const PICK = new URLSearchParams(location.search).get('pick');
 if (PICK) try { for (const n of PICK.split(',')) if (n === 'beams') { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; } else [out[n], backends[n]] = await SCENES[n](); } catch (e) { out.error = String(e && e.stack || e); }
 else try {
@@ -921,6 +935,7 @@ else try {
   [out['gpu-sss'], backends['gpu-sss']] = await sssScene();
   [out['gpu-oit'], backends['gpu-oit']] = await oitScene();
   [out.flare, backends.flare] = await flareScene();
+  [out.film, backends.film] = await filmScene();
   [out.rain, backends.rain] = await rainScene();
   [out['gpu-pom'], backends['gpu-pom']] = await pomScene();
   [out.batch, backends.batch] = await batchScene();

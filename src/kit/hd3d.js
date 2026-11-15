@@ -824,6 +824,10 @@ const UP = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float k; varyin
 export const FINAL_EFFECTS = [
   { name: 'head', what: 'uniforms, the tone mapping three leaves out under SGSR, helpers', glsl: `uniform sampler2D tDiffuse, tBloom; uniform float t, hurt, vig, bloom, grain; uniform vec2 px; varying vec2 vUv;
   uniform float gradeOn, sat, con, glare, aspect; uniform vec3 lo, hi, sunCol; uniform vec2 sunUV;
+  uniform float fringe, gLum, gSize, gCol, flick;
+  #ifdef FILM
+  uniform sampler2D tBloom1; uniform float hal, streak, streakLen; uniform vec3 halTint, streakTint;
+  #endif
   #ifdef LUT
   uniform highp sampler3D tLut; uniform float lutS, lutO, lutK;
   #endif
@@ -858,11 +862,20 @@ ${ShaderChunk.tonemapping_pars_fragment}
       float lb = luma(b); col = lb < lMin || lb > lMax ? a : b;
     }
   #else
-    vec2 off = d * r2 * .012;
+    vec2 off = d * r2 * fringe;
     vec3 col = vec3(tex(vUv + off).r, tex(vUv).g, tex(vUv - off).b);
   #endif
 ` },
   { name: 'bloom', what: 'bloom', glsl: `    col += texture2D(tBloom, vUv).rgb * bloom;
+` },
+  { name: 'film', what: 'film halation and anamorphic streaks (v.film)', glsl: `  #ifdef FILM
+    // halation: light that went through the film and back off its base, a warm red glow round what is bright
+    col += texture2D(tBloom, vUv).rgb * halTint * hal;
+    // anamorphic streaks: what is bright smeared sideways, as an anamorphic lens draws it
+    if (streak > 0.) { vec3 s = vec3(0.); float ws = 0.;
+      for (int i = 1; i <= 6; i++) { float w = exp(-float(i) * .5); vec2 o = vec2(float(i) * streakLen / 6., 0.); s += (texture2D(tBloom1, vUv + o).rgb + texture2D(tBloom1, vUv - o).rgb) * w; ws += 2. * w; }
+      col += s / ws * streakTint * streak; }
+  #endif
 ` },
   { name: 'flare', what: 'lens flare and dirt (v.flare: three\'s LensflareNode maths, ghosts of the bright parts mirrored through the middle)', glsl: `  #ifdef FLARE
     { vec2 fv = 1. - vUv, gv = (vec2(.5) - fv) * flareSp; vec3 fl = vec3(0.);
@@ -898,7 +911,12 @@ ${ShaderChunk.tonemapping_pars_fragment}
 ` },
   { name: 'vignette', what: 'vignette', glsl: `    col *= 1. - vig * smoothstep(.12, .62, r2 * 1.6);
 ` },
-  { name: 'grain', what: 'film grain', glsl: `    col += (h(vUv / px + t) - .5) * grain;
+  { name: 'grain', what: 'film grain (v.film: following the brightness, in clumps, a touch of colour) and the film\'s flicker', glsl: `    col *= 1. + (h(vec2(t * 3.1, 1.7)) - .5) * flick;
+    { vec2 gp = gSize > 1. ? floor(vUv / px / gSize) + .5 : vUv / px;
+      float gl = clamp(dot(col, vec3(.2126, .7152, .0722)), 0., 1.), ga = grain * mix(1., .45 + 3.4 * gl * (1. - gl), gLum);
+      vec3 g = vec3(h(gp + t) - .5);
+      if (gCol > 0.) g = mix(g, vec3(h(gp + t + 17.3), h(gp + t + 41.7), h(gp + t + 71.1)) - .5, gCol);
+      col += g * ga; }
 ` },
   { name: 'hurt', what: 'hurt tint (v.hurt)', glsl: `    col = mix(col, col * vec3(1.25, .45, .4) + vec3(.12, 0., 0.), hurt * smoothstep(.04, .4, r2));
 ` },
@@ -912,6 +930,16 @@ const FINAL = FINAL_EFFECTS.map(e => e.glsl).join('');
 const TONE_FN = { aces: 'ACESFilmicToneMapping', neutral: 'NeutralToneMapping', agx: 'AgXToneMapping' };
 const TONES = { aces: ACESFilmicToneMapping, neutral: NeutralToneMapping, agx: AgXToneMapping };
 const MIPS = 5;
+// v.film's looks (filmSet): halation (a warm glow round what is bright, from the bloom's pictures), grain (times the usual
+// fine grain; it follows the brightness: most in the mid tones, least in deep shadow and highlights), grainSize (in drawn
+// pixels: film grain comes in clumps), grainColour (0 grey, 1 a speck of colour in each channel), fringe (lens fringing at
+// the edges; .012 is the view's usual), streaks (anamorphic: what is bright smeared sideways), streakLength (a part of the
+// picture's width each way), flicker (the exposure wavering from frame to frame, as old film's does), and the tints.
+const FILM_LOOKS = {
+  film: { halation: .3, grain: 1.8, grainSize: 1.5, grainColour: .3, fringe: .02, streaks: 0, streakLength: .2, flicker: 0, halationTint: [1, .32, .1], streakTint: [.35, .55, 1] },
+  anamorphic: { halation: .25, grain: 1.4, grainSize: 1.5, grainColour: .25, fringe: .028, streaks: .45, streakLength: .25, flicker: 0, halationTint: [1, .32, .1], streakTint: [.35, .55, 1] },
+  old: { halation: .45, grain: 3.2, grainSize: 2, grainColour: .15, fringe: .03, streaks: 0, streakLength: .2, flicker: .05, halationTint: [1, .4, .15], streakTint: [.35, .55, 1] },
+};
 class FinalPass extends Pass {
   constructor() {
     super(); this.needsSwap = false;
@@ -920,7 +948,9 @@ class FinalPass extends Pass {
     this.up = qmat(UP, { tDiffuse: { value: null }, px: { value: new Vector2() }, k: { value: 1 } }, { blending: ADD });
     this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
       gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) },
-      drops: { value: Array.from({ length: DROPS_N }, () => new Vector4()) }, dropN: { value: 0 } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
+      drops: { value: Array.from({ length: DROPS_N }, () => new Vector4()) }, dropN: { value: 0 },
+      fringe: { value: .012 }, gLum: { value: 0 }, gSize: { value: 1 }, gCol: { value: 0 }, flick: { value: 0 },
+      tBloom1: { value: null }, hal: { value: 0 }, streak: { value: 0 }, streakLen: { value: .2 }, halTint: { value: new Vector3(1, .3, .1) }, streakTint: { value: new Vector3(.35, .55, 1) } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
     this.quad = new FullScreenQuad(null); this.mips = []; this.scale = .5; this.w = 0; this.h = 0; this.fxaa = false; this.strength = .7;
   }
   setSize(w, h) {
@@ -956,6 +986,16 @@ class FinalPass extends Pass {
     if (on) this.final.defines.DROPS = ''; else delete this.final.defines.DROPS;
     this.final.needsUpdate = true;
   }
+  // v.film (filmSet: null for none): grain, fringing and flicker always; halation and streaks only with bloom (FILM)
+  setFilm(f) {
+    const u = this.final.uniforms;
+    u.fringe.value = f ? f.fringe : .012; u.gLum.value = f ? 1 : 0; u.gSize.value = f ? f.grainSize : 1; u.gCol.value = f ? f.grainColour : 0; u.flick.value = f ? f.flicker : 0;
+    const on = !!f && this.strength > 0 && (f.halation > 0 || f.streaks > 0);
+    if (on) { u.hal.value = f.halation; u.streak.value = f.streaks; u.streakLen.value = f.streakLength; u.halTint.value.copy(f.halationTint); u.streakTint.value.copy(f.streakTint); }
+    if (on === ('FILM' in this.final.defines)) return;
+    if (on) this.final.defines.FILM = ''; else delete this.final.defines.FILM;
+    this.final.needsUpdate = true;
+  }
   setFxaa(on) { if (this.fxaa === on) return; this.fxaa = on; if (on) this.final.defines.FXAA = ''; else delete this.final.defines.FXAA; this.final.needsUpdate = true; }
   pass(r, mat, target) { this.quad.material = mat; r.setRenderTarget(target); this.quad.render(r); }
   render(r, writeBuffer, readBuffer) {
@@ -969,7 +1009,7 @@ class FinalPass extends Pass {
       for (let i = M.length - 1; i > 0; i--) { const u = this.up.uniforms; u.tDiffuse.value = M[i].texture; u.px.value.set(.5 / M[i].width, .5 / M[i].height); u.k.value = 1; this.pass(r, this.up, M[i - 1]); }
       r.autoClear = auto;
     }
-    F.tDiffuse.value = readBuffer.texture; F.tBloom.value = M[0]?.texture ?? null; F.bloom.value = on ? this.strength * .8 : 0;
+    F.tDiffuse.value = readBuffer.texture; F.tBloom.value = M[0]?.texture ?? null; F.tBloom1.value = M[1]?.texture ?? M[0]?.texture ?? null; F.bloom.value = on ? this.strength * .8 : 0;
     F.toneMappingExposure.value = r.toneMappingExposure; F.px.value.set(1 / readBuffer.width, 1 / readBuffer.height);
     if (this.eyeView?.eye) {   // auto exposure's light meter, from the scene before tone mapping
       const v = this.eyeView, src = readBuffer.texture;
@@ -2042,7 +2082,7 @@ export class HDView {
     if (fog) this.scene.fog = new FogExp2(bg, fog);
     this.envI = env; this.hemi = new HemisphereLight(sky, ground, amb); this.scene.add(this.hemi);
     this.cam = new PerspectiveCamera(fov, 1, .05, 120); this.scene.add(this.cam);
-    this.hurt = 0; this.t = 0; this.W = 240; this.H = 320; this.exposure = 1; this.bloom = .7; this.tone = 'aces'; this.autoExposure = false; this.eye = null; this.lut = null; this.lutAmount = 1; this.oit = false; this.flare = null; this.fog3d = null; this.liveBounce = null;
+    this.hurt = 0; this.t = 0; this.W = 240; this.H = 320; this.exposure = 1; this.bloom = .7; this.tone = 'aces'; this.autoExposure = false; this.eye = null; this.lut = null; this.lutAmount = 1; this.oit = false; this.flare = null; this.film = null; this.fog3d = null; this.liveBounce = null;
     this.drops = new LensDrops();   // rain on the lens (lens-drops.js): gs.sky.Weather lands drops while it rains; add() for a splash of your own
     this.lamps = []; this.tierSeen = -1; this.parts = []; this.reflectors = []; this.contacts = [];
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
@@ -2784,6 +2824,17 @@ export class HDView {
     toRGB(o.tint ?? [1, .92, .85], F.tint); F.dirtTex = lensDirt();
     return F;
   }
+  // v.film as numbers: true / 'film', 'anamorphic', 'old', or { halation, grain, grainSize, grainColour, fringe, streaks,
+  // streakLength, flicker, halationTint, streakTint } (what an object leaves out is the 'film' look's)
+  filmSet() {
+    const f = this.film; if (!f) return null;
+    const look = FILM_LOOKS[typeof f === 'string' ? f : 'film'] || FILM_LOOKS.film, o = typeof f === 'object' ? { ...look, ...f } : look;
+    const F = this._filmO ||= { halationTint: new Vector3(), streakTint: new Vector3() };
+    F.halation = Math.max(0, o.halation); F.grain = Math.max(0, o.grain); F.grainSize = Math.max(1, o.grainSize); F.grainColour = Math.min(1, Math.max(0, o.grainColour));
+    F.fringe = Math.max(0, o.fringe); F.streaks = Math.max(0, o.streaks); F.streakLength = Math.max(.01, o.streakLength); F.flicker = Math.max(0, o.flicker);
+    toRGB(o.halationTint, F.halationTint); toRGB(o.streakTint, F.streakTint);
+    return F;
+  }
   // v.lut as a texture: a look's name, a function, a .cube text or a table from gs.hd.lut (made once)
   lutTex() {
     const l = this.lut; if (!l) return null;
@@ -3088,7 +3139,8 @@ export class HDView {
     // fringing, which turns a dark hair or a lash over skin or sky magenta and green, a pixel to each side)
     const ms = T.msaa >= 4 ? 4 : 0;
     const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: ms, bloomScale: T.bloom * fxK('bloom'), smooth: !ms, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, drops: this.drops.on ? this.drops : null, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
-      dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
+      dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, film: this.filmSet(), grain: HD.grain };
+    if (o.film && HD.grain == null) o.grain = .035 * o.film.grain;
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
     o.fx = this.extras?.length ? this.extras : null;
@@ -3483,7 +3535,8 @@ export class HDView {
       if (F.scale !== blK) { F.scale = blK; if (F.w) F.setSize(F.w, F.h); }   // (the effects ladder, FXS: the bloom's pictures smaller)
       if (!baking && !off) { fxOn = new Set(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
       F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.setDrops(this.drops.on ? this.drops : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
-      const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035;
+      const film = this.filmSet(); F.setFilm(film && T.bloom ? film : film && { ...film, halation: 0, streaks: 0 });
+      const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035 * (film ? film.grain : 1);
       const g = this.grade; u.gradeOn.value = g ? 1 : 0;
       if (g) { u.sat.value = g.saturation ?? 1; u.con.value = g.contrast ?? 1; toRGB(g.shadows, u.lo.value); toRGB(g.highlights, u.hi.value); }
       u.glare.value = 0;

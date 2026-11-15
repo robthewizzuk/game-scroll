@@ -2025,6 +2025,8 @@ function bloomChain(src, aoF, P = HALF4) {
   for (const n of [...nodes, ...Us]) if (n?.renderTarget) n.renderTarget.gsPart = 'bloom';   // (hd3d.js gpuTime: the chip's time by pass)
   return {
     out,
+    // (the second level grown back up: the softer bloom, read sideways for v.film's streaks; hd3d.js FinalPass tBloom1)
+    wide: Us[1] || M[1],
     size(w, h, scale) {
       // the same sizes as FinalPass.setSize: the tier's scale, then halving
       let bw = Math.max(1, Math.round(w * scale)), bh = Math.max(1, Math.round(h * scale));
@@ -2046,11 +2048,17 @@ function bloomChain(src, aoF, P = HALF4) {
 // upscaling). With frame generation they go on as each refresh is shown, so the grain is new every
 // refresh (blending two frames' grain would halve it on every other one) and the vignette and the
 // hurt flash stay put instead of moving with the picture.
+// v.film (hd3d.js FINAL_EFFECTS grain): the exposure's flicker, and grain that follows the brightness (gLum), comes in
+// clumps of gSize drawn pixels and has a touch of colour (gCol); with no film look it is the fine grey grain as before.
+const grainHash = p => fract(sin(dot(p, vec2(12.9898, 78.233))).mul(43758.5453));
 function touches(U, col, t, k) {
   const d = screenUV.sub(.5), r2 = dot(d, d);
   col = col.mul(float(1).sub(U.vig.mul(smoothstep(.12, .62, r2.mul(1.6)))));                       // vignette
-  const p = floor(vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y)).mul(k)).add(.5).add(t);   // (WebGL counts pixel rows from the bottom)
-  col = col.add(fract(sin(dot(p, vec2(12.9898, 78.233))).mul(43758.5453)).sub(.5).mul(U.grain));     // grain
+  col = col.mul(float(1).add(grainHash(vec2(t.mul(3.1), 1.7)).sub(.5).mul(U.flick)));                  // flicker
+  const p = floor(vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y)).mul(k).div(U.gSize)).add(.5).add(t);   // (WebGL counts pixel rows from the bottom)
+  const gl = clamp(dot(col, vec3(.2126, .7152, .0722)), 0, 1), ga = U.grain.mul(mix(float(1), gl.mul(float(1).sub(gl)).mul(3.4).add(.45), U.gLum));
+  const g = mix(vec3(grainHash(p).sub(.5)), vec3(grainHash(p.add(17.3)), grainHash(p.add(41.7)), grainHash(p.add(71.1))).sub(.5), U.gCol);
+  col = col.add(g.mul(ga));                                                                          // grain
   return mix(col, col.mul(vec3(1.25, .45, .4)).add(vec3(.12, 0, 0)), U.hurt.mul(smoothstep(.04, .4, r2)));   // hurt
 }
 // Snapdragon GSR 1 on WebGPU: sgsr.js's one pass (Qualcomm, BSD 3-Clause; the licence and what changed
@@ -2601,6 +2609,9 @@ export class GpuChain {
       shThr: uniform(1.1), shHi: uniform(1.1 * 2.2), shCap: uniform(1e9), shGain: uniform(1),
       // frame generation's last touches: the grain's own clock and size (touches())
       gt: uniform(0), gk: uniform(1), grain: uniform(.035),
+      // v.film (hd3d.js FinalPass setFilm): lens fringing, the grain's brightness, clumps and colour, flicker; halation and streaks
+      fringe: uniform(.012), gLum: uniform(0), gSize: uniform(1), gCol: uniform(0), flick: uniform(0),
+      hal: uniform(0), streak: uniform(0), streakLen: uniform(.2), halTint: uniform(new Vector3(1, .3, .1)), streakTint: uniform(new Vector3(.35, .55, 1)),
     };
     // volumetric light and motion blur (hd3d.js VOL and MB: the same numbers, from beamsFrame and blurFrame)
     this.V = {
@@ -2625,8 +2636,8 @@ export class GpuChain {
     // gs.fx3d's screen effects (hd3d-gpu-fx.js): the slots they take in the chain, and reflections (v.reflect())
     this.fxSlots = []; this.fxR = []; this.fxN = []; this.fxK = 1; this.xKey = ''; this.reflOn = false; this.tracer = null;
   }
-  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false) {
-    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${halfKey()}|${this.aoBack}|${SHARE.on}|${HDR_SMALL.on}`;
+  build(aoOn, smooth, msaa, s2 = false, dofOn = false, shaftsOn = false, live = false, s1 = false, volOn = false, mbOn = false, mrtOn = false, tone = 'aces', lutOn = false, oitOn = false, flareOn = false, giOn = false, spreadOn = false, dropsOn = false, lensOn = false, filmOn = false) {
+    const key = `${aoOn}|${smooth}|${msaa}|${this.clear}|${s2}|${dofOn}|${shaftsOn}|${live}|${s1}|${volOn}|${mbOn}|${mrtOn}|${tone}|${lutOn}|${oitOn}|${flareOn}|${giOn}|${spreadOn}|${dropsOn}|${lensOn}|${filmOn}|${halfKey()}|${this.aoBack}|${SHARE.on}|${HDR_SMALL.on}`;
     const TM = TONE[tone] ?? ACESFilmicToneMapping;
     if (key === this.key) return;
     // (for the frame lab: what changed since the chain was last built, when it is built again)
@@ -2876,9 +2887,16 @@ export class GpuChain {
     const graded = Fn(() => {
       const uv = uv0;
       // smooth: with FXAA on (below) no fringe; otherwise a touch of lens fringing at the edges
-      let col = smooth ? lit : vec3(src.sample(uv.add(d.mul(r2).mul(.012))).r.mul(srcAo).add(shafts.r), lit.g, src.sample(uv.sub(d.mul(r2).mul(.012))).b.mul(srcAo).add(shafts.b));
+      let col = smooth ? lit : vec3(src.sample(uv.add(d.mul(r2).mul(U.fringe))).r.mul(srcAo).add(shafts.r), lit.g, src.sample(uv.sub(d.mul(r2).mul(U.fringe))).b.mul(srcAo).add(shafts.b));
       // bloom
       col = col.add(this.bloomN.out.mul(this.bloomK));
+      // film halation and anamorphic streaks (v.film; hd3d.js FINAL_EFFECTS film)
+      if (filmOn) {
+        col = col.add(this.bloomN.out.mul(U.halTint).mul(U.hal));
+        const Wd = this.bloomN.wide; let st = vec3(0), ws = 0;
+        for (let i = 1; i <= 6; i++) { const w = Math.exp(-i * .5), o = vec2(U.streakLen.mul(i / 6), 0); st = st.add(Wd.sample(uv.add(o)).rgb.add(Wd.sample(uv.sub(o)).rgb).mul(w)); ws += 2 * w; }
+        col = col.add(st.div(ws).mul(U.streakTint).mul(U.streak));
+      }
       // lens flare (v.flare): three's LensflareNode over the bloom, and the lens dirt lit by it (hd3d.js FINAL_EFFECTS flare)
       if (flareOn) {
         const F = this.F, bl = this.bloomN.out.mul(this.bloomK);
@@ -2979,7 +2997,7 @@ export class GpuChain {
     const fx = !this.clear && o.ao > 0;
     this.aoBack = fx && o.aoBack !== false;
     this.s2Net = o.s2Net || null;
-    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : (o.s2Net ? 'net:' + o.s2Net.id : 'hand') + '#' + s2Shape(f.fsr)) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn);
+    this.build(fx, !!o.smooth && !f, o.msaa, f ? (o.s2Plain ? 'plain' : (o.s2Net ? 'net:' + o.s2Net.id : 'hand') + '#' + s2Shape(f.fsr)) : false, !this.clear && !!o.dofOn, !this.clear && !!o.shaftsOn, live, s1, !this.clear && !!o.volOn, !this.clear && !!o.mbOn, !!o.mrt, o.tone, !this.clear && !!o.lut, !this.clear && !!o.oit, !this.clear && !!o.flare, fx && o.gi ? o.gi.kind : false, fx && o.spread ? o.spread : false, !this.clear && !!o.drops, fx && !!o.lensOn, !this.clear && !!o.film && o.bloom > 0 && o.bloomScale > 0 && (o.film.halation > 0 || o.film.streaks > 0));
     // (spread over frames: the camera this frame and last, before anything is drawn; stirred when a shadow map was drawn
     // again or the volumetric light's light moved, which change the picture though the camera didn't)
     if (this.spread) {
@@ -3006,6 +3024,8 @@ export class GpuChain {
       if (this.giN && 'resolutionScale' in this.giN) this.giN.resolutionScale = (this.spGI ? .5 : 1) * k;
       this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
+      const fm = o.film; U.fringe.value = fm ? fm.fringe : .012; U.gLum.value = fm ? 1 : 0; U.gSize.value = fm ? fm.grainSize : 1; U.gCol.value = fm ? fm.grainColour : 0; U.flick.value = fm ? fm.flicker : 0;
+      if (fm) { U.hal.value = fm.halation; U.streak.value = fm.streaks; U.streakLen.value = fm.streakLength; U.halTint.value.copy(fm.halationTint); U.streakTint.value.copy(fm.streakTint); }
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }
       const g = o.grade; U.gradeOn.value = g ? 1 : 0;
       if (g) { U.sat.value = g.sat; U.con.value = g.con; U.lo.value.copy(g.lo); U.hi.value.copy(g.hi); }
