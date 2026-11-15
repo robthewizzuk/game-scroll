@@ -210,7 +210,7 @@ const gps = new Gps(city, { icon: gs.icons.icon });   // a City or a Metro
 gps.to(target);                                       // where the game sends the player (a thing that moves is followed)
 gps.watch(jobs);                                      // gs.missions Jobs or Mission: their markers on the maps
 gps.show(view);                                       // the way on the road ahead, as glowing arrows
-update(dt) { gps.update(dt, { x: car.x, z: car.y, heading: car.angle }); }
+update(dt) { gps.update(dt, { x: car.x, z: car.y, heading: Math.PI / 2 - car.angle })   // heading: atan2(dx, dz); a gs.vehicles Car's angle is atan2(dz, dx); }
 draw(c) {
   gps.mini(c, W - 96, 10, 86, 86);                    // the minimap, turning with the player
   if (gps.next) say(gps.next.turn, gps.next.in);      // 'left' | 'right' | 'arrive', in metres
