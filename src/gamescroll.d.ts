@@ -1768,15 +1768,25 @@ export interface AiPart { Crowd: new (...a: Loose[]) => Loose; NavGrid: new (...
 
 /** A behaviour tree (mistreevous MDSL text); agent gives each action and condition by name. Actions return Tree.ok, Tree.fail or nothing (still going). */
 export declare class Tree {
-  constructor(definition: string | object, agent: Record<string, (...a: Loose[]) => Loose>, o?: { seed?: number });
+  constructor(definition: string | object, agent: Record<string, (...a: Loose[]) => Loose>, o?: { seed?: number; /** Corrections (with see): true, or a gs.brains.Coach to keep them on the phone. */ coach?: boolean | Coach | null; /** Numbers about the moment, for the coach's examples (the same count every time). */ see?: (() => ArrayLike<number>) | null });
   static ok: string; static fail: string; static run: string;
   update(dt: number): this; reset(): this; readonly state: 'running' | 'ok' | 'failed'; path(): string[];
+  /** The coach, when it was given one and a see. */
+  readonly coach: Coach | null;
+  /** "In a moment like this, do this": makes the built-in condition [Told, "Name"] true in moments like it, so give the tree a branch for it first: sequence { condition [Told, "Flee"] action [Flee] }. */
+  correct(name: string): this;
+  /** "Not that, in a moment like this": the action named (default: the one it last ran) fails at once in moments like it, and the tree goes on to its next branch. */
+  avoid(name?: string): this;
+  /** After update(): what the coach's examples changed this step, or null. */
+  readonly told: { action: string; not: boolean } | null;
 }
 type Consideration = ((...a: Loose[]) => number) & { curve?: true };
 /** Utility AI: the option whose considerations score highest (0..1, multiplied) wins; stick keeps the current pick a little longer. */
 export declare class Choose {
-  constructor(options: Record<string, Consideration | Consideration[] | { score: Consideration | Consideration[]; weight?: number }>, o?: { stick?: number; noise?: number; seed?: number });
+  constructor(options: Record<string, Consideration | Consideration[] | { score: Consideration | Consideration[]; weight?: number }>, o?: { stick?: number; noise?: number; seed?: number; /** Corrections about what it picks: true, or a gs.brains.Coach to keep them on the phone. Then every consideration is read on each pick. */ coach?: boolean | Coach | null });
   pick(...a: Loose[]): string; scores: Record<string, number>; current: string | null;
+  /** With coach: want.coach.correct('sleep') ("there, it should have wanted sleep"), want.coach.avoid(), want.coach.recalled. Its examples are about what the considerations read. */
+  readonly coach: Coach | null;
   static linear: Consideration; static quad: Consideration; static root: Consideration; static invert: Consideration;
   static logistic(mid?: number, k?: number): Consideration; static step(at?: number): Consideration;
 }
@@ -1927,6 +1937,45 @@ export interface DialOptions {
   profile?: boolean;
 }
 /**
+ * Corrections for anything that decides by rules, with no network to train: a kit's team or squad, a
+ * Choose, a behaviour tree, your own if / else. The rules choose as usual; in spots like the examples
+ * the coach says otherwise, and nowhere else. gs.sports.Team, gs.tactics.Squad, gs.ai.Choose and gs.ai.Tree
+ * take one as `coach` (true makes one for the session) and feed it what they look at themselves.
+ */
+export declare class Coach {
+  constructor(api: GameApi | null, opts?: CoachOptions);
+  constructor(opts?: CoachOptions);
+  name: string;
+  /** What it looks at and what it can say. A kit given a coach does this itself. */
+  shape(inputs: number, actions: string[] | number): this;
+  /** The move to make on inputs `see`: `usual` (the rules' choice; or a list, best first, of the moves that can be made here), unless corrections in spots like this one say otherwise. */
+  pick<T extends number | string>(see: ArrayLike<number>, usual: T | T[]): T;
+  /** "In this spot the right move was this": for the spot it last picked on, or one of your own. A couple that agree make a rule in spots like them; one alone is a lean. */
+  correct(action: number | string): this; correct(see: ArrayLike<number>, action: number | string): this;
+  /** "In this spot, not that": avoid() is about what it last picked (so name the move when teaching the same thing twice). */
+  avoid(action?: number | string): this; avoid(see: ArrayLike<number>, action: number | string): this;
+  /** After pick(): the correction that shaped it, or null. */
+  readonly recalled: { action: number | string; not: boolean; like: number } | null;
+  /** Forgets the corrections given while running (all, or one action's); the maker's own stay. */
+  uncorrect(action?: number | string): this;
+  /** Every correction it holds, as [see, action] ("not this": [see, action, false]). */
+  readonly corrections: ([number[], number | string] | [number[], number | string, false])[];
+  /** How far it trusts its corrections, 0..2. */
+  readonly heed: number;
+  /** What its examples say about a spot, per action: above 0 towards it, below 0 away (null: nothing like it). Past 3 either way outweighs a rule. */
+  lean(see: ArrayLike<number>): Float32Array | null;
+}
+export interface CoachOptions {
+  /** Its name in the game's saved brains (default 'coach'): one per thing coached. */
+  name?: string;
+  /** How many numbers it looks at, and the moves it can say (names, or how many). Left out when a kit is given the coach. */
+  inputs?: number; actions?: string[] | number;
+  /** The maker's own corrections, as [see, action] (or [see, action, false] where a move is wrong). */
+  corrections?: ([number[], number | string] | [number[], number | string, false])[];
+  /** Keep what it is taught on the phone (true); false: this session only. */
+  save?: boolean;
+}
+/**
  * Teach by example: show it a thing a few times under a name, and it says which name a new thing looks
  * like, or that it looks like none. For any list of numbers: a hand's shape (gs.vision Hands), a pose
  * (Body), a move made with the phone (gs.moves), a sound (gs.hear Sounds).
@@ -2010,6 +2059,7 @@ export interface BrainsPart {
   Predict: typeof Predict;
   Player: typeof Player;
   Dial: typeof Dial;
+  Coach: typeof Coach;
   Examples: typeof Examples;
   Nemesis: typeof Nemesis;
   Shadow: typeof Shadow;
@@ -2303,13 +2353,15 @@ export interface SportsPitch { w: number; h: number; goal: number; x: number; y:
 export interface SportsAct { do: 'chase' | 'shoot' | 'pass' | 'dribble' | 'support' | 'mark' | 'keep'; x: number; y: number; to?: Loose; kick?: { x: number; y: number; power: number } }
 export interface SportsTeam {
   pitch: SportsPitch; side: 0 | 1; skill: Skill; keeper: boolean; shootRange: number; players: Loose[]; chaser: Loose; plan: Map<Loose, SportsAct>;
+  /** With coach: about the last choice of the one with the ball ('shoot' | 'pass' | 'dribble'): team.coach.correct('pass'), team.coach.avoid('shoot'), team.coach.recalled. Its examples are about where he was, how pressed, and how open the shot and the best pass were. */
+  readonly coach: Coach | null;
   home(p: Loose, ball: { x: number; y: number }): { x: number; y: number };
   think(world: { ball: { x: number; y: number; vx?: number; vy?: number; owner?: Loose }; mates?: Loose[]; foes?: Loose[] }, dt?: number): Map<Loose, SportsAct>;
   kick(p: { x: number; y: number }, at: { x: number; y: number }, power: number): { x: number; y: number; power: number };
 }
 export interface SportsPart {
   Pitch: new (o?: { w?: number; h?: number; goal?: number; x?: number; y?: number }) => SportsPitch;
-  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number }) => SportsTeam;
+  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number; /** Corrections for the one with the ball: true, or a gs.brains.Coach to keep them on the phone. */ coach?: boolean | Coach | null }) => SportsTeam;
 }
 export interface DragPart { Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; axis?: 'x' | 'y' } | null; swap?: boolean }) => Drag }
 
@@ -2515,14 +2567,24 @@ export interface CombatPart {
   Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose | false; knock?: number; link?: boolean }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
+export type SquadRole = 'suppress' | 'advance' | 'flank' | 'grenade' | 'retreat';
 export interface TacticsPart {
   CoverMap: new (cols: number, rows: number, blocked: (c: number, r: number) => boolean, o?: { size?: number; x0?: number; y0?: number; low?: (c: number, r: number) => boolean; link?: boolean }) => {
     spots: CoverSpot[]; size: number; protects(spot: CoverSpot, threat: P3): boolean;
     find(from: P3, threat: P3, o?: { near?: number; band?: [number, number]; flank?: number; who?: Loose; sees?: (a: P3, b: P3) => boolean }): CoverSpot | null;
     take(spot: CoverSpot | null, who: Loose): CoverSpot | null; free(who: Loose): Loose; peek(spot: CoverSpot, threat: P3): P3; at(col: number, row: number): CoverSpot | null;
+    /** "Not that cover" (a man fell there): the spot, or the one nearest a point, counts as `by` cells further to walk (default 6) and its neighbours within `near` half that, so others take it only when nothing else will do. forgive() takes it all back. */
+    avoid(spot: CoverSpot | P3, o?: { by?: number; near?: number }): Loose; forgive(): Loose;
   };
-  Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m: Loose, t: P3) => boolean; range?: number; grenades?: number; camp?: number; think?: number; aggression?: number; rng?: () => number }) => On<Loose> & {
+  Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m: Loose, t: P3) => boolean; range?: number; grenades?: number; camp?: number; think?: number; aggression?: number; rng?: () => number; /** Corrections about the roles it hands out: true, or a gs.brains.Coach to keep them on the phone. */ coach?: boolean | Coach | null }) => On<Loose> & {
     members: Loose[]; readonly left: Loose[]; update(dt: number, target: P3): Loose; hurt(m: Loose): Loose; reloading(m: Loose): Loose;
+    readonly coach: Coach | null;
+    /** With coach: "there, he should have been told this", about the spot the member was last given a role in. A couple of times and the squad does so in spots like it (how far, how hurt, whether he sees the target, how many are left). */
+    correct(m: Loose, role: SquadRole): Loose;
+    /** With coach: "not that, there": the role he was last given (or the one named). */
+    avoid(m: Loose, role?: SquadRole): Loose;
+    /** The correction that shaped the member's last role, or null. */
+    recalled(m: Loose): { action: SquadRole; not: boolean; like: number } | null;
   };
   Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: number, ally: P3, player: P3): Loose };
 }

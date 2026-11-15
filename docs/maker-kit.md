@@ -735,6 +735,11 @@ const goal = want.pick();   // 'eat', 'sleep' or 'fight'; want.scores has them a
 Curves: `Choose.linear`, `quad`, `root`, `invert`, `logistic(mid, k)`, `step(at)`. Use a Choose inside a
 tree action, or to pick a `Brain` state.
 
+Both can be coached: `new Choose(options, { coach: true })` then `want.coach.correct('sleep')`, and
+`new Tree(text, agent, { coach: true, see: () => [me.hp / 10, cornered ? 1 : 0] })` then
+`tree.avoid('Bite')` and `tree.correct('Flee')`
+([A coach for things that decide by rules](#a-coach-for-things-that-decide-by-rules)).
+
 ### Swarms: thousands of flockers
 
 `gs.ai.Swarm` moves hundreds or thousands of simple creatures that flock: shoals, bats, bees,
@@ -1597,6 +1602,49 @@ function make(api) {
 - It is saved with the game's brains in a few bytes. Give each opponent its own `name`.
 - A game with no winner (an endless runner) can use the score: `dial.result(score >= goal)`.
 
+### A coach for things that decide by rules
+
+`gs.brains.Coach` is corrections with no network: your rules (or a kit's) choose as usual, and in
+spots like the ones it was shown the coach says otherwise. "There, pass." "Not that, here." It holds
+from the next decision, with nothing to train.
+
+```js
+const { Coach } = gs.brains;
+const coach = new Coach(api, { name: 'keeper', inputs: 3, actions: ['stay', 'dive', 'rush'] });
+const usual = ballNear > .7 && ballFast > .5 ? 'dive' : 'stay';      // your own rules
+const a = coach.pick([ballNear, ballFast, alone], usual);            // theirs, unless it was taught otherwise here
+coach.correct('rush');        // "there, the right move was rush" (the spot it last picked on)
+coach.avoid('dive');          // "not a dive there"; avoid() alone: not what it just picked
+if (coach.recalled) showThatItRemembered(coach.recalled);            // { action, not, like }
+```
+
+Four kits take one and feed it what they look at themselves. `coach: true` lasts the session;
+`coach: new Coach(api, { name: 'away' })` is kept on the phone with the game's brains.
+
+| Kit | What is coached | How |
+| --- | --- | --- |
+| `gs.sports.Team` | the one with the ball: `'shoot'`, `'pass'`, `'dribble'` | `team.coach.correct('pass')`, `team.coach.avoid('shoot')` |
+| `gs.tactics.Squad` | each member's role: `'suppress'`, `'advance'`, `'flank'`, `'grenade'`, `'retreat'` | `squad.correct(member, 'flank')`, `squad.avoid(member)`, `squad.recalled(member)` |
+| `gs.ai.Choose` | which want wins | `want.coach.correct('sleep')`, `want.coach.avoid()` |
+| `gs.ai.Tree` | which actions run (give it `see: () => [numbers about the moment]`) | `tree.avoid('Bite')`: Bite fails in moments like this, so the tree goes on to its next branch; `tree.correct('Flee')` makes `condition [Told, "Flee"]` true in them |
+
+And for cover, `cover.avoid(spot)` is "not that cover" (a man fell there): the others take it only
+when nothing else will do, until `cover.forgive()`.
+
+- One example is already a lean in spots much like it; a couple that agree make a rule. In the kit
+  test one example changes the lesson's spots every time and leaves 95% of other spots as they were;
+  four leave 96%.
+- "Spots like them" means alike in the numbers the coach is given (a team: where he is, how pressed,
+  how open the shot and the best pass are). Where an action's examples differ on a number, that number
+  stops mattering, so show it the move in a few different spots of the same kind.
+- `usual` may be a list, best first, of the moves that can be made here; then a "not this" goes to
+  the next in the list and it never picks a move that isn't in it. The kits do this themselves.
+- `avoid()` alone is about what it just picked. When teaching the same thing several times, name the
+  move (`avoid('dive')`): after the first time it may already be picking something else.
+- A game's own lessons go in `corrections: [[see, action], [see, action, false]]`; the debug overlay's
+  B key copies what a coach was taught while you played. `uncorrect()` forgets what it was taught.
+- A coached team, squad, Choose or tree with nothing taught plays exactly as it did before.
+
 ### Teach by example: signs, poses, moves and sounds of your own
 
 `gs.brains.Examples` learns a thing from a few examples and says which one a new thing looks like, or
@@ -2096,7 +2144,9 @@ says where to lean out. `Squad(members, { cover, sees })` gives each enemy an or
 (`move`, `shoot`, `throw`, `hold`) with roles: some pin you down while others move up or flank, a
 grenade flushes you out of cover you've camped in, the hurt fall back, and they call out
 (`on('call')`: contact, reloading, man down) for your barks. `Route(points)` is an ally who leads
-and waits for you.
+and waits for you. A squad can be coached (`coach: true`, then `squad.correct(member, 'flank')` and
+`squad.avoid(member)`), and `cover.avoid(spot)` is "not that cover":
+[A coach for things that decide by rules](#a-coach-for-things-that-decide-by-rules).
 
 **Climbing** (`gs.climb`): `Ledges.fromLevel(level3d)` finds every edge you can hang from (or `add()`
 your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up, leaps to the next

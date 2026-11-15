@@ -19,6 +19,14 @@
 //
 // Players are your own objects with x, y (and speed); ball: { x, y, vx, vy, owner } (owner: the player
 // holding it, or null). Sizes are game units; the pitch is w x h with goals in the middle of each end.
+//
+// A team can be coached (Tiny Brains corrections): new Team(pitch, 1, { coach: true }), then
+// team.coach.correct('pass') says "there, the one with the ball should have passed" and
+// team.coach.avoid('shoot') "not a shot from there": a couple of times and it does so in spots like
+// them (where on the pitch, how pressed, how open the shot and the pass were) and nowhere else.
+// coach: new gs.brains.Coach(api, { name: 'away' }) keeps what it was taught on the phone.
+
+import { Coach } from './brains.js';
 
 export class Pitch {
   /** w, h: the pitch; goal: the goal mouth's width; x, y: its top left. Team 0 attacks the goal at the top. */
@@ -37,6 +45,7 @@ const FORMATIONS = {   // [across, up] in the team's own terms, keeper first whe
   'k-3-2': [[.5, .04], [.2, .3], [.5, .26], [.8, .3], [.35, .62], [.65, .62]],
 };
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const WITH_BALL = ['shoot', 'pass', 'dribble'];   // what a coach can say to the one with the ball
 /** How close the nearest of `foes` gets to the straight line a -> b (how open a pass or shot is). */
 function laneGap(a, b, foes) {
   let best = Infinity; const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
@@ -45,9 +54,11 @@ function laneGap(a, b, foes) {
 }
 
 export class Team {
-  /** side: 0 attacks the top, 1 the bottom; formation: a name ('1-1', '2-1', '2-2', '1-2-1', 'k-2-2', 'k-3-2': k is a keeper) or [[across, up]...]; skill: 0..1 (how well it reads the game: a number, or a gs.brains.Dial that follows the player); shootRange: in game units. */
-  constructor(pitch, side, { formation = '2-2', skill = .7, shootRange = null, keeper = null, players = null, rnd = Math.random } = {}) {
+  /** side: 0 attacks the top, 1 the bottom; formation: a name ('1-1', '2-1', '2-2', '1-2-1', 'k-2-2', 'k-3-2': k is a keeper) or [[across, up]...]; skill: 0..1 (how well it reads the game: a number, or a gs.brains.Dial that follows the player); shootRange: in game units; coach: true, or a gs.brains.Coach (then team.coach takes corrections about the one with the ball). */
+  constructor(pitch, side, { formation = '2-2', skill = .7, shootRange = null, keeper = null, players = null, rnd = Math.random, coach = null } = {}) {
     this.pitch = pitch; this.side = side; this.skill = skill; this.rnd = rnd;   // rnd: a seeded gs.math.rng for replays
+    this.coach = coach === true ? new Coach({ name: 'team', save: false }) : coach || null;
+    if (this.coach) this.coach.shape(7, WITH_BALL);
     this.spots = typeof formation === 'string' ? FORMATIONS[formation] || FORMATIONS['2-2'] : formation;
     this.keeper = keeper ?? (typeof formation === 'string' && formation.startsWith('k'));
     this.shootRange = shootRange ?? pitch.h * .3;
@@ -105,22 +116,37 @@ export class Team {
   }
   /** The choice for the player with the ball: shoot, pass or run on. */
   withBall(p, { foes = [] }, goal) {
-    const P = this.pitch, mates = this.players.filter(m => m !== p), pressure = Math.min(...foes.map(f => dist(f, p)), Infinity);
-    // shoot: in range, at the corner of the goal the keeper covers least
-    if (dist(p, goal) < this.shootRange) {
+    const P = this.pitch, C = this.coach, mates = this.players.filter(m => m !== p), pressure = Math.min(...foes.map(f => dist(f, p)), Infinity), dg = dist(p, goal);
+    // shoot: in range, at the corner of the goal the keeper covers least (a coached team may be told to from a little further)
+    let shot = null, shoots = false;
+    if (dg < this.shootRange * (C ? 1.5 : 1)) {
       const aims = [goal.x - goal.half * .7, goal.x + goal.half * .7, goal.x].map(x => ({ x, y: goal.y }));
-      const best = aims.map(a => [a, laneGap(p, a, foes)]).sort((a, b) => b[1] - a[1])[0];
-      if (best[1] > 10 + (1 - this.skill) * 10 || pressure < 25) return { do: 'shoot', x: best[0].x, y: best[0].y, kick: this.kick(p, best[0], 1) };
+      shot = aims.map(a => [a, laneGap(p, a, foes)]).sort((a, b) => b[1] - a[1])[0];
+      shoots = dg < this.shootRange && (shot[1] > 10 + (1 - this.skill) * 10 || pressure < 25);
     }
     // pass: the team-mate further up with the clearest lane, when pressed or someone is clearly better placed
-    let pick = null, score = -Infinity;
-    for (const m of mates) {
-      const gap = laneGap(p, m, foes), up = P.upfield(this.side, m) - P.upfield(this.side, p), d = dist(p, m);
-      if (gap < 14 || d < 30) continue;
-      const s = gap * .04 + up * 3 - d / P.h + (Math.min(...foes.map(f => dist(f, m))) / 60);
-      if (s > score) { score = s; pick = m; }
+    let pick = null, score = -Infinity, passes = false;
+    if (!shoots || C) {
+      for (const m of mates) {
+        const gap = laneGap(p, m, foes), up = P.upfield(this.side, m) - P.upfield(this.side, p), d = dist(p, m);
+        if (gap < 14 || d < 30) continue;
+        const s = gap * .04 + up * 3 - d / P.h + (Math.min(...foes.map(f => dist(f, m))) / 60);
+        if (s > score) { score = s; pick = m; }
+      }
+      passes = !!pick && (pressure < 35 || score > 1.6 - this.skill * .4);
     }
-    if (pick && (pressure < 35 || score > 1.6 - this.skill * .4)) return { do: 'pass', x: pick.x, y: pick.y, to: pick, kick: this.kick(p, pick, Math.min(1, dist(p, pick) / (P.h * .5))) };
+    let act = shoots ? 'shoot' : passes ? 'pass' : 'dribble';
+    if (C) {
+      // what a coach's examples are about: where he is, how pressed, how open the shot and the best pass are
+      const see = this.see || (this.see = new Float32Array(7)), u = P.upfield(this.side, p);
+      see[0] = u; see[1] = Math.abs((p.x - P.x) / P.w - .5) * 2; see[2] = Math.min(2, dg / this.shootRange);
+      see[3] = shot ? Math.min(1, shot[1] / 40) : 0; see[4] = Math.min(1, pressure / 80);
+      see[5] = pick ? Math.max(-1, Math.min(1, score / 3)) : -1; see[6] = pick ? P.upfield(this.side, pick) - u : 0;
+      const can = [act]; for (const a of WITH_BALL) if (a !== act && (a === 'shoot' ? shot : a === 'pass' ? pick : true)) can.push(a);
+      act = C.pick(see, can);
+    }
+    if (act === 'shoot') return { do: 'shoot', x: shot[0].x, y: shot[0].y, kick: this.kick(p, shot[0], 1) };
+    if (act === 'pass') return { do: 'pass', x: pick.x, y: pick.y, to: pick, kick: this.kick(p, pick, Math.min(1, dist(p, pick) / (P.h * .5))) };
     // run on: towards goal, bending away from the nearest foe
     const nf = foes.reduce((a, f) => (!a || dist(f, p) < dist(a, p) ? f : a), null);
     let x = goal.x, y = goal.y; if (nf && dist(nf, p) < 50) { x += (p.x - nf.x) * 1.5; }

@@ -41,6 +41,9 @@
 // Dial is the win-rate rail by itself, for an opponent that isn't a Brain: a search, a team, a
 // director (wherever a kit takes a skill number). Examples is teaching by example for any list of
 // numbers: a hand sign, a pose, a move made with the phone or a sound of the game's or the player's own.
+// Coach is corrections for anything that decides by rules, with no network (a team, a squad, a Choose,
+// a behaviour tree, your own if / else): the rules choose, and the coach says otherwise in spots like
+// the ones it was shown.
 //
 // Corrections: bot.correct(see, 'flee') is "in this spot the right move was flee". A brain holds to
 // it from a couple of examples, at once and without retraining, in spots like the ones it was shown
@@ -175,8 +178,9 @@ function slot(api, name) {
 // card that made them.
 const LIVE = new Set();
 const track = o => { o.owner = currentOwner(); LIVE.add(new WeakRef(o)); if (LIVE.size > 200) for (const r of LIVE) if (!r.deref()) LIVE.delete(r); };
-/** The brains (Brain, Dial, Examples, Shadow, Nemesis) still alive, optionally only those a card made. */
-export const brainStats = b => b.examples ? { name: b.name, kind: 'examples', names: b.names.length, count: b.count(), ok: true }
+/** The brains (Brain, Dial, Coach, Examples, Shadow, Nemesis) still alive, optionally only those a card made. */
+export const brainStats = b => b.coach ? { name: b.name, kind: 'coach', count: b.fix ? b.fix.count : 0, heed: b.heed, ok: true }
+  : b.examples ? { name: b.name, kind: 'examples', names: b.names.length, count: b.count(), ok: true }
   : b.dial ? { name: b.name, kind: 'dial', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, ok: isFinite(b.skill) }
   : b.target && !b.habits ? { name: b.name, kind: 'brain', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, trust: b.trust, lean: b.lean, fun: b.fun, ok: b.net.w.every(Number.isFinite) }
   : b.habits ? { name: b.name, kind: 'nemesis', ...b.record } : { name: b.name, kind: 'shadow', like: b.like, seen: b.seen, ok: b.net.w.every(Number.isFinite) };
@@ -843,6 +847,104 @@ export class Dial {
 // The player's chance of winning at each skill level is learned the way a Brain learns it.
 Dial.prototype.winChance = Brain.prototype.winChance;
 Dial.prototype.calibrate = Brain.prototype.calibrate;
+
+// ---------------------------------------------------------------- Coach
+
+/**
+ * Coach: corrections for anything that decides by rules, with no network to train: a kit's team or
+ * squad, a Choose, a behaviour tree, your own if / else. The rules choose as usual; in spots like the
+ * examples the coach says otherwise, and nowhere else.
+ *
+ *   const coach = new Coach(api, { name: 'keeper', inputs: 3, actions: ['stay', 'dive', 'rush'] });
+ *   const a = coach.pick([ballNear, ballSpeed, alone], usual);    // usual: what your rules chose
+ *   coach.correct('rush');       // "here the right move was rush" (the spot it last picked on)
+ *   coach.avoid();               // "not what you just did, here"
+ *
+ * usual: the rules' choice, or a list, best first, of the moves that can be made here (then it never
+ * picks one that isn't in it; with one name alone, the move after an avoided one is the first other
+ * in `actions`). correct(see, action) and avoid(see, action) take a spot of their own; `recalled`,
+ * `corrections`, `heed` and uncorrect() are as on a Brain: a couple of examples that agree make a
+ * rule in spots like them, one alone is a lean, the newest 12 per action are kept. They are saved
+ * with the game's brains (save: false keeps them to this round); a game's own go in opts.corrections
+ * as [see, action] or [see, action, false] ("not this"). gs.sports.Team, gs.tactics.Squad, gs.ai.Choose
+ * and gs.ai.Tree take one as `coach` (true makes it) and feed it what they look at themselves.
+ */
+export class Coach {
+  constructor(api, opts = {}) {
+    if (api && !api.brains && !api.score && (api.inputs || api.actions || api.name)) { opts = api; api = null; }
+    this.coach = true;
+    this.name = String(opts.name || 'coach');
+    this.slot = opts.save === false ? null : slot(api, this.name);
+    this.given = opts.corrections || [];
+    this.fix = null; this.names = null; this.logOf = () => this.flat;   // (rules have no chances of their own to weigh the examples against)
+    if (opts.inputs || opts.actions) this.shape(opts.inputs, opts.actions);
+    track(this);
+  }
+  /** What it looks at and what it can say: how many inputs, and the actions (names, or how many). A kit that is given a coach does this itself. */
+  shape(inputs, actions) {
+    const names = Array.isArray(actions) ? actions.map(String) : null, A = names ? names.length : Math.max(2, actions | 0), n = Math.max(1, inputs | 0);
+    if (this.fix && this.fix.n === n && this.fix.acts === A && String(this.names) === String(names)) return this;
+    this.names = names; this.fix = new Fixes(n, A);
+    this.z = new Float32Array(A); this.flat = new Float32Array(A);
+    this.last = -1; this.lastSee = null; this.recallA = -1; this.recallT = 0;
+    for (const c of this.given) if (Array.isArray(c) && c[0] && c[0].length !== undefined) this.fix.add(c[0], this.which(c[1]), c[2] === false, true);
+    this.load();
+    return this;
+  }
+  /** What its examples say about a spot, per action: above 0 towards it, below 0 away (null: nothing like it). Past 3 either way outweighs a rule. */
+  lean(see) {
+    const f = this.fix; if (!f || !f.count || !see || !f.lean(see, this.logOf)) return null;
+    return f.t;
+  }
+  which(a) { return typeof a === 'number' ? a | 0 : this.names ? this.names.indexOf(String(a)) : -1; }
+  /** The move to make on inputs `see`: the rules' own (`usual`), unless corrections in spots like this one say otherwise. */
+  pick(see, usual) {
+    if (!this.fix) return Array.isArray(usual) ? usual[0] : usual;
+    const f = this.fix, A = f.acts, z = this.z, name = a => (this.names ? this.names[a] : a);
+    f.note(see);
+    if (!this.lastSee) this.lastSee = new Float32Array(f.n);
+    for (let i = 0; i < f.n; i++) this.lastSee[i] = +see[i] || 0;
+    // the rules' choice counts for as much as a sure brain's (their second choice half that, and so on down)
+    if (Array.isArray(usual)) {
+      z.fill(-Infinity); let i = 0; const n = usual.length;
+      for (const u of usual) { const a = this.which(u); if (a >= 0 && a < A && z[a] === -Infinity) z[a] = FIX_GAP * (n > 1 ? 1 - i / (n - 1) : 1); i++; }
+    } else { z.fill(0); const a = this.which(usual); if (a >= 0 && a < A) z[a] = FIX_GAP; }
+    this.recallA = -1; this.recallT = 0;
+    if (f.count && f.lean(see, this.logOf)) {
+      let top = 0;
+      for (let a = 0; a < A; a++) { if (z[a] === -Infinity) continue; z[a] += f.t[a]; if (Math.abs(f.t[a]) > top) { top = Math.abs(f.t[a]); this.recallA = a; this.recallT = f.t[a] / f.trust; } }
+    }
+    let best = -1; for (let a = 0; a < A; a++) if (z[a] > -Infinity && (best < 0 || z[a] > z[best])) best = a;
+    if (best < 0) { this.last = -1; return Array.isArray(usual) ? usual[0] : usual; }   // nothing it knows: the rules' own word
+    this.last = best;
+    return name(best);
+  }
+  /** "In this spot the right move was this": correct(see, action), or correct(action) for the spot it last picked on. */
+  correct(see, action) {
+    if (action === undefined) { action = see; see = this.lastSee; }
+    if (!this.fix || !see || see.length === undefined) return this;
+    this.fix.add(see, this.which(action)); this.save();
+    return this;
+  }
+  /** "In this spot, not that": avoid(see, action), avoid(action) for the spot it last picked on, or avoid() for what it picked there. */
+  avoid(see, action) {
+    if (see === undefined) { see = this.lastSee; action = this.last; }
+    else if (action === undefined) { action = see; see = this.lastSee; }
+    if (!this.fix || !see || see.length === undefined) return this;
+    this.fix.add(see, this.which(action), true); this.save();
+    return this;
+  }
+  /** Forgets the corrections given while running: all of them, or one action's. */
+  uncorrect(action) { if (!this.fix) return this; const a = action === undefined ? -1 : this.which(action); if (action === undefined || a >= 0) { this.fix.clear(a); this.save(); } return this; }
+  save() { if (!this.slot || !this.fix) return; try { const c = this.fix.pack(); this.slot.save(JSON.stringify(c ? { v: 1, c, u: this.fix.usual() } : { v: 1 })); } catch (_) {} }
+  load() {
+    if (!this.slot) return;
+    let d; try { d = JSON.parse(this.slot.load() || 'null'); } catch (_) { return; }
+    if (d && d.v === 1 && d.c) this.fix.unpack(d.c, d.u);
+  }
+}
+// What it recalled, what it holds and how far it trusts it are worked out the way a Brain does.
+for (const k of ['recalled', 'corrections', 'heed']) { const d = Object.getOwnPropertyDescriptor(Brain.prototype, k), none = k === 'corrections' ? [] : k === 'heed' ? 0 : null; Object.defineProperty(Coach.prototype, k, { get() { return this.fix ? d.get.call(this) : none; } }); }
 
 // ---------------------------------------------------------------- Examples
 
