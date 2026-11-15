@@ -4536,3 +4536,33 @@ update(dt) {
 - **Approval** (-100 to 100, `m.mood` from fed up to devoted): `likes` maps deeds to how much each one cares. A gs.rpg Reputation's deeds reach them by themselves, `party.deed(id)` covers the game's own, and `party.gift(m)` covers a kindness. A fed-up companion may refuse orders, and at `leaveAt` it leaves.
 - **Talk**: lines for joining, fights, getting hurt, healing, orders, approval and quiet moments (`LINES`, or your own in `lines`). Two of them banter when nothing happens. With `voice: true`, a gs.models person in `person` speaks the line.
 - `pack()` / `unpack()` keep approval and tactics in a save.
+
+## Mounts
+
+`gs.mounts.Mount(creature, { world })` turns a `gs.models.creature` into something to ride: a horse, a deer, a giant owl or a dragon. It fits a saddle, blanket, girth, stirrups and reins to the creature's own shape, pins them to its back so they move with its stride, and makes it a solid rider in the game's World3D, which it finds by itself.
+
+```js
+const { Mount } = gs.mounts, { creature, human } = gs.models;
+make() {
+  [horse] = creature.all([{ like: 'horse', seed: 4 }]); [hero] = human.all([{ seed: 3 }]);
+  steed = new Mount(horse);
+}
+reset() { steed.place(0, 0, 0); }
+update(dt) {
+  if (tappedTheHorse) steed.enter(hero);                    // walks to its left side and swings up astride
+  if (tappedGetOff) steed.exit();
+  steed.ride(dt, { stick: stick.value, jump, urge: swipedUp, rein: swipedDown });
+  if (swingTapped) steed.strike('right');                   // 'left', 'front'; steed.shoot(dir) for a bow
+  for (const e of steed.events) if (e.type === 'strike') hitAround(e.at, e.radius, e.power);
+}
+```
+
+- **Gaits**: stand, walk, trot, canter and gallop (`GAITS`), at speeds from the creature's own legs (`speeds`). `urge()` and `rein()` move the gait up or down, like a nudge of the heels or a pull on the reins. The stick runs it up to that gait, and pulling back stops it, then backs it up.
+- **Weight**: it takes a second or two to get going and stops quicker. It turns tightly at a walk and wide at a gallop, and it leans into turns.
+- **Stamina**: the gallop spends it. The mount sends `tired` at nothing left and `rested` once it can gallop again.
+- **Jumps** (`jump: true`) go over fences from a trot or faster, or as a hop from a stand. The height comes from its size (`jump` sets it).
+- **Flying**: a creature that can fly (a dragon, an owl) takes off on `jump`. In the air, the stick sets the speed, `climb` (-1 to 1) dives or climbs, the stick's x banks it into turns, and `land` brings it down.
+- **The rider** sits each gait: deep at the walk, rising at the trot, up and forward over the neck at the gallop. Their hands stay on the reins and their feet in the stirrups. While on, they belong to the mount (`person.vehicle`), as people in a gs.models vehicle do. `rider` says who is on.
+- **From the saddle**: a blow's hit comes as a `strike` event, twice as hard at a full gallop as at a stand (a charge). `shoot(dir)` sends a `shoot` event.
+- `steerTo(x, z)` gives a stick that takes it somewhere: a companion's horse, or a horse led by the reins. `pack()` and `unpack()` keep where it is.
+- Without a World3D it keeps to `ground(x, z)`. `saddle: false` and `reins: false` leave the tack off, and `saddle: { colour, blanket }` colours it.

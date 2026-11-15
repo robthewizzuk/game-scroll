@@ -2623,6 +2623,56 @@ export interface Dungeon3D {
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z: number } | null; turn?: number; all?: boolean; colours?: Record<string, string> }): void;
   settle(dt: number): void; pack(): Loose; unpack(d: Loose): Dungeon3D; remove(): void;
 }
+/** A ground gait (a flyer in the air is 'fly'). */
+export type MountGait = 'stand' | 'walk' | 'trot' | 'canter' | 'gallop' | 'back' | 'fly';
+export interface MountEvent { type: 'gait' | 'tired' | 'rested' | 'jump' | 'land' | 'takeoff' | 'bump' | 'strike' | 'shoot'; gait?: MountGait; was?: MountGait; speed?: number; thing?: Loose; side?: 'left' | 'right' | 'front'; at?: XYZ; radius?: number; power?: number; dir?: XYZ; from?: XYZ }
+export interface MountInput { stick?: { x: number; y: number } | null; jump?: boolean; urge?: boolean; rein?: boolean; climb?: number; land?: boolean }
+export interface Mount {
+  /** The creature. */
+  beast: Loose;
+  /** Metres a second each gait runs at (and fly for a flyer). */
+  speeds: Record<MountGait | 'fly', number>;
+  speed: number; yaw: number; gait: MountGait;
+  /** The gait it is urged to (stick forward runs up to it). */
+  want: MountGait;
+  air: boolean; flying: boolean; flies: boolean; onGround: boolean;
+  /** 0..1: the gallop spends it; tired at 0 (no gallop until it is back over a third). */
+  stamina: number; tired: boolean;
+  /** How the rider sits: 0 deep in the saddle .. 1 up and forward over the neck. */
+  posture: number;
+  events: MountEvent[];
+  /** Who is in the saddle or getting on. */
+  readonly rider: Loose;
+  /** The saddle seat ({ saddle: { who, point, ... } }), as a vehicle's seats. */
+  seats: Record<string, Loose>;
+  /** The walks on and off in progress. */
+  readonly trips: { person: Loose; kind: string; step: string; done: boolean; then(fn: (t: Loose) => void): Loose }[];
+  on(type: MountEvent['type'], fn: (e: MountEvent) => void): Mount;
+  place(x?: number, y?: number, z?: number, turn?: number): Mount;
+  /** Someone walks to its left side and gets on (person.vehicle is the mount from then). */
+  enter(person: Loose, o?: { walk?: number }): Loose;
+  /** Whoever is on gets off and stands beside it. */
+  exit(): Loose;
+  /** Puts someone in the saddle at once / takes them off at once. */
+  putIn(person: Loose): Mount; takeOut(person: Loose): Loose;
+  /** Each frame: moves it, plays its gait and sits the rider. */
+  ride(dt: number, input?: MountInput): Mount;
+  urge(): Mount; rein(): Mount;
+  takeOff(): void;
+  /** A blow from the saddle (its hit comes as a 'strike' event, harder at speed). */
+  strike(side?: 'left' | 'right' | 'front', o?: { power?: number; time?: number }): boolean;
+  /** Looses an arrow from the saddle (a 'shoot' event). */
+  shoot(dir?: XYZ | null, o?: { time?: number }): boolean;
+  /** A stick that takes it towards a point: pass to ride(). */
+  steerTo(x: number, z: number, o?: { stop?: number; gait?: MountGait }): { x: number; y: number };
+  pack(): { x: number; y: number; z: number; r: number; s: number }; unpack(d: Loose): Mount;
+  remove(): void;
+}
+export interface MountsPart {
+  /** A creature to ride. o: world (found), ground(x, z) without one, fly, saddle (false, or { colour, dark, blanket }), reins (false), turn, stamina (seconds of gallop), jump (metres), seat (metres back from the middle of the back), link. */
+  Mount: new (beast: Loose, o?: { world?: Loose; ground?: (x: number, z: number) => number; fly?: boolean; saddle?: false | { colour?: string; dark?: string; blanket?: string }; reins?: boolean; turn?: number; stamina?: number; jump?: number; seat?: number; link?: boolean }) => Mount;
+  GAITS: readonly MountGait[];
+}
 export interface DungeonPart {
   /** A dungeon map (gs.gen's dungeon(), cave() or maze(), or text) built in a Next Gen view: walls, doors, a locked door and its key, a lever gate, plates, traps, chests, a secret wall, torches; solid in the World3D. */
   Dungeon: new (view: Loose, o: { map: string | { text: string; rooms?: Loose[] }; seed?: number; size?: number; height?: number; dress?: boolean; ceiling?: boolean; at?: { x?: number; y?: number; z?: number }; world?: Loose | false; lamps?: boolean; hints?: boolean; loot?: (chest: DungeonThing) => { id: string; n: number }[]; trapRearm?: number; materials?: { wall?: Loose; floor?: Loose; ceiling?: Loose; trim?: Loose; wood?: Loose; iron?: Loose }; link?: boolean }) => Dungeon3D;
@@ -4986,7 +5036,7 @@ export interface GS {
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; companions: CompanionsPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; dungeon: DungeonPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; dungeon: DungeonPart; mounts: MountsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;
