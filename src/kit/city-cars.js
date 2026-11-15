@@ -162,7 +162,9 @@ const lampMat = kind => shared(kind, () => kind === 'head' ? new MeshStandardMat
   : new MeshStandardMaterial({ color: '#9c1010', emissive: new Color('#ff2414'), emissiveIntensity: kind === 'brake' ? 2.6 : .1, roughness: .25 }));
 
 const _m = new Matrix4(), _q = new Quaternion(), _s = new Vector3(1, 1, 1), _p = new Vector3(), _up = new Vector3(0, 1, 0), _c = new Color(), _w = new Object3D();
-const ZERO = new Matrix4().makeScale(0, 0, 0);
+const ZERO = new Matrix4().makeScale(0, 0, 0), _half = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI);
+// a car's turn as its model is made (nose along -z): its heading, or its whole tilt when it has crashed (c.q, nose along +z)
+const turnOf = (c, q) => c.q ? q.set(c.q.x, c.q.y, c.q.z, c.q.w).multiply(_half) : q.setFromAxisAngle(_up, c.heading + Math.PI);
 
 // a box as one of a car's surfaces (its corners coloured, its row in the table): the furthest parked cars' shapes
 function block(x0, y0, z0, x1, y1, z1, colour, pal = -1) {
@@ -255,10 +257,14 @@ export class Fleet {
   pick(R) { const n = this.kits.length, r = R(); return Math.min(n - 1, Math.floor(r * r * n * 1.15)); }   // (the first styles commonest)
   /** Gives each car its slot in its style's copies (after the list is made; a car keeps its style and slot for good). */
   assign(list) {
-    for (const f of this.far) f.n = 0;
+    for (const f of this.far) { f.n = 0; f.free = []; }
     for (const c of list) { c.slot = this.far[c.style].n++; }
     for (const c of [...this.close.keys()]) this.drop(c);
   }
+  /** A slot for a car added later (cars.add): a freed one, or the next; false when its style's copies are full. */
+  slotFor(c) { const F = this.far[c.style]; F.free ||= []; if (F.free.length) { c.slot = F.free.pop(); return true; } if (F.n >= this.cap) return false; c.slot = F.n++; return true; }
+  /** A car taken out: its slot drawn as nothing until another car takes it. */
+  freeSlot(c) { const F = this.far[c.style]; if (!F || c.slot == null) return; this.drop(c); F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); (F.free ||= []).push(c.slot); F.paint.instanceMatrix.needsUpdate = F.rest.instanceMatrix.needsUpdate = true; }
   kitOf(c) { return this.kits[c.style]; }
   draw(list, night, dt) {
     // which cars are drawn whole: the nearest few within reach (a car already close keeps it a little further)
@@ -273,7 +279,7 @@ export class Fleet {
     for (const c of list) {
       const F = this.far[c.style];
       if (this.close.has(c)) { F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); this.pose(c, this.close.get(c), dt, night); continue; }
-      _q.setFromAxisAngle(_up, c.heading + Math.PI); _m.compose(_p.set(c.x, 0, c.z), _q, _s);
+      turnOf(c, _q); _m.compose(_p.set(c.x, c.y || 0, c.z), _q, _s);
       F.paint.setMatrixAt(c.slot, _m); F.rest.setMatrixAt(c.slot, _m); F.paint.setColorAt(c.slot, _c.set(c.colour));
     }
     for (const F of this.far) { sendUsed(F.paint.instanceMatrix, F.n); sendUsed(F.rest.instanceMatrix, F.n); sendUsed(F.paint.instanceColor, F.n); }
@@ -321,7 +327,7 @@ export class Fleet {
   // a close-up car each frame: where it is, its body on its springs, its wheels, its brake lamps
   pose(c, r, dt, night) {
     const k = this.kitOf(c), o = r.o;
-    o.position.set(c.x, 0, c.z); o.rotation.set(0, c.heading + Math.PI, 0);
+    o.position.set(c.x, c.y || 0, c.z); turnOf(c, o.quaternion);
     if (dt > 0) {
       const ds = Math.max(c.v * dt, 1e-4); let dh = c.heading - r.h; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
       const st = Math.max(-.6, Math.min(.6, -Math.atan(k.wheelbase * dh / ds))), h = Math.min(1, dt * 8), a = (c.v - r.v) / dt;
