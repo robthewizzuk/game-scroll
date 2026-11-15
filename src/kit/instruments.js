@@ -99,6 +99,10 @@ export function makeVoice(T, name, out) {
       if (when <= prev) return; prev = when;
       s.triggerAttackRelease(note, Math.max(.02, len), when, Math.max(0, Math.min(1, lv)));
     },
+    /** Plays into another node from now on (a finished tune's instrument taken up by the next). */
+    route(o) { try { last.disconnect(); } catch { /* not connected */ } if (o) last.connect(o); prev = 0; },
+    /** Lets go of a held note at `when`. */
+    hush(when) { try { s.triggerRelease(when); } catch { /* nothing held */ } },
     dispose() { for (const p of parts) try { p.dispose(); } catch { /* gone */ } },
   };
 }
@@ -106,23 +110,25 @@ export function makeVoice(T, name, out) {
 /** A drum kit playing into `out`. hit('k' | 's' | 'h' | 'c', when, level). */
 export function makeKit(T, name, out) {
   const kit = KITS[name]; if (!kit) return null;
-  const parts = [], drums = {};
+  const parts = [], drums = {}, outs = [], synths = [];
   for (const [k, d] of Object.entries(kit)) {
     if (d.skin) {
       const m = new T.MembraneSynth({ volume: d.db, pitchDecay: d.drop, octaves: d.octaves, oscillator: { type: 'sine' }, envelope: { attack: .001, decay: d.decay, sustain: 0, release: .08 } });
-      m.connect(out); parts.push(m);
+      m.connect(out); parts.push(m); outs.push(m); synths.push(m);
       drums[k] = { prev: 0, hit(when, lv) { m.triggerAttackRelease(d.skin, d.decay, when, lv); } };
     } else {
       const n = new T.NoiseSynth({ volume: d.db, noise: { type: d.noise }, envelope: { attack: .001, decay: d.decay, sustain: 0, release: .03 } }), f = new T.Filter({ type: d.filter[0], frequency: d.filter[1], Q: d.filter[2] });
-      n.connect(f); f.connect(out); parts.push(n, f);
+      n.connect(f); f.connect(out); parts.push(n, f); outs.push(f); synths.push(n);
       let body = null;
-      if (d.body) { body = new T.Synth({ volume: d.body[2], oscillator: { type: 'sine' }, envelope: { attack: .001, decay: d.body[1], sustain: 0, release: .03 } }); body.connect(out); parts.push(body); }
+      if (d.body) { body = new T.Synth({ volume: d.body[2], oscillator: { type: 'sine' }, envelope: { attack: .001, decay: d.body[1], sustain: 0, release: .03 } }); body.connect(out); parts.push(body); outs.push(body); synths.push(body); }
       drums[k] = { prev: 0, hit(when, lv) { n.triggerAttackRelease(d.decay, when, lv); if (body) body.triggerAttackRelease(d.body[0], d.body[1], when, lv); } };
     }
   }
   return {
     name,
     hit(k, when, lv = 1) { const d = drums[k]; if (!d || when <= d.prev + .01) return; d.prev = when; d.hit(when, Math.max(0, Math.min(1, lv))); },
+    route(o) { for (const x of outs) { try { x.disconnect(); } catch { /* not connected */ } if (o) x.connect(o); } for (const d of Object.values(drums)) d.prev = 0; },
+    hush(when) { for (const x of synths) try { x.triggerRelease(when); } catch { /* nothing held */ } },
     dispose() { for (const p of parts) try { p.dispose(); } catch { /* gone */ } },
   };
 }
