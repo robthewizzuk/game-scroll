@@ -1333,6 +1333,82 @@ console.log('physics ok');
   for (let k = 0; k < 60; k++) i.update(F); assert.equal(i.phase, 'idle', 'the move ends');
   console.log('fight: motions, dash, facing, buffer, specials, frames, boxes, one hit, hit stop, cancels, block, low ok');
 }
+// a ready-made opponent for fighting games: it reads its moves' frames, reacts no faster than a person, and learns the player
+{
+  const { Fighter, Opponent, clash } = await import('../src/kit/fight.js');
+  const { Dial } = await import('../src/kit/brains.js');
+  let seed = 5; const R = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const F = 1 / 60, MOVES = {
+    jab: { start: 3, active: 2, recover: 6, hit: [[10, -60, 34, 14]], damage: 4, stun: 12, cancel: ['strong', 'sweep'] },
+    strong: { start: 8, active: 3, recover: 16, hit: [[10, -55, 52, 16]], damage: 10, stun: 20, blockStun: 8 },
+    sweep: { start: 7, active: 3, recover: 15, hit: [[10, -12, 48, 12]], damage: 7, stun: 18, low: true },
+    overhead: { start: 17, active: 2, recover: 14, hit: [[8, -90, 40, 40]], damage: 9, stun: 20, high: true },
+  };
+  // one frame of thought in a set-up spot: its own fighter on the right, the player on the left, `apart` between them
+  const spot = (apart, rnd, set = () => {}, opts = {}) => {
+    const p = new Fighter(MOVES, { x: 100, facing: 1 }), c = new Fighter(MOVES, { x: 100 + apart, facing: -1 }), cpu = new Opponent({ skill: 1, rng: () => rnd, name: 'spot', ...opts }).join(c, p);
+    set(p, c, cpu); return cpu.think(F);
+  };
+  const run = (f, n) => { for (let i = 0; i < n; i++) f.update(F); };
+  assert.deepEqual(spot(200, .99), { walk: 1, block: false, move: null }, 'far apart: it walks in');
+  assert.equal(spot(50, .01).move, 'jab', 'in reach of a player who is not guarding: the jab that leads on to its strong');
+  assert.deepEqual(spot(60, .6), { walk: 1, block: false, move: null }, 'a step short of that: it steps in');
+  assert.equal(spot(60, .01, p => { p.blocking = true; }).move, 'sweep', 'they guard high: it goes low');
+  assert.notEqual(spot(60, .01, p => { p.blocking = true; p.blockLow = true; }).move, 'sweep', 'they guard low: not a sweep');
+  assert.equal(spot(50, .01, p => { p.blocking = true; p.blockLow = true; }).move, 'overhead', 'close to a low guard: over the top');
+  // it sees a move a reaction time after it began (7 frames at skill 1, 20 at skill 0), and then guards at the right height
+  assert.equal(spot(55, .99, p => { p.start('overhead'); run(p, 5); }).block, false, 'a move 5 frames old: not seen yet');
+  assert.equal(spot(55, .99, p => { p.start('overhead'); run(p, 9); }).block, 'high', 'seen: it guards high against an overhead');
+  assert.equal(spot(55, .99, p => { p.start('sweep'); run(p, 8); }).block, 'low', 'and low against a sweep');
+  assert.equal(spot(55, .99, p => { p.start('overhead'); run(p, 9); }, { skill: 0 }).block, false, 'at skill 0 it has not seen it by then');
+  assert.equal(spot(50, .2, p => { p.start('overhead'); run(p, 9); }).move, 'jab', 'or it stops a slow move with a faster one of its own');
+  assert.equal(spot(120, .99, p => { p.start('overhead'); run(p, 9); }).block, false, 'a move that will not reach is not guarded');
+  // the player is open: the hardest move that lands in time, a step in when nothing reaches, a follow-up when its own move connects
+  assert.equal(spot(60, .5, p => { p.start('strong'); run(p, 14); }).move, 'strong', 'their strong missed with 13 frames left: its own strong lands first');
+  assert.equal(spot(60, .5, p => { p.start('strong'); run(p, 21); }).move, 'sweep', 'with 6 frames left nothing that reaches is certain to land: it takes its turn, with a move that is out before theirs could be');
+  assert.equal(spot(52, .5, p => { p.start('strong'); run(p, 21); }).move, 'jab', 'closer, the jab');
+  assert.deepEqual(spot(80, .5, p => { p.start('overhead'); run(p, 20); }), { walk: 1, block: false, move: null }, 'out of reach of an open player: a step in');
+  assert.equal(spot(50, .5, (p, c) => { c.start('jab'); run(c, 4); assert.ok(clash(c, p)); c.stop = 0; }).move, 'strong', 'its jab connected: on into the strong');
+  assert.equal(spot(50, .5, (p, c) => { c.start('jab'); run(c, 4); }).move, null, 'a jab that has not connected is not cancelled');
+  assert.deepEqual(new Opponent({ name: 'none' }).think(F), { walk: 0, block: false, move: null }, 'no fighters joined: nothing');
+  // a small fighting game: 30 second rounds, the same moves each side
+  const WALK = 100, REACH = { jab: 56, strong: 74, sweep: 70 };
+  const sweeper = (me, foe) => (Math.abs(foe.x - me.x) <= REACH.sweep - 2 ? { walk: 0, block: false, move: 'sweep' } : { walk: 1, block: false, move: null });   // walks in and sweeps, always
+  const basic = (me, foe) => (me.move === 'jab' && me.hitThis.size ? { walk: 0, block: false, move: 'strong' } : Math.abs(foe.x - me.x) <= REACH.jab - 2 ? { walk: 0, block: false, move: R() < 3 * F ? 'jab' : null } : { walk: 1, block: false, move: null });
+  const play = (player, cpu, n) => {
+    let won = 0;
+    for (let g = 0; g < n; g++) {
+      const a = new Fighter(MOVES, { x: 150, facing: 1 }), b = new Fighter(MOVES, { x: 250, facing: -1 }); cpu.join(b, a);
+      for (let f = 0; f < 1800 && a.hp > 0 && b.hp > 0; f++) {
+        a.facing = a.x <= b.x ? 1 : -1; b.facing = -a.facing;
+        const wa = player(a, b), wb = cpu.think(F);
+        assert.ok([-1, 0, 1].includes(wb.walk) && [false, 'high', 'low'].includes(wb.block) && (wb.move === null || MOVES[wb.move]), 'a want your game can carry out');
+        for (const [me, w] of [[a, wa], [b, wb]]) { me.blocking = !!w.block; me.blockLow = w.block === 'low'; if (!me.busy && me.stop <= 0 && w.walk && !(w.block && w.walk > 0)) me.x = Math.max(20, Math.min(380, me.x + w.walk * me.facing * WALK * F)); if (w.move) me.start(w.move); }
+        if (Math.abs(a.x - b.x) < 24) { const mid = (a.x + b.x) / 2, s = a.x <= b.x ? -1 : 1; a.x = mid + s * 12; b.x = mid - s * 12; }
+        a.update(F); b.update(F);
+        for (const [x, y] of (f + g) % 2 ? [[a, b], [b, a]] : [[b, a], [a, b]]) { const h = clash(x, y); if (h && !h.blocked) y.hp -= h.move.damage; }
+      }
+      won += a.hp === b.hp ? .5 : a.hp > b.hp ? 1 : 0; cpu.result(a.hp > b.hp);
+    }
+    return won / n;
+  };
+  const kept = new Map(), api = { brains: { load: n => kept.get(n) ?? null, save: (n, t) => { kept.set(n, t); } } };
+  const cpu = new Opponent(api, { skill: 1, rng: R, name: 'bruiser' });
+  assert.ok(cpu.expect(60).low < .3, 'a player it has never met: it expects middling attacks');
+  const blind = play(sweeper, new Opponent({ skill: 1, learn: false, rng: R, name: 'b0' }), 40), first = play(sweeper, cpu, 40);
+  assert.ok(cpu.expect(60).low > .8, 'this player goes low: ' + cpu.expect(60).low.toFixed(2)); assert.ok(cpu.expect(60).eager > 1, 'and attacks at once when in reach: ' + cpu.expect(60).eager.toFixed(1) + ' a second');
+  assert.ok(blind > .8 && first < .3, 'so it guards low and takes its turn: the sweeper wins ' + Math.round(blind * 100) + ' in 100 rounds against one that never learns, ' + Math.round(first * 100) + ' against one that does');
+  assert.ok(kept.has('bruiser') && kept.has('bruiser-guard') && kept.has('bruiser-punish'), 'kept with the game\'s brains');
+  const pair = () => [new Fighter(MOVES, { x: 250, facing: -1 }), new Fighter(MOVES, { x: 150 })];
+  assert.ok(new Opponent(api, { skill: 1, name: 'bruiser' }).join(...pair()).expect(60).low > .8, 'a new session still knows them'); assert.ok(new Opponent(api, { name: 'other' }).join(...pair()).expect(60).low < .3, 'another name knows nothing');
+  const hard = play(basic, new Opponent({ skill: 1, rng: R, name: 'b1' }), 40), easy = play(basic, new Opponent({ skill: .25, rng: R, name: 'b2' }), 40);
+  assert.ok(hard < .2 && easy > .7, 'skill: a plain player wins ' + Math.round(hard * 100) + ' in 100 at skill 1, ' + Math.round(easy * 100) + ' at .25');
+  const dial = new Dial({ name: 'b3', save: false }), k0 = dial.skill, dialled = new Opponent({ skill: dial, rng: R, name: 'b4' });
+  for (let i = 0; i < 6; i++) dialled.result(true);
+  assert.ok(dial.skill > k0, 'the player keeps winning: the dial goes up');
+  assert.ok(cpu.forget().expect(60).low < .3, 'forgotten');
+  console.log('fight opponent: walks in, the hardest move that reaches, round a guard, a reaction time before it guards, punishes, follows up; it learns a sweeper (they win ' + Math.round(blind * 100) + ' in 100 against one that never learns, ' + Math.round(first * 100) + ' against one that does), skill (' + Math.round(easy * 100) + ' at .25, ' + Math.round(hard * 100) + ' at 1), saved, a dial ok');
+}
 {
   const { Bullets, Emitter } = await import('../src/kit/bullets.js');
   const b = new Bullets({ max: 100, w: 300, h: 300 }), ring = new Emitter(b, { every: .5, rotate: .1, times: 3 }).ring(8, 50);

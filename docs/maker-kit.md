@@ -2074,6 +2074,43 @@ feet (facing right), `stun`, `blockStun`, `stop`, `low`/`high`, `cancel: [names]
 `start(name)`, `update(dt)`, `phase`. `clash(a, b)` checks a's hit boxes against b's hurt boxes once per
 move, sets stun, block stun (b.blocking, b.blockLow) and hit stop, and returns `{ move, blocked, x, y }`.
 
+A ready-made opponent for a fighting game (Tiny Brains): it reads its moves' frames (how far each
+reaches, how fast it comes out, whether it is safe when blocked) and learns how this player fights.
+
+```js
+const { Fighter, Opponent, clash } = gs.fight;
+cpu = new Opponent(api, { skill: .6 });                 // make(): what it learns is kept on the phone
+reset() { p1 = new Fighter(MOVES, { x: 100 }); p2 = new Fighter(MOVES, { x: 260, facing: -1 }); cpu.join(p2, p1); }
+update(dt) {
+  const want = cpu.think(dt);                           // { walk: -1 | 0 | 1, block: false | 'high' | 'low', move: 'jab' | null }
+  p2.blocking = !!want.block; p2.blockLow = want.block === 'low';
+  if (!p2.busy) p2.x += want.walk * p2.facing * WALK * dt;       // 1 is towards the player
+  if (want.move) p2.start(want.move);
+  // ...the player's side, p1.update(dt), p2.update(dt), clash() both ways, as before
+}
+// at the end of a round:
+cpu.result(playerWon);
+```
+
+- It says what it wants; your game does it (walking speed, the stage's edges and damage stay yours).
+- From the frames alone it punishes a move that missed or was blocked with the hardest move that lands
+  in time, takes its turn after a block with a move that is out before the player's could be, cancels
+  into follow-ups when a move connects, and goes low on a player it can see guarding high (and over the
+  top of a low guard).
+- It sees a move only a reaction time after it began: 7 frames at skill 1, 20 at skill 0. A jab or a
+  sweep is faster than that, as it is for a person, so what it can't react to it has to expect. It
+  learns how high this player attacks from each distance, how eager they are, how they guard and
+  whether they punish what they block (`cpu.expect(dist)`, `cpu.guard()`), and guards to suit.
+- `skill` is 0..1 or a `gs.brains.Dial`: how fast it reacts, how often it punishes, guards at the
+  right height and takes its follow-ups, and how fanciful its choice of move is.
+- Measured in a small made-up fighting game (four moves, 30 second rounds, the same moves each side)
+  against scripted players: one who walks in and sweeps wins every round against an opponent that
+  never learns and 2 in 100 once it has learned them; one who presses moves at random wins 6 in 100,
+  a decent one (guards half the time, punishes) 30 in 100. By skill, that decent player wins 57 in
+  100 at .75, 84 at .5 and nearly always below that; with a dial every one of them wins about 62 in
+  100. One who only ever guards loses at any skill, because it sees the guard and goes round it. A
+  think takes about a microsecond.
+
 **Bullet patterns** (`gs.bullets`): `Bullets({ max, w, h })` keeps thousands of bullets in flat arrays:
 `fire(x, y, speed, angle, { accel, turn, wave, home, kind, life })`, `update(dt, target)`, `each(fn)` to
 draw, `hit(x, y, r, graze)` (`{ hit, grazed }`: near misses count once) and `clear(fn, x, y, r)` for
