@@ -1,11 +1,16 @@
 // Castle Lanes: two castles, three lanes. Pick a soldier card, then tap a lane to send it marching. Swords
 // beat bows, bows beat spears, spears beat swords, and soldiers that reach the far castle knock its walls
 // down. Bread refills over time, so spend it well. Topple the enemy castle to face a tougher one.
+// The enemy commander has two Tiny Brains: a habit reader (gs.brains.Predict) that learns which soldier
+// you tend to send next, so it can have the counter on its way, and the win-rate dial (gs.brains.Dial)
+// that sets how often it trusts that guess and how fast its bread comes in, so each castle stays a
+// fair fight for this player. A "?" over its castle shows when it has read your next soldier.
 import gs from '../gamescroll.js';
 const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
 const { rnd } = gs.util;
+const { Predict, Dial } = gs.brains;
 
 let W = 360, H = 640;
 const KINDS = {
@@ -17,7 +22,9 @@ const NAMES = ['sword', 'spear', 'bow'];
 
 function make(api) {
   const feel = new Feel();
-  let units, bread, foe, me, them, pick, score, level, t, aiT, msg, ml, ended;
+  let units, bread, foe, me, them, pick, score, level, t, aiT, msg, ml, ended, read = 0, lastLane = 1;
+  const habits = new Predict(api, { name: 'castle-lanes-habits', moves: NAMES });
+  const dial = new Dial(api, { name: 'castle-lanes', target: .6 });
   const laneX = i => W * (i + .5) / 3, TOPY = 110, BOTY = () => H - 170;
 
   function newLevel() { level++; me = me ?? 20; them = 12 + level * 4; units = []; foe = 5; aiT = 2; }
@@ -33,14 +40,17 @@ function make(api) {
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
       t += dt; if (ml > 0) ml -= dt;
-      bread = Math.min(10, bread + dt * .7); foe = Math.min(10, foe + dt * (.55 + level * .08));
+      bread = Math.min(10, bread + dt * .7); foe = Math.min(10, foe + dt * (.55 + level * .08) * (.85 + .3 * dial)); read = Math.max(0, read - dt);
       // the enemy commander: answers your soldiers with their counter, or pushes a lane
       aiT -= dt;
       if (aiT <= 0) {
         aiT = rnd(.8, 1.6);
         const mine = units.filter(u => u.side === 1 && u.y < H * .65).sort((a, b) => a.y - b.y)[0];
         let kind, lane;
-        if (mine && Math.random() < .7) { kind = NAMES.find(n => KINDS[n].beats === mine.kind); lane = mine.lane; }
+        const next = habits.guess();
+        // it has read your next soldier: send its counter down the lane you used last
+        if (next && habits.sure > .4 && Math.random() < dial * .7) { kind = NAMES.find(n => KINDS[n].beats === next); lane = lastLane; read = 1.2; }
+        else if (mine && Math.random() < .7) { kind = NAMES.find(n => KINDS[n].beats === mine.kind); lane = mine.lane; }
         else { kind = NAMES[Math.random() * 3 | 0]; lane = Math.random() * 3 | 0; }
         if (foe >= KINDS[kind].cost) { foe -= KINDS[kind].cost; spawn(-1, kind, lane); }
       }
@@ -54,8 +64,8 @@ function make(api) {
         if (u.side === -1 && u.y >= BOTY() + 10) { u.hp = 0; me -= 2; feel.hurt(laneX(u.lane), BOTY() + 20); haptic('error'); }
       }
       units = units.filter(u => u.hp > 0);
-      if (them <= 0) { score += 10; api.score(score); notes('C5 E5 G5 C6', { len: .07 }); feel.win(W / 2, 80); haptic('success'); msg = `Castle ${level} falls!`; ml = 2; newLevel(); }
-      if (me <= 0 && !ended) { ended = true; feel.lose(); api.over(); }
+      if (them <= 0) { score += 10; api.score(score); notes('C5 E5 G5 C6', { len: .07 }); feel.win(W / 2, 80); haptic('success'); msg = `Castle ${level} falls!`; ml = 2; dial.result(true); newLevel(); }
+      if (me <= 0 && !ended) { ended = true; dial.result(false); feel.lose(); api.over(); }
     },
     draw(c) {
       c.fillStyle = '#8ab17d'; c.fillRect(0, 0, W, H);
@@ -64,6 +74,10 @@ function make(api) {
       const castle = (y, hp, max, col, flip) => { c.fillStyle = col; c.fillRect(20, y - 24, W - 40, 40); for (let x = 20; x < W - 20; x += 24) c.fillRect(x, y - (flip ? -16 : 34), 14, 12); c.fillStyle = '#00000040'; c.fillRect(40, y - 6, W - 80, 8); c.fillStyle = '#ffd166'; c.fillRect(40, y - 6, (W - 80) * Math.max(0, hp / max), 8); };
       castle(TOPY - 30, them, 12 + level * 4, '#6d597a', false);
       castle(BOTY() + 34, me, 20, '#7f5539', true);
+      if (read > 0) {   // the commander read your next soldier: its counter is coming down this lane
+        c.globalAlpha = Math.min(1, read * 2); c.fillStyle = '#ffd166'; c.font = '800 20px Rubik, sans-serif'; c.textAlign = 'center';
+        c.fillText('?', laneX(lastLane), TOPY + 24 - Math.sin(t * 8) * 2); c.globalAlpha = 1;
+      }
       feel.begin(c);
       // one-time pick highlight shows lanes are tappable
       if (pick) for (let i = 0; i < 3; i++) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.setLineDash([6, 6]); c.strokeRect(laneX(i) - 26, TOPY, 52, BOTY() - TOPY); c.setLineDash([]); }
@@ -92,7 +106,7 @@ function make(api) {
       if (y > H - 110) { const i = Math.floor((x - 20) / ((W - 40) / 3)); const n = NAMES[i]; if (n && bread >= KINDS[n].cost) { pick = pick === n ? null : n; sfx(700, .03, 'square', .02); haptic('tick'); } return; }
       if (!pick) return;
       const lane = Math.min(2, Math.max(0, Math.floor(x / (W / 3))));
-      if (bread >= KINDS[pick].cost) { bread -= KINDS[pick].cost; spawn(1, pick, lane); haptic('light'); }
+      if (bread >= KINDS[pick].cost) { bread -= KINDS[pick].cost; spawn(1, pick, lane); habits.see(pick); lastLane = lane; haptic('light'); }
       if (bread < KINDS[pick].cost) pick = null;
     },
   };

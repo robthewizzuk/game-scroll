@@ -4,13 +4,17 @@ const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { Dial } = gs.brains;
 
 // Turn-based artillery on a hill. Drag back from your tank to aim and set power, then let go.
 // Mind the wind. Each enemy tank you hit brings a sharper one. Get hit once and it's over.
 // A shell hits a tank it touches on the way (swept against the tank's body each step), not only where it lands.
+// How sharp the enemy's aim is follows a Tiny Brains win-rate dial (gs.brains.Dial): each tank is a
+// duel, and the dial keeps this player winning most of them, so the climb stays fair.
 const P = PAL.moss, W = 160, H = 160, G = 90, MAXP = 120;
 
 function make(api) {
+  const dial = new Dial(api, { name: 'tank-duel', target: .75 });
   const feel = new Feel({ pixel: true, sound: false, buzz: false });   // the game has its own sounds and buzzes
   let ground, me, foe, shell, turn, wind, score, aim, boom, wait, foeErr, t;
   function terrain() {
@@ -19,7 +23,7 @@ function make(api) {
   }
   function newRound() {
     terrain(); me = { x: Math.round(rnd(12, 30)) }; foe = { x: Math.round(rnd(130, 148)) };
-    wind = Math.round(rnd(-20, 20)); turn = 'me'; shell = null; boom = null; wait = 0; foeErr = Math.max(.04, .3 - score * .05);
+    wind = Math.round(rnd(-20, 20)); turn = 'me'; shell = null; boom = null; wait = 0; foeErr = Math.max(.04, .3 - score * .05) * (1.4 - .8 * dial);
   }
   const gy = x => ground[clamp(Math.round(x), 0, W - 1)];
   // A tank's body as the shell sees it: [left, top, right, bottom], a pixel round what's drawn (hull, turret).
@@ -51,6 +55,7 @@ function make(api) {
     const near = tk => { const b = box(tk), dx = Math.max(b[0] - x, 0, x - b[2]), dy = Math.max(b[1] - y, 0, y - b[3]); return Math.hypot(dx, dy) < 4; };
     const hitFoe = direct === 'foe' || near(foe), hitMe = direct === 'me' || (!hitFoe && near(me));
     for (let i = -7; i <= 7; i++) { const xx = Math.round(x) + i; if (xx < 0 || xx >= W) continue; const d = Math.sqrt(49 - i * i); if (ground[xx] < y + d) ground[xx] = Math.min(150, Math.max(ground[xx], y + d)); }
+    if (hitFoe || hitMe) dial.result(hitFoe);
     if (hitFoe) { score++; api.score(score); haptic('success'); wait = 1.2; turn = 'next'; feel.juice.burst(foe.x, y - 3, { n: 14, speed: 70, life: .6, size: 2, gravity: 120, color: [P[0], P[1]] }).pop(foe.x - 10, y - 16, 'HIT', { color: P[0], size: 8 }); return; }
     if (hitMe) { haptic('error'); turn = 'dead'; wait = .6; feel.juice.shake(5).burst(me.x, y - 3, { n: 14, speed: 70, life: .6, size: 2, gravity: 120, color: [P[0], P[1]] }); return; }
     turn = shell.who === 'me' ? 'foe' : 'me'; wait = turn === 'foe' ? .9 : 0;

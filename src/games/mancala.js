@@ -6,6 +6,7 @@
 import gs from '../gamescroll.js';
 const { haptic } = gs.device;
 const { Search } = gs.solve;
+const { Dial } = gs.brains;
 const { Table, slab, stone, ring, sounds } = gs.tabletop;
 
 let W = 300, H = 460;
@@ -37,6 +38,9 @@ const brain = new Search({
 });
 
 function make(api) {
+  // the win-rate dial (Tiny Brains): the other side plays between a looser and a sharper game, following this
+  // player's results so they win a little over half their games
+  const dial = new Dial(api, { name: 'mancala', start: .82, range: [.55, .97] });
   let T, rig, stones, pits, rings, b, state, turn, tall = true;
 
   function setup() {
@@ -101,11 +105,11 @@ function make(api) {
     state = 'busy';
     let r = await play(from);
     while (!r.done && r.t === 1) {                                 // the other side plays until the turn comes back
-      turn = 1; const m = await T.think(brain, { b, t: 1 }, { time: 220, depth: 7, skill: .82, wait: .7 });
+      turn = 1; const m = await T.think(brain, { b, t: 1 }, { time: 220, depth: 7, skill: dial, wait: .7 });
       r = await play(m);
     }
     if (r.done) {
-      state = 'done'; turn = -1; const won = b[ME] > b[THEM];
+      state = 'done'; turn = -1; const won = b[ME] > b[THEM]; dial.result(b[ME] === b[THEM] ? 'draw' : won);
       if (won) { sounds.gong(); api.win(); } else sounds.thud();
       await T.wait(1.6); api.clearSave(); T.stop(); return api.over();
     }

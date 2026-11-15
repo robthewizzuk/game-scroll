@@ -4,12 +4,19 @@ const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { View, G, part, grp, blob, flat, THREE } = gs.toon;
 const { Group } = THREE;
+const { Brain } = gs.brains;
+const CHOICES = ['jab', 'heavy', 'sweep', 'guard', 'back'];
 const teleHigh = flat('#ff4848', .35), teleLow = flat('#4890ff', .35);
 
 // A one-on-one arena fighter built for thumbs. Tap to jab, swipe forward for a heavy blow, swipe
 // down to sweep low, swipe up to hop, swipe back to step away, and hold still to guard. Guard
 // stops jabs and heavies but not sweeps; hop over sweeps. Rivals flash before they strike: red
 // means guard, blue means hop. Hit them while they wind up for a double-damage counter.
+// Up close, each rival's choice (jab, heavy, sweep, guard, step back) comes from a Tiny Brains rival
+// with a memory. Its teacher is the old dice roll; it sees how you fight (how often you guard and hop,
+// whether you're winding up, the health bars) and feels each move: a sweep you hop or a blow you block
+// at the last moment is the thrill, a swing at thin air is dull. Its memory keeps which move gave this
+// player a close fight from where, and the win-rate rail keeps it fair (it thinks slower while you lose).
 const MOVES = {
   jab: { wind: .1, act: .1, rec: .15, dmg: 4, reach: 26, kind: 'high' },
   heavy: { wind: .32, act: .12, rec: .35, dmg: 11, reach: 34, kind: 'high', push: 20 },
@@ -26,6 +33,16 @@ let W = 192, H = 160;
 
 function make(api) {
   let you, foe, rival, ko, t, parts, msg, dead, sw, between, flash, wins;
+  // how this player fights, kept across bouts: how often they guard and hop (-1 never .. 1 a lot)
+  const habit = { guard: 0, hop: -.5 };
+  // see: 0..1 the habits above, 2 what you're doing now (1 winding up, -1 recovering), 3 your health, 4 the rival's
+  const see = () => [habit.guard, habit.hop, you.st === 'wind' ? 1 : you.st === 'rec' || you.stun > 0 ? -1 : 0, you.hp / you.max * 2 - 1, foe.hp / foe.max * 2 - 1];
+  const mind = new Brain(api, {
+    name: 'swipe-fighter-rival', inputs: 5, actions: CHOICES, memory: true,
+    // the teacher is the old dice roll
+    teacher: () => { const r = Math.random(); return r < .3 ? 'jab' : r < .55 ? 'heavy' : r < .78 ? 'sweep' : r < .9 ? 'guard' : 'back'; },
+    limits: { react: .1, perSecond: 10, minNoise: .06 },
+  });
   const floor = () => H - 22;
   const mk = (x, dir, col, skin) => ({ x, dir, hp: 60, max: 60, st: 'idle', mv: null, tt: 0, guard: false, air: 0, down: 0, stun: 0, col, skin, hitDone: false });
   function startFight() { const r = RIVALS[wins % RIVALS.length], lap = Math.floor(wins / RIVALS.length); rival = { ...r, speed: r.speed + lap * .2, aggro: r.aggro + lap * .3 }; foe = mk(W * .7, -1, r.col, r.skin); foe.hp = foe.max = 50 + wins * 6; foe.think = .8; you.x = W * .3; you.st = 'idle'; you.mv = null; between = 1.4; msg = { txt: `VS ${rival.name}`, l: 1.4 }; }
@@ -79,9 +96,10 @@ function make(api) {
   function burst(x, y, col) { for (let i = 0; i < 8; i++) parts.push({ x, y, vx: rnd(-60, 60), vy: rnd(-70, 10), l: .35, col }); }
   function strike(a, b) {
     const m = MOVES[a.mv], d = Math.abs(a.x - b.x); if (d > m.reach || a.hitDone) return; a.hitDone = true;
-    if (m.kind === 'low' && b.air > 0) { burst(b.x, floor() - 4, '#ffffff'); return; }
-    if (m.kind === 'high' && b.guard && b.st === 'idle') { b.x += a.dir * 6; sfx(900, .05, 'square', .03); parts.push({ txt: 'BLOCK', x: b.x, y: floor() - 46, l: .6, col: '#a0c8ff' }); if (b === you) haptic('light'); a.st = 'rec'; a.tt = 0; return; }
+    if (m.kind === 'low' && b.air > 0) { if (a === foe) mind.feel(1); burst(b.x, floor() - 4, '#ffffff'); return; }   // you hopped its sweep
+    if (m.kind === 'high' && b.guard && b.st === 'idle') { if (a === foe) mind.feel(.6); b.x += a.dir * 6; sfx(900, .05, 'square', .03); parts.push({ txt: 'BLOCK', x: b.x, y: floor() - 46, l: .6, col: '#a0c8ff' }); if (b === you) haptic('light'); a.st = 'rec'; a.tt = 0; return; }
     const counter = b.st === 'wind', dmg = m.dmg * (counter ? 2 : 1);
+    if (a === foe) mind.feel(.2); else if (counter) mind.feel(1);   // its blow landed; or you read its wind-up and countered
     b.hp -= dmg; b.st = 'idle'; b.mv = null; b.stun = .3 + (counter ? .25 : 0); b.guard = false; b.x += a.dir * (m.push || 6); if (m.down) b.down = .8;
     burst(b.x, floor() - (m.kind === 'low' ? 6 : 30), counter ? '#f8e040' : '#ffffff'); parts.push({ txt: counter ? `COUNTER ${dmg}` : `${dmg}`, x: b.x, y: floor() - 50, l: .7, col: counter ? '#f8e040' : '#f8f8f0' });
     flash = .08; sfx(counter ? 160 : 220, .12, 'square', .06, -80); haptic(b === you ? 'heavy' : counter ? 'success' : 'medium');
@@ -91,7 +109,7 @@ function make(api) {
     if (f.air > 0) { f.air += dt; if (f.air > .55) f.air = 0; }
     if (f.st !== 'idle') { const m = MOVES[f.mv]; f.tt += dt; const sp = f === foe ? rival.speed : 1;
       if (f.st === 'wind' && f.tt >= m.wind / sp) { f.st = 'act'; f.tt = 0; sfx(f.mv === 'jab' ? 500 : 300, .05, 'square', .03, -100); }
-      else if (f.st === 'act') { strike(f, o); if (f.tt >= m.act) { f.st = 'rec'; f.tt = 0; } }
+      else if (f.st === 'act') { strike(f, o); if (f.tt >= m.act) { if (f === foe && !f.hitDone) mind.feel(-.3); f.st = 'rec'; f.tt = 0; } }   // a swing at thin air
       else if (f.st === 'rec' && f.tt >= m.rec / sp) { f.st = 'idle'; f.mv = null; } }
     f.x = clamp(f.x, 12, W - 12); f.dir = o.x > f.x ? 1 : -1;
     if (Math.abs(f.x - o.x) < 16) { const push = (16 - Math.abs(f.x - o.x)) / 2; f.x -= f.dir * push; }
@@ -102,9 +120,15 @@ function make(api) {
       // react to your wind-ups sometimes, based on aggression
       if (you.st === 'wind' && foe.think < .3 && Math.random() < .03 * rival.aggro) { if (you.mv === 'sweep') foe.air = .01; else foe.guard = true; }
       if (foe.think <= 0) {
-        foe.guard = false; foe.think = rnd(.35, .9) / rival.aggro;
+        foe.guard = false; foe.think = rnd(.35, .9) / rival.aggro * (1.15 - .3 * mind.skill);
         if (d > 32) { foe.walk = rnd(.25, .6); }
-        else { const r = Math.random(); if (r < .3) act(foe, 'jab'); else if (r < .55) act(foe, 'heavy'); else if (r < .78) act(foe, 'sweep'); else if (r < .9) foe.guard = true, foe.think = .6; else foe.back = .3; }
+        else {
+          habit.guard += ((you.guard ? 1 : -1) - habit.guard) * .15;
+          mind.act(see(), 1); const c = mind.action;
+          if (c === 'guard') { foe.guard = true; foe.think = .6; mind.feel(0); }
+          else if (c === 'back') { foe.back = .3; mind.feel(0); }
+          else act(foe, c);
+        }
       }
       if (foe.walk > 0) { foe.walk -= dt; foe.x += foe.dir * 40 * rival.speed * dt; }
       if (foe.back > 0) { foe.back -= dt; foe.x -= foe.dir * 50 * dt; }
@@ -119,11 +143,11 @@ function make(api) {
       if (dead) { dead += dt; if (dead > 1.5) api.over(); return; }
       if (between > 0) { between -= dt; return; }
       if (ko) { ko += dt; if (ko > 1.6) { ko = 0; wins++; api.score(wins); you.hp = Math.min(you.max, you.hp + 25); startFight(); } return; }
-      if (sw && !sw.used && performance.now() - sw.t > 160 && you.st === 'idle') you.guard = true;
+      if (sw && !sw.used && t - sw.t > .16 && you.st === 'idle') you.guard = true;
       if (you.walk) { you.x += you.walk * 60 * dt; }
       step(you, foe, dt); ai(dt); step(foe, you, dt);
-      if (foe.hp <= 0) { foe.hp = 0; ko = .01; msg = { txt: 'K.O.!', l: 1.5 }; haptic('success'); sfx(880, .5, 'square', .05, 400); }
-      else if (you.hp <= 0) { you.hp = 0; dead = .01; msg = { txt: 'DOWN AND OUT', l: 9 }; haptic('error'); sfx(110, .7, 'sawtooth', .05, -40); }
+      if (foe.hp <= 0) { foe.hp = 0; ko = .01; mind.result(true); msg = { txt: 'K.O.!', l: 1.5 }; haptic('success'); sfx(880, .5, 'square', .05, 400); }
+      else if (you.hp <= 0) { you.hp = 0; dead = .01; mind.result(false); msg = { txt: 'DOWN AND OUT', l: 9 }; haptic('error'); sfx(110, .7, 'sawtooth', .05, -40); }
     },
     draw(c) {
       const v = view3d(); v.frame();
@@ -148,14 +172,15 @@ function make(api) {
       if (msg) { c.fillStyle = '#000a'; c.fillRect(0, H * .4 - 10, W, 14); c.fillStyle = dead ? '#f86060' : '#f8f8f0'; c.fillText(msg.txt, W / 2, H * .4); }
       if (t < 9 && !msg) { c.fillStyle = '#000a'; c.fillRect(0, H - 20, W, 18); c.fillStyle = '#f8f8f0'; c.fillText('TAP JAB · SWIPE FWD HEAVY', W / 2, H - 12); c.fillText('DOWN SWEEP · UP HOP · HOLD GUARD', W / 2, H - 4); }
     },
-    down(x, y) { sw = { x, y, t: performance.now(), used: false }; },
+    down(x, y) { sw = { x, y, t, used: false }; },
     move(x, y, p) {
       if (!p || !sw || sw.used || dead) return; const dx = x - sw.x, dy = y - sw.y; if (Math.hypot(dx, dy) < 16) return; sw.used = true; you.guard = false;
       if (Math.abs(dx) > Math.abs(dy)) { if (Math.sign(dx) === you.dir) self.cmd('heavy'); else self.cmd('back'); } else self.cmd(dy > 0 ? 'sweep' : 'hop');
     },
-    up() { if (sw && !sw.used && performance.now() - sw.t < 160) self.cmd('jab'); you.guard = false; you.walk = 0; sw = null; },
+    up() { if (sw && !sw.used && t - sw.t < .16) self.cmd('jab'); you.guard = false; you.walk = 0; sw = null; },
     cmd(c2) {
       if (dead || ko || between > 0) return;
+      habit.hop += ((c2 === 'hop' ? 1 : -1) - habit.hop) * .15;
       if (c2 === 'hop') { if (you.st === 'idle' && you.air === 0 && !you.down) { you.air = .01; sfx(500, .05, 'square', .03, 200); } return; }
       if (c2 === 'back') { if (you.st === 'idle') { you.x -= you.dir * 20; sfx(300, .04, 'square', .02); } return; }
       if (act(you, c2)) haptic('tick');
