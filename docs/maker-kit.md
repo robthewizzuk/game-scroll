@@ -81,7 +81,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
-| Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
+| Cars, lorries, buses, motorbikes, tanks, trains, boats, planes and helicopters to drive (police, taxi, ambulance and fire engine too), with no model files: wheels that roll and steer, tracks, a turret, propellers, rotors, flashing lights | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
 | Fur on animals, beards (and hair, when asked) in strands on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -3832,8 +3832,8 @@ update(dt) {
 
 ## Vehicles made in code
 
-`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, tanks, trains, boats and planes with no model
-files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
+`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, buses, motorbikes, tanks, trains, boats, planes
+and helicopters with no model files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
 a little, and handed back as a three.js Group with the parts that turn on pivots of their own:
 
 ```js
@@ -3850,12 +3850,15 @@ update(dt) {
 
 | `kind` | `style` (the first is what you get with none) | What turns | `points` |
 | --- | --- | --- | --- |
-| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
-| `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
+| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep`, `police`, `taxi`, `ambulance` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; `beacon0`, `beacon1`... (lights on the roof) |
+| `truck` | `flat`, `canvas`, `box`, `fire` (a fire engine), `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind; a fire engine's `parts.turntable` and `ladder` | a car's, and `load`; a fire engine's `tip`, `hose`, `crewL`, `crewR` |
+| `bus` | `city`, `double` (a double decker), `coach`; `side: 'left'` puts its doors on the left | four `wheels`, twin tyres behind | `driver`, `door` (`door0`, `door1`...), `aisle`, `exhaust`, `lampL`, `lampR`, `hitch` |
+| `bike` (a motorbike) | `road`, `sport` (a fairing), `scooter`, `dirt` | `parts.fork` with its bars and front wheel, both `wheels`; it leans | `rider`, `pillion`, `pegL`, `pegR`, `barL`, `barR`, `exhaust`, `lampL`, `stand` |
 | `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
 | `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `guard` (a guard's van), `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a tender's `coal`; a wagon's `load`, a coach's `door`, the `roof` of a van, a guard's van and a coach; a guard's van's `veranda` and `tail`; a tank wagon's `filler` |
 | `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
 | `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
+| `helicopter` | `light`, `police` (a searchlight under its nose), `medic` | `parts.rotor`, `parts.tail` | `pilot`, `copilot`, `door`, `cabin`, `hook`, `tailRotor`, `smoke`; a police one's `spot` |
 
 `vehicle.kinds` is the same list, for a menu or a test.
 
@@ -3890,7 +3893,16 @@ update(dt) {
   springs does (`sway: 0` for none), propellers spin up to a blur with `power` (0..1), a boat's outboard turns with the steering
   and a patrol boat's radar goes round. A tank takes `turn` (-1..1: one track runs ahead of the other, on
   the spot when it stands) and `aim: [bearing, lift]`, which eases its turret and gun there. `ground:
-  false` keeps a plane's wheels still in the air (it is the default for a plane).
+  false` keeps a plane's wheels still in the air (it is the default for a plane and a helicopter). A
+  motorbike's `fork` turns with `steer` and it leans into a turn as far as its speed round it asks
+  (`bike.lean` is how far now; `lean` in the options to say yourself, as a stunt or a fall does).
+- **Flashing lights.** A police car, an ambulance, a fire engine and a police helicopter have beacons:
+  `car.siren(true)` sets them flashing in bursts, one side and then the other, as `move()` or `update(dt)`
+  runs (`siren(false)` stops them, `sirenOn` says). `car.beacons` lists each one (`point`, `colour`, `on` this
+  frame), so a game can light the street with `v.flash()` or `placeLamps` where they are. Each flashing car has
+  materials of its own, so one car's lights do not flash another's; a taxi's roof sign lights with `lights(true)`.
+  No sound comes with them: a siren is the game's (`gs.sound`). `gs.sound.Foley` gives buses, motorbikes,
+  scooters, dirt bikes and helicopters' rotors engines of their own by themselves.
 - **By hand** instead: `roll(metres so far)` (a tank: `roll(left, right)`), `steer(radians)`,
   `aim(bearing, lift)` (the gun stops at its own limits), or turn any of `parts` yourself (they are
   Groups: `boat.parts.oarL.rotation.y = stroke`).
@@ -3906,7 +3918,14 @@ update(dt) {
   `gs.physics3d` the chassis and the car's own four wheels, so they ride the bumps and it can roll over;
   then `drive.drive(throttle, steer, brake)` each frame as ever (don't call `move()` as well). `chassis()`
   moves the body so its origin is the middle of the chassis and not the road, so call it once, when you
-  make the car. A third axle's wheels follow the second's.
+  make the car. A third axle's wheels follow the second's. A bus the same.
+- **A motorbike on real physics:** `ride = world.vehicle(bike, bike.chassis())` (`chassis()` says `bike: true`):
+  its rays sit close under it, its back wheel drives, its rider keeps it upright and its mesh leans into the
+  turn and turns its forks by itself. It goes over when it hits something at `fall` metres a second or more
+  (8; `bike.chassis({ fall: 12 })`) or is tipped past about 50°: then `ride.fallen` is true, and the game
+  throws the rider (`gs.characters.Reactions`). `ride.rightUp()` stands it up again.
+- **A helicopter** is the look for `gs.craft.Hover`: place it from the craft each frame and `move(dt, speed,
+  { power })` spins its rotor and tail rotor up to a blur.
 - **Boats and planes** are the look for `gs.craft`: `boat = new Boat(sea, { length: hull.size.length,
   width: hull.size.width, draft: 0 })`, then `hull.position.copy(boat.pos); hull.quaternion.copy(boat.quat);
   hull.move(dt, boat.speed, { steer })` each frame; a plane the same from a `Plane({ ground, gear:
@@ -3947,7 +3966,9 @@ update(dt) {
   whole train by its own position.
 - **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
   21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 5,000 to
-  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less
+  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000;
+  a police car, a taxi and an ambulance 19,000 to 22,000 in about 20 draws; a fire engine 21,000 in 25; a bus 16,000 to 17,000 in 13; a
+  motorbike 11,500 to 16,000 in about 20; a helicopter 5,500 to 8,000 in 14 to 18. Each is made in about a tenth of a second or less
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.
   Wagons of one kind share theirs too. Make vehicles in `make()`.

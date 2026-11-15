@@ -252,8 +252,11 @@ const yaw = a => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });
  */
 class Vehicle3 {
   constructor(world, mesh, { w = 1.6, h = .5, l = 3, density = 1, wheels = [], radius = .38, rest = .35, travel = .3,
-    stiffness = 30, damping = 4, grip = 2.5, power = 12, brakes = .3, steer = .5, at, tag = 'car', dents = true } = {}) {
+    stiffness = 30, damping = 4, grip = 2.5, power = 12, brakes = .3, steer = .5, at, tag = 'car', dents = true, bike = false, fall = 8 } = {}) {
     this.world = world; this.mesh = mesh || null; this.wheelMeshes = wheels; this.power = power; this.brakes = brakes; this.maxSteer = steer;
+    // a motorbike (bike: true): its four rays close together under it, kept upright by its rider until it hits something at `fall`
+    // metres a second or more or is tipped too far (then fallen is true, and it goes over); its mesh leans into the turn by itself
+    this.bike = !!bike; this.fallAt = fall; this.fallen = false; this.h = 1 / 60;
     this.chassis = world.box(mesh, w, h, l, { density, at, tag, drag: .1, spinDrag: .6 });
     this.ctl = world.world.createVehicleController(this.chassis.body);
     // a low centre of mass keeps it on its wheels in turns and under power (arcade, not a sim)
@@ -269,6 +272,10 @@ class Vehicle3 {
     this.throttle = 0; this.steerNow = 0; this.braking = false; this.radius = radius;
     world.vehicles.push(this);
     // a gs.models vehicle dents, cracks its glass and breaks its lamps where it hits things by itself (dents: false: your own)
+    if (bike) world.onHit((a, b, speed) => {
+      const other = a === this.chassis ? b : b === this.chassis ? a : null;
+      if (other && !this.chassis.dead && speed >= this.fallAt && other.kind !== 'floor' && other.tag !== 'floor') this.fallen = true;
+    });
     if (dents && typeof mesh?.hit === 'function') world.onHit((a, b, speed, c) => {
       const other = a === this.chassis ? b : b === this.chassis ? a : null; if (!other || this.chassis.dead || speed < 3) return;
       if ((other.kind === 'floor' || other.tag === 'floor') && speed < 6) return;   // (a hard landing or a roll, not the road)
@@ -284,19 +291,36 @@ class Vehicle3 {
   /** True when it's on its roof or side (offer a "flip back" button). */
   get upsideDown() { const q = this.chassis.body.rotation(); return 1 - 2 * (q.x * q.x + q.z * q.z) < .3; }
   /** Puts it back upright where it is, a little above the ground. */
-  rightUp(lift = 1) { const p = this.chassis.pos; this.chassis.place(p.x, p.y + lift, p.z, { x: 0, y: 0, z: 0, w: 1 }); this.chassis.setVel(0, 0, 0).setSpin(0, 0, 0); return this; }
+  rightUp(lift = 1) { const p = this.chassis.pos, q = this.chassis.body.rotation(), y = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z)); this.chassis.place(p.x, p.y + lift, p.z, { x: 0, y: Math.sin(y / 2), z: 0, w: Math.cos(y / 2) }); this.chassis.setVel(0, 0, 0).setSpin(0, 0, 0); this.fallen = false; return this; }
   step(h) {
+    this.h = h;
     this.steerNow += ((this.steerTo || 0) * this.maxSteer - this.steerNow) * Math.min(1, h * 10);
+    if (this.bike && !this.fallen) this.upright(h);
     for (let i = 0; i < this.ctl.numWheels(); i++) {
       if (i < 2) this.ctl.setWheelSteering(i, -this.steerNow);
-      this.ctl.setWheelEngineForce(i, -this.throttle * this.power * this.chassis.body.mass() / 4);   // power: metres per second² of push, all four wheels
+      const driven = !this.bike || i >= 2, push = this.fallen ? 0 : -this.throttle * this.power * this.chassis.body.mass() / (this.bike ? 2 : 4);
+      this.ctl.setWheelEngineForce(i, driven ? push : 0);   // power: metres per second² of push (a car's on all four wheels, a bike's on its back one)
       this.ctl.setWheelBrake(i, this.braking ? this.brakes * this.chassis.body.mass() : 0);
     }
     // sensors are left out by flag: asking each collider from inside this call (c.isSensor()) goes back into the engine while it
     // holds the colliders, which left sensors in and the world unable to be freed. The controller skips its own chassis by itself.
     this.ctl.updateVehicle(h, R.QueryFilterFlags.EXCLUDE_SENSORS);
   }
+  // a bike's rider keeps it upright: its roll about its own length is turned back towards none (its lean is drawn, not simulated)
+  upright(h) {
+    const b = this.chassis.body, q = b.rotation(), ry = 2 * (q.x * q.y + q.w * q.z);
+    const fx = -2 * (q.x * q.z + q.w * q.y), fy = -2 * (q.y * q.z - q.w * q.x), fz = -(1 - 2 * (q.x * q.x + q.y * q.y));   // (its nose, in the world; ry: how far its right side has come up)
+    const roll = Math.asin(Math.max(-1, Math.min(1, ry)));
+    if (Math.abs(roll) > .9) { this.fallen = true; return; }
+    const w = b.angvel(), wf = w.x * fx + w.y * fy + w.z * fz, k = Math.min(1, h * 25), d = (roll * 14 - wf) * k;
+    b.setAngvel({ x: w.x + fx * d, y: w.y + fy * d, z: w.z + fz * d }, true);
+  }
   sync() {
+    if (this.bike && typeof this.mesh?.move === 'function') {   // a gs.models bike: its wheels roll, its forks turn, it leans as its speed round the turn asks
+      const v = this.speed, wy = this.chassis.body.angvel().y, lean = this.fallen ? 0 : Math.atan(Math.max(-1.2, Math.min(1.2, v * -wy / 9.81)));
+      this.mesh.move(this.h, v, { steer: this.steerNow / .45, lean });
+      return;
+    }
     this.wheelMeshes.forEach((m, i) => {
       if (!m || i >= this.ctl.numWheels()) return;
       const len = this.ctl.wheelSuspensionLength(i) ?? 0, cp = this.ctl.wheelChassisConnectionPointCs(i);
@@ -511,7 +535,7 @@ export class World3D {
     const from = this.inner(V(x, y + reach, z)), hit = this.world.castRay(new R.Ray(from, V(0, -1, 0)), 1e4, true, R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, not?.body);
     return hit ? from.y - hit.timeOfImpact : null;
   }
-  /** A car with suspension (see Vehicle3 above): w, h, l chassis size, wheels (meshes, children of mesh), power, grip, steer, at. */
+  /** A car with suspension (see Vehicle3 above): w, h, l chassis size, wheels (meshes, children of mesh), power, grip, steer, at; bike: true for a motorbike. */
   vehicle(mesh, o = {}) { return new Vehicle3(this, mesh, o); }
 
   /* joints: a or b null = the fixed world; points are world positions */
