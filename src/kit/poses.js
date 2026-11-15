@@ -118,8 +118,54 @@ export const POSES = {
   downed: cyc(p => P({ hips: [-1.45, 0, 0], spine: [.15, 0, 0], head: [.35, 0, 0], armL: [.4, 0, -.3], armR: [-1.6 + S(p * TAU) * .1, 0, .3], foreL: [-1.4, 0, 0], foreR: [-.4, 0, 0], legL: [-.15, 0, -.1], legR: [-.7, 0, .15], shinL: [.22, 0, 0], shinR: [1.35, 0, 0], footR: [.4, 0, 0] }, .47), 0),   // on its back, up on one elbow, a knee up, a hand raised
   wave: cyc(p => P({ armR: [0, 0, 2.6], foreR: [0, 0, .5 + S(p * TAU) * .5], armL: [0, 0, -.08], foreL: [-.15, 0, 0] }), 0),
   sit: cyc(() => P({ spine: [-.05, 0, 0], legL: [-1.57, 0, -.08], legR: [-1.57, 0, .08], shinL: [1.57, 0, 0], shinR: [1.57, 0, 0], armL: [-.4, 0, -.1], armR: [-.4, 0, .1], foreL: [-.6, 0, 0], foreR: [-.6, 0, 0] }, .245), 0),
+  // In cover (gs.tactics TakeCover), with the back to the wall, the gun held up ready and the head turned to the end of the
+  // wall the person will lean out of (L: their left as they face out from the wall, R: their right); low cover crouched.
+  coverHighL: cyc(p => P({ spine: [-.06, .3, .05], head: [.05, .85, 0], legL: [-.12, 0, .1], legR: [.05, 0, -.08], shinL: [.25, 0, 0], shinR: [.15, 0, 0], footL: [-.1, 0, 0], footR: [-.08, 0, 0], armR: [-.6, .2, .2], foreR: [-1.7, 0, 0], armL: [-.7, -.2, -.28], foreL: [-1.55, 0, 0] }, .02 + S(p * TAU) * .003), 0),
+  coverLowL: cyc(p => P({ spine: [.32, .35, .06], head: [-.15, .8, 0], legL: [-1.25, 0, .18], legR: [-.95, 0, -.12], shinL: [2.0, 0, 0], shinR: [1.75, 0, 0], footL: [-.6, 0, 0], footR: [-.55, 0, 0], armR: [-.8, .2, .2], foreR: [-1.65, 0, 0], armL: [-.9, -.2, -.28], foreL: [-1.45, 0, 0] }, .146 + S(p * TAU) * .004), 0),
+  // stepped out round the end of high cover, side on to the wall, leaning out over the outer foot (the arms: upper('aim'))
+  peekHighL: cyc(() => P({ spine: [.08, 0, .14], head: [0, 0, -.1], legL: [-.25, 0, .22], legR: [.25, 0, -.06], shinL: [.35, 0, 0], shinR: [.2, 0, 0], footL: [.1, 0, 0], footR: [-.2, 0, 0], armR: [-.4, 0, 0], armL: [-.4, 0, 0] }, .035), 0),
+  // firing blind (upper body): the gun held up over the top of low cover, or out round the end of high cover, head kept down
+  blindOver: cyc(p => P({ spine: [.2, 0, 0], head: [.55, 0, 0], armR: [-3.2 + S(p * TAU * 3) * .04, -.1, .15], foreR: [-.3, 0, 0], armL: [-3.05, .2, -.15], foreL: [-.55, 0, 0] }), 0),
+  blindSideL: cyc(p => P({ spine: [.1, -.25, -.1], head: [.35, -.6, 0], armL: [-.1, 0, 1.35 + S(p * TAU * 3) * .04], foreL: [-.15, 0, 0], armR: [-.9, .6, .1], foreR: [-1.5, 0, 0] }), 0),
+  // shooting out of a car's side window (seated: the legs are the seat's), and through the windscreen
+  carAimL: cyc(() => P({ spine: [0, .95, .12], head: [0, .35, 0], armR: [-1.45, 0, .3], foreR: [-.1, 0, 0], armL: [-1.3, 0, -.5], foreL: [-.5, 0, 0] }), 0),
+  carAimF: cyc(() => P({ spine: [.1, .1, 0], head: [-.05, -.1, 0], armR: [-1.4, 0, .3], foreR: [-.2, 0, 0], armL: [-1.3, 0, -.5], foreL: [-.55, 0, 0] }), 0),
 };
-const TIMED = { idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2 };
+// the other side of a pose: left and right swapped, as in a mirror (turns about y and z change sign)
+const SWAP = { armL: 'armR', armR: 'armL', foreL: 'foreR', foreR: 'foreL', handL: 'handR', handR: 'handL', legL: 'legR', legR: 'legL', shinL: 'shinR', shinR: 'shinL', footL: 'footR', footR: 'footL' };
+/** A pose function mirrored: left for right. For your own poses: rig.add('waveL', mirror(rig.poses.wave.cycle)). */
+export function mirror(fn) {
+  return ph => { const s = fn(ph), j = {}; for (const k in s.j) { const a = s.j[k]; j[SWAP[k] || k] = [a[0], -a[1], -a[2]]; } return { ...s, j, shift: s.shift ? [-s.shift[0], s.shift[1], s.shift[2]] : s.shift }; };
+}
+for (const n of ['coverHigh', 'coverLow', 'peekHigh', 'blindSide']) POSES[n + 'R'] = cyc(mirror(POSES[n + 'L'].cycle), 0);
+POSES.carAimR = cyc(mirror(POSES.carAimL.cycle), 0);
+// Melee (gs.fight Melee): each blow from the guard, out and back, played by how far through the move it is: rig.play(m.pose, { at: m.at, fade: .06 }).
+// The guard: fists up by the chin, the left foot forward. A blow's keys are spaced as FISTS' frames (start, active, recover).
+const GUARD = { spine: [.12, -.15, 0], head: [-.08, .12, 0], armL: [-.95, 0, -.3], foreL: [-2.05, 0, 0], armR: [-.75, 0, .35], foreR: [-2.2, 0, 0], legL: [-.3, 0, .06], shinL: [.3, 0, 0], footL: [.0, 0, 0], legR: [.18, 0, -.06], shinR: [.32, 0, 0], footR: [-.1, 0, 0], drop: .03 };
+const blow = (keysAt, extended, wind = {}) => keys([[0, GUARD], [keysAt[0] * .6, wind], [keysAt[0], extended], [keysAt[1], extended], [1, GUARD]]);
+const fr = (s, a, r) => [s / (s + a + r), (s + a) / (s + a + r)];
+Object.assign(POSES, {
+  guard: cyc(p => { const k = S(p * TAU) * .012, { drop, ...j } = GUARD; return P({ ...j, spine: [.12 + k, -.15, 0] }, drop + k); }, 0),
+  jab: cyc(blow(fr(5, 3, 9), { spine: [.15, -.35, 0], armL: [-1.55, 0, -.12], foreL: [-.12, 0, 0], legL: [-.4, 0, .06], shinL: [.35, 0, 0] }), 0),
+  cross: cyc(blow(fr(6, 3, 11), { spine: [.18, .45, 0], head: [-.05, -.2, 0], armR: [-1.55, 0, .15], foreR: [-.1, 0, 0], armL: [-1.0, 0, -.35], foreL: [-2.1, 0, 0], legR: [.3, 0, -.06], shinR: [.25, 0, 0], footR: [.35, 0, 0] }, { spine: [.1, -.25, 0] }), 0),
+  hook: cyc(blow(fr(8, 4, 14), { spine: [.16, .7, 0], head: [-.05, -.35, 0], armR: [-.55, 0, -1.35], foreR: [-1.55, 0, 0], legR: [.25, -.3, -.06], footR: [.3, 0, 0] }, { spine: [.12, -.4, 0], armR: [-.4, 0, -.9], foreR: [-1.8, 0, 0] }), 0),
+  uppercut: cyc(blow(fr(10, 4, 20), { spine: [-.12, .35, 0], head: [-.2, -.1, 0], armR: [-1.35, 0, .25], foreR: [-1.75, 0, 0], drop: 0 }, { spine: [.42, -.2, 0], armR: [-.3, 0, .3], foreR: [-2.3, 0, 0], legL: [-.6, 0, .06], shinL: [.9, 0, 0], legR: [-.1, 0, -.06], shinR: [.8, 0, 0], drop: .1 }), 0),
+  kick: cyc(blow(fr(11, 4, 18), { spine: [-.25, 0, 0], legR: [-1.45, 0, -.05], shinR: [.15, 0, 0], footR: [-.3, 0, 0], legL: [.05, 0, .06], shinL: [.2, 0, 0], drop: 0 }, { spine: [.05, 0, 0], legR: [-1.4, 0, -.05], shinR: [1.9, 0, 0] }), 0),
+  knee: cyc(blow(fr(7, 3, 14), { spine: [.35, 0, 0], head: [.1, 0, 0], legR: [-1.45, 0, -.05], shinR: [2.1, 0, 0], armL: [-1.25, 0, -.25], foreL: [-.9, 0, 0], armR: [-1.2, 0, .25], foreR: [-.9, 0, 0] }, { armL: [-1.4, 0, -.2], foreL: [-.4, 0, 0], armR: [-1.4, 0, .2], foreR: [-.4, 0, 0] }), 0),
+  sweep: cyc(blow(fr(9, 4, 20), { spine: [.5, .6, 0], head: [-.3, -.3, 0], legL: [-1.3, 0, .1], shinL: [2.1, 0, 0], footL: [-.6, 0, 0], legR: [-.25, 0, -1.25], shinR: [.1, 0, 0], armL: [-.4, 0, .5], foreL: [-.3, 0, 0], armR: [-.6, 0, -.5], foreR: [-.3, 0, 0], drop: .3 }, { spine: [.45, -.2, 0], legL: [-1.2, 0, .1], shinL: [2.0, 0, 0], legR: [-.9, 0, -.4], shinR: [1.6, 0, 0], drop: .28 }), 0),
+  shove: cyc(blow(fr(6, 4, 14), { spine: [.28, 0, 0], armL: [-1.5, 0, -.25], foreL: [-.15, 0, 0], armR: [-1.5, 0, .25], foreR: [-.15, 0, 0], legL: [-.55, 0, .06], shinL: [.45, 0, 0], legR: [.35, 0, -.06], shinR: [.15, 0, 0] }, { armL: [-1.2, 0, -.3], foreL: [-1.6, 0, 0], armR: [-1.2, 0, .3], foreR: [-1.6, 0, 0] }), 0),
+  // with something held in both hands (a bat): across from the right, back from the left, down from overhead
+  swing: cyc(blow(fr(12, 5, 16), { spine: [.15, 1.0, 0], head: [0, -.6, 0], armR: [-1.35, 0, .3], foreR: [-.5, 0, 0], armL: [-1.4, 0, -.15], foreL: [-.35, 0, 0], legR: [.3, -.4, -.06] }, { spine: [.05, -1.05, 0], head: [0, .7, 0], armR: [-1.9, 0, -.6], foreR: [-1.6, 0, 0], armL: [-1.7, 0, -.9], foreL: [-1.3, 0, 0] }), 0),
+  backhand: cyc(blow(fr(10, 5, 18), { spine: [.15, -1.0, 0], head: [0, .6, 0], armR: [-1.45, 0, .2], foreR: [-.4, 0, 0], armL: [-1.3, 0, -.4], foreL: [-.5, 0, 0], legL: [-.2, .4, .06] }, { spine: [.05, .95, 0], head: [0, -.6, 0], armR: [-1.6, 0, .9], foreR: [-1.4, 0, 0], armL: [-1.8, 0, .4], foreL: [-1.5, 0, 0] }), 0),
+  overhead: cyc(blow(fr(18, 4, 24), { spine: [.55, 0, 0], head: [-.3, 0, 0], armR: [-1.2, 0, .2], foreR: [-.2, 0, 0], armL: [-1.2, 0, -.2], foreL: [-.25, 0, 0], legL: [-.6, 0, .06], shinL: [.6, 0, 0], drop: .08 }, { spine: [-.2, 0, 0], armR: [-3.0, 0, .15], foreR: [-.9, 0, 0], armL: [-3.0, 0, -.15], foreL: [-.9, 0, 0] }), 0),
+  // hit and still on its feet (Reactions takes over when it is knocked off them), and out of the way
+  stagger: cyc(keys([[0, { spine: [-.3, .2, .08], head: [-.35, .3, 0], armL: [-.5, 0, .4], foreL: [-.9, 0, 0], armR: [-.3, 0, -.45], foreR: [-.8, 0, 0], legL: [-.3, 0, .1], shinL: [.4, 0, 0], legR: [.25, 0, -.1], shinR: [.2, 0, 0] }], [1, GUARD]]), 0),
+  dodgeL: cyc(keys([[0, GUARD], [.3, { spine: [.25, .2, .35], head: [-.1, 0, -.2], legL: [-.2, 0, .55], shinL: [.7, 0, 0], legR: [0, 0, .1], shinR: [.2, 0, 0], drop: .12 }], [.75, { spine: [.2, .1, .2], legL: [-.25, 0, .25], shinL: [.5, 0, 0], drop: .08 }], [1, GUARD]]), 0),
+  dodgeBack: cyc(keys([[0, GUARD], [.3, { spine: [-.25, 0, 0], head: [-.15, 0, 0], legL: [.1, 0, .06], shinL: [.5, 0, 0], legR: [.5, 0, -.06], shinR: [.6, 0, 0], drop: .1 }], [1, GUARD]]), 0),
+});
+POSES.dodgeR = cyc(mirror(POSES.dodgeL.cycle), 0);
+const AIMED = new Set(['aim', 'carAimL', 'carAimR', 'carAimF']);   // upper poses the aim (up and down) and aimYaw turn
+const TIMED = { guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2 };
 
 // ---- smooth curves and key poses
 // A curve through [when, value] points that never swings past a point (so a knee can't bend backwards
@@ -400,11 +446,12 @@ export class Rig {
   }
   sample(name, phase) { const def = this.poses[name]; if (!def) return { j: {}, drop: 0 }; return def.cycle(phase); }
   /**
-   * speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer; turn: how fast
+   * speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer (aim, carAimL/R/F);
+   * aimYaw: turn at the waist for it (radians, to the left +: aiming from a seat); turn: how fast
    * the body turns (rad/s, to its left +; the body banks into it); toward: where the person means to go next, a point { x, z }
    * or a heading (radians, as rotation.y), so the eyes and head turn there first (lead.js; read from the body's own turning without it).
    */
-  update(dt, { speed = 0, aim = 0, turn = 0, toward = null } = {}) {
+  update(dt, { speed = 0, aim = 0, aimYaw = 0, turn = 0, toward = null } = {}) {
     this.lastDt = dt;
     // a blend space: its walks and runs share one phase. The stride of a mix is the mix of the strides, and a pose that
     // stands still has none: mixed with standing, a walk takes shorter steps at its own beat (its feet slid when it
@@ -462,7 +509,10 @@ export class Rig {
     if (this.top && this.topW > .001) {
       const s = this.sample(this.top, this.phase), tw = inst ? this.topW * this.topW * (3 - 2 * this.topW) : this.topW;   // (with momentum it comes in and goes out gently; topW itself still counts evenly, for a game that reads it)
       for (const j of UPPER) { const a = s.j[j] || [0, 0, 0], o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += (a[i] - o[i]) * tw; }
-      if (this.top === 'aim') { (out.armR ||= [0, 0, 0])[0] -= aim * tw; (out.armL ||= [0, 0, 0])[0] -= aim * tw; (out.head ||= [0, 0, 0])[0] -= aim * .5 * tw; }
+      if (AIMED.has(this.top)) {
+        (out.armR ||= [0, 0, 0])[0] -= aim * tw; (out.armL ||= [0, 0, 0])[0] -= aim * tw; (out.head ||= [0, 0, 0])[0] -= aim * .5 * tw;
+        if (aimYaw) { (out.spine ||= [0, 0, 0])[1] += aimYaw * .7 * tw; out.head[1] += aimYaw * .3 * tw; }   // (turned at the waist: aiming from a seat, or round without moving the feet)
+      }
       if (!this.topOn && this.topW < .01) this.top = null;
     }
     if (man) drop += man.pose(dt, out, speed, gph, gw);   // a person's own bearing and mood, a footfall felt, the slope

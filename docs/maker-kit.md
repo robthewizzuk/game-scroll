@@ -78,10 +78,11 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
 | Run, aim, hang and climb poses on a 3D figure | `gs.poses` | [Action and adventure kits](#action-and-adventure-kits) |
 | Mission scripts, objectives, checkpoints | `gs.missions` | [Action and adventure kits](#action-and-adventure-kits) |
+| Jobs around an open world, a phone that rings with them, retry mid-city, the world saved in 8 KB | `gs.missions` `Jobs`, `Phone`, `WorldSave` | [Action and adventure kits](#action-and-adventure-kits) |
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
-| Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
+| Cars, lorries, buses, motorbikes, tanks, trains, boats, planes and helicopters to drive (police, taxi, ambulance and fire engine too), with no model files: wheels that roll and steer, tracks, a turret, propellers, rotors, flashing lights | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
 | Fur on animals, beards (and hair, when asked) in strands on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -106,6 +107,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Lines that change every time (a shopkeeper, a riddle) | `gs.phoneai` (the phone's built-in AI) | [Hearing, doodles and the phone's AI](#hearing-doodles-and-the-phones-ai) |
 | The same jumps and timings at 30, 60 and 120 fps; exact replays | `tick: 60`, `gs.tick` | [Fixed game tick](#fixed-game-tick) |
 | An original tune for your game without writing notes | `gs.sound.compose({ mood, seed })` | [Music composer](#music-composer) |
+| A car radio: stations, made-up DJs, adverts, news | `gs.sound.Radio` | [Car radio](#car-radio) |
 | Music under every round in one line; a band, synths or an orchestra instead of beeps | `music: 'chase'` in the definition, `music({ set: 'band' })`, `gs.sound.instrument()` | [Sound](#sound) |
 | Smooth lines in a drawing game; ink that stays under the fingertip | `touch: 'fine'`, `api.ahead()` | [Finer touch](#finer-touch) |
 | Save something big (a built world, drawings, recorded runs) | `api.saveLocal()` / `loadLocal()` | [Save slots](#a-bigger-save-that-stays-on-the-phone) |
@@ -2331,6 +2333,48 @@ arrows) and asks your `hits()` what each one met; `arc` and `lob` give grenade t
 down before dying, and keeps the direction of each hit (`hits[].angle`) for damage arrows.
 `Markers` times hit markers. `Explosives` are barrels and mines that set each other off.
 
+**A ready-made arsenal** (`gs.combat`): `ARSENAL` holds the numbers for every weapon `gs.models.weapon` makes
+(`pistol`, `revolver`, `smg`, `shotgun`, `rifle`, `sniper`, `launcher`, `grenade`, and `bat`, `pipe`, `wrench`, `baton`
+to swing): its `Gun` options, the ammo it takes, the case it throws, a grenade's throw and fuse, a rocket's blast and
+a melee weapon's `{ reach, damage, arc }` for `Melee`. `arm('rifle')` is a `Gun` with those numbers. `Pouch({ pistol: 36 })`
+is ammo by kind with a most of each, and a gun given one (`arm(kind, { pouch })`) reloads out of it, so guns that take
+the same rounds share them. `Loadout({ pouch, health })` is what one person carries, a weapon to each slot (melee, hand,
+long, heavy, throw): `give(kind)` picks one up loaded (another of the same kind gives its rounds; a second long gun
+takes the first's place, which `give` returns to drop), `next()`, `use(kind)` (drawing takes a moment),
+`fire(from, dir, held, { at })` pulls the trigger with the weapon's sound, `reload()`, `save()` / `load()`.
+`Pickups()` lies about the world: `add({ x, y, z, kind: 'shotgun' })`, `{ kind: 'ammo', of: 'shells', amount }`,
+`{ kind: 'health', amount }`, with `respawn` seconds; `drops.collect(dt, hero.feet, arms)` takes what the hero walks
+over and the loadout has room for (each has `spin` and `bob` to draw it turning). `weaponSound(kind, what, at)` is each
+weapon's own report, click when empty, reload, pump or bolt, swing, pin and draw, heard from `at` through the game's
+`gs.sound.Ears` when it made one (muffled behind walls, echoing in the place). A rocket is a flying `Shots` shot that
+lights an `Explosives` charge where it lands; a grenade is a `World3D` ball added to `Explosives` with `body` and lit
+(`ARSENAL.grenade.throw` has its speed and fuse; `arc` draws the throw line).
+
+**Weapons you can see** (`gs.models` and `gs.fx3d`, Next Gen): `gs.models.weapon('rifle')` is one made in code, our own
+designs, a few draws each, with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
+`sight` and `stock`. `weapon.wield(person)` puts it in the hands of a `gs.models.human`, a `gs.poses` person or a figure:
+each frame after `rig.update()`, `held.update(dt, { how, pitch, yaw })` holds it `'aim'` (a long gun's stock in the
+shoulder, a pistol out in both hands, pointing where the body faces, turned about the shoulder by the aim), `'hip'`,
+`'ready'` (pointing down in front), `'low'` (in one hand at the side), `'slung'` (on the back) or `'none'` (put away),
+eased from one to the next, with both hands closed round it; `held.muzzle` and `held.dir` are where shots leave. Things
+to swing are held up over the shoulder at `'ready'` and out in front at `'aim'`. `gs.fx3d.Impacts(view)` shows where shots
+land, by what they hit: `fx.hit(worldRayHit, { from })` throws sparks off metal, dust and chips off stone, splinters off
+wood, glints off glass, a spray of dirt, sand or snow, a splash on water, a puff off cloth and people (no blood) and
+leaves a mark on the surface, with its sound; what was hit is read from the mesh as `Foley` reads it (or
+`{ surface: 'metal' }`). `fx.muzzle(at, dir, { kind })` is a flash that lights the scene and a wisp of smoke;
+`fx.shell(held.gun.points.eject, { kind })` throws a spent case out to the right that bounces on the world with a tinkle.
+`fx.update(dt)` each frame, `fx.clear()` in `reset()`. On WebGPU marks don't show on see-through things (glass).
+
+**Shooting from a car** (`gs.combat`): `DriveBy(car, { seat: 'driver' })` (a `gs.models` vehicle, any Object3D, or a
+`gs.vehicles` Car) keeps the aim where it can go from that seat: out of the side window on its side (the gun leans
+out further the further round it points), through the windscreen, out of the back window with `rear: true`; the
+driver can't shoot across his own passenger. `drive.update(dt)` after the car moves, `drive.aim(wantDir)`, then
+`drive.fire(gun, held)` pulls the trigger from where the gun is: the ride throws the aim about (speed and bumps:
+`drive.spread`) and flying shots carry the car's speed. `drive.glass` is where a shot crosses the glass
+(`car.hit(drive.glass)` breaks it), `drive.pose` the upper-body pose (`carAimL`, `carAimR`, `carAimF`) and
+`drive.turn`, `drive.pitch` go to `rig.update(dt, { aimYaw: drive.turn, aim: drive.pitch })`. Police leaning out of
+their car use the same.
+
 **Cover and squads** (`gs.tactics`): `CoverMap(cols, rows, blocked)` finds every spot beside a wall and
 which way it faces; `find(from, threat)` picks cover that blocks a threat (or flanks it), `peek()`
 says where to lean out. `Squad(members, { cover, sees })` gives each enemy an order each think
@@ -2341,6 +2385,34 @@ and waits for you. A squad can be coached (`coach: true`, then `squad.correct(me
 `squad.avoid(member)`), and `cover.avoid(spot)` is "not that cover":
 [A coach for things that decide by rules](#a-coach-for-things-that-decide-by-rules).
 
+**Cover in 3D** (`gs.tactics`): `Cover3D()` finds cover in the game's `World3D` with rays, so whatever is solid
+there is cover: walls, low walls, cars, crates, a City's buildings, a level made with `world.ground(mesh)`. Each spot
+knows which way it faces, how high it is (`low`: shoot over it, with its `top`; high: lean out round it) and how far
+its ends are (`left`, `right`, as you face out). `cover.update(hero.feet)` looks over the squares round the hero a
+little each frame (`around(p, r)` all at once, while loading; `touch(p)` after something there broke). It has the
+2D `CoverMap`'s `find`, `peek`, `protects`, `avoid`, so `new Squad(enemies)` hands the same spots out (positions
+`{ x, y, z }`, y up) with real line of sight (`cover.sees(a, b)`: eyes to chest). `TakeCover(cover)` is the hero:
+`hide.take(hero.feet, heroYaw)` snaps to the nearest wall; each frame `hide.update(dt, { move, aim, blind, threat },
+hero.feet)` slides along it, stops at its ends, leans out round an end or stands up over low cover while aiming,
+fires blind (`hide.spread` widens the aim), runs to the next cover when the stick keeps pushing at an end, and leaves
+when the stick pulls away from the wall. Then `hero.walk(hide.walk.x, hide.walk.z)`, `heroYaw = hide.facing`,
+`rig.play(hide.pose)`, `rig.upper(hide.upper)`, shots from `hide.muzzle`; `hide.exposed` (0..1) is how much of the hero
+shows, for enemies' aim.
+
+**Melee in 3D** (`gs.fight`): `Melee(body, { react })` is one person's fists and feet in a 3D world, in frames like the
+2D `Fighter` but with a reach, an arc in front and a height where 2D has boxes. `attack('light')` (jab, cross, hook,
+uppercut: pressed again in time they chain into a combo, and a press a moment early still counts), `attack('heavy')`
+(a kick, a knee), `attack('low')` (a sweep that trips), `attack('push')` (a shove the guard can't stop), `block(held)`
+(stops what comes from in front, not from behind), `dodge({ x, z })` (a quick step nothing can hit for most of).
+`update(dt, foes)` locks on to the foe in front, turns and steps in to bring the blow into reach (`walk`, `facing`),
+and returns what landed: `{ who, damage, blocked, at, push, knock, trip }`. A foe that is a `Melee` gets hit stun and
+loses `hp`; one with `react` (a `gs.characters.Reactions` on its body) staggers, trips or falls for real. `pose` and `at`
+go to `rig.play(m.pose, { at: m.at, fade: .06 })` (gs.poses has `guard`, `jab`, `cross`, `hook`, `uppercut`, `kick`,
+`knee`, `sweep`, `shove`, `stagger`, `dodgeL`, `dodgeR`, `dodgeBack`, and with a bat `swing`, `backhand`, `overhead`).
+`moves: SWINGS` with `weapon: { reach, damage }` for a bat, a pipe or a stick. `Brawler({ skill })` is a ready-made
+foe: `think(dt, me, foe)` gives `{ walk, face, attack, block, dodge }`: it closes in, circles, throws combos when you
+are open, blocks or steps out of what it sees coming no faster than a person, and backs off when hurt.
+
 **Climbing** (`gs.climb`): `Ledges.fromLevel(level3d)` finds every edge you can hang from (or `add()`
 your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up, leaps to the next
 handhold the way you push, drops or kicks off. `Rope` is a swing you pump higher. `climber.pos` and
@@ -2348,7 +2420,10 @@ handhold the way you push, drops or kicks off. `Rope` is a swing you pump higher
 
 **Poses** (`gs.poses`, 3D): `figure()` builds a simple jointed person and `Rig` blends poses on it:
 idle, walk, run, sprint, crouch, sneak, aim, jump, fall, land, hang, shimmy, climb, swing, cover,
-punch, takedown, downed, wave, sit, or your own. Walk and run cycles follow `speed` so feet don't
+punch, takedown, downed, wave, sit, in cover with the back to the wall (`coverHighL`, `coverLowL` and their `R`
+sides, `peekHighL` leaning out round an end, upper `blindOver` and `blindSideL` firing blind), shooting from a seat
+(upper `carAimL`, `carAimR`, `carAimF`, turned at the waist by `rig.update(dt, { aimYaw })`), or your own;
+`mirror(fn)` makes the other side of a pose of your own. Walk and run cycles follow `speed` so feet don't
 slide; `upper('aim')` aims over the legs. Works on your own models too (pass their joints).
 
 **Lifelike motion** (`gs.poses`): `LIFELIKE` is a set of idle, walk, jog, run, sprint and sneak drawn from where
@@ -2485,6 +2560,59 @@ m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` m
 `any()` wait for several things, `restart()` returns to the last checkpoint after a loss (skipping
 the lines already heard), and `save()`/`load()` keep it between sessions.
 
+**Open-world missions** (`gs.missions`, for a city game): three more pieces on top of `Mission`.
+
+`Jobs` is the list of jobs in the world, each a mission with a place to start it:
+
+```js
+const { Jobs, Phone, WorldSave, zone } = gs.missions;
+jobs = new Jobs([
+  { id: 'pies', name: 'Hot Pies', at: shop, from: 'Nonna Ruth', pay: 150, icon: 'pizza',
+    call: { from: 'Nonna Ruth', say: ['The pies are getting cold!', 'Come to the shop.'] },
+    script: function* (m, job) {
+      m.objective('Take the pies to the docks', { at: docks, kind: 'drop' }); m.timer(90);
+      yield m.until(() => zone(docks, 6).has(me));
+      m.checkpoint('docks', { at: docks });                        // a retry starts here, mid-city
+      m.leash(() => inVan, 10, 'You left the van');
+      m.objective('Back to the shop', { at: shop }); yield m.until(() => zone(shop, 4).has(me));
+    } },
+  { id: 'race', needs: ['pies'], at: { x: -20, z: 5 }, script: ... },
+]);
+update(dt) { jobs.update(dt, me); }   // me: { x, z }
+```
+
+- `jobs.offer` is the open job whose marker the player stands on: show "Start" and call `jobs.start(id)`
+  (`start: 'enter'` starts it by walking on). `jobs.mission` is the running Mission.
+- `jobs.markers`, each frame: `[{ at: { x, y, z }, kind, text, icon, pinned, job }]`: the open jobs' start points
+  while roaming, the mission's objectives during one (an objective's `at` can be a moving thing, or a function).
+  Pass them to your map and GPS (`pinned` is where the GPS should go).
+- A fail sets `jobs.failed`: `jobs.retry()` goes back to the last checkpoint and `jobs.mission.respawn` is where
+  to put the player; `jobs.quit()` drops it (the marker stays, to try again). `m.abandon()` is the player giving up.
+- `m.timer(seconds)` fails the mission when it runs out (`m.clock.left` to show); `m.leash(test, seconds)` fails
+  it after that long out of the area or out of the car (`m.away` to show a warning).
+- Done jobs pay into `jobs.money`, unlock the jobs that `needs` them, and fire `on('done')`.
+
+`Phone` is the player's phone: `phone.ring({ from, say: [lines], voice, job })` rings (with a buzz), and once
+answered (`phone.answer()`, or `decline()`) the caller's lines are spoken on a phone line and shown as
+`phone.call.line`; `skip()` moves on. A call with a `job` pins it as the waypoint. Jobs made in the same game ring
+the phone with each job's `call` by themselves when it opens; the car radio waits while it rings.
+`phone.text(from, text)` puts a message in `phone.inbox`; `phone.missed` has the calls nobody answered.
+
+`WorldSave` keeps the world's state in the 8 KB that `api.save()` follows the player with:
+
+```js
+save = new WorldSave(api);
+save.keep('world', () => ({ hour: sky.time, cash, rain: weather.kind }), d => { sky.time = d.hour; cash = d.cash; });
+save.keep('cars', () => rows(garage, ['style', 'colour', 'x', 'z']), d => garage = unrows(d, ['style', 'colour', 'x', 'z']), { optional: true });
+save.load();                       // in make(), after everything is made
+update(dt) { save.update(dt); }    // saves when something changed, every few seconds; save.now() straight away
+```
+
+The Jobs (done, money, a running job's checkpoint), Phone (texts) and Radio (the station) of the same game are kept
+by themselves. Numbers are rounded to two places and `rows()` writes a list of records without repeating the names;
+if it all comes to more than 8 KB, the `optional` parts are left out (`save.dropped`), and `save.size` / `save.room`
+say how much is used. A built world (every crate where you left it) is bigger: keep that with `api.saveLocal`.
+
 **Cutscenes** (`gs.cutscene`): `Cutscene([{ at, cam: [points], look, time }, { at, say, who }, { at, do }])`
 moves the camera along smooth paths, shows lines and letterbox bars, runs actions on cue and can be
 skipped. Put your camera at `scene.shot` each frame. Camera shakes follow Reduce motion.
@@ -2514,6 +2642,63 @@ asked where the ball next meets the real floor, walls, ramps and goals, once a f
 few seconds of replay (`playback(t)`). `BallCar` is a real suspension car with boost, jump, a second
 jump that flips you the way you push, and air control. `chaseBall(car, arena)` is a simple
 opponent to start from.
+
+**Magic** (`gs.magic`, 2D or 3D): a book of spells, `new Magic({ book })`, and a unit for each who casts
+or can be hit, `magic.unit(body, { stats, team, radius, height, hand })` (its `stats` is a `gs.stats`
+`Stats` with `hp` and `mana` pools). `unit.cast(name, { dir | at | target })` starts a spell or says why
+not (`'mana'`, `'cooling'`, `'busy'`, `'stunned'`, `'silenced'`, `'range'`); `magic.update(dt)` finishes
+casts, flies bolts, sets off areas, burns beams, runs the units' Stats on and gives back the frame's
+events (`hit` with `damage`, `absorbed`, `statuses`, `reaction`, `push`; `heal`, `shield`, `warn`,
+`interrupt`, `dead`...). A spell is data: `kind` (`bolt`, `area`, `beam`, `shield`, `heal`, `buff`),
+`element`, `cost`, `cool` and `charges` (gs.stats cooldowns), `cast` (seconds; `still`: moving cuts it
+off, `fragile`: a big hit does), `damage`, `heal`, `status`, `push`. Bolts can `homing`, `pierce`,
+`chain` (jumps on to the next foe) and `splash`; areas are a `circle`, `cone`, `line` or `ring`, at the
+caster, the aimed point or the target, with a `delay` (a warning ring first: `area.part`), lingering
+(`for`, `every`) or following the caster (an aura), and `blocks: true` stops foes' bolts at its edge;
+beams are held (`channel`, `drain` a second); shields soak up harm (`absorb`) or send bolts back
+(`reflect`); heals are at once or `over` seconds. Statuses (`STATUSES`: burn, chill, frozen, shocked,
+wet, poison, rooted, weak, silence, slow, regen, haste, might, stoneskin) are gs.stats buffs, so put
+them in the Stats' buffs table and saving keeps them; three doses of chill freeze, and they meet
+(`REACTIONS`): fire thaws ice for half again, frost freezes the wet, lightning through water stuns,
+earth shatters ice, fire flares poison. Targets resist with a `resist.fire` stat (0..1), `armour`
+takes half off, and `power` and `castSpeed` stats on the caster count. A wall in the game's physics
+world stops bolts by itself; a `push` spell throws loose things and people who react; fire bursts in
+the game's smoke. `magic.hit(by, who, name, spell)` lands one of your own (a burning blade, a trap). Draw
+from `magic.bolts`, `magic.areas`, `magic.beams`, `magic.zaps`, `unit.casting.part` and `unit.ward`,
+or in 3D let `new Looks(magic, particles)` (a `gs.fx3d.Particles3D`) do it: a glow in the hand, bolt
+trails with their own light, flashes where they land, rings for areas, sparks along beams, a shimmer
+round a ward, motes from a heal.
+
+```js
+const { Magic, STATUSES, Looks } = gs.magic, { Stats } = gs.stats;
+const BOOK = { firebolt: { kind: 'bolt', element: 'fire', cost: 8, cool: .8, cast: .3, speed: 24, damage: 14, status: 'burn' },
+               nova: { kind: 'area', element: 'frost', at: 'self', radius: 4, damage: 8, status: 'chill', cost: 20, cool: 6 } };
+magic = new Magic({ book: BOOK }); looks = new Looks(magic, new gs.fx3d.Particles3D(view.scene));
+hero = magic.unit(heroMesh, { team: 'hero', stats: new Stats({ hp: { max: 100 }, mana: { max: 60, regen: 6 } }, { buffs: STATUSES }) });
+// update(dt): for (const e of magic.update(dt)) if (e.type === 'hit') feel.hit(...); looks.update(dt);
+```
+
+**Monsters** (`gs.monsters`, 2D or 3D): `new Moveset(body, { attacks: ['bite', 'claw', 'pounce'], radius, stats })`
+is what a monster fights with. Each attack is data (`ATTACKS` has `bite`, `claw`, `swipe`, `tail`,
+`sweep`, `stomp`, `slam`, `charge`, `pounce`, `breath`, `spit` and `roar` to start from): a `shape`
+(`cone`, `circle`, `ring`, `rear` behind it, `line` for a dash), the `range` and `side` it is picked
+from, a `windup` you can see coming, an `active` moment it hurts, a `recover` to punish, `damage`,
+`push`, `status`, `cool` and `weight`; `track` turns it after you while it winds up, `spin` sweeps it
+round, `dash` and `leap` carry it (a charge, a pounce), `every` hurts again and again (breath), `spell`
+casts a gs.magic spell from its `unit`. `moves.update(dt, target, targets)` gives `{ walk, speed, face,
+pose, move, hits, shots }`: walk it in between, play `pose` (`{ name, at }`) on its rig, add `move`
+to its position. Draw the telegraph from `moves.now.shape` (red while it winds up, by `now.phaseT`).
+Targets with `stats` lose health, with `react` (people who react, or a Hurt) are shoved, with
+`blocks(attack, from)` take a chip, `dodging` are missed. `moves.hurt(power)` breaks a windup on a hard
+hit; `skill` (a number or a gs.brains `Dial`) shortens the windups and the rests. `new Hurt(creature, {
+ground })` is how a `gs.models.creature` (or anything on a gs.poses rig) takes a hit, over whatever its
+rig is doing: `hurt.hit(push, { power })` is a flinch away from the blow, a stagger back, or knocked off
+its feet onto its side to get up again; `hurt.die(push)` falls dead and stays; `hurt.busy` says when it
+can't act; call `hurt.update(dt)` after the rig. `new Boss({ stats, moves, phases: [{ below: 1, attacks
+}, { below: .6, attacks, buff, pause, summon }], poise: { max, stun }, enrage: 120 })` changes the fight
+as its health falls: new attacks and buffs, a roar between when it takes no harm (`invulnerable`), a
+`summon` event for adds, a poise meter its hits fill that breaks into a stagger, and a rage when time is
+up; `boss.update(dt)` gives `phase`, `staggered`, `summon`, `calm`, `enraged` and `dead`.
 
 **Campaigns** (`gs.campaign`): `Campaign(chapters, { extras }).attach(api)` keeps which missions are
 open (in order, or by stars), up to three stars each (score targets or named challenges), best
@@ -2996,6 +3181,48 @@ definition instead (see [Sound](#sound)): the app does all of this for you.
 It returns music()'s parts with `layers: { arp, drums2, lead2 }`, so `intensity()` and `follow()` build
 it up. `info` has the key, mode and chords, plus `win` and `lose` jingles for `notes()` in the same key.
 Music theory (scales and modes) comes from Tonal (MIT).
+
+## Car radio
+
+`gs.sound.Radio` is a car radio for a driving or open-city game: stations of original songs written by
+`compose()`, each with a made-up DJ who talks between songs through `say()`, station idents, silly made-up
+adverts, and the news your game feeds it. Every station keeps its own clock, so a station you left is further
+on when you come back, half way through a song. Five stations come with it (all made up: Kerbside 88 for pop,
+Owl Hours for slow songs, Redline 104 for fast ones, Gilded 97's orchestra and Honk 101's chip tunes), each with
+its own DJ, voice and catch phrases; the songs have made-up titles and artists from the seed.
+
+```js
+const { Radio } = gs.sound;
+make() { radio = new Radio(); }                   // made once: the stations carry on from round to round
+update(dt) { radio.update(dt); }                  // nothing plays until it's on
+// get in the car: radio.on()     the dial: radio.next(), radio.prev(), radio.tune('Owl Hours')
+// get out:  radio.listen({ inside: false, distance: 3 })      back in: radio.listen({ inside: true })
+// a chase starts: radio.news('a police chase is heading over the harbour bridge', { urgent: true })
+draw: radio.now   // { on, station, freq, dj, kind: 'song' | 'talk', song: { title, artist }, line, left }
+```
+
+- **Songs** have a shape: an intro without the tune, then the layers (`compose()`'s arpeggio, busier drums and
+  harmony) come and go, and the tune drops out at the end. Each station plays in its own instrument set.
+- **Breaks**: the DJ names the song that just played and the next one, sometimes says the weather (a `gs.sky`
+  Weather made in the same game is found by itself) and the time of day (from a Sky), reads an advert or a bit of
+  local news, over a soft bed of the next song's chords. A break lasts as long as the DJ takes.
+- **News** (`radio.news(text)`): every station reads it at its next break; `urgent: true` breaks in now, over
+  the song, with two pips. This is how a wanted level, a robbery or a crash gets on the radio.
+- **The car body**: inside, it sounds like car speakers; `listen({ inside: .6 })` is a door open; outside it's
+  muffled through the body and quieter, fades as you walk away, the DJ can't be made out past 8 m and it's silent
+  past 30 m.
+- **The phone**: a `gs.missions` Phone made in the same game holds the radio down while it rings and while you
+  talk (`radio.hold(true)` does it by hand: a cutscene).
+- **The phone's own AI** writes fresher DJ lines on phones that have one: `new Radio({ ai: new PhoneAI({ persona:
+  'a radio DJ', words: 24 }) })` (`gs.phoneai`). It's asked only for the station on air, a song ahead; every line
+  has a written one, and play never waits for it.
+- **Your own stations**: `new Radio({ stations: [{ name, freq, mood, set, voices, tagline, talk, dj: { name, voice:
+  'woman' | 'man', take, pitch, rate, persona, sign: ['catch phrase'] } }] })`. `seed` changes every song.
+  `gs.sound.STATIONS` and `ADVERTS` are the ones that come with it.
+
+It plays on the music channel, so the player's Sound settings rule it (with music off, the DJs are quiet too),
+and music stops with the round as usual. Don't also put `music:` in the definition of a game with a radio.
+`radio.pack()` / `unpack()` keep the station (a `WorldSave` does it by itself).
 
 ## Puzzles and opponents
 
@@ -3832,8 +4059,8 @@ update(dt) {
 
 ## Vehicles made in code
 
-`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, tanks, trains, boats and planes with no model
-files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
+`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, buses, motorbikes, tanks, trains, boats, planes
+and helicopters with no model files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
 a little, and handed back as a three.js Group with the parts that turn on pivots of their own:
 
 ```js
@@ -3850,12 +4077,15 @@ update(dt) {
 
 | `kind` | `style` (the first is what you get with none) | What turns | `points` |
 | --- | --- | --- | --- |
-| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
-| `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
+| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep`, `police`, `taxi`, `ambulance` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; `beacon0`, `beacon1`... (lights on the roof) |
+| `truck` | `flat`, `canvas`, `box`, `fire` (a fire engine), `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind; a fire engine's `parts.turntable` and `ladder` | a car's, and `load`; a fire engine's `tip`, `hose`, `crewL`, `crewR` |
+| `bus` | `city`, `double` (a double decker), `coach`; `side: 'left'` puts its doors on the left | four `wheels`, twin tyres behind | `driver`, `door` (`door0`, `door1`...), `aisle`, `exhaust`, `lampL`, `lampR`, `hitch` |
+| `bike` (a motorbike) | `road`, `sport` (a fairing), `scooter`, `dirt` | `parts.fork` with its bars and front wheel, both `wheels`; it leans | `rider`, `pillion`, `pegL`, `pegR`, `barL`, `barR`, `exhaust`, `lampL`, `stand` |
 | `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
 | `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `guard` (a guard's van), `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a tender's `coal`; a wagon's `load`, a coach's `door`, the `roof` of a van, a guard's van and a coach; a guard's van's `veranda` and `tail`; a tank wagon's `filler` |
 | `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
 | `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
+| `helicopter` | `light`, `police` (a searchlight under its nose), `medic` | `parts.rotor`, `parts.tail` | `pilot`, `copilot`, `door`, `cabin`, `hook`, `tailRotor`, `smoke`; a police one's `spot` |
 
 `vehicle.kinds` is the same list, for a menu or a test.
 
@@ -3890,7 +4120,16 @@ update(dt) {
   springs does (`sway: 0` for none), propellers spin up to a blur with `power` (0..1), a boat's outboard turns with the steering
   and a patrol boat's radar goes round. A tank takes `turn` (-1..1: one track runs ahead of the other, on
   the spot when it stands) and `aim: [bearing, lift]`, which eases its turret and gun there. `ground:
-  false` keeps a plane's wheels still in the air (it is the default for a plane).
+  false` keeps a plane's wheels still in the air (it is the default for a plane and a helicopter). A
+  motorbike's `fork` turns with `steer` and it leans into a turn as far as its speed round it asks
+  (`bike.lean` is how far now; `lean` in the options to say yourself, as a stunt or a fall does).
+- **Flashing lights.** A police car, an ambulance, a fire engine and a police helicopter have beacons:
+  `car.siren(true)` sets them flashing in bursts, one side and then the other, as `move()` or `update(dt)`
+  runs (`siren(false)` stops them, `sirenOn` says). `car.beacons` lists each one (`point`, `colour`, `on` this
+  frame), so a game can light the street with `v.flash()` or `placeLamps` where they are. Each flashing car has
+  materials of its own, so one car's lights do not flash another's; a taxi's roof sign lights with `lights(true)`.
+  No sound comes with them: a siren is the game's (`gs.sound`). `gs.sound.Foley` gives buses, motorbikes,
+  scooters, dirt bikes and helicopters' rotors engines of their own by themselves.
 - **By hand** instead: `roll(metres so far)` (a tank: `roll(left, right)`), `steer(radians)`,
   `aim(bearing, lift)` (the gun stops at its own limits), or turn any of `parts` yourself (they are
   Groups: `boat.parts.oarL.rotation.y = stroke`).
@@ -3906,7 +4145,14 @@ update(dt) {
   `gs.physics3d` the chassis and the car's own four wheels, so they ride the bumps and it can roll over;
   then `drive.drive(throttle, steer, brake)` each frame as ever (don't call `move()` as well). `chassis()`
   moves the body so its origin is the middle of the chassis and not the road, so call it once, when you
-  make the car. A third axle's wheels follow the second's.
+  make the car. A third axle's wheels follow the second's. A bus the same.
+- **A motorbike on real physics:** `ride = world.vehicle(bike, bike.chassis())` (`chassis()` says `bike: true`):
+  its rays sit close under it, its back wheel drives, its rider keeps it upright and its mesh leans into the
+  turn and turns its forks by itself. It goes over when it hits something at `fall` metres a second or more
+  (8; `bike.chassis({ fall: 12 })`) or is tipped past about 50°: then `ride.fallen` is true, and the game
+  throws the rider (`gs.characters.Reactions`). `ride.rightUp()` stands it up again.
+- **A helicopter** is the look for `gs.craft.Hover`: place it from the craft each frame and `move(dt, speed,
+  { power })` spins its rotor and tail rotor up to a blur.
 - **Boats and planes** are the look for `gs.craft`: `boat = new Boat(sea, { length: hull.size.length,
   width: hull.size.width, draft: 0 })`, then `hull.position.copy(boat.pos); hull.quaternion.copy(boat.quat);
   hull.move(dt, boat.speed, { steer })` each frame; a plane the same from a `Plane({ ground, gear:
@@ -3947,7 +4193,9 @@ update(dt) {
   whole train by its own position.
 - **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
   21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 5,000 to
-  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less
+  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000;
+  a police car, a taxi and an ambulance 19,000 to 22,000 in about 20 draws; a fire engine 21,000 in 25; a bus 16,000 to 17,000 in 13; a
+  motorbike 11,500 to 16,000 in about 20; a helicopter 5,500 to 8,000 in 14 to 18. Each is made in about a tenth of a second or less
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.
   Wagons of one kind share theirs too. Make vehicles in `make()`.

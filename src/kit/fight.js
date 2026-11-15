@@ -1,4 +1,4 @@
-// Fighting games: an input reader that remembers the last moments (so a special move's motion and a
+// Fighting games (and, for 3D street fights, Melee and Brawler: src/kit/melee3d.js): an input reader that remembers the last moments (so a special move's motion and a
 // press a moment early both count), and moves made of frames (start-up, active, recovery) with hit
 // boxes, hurt boxes, cancels, hit stun, block stun and hit stop. Frames are 60ths of a second; the kit
 // steps them with dt. Your game draws the fighters and decides damage and the rules.
@@ -333,3 +333,6 @@ export class Opponent {
   /** Forgets how the player fights. */
   forget() { for (const p of [this.heights, this.guards, this.punished]) if (p) p.forget(); this.seen.clear(); this.near = this.starts = 0; this.clear(); return this; }
 }
+
+// fights between people standing in a 3D world (src/kit/melee3d.js)
+export { Melee, Brawler, FISTS, SWINGS } from './melee3d.js';

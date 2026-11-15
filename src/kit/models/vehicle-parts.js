@@ -128,7 +128,27 @@ export class Shape {
     for (const [s, o] of acc) if (o.pos.length) this.put(s, geoOf(o.pos, o.nor));
     return this;
   }
-  /** How many triangles it holds so far. */
+  /**
+   * A strip laid over a surface: rows [[a, b], ...] (two points each, in order along it), facing `out` ([x, y, z],
+   * roughly away from the body): a livery's band, a row of windows. Smooth along it, as the surface under it is.
+   */
+  ribbon(slot, rows, out) {
+    const n = rows.length; if (n < 2) return this;
+    const pos = [], nor = [], N = rows.map((r, i) => {
+      const p = rows[max(0, i - 1)], q = rows[min(n - 1, i + 1)];
+      const u = [0, 1, 2].map(k => q[0][k] + q[1][k] - p[0][k] - p[1][k]), v = [0, 1, 2].map(k => r[0][k] - r[1][k]);
+      let c = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]; if (c[0] * out[0] + c[1] * out[1] + c[2] * out[2] < 0) c = c.map(x => -x);
+      const l = hypot(...c) || 1; return c.map(x => x / l);
+    });
+    const put = (p, nn) => { pos.push(p[0], p[1], p[2]); nor.push(nn[0], nn[1], nn[2]); };
+    for (let i = 0; i < n - 1; i++) {
+      const a = rows[i][0], b = rows[i][1], c = rows[i + 1][1], d = rows[i + 1][0], na = N[i], nb = N[i + 1];
+      const f = [(b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]), (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])];
+      if (f[0] * na[0] + f[1] * na[1] + f[2] * na[2] >= 0) { put(a, na); put(b, na); put(c, nb); put(a, na); put(c, nb); put(d, nb); }
+      else { put(a, na); put(c, nb); put(b, na); put(a, na); put(d, nb); put(c, nb); }
+    }
+    return this.put(slot, geoOf(pos, nor));
+  }
   /** The box round everything in it: `{ lo: [x, y, z], hi, w, h, l }`. */
   bounds() {
     const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];

@@ -15,5 +15,6 @@ export { building, BUILDING_STYLES as buildings } from './models/buildings.js';
 export { human } from './models/human.js';
 export { creature } from './models/creature.js';
 export { vehicle } from './models/vehicles.js';
+export { weapon, WEAPON_KINDS as weapons, Wield } from './models/weapons.js';
 export { relief } from './relief.js';
 export { fur } from './models/fur.js';
