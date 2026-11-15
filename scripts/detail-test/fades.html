@@ -87,19 +87,24 @@ try {
   const P1 = await shot(S); HD.lodFade = true;
   const endOff = differ(A1, P1, 6);
   check('a fade ends in the picture a plain switch gives', endOff <= 8, `${endOff} pixels differ`);
-  // half way: one level or the other at each pixel, about half of each
+  // half way: one level or the other at each pixel, about half of each. (The finishing pass's edge smoothing (FXAA,
+  // on wherever there is no multisampling, as on WebGPU) then blends a pixel with the ones round it where the picture
+  // is busy, as in a dog's fur in locks: there a pixel is a mix of the levels the dither shows round it. So a pixel
+  // counts as one level or the other when it is either, or lies within what the two levels show in the pixels next
+  // to it; most must still be one or the other outright.)
   {
-    let region = 0, either = 0, covered = 0, holes = 0, both = 0, as0 = 0, as1 = 0;
+    const inMix = i => { const x0 = (i >> 2) % W, y0 = (i >> 2) / W | 0; for (let c = 0; c < 3; c++) { let lo = 255, hi = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = x0 + dx, y = y0 + dy; if (x < 0 || y < 0 || x >= W || y >= H) continue; const j = (y * W + x) * 4 + c; lo = Math.min(lo, A0[j], P1[j]); hi = Math.max(hi, A0[j], P1[j]); } if (M[i + c] < lo - 12 || M[i + c] > hi + 12) return false; } return true; };
+    let region = 0, either = 0, outright = 0, covered = 0, holes = 0, both = 0, as0 = 0, as1 = 0;
     for (let i = 0; i < M.length; i += 4) {
       const in0 = !near(A0, E, i, 12), in1 = !near(P1, E, i, 12);
       if (!in0 && !in1) continue;
       region++;
-      if (near(M, A0, i, 12) || near(M, P1, i, 12)) either++;
+      if (near(M, A0, i, 12) || near(M, P1, i, 12)) { outright++; either++; } else if (inMix(i)) either++;
       if (!near(A0, E, i, 24) && !near(P1, E, i, 24)) { covered++; if (near(M, E, i, 6)) holes++; }
       if (!near(A0, P1, i, 24)) { both++; const d0 = Math.abs(M[i] - A0[i]) + Math.abs(M[i + 1] - A0[i + 1]) + Math.abs(M[i + 2] - A0[i + 2]), d1 = Math.abs(M[i] - P1[i]) + Math.abs(M[i + 1] - P1[i + 1]) + Math.abs(M[i + 2] - P1[i + 2]); if (d0 < d1) as0++; else as1++; }
     }
-    info.half = { region, either, covered, holes, differing: both, likeLevel0: as0, likeLevel1: as1 };
-    check('half way, each pixel shows one level or the other', region > 3000 && either >= region * .97, `${either} of ${region} pixels the two cover match one of them`);
+    info.half = { region, either, outright, covered, holes, differing: both, likeLevel0: as0, likeLevel1: as1 };
+    check('half way, each pixel shows one level or the other', region > 3000 && either >= region * .995 && outright >= region * .93, `${either} of ${region} pixels the two cover show one of them or a mix of what they show next to it, ${outright} one of them outright`);
     check('half way, no holes where both levels cover', holes <= covered * .002, `${holes} of ${covered} pixels show the ground through them`);
     check('half way, about half of each level shows where they differ', both > 200 && as0 > both * .3 && as1 > both * .3, `${as0} like the old level, ${as1} like the new, of ${both}`);
     const moved = differ(M, A0, 12), moved1 = differ(M, P1, 12);
