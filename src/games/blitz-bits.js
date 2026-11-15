@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // A gauntlet of four-second micro games, back to back. Each one flashes a single word telling
 // you what to do: tap, catch, dodge, pop, stop, rub, plug, flick or wait. Win to keep going;
@@ -53,7 +54,7 @@ function make(api) {
   const ready = new Ready();                                            // the first micro game waits for a tap
   let cur, s, wins, lives, t, phase, pt, speed, order, last;
   function next() {
-    if (!order.length) { order = MICROS.map((_, i) => i).sort(() => Math.random() - .5); if (order[0] === last) order.push(order.shift()); }
+    if (!order.length) { order = shuffle(MICROS.map((_, i) => i)); if (order[0] === last) order.push(order.shift()); }
     last = order.shift(); cur = MICROS[last]; s = { t: 0, sp: speed, win: false, lose: false }; cur.init(s); phase = 'intro'; pt = 0;
   }
   const dur = () => Math.max(2.6, 4.2 - (speed - 1) * 1.6);

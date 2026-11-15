@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic, want, tilt, calibrateTilt, onShake, startMic, stopMic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // More four-second micro games, but these use the phone itself. Tilt to roll a ball into the hole,
 // blow to pop a balloon, shake a fizzy can, keep a tray level, hush when the baby sleeps, steer
@@ -55,7 +56,7 @@ function make(api) {
   const ready = new Ready();                                            // the first micro game waits for a tap
   let cur, s, wins, lives, t, phase, pt, speed, order, last, unShake, dragStart;
   function next() {
-    if (!order.length) { order = MICROS.map((_, i) => i).sort(() => Math.random() - .5); if (order[0] === last) order.push(order.shift()); }
+    if (!order.length) { order = shuffle(MICROS.map((_, i) => i)); if (order[0] === last) order.push(order.shift()); }
     last = order.shift(); cur = MICROS[last]; s = { t: 0, sp: speed, win: false, lose: false }; cur.init(s); phase = 'intro'; pt = 0; sense.drag = null; sense.tapBurst = 0; calibrateTilt();
   }
   const dur = () => Math.max(3, 4.6 - (speed - 1) * 1.6);

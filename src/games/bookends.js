@@ -1,6 +1,7 @@
 import gs from '../gamescroll.js';
 const { sfx } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects, { Ready } = gs.rounds;
 const text = gs.pixel.text;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Bookends: pairs of books drop into a bookcase. Slide a pair with your finger, tap to spin it, flick
 // down to drop it. Books clear when they are trapped: a run of two or more of the same book with a
@@ -64,7 +65,7 @@ function make(api) {
     haptic(chain > 1 ? 'success' : 'medium'); sfx(440 + chain * 160 + longest * 40, .14, 'square', .05, 300);
   }
   function dropBoxes() {
-    const n = 2 + Math.min(3, score / 600 | 0), xs = [0, 1, 2, 3, 4, 5].sort(() => Math.random() - .5).slice(0, n);
+    const n = 2 + Math.min(3, score / 600 | 0), xs = shuffle([0, 1, 2, 3, 4, 5]).slice(0, n);
     for (const x of xs) if (!g[0][x]) g[0][x] = { k: BOX, pop: 0 };
     msg = { txt: 'DUSTY BOXES', l: 1 }; sfx(160, .2, 'square', .04, -60); haptic('medium');
   }

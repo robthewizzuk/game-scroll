@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const { approach } = gs.juice;
 
 // Vertical space shooter. Drag anywhere to fly; your ship fires on its own. Catch the P orbs to
 // widen your shot. A hit knocks your power down a level, and a hit with no power left ends the run.
@@ -65,7 +66,7 @@ function make(api) {
       }
       foes = foes.filter(f => !f.gone); shots = shots.filter(s => !s.dead);
       if (boss) {
-        boss.t += dt; boss.y += (34 - boss.y) * Math.min(1, dt * 1.5); boss.x = W / 2 + Math.sin(boss.t * .7) * (W / 2 - 30);
+        boss.t += dt; boss.y = approach(boss.y, 34, 1.5, dt); boss.x = W / 2 + Math.sin(boss.t * .7) * (W / 2 - 30);
         if (boss.t > 1.5 && boss.t % 1.6 < dt) { for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2 + boss.t; ebul.push({ x: boss.x, y: boss.y + 6, vx: Math.cos(a) * 55, vy: Math.sin(a) * 55 }); } sfx(180, .1, 'square', .03); }
         if (boss.t > 2 && boss.t % 2.3 < dt) { for (let k = 0; k < 3; k++) aimShot(boss.x + (k - 1) * 12, boss.y + 8, 95); }
         for (const s of shots) if (!s.dead && Math.abs(s.x - boss.x) < 22 && Math.abs(s.y - boss.y) < 10) { s.dead = true; boss.hp--; boss.flash = .05; }

@@ -11,17 +11,16 @@ const W = 360, H = 640, RX = 90;
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
   const ready = new Ready({ eat: false });                // hovers until the first tap, which also asks for the mic
-  let y, vy, rings, spawn, score, lives, hold, mic, asked, level, t, dead, flames;
+  let y, vy, rings, spawn, score, lives, hold, mic, asked, level, t, dead;
   return {
-    reset() { stopMic(); mic = null; y = H / 2; vy = 0; rings = []; spawn = 1; score = 0; lives = 3; hold = false; asked = false; level = 0; t = 0; dead = 0; flames = []; feel.clear(); ready.reset(); },
+    reset() { stopMic(); mic = null; y = H / 2; vy = 0; rings = []; spawn = 1; score = 0; lives = 3; hold = false; asked = false; level = 0; t = 0; dead = 0; feel.clear(); ready.reset(); },
     update(dt) {
       feel.update(dt); t += dt; if (!ready.update(dt)) return;
       if (!asked) { asked = true; startMic().then(m => { mic = m; }); }
       level = Math.max(hold ? .55 : 0, mic ? clamp((mic.level() - .04) * 2.2, 0, 1) : 0);
       vy += (520 - level * 1350) * dt; vy = clamp(vy, -420, 420); y += vy * dt;
       if (y < 30) { y = 30; vy = 0; } if (y > H - 40) { y = H - 40; vy = 0; }
-      if (level > .1) flames.push({ x: RX - 26, y: y + rnd(-3, 3), vx: -rnd(120, 220), life: .3 * level + .05 });
-      for (const f of flames) { f.x += f.vx * dt; f.life -= dt; } flames = flames.filter(f => f.life > 0);
+      if (level > .1) feel.juice.emit(RX - 26, y + rnd(-3, 3), -rnd(120, 220), 0, { life: .3 * level + .05, size: 8 + (.3 * level + .05) * 40, drag: 0, color: ['#ffd23c', '#ffa03c', '#ff783c'] });
       spawn -= dt; const sp = 150 + Math.min(140, score * 6);
       if (spawn <= 0) { spawn = rnd(1.4, 2) * 150 / sp + .6; const last = rings[rings.length - 1]; const ry = clamp((last ? last.y : H / 2) + rnd(-200, 200), 110, H - 120); rings.push({ x: W + 40, y: ry, gap: Math.max(80, 140 - score * 3), done: false }); }
       for (const r of rings) {
@@ -39,7 +38,6 @@ function make(api) {
         c.strokeStyle = r.miss ? '#ff5d73' : r.done ? '#7dffb2' : '#ffd34a'; c.lineWidth = 7;
         c.beginPath(); c.ellipse(r.x, r.y, 14, r.gap / 2, 0, Math.PI / 2, Math.PI * 1.5); c.stroke();
       }
-      for (const f of flames) { c.fillStyle = `rgba(255,${120 + f.life * 300 | 0},60,${f.life * 3})`; c.beginPath(); c.arc(f.x, f.y, 4 + f.life * 20, 0, 7); c.fill(); }
       c.save(); c.translate(RX, y); c.rotate(clamp(vy / 900, -.5, .5));
       c.fillStyle = '#e8ecf5'; c.beginPath(); c.moveTo(26, 0); c.quadraticCurveTo(10, -14, -22, -11); c.lineTo(-22, 11); c.quadraticCurveTo(10, 14, 26, 0); c.fill();
       c.fillStyle = '#ff5d73'; c.beginPath(); c.moveTo(-14, -11); c.lineTo(-28, -20); c.lineTo(-22, -6); c.fill(); c.beginPath(); c.moveTo(-14, 11); c.lineTo(-28, 20); c.lineTo(-22, 6); c.fill();

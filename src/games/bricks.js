@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const { approach } = gs.juice;
 
 // Brick breaker, colour edition. Drag to slide the paddle and keep the ball in play. Silver bricks
 // take extra hits and gold ones never break. Catch falling capsules: W wide paddle, M multiball,
@@ -59,7 +60,7 @@ function make(api) {
       t += dt; if (msg) { msg.l -= dt; if (msg.l <= 0) msg = null; }
       for (const k in eff) eff[k] = Math.max(0, eff[k] - dt);
       pw += ((eff.W > 0 ? 46 : 30) - pw) * Math.min(1, dt * 8);
-      px += (tx - px) * Math.min(1, dt * 22); px = clamp(px, pw / 2, W - pw / 2);
+      px = approach(px, tx, 27, dt); px = clamp(px, pw / 2, W - pw / 2);
       for (const k of bricks) if (k.flash) k.flash = Math.max(0, k.flash - dt);
       if (eff.L > 0 && (t * 4 | 0) !== ((t - dt) * 4 | 0)) { lasers.push({ x: px - pw / 2 + 3, y: PY() }, { x: px + pw / 2 - 3, y: PY() }); sfx(1600, .03, 'square', .02, -800); }
       for (const l of lasers) { l.y -= 240 * dt; for (let i = 0; i < bricks.length; i++) { const k = bricks[i]; if (l.x > k.x && l.x < k.x + k.w && l.y > k.y && l.y < k.y + k.h) { l.dead = true; hitBrick(k, i); break; } } }

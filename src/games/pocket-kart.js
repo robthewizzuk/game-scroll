@@ -3,6 +3,8 @@ const { Timers } = gs.math;
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, disc } = gs.util;
+const { approach } = gs.juice;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Pocket Kart: a flat-plane scaling kart racer in the style of early-2000s handhelds. Two laps
 // against five rival drivers on one of four hand-laid tracks, each with its own scenery and
@@ -258,7 +260,7 @@ function make(api) {
     if (g === BOOST && k.boost < .6) { k.boost = 1; if (k === me) { haptic('medium'); sfx(520, .3, 'sawtooth', .04, 600); } }
     let top = SURF[g][0] * k.d.top * (k.band || 1) * (k.draft || 1); if (k.boost) top = Math.max(top, 196); top = Math.min(top, cap);
     k.v += (k.v < top ? (k.boost ? 220 : 72) : -170) * dt; k.v = clamp(k.v, 0, 200);
-    k.st += (steer - k.st) * Math.min(1, dt * 10);
+    k.st = approach(k.st, steer, 11, dt);
     k.a += k.st * dt * (1.4 + k.v / 120) * .9;
     k.md += angDiff(k.a, k.md) * Math.min(1, SURF[g][1] * dt);
     k.x = clamp(k.x + Math.cos(k.md) * k.v * dt, 4, WORLD - 4); k.y = clamp(k.y + Math.sin(k.md) * k.v * dt, 4, WORLD - 4);
@@ -336,7 +338,7 @@ function make(api) {
     reset() { timers.clear();
       themeI = (themeI + 1) % THEMES.length; const th = THEMES[themeI];
       if (!trk || trk.th !== th) { trk = buildTrack(th); trk.solid = trk.props.filter(o => KINDS[o.kind][1]).map(o => ({ x: o.x, y: o.y, r: KINDS[o.kind][1] })); img = null; mini = null; }
-      const lineup = [...DRIVERS].sort(() => Math.random() - .5);
+      const lineup = shuffle([...DRIVERS]);
       karts = [...lineup, YOU].map((d, j) => { const g = trk.grid[j]; return { d, x: g.x, y: g.y, a: g.a, md: g.a, v: 0, st: 0, idx: g.idx, frac: 0, lap: -1, lat: (j & 1 ? 1 : -1) * 13, boost: 0, sink: 0, wob: 0, passT: 0, done: false, si: [...DRIVERS, YOU].indexOf(d) }; });
       for (const k of karts) k.d = { ...k.d, bias: k.d === YOU ? 0 : (Math.random() - .5) * 8 };
       me = karts[5]; best = api.load({ best: {} }).best || {}; draftT = 0; newBest = false; t = 0; raceT = 0; go = 3.2; msg = null; held = null; flash = 0; shake = 0; finished = false; endT = 0; results = null; camA = me.a; parts = []; wrongT = 0; lastPlace = 6; live = true;

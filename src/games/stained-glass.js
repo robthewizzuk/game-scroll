@@ -10,6 +10,7 @@ const { text } = gs.pixel;
 const { sounds, notes } = gs.sound;
 const { haptic } = gs.device;
 const { rng } = gs.math;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 const W = 160, H = 176, GW = 64, GH = 64, CS = 2, OX = 16, OY = 22;
 const GLASS = [C16[2], C16[8], C16[4], C16[5]];
@@ -70,7 +71,7 @@ function make(api) {
     win = cut(level, (Math.random() * 1e9) | 0);
     const n = win.seeds.length, nLock = Math.max(1, Math.round(n * .22));
     col = win.sol.map(() => -1); locked = win.sol.map(() => false);
-    const idx = win.sol.map((_, i) => i).sort(() => Math.random() - .5);
+    const idx = shuffle(win.sol.map((_, i) => i));
     for (let i = 0; i < nLock; i++) { locked[idx[i]] = true; col[idx[i]] = win.sol[idx[i]]; }
     // row runs: glass fill and lead lines (a cell is lead where its right or lower neighbour is another pane or stone)
     runs = []; leads = [];

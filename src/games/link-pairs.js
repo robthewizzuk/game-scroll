@@ -2,10 +2,12 @@ import gs from '../gamescroll.js';
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { Feel } = gs.effects;
+const { icon } = gs.icons;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle
 
 // Tap two matching tiles to clear them, but only if a path with at most two turns joins them through empty space.
 const W = 360, H = 640, C = 6, Rn = 8, CS = 52, OX = (W - C * CS) / 2, OY = 130;
-const ICONS = ['★', '♥', '♦', '♣', '♠', '●', '▲', '■', '☀', '☂', '♪', '✿'];
+const ICONS = ['star', 'heart', 'diamonds', 'clubs', 'spades', 'moon', 'anchor', 'crown', 'sun', 'cloud', 'music', 'flower'];   // gs.icons names
 const HUES = [45, 350, 200, 130, 260, 20, 170, 300, 60, 220, 100, 330];
 
 function make(api) {
@@ -14,7 +16,7 @@ function make(api) {
   const at = (x, y) => (x < 0 || y < 0 || x >= C || y >= Rn) ? -1 : g[y * C + x];
   function deal() {
     const n = C * Rn / 2, kinds = Math.min(ICONS.length, 6 + board), vals = []; for (let i = 0; i < n; i++) { const k = i % kinds; vals.push(k, k); }
-    for (let i = vals.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [vals[i], vals[j]] = [vals[j], vals[i]]; } g = vals; sel = null;
+    g = shuffle(vals); sel = null;
   }
   // BFS over cells (with a 1-cell border outside the board) counting turns.
   function path(a, b) {
@@ -40,7 +42,7 @@ function make(api) {
       feel.begin(c);
       for (let i = 0; i < g.length; i++) { if (g[i] === null) continue; const x = OX + (i % C) * CS, y = OY + (i / C | 0) * CS, s = sel === i;
         c.fillStyle = s ? '#ffe9a8' : '#f3ead6'; c.beginPath(); c.roundRect(x + 3, y + 3, CS - 6, CS - 6, 8); c.fill(); c.fillStyle = '#c9bb98'; c.fillRect(x + 6, y + CS - 8, CS - 12, 3);
-        c.fillStyle = `hsl(${HUES[g[i]]} 65% 42%)`; c.font = '28px Rubik, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(ICONS[g[i]], x + CS / 2, y + CS / 2); }
+        c.fillStyle = `hsl(${HUES[g[i]]} 65% 42%)`; icon(c, ICONS[g[i]], x + CS / 2, y + CS / 2, 30, { color: `hsl(${HUES[g[i]]} 65% 42%)` }); }
       c.textBaseline = 'alphabetic';
       if (line) { c.strokeStyle = `rgba(255,211,74,${line.l * 3})`; c.lineWidth = 4; c.beginPath(); line.pts.forEach(([x, y], i) => { const px = OX + x * CS + CS / 2, py = OY + y * CS + CS / 2; i ? c.lineTo(px, py) : c.moveTo(px, py); }); c.stroke(); }
       feel.end(c, W, H);
