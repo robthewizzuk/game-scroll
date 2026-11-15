@@ -109,19 +109,25 @@ The PR check (`.github/workflows/game-pr-check.yml`) runs the node checks (`npm 
 apps' web build, `licences`, `types-check`, `game-types`, the starter templates, `kit-test`, `brains`, `recommend`, `site`),
 the uniqueness check on the changed games (`unique.mjs --since`), and then smoke, streamed, fold, sweep, Tiny
 Brains, the AI playtester and budget on the changed games (plus a sample of engine-heavy games when shared code
-changes), split over up to three machines. The slower checks run only when their parts change, each on a machine
-of its own: `app-test.cjs -scenes` and `sound-test.cjs` ("app"), `app-test.cjs scenes` ("app-scenes"),
-`framegen-test.cjs --check`, `close-up.cjs`, `gpu-loss.cjs` and the dust look ("framegen"), `upscale-compare.cjs`
-in three parts ("sgsr"), `share-link.mjs`, the guards' mutation check, and `ar-floor.cjs` when the AR kit changes.
+changes), dealt out over up to three machines by how long each game takes (`pick-games.mjs --deal`: Long Shadow
+and the swept Console games count for most). The slower checks run only when their parts change, each on a machine of its own:
+`app-test.cjs -scenes` and `sound-test.cjs` ("app"), `app-test.cjs scenes` ("app-scenes"), `framegen-test.cjs
+--check`, `close-up.cjs` and the dust look ("framegen"), `gpu-loss.cjs` and `shader-replay.cjs` ("gpu-recovery"),
+`upscale-compare.cjs` in three WebGPU parts and the WebGL one ("sgsr"), `share-link.mjs`, the guards' mutation
+check, and `ar-floor.cjs` when the AR kit changes.
 
 **Keeping it quick.** GitHub runs about 20 jobs at once for the whole repository, shared by every open pull
-request, so time on a machine is what everyone waits for. Before adding a check: give it a "did my part
-change?" step like the others, so other pull requests skip it in seconds; keep any one job under about 8
-minutes on GitHub (split by part or scene, as `app-test.cjs` and `upscale-compare.cjs` are); and use
-`.github/actions/browser` for Node and the browser. GitHub's machines are about 1.8 times slower than the
-cloud machine these times were measured on. The maths probe (`math-probe.cjs`, a warning only) runs after
-merging (`maths-probe.yml`), and the Android builds skip pull requests that change only games, kits or test
-scripts.
+request, so time on a machine is what everyone waits for. The "plan" job works out once which parts a pull
+request changed, and a job with nothing to check is skipped before it takes a machine. Before adding a check:
+give it an answer in "plan"'s "Which slower checks have something to check" step (or reuse one) and an `if:`
+on that answer; keep any one job under about 8 minutes on GitHub (split by part or scene, as `app-test.cjs` and
+`upscale-compare.cjs` are: `--scenes =name` is one scene alone); and use `.github/actions/browser` for Node and
+the browser (its Playwright version is pinned there: move it on in a pull request of its own, as a new browser
+can move the picture checks' numbers). GitHub's machines are about 1.8 times slower than the cloud machine
+these times were measured on. The maths probe (`math-probe.cjs`, a warning only) runs after merging
+(`maths-probe.yml`). Pull requests build the Android app ("Google Play", the release build) only when they
+change what Gradle builds (`android/`, `plugins/`, the packages, the NPU files); the debug APK is built on
+main, or by hand with "Run workflow".
 
 ## The AI playtester: can a player reach the goal?
 
