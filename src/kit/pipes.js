@@ -7,10 +7,12 @@
 // hundreds of milliseconds on a phone), or, built in the background, a thing that shows up late. Unity traces
 // these (PSO tracing) and Godot bakes them ahead (its shader baker). Here a game's own rounds are the trace.
 //
-// While a round is being played, each pipeline the shared WebGPU device makes for the first time is noted for
-// that game: its whole descriptor, with the WGSL text of its shaders and its layouts (plain WebGPU, nothing of
+// While a round is being played, and while it gets ready under the loading screen, each pipeline the shared WebGPU
+// device makes for the first time is noted for that game (the loading screen's own ones too, so that the first Play
+// after the app starts has all of them made at once, alongside the game being made, PIPES.rush): its whole descriptor, with the WGSL text of its shaders and its layouts (plain WebGPU, nothing of
 // three's). The notes are kept on this phone (IndexedDB 'gs-pipes', squeezed). The next time a card of that
-// game is the one on screen, the same pipelines are made again in the background (createRenderPipelineAsync:
+// game is played (a Next Gen, AR or Board card makes nothing before Play; a Console card, once it is on screen), the
+// same pipelines are made again in the background (createRenderPipelineAsync:
 // the browser's own threads, no frame waits for them), the loading screen waits a little for them (a soft
 // wait: GATE.soft at most), and they are kept while the card is on screen. A browser's WebGPU hands back the
 // pipeline it already holds when asked for an identical one (Dawn: Chrome, Android's web view, the Mac and
@@ -30,15 +32,16 @@ const DB = 'gs-pipes', STORE = 'games', V = 1;
 // all of them at once, as soon as the card came into view, was the graphics chip busy with them in the middle
 // of the swipe (each new shader and pipeline is work the chip's driver does where the feed's own frames are
 // drawn), and Next Gen cards made the feed stutter as they came past.
-export const PIPES = { MAX: 96, KEEP: 40, MISS: 3, playedMs: 20000, on: true, BATCH: 2, free: () => true };
+// rush(): the card is getting ready for its round (the loading screen is up): RUSH at a time, nothing to keep smooth.
+export const PIPES = { MAX: 400, KEEP: 30, MISS: 3, playedMs: 20000, on: true, BATCH: 2, RUSH: 24, free: () => true, rush: () => false };
 
 let dev = null, rev = '';
 const meta = new WeakMap();   // shader module -> { code, h }; bind group layout and pipeline layout -> { d: plain data }
 let everMade = new Set();     // pipelines this device has made this session (by key)
 const cards = new Map();      // card -> { id, keys (noted pipelines made again for it), used, made (pipelines held), left, dev, played }
 const recs = new Map();       // game id -> { id, pipes: [{ key, kind, d, miss }], mods: { hash: WGSL }, has: Set, loaded, dirty }
-let front = null, playingCard = null, playingAt = 0;
-const stats = { noted: 0, primed: 0, ready: 0, failed: 0, hits: 0, saves: 0, made: 0, midRound: 0, midRoundReady: 0 };
+let front = null, playingCard = null, playingAt = 0, playingWarm = false;
+const stats = { noted: 0, primed: 0, ready: 0, failed: 0, hits: 0, saves: 0, made: 0, midRound: 0, midRoundReady: 0, warm: 0 };
 const saving = new Set();
 
 // a short hash of a string (cyrb53)
@@ -100,15 +103,15 @@ function made(desc, out, kind) {
   const compute = kind.includes('Compute'), key = hash((compute ? 'c' : 'r') + JSON.stringify(d));
   const first = !everMade.has(key); everMade.add(key); stats.made++;
   // (named for the frame lab: three's label without its number, 'renderPipeline_MeshStandardMaterial_81' -> MeshStandardMaterial)
-  if (playingCard) built(String(desc?.label || '').replace(/^(render|compute)Pipeline_/, '').replace(/_\d+$/, '') || (kind.includes('Compute') ? 'compute' : 'render'), first ? '' : 'again');
+  if (playingCard && !playingWarm) built(String(desc?.label || '').replace(/^(render|compute)Pipeline_/, '').replace(/_\d+$/, '') || (kind.includes('Compute') ? 'compute' : 'render'), first ? '' : 'again');
   let had = false;
   for (const H of cards.values()) if (H.keys.has(key)) { had = true; if (!H.used.has(key)) { H.used.add(key); stats.hits++; } }
   const card = playingCard, H = card && cards.get(card);
   if (!H) return;
   // held while the card is on screen (Play again, a thing made again after three let it go)
   if (out && typeof out.then === 'function') out.then(p => { if (cards.get(card) === H && H.dev === dev) H.made.set(key, p); }, () => {}); else if (out) H.made.set(key, out);
-  if (!first) return;   // (made before this session, out of the round: under the loading screen, or by an earlier card)
-  stats.midRound++; if (had) stats.midRoundReady++;
+  if (!first) return;   // (made before this session: by an earlier card, or ahead from the notes)
+  if (playingWarm) stats.warm++; else { stats.midRound++; if (had) stats.midRoundReady++; }
   const R = record(H.id);
   if (R.has.has(key)) return;
   R.pipes.push({ key, kind: compute ? 'compute' : 'render', d, miss: 0 }); R.has.add(key);
@@ -165,7 +168,8 @@ function build(card, H, R, d) {
     if (cards.get(card) !== H || H.dev !== d) { if (H.dev === d) H.left -= todo.length - i; i = todo.length; return; }
     let free = true; try { free = PIPES.free(); } catch (_) { /* made anyway */ }
     if (!free) { setTimeout(pump, 100); return; }
-    for (let n = 0; n < PIPES.BATCH && i < todo.length; n++) one(todo[i++]);
+    let rush = false; try { rush = PIPES.rush(); } catch (_) { /* a few */ }
+    for (let n = 0, most = rush ? PIPES.RUSH : PIPES.BATCH; n < most && i < todo.length; n++) one(todo[i++]);
     if (i < todo.length) later(pump);
   };
   pump();
@@ -192,13 +196,17 @@ export function releasePipes(card) {
   if (R && ![...cards.values()].some(x => x.id === H.id)) Promise.all([...saving]).then(() => { if (!R.dirty && ![...cards.values()].some(x => x.id === H.id)) recs.delete(H.id); });
 }
 
-/** The app, each frame: the card whose round is being played now (not paused, not getting ready), or null. */
-export function playingPipes(card) {
-  card ||= null;
-  if (card === playingCard) return;
+/**
+ * The app, each frame: the card whose round is being played now (not paused), or null. warm: it is getting ready for
+ * its round, under the loading screen: what it builds there is noted too (not as built in play), so that the next
+ * time the app starts, Play has all of it made ahead at once, alongside the game being made.
+ */
+export function playingPipes(card, warm = false) {
+  card ||= null; warm = !!card && !!warm;
+  if (card === playingCard && warm === playingWarm) return;
   const now = performance.now(), was = playingCard, W = was && cards.get(was);
-  if (W) { W.played += now - playingAt; const R = recs.get(W.id); if (R?.dirty) save(W.id); }
-  playingCard = card; playingAt = now;
+  if (W) { if (!playingWarm) W.played += now - playingAt; const R = recs.get(W.id); if (R?.dirty) save(W.id); }
+  playingCard = card; playingAt = now; playingWarm = warm;
 }
 
 // What the loading screen waits a little for: the card on screen's pipelines still being made

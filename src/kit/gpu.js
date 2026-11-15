@@ -88,7 +88,28 @@ export const gpuPick = () => pick;
 /** Tests only: draw with WebGL ('webgl') or WebGPU where there is one ('webgpu'). */
 export function setGpuPick(v) { pick = v === 'webgl' ? 'webgl' : 'webgpu'; if (pick === 'webgpu') prepareGPU(); }
 
-let gpu = null, gpuLoad = null;
+let gpu = null, gpuLoad = null, gpuSettled = false;
+// Next Gen, AR and Board games make nothing in the feed until Play (src/main.js): the app turns this on at start,
+// and the 3D parts then load only three's WebGPU code with them (loadGPUCode), leaving the device and its renderer
+// to be made on the first Play (gpuWait). Off (test pages, the kit browser), the 3D parts make it as they load.
+export const GPU_AT_PLAY = { on: false };
+/** The 3D parts are loading (gamescroll.js): three's WebGPU code is downloaded and read, nothing is made with it. */
+export function loadGPUCode() {
+  if (pick !== 'webgpu' || !globalThis.navigator?.gpu) return Promise.resolve(null);
+  return Promise.all([import('three/webgpu'), import('./hd3d-gpu.js')]).then(() => null, () => null);
+}
+// ...and what else the 3D parts read in as they load that only a round needs (the textures made in code that were
+// kept from earlier launches: gs.models' saved bakes): read on the first Play too, alongside the device (gamescroll.js)
+const atPlay = []; let playRead = null, playDone = false;
+export function onFirstPlay(fn) { atPlay.push(fn); playDone = false; }
+/** A promise to wait for before a 3D game is made: the shared WebGPU renderer, and what onFirstPlay asked for; else null. */
+export function gpuWait() {
+  const wait = [];
+  if (atPlay.length) { const fns = atPlay.splice(0), p = playRead = Promise.all([playRead, ...fns.map(f => Promise.resolve().then(f).catch(() => null))]).then(() => { if (playRead === p) playDone = true; }); }
+  if (playRead && !playDone) wait.push(playRead);
+  if (!(pick !== 'webgpu' || gpu || (gpuLoad && gpuSettled) || gpuMending() || LOSS.n > LOSS.most)) wait.push(prepareGPU());
+  return wait.length ? Promise.all(wait) : null;
+}
 const BIG_LIST = 268435456;   // the most asked of a chip for one list a shader reads, and for one buffer (256 MB)
 // The screen's own picture has no depth picture beside it: every 3D view draws its scene into pictures of its own
 // (which have their depth) and only finished pictures, as flat rectangles, onto the screen. three makes one the size
@@ -187,6 +208,7 @@ function oneWrite(r) {
  */
 export function prepareGPU() {
   if (pick !== 'webgpu' || LOSS.n > LOSS.most) return Promise.resolve(null);   // (lost too often this session: WebGL)
+  if (!gpuLoad) gpuSettled = false;
   return gpuLoad ||= (async () => {
     try {
       // (the phone and driver steering list may keep this device on WebGL: src/steer.js, read at start; waited for at most a second)
@@ -247,7 +269,7 @@ export function prepareGPU() {
       const dev = r.backend.device;
       dev?.lost?.then(info => lostGPU(r, info));
       return gpu = { r, W, fx, dev, at: LOSS.n };
-    } catch (e) { console.warn('WebGPU did not start:', e); gpuLoad = null; return null; }
+    } catch (e) { console.warn('WebGPU did not start:', e); gpuLoad = null; return null; } finally { gpuSettled = true; }
   })();
 }
 // A geometry freed (geometry.dispose()) has three free what each of its render objects sent to the chip, and

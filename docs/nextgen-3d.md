@@ -757,8 +757,10 @@ export default {
 Check it with `node scripts/sweep.cjs my-game` (long random play at odd sizes) as well as the
 usual smoke and fold tests.
 
-**The loading screen after Play.** Play does not start a Next Gen, AR or Board round at once: the
-app puts a loading screen over the card, runs your `reset()`, draws the round's first frames under
+**The loading screen after Play.** A Next Gen, AR or Board card in the feed is only a picture: the game
+as it looked at the end of its last round on this phone (or a cover for one never played), with nothing
+of the game made, drawn or built while the feed is scrolled. Play does not start the round at once: the
+app puts a loading screen over the card, makes the game (`make()`, on the first Play), runs your `reset()`, draws the round's first frames under
 the cover, runs your first `update()` there once, and starts the round when the shaders for all of
 that are built and the frames come on time (usually well under a second; "Play again" mostly shows
 no loading screen at all). There is nothing to call. Two things follow for the game: make what the
