@@ -163,6 +163,8 @@ export function unpackWeights(s) {
 // ---------------------------------------------------------------- where a brain keeps what it learned
 
 const memory = new Map();   // when the game has no api (tests): kept for this session only
+/** Where a brain of this name is kept for a game (the game's brain slot; in memory with no api). For the kits' own learners. */
+export const brainSlot = (api, name) => slot(api, name);
 function slot(api, name) {
   const b = api && api.brains;
   return {

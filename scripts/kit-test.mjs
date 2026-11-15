@@ -1206,6 +1206,84 @@ console.log('physics ok');
   console.log('vehicles: car, drift boost, kart hop, laps ok');
 }
 {
+  // a ready-made driver: laps by the course's bends alone, a Kart as well as a Car, and a player's quicker lap taken and driven
+  const { Car, Kart, Laps, Driver } = await import('../src/kit/vehicles.js'); const { Dial } = await import('../src/kit/brains.js');
+  let seed = 11; const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const OVAL = [[200, 100], [600, 100], [760, 250], [600, 400], [200, 400], [40, 250]], RAD = 45, DT = 1 / 60;
+  const unit = (x, y) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
+  // a made-up player: `cut` of the radius inside each checkpoint, braking just in time (late > 1: later than is safe), at `pace` of full throttle
+  const player = ({ cut, late, pace = 1 }) => (car, race) => {
+    const P = race.points, n = P.length, i = car.next, a = P[(i - 1 + n) % n], b = P[i], c = P[(i + 1) % n];
+    const [ux, uy] = unit(a[0] - b[0], a[1] - b[1]), [wx, wy] = unit(c[0] - b[0], c[1] - b[1]), [nx, ny] = unit(ux + wx, uy + wy);
+    const tx = b[0] + nx * RAD * cut, ty = b[1] + ny * RAD * cut, dist = Math.hypot(tx - car.x, ty - car.y);
+    let d = Math.atan2(ty - car.y, tx - car.x) - car.angle; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+    const bend = Math.acos(Math.max(-1, Math.min(1, -(ux * wx + uy * wy)))), vc = Math.min(car.top, RAD * 1.2 / Math.max(.02, 1 / Math.cos(bend / 2) - 1) * car.turn * .8) * pace;
+    let lim = Math.sqrt(vc * vc + 2 * car.brakes * Math.max(0, dist - RAD * .5) * late);
+    if (Math.abs(d) > .3) { const rt = dist / (2 * Math.max(.05, Math.abs(Math.sin(d)))) * car.turn * .8; lim = Math.max(car.top * .15, Math.min(lim, rt / (1 + .25 * rt / car.top))); }
+    return { throttle: car.speed < lim ? pace : 0, brake: car.speed > lim * 1.05, steer: Math.max(-1, Math.min(1, d * 3)) };
+  };
+  const racer = player({ cut: .8, late: 1.3 }), careful = player({ cut: .2, late: .7, pace: .85 });
+  // a race: each entry is a Driver or a made-up player; a `pupil` watches the first car. Gives each car's lap times and how many frames it drove a learned line.
+  const go = (who, { points = OVAL, laps = 3, pupil = null, seconds = 90, angle } = {}) => {
+    const race = new Laps(points, { radius: RAD, laps }), a0 = angle ?? Math.atan2(points[1][1] - points[0][1], points[1][0] - points[0][0]);
+    const cars = who.map((w, k) => ({ w, car: race.join(new Car({ x: points[0][0] - Math.cos(a0) * 30 * k, y: points[0][1] - Math.sin(a0) * 30 * k, angle: a0 })), times: [], t0: 0, led: 0 }));
+    for (let f = 0; f < seconds * 60 && !cars.every(c => c.car.done); f++) for (const c of cars) {
+      if (c.car.done) continue;
+      c.car.update(DT, c.w instanceof Driver ? c.w.drive(DT, c.car, race) : c.w(c.car, race)); const was = c.car.lap; race.update(c.car);
+      if (c.w instanceof Driver && c.w.using) c.led++;
+      if (c === cars[0] && pupil) pupil.watch(DT, c.car, race);
+      if (c.car.lap > was) { c.times.push(f * DT - c.t0); c.t0 = f * DT; }
+    }
+    return cars.map(c => ({ times: c.times, best: Math.min(Infinity, ...c.times), led: c.led }));
+  };
+  // by the bends alone: laps at every skill, quicker at a higher one, braking for a hairpin, turning round when it starts facing the wrong way
+  const plain = k => new Driver({ skill: k, learn: false, rng });
+  const top = go([plain(1)])[0], low = go([plain(0)])[0];
+  assert.ok(top.times.length === 3 && low.times.length === 3 && top.best < 8.6 && low.best > top.best + .5, `it drives its laps, quicker at a higher skill (${top.best.toFixed(2)}s at 1, ${low.best.toFixed(2)}s at 0)`);
+  const PINS = [[100, 80], [700, 80], [760, 160], [700, 240], [160, 240], [100, 320], [160, 400], [700, 400], [780, 480], [700, 560], [100, 560], [30, 320]];
+  const pins = go([plain(1), plain(.3)], { points: PINS }); assert.ok(pins[0].times.length === 3 && pins[1].times.length === 3 && pins[0].best < 18, 'hairpins: it brakes for each and misses none');
+  assert.equal(go([plain(.7)], { angle: Math.PI }).at(0).times.length, 3, 'started facing the wrong way, it turns round and drives its laps');
+  { // a Kart (metres, -z ahead, steering the other way round)
+    const P = OVAL.map(p => [p[0] / 10, p[1] / 10]), race = new Laps(P, { radius: 4.5, laps: 2 }), kart = race.join(new Kart({ x: P[0][0], z: P[0][1], heading: Math.atan2(-(P[1][0] - P[0][0]), -(P[1][1] - P[0][1])) })), d = plain(1);
+    let f = 0; for (; f < 60 * 60 && !kart.done; f++) { kart.update(DT, d.drive(DT, kart, race)); race.update(kart); }
+    assert.ok(kart.done && f * DT < 20, 'it drives a Kart round as well');
+  }
+  // learning: it watches a quicker player for a race, then drives their line: quicker than its own way, about as quick as they were
+  const saved = new Map(), api = { brains: { load: n => saved.get(n) ?? null, save: (n, t) => saved.set(n, t) } };
+  const pupil = new Driver(api, { name: 'oval', skill: 1, rng });
+  assert.ok(pupil.best.theirs === Infinity && pupil.best.own === Infinity, 'it starts with no lap of theirs and none of its own');
+  const first = go([racer, pupil], { pupil }), theirs = first[0].best;
+  assert.ok(Math.abs(pupil.best.theirs - theirs) < .02 && pupil.best.own < Infinity && theirs < pupil.best.own - .2, `it keeps the player's best lap (${theirs.toFixed(2)}s; its own ${pupil.best.own.toFixed(2)}s)`);
+  const own = pupil.best.own, second = go([racer, pupil], { pupil });
+  assert.ok(second[1].led > 60 * 15 && second[1].best < own - .2 && second[1].best < theirs * 1.03, `on their line it laps quicker than by itself (${second[1].best.toFixed(2)}s), about as quick as they did`);
+  assert.ok(saved.get('oval').length < 700, 'the line is a short save');
+  const again = new Driver(api, { name: 'oval', skill: 1, rng });
+  assert.ok(Math.abs(again.best.theirs - pupil.best.theirs) < .01 && Math.abs(again.best.own - own) < .01, 'a new one of the same name has the line and its own lap time');
+  const third = go([again]); assert.ok(third[0].led > 60 * 15 && third[0].best < own - .2, 'and drives it from the first lap');
+  const half = new Driver(api, { name: 'oval', skill: .5, rng }), slow = go([half])[0];
+  assert.ok(slow.times.length === 3 && slow.best > third[0].best + .1, 'a lower skill is slower on the same line');
+  // a line is only driven on the course it was driven on
+  const moved = go([new Driver(api, { name: 'oval', skill: 1, rng })], { points: OVAL.map(p => [p[0] * 1.5 + 300, p[1] * 1.5]) });
+  assert.ok(moved[0].led === 0 && moved[0].times.length === 3, 'a line from another course is left alone');
+  // a slower player teaches it nothing: their lap is kept but never driven
+  const dull = new Driver({ name: 'dull', skill: 1, rng }); go([careful, dull], { pupil: dull }); const after = go([careful, dull], { pupil: dull });
+  assert.ok(dull.best.theirs > dull.best.own && after[1].led === 0, 'a slower lap than its own is not driven');
+  const deaf = new Driver({ name: 'deaf', skill: 1, learn: false, rng }); go([racer, deaf], { pupil: deaf }); assert.equal(deaf.best.theirs, Infinity, 'learn: false never takes a line');
+  // a line that turns out no quicker is dropped after a lap on it
+  const fooled = new Driver({ name: 'fooled', skill: 1, rng }); go([careful, fooled], { pupil: fooled }); fooled.line.time = 1; const tried = go([fooled], { laps: 5 });
+  assert.ok(fooled.line.poor && tried[0].led > 0 && tried[0].times.length === 5, 'a line that is no quicker in its hands is dropped');
+  pupil.forget(); assert.ok(pupil.best.theirs === Infinity && saved.get('oval') === '' && new Driver(api, { name: 'oval' }).best.theirs === Infinity, 'forget() drops the line and the save');
+  // a Dial as its skill; held up, it backs off (but not on the grid before the start)
+  const dial = new Dial({ name: 'drv', start: .5, profile: false }), dd = new Driver({ skill: dial, learn: false, rng }), s0 = dial.skill; dd.result(true); dd.result(true); dd.result(true);
+  assert.ok(dial.skill > s0 && go([dd])[0].times.length === 3, 'a Dial as its skill hears the result (the player won: harder) and sets its pace');
+  { const race = new Laps(OVAL, { radius: RAD }), car = race.join(new Car({ x: 200, y: 100 })), d = plain(1); let back = 0;
+    for (let f = 0; f < 120; f++) back += d.drive(DT, car, race).throttle < 0; assert.equal(back, 0, 'waiting on the grid it does not back off');
+    for (let f = 0; f < 60; f++) { car.update(DT, d.drive(DT, car, race)); race.update(car); }
+    const x = car.x, y = car.y; for (let f = 0; f < 110; f++) { const inp = d.drive(DT, car, race); back += inp.throttle < 0; car.update(DT, inp); car.x = x; car.y = y; car.speed = 0; car.vx = car.vy = 0; }
+    assert.ok(back > 20 && back < 50, 'held up for a second it backs off for a moment'); }
+  console.log(`vehicles driver: laps by the bends (${top.best.toFixed(2)}s at skill 1, ${low.best.toFixed(2)}s at 0), hairpins, a kart; it takes a quicker player's lap (${theirs.toFixed(2)}s; its own ${own.toFixed(2)}s) and drives it in ${second[1].best.toFixed(2)}s, saved, not on another course, a slower lap left alone, a dial, backs off when held ok`);
+}
+{
   const { Drag } = await import('../src/kit/drag.js');
   const d = new Drag({ accept: (p, s) => p.kind === s.kind }); let drops = 0, rejects = 0; d.on('drop', () => drops++).on('reject', () => rejects++);
   const red = d.piece({ x: 10, y: 10, w: 20, h: 20, kind: 'r' }), sr = d.slot({ x: 100, y: 100, w: 30, h: 30, kind: 'r' }), sb = d.slot({ x: 200, y: 100, w: 30, h: 30, kind: 'b' });
@@ -1332,6 +1410,82 @@ console.log('physics ok');
   const i = new Fighter(M, { x: 0 }), j = new Fighter(M, { x: 40, facing: -1 }); j.blocking = true; i.start('low'); i.update(F * 2.5); assert.equal(clash(i, j).blocked, false, 'a low hits a standing block');
   for (let k = 0; k < 60; k++) i.update(F); assert.equal(i.phase, 'idle', 'the move ends');
   console.log('fight: motions, dash, facing, buffer, specials, frames, boxes, one hit, hit stop, cancels, block, low ok');
+}
+// a ready-made opponent for fighting games: it reads its moves' frames, reacts no faster than a person, and learns the player
+{
+  const { Fighter, Opponent, clash } = await import('../src/kit/fight.js');
+  const { Dial } = await import('../src/kit/brains.js');
+  let seed = 5; const R = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const F = 1 / 60, MOVES = {
+    jab: { start: 3, active: 2, recover: 6, hit: [[10, -60, 34, 14]], damage: 4, stun: 12, cancel: ['strong', 'sweep'] },
+    strong: { start: 8, active: 3, recover: 16, hit: [[10, -55, 52, 16]], damage: 10, stun: 20, blockStun: 8 },
+    sweep: { start: 7, active: 3, recover: 15, hit: [[10, -12, 48, 12]], damage: 7, stun: 18, low: true },
+    overhead: { start: 17, active: 2, recover: 14, hit: [[8, -90, 40, 40]], damage: 9, stun: 20, high: true },
+  };
+  // one frame of thought in a set-up spot: its own fighter on the right, the player on the left, `apart` between them
+  const spot = (apart, rnd, set = () => {}, opts = {}) => {
+    const p = new Fighter(MOVES, { x: 100, facing: 1 }), c = new Fighter(MOVES, { x: 100 + apart, facing: -1 }), cpu = new Opponent({ skill: 1, rng: () => rnd, name: 'spot', ...opts }).join(c, p);
+    set(p, c, cpu); return cpu.think(F);
+  };
+  const run = (f, n) => { for (let i = 0; i < n; i++) f.update(F); };
+  assert.deepEqual(spot(200, .99), { walk: 1, block: false, move: null }, 'far apart: it walks in');
+  assert.equal(spot(50, .01).move, 'jab', 'in reach of a player who is not guarding: the jab that leads on to its strong');
+  assert.deepEqual(spot(60, .6), { walk: 1, block: false, move: null }, 'a step short of that: it steps in');
+  assert.equal(spot(60, .01, p => { p.blocking = true; }).move, 'sweep', 'they guard high: it goes low');
+  assert.notEqual(spot(60, .01, p => { p.blocking = true; p.blockLow = true; }).move, 'sweep', 'they guard low: not a sweep');
+  assert.equal(spot(50, .01, p => { p.blocking = true; p.blockLow = true; }).move, 'overhead', 'close to a low guard: over the top');
+  // it sees a move a reaction time after it began (7 frames at skill 1, 20 at skill 0), and then guards at the right height
+  assert.equal(spot(55, .99, p => { p.start('overhead'); run(p, 5); }).block, false, 'a move 5 frames old: not seen yet');
+  assert.equal(spot(55, .99, p => { p.start('overhead'); run(p, 9); }).block, 'high', 'seen: it guards high against an overhead');
+  assert.equal(spot(55, .99, p => { p.start('sweep'); run(p, 8); }).block, 'low', 'and low against a sweep');
+  assert.equal(spot(55, .99, p => { p.start('overhead'); run(p, 9); }, { skill: 0 }).block, false, 'at skill 0 it has not seen it by then');
+  assert.equal(spot(50, .2, p => { p.start('overhead'); run(p, 9); }).move, 'jab', 'or it stops a slow move with a faster one of its own');
+  assert.equal(spot(120, .99, p => { p.start('overhead'); run(p, 9); }).block, false, 'a move that will not reach is not guarded');
+  // the player is open: the hardest move that lands in time, a step in when nothing reaches, a follow-up when its own move connects
+  assert.equal(spot(60, .5, p => { p.start('strong'); run(p, 14); }).move, 'strong', 'their strong missed with 13 frames left: its own strong lands first');
+  assert.equal(spot(60, .5, p => { p.start('strong'); run(p, 21); }).move, 'sweep', 'with 6 frames left nothing that reaches is certain to land: it takes its turn, with a move that is out before theirs could be');
+  assert.equal(spot(52, .5, p => { p.start('strong'); run(p, 21); }).move, 'jab', 'closer, the jab');
+  assert.deepEqual(spot(80, .5, p => { p.start('overhead'); run(p, 20); }), { walk: 1, block: false, move: null }, 'out of reach of an open player: a step in');
+  assert.equal(spot(50, .5, (p, c) => { c.start('jab'); run(c, 4); assert.ok(clash(c, p)); c.stop = 0; }).move, 'strong', 'its jab connected: on into the strong');
+  assert.equal(spot(50, .5, (p, c) => { c.start('jab'); run(c, 4); }).move, null, 'a jab that has not connected is not cancelled');
+  assert.deepEqual(new Opponent({ name: 'none' }).think(F), { walk: 0, block: false, move: null }, 'no fighters joined: nothing');
+  // a small fighting game: 30 second rounds, the same moves each side
+  const WALK = 100, REACH = { jab: 56, strong: 74, sweep: 70 };
+  const sweeper = (me, foe) => (Math.abs(foe.x - me.x) <= REACH.sweep - 2 ? { walk: 0, block: false, move: 'sweep' } : { walk: 1, block: false, move: null });   // walks in and sweeps, always
+  const basic = (me, foe) => (me.move === 'jab' && me.hitThis.size ? { walk: 0, block: false, move: 'strong' } : Math.abs(foe.x - me.x) <= REACH.jab - 2 ? { walk: 0, block: false, move: R() < 3 * F ? 'jab' : null } : { walk: 1, block: false, move: null });
+  const play = (player, cpu, n) => {
+    let won = 0;
+    for (let g = 0; g < n; g++) {
+      const a = new Fighter(MOVES, { x: 150, facing: 1 }), b = new Fighter(MOVES, { x: 250, facing: -1 }); cpu.join(b, a);
+      for (let f = 0; f < 1800 && a.hp > 0 && b.hp > 0; f++) {
+        a.facing = a.x <= b.x ? 1 : -1; b.facing = -a.facing;
+        const wa = player(a, b), wb = cpu.think(F);
+        assert.ok([-1, 0, 1].includes(wb.walk) && [false, 'high', 'low'].includes(wb.block) && (wb.move === null || MOVES[wb.move]), 'a want your game can carry out');
+        for (const [me, w] of [[a, wa], [b, wb]]) { me.blocking = !!w.block; me.blockLow = w.block === 'low'; if (!me.busy && me.stop <= 0 && w.walk && !(w.block && w.walk > 0)) me.x = Math.max(20, Math.min(380, me.x + w.walk * me.facing * WALK * F)); if (w.move) me.start(w.move); }
+        if (Math.abs(a.x - b.x) < 24) { const mid = (a.x + b.x) / 2, s = a.x <= b.x ? -1 : 1; a.x = mid + s * 12; b.x = mid - s * 12; }
+        a.update(F); b.update(F);
+        for (const [x, y] of (f + g) % 2 ? [[a, b], [b, a]] : [[b, a], [a, b]]) { const h = clash(x, y); if (h && !h.blocked) y.hp -= h.move.damage; }
+      }
+      won += a.hp === b.hp ? .5 : a.hp > b.hp ? 1 : 0; cpu.result(a.hp > b.hp);
+    }
+    return won / n;
+  };
+  const kept = new Map(), api = { brains: { load: n => kept.get(n) ?? null, save: (n, t) => { kept.set(n, t); } } };
+  const cpu = new Opponent(api, { skill: 1, rng: R, name: 'bruiser' });
+  assert.ok(cpu.expect(60).low < .3, 'a player it has never met: it expects middling attacks');
+  const blind = play(sweeper, new Opponent({ skill: 1, learn: false, rng: R, name: 'b0' }), 40), first = play(sweeper, cpu, 40);
+  assert.ok(cpu.expect(60).low > .8, 'this player goes low: ' + cpu.expect(60).low.toFixed(2)); assert.ok(cpu.expect(60).eager > 1, 'and attacks at once when in reach: ' + cpu.expect(60).eager.toFixed(1) + ' a second');
+  assert.ok(blind > .8 && first < .3, 'so it guards low and takes its turn: the sweeper wins ' + Math.round(blind * 100) + ' in 100 rounds against one that never learns, ' + Math.round(first * 100) + ' against one that does');
+  assert.ok(kept.has('bruiser') && kept.has('bruiser-guard') && kept.has('bruiser-punish'), 'kept with the game\'s brains');
+  const pair = () => [new Fighter(MOVES, { x: 250, facing: -1 }), new Fighter(MOVES, { x: 150 })];
+  assert.ok(new Opponent(api, { skill: 1, name: 'bruiser' }).join(...pair()).expect(60).low > .8, 'a new session still knows them'); assert.ok(new Opponent(api, { name: 'other' }).join(...pair()).expect(60).low < .3, 'another name knows nothing');
+  const hard = play(basic, new Opponent({ skill: 1, rng: R, name: 'b1' }), 40), easy = play(basic, new Opponent({ skill: .25, rng: R, name: 'b2' }), 40);
+  assert.ok(hard < .2 && easy > .7, 'skill: a plain player wins ' + Math.round(hard * 100) + ' in 100 at skill 1, ' + Math.round(easy * 100) + ' at .25');
+  const dial = new Dial({ name: 'b3', save: false }), k0 = dial.skill, dialled = new Opponent({ skill: dial, rng: R, name: 'b4' });
+  for (let i = 0; i < 6; i++) dialled.result(true);
+  assert.ok(dial.skill > k0, 'the player keeps winning: the dial goes up');
+  assert.ok(cpu.forget().expect(60).low < .3, 'forgotten');
+  console.log('fight opponent: walks in, the hardest move that reaches, round a guard, a reaction time before it guards, punishes, follows up; it learns a sweeper (they win ' + Math.round(blind * 100) + ' in 100 against one that never learns, ' + Math.round(first * 100) + ' against one that does), skill (' + Math.round(easy * 100) + ' at .25, ' + Math.round(hard * 100) + ' at 1), saved, a dial ok');
 }
 {
   const { Bullets, Emitter } = await import('../src/kit/bullets.js');
@@ -4420,6 +4574,7 @@ console.log('physics ok');
   // three.js update rewrites them, this is where it shows (the look would fall back to no real shadows)
   assert.ok(celReady, 'three\'s toon shader still has the lines the cel look changes');
   assert.ok(HIDDEN.toon.includes('TOON') && HIDDEN.toon.includes('celReady'), 'the test switches stay off gs.toon');
+  assert.ok(HIDDEN.brains.includes('brainSlot'), 'the kits\' own save slot stays off gs.brains');
   const lit = toon('#c04040'), glass = toon('#80c0ff', { opacity: .4 }), paint = flat('#ffffff', .8);
   assert.deepEqual([lit.userData.gsLooks, paint.userData.gsLooks], [['cel'], ['retro']], 'toon() carries the cel look, flat() the retro one');
   // who casts and who takes shadows: lit solid things cast, see-through and flat ones don't, blob() discs never

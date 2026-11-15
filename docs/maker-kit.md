@@ -2074,6 +2074,43 @@ feet (facing right), `stun`, `blockStun`, `stop`, `low`/`high`, `cancel: [names]
 `start(name)`, `update(dt)`, `phase`. `clash(a, b)` checks a's hit boxes against b's hurt boxes once per
 move, sets stun, block stun (b.blocking, b.blockLow) and hit stop, and returns `{ move, blocked, x, y }`.
 
+A ready-made opponent for a fighting game (Tiny Brains): it reads its moves' frames (how far each
+reaches, how fast it comes out, whether it is safe when blocked) and learns how this player fights.
+
+```js
+const { Fighter, Opponent, clash } = gs.fight;
+cpu = new Opponent(api, { skill: .6 });                 // make(): what it learns is kept on the phone
+reset() { p1 = new Fighter(MOVES, { x: 100 }); p2 = new Fighter(MOVES, { x: 260, facing: -1 }); cpu.join(p2, p1); }
+update(dt) {
+  const want = cpu.think(dt);                           // { walk: -1 | 0 | 1, block: false | 'high' | 'low', move: 'jab' | null }
+  p2.blocking = !!want.block; p2.blockLow = want.block === 'low';
+  if (!p2.busy) p2.x += want.walk * p2.facing * WALK * dt;       // 1 is towards the player
+  if (want.move) p2.start(want.move);
+  // ...the player's side, p1.update(dt), p2.update(dt), clash() both ways, as before
+}
+// at the end of a round:
+cpu.result(playerWon);
+```
+
+- It says what it wants; your game does it (walking speed, the stage's edges and damage stay yours).
+- From the frames alone it punishes a move that missed or was blocked with the hardest move that lands
+  in time, takes its turn after a block with a move that is out before the player's could be, cancels
+  into follow-ups when a move connects, and goes low on a player it can see guarding high (and over the
+  top of a low guard).
+- It sees a move only a reaction time after it began: 7 frames at skill 1, 20 at skill 0. A jab or a
+  sweep is faster than that, as it is for a person, so what it can't react to it has to expect. It
+  learns how high this player attacks from each distance, how eager they are, how they guard and
+  whether they punish what they block (`cpu.expect(dist)`, `cpu.guard()`), and guards to suit.
+- `skill` is 0..1 or a `gs.brains.Dial`: how fast it reacts, how often it punishes, guards at the
+  right height and takes its follow-ups, and how fanciful its choice of move is.
+- Measured in a small made-up fighting game (four moves, 30 second rounds, the same moves each side)
+  against scripted players: one who walks in and sweeps wins every round against an opponent that
+  never learns and 2 in 100 once it has learned them; one who presses moves at random wins 6 in 100,
+  a decent one (guards half the time, punishes) 30 in 100. By skill, that decent player wins 57 in
+  100 at .75, 84 at .5 and nearly always below that; with a dial every one of them wins about 62 in
+  100. One who only ever guards loses at any skill, because it sees the guard and goes round it. A
+  think takes about a microsecond.
+
 **Bullet patterns** (`gs.bullets`): `Bullets({ max, w, h })` keeps thousands of bullets in flat arrays:
 `fire(x, y, speed, angle, { accel, turn, wave, home, kind, life })`, `update(dt, target)`, `each(fn)` to
 draw, `hit(x, y, r, graze)` (`{ hit, grazed }`: near misses count once) and `clear(fn, x, y, r)` for
@@ -2158,6 +2195,46 @@ For real suspension and cars that can roll over, `World3D.vehicle(mesh, { wheels
 `car.upsideDown`, `car.rightUp()`.
 These are how a car handles; what it looks like is yours, or `gs.models.vehicle('car')`:
 [Vehicles made in code](#vehicles-made-in-code).
+
+A ready-made rival driver (Tiny Brains): `Driver` drives a `Car` or a `Kart` round a `Laps` course, and
+takes the player's best lap as its own line when that is quicker than its own way round.
+
+```js
+const { Car, Laps, Driver } = gs.vehicles;
+rival = new Driver(api, { name: 'harbour', skill: .7 });   // make(): one for each rival car, a name for each course
+reset() { race = new Laps(POINTS, { radius: 40 }); me = race.join(new Car(START)); them = race.join(new Car(GRID2)); }
+update(dt) {
+  me.update(dt, myInput); race.update(me);
+  rival.watch(dt, me, race);                               // it keeps the player's best lap
+  them.update(dt, rival.drive(dt, them, race)); race.update(them);   // { throttle, steer, brake, drift }
+}
+// at the end of a race:
+rival.result(playerWon);
+```
+
+- By itself it drives by the course's bends: the inside of each checkpoint, as fast as the bend allows
+  for this car (from the car's own `turn`, `top` and `brakes`), braking in time for it and the one after.
+- `watch()` keeps the player's quickest lap: where they were and how fast, at 64 places round it (a
+  short save on the phone under the driver's name). A lap counts from the second time across the line,
+  because the first starts from a standstill.
+- It drives that line once it has a lap of its own to compare with, only while the player's lap is the
+  quicker, and only on the course it was driven on. A line that turns out no quicker in its hands is
+  dropped after a lap. `rival.best` is `{ theirs, own }` in seconds; `rival.using` says which it is on.
+- `skill` is 0..1 or a `gs.brains.Dial`: its pace through the bends, how close it cuts them and how
+  steady its hands are. On the player's line a lower skill is slower through the slow parts.
+- It does not drift, and it knows nothing of walls or other cars: held up for a second it backs off
+  and tries again. A course with walls needs checkpoints a car can drive between in straight lines.
+- Measured on four made-up courses with a top-down `Car` and scripted players, none of it on a phone.
+  By the bends alone its best laps at skill 0, .5 and 1 were 9.1, 8.3 and 8.0 seconds on an oval, 10.3,
+  8.9 and 8.8 on a kidney, 12.2, 11.0 and 10.5 on a twisty course and 18.4, 16.9 and 16.4 through
+  hairpins (neighbouring skills are sometimes a tenth or two out of order). After watching a quick
+  player for one race, at skill 1 it went from 7.97 to 7.57 on the oval (their lap: 7.63), 8.80 to 8.32
+  on the kidney (8.47) and 16.40 to 15.90 through the hairpins (16.28): a little quicker than the lap
+  it copied, because it cuts the line's corners slightly. On the twisty course its own way was already
+  quicker than every scripted player, so it took nothing, and a slower player's lap never changed its
+  times. At skill .5 the same line was worth about half a second a lap; at skill 0 it was within the
+  wobble from lap to lap. 480 races on learned lines at skills from 0 to .75 all finished. A
+  `drive()` takes 3 to 5 microseconds.
 
 **3D levels from text** (`gs.level3d.Level3D(text, { size, wall, look })`): the same text maps in 3D.
 `#` walls, `.` floor, `1`-`9` raised floors, `~` water, `=` low walls, spaces as holes, letters as

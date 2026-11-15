@@ -2324,6 +2324,33 @@ export interface FightPart {
   Reader: new (o?: { window?: number; buffer?: number; dead?: number }) => FightReader;
   Fighter: new (moves: Record<string, FightMove>, o?: { x?: number; y?: number; facing?: number; hurt?: FBox[]; hp?: number }) => Fighter;
   clash(a: Fighter, b: Fighter): { move: FightMove; name: string; blocked: boolean; x: number; y: number } | null;
+  /** new Opponent(api, { name, skill, learn, rng }) in make(); join(its fighter, the player's) each round; think(dt) each frame. */
+  Opponent: new (api?: GameApi | null, o?: { name?: string; skill?: Skill; /** false: it never learns the player. */ learn?: boolean; rng?: () => number }) => FightOpponent;
+}
+/** What a fighting game's Opponent wants to do this frame, for your game to do. */
+export interface FightWant { /** 1 towards the player, -1 away, 0. */ walk: -1 | 0 | 1; block: false | 'high' | 'low'; /** A move to start now, or null. */ move: string | null }
+/**
+ * A ready-made opponent for a fighting game (Tiny Brains). It reads its moves' frames for what reaches, what is fast
+ * and what is safe; punishes a move that missed or was blocked, takes its follow-ups, goes round a guard it can see,
+ * and guards what it sees coming, a person's reaction time after the move began. What is too fast to react to it must
+ * expect: it learns how high this player attacks from each distance, how eager they are, how they guard and whether
+ * they punish, across rounds and sessions.
+ */
+export interface FightOpponent {
+  /** 0..1, or a gs.brains.Dial. Set it any time. */
+  skill: Skill;
+  /** The two fighters of a round: its own, and the player's. Call it for each new pair. */
+  join(me: Fighter, foe: Fighter): FightOpponent;
+  /** Each frame: what it wants to do. */
+  think(dt?: number, me?: Fighter, foe?: Fighter): FightWant;
+  /** What it expects of the player from `dist` apart: chances for how high their next attack is, and the attacks they begin a second while it is in their reach. */
+  expect(dist?: number): { mid: number; low: number; high: number; eager: number };
+  /** How it expects the player to be guarding when it attacks. */
+  guard(): { open: number; high: number; low: number };
+  /** The end of a round: did the player win? Tells a Dial given as its skill, and saves what it learned. */
+  result(playerWon: boolean | 'draw' | number): FightOpponent;
+  /** Forgets how the player fights. */
+  forget(): FightOpponent;
 }
 export interface BulletOpts { accel?: number; turn?: number; wave?: [number, number]; home?: number; kind?: number; life?: number }
 export interface Bullets {
@@ -2483,11 +2510,39 @@ export interface Kart extends WheelsBase {
   /** Puts it straight at x, y, z (its underside), turned to heading, with nothing in between. */
   moveTo(x: number, y: number, z: number, heading?: number): Kart;
 }
+/**
+ * A computer driver for a Car or a Kart on a Laps course (one for each rival car). By itself it drives by the
+ * course's bends, from the car's own turn, top and brakes. Shown the player's car each frame it keeps their best lap
+ * and drives that line when it is quicker than its own way round. It does not drift, and knows nothing of walls or
+ * other cars but to back off when held up.
+ */
+export interface Driver {
+  /** 0..1, or a gs.brains.Dial: its pace through the bends, how close it cuts them, how steady its hands are. Set it any time. */
+  skill: Skill;
+  /** The input for its car this frame: car.update(dt, driver.drive(dt, car, race)), then race.update(car). */
+  drive(dt: number, car: Car | Kart, race: Loose): { throttle: number; steer: number; brake: boolean; drift: boolean };
+  /** Each frame with the player's car, after race.update(car): keeps their quickest lap (from the second time across the line). True on the frame it takes a new one. */
+  watch(dt: number, car: Car | Kart, race: Loose): boolean;
+  /** Lap times in seconds: the player's best that it holds, and its own best by the bends alone (Infinity: none yet). */
+  readonly best: { theirs: number; own: number };
+  /** Is it on the player's line this frame? */
+  readonly using: boolean;
+  /** The end of a race: did the player win? Tells a Dial given as its skill. */
+  result(playerWon: boolean | 'draw' | number): Driver;
+  /** Forgets the player's line and its own lap time. */
+  forget(): Driver;
+}
 export interface VehiclesPart {
   /** world: a gs.physics Physics with no gravity (top-down) to drive in, solid; size: [length, width]; mass (kg: how hard it shoves). */
   Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; /** A 2D Physics to drive in, solid. Left out: the one the game made before the car; false: none. */ world?: Loose | false; size?: [number, number]; mass?: number; link?: boolean }) => Car;
   /** world: a gs.physics3d World3D to drive in, solid; size: [width, height, length] (metres); clear: the gap under it (kerbs and ramp lips lower pass under); fall: the y it counts as fallen out. */
   Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; /** A World3D to drive in, solid. Left out: the one the game made before the kart; false: none. */ world?: Loose | false; size?: [number, number, number]; clear?: number; fall?: number; link?: boolean }) => Kart;
+  /**
+   * A ready-made rival driver. name: its save's name ('driver': give each course and each rival its own); skill: 0..1 or a
+   * gs.brains.Dial (.7); learn: false for one that never takes the player's line; save: false keeps the line for this
+   * session only; rng. With no api (new Driver({ skill })) nothing is kept on the phone.
+   */
+  Driver: { new (api: GameApi | null, o?: { name?: string; skill?: Skill; learn?: boolean; save?: boolean; rng?: () => number }): Driver; new (o?: { name?: string; skill?: Skill; learn?: boolean; save?: boolean; rng?: () => number }): Driver };
   Laps: new (points: Pt[], o?: { radius?: number; laps?: number }) => {
     points: Pt[]; laps: number; racers: Loose[]; join<T>(r: T): T; update<T>(r: T): T; places<T = Loose>(): T[]; aim(r: Loose, ahead?: number): { x: number; y: number; angle: number };
   };
