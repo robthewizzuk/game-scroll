@@ -13,6 +13,12 @@
 // that very camera). error: the mean difference out of 255 over the pixels reflections touch; flicker: how much a
 // still picture changes from frame to frame there; steps: the same error along the poles' reflections only.
 //   ?w=300&h=400  ?tier=2  ?frames=24 (frames to settle)  ?refs=40 (frames the truth gathers)  ?poses=12  ?hd=key:val
+//   ?roughs=.07,.07,.07 (how rough the three strips are)  ?orbs=1 (glowing balls over the floor, brighter than white:
+//   the engine test hall's lanterns)  ?fov=20 (a narrow view: a reflection's blur is then as many pixels wide as on
+//   a phone's far bigger picture)
+//   ?probe=polished: a check of its own (3 minutes), floors only a little rougher than a mirror (0.075, 0.1, 0.15:
+//   polished stone, a wet street) under the glowing balls. Such a floor's rays go nearly straight and are shared
+//   over its blur (hd3d-gpu-trace.js CONE_FULL); scattered, they were grain round every bright thing on a phone
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search);
@@ -30,12 +36,13 @@ try {
 
   const v = new gs.hd.HDView({ bg: '#8fb0d8', env: .6, amb: .5 }), c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d', { willReadFrequently: true });
-  v.cam.fov = 60; v.cam.far = 200; v.cam.updateProjectionMatrix();
+  v.cam.fov = +(Q.get('fov') || 60); v.cam.far = 200; v.cam.updateProjectionMatrix();
   const sun = gs.hd.sun('#fff2d8', 3, 20, [.5, 1, .9]); v.scene.add(sun, sun.target); v.sun = sun;
   const add = (g, m, px, py, pz) => { const mesh = new T.Mesh(g, m); mesh.position.set(px, py, pz); mesh.castShadow = mesh.receiveShadow = true; v.scene.add(mesh); return mesh; };
   const bright = col => new T.MeshBasicMaterial({ color: col });
   // the floor in three strips, left to right: a mirror, a little rough, rough
-  const strips = [[-5.1, 7.8, .04], [0, 2.4, .25], [5.1, 7.8, .45]].map(([px, wide, rough]) => { const f = add(new T.PlaneGeometry(wide, 40).rotateX(-Math.PI / 2), gs.hd.pbr('#8d949c', { rough, metal: 1 }), px, 0, 0); f.castShadow = false; return f; });
+  const POLISHED = Q.get('probe') === 'polished', RS = (Q.get('roughs') || (POLISHED ? '.075,.1,.15' : '.04,.25,.45')).split(',').map(Number);
+  const strips = [[-5.1, 7.8, RS[0]], [0, 2.4, RS[1]], [5.1, 7.8, RS[2]]].map(([px, wide, rough]) => { const f = add(new T.PlaneGeometry(wide, 40).rotateX(-Math.PI / 2), gs.hd.pbr('#8d949c', { rough, metal: 1 }), px, 0, 0); f.castShadow = false; return f; });
   const ball = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8e8e8', { rough: .03, metal: 1 }), -2.6, .7, 2.6);
   const ball2 = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8c890', { rough: .3, metal: 1 }), 2.6, .7, 2.6);
   const box = add(new T.BoxGeometry(1, 1, 1), gs.hd.pbr('#c0392b', { rough: .6 }), -1.2, .5, -.5); box.userData.moves = true;   // (it jumps aside at the end)
@@ -45,6 +52,7 @@ try {
   const poles = [[-3.1, '#ffe020', .06], [-2, '#20e0ff', -.05], [-.5, '#ff40c0', .04], [.6, '#40ff60', -.07], [2.1, '#ffffff', .05], [3.2, '#ff8020', -.04]].map(([px, col, lean]) => { const p = add(new T.BoxGeometry(.12, 5, .12), bright(col), px, 2.5, -3.2); p.rotation.z = lean; p.castShadow = false; return p; });
   const bar = add(new T.BoxGeometry(9, .5, .5), bright('#ff2020'), 0, 7, -5); bar.castShadow = false;   // above the top of the screen
   const wall = add(new T.BoxGeometry(30, 14, .5), bright('#20ff40'), 0, 7, 16); wall.castShadow = false;   // behind the camera
+  if (Q.get('orbs') || POLISHED) ['#40e0ff', '#ff5a90', '#80ff60', '#ffd040', '#ffb850'].forEach((col, i) => { const m = gs.hd.pbr(col, { rough: .5 }); m.emissive = new T.Color(col); m.emissiveIntensity = 2.5; const o = add(new T.SphereGeometry(.3, 20, 14), m, -3.4 + i * 1.7, 1.1 + (i % 3) * .7, 1.5 - (i % 2) * 2.5); o.castShadow = false; });
   const lamp = new T.PointLight('#ffd080', 5, 10); lamp.position.set(1.6, 1.6, -2.4); v.scene.add(lamp);
   v.reflect(...strips, ball, ball2);
   // the camera along its path: a strafe to the right with a slow turn back toward the middle (t 0..1)
@@ -84,6 +92,28 @@ try {
     let worst = 0; for (let i = 0; i < W * H; i++) if (mask[i]) worst = Math.max(worst, (Math.abs(ten[i * 4] - after[i * 4]) + Math.abs(ten[i * 4 + 1] - after[i * 4 + 1]) + Math.abs(ten[i * 4 + 2] - after[i * 4 + 2])) / 3);
     info.jump = { left: diff(ten, after, mask), change: diff(before, after, mask), last: diff(seq[23], after, mask), worst: +worst.toFixed(1), fade: seq.map(d => diff(d, after, mask)).join(' ') };
   };
+  // the yard with no reflections (to find where they are), and the wait for the traced level after it
+  const bare = async () => { const was = v.reflectors.slice(); v.reflectors.length = 0; for (const o of was) o.userData.gsReflect = false; const d = (await settle(6)).slice(); for (const o of was) { o.userData.gsReflect = true; v.reflectors.push(o); } return d; };
+  const tracedAgain = async () => { for (let i = 0; i < 400; i++) { draw(); const t = HD.info.trace; if (HD.info.refl === 'traced' && t && t.builds >= 1 && t.tris > 0 && !t.busy && i > 3) break; await nextFrame(); } };
+  const maskOf = (ref, none) => { const mask = new Uint8Array(W * H); let on = 0; for (let i = 0; i < W * H; i++) { const d = Math.abs(ref[i * 4] - none[i * 4]) + Math.abs(ref[i * 4 + 1] - none[i * 4 + 1]) + Math.abs(ref[i * 4 + 2] - none[i * 4 + 2]); if (d > 9) { mask[i] = 1; on++; } } return { mask, on }; };
+  // ?probe=polished (see the top): the walk's last frame against the truth there, and how steady it is standing still
+  if (POLISHED) {
+    pose(1); mode('ref', 0); const truth = (await settle(+(Q.get('wait') || 200))).slice(); shot('polished-ref');
+    const none = await bare(); await tracedAgain(); const { mask } = maskOf(truth, none), res = {};
+    for (const m of ['was', 'regen']) {
+      pose(0); mode(m); v.cut(); await settle(30);
+      let d = null; for (let j = 0; j < 36; j++) { pose((j + 1) / 36); d = draw(); await nextFrame(); }
+      res[m] = { error: diff(d, truth, mask), specks: specks(d, truth, mask) }; shot('polished-' + m);
+      let fl = 0, last = (await settle(40)).slice(); for (let i = 0; i < 6; i++) { const n = draw().slice(); await nextFrame(); fl += diff(n, last, mask); last = n; }
+      res[m].flicker = +(fl / 6).toFixed(3);
+    }
+    info.polished = res;
+    check('a polished floor (a little rougher than a mirror) is no grainier at a walk than the pass as it was', res.regen.specks <= res.was.specks * 1.1 + .05, `${res.regen.specks} against ${res.was.specks}`);
+    check('and closer to the truth', res.regen.error < res.was.error, `${res.regen.error} against ${res.was.error}`);
+    check('standing still it settles', res.regen.flicker < .8, `${res.regen.flicker} of 255 from frame to frame`);
+    v.free(); HD.traced = null; HD.regen = null; HD.regenRef = false; HD.traceScale = 0;
+    window.result = { out, info, checks }; throw 0;
+  }
   // ?probe=regen: only that mode's moving frames, each one saved (to look at what a change does, in a minute)
   if (Q.get('probe') === 'jump') { await jump(new Uint8Array(W * H).fill(1)); v.free(); HD.traced = null; HD.regen = null; window.result = { out, info, checks }; throw 0; }
   // ?probe=truth&wait=400: the truth at the moving camera's last place alone, from that many frames (a finer one to
@@ -100,11 +130,9 @@ try {
   // ----- the camera still -----
   // the truth, and where reflections are (the truth against the yard with none)
   mode('ref', 100); const ref0 = (await settle(REFS * 4)).slice(); shot('still-ref');   // (the one every still number is held against: four times the frames)
-  const none = await (async () => { const was = v.reflectors.slice(); v.reflectors.length = 0; for (const o of was) o.userData.gsReflect = false; const d = (await settle(6)).slice(); for (const o of was) { o.userData.gsReflect = true; v.reflectors.push(o); } return d; })(); shot('none');
-  // (the traced level is still there, or is made again: either way wait for it)
-  for (let i = 0; i < 400; i++) { draw(); const t = HD.info.trace; if (HD.info.refl === 'traced' && t && t.builds >= 1 && t.tris > 0 && !t.busy && i > 3) break; await nextFrame(); }
-  const mask = new Uint8Array(W * H); let on = 0;
-  for (let i = 0; i < W * H; i++) { const d = Math.abs(ref0[i * 4] - none[i * 4]) + Math.abs(ref0[i * 4 + 1] - none[i * 4 + 1]) + Math.abs(ref0[i * 4 + 2] - none[i * 4 + 2]); if (d > 9) { mask[i] = 1; on++; } }
+  const none = await bare(); shot('none');
+  await tracedAgain();   // (the traced level is still there, or is made again: either way wait for it)
+  const { mask, on } = maskOf(ref0, none);
   info.reflective = +(on / (W * H) * 100).toFixed(1) + '% of the picture';
   // the poles' reflections: the pixels of the floor near where each pole's mirror image falls
   const steps = new Uint8Array(W * H), P = new T.Vector3();

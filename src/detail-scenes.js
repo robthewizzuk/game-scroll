@@ -535,8 +535,10 @@ function hall({ gs, HD, size, gpu, top = true }) {
   const T = gs.THREE, pbr = gs.hd.pbr, n = Math.max(3, Math.round(12 * size)), L = n * 7, { v, sun } = view(gs, 260, .001), was = { traced: HD.traced, regen: HD.regen };
   const add = (g, m, x, y, z, shadow = true) => { const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = shadow; o.receiveShadow = true; v.scene.add(o); return o; };
   add(new T.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), pbr('#8a8478', { rough: .95 }), 0, -.3, 0, false);
-  // a polished floor, with a polished panel standing at each end (they show what is behind the camera)
-  const floor = add(new T.BoxGeometry(22, .3, L + 18), pbr('#7c858f', { rough: .07, metal: .9 }), 0, -.15, 0, false);
+  // a polished floor, with a polished panel standing at each end (they show what is behind the camera). (The floor
+  // a little rougher than a mirror, the panels mirrors: at 0.07, the line between the two for ray traced
+  // reflections, a phone's chip had the floor on one side of it and a build machine on the other)
+  const floor = add(new T.BoxGeometry(22, .3, L + 18), pbr('#7c858f', { rough: .08, metal: .9 }), 0, -.15, 0, false);
   const chrome = pbr('#e6e8ea', { rough: .04, metal: 1 }), panelG = new T.BoxGeometry(7, 5, .25), panels = [-1, 1].map(s => add(panelG, chrome, 0, 2.9, s * (L / 2 + 5)));
   // two rows of pillars with a beam across each pair, and a figure on a plinth by each pillar
   const stone = pbr('#b9b0a2', { rough: .8 }), dark = pbr('#4a443c', { rough: .7 }), pillarG = new T.CylinderGeometry(.5, .58, 8, 40, 10), beamG = new T.BoxGeometry(17.2, .7, .9), plinthG = new T.BoxGeometry(1.7, .9, 1.7);

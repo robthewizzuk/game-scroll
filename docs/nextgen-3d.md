@@ -752,7 +752,11 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
     surface keeps is what its rays found, apart from the sky the rest of them missed into, and it is
     found again by how far off the things found are. While the camera moves it keeps only as many frames
     as those things take to part from the sky behind them by the surface's own blur (longer, and a
-    near thing's reflection trails behind it, too strong). Against a reference with a ray for every
+    near thing's reflection trails behind it, too strong). A surface only a little rougher than a mirror
+    (roughness 0.07 to 0.16: polished stone, a wet street) has a blur just a few pixels wide, too narrow
+    for scattered rays to be smoothed in: there the rays go nearly straight, as a mirror's, and are
+    shared between pixels over the blur's own shape, its history kept as a mirror's is (scattered, they
+    showed on a phone as grain round every bright thing in the floor). Against a reference with a ray for every
     pixel the error is about a seventh of what it was with the camera still, a little over a quarter at a walk
     and a third moving fast, with fewer specks than the old pass in each; a moving camera leaves a
     fine grain on rough surfaces and thin reflections (a pole's) a little faint, and when a thing jumps
@@ -770,7 +774,10 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   - Checked by `node scripts/detail-test.cjs --page traced --webgpu`, `--page regen --webgpu` (Ray
     Regeneration against the reference) and the kit test (the copy's lists
     are walked there the way the shader walks them, against three's own ray caster). On a phone: the
-    **Hall** in the engine test scenes, which is walked with Ray Regeneration off and then on. Nobody has seen it on a phone yet.
+    **Hall** in the engine test scenes, which is walked with Ray Regeneration off and then on. On a
+    Galaxy Z Fold 8 (15 November, 907 x 1434 drawn) it took about 2 ms more of the chip a frame than
+    the old pass (18.4 against 16.9 ms; 49 against 52 fps); the polished floor's grain seen in that run
+    is what the paragraph above mends, and the mended floor has not been seen on a phone yet.
 - **Finer sun shadows (WebGPU).** The sun's shadow map is tens of metres across, so a cup on a table,
   fingers on a rail or a nose throws next to nothing in it, and past its box nothing throws a shadow at all.
   On WebGPU a half-size *sun mask* is worked out once a frame after the scene is drawn, and the sun's light
