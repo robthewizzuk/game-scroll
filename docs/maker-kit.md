@@ -4559,8 +4559,9 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
 
 `gs.town` is a village or a castle town as rules: a world clock, a layout from a seed, townsfolk who live their
 day by the clock, shops and monsters that come at night. It is plain data, so a 2D game can use it too;
-`gs.city.Town` builds the same plan in a Next Gen view. Reputation is the `gs.rpg` kit's: pass `rep.price` to a
-shop and read `rep.mood(faction)` for how a townsperson meets the hero.
+`gs.city.Town` builds the same plan in a Next Gen view. Reputation is the `gs.rpg` kit's: a shop given a `faction`
+finds the game's Reputation and prices by the hero's standing with it (dearer when they dislike the hero, and they
+pay less), and `rep.mood(faction)` says how a townsperson meets the hero.
 
 ```js
 const { Clock, Folk, Shop, Night } = gs.town, { Town } = gs.city;
@@ -4570,7 +4571,7 @@ make() {
   town = new Town(view, { seed: 7, kind: 'castle', houses: 16 });   // solid in the game's World3D by itself
   folk = new Folk(town.plan, { crowd });                      // a gs.props.Crowd of human() kinds: moved by itself
   night = new Night(town.plan, { kinds: ['ghoul', { kind: 'wolf', speed: 2.4 }] });
-  inn = new Shop({ stock: { stew: { price: 4, count: 6 }, room: { price: 10, count: 3 } }, keeper: folk.of('innkeeper')[0], price: (p, o) => rep.price(p, 'town', { sell: o.selling }) });
+  inn = new Shop({ stock: { stew: { price: 4, count: 6 }, room: { price: 10, count: 3 } }, keeper: folk.of('innkeeper')[0], faction: 'town' });
 }
 update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt, hero); }
 ```
@@ -4602,3 +4603,133 @@ update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt
 - Saving: `clock`, `folk`, each `Shop` and `night` have `pack()` / `unpack(d)` (for `WorldSave.keep`).
 - To look it over: `node scripts/town.cjs sheet.png [kind=castle] [views=square,street,cottage,inn,gate,keep,high,map]
   [times=10,21.5] [seed=7] [--webgpu]` (`map` shows each townsperson where the hour has them).
+
+## Dungeons
+
+`gs.dungeon.Dungeon` builds a dungeon map in a Next Gen view and makes it work. The map is gs.gen's `dungeon()`,
+`cave()` or `maze()` (or your own text), and from a seed it is dressed with doors, one locked door whose key lies in
+a chest you can reach first, an iron gate that lifts while its levers are all set right (in front of the exit where
+one corridor leads there), spike traps in the corridors, chests, a secret wall that shortens the way, torches,
+pillars in the big rooms, and barrels and crates to push. It is solid in the game's `World3D` (found by itself): a
+shut door is a wall, an open one is not.
+
+```js
+const { Dungeon } = gs.dungeon, { dungeon } = gs.gen;
+reset() {
+  dg = new Dungeon(view, { map: dungeon(40, 30, { seed }), seed });   // in reset(): under the loading screen
+  hero.at(dg.start);
+  dg.on('trap', (t, who) => hurt(10)).on('loot', (t, loot) => feel.coin()).on('solved', () => feel.win());
+}
+update(dt) { dg.update(dt, hero.position); }            // plates, traps, the map filling in, doors swinging
+down() { const r = dg.use(hero.position, { inventory }); if (r.why === 'locked') say('Locked. There must be a key.'); }
+draw(c) { dg.drawMap(c, 250, 10, 100, 80, { at: hero.position, turn }); }   // only what has been seen
+```
+
+- Letters a map may use (`gs.dungeon.LEGEND`): `D` door, `K` locked door, `G` gate, `V` lever, `O` pressure plate,
+  `C` chest, `X` spike trap, `H` secret wall, `T` torch, `P` pillar, `B` barrel, `R` crate, `S` start, `E` exit; any
+  other letter is a mark (`find('A')`). Levers and plates within 8 cells of a map's gate work it. `dress: false`
+  keeps to what the map says.
+- `use(what, { inventory })` opens and shuts doors, unlocks with the key (any inventory with `has`, `take` and `add`:
+  `gs.items.Inventory` fits), pulls levers, loots chests (`loot: chest => [{ id, n }]`, else some gold) and finds the
+  secret wall. `near(position)` lists what is in reach, to show a prompt.
+- A lamp on each lever, and over the gate, lights while that lever is right (`hints: false` for none).
+- `update(dt, [hero, companion])`: anyone heavy presses plates and sets off traps, and the barrels and crates press
+  plates too. The trap's harm is yours: `on('trap', (t, who) => ...)`.
+- `ceiling: false` for a camera from above. `at: { x, y, z }` puts it anywhere (under a town, or as a `gs.regions`
+  part: build it in the part's make and `remove()` it when the part goes).
+- `pack()` / `unpack(data)` keep what is open, found and looted, and the map, for `api.save()`.
+- `gs.dungeon.layout(map, { seed })` and `DungeonRules` are the same rules with no 3D, for a 2D game.
+
+
+## People who change, and a character creator
+
+A person from `gs.models.human()` can change while the game runs, with nothing sculpted again: `person.looks`.
+
+```js
+hero.looks.set({ weight: .4, muscle: .7 });              // -1..1 (muscle 0..1): at once, the clothes go with the body
+hero.looks.set({ jaw: .5, chin: -.3, nose: .2, eyes: .3 }); // the face: jaw, chin, cheeks, nose, lips, brow, eyes (-1..1)
+hero.looks.set({ age: .6 });                              // 0..1: grey hair, sagging a little, a real face's lines stay in
+hero.looks.set({ lean: -.8 });                            // -1 evil (pale, a red glint in the eyes) .. 1 good (warm)
+hero.looks.set({ skin: '#8a5a3c', hair: '#c9a35a', height: 1.05 });
+const scar = hero.looks.mark({ kind: 'scar', at: 'cheekL', design: 'claw' });   // rides the body as it moves
+scar.strength = .4;                                       // fades as it heals; scar.remove()
+hero.looks.mark({ kind: 'tattoo', at: 'armR', design: 'band', colour: '#1c2433' });
+api.save({ looks: hero.looks.pack() });  /* later */  hero.looks.unpack(api.load({}).looks);
+```
+
+- Marks: `kind` `'tattoo'` (`band`, `spiral`, `star`, `rune`, `leaf`, `wing`, `dots`), `'scar'` (`slash`, `claw`, `burn`,
+  `stitch`) or `'paint'` (`stripes`, `mask`); `at` `cheekL`/`R`, `brow`, `chin`, `eyeL`/`R`, `neck`, `armL`/`R`,
+  `foreL`/`R`, `handL`/`R`, `chest`, `back`, or `{ bone, off: [x, y, z] }`; `size` (metres across), `turn`.
+- The person gets its own copy of its points and its skin, hair and eye materials the first time; its twins keep theirs.
+
+`gs.models.Creator` is a character creator's state: the person to show, sliders that show at once (build, face, age,
+skin, hair colour, good or evil) and picks (body, hair style, heritage, face, beard) that make the person again in the
+background a moment after the last change and swap them in. The kit draws nothing: your panel reads `sliders` and
+`picks`.
+
+```js
+make() { cr = new gs.models.Creator({ sex: 'f', seed: 3 }, { onSwap: (old, now) => { old.removeFromParent(); view.scene.add(now); } }); view.scene.add(cr.person); }
+update(dt) { cr.update(dt); cr.person.rig.update(dt); }
+// your sliders: for (const s of cr.sliders) ... cr.set(s.id, value);  your picks: cr.set('hairStyle', 'long')
+// done: api.save({ hero: cr.options() })  then  hero = gs.models.human(saved.hero); hero.looks.unpack(saved.hero.looks)
+```
+
+## Companions
+
+`gs.companions.Companions(api, { hero, coach: true })` keeps up to three friends who follow the hero, talk and fight in roles. The kit decides; your game moves and draws them.
+
+```js
+const { Companions } = gs.companions;
+make() { party = new Companions(api, { hero: heroBody, coach: true }); }
+reset() {
+  party.clear();
+  party.join(bran, { name: 'Bran', role: 'guard', stats: branStats, likes: { rescue: 3, steal: -6 } });
+  party.join(mira, { name: 'Mira', role: 'healer', stats: miraStats, unit: magic.unit(mira, { team: 'hero', stats: miraStats }), spells: { heal: 'mend', attack: 'spark' } });
+}
+update(dt) {
+  const slow = party.update(dt, { foes });                 // the world runs at dt * slow (the wheel slows it)
+  for (const m of party.members) walk(m.body, m.goal, m.run, dt * slow);
+  for (const e of party.events) {
+    if (e.type === 'swing' || e.type === 'shoot') hurt(e.target, 8);
+    if (e.type === 'say') bubble(e.who, e.text);
+  }
+}
+```
+
+- **Roles** (`ROLES`): `guard` stands between the hero and whatever is on it, taunts and swings; `healer` heals whoever is lowest; `archer` keeps her distance and shoots; `caster` casts. With a gs.magic unit and `spells`, heals and spells are cast through Magic by themselves; otherwise each is an event for the game.
+- **Each frame** a companion gives `goal` (where to walk), `run`, `face`, `act` (`follow`, `attack`, `shoot`, `cast`, `heal`, `guard`, `hold`, `retreat`, `down`) and `target`.
+- **Order wheel**: `party.wheel.open()` on a long press slows the world (`slow: 0` pauses). `wheel.at(dx, dy)` is the item under the finger, measured from the centre as a part of the radius. `wheel.pick(item, { target })` gives the order. The orders are attack, hold here, heal me, all on it, fall back and follow; `command(id, { who })` does the same in code.
+- **Tactics** (`m.tactics`): `stance` (bold, steady, careful or passive), `healAt` (0 to 1) and `focus` (nearest, weakest, strongest, or the one on the hero). These are a menu's worth of settings. With `coach: true`, `party.correct(m, 'heal')` means "here you should have healed". After a couple of those, it does so in spots like that. `party.avoid(m)` means "not that, here". The corrections are kept with the game's brains.
+- **Approval** (-100 to 100, `m.mood` from fed up to devoted): `likes` maps deeds to how much each one cares. A gs.rpg Reputation's deeds reach them by themselves, `party.deed(id)` covers the game's own, and `party.gift(m)` covers a kindness. A fed-up companion may refuse orders, and at `leaveAt` it leaves.
+- **Talk**: lines for joining, fights, getting hurt, healing, orders, approval and quiet moments (`LINES`, or your own in `lines`). Two of them banter when nothing happens. With `voice: true`, a gs.models person in `person` speaks the line.
+- `pack()` / `unpack()` keep approval and tactics in a save.
+
+## Mounts
+
+`gs.mounts.Mount(creature, { world })` turns a `gs.models.creature` into something to ride: a horse, a deer, a giant owl or a dragon. It fits a saddle, blanket, girth, stirrups and reins to the creature's own shape, pins them to its back so they move with its stride, and makes it a solid rider in the game's World3D, which it finds by itself.
+
+```js
+const { Mount } = gs.mounts, { creature, human } = gs.models;
+make() {
+  [horse] = creature.all([{ like: 'horse', seed: 4 }]); [hero] = human.all([{ seed: 3 }]);
+  steed = new Mount(horse);
+}
+reset() { steed.place(0, 0, 0); }
+update(dt) {
+  if (tappedTheHorse) steed.enter(hero);                    // walks to its left side and swings up astride
+  if (tappedGetOff) steed.exit();
+  steed.ride(dt, { stick: stick.value, jump, urge: swipedUp, rein: swipedDown });
+  if (swingTapped) steed.strike('right');                   // 'left', 'front'; steed.shoot(dir) for a bow
+  for (const e of steed.events) if (e.type === 'strike') hitAround(e.at, e.radius, e.power);
+}
+```
+
+- **Gaits**: stand, walk, trot, canter and gallop (`GAITS`), at speeds from the creature's own legs (`speeds`). `urge()` and `rein()` move the gait up or down, like a nudge of the heels or a pull on the reins. The stick runs it up to that gait, and pulling back stops it, then backs it up.
+- **Weight**: it takes a second or two to get going and stops quicker. It turns tightly at a walk and wide at a gallop, and it leans into turns.
+- **Stamina**: the gallop spends it. The mount sends `tired` at nothing left and `rested` once it can gallop again.
+- **Jumps** (`jump: true`) go over fences from a trot or faster, or as a hop from a stand. The height comes from its size (`jump` sets it).
+- **Flying**: a creature that can fly (a dragon, an owl) takes off on `jump`. In the air, the stick sets the speed, `climb` (-1 to 1) dives or climbs, the stick's x banks it into turns, and `land` brings it down.
+- **The rider** sits each gait: deep at the walk, rising at the trot, up and forward over the neck at the gallop. Their hands stay on the reins and their feet in the stirrups. While on, they belong to the mount (`person.vehicle`), as people in a gs.models vehicle do. `rider` says who is on.
+- **From the saddle**: a blow's hit comes as a `strike` event, twice as hard at a full gallop as at a stand (a charge). `shoot(dir)` sends a `shoot` event.
+- `steerTo(x, z)` gives a stick that takes it somewhere: a companion's horse, or a horse led by the reins. `pack()` and `unpack()` keep where it is.
+- Without a World3D it keeps to `ground(x, z)`. `saddle: false` and `reins: false` leave the tack off, and `saddle: { colour, blanket }` colours it.

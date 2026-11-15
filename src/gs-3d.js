@@ -27,3 +27,5 @@ export * as gas from './kit/gas.js';
 export * as tabletop from './kit/tabletop.js';
 export * as regions from './kit/regions.js';
 export * as THREE from 'three';
+export * as dungeon from './kit/dungeon3d.js';
+export * as mounts from './kit/mounts.js';

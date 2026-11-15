@@ -2478,6 +2478,78 @@ export interface Magic {
   hit(by: MagicUnit | null, who: MagicUnit, name: string, spell: Partial<Spell>, at?: P3, push?: P3 | null): MagicEvent;
   status(who: MagicUnit, id: string, spell?: Partial<Spell>, o?: { for?: number; spec?: StatBuff }): string | null;
 }
+/** What a companion does: the coach learns among these. */
+export type CompanionAct = 'follow' | 'attack' | 'shoot' | 'cast' | 'heal' | 'guard' | 'hold' | 'retreat' | 'down';
+export type CompanionRole = 'guard' | 'healer' | 'archer' | 'caster';
+export interface CompanionEvent { type: 'join' | 'full' | 'fight' | 'calm' | 'say' | 'swing' | 'shoot' | 'cast' | 'heal' | 'taunt' | 'order' | 'refuse' | 'approve' | 'disapprove' | 'mood' | 'leave' | 'down' | 'up' | 'wheel'; who?: Companion; target?: Loose; at?: { x: number; z: number }; from?: { x: number; z: number }; text?: string; kind?: string; after?: number; spell?: string | null; cast?: boolean; by?: number; why?: string | null; mood?: string; was?: string; id?: string; open?: boolean; [k: string]: Loose }
+export interface Companion {
+  name: string; role: CompanionRole; body: Loose; stats: Loose; unit: Loose; person: Loose;
+  /** Spells cast through gs.magic when it has a unit: heal, attack (cast), shoot, melee. */
+  spells: { heal?: string; attack?: string; shoot?: string; melee?: string };
+  /** Deeds it likes (above 0) or dislikes, by id. */
+  likes: Record<string, number>;
+  /** stance: 'bold' | 'steady' | 'careful' | 'passive'; healAt (0..1); focus: 'nearest' | 'weakest' | 'strongest' | 'hero'. */
+  tactics: { stance: 'bold' | 'steady' | 'careful' | 'passive'; healAt: number; focus: 'nearest' | 'weakest' | 'strongest' | 'hero' };
+  /** -100..100. */
+  approval: number;
+  /** 'fed up', 'wary', 'easy', 'warm' or 'devoted'. */
+  readonly mood: string;
+  /** Where it wants to be this frame (x, z; or x, y in 2D), whether to run, what to face. */
+  goal: { x: number; z?: number; y?: number }; run: boolean; face: { x: number; z: number } | null;
+  /** What it does now, and on whom. */
+  act: CompanionAct; target: Loose;
+  order: { id: string; target: Loose; at: Loose; left: number } | null;
+  down: boolean;
+  /** What it looked at when it last decided (for the coach). */
+  see: Float32Array;
+  at(): { x: number; z?: number; y?: number };
+  hp(): number;
+  approve(n: number, why?: string | null): Companion;
+  command(id: string, o?: { target?: Loose; at?: Loose; for?: number }): boolean;
+  revive(): Companion;
+}
+export interface CompanionWheel {
+  on: boolean; who: Companion | null; speed: number; slow: number;
+  items: { id: string; label: string; icon: string; angle: number }[];
+  over: { id: string; label: string; icon: string; angle: number } | null;
+  open(who?: Companion | null): CompanionWheel; close(): CompanionWheel;
+  /** The item a finger is over, from the wheel's centre as a part of its radius (inside .25 is none). */
+  at(dx: number, dy: number): { id: string; label: string; icon: string; angle: number } | null;
+  /** Gives the order (the item under the finger) and closes the wheel. */
+  pick(item?: Loose, o?: { target?: Loose; at?: Loose; for?: number }): boolean;
+}
+export interface CompanionParty {
+  members: Companion[]; events: CompanionEvent[]; max: number; wheel: CompanionWheel; fighting: boolean; hero: Loose;
+  on(type: CompanionEvent['type'] | '*', fn: (e: CompanionEvent) => void): CompanionParty;
+  /** Adds one (null when full). */
+  join(body: Loose, o?: { name?: string; role?: CompanionRole; stats?: Loose; unit?: Loose; health?: () => number; person?: Loose; spells?: Companion['spells']; likes?: Record<string, number>; lines?: Record<string, string[]>; tactics?: Partial<Companion['tactics']>; approval?: number; roleOpts?: Loose }): Companion | null;
+  leave(m: Companion): CompanionParty; clear(): CompanionParty; find(name: string): Companion | null;
+  /** Decides for everyone; returns how fast the world runs now (the wheel slows it). */
+  update(dt: number, o?: { foes?: Loose[]; hero?: Loose }): number;
+  /** An order for all (or who): 'attack', 'hold', 'heal', 'focus', 'back', 'follow'. False when refused. */
+  command(id: string, o?: { who?: Companion | null; target?: Loose; at?: Loose; for?: number }): boolean;
+  /** A deed the hero did: those who care like or dislike it (a gs.rpg Reputation's deeds arrive by themselves). */
+  deed(id: string, o?: { seen?: boolean; by?: number }): CompanionParty;
+  gift(m: Companion, n?: number): CompanionParty;
+  say(m: Companion, kind: string, o?: { force?: boolean; foe?: Loose }): CompanionEvent | null;
+  /** Tiny Brains coach: "here, this one should have done action". */
+  correct(m: Companion, action: CompanionAct): CompanionParty;
+  /** "Not what you just did, here." */
+  avoid(m: Companion, action?: CompanionAct): CompanionParty;
+  coachFor(role: CompanionRole): Loose;
+  pack(): Loose[]; unpack(d: Loose[]): CompanionParty;
+}
+export interface CompanionsPart {
+  /** api: the game's api (the coach keeps its corrections). o: hero, max (3), magic, reputation (found by themselves), coach (true: one per role), talk (6 s between lines), banter (40 s; 0 never), leaveAt (-90), leaves, wheel ({ slow, orders, ease }), voice (lines spoken by person.face), heroUnit, heroName, seed. */
+  Companions: new (api: Loose, o?: { hero?: Loose; max?: number; magic?: Loose; reputation?: Loose; coach?: Loose; talk?: number; banter?: number; leaveAt?: number; leaves?: boolean; wheel?: { slow?: number; orders?: { id: string; label: string; icon: string }[]; ease?: number }; voice?: boolean; heroUnit?: Loose; heroName?: string; seed?: number; link?: boolean }) => CompanionParty;
+  ACTIONS: readonly CompanionAct[];
+  ROLES: Readonly<Record<CompanionRole, { keep: number; reach: number; acts: CompanionAct[]; every: Record<string, number>; slot: [number, number]; brave: number }>>;
+  ORDERS: readonly { id: string; label: string; icon: string }[];
+  MOODS: readonly { id: string; at: number }[];
+  LINES: Readonly<Record<string, string[]>>;
+  BANTER: readonly [string, string][];
+  Companion: Loose; Wheel: Loose;
+}
 export interface MagicPart {
   /** book: { name: Spell }; statuses (STATUSES), reactions (REACTIONS), gcd, gravity, world (a World3D or 2D Physics; found by itself; false none), apply (false: only say who was hit). */
   Magic: new (o?: { book?: Record<string, Spell>; statuses?: Record<string, StatBuff>; reactions?: { name: string; has: string; by: string; clear?: string[]; add?: string; bonus?: number; skip?: boolean }[]; gcd?: number; gravity?: number; world?: Loose; apply?: boolean; link?: boolean }) => Magic;
@@ -2647,6 +2719,96 @@ export interface Town3D {
   update(dt?: number): Town3D; open(k?: number): Town3D; buildingAt(x: number, z: number): (TownBuilding & { mesh: Loose }) | null;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z: number }; range?: number; turn?: number; colours?: Record<string, string> }): void; remove(): void;
 }
+export type DungeonKind = 'door' | 'locked' | 'gate' | 'lever' | 'plate' | 'chest' | 'trap' | 'secret' | 'torch' | 'pillar' | 'barrel' | 'crate';
+export interface DungeonThing {
+  id: number; kind: DungeonKind; col: number; row: number; x: number; z: number; axis?: 'x' | 'z'; face?: [number, number]; key?: string; group?: string; want?: boolean;
+  on?: boolean; open?: boolean; found?: boolean; down?: boolean; armed?: boolean; fired?: number; loot?: { id: string; n: number }[]; mesh?: Loose;
+}
+export interface DungeonLayout {
+  cols: number; rows: number; size: number; x0: number; z0: number; grid: string[]; rooms: { id: number; col: number; row: number; cols: number; rows: number; x: number; z: number }[];
+  start: { col: number; row: number; x: number; z: number } | null; exit: { col: number; row: number; x: number; z: number } | null; marks: Record<string, { col: number; row: number; x: number; z: number }[]>; things: DungeonThing[];
+}
+export type DungeonEvent = 'open' | 'shut' | 'unlock' | 'lever' | 'solved' | 'press' | 'release' | 'trap' | 'loot' | 'secret';
+export interface DungeonInventory { has(id: string): boolean; take?(id: string, n: number): unknown; add(id: string, n: number): unknown }
+export interface DungeonUse { ok: boolean; thing?: DungeonThing; why?: 'locked' | 'nothing' | 'blocked'; loot?: { id: string; n: number }[] }
+export interface DungeonRulesT {
+  L: DungeonLayout; things: DungeonThing[]; seen: Uint8Array; solved: Set<string>;
+  on(ev: DungeonEvent, fn: (thing: DungeonThing, more?: Loose) => void): DungeonRulesT; cellAt(x: number, z: number): { col: number; row: number; ch: string } | null; open(col: number, row: number): boolean;
+  near(x: number, z: number, r?: number): DungeonThing[]; spot(t: DungeonThing): { x: number; z: number }; use(what: DungeonThing | { x: number; z: number }, o?: { inventory?: DungeonInventory | null }): DungeonUse;
+  check(group: string): void; step(dt: number, feet?: { x: number; z: number }[]): void; see(x: number, z: number): void; find(mark: string): { col: number; row: number; x: number; z: number }[];
+  pack(): Loose; unpack(d: Loose): DungeonRulesT;
+}
+export interface Dungeon3D {
+  layout: DungeonLayout; rules: DungeonRulesT; things: DungeonThing[]; group: Loose; start: { x: number; y: number; z: number }; exit: { x: number; y: number; z: number } | null; solid: Loose;
+  on(ev: DungeonEvent, fn: (thing: DungeonThing, more?: Loose) => void): Dungeon3D;
+  /** Each frame: the hero's position (or several: companions, anything heavy) presses plates, fires traps and fills in the map; doors, gates and lids move to match. */
+  update(dt?: number, hero?: { x: number; z: number } | { position: { x: number; z: number } } | ({ x: number; z: number })[] | null): Dungeon3D;
+  use(what: DungeonThing | { x: number; z: number } | { position: { x: number; z: number } }, o?: { inventory?: DungeonInventory | null }): DungeonUse;
+  near(p: { x: number; z: number } | { position: { x: number; z: number } }, r?: number): DungeonThing[]; cellAt(p: { x: number; z: number }): { col: number; row: number; ch: string } | null;
+  spot(t: DungeonThing | { col: number; row: number }): { x: number; y: number; z: number }; find(mark: string): { x: number; y: number; z: number }[];
+  drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z: number } | null; turn?: number; all?: boolean; colours?: Record<string, string> }): void;
+  settle(dt: number): void; pack(): Loose; unpack(d: Loose): Dungeon3D; remove(): void;
+}
+/** A ground gait (a flyer in the air is 'fly'). */
+export type MountGait = 'stand' | 'walk' | 'trot' | 'canter' | 'gallop' | 'back' | 'fly';
+export interface MountEvent { type: 'gait' | 'tired' | 'rested' | 'jump' | 'land' | 'takeoff' | 'bump' | 'strike' | 'shoot'; gait?: MountGait; was?: MountGait; speed?: number; thing?: Loose; side?: 'left' | 'right' | 'front'; at?: XYZ; radius?: number; power?: number; dir?: XYZ; from?: XYZ }
+export interface MountInput { stick?: { x: number; y: number } | null; jump?: boolean; urge?: boolean; rein?: boolean; climb?: number; land?: boolean }
+export interface Mount {
+  /** The creature. */
+  beast: Loose;
+  /** Metres a second each gait runs at (and fly for a flyer). */
+  speeds: Record<MountGait | 'fly', number>;
+  speed: number; yaw: number; gait: MountGait;
+  /** The gait it is urged to (stick forward runs up to it). */
+  want: MountGait;
+  air: boolean; flying: boolean; flies: boolean; onGround: boolean;
+  /** 0..1: the gallop spends it; tired at 0 (no gallop until it is back over a third). */
+  stamina: number; tired: boolean;
+  /** How the rider sits: 0 deep in the saddle .. 1 up and forward over the neck. */
+  posture: number;
+  events: MountEvent[];
+  /** Who is in the saddle or getting on. */
+  readonly rider: Loose;
+  /** The saddle seat ({ saddle: { who, point, ... } }), as a vehicle's seats. */
+  seats: Record<string, Loose>;
+  /** The walks on and off in progress. */
+  readonly trips: { person: Loose; kind: string; step: string; done: boolean; then(fn: (t: Loose) => void): Loose }[];
+  on(type: MountEvent['type'], fn: (e: MountEvent) => void): Mount;
+  place(x?: number, y?: number, z?: number, turn?: number): Mount;
+  /** Someone walks to its left side and gets on (person.vehicle is the mount from then). */
+  enter(person: Loose, o?: { walk?: number }): Loose;
+  /** Whoever is on gets off and stands beside it. */
+  exit(): Loose;
+  /** Puts someone in the saddle at once / takes them off at once. */
+  putIn(person: Loose): Mount; takeOut(person: Loose): Loose;
+  /** Each frame: moves it, plays its gait and sits the rider. */
+  ride(dt: number, input?: MountInput): Mount;
+  urge(): Mount; rein(): Mount;
+  takeOff(): void;
+  /** A blow from the saddle (its hit comes as a 'strike' event, harder at speed). */
+  strike(side?: 'left' | 'right' | 'front', o?: { power?: number; time?: number }): boolean;
+  /** Looses an arrow from the saddle (a 'shoot' event). */
+  shoot(dir?: XYZ | null, o?: { time?: number }): boolean;
+  /** A stick that takes it towards a point: pass to ride(). */
+  steerTo(x: number, z: number, o?: { stop?: number; gait?: MountGait }): { x: number; y: number };
+  pack(): { x: number; y: number; z: number; r: number; s: number }; unpack(d: Loose): Mount;
+  remove(): void;
+}
+export interface MountsPart {
+  /** A creature to ride. o: world (found), ground(x, z) without one, fly, saddle (false, or { colour, dark, blanket }), reins (false), turn, stamina (seconds of gallop), jump (metres), seat (metres back from the middle of the back), link. */
+  Mount: new (beast: Loose, o?: { world?: Loose; ground?: (x: number, z: number) => number; fly?: boolean; saddle?: false | { colour?: string; dark?: string; blanket?: string }; reins?: boolean; turn?: number; stamina?: number; jump?: number; seat?: number; link?: boolean }) => Mount;
+  GAITS: readonly MountGait[];
+}
+export interface DungeonPart {
+  /** A dungeon map (gs.gen's dungeon(), cave() or maze(), or text) built in a Next Gen view: walls, doors, a locked door and its key, a lever gate, plates, traps, chests, a secret wall, torches; solid in the World3D. */
+  Dungeon: new (view: Loose, o: { map: string | { text: string; rooms?: Loose[] }; seed?: number; size?: number; height?: number; dress?: boolean; ceiling?: boolean; at?: { x?: number; y?: number; z?: number }; world?: Loose | false; lamps?: boolean; hints?: boolean; loot?: (chest: DungeonThing) => { id: string; n: number }[]; trapRearm?: number; materials?: { wall?: Loose; floor?: Loose; ceiling?: Loose; trim?: Loose; wood?: Loose; iron?: Loose }; link?: boolean }) => Dungeon3D;
+  /** The map read and dressed, as plain data (no 3D). */
+  layout(map: string | { text: string; rooms?: Loose[] }, o?: { size?: number; seed?: number; dress?: boolean }): DungeonLayout;
+  /** The rules alone (what is open, found and taken): for a 2D game or a test. */
+  DungeonRules: new (layout: DungeonLayout, o?: { loot?: (chest: DungeonThing) => { id: string; n: number }[]; trapRearm?: number }) => DungeonRulesT;
+  /** The map letters: D door, K locked, G gate, V lever, O plate, C chest, X trap, H secret, T torch, P pillar, B barrel, R crate. */
+  LEGEND: Record<string, DungeonKind>;
+}
 export interface TownPart {
   /** The world's time of day: hour, day, night, dark (0..1), wait()/sleep() to pass time, every(hour, fn). Drives the game's Sky by itself. */
   Clock: new (o?: { hour?: number; day?: number; speed?: number; dawn?: number; dusk?: number; sky?: Loose | false; link?: boolean }) => WorldClock;
@@ -2656,8 +2818,8 @@ export interface TownPart {
   route(plan: TownPlan, from: { x: number; z: number }, to: { x: number; z: number }): { x: number; z: number }[];
   /** Townsfolk who live their day by the clock: sleep, work, eat, drink at the inn, chat on the square; they hide when monsters are about. */
   Folk: new (plan: TownPlan, o?: { count?: number; clock?: WorldClock; seed?: number; speed?: number; crowd?: Loose; moves?: { walk?: string; idle?: string; sit?: string; work?: string }; night?: TownNight; routines?: Record<string, TownSlot[]>; ground?: (x: number, z: number) => number; link?: boolean }) => TownFolk;
-  /** A shop with opening hours, stock that restocks each morning, buying and selling; price: your own (rep.price). */
-  Shop: new (o?: { name?: string; stock?: Record<string, { price: number; count?: number; restock?: number }>; hours?: [number, number]; clock?: WorldClock; keeper?: TownPerson | null; money?: number; buys?: boolean | string[] | ((id: string) => number | null); sells?: number; price?: (base: number, o: { id: string; selling: boolean }) => number; link?: boolean }) => TownShop;
+  /** A shop with opening hours, stock that restocks each morning, buying and selling; faction: whose shop, priced by a gs.rpg Reputation's standing with it (found by itself); price: your own, which wins. */
+  Shop: new (o?: { name?: string; stock?: Record<string, { price: number; count?: number; restock?: number }>; hours?: [number, number]; clock?: WorldClock; keeper?: TownPerson | null; money?: number; buys?: boolean | string[] | ((id: string) => number | null); sells?: number; price?: (base: number, o: { id: string; selling: boolean }) => number; faction?: string | null; reputation?: Loose | false; link?: boolean }) => TownShop;
   /** Monsters that come in from the wild at night, keep off torches, hunt the hero when near and go at dawn. */
   Night: new (plan: TownPlan, o?: { clock?: WorldClock; kinds?: (string | { kind: string; weight?: number; speed?: number; sense?: number })[]; every?: number; max?: number; from?: number; to?: number; away?: number; light?: number | false; seed?: number; steer?: boolean; link?: boolean }) => TownNight;
   /** Each kind of townsperson's day. */
@@ -4499,6 +4661,32 @@ export interface Wield {
   /** How far it was turned out of the body or a wall this frame (radians). */ readonly turned?: number;
   /** Takes it off the person: the weapon. */ drop(): Loose;
 }
+export type LookShape = 'weight' | 'muscle' | 'age' | 'jaw' | 'chin' | 'cheeks' | 'nose' | 'lips' | 'brow' | 'eyes';
+export interface LookValues { weight?: number; muscle?: number; age?: number; jaw?: number; chin?: number; cheeks?: number; nose?: number; lips?: number; brow?: number; eyes?: number; lean?: number; skin?: string | null; hair?: string | null; height?: number }
+export interface LookMarkOptions {
+  kind?: 'tattoo' | 'scar' | 'paint'; at?: 'cheekL' | 'cheekR' | 'brow' | 'chin' | 'eyeL' | 'eyeR' | 'neck' | 'armL' | 'armR' | 'foreL' | 'foreR' | 'handL' | 'handR' | 'chest' | 'back' | { bone: string; off?: [number, number, number]; facing?: [number, number, number] };
+  design?: 'band' | 'spiral' | 'star' | 'rune' | 'leaf' | 'wing' | 'dots' | 'slash' | 'claw' | 'burn' | 'stitch' | 'stripes' | 'mask'; colour?: string; size?: number; turn?: number; seed?: number; strength?: number;
+}
+export interface LookMark { strength: number; readonly o: LookMarkOptions; mesh: Loose; remove(): void }
+/** person.looks (gs.models.human): how a person looks, changed while the game runs with no sculpting again. */
+export interface PersonLooks {
+  /** Shapes -1..1 (muscle and age 0..1), lean -1 (evil) .. 1 (good), skin / hair colours (null: as made), height a scale (1 as made). Only what is named changes. */
+  set(o: LookValues): PersonLooks; get(k: keyof LookValues): number | string | null;
+  /** A scar, a tattoo or paint on the skin that rides the body; strength fades it. */
+  mark(o: LookMarkOptions): LookMark; readonly marks: LookMark[];
+  pack(): Loose; unpack(d: Loose): PersonLooks;
+}
+export interface CreatorSlider { id: string; group: string; label: string; min: number; max: number; live: boolean }
+export interface CreatorPick { id: string; group: string; label: string; choices: (string | number)[] }
+export interface CharacterCreator {
+  /** The person to show (a new one after each swap). */
+  person: Loose; readonly sliders: CreatorSlider[]; readonly picks: CreatorPick[]; readonly busy: boolean;
+  set(id: string, value: number | string): CharacterCreator; value(id: string): number | string;
+  /** Each frame: a moment after the last pick (or colour) the person is made again in the background, then onSwap(old, now). */
+  update(dt?: number): CharacterCreator;
+  /** What to give gs.models.human for this person (and looks: person.looks.unpack(o.looks) after). */
+  options(): Loose; pack(): Loose; unpack(d: Loose): CharacterCreator;
+}
 export interface ModelsPart {
   /** A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' | 'fabric' | 'leather' | 'marble' | 'dirt' | 'sand' | 'snow' | 'skin' (pores and fine lines) | 'palm' (a palm trunk: rings, leaf scars, fibres). Options: the recipe's colours (colour, dark, mortar, gap, rust, deep, under, vein, grout), seed, repeat [u, v], size (texture pixels, 256), depth (parallax, WebGPU); WebGPU: closeUp (sharp detail near the camera, default on), solid (laid on by world position, metres per tile), scatter (no visible repeat). Others go to gs.hd.pbr. */
   material(name: string, o?: { colour?: string; color?: string; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean; solid?: boolean | number; scatter?: boolean; [k: string]: Loose }): Loose;
@@ -4545,6 +4733,11 @@ export interface ModelsPart {
    * 'gate' (width of the way through 3.4: a gatehouse with a tower each side and a portcullis, the child named 'portcullis', userData.lift metres up to open it). colour, seed, wear,
    * materials ({ wall, trim, roof, wood, iron }). userData.solid: [{ at, size }] boxes for physics in its own frame; userData.walk: the height of its wall walk.
    */
+  /** A character creator on human(): sliders that show at once (person.looks), picks that make the person again in the background and swap them in (onSwap). Draw your own panel from sliders and picks. */
+  Creator: new (o?: Loose, opts?: { onSwap?: (old: Loose, now: Loose) => void; wait?: number }) => CharacterCreator;
+  /** The shapes person.looks can set. */
+  readonly looks: readonly LookShape[];
+  readonly CREATOR_SLIDERS: readonly CreatorSlider[]; readonly CREATOR_PICKS: readonly CreatorPick[];
   fort(o?: { kind?: 'wall' | 'tower' | 'gate'; length?: number; height?: number; thick?: number; radius?: number; width?: number; roof?: boolean; colour?: string; color?: string; seed?: number; wear?: false | Record<string, Loose>; materials?: Record<string, Loose> }): Loose;
   /** The castle pieces fort() makes. */
   readonly forts: readonly string[];
@@ -5066,8 +5259,8 @@ export interface GS {
   board: BoardPart; battle: BattlePart; stats: StatsPart; rpg: RpgPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
-  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; companions: CompanionsPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; dungeon: DungeonPart; mounts: MountsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;

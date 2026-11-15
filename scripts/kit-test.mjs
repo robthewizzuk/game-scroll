@@ -9349,6 +9349,15 @@ console.log('physics ok');
     const keeper = { doing: 'sleep', moving: false, held: 0 }, K = new Shop({ stock: { bread: { price: 3 } }, clock: C, keeper }); assert.ok(!K.open, 'shut while the keeper sleeps'); keeper.doing = 'work'; assert.ok(K.open);
     const cheap = new Shop({ stock: { bread: { price: 10 } }, clock: C, price: (b, { selling }) => selling ? b * 1.2 : b * .8 }); assert.ok(cheap.priceOf('bread') === 8 && cheap.priceOf('bread', { selling: true }) === 6, 'the game\'s own prices (reputation)');
     const T = new Shop({ clock: C }).unpack(S.pack()); assert.equal(T.money, S.money);
+    // a shop of a faction prices by a gs.rpg Reputation's standing with it (given here; found by itself in a game)
+    const { Reputation } = await import('../src/kit/rpg.js');
+    const rep = new Reputation({ factions: { town: {} }, deeds: { help: { town: 40 }, rob: { town: -80 } }, link: false });
+    const R = new Shop({ stock: { bread: { price: 100, count: 9 } }, clock: C, faction: 'town', reputation: rep });
+    assert.ok(R.priceOf('bread') === 100 && R.priceOf('bread', { selling: true }) === 50, 'a stranger pays the list price');
+    rep.did('help'); const liked = [R.priceOf('bread'), R.priceOf('bread', { selling: true })];
+    rep.did('rob'); rep.did('rob'); const hated = [R.priceOf('bread'), R.priceOf('bread', { selling: true })];
+    assert.ok(liked[0] < 100 && liked[1] > 50 && hated[0] > 100 && hated[1] < 50, 'liked: cheaper and pays more; disliked: dearer and pays less ' + JSON.stringify({ liked, hated }));
+    assert.equal(new Shop({ stock: { bread: { price: 100 } }, clock: C, faction: 'town', reputation: rep, price: b => b }).priceOf('bread'), 100, 'the game\'s own price wins');
   }
   // the night: monsters come in from the edge after dusk, keep off torches, hunt a hero near, go at dawn; folk hide; no sleep with one near
   {
@@ -9367,6 +9376,141 @@ console.log('physics ok');
     const r = F.rest(2, hero); assert.ok(r.ok && r.hours === 2);
   }
   console.log('town: clock, plans, folk, shops and the night');
+}
+
+{
+  // gs.dungeon's rules (dungeon.js: no three.js): a gs.gen map dressed, then played through by its rules
+  const { layout, DungeonRules } = await import('../src/kit/dungeon.js');
+  const { dungeon: dig, loadGen } = await import('../src/kit/gen.js'); await loadGen();
+  for (const seed of [1, 2, 3, 42]) {
+    const map = dig(40, 30, { seed }), L = layout(map, { seed }), R = new DungeonRules(L), k = t => L.things.filter(x => x.kind === t);
+    assert.ok(L.start && L.exit && k('gate').length === 1 && k('locked').length === 1 && k('lever').length >= 1 && k('torch').length > 5, 'dressed ' + seed);
+    assert.deepEqual(layout(map, { seed }).things.map(t => t.kind + t.col + ',' + t.row), L.things.map(t => t.kind + t.col + ',' + t.row), 'the same seed, the same dungeon');
+    const reach = () => { const seen = new Set([L.start.col + ',' + L.start.row]), q = [[L.start.col, L.start.row]]; while (q.length) { const [c, r] = q.pop(); for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) { const a = c + dx, b = r + dz; if (!seen.has(a + ',' + b) && R.open(a, b)) { seen.add(a + ',' + b); q.push([a, b]); } } } return seen; };
+    for (const t of k('door')) R.use(t);
+    const lk = k('locked')[0], gate = k('gate')[0], chest = L.things.find(t => t.kind === 'chest' && t.loot?.[0]?.id === lk.key), first = reach();
+    assert.ok(chest && first.has(chest.col + ',' + chest.row), 'the key is reachable before its door ' + seed);
+    for (const lv of k('lever')) assert.ok(first.has((lv.col + lv.face[0]) + ',' + (lv.row + lv.face[1])), 'a lever is reachable before its gate');
+    const bag = new Map(), inv = { has: i => bag.get(i) > 0, take: (i, n) => bag.set(i, bag.get(i) - n), add: (i, n) => bag.set(i, (bag.get(i) || 0) + n) };
+    assert.equal(R.use(lk, { inventory: inv }).why, 'locked');
+    assert.ok(R.use(chest, { inventory: inv }).ok && inv.has(lk.key) && R.use(lk, { inventory: inv }).ok && lk.open && !inv.has(lk.key), 'the key opens its door');
+    let solved = 0; R.on('solved', () => solved++);
+    for (const lv of k('lever')) if (lv.on !== lv.want) R.use(lv);
+    assert.ok(gate.open && solved === 1, 'the levers set right open the gate');
+    if (k('lever').length) { const lv = k('lever')[0]; R.use(lv); assert.ok(!gate.open, 'and a wrong one shuts it'); R.use(lv); }
+    assert.ok(reach().has(L.exit.col + ',' + L.exit.row), 'the exit can be reached ' + seed);
+    const sec = k('secret')[0]; if (sec) { assert.ok(!R.open(sec.col, sec.row)); R.use(sec); assert.ok(R.open(sec.col, sec.row), 'a found secret wall opens'); }
+    const saved = JSON.parse(JSON.stringify(R.pack())), L2 = layout(map, { seed }), R2 = new DungeonRules(L2).unpack(saved);
+    assert.ok(L2.things.every((t, i) => t.kind === L.things[i].kind && !!t.open === !!L.things[i].open && !!t.on === !!L.things[i].on), 'pack / unpack');
+  }
+  {
+    // traps fire once, wait, and arm again; plates press and let up; the map fills in where feet go
+    const L = layout('#######\n#S.X.O#\n#..G.E#\n#######', { dress: false }), R = new DungeonRules(L, { trapRearm: 1 });
+    const trap = L.things.find(t => t.kind === 'trap'), plate = L.things.find(t => t.kind === 'plate'), gate = L.things.find(t => t.kind === 'gate');
+    let fired = 0; R.on('trap', () => fired++);
+    R.step(.1, [trap]); R.step(.1, [trap]); assert.equal(fired, 1, 'once while stood on'); R.step(1.2, []); R.step(.1, [trap]); assert.equal(fired, 2, 'armed again');
+    assert.ok(plate.group === gate.group && !gate.open); R.step(.1, [plate]); assert.ok(plate.down && gate.open, 'a plate opens its gate'); R.step(.1, []); assert.ok(!gate.open);
+    assert.ok(R.seen.some(Boolean));
+  }
+  console.log('dungeon: maps dressed, keys, levers, gates, traps, plates, secrets, saves');
+}
+
+{
+  // person.looks (human-looks.js) on a bare skeleton and a small skin of our own: points move by their bones' share and come back
+  const T = await import('three'), { skeleton } = await import('../src/kit/models/human.js'), { Looks } = await import('../src/kit/models/human-looks.js');
+  const man = skeleton({ sex: 'm' }), skel = new T.Skeleton(Object.values(man.bones)), names = skel.bones.map(b => b.name);
+  const g = new T.SphereGeometry(.1, 12, 8), n = g.attributes.position.count, SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
+  // the top half on the belly, the bottom half on the jaw
+  for (let i = 0; i < n; i++) { SI[i * 4] = names.indexOf(g.attributes.position.getY(i) > 0 ? 'belly' : 'jaw'); SW[i * 4] = 1; }
+  g.setAttribute('skinIndex', new T.BufferAttribute(SI, 4)); g.setAttribute('skinWeight', new T.BufferAttribute(SW, 4)); g.addGroup(0, g.index.count, 0);
+  const mats = [0, 1, 2, 3, 4, 5, 6].map(() => new T.MeshStandardMaterial()), mesh = new T.SkinnedMesh(g, mats); man.add(mesh); mesh.bind(skel);
+  man.mesh = mesh; man.lods = [mesh];
+  const L = new Looks(man, { skin: '#c89878', hair: '#3a2a1e' }), before = g.attributes.position.array.slice();
+  L.set({ weight: 1 });
+  const P = mesh.geometry.attributes.position.array, moved = i => Math.hypot(P[i * 3] - before[i * 3], P[i * 3 + 1] - before[i * 3 + 1], P[i * 3 + 2] - before[i * 3 + 2]);
+  const top = [...Array(n).keys()].filter(i => before[i * 3 + 1] > .02), bottom = [...Array(n).keys()].filter(i => before[i * 3 + 1] < -.02);
+  assert.ok(mesh.geometry !== g && g.attributes.position.array[0] === before[0], 'the person gets its own points (twins keep theirs)');
+  assert.ok(top.every(i => Math.abs(moved(i) - .05) < 1e-4) && bottom.every(i => moved(i) < 1e-6), 'weight: the belly out by its measure, the jaw not at all');
+  L.set({ weight: 0, jaw: 1 }); assert.ok(top.every(i => moved(i) < 1e-6) && bottom.some(i => moved(i) > .001), 'back as made, and the jaw wider');
+  L.set({ jaw: 0, lean: -1, age: 1, skin: '#5c3a26' });
+  const skin = mesh.material[0]; assert.ok(skin !== mats[0] && skin.color.r < mats[0].color.r, 'its own skin, tinted');
+  const d = JSON.parse(JSON.stringify(L.pack())), L2 = new Looks(man, { skin: '#c89878' }); L2.unpack(d); assert.ok(L2.get('lean') === -1 && L2.get('skin') === '#5c3a26' && L2.get('age') === 1, 'pack / unpack');
+  console.log('looks: weight, the face, colours, saves');
+  // the creator: sliders show at once on the person's looks; a pick makes the person again in the background and swaps them in
+  const { Creator } = await import('../src/kit/models/human-looks.js'), made = [];
+  const fake = o => { const sets = [], p = new T.Group(); p.looks = { set: v => sets.push(v), marks: [], base: { height: 1 }, mark() {}, pack: () => ({ v: {} }) }; p.sets = sets; p.o = o; made.push(p); return p; };
+  fake.ready = () => Promise.resolve(true);
+  let swapped = null; const cr = new Creator(fake, { sex: 'm', seed: 2 }, { onSwap: (a, b) => { swapped = [a, b]; } });
+  cr.set('jaw', .5); assert.ok(cr.person.sets.some(v => v.jaw === .5) && !cr.busy, 'a live slider shows at once');
+  assert.throws(() => cr.set('hairStyle', 'mohawk')); cr.set('hairStyle', 'long'); assert.ok(cr.busy);
+  cr.update(.1); assert.equal(made.length, 1, 'waits for the last change'); cr.update(.5); await null; await null;
+  assert.ok(made.length === 2 && made[1].o.hairStyle === 'long' && swapped?.[1] === cr.person && cr.person.sets.some(v => v.jaw === .5), 'made again with the pick, and the looks kept');
+  assert.equal(cr.set('jaw', 9).value('jaw'), 1, 'sliders keep to their range');
+  console.log('creator: live sliders, picks made again in the background');
+}
+
+// gs.companions: follow, roles in a fight, the order wheel, tactics the coach corrects, approval from deeds
+{
+  const { Companions, ACTIONS } = await import('../src/kit/companions.js');
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Magic } = await import('../src/kit/magic.js');
+  const { together, linksFor } = await import('../src/kit/links.js');
+  together(() => {
+    const magic = new Magic({ book: { mend: { kind: 'heal', cost: 5, cool: 1, heal: 30 }, spark: { kind: 'bolt', cost: 4, cool: .5, speed: 30, damage: 6 } } });
+    const rep = { handlers: {}, on(e, f) { (this.handlers[e] ||= []).push(f); return this; }, did(id) { for (const f of this.handlers.deed || []) f(id, { seen: true }); } };
+    linksFor(null).join('reputation', rep);
+    const st = () => new Stats({ hp: { max: 100 }, mana: { max: 60, regen: 4 }, power: 1 });
+    const hero = { position: { x: 0, y: 0, z: 0 } }; hero.stats = st(); hero.unit = magic.unit(hero, { team: 'hero', stats: hero.stats });
+    const party = new Companions({ hero, coach: true, seed: 3, heroUnit: hero.unit });
+    const body = (x, z) => ({ position: { x, y: 0, z } });
+    const mk = (name, role, x, z, more = {}) => { const b = body(x, z), s = st(); return party.join(b, { name, role, stats: s, unit: magic.unit(b, { team: 'hero', stats: s }), ...more }); };
+    const bran = mk('Bran', 'guard', 2, -1, { likes: { rescue: 3, steal: -6 } });
+    const mira = mk('Mira', 'healer', -2, -2, { spells: { heal: 'mend', attack: 'spark' }, likes: { steal: 4 } });
+    const ilse = mk('Ilse', 'archer', 1, -3);
+    assert.equal(mk('Odo', 'caster', 0, -4), null, 'three at most');
+    const walk = (dt, speed = 1) => { for (const m of party.members) { const p = m.body.position, dx = m.goal.x - p.x, dz = m.goal.z - p.z, d = Math.hypot(dx, dz), v = (m.run ? 6 : 3) * dt * speed; if (d > .01) { p.x += dx / d * Math.min(d, v); p.z += dz / d * Math.min(d, v); } } };
+    // walking north: they keep their places round the hero
+    for (let i = 0; i < 300; i++) { hero.position.z += 3 / 60; party.update(1 / 60, { foes: [] }); walk(1 / 60); }
+    for (const m of party.members) { const p = m.body.position; assert.ok(Math.hypot(p.x - hero.position.x, p.z - hero.position.z) < 4 && p.z < hero.position.z + .5, m.name + ' follows behind the hero'); }
+    assert.ok(Math.abs(bran.body.position.x - ilse.body.position.x) > .5 || Math.abs(bran.body.position.z - ilse.body.position.z) > .5, 'not on top of each other');
+    // foes come: the guard closes in, the archer keeps away and shoots, the healer heals the hurt hero
+    const foes = [0, 1, 2].map(i => ({ position: { x: -2 + i * 2, y: 0, z: hero.position.z + 9 }, hp: 30, hpMax: 30, name: 'wolf' }));
+    hero.stats.change('hp', -60);
+    const seen = new Set(); let mended = 0;
+    for (let i = 0; i < 600; i++) {
+      for (const f of foes) if (f.hp > 0) { const dz = hero.position.z - f.position.z; if (Math.abs(dz) > 1.5) f.position.z += Math.sign(dz) * 2 / 60; }
+      const slow = party.update(1 / 60, { foes }); walk(1 / 60, slow); magic.update(1 / 60);
+      for (const e of party.events) { seen.add(e.type); if (e.type === 'swing' || e.type === 'shoot') e.target.hp -= 6; if (e.type === 'heal' && e.cast) mended++; }
+    }
+    assert.ok(seen.has('fight') && seen.has('swing') && seen.has('shoot') && seen.has('say'), 'a fight: swings, shots and lines: ' + [...seen]);
+    assert.ok(mended > 0 && hero.stats.part('hp') > .45, 'the healer mended the hero through gs.magic: ' + hero.stats.part('hp'));
+    assert.ok(foes.every(f => f.hp <= 0) && seen.has('calm'), 'the wolves fell and the fight ended');
+    // the wheel: slows the world while open, an order to hold is kept
+    party.wheel.open(); let sp = 1; for (let i = 0; i < 30; i++) sp = party.update(1 / 60, { foes: [] }); assert.ok(sp < .2, 'the wheel slows time: ' + sp);
+    assert.equal(party.wheel.at(0, -1).id, 'attack', 'the top item'); assert.equal(party.wheel.at(.05, .05), null, 'the middle is none');
+    const hold = party.wheel.items.find(x => x.id === 'hold'); assert.equal(party.wheel.at(Math.sin(hold.angle), -Math.cos(hold.angle)).id, 'hold');
+    party.wheel.pick(); for (let i = 0; i < 30; i++) sp = party.update(1 / 60, { foes: [] }); assert.ok(sp > .95 && !party.wheel.on, 'time back to full');
+    const at = { ...ilse.body.position }; for (let i = 0; i < 200; i++) { hero.position.z += 3 / 60; party.update(1 / 60, { foes: [] }); walk(1 / 60); }
+    assert.ok(Math.hypot(ilse.body.position.x - at.x, ilse.body.position.z - at.z) < .2 && ilse.act === 'hold', 'held where they stood');
+    party.command('follow'); party.update(1 / 60, { foes: [] }); assert.equal(ilse.act, 'follow');
+    // tactics: a passive guard keeps out; the coach's corrections win in spots like the one corrected
+    const wolf = { position: { x: hero.position.x + 1, y: 0, z: hero.position.z + 1.5 }, hp: 30, hpMax: 30 };
+    bran.body.position.x = hero.position.x + 1; bran.body.position.z = hero.position.z - 1;
+    party.update(1 / 60, { foes: [wolf] }); assert.ok(['guard', 'attack'].includes(bran.act), 'the guard steps in: ' + bran.act);
+    party.correct(bran, 'hold'); party.correct(bran, 'hold'); party.update(1 / 60, { foes: [wolf] });
+    assert.equal(bran.act, 'hold', 'corrected: here it holds'); party.coachFor('guard').uncorrect();
+    bran.tactics.stance = 'passive'; party.update(1 / 60, { foes: [wolf] }); assert.ok(['follow', 'retreat'].includes(bran.act), 'passive: keeps out of it');
+    assert.ok(ACTIONS.includes(bran.act));
+    // approval: a Reputation's deeds reach them by themselves; enough dislike and one leaves
+    rep.did('rescue'); assert.equal(bran.approval, 3, 'liked the rescue'); assert.equal(mira.approval, 0, 'Mira does not care');
+    rep.did('steal'); assert.equal(mira.approval, 4); assert.equal(bran.mood, 'easy');
+    for (let i = 0; i < 20; i++) rep.did('steal');
+    assert.ok(!party.members.includes(bran) && party.events.some(e => e.type === 'leave' && e.who === bran), 'Bran left over the thieving');
+    assert.equal(mira.mood, 'devoted');
+    // saves
+    const saved = JSON.parse(JSON.stringify(party.pack())); mira.approval = 0; party.unpack(saved); assert.ok(mira.approval > 60, 'approval saved');
+  });
+  console.log('companions: following, guard, healer and archer in a fight, the order wheel, the coach, approval from deeds, saves');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

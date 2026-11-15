@@ -19,3 +19,8 @@ export { vehicle } from './models/vehicles.js';
 export { weapon, WEAPON_KINDS as weapons, Wield } from './models/weapons.js';
 export { relief } from './relief.js';
 export { fur } from './models/fur.js';
+import { Creator as MakeCreator } from './models/human-looks.js';
+import { human as makeHuman } from './models/human.js';
+export { LOOK_SHAPES as looks, CREATOR_SLIDERS, CREATOR_PICKS } from './models/human-looks.js';
+/** A character creator on gs.models.human: new Creator(options, { onSwap }) (human-looks.js). */
+export class Creator extends MakeCreator { constructor(o, opts) { super(makeHuman, o, opts); } }
