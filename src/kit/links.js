@@ -19,7 +19,7 @@ import { currentOwner, onRelease, ownedBy } from './cleanup.js';
 
 const sets = new WeakMap();   // a card, or a view made outside one -> its Links
 const NONE = Object.freeze([]);
-const MANY = new Set(['water', 'gas', 'fluid', 'structure', 'reactions', 'explosives']);   // kinds a game may have several of
+const MANY = new Set(['water', 'gas', 'fluid', 'structure', 'reactions', 'explosives', 'vehicles']);   // kinds a game may have several of
 const refOf = typeof WeakRef === 'function' ? x => new WeakRef(x) : x => ({ deref: () => x });
 
 export class Links {

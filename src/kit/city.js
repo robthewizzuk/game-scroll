@@ -1318,9 +1318,10 @@ export class City {
    * people round the player (bodies that move with them, the nearest `cars` and `people`, refreshed in city.update()). A
    * kart, a thrown crate or a ragdoll then meets them; a car hit hard stops for a moment (cars.bump) and a person hit falls
    * over (people.knock) by themselves. Hits come back as usual from world.onHit: a body's .car or .person says which.
-   * Options: furniture, parked (true), cars (10), people (14), within (metres from the player; 70).
+   * Options: furniture, parked (true), cars (10), people (14), within (metres from the player; 70), knock (true: a car
+   * going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over; city.props.mend() stands them up).
    */
-  solid(world, { furniture = true, parked = true, cars = 10, people = 14, within = 70 } = {}) {
+  solid(world, { furniture = true, parked = true, cars = 10, people = 14, within = 70, knock = true } = {}) {
     const q = new Quads();
     for (const b of this.plan.buildings) for (const p of b.parts) q.box(p.x0, p.y0 - .2, p.z0, p.x1, p.y1, p.z1);
     for (const b of this.plan.blocks) q.box(b.x0, -.3, b.z0, b.x1, KERB, b.z1);
@@ -1328,8 +1329,10 @@ export class City {
     if (!world.shapes) return this;   // (an older world: the buildings only)
     if (furniture && this.props) {
       const P = this.props, has = n => P.kinds.has(n) && P.count(n) > 0;
-      for (const [n, r] of [['tree', .22], ['pine', .25], ['lamp', .12], ['signal', .12], ['post', .06], ['bollard', .12], ['upole', .14], ['psign', .05], ['mast', .1]]) if (has(n)) P.solid(world, n, { shape: 'trunk', r, sound: n === 'tree' || n === 'pine' ? 'wood' : 'metal' });
-      for (const n of ['bench', 'hydrant', 'bin', 'tank', 'hvac', 'ac', 'hut']) if (has(n)) P.solid(world, n, { sound: n === 'bench' ? 'wood' : 'metal' });
+      // (what a car knocks over, and how fast it must be going: lamp posts, signals, signs, benches, bins; trees, bollards and poles stop it)
+      const KNOCK = { lamp: 8, signal: 9, post: 4, psign: 4, bench: 5, hydrant: 6, bin: 2.5 };
+      for (const [n, r] of [['tree', .22], ['pine', .25], ['lamp', .12], ['signal', .12], ['post', .06], ['bollard', .12], ['upole', .14], ['psign', .05], ['mast', .1]]) if (has(n)) P.solid(world, n, { shape: 'trunk', r, sound: n === 'tree' || n === 'pine' ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'lamp' || n === 'signal' ? .8 : .5 });
+      for (const n of ['bench', 'hydrant', 'bin', 'tank', 'hvac', 'ac', 'hut']) if (has(n)) P.solid(world, n, { sound: n === 'bench' ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'bin' ? .15 : .4 });
     }
     if (parked && this.parked.length) world.shapes(this.parked.map(c => ({ box: [c.wid, 1.45, c.len], at: { x: c.x, y: (c.y || 0) + .75, z: c.z }, turn: c.heading, part: c })), { tag: 'parked car', sound: 'metal' });
     const old = this.bodies, S = this.bodies = { world, within, cars: [], people: [], ncars: cars, npeople: people };
