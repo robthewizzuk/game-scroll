@@ -1,0 +1,57 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.magic filmed for scripts/magic.cjs: a caster on the left and three dummies, a spell each column, drawn by Looks on gs.fx3d's
+// particles in a Next Gen view (its flashes light the floor). It prints each spell's hits.
+//   ?cols=8 &cell=320x220 &gpu (WebGPU)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await gs.fx3d.loadFx3d?.();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), { pbr } = gs.hd, { Magic, STATUSES, Looks } = gs.magic, { Stats } = gs.stats;
+  const [cw, ch] = (Q.get('cell') || '320x220').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false;
+  const v = new gs.hd.HDView({ bg: '#1c2230', fog: .02, env: .25, amb: .18 });
+  const sun = gs.hd.sun('#c8d4ff', .5, 10, [.4, .9, .5]); v.scene.add(sun, sun.target); v.sun = sun;
+  const floor = new T.Mesh(new T.BoxGeometry(40, .2, 40), pbr('#59544c', { rough: .85 })); floor.position.y = -.1; floor.receiveShadow = true; v.scene.add(floor);
+  const fig = (c, x, z) => { const g = new T.Group(); const b = new T.Mesh(new T.CapsuleGeometry(.32, 1.1, 6, 12), pbr(c, { rough: .7 })); b.position.y = .87; b.castShadow = true; g.add(b); g.position.set(x, 0, z); v.scene.add(g); return g; };
+  const BOOK = {
+    firebolt: { kind: 'bolt', element: 'fire', cast: .3, speed: 14, damage: 14, status: 'burn' },
+    cone: { kind: 'area', element: 'frost', shape: 'cone', radius: 7, angle: .45, damage: 6, status: 'chill' },
+    meteor: { kind: 'area', element: 'fire', at: 'aim', radius: 2.2, delay: .9, damage: 30, push: 5 },
+    arc: { kind: 'bolt', element: 'storm', speed: 30, damage: 20, chain: { jumps: 2, range: 5 } },
+    ward: { kind: 'shield', element: 'arcane', absorb: 40, for: 6 },
+    mend: { kind: 'heal', element: 'nature', heal: 30, cast: .4 },
+    ray: { kind: 'beam', element: 'arcane', channel: 1.2, every: .2, damage: 3, range: 12 },
+    nova: { kind: 'area', element: 'force', at: 'aim', radius: 3, push: 8, damage: 4 },
+  };
+  const magic = new Magic({ book: BOOK }), fx = new gs.fx3d.Particles3D(v.scene), looks = new Looks(magic, fx);
+  const mk = () => new Stats({ hp: { max: 100 }, mana: { max: 200 }, speed: 3 }, { buffs: STATUSES });
+  const heroM = fig('#3a5a9a', -4, 0); heroM.rotation.y = Math.PI / 2;
+  const hero = magic.unit(heroM, { team: 'hero', stats: mk() });
+  const dummies = [[2, -1.3], [3.5, .8], [5, -.4]].map(([x, z]) => { const m = fig('#8a6a4a', x, z); m.rotation.y = -Math.PI / 2; return magic.unit(m, { team: 'foes', stats: mk(), radius: .4 }); });
+  const plan = [['firebolt', { target: dummies[0] }, .62], ['cone', { dir: { x: 1, y: 0, z: 0 } }, .2], ['meteor', { at: { x: 3.4, y: 0, z: .2 } }, 1.15], ['arc', { target: dummies[0] }, .25],
+    ['ward', {}, .5], ['mend', {}, .55], ['ray', { target: dummies[1] }, .7], ['nova', { at: { x: 3.5, y: 0, z: 0 } }, .2]];
+  const cols = plan.length, sheet = document.createElement('canvas'); sheet.width = cw * Math.min(4, cols); sheet.height = ch * Math.ceil(cols / 4); const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d'), info = [], dt = 1 / 60;
+  let t = 0;
+  for (let k = 0; k < cols; k++) {
+    const [name, aim, shotAt] = plan[k]; if (name === 'mend') hero.stats.change('hp', -40);
+    for (const d of dummies) d.stats.clear(); hero.gcd = 0; for (const u of magic.units) u.dead = false;
+    const hits = []; const ok = hero.cast(name, aim); let s = 0;
+    for (let i = 0; s < shotAt; i++, s += dt) {
+      t += dt; for (const e of magic.update(dt)) if (['hit', 'heal', 'shield', 'reaction', 'warn'].includes(e.type)) hits.push(e.type + (e.damage ? ' ' + e.damage : '') + (e.heal ? ' +' + e.heal : '') + (e.reaction ? ' ' + e.reaction : ''));
+      looks.update(dt); fx.update(dt);
+      v.cam.fov = 46; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 100; v.cam.updateProjectionMatrix(); v.cam.position.set(.2, 4.2, 8.5); v.cam.lookAt(.6, .9, 0); v.cam.updateMatrixWorld(); v.t = t; v.render(cx, cw, ch);
+      if (i % 8 === 0) await frame();
+    }
+    if (name === 'ward') { const w = magic.hit(dummies[0], hero, 'test', { damage: 25 }); hits.push('ward soaked ' + w.absorbed); for (let i = 0; i < 10; i++) { magic.update(dt); looks.update(dt); fx.update(dt); } }
+    await frame(); v.render(cx, cw, ch); sx.drawImage(cell, (k % 4) * cw, (k / 4 | 0) * ch); sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(name, (k % 4) * cw + 5, (k / 4 | 0) * ch + 14);
+    info.push(`${name}: ${ok === true ? 'cast' : ok}; ${hits.join(', ') || 'nothing yet'}`);
+    for (let i = 0; i < 60; i++) { magic.update(dt); looks.update(dt); fx.update(dt); } looks.clear(); fx.clear(); magic.bolts.length = 0; magic.areas.length = 0; hero.stop(); hero.interrupt();
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

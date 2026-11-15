@@ -7205,6 +7205,109 @@ console.log('physics ok');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
 }
 
+// gs.magic: casts, mana and cooldowns, bolts that home, pierce, chain and splash, areas that warn and linger, beams, wards, heals, statuses that meet
+{
+  const { Magic, STATUSES, Looks } = await import('../src/kit/magic.js');
+  const { Stats } = await import('../src/kit/stats.js');
+  const BOOK = {
+    firebolt: { kind: 'bolt', element: 'fire', cost: 10, cool: 1, cast: .3, speed: 20, damage: 12, status: 'burn' },
+    seeker: { kind: 'bolt', element: 'arcane', speed: 10, damage: 5, homing: 4 },
+    spear: { kind: 'bolt', element: 'frost', speed: 30, damage: 6, pierce: 2, status: 'chill' },
+    arc: { kind: 'bolt', element: 'storm', speed: 30, damage: 20, chain: { jumps: 2, range: 4, falloff: .5 } },
+    meteor: { kind: 'area', element: 'fire', at: 'aim', range: 20, radius: 2.5, delay: 1, damage: 30, push: 6 },
+    cone: { kind: 'area', element: 'frost', shape: 'cone', angle: .4, radius: 9, damage: 4 },
+    puddle: { kind: 'area', element: 'water', at: 'aim', radius: 2, status: 'wet', for: 3, every: .5 },
+    ray: { kind: 'beam', element: 'storm', channel: 1, every: .25, damage: 2, range: 10, drain: 5 },
+    ward: { kind: 'shield', element: 'arcane', absorb: 20, for: 5 },
+    mirror: { kind: 'shield', reflect: true, absorb: 100, for: 5 },
+    mend: { kind: 'heal', heal: 25, cast: .5, fragile: true },
+    renew: { kind: 'heal', heal: 30, over: 3 },
+    hurry: { kind: 'buff', buff: 'haste' },
+  };
+  const mk = (team, x, z, o = {}) => ({ team, body: { x, y: 0, z, yaw: o.yaw ?? 0 }, stats: new Stats({ speed: 5, castSpeed: 1, hp: { max: 100 }, mana: { max: 50, regen: 0 } }, { buffs: STATUSES }) });
+  const magic = new Magic({ book: BOOK, link: false }), ev = [];
+  magic.on('any', e => ev.push(e.type));
+  const H = mk('hero', 0, 0), hero = magic.unit(H.body, { team: 'hero', stats: H.stats });
+  const foes = [[0, 8], [1, 10], [-1, 12]].map(([x, z]) => { const f = mk('foes', x, z); return magic.unit(f.body, { team: 'foes', stats: f.stats, radius: .5 }); });
+  const run = (s, dt = 1 / 60) => { for (let t = 0; t < s - 1e-9; t += dt) magic.update(dt); };
+  // a cast takes its time, costs mana once it goes, then cools down
+  assert.equal(hero.cast('firebolt', { target: foes[0] }), true, 'cast starts');
+  assert.equal(hero.cast('firebolt'), 'busy', 'one cast at a time'); run(.2);
+  assert.ok(hero.casting && Math.abs(hero.casting.part - .2 / .3) < .1 && hero.stats.get('mana') === 50, 'mana is taken when the spell goes, not while casting');
+  run(.15); assert.ok(!hero.casting && hero.stats.get('mana') === 40 && magic.bolts.length === 1, 'released: a bolt in flight, 10 mana spent');
+  run(.3); assert.equal(hero.can('firebolt'), 'cooling', 'cooling down');
+  run(.35); assert.ok(foes[0].stats.get('hp') === 88 && foes[0].stats.has('burn') && magic.bolts.length === 0, 'it hit: 12 off, burning: ' + foes[0].stats.get('hp'));
+  run(1.2); assert.ok(foes[0].stats.get('hp') < 88 - 3.9, 'burn ticks: ' + foes[0].stats.get('hp'));
+  assert.equal(hero.can('firebolt'), true, 'ready again after its cooldown');
+  hero.stats.change('mana', -45); assert.equal(hero.can('firebolt'), 'mana', 'not enough mana'); hero.stats.fill('mana');
+  // statuses meet: frost on the wet freezes, fire thaws (and hits harder), chill at three doses becomes frozen
+  const f1 = foes[1]; f1.stats.buff('wet');
+  magic.hit(hero, f1, 'test', { element: 'frost', damage: 0 }); assert.ok(f1.stats.is('frozen') && !f1.stats.has('wet') && f1.stats.is('stunned'), 'frost on the wet: frozen');
+  const e = magic.hit(hero, f1, 'test', { element: 'fire', damage: 10, status: 'burn' }); assert.ok(e.reaction === 'thaw' && e.damage === 15 && !f1.stats.is('frozen') && !f1.stats.has('burn'), 'fire thaws: 1.5x and no burn: ' + JSON.stringify([e.reaction, e.damage]));
+  for (let i = 0; i < 3; i++) magic.hit(hero, f1, 'test', { element: 'frost', status: 'chill' }); assert.ok(f1.stats.is('frozen') && !f1.stats.has('chill'), 'three doses of chill: frozen');
+  assert.equal(f1.cast('ward'), 'stunned', 'frozen: no casting'); f1.stats.remove('frozen');
+  // a homing bolt turns after a foe that steps aside
+  const s0 = foes[2]; s0.body.x = 4; hero.cast('seeker', { target: s0, dir: { x: 0, y: 0, z: 1 } }); const hp2 = s0.stats.get('hp'); run(2.5);
+  assert.ok(s0.stats.get('hp') === hp2 - 5, 'a homing bolt finds a foe off to the side: ' + s0.stats.get('hp')); s0.body.x = -1;
+  // piercing goes through two, a chain jumps on with less each time
+  for (const f of foes) f.stats.clear(); hero.gcd = 0;
+  foes[1].body.x = .3; hero.cast('spear', { dir: { x: 0, y: 0, z: 1 } }); run(1);
+  assert.ok(foes[0].stats.get('hp') === 94 && foes[0].stats.has('chill'), 'the first it pierced'); assert.ok(foes[1].stats.get('hp') === 94 || foes[2].stats.get('hp') === 94, 'and one behind');
+  for (const f of foes) f.stats.clear(); hero.gcd = 0; foes[1].body.x = 0; foes[2].body.x = 0;
+  hero.cast('arc', { target: foes[0] }); run(1);
+  assert.deepEqual(foes.map(f => f.stats.get('hp')), [80, 90, 95], 'a chain: 20, then 10 and 5 jumping on');
+  assert.ok(magic.zaps.length === 0 && ev.includes('hit'), 'zaps fade');
+  // an area warns, then goes off where aimed, shoving those in it
+  for (const f of foes) f.stats.clear(); hero.gcd = 0;
+  hero.cast('meteor', { at: { x: 0, y: 0, z: 8.5 } }); run(.5);
+  assert.ok(magic.areas[0] && !magic.areas[0].live && Math.abs(magic.areas[0].part - .5) < .05 && ev.includes('warn'), 'a warning first, half way: ' + magic.areas[0]?.part);
+  let pushed = null; magic.on('hit', e => { if (e.spell === 'meteor') pushed = e.push; }); run(.6);
+  assert.ok(foes[0].stats.get('hp') === 70 && foes[1].stats.get('hp') === 70 && foes[2].stats.get('hp') === 100 && magic.areas.length === 0, 'it lands on those within its radius: ' + foes.map(f => f.stats.get('hp')));
+  assert.ok(pushed && Math.abs(pushed.z) > 1, 'and pushes them away from the middle');
+  // a cone in front, not behind
+  for (const f of foes) f.stats.clear(); hero.gcd = 0; const back = magic.unit({ x: 0, y: 0, z: -3 }, { team: 'foes', stats: new Stats({ hp: { max: 100 } }) });
+  hero.cast('cone'); run(.05); assert.ok(foes[0].stats.get('hp') === 96 && back.stats.get('hp') === 100, 'a cone the way the caster faces');
+  magic.remove(back);
+  // a lingering puddle soaks those who stand in it, then lightning through the wet stuns
+  hero.gcd = 0; hero.cast('puddle', { at: { x: 0, y: 0, z: 8 } }); run(.6); assert.ok(foes[0].stats.has('wet') && magic.areas.length === 1, 'a lingering area ticks');
+  run(3); assert.equal(magic.areas.length, 0, 'and ends');
+  const c = magic.hit(hero, foes[0], 'test', { element: 'storm', damage: 10 }); assert.ok(c.reaction === 'conduct' && c.damage === 15 && foes[0].stats.is('stunned'), 'lightning through water stuns');
+  // a beam held: ticks while channelled, drains mana, ends after its time
+  for (const f of foes) f.stats.clear(); hero.stats.fill('mana'); hero.gcd = 0;
+  hero.cast('ray', { target: foes[0] }); run(.55); assert.ok(hero.channel && magic.beams[0].hit === foes[0] && foes[0].stats.get('hp') === 94, 'a beam ticks: ' + foes[0].stats.get('hp'));
+  run(.6); assert.ok(!hero.channel && magic.beams.length === 0 && foes[0].stats.get('hp') === 92 && Math.abs(hero.stats.get('mana') - 45) < .2, 'ends after its channel; drained mana: ' + hero.stats.get('mana'));
+  // a ward soaks up harm; a mirror turns a bolt back on who sent it
+  hero.gcd = 0; hero.cast('ward'); const w = magic.hit(foes[0], hero, 'test', { damage: 30 }); assert.ok(w.absorbed === 20 && w.damage === 10 && hero.stats.get('hp') === 90 && ev.includes('broken'), 'a ward takes 20, the rest gets through');
+  const m = magic.unit({ x: 6, y: 0, z: 0 }, { team: 'foes', stats: new Stats({ hp: { max: 100 }, mana: { max: 50 } }) });
+  m.cast('mirror'); hero.gcd = 0; hero.stats.hurry('firebolt', 0, { all: true }); hero.cast('firebolt', { target: m }); run(3);
+  assert.ok(m.stats.get('hp') === 100 && hero.stats.get('hp') < 90 && ev.includes('reflect'), 'the mirror sends it back: ' + hero.stats.get('hp'));
+  magic.remove(m);
+  // heals: at once after a cast a hit breaks (fragile), and over time
+  hero.stats.change('hp', -40); hero.stats.cleanse(); const was = hero.stats.get('hp'); hero.gcd = 0;
+  hero.cast('mend'); run(.2); hero.stats.change('hp', -1); assert.ok(!hero.casting && ev.includes('interrupt'), 'a fragile cast is broken by a hit');
+  hero.gcd = 0; hero.cast('mend'); run(.6); assert.equal(hero.stats.get('hp'), was - 1 + 25, 'a heal');
+  hero.gcd = 0; hero.cast('renew'); run(3.05); assert.ok(Math.abs(hero.stats.get('hp') - (was + 24 + 30)) < 1.01 || hero.stats.full('hp'), 'and over time: ' + hero.stats.get('hp'));
+  hero.gcd = 0; hero.cast('hurry'); assert.ok(hero.stats.is('hasted') && hero.stats.get('speed') > 6, 'a buff');
+  // dead units stop casting and say so
+  foes[0].stats.change('hp', -999); run(.02); assert.ok(foes[0].dead && ev.includes('dead') && foes[0].cast('ward') === 'dead', 'dead');
+  // the same on the flat (2D: no z)
+  const flat = new Magic({ book: BOOK, link: false }), a = flat.unit({ x: 0, y: 0, angle: 0 }, { team: 'a', stats: new Stats({ hp: { max: 50 }, mana: { max: 50 } }) }), b = flat.unit({ x: 20, y: 1 }, { team: 'b', radius: 2, stats: new Stats({ hp: { max: 50 } }) });
+  a.cast('seeker', { dir: { x: 1, y: 0 } }); for (let i = 0; i < 200; i++) flat.update(1 / 60);
+  assert.ok(b.stats.get('hp') === 45 && flat.bolts.length === 0, '2D: a bolt on the flat: ' + b.stats.get('hp'));
+  // a wall in the physics world stops a bolt short of the foe behind it
+  const wallAt = 4, W = { ray: (from, dir, l) => { const n = Math.hypot(dir.x, dir.y, dir.z), z1 = from.z + dir.z / n * l; return from.z < wallAt && z1 >= wallAt ? { thing: 'wall', point: { x: from.x, y: from.y, z: wallAt }, distance: (wallAt - from.z) * n / dir.z } : null; } };
+  const walled = new Magic({ book: BOOK, world: W, link: false }), wa = walled.unit({ x: 0, y: 0, z: 0 }, { stats: new Stats({ hp: { max: 50 }, mana: { max: 50 } }) }), wb = walled.unit({ x: 0, y: 0, z: 8 }, { team: 'x', stats: new Stats({ hp: { max: 50 } }) });
+  let wallHit = null; walled.on('wall', e => { wallHit = e; }); wa.cast('seeker', { target: wb }); for (let i = 0; i < 120; i++) walled.update(1 / 60);
+  assert.ok(wallHit && Math.abs(wallHit.at.z - wallAt) < 1e-6 && wb.stats.get('hp') === 50, 'a wall stops a bolt');
+  // looks: trails, rings and flashes on a stand-in particle system
+  const made = []; const fx = { make: (p, o) => { const t = { p, o, on: true, at(q) { this.p = q; return t; }, stop() { t.on = false; } }; made.push(t); return t; }, flash: () => ({ at() {}, stop() {} }), sparks: () => {} };
+  const M2 = new Magic({ book: BOOK, link: false }), L = new Looks(M2, fx), u1 = M2.unit({ x: 0, y: 0, z: 0 }, { stats: new Stats({ hp: { max: 50 }, mana: { max: 50 } }) }); M2.unit({ x: 0, y: 0, z: 6 }, { team: 'x', stats: new Stats({ hp: { max: 50 } }) });
+  u1.cast('firebolt', { dir: { x: 0, y: 0, z: 1 } }); for (let i = 0; i < 60; i++) { M2.update(1 / 60); L.update(1 / 60); }
+  assert.ok(made.some(t => t.o.loop && !t.on) && made.filter(t => t.o.burst).length >= 2, 'looks: a trail that stops, bursts where it went and where it hit');
+  assert.throws(() => new Magic({ book: { x: { kind: 'nope' } } }), /needs kind/, 'a spell with no kind says so');
+  console.log('gs.magic: casts, mana, cooldowns, homing, piercing, chains, warned and lingering areas, cones, beams, wards, mirrors, heals, buffs, statuses that meet, 2D, looks ok');
+}
+
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
 {
   const THREE = await import('three');
