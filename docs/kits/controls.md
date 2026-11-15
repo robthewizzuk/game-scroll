@@ -8,21 +8,21 @@ On-screen thumbsticks and buttons, taps, holds, swipes, two-finger gestures, key
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ControlsPart`, line 533), where every option and field is described.
+From `src/gamescroll.d.ts` (`ControlsPart`, line 538), where every option and field is described.
 
-- `Stick: new (o?: { x?: number; y?: number; r?: number; floating?: boolean; zone?: number[]; dead?: number; axis?: 'both' | 'x' | 'y'; color?: string }) => Control & { x…` Virtual thumbstick: x, y (-1..1), mag, angle, active. (:535)
-  - `wants(x: number, y: number): boolean` (:532)
-  - `release(): void` (:532)
-  - `down(x: number, y: number, id?: number): boolean` (:532)
-  - `move(x: number, y: number, pressed: boolean, id?: number): boolean` (:532)
-  - `up(x: number, y: number, id?: number): boolean` (:532)
-  - `draw(c: Ctx, o?: Loose): void` (:532)
-- `Button: new (o?: { x?: number; y?: number; r?: number; label?: string; zone?: number[]; color?: string }) => Control & { isDown: boolean; readonly heldFor: number; pre…` Round button: isDown, pressed() once per press, released(), heldFor. (:537)
-- `Gestures: new (o?: Loose) => Loose` Tap, double tap, hold and swipe. (:539)
-- `TwoFingers: new (o?: { zone?: number[]; one?: Loose; minScale?: number; minTurn?: number; pinch?: (scale: number, x: number, y: number) => void; twist?: (angle: number…` Pinch, twist and two-finger pan (one-finger touches go to `one`). (:541)
-- `Keys: new () => { key(k: string, isDown: boolean): void; held(k: string): boolean; axis(): XY; clear(): void }` Keyboard state: keys.held('ArrowLeft'), keys.axis(). (:543)
-- `route(...controls: Loose[]): { down: Game['down']; move: Game['move']; up: Game['up'] }` Hands each finger to the first control that wants it. (:545)
-- `twoThumb(W: number, H: number, o?: { right?: 'stick' | string[]; r?: number }): Loose` Left stick plus a right stick (right: 'stick') or named buttons (right: ['A', 'B']). (:547)
+- `Stick: new (o?: { x?: number; y?: number; r?: number; floating?: boolean; zone?: number[]; dead?: number; axis?: 'both' | 'x' | 'y'; color?: string }) => Control & { x…` Virtual thumbstick: x, y (-1..1), mag, angle, active; r its reach (change it as the screen changes); cx, cy where its ring is (where the finger landed, for a floating one) and kx, ky its knob, for a game that draws… (:540)
+  - `wants(x: number, y: number): boolean` (:537)
+  - `release(): void` (:537)
+  - `down(x: number, y: number, id?: number): boolean` (:537)
+  - `move(x: number, y: number, pressed: boolean, id?: number): boolean` (:537)
+  - `up(x: number, y: number, id?: number): boolean` (:537)
+  - `draw(c: Ctx, o?: Loose): void` (:537)
+- `Button: new (o?: { x?: number; y?: number; r?: number; label?: string; zone?: number[]; color?: string }) => Control & { isDown: boolean; readonly heldFor: number; pre…` Round button: isDown, pressed() once per press, released(), heldFor. (:542)
+- `Gestures: new (o?: Loose) => Loose` Tap, double tap, hold and swipe. (:544)
+- `TwoFingers: new (o?: { zone?: number[]; one?: Loose; minScale?: number; minTurn?: number; pinch?: (scale: number, x: number, y: number) => void; twist?: (angle: number…` Pinch, twist and two-finger pan (one-finger touches go to `one`). (:546)
+- `Keys: new () => { key(k: string, isDown: boolean): void; held(k: string): boolean; axis(): XY; clear(): void }` Keyboard state: keys.held('ArrowLeft'), keys.axis(). (:548)
+- `route(...controls: Loose[]): { down: Game['down']; move: Game['move']; up: Game['up'] }` Hands each finger to the first control that wants it. (:550)
+- `twoThumb(W: number, H: number, o?: { right?: 'stick' | string[]; r?: number }): Loose` Left stick plus a right stick (right: 'stick') or named buttons (right: ['A', 'B']). (:552)
 
 ## From the maker kit
 
@@ -79,7 +79,7 @@ finger lands the one-finger gesture is dropped, so a pinch never ends in a stray
 
 ## In real games
 
-11 games use it (`node scripts/examples.mjs gs.controls` lists them). The shortest:
+13 games use it (`node scripts/examples.mjs gs.controls` lists them). The shortest:
 
 `src/games/slide-ten.js` (Slide Ten, Pocket · Merge, 108 lines):
 
@@ -102,7 +102,7 @@ const { Gestures } = gs.controls;
     up: (x, y, id) => g.up(x, y, id),
 ```
 
-`src/games/ladder-climber.js` (Ladder Climber, Pocket · Reflex, 113 lines):
+`src/games/ladder-climber.js` (Ladder Climber, Pocket · Reflex, 114 lines):
 
 ```js
 const { sfx, sounds, music } = gs.sound;
