@@ -1,0 +1,145 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// People's shadows from a stand-in body (gs.models.human's shadow body, HD.shadowBody), for scripts/detail-test.cjs --page shadow-body.
+// 1. Twelve people at each level of detail under a low sun and a spot light: each level's own shadow against the body's.
+//    The pictures must be nearly the same, with far fewer triangles and draws in the shadow maps.
+// 2. Close up to a face, a hand and a walker's legs, the sun low behind: the body's shadow on the ground and on the person.
+// 3. The body is never in the picture: with the shadows off, the picture is the same to the pixel both ways.
+// 4. Walking for twenty frames: the shadow follows (posed on the chip on WebGPU, by its own pass on WebGL).
+// 5. The body is on no layer a view camera, a reflection or a ray has; a person made with shadows: false has none.
+//   ?gpu  WebGPU   ?tier=2   ?w=640&h=360
+//   ?bench (--bench): n people walking at each level, each level's own shadow against the body's: shadow triangles, draws and chip time a frame (&n=40 &frames=30)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { BODY_BIT } from '../../src/kit/scene-list.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 640), H = +(Q.get('h') || 360), { human } = gs.models;
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false;
+const out = {}, info = {}, checks = [];
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const SPECS = [{ seed: 1, strands: false }, { seed: 61, sex: 'f', age: 26, hairStyle: 'long', look: 'real' }, { seed: 7, kit: 'heavy' }];
+  await human.ready(SPECS);
+  const src = SPECS.map(s => human(s));
+  info.triangles = { levels: src.map(s => s.tris), body: src.map(s => s.shadowBody.geometry.index.count / 3), bodyPoints: src.map(s => s.shadowBody.geometry.attributes.position.count), allPoints: src.map(s => s.mesh.geometry.attributes.position.count) };
+  function stage({ spot = true } = {}) {
+    const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, amb: .35 }), c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+    const sun = gs.hd.sun('#fff2d8', 2.8, 9, [-.8, .55, .35]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(300, 300).rotateX(-Math.PI / 2), gs.hd.pbr('#9a9a8a', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    const wall = new T.Mesh(new T.BoxGeometry(14, 4, .3), gs.hd.pbr('#b8b0a0', { rough: .85 })); wall.position.set(0, 2, -3.2); wall.receiveShadow = wall.castShadow = true; v.scene.add(wall);
+    let lamp = null;
+    if (spot) { lamp = new T.SpotLight('#ffd9a8', 40, 18, .7, .4, 2); lamp.position.set(3.5, 4.5, 3); lamp.target.position.set(0, 0, -1); lamp.castShadow = true; lamp.shadow.mapSize.set(512, 512); lamp.shadow.bias = -.0005; lamp.shadow.normalBias = .02; v.scene.add(lamp, lamp.target); }
+    v.cam.fov = 40; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix();
+    return { v, c, x, sun, lamp };
+  }
+  const look = (S, from, at) => { S.v.cam.position.set(...from); S.v.cam.lookAt(...at); S.v.cam.updateMatrixWorld(); S.v.cut?.(); };
+  const draw = async S => { S.v.t = 0; HD.info.shTris = 0; HD.info.shCalls = 0; S.v.render(S.x, W, H); await nextFrame(); return S.x.getImageData(0, 0, W, H).data; };
+  const shot = async (S, most = 40) => {
+    let last = null, same = 0;
+    for (let i = 0; i < most * 5 && (same < 2 || (i >= most ? false : S.v.detailPending?.())); i++) { const d = await draw(S); same = last && differ(last, d, 0) === 0 ? same + 1 : 0; last = d; if (i >= most && same >= 2) break; }
+    return last;
+  };
+  // (the shadow maps are drawn only when something in them moved: each frame here moves the sun a hair and back, so both ways draw them whole)
+  const nudge = S => { S.sun.shadow.needsUpdate = true; S.v.shadowsDirty?.(); };
+  const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const dark = d => { let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2]; return s / (d.length / 4) / 3; };
+  const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); };
+  // each level's own shadow (false) and the body's (true): a picture, and what the shadow maps drew for it
+  const both = async (S, fn) => { const r = {}; for (const on of [false, true]) { HD.shadowBody = on; nudge(S); r[on] = await fn(on); } HD.shadowBody = true; return r; };
+  const stats = async S => { nudge(S); await draw(S); return { tris: HD.info.shTris, draws: HD.info.shCalls }; };
+
+  if (Q.has('bench')) {
+    const N = +(Q.get('n') || 40), frames = +(Q.get('frames') || 30), res = {};
+    for (const L of [0, 1, 2]) for (const on of [false, true]) {
+      HD.shadowBody = on;
+      const S = stage({ spot: false }), R = gs.math.rng(5), who = [];
+      look(S, [0, 2.2, 9], [0, 1, 0]);
+      for (let i = 0; i < N; i++) { const f = src[i % 3].twin(); f.position.set((R() - .5) * 14, 0, (R() - .5) * 10 - 1); f.rotation.y = R() * 6.28; f.rig.play?.('walk'); f.lod = L; S.v.scene.add(f); who.push(f); }
+      const step = async () => { for (const p of who) { p.position.x += Math.sin(p.rotation.y) * .022; p.position.z += Math.cos(p.rotation.y) * .022; p.rotation.y += .004; p.rig.update(1 / 60, { speed: 1.3 }); } await draw(S); };
+      for (let i = 0; i < 20; i++) await step();
+      const sh = [], dr = [], cpu = [], gpu = [], parts = {};
+      for (let i = 0; i < frames; i++) { await step(); sh.push(HD.info.shTris); dr.push(HD.info.shCalls); cpu.push(HD.info.cpu); if (HD.info.gpuMs != null) gpu.push(HD.info.gpuMs); for (const [k, v] of Object.entries(HD.info.gpuParts || {})) (parts[k] ||= []).push(v); }
+      const med = a => a.length ? +[...a].sort((p, q) => p - q)[a.length >> 1].toFixed(2) : null;
+      res[`level ${L}, ${on ? 'body' : 'own'}`] = { people: N, shadowTris: med(sh), shadowDraws: med(dr), codeMs: med(cpu), chipMs: med(gpu), shadowsMs: med(parts.shadows || []), skinningMs: med(parts.skinning || []), posedPoints: HD.info.skin?.points ?? null };
+      out[`bench-${L}-${on ? 'body' : 'own'}`] = S.c.toDataURL();
+      S.v.dispose?.();
+    }
+    HD.shadowBody = true;
+    window.result = { out, info: { ...info, ...res }, checks };
+    throw new Error('bench done');
+  }
+
+  /* ---------- 1. a dozen people at each level, both ways ---------- */
+  const S = stage();
+  const LINE = [];
+  for (let i = 0; i < 12; i++) LINE.push({ kind: i % 3, move: ['walk', 'idle', 'run'][i % 3], phase: (i * .37) % 1, x: (i % 4 - 1.5) * 2.1, z: Math.floor(i / 4) * 1.7 - 1.6, turn: i * 1.3 });
+  const line = LINE.map(o => { const f = src[o.kind].twin(); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
+  look(S, [1.5, 2.6, 9.5], [0, .9, 0]);
+  for (const L of [0, 1, 2]) {
+    for (const f of line) f.lod = L;
+    const r = await both(S, async on => { const d = await shot(S); out[`level-${L}-${on ? 'body' : 'own'}`] = S.c.toDataURL(); return { d, ...await stats(S) }; });
+    const a = r[false], b = r[true], off = differ(a.d, b.d, 16), offAny = differ(a.d, b.d, 4);
+    info['level ' + L] = { own: { tris: a.tris, draws: a.draws }, body: { tris: b.tris, draws: b.draws }, pixels: { over16: off, over4: offAny } };
+    check(`level ${L}: the body's shadows look as each level's own did`, off <= W * H * .004, `${off} pixels differ by more than 16 of 255 (${(off / W / H * 100).toFixed(2)}%), ${offAny} by more than 4`);
+    // (cluster detail already draws a level 0 person this far off as the view's cut of it: about 8,000 triangles a map, not 52,000 to 78,000)
+    if (L < 2) check(`level ${L}: fewer triangles and draws in the shadow maps`, b.tris > 0 && b.tris * (L ? 1.5 : 3) < a.tris && b.draws * (L ? 1.5 : 4) < a.draws, `${a.tris} each level's own, ${b.tris} the body's; draws ${a.draws} against ${b.draws}`);
+    else check('level 2: the same triangles in the shadow maps (the body is that level)', b.tris > 0 && Math.abs(b.tris - a.tris) <= a.tris * .05 && b.draws <= a.draws, `${a.tris} against ${b.tris}; draws ${a.draws} against ${b.draws}`);
+  }
+  for (const f of line) f.lod = 0;
+
+  /* ---------- 2. close up ---------- */
+  for (const [k, from, at] of [['face', [-1.6, 1.65, -.1], [-2.1, 1.55, -1.6]], ['hand', [2.9, 1.2, 1.2], [3.15, .95, .1]], ['legs', [-3.6, .7, 1.4], [-3.15, .45, .1]]]) {
+    look(S, from, at);
+    const r = await both(S, async on => { const d = await shot(S); out[`close-${k}-${on ? 'body' : 'own'}`] = S.c.toDataURL(); return d; });
+    const off = differ(r[false], r[true], 16);
+    info['close ' + k] = { over16: off, over4: differ(r[false], r[true], 4) };
+    check(`close up (${k}): the body's shadow looks as the shown level's own did`, off <= W * H * .02, `${off} pixels differ by more than 16 of 255 (${(off / W / H * 100).toFixed(2)}%)`);
+  }
+  look(S, [1.5, 2.6, 9.5], [0, .9, 0]);
+
+  /* ---------- 3. the body is never in the picture ---------- */
+  {
+    S.sun.castShadow = false; if (S.lamp) S.lamp.castShadow = false;
+    const r = await both(S, async () => shot(S));
+    S.sun.castShadow = true; if (S.lamp) S.lamp.castShadow = true;
+    const off = differ(r[false], r[true], 0);
+    check('with the shadows off, the picture is the same to the pixel with the body and without', off === 0, `${off} pixels differ`);
+    // ...and the shadows themselves are there: the ground round the people darker with them than with none
+    nudge(S); const lit = await shot(S);
+    for (const f of line) { f.shadowBody.userData.gsShadowFor = null; f.shadowBody.castShadow = false; }
+    nudge(S); const none = await shot(S); out['no-people-shadows'] = S.c.toDataURL();
+    for (const f of line) { f.shadowBody.userData.gsShadowFor = f.lods; f.shadowBody.castShadow = true; }
+    nudge(S); await shot(S);
+    check('the people cast shadows with the body (the picture is darker than with no shadows from them)', dark(lit) < dark(none) - .3, `${dark(lit).toFixed(2)} with, ${dark(none).toFixed(2)} without`);
+  }
+
+  /* ---------- 4. walking ---------- */
+  {
+    for (const [i, f] of line.entries()) f.rig.play(i % 2 ? 'walk' : 'run', { fade: 0 });
+    for (let i = 0; i < 20; i++) { for (const f of line) { f.position.z += .02; f.rig.update(1 / 60, { speed: 1.4 }); } await draw(S); }
+    for (const [i, f] of line.entries()) pin(f, i % 2 ? 'walk' : 'run', .55);
+    const r = await both(S, async on => { const d = await shot(S); out[`walked-${on ? 'body' : 'own'}`] = S.c.toDataURL(); return d; });
+    const off = differ(r[false], r[true], 16);
+    check('after twenty frames walking, the body\'s shadows are where the people are', off <= W * H * .004, `${off} pixels differ by more than 16 of 255`);
+    if (GPU) check('the bodies are posed in the skin pool, with only the points they use', HD.info.skin?.posed >= line.length * 2 && info.triangles.bodyPoints.every((n, i) => n * 8 < info.triangles.allPoints[i]), JSON.stringify(HD.info.skin) + ' points ' + JSON.stringify(info.triangles.bodyPoints));
+  }
+
+  /* ---------- 5. layers ---------- */
+  {
+    const f = line[0], b = f.shadowBody;
+    check('the body is on the shadow layer alone, and the levels shown cast nothing', b.layers.mask & BODY_BIT && !(b.layers.mask & 1) && !S.v.cam.layers.test(b.layers) && f.lods.every(m => !m.castShadow) && b.castShadow, `mask ${b.layers.mask.toString(2)}`);
+    check('the sun\'s and the lamp\'s cameras see the shadow layer', (S.sun.shadow.camera.layers.mask & BODY_BIT) && (!S.lamp || (S.lamp.shadow.camera.layers.mask & BODY_BIT)), `${S.sun.shadow.camera.layers.mask.toString(2)}`);
+    const ray = new T.Raycaster(new T.Vector3(f.position.x, 1.2, 8), new T.Vector3(0, 0, -1)); ray.far = 20;
+    const hits = ray.intersectObject(f, true).map(h => h.object.name);
+    check('a ray (a shot) never hits the body', !hits.includes('human:shadow body'), hits.join(', ') || 'no hits');
+    const plain = human({ ...SPECS[0], shadows: false });
+    check('a person made with shadows: false has no body and casts nothing', !plain.shadowBody && plain.lods.every(m => !m.castShadow));
+  }
+  S.v.dispose?.();
+} catch (e) { if (e.message !== 'bench done') window.result = { error: String(e.stack || e) }; throw e; }
+window.result = { out, info, checks };
+</script>

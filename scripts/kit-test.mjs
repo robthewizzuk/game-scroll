@@ -1746,6 +1746,87 @@ console.log('physics ok');
   console.log('tactics: cover spots, cover that protects, squad orders + callouts ok');
 }
 {
+  // 3D cover found from a physics world: a high wall and a low wall; the hero snaps, slides, runs to the next and peeks; a squad in 3D
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Cover3D, TakeCover, Squad } = await import('../src/kit/tactics.js');
+  const w = new World3D(); w.floor(0);
+  const wall = (x, y, z, sx, sy, sz) => w.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  wall(0, 1.25, 0, 6, 2.5, .4); wall(8, .5, 0, 3, 1, .4); w.step(1 / 60);
+  const c = new Cover3D({ world: w }); c.around({ x: 3, y: 0, z: 0 }, 10);
+  const front = c.spots.filter(s => s.nz > .9 && Math.abs(s.z - .6) < .1);
+  assert.ok(front.some(s => !s.low && s.x > -3 && s.x < 3) && front.some(s => s.low && s.x > 6.5), 'high and low cover found along both walls: ' + front.length);
+  assert.ok(front.filter(s => s.low).every(s => Math.abs(s.top - 1) < .15), 'a low wall knows its top');
+  assert.ok(front.some(s => s.left != null && Math.abs(s.x + s.left - 3) < .35), 'the end of the high wall is found');
+  const threat = { x: 0, y: 0, z: -10 }, f = c.find({ x: 1, y: 0, z: 3 }, threat);
+  assert.ok(f && f.nz > .9 && c.protects(f, threat) && !c.protects(f, { x: 0, y: 0, z: 10 }), 'finds cover between it and the threat');
+  const pk = c.peek(f, threat); assert.ok(pk.side !== 0 && Math.abs(pk.x) > 2.9, 'peeks out round the end: ' + JSON.stringify(pk));
+  const hide = new TakeCover(c); assert.ok(hide.take({ x: 1, y: 0, z: 1.3 }, Math.PI) && hide.busy, 'takes cover in reach');
+  let feet = { x: 1, y: 0, z: 1.3 }, states = new Set();
+  for (let i = 0; i < 300; i++) { hide.update(1 / 60, { move: { x: 1, z: 0 } }, feet); states.add(hide.state); feet = { x: feet.x + hide.walk.x / 60, y: 0, z: feet.z + hide.walk.z / 60 }; }
+  assert.ok(states.has('in') && states.has('dash') && feet.x > 6.5 && hide.spot.low, 'slides along, runs to the next cover at the end: ' + feet.x.toFixed(2) + ' ' + [...states]);
+  for (let i = 0; i < 30; i++) { hide.update(1 / 60, { aim: true, threat }, feet); feet = { x: feet.x + hide.walk.x / 60, y: 0, z: feet.z + hide.walk.z / 60 }; }
+  assert.ok(hide.state === 'peek' && hide.upper === 'aim' && hide.muzzle.y > 1.1 && hide.exposed > .5, 'pops up over low cover to aim');
+  for (let i = 0; i < 20; i++) hide.update(1 / 60, { blind: true, threat }, feet); assert.ok(hide.state === 'blind' && hide.upper === 'blindOver' && hide.spread > 0, 'fires blind over the top');
+  for (let i = 0; i < 40; i++) hide.update(1 / 60, { move: { x: 0, z: 1 } }, feet); assert.ok(!hide.busy, 'pulling away from the wall leaves it');
+  wall(0, .5, -8, 4, 1, .4); wall(6, 1.25, -8, 2, 2.5, .4); w.step(1 / 60); c.clear(); c.around({ x: 0, y: 0, z: -6 }, 14);
+  const men = [{ x: -2, y: 0, z: -12 }, { x: 2, y: 0, z: -13 }, { x: 5, y: 0, z: -12 }], sq = new Squad(men, { cover: c, think: .1 });
+  for (let i = 0; i < 60; i++) sq.update(1 / 30, { x: 12, y: 0, z: 2 });
+  assert.ok(men.some(m => m.order.spot && m.order.to.z != null), 'a squad hands out 3D cover: ' + men.map(m => m.order.role));
+  console.log('tactics 3D: cover from a world, snap, slide, dash, peek, blind fire, squads ok');
+}
+{
+  const { DriveBy, Gun } = await import('../src/kit/combat.js');
+  const car = { position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, points: { driver: { position: { x: -.37, y: .6, z: .2 } } }, size: { width: 1.8 } };
+  const d = new DriveBy(car);
+  d.aim({ x: -1, y: 0, z: 0 }); assert.ok(d.through === 'left' && d.pose === 'carAimL' && d.from.x < -.9 && !d.glass, 'out of the driver\'s window, leaning out');
+  d.aim({ x: 1, y: 0, z: 0 }); assert.ok(d.through === 'front' && d.dir.x > 0 && d.dir.z < -.5 && d.glass && d.glass.z < 0, 'the far side is only reached through the windscreen');
+  d.aim({ x: 0, y: -1, z: -.2 }); assert.ok(Math.asin(d.dir.y) >= -.51, 'cannot aim straight down');
+  car.quaternion = { x: 0, y: Math.sin(Math.PI / 4), z: 0, w: Math.cos(Math.PI / 4) };   // turned to its left: its left window now faces +z
+  d.aim({ x: 0, y: 0, z: 1 }); assert.ok(d.through === 'left' && d.dir.z > .9, 'follows the car round');
+  car.position = { x: 0, y: 0, z: -.5 }; d.update(1 / 60); car.position = { x: 0, y: 0, z: -1 }; d.update(1 / 60);
+  const s = d.fire(new Gun({ speed: 80, spread: 0 }))[0]; assert.ok(s && s.carry.z < -20 && d.spread > .012, 'flying shots carry the car\'s speed; the ride spreads the aim');
+  console.log('combat: shooting from a car ok');
+}
+{
+  const { Melee, Brawler, SWINGS } = await import('../src/kit/fight.js');
+  const A = { x: 0, y: 0, z: 0, yaw: 0 }, B = { x: 0, y: 0, z: 1.6, yaw: Math.PI };   // face to face, 1.6 m apart
+  const a = new Melee(A), b = new Melee(B); let hits = [];
+  const run = (n, fa = () => {}, fb = () => {}) => { for (let i = 0; i < n; i++) { fa(i); fb(i); for (const h of [...a.update(1 / 60, [b]), ...b.update(1 / 60, [a])]) hits.push(h); for (const [m, P] of [[a, A], [b, B]]) { P.x += m.walk.x / 60; P.z += m.walk.z / 60; if (m.facing != null) P.yaw = m.facing; } } };
+  run(40, i => { if (i === 0) a.attack('light'); });
+  assert.ok(hits.length === 1 && hits[0].who === b && !hits[0].blocked && b.hp < 100 && hits[0].push.z > 0, 'a jab steps in and lands, pushing away: ' + JSON.stringify(hits.map(h => h.name)));
+  assert.ok(A.z > .05, 'steps in to bring it into reach');
+  hits = []; b.hp = 100; a.reset(); b.reset();
+  run(120, i => { if (i % 9 === 0) a.attack('light'); });
+  assert.deepEqual(hits.slice(0, 4).map(h => h.name), ['jab', 'cross', 'hook', 'uppercut'], 'pressing again chains the combo');
+  assert.ok(hits[3].knock, 'the combo ends in a knock-down blow');
+  hits = []; a.reset(); b.reset(); b.block(true); A.z = 0; B.z = 1.3;
+  run(40, i => { if (i === 0) a.attack('light'); });
+  assert.ok(hits[0]?.blocked && hits[0].damage < 2, 'the guard blocks from in front');
+  hits = []; a.reset(); b.reset(); b.block(false); B.z = 1.3;
+  run(40, i => { if (i === 0) a.attack('light'); if (i === 2) b.dodge({ x: 1, z: 0 }); });
+  assert.ok(!hits.length && B.x > .5, 'a dodge steps out of it: ' + hits.map(h => h.name) + ' ' + B.x.toFixed(2));
+  hits = []; a.reset(); b.reset(); A.x = 0; A.z = 0; B.x = 0; B.z = 1.3; B.yaw = 0;   // b turned away: hit from behind, guard or not
+  b.block(true); run(40, i => { if (i === 0) a.attack('light'); });
+  assert.ok(hits[0] && !hits[0].blocked, 'no guard against a blow from behind');
+  const c = new Melee({ x: 0, y: 0, z: 0, yaw: 0 }, { moves: SWINGS, weapon: { reach: .3, damage: 1.5 } });
+  assert.ok(c.stats(SWINGS.swing).reach > 1.8 && c.stats(SWINGS.swing).damage === 24, 'a weapon adds to its moves');
+  // a ready-made foe closes in and fights
+  const P1 = { x: 0, y: 0, z: 0, yaw: 0 }, P2 = { x: 0, y: 0, z: 5, yaw: Math.PI }, me = new Melee(P1), them = new Melee(P2), ai = new Brawler({ skill: .7, rng: (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(7) });
+  let landed = 0, tried = 0;
+  for (let i = 0; i < 600; i++) {
+    const t = ai.think(1 / 60, them, me); them.attack(t.attack); them.block(t.block); if (t.dodge) them.dodge(t.dodge); if (t.attack) tried++;
+    P2.x += (t.walk.x + them.walk.x) / 60; P2.z += (t.walk.z + them.walk.z) / 60; if (them.facing != null) P2.yaw = them.facing; else if (t.face != null) P2.yaw = t.face;
+    landed += them.update(1 / 60, [me]).filter(h => !h.blocked).length; me.update(1 / 60, [them]);
+  }
+  assert.ok(Math.hypot(P2.x, P2.z) < 1.8 && tried > 2 && landed > 0, 'a Brawler closes in and lands blows: ' + tried + ' ' + landed);
+  const { figure } = await import('../src/kit/poses.js'), { Reactions } = await import('../src/kit/reactions.js');
+  const fa = figure(), fb = figure(); fb.position.z = 1.3; fb.rotation.y = Math.PI;
+  const rb = new Reactions(fb, {}), ma = new Melee(fa), mb = new Melee(fb, { react: rb }), seen = new Set();
+  for (let i = 0; i < 200; i++) { if (i % 9 === 0 && i < 60) ma.attack('light'); ma.update(1 / 60, [mb]); mb.update(1 / 60, [ma]); fa.position.z += ma.walk.z / 60; fb.rig.update(1 / 60, {}); rb.update(1 / 60); seen.add(rb.state); }
+  assert.ok(seen.has('stagger') && seen.has('down'), 'a body with Reactions staggers and goes down under blows: ' + [...seen]);
+  console.log('fight 3D: blows that step in and land, combos, guard, dodge, from behind, weapons, a ready-made brawler ok');
+}
+{
   const { Ledges, Climber, Rope } = await import('../src/kit/climb.js');
   const L = new Ledges().add({ x: 0, y: 3, z: 0 }, { x: 4, y: 3, z: 0 }, { x: 0, z: 1 });
   const cl = new Climber(L); assert.ok(cl.grab({ x: 1, y: 1.4, z: .3 }, -1), 'grabs a ledge in reach');
@@ -2896,6 +2977,39 @@ console.log('physics ok');
   assert.equal(sp.frameGenCould(heavy, 60), false, 'a heavy one keeps its sharpness steps first');
   sp.chipCost('kt-new', 5, null); sp.chipCost('kt-new', 5, null);
   assert.equal(sp.frameGenFits({ id: 'kt-new' }, 60), true, 'two reads are not enough to judge');
+  // 30 → 60 (a console's way, for the mini console, Rob 2026-11-15): real frames at about 30 a second, GSFG makes the
+  // rest; each real frame is sent after its refresh is handed over (pace early), so it has two refreshes of the chip
+  sp.setFrameGenPick('thirty'); assert.equal(sp.frameGenPick(), 'thirty', 'a pick of its own');
+  const g3 = { id: 'kt-thirty', era: 'nextgen' };
+  assert.equal(sp.fpsFor(g3), 30, '30 → 60 on a 120 Hz screen: 30 real frames a second');
+  assert.equal(sp.frameGenFor(g3), 'blend', 'blended between real frames');
+  assert.equal(sp.frameGenPaceOf(g3, 4), 'early', 'pace early');
+  assert.equal(sp.frameGenFor({ ...g3, frameGen: false }), false, 'a game that turns frame generation off keeps it off');
+  screen.rates = [60, 120]; screen.top = 120;
+  assert.equal(sp.screenWant(g3), 60, 'a 120 Hz screen is asked for 60');
+  screen.rates = [90, 120]; screen.top = 120;
+  assert.equal(sp.screenWant(g3), 120, 'one without 60 Hz: 120, a whole number of refreshes (90 would not be)');
+  screen.rates = []; screen.top = 0;
+  assert.equal(sp.thirtyRate(60), 30); assert.equal(sp.thirtyRate(90), 30, '90 Hz: three refreshes a real frame');
+  assert.equal(sp.thirtyRate(144), 28.8, '144 Hz: five refreshes a real frame (a whole number, never 4.8)');
+  sp.speed.game = heavy; for (let i = 0; i < 3; i++) sp.chipCost(heavy.id, 11, 3);
+  assert.equal(sp.frameGenFits(heavy, 30), true, 'an 11 ms real frame and a 3 ms made one share two 8.3 ms refreshes');
+  assert.equal(sp.frameGenFor(heavy), 'blend', 'so the town makes frames between at 30');
+  assert.ok(sp.frameGenRoom(heavy) > 1000 / 120, 'and the quality steps may give a real frame more than one refresh');
+  for (let i = 0, t = 20000; i < 80; i++) sp.tick(t += 1000 / 60);
+  assert.equal(sp.screenHz(), 60, 'a 60 Hz screen');
+  assert.equal(sp.frameGenFor(g3), 'blend', '30 → 60 fills a 60 Hz screen');
+  assert.equal(sp.frameGenSteps(g3), 2, 'one made frame for each real one');
+  assert.match(sp.frameGenStatus(g3), /draws 30 frames a second and makes 30 more \(blend, each real frame given two refreshes/, 'Settings says so');
+  assert.equal(sp.frameGenPace(g3.id), true, 'its frames came late with two refreshes: back to one');
+  assert.equal(sp.frameGenPaceOf(g3, 2), 'first', 'pace first for it from then on');
+  assert.ok(Math.abs(sp.frameGenRoom(g3) - 800 / 60) < 1e-9, 'and one refresh of room again');
+  sp.setFrameGenPick('auto');
+  assert.equal(sp.frameGenFor(g3), false, 'Auto leaves a 60 Hz screen alone');
+  assert.match(sp.frameGenStatus(g3), /30 → 60 fills a 60 Hz screen/, 'and Settings says which pick fills it');
+  sp.setFrameGenPick('nonsense'); assert.equal(sp.frameGenPick(), 'auto', 'an unknown pick is Auto');
+  for (let i = 0, t = 40000; i < 80; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.screenHz(), 120, 'back to 120 Hz');
   sp.speed.game = null; sp.speed.gpu = false;
   // drop a made frame that would come late, never a real one (hd3d-gpu.js GpuChain): the chip still on the real frame
   const { GpuChain } = await import('../src/kit/hd3d-gpu.js');

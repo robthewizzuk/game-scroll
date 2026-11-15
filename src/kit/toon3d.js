@@ -17,6 +17,7 @@
 //  - v.persp(fov): a free perspective camera (runners, racers) the game moves itself; use
 //    v.toScreen(x, y, z) to place 2D HUD effects over 3D things.
 import { timed } from './prof.js';
+import { BODY_LAYER } from './scene-list.js';
 import {
   Scene, Color, Fog, OrthographicCamera, PerspectiveCamera, DirectionalLight, HemisphereLight,
   MeshToonMaterial, MeshBasicMaterial, ShaderMaterial, ShadowMaterial, Mesh, Group, DataTexture, NearestFilter, RGBAFormat,
@@ -484,7 +485,7 @@ export class View {
     // (a retro look sets its own small size: so many lines up the picture)
     const q = look && look.lines < ph ? look.lines / ph : Math.min(1, Math.sqrt(MAX_PX / (pw * ph))) * quality; pw = Math.max(1, Math.round(pw * q)); ph = Math.max(1, Math.round(ph * q));
     CEL.gsRetro.value.set(look?.snap ? pw / 2 : 0, look?.snap ? ph / 2 : 0, look?.bits ? (1 << look.bits) - 1 : 0, 0);
-    const cam = this.cam; cam.layers.enableAll();
+    const cam = this.cam; cam.layers.enableAll(); cam.layers.disable(BODY_LAYER);   // (not people's shadow bodies: scene-list.js)
     const fog = this.scene.fog, k = Math.max(1, Math.round(.75 * ph / h));
     inkU.px.value.set(k / pw, k / ph);
     inkU.persp.value = cam.isPerspectiveCamera ? 1 : 0; inkU.near.value = cam.near; inkU.far.value = cam.far;
@@ -514,7 +515,7 @@ export class View {
         r.shadowMap.autoUpdate = false;   // (the shadow map is this frame's already)
         cam.layers.set(0); r.setRenderTarget(normRT); r.setClearColor(0x8080ff, 1); r.clear(); r.render(this.scene, cam);
         r.shadowMap.autoUpdate = true;
-        this.scene.background = bg; this.scene.fog = fog; this.scene.overrideMaterial = null; cam.layers.enableAll(); r.setRenderTarget(null);
+        this.scene.background = bg; this.scene.fog = fog; this.scene.overrideMaterial = null; cam.layers.enableAll(); cam.layers.disable(BODY_LAYER); r.setRenderTarget(null);
         inkU.tN.value = normRT.texture; inkU.tD.value = normRT.depthTexture;
         r.autoClear = false; r.render(inkQuad, inkCam); r.autoClear = true;
       }

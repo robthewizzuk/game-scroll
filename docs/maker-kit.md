@@ -2333,6 +2333,16 @@ arrows) and asks your `hits()` what each one met; `arc` and `lob` give grenade t
 down before dying, and keeps the direction of each hit (`hits[].angle`) for damage arrows.
 `Markers` times hit markers. `Explosives` are barrels and mines that set each other off.
 
+**Shooting from a car** (`gs.combat`): `DriveBy(car, { seat: 'driver' })` (a `gs.models` vehicle, any Object3D, or a
+`gs.vehicles` Car) keeps the aim where it can go from that seat: out of the side window on its side (the gun leans
+out further the further round it points), through the windscreen, out of the back window with `rear: true`; the
+driver can't shoot across his own passenger. `drive.update(dt)` after the car moves, `drive.aim(wantDir)`, then
+`drive.fire(gun, held)` pulls the trigger from where the gun is: the ride throws the aim about (speed and bumps:
+`drive.spread`) and flying shots carry the car's speed. `drive.glass` is where a shot crosses the glass
+(`car.hit(drive.glass)` breaks it), `drive.pose` the upper-body pose (`carAimL`, `carAimR`, `carAimF`) and
+`drive.turn`, `drive.pitch` go to `rig.update(dt, { aimYaw: drive.turn, aim: drive.pitch })`. Police leaning out of
+their car use the same.
+
 **Cover and squads** (`gs.tactics`): `CoverMap(cols, rows, blocked)` finds every spot beside a wall and
 which way it faces; `find(from, threat)` picks cover that blocks a threat (or flanks it), `peek()`
 says where to lean out. `Squad(members, { cover, sees })` gives each enemy an order each think
@@ -2343,6 +2353,34 @@ and waits for you. A squad can be coached (`coach: true`, then `squad.correct(me
 `squad.avoid(member)`), and `cover.avoid(spot)` is "not that cover":
 [A coach for things that decide by rules](#a-coach-for-things-that-decide-by-rules).
 
+**Cover in 3D** (`gs.tactics`): `Cover3D()` finds cover in the game's `World3D` with rays, so whatever is solid
+there is cover: walls, low walls, cars, crates, a City's buildings, a level made with `world.ground(mesh)`. Each spot
+knows which way it faces, how high it is (`low`: shoot over it, with its `top`; high: lean out round it) and how far
+its ends are (`left`, `right`, as you face out). `cover.update(hero.feet)` looks over the squares round the hero a
+little each frame (`around(p, r)` all at once, while loading; `touch(p)` after something there broke). It has the
+2D `CoverMap`'s `find`, `peek`, `protects`, `avoid`, so `new Squad(enemies)` hands the same spots out (positions
+`{ x, y, z }`, y up) with real line of sight (`cover.sees(a, b)`: eyes to chest). `TakeCover(cover)` is the hero:
+`hide.take(hero.feet, heroYaw)` snaps to the nearest wall; each frame `hide.update(dt, { move, aim, blind, threat },
+hero.feet)` slides along it, stops at its ends, leans out round an end or stands up over low cover while aiming,
+fires blind (`hide.spread` widens the aim), runs to the next cover when the stick keeps pushing at an end, and leaves
+when the stick pulls away from the wall. Then `hero.walk(hide.walk.x, hide.walk.z)`, `heroYaw = hide.facing`,
+`rig.play(hide.pose)`, `rig.upper(hide.upper)`, shots from `hide.muzzle`; `hide.exposed` (0..1) is how much of the hero
+shows, for enemies' aim.
+
+**Melee in 3D** (`gs.fight`): `Melee(body, { react })` is one person's fists and feet in a 3D world, in frames like the
+2D `Fighter` but with a reach, an arc in front and a height where 2D has boxes. `attack('light')` (jab, cross, hook,
+uppercut: pressed again in time they chain into a combo, and a press a moment early still counts), `attack('heavy')`
+(a kick, a knee), `attack('low')` (a sweep that trips), `attack('push')` (a shove the guard can't stop), `block(held)`
+(stops what comes from in front, not from behind), `dodge({ x, z })` (a quick step nothing can hit for most of).
+`update(dt, foes)` locks on to the foe in front, turns and steps in to bring the blow into reach (`walk`, `facing`),
+and returns what landed: `{ who, damage, blocked, at, push, knock, trip }`. A foe that is a `Melee` gets hit stun and
+loses `hp`; one with `react` (a `gs.characters.Reactions` on its body) staggers, trips or falls for real. `pose` and `at`
+go to `rig.play(m.pose, { at: m.at, fade: .06 })` (gs.poses has `guard`, `jab`, `cross`, `hook`, `uppercut`, `kick`,
+`knee`, `sweep`, `shove`, `stagger`, `dodgeL`, `dodgeR`, `dodgeBack`, and with a bat `swing`, `backhand`, `overhead`).
+`moves: SWINGS` with `weapon: { reach, damage }` for a bat, a pipe or a stick. `Brawler({ skill })` is a ready-made
+foe: `think(dt, me, foe)` gives `{ walk, face, attack, block, dodge }`: it closes in, circles, throws combos when you
+are open, blocks or steps out of what it sees coming no faster than a person, and backs off when hurt.
+
 **Climbing** (`gs.climb`): `Ledges.fromLevel(level3d)` finds every edge you can hang from (or `add()`
 your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up, leaps to the next
 handhold the way you push, drops or kicks off. `Rope` is a swing you pump higher. `climber.pos` and
@@ -2350,7 +2388,10 @@ handhold the way you push, drops or kicks off. `Rope` is a swing you pump higher
 
 **Poses** (`gs.poses`, 3D): `figure()` builds a simple jointed person and `Rig` blends poses on it:
 idle, walk, run, sprint, crouch, sneak, aim, jump, fall, land, hang, shimmy, climb, swing, cover,
-punch, takedown, downed, wave, sit, or your own. Walk and run cycles follow `speed` so feet don't
+punch, takedown, downed, wave, sit, in cover with the back to the wall (`coverHighL`, `coverLowL` and their `R`
+sides, `peekHighL` leaning out round an end, upper `blindOver` and `blindSideL` firing blind), shooting from a seat
+(upper `carAimL`, `carAimR`, `carAimF`, turned at the waist by `rig.update(dt, { aimYaw })`), or your own;
+`mirror(fn)` makes the other side of a pose of your own. Walk and run cycles follow `speed` so feet don't
 slide; `upper('aim')` aims over the legs. Works on your own models too (pass their joints).
 
 **Lifelike motion** (`gs.poses`): `LIFELIKE` is a set of idle, walk, jog, run, sprint and sneak drawn from where
