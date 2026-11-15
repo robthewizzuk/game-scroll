@@ -2,6 +2,7 @@ import gs from '../gamescroll.js';
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { Feel } = gs.effects;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle
 
 // Pour coloured balls between tubes until every tube holds one colour. Each solved rack adds time and a colour.
 const W = 360, H = 640, CAP = 4;
@@ -11,8 +12,8 @@ function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
   let tubes, sel, time, score, t, nColors, moving, dead, shake;
   function rack() {
-    const balls = []; for (let i = 0; i < nColors; i++) for (let k = 0; k < CAP; k++) balls.push(i);
-    do { for (let i = balls.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [balls[i], balls[j]] = [balls[j], balls[i]]; } } while (solved(chunk(balls)));
+    let balls = []; for (let i = 0; i < nColors; i++) for (let k = 0; k < CAP; k++) balls.push(i);
+    do balls = shuffle(balls); while (solved(chunk(balls)));
     tubes = chunk(balls); tubes.push([], []); sel = -1;
   }
   const chunk = b => { const out = []; for (let i = 0; i < b.length; i += CAP) out.push(b.slice(i, i + CAP)); return out; };

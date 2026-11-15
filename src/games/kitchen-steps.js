@@ -6,6 +6,7 @@ const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes, noise } = gs.sound;
 const { clamp, rnd } = gs.util;
+const { icon } = gs.icons;
 
 let W = 360, H = 640;
 const FOODS = [['carrot', '#ff8c2a', '#3fae49'], ['pepper', '#e63946', '#2d6a4f'], ['onion', '#e9c46a', '#a8803a'], ['leek', '#b7e4a0', '#4c956c']];
@@ -71,7 +72,7 @@ function make(api) {
       // order ticket
       c.fillStyle = '#fff'; c.fillRect(18, 30, W - 36, 96); c.fillStyle = '#e63946'; c.fillRect(18, 30, W - 36, 6);
       c.fillStyle = '#3d2b1f'; c.font = '800 20px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText(order.name, 32, 62);
-      order.steps.forEach((s, i) => { const x = 32 + i * ((W - 64) / order.steps.length); c.fillStyle = i < step ? '#2a9d8f' : i === step ? '#e76f51' : '#c9b79c'; c.beginPath(); c.roundRect(x, 76, (W - 64) / order.steps.length - 6, 32, 8); c.fill(); c.fillStyle = '#fff'; c.font = '700 11px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText(i < step ? '✓' : s.toUpperCase(), x + ((W - 64) / order.steps.length - 6) / 2, 97); });
+      order.steps.forEach((s, i) => { const x = 32 + i * ((W - 64) / order.steps.length); c.fillStyle = i < step ? '#2a9d8f' : i === step ? '#e76f51' : '#c9b79c'; c.beginPath(); c.roundRect(x, 76, (W - 64) / order.steps.length - 6, 32, 8); c.fill(); c.fillStyle = '#fff'; c.font = '700 11px Rubik, sans-serif'; c.textAlign = 'center'; if (i < step) icon(c, 'check-mark', x + ((W - 64) / order.steps.length - 6) / 2, 92, 16, { color: '#fff' }); else c.fillText(s.toUpperCase(), x + ((W - 64) / order.steps.length - 6) / 2, 97); });
       c.fillStyle = '#00000018'; c.fillRect(18, 120, W - 36, 6); c.fillStyle = clock / clockMax < .25 ? '#e63946' : '#2a9d8f'; c.fillRect(18, 120, (W - 36) * clock / clockMax, 6);
       feel.begin(c);
       const s = order.steps[step], mx = W / 2, my = H * .45;
@@ -113,7 +114,7 @@ function make(api) {
       }
       feel.end(c, W, H);
       c.textAlign = 'center';
-      c.fillStyle = '#3d2b1f'; c.font = '700 18px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText('🍳'.repeat(Math.max(0, lives)), 20, H - 26);
+      for (let i = 0; i < lives; i++) icon(c, 'fried-eggs', 32 + i * 28, H - 32, 26, { color: '#fff3d6' });
       if (banner) { c.fillStyle = '#000000a0'; c.fillRect(0, H * .3, W, 90); c.fillStyle = '#fff'; c.textAlign = 'center'; c.font = '800 30px Rubik, sans-serif'; c.fillText(banner.txt, W / 2, H * .3 + 42); if (banner.sub) { c.font = '600 18px Rubik, sans-serif'; c.fillText(banner.sub, W / 2, H * .3 + 72); } }
     },
     down(x, y) {

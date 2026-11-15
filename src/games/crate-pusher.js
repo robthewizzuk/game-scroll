@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Warehouse puzzle: push (never pull) every crate onto a dot. Swipe or tap beside the worker to step. Tap ↺ to restart a room.
 const R = PAL.amber, W = 160, H = 160, N = 8, CS = 16, OX = (W - N * CS) / 2, OY = 20, D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -16,7 +17,7 @@ function make(api) {
     for (;;) {
       wall = Array.from({ length: N * N }, (_, i) => { const x = i % N, y = i / N | 0; return x === 0 || y === 0 || x === N - 1 || y === N - 1 || Math.random() < .1; });
       const free = []; for (let i = 0; i < N * N; i++) if (!wall[i]) free.push(i);
-      const nc = Math.min(3, 2 + (score >> 2)); const pick = free.sort(() => Math.random() - .5);
+      const nc = Math.min(3, 2 + (score >> 2)); const pick = shuffle(free);
       targets = pick.slice(0, nc).map(i => ({ x: i % N, y: i / N | 0 })); crates = targets.map(c => ({ ...c })); let pl = { x: pick[nc] % N, y: pick[nc] / N | 0 };
       for (let s = 0; s < 400; s++) {   // play backwards: random walks with pulls guarantee a solvable room
         const d = D[Math.random() * 4 | 0], nx = pl.x + d[0], ny = pl.y + d[1]; if (isWall(nx, ny) || crateAt(nx, ny) >= 0) continue;

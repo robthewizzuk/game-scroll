@@ -5,6 +5,7 @@ const { rnd } = gs.util;
 const { backdrop } = gs.gfx;
 const { brick, BRICK_KEYS } = gs.bricks;
 const { Feel } = gs.effects;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Speed-build from the instruction booklet. The booklet shows the model and flashes the next
 // brick it needs. Find that exact brick (colour AND length) in the tray and tap it. The right
@@ -29,7 +30,7 @@ function make(api) {
   function fillTray() {
     const need = model[step], n = 6, items = [{ w: need.w, col: need.col }];
     while (items.length < n) { const r = Math.random(), it = r < .35 ? { w: need.w, col: BRICK_KEYS[Math.random() * 6 | 0] } : r < .7 ? { w: SIZES[Math.random() * 3 | 0], col: need.col } : { w: SIZES[Math.random() * 3 | 0], col: BRICK_KEYS[Math.random() * 6 | 0] }; if (!items.some(o => o.w === it.w && o.col === it.col)) items.push(it); }
-    tray = items.sort(() => Math.random() - .5);
+    tray = shuffle(items);
   }
   function slots() {
     const n = tray.length, cols = 3, cw = (W - 16) / cols, rh = Math.min(30, (H * .42) / 2);

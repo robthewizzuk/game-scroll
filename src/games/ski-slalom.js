@@ -4,6 +4,7 @@ const { tilt, calibrateTilt, want, haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
+const { approach } = gs.juice;
 
 // Ski downhill through the gates. Drag left and right to carve (or tilt the phone).
 // Every gate cleared speeds you up. Miss three gates or hit a tree and the run ends.
@@ -26,7 +27,7 @@ function make(api) {
       // steering target
       let target = sk.x; const tl = tilt();
       if (drag) target = drag.x; else if (tl) target = sk.x + tl.x * 160;
-      const want_vx = clamp((target - sk.x) * 4, -320, 320); sk.vx += (want_vx - sk.vx) * Math.min(1, dt * 5); sk.x = clamp(sk.x + sk.vx * dt, 14, W - 14);
+      const want_vx = clamp((target - sk.x) * 4, -320, 320); sk.vx = approach(sk.vx, want_vx, 5, dt); sk.x = clamp(sk.x + sk.vx * dt, 14, W - 14);
       sk.ang = clamp(sk.vx / 320, -1, 1);
       track.push({ x: sk.x, y: SY }); for (const p of track) p.y -= dy; track = track.filter(p => p.y > -10);
       for (const s of snow) { s.y -= dy * .2; if (s.y < 0) { s.y += H; s.x = rnd(0, W); } }

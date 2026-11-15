@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // A one-minute daily workout for your brain: four quick drills, fifteen seconds each. Quick sums,
 // count the dots, remember the lit squares, pick the bigger side, and tap 1 to 9 in order. Every
@@ -16,7 +17,7 @@ function make(api) {
   let plan, di, phase, pt, q, score, per, t, fx, done, results, tx = 0, ty = 0;
   function newQ() {
     const d = plan[di], lvl = per[di] || 0;
-    if (d === 'SUMS') { const op = lvl > 4 && Math.random() < .5 ? '-' : lvl > 8 && Math.random() < .3 ? 'x' : '+', a = op === 'x' ? 2 + (Math.random() * 8 | 0) : 2 + (Math.random() * (9 + lvl * 2) | 0), b = op === 'x' ? 2 + (Math.random() * 8 | 0) : 1 + (Math.random() * (8 + lvl) | 0), A = op === '-' ? Math.max(a, b) : a, B = op === '-' ? Math.min(a, b) : b, ans = op === '+' ? A + B : op === '-' ? A - B : A * B; const opts = new Set([ans]); while (opts.size < 4) opts.add(Math.max(0, ans + (Math.random() * 7 | 0) - 3)); q = { text: `${A} ${op === 'x' ? '×' : op} ${B}`, ans, opts: [...opts].sort(() => Math.random() - .5) }; }
+    if (d === 'SUMS') { const op = lvl > 4 && Math.random() < .5 ? '-' : lvl > 8 && Math.random() < .3 ? 'x' : '+', a = op === 'x' ? 2 + (Math.random() * 8 | 0) : 2 + (Math.random() * (9 + lvl * 2) | 0), b = op === 'x' ? 2 + (Math.random() * 8 | 0) : 1 + (Math.random() * (8 + lvl) | 0), A = op === '-' ? Math.max(a, b) : a, B = op === '-' ? Math.min(a, b) : b, ans = op === '+' ? A + B : op === '-' ? A - B : A * B; const opts = new Set([ans]); while (opts.size < 4) opts.add(Math.max(0, ans + (Math.random() * 7 | 0) - 3)); q = { text: `${A} ${op === 'x' ? '×' : op} ${B}`, ans, opts: shuffle([...opts]) }; }
     else if (d === 'DOTS') { const n = 3 + (Math.random() * Math.min(9, 4 + lvl) | 0), dots = []; while (dots.length < n) { const p = { x: rnd(.1, .9), y: rnd(.1, .9) }; if (dots.every(o => Math.hypot(o.x - p.x, o.y - p.y) > .14)) dots.push(p); } const opts = new Set([n]); while (opts.size < 4) opts.add(Math.max(1, n + (Math.random() * 5 | 0) - 2)); q = { dots, ans: n, show: Math.max(.6, 1.4 - lvl * .08), opts: [...opts].sort((a, b) => a - b) }; }
     else if (d === 'MEMORY') { const n = 3 + Math.min(4, lvl >> 1), cells = []; while (cells.length < n) { const i = Math.random() * 16 | 0; if (!cells.includes(i)) cells.push(i); } q = { cells, got: [], show: 1.4, bad: 0 }; }
     else if (d === 'BIGGER') { const mk = () => { const a = 1 + (Math.random() * (6 + lvl) | 0), b = 1 + (Math.random() * (6 + lvl) | 0); return Math.random() < .5 ? { s: `${a}+${b}`, v: a + b } : { s: `${a}×${b > 5 ? b - 4 : b}`, v: a * (b > 5 ? b - 4 : b) }; }; let L = mk(), R = mk(); while (L.v === R.v) R = mk(); q = { L, R }; }
@@ -28,7 +29,7 @@ function make(api) {
   function wrong() { pt += 1; fx = { ok: false, l: .3 }; haptic('error'); sfx(160, .12, 'sawtooth', .04, -40); feel.juice.shake(3); }
   function optRects(n) { const a = area(), bw = (a.w - 6) / 2, bh = 30, y0 = a.y + a.h - bh * 2 - 6; return Array.from({ length: n }, (_, i) => ({ x: a.x + (i % 2) * (bw + 6), y: y0 + (i >> 1) * (bh + 6), w: bw, h: bh })); }
   const self = {
-    reset() { plan = [...DRILLS].sort(() => Math.random() - .5).slice(0, 4); di = 0; phase = 'intro'; pt = 0; score = 0; per = []; t = 0; fx = null; done = 0; results = []; feel.clear(); ready.reset(); newQ(); },
+    reset() { plan = shuffle([...DRILLS]).slice(0, 4); di = 0; phase = 'intro'; pt = 0; score = 0; per = []; t = 0; fx = null; done = 0; results = []; feel.clear(); ready.reset(); newQ(); },
     fx(dt) { feel.update(dt); },
     resize(w, h) { W = w; H = h; },
     update(dt) {

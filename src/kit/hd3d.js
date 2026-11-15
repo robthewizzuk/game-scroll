@@ -87,7 +87,7 @@ import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadin
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
-import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSlack, frameGenOne, frameGenRoom, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
+import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenPick, frameGenFailed, frameGenReady, frameGenPace, frameGenSlack, frameGenOne, frameGenRoom, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
 import { desktop } from '../desktop.js';
 
 export * as THREE from 'three';
@@ -125,7 +125,10 @@ export const TIERS = [
 // (startTier). (It used to start a 'top' computer on ultra with half as many pixels again in each tier: Rob's
 // MacBook Air M5, 2026-11-13, played Long Shadow at 47 fps with 537 stutters a minute where the Fold 8 keeps 60;
 // with that fixed it still started on ultra, as the game had settled there the run before, 2026-11-14.)
-const START = { top: 2, mid: 2, low: 1 };
+// (mid starts on medium: Rob's friend's Pixel 10a, a Mali-G715, drew the engine's Hall at 38 frames a second on high,
+// 2026-11-14, and the phone performance report had its Next Gen games at 54 to 58 with 7% of frames slow; it climbs to
+// high by itself where the frames show room)
+const START = { top: 2, mid: 1, low: 1 };
 const CAP = desktop ? 3 : 2;
 /**
  * The tier a game starts on (pure: tests). saved: where it settled last time (speed.js settledFor), cls: the
@@ -369,6 +372,10 @@ function chipOff() {
 }
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
 const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < frameGenRoom(Q.game);
+// a phone's Auto drew 30 with frames made between (speed.js thirtyFor): back to 60 drawn, nothing made, where a real frame takes the chip
+// under eight tenths of a 60 Hz refresh (unknown: try; a climb that doesn't hold doubles the wait before the next, Q.fpsHold)
+const back60 = () => !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / 60;
+const autoThirty = () => !!Q.game && frameGenFor(Q.game) && frameGenOne(Q.game) && frameGenPick() === 'auto';
 // The quality steps' own record, for the frame lab's report (Rob's MacBook Air M5, 2026-11-14: Long Shadow stuttered
 // for 26 s before anything was stepped down, and the report couldn't say why): each window of frames (performance.now(),
 // its average gap in ms, frames a refresh or more late, the verdict, what was done about it), the last 400, and the
@@ -417,7 +424,13 @@ function decide(v, now, fps, budget) {
     // (held up by the CPU above 60: fewer pixels wouldn't help and a lower tier costs the picture, so it's the frame rate that gives first)
     // (and before the picture loses sharpness when frames made between would take over at 60 and fit: frameGenCould)
     if (fps > 60 && (Q.lvl >= 1 || cpuBound || frameGenCould(Q.game, 60)) && stepDown(Q.game)) { Q.lvl = 0; Q.ceil = 0; Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2); }
+    // At 60 on a phone (Rob, 2026-11-15: "drop to 30 fps using frame gen to hit 60 where needed", "must also look good"): held
+    // up by the CPU, or with an effect and the picture already a step smaller, a game draws 30 and frame generation makes the
+    // other 30, where the real frame and the one made after it fit two refreshes (speed.js thirtyFor). That comes before a lower
+    // tier or a smaller picture still: the picture keeps its detail and the frames keep coming at 60.
+    else if (thirty60(fps, cpuBound, now)) { /* 30 drawn, 30 made */ }
     else if (!cpuBound && fxDown(g)) { /* an effect drawn smaller first */ }
+    else if ((Q.lvl >= 1 || Q.out >= 1) && thirty60(fps, true, now)) { /* 30 drawn, 30 made */ }
     else if (!cpuBound && sizeDown(g)) { /* the final picture, or the 3D's own, smaller */ }
     // (from the tier being drawn: while hot that is one under the game's own, HD.tier, and a step to the one it already draws would change nothing)
     // (the tier itself waits for the round's end, applyTier; it is saved now, so that a game left mid-round starts on it next time:
@@ -429,15 +442,25 @@ function decide(v, now, fps, budget) {
     // (while hot the 3D keeps its first step; the tier may still climb from there to what the heat allows, HD.tier:
     // a hot phone used to stay on the tier it had fallen to for as long as it stayed hot)
     const top = Q.lvl === 0 || (Q.lvl === 1 && hot(now));
-    if (Q.lvl > Q.ceil && !top) { Q.lvl--; Q.upT = now; }
-    else if (Q.out > Q.outCeil) { Q.out--; Q.upT = now; }
-    else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now)) { fxUp(); Q.upT = now; }
-    else if (top && Q.out === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, Q.capNow) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom)) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
+    // (with frames made between, a step up only while a real frame leaves the made one its room: roomUp)
+    if (Q.lvl > Q.ceil && !top && roomUp()) { Q.lvl--; Q.upT = now; }
+    else if (Q.out > Q.outCeil && roomUp()) { Q.out--; Q.upT = now; }
+    // (drawing 30 with frames made between on a phone: 60 drawn again comes first, once the chip's times show room for it)
+    else if (Q.lvl === 0 && Q.out === 0 && autoThirty() && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && !hot(now) && back60() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
+    else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now) && roomUp()) { fxUp(); Q.upT = now; }
+    else if (top && Q.out === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, Q.capNow) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom) && roomUp()) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
   } else { Q.slow = 0; Q.fast = 0; }
   if ((Q.tier !== tier0 || Q.lvl !== lvl0 || Q.out !== out0 || Q.fxLast.length !== fx0) && !(Q.want != null && Q.want < Q.tier)) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, out: Q.out, fx: fxSaved() });
+}
+// 60 -> 30 with frames made between (a phone's Auto, speed.js thirtyFor), where they'd fit (frameGenCould); the
+// picture's steps are kept, and climb back under the wider budget
+function thirty60(fps, cpuBound, now) {
+  if (!(fps > 45 && fps < 61) || !cpuBound || !Q.game || frameGenPick() !== 'auto' || !frameGenCould(Q.game, 30) || !stepDown(Q.game)) return false;
+  Q.fpsT = now; if (now - Q.fpsUpT < 20000) Q.fpsHold = Math.min(8 * 60000, Q.fpsHold * 2);
+  return true;
 }
 /** The slow verdict, GPU-bound, with no effect left to draw smaller: the final picture or the 3D's own a step down (pickSize). False if neither can. */
 function sizeDown(g) {

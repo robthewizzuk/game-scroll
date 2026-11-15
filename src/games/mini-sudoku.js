@@ -7,6 +7,7 @@ const { C16 } = gs.palettes;
 const { text } = gs.pixel;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 160, H = 176;
 const K = C16;
@@ -32,14 +33,14 @@ function make(api) {
   }
   function newGrid() {
     // shuffle a known solution: relabel numbers, swap rows inside bands, bands, then the same for columns
-    const base = [1, 2, 3, 4, 3, 4, 1, 2, 2, 1, 4, 3, 4, 3, 2, 1], perm = [1, 2, 3, 4].sort(() => Math.random() - .5);
+    const base = [1, 2, 3, 4, 3, 4, 1, 2, 2, 1, 4, 3, 4, 3, 2, 1], perm = shuffle([1, 2, 3, 4]);
     let rows = [[0, 1], [2, 3]].map(b => Math.random() < .5 ? b : b.reverse()); if (Math.random() < .5) rows.reverse(); rows = rows.flat();
     let cols = [[0, 1], [2, 3]].map(b => Math.random() < .5 ? b : b.reverse()); if (Math.random() < .5) cols.reverse(); cols = cols.flat();
     const tr = Math.random() < .5;
     sol = []; for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { const rr = tr ? cols[c] : rows[r], cc = tr ? rows[r] : cols[c]; sol.push(perm[base[rr * 4 + cc] - 1]); }
     // take clues away while it still has only one answer
     grid = [...sol]; const want = Math.max(4, 8 - Math.floor(solved / 2));
-    const order = [...Array(16).keys()].sort(() => Math.random() - .5);
+    const order = shuffle([...Array(16).keys()]);
     for (const i of order) { if (grid.filter(Boolean).length <= want) break; const v = grid[i]; grid[i] = 0; if (count([...grid]) !== 1) grid[i] = v; }
     given = grid.map(Boolean); sel = given.indexOf(false);
   }

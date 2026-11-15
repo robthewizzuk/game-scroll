@@ -4,6 +4,7 @@ const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Two little scenes, five differences, drawn fresh every round. Tap a difference on either picture.
 // Wrong taps cost three seconds. Finish a pair to win more time.
@@ -47,20 +48,20 @@ function drawObj(c, o) {
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
   const ready = new Ready();                              // the pictures stay covered (and the clock stopped) until the first tap
-  let a, b, diffs, found, time, score, t, marks, misses, round, flash;
+  let a, b, diffs, found, time, score, t, marks, misses, round;
   function newPair() {
-    a = scene(); const idx = a.map((_, i) => i).sort(() => Math.random() - .5).slice(0, DIFFS);
+    a = scene(); const idx = shuffle(a.map((_, i) => i)).slice(0, DIFFS);
     b = a.map((o, i) => idx.includes(i) ? mutate(o) : o); diffs = idx.map(i => ({ x: a[i].x, y: a[i].y, r: 30 * Math.max(a[i].s, b[i].s), found: false }));
     marks = []; round++;
   }
   const self = {
-    reset() { time = 45; score = 0; t = 0; misses = []; round = 0; flash = 0; feel.clear(); ready.reset(); newPair(); },
+    reset() { time = 45; score = 0; t = 0; misses = []; round = 0; feel.clear(); ready.reset(); newPair(); },
     fx(dt) { feel.update(dt); },
     update(dt) {
       feel.update(dt); if (!ready.update(dt)) return;
-      t += dt; time -= dt; flash = Math.max(0, flash - dt * 3); if (time <= 0) { time = 0; haptic('error'); return api.over(); }
+      t += dt; time -= dt; if (time <= 0) { time = 0; haptic('error'); return api.over(); }
       for (const m of misses) m.l -= dt; misses = misses.filter(m => m.l > 0);
-      if (diffs.every(d => d.found)) { time += 20; haptic('success'); sfx(990, .25, 'triangle', .06, 300); flash = 1; feel.juice.pop(W / 2, 336, '+20s', { color: '#7dff9a', size: 18 }); newPair(); }
+      if (diffs.every(d => d.found)) { time += 20; haptic('success'); sfx(990, .25, 'triangle', .06, 300); feel.juice.flash('#ffffff', .4, .33); feel.juice.pop(W / 2, 336, '+20s', { color: '#7dff9a', size: 18 }); newPair(); }
     },
     draw(c) {
       c.fillStyle = '#1b2236'; c.fillRect(0, 0, W, H);
@@ -78,7 +79,6 @@ function make(api) {
       c.font = '400 10px "Press Start 2P", monospace'; c.textAlign = 'left'; c.fillStyle = time < 8 ? '#ff6060' : '#ffffffcc'; c.fillText(`${Math.ceil(time)}s`, 14, 30);
       c.textAlign = 'right'; c.fillStyle = '#ffffffcc'; c.fillText(`${diffs.filter(d => d.found).length}/${DIFFS}`, W - 14, 30);
       c.textAlign = 'center'; c.fillStyle = '#ffffff60'; c.font = '600 12px Rubik, sans-serif'; c.fillText(t < 5 && round === 1 ? 'tap the 5 differences on either picture' : '', W / 2, 620);
-      if (flash) { c.fillStyle = `rgba(255,255,255,${flash * .4})`; c.fillRect(0, 0, W, H); }
     },
     down(x, y) {
       if (ready.go()) return;

@@ -13,7 +13,7 @@ const N = 6;
 
 function make(api) {
   const feel = new Feel();
-  let phys, parts, crates, bin, score, throws, t, aim, still, run, pops, cool, binHit;
+  let phys, parts, crates, bin, score, throws, t, aim, still, run, cool, binHit;
   const START = () => ({ x: 50, y: 150 });
   const SW = () => (W - 150) / N, SH = () => (H - 300) / N;
   function steps() {
@@ -44,12 +44,12 @@ function make(api) {
     {
       const d =a.tag === 'dummy' ? a : b.tag === 'dummy' ? b : null; if (!d || !run) return;
       const other = d === a ? b : a;
-      if (other.tag === 'bin') { if (!binHit) { binHit = true; pops.push({ x, y, txt: 'IN THE BIN! +15', l: 1.4 }); score += 15; api.score(score); notes('C5 E5 G5 C6', { len: .06 }); haptic('success'); } return; }
+      if (other.tag === 'bin') { if (!binHit) { binHit = true; feel.juice.pop(x, y, 'IN THE BIN! +15', { color: '#d00000', life: 1.4, rise: 42 }); score += 15; api.score(score); notes('C5 E5 G5 C6', { len: .06 }); haptic('success'); } return; }
       if (speed < 250 || (cool.get(d) || 0) > t) return;
       cool.set(d, t + .15);
       const p = Math.floor(speed / 250) * (d.head ? 2 : 1);
       score += p; api.score(score); run.got += p;
-      pops.push({ x, y, txt: `+${p}`, l: .7 });
+      feel.juice.pop(x, y, `+${p}`, { color: '#d00000', life: .7, rise: 21 });
       sfx(140 + speed * .1, .06, 'square', .04); haptic(speed > 500 ? 'medium' : 'light');
       if (speed > 500) feel.hit(x, y, { power: .4 });
     }
@@ -74,16 +74,15 @@ function make(api) {
   }
 
   return {
-    reset() { score = 0; throws = 3; t = 0; aim = null; still = 0; run = null; pops = []; parts = null; cool = new Map(); binHit = false; build(); feel.clear(); },
+    reset() { score = 0; throws = 3; t = 0; aim = null; still = 0; run = null; parts = null; cool = new Map(); binHit = false; build(); feel.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
       t += dt;
-      for (const p of pops) { p.l -= dt; p.y -= 30 * dt; } pops = pops.filter(p => p.l > 0);
       phys.step(dt);
       if (!run) return;
       run.time += dt;
-      for (const c of crates) if (!c.out && c.y > c.y0 + SH() * 1.5) { c.out = true; score += 5; api.score(score); pops.push({ x: c.x, y: c.y - 20, txt: 'CRATE +5', l: 1 }); notes('E5 G5', { len: .05 }); }
+      for (const c of crates) if (!c.out && c.y > c.y0 + SH() * 1.5) { c.out = true; score += 5; api.score(score); feel.juice.pop(c.x, c.y - 20, 'CRATE +5', { color: '#d00000', life: 1, rise: 30 }); notes('E5 G5', { len: .05 }); }
       const torso = parts[0], sp = Math.hypot(torso.vx, torso.vy);
       still = sp < 25 ? still + dt : 0;
       if (still > 1.2 || run.time > 12 || torso.y > H + 100) {
@@ -118,7 +117,6 @@ function make(api) {
         c.fillStyle = '#000'; c.fillRect(s.x - 1, s.y - 33, 2, 18); c.fillRect(s.x - 9, s.y - 25, 18, 2);
         if (aim) { const v = fling(); c.strokeStyle = '#d00000'; c.lineWidth = 3; c.setLineDash([6, 6]); c.beginPath(); c.moveTo(s.x, s.y); c.lineTo(s.x + v.vx * .15, s.y + v.vy * .15); c.stroke(); c.setLineDash([]); }
       }
-      for (const p of pops) { c.fillStyle = `rgba(208,0,0,${Math.min(1, p.l * 2)})`; c.font = '800 16px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText(p.txt, p.x, p.y); }
       feel.end(c, W, H);
       c.textAlign = 'right'; c.fillStyle = '#283618'; c.font = '700 15px Rubik, sans-serif'; c.fillText(`flings ${throws}`, W - 16, 60);
       if (!run && !aim && throws === 3) { c.textAlign = 'center'; c.font = '700 16px Rubik, sans-serif'; c.fillText('Drag back from the dummy, let go', W / 2, 110); }

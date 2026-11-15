@@ -5,6 +5,7 @@ const { rnd } = gs.util;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Your cart races along three rails. Junction switches flash ahead: tap to flip the next one
 // so the cart changes rail (or not) and dodges the broken track. Grab gems on the way.
@@ -22,7 +23,7 @@ function make(api) {
     if (segs.length > 4) {
       // Break one or two rails, but always leave every safe rail of the last stretch a way through.
       for (let tries = 0; tries < 20; tries++) {
-        const k = Math.random() < .35 + Math.min(.35, dist / 6000) ? 2 : 1, lanes = [0, 1, 2].sort(() => Math.random() - .5);
+        const k = Math.random() < .35 + Math.min(.35, dist / 6000) ? 2 : 1, lanes = shuffle([0, 1, 2]);
         s.broken = [false, false, false]; for (let i = 0; i < k; i++) s.broken[lanes[i]] = true;
         if ([0, 1, 2].every(l => prev.broken[l] || reach(l, s.alt).some(to => !s.broken[to]))) break;
         s.broken = [false, false, false];

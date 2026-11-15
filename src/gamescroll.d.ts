@@ -477,7 +477,8 @@ export declare class Juice {
   burst(x: number, y: number, o?: BurstOpts): this;
   emit(x: number, y: number, vx: number, vy: number, o?: BurstOpts): this;
   shake(amount: number): this;
-  pop(x: number, y: number, text: string, o?: { color?: string; size?: number }): this;
+  /** A line of text that pops up and rises: font is a CSS family (the Juice's own by default), life seconds (.9), rise how far it rises (30). */
+  pop(x: number, y: number, text: string, o?: { color?: string; size?: number; font?: string; life?: number; rise?: number }): this;
   tween(obj: object, props: object, dur: number, ease?: (t: number) => number, delay?: number): Loose;
   flash(color?: string, a?: number, dur?: number): this;
   /** Hit-stop: freeze the action for a moment. */
@@ -535,8 +536,8 @@ export declare class Feel {
 
 interface Control { wants(x: number, y: number): boolean; release(): void; down(x: number, y: number, id?: number): boolean; move(x: number, y: number, pressed: boolean, id?: number): boolean; up(x: number, y: number, id?: number): boolean; draw(c: Ctx, o?: Loose): void }
 export interface ControlsPart {
-  /** Virtual thumbstick: x, y (-1..1), mag, angle, active. */
-  Stick: new (o?: { x?: number; y?: number; r?: number; floating?: boolean; zone?: number[]; dead?: number; axis?: 'both' | 'x' | 'y'; color?: string }) => Control & { x: number; y: number; readonly mag: number; readonly angle: number; readonly active: boolean; place(x: number, y: number, zone?: number[]): void };
+  /** Virtual thumbstick: x, y (-1..1), mag, angle, active; r its reach (change it as the screen changes); cx, cy where its ring is (where the finger landed, for a floating one) and kx, ky its knob, for a game that draws its own. */
+  Stick: new (o?: { x?: number; y?: number; r?: number; floating?: boolean; zone?: number[]; dead?: number; axis?: 'both' | 'x' | 'y'; color?: string }) => Control & { x: number; y: number; r: number; readonly cx: number; readonly cy: number; readonly kx: number; readonly ky: number; readonly mag: number; readonly angle: number; readonly active: boolean; place(x: number, y: number, zone?: number[]): void };
   /** Round button: isDown, pressed() once per press, released(), heldFor. */
   Button: new (o?: { x?: number; y?: number; r?: number; label?: string; zone?: number[]; color?: string }) => Control & { isDown: boolean; readonly heldFor: number; pressed(): boolean; released(): boolean; place(x: number, y: number, zone?: number[]): void };
   /** Tap, double tap, hold and swipe. */

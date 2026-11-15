@@ -4,6 +4,7 @@ const { tilt, calibrateTilt, want, haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
+const { approach } = gs.juice;
 
 // Glasses roll past on a belt. Tilt your phone to tip the jug and fill each one to its line.
 // Close to the line scores best; spill over and you lose a glass. No tilt sensor? Drag to tip.
@@ -24,7 +25,7 @@ function make(api) {
       spawn -= dt; if (spawn <= 0) { spawn = rnd(150, 210) / belt; add(); }
       const tl = tilt(); let want = 0;
       if (drag) want = clamp((drag.x - drag.x0) / 120, 0, 1); else if (tl) want = clamp(-tl.x, 0, 1) || clamp(tl.x, 0, 1);
-      ang += (want - ang) * Math.min(1, dt * 8);
+      ang = approach(ang, want, 8, dt);
       stream = ang > .25 ? (ang - .25) / .75 : 0;
       const sx = JX + 40 + ang * 20;
       for (const g of glasses) {

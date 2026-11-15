@@ -3,6 +3,7 @@ const { sfx } = gs.sound, { haptic } = gs.device, { clamp, rnd } = gs.util, { Fe
 const { View, G, part, grp, blob, flat, THREE } = gs.toon;
 const { Group } = THREE;
 const text = gs.pixel.text;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Paint Run: a drop of paint runs down a sheet of paper on a giant desk. You are always one colour.
 // A wall of your own colour bursts when you run into it (and bursts in a row are worth more); a wall
@@ -46,7 +47,7 @@ function make(api) {
     }
     v3.persp(W, H, 58, .1, 80); return v3;
   }
-  const shuffled = () => [0, 1, 2].sort(() => Math.random() - .5);
+  const shuffled = () => shuffle([0, 1, 2]);
   function spawn(z) {
     const r = Math.random(), lvl = Math.min(1, dist / 1500), L = [-1, 0, 1][Math.random() * 3 | 0];
     if (r < .28) shuffled().forEach((c, i) => objs.push({ k: 'wall', c, lane: i - 1, z }));                // one of each: find your colour

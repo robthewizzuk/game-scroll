@@ -7,6 +7,7 @@ const { C16 } = gs.palettes;
 const { text } = gs.pixel;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 160, H = 192;
 const HATS = [null, C16[2], C16[8], C16[5]], HAIR = [C16[0], C16[4], C16[11], C16[3]], BOOTS = [C16[12], C16[0], C16[9]];
@@ -23,7 +24,7 @@ function make(api) {
       sus = Array.from({ length: 4 }, () => ({ hat: Math.random() * 4 | 0, glasses: Math.random() < .5, hair: Math.random() * 4 | 0, boots: Math.random() * 3 | 0, out: false, skin: [C16[14], '#e8b088', '#a86838', '#683820'][Math.random() * 4 | 0] }));
       culprit = Math.random() * 4 | 0; const cu = sus[culprit];
       const usable = KINDS.filter(k => (k !== 'hat' || cu.hat) && (k !== 'glasses' || cu.glasses));
-      const pick = usable.sort(() => Math.random() - .5).slice(0, Math.min(3, usable.length));
+      const pick = shuffle(usable).slice(0, Math.min(3, usable.length));
       const match = s => pick.every(k => s[k] === cu[k]);
       if (pick.length >= 2 && sus.filter(match).length === 1 && sus.filter(s => pick.slice(0, -1).every(k => s[k] === cu[k])).length > 1) {
         const sh = sceneH(); const spots = [];
