@@ -609,6 +609,22 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   `batch` (96) probes are relit a frame; a sun going in takes a couple of rounds. Moving things and
   people are not in the traced copy, so they take the light but don't bounce it. `HD.info.bounce` says
   what it holds; `HD.tracedBounce = false` turns it off.
+- `v.farWorld = true | { from, every, res, slack }` (WebGPU): the far world drawn into four pictures
+  round the camera, one looking each way, and shown from them instead of drawn again every frame. What
+  is still and at least `from` metres off (150) goes in: plain meshes and plain sets of copies, opaque,
+  not skinned, not moving. Each picture keeps its depth, so near things, people and anything far that
+  moves are drawn live in front of it or behind it as the scene has them, and fog, see-through things,
+  the upscaler and frame generation treat it as the scene. One picture is drawn again every `every` (6)
+  frames, so light changes reach it within half a second or so. It stands in only while the camera
+  stays within `slack` metres (a fiftieth of `from`) of where the pictures were drawn and doesn't zoom
+  in past their sharpness (`res`, 1024 pixels a picture at most): walking on or looking through a
+  scope draws everything live, and the pictures are drawn again where the camera settles. A far thing
+  that moves is drawn live until it has kept still a while; `mesh.userData.noFar = true` keeps one live from the start,
+  and `userData.hollow = r` says a mesh has nothing within `r` metres of its middle (gs.outdoors'
+  `horizon()` ring says so itself). Shadows, reflections and occlusion culling see the far things as
+  before. For a nest over a valley, a lookout, a castle wall: a view that keeps still. `HD.info.far`
+  says what it holds and why it is off; `HD.farWorld = false` draws everything live. WebGL draws
+  everything live.
 - `v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps }`
   (WebGPU, high and ultra): fog that light really travels through, kept in a grid of small boxes fitted
   to the view (froxels, as in Frostbite and Unreal) and worked out each frame on the graphics chip. The

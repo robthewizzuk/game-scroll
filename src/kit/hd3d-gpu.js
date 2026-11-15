@@ -79,6 +79,8 @@ export function bounceGrid(w, h, d, nx, ny, nz) {
   return g;
 }
 export { bakeProbe };   // v.bakeLight() on this renderer
+export { FarWorld } from './hd3d-gpu-far.js';   // v.farWorld: the far world drawn into pictures round the camera
+import { FAR_LAYER } from './hd3d-gpu-far.js';
 export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
@@ -2757,6 +2759,7 @@ export class GpuChain {
         const n = this.giN = vxgi(dN, nN, this.scene, this.cam, this.giRes || 64); n.useTemporalFiltering = false; n.bounces = 1;
         if (this.giBox) n.volume.bounds.copy(this.giBox);
         n.volume.layers.enable(OCC_LAYER);   // (what the camera's occlusion culling hides this frame is still part of the level)
+        n.volume.layers.enable(FAR_LAYER);   // (and so is the far world while its picture stands in for it: hd3d-gpu-far.js)
         const gi = n.getGINode(), vao = n.getAONode();
         g = Fn(() => vec4(C.sample(uv()).rgb.mul(mix(float(1), vao.sample(uv()).r, .5)).add(dif.sample(uv()).rgb.mul(gi.sample(uv()).rgb).mul(U.giK)), 1))();
       } else {
