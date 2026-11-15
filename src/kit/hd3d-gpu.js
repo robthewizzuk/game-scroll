@@ -418,6 +418,7 @@ export function airNodes(AIR) {
     sun: uniform(new Vector3(0, 1, 0)), c: uniform(new Color()), cs: uniform(new Color()), haze: uniform(0),
     mist: uniform(new Vector3()), patchy: uniform(0), drift: uniform(new Vector2()), noise: null,
   };
+  for (const u of Object.values(U)) u?.setGroup(TSL.renderGroup);   // (the whole frame's: sent once a render, see frameWide)
   const sync = () => {
     U.sun.value.copy(AIR.gsSun.value); U.c.value.copy(AIR.gsAirC.value); U.cs.value.copy(AIR.gsAirSun.value); U.haze.value = AIR.gsHaze.value;
     const m = AIR.gsMist.value; U.mist.value.set(m.x, m.y, m.z); U.patchy.value = m.w; U.drift.value.copy(AIR.gsDrift.value);
@@ -451,6 +452,12 @@ export function airNodes(AIR) {
 // Named looks (looks.js lookPatch) as nodes on the material, which three copies onto the node material
 // it makes from it. 'air' is the scene's fog node instead (airNodes).
 const live = o => uniform(o.value).onRenderUpdate(() => o.value);   // follows the { value } the game changes
+// The same for a number the whole frame shares (the air's, the weather's: hd3d.js AIR): one node for everything that reads
+// it, in three's per-render group, so it goes to the chip once a render. As a number of each thing's own it was written
+// into every thing drawn, each frame it changed (a street: 310 of a frame's 394 writes were the mist's drift and the sky's
+// horizon), and a thing three finds unchanged would never have had the new one at all.
+const FRAME_WIDE = new Map();
+const frameWide = o => { let n = FRAME_WIDE.get(o); if (!n) FRAME_WIDE.set(o, n = uniform(o.value).setGroup(TSL.renderGroup).onRenderUpdate(() => o.value)); return n; };
 // Frames drawn (GpuChain.draw counts them), and a { value } as it was at the frame before this one: for
 // motion that a shader makes itself (three only knows a mesh's matrices and bones from the frame before)
 const DRAWN = { n: 0 };
@@ -790,14 +797,14 @@ let BLANK_COVER = null;
 const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { needsUpdate: true });   // (one spot at -1000 m: all open)
 export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world = true) {
   if (!world) {
-    const w = live(AIR.gsWet).mul(live(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
+    const w = frameWide(AIR.gsWet).mul(frameWide(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
     m.roughnessNode = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
     afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))));
     return;
   }
   const facing = m.userData.gsBothSides ? n => n : TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at; grass blades are lit alike on both, so snow lies on both)
-  const on = live(AIR.gsAirOn), flat = facing(normalViewGeometry), { wx, wp, gg, open } = openSky(AIR, facing);
-  const w = max(live(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3)), r0 = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
+  const on = frameWide(AIR.gsAirOn), flat = facing(normalViewGeometry), { wx, wp, gg, open } = openSky(AIR, facing);
+  const w = max(frameWide(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3)), r0 = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
   const coat = m.isMeshPhysicalNodeMaterial && m.clearcoat > 0 ? min(TSL.materialClearcoat.mul(2), 1).mul(smoothstep(.35, .7, TSL.materialClearcoatRoughness).oneMinus()) : null;
   const rw = runningWater(AIR, gg, wp, open.mul(on), r0, coat), runN = cameraViewMatrix.mul(vec4(rw.ga.mul(rw.out.x).add(rw.gd.mul(rw.out.y)), 0)).xyz;
   const base = m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, wetN = base.add(runN).normalize();
@@ -819,7 +826,7 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
 // along it (x level across, y up it), how glassy the water makes it, how much darker; ga, gd: those two ways, in the world. Worked out
 // only while it rains or is wet.
 function runningWater(AIR, gg, wp, open, r0, coat) {
-  const rain = live(AIR.gsRain), wx = live(AIR.gsWx);
+  const rain = frameWide(AIR.gsRain), wx = frameWide(AIR.gsWx);
   const ga = select(abs(gg.y).greaterThan(.98), vec3(1, 0, 0), normalize(vec3(gg.z, 0, gg.x.negate()))), gd = TSL.cross(gg, ga);
   const out = Fn(() => {
     const r = vec4(0).toVar();
@@ -847,7 +854,7 @@ function runningWater(AIR, gg, wp, open, r0, coat) {
 }
 // rings spreading on the puddles (p) where drops land: two layers of drops, one a cell, a new one each beat (AIR_WET's sums)
 function puddleRings(AIR, wp, p) {
-  const rain = live(AIR.gsRain);
+  const rain = frameWide(AIR.gsRain);
   return Fn(() => {
     const rr = vec2(0).toVar();
     If(rain.x.mul(p).greaterThan(0), () => {
@@ -862,7 +869,7 @@ function puddleRings(AIR, wp, p) {
 }
 // the weather's cover over this point (Weather's picture of the highest roof over each spot): 1 under the open sky, 0 under a roof
 function openSky(AIR, facing) {
-  const wx = live(AIR.gsWx), at = live(AIR.gsCoverAt), wp = positionWorld.add(ORG), gg = facing(normalWorldGeometry);
+  const wx = frameWide(AIR.gsWx), at = frameWide(AIR.gsCoverAt), wp = positionWorld.add(ORG), gg = facing(normalWorldGeometry);
   const gp = wp.xz.add(gg.xz.mul(wx.w)), gd = abs(gp.sub(at.xy));
   const top = texture(AIR.gsCover.value || blankCover(), gp.mul(at.z)).onRenderUpdate(() => AIR.gsCover.value || blankCover()).r;
   const open = mix(float(1), smoothstep(-.7, -.25, wp.y.sub(top)), step(max(gd.x, gd.y), at.w).mul(step(1e-6, at.w)));
@@ -881,9 +888,9 @@ export function grime(m, kind, o, AIR, air) {
   const n = mx_noise_float(P.mul(11)).toVar('gsGrimeN');
   let ww = float(0), ws = float(0);
   if (air) {
-    const on = live(AIR.gsAirOn);
-    if (air.world) { const { wx, open } = openSky(AIR, TSL.negateOnBackSide || TSL.directionToFaceDirection); ww = max(live(AIR.gsWet), wx.x.mul(open)).mul(on); ws = wx.y.mul(open).mul(on); }
-    else ww = live(AIR.gsWet).mul(on);
+    const on = frameWide(AIR.gsAirOn);
+    if (air.world) { const { wx, open } = openSky(AIR, TSL.negateOnBackSide || TSL.directionToFaceDirection); ww = max(frameWide(AIR.gsWet), wx.x.mul(open)).mul(on); ws = wx.y.mul(open).mul(on); }
+    else ww = frameWide(AIR.gsWet).mul(on);
   }
   const skin = kind === 'skin', leather = kind === 'leather', w = max(g.x, ww);
   const soak = smoothstep(.05, .3, w.mul(1.3).sub(float(1).sub(P.y.div(1.8)).mul(.35)).add(n.mul(.1))).toVar('gsSoak');
@@ -900,7 +907,7 @@ export function grime(m, kind, o, AIR, air) {
 // The sun's light on WebGPU: cloud shadows drifting over everything (hd3d.js gsShadeAt) and the near
 // shadow cascade's share (CASC_NEAR / CASC_W: the near light inside its box, fading at the edges, the far
 // one elsewhere), as the light's colour node. role: a uniform per light, 0 plain, 1 near, 2 far.
-const CASC = { m: uniform(new Matrix4()), fade: uniform(.06) };
+const CASC = { m: uniform(new Matrix4()).setGroup(TSL.renderGroup), fade: uniform(.06).setGroup(TSL.renderGroup) };   // (the whole frame's: see frameWide)
 export function setCascade(near, fade) { if (near) CASC.m.value = near.shadow.matrix; CASC.fade.value = fade; }
 // Many lights (three.js's Forward+ clustered lighting): the view is cut into tiles and depth slices and
 // each pixel only adds up the point and spot lights that reach it, so a scene can have dozens of lamps
@@ -1586,11 +1593,11 @@ export function froxels() {
 }
 export function gpuSunLight(l, AIR, noise) {
   const c = new Color(), col = uniform(c).onRenderUpdate(() => c.copy(l.color).multiplyScalar(l.intensity)), role = uniform(0);
-  const wp = positionWorld, S = live(AIR.gsSun), CL = live(AIR.gsCloud), DR = live(AIR.gsDrift);
+  const wp = positionWorld, S = frameWide(AIR.gsSun), CL = frameWide(AIR.gsCloud), DR = frameWide(AIR.gsDrift);
   const cuv = wp.xz.add(ORG.xz).add(S.xz.div(max(S.y, .15)).mul(CL.z.sub(wp.y)));
   const n = texture(noise, cuv.div(max(CL.w, 1)).add(DR)).r;
   // (the clouds marched through on WebGPU cast their own shadow, hd3d-gpu-sky.js; else the painted clouds' pattern on the air)
-  const flat = select(live(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
+  const flat = select(frameWide(AIR.gsAirOn).greaterThan(.5).and(CL.y.greaterThan(0)), float(1).sub(CL.y.mul(smoothstep(float(1).sub(CL.x), float(1.12).sub(CL.x.mul(.6)), n))), float(1));
   const shade = select(SKY.shadeOn.greaterThan(.5), cloudShadeAt(wp.add(ORG), S), flat);
   const sc = CASC.m.mul(vec4(wp, 1)), p = sc.xyz.div(sc.w), e = min(p.xy, p.xy.oneMinus());
   const nearW = select(p.z.greaterThan(0).and(p.z.lessThan(1)), smoothstep(0, CASC.fade, min(e.x, e.y)), float(0));
