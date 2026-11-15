@@ -5,10 +5,13 @@
 // and the number of CPU cores and memory. It picks the starting quality of 3D games and their frame
 // rate:
 //
-//   3D games (Next Gen, AR):  top 120 fps (where the screen does 120 Hz), mid 60, low 30
-//   other games:              the screen's own rate (up to 120), 60 on low phones
+//   3D games (Next Gen, AR, Board):  top and mid 60 fps, low 30 (a computer: see below)
+//   other games:                     the screen's own rate (up to 120), 60 on low phones
 //
-// The 3D kit can step a game down from there (120 -> 60 -> 30) when the phone can't keep up even
+// 60 drawn frames a second is what a 3D game on a phone aims for, with no frames made between (Rob, 2026-11-15:
+// "aim for 60fps without frame gen but drop to 30 fps using frame gen to hit 60 where needed. Steady frames are
+// always the goal"). Where it can't hold 60 it draws 30 and frame generation makes the other 30, on WebGPU and where
+// those fit (Auto's 30 → 60, below). The 3D kit can step a game down from there (60 -> 30) when the phone can't keep up even
 // after lowering its resolution, and it remembers per game where it settled, so the next round
 // starts there (for a day: then the game gets a fresh start from the phone's class). Players can pin a
 // rate in Settings (Auto / 120 / 60 / 30 battery saver).
@@ -171,7 +174,8 @@ export function autoFps(def) {
   const k = phoneClass();
   // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes)
   if (speed.desktop) return !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
-  if (is3D(def)) return k === 'top' ? 120 : k === 'mid' ? 60 : 30;
+  // (a phone: 60, never 120 by itself. On 120 the Fold 8 got hot within minutes and then stuttered; pick 120 in Settings to have it)
+  if (is3D(def)) return k === 'low' ? 30 : 60;
   return k === 'low' ? 60 : 120;
 }
 /** A computer's frame rate one step down from f: the next whole number of refreshes a frame (0: none left above 30). */
@@ -218,7 +222,23 @@ export function setFrameGenHow(v) { fgHow = ['game', 'blend', 'ahead'].includes(
 // screens frame generation fills: 90 Hz and up (60 fps on 90 Hz is one or two refreshes a frame); 30 → 60 fills a
 // 60 Hz screen too (one made frame for each real one: a console's 30 shown at 60)
 const FG_HZ = 90;
-const fgMinHz = () => fgPick === 'thirty' ? 60 : FG_HZ;
+const fgMinHz = def => fgPick === 'thirty' || autoPhone(def) ? 60 : FG_HZ;
+/*
+ * Auto on a phone (Rob, 2026-11-15): a 3D game draws 60 frames a second with no frames made between, and where it can't
+ * hold 60 (the 3D kit stepped it down to 30, a low phone starts there, or the phone is saving power) it draws 30 and
+ * frame generation makes one frame between each pair: 30 → 60's way (each real frame given two refreshes of the chip,
+ * pace 'early'; the spare refresh at 120 Hz where its code runs late). Auto used to fill only a screen of 90 Hz and up,
+ * and only where a real frame and a made one each fit one refresh at the screen's top rate (7.5 ms at 120 Hz), which no
+ * Next Gen game's real frame does on the Fold 8: so it never came on there, and a game that couldn't hold 60 went to
+ * 30 frames a second with nothing made between, or gave up its picture. Auto fills no higher than 60 on a phone.
+ */
+const autoPhone = def => fgPick === 'auto' && !speed.desktop && is3D(def);
+/** 30 → 60 for this game now: the player's pick, or Auto on a phone where the game draws under 45 (rate, or its own) or the phone saves power. */
+export function thirtyFor(def, rate) {
+  if (fgPick === 'thirty') return true;
+  return autoPhone(def) && ((rate ?? realFps(def)) < 45 || fgSaving());
+}
+const gameOf = id => speed.game?.id === id ? speed.game : null;
 /**
  * 30 → 60's real frame rate on this screen: about 30, a whole number of refreshes apart (60 and 120 Hz: 30;
  * 144 Hz: 28.8, five refreshes; 90 Hz: 30, three).
@@ -234,16 +254,16 @@ export function slackRate(rates = screen.rates) {
   const ok = (rates || []).filter(r => r >= 110 && Math.abs(r / 60 - Math.round(r / 60)) < .04).sort((a, b) => a - b);
   return ok[0] || 0;
 }
-const slackOn = id => fgPick === 'thirty' && !!settled[id]?.fgSlack && !!slackRate();
+const slackOn = def => thirtyFor(def) && !!settled[def?.id]?.fgSlack && !!slackRate();
 /** 30 → 60 makes one frame between each pair of real ones, whatever the screen's rate (hd3d-gpu.js GpuChain: fgo.one). */
-export const frameGenOne = () => fgPick === 'thirty';
+export const frameGenOne = (def = speed.game) => thirtyFor(def);
 /**
  * The 3D kit found 30 → 60's refresh for the frame made between didn't come in time for this game (its real frame's
  * code ran past a refresh): from now on it asks the screen for slackRate() and shows that frame on the middle
  * refresh or the one after. False if it already does, or the screen has no such rate.
  */
 export function frameGenSlack(id, why = '') {
-  if (!id || fgPick !== 'thirty' || settled[id]?.fgSlack || !slackRate()) return false;
+  if (!id || !thirtyFor(gameOf(id)) || settled[id]?.fgSlack || !slackRate()) return false;
   settle(id, { fgSlack: true }); note(id, `${slackRate()} Hz${why ? ` after ${why}` : ''}`); return true;
 }
 // the most refreshes per real frame a game that switched itself to ahead still guesses (60 fps on a 144 Hz
@@ -258,6 +278,7 @@ export const fgSaving = () => fgPick === 'auto' && power.saving;
 const late = [];
 let shieldUntil = 0;
 export function frameLate(now) {
+  if (autoPhone(speed.game)) return;   // (a phone's Auto fills only to 60, by stepping down: not for a moment, and not past the screen's 60)
   late.push(now); while (late.length && now - late[0] > 1000) late.shift();
   // (not where a made frame wouldn't fit a refresh: frames made then would come late too)
   if (late.length >= 2 && frameGenFits(speed.game, hz / 2)) shieldUntil = now + 2000;
@@ -267,7 +288,8 @@ const shieldOn = () => typeof performance !== 'undefined' && performance.now() <
 function fgRate(def) {
   const f = realFps(def);
   // 30 → 60: about 30 a second, a whole number of refreshes apart
-  if (fgPick === 'thirty') return thirtyRate(hz);
+  if (thirtyFor(def)) return thirtyRate(hz);
+  if (autoPhone(def)) return 0;   // (Auto on a phone: 60 drawn, nothing made)
   // Auto: a game that can't reach the screen's rate (it settled lower); Always, saving power or riding
   // out a busy spell: half the screen's rate (or the game's own, if lower)
   const real = fgPick === 'always' || fgSaving() || shieldOn() ? Math.min(f, hz / 2) : f < hz * .9 ? f : 0;
@@ -277,7 +299,7 @@ function fgRate(def) {
 /** Frame generation could come on for this game here (the 3D kit then has the scene write motion, so it can start without a rebuild). */
 export function frameGenReady(def) {
   if (!is3D(def) || def.frameGen === false) return false;
-  return !!speed.forceFrameGen || (steerFor(def.id).frameGen !== false && fgPick !== 'off' && hz >= fgMinHz() && pick === 'auto' && !fgFailed.has(def.id));
+  return !!speed.forceFrameGen || (steerFor(def.id).frameGen !== false && fgPick !== 'off' && hz >= fgMinHz(def) && pick === 'auto' && !fgFailed.has(def.id));
 }
 /**
  * Whether the 3D kit makes frames between this game's real ones now: 'blend' | 'ahead' | false.
@@ -288,7 +310,7 @@ export function frameGenFor(def) {
   if (!is3D(def) || def.frameGen === false) return false;
   const how = fgHow !== 'game' ? fgHow : def.frameGen === 'ahead' ? 'ahead' : 'blend';
   if (speed.forceFrameGen) return speed.forceFrameGen === true ? how : speed.forceFrameGen;
-  if (fgPick === 'off' || steerFor(def.id).frameGen === false || !speed.gpu || hz < fgMinHz() || fgFailed.has(def.id) || pick !== 'auto') return false;   // a pinned rate is what the screen shows
+  if (fgPick === 'off' || steerFor(def.id).frameGen === false || !speed.gpu || hz < fgMinHz(def) || fgFailed.has(def.id) || pick !== 'auto') return false;   // a pinned rate is what the screen shows
   const real = fgRate(def);
   if (!real) return false;
   // Auto (not Always or 30 → 60): only where a real frame and a made frame each fit a refresh by the chip's times
@@ -307,7 +329,7 @@ export function frameGenFor(def) {
 export function frameGenPace(id, why = '') {
   if (!id || settled[id]?.fgPace === 'first') return false;   // ('early' falls back to 'first' the same way)
   // (not 30 → 60 where the screen has a spare refresh: 'first' there would give a real frame one 120 Hz refresh)
-  if (fgPick === 'thirty' && slackRate()) return false;
+  if (thirtyFor(gameOf(id)) && slackRate()) return false;
   settle(id, { fgPace: 'first' }); note(id, `pace first${why ? ` after ${why}` : ''}`); return true;
 }
 // what frame generation tried for each game this session, for frameGenStatus (the frame lab's GSFG line)
@@ -331,7 +353,7 @@ export function frameGenPaceOf(def, steps) {
   // that refresh and the next on the chip (pace 'early'); unless it came late here before (then 'first')
   // (a 'first' kept from before the spare refresh was tried, or from Auto, waits until that has been tried too)
   // (30 → 60 goes from 60 Hz to the spare refresh at 120 Hz, then off; 'first' only on a screen with no spare refresh)
-  if (fgPick === 'thirty') return (paceWas = was?.fgPace === 'first' && !slackRate() ? 'first' : 'early');
+  if (thirtyFor(def)) return (paceWas = was?.fgPace === 'first' && !slackRate() ? 'first' : 'early');
   if (was?.fgPace === 'first' || was?.fgHow === 'ahead' || c.id !== (def?.id ?? null) || !(c.nr >= READS) || !(made > 0)) return (paceWas = 'first');
   return (paceWas = c.real + made < rf * (paceWas === 'after' ? .8 : .65) ? 'after' : 'first');
 }
@@ -374,7 +396,7 @@ export function frameGenFits(def, rate = 0, guess = false) {
   const real = c.nr >= READS ? c.real : null, made = c.nm >= READS ? c.made : guess && c.made == null ? madeGuess() : null;
   const n = rate > 0 ? hz / rate : 2, whole = Math.abs(n - Math.round(n)) < .05;
   // (30 → 60's 'early' pace: the real frame and the frame made after it share the real frame's time, two 60 Hz refreshes)
-  if (whole && rate > 0 && fgPick === 'thirty' && thirtyPace(def)) { const win = 900 / rate; return !((real || 0) + (made || 0) > win) && !(made > win / 2); }
+  if (whole && rate > 0 && thirtyFor(def, rate) && thirtyPace(def)) { const win = 900 / rate; return !((real || 0) + (made || 0) > win) && !(made > win / 2); }
   return whole ? !(real > lim) && !(made > lim) : !((real || 0) + (made || 0) > lim);
 }
 /**
@@ -383,14 +405,14 @@ export function frameGenFits(def, rate = 0, guess = false) {
  * frame made after it share two refreshes, so about one and six tenths of a refresh less the made frame's time.
  */
 export function frameGenRoom(def) {
-  const rf = 1000 / hz, early = speed.pace ? speed.pace === 'early' : fgPick === 'thirty' && thirtyPace(def) && frameGenFor(def) === 'blend';
+  const rf = 1000 / hz, early = speed.pace ? speed.pace === 'early' : thirtyFor(def) && thirtyPace(def) && frameGenFor(def) === 'blend';
   return early ? 800 / thirtyRate(hz) - (madeGuess() || rf * .2) : .8 * rf;
 }
 // 30 → 60 on 'early' for this game (not fallen back to 'first')
 const thirtyPace = def => !(settled[def?.id]?.fgPace === 'first' && !slackRate());
 /** Auto would make frames between for this game at rate real frames a second, and they'd fit (frameGenFits). */
 export function frameGenCould(def, rate) {
-  if (!is3D(def) || def.frameGen === false || fgPick === 'off' || !speed.gpu || hz < fgMinHz() || fgFailed.has(def.id) || pick !== 'auto') return false;
+  if (!is3D(def) || def.frameGen === false || fgPick === 'off' || steerFor(def.id).frameGen === false || !speed.gpu || hz < fgMinHz(def) || fgFailed.has(def.id) || pick !== 'auto') return false;
   return rate >= 25 && hz / rate >= 1.4 && frameGenFits(def, rate, true);
 }
 /** One line for Settings: whether the game on screen makes frames in between now, and if not, why. */
@@ -400,22 +422,32 @@ export function frameGenStatus(def) {
   if (def.frameGen === false) return `${name} turns it off.`;
   if (fgPick === 'off') return 'Off.';
   if (pick !== 'auto') return `Off while Frame rate is set to ${pick}: set it to Auto.`;
-  if (hz < fgMinHz()) return `Off: this screen runs at ${hz} Hz, so there are no refreshes in between to fill.${fgPick !== 'thirty' ? ' 30 → 60 fills a 60 Hz screen.' : ''}`;
+  if (hz < fgMinHz(def)) return `Off: this screen runs at ${hz} Hz, so there are no refreshes in between to fill.${fgPick !== 'thirty' ? ' 30 → 60 fills a 60 Hz screen.' : ''}`;
   if (!speed.gpu) return `Off: ${name} draws with WebGL here (an effect it uses isn’t ready for WebGPU).`;
   if (fgFailed.has(def.id)) return `Off for ${name} until the app restarts: the phone was too busy for the frames in between${fgWhy.get(def.id) ? ` (${fgWhy.get(def.id)})` : ''}.${fgTrail.get(def.id)?.length ? ` Before that: ${fgTrail.get(def.id).join('; ')}.` : ''}`;
   const fr = fgRate(def);
-  if (fr && fgPick === 'auto' && !frameGenFits(def, fr)) return `Off for ${name}: a frame takes the graphics chip longer than a refresh holds (${(1000 / hz).toFixed(1)} ms), so frames made between would come late.`;
+  if (fr && fgPick === 'auto' && !frameGenFits(def, fr)) return thirtyFor(def) ? `Off for ${name}: a real frame and the frame made after it take the graphics chip longer than two refreshes (${(2000 / hz).toFixed(1)} ms), so frames made between would come late.` : `Off for ${name}: a frame takes the graphics chip longer than a refresh holds (${(1000 / hz).toFixed(1)} ms), so frames made between would come late.`;
   const how = frameGenFor(def);
   if (how) {
-    const real = Math.round(fpsFor(def)), why = fgPick === 'thirty' ? (how === 'blend' && thirtyPace(def) ? ', each real frame given two refreshes of the graphics chip' : '') + (slackOn(def.id) ? `, the screen at ${hz} Hz so the frame between has a spare refresh` : '') : fgPick === 'always' ? '' : shieldOn() ? ', riding out a busy moment' : fgSaving() ? `, ${power.why || 'saving power'}` : '';
-    return `${name}: draws ${real} frames a second and makes ${fgPick === 'thirty' ? real : Math.round(hz - real)} more (${how}${why}).`;
+    const t30 = thirtyFor(def), real = Math.round(fpsFor(def)), why = t30 ? (how === 'blend' && thirtyPace(def) ? ', each real frame given two refreshes of the graphics chip' : '') + (slackOn(def) ? `, the screen at ${hz} Hz so the frame between has a spare refresh` : '') + (fgPick === 'auto' ? (fgSaving() ? `, ${power.why || 'saving power'}` : ', it couldn’t hold 60 here') : '') : fgPick === 'always' ? '' : shieldOn() ? ', riding out a busy moment' : fgSaving() ? `, ${power.why || 'saving power'}` : '';
+    return `${name}: draws ${real} frames a second and makes ${t30 ? real : Math.round(hz - real)} more (${how}${why}).`;
   }
   const f = realFps(def);
+  if (autoPhone(def) && f >= 45) return `${name} draws ${Math.round(f)} frames a second itself here, so Auto makes none. If it can’t hold that, it draws 30 and makes the other 30.`;
   return f >= hz * .9 ? `${name} already draws ${Math.round(f)} frames a second, the screen’s rate, so Auto leaves it (until the phone is warm or low on battery). Pick Always to try it.`
     : `${name} runs at ${Math.round(f)} frames a second here, too few to fill in between.`;
 }
-/** The 3D kit found the refreshes between real frames didn't come (the phone is too busy): no frame generation for this game until the app restarts. */
-export function frameGenFailed(id, why = '') { if (id) { fgFailed.add(id); fgWhy.set(id, why); } }
+/**
+ * The 3D kit found the refreshes between real frames didn't come (the phone is too busy): no frame generation for this game until the app restarts.
+ * (Auto on a phone stepped the game to 30 for the frames made between: without them it goes back to 60, and the 3D kit's other steps
+ * take over: 30 frames a second with nothing made between is what a game gets only once nothing else is left.)
+ */
+export function frameGenFailed(id, why = '') {
+  if (!id) return;
+  fgFailed.add(id); fgWhy.set(id, why);
+  const def = gameOf(id), s = settled[id];
+  if (def && fgPick === 'auto' && autoPhone(def) && s?.fps && s.fps < autoFps(def)) { settled[id] = { ...noFps(s), at: Date.now() }; store.set(SETTLE_KEY, settled); }
+}
 const fgWhy = new Map();
 
 /* ---------- asking the screen for a rate ---------- */
@@ -431,10 +463,11 @@ export function screenWant(def) {
   if (def.fps) f = Math.min(f, def.fps);
   f = Math.max(30, Math.min(f, top));
   // frame generation could fill in (as frameGenFor, at the screen's fastest rate) and the game runs below it
+  const t30 = thirtyFor(def, f);
   const fg = is3D(def) && def.frameGen !== false && (!!speed.forceFrameGen
-    || (fgPick !== 'off' && pick === 'auto' && top >= fgMinHz() && speed.gpu && !fgFailed.has(def.id) && (fgPick !== 'auto' || frameGenFits(def, f))));
+    || (fgPick !== 'off' && pick === 'auto' && top >= fgMinHz(def) && speed.gpu && !fgFailed.has(def.id) && (!autoPhone(def) || t30) && (fgPick !== 'auto' || frameGenFits(def, t30 ? thirtyRate(60) : f))));
   // 30 → 60: 60 Hz (each real frame two refreshes, one of them made), where the screen offers it
-  if (fg && fgPick === 'thirty' && !speed.forceFrameGen) return (slackOn(def.id) && slackRate()) || pickRate(screen.rates, 60, false);
+  if (fg && t30 && !speed.forceFrameGen) return (slackOn(def) && slackRate()) || pickRate(screen.rates, 60, false);
   return pickRate(screen.rates, f, fg && f < top * .9);
 }
 /** The feed, every refresh: the game being played (null between rounds, paused, or in the feed). */
