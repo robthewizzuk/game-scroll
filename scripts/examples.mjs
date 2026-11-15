@@ -59,7 +59,7 @@ export function uses(id, text) {
   return out;
 }
 
-function index() {
+export function index() {
   return readdirSync(GAMES).filter(f => f.endsWith('.js')).sort().map(f => {
     const id = f.slice(0, -3), text = readFileSync(join(GAMES, f), 'utf8'), src = text.split('\n');
     const pick = re => (text.match(re) || [])[1];
