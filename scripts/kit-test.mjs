@@ -514,6 +514,57 @@ console.log('physics ok');
   assert.ok(tw.done && ticks === 7, 'typewriter ' + ticks);
   console.log('story ok');
 }
+// a conversation played by people (Talk)
+{
+  const { Story, Talk } = await import('../src/kit/story.js');
+  const { Reputation } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const TALK = `
+  EXTERNAL did(deed)
+  EXTERNAL give(id, n)
+  VAR town_rank = "neutral"
+  VAR town = 0
+  #shot:two
+  Back again, are you? #who:mara #mood:frown
+  Just passing. #who:hero
+  * {town_rank == "loved"} [Ask for the key] Anything for you. #who:mara #mood:smile .5 #do:nod
+    ~ did("helped")
+    ~ give("key", 1)
+    -> END
+  * [Leave] Off you go then. #who:mara #wait:0
+    -> END`;
+  const face = () => ({ moods: {}, looked: null, said: [], set(n, a) { this.moods[n] = a; return this; }, look(t) { this.looked = t; return this; }, say(t) { this.said.push(t); return Promise.resolve(true); }, hush() {}, talking: false });
+  const at = (x, z) => ({ matrixWorld: { elements: [1,0,0,0, 0,1,0,0, 0,0,1,0, x, 1.6, z, 1] } });
+  const hero = { face: face(), bones: { head: at(0, 0) } }, mara = { face: face(), bones: { head: at(0, 2) } };
+  const cam = { position: { set(x, y, z) { Object.assign(this, { x, y, z }); } }, lookAt(x, y, z) { this.look = { x, y, z }; } };
+  let cuts = 0; const view = { cut: () => cuts++ };
+  for (const loved of [true, false]) {
+    const rep = new Reputation({ factions: { town: {} }, deeds: { helped: { town: 5, good: 5 } } }); if (loved) rep.move('town', 70);
+    const inv = new Inventory({ key: { stack: 1 } }, { slots: 2 });
+    hero.face = face(); mara.face = face();
+    const t = new Talk(new Story(TALK), { cast: { hero: { person: hero }, mara: { person: mara, name: 'Mara', voice: 'woman' } }, hero: 'hero', camera: cam, view, rep, inv });
+    const done = []; t.on('do', (m, w) => done.push(m + ':' + w)); t.on('end', () => done.push('end'));
+    t.start();
+    assert.equal(t.who, 'Mara'); assert.equal(t.text, 'Back again, are you?'); assert.equal(mara.face.moods.frown, 1); assert.equal(mara.face.said[0], 'Back again, are you?');
+    assert.ok(mara.face.looked === hero.bones.head && hero.face.looked === mara.bones.head, 'they look at each other');
+    assert.equal(t.shot.kind, 'two'); assert.ok(Math.abs(cam.position.x) > 1.5, 'two shot from the side ' + cam.position.x);
+    assert.equal(t.shown, ''); t.tap(); assert.equal(t.shown, t.text, 'first tap shows the line'); t.tap();
+    assert.equal(t.who, 'hero'); assert.equal(t.shot.kind, 'over'); assert.ok(cam.position.z > 2, 'over Mara\'s shoulder onto the hero: behind her ' + cam.position.z);
+    const side1 = Math.sign(cam.position.x);
+    t.update(10); assert.equal(t.choices.length, loved ? 2 : 1, 'choices by the town\'s feeling');
+    if (loved) {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Anything for you.'); assert.equal(mara.face.moods.smile, .5); assert.equal(mara.face.moods.frown, 0, 'the old mood goes');
+      assert.ok(cam.position.z < 0, 'over the hero\'s shoulder onto Mara ' + cam.position.z); assert.equal(Math.sign(cam.position.x), side1, 'same side of the line');
+      assert.deepEqual(done, ['nod:mara']);
+      t.update(10); t.tap(); assert.ok(t.ended && done.includes('end'));
+      assert.ok(rep.with('town') > 70 && inv.has('key'), 'the deed and the key reached the game');
+    } else {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Off you go then.'); t.update(1); t.update(.1); assert.ok(t.ended, 'a #wait line moves on by itself');
+    }
+  }
+  assert.ok(cuts >= 3, 'cuts ' + cuts);
+  console.log('story Talk: voices and moods on faces, eyes on each other, shots on one side of the line, cuts, choices by reputation, deeds and items through EXTERNAL functions, #wait ok');
+}
 
 // save versions: old saves go through migrate(), a newer save is kept safe
 {
@@ -2030,6 +2081,17 @@ console.log('physics ok');
   cs.on('say', () => lines++).on('end', () => ended++); for (let i = 0; i < 30; i++) cs.update(1 / 60); assert.ok(cs.shot && cs.shot.x > 0 && cs.shot.x < 10, 'camera moves along the path');
   cs.skip(); assert.ok(ended === 1 && !cs.playing, 'skip ends it');
   console.log('cutscene: camera path, lines, skip ok');
+  // actors: walk, gesture, mood, a line in their voice, turn; skip puts them where they were going
+  const played = [], p = { position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 }, rig: { play: n => played.push(n), blend() {} }, face: { look(t) { this.l = t; }, set(n, a) { this[n] = a; }, say(t) { this.s = t; return Promise.resolve(true); } } };
+  const c2 = new Cutscene([{ at: 0, actor: p, walk: { x: 2, z: 0 } }, { at: .5, actor: p, play: 'bow', mood: 'smile' }, { at: 1, actor: p, say: 'Hello.', who: 'M', look: { x: 0, y: 1, z: 0 } }, { at: 4, actor: p, turn: 0, time: 2 }]);
+  for (let i = 0; i < 30; i++) c2.update(1 / 60); assert.ok(c2.motion(p).speed > 0 && p.position.x > 0, 'walking');
+  for (let i = 0; i < 150; i++) c2.update(1 / 60);
+  assert.ok(Math.abs(p.position.x - 2) < .04 && Math.abs(p.rotation.y - Math.PI / 2) < .05, 'walked there, facing the way it went');
+  assert.ok(played.includes('bow') && played.includes('idle') && p.face.s === 'Hello.' && p.face.smile === 1 && p.face.l, 'gesture, stop, line in its voice, mood, eyes');
+  c2.skip(); assert.equal(p.rotation.y, 0, 'skip turns it as it was told');
+  const { GESTURES, Rig } = await import('../src/kit/poses.js');
+  for (const [n, g] of Object.entries(GESTURES)) { assert.ok(g.once && g.time > 0, n); const a = g.cycle(0).j, b = g.cycle(1).j; for (const k of Object.keys(a)) assert.ok(a[k].every((x, i) => Math.abs(x - b[k][i]) < 1e-9), n + ' ends where it began: ' + k); }
+  console.log('cutscene actors and gestures ok');
 }
 {
   const { Prompts } = await import('../src/kit/prompts.js');
@@ -7709,6 +7771,104 @@ console.log('physics ok');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
 }
 
+// gs.rpg: a hero who grows (levels, attributes, skill tree, gear) and a world that remembers (reputation)
+{
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Growth, Reputation, xpTo } = await import('../src/kit/rpg.js');
+  const hero = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } });
+  const TREE = { cleave: { ranks: 3, perk: { mul: { damage: 1.1 } } }, whirl: { needs: ['cleave:2'], level: 4 }, ward: { perk: { add: { armour: 5 } }, excludes: ['frenzy'] }, frenzy: { perk: { mul: { speed: 1.2 } }, excludes: ['ward'] } };
+  const g = new Growth(hero, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } });
+  assert.equal(hero.get('damage'), 9); assert.equal(hero.max('hp'), 100); assert.equal(hero.get('hp'), 60);
+  let lv = []; g.on('level', l => lv.push(l));
+  assert.equal(xpTo(2), 100); assert.equal(g.gain(99), 0); assert.ok(Math.abs(g.part - .99) < 1e-9);
+  assert.equal(g.gain(300), 2); assert.deepEqual(lv, [2, 3]); assert.equal(hero.get('hp'), 100, 'filled on level');
+  assert.equal(g.points, 6); assert.equal(g.skillPoints, 2);
+  assert.ok(g.raise('might', 2)); assert.equal(hero.get('damage'), 11); assert.equal(hero.max('hp'), 116);
+  assert.equal(g.can('whirl').why, 'level'); assert.ok(g.learn('cleave')); assert.ok(Math.abs(hero.get('damage') - 12.1) < 1e-9);
+  assert.ok(g.learn('ward')); assert.equal(g.can('frenzy').why, 'ranks' === 0 ? '' : 'excluded'); assert.equal(hero.get('armour'), 5);
+  g.gain(1000); assert.equal(g.level, 6); assert.equal(g.can('whirl').why, 'needs'); assert.deepEqual(g.can('whirl').needs, ['cleave:2']);
+  assert.ok(g.learn('cleave')); assert.ok(g.learn('whirl')); assert.ok(g.has('whirl'));
+  assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9);
+  const inv = new Inventory({ sword: { stack: 1, kind: 'hand', stats: { add: { damage: 3 } } }, ring: { stack: 1, kind: 'ring', stats: { mul: { speed: 1.5 } } } }, { slots: 4, extra: { hand: 'hand', ring: 'ring' } });
+  g.wear(inv); inv.add('sword'); assert.ok(inv.move(0, 'hand')); assert.ok(Math.abs(hero.get('damage') - 14 * 1.21) < 1e-9, 'sword counts ' + hero.get('damage'));
+  assert.ok(inv.move('hand', 0)); assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9, 'sword off');
+  const p = g.pack(); const h2 = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } }); const g2 = new Growth(h2, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } }).unpack(JSON.parse(JSON.stringify(p)));
+  assert.equal(h2.get('damage'), hero.get('damage')); assert.equal(g2.level, 6);
+  g.respec(); assert.equal(g.rank('cleave'), 0); assert.equal(g.attr('might'), 5); assert.equal(g.points, 15); assert.equal(g.skillPoints, 5); assert.equal(hero.get('damage'), 9);
+  // standalone
+  const s = new Growth(null, { attributes: { might: 3 }, derive: { damage: a => a.might } }); assert.equal(s.value('damage', 1), 4);
+  // reputation
+  const r = new Reputation({ factions: { town: {}, guard: { law: true, allies: ['town'] }, bandits: { start: -20, rivals: ['town'], fights: true } },
+    deeds: { rescue: { good: 15, fame: 10, town: 20 }, steal: { good: -5, town: -15, crime: 50 } }, titles: [{ name: 'the Bright', good: [40, 100] }] });
+  assert.equal(r.mood('town'), 'ignore');
+  let out = r.did('rescue'); assert.equal(out.town, 20); assert.equal(out.bandits, -10); assert.equal(r.with('guard'), 10, 'ally moves with town');
+  assert.equal(r.rank('town'), 'liked'); r.did('rescue'); r.did('rescue'); assert.equal(r.with('town'), 60); assert.equal(r.rank('town'), 'loved'); assert.equal(r.mood('town'), 'bow');
+  assert.equal(r.title(), 'the Bright'); assert.equal(r.price(100, 'town'), 85); assert.equal(r.price(100, 'town', { sell: true }), 57);
+  out = r.did('steal', { seen: false }); assert.deepEqual(out, { good: -5 }); assert.equal(r.bounty('guard'), 0);
+  out = r.did('steal', { seen: ['guard'] }); assert.equal(r.bounty('guard'), 50); assert.equal(r.mood('guard'), 'arrest'); assert.equal(r.with('town'), 60, 'town did not see');
+  r.pay('guard'); assert.equal(r.bounty('guard'), 0); assert.equal(r.done('steal'), 2);
+  assert.equal(r.mood('bandits'), 'avoid'); r.move('bandits', -20); assert.equal(r.mood('bandits'), 'attack');
+  const r2 = new Reputation({ factions: { town: {}, guard: { law: true }, bandits: { start: -20, rivals: ['town'], fights: true } }, deeds: {} }).unpack(JSON.parse(JSON.stringify(r.pack())));
+  assert.equal(r2.with('town'), r.with('town')); assert.equal(r2.get('fame'), 30); assert.equal(r.vars().town_rank, 'loved', 'vars for a conversation');
+  assert.throws(() => new Reputation({ deeds: { x: { nope: 1 } } }));
+  console.log('gs.rpg: levels on a curve, attributes into stats, skill tree needs/excludes/ranks, gear from equip slots, respec, saving; reputation deeds seen and unseen, rivals and allies, bounties, moods, prices, titles ok');
+}
+// gs.rpg Quests and Flags: quests that branch, count, fail and reward; the journal; world flags; a conversation that moves a quest on
+{
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Story, Talk, loadStory } = await import('../src/kit/story.js');
+  const { together } = await import('../src/kit/links.js');
+  await loadStory();
+  const TABLE = { key: { name: 'The Gate Key', needs: ['flag:met_mara'], stages: {
+      ask: { text: 'Ask Mara about the gate key', at: { x: 0, z: 10 }, reach: 2, next: 'mill' },
+      mill: { text: 'Find the miller', at: [20, 0, 0], when: t => t > 1, next: 'flour' },
+      flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },
+      done: { end: 'helped', text: 'Mara gave you the key.' },
+      lost: { end: 'failed', text: 'Mara will never trust you now.' } },
+      rewards: { helped: { xp: 150, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true }, gold: 20 } } },
+    wolves: { name: 'Wolves', stages: { hunt: { text: 'Drive off five wolves', count: 5, next: 'paid' }, paid: { end: 'done', text: 'The farmer paid you.' } } } };
+  let made;
+  together(() => { made = { grow: new Growth(null, { attributes: { might: 1 } }), rep: new Reputation({ factions: { town: {} }, deeds: { helped: { town: 10 } } }), inv: new Inventory({ key: { stack: 1 }, flour: { stack: 9 } }, { slots: 4 }), flags: new Flags(), quests: new Quests(TABLE) }; });
+  const { grow, rep, inv, flags, quests } = made, ev = [];
+  for (const e of ['start', 'stage', 'end', 'fail', 'reward']) quests.on(e, (...a) => ev.push(e + ':' + a[0] + (e === 'stage' ? ':' + a[1] : '')));
+  assert.equal(quests.can('key'), false, 'needs met_mara'); assert.equal(quests.start('key'), false);
+  flags.set('met_mara'); assert.ok(quests.start('key')); assert.equal(quests.stage('key'), 'ask'); assert.ok(quests.start('wolves'));
+  assert.deepEqual(quests.markers.map(m => [m.quest, m.at.z]), [['key', 10]], 'a marker where the stage is');
+  quests.update(.5, { x: 0, z: 5 }); assert.equal(quests.stage('key'), 'ask'); quests.update(.5, { x: 0, y: 0, z: 8.5 }); assert.equal(quests.stage('key'), 'mill', 'reaching it moves on');
+  quests.update(.6); assert.equal(quests.stage('key'), 'mill'); quests.update(.6); assert.equal(quests.stage('key'), 'flour', 'when() moves on');
+  assert.equal(quests.count('wolf'), 0, 'not enough yet to move on'); assert.equal(quests.progress('wolves').n, 1, 'a stage counts what it names');
+  quests.count('flour', 2); assert.equal(quests.progress('key').n, 2); quests.count('flour'); assert.equal(quests.ended('key'), 'helped');
+  assert.ok(grow.level >= 2 && inv.has('key') && rep.with('town') === 10 && flags.has('mara_friend'), 'rewards reached the growth, inventory, reputation and flags it found');
+  assert.ok(ev.includes('reward:key') && ev.includes('end:key'));
+  assert.deepEqual(quests.journal.slice(0, 2).map(j => j.text), ['Mara gave you the key.', 'Bring Mara three sacks of flour']);
+  assert.deepEqual(quests.list().active.map(q => q.id), ['wolves']); assert.deepEqual(quests.list().done.map(q => q.id), ['key']);
+  assert.equal(quests.start('key'), false, 'not again unless it repeats'); assert.deepEqual(quests.vars(), { quest_key: 'helped', quest_wolves: 'hunt' });
+  quests.fail('wolves'); assert.ok(quests.failed('wolves') && ev.includes('fail:wolves'));
+  const saved = JSON.parse(JSON.stringify(quests.pack())); assert.ok(JSON.stringify(saved).length < 400, 'small: ' + JSON.stringify(saved).length);
+  const q2 = new Quests(TABLE, { link: false }).unpack(saved); assert.equal(q2.ended('key'), 'helped'); assert.equal(q2.journal[0].text, quests.journal[0].text);
+  assert.throws(() => new Quests({ x: { stages: { a: { next: 'nope' } } } }), /not one of its stages/);
+  // a conversation finds them all and moves a quest on
+  let talk;
+  together(() => {
+    const f = new Flags(), q = new Quests(TABLE);
+    talk = new Talk(new Story(`
+  EXTERNAL quest(id, stage)
+  EXTERNAL flag(name)
+  VAR quest_key = ""
+  VAR met_mara = false
+  {quest_key == "": Hello, stranger.|Back about the key?} #who:mara
+  ~ flag("met_mara")
+  ~ quest("key", "ask")
+  Ask me about the key, then. #who:mara
+  -> END`), { cast: { mara: {} }, voices: false });
+    talk.start(); assert.equal(talk.text, 'Hello, stranger.'); talk.tap(); talk.tap();
+    assert.ok(f.has('met_mara') && q.is('key', 'ask'), 'the talk set a flag and started the quest it found');
+    assert.equal(talk.text, 'Ask me about the key, then.');
+  });
+  console.log('gs.rpg Quests: stages moved on by reaching, waiting and counting, needs, rewards to the kits it found, the journal, markers, failing, saving; Flags; a Talk that sets a flag and starts a quest ok');
+}
 // gs.magic: casts, mana and cooldowns, bolts that home, pierce, chain and splash, areas that warn and linger, beams, wards, heals, statuses that meet
 {
   const { Magic, STATUSES, Looks } = await import('../src/kit/magic.js');
@@ -8889,6 +9049,44 @@ console.log('physics ok');
   const s3 = new WorldSave(api, { link: false }); s3.keep('big', () => 'x'.repeat(9000)); assert.equal(s3.now(), false, 'and a save that can\'t fit isn\'t written');
   console.warn = warn; radio.off(); (await import('../src/kit/sound.js')).stopTalking();   // (lines still waiting for the voice list must not speak in later tests)
   console.log('missions: open-world jobs, markers, phone calls, retry mid-city, world save in 8 KB ok');
+}
+// WorldSave for an RPG: the gs.rpg kits kept by themselves, a save soon after a quest moves on, parts on the phone, slots
+{
+  const { WorldSave } = await import('../src/kit/missions.js');
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { together } = await import('../src/kit/links.js');
+  let cloud = null, phone = null, writes = 0;
+  const api = { save: d => { cloud = JSON.parse(JSON.stringify(d)); writes++; return true; }, load: f => cloud ?? f,
+    saveLocal: d => { phone = JSON.parse(JSON.stringify(d)); return true; }, loadLocal: f => phone ?? f };
+  const TABLE = { gate: { name: 'The Gate', stages: { find: { text: 'Find the gate', next: 'open' }, open: { text: 'Open it', count: 2, next: 'won' }, won: { end: 'done', text: 'Open.' } }, rewards: { done: { xp: 120, deeds: ['brave'] } } } };
+  let k, crates;
+  const make = () => together(() => {
+    k = { grow: new Growth(null, { attributes: { might: 3 } }), rep: new Reputation({ factions: { town: {} }, deeds: { brave: { town: 10, fame: 5 } } }), flags: new Flags(), quests: new Quests(TABLE), inv: new Inventory({}, { slots: 2 }) };
+    crates = [[1, 2, 3]];
+    k.save = new WorldSave(api); k.save.keep('crates', () => crates, d => { crates = d; }, { local: true });
+  });
+  make(); assert.equal(k.save.load(), false, 'nothing saved yet');
+  k.quests.start('gate'); k.flags.set('met_gate');
+  k.save.update(.1); assert.equal(writes, 0); k.save.update(.5); assert.equal(writes, 1, 'a quest starting saves a moment later by itself');
+  assert.ok(cloud.Q && cloud.G && cloud.E && cloud.W && cloud._t >= 0, 'quests, growth, reputation and flags kept by themselves: ' + Object.keys(cloud));
+  assert.deepEqual(phone.w.crates, [[1, 2, 3]], 'a local part goes to the phone save');
+  assert.ok(!('crates' in cloud), 'and not to the 8 KB');
+  k.quests.to('gate', 'open'); k.quests.count('x', 2); k.save.update(.6);
+  assert.equal(cloud.Q.e.gate, 'done'); assert.equal(k.grow.level, 2);
+  crates = [[9, 9, 9]]; k.save.update(10);
+  assert.ok(k.save.slot(1, 'At the gate')); assert.deepEqual(k.save.slots.map(s => s && s.label), ['At the gate', null, null]);
+  k.flags.set('gate_smashed'); crates = []; k.save.now();
+  // a new phone with the same cloud save but no phone save
+  const keepPhone = phone; phone = null; make(); assert.ok(k.save.load());
+  assert.ok(k.quests.ended('gate') === 'done' && k.grow.level === 2 && k.rep.with('town') === 10 && k.flags.has('gate_smashed') && k.save.played > 10, 'the world comes back from the 8 KB');
+  assert.deepEqual(crates, [[1, 2, 3]], 'the phone-only part stays as made on a new phone');
+  phone = keepPhone; make(); k.save.load(); assert.deepEqual(crates, [], 'the phone save comes back on the same phone');
+  assert.ok(k.save.restore(1) && !k.flags.has('gate_smashed') && JSON.stringify(crates) === '[[9,9,9]]', 'a slot puts the world back as it was');
+  assert.ok(!cloud.W.gate_smashed, 'and becomes the save');
+  k.save.clear(1); assert.equal(k.save.slots[0], null);
+  assert.throws(() => k.save.slot(4), /slot 4/);
+  console.log('world save: gs.rpg quests, growth, reputation and flags kept by themselves, saved soon after a quest moves on, parts kept on the phone, save slots ok');
 }
 {
   // the car radio: stations that carry on, DJs, news, the car body, the phone AI's lines

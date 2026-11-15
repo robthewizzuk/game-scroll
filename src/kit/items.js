@@ -17,10 +17,13 @@
 // merging the same thing, swapping different things, and refusing what doesn't fit an equip slot.
 // book.can(inv) lists what can be made now; book.timer (with time:) makes things over seconds.
 
+import { linksFor } from './links.js';
+
 /** A stack in a slot: { id, n }. */
 export class Inventory {
   /** defs: { id: { stack, kind, weight } }; slots: how many; extra: { name: kind } equip slots taking only that kind; stack: default most per slot; weight: most total weight (Infinity). */
-  constructor(defs = {}, { slots = 20, extra = {}, stack = 99, weight = Infinity } = {}) {
+  constructor(defs = {}, { slots = 20, extra = {}, stack = 99, weight = Infinity, link = true } = {}) {
+    linksFor(null, link)?.join('inventory', this);   // (a gs.rpg Growth, Quests or Talk made in the same game finds it)
     this.defs = defs; this.stack = stack; this.maxWeight = weight;
     this.slots = Array(slots).fill(null); this.extra = extra; this.equip = Object.fromEntries(Object.keys(extra).map(k => [k, null]));
     this.handlers = {};

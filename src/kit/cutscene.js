@@ -16,6 +16,15 @@
 //   down() { if (intro.playing) intro.skip(); }                    // jumps to the end, running every action it passed
 //   draw(c) { intro.drawBars(c, W, H); intro.drawLine(c, W, H); } // or draw your own from intro.bars and intro.line
 //
+// Actors: steps with actor (a gs.models.human or gs.poses person) direct the people in it. walk: { x, z } (at speed,
+// 1.3 m/s; they turn to it, walk there and stop), turn: an angle or a point to face, look: a point or thing for the
+// eyes (null: free), play: a gesture or move ('bow', 'nod', 'point'...: gs.poses GESTURES), mood + amount (a face
+// shape), and say with actor speaks the line in that person's voice (voice, pitch, fx) with the mouth moving to it.
+// The game still updates each rig once a frame, with what the cutscene says it is doing:
+//     { at: 0, actor: mara, walk: { x: 1, z: 2 } }, { at: 2.5, actor: mara, play: 'bow' },
+//     { at: 3, actor: mara, say: 'You came back.', who: 'Mara', voice: 'woman', look: hero },
+//   update(dt) { intro.update(dt); for (const p of people) p.rig.update(dt, intro.motion(p)); }
+//
 // Reduce motion: camera moves still play (they're the story), but shakes added with { shake } are toned down.
 
 import { prefs } from './prefs.js';
@@ -46,7 +55,7 @@ export class Cutscene {
   }
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
   emit(ev, ...a) { for (const f of this.handlers[ev] || []) f(...a); }
-  reset() { this.t = 0; this.playing = true; this.done = false; this.bars = 0; this.line = null; this.shot = null; this.shakeLeft = 0; this.shakeAmt = 0; for (const s of this.steps) s.ran = false; this.camStep = null; this.lens = null; return this; }
+  reset() { this.acting = new Map(); this.t = 0; this.playing = true; this.done = false; this.bars = 0; this.line = null; this.shot = null; this.shakeLeft = 0; this.shakeAmt = 0; for (const s of this.steps) s.ran = false; this.camStep = null; this.lens = null; return this; }
   get progress() { return this.length ? Math.min(1, this.t / this.length) : 1; }
   update(dt) {
     if (!this.playing) { this.bars = Math.max(0, this.bars - dt * 1.5 * this.barsTo); return this; }
@@ -60,6 +69,7 @@ export class Cutscene {
       const p = along(s.cam, e), look = typeof s.look === 'function' ? s.look(this.t) : s.look;
       this.shot = { ...p, look: look ? { x: look.x, y: look.y, z: look.z ?? 0 } : null };
     }
+    for (const [p, a] of this.acting) this.act(p, a, dt);
     if (this.line && this.t > this.line.until) this.line = null;
     this.shakeLeft = Math.max(0, this.shakeLeft - dt);
     if (this.shot && this.shakeLeft > 0) { const a = this.shakeAmt * prefs.motion * this.shakeLeft; this.shot.x += (Math.random() - .5) * a; this.shot.y += (Math.random() - .5) * a; }
@@ -68,15 +78,43 @@ export class Cutscene {
     return this;
   }
   start(s) {
+    if (s.actor) this.direct(s);
     if (s.cam) this.camStep = s;
+    if (s.say != null && s.actor?.face?.say) s.actor.face.say(s.say, { voice: s.voice ?? null, pitch: s.pitch ?? 1, rate: s.rate ?? 1, fx: s.fx ?? null, size: s.size ?? null });
     if (s.say != null) { this.line = { text: s.say, who: s.who ?? null, until: s.at + (s.time ?? Math.max(2, s.say.length * .06)) }; this.emit('say', this.line); }
     if (s.do) s.do(this);
     if (s.shake) { this.shakeAmt = s.shake; this.shakeLeft = s.time ?? .5; }
     if (s.bars != null) this.barsTo = s.bars;
     if (s.lens !== undefined) this.lens = s.lens;
   }
-  /** Jumps to the end: every action not yet run runs now, in order. */
-  skip() { if (!this.skippable || !this.playing) return this; for (const s of this.steps) if (!s.ran) { s.ran = true; if (s.do) s.do(this); } this.t = this.length; this.line = null; this.emit('skip'); this.finish(); return this; }
+  // an actor's step: what it is told to do from now on
+  direct(s) {
+    const p = s.actor, a = this.acting.get(p) || { speed: 0, to: null, face: null };
+    this.acting.set(p, a);
+    if (s.walk) { a.to = { x: s.walk.x, z: s.walk.z ?? s.walk.y }; a.pace = s.speed ?? 1.3; }
+    if (s.turn != null) a.face = typeof s.turn === 'number' ? s.turn : Math.atan2((s.turn.x ?? 0) - p.position.x, (s.turn.z ?? s.turn.y ?? 0) - p.position.z);
+    if (s.look !== undefined && p.face?.look) p.face.look(s.look);
+    if (s.play) p.rig?.play(s.play, { again: true });
+    if (s.mood && p.face?.set) { if (a.mood && a.mood !== s.mood) p.face.set(a.mood, 0); p.face.set(s.mood, s.amount ?? 1); a.mood = s.mood; }
+  }
+  // walking to a point, turning to a heading
+  act(p, a, dt) {
+    const turnTo = (want, rate) => { let d = want - p.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d)); p.rotation.y += Math.sign(d) * Math.min(Math.abs(d), rate * dt); };
+    if (a.to) {
+      const dx = a.to.x - p.position.x, dz = a.to.z - p.position.z, d = Math.hypot(dx, dz);
+      if (d < .03) { a.to = null; a.speed = 0; p.rig?.play?.('idle'); }
+      else {
+        a.speed = Math.min(a.pace, d * 2.5 + .3); const step = Math.min(d, a.speed * dt);
+        p.position.x += dx / d * step; p.position.z += dz / d * step; turnTo(Math.atan2(dx, dz), 5);
+        p.rig?.blend?.({ idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }, a.speed);
+      }
+    } else if (a.face != null) { turnTo(a.face, 3); }
+  }
+  /** What an actor is doing, for its rig: person.rig.update(dt, cut.motion(person)) ({ speed } while it walks). */
+  motion(p) { const a = this.acting?.get(p); return a && a.speed ? { speed: a.speed } : {}; }
+  /** Jumps to the end: every action not yet run runs now, in order (actors arrive where they were going). */
+  skip() { if (!this.skippable || !this.playing) return this; for (const s of this.steps) if (!s.ran) { s.ran = true; if (s.actor) this.direct(s); if (s.do) s.do(this); }
+    for (const [p, a] of this.acting) { if (a.to) { p.position.x = a.to.x; p.position.z = a.to.z; a.to = null; a.speed = 0; p.rig?.play?.('idle'); } if (a.face != null) p.rotation.y = a.face; } this.t = this.length; this.line = null; this.emit('skip'); this.finish(); return this; }
   finish() {
     if (this.done) return; this.done = true; this.playing = false; this.line = null;
     if (this.camStep) { const s = this.camStep; this.shot = { ...s.cam[s.cam.length - 1], look: this.shot?.look ?? null }; }

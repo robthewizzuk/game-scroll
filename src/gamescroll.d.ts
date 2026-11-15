@@ -1427,6 +1427,25 @@ export interface StoryPart {
   };
   Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: string): Loose; skip(): Loose; update(dt: number): Loose };
   loadStory(): Promise<Loose>;
+  /**
+   * A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other,
+   * #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide | none). rep / grow / vars set the
+   * ink's own VARs of those names before each line; bind (and rep: did, grow: xp, inv: has, give, take) answer its EXTERNAL functions.
+   */
+  Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; head?: Loose | (() => P3) }>; hero?: string | null; camera?: Loose; view?: Loose; speed?: number; voices?: boolean; shots?: boolean; rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; quests?: Quests | null; flags?: Flags | null; vars?: (() => Record<string, Loose>) | null; bind?: Record<string, (...a: Loose[]) => Loose>; link?: boolean }) => TalkScene;
+}
+export interface TalkScene {
+  on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this;
+  /** Starts (at a section of the story, or where it is). */ start(section?: string | null): this;
+  /** The speaker's cast id (null: a narrator). */ readonly speaker: string | null; /** Their name to draw. */ readonly who: string;
+  /** The line so far, typed out. */ readonly shown: string; readonly text: string;
+  /** Choices open once the line is typed out. */ readonly choices: StoryLine['choices'];
+  line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null;
+  /** The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). */
+  shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null;
+  ended: boolean;
+  /** Shows the whole line, or goes on. */ tap(): this; choose(index: number): this; stop(): this; update(dt: number): this;
+  save(): string; load(json: string): this;
 }
 
 export declare class Ghost {
@@ -2311,6 +2330,91 @@ export interface StatsPart {
   Stats: new (stats?: Record<string, number | { base: number; min?: number; max?: number } | { max: number; regen?: number; delay?: number; start?: number; min?: number }>, o?: { buffs?: Record<string, StatBuff> }) => Stats;
 }
 
+export interface GrowthSkill {
+  name?: string; /** Most ranks (1). */ ranks?: number; /** Skill points a rank (1). */ cost?: number; /** Level it opens at. */ level?: number;
+  /** Skills needed first: 'id' or 'id:rank'. */ needs?: string[]; /** Skills that rule this one out. */ excludes?: string[];
+  /** Put on the Stats once a rank: add (times the rank) and mul (to the power of the rank). */ perk?: { add?: Record<string, number>; mul?: Record<string, number> };
+  /** Where to draw it in your tree. */ at?: Loose; tags?: string[];
+}
+export interface GrowthNode { id: string; name: string; rank: number; ranks: number; ok: boolean; why: string | null; needs: { id: string; rank: number }[]; at: Loose; tags: string[] }
+export interface Growth {
+  stats: Stats | null; level: number; xp: number; /** Unspent attribute points. */ points: number; /** Unspent skill points. */ skillPoints: number;
+  attrs: Record<string, number>; ranks: Record<string, number>; cap: number;
+  on(ev: 'xp' | 'level' | 'raise' | 'learn' | 'respec', fn: (...a: Loose[]) => void): this;
+  /** XP needed in all for a level. */ need(level: number): number;
+  /** XP in all for the next level (Infinity at the cap). */ readonly next: number;
+  /** 0..1 of the way to the next level. */ readonly part: number;
+  /** Gives XP; returns the levels gained (pools filled on a level up unless refill: false). */ gain(n: number, why?: string | null): number;
+  attr(name: string): number; /** Spends points on an attribute; false if short or at its top. */ raise(name: string, n?: number): boolean;
+  rank(id: string): number; has(id: string, rank?: number): boolean;
+  can(id: string): { ok: boolean; why: 'ranks' | 'level' | 'needs' | 'excluded' | 'points' | null; needs: string[]; cost: number };
+  /** Learns a skill's next rank; false if can() says no. */ learn(id: string): boolean;
+  /** Every skill, for drawing the tree. */ readonly nodes: GrowthNode[];
+  /** Gives back every point spent (keep: 'attributes' keeps those). */ respec(o?: { keep?: 'attributes' | null }): this;
+  /** A piece of gear's numbers on a slot, or null to take them off. */ gear(slot: string, spec: { add?: Record<string, number>; mul?: Record<string, number>; tags?: string[] } | null): this;
+  /** Follows a gs.items Inventory: what is in its equip slots counts, from its defs' stats: { add, mul }. */ wear(inv: Inventory): this;
+  /** What attributes, skills and gear add to a stat and multiply it by. */ parts(stat: string): { add: number; mul: number };
+  /** A stat now (the Stats' own, or worked out from base with no Stats). */ value(stat: string, base?: number): number;
+  restart(level?: number, xp?: number | null): this; pack(): Loose; unpack(d: Loose): this;
+}
+export interface RepFaction { start?: number; /** Move the other way by share (both ways). */ rivals?: string[]; /** Move the same way by share (both ways). */ allies?: string[]; /** Puts bounties on crimes it sees; mood 'arrest'. */ law?: boolean; /** Attacks when it hates the hero (else flees). */ fights?: boolean; /** Runs from a famous villain. */ timid?: boolean; /** Points a second back to its start. */ fade?: number }
+export type RepMood = 'arrest' | 'attack' | 'flee' | 'avoid' | 'ignore' | 'stare' | 'greet' | 'bow' | 'cheer';
+export interface Reputation {
+  on(ev: 'change' | 'rank' | 'deed' | 'paid', fn: (...a: Loose[]) => void): this;
+  get(axis: string): number; /** An axis -1..1 (0..1 for one that starts at its bottom). */ lean(axis: string): number;
+  /** A faction's standing, -100..100. */ with(faction: string): number;
+  /** 'hated' | 'disliked' | 'neutral' | 'liked' | 'loved' (or your ranks). */ rank(faction: string): string;
+  bounty(faction: string): number; /** Pays a bounty off; returns it. */ pay(faction: string): number;
+  /** Times a deed was done. */ done(id: string): number;
+  move(key: string, by: number, why?: string | null): this;
+  /** The hero did a deed. seen: true (everyone), false (nobody: only inner axes move) or the factions that saw. Returns what moved. */
+  did(id: string, o?: { seen?: boolean | string[]; by?: number; spec?: Record<string, number> | null }): Record<string, number>;
+  update(dt: number): void;
+  /** How someone of a faction meets the hero. */ mood(faction: string): RepMood;
+  /** A price from a faction (dearer when disliked, cheaper when liked); sell: what they pay the hero. */ price(base: number, faction?: string | null, o?: { sell?: boolean; spread?: number }): number;
+  title(): string | null; /** Every number flat, for a conversation's variables. */ vars(): Record<string, number | string>;
+  log: { id: string; seen: boolean }[]; restart(): this; pack(): Loose; unpack(d: Loose): this;
+}
+export interface Flags {
+  on(ev: 'change', fn: (name: string, value: Loose, was: Loose) => void): this;
+  get(name: string, fallback?: Loose): Loose; /** Set and not false, 0 or ''. */ has(name: string): boolean;
+  /** false or null takes it out. */ set(name: string, value?: Loose): this; /** Adds to a number; returns it. */ add(name: string, n?: number): number;
+  /** How many set flags start with this. */ count(prefix?: string): number; readonly all: Record<string, Loose>;
+  pack(): Record<string, Loose>; unpack(d: Loose): this;
+}
+export interface QuestStage { text?: string; at?: P3 | [number, number, number] | { x: number; z: number } | (() => Loose); reach?: number; when?: (t: number) => boolean; count?: number; of?: string; next?: string; end?: string; hidden?: boolean; icon?: string; failText?: string }
+export interface QuestDef { name?: string; icon?: string; stages: Record<string, QuestStage>; rewards?: Record<string, { xp?: number; items?: Record<string, number>; deeds?: string[]; flags?: Record<string, Loose> } & Record<string, Loose>>; needs?: (string | (() => boolean))[]; repeat?: boolean }
+export interface JournalLine { quest: string; name: string; stage: string; text: string; end: string | null; t: number }
+export interface QuestLine { id: string; name: string; stage: string | null; text: string; end: string | null }
+export interface Quests {
+  on(ev: 'start' | 'stage' | 'count' | 'end' | 'fail' | 'reward', fn: (...a: Loose[]) => void): this;
+  table: Record<string, QuestDef>; journal: JournalLine[]; pinned: string | null;
+  restart(): this; /** Its stage ('' when not running). */ stage(id: string): string; is(id: string, stage: string): boolean;
+  active(id: string): boolean; /** How it ended, or null. */ ended(id: string): string | null; failed(id: string): boolean;
+  /** Not running, not done (unless repeat) and its needs met: 'quest:id', 'quest:id=way', 'flag:name', '!...' or a function. */ can(id: string): boolean;
+  start(id: string, stage?: string | null): boolean; /** Moves it to a stage; an end stage ends it. */ to(id: string, stage: string): this;
+  end(id: string, way?: string): this; fail(id: string): this;
+  /** Counts n of something for each running stage that counts it; returns how many stages moved on. */ count(what: string, n?: number): number;
+  progress(id: string): { n: number; of: number };
+  /** Each frame: stages with reach (near at) or when move on. */ update(dt: number, player?: Loose): this;
+  pin(id: string | null): this; readonly markers: { at: P3; kind: 'quest'; text: string; icon: string | null; pinned: boolean; quest: string }[];
+  list(): { active: QuestLine[]; done: QuestLine[]; failed: QuestLine[] };
+  /** quest_<id>: its stage or end, for a conversation. */ vars(): Record<string, string>;
+  pack(): Loose; unpack(d: Loose): this;
+  readonly rep: Reputation | null; readonly grow: Growth | null; readonly inv: Inventory | null; readonly flags: Flags | null;
+}
+export interface RpgPart {
+  /** XP needed in all to reach a level: base * (level - 1)^power (100, 1.5). */
+  xpTo(level: number, o?: { base?: number; power?: number }): number;
+  /** new Growth(stats, { attributes, derive, tree, curve, cap, points, skills, most, refill }) in reset(). */
+  Growth: new (stats?: Stats | null, o?: { attributes?: Record<string, number>; derive?: Record<string, (attrs: Record<string, number>, g: Growth) => number>; tree?: Record<string, GrowthSkill>; curve?: { base?: number; power?: number } | ((level: number) => number); cap?: number; points?: number; skills?: number; most?: number | Record<string, number>; refill?: boolean; level?: number; xp?: number | null }) => Growth;
+  /** new Reputation({ axes, factions, deeds, share, inner, good, fame, titles, ranks }) in reset(). */
+  Reputation: new (o?: { axes?: Record<string, [number, number, number?] | { min?: number; max?: number; start?: number; fade?: number }>; factions?: Record<string, RepFaction>; deeds?: Record<string, Record<string, number>>; share?: number; inner?: string[]; good?: string; fame?: string; titles?: ({ name: string } & Record<string, Loose>)[]; ranks?: [number, string][]; keep?: number }) => Reputation;
+  /** new Flags({ ...start }) in reset(): the world's own facts by name. */
+  Flags: new (start?: Record<string, Loose>, o?: { link?: boolean }) => Flags;
+  /** new Quests({ id: { name, stages, rewards, needs } }) in reset(); finds the game's Reputation, Growth, Inventory and Flags. */
+  Quests: new (table: Record<string, QuestDef>, o?: { rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; flags?: Flags | null; keep?: number; link?: boolean }) => Quests;
+}
 /** A spell in a gs.magic book. */
 export interface Spell {
   kind: 'bolt' | 'area' | 'beam' | 'shield' | 'heal' | 'buff';
@@ -2562,7 +2666,7 @@ export interface TownPart {
   between(h: number, a: number, b: number): boolean;
 }
 export interface ItemsPart {
-  Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number }) => Inventory;
+  Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number; link?: boolean }) => Inventory;
   Recipes: new (defs?: Record<string, ItemDef>) => Recipes;
 }
 export interface AdvSpot { id: string; room: string; x?: number; y?: number; w?: number; h?: number; r?: number; poly?: [number, number][]; z?: number; look?: string | ((s: AdvSpot) => string); take?: boolean | string; took?: string; exit?: string; locked?: string | boolean; talk?: string | ((s: AdvSpot) => string); cant?: string | ((item: string) => string); when?: () => boolean; walk?: [number, number]; [k: string]: Loose }
@@ -3257,12 +3361,16 @@ export interface MissionsPart {
     ring(call: { from?: string; say: string | string[]; voice?: Loose; job?: string }, o?: { after?: number }): PhoneCall;
     text(from: string, text: string): Loose; answer(): Loose; decline(): Loose; skip(): Loose; update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
   };
-  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone and Radio found by themselves; rounded, measured, saved when it changes. */
-  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean }) => {
-    size: number; readonly room: number; dropped: string[];
-    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean }): Loose;
-    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean };
+  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone, Radio and the gs.rpg Quests, Growth, Reputation and Flags found by themselves; rounded, measured, saved when it changes; local parts and save slots on this phone (api.saveLocal). */
+  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean; slots?: number }) => {
+    size: number; readonly room: number; dropped: string[]; /** Seconds of play, kept with the save. */ played: number;
+    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean; local?: boolean }): Loose;
+    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean; local: Loose | null };
     load(): boolean; now(force?: boolean): boolean; update(dt: number): Loose;
+    /** Saves in a moment (a quest moving on or a level gained calls it by itself). */ soon(after?: number): Loose;
+    /** Saves the world now into a slot on this phone (1..slots). */ slot(n: number, label?: string): boolean;
+    /** Puts the world back from a slot and makes that the save. */ restore(n: number): boolean;
+    clear(n: number): Loose; readonly slots: ({ n: number; label: string; played: number; at: number } | null)[];
   };
   /** Rounds every number in it to `places`. */
   compact<T>(v: T, places?: number): T;
@@ -3283,11 +3391,12 @@ export interface MissionsPart {
  * focus now), stops (the exposure it adds).
  */
 export interface Lens { fstop?: number; focal?: number; focus?: number | 'auto' | P3 | Loose; spot?: [number, number]; pull?: number; blades?: number; turn?: number; bokeh?: number; max?: number; blur?: number; sensor?: number; shutter?: number; iso?: number | 'auto'; ev?: number; key?: number; night?: number; speed?: number; readonly at?: number; readonly stops?: number }
-export interface CutsceneStep { at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
+export interface CutsceneStep { /** A person it directs: walk to { x, z } at speed, turn (an angle or a point), look (a point or thing; null: free), play (a gesture or move), mood + amount, and say in voice with the mouth moving. */ actor?: Loose; walk?: { x: number; z: number }; speed?: number; turn?: number | P3; play?: string; mood?: string; amount?: number; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
 export interface CutscenePart {
   along(points: P3[], u: number): P3;
   Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & {
     playing: boolean; done: boolean; bars: number; line: { text: string; who: string | null } | null; shot: { x: number; y: number; z: number; look: P3 } | null; readonly progress: number; /** the lens the last lens step set (for v.lens) */ lens: Lens | null;
+    /** What an actor is doing, for its rig: person.rig.update(dt, cut.motion(person)). */ motion(person: Loose): { speed?: number };
     update(dt: number): Loose; skip(): Loose; reset(): Loose; drawBars(c: CanvasRenderingContext2D, w: number, h: number, colour?: string): void; drawLine(c: CanvasRenderingContext2D, w: number, h: number, o?: Loose): void;
   };
 }
@@ -3766,6 +3875,8 @@ export interface RigT {
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
+  /** Gestures every rig has, played once from standing at ease: rig.play('nod'): nod, shake, bow, shrug, point, cheer, laugh, think, beckon. */
+  GESTURES: Record<'nod' | 'shake' | 'bow' | 'shrug' | 'point' | 'cheer' | 'laugh' | 'think' | 'beckon', Loose>;
   /** A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go with, so a bent limb keeps its girth. Kit use: gs.models.human() makes them; nothing poses them. of: the joint it follows; home: its place; out: where the outside of the bend is (metres), or null. */
   Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null };
   /** A muscle that bulges (a person's biceps: bones.bicepL...): a bone that moves out from its place as another joint bends (of), by out (metres) at a right angle's bend times size, for the skin over it to swell. Kit use: gs.models.human() makes them; nothing poses them. */
@@ -4865,7 +4976,7 @@ export interface GS {
   things: ThingsPart; rounds: RoundsPart; pacing: PacingPart; aim: AimPart; senses: SensesPart; prefs: PrefsPart; tick: TickPart; solve: SolvePart;
   camera2d: Camera2dPart; tiles: TilesPart; movers: MoversPart; anim: AnimPart; story: StoryPart; replay: ReplayPart; look2d: Look2dPart;
   tweak: TweakFn; brains: BrainsPart;
-  board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
+  board: BoardPart; battle: BattlePart; stats: StatsPart; rpg: RpgPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
