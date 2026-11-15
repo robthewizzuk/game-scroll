@@ -3259,6 +3259,9 @@ export type VehicleT = Loose & {
    * A motorbike: `world.vehicle(bike, bike.chassis())` (it says bike: true): its rider keeps it upright and it leans into turns by itself, until it hits something at 8 m/s or more (fall) and goes over (`fallen`; rightUp() stands it again).
    */
   chassis?(o?: Record<string, Loose>): Record<string, Loose>;
+  // (chassis() also gives how each drives: density (its weight against what it hits), power, top (the speed its pull fades to), steerFade (the speed its
+  // wheels turn half as far), brakes, grip; a lorry or a bus is heavy and slow to turn, a sports car quick. On the World3D.vehicle it makes:
+  // drive(throttle, steer, brake, handbrake): the handbrake locks the back wheels so it slides round.)
   /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops); a fire engine's turntable and ladder (up to 1.25). */
   aim(turn?: number, lift?: number): VehicleT;
   /** Its lamps on or off (a taxi's roof sign too). */
@@ -3308,12 +3311,44 @@ export type VehicleT = Loose & {
   smash?(point: Loose, o?: { power?: number }): 'lamp' | 'screen' | 'crack' | 'window' | null;
   /** A knock: dent(), then smash() as well when power is over .25. */
   hit?(point: Loose, o?: { power?: number; dir?: Loose }): 'lamp' | 'screen' | 'crack' | 'window' | null;
-  /** Mended: its shapes and materials shared again, the broken glass gone (its dirt and wet stay). */
+  /** Mended: its shapes and materials shared again, the broken glass gone, health back, fire out, tyres whole, doors and bumpers back on (its dirt and wet stay). */
   mend?(): VehicleT;
   /** Each frame (move() calls it): falling glass, doors swinging, flashing lamps, and the people in it or getting in and out. */
   update?(dt: number): VehicleT;
   /** What it has taken: dents, panes of glass broken or crazed, lamps broken. */
   readonly damage?: { dents: number; glass: number; lamps: number };
+  /**
+   * A car's, a truck's, a bus's, a motorbike's crashes. How much more it can take, 1 (new) .. 0: each hit() takes some (a hard knock about a sixth of a
+   * car's; a lorry or a bus takes about half that), so World3D.vehicle crashes wear it down by themselves. Under .55 its engine smokes, under .3 black
+   * smoke, under .12 it is on fire, and some seconds later it blows up (blow()).
+   */
+  readonly health?: number;
+  /** How much of its engine's pull is left, 0..1: less as it smokes, none once it has blown up (World3D.vehicle reads it). */
+  readonly engine?: number;
+  /** True once it has blown up: a burnt-out shell. */
+  readonly wrecked?: boolean;
+  /** True while it is on fire. */
+  readonly burning?: boolean;
+  /** Takes health off for the game's own reasons (shots, a fire, a fall): amount as a hit takes it (.16 a hard knock for a car). */
+  harm?(amount?: number): VehicleT;
+  /** Puts its fire out: it smokes on and needs another hit to catch again. */
+  putOut?(): VehicleT;
+  /**
+   * Blows it up now: a fireball, its paint charred, its glass blown out, most doors and bumpers thrown off, its tyres burnt flat; the blast is felt
+   * round it as an Explosives blast is (the World3D's bodies, people who react, smoke, buildings that come apart, other vehicles, which may catch fire).
+   * on('blow', e => ...) gets where (e.at), how far (e.radius) and e.hurt(point) 0..1 for the game's own damage.
+   */
+  blow?(o?: { power?: number }): VehicleT;
+  /** Its tyres, as its wheels: flat once burst (a sharp hit() on a tyre bursts it by itself). World3D.vehicle sits a flat one lower and lets it grip less. */
+  readonly tyres?: { wheel: Loose; flat: boolean; i: number }[];
+  /** Bursts a tyre: a wheel's number, or the one nearest a point in the world. */
+  burst?(which?: number | Loose): VehicleT;
+  /** Knocks a door or bumper loose ('doorL', 'bumperF'...): a door hangs and swings, a bumper droops. A hard hit() there does it by itself, and the next takes it off. */
+  loosen?(name: string): VehicleT;
+  /** A door or bumper comes off and falls into the road (a body of its own in the game's World3D when it has one), flung by push (m/s, in the world; out from it by default). mend() puts it back. */
+  detach?(name: string, o?: { push?: Loose }): VehicleT;
+  /** fn(e) when it starts to smoke ('smoke'), catches fire ('fire'), blows up ('blow': e.at, e.radius, e.hurt(point)), a tyre bursts ('burst': e.tyre) or a part comes off ('off': e.name, e.part). */
+  on?(event: 'smoke' | 'fire' | 'blow' | 'burst' | 'off', fn: (e: Loose) => void): VehicleT;
   /** Another just like it, sharing its shapes and materials. */
   twin(): VehicleT;
 };
@@ -3725,7 +3760,11 @@ export interface PropsPart {
      * are one fixed body (a ray's hit.part is { props, kind, id }); loose: true makes each a body of its own that falls and is knocked over,
      * drawn where its body is. Returns the body, or a Map of id to body.
      */
-    solid(world: Loose, name: string, o?: { shape?: 'box' | 'trunk' | 'ball' | 'hull'; r?: number | null; loose?: boolean; density?: number; tag?: string; sound?: string; friction?: number; bounce?: number }): Loose;
+    solid(world: Loose, name: string, o?: { shape?: 'box' | 'trunk' | 'ball' | 'hull'; r?: number | null; loose?: boolean; density?: number; tag?: string; sound?: string; friction?: number; bounce?: number; /** Still copies: something moving at least this fast (m/s) knocks one over (it falls as a body of its own; what hit it carries on, a little slower). */ knock?: number }): Loose;
+    /** Knocks a still copy over now (solid() with knock does it by itself): by, what hit it, gets most of its speed (was: how it moved before). Returns the copy's body. */
+    knock(name: string, id: number, by?: Loose, was?: Loose): Loose;
+    /** Stands the copies that were knocked over back up, solid again (one kind, or all). */
+    mend(name?: string | null): Loose;
     unsolid(name: string): Loose;
   };
   Areas: new (o?: { depth?: number }) => { current: string | null; add(name: string, object: Loose, box?: Loose): Loose; link(a: string, b: string): Loose; at(p: P3): string | null; update(p: P3): Loose; readonly shown: string[] };
@@ -4361,7 +4400,7 @@ export interface CityWorld {
    * and bodies for the nearest `cars` and `people` that move with them (refreshed in update()): a car hit hard stops a moment and a
    * person hit falls over by themselves. A hit body's .car or .person says which.
    */
-  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityWorld;
+  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over (city.props.mend() stands them up). */ knock?: boolean }): CityWorld;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water', string>> }): void;
   mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
   dispose(): void;
