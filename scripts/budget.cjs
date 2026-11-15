@@ -81,7 +81,14 @@ const p95 = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - 
     for (let i = 0; i < 240 && await p.evaluate(() => !__gs.active || __gs.active.loading); i++) await p.waitForTimeout(250);
     const readyS = (Date.now() - tLoad) / 1000;
     const is3d = await p.evaluate(() => ['console', 'nextgen', 'ar', 'board'].includes(__gs.active?.def.era));
-    await p.evaluate(() => __gs.start()); await p.waitForTimeout(200);
+    // a Next Gen, AR or Board game starts as a player's does: Play, then its loading screen, where the app runs reset() and
+    // the round's first update and builds what the round will use (shaders, a radio's instruments), then the round
+    // (__gs.start() skips that screen, so all of that was timed as play)
+    const gated = await p.evaluate(() => ['nextgen', 'ar', 'board'].includes(__gs.active?.def.era));
+    const play = () => p.evaluate(g => g ? __gs.play() : __gs.start(), gated);
+    await play();
+    for (let i = 0; gated && i < 240 && await p.evaluate(() => !!__gs.active?.starting); i++) await p.waitForTimeout(250);
+    await p.waitForTimeout(200);
     // time the game's own update() and draw(); the game object is remade if a kit loads, so wrap again then
     await p.evaluate(() => {
       const T = window.__budget = { u: [], d: [], g: [] };
@@ -104,7 +111,7 @@ const p95 = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - 
     const t0 = Date.now(), end = t0 + SECONDS * 1000, last = t0 + LONGEST * 1000;
     const short = () => p.evaluate(n => __budget.u.length < n, FEW + 5);   // (the first five updates are not counted)
     while (Date.now() < end || Date.now() < last && await short()) {
-      if (await p.evaluate(() => __gs.active.state !== 'playing')) { await p.evaluate(() => __gs.start()).catch(() => {}); }
+      if (await p.evaluate(() => __gs.active.state !== 'playing' && !__gs.active.starting)) await play().catch(() => {});
       const x = box[0] + Math.random() * box[2], y = box[1] + Math.random() * box[3];
       await p.mouse.move(x, y); await p.mouse.down(); await p.waitForTimeout(40 + Math.random() * 120); await p.mouse.up();
       await p.waitForTimeout(80 + Math.random() * 200);
