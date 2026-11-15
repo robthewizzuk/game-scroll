@@ -1602,6 +1602,39 @@ It works best when the bot plays the same role the player does (duels, races, sp
 overlay also lists each brain's skill, win rate against its target, trust, fun lean, how torn it is
 and any tell.
 
+**Corrections: a few examples that stick.** `bot.correct(see, 'flee')` says "in this spot the right
+move was flee". Where `watch()` is one small step of learning, a correction is kept as an example and
+counts from the very next decision, whatever the teacher or the network say:
+
+```js
+// the maker's own, written into the game (they stay through reset()):
+const bot = new Brain(api, { inputs: 4, actions: ['left', 'right', 'jump', 'flee'], teacher,
+  corrections: [[[0, 0, -.8, .6], 'flee'], [[.4, -.3, -.7, .5], 'flee'], [[-.5, .5, -.9, .7], 'flee']] });
+// or while the game runs, about the spot it just decided on:
+if (walkedOffTheLedge) bot.correct('jump');
+// a pet the player trains: they tap the move it should have made
+down(x, y) { const move = buttonAt(x, y); if (move) pet.correct(move); }
+```
+
+- **One example is a lean, two that agree are a fix.** With a couple of examples the brain does the
+  move in spots like them, and nowhere else: in the kit's test, eight examples of "hurt with the
+  player near" fix about three quarters of such spots and leave over 95% of other decisions as they were.
+- **It works out which inputs matter.** Where an action's examples agree on an input, that input
+  counts; where they are as spread as it usually is, it doesn't ("whatever `dx` is"). So show it the
+  move in a few different spots of the same kind. Two different kinds of spot for one action work
+  less well than one.
+- **The newest word on a spot wins**, and examples close together that name different moves are
+  trusted less (`bot.heed`, 2 down to 0).
+- The newest 12 per action are kept and saved with the brain (a few bytes each); `bot.uncorrect()`
+  forgets them, `bot.corrections` lists them as `[see, action]` pairs to paste into the game.
+- **The guard rails still apply**: the reaction time, the randomness, the limit on changes of mind and
+  your `rules` all act on what it then does, and the skill dial still follows the win rate.
+- A decision still takes a few microseconds, with nothing to download.
+
+The method is the corrections of [TinyDecide](https://huggingface.co/TheREZOR/TinyDecide) (Apache
+2.0): the average of each answer's examples, a lean towards the nearest, and a trust worked out by
+leaving each example out in turn. Only the method is used, not the model.
+
 **Tune the feel (makers).** `gs.brains.tune({ params, trial, want })` searches number ranges for the
 ones whose `trial(params)` result is closest to `want`: run a quick bot round with your own update and
 return how long it lasted, or how often a jump was made. It's for tests and the dev console, not for
