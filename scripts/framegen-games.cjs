@@ -6,14 +6,15 @@
 // within the last real step of the frame it was made from.
 // Uses SwiftShader's Vulkan driver, so it runs without a GPU; the headless screen is 60 Hz, so here
 // the games draw 30 real frames a second and frame generation makes the other 30.
-//   npm run build:bundled && node scripts/framegen-games.cjs [id ...] [--mode blend|ahead] [--shots dir] [--feed] [--jobs n] [--play s]
+//   npm run build:bundled && node scripts/framegen-games.cjs [id ...] [--mode blend|ahead] [--pace after|first|early] [--shots dir] [--feed] [--jobs n] [--play s]
 // Without ids it plays every Next Gen and AR game that draws on WebGPU. --jobs: browsers playing at
-// once (default: half the CPUs; each SwiftShader uses several); --play: seconds of play per game (5).
+// once (default: half the CPUs; each SwiftShader uses several); --play: seconds of play per game (5); --pace: blend's
+// pace for every game (HD.fgPace; early is 30 → 60's: the real frame's refresh shown first, its work sent after it).
 const { chromium, devices } = require('playwright');
 const fs = require('fs'), path = require('path'), os = require('os');
 (async () => {
   const argv = process.argv.slice(2), take = k => { const i = argv.indexOf(k); return i >= 0 ? argv.splice(i, 2)[1] : null; };
-  const shots = take('--shots'), only = take('--mode'), modes = only ? [only] : ['blend', 'ahead'];
+  const shots = take('--shots'), only = take('--mode'), modes = only ? [only] : ['blend', 'ahead'], pace = take('--pace');
   const jobs = Math.max(1, +(take('--jobs') || Math.floor(os.cpus().length / 2))), play = 1000 * +(take('--play') || 5);
   // --feed: leave the refreshes between to the feed's own loop (only light games keep up on SwiftShader)
   const feedLoop = argv.includes('--feed'); if (feedLoop) argv.splice(argv.indexOf('--feed'), 1);
@@ -41,7 +42,7 @@ const fs = require('fs'), path = require('path'), os = require('os');
     // (and real frames come seconds apart in the heaviest games here: not a pause, as it would be on a phone)
     // fresh aim off: it turns frames to where the newest touch points, and the random touches here jump
     // about, so frames wouldn't sit between their neighbours (scripts/framegen-test.cjs checks the turn itself)
-    await p.evaluate(() => { __hd.force = 0; __hd.scale = .45; __hd.direct = true; __hd.fgGap = 3000; __hd.aim = false; });
+    await p.evaluate(pace => { __hd.force = 0; __hd.scale = .45; __hd.direct = true; __hd.fgGap = 3000; __hd.aim = false; if (pace) __hd.fgPace = pace; }, pace);
     return w;
   };
   const first = await open();

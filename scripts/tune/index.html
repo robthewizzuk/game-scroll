@@ -1,0 +1,129 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// A scene for scripts/tune.cjs: an effect's settings searched against the ray traced reference (the truth: a ray for
+// every pixel of the picture, every frame added to the ones before, HD.regenRef). The page builds the scene, works
+// out the truth once (prepare), then scores settings (score) as often as it is asked, each time building the effects
+// chain again with them.
+//   ?scene=yard|polished|hall  ?w=300&h=400  ?poses=12 (places along the camera's path that have a truth)  ?refs=48
+//   (frames each truth gathers; the still one four times that)
+// window.prepare(refs?): the truth (given back, to hand to the next page, or taken from a page before) and where
+// reflections are. window.score({ effect: 'regen' | 'ssr' | 'was', settings, shots }): how far the picture is from the
+// truth, still (after it settles), at a walk and at a sprint along the path, as in scripts/detail-test/regen.html:
+// error (mean of 255 over the reflections), specks (how grainy the error is), flicker (a still picture, frame to frame)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+import { SSR_SETTINGS } from '../../src/kit/hd3d-gpu-fx.js';
+const Q = new URLSearchParams(location.search), SCENE = Q.get('scene') || 'yard';
+setGpuPick('webgpu');
+await loadParts(); await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+try {
+  if (!await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 300), H = +(Q.get('h') || 400), POSES = +(Q.get('poses') || 12), REFS = +(Q.get('refs') || 48);
+  HD.force = 2; HD.upscale = false; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.occlude = false; HD.traced = true;
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  let v, pose, things = () => {};
+  if (SCENE === 'hall') {
+    // the engine test Hall (src/detail-scenes.js), its walk's last 0.72 s: 36 frames at a phone's 50 a second
+    const S = SCENES.find(s => s[0] === 'hall')[3]({ gs, HD, size: .3, gpu: true, top: true }); v = S.v;
+    await S.modes.find(o => o.key === 'traced').enter(async () => { draw(); await nextFrame(); });
+    pose = t => S.path(4 - .72 * (1 - t), v.cam);
+  } else {
+    // scripts/detail-test/regen.html's yard: a floor in three strips (a mirror, a little rough, rough; polished: three
+    // a little rougher than a mirror, under glowing balls), chrome balls, poles, a bar above the screen, a wall behind
+    v = new gs.hd.HDView({ bg: '#8fb0d8', env: .6, amb: .5 });
+    v.cam.fov = 60; v.cam.far = 200; v.cam.updateProjectionMatrix();
+    const sun = gs.hd.sun('#fff2d8', 3, 20, [.5, 1, .9]); v.scene.add(sun, sun.target); v.sun = sun;
+    const add = (g, m, px, py, pz) => { const mesh = new T.Mesh(g, m); mesh.position.set(px, py, pz); mesh.castShadow = mesh.receiveShadow = true; v.scene.add(mesh); return mesh; };
+    const bright = col => new T.MeshBasicMaterial({ color: col }), POL = SCENE === 'polished', RS = POL ? [.075, .1, .15] : [.04, .25, .45];
+    const strips = [[-5.1, 7.8, RS[0]], [0, 2.4, RS[1]], [5.1, 7.8, RS[2]]].map(([px, wide, rough]) => { const f = add(new T.PlaneGeometry(wide, 40).rotateX(-Math.PI / 2), gs.hd.pbr('#8d949c', { rough, metal: 1 }), px, 0, 0); f.castShadow = false; return f; });
+    const ball = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8e8e8', { rough: .03, metal: 1 }), -2.6, .7, 2.6);
+    const ball2 = add(new T.SphereGeometry(.7, 48, 32), gs.hd.pbr('#e8c890', { rough: .3, metal: 1 }), 2.6, .7, 2.6);
+    add(new T.BoxGeometry(1, 1, 1), gs.hd.pbr('#c0392b', { rough: .6 }), -1.2, .5, -.5);
+    add(new T.BoxGeometry(1, 2.4, 1), gs.hd.pbr('#2f62b0', { rough: .6 }), 1.6, 1.2, -.8);
+    add(new T.BoxGeometry(1.2, .8, 1.2), gs.hd.pbr('#d8b020', { rough: .6 }), 2.7, .4, -1.2);
+    for (const [px, col, lean] of [[-3.1, '#ffe020', .06], [-2, '#20e0ff', -.05], [-.5, '#ff40c0', .04], [.6, '#40ff60', -.07], [2.1, '#ffffff', .05], [3.2, '#ff8020', -.04]]) { const p = add(new T.BoxGeometry(.12, 5, .12), bright(col), px, 2.5, -3.2); p.rotation.z = lean; p.castShadow = false; }
+    add(new T.BoxGeometry(9, .5, .5), bright('#ff2020'), 0, 7, -5).castShadow = false;
+    add(new T.BoxGeometry(30, 14, .5), bright('#20ff40'), 0, 7, 16).castShadow = false;
+    if (POL) ['#40e0ff', '#ff5a90', '#80ff60', '#ffd040', '#ffb850'].forEach((col, i) => { const m = gs.hd.pbr(col, { rough: .5 }); m.emissive = new T.Color(col); m.emissiveIntensity = 2.5; const o = add(new T.SphereGeometry(.3, 20, 14), m, -3.4 + i * 1.7, 1.1 + (i % 3) * .7, 1.5 - (i % 2) * 2.5); o.castShadow = false; });
+    const lamp = new T.PointLight('#ffd080', 5, 10); lamp.position.set(1.6, 1.6, -2.4); v.scene.add(lamp);
+    v.reflect(...strips, ball, ball2);
+    pose = t => { v.cam.position.set(-1.2 + 2.4 * t, 2.3, 8); v.cam.lookAt(-.4 + .5 * t, .5, 0); v.cam.updateMatrixWorld(); };
+  }
+  function draw() { v.t = 0; v.render(x, W, H); return x.getImageData(0, 0, W, H).data; }
+  const settle = async n => { let d = null; for (let i = 0; i < n; i++) { d = draw(); await nextFrame(); } return d; };
+  const tracedAgain = async () => { for (let i = 0; i < 600; i++) { draw(); const t = HD.info.trace; if (HD.info.refl === 'traced' && t && t.builds >= 1 && t.tris > 0 && !t.busy && i > 3) return true; await nextFrame(); } return false; };
+  const diff = (a, b, mask) => { let s = 0, n = 0; for (let i = 0; i < W * H; i++) if (mask[i]) { s += (Math.abs(a[i * 4] - b[i * 4]) + Math.abs(a[i * 4 + 1] - b[i * 4 + 1]) + Math.abs(a[i * 4 + 2] - b[i * 4 + 2])) / 3; n++; } return n ? s / n : 0; };
+  const specks = (a, b, mask) => {
+    const e = new Float32Array(W * H * 3); for (let i = 0; i < W * H; i++) for (let k = 0; k < 3; k++) e[i * 3 + k] = a[i * 4 + k] - b[i * 4 + k];
+    let s = 0, n = 0;
+    for (let y = 1; y < H - 1; y++) for (let x0 = 1; x0 < W - 1; x0++) { const i = y * W + x0; if (!mask[i]) continue;
+      for (let k = 0; k < 3; k++) { let m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) m += e[(i + dy * W + dx) * 3 + k]; s += Math.abs(e[i * 3 + k] - m / 9) / 3; }
+      n++; }
+    return n ? s / n : 0;
+  };
+  const b64 = a => { let s = ''; for (let i = 0; i < a.length; i += 32768) s += String.fromCharCode.apply(null, a.subarray(i, i + 32768)); return btoa(s); };
+  const unb64 = s => { const t = atob(s), a = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) a[i] = t.charCodeAt(i); return a; };
+  const chain = () => v._gpuChain;
+  const mode = (m, n = 0) => { HD.traced = m !== 'ssr'; HD.regen = m !== 'was'; HD.regenRef = m === 'ref' ? n + 1 : false; HD.traceScale = m === 'fewer' ? .35 : 0; };
+  const ts = Array.from({ length: POSES }, (_, i) => (i + 1) / POSES);
+  let truth0, truth, mask, ready = false, mod = null, tuned = null;
+
+  window.prepare = async (given) => {
+    pose(0); mode('regen');
+    if (!await tracedAgain()) throw new Error('the scene was not ray traced in time');
+    const t0 = performance.now();
+    if (given) { truth0 = unb64(given.still); truth = given.moving.map(unb64); mask = unb64(given.mask); }
+    else {
+      mode('ref', 100); truth0 = (await settle(REFS * 4)).slice();
+      truth = []; for (const [i, t] of ts.entries()) { pose(t); mode('ref', i); truth.push((await settle(REFS)).slice()); }
+      // where reflections are: the truth against the scene with none
+      pose(0); mode('regen'); const was = v.reflectors.slice(); v.reflectors.length = 0; for (const o of was) o.userData.gsReflect = false;
+      const none = (await settle(6)).slice(); for (const o of was) { o.userData.gsReflect = true; v.reflectors.push(o); }
+      await tracedAgain();
+      mask = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) { const d = Math.abs(truth0[i * 4] - none[i * 4]) + Math.abs(truth0[i * 4 + 1] - none[i * 4 + 1]) + Math.abs(truth0[i * 4 + 2] - none[i * 4 + 2]); if (d > 9) mask[i] = 1; }
+    }
+    ready = true; let on = 0; for (const m of mask) on += m;
+    return { ms: performance.now() - t0, reflective: on / (W * H), refs: given ? null : { still: b64(truth0), moving: truth.map(b64), mask: b64(mask) } };
+  };
+
+  // settings for an effect, then the chain built again with them (it builds itself afresh once its key is cleared)
+  const apply = async (effect, settings) => {
+    if (effect === 'ssr') { Object.assign(SSR_SETTINGS, settings || {}); }
+    else if (effect === 'regen' || effect === 'fewer') {
+      mod ||= await import('../../src/kit/hd3d-gpu-trace.js');
+      tuned ||= mod.regenSettings();   // (as the file has them: what an empty settings goes back to)
+      mod.regenSettings({ ...tuned, ...(settings || {}) });
+    }
+    if (chain()) chain().key = '';
+  };
+
+  window.score = async ({ effect = 'regen', settings = null, shots = false } = {}) => {
+    if (!ready) throw new Error('prepare() first');
+    const t0 = performance.now(), out = {};
+    await apply(effect, settings);
+    const m = effect === 'ssr' ? 'ssr' : effect;
+    // the camera still, after a cut: (the rays' noise then runs the same every time)
+    pose(0); mode(m); v.cut(); const d = (await settle(24)).slice();
+    let fl = 0, last = d; for (let i = 0; i < 6; i++) { const n = draw().slice(); await nextFrame(); fl += diff(n, last, mask); last = n; }
+    const still = { error: diff(d, truth0, mask), specks: specks(d, truth0, mask), flicker: fl / 6 };
+    if (shots) { out.still = c.toDataURL(); }
+    // a sprint: a pose a frame, each against its truth
+    pose(0); v.cut(); await settle(10);
+    let e = 0, sp = 0;
+    for (const [i, t] of ts.entries()) { pose(t); const f = draw(); await nextFrame(); e += diff(f, truth[i], mask); sp += specks(f, truth[i], mask); }
+    if (shots) out.fast = c.toDataURL();
+    const fast = { error: e / POSES, specks: sp / POSES };
+    // a walk: the same path at a third of the speed, every third frame against its truth
+    pose(0); v.cut(); await settle(10); e = 0; sp = 0;
+    for (let j = 0; j < POSES * 3; j++) { pose((j + 1) / (POSES * 3)); const f = draw(); await nextFrame(); if (j % 3 === 2) { const i = (j - 2) / 3; e += diff(f, truth[i], mask); sp += specks(f, truth[i], mask); } }
+    if (shots) out.walk = c.toDataURL();
+    const walk = { error: e / POSES, specks: sp / POSES };
+    return { still, fast, walk, ms: performance.now() - t0, refl: HD.info.refl, shots: shots ? out : null };
+  };
+  // (the truth as pictures, for a sheet)
+  window.truthShots = () => { const pic = px => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H); im.data.set(px); g.putImageData(im, 0, 0); return cv.toDataURL(); }; return { still: pic(truth0), fast: pic(truth[POSES - 1]) }; };
+  window.tuneReady = true;
+} catch (e) { window.tuneError = String(e?.stack || e); }
+</script>

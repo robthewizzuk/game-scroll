@@ -12,6 +12,12 @@
 import { Object3D, Vector4 } from 'three';
 import { STILL, pushCells } from './still.js';
 
+/**
+ * The layer of things drawn into shadows only (a person's shadow body, gs.models.human): no view camera has it, every
+ * pass that draws shadow casters does (the lights' shadow cameras, the lamps' slots, the far heights, contact shadows).
+ */
+export const BODY_LAYER = 24, BODY_BIT = 1 << BODY_LAYER;
+
 const EDITS = new WeakMap(), LISTS = new WeakMap();
 /** How many times a scene was listed (tests, probes). */
 export const listStats = { built: 0 };

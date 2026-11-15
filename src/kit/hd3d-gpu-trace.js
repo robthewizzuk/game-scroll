@@ -46,7 +46,8 @@ const ROUGH_MAX = .65, ROUGH_FADE = .45;   // rougher than this a surface shows 
 // surface's cone of directions that rays are sent into (all but its far tail, whose few rays are mostly bright
 // specks; with only the middle half, reflections came out too strong: half the light comes from outside it);
 // REGEN_TAPS: this frame's rays round a pixel that count for it
-const ROUGH_SHARP = .07, LOBE_KEEP = .95;
+const ROUGH_SHARP = .07;
+let LOBE_KEEP = .95;
 // A surface only a little rougher than a mirror (ROUGH_SHARP to CONE_FULL: a polished floor) has a narrow cone: a
 // few pixels' blur, with no room in it for the many rays that smoothing scattered ones takes, and its history is
 // short while the camera moves. Scattered, its rays came out as grain round every bright thing reflected (first
@@ -63,7 +64,7 @@ const ROUGH_SHARP = .07, LOBE_KEEP = .95;
 // not noise: what the history holds outside them is what was there before the camera moved);
 // STILL_KEEP: the least frames' worth any rough surface keeps while nothing moves (a mirror keeps six: its rays are
 // exact; here each frame's are another few of the blur, and six of them shimmer)
-const CONE_FULL = .22, SHARE_WIDE = 1.9, SHARE_TAIL = .3, SHARE_THIN = .85, HOLD_STRAIGHT = 1, STILL_KEEP = 32;
+let CONE_FULL = .22, SHARE_WIDE = 1.9, SHARE_TAIL = .3, SHARE_THIN = .85, HOLD_STRAIGHT = 1, STILL_KEEP = 32;
 const REGEN_TAIL = [[2.6, 0], [3.1, 2.4], [4, 4.8], [5.6, 7.2]].map(([r, a]) => [r * Math.cos(a), r * Math.sin(a)]);
 const coneOf = (rough, U) => mix(smoothstep(ROUGH_SHARP, CONE_FULL, rough), float(1), U.ref);   // (the tests' reference: the whole cone)
 const REGEN_TAPS = [[0, 0], [1, 0], [0, 1], [1, 1]];
@@ -76,7 +77,19 @@ const REGEN_TAPS = [[0, 0], [1, 0], [0, 1], [1, 1]];
 // HIST_TURN: the furthest to either side the history is read on a curved surface, as the share of its blur's
 // angle that the surface may turn by on the way; HOLD_MOVING: how far outside this frame's rays the history may
 // be while the picture moves fast
-const HIST_WIDE = .5, HIST_FINE = .1, USUAL = .1, KEEP_ROUGH = 160, KEEP_SLIDE = 1.5, SLIDE_LEAST = .1, FILL_KEEPS = .85, HIST_TURN = .3, HOLD_MOVING = .15;
+let HIST_WIDE = .5, HIST_FINE = .1, USUAL = .1, KEEP_ROUGH = 160, KEEP_SLIDE = 1.5, SLIDE_LEAST = .1, FILL_KEEPS = .85, HIST_TURN = .3, HOLD_MOVING = .15;
+/**
+ * Ray Regeneration's settings above (none of them changes the tests' reference), for scripts/tune.cjs: its search
+ * against the reference sets others (o: any of them by name) for the next build of the effects chain. Returns the
+ * ones in use. Not on gs: games don't reach it.
+ */
+export function regenSettings(o) {
+  if (o) {
+    ({ LOBE_KEEP = LOBE_KEEP, CONE_FULL = CONE_FULL, SHARE_WIDE = SHARE_WIDE, SHARE_TAIL = SHARE_TAIL, SHARE_THIN = SHARE_THIN, HOLD_STRAIGHT = HOLD_STRAIGHT, STILL_KEEP = STILL_KEEP,
+      HIST_WIDE = HIST_WIDE, HIST_FINE = HIST_FINE, USUAL = USUAL, KEEP_ROUGH = KEEP_ROUGH, KEEP_SLIDE = KEEP_SLIDE, SLIDE_LEAST = SLIDE_LEAST, FILL_KEEPS = FILL_KEEPS, HIST_TURN = HIST_TURN, HOLD_MOVING = HOLD_MOVING } = o);
+  }
+  return { LOBE_KEEP, CONE_FULL, SHARE_WIDE, SHARE_TAIL, SHARE_THIN, HOLD_STRAIGHT, STILL_KEEP, HIST_WIDE, HIST_FINE, USUAL, KEEP_ROUGH, KEEP_SLIDE, SLIDE_LEAST, FILL_KEEPS, HIST_TURN, HOLD_MOVING };
+}
 const REGEN_DISC = Array.from({ length: 4 }, (_, i) => { const r = Math.sqrt((i + .5) / 4), a = i * 2.399963; return [r * Math.cos(a), r * Math.sin(a)]; });
 // (the walk's stack: the tree over the blocks is at most 9 deep, a block's BLOCK_DEPTH)
 BVH_STACK_DEPTH.value = Math.min(BVH_STACK_DEPTH.value, BLOCK_DEPTH + 12);
@@ -123,7 +136,8 @@ export class Tracer {
     };
     // three-mesh-bvh's walk through the two trees, reading these lists
     const like = { storage: st, getShapecastFn(o) { return getShapecastFn(this, o); } }, first = getRaycastFirstHitFn(like), any = getRaycastAnyHitFn(like);
-    // what a ray hit: its facing and how far, its colour and its place in the glow table (all nothing on a miss)
+    // what a ray hit: its facing (toward the ray) and how far, its colour and its place in the glow table, and which
+    // side of the triangle it met (1 its front, -1 its back: inside something solid), all nothing on a miss
     const hit = wgslTagFn/* wgsl */`
       fn gsTraceHit( ro: vec3f, rd: vec3f, far: f32 ) -> mat4x4f {
         var ray: ${ rayStruct };
@@ -145,7 +159,7 @@ export class Tracer {
         let cb = vec3f( f32( lb & 31u ) / 31.0, f32( ( lb >> 5u ) & 63u ) / 63.0, f32( ( lb >> 11u ) & 31u ) / 31.0 );
         let cc = vec3f( f32( lc & 31u ) / 31.0, f32( ( lc >> 5u ) & 63u ) / 63.0, f32( ( lc >> 11u ) & 31u ) / 31.0 );
         let col = ca * w.x + cb * w.y + cc * w.z;
-        return mat4x4f( vec4f( n, hit.dist ), vec4f( col * col, f32( la >> 16u ) ), vec4f( hit.normal, 1.0 ), vec4f( 0.0 ) );
+        return mat4x4f( vec4f( n, hit.dist ), vec4f( col * col, f32( la >> 16u ) ), vec4f( hit.normal, 1.0 ), vec4f( hit.side, 0.0, 0.0, 0.0 ) );
       }
     `;
     // is the way to a light clear? (1: yes)
@@ -370,6 +384,38 @@ export function tracedMRT(m) {
   return vec4(specularColorBlended.mul(SHINY).mul(m.envNode ? -1 : 1), float(1 + 1 / 64).sub(clamp(roughness, 0, 1)).mul(HELD));
 }
 
+/**
+ * What lights a spot a ray hit, worked out without the picture (kit use: the reflections' hits the camera can't see,
+ * and the bounce light's probes, hd3d-gpu-bounce.js): the sun (through a shadow ray), the sky's light, the nearest
+ * lamps, its own glow; polished metal shows the sky and room around it in its colour instead (look: its place in the
+ * glow table, +128 for metal). L, S: the Tracer's uniforms and walk; pal: its glow table; envAt(dir, rough): the
+ * sky's light that way; camPos: the camera, to fog the spot by how far it is (null: no fog). P is where the drawing
+ * has it (the walk is in the world's own numbers: ORIGIN added).
+ */
+export function hitShader(L, S, pal, envAt, camPos = null) {
+  return (P, n, alb, look, rd) => {
+    const metal = look.greaterThan(127.5), glow = look.sub(select(metal, float(128), float(0)));
+    const lit = vec3(0).toVar();
+    const ndl = max(dot(n, L.sunDir), 0);
+    If(ndl.mul(L.sunCol.r.add(L.sunCol.g).add(L.sunCol.b)).greaterThan(1e-3), () => { lit.addAssign(L.sunCol.mul(ndl.mul(S.clear(P.add(n.mul(.03)).add(ORG), L.sunDir, L.far)))); });
+    lit.addAssign(mix(L.ground, L.sky, n.y.mul(.5).add(.5)));
+    Loop({ start: 0, end: LAMPS }, ({ i }) => {
+      If(float(i).greaterThanEqual(L.nl), () => { Break(); });
+      const lp = L.lPos.element(i), lc = L.lCol.element(i), ld = L.lDir.element(i), k = L.lCone.element(i);
+      const v = lp.xyz.sub(P), dd = max(dot(v, v), 1e-4), dl = sqrt(dd), dir = v.div(dl), nl = max(dot(n, dir), 0);
+      // three's falloff: 1 / d^decay, fading to nothing at the lamp's range; a spot's cone
+      const cut = select(lp.w.greaterThan(0), pow(clamp(float(1).sub(pow(dl.div(max(lp.w, 1e-3)), 4)), 0, 1), 2), float(1));
+      const cone = select(k.z.greaterThan(.5), smoothstep(k.x, k.y, dot(dir.negate(), ld.xyz)), float(1));
+      lit.addAssign(lc.xyz.mul(nl.mul(cut).mul(cone).div(max(pow(dl, lc.w), .01))));
+    });
+    const col = alb.mul(select(metal, envAt(reflect(rd, n), float(.3)), lit.mul(1 / Math.PI).add(envAt(n, float(1))))).add(pal.load(ivec2(int(glow.add(.5)), int(0))).rgb).toVar();
+    if (!camPos) return col;
+    // the scene's fog, by how far the spot is from the camera
+    const fd = length(P.sub(camPos)).mul(L.fogK);
+    return mix(L.fogCol, col, exp(fd.mul(fd).negate()));
+  };
+}
+
 /* ---------- the stage in the chain ---------- */
 const VOGEL = Array.from({ length: 6 }, (_, i) => { const r = Math.sqrt((i + .5) / 6), a = i * 2.399963; return [r * Math.cos(a), r * Math.sin(a)]; });
 /** The scene's colour with the traced reflections laid over it (a picture node). tr: the view's Tracer. */
@@ -391,28 +437,8 @@ export function traceStage(ch, sp, colT, tr) {
   const toUV = pv => { const c = U.proj.mul(vec4(pv, 1)), n = c.xy.div(c.w); return vec2(n.x.mul(.5).add(.5), n.y.mul(-.5).add(.5)); };
   const off = q => q.x.lessThan(0).or(q.x.greaterThan(1)).or(q.y.lessThan(0)).or(q.y.greaterThan(1));
   const envAt = (dir, rough) => { const n = pmremTexture(ch.scene.environment, dir, rough); (ch.trEnvs ||= []).push(n); return n.rgb.mul(L.envI); };
-  // a hit the camera can't see, lit simply: the sun (through a shadow ray), the sky's light, the nearest lamps, its own glow;
-  // polished metal shows the sky and room around it in its colour instead (look: its place in the glow table, +128 for metal)
-  const shade = (P, n, alb, look, rd) => {
-    const metal = look.greaterThan(127.5), glow = look.sub(select(metal, float(128), float(0)));
-    const lit = vec3(0).toVar();
-    const ndl = max(dot(n, L.sunDir), 0);
-    If(ndl.mul(L.sunCol.r.add(L.sunCol.g).add(L.sunCol.b)).greaterThan(1e-3), () => { lit.addAssign(L.sunCol.mul(ndl.mul(S.clear(P.add(n.mul(.03)).add(ORG), L.sunDir, L.far)))); });
-    lit.addAssign(mix(L.ground, L.sky, n.y.mul(.5).add(.5)));
-    Loop({ start: 0, end: LAMPS }, ({ i }) => {
-      If(float(i).greaterThanEqual(L.nl), () => { Break(); });
-      const lp = L.lPos.element(i), lc = L.lCol.element(i), ld = L.lDir.element(i), k = L.lCone.element(i);
-      const v = lp.xyz.sub(P), dd = max(dot(v, v), 1e-4), dl = sqrt(dd), dir = v.div(dl), nl = max(dot(n, dir), 0);
-      // three's falloff: 1 / d^decay, fading to nothing at the lamp's range; a spot's cone
-      const cut = select(lp.w.greaterThan(0), pow(clamp(float(1).sub(pow(dl.div(max(lp.w, 1e-3)), 4)), 0, 1), 2), float(1));
-      const cone = select(k.z.greaterThan(.5), smoothstep(k.x, k.y, dot(dir.negate(), ld.xyz)), float(1));
-      lit.addAssign(lc.xyz.mul(nl.mul(cut).mul(cone).div(max(pow(dl, lc.w), .01))));
-    });
-    const col = alb.mul(select(metal, envAt(reflect(rd, n), float(.3)), lit.mul(1 / Math.PI).add(envAt(n, float(1))))).add(pal.load(ivec2(int(glow.add(.5)), int(0))).rgb).toVar();
-    // the scene's fog, by how far the spot is from the camera
-    const fd = length(P.sub(U.camPos)).mul(L.fogK);
-    return mix(L.fogCol, col, exp(fd.mul(fd).negate()));
-  };
+  // a hit the camera can't see, lit simply (hitShader below), fogged by how far it is from the camera
+  const shade = hitShader(L, S, pal, envAt, U.camPos);
   // tests (HD.traceShow): the traced level itself, as rays from the camera find it, lit as a hit the camera can't see is
   if (tr.show) {
     ch.trH = null;
@@ -868,3 +894,5 @@ export function traceFrame(ch, w, h, scale, { cut = false, f = null, ref = false
   const e = ch.scene.environment; if (e) for (const n of ch.trEnvs || []) if (n.value !== e) n.value = e;
 }
 export function traceDispose(ch) { ch.trH?.renderTarget?.dispose(); if (ch.trG) ch.trG.dispose(); else ch.trT?.renderTarget?.dispose(); ch.trH = ch.trT = ch.trG = ch.trU = ch.trEnvs = null; }
+// bounce light from the same rays (v.liveBounce = 'traced'), in this part with them
+export { TracedBounce } from './hd3d-gpu-bounce.js';
