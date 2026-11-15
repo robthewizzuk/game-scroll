@@ -17,7 +17,9 @@ a dog by tilting the phone."*
 | GitHub Copilot | `.github/copilot-instructions.md` | |
 
 These tools can run the checks themselves and fix what fails: `node scripts/check.mjs <id>` runs them all and
-prints one report with the line and a fix for each problem. `node scripts/examples.mjs <name>` shows them how
+prints one report with the line and a fix for each problem, the speed report included (frame time left, the slowest
+lines, garbage, and for 3D games draw calls, triangles and shaders built mid-play against phone budgets; `npm run speed <id>`
+alone). `node scripts/examples.mjs <name>` shows them how
 real games use any part of `gs`. Ask them to.
 
 ## Chat apps (ChatGPT, Gemini, Claude.ai)

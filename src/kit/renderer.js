@@ -16,6 +16,15 @@ function cutLastGL(a, b) {
   return a.id - b.id;
 }
 
+// Draw calls and triangles summed over a whole frame (a view can render several passes; three's info holds the
+// last one only): glStats.frame is the last finished frame's, for the speed report (scripts/budget.cjs).
+let stamp = -1, calls = 0, tris = 0;
+function frameCount(i) {
+  const now = document.timeline?.currentTime ?? 0;
+  if (now !== stamp) { if (stamp >= 0) glStats.frame = { calls, tris }; stamp = now; calls = 0; tris = 0; }
+  calls += i.calls; tris += i.triangles;
+}
+
 /** Makes a three.js renderer on a new canvas (options as WebGLRenderer's), or throws if this device can't. */
 export function makeRenderer(o = {}) {
   const canvas = o.canvas || document.createElement('canvas');
@@ -29,7 +38,7 @@ export function makeRenderer(o = {}) {
   // makes endless one-off shaders.
   const render = r.render.bind(r); let seen = 0, kept = 0;
   r.render = (scene, cam) => {
-    render(scene, cam); glStats.r = r;
+    render(scene, cam); glStats.r = r; frameCount(r.info.render);
     const list = r.info.programs; if (!list || list.length === seen) return;
     if (list.length > seen) glStats.programs += list.length - seen;   // (kept programs are never deleted, so growth = shaders built)
     seen = list.length; for (const p of list) if (!p.gsKept && kept < KEEP_MAX) { p.gsKept = true; p.usedTimes++; kept++; }

@@ -17,14 +17,15 @@ How to check a change without waiting longer than you need to. Written for peopl
 
 | You changed | Run | Time |
 | --- | --- | --- |
-| One game file, all at once | `node scripts/check.mjs <id>`: lint, types, unique, the streamed build, smoke, streamed, fold, sweep (3D games) and the playtest bot, the play checks side by side, with one report (each problem's line in the game's own file, the code on it and what to do; a crash while playing is traced back through the build's source maps). `--quick` only the code checks, `--full` adds `budget.cjs`, `--json` for tools | about 15 to 40 s (3D longer); `--quick` 2 s |
+| One game file, all at once | `node scripts/check.mjs <id>`: lint, types, unique, the streamed build, smoke, streamed, fold, sweep (3D games) and the playtest bot, the play checks side by side, with one report (each problem's line in the game's own file, the code on it and what to do; a crash while playing is traced back through the build's source maps). then the speed report (`budget.cjs`, alone so nothing else slows it; `--no-speed` leaves it out). `--quick` only the code checks, `--json` for tools | about 40 s to 1 min (3D longer); `--quick` 2 s |
 | A game's knobs (its `gs.tweak('Feel', ...)` numbers) | `node scripts/knobs.mjs <id>` lists them; `node scripts/knobs.mjs <id> speed=140 jump*1.2` changes them in the file (only those numbers) | instant |
 | How real games use a part of gs | `node scripts/examples.mjs <name>` (`Feel.coin`, `gs.physics`, `Ready`, any text): the shortest games that use it with the lines, its declaration in `src/gamescroll.d.ts` and its place in `docs/maker-kit.md`; `--kits` counts the games using each kit | under a second |
 | One game file | `node scripts/game-lint.mjs <id>` (it also gives kit hints: advice, never a failure), `node scripts/game-types.mjs <id>`, `npm run games`, then `node scripts/smoke.cjs <id>` and `node scripts/stream-smoke.mjs <id>` | under 20 s |
 | How games use `gs` (a kit, method, option or definition field that doesn't exist) | `npm run game-types` (every game against `src/gamescroll.d.ts`; `-- --self-test` checks the check, `-- --all` also lists what it leaves alone) | about a second |
 | Does a game play differently from the others? | `node scripts/unique.mjs <id>` (its three nearest games and what they share; no ids: the closest pairs of all; `--since origin/main...HEAD`: the games a branch adds or changes; `--self-test`). A near-copy (new names on the same code) fails; a near-twin (plays and reads like another) is a warning | 4 s |
 | A 3D game (Console, Next Gen, AR, Board) | add `node scripts/sweep.cjs <id>` | 20 s to 2 min |
-| A game's speed | `node scripts/budget.cjs <id>` | about 25 s |
+| A game's speed | `npm run speed <id>` (`node scripts/budget.cjs <id>`): the speed report, see [Speed report](#speed-report) | about 25 s |
+| A phone's frame lab recording | `node scripts/budget.cjs --lab <report.html or summary.txt>` (`-` reads pasted text): the same advice from what the phone measured | instant |
 | Can the goal be reached? | `node scripts/playtest.cjs <id> [--budget 20] [--strict]`: a bot plays faster than real time and tries to win (see below) | about 20 s a game |
 | Layout, cards, folding | `node scripts/fold.cjs [id ...]` | about 12 s |
 | Feed swiping | `node scripts/feed-jank.cjs [swipes] [--filter nextgen]` (compare before and after, not with a phone) | about a minute |
@@ -178,6 +179,32 @@ else. Results print as each game finishes, so they can come out in a different o
 
 `budget.cjs` stays one game at a time on purpose: it measures time, and games running beside it
 would make it look slower than it is.
+
+## Speed report
+
+Making a game run well on phones is the maker's job, so `npm run speed <id>` (and the `speed` step of
+`npm run check`) says how a game does and what to change. It plays the game for 12 s on a CPU slowed four
+times (about a mid-range phone) and reports:
+
+- **headroom**: the slow frames (95th percentile) against the budget for its style, how much is left, the
+  99th percentile and frames over twice the budget (hitches). Over the budget fails, here and in the PR check.
+- **slowest lines** in the game's own file, from the profiler's line ticks, with their functions.
+- **garbage**: MB made a second, the share from the game's own calls (a kit call counts for the game line
+  that made it), and the functions that make most. Over 4 MB a second from the game is a warning: on a
+  phone it means collections, which show as hitches.
+- **memory** growth over the play (a steady climb fails as a leak).
+- **3D** (Console, Next Gen, AR, Board): draw calls and triangles a frame (average and most), shaders,
+  pictures and meshes, which phone classes it fits (low 150 draws / 150k triangles, mid 300 / 400k, top
+  600 / 1M: estimates from the engine's own scenes and test phones, a guide rather than a rule; Console
+  games are held to low, the others to mid), and any shader built after the first 1.5 s of play, by
+  material type (each one is a hitch on a phone).
+
+Each warning comes with what to do (`scripts/lib/speed-advice.cjs`, shared with the frame lab reader).
+`--json` adds a `SPEED_JSON {...}` line per game for tools. Draw calls, triangles and shaders are counted
+the same here as on a phone; times are not (the software 3D here is slow in its own ways), so for the
+graphics chip use a frame lab recording from a real phone: `node scripts/budget.cjs --lab <file>` reads
+its Report file or Copy text and gives the same advice (game CPU against the beat, the chip, draws and
+triangles against the budgets, hitches by cause, heat, memory).
 
 ## Why 3D tests are slow, and what to do about it
 

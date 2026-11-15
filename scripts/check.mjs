@@ -5,9 +5,9 @@
 //
 //   node scripts/check.mjs <id>            the checks AGENTS.md lists, about 30 to 60 s (3D games longer)
 //   node scripts/check.mjs <id> --quick    only the checks that read the code: lint, types, unique (about 2 s)
-//   node scripts/check.mjs <id> --full     also the speed budget on a slowed CPU (budget.cjs)
+//   node scripts/check.mjs <id> --no-speed without the speed report (it runs last, about 15 to 40 s)
 //   node scripts/check.mjs <id> --json     the report as JSON (for tools; the exit code is the same)
-//   npm run check <id>                      the same (npm passes --quick/--full/--json through after --)
+//   npm run check <id>                      the same (npm passes --quick/--no-speed/--json through after --)
 //
 // What runs (each is its own script too, see docs/testing.md):
 //   lint      game-lint.mjs     forbidden code (network, storage, eval...); its kit hints come out as advice
@@ -19,7 +19,9 @@
 //   fold      fold.cjs          survives folding and unfolding the screen
 //   sweep     sweep.cjs         odd screen sizes and long play (Console, Next Gen, AR and Board games only)
 //   playtest  playtest.cjs      a bot tries to reach the goal (a warning, never a failure)
-//   budget    budget.cjs        (--full) frame time and memory on a slowed CPU
+//   speed     budget.cjs        the speed report on a slowed CPU: frame time against the budget (fails over it),
+//                               slowest lines, garbage, memory, and for 3D games draw calls, triangles and shaders
+//                               built mid-play against phone budgets (warnings); run alone, after the others
 // The browser checks play the app built with source maps (vite build --mode bundled --sourcemap hidden),
 // so they test the code as it is now, and run side by side (each has its own port).
 import { spawn } from 'node:child_process';
@@ -30,10 +32,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2), flag = f => argv.includes('--' + f) || process.env['npm_config_' + f] === 'true';
-const QUICK = flag('quick'), FULL = flag('full'), JSONOUT = flag('json');
+const QUICK = flag('quick'), SPEED = !flag('no-speed'), JSONOUT = flag('json');
 let id = argv.find(a => !a.startsWith('--'));
 if (id?.endsWith('.js')) id = id.replace(/^.*[\\/]/, '').slice(0, -3);
-if (!id) { console.log('Usage: node scripts/check.mjs <game-id> [--quick] [--full] [--json]'); process.exit(1); }
+if (!id) { console.log('Usage: node scripts/check.mjs <game-id> [--quick] [--no-speed] [--json]'); process.exit(1); }
 if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(id)) { console.error(`"${id}" isn't a game id (lowercase letters, numbers and dashes, like my-game)`); process.exit(1); }
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), ID = esc(id);   // ids are checked above; escaped all the same
 const REL = `src/games/${id}.js`, FILE = join(ROOT, REL);
@@ -165,6 +167,7 @@ if (build) {
 }
 
 // ---- the checks that play it
+let speed = null;
 if (!QUICK) {
   const vb = await run(process.execPath, [join('node_modules', 'vite', 'bin', 'vite.js'), 'build', '--mode', 'bundled', '--sourcemap', 'hidden', '--logLevel', 'error']);
   if (vb.code) step('app build', 'fail', vb.ms, [problem(undefined, vb.out.trim().split('\n').slice(0, 6).join(' / '), 'The app did not build with this game in it: fix the error above first.')]);
@@ -175,7 +178,6 @@ if (!QUICK) {
       ['fold', node('fold.cjs', id, '--jobs', '1')],
       THREE_D && ['sweep', node('sweep.cjs', id, '--jobs', '1')],
       ['playtest', node('playtest.cjs', id, '--jobs', '1')],
-      FULL && ['budget', node('budget.cjs', id)],
     ].filter(Boolean);
     for (const [name, p] of plays) {
       const r = await p, script = { smoke: 'smoke.cjs', stream: 'stream-smoke.mjs', fold: 'fold.cjs', sweep: 'sweep.cjs', playtest: 'playtest.cjs', budget: 'budget.cjs' }[name];
@@ -194,12 +196,19 @@ if (!QUICK) {
         step(name, status, r.ms, probs, status === 'pass' ? [why] : []);
         continue;
       }
-      if (name === 'budget') {
-        const probs = r.code ? r.out.split('\n').filter(l => /over budget|memory grew|too few/.test(l)).map(l => problem(undefined, l.trim(), 'The lines after "over budget" in node scripts/budget.cjs ' + id + ' name the slowest functions with file and line.')) : [];
-        step(name, r.code ? 'fail' : 'pass', r.ms, probs);
-        continue;
-      }
       step(name, r.code ? 'fail' : 'pass', r.ms, r.code ? crashes(r.out, script) : []);
+    }
+    // the speed report runs alone, after the others, so their work doesn't slow its frames
+    if (SPEED && !steps.some(s => s.name === 'smoke' && s.status === 'fail')) {
+      const r = await node('budget.cjs', id, '--json');
+      const j = (() => { try { return JSON.parse(r.out.split('\n').find(l => l.startsWith('SPEED_JSON '))?.slice(11) || 'null'); } catch (_) { return null; } })();
+      if (!j) step('speed', r.code ? 'fail' : 'warn', r.ms, [problem(undefined, r.out.trim().split('\n').slice(-3).join(' / ') || 'the speed report did not finish', 'Run node scripts/budget.cjs ' + id + ' for the full output.')]);
+      else {
+        const pr = w => problem(w.line, w.what + ': ' + w.fact, w.fix);
+        const note = `p95 ${j.ms} of ${j.budget} ms (${Math.round(j.left * 100)}% left)${j.garbageMBs != null ? `, ${j.garbageMBs} MB garbage/s` : ''}${j.d3 ? `, ${j.d3.callsMax} draws, ${Math.round(j.d3.trisMax / 1000)}k triangles` : ''}${j.slowLines.length ? `; slowest :${j.slowLines[0].line}${j.slowLines[0].fn ? ' ' + j.slowLines[0].fn + '()' : ''} ${j.slowLines[0].pct}%` : ''} (node scripts/budget.cjs ${id} for the whole report)`;
+        step('speed', j.ok ? (j.warnings.length ? 'warn' : 'pass') : 'fail', r.ms, [...j.fails, ...j.warnings].map(pr), [note]);
+        speed = j;
+      }
     }
   }
 }
@@ -210,7 +219,7 @@ const knobs = readKnobs(SRC.join('\n')).map(({ at, ...k }) => k);
 
 // ---- the report
 const fails = steps.filter(s => s.status === 'fail'), warns = steps.filter(s => s.status === 'warn');
-const report = { id, style: ERA, ok: !fails.length, failed: fails.map(s => s.name), warnings: warns.map(s => s.name), steps, knobs,
+const report = { id, style: ERA, ok: !fails.length, failed: fails.map(s => s.name), warnings: warns.map(s => s.name), steps, knobs, speed,
   advice: steps.find(s => s.name === 'lint')?.notes || [] };
 if (JSONOUT) { console.log(JSON.stringify(report, null, 2)); process.exit(fails.length ? 1 : 0); }
 
@@ -226,7 +235,7 @@ for (const s of steps) {
     if (p.kit) console.log(`        inside the kit at ${p.kit}`);
     console.log(`        fix: ${p.fix}`);
   }
-  if (s.notes.length && s.name === 'unique') console.log('      ' + s.notes.join('; '));
+  if (s.notes.length && (s.name === 'unique' || s.name === 'speed')) console.log('      ' + s.notes.join('; '));
 }
 console.log(knobs.length ? `\nknobs (node scripts/knobs.mjs ${id} changes them; docs/feel-words.md says which to move): ${knobs.map(k => `${k.folder}.${k.key}=${k.value}`).join(', ')}`
   : `\nknobs: none yet (docs/feel-words.md: keep the numbers that set how it feels in one gs.tweak('Feel', {...}) block)`);

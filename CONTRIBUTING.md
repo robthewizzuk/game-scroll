@@ -437,7 +437,8 @@ needed for the browser tests: `npm i --no-save playwright && npx playwright inst
 One command runs them all and prints one short report, each problem with its line in your file and what to do about it:
 
 ```bash
-npm run check my-game                     # every check below (about 30 s); -- --quick for the code checks alone (2 s), -- --full adds the speed budget
+npm run check my-game                     # every check below (about 30 s plus the speed report); -- --quick for the code checks alone (2 s)
+npm run speed my-game                     # the speed report alone: frame time left, slowest lines, garbage, memory, 3D counts against phones
 npm run examples Feel.coin                # how real games use a part of gs (the shortest first), with its types and docs
 ```
 

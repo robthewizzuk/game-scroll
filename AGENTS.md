@@ -19,8 +19,8 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference 
    that use it with the lines, plus its declaration in `src/gamescroll.d.ts` and its place in `docs/maker-kit.md`.
 4. Check it, and fix whatever fails: `node scripts/check.mjs <id>` runs all of the checks below in about
    30 s and prints one report: each problem with the line in your file (a crash while playing is traced
-   back to your source line), the code on it and what to do (`--quick`: only the code checks, 2 s; `--full`: also the
-   speed budget; `--json` for tools). The checks one by one:
+   back to your source line), the code on it and what to do (`--quick`: only the code checks, 2 s; `--no-speed`: without
+   the speed report; `--json` for tools). The checks one by one:
    ```bash
    node scripts/game-lint.mjs <id>          # forbidden code (network, storage, eval...); also kit hints (advice, not failures)
    node scripts/game-types.mjs <id>         # gs used the way its types describe (no kit, method, option or field that doesn't exist)
@@ -31,8 +31,12 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference 
    node scripts/fold.cjs <id>                # survives folding / unfolding the screen
    ```
    For Console, Next Gen and Board games also run `node scripts/sweep.cjs <id>`. `node scripts/playtest.cjs <id>`
-   has a bot try to reach the goal (warnings only). `node scripts/budget.cjs <id>`
-   checks frame time and memory on a slowed CPU (the PR check runs it too).
+   has a bot try to reach the goal (warnings only). `npm run speed <id>` (`node scripts/budget.cjs <id>`) is the speed
+   report, last in the check: frame time on a slowed CPU against the budget (over it fails, here and in the PR check), the
+   slowest lines in your file, garbage made a second and where, memory growth, and for 3D games draw calls, triangles and
+   shaders built mid-play against low, mid and top phones, each with what to do. Making a game run well on phones is
+   the maker's job: fix its warnings too. A frame lab recording from a phone (its Report file or Copy text) gets the
+   same advice: `node scripts/budget.cjs --lab <file>`.
    Which check fits which change, and how to keep testing fast (`--jobs`, software 3D): [docs/testing.md](docs/testing.md).
 5. Only change files in `src/games/` (and optionally tick the idea in `docs/game-ideas.md`). Shared
    code (`src/kit/`, `src/gamescroll.js`, `src/main.js`...) ships inside the app: change it only when

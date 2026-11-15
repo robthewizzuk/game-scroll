@@ -13,6 +13,7 @@
     "check": "node scripts/check.mjs",
     "examples": "node scripts/examples.mjs",
     "knobs": "node scripts/knobs.mjs",
+    "speed": "node scripts/budget.cjs",
     "smoke": "vite build --mode bundled && node scripts/smoke.cjs",
     "stream-smoke": "node scripts/stream-smoke.mjs",
     "share-link": "node scripts/share-link.mjs",

@@ -16,7 +16,7 @@ import { holdSubmits, watchSubmits, flushGPU } from './submit.js';
 /** 'webgl' or 'webgpu' for a renderer from makeRenderer or webgpu(). */
 export const backend = r => r?.gsBackend || 'webgl';
 /** WebGL shader programs built so far this session, and the WebGL renderer that last drew (renderer.js keeps both; the frame lab reads them). */
-export const glStats = { programs: 0, r: null };
+export const glStats = { programs: 0, r: null, frame: null };
 
 let chip = null;
 /** The graphics chip's name, read once from a throwaway context ('' if unknown). */

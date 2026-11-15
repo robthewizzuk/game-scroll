@@ -26,6 +26,8 @@ Follow AGENTS.md at the repo root. In short:
    - `npm run games`
    - `npm run build:bundled && node scripts/smoke.cjs <id>`
    - `node scripts/fold.cjs <id>` (and `node scripts/sweep.cjs <id>` for console / nextgen)
+   - `npm run speed <id>` (the speed report: frame time left, slowest lines, garbage, 3D counts against phones;
+     fix its warnings too: a game that hitches on a phone isn't done)
 5. **Look at it.** Take a screenshot during play (`SHOTS=<dir> node scripts/smoke.cjs <id>`) and check
    it reads well on a phone: big enough targets, clear HUD, the style's colour rules.
 6. Report what the game is, how it plays and what the checks said. Change only `src/games/<id>.js`

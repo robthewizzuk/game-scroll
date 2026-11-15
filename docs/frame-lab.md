@@ -175,7 +175,8 @@ One HTML file with everything in it, readable in any browser, phone or desktop:
 - the pictures from A/B (with a wipe slider), Shimmer and GSFG check, and the Half and Spread checks' times
 
 To send one to Claude: Report, share it to yourself (Drive, email), and attach it in chat; or just
-Copy and paste the summary.
+Copy and paste the summary. `node scripts/budget.cjs --lab <file>` (or `-` with the summary pasted in) turns a
+Report file or Copy text into what to change in the game, the same advice as the speed report (docs/testing.md).
 
 ## How it hooks in
 
