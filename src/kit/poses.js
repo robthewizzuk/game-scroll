@@ -164,8 +164,65 @@ Object.assign(POSES, {
   dodgeBack: cyc(keys([[0, GUARD], [.3, { spine: [-.25, 0, 0], head: [-.15, 0, 0], legL: [.1, 0, .06], shinL: [.5, 0, 0], legR: [.5, 0, -.06], shinR: [.6, 0, 0], drop: .1 }], [1, GUARD]]), 0),
 });
 POSES.dodgeR = cyc(mirror(POSES.dodgeL.cycle), 0);
+// Armed (gs.fight BLADES, AXES, SPEARS, STAVES; a sword, an axe or a mace in the right hand, a shield on the left arm, or
+// nothing in it). The guard: the blade up and forward, the shield (or the empty hand) out in front, side on, the left foot forward.
+const LEGS = { legL: [-.32, 0, .08], shinL: [.32, 0, 0], footL: [0, 0, 0], legR: [.22, 0, -.08], shinR: [.34, 0, 0], footR: [-.1, 0, 0] };
+const ARMED = { spine: [.1, -.3, 0], head: [-.05, .25, 0], armR: [-.4, 0, .25], foreR: [-1.25, 0, 0], handR: [.75, 0, 0], armL: [-.75, 0, -.15], foreL: [-1.0, 0, 0], handL: [0, 0, 0], ...LEGS, drop: .04 };
+// a blow: from the guard to the wind-up, through the strike (from at the active frames' start to the end of them) and back
+const cut = (f, wind, from, to, rec = null) => keys([[0, ARMED], [f[0] * .62, wind], [f[0], from], [f[1], to], ...(rec ? [[f[1] + (1 - f[1]) * .45, rec]] : []), [1, ARMED]]);
+const SPEAR = { spine: [.12, -.55, 0], head: [-.05, .5, 0], armR: [-.05, .4, .8], foreR: [-1.4, 0, 0], handR: [1.05, 0, 0], armL: [-.85, 0, -.1], foreL: [-.55, 0, 0], handL: [0, 0, 0], ...LEGS, drop: .05 };
+const jab = (f, wind, from, to) => keys([[0, SPEAR], [f[0] * .62, wind], [f[0], from], [f[1], to], [1, SPEAR]]);
+Object.assign(POSES, {
+  armed: cyc(p => { const k = S(p * TAU) * .012, { drop, ...j } = ARMED; return P({ ...j, spine: [.1 + k, -.3, 0] }, drop + k); }, 0),
+  // the shield up in front, the blade back over it ready to come round
+  shieldUp: cyc(p => { const k = S(p * TAU) * .01, { drop, ...j } = ARMED; return P({ ...j, spine: [.16 + k, -.35, 0], head: [.02, .3, 0], armL: [-1.15, 0, -.05], foreL: [-.75, 0, 0], armR: [-.6, 0, .45], foreR: [-1.6, 0, 0], handR: [.55, 0, 0] }, drop + .02 + k); }, 0),
+  // one-handed: across from the right, back from the left, down from overhead, a thrust, a cut at the legs. The blade runs on
+  // from the forearm (the wrist cocked), its edge leading (the forearm turned), and the arm sweeps it round with the body.
+  slash: cyc(cut(fr(8, 4, 12), { spine: [.05, -.7, 0], head: [0, .6, 0], armR: [-1.4, 0, -1.0], foreR: [-.7, 1.5, 0], handR: [1.0, 0, 0] },
+    { spine: [.12, -.15, 0], head: [0, .2, 0], armR: [-1.45, 0, -.45], foreR: [-.15, 1.5, 0], handR: [1.4, 0, 0], legR: [.32, 0, -.08] },
+    { spine: [.18, .5, 0], head: [0, -.35, 0], armR: [-1.4, 0, .7], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0], legR: [.3, -.3, -.08] },
+    { spine: [.14, .3, 0], armR: [-1.0, 0, .6], foreR: [-.9, .8, 0], handR: [1.0, 0, 0] }), 0),
+  cutBack: cyc(cut(fr(7, 4, 14), { spine: [.15, .55, 0], head: [0, -.35, 0], armR: [-1.5, 0, .9], foreR: [-1.1, 1.5, 0], handR: [1.0, 0, 0] },
+    { spine: [.14, .3, 0], head: [0, -.1, 0], armR: [-1.45, 0, .5], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0] },
+    { spine: [.1, -.45, 0], head: [0, .45, 0], armR: [-1.4, 0, -.8], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0] },
+    { spine: [.1, -.35, 0], armR: [-.9, 0, -.4], foreR: [-1.0, .8, 0], handR: [1.0, 0, 0] }), 0),
+  chop: cyc(cut(fr(13, 4, 20), { spine: [-.12, -.2, 0], head: [-.15, .2, 0], armR: [-2.9, 0, .2], foreR: [-1.4, 0, 0], handR: [.6, 0, 0], drop: .02 },
+    { spine: [.25, -.2, 0], armR: [-2.0, 0, .1], foreR: [-.2, 0, 0], handR: [1.2, 0, 0], legL: [-.5, 0, .08], shinL: [.55, 0, 0] },
+    { spine: [.45, -.2, 0], head: [.1, .2, 0], armR: [-1.15, 0, .1], foreR: [-.1, 0, 0], handR: [.9, 0, 0], legL: [-.55, 0, .08], shinL: [.7, 0, 0], drop: .09 }), 0),
+  thrust: cyc(cut(fr(10, 3, 16), { spine: [.05, -.55, 0], head: [0, .5, 0], armR: [.2, 0, .3], foreR: [-1.55, 0, 0], handR: [1.5, 0, 0], legR: [.35, 0, -.08] },
+    { spine: [.2, .15, 0], head: [-.05, -.1, 0], armR: [-1.4, 0, .05], foreR: [-.1, 0, 0], handR: [.95, 0, 0], legL: [-.7, 0, .08], shinL: [.75, 0, 0], legR: [.4, 0, -.08], shinR: [.1, 0, 0], drop: .1 },
+    { spine: [.24, .2, 0], armR: [-1.5, 0, 0], foreR: [-.05, 0, 0], handR: [.95, 0, 0], legL: [-.75, 0, .08], shinL: [.8, 0, 0], drop: .12 }), 0),
+  lowCut: cyc(cut(fr(9, 4, 16), { spine: [.3, -.7, 0], armR: [-.9, 0, -1.0], foreR: [-.9, 1.5, 0], handR: [1.0, 0, 0], drop: .08 },
+    { spine: [.55, -.1, 0], head: [-.3, .1, 0], armR: [-.7, 0, -.55], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0], legL: [-.8, 0, .1], shinL: [1.0, 0, 0], drop: .16 },
+    { spine: [.6, .55, 0], head: [-.3, -.3, 0], armR: [-.75, 0, .6], foreR: [-.2, 1.5, 0], handR: [1.4, 0, 0], legL: [-.85, 0, .1], shinL: [1.1, 0, 0], drop: .18 }), 0),
+  // the shield driven forward into them, the shoulder behind it
+  bash: cyc(cut(fr(6, 4, 14), { spine: [.05, -.6, 0], armL: [-.9, 0, -.15], foreL: [-1.3, 0, 0] },
+    { spine: [.3, .25, 0], armL: [-1.45, 0, -.1], foreL: [-.35, 0, 0], legL: [-.7, 0, .08], shinL: [.7, 0, 0], drop: .1 },
+    { spine: [.32, .3, 0], armL: [-1.5, 0, -.1], foreL: [-.25, 0, 0], legL: [-.72, 0, .08], shinL: [.72, 0, 0], drop: .1 }), 0),
+  // an axe's beard hooked over the guard and pulled down and back
+  axeHook: cyc(cut(fr(9, 4, 16), { spine: [.1, -.4, 0], armR: [-2.2, 0, .4], foreR: [-1.0, 0, 0], handR: [.3, 0, 0] },
+    { spine: [.2, .1, 0], armR: [-1.7, 0, .1], foreR: [-.5, 0, 0], handR: [.6, 0, 0] },
+    { spine: [.05, -.5, 0], armR: [-.6, 0, .3], foreR: [-1.3, 0, 0], handR: [.6, 0, 0], legR: [.45, 0, -.08], legL: [-.15, 0, .08] }), 0),
+  // a spear (or a staff's end) in both hands: the right hand back by the hip, the left forward along the shaft
+  spearGuard: cyc(p => { const k = S(p * TAU) * .012, { drop, ...j } = SPEAR; return P({ ...j, spine: [.12 + k, -.55, 0] }, drop + k); }, 0),
+  spearThrust: cyc(jab(fr(7, 3, 12), { spine: [.05, -.75, 0], armR: [.4, .4, .9], foreR: [-1.3, 0, 0], legR: [.35, 0, -.08] },
+    { spine: [.2, -.35, 0], armR: [-.6, .35, .6], foreR: [-.8, 0, 0], handR: [.7, 0, 0], legL: [-.6, 0, .08], shinL: [.6, 0, 0], drop: .09 },
+    { spine: [.22, -.3, 0], armR: [-.75, .3, .55], foreR: [-.6, 0, 0], handR: [.6, 0, 0], legL: [-.65, 0, .08], shinL: [.65, 0, 0], drop: .1 }), 0),
+  spearLunge: cyc(jab(fr(13, 4, 20), { spine: [-.05, -.85, 0], armR: [.5, .4, 1.0], foreR: [-1.5, 0, 0], legR: [.4, 0, -.08], drop: .02 },
+    { spine: [.3, -.2, 0], head: [-.15, .2, 0], armR: [-1.0, .3, .45], foreR: [-.35, 0, 0], legL: [-1.0, 0, .1], shinL: [1.0, 0, 0], legR: [.55, 0, -.08], shinR: [.1, 0, 0], drop: .18 },
+    { spine: [.32, -.15, 0], armR: [-1.1, .3, .4], foreR: [-.25, 0, 0], legL: [-1.05, 0, .1], shinL: [1.05, 0, 0], legR: [.58, 0, -.08], shinR: [.1, 0, 0], drop: .2 }), 0),
+  spearSweep: cyc(jab(fr(10, 4, 20), { spine: [.3, -1.0, 0], armR: [.2, 0, .2], foreR: [-1.0, 1.5, 0], handR: [1.2, 0, 0], drop: .1 },
+    { spine: [.5, -.4, 0], head: [-.3, .3, 0], armR: [-.5, 0, -.4], foreR: [-.4, 1.5, 0], handR: [1.4, 0, 0], legL: [-.8, 0, .1], shinL: [1.0, 0, 0], drop: .2 },
+    { spine: [.5, .4, 0], head: [-.3, -.3, 0], armR: [-.6, 0, .6], foreR: [-.4, 1.5, 0], handR: [1.4, 0, 0], legL: [-.85, 0, .1], shinL: [1.05, 0, 0], drop: .2 }), 0),
+  // a bow in the left hand: held low and ready, then drawn (at: how far, 0..1): side on, the bow arm out towards the mark (the
+  // body's forward), the right hand drawing the string back to the jaw, the head turned to look along the arrow
+  bowReady: cyc(p => P({ spine: [.06 + S(p * TAU) * .01, -.2, 0], head: [0, .2, 0], armL: [-.45, 0, -.15], foreL: [-.45, 0, 0], handL: [0, 0, 0], armR: [-.55, 0, .25], foreR: [-1.2, 0, 0], handR: [0, 0, 0], legL: [-.15, 0, .1], legR: [.12, 0, -.06], shinL: [.1, 0, 0], shinR: [.12, 0, 0] }), 0),
+  bowDraw: cyc(keys([[0, { hips: [0, -1.2, 0], spine: [.04, -.37, 0], head: [0, 1.45, 0], armL: [-1.57, 0, 1.57], foreL: [0, 0, 0], handL: [0, 0, 0], armR: [-1.4, 0, 1.15], foreR: [-.35, 0, 0], handR: [0, 0, 0], legL: [-.1, 0, .14], legR: [.1, 0, -.12], shinL: [.1, 0, 0], shinR: [.1, 0, 0] }],
+    [.5, { armR: [-.8, 0, -.4], foreR: [-1.9, 0, 0] }],
+    [1, { armR: [0, 0, -1.57], foreR: [-2.6, 0, 0] }]]), 0),
+});
 const AIMED = new Set(['aim', 'carAimL', 'carAimR', 'carAimF']);   // upper poses the aim (up and down) and aimYaw turn
-const TIMED = { guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2 };
+const TIMED = { guard: .6, armed: .6, shieldUp: .6, spearGuard: .6, bowReady: .25, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2 };
 
 // ---- smooth curves and key poses
 // A curve through [when, value] points that never swings past a point (so a knee can't bend backwards

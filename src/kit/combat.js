@@ -23,6 +23,7 @@
 
 import { linksFor } from './links.js';
 export { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } from './arsenal.js';
+export { Bow } from './bow.js';
 
 const len = v => Math.hypot(v.x, v.y, v.z || 0);
 const norm = v => { const l = len(v) || 1; return { x: v.x / l, y: v.y / l, z: (v.z || 0) / l }; };

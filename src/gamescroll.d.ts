@@ -1563,7 +1563,10 @@ export interface Fx3dEffect {
 }
 /** 3D text, 3D particle effects and extra screen effects (lazy). All of it draws on WebGL and on WebGPU. */
 export type ImpactSurface = 'metal' | 'stone' | 'wood' | 'glass' | 'dirt' | 'grass' | 'gravel' | 'sand' | 'snow' | 'mud' | 'water' | 'ice' | 'cloth' | 'body' | 'plastic' | 'rubber' | 'leaves' | 'carpet';
-export type WeaponKind = 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' | 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton';
+export type WeaponKind = 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' | 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton'
+  | 'sword' | 'longsword' | 'dagger' | 'axe' | 'mace' | 'spear' | 'staff' | 'shield' | 'bow' | 'arrow' | 'quiver';
+/** The weapons with numbers in gs.combat's ARSENAL (an arrow and a quiver are only things to see). */
+export type ArsenalKind = Exclude<WeaponKind, 'arrow' | 'quiver'>;
 export interface Fx3dPart {
   /**
    * Sharp text inside the 3D world: scores over heads, signs, labels. size: the height of a capital letter in world
@@ -1665,7 +1668,8 @@ export interface CharactersPart {
 export interface CarrySpot { bone: string; /** where the grip sits, in the person's own space as they stand (1.8 m, facing +z, the left at +x) */ at: P3; /** which way its length points */ dir: P3; /** which way its flat faces */ face: P3; /** the hand that draws it */ hand?: 'L' | 'R' }
 export interface CarryT {
   person: Loose; things: Record<string, Loose>; readonly busy: boolean;
-  add(name: string, thing: Loose, spot: string | CarrySpot, o?: { grip?: P3; along?: P3; face?: P3; hand?: 'L' | 'R'; held?: { at: P3; dir: P3; face: P3 }; /** a scabbard that stays on the body: true (sized to the thing) or its size */ sheath?: boolean | { length?: number; radius?: number; colour?: string } }): Loose;
+  add(name: string, thing: Loose, spot: string | CarrySpot, o?: { grip?: P3; along?: P3; face?: P3; hand?: 'L' | 'R'; held?: { at: P3; dir: P3; face: P3 }; /** a scabbard that stays on the body: true (sized to the thing) or its size */ sheath?: boolean | { length?: number; radius?: number; colour?: string };
+    /** held in both hands once drawn (a gs.models.weapon made for two: a spear, a staff, a longsword, has it by itself), the other hand at fore */ both?: boolean; fore?: P3 }): Loose;
   /** The hand goes to it, takes it ('grab') and brings it round ('drawn'). false if it is already in hand or that hand is busy. */
   draw(name: string, o?: { time?: number }): boolean;
   sheathe(name: string, o?: { time?: number }): boolean;
@@ -2540,10 +2544,20 @@ export interface Fighter {
   canCancel(name: string): boolean; start(name: string): boolean; update(dt: number): Fighter; hitboxes(): { x: number; y: number; w: number; h: number }[]; hurtboxes(): { x: number; y: number; w: number; h: number }[];
 }
 /** A 3D melee move: frames (60ths) and where it lands. */
-export interface MeleeMove { button?: string; start: number; active: number; recover: number; reach: number; arc: number; height: 'high' | 'mid' | 'low'; damage: number; push: number; up?: number; stun?: number; lunge?: number; then?: Record<string, string>; knock?: boolean; trip?: boolean; unblockable?: boolean; pose?: string; armed?: boolean }
-export interface MeleeHit { who: Loose; by: MeleeT; move: MeleeMove; name: string; blocked: boolean; damage: number; at: P3; push: P3; knock: boolean; trip: boolean; combo: number; left?: number }
+export interface MeleeMove { button?: string; start: number; active: number; recover: number; reach: number; arc: number; height: 'high' | 'mid' | 'low'; damage: number; push: number; up?: number; stun?: number; lunge?: number; then?: Record<string, string>; knock?: boolean; trip?: boolean; unblockable?: boolean; pose?: string; armed?: boolean;
+  /** How armour takes it. */ edge?: 'cut' | 'point' | 'blunt'; /** Blocked, it knocks the guard aside (a hook, a bash). */ guardBreak?: boolean; /** Only with a shield. */ shield?: boolean }
+/** A weapon's numbers for Melee (gs.fight ARMS): added to its move set's (moves: its name), quick (sooner moves), hands. */
+export interface MeleeArm { reach?: number; damage?: number; arc?: number; moves?: 'BLADES' | 'AXES' | 'SPEARS' | 'STAVES' | 'SWINGS' | 'FISTS'; edge?: 'cut' | 'point' | 'blunt'; quick?: number; hands?: 1 | 2; kind?: string }
+/** How a shield guards: the arc it covers (radians), the share of a blow that gets through, parry frames. */
+export interface MeleeShield { arc: number; chip: number; parry: number }
+export interface MeleeHit { who: Loose; by: MeleeT; move: MeleeMove; name: string; blocked: boolean; damage: number; at: P3; push: P3; knock: boolean; trip: boolean; combo: number; left?: number;
+  /** Turned aside by a guard raised just in time (no damage; the one who swung is left open). */ parried: boolean; /** What armour took. */ soaked: number; /** A shield took it. */ shield: boolean; /** The guard was knocked aside. */ guardBroken: boolean }
 export interface MeleeT {
-  body: Loose; moves: Record<string, MeleeMove>; radius: number; height: number; hp: number; maxHp: number; react: Loose; weapon: { reach?: number; damage?: number; arc?: number } | null;
+  body: Loose; moves: Record<string, MeleeMove>; radius: number; height: number; hp: number; maxHp: number; react: Loose; weapon: MeleeArm | null;
+  shield: MeleeShield | null; parryWindow: number; armour: number | 'auto' | { high?: number; mid?: number; low?: number };
+  /** The pose for its guard ('guard', 'armed', 'shieldUp', 'spearGuard'); the guard knocked aside (seconds left); left open after a parry (seconds left). */ guardPose: string; guardDown: number; open: number;
+  /** The guard was raised in time to parry what lands now. */ readonly parrying: boolean;
+  /** How much of a blow at a height with an edge its armour takes, 0..1. */ protect(height?: 'high' | 'mid' | 'low', edge?: 'cut' | 'point' | 'blunt'): number;
   move: MeleeMove | null; name: string | null; frame: number; stun: number; guard: boolean; target: Loose; combo: number; hits: MeleeHit[];
   /** After update: metres a second to move the body by (stepping in, a dodge), the yaw to turn to (or null), the pose for gs.poses and how far through it (rig.play(m.pose, { at: m.at, fade: .06 })). */
   walk: { x: number; z: number }; facing: number | null; pose: string | null; at: number;
@@ -2553,21 +2567,37 @@ export interface MeleeT {
   pick(foes: Loose[]): Loose; start(name: string): boolean; stats(m: MeleeMove): MeleeMove; reset(): MeleeT;
   /** Steps the frames, takes buffered presses, turns and steps in onto the foe locked on to, and returns what landed this frame. Hits on a Melee give it stun and take its hp; with react (Reactions) on the one hit, it staggers, trips or falls. */
   update(dt: number, foes?: Loose[]): MeleeHit[];
-  on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block' | 'dodge', fn: (...a: Loose[]) => void): MeleeT;
+  on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'parried' | 'hurt' | 'block' | 'parry' | 'dodge', fn: (...a: Loose[]) => void): MeleeT;
 }
 export interface FightPart {
   /**
    * Melee between people in a 3D world: body an Object3D (position, rotation.y) or { x, y, z, yaw }. moves (FISTS, or SWINGS for something held
    * in both hands); radius (.35), height (1.8), lock (3.5 m to lock on), turn (10 rad/s onto the target), react (a Reactions on this body),
-   * buffer (.25 s), weapon ({ reach, damage, arc } added to its moves), hp (100).
+   * buffer (.25 s), weapon ({ reach, damage, arc } added to its moves, or a kind of ARMS: 'sword', 'axe', 'spear'... with its move set), hp (100),
+   * shield (true or { arc, chip, parry }: a wider guard that takes low blows and lets nothing through; 'push' bashes), parry (frames before a blow
+   * lands that a guard raised then parries it, 6), armour (0..1, { high, mid, low }, or 'auto': what a gs.models.human body wears).
    */
-  Melee: new (body: Loose, o?: { moves?: Record<string, MeleeMove>; radius?: number; height?: number; lock?: number; turn?: number; react?: Loose; buffer?: number; weapon?: { reach?: number; damage?: number; arc?: number } | null; hp?: number }) => MeleeT;
+  Melee: new (body: Loose, o?: { moves?: Record<string, MeleeMove>; radius?: number; height?: number; lock?: number; turn?: number; react?: Loose; buffer?: number; weapon?: MeleeArm | keyof FightPart['ARMS'] | null; hp?: number; shield?: boolean | Partial<MeleeShield> | null; parry?: number; armour?: number | 'auto' | { high?: number; mid?: number; low?: number } }) => MeleeT;
   /** A ready-made 3D brawler: think(dt, me, foe) gives { walk, face, attack, block, dodge } for your game to do. skill 0..1 or a gs.brains Dial (result(playerWon) at the end). */
   Brawler: new (o?: { skill?: Skill | number; speed?: number; rng?: () => number; mean?: number }) => { skill: Loose; think(dt: number, me: MeleeT, foe: MeleeT): { walk: { x: number; z: number }; face: number | null; attack: string | null; block: boolean; dodge: { x: number; z: number } | null }; result(playerWon: boolean): Loose };
   /** Fists and feet: jab, cross, hook, uppercut (light chain), kick, knee (heavy), sweep (low: trips), shove (push: unblockable). */
   FISTS: Record<string, MeleeMove>;
   /** Swinging something held: swing, backhand, overhead, jabWith, sweep. */
   SWINGS: Record<string, MeleeMove>;
+  /** A one-handed sword (or a dagger): slash, cutBack, chop (light chain), thrust (heavy), lowCut (low), bash (push, with a shield), shove. */
+  BLADES: Record<string, MeleeMove>;
+  /** An axe or a mace: hack, hackBack, cleave (puts them down), hook (low: pulls the guard aside), bash, shove. */
+  AXES: Record<string, MeleeMove>;
+  /** A spear: thrust, thrust2, lunge (heavy), sweep (low: trips), shaft (push). */
+  SPEARS: Record<string, MeleeMove>;
+  /** A staff: swing, backhand, overhead, jab (heavy), sweep, shaft. */
+  STAVES: Record<string, MeleeMove>;
+  /** The move sets by name. */
+  MOVESETS: Record<'FISTS' | 'SWINGS' | 'BLADES' | 'AXES' | 'SPEARS' | 'STAVES', Record<string, MeleeMove>>;
+  /** Each weapon's numbers for Melee (gs.combat's ARSENAL melee entries are these). */
+  ARMS: Record<'bat' | 'pipe' | 'wrench' | 'baton' | 'sword' | 'longsword' | 'dagger' | 'axe' | 'mace' | 'spear' | 'staff', MeleeArm>;
+  /** How a shield guards by default. */
+  SHIELD: MeleeShield;
   Reader: new (o?: { window?: number; buffer?: number; dead?: number }) => FightReader;
   Fighter: new (moves: Record<string, FightMove>, o?: { x?: number; y?: number; facing?: number; hurt?: FBox[]; hp?: number }) => Fighter;
   clash(a: Fighter, b: Fighter): { move: FightMove; name: string; blocked: boolean; x: number; y: number } | null;
@@ -2883,26 +2913,42 @@ export interface Gun {
   save(): Loose; load(d: Loose): Gun; [k: string]: Loose;
 }
 export interface ArsenalEntry {
-  /** Where a Loadout keeps it. */ slot: 'melee' | 'hand' | 'long' | 'heavy' | 'throw';
+  /** Where a Loadout keeps it ('off': a shield, worn beside the one out). */ slot: 'melee' | 'hand' | 'long' | 'heavy' | 'throw' | 'off';
   /** The ammo it takes (a Pouch's name for it). */ ammo?: string;
   /** The case it throws (gs.fx3d Impacts.shell). */ shell?: 'small' | 'rifle' | 'shell' | null;
   /** Rounds that come with it picked up. */ pickup?: number;
   /** Options for gs.combat.Gun. */ gun?: Loose;
   /** A grenade's throw: speed, fuse, radius, damage (for gs.combat.Explosives). */ throw?: { speed: number; fuse: number; radius: number; damage: number };
   /** A launcher's rocket going off. */ blast?: { radius: number; damage: number };
-  /** A gs.fight.Melee weapon over SWINGS. */ melee?: { reach: number; damage: number; arc: number };
+  /** A gs.fight.Melee weapon (gs.fight ARMS). */ melee?: MeleeArm;
+  /** How a shield guards (gs.fight.Melee's shield). */ shield?: MeleeShield;
+  /** Options for gs.combat.Bow. */ bow?: { draw: number; speed: number; damage: number };
+}
+export interface BowHit { arrow: Loose; who: Loose | null; thing: Loose | null; at: P3; dir: P3; speed: number; head: boolean; damage: number }
+export interface BowT {
+  /** The draw now, 0..1 (bowModel.pull(bow.k)); seconds held at full; an arrow on the string. */ k: number; full: number; loaded: boolean;
+  /** Arrows in flight ({ x, y, z, v, damage }) and stuck where they landed ({ x, y, z, dir, on }). */ flying: Loose[]; stuck: Loose[];
+  /** Nocked and not drawn. */ readonly ready: boolean; /** Arrows left (the pouch's and the one on the string). */ readonly left: number; /** How far off the aim an arrow loosed now may go (radians). */ readonly wobble: number;
+  /** Each frame: pull (held), from and dir (where it leaves, the aim), targets, hits (your own ray test, else the game's World3D). The hits this frame. */
+  update(dt: number, o?: { pull?: boolean; from?: P3 | null; dir?: P3 | null; targets?: Loose[]; hits?: (from: P3, to: P3, arrow: Loose) => Loose }): BowHit[];
+  /** Lets the arrow go now. */ loose(from: P3, dir: P3): Loose | null;
+  /** Picks up stuck arrows near a point: how many went back in the pouch. */ gather(at: P3, reach?: number): number;
+  /** Keeps a model on each arrow (make: () => gs.models.weapon('arrow')). */ show(scene: Loose, make: () => Loose): BowT; hide(): BowT;
+  on(ev: 'nock' | 'draw' | 'loose' | 'hit', fn: (e: Loose) => void): BowT; reset(): BowT;
 }
 export interface Pouch { n: Record<string, number>; max: Record<string, number>; count(kind: string): number; add(kind: string, n: number): number; take(kind: string, n?: number): number; full(kind: string): boolean; save(): Record<string, number>; load(d: Loose): Pouch }
 export interface Pickup { x: number; y: number; z: number; kind: WeaponKind | 'ammo' | 'health' | string; of?: string; amount: number | null; respawn: number; here: boolean; spin: number; bob: number; [k: string]: Loose }
 export interface Loadout {
-  pouch: Pouch; carried: Record<string, { gun: Gun | null }>; kind: WeaponKind | null; switching: number; health: Health | null;
+  pouch: Pouch; carried: Record<string, { gun: Gun | null; bow: BowT | null }>; kind: ArsenalKind | null; switching: number; health: Health | null;
+  /** The shield worn beside the one out (slot 'off'), or null. */ off: ArsenalKind | null;
+  /** The bow out (its arrows come from the pouch; update it yourself: arms.bow.update(dt, { pull, from, dir, targets })), or null. */ readonly bow: BowT | null;
   /** The gun out (null for a thing swung or thrown, or nothing). */ readonly gun: Gun | null;
   /** ARSENAL's entry for the one out. */ readonly info: ArsenalEntry | null;
-  /** The kinds carried, in slot order. */ readonly list: WeaponKind[];
+  /** The kinds carried, in slot order. */ readonly list: ArsenalKind[];
   has(kind: string): boolean;
-  /** Picks one up (with its rounds): drops what was in its slot (returned). */ give(kind: WeaponKind, o?: { rounds?: number; use?: boolean }): WeaponKind | null;
+  /** Picks one up (with its rounds): drops what was in its slot (returned). A shield is worn (off), not taken out. */ give(kind: ArsenalKind, o?: { rounds?: number; use?: boolean }): ArsenalKind | null;
   /** What a Pickups handed over: how much it took (0: leave it lying). */ take(p: Pickup): number;
-  use(kind: WeaponKind): Loadout; next(step?: number): Loadout; prev(): Loadout; update(dt: number): Loadout;
+  use(kind: ArsenalKind): Loadout; next(step?: number): Loadout; prev(): Loadout; update(dt: number): Loadout;
   /** Gun.pull with its sound (at: where), nothing while switching. */ fire(from: P3, dir: P3, pressed?: boolean, o?: { at?: P3 }): Shot[];
   reload(o?: { at?: P3 | null }): Loadout; save(): Loose; load(d: Loose): Loadout;
 }
@@ -2913,9 +2959,15 @@ export interface Health {
 export interface CombatPart {
   Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number; pouch?: Pouch | null; ammoType?: string | null }) => Gun;
   /** Each weapon's numbers (the ones gs.models.weapon makes): its Gun options, ammo, case, slot, a grenade's throw, a rocket's blast, a melee weapon. */
-  ARSENAL: Readonly<Record<WeaponKind, ArsenalEntry>>;
+  ARSENAL: Readonly<Record<ArsenalKind, ArsenalEntry>>;
   /** A Gun with a weapon's numbers (o over them: a pouch...). */
-  arm(kind: WeaponKind, o?: Loose): Gun;
+  arm(kind: ArsenalKind, o?: Loose): Gun;
+  /**
+   * A bow: drawn over draw seconds while pull is held (speed and damage grow with it; held at full past tire seconds it shakes), loosed on letting
+   * go (barely drawn: let down), the next arrow nocked from the pouch. Arrows drop with gravity and stop in the game's World3D (or your hits test)
+   * or in a target (anything with a position, radius and height), and go along with who they stuck in. show(scene, make) keeps a model on each.
+   */
+  Bow: new (o?: { draw?: number; speed?: number; damage?: number; gravity?: number; spread?: number; shake?: number; tire?: number; nock?: number; pouch?: Pouch | null; ammo?: string; stick?: number; range?: number; sounds?: boolean; rng?: () => number; link?: boolean }) => BowT;
   /** Ammo carried by kind ('pistol', 'magnum', 'shells', 'rifle', 'rockets', 'grenades' or your own); max: the most of each. */
   Pouch: new (start?: Record<string, number>, o?: { max?: Record<string, number> }) => Pouch;
   /** The weapons one person carries (a slot each), the one out, and a pouch the guns share; sounds: false to play your own. health: where health pickups go. */
@@ -2923,7 +2975,7 @@ export interface CombatPart {
   /** Things lying in the world to pick up (weapons, kind 'ammo' with of and amount, kind 'health'); update(dt, who) gives those in reach; collect(dt, who, loadout) takes them. */
   Pickups: new (o?: { reach?: number; bob?: number }) => { list: Pickup[]; add(o: Partial<Pickup> & { kind: string }): Pickup; remove(p: Pickup): Loose; taken(p: Pickup): Loose; update(dt: number, who?: P3 | P3[] | null): Pickup[]; collect(dt: number, who: P3 | P3[], loadout: Loadout): Pickup[]; clear(): Loose };
   /** A weapon's sound: 'fire', 'empty', 'reload' (over time), 'pump', 'swing', 'pin', 'draw'; at: through the game's gs.sound.Ears when there is one. */
-  weaponSound(kind: WeaponKind | string, what?: 'fire' | 'empty' | 'reload' | 'pump' | 'swing' | 'pin' | 'draw', at?: P3 | null, o?: { time?: number; vary?: number }): void;
+  weaponSound(kind: WeaponKind | string, what?: 'fire' | 'empty' | 'reload' | 'pump' | 'swing' | 'pin' | 'draw' | 'clang' | 'parry' | 'bash' | 'nock' | 'thunk' | 'flesh', at?: P3 | null, o?: { time?: number; vary?: number }): void;
   /** push: how hard a hit shoves a loose body (kg metres a second) when update is given a physics world. */
   Shots: new (o?: { gravity?: number; push?: number; link?: boolean }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
     /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter).
@@ -4283,7 +4335,8 @@ export interface ModelsPart {
    * points grip, fore (the left hand), muzzle, eject, sight, stock; userData.weapon { kind, hands, long, melee, length, upright }. A few draws each;
    * the same weapon asked for again shares its shapes. finish: the colour of its polymer parts. wield(person) holds it.
    */
-  weapon(kind?: WeaponKind, o?: { finish?: string | null; seed?: number; shadows?: boolean }): Loose & { points: Record<'grip' | 'fore' | 'muzzle' | 'eject' | 'sight' | 'stock', Loose | null>; wield(person: Loose): Wield };
+  weapon(kind?: WeaponKind, o?: { finish?: string | null; seed?: number; shadows?: boolean; style?: 'round' | 'heater' | 'kite' | null }): Loose & { points: Record<'grip' | 'fore' | 'muzzle' | 'eject' | 'sight' | 'stock', Loose | null> & { nock?: Loose }; wield(person: Loose): Wield;
+    /** A bow's: draws it (k 0..1, or the string to a point in the world: the drawing hand); load(arrow) puts an arrow on the string. */ pull?(k?: number, point?: Loose): Loose; load?(arrow?: Loose | null): Loose; draw?: number; arrow?: Loose | null };
   /** The weapons there are. */
   readonly weapons: readonly WeaponKind[];
   /** A weapon in someone's hands: weapon.wield(person) or new Wield(person, weapon). */

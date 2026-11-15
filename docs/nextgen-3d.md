@@ -1732,7 +1732,13 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   **Carried and drawn.** `new gs.characters.Carry(person)`: `add('sword', mesh, 'hipL', { sheath: true })`
   hangs a thing at a spot (`hipL`, `hipR`, `back`, `backL`, `shield`, `quiver`, `bow`, `belt`, or your own on any
   bone), `draw('sword')` sends the hand to it, takes it and brings it round into the hand, `sheathe('sword')` puts
-  it back; `update(dt)` after `rig.update()`, events `grab` (the sound), `drawn`, `stowed`. Each arm is
+  it back; `update(dt)` after `rig.update()`, events `grab` (the sound), `drawn`, `stowed`. **Swords, shields and bows:**
+  `gs.models.weapon('sword' | 'longsword' | 'dagger' | 'axe' | 'mace' | 'spear' | 'staff' | 'shield' | 'bow' | 'arrow' |
+  'quiver')` are made in code (a shield `{ style: 'round' | 'heater' | 'kite', finish }`); `Carry` knows each one's hand
+  and hold (a shield and a bow in the left, a spear's other hand on its shaft); `gs.fight.Melee(body, { weapon: 'sword',
+  shield: true, armour: 'auto' })` fights with them and gs.poses has the cuts, the shield up, the spear and the bow draw
+  (`docs/maker-kit.md`, "Melee in 3D"); a bow model's `pull(bow.k)` draws its string. The lab: `node scripts/arms.cjs
+  out.png rows=knight:ss:slash@.4,archer:bow:bowDraw@1,models [--webgpu]`. Each arm is
   a piece of its own that turns in the shoulder, so any pose is safe: nothing stretches at the armpit.
   **A cut of clothes this phone hasn't made yet takes a second or two to sculpt, so it happens in the
   background**: the app shows "Loading…" and makes the game again, exactly as when a big library loads, and
