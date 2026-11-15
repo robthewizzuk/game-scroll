@@ -18,6 +18,7 @@ export * as structure from './kit/structure.js';
 export * as props from './kit/props.js';
 export * as outdoors from './kit/outdoors.js';
 export * as city from './kit/city.js';
+export * as town3d from './kit/town3d.js';
 export * as models from './kit/models.js';
 export * as voxels from './kit/voxels.js';
 export * as fluid from './kit/fluid.js';
