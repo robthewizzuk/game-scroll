@@ -591,7 +591,7 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   draw it); grain and flicker go on as each refresh is shown, so with frame generation they stay fresh.
   Off by default: each game picks its own look. Pair it with `v.lut = 'film'` and `v.tone = 'aces'` for a
   whole film look.
-- `v.liveBounce = 'screen' | 'voxel' | { kind, strength, res, box }` (WebGPU, high and ultra): light
+- `v.liveBounce = 'screen' | 'voxel' | 'traced' | { kind, strength, res, box }` (WebGPU, high and ultra): light
   bounced off walls and floors onto what's near them, worked out every frame, so it follows a moving
   sun, a lamp switched on or a door opened (`v.bounce()` instead bakes it once, on every renderer).
   `'screen'` is three.js's SSGI: what's on screen bounces, cheapest. `'voxel'` is three.js's VXGI: the
@@ -599,6 +599,16 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   a big world) and light is traced through them in cones, so walls off screen and behind you count
   too; call `v.levelChanged()` after its big still pieces change. Moving things count where they stood
   when the voxels were made, so keep it for levels whose shape stays put. `strength` (1) scales it.
+  `'traced'` (or `{ kind: 'traced', strength, box, spacing, res, rays, batch }`) is bounce light from the
+  rays ray traced reflections send, on the phones and qualities that trace them (elsewhere none, or the
+  baked `v.bounce()` where the game has one): a grid of probes, each relit every few frames by `rays`
+  (64) rays into the traced copy of the level, so it follows the sun, lamps and doors, counts walls off
+  screen and behind you, and bounces on and on (a white room fills with light). Over `box` the grid stays
+  put (`spacing` 1.5 m between probes); without one it follows the camera, a quarter of it ahead (`res`
+  [12, 6, 12] probes `spacing` 2 m apart), keeping what it found as it moves and fading out at its edges.
+  `batch` (96) probes are relit a frame; a sun going in takes a couple of rounds. Moving things and
+  people are not in the traced copy, so they take the light but don't bounce it. `HD.info.bounce` says
+  what it holds; `HD.tracedBounce = false` turns it off.
 - `v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps }`
   (WebGPU, high and ultra): fog that light really travels through, kept in a grid of small boxes fitted
   to the view (froxels, as in Frostbite and Unreal) and worked out each frame on the graphics chip. The
