@@ -753,10 +753,13 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
     found again by how far off the things found are. While the camera moves it keeps only as many frames
     as those things take to part from the sky behind them by the surface's own blur (longer, and a
     near thing's reflection trails behind it, too strong). A surface only a little rougher than a mirror
-    (roughness 0.07 to 0.16: polished stone, a wet street) has a blur just a few pixels wide, too narrow
+    (roughness 0.07 to 0.22: polished stone, a wet street) has a blur just a few pixels wide, too narrow
     for scattered rays to be smoothed in: there the rays go nearly straight, as a mirror's, and are
     shared between pixels over the blur's own shape, its history kept as a mirror's is (scattered, they
-    showed on a phone as grain round every bright thing in the floor). Against a reference with a ray for every
+    showed on a phone as grain round every bright thing in the floor). The sharing follows the real
+    blur: most of it close in, a few rays from much further out for the wide faint glow round a bright
+    thing, along the floor toward the camera as far as the blur runs, and never further from a thing
+    than the blur is wide where the thing is (a ball just over the floor stays sharp in it). Against a reference with a ray for every
     pixel the error is about a seventh of what it was with the camera still, a little over a quarter at a walk
     and a third moving fast, with fewer specks than the old pass in each; a moving camera leaves a
     fine grain on rough surfaces and thin reflections (a pole's) a little faint, and when a thing jumps
