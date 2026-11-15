@@ -13,6 +13,10 @@
 //     measures it
 //   - heat (Android thermal status and headroom, iPhone thermal state), battery, and a CPU speed probe (a
 //     fixed bit of work timed every 2 s: it slows when the phone throttles its clocks)
+//   - power (Android, on battery): what the whole phone draws (the battery's current times its voltage, read every
+//     second while the lab is open) and that as joules a real frame, the battery's temperature, the heat model's
+//     plan (src/kit/heat.js: where this load settles, when it would get warm, stepped down ahead) and the phone's
+//     performance hint session (src/kit/perfhint.js)
 //   - CPU by part of the engine (src/kit/prof.js): physics, poses, crowds, AI, sound, the 3D frame's own
 //     pieces (occlusion, shadows, drawing...), and the game's own code as what is left of its update and draw
 //   - memory (src/kit/memory.js): the memory guard's level (fine, tight, low, critical) and, on Android, the
@@ -43,7 +47,9 @@
 // Android and iPhone runs on the screen's beat; the browser doesn't say when a picture actually lit up.
 import { Capacitor } from '@capacitor/core';
 import { speed, screenHz, fpsFor, phoneClass, frameGenStatus } from './kit/speed.js';
-import { power } from './kit/power.js';
+import { power, pace } from './kit/power.js';
+import { heat } from './kit/heat.js';
+import { hint } from './kit/perfhint.js';
 import { memory, LEVELS as MEM, forceMemory } from './kit/memory.js';
 import { screen } from './kit/screenrate.js';
 import { webgpu, gpuPick, setGpuPick, prepareGPU, gpuName, glStats } from './kit/gpu.js';
@@ -85,10 +91,11 @@ function probe() {
   probeBest = Math.min(probeBest, ms); return probeBest / ms;
 }
 let kk = 0;
-const samples = [];       // { t, cpu, heat, thermal, headroom, level, charging, saving, heap, hz, mem, free, line }
+const samples = [];       // { t, cpu, heat, thermal, headroom, level, charging, saving, heap, hz, mem, free, line, w (watts), bt (battery °C), plan (where the heat settles), ahead, hint }
 function sample() {
   const now = performance.now(), cpu = probe();
-  const s = { t: now, cpu: r2(cpu), heat: power.heat, thermal: power.thermal ?? null, headroom: power.headroom ?? null, level: r2(power.level), charging: power.charging, saving: power.saving, heap: heapMB(), hz: screenHz(), mem: memory.level, free: memory.avail > 0 ? Math.round(memory.avail / 1048576) : null, line: memory.threshold > 0 ? Math.round(memory.threshold / 1048576) : null };
+  const s = { t: now, cpu: r2(cpu), heat: power.heat, thermal: power.thermal ?? null, headroom: power.headroom ?? null, level: r2(power.level), charging: power.charging, saving: power.saving, heap: heapMB(), hz: screenHz(), mem: memory.level, free: memory.avail > 0 ? Math.round(memory.avail / 1048576) : null, line: memory.threshold > 0 ? Math.round(memory.threshold / 1048576) : null,
+    w: power.watts != null ? r2(power.watts) : null, bt: power.batteryTemp, plan: heat.settles != null ? r2(heat.settles) : null, ahead: heat.ahead, hint: hint.on };
   samples.push(s); if (samples.length > 300) samples.shift();
   if (rec) rec.samples.push(s);
 }
@@ -382,6 +389,7 @@ const PAIRS = {
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   aoBack: { title: 'Ambient occlusion on everything vs on bounce light only', a: 'on the whole picture (as before)', b: 'on the light that bounces only', set: on => { HD.aoBack = on; }, needs: () => HD?.info.backend === 'webgpu' && HD.tier >= 2, no: 'Ambient occlusion in the shading needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   gridDecals: { title: 'Decals as meshes vs in the lamps\' grid', a: 'a mesh cut from the surface for each, one draw each (as before)', b: 'boxes in the lamps\' grid, no draws', set: on => { HD.gridDecals = on; }, needs: () => HD?.info.backend === 'webgpu', no: 'Decals in the lamps\' grid need WebGPU, so there is nothing to compare.' },
+  oled: { title: 'OLED dimming off vs on', a: 'as drawn', b: 'big bright areas dimmed (while saving power)', set: on => { heat.oledForce = on ? 1 : 0; } },
   sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
 // half precision in the kit's own WebGPU passes (src/kit/half.js) can be compared: WebGPU, and a chip that has it
@@ -396,7 +404,7 @@ function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, oled: heat.oledForce, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -410,7 +418,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; heat.oledForce = keep.oled; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
@@ -691,6 +699,8 @@ export function summary(R = lastRec) {
     chipLine(R),
     stepsLine(R),
     memLine(S),
+    energyLine(S, m),
+    planLine(S),
     hit.length ? 'Hitch causes: ' + Object.entries(groups).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k, g]) => `${g.n}× ${k} (worst ${g.worst.toFixed(0)} ms)`).join('; ') : 'No hitches.',
     s0 && s1 ? `Heat ${['cool', 'warm', 'hot'][s0.heat]} → ${['cool', 'warm', 'hot'][s1.heat]}${s1.headroom != null && s1.headroom >= 0 ? ` (headroom ${s1.headroom.toFixed(2)})` : ''} · CPU speed ${Math.round(s0.cpu * 100)}% → ${Math.round(s1.cpu * 100)}% · battery ${Math.round(s0.level * 100)}% → ${Math.round(s1.level * 100)}%${s1.charging ? ' charging' : ''}${s1.heap ? ` · heap ${s1.heap} MB` : ''}` : '',
   ];
@@ -718,6 +728,22 @@ function cpuLine(R) {
   const part = (name, col) => { const a = pick(col); return a.length && q(a, .95) > 0 ? `${name} ${q(a, .5).toFixed(1)}/${q(a, .95).toFixed(1)}` : ''; };
   const parts = [part('update', r.upd), part('draw', r.drw), part('3D', r.cpu3d), part('GSFG', r.fg), part('GPU', r.gpu)].filter(Boolean);
   return parts.length ? `CPU per frame in ms (middle/95%): ${parts.join(' · ')}` : '';
+}
+// What the phone drew from its battery over the recording (power.watts: the whole phone, screen and all), and
+// that shared out over the real frames drawn: joules a frame, the cost of a frame that the frame times don't show
+// (a frame that keeps up at higher clocks costs more, and heats the phone). '' where the phone doesn't say.
+export function energyLine(S, m) {
+  const ws = S.map(s => s.w).filter(w => w != null);
+  if (!ws.length) return S.some(s => s.charging && s.thermal != null) ? 'Power: not read while charging (unplug for joules a frame)' : '';
+  const w = ws.reduce((a, b) => a + b, 0) / ws.length, fps = m && m.secs > 0 ? (m.real || m.frames) / m.secs : 0;
+  const bt = S.map(s => s.bt).filter(t => t != null);
+  return `Power ${w.toFixed(2)} W average (whole phone; ${Math.min(...ws).toFixed(1)} to ${Math.max(...ws).toFixed(1)} W)${fps > 0 ? ` · ${Math.round(w / fps * 1000)} mJ a real frame at ${fps.toFixed(0)} fps` : ''}${bt.length ? ` · battery ${bt[0].toFixed(1)} → ${bt[bt.length - 1].toFixed(1)} °C` : ''}`;
+}
+// The heat model over the recording (src/kit/heat.js): how long it had the game stepped down ahead of the heat
+function planLine(S) {
+  if (!S.length || S[S.length - 1].headroom == null || S[S.length - 1].headroom < 0) return '';
+  const ahead = S.filter(s => s.ahead).length, hinted = S.some(s => s.hint);
+  return `${heat.text()}${ahead ? ` · stepped down ahead in ${Math.round(100 * ahead / S.length)}% of readings` : ''} · performance hints ${hinted ? `on (${hint.threads.join(', ') || '?'}, ${hint.sent} frames told)` : `off${hint.why ? ' (' + hint.why + ')' : ''}`}`;
 }
 // The memory guard (src/kit/memory.js) over the recording: its level at the start and end and the worst,
 // and the phone's free memory against the line where it starts closing apps (Android)
@@ -775,7 +801,7 @@ const X=(t,W)=>36+(t/T)*(W-40);
 chart('Frame time (every picture shown)',220,(x,W,h)=>{const top=Math.max(E*3,50);axes(x,W,h,top,[[E,E.toFixed(1)],[E*2,(E*2).toFixed(1)],[top,top.toFixed(0)+'ms']]);for(const [t,iv,k,p] of pres){const y=h-20-Math.min(1,iv/top)*(h-36);x.fillStyle=!p?C.grey:iv>=E*1.5&&iv-E>=rf*.9?C.bad:k===2?C.made:C.real;x.fillRect(X(t,W),y,1.2,h-20-y)}for(const e of ev){x.fillStyle=col[e.k]||'#fff';x.fillRect(X(e.t-0,W),4,2,8)}x.fillStyle=C.mut;x.fillText('green real · magenta made · red stutter · ticks: orange shader, purple textures, yellow GC, blue quality, grey card',40,14)});
 chart('Frame rate (1 s windows) and 1% low',180,(x,W,h)=>{const top=(cfg.hz||60)*1.1;axes(x,W,h,top,[[30,'30'],[60,'60'],[cfg.hz||60,String(cfg.hz||60)]]);const pts=[],low=[];for(let s=0;s<T;s+=500){const w=pres.filter(p=>p[0]>s&&p[0]<=s+1000&&p[3]);if(w.length<3)continue;const sum=w.reduce((a,b)=>a+b[1],0),sorted=w.map(p=>p[1]).sort((a,b)=>a-b);pts.push([s+500,w.length/(sum/1000)]);low.push([s+500,1000/sorted[Math.floor(.99*(sorted.length-1))]])}for(const [arr,c] of [[pts,C.real],[low,C.bad]]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();arr.forEach(([t,v],i)=>{const y=h-20-(v/top)*(h-36);i?x.lineTo(X(t,W),y):x.moveTo(X(t,W),y)});x.stroke()}x.fillStyle=C.mut;x.fillText('green fps · red 1% low',40,14)});
 chart('CPU time per real frame',180,(x,W,h)=>{const top=Math.max(E*1.5,10);axes(x,W,h,top,[[E,'budget '+E.toFixed(1)],[top,top.toFixed(0)+'ms']]);for(let j=0;j<r.ft.length;j++){const t=r.t[r.ft[j]];let y0=h-20;for(const [v,c] of [[r.upd[j],'#22d3ee'],[r.drw[j],C.cpu],[r.fg[j],C.fg]]){const hh=Math.min(1,(v||0)/top)*(h-36);x.fillStyle=c;x.fillRect(X(t,W),y0-hh,1.2,hh);y0-=hh}if(r.gpu[j]!=null){x.fillStyle=C.gpu;x.fillRect(X(t,W),h-20-Math.min(1,r.gpu[j]/top)*(h-36),2,2)}}x.fillStyle=C.mut;x.fillText('cyan update · blue draw (incl. 3D) · magenta GSFG · yellow dots GPU',40,14)});
-const S=R.samples;if(S.length>1)chart('Phone: CPU speed, heat, battery',160,(x,W,h)=>{axes(x,W,h,1,[[.5,'50%'],[1,'100%']]);for(const [f,c] of [[s=>s.cpu,'#22d3ee'],[s=>s.heat/2,'#f87171'],[s=>s.headroom!=null&&s.headroom>=0?Math.min(1,s.headroom):null,'#fb923c'],[s=>s.level,'#4ade80'],[s=>s.mem!=null?s.mem/3:null,'#a78bfa']]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();let st=0;for(const s of S){const v=f(s);if(v==null)continue;const y=h-20-v*(h-36);st++?x.lineTo(X(s.t,W),y):x.moveTo(X(s.t,W),y)}x.stroke()}x.fillStyle=C.mut;x.fillText('cyan CPU speed probe · red heat (0 cool, 1 hot) · orange thermal headroom · green battery · violet memory (0 fine, 1 critical)',40,14)});
+const S=R.samples;if(S.length>1)chart('Phone: CPU speed, heat, battery, power',160,(x,W,h)=>{axes(x,W,h,1,[[.5,'50%'],[1,'100%']]);for(const [f,c] of [[s=>s.cpu,'#22d3ee'],[s=>s.heat/2,'#f87171'],[s=>s.headroom!=null&&s.headroom>=0?Math.min(1,s.headroom):null,'#fb923c'],[s=>s.level,'#4ade80'],[s=>s.mem!=null?s.mem/3:null,'#a78bfa'],[s=>s.w!=null?Math.min(1,s.w/10):null,'#facc15'],[s=>s.plan!=null?Math.min(1,s.plan):null,'#fdba74']]){x.strokeStyle=c;x.lineWidth=1.5;x.beginPath();let st=0;for(const s of S){const v=f(s);if(v==null)continue;const y=h-20-v*(h-36);st++?x.lineTo(X(s.t,W),y):x.moveTo(X(s.t,W),y)}x.stroke()}x.fillStyle=C.mut;x.fillText('cyan CPU speed probe · red heat (0 cool, 1 hot) · orange thermal headroom · green battery · violet memory (0 fine, 1 critical) · yellow power (0 to 10 W) · light orange where the heat model says this load settles',40,14)});
 chart('Frame times in screen refreshes',120,(x,W,h)=>{const hist=R.stats?R.stats.hist:[0,0,0,0,0],tot=hist.reduce((a,b)=>a+b,0)||1;hist.forEach((v,i)=>{const bw=(W-40)/5,bh=(v/tot)*(h-36);x.fillStyle=i?C.bad:C.real;x.fillRect(40+i*bw+4,h-20-bh,bw-8,bh);x.fillStyle=C.mut;x.fillText((i+1)+(i===4?'+':'')+' refresh'+(i?'es':'')+' '+(100*v/tot).toFixed(1)+'%',44+i*bw,h-4)})});
 const hs=ev.filter(e=>e.k==='H');const t=document.getElementById('hitches');t.appendChild($('<h2>Hitches ('+hs.length+') and events</h2>'));t.appendChild($('<table><tr><th>at</th><th>ms</th><th>what</th></tr>'+ev.map(e=>'<tr><td>'+(e.t/1000).toFixed(2)+'s</td><td>'+(e.ms||'')+'</td><td><span style="color:'+(col[e.k]||'#fff')+'">'+e.k+'</span> '+e.text.replace(/</g,'&lt;')+'</td></tr>').join('')+'</table>'));
 t.appendChild($('<h2>Settings</h2><pre>'+JSON.stringify(R.cfg,null,1).replace(/</g,'&lt;')+'</pre>'))}
@@ -919,6 +945,11 @@ function text(now) {
   }
   if (SYS.size) L.push(`CPU by part (ms a frame): ${partsText([...SYS])}`);
   if (smp) L.push(`heat ${['cool', 'warm', 'hot'][smp.heat] || '?'}${smp.headroom != null && smp.headroom >= 0 ? ` hr ${smp.headroom.toFixed(2)}` : ''}${smp.saving ? ' saving' : ''} · CPU speed ${Math.round(smp.cpu * 100)}% · battery ${Math.round(smp.level * 100)}%${smp.charging ? '+' : ''}${smp.heap ? ` · heap ${smp.heap} MB` : ''} · memory ${MEM[smp.mem] || '?'}${smp.free != null ? ` ${gb(smp.free)} free` : ''}`);
+  if (smp && (smp.w != null || (smp.headroom != null && smp.headroom >= 0) || hint.on)) {
+    const mm = m && m.secs > 0 ? (m.real || m.frames) / m.secs : 0;
+    L.push(`${smp.w != null ? `power ${smp.w.toFixed(2)} W${mm > 0 ? ` · ${Math.round(smp.w / mm * 1000)} mJ a frame` : ''}` : smp.charging ? 'power: unplug to read it' : 'power ?'}${smp.bt != null ? ` · battery ${smp.bt.toFixed(1)} °C` : ''} · hints ${hint.on ? `on (${hint.threads.length} threads)` : 'off' + (hint.why ? ` (${hint.why})` : '')}`);
+    L.push(heat.text());
+  }
   if (lastH) L.push(`last hitch ${Math.round(lastH.ms)} ms ${((now - lastH.t) / 1000).toFixed(0)} s ago: ${lastH.text}`);
   UI.txt.textContent = L.join('\n');
   if (rec) UI.render();
@@ -938,7 +969,7 @@ let api = null;
 /** Turns the lab on. ctx.active() is the card on screen; returns the hooks the feed calls. */
 export function openLab(ctx = {}) {
   if (api) return api;
-  store.set(KEY, true); PROF.on = true; take(); panel(); obs = observe(); sampler = setInterval(sample, 2000); setTimeout(sample, 300);
+  store.set(KEY, true); PROF.on = true; take(); panel(); obs = observe(); sampler = setInterval(sample, 2000); setTimeout(sample, 300); pace('lab', 1000);
   addEventListener('resize', onResize); document.addEventListener('visibilitychange', onVis);
   raf = requestAnimationFrame(loop);
   api = {
@@ -965,7 +996,7 @@ export function openLab(ctx = {}) {
 }
 function closeLab() {
   if (!api) return; store.set(KEY, false); if (rec) stopRec(); setFrozen(false); PROF.on = PROF.trace = false; take(); SYS.clear();
-  cancelAnimationFrame(raf); clearInterval(sampler); obs?.disconnect(); removeEventListener('resize', onResize); document.removeEventListener('visibilitychange', onVis);
+  cancelAnimationFrame(raf); clearInterval(sampler); pace('lab', 0); obs?.disconnect(); removeEventListener('resize', onResize); document.removeEventListener('visibilitychange', onVis);
   UI.closeViewer?.(); UI.el?.remove(); UI.style?.remove(); tintEl?.remove(); UI.el = null; tintEl = null;
   if (HD?.fgTap?.gsLab) HD.fgTap = HD.fgTap.prev || null;
   const cb = api.onClose; api = null; cb?.();

@@ -188,7 +188,7 @@ export function verdict(r) {
 const PLUGINS = [
   ['Device', 'getInfo'], ['App', 'getState'], ['Haptics', 'selectionStart'], ['KeepAwake', 'isSupported'], ['Geolocation', 'checkPermissions'],
   ['Motion', null], ['Filesystem', 'checkPermissions'], ['Share', 'canShare'], ['TextToSpeech', 'getSupportedLanguages'],
-  ['PowerState', 'get'], ['AppHealth', 'get', { since: 0 }, r => r ? { robot: r.robot, known: r.known, exits: (r.exits || []).length, web: !!r.web } : r, 'android'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
+  ['PowerState', 'get'], ['PowerState', 'battery', {}, r => r, 'android'], ['AppHealth', 'get', { since: 0 }, r => r ? { robot: r.robot, known: r.known, exits: (r.exits || []).length, web: !!r.web } : r, 'android'], ['ScreenRate', 'get'], ['PhoneSensors', 'available'], ['PhoneSensors', 'output'], ['RichHaptics', 'supported'],
   ['NativeAR', 'available'], ['NPU', 'available'], ['PhoneAI', 'modelAvailable'], ['PhoneAI', 'speechAvailable', { language: 'en-US' }],
   ['GameServices', 'signIn', {}],
   ['SpeechAudio', 'render', { text: 'Testing, one two.', lang: 'en-GB', rate: 1, pitch: 1 },

@@ -61,6 +61,10 @@ The numbers, over the last 5 seconds:
   **memory** (the memory guard's level, fine, tight, low or critical, and on Android the phone's free
   memory; see below), and **CPU speed**: a fixed bit of work timed every 2 seconds, as a share of its
   best time. When the phone throttles its clocks, this falls.
+- **power** (Android, on battery; below): what the whole phone draws now in watts, that as millijoules a
+  frame, the battery's temperature, and whether the phone's performance hint session is on and which
+  threads it holds; then the **heat plan**: where this game's load would leave the phone's thermal
+  headroom, how many seconds until it would be warm, and "STEPPED DOWN AHEAD" while it is.
 - the last hitch and its causes. A hitch is a long gap between two pictures, and it is put down to the
   frame drawn before the gap (its update() and draw(), its biggest part, and the shaders, textures and
   garbage counted with it): that frame's work is what held the next picture back.
@@ -91,6 +95,21 @@ from the next round (as when hot), and the textures read back from storage are l
 report from a close that came while memory was short says "(memory was low)". The lab's api
 `memory(2)` acts as if memory were low (`memory(null)`: back to the phone's readings).
 
+### Power and the heat plan
+
+Frame times say how long a frame took, not what it cost: a frame that keeps up because the phone raised
+its clocks costs more power, heats the phone, and a few minutes later the phone slows itself down. While
+the lab is open the battery is read every second (`plugins/power-state` `battery()`: Android's
+`CURRENT_NOW` times the battery's voltage, with the microamps and milliamps and the sign each maker uses
+sorted out in `wattsOf`, `src/kit/power.js`). That is the whole phone, screen and radios too, so compare
+games and settings against each other on the same phone and brightness, not against a number. Joules a
+frame is the power shared over the real frames drawn. Nothing is read while charging (the current then
+goes into the battery): unplug for a run.
+
+The heat plan is `src/kit/heat.js`: a one-lump (RC) model of the phone's heat, fitted from the thermal
+headroom read every 3 seconds while a round is played, that steps a 3D game down a little before the
+phone gets warm instead of after, and keeps it on a tier it can hold. See [nextgen-3d.md](nextgen-3d.md).
+
 ## Hitch causes
 
 Every stutter during play is checked for what happened since the picture before it. So is every
@@ -120,7 +139,7 @@ pause), so the recording's summary counts freezes on their own, with the worst.
 | **● Rec** | Records up to 60 s of every refresh, hitch and phone reading. Tap again to stop. |
 | **Freeze** | Stops the game's clock but keeps drawing: the picture settles and nothing moves. |
 | **Tint** | Tints the card magenta on every made frame, so you see frame generation working. |
-| **A/B** | On a frozen frame, two pictures with one setting changed: upscaler off vs on, SGSR 1 vs GSSR (Game Scroll Super Resolution: our tuned SGSR 2), SGSR 2 as Qualcomm has it vs GSSR, textures as drawn vs sharpened under GSSR (WebGPU), WebGL vs WebGPU, half vs full resolution, low vs ultra tier, full vs half precision (the kit's own WebGPU passes in 16-bit numbers, on a chip that has them), every sample vs spread over frames (WebGPU, high and ultra: ambient occlusion, volumetric light and bounce light), the sky as before vs as the big engines draw it (WebGPU: Hillaire's air and marched clouds against the Preetham sky and painted clouds). Settings go back afterwards. |
+| **A/B** | On a frozen frame, two pictures with one setting changed: upscaler off vs on, SGSR 1 vs GSSR (Game Scroll Super Resolution: our tuned SGSR 2), SGSR 2 as Qualcomm has it vs GSSR, textures as drawn vs sharpened under GSSR (WebGPU), WebGL vs WebGPU, half vs full resolution, low vs ultra tier, full vs half precision (the kit's own WebGPU passes in 16-bit numbers, on a chip that has them), every sample vs spread over frames (WebGPU, high and ultra: ambient occlusion, volumetric light and bounce light), the sky as before vs as the big engines draw it (WebGPU: Hillaire's air and marched clouds against the Preetham sky and painted clouds), OLED dimming off vs on (big bright areas a little dimmer, as while the phone saves power). Settings go back afterwards. |
 | **Shimmer** | On a frozen frame, 16 pictures in a row and a heat map of pixels that still change while nothing moves: shimmering edges, upscaler or anti-aliasing jitter. With GSSR it then measures the same frame again as Qualcomm's shader has it, and the notes give both numbers. |
 | **GSFG check** | While you play a WebGPU game: grabs real, made, real frames from GSFG (Game Scroll Frame Generation) and flags made pixels that match neither real frame nearby (ghosting, smears, holes behind moving things). Turns GSFG on for the check if it's off. |
 | **Half** | While you play a WebGPU game on a chip with half precision (`shader-f16`): the chip's own time a frame by pass with the kit's own passes in full precision, then in half, then both again (1 s to settle and 2.5 s of readings each; the chain is built again at each switch), and how much each pass saved. The passes in half: GSSR's upscale, the sharp picture reads in GSSR and GSFG, smoke and fire, the grade and sun glare (`src/kit/half.js`). `HD.info.half` (in the report) says which precision is drawing and any function the chip would not compile in half. |
@@ -148,7 +167,9 @@ One HTML file with everything in it, readable in any browser, phone or desktop:
 - CPU by part: the average a frame and the worst frame for each part of the engine
 - the chip by pass: the graphics chip's own time a frame for the scene, its shadows and each pass after
   it (where the phone gives the chip's times: WebGPU with timestamps), and the draws and triangles a frame
-- the phone: CPU speed, heat, thermal headroom, battery and memory over time
+- the phone: CPU speed, heat, thermal headroom, battery, memory, power and where the heat model says the
+  load settles, over time; the summary gives the average power, millijoules a real frame, the battery's
+  temperature, the heat plan and how much of the recording was stepped down ahead of the heat
 - frame times in screen refreshes (how many pictures took 1, 2, 3... refreshes)
 - every hitch and event with its causes, and the settings at the start and end
 - the pictures from A/B (with a wipe slider), Shimmer and GSFG check, and the Half and Spread checks' times

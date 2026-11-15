@@ -28,6 +28,8 @@ import { store } from './util.js';
 import { HEARTS_URL, REAL, deviceId } from './hearts.js';
 import { playstats } from './playstats.js';
 import { power } from './kit/power.js';
+import { heat as heatPlan } from './kit/heat.js';
+import { hintFrame } from './kit/perfhint.js';
 import { memory, onMemory } from './kit/memory.js';
 import { appHealth, judgeExit, memoryNote } from './exits.js';
 import { desktop } from './desktop.js';
@@ -152,7 +154,7 @@ function count(c, dt, work, budget, heat) {
 
 export const perf = {
   /** A game came up in the feed ('' for none). */
-  shown(id) { current = id || ''; curVer = verOf(current); playing = false; lastFrame = 0; if (document.visibilityState !== 'hidden') openMarker(); },
+  shown(id) { if (id !== current) heatPlan.forget(); current = id || ''; curVer = verOf(current); playing = false; lastFrame = 0; if (document.visibilityState !== 'hidden') openMarker(); },
   /** A round started or ended. */
   started(id) { current = id; curVer = verOf(id); playing = true; lastFrame = 0; (pending.games[key(id, curVer)] ||= blank()).r++; (local[id] ||= blank()).r++; openMarker(); save(); },
   ended() { playing = false; lastFrame = 0; openMarker(); },
@@ -166,6 +168,8 @@ export const perf = {
     const dt = lastFrame ? now - lastFrame : 0; lastFrame = now;
     if (dt <= 0 || dt > GAP_MS) return;   // first frame, or the app was away
     if (perf.tap) try { perf.tap.frame(id, dt, work, budget); } catch (_) { /* the listener's own trouble */ }
+    // (the heat model's load, and the phone's performance hints: src/kit/heat.js, src/kit/perfhint.js)
+    heatPlan.frame(dt, work); hintFrame(work, heatPlan.gpuMs, budget);
     const heat = power.thermal == null ? -1 : power.heat;   // -1: this phone doesn't say (the web)
     count(pending.games[key(id, id === current ? curVer : verOf(id))] ||= blank(), dt, work, budget, heat);
     count(local[id] ||= blank(), dt, work, budget, heat);

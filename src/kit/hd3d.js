@@ -78,6 +78,7 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { power } from './power.js';
+import { heat } from './heat.js';
 import { lensFrame, afTake, AF_LOG } from './lens.js';
 import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadingCount } from './lod-fade.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
@@ -136,11 +137,15 @@ export function startTier(saved, cls, computer) {
 export const mayClimb = (tier, cls, computer, room) => !computer || tier < (START[cls] ?? 2) || !!room;
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
 // lower (from the next round: a tier change rebuilds shaders) and at most the first resolution step (now).
+// The same a little before it gets warm, where the heat model (heat.js) sees it coming at full quality (heat.ahead),
+// so the phone never gets as far as slowing itself down; and between rounds a game draws no higher than the tier
+// the model says the phone can hold for as long as it is played (heat.cap), so it doesn't climb to one it would
+// only have to give up again.
 // The same while the phone is short of memory (src/kit/memory.js: low or critical), as a lower tier and
 // a smaller picture keep fewer and smaller render targets; critical also takes the second resolution step.
 const HOT_HOLD = 60000;
 let hotAt = -1e9;
-function hot(now = performance.now()) { if (power.heat >= 1 || memory.level >= 2) hotAt = now; return now - hotAt < HOT_HOLD; }
+function hot(now = performance.now()) { if (power.heat >= 1 || heat.ahead || memory.level >= 2) hotAt = now; return now - hotAt < HOT_HOLD; }
 // Resolution moves in a few fixed steps (each step reallocates the render targets, so it must be
 // rare): drop a step after two slow windows of ~45 frames, climb back after ~6 s at full speed, and
 // never climb back above a step that already proved too slow (for 30 s, longer each time a climb fails).
@@ -330,7 +335,7 @@ function gpuTime(r, full = true) {
       GT.fits.push(chipFits(f, wall)); if (GT.fits.length > 10) GT.fits.shift();
       if (GT.fits.filter(x => !x).length >= BAD) { chipOff(); return; }
     }
-    HD.info.gpuMs = f; HD.info.gpuCompute = comp / n;
+    HD.info.gpuMs = f; HD.info.gpuCompute = comp / n; heat.chip(f);   // (the heat model's load: heat.js)
     let fg = 0; for (const k in by) if (k === 'fg' || k.startsWith('fg:')) fg += by[k];
     for (const k in by) by[k] /= n; HD.info.gpuParts = by;
     const real = f - fg / n; HD.info.gpuReal = real; HD.info.fgGpu = fg / n; HD.info.madeMs = made && fg > 0 ? fg / made : null;
@@ -451,7 +456,10 @@ function applyTier() {
     if (Q.force == null && Q.lvl < l && hot()) { Q.lvl = l; Q.ceil = Math.max(Q.ceil, l); }
     return;
   }
-  Q.capNow = hot() ? CAP - 1 : CAP;   // between rounds: one tier lower while hot
+  // between rounds: one tier lower while hot, and no higher than the phone holds (each tier's chip work for these
+  // frames as a share of what is drawn now: its pixels at full resolution over the drawn tier's at this step)
+  const drawn = Math.min(Q.tier, Q.capNow ?? CAP), lv = LEVELS[Q.lvl] ** 2;
+  Q.capNow = Math.min(hot() ? CAP - 1 : CAP, heat.cap(t => TIERS[t].px / (TIERS[drawn].px * lv), drawn));
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.out = Q.outCeil = 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
   if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)
@@ -810,6 +818,9 @@ const BRIGHT = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float thr; 
   vec3 pick(vec2 o){ vec3 c = texture2D(tDiffuse, vUv + o * px).rgb; float l = dot(c, vec3(.2126, .7152, .0722));
     return c * smoothstep(thr - .05, thr + .05, l); }
   void main(){ vec3 c = pick(vec2(-1., -1.)) + pick(vec2(1., -1.)) + pick(vec2(-1., 1.)) + pick(vec2(1., 1.)); gl_FragColor = vec4(c * .25, 1.); }`;
+// a quarter the size, each pixel the exact average of a 4 x 4 block (four bilinear reads between texels; px: one source texel)
+const BOX4 = `uniform sampler2D tDiffuse; uniform vec2 px; varying vec2 vUv;
+  void main(){ gl_FragColor = vec4(.25 * (texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(-px.x, px.y)).rgb + texture2D(tDiffuse, vUv + px).rgb), 1.); }`;
 const DOWN = `uniform sampler2D tDiffuse; uniform vec2 px; varying vec2 vUv;
   void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb * 4.;
     c += texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(-px.x, px.y)).rgb + texture2D(tDiffuse, vUv + px).rgb;
@@ -822,7 +833,7 @@ const UP = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float k; varyin
 // full-screen draw on phones, and each piece can be ported to a WebGPU node on its own). They run
 // in this order; FINAL is them joined. Uniforms: the pass's own (FinalPass below).
 export const FINAL_EFFECTS = [
-  { name: 'head', what: 'uniforms, the tone mapping three leaves out under SGSR, helpers', glsl: `uniform sampler2D tDiffuse, tBloom; uniform float t, hurt, vig, bloom, grain; uniform vec2 px; varying vec2 vUv;
+  { name: 'head', what: 'uniforms, the tone mapping three leaves out under SGSR, helpers', glsl: `uniform sampler2D tDiffuse, tBloom, tBig; uniform float t, hurt, vig, bloom, grain, oled; uniform vec2 px; varying vec2 vUv;
   uniform float gradeOn, sat, con, glare, aspect; uniform vec3 lo, hi, sunCol; uniform vec2 sunUV;
   #ifdef LUT
   uniform highp sampler3D tLut; uniform float lutS, lutO, lutK;
@@ -896,6 +907,11 @@ ${ShaderChunk.tonemapping_pars_fragment}
     col = mix(col, texture(tLut, clamp(col, 0., 1.) * lutS + lutO).rgb, lutK);
   #endif
 ` },
+  { name: 'oled', what: 'big bright areas a little dimmer while the phone saves power (OLED screens light each pixel, so a bright sky costs; heat.js oled)', glsl: `    // (tBig: the picture before tone mapping, each pixel the average of a 16 x 16 block (FinalPass.big): high only where
+    // a big area is bright, so a small highlight, a spark or the sun's disc keeps its full brightness; blue a little
+    // more, the costliest of an OLED's three lights)
+    if (oled > 0.) col *= 1. - oled * smoothstep(.1, .7, dot(texture2D(tBig, vUv).rgb * toneMappingExposure, vec3(.2126, .7152, .0722))) * vec3(.9, .9, 1.2);
+` },
   { name: 'vignette', what: 'vignette', glsl: `    col *= 1. - vig * smoothstep(.12, .62, r2 * 1.6);
 ` },
   { name: 'grain', what: 'film grain', glsl: `    col += (h(vUv / px + t) - .5) * grain;
@@ -912,19 +928,28 @@ const FINAL = FINAL_EFFECTS.map(e => e.glsl).join('');
 const TONE_FN = { aces: 'ACESFilmicToneMapping', neutral: 'NeutralToneMapping', agx: 'AgXToneMapping' };
 const TONES = { aces: ACESFilmicToneMapping, neutral: NeutralToneMapping, agx: AgXToneMapping };
 const MIPS = 5;
+// The most the OLED dimming (FINAL_EFFECTS 'oled', hd3d-gpu.js the same) takes off a big bright area, in screen
+// colours: a tenth (about a fifth of the light, a quarter of the blue), eased in over two seconds (heat.oled)
+const OLED_MAX = .1;
 class FinalPass extends Pass {
   constructor() {
     super(); this.needsSwap = false;
     this.bright = qmat(BRIGHT, { tDiffuse: { value: null }, px: { value: new Vector2() }, thr: { value: .82 } });
     this.down = qmat(DOWN, { tDiffuse: { value: null }, px: { value: new Vector2() } });
     this.up = qmat(UP, { tDiffuse: { value: null }, px: { value: new Vector2() }, k: { value: 1 } }, { blending: ADD });
-    this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
+    this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, tBig: { value: null }, oled: { value: 0 }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
       gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) },
       drops: { value: Array.from({ length: DROPS_N }, () => new Vector4()) }, dropN: { value: 0 } }, { defines: { SRGB_TRANSFER: '', TONE_FN: TONE_FN.aces } });
+    this.box = qmat(BOX4, { tDiffuse: { value: null }, px: { value: new Vector2() } }); this.big = [];   // (the OLED dimming's picture of how bright each area is: drawn only while it dims)
     this.quad = new FullScreenQuad(null); this.mips = []; this.scale = .5; this.w = 0; this.h = 0; this.fxaa = false; this.strength = .7;
   }
   setSize(w, h) {
     this.w = w; this.h = h;
+    const qw = Math.max(1, Math.ceil(w / 4)), qh = Math.max(1, Math.ceil(h / 4));
+    if (this.big[0]?.width !== qw || this.big[0]?.height !== qh) {
+      for (const m of this.big) m.dispose();
+      this.big = [[qw, qh], [Math.max(1, Math.ceil(qw / 4)), Math.max(1, Math.ceil(qh / 4))]].map(([x, y]) => new WebGLRenderTarget(x, y, { type: HalfFloatType, depthBuffer: false, minFilter: LinearFilter, magFilter: LinearFilter }));
+    }
     const bw = Math.max(1, Math.round(w * this.scale)), bh = Math.max(1, Math.round(h * this.scale));
     if (this.mips[0] && this.mips[0].width === bw && this.mips[0].height === bh) return;
     for (const m of this.mips) m.dispose(); this.mips = [];
@@ -970,6 +995,11 @@ class FinalPass extends Pass {
       r.autoClear = auto;
     }
     F.tDiffuse.value = readBuffer.texture; F.tBloom.value = M[0]?.texture ?? null; F.bloom.value = on ? this.strength * .8 : 0;
+    if (F.oled.value > 0 && this.big.length) {   // the OLED dimming: how bright each area is, a 16 x 16 block average
+      const b = this.box.uniforms; b.tDiffuse.value = readBuffer.texture; b.px.value.set(1 / readBuffer.width, 1 / readBuffer.height); this.pass(r, this.box, this.big[0]);
+      b.tDiffuse.value = this.big[0].texture; b.px.value.set(1 / this.big[0].width, 1 / this.big[0].height); this.pass(r, this.box, this.big[1]);
+      F.tBig.value = this.big[1].texture;
+    } else { F.oled.value = 0; F.tBig.value = M[0]?.texture ?? null; }
     F.toneMappingExposure.value = r.toneMappingExposure; F.px.value.set(1 / readBuffer.width, 1 / readBuffer.height);
     if (this.eyeView?.eye) {   // auto exposure's light meter, from the scene before tone mapping
       const v = this.eyeView, src = readBuffer.texture;
@@ -981,7 +1011,7 @@ class FinalPass extends Pass {
     }
     this.pass(r, this.final, this.renderToScreen ? null : writeBuffer);
   }
-  dispose() { this.eyeM?.rt.dispose(); this.eyeM?.mat.dispose(); for (const m of this.mips) m.dispose(); for (const m of [this.bright, this.down, this.up, this.final]) m.dispose(); this.quad.dispose(); }
+  dispose() { this.eyeM?.rt.dispose(); this.eyeM?.mat.dispose(); for (const m of [...this.mips, ...this.big]) m.dispose(); for (const m of [this.bright, this.down, this.up, this.final, this.box]) m.dispose(); this.quad.dispose(); }
 }
 // Sun shafts (v.shafts): light streaming past trees, through windows and round a hill top. A small
 // pass of its own (so it can be swapped for a WebGPU node later without touching the final pass):
@@ -3091,6 +3121,7 @@ export class HDView {
     const ms = T.msaa >= 4 ? 4 : 0;
     const o = { tone: this.tone, w: pw, h: ph, fw: r.domElement.width, fh: r.domElement.height, s2: null, s1: !!up?.s1, ao: T.ao * fxK('ao'), msaa: ms, bloomScale: T.bloom * fxK('bloom'), smooth: !ms, bloom: this.bloom, t: this.t % 10, hurt: this.hurt, grade: null, glare: 0, lut: this.lutAmount > 0 ? this.lutTex() : null, lutK: this.lutAmount, oit: !!this.oit, drops: this.drops.on ? this.drops : null, flare: this.bloom > 0 ? this.flareSet() : null, sunUV: GQ.set(.5, .5), sunCol: C_WARM, aspect: this.W / this.H,
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, grain: HD.grain };
+    o.oled = baking || off ? 0 : heat.oled() * OLED_MAX;   // (big bright areas dimmer while saving power: FINAL_EFFECTS oled)
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
     o.fx = this.extras?.length ? this.extras : null;
@@ -3485,7 +3516,7 @@ export class HDView {
       if (F.scale !== blK) { F.scale = blK; if (F.w) F.setSize(F.w, F.h); }   // (the effects ladder, FXS: the bloom's pictures smaller)
       if (!baking && !off) { fxOn = new Set(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
       F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.setDrops(this.drops.on ? this.drops : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
-      const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035;
+      const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035; u.oled.value = baking || off ? 0 : heat.oled() * OLED_MAX;
       const g = this.grade; u.gradeOn.value = g ? 1 : 0;
       if (g) { u.sat.value = g.saturation ?? 1; u.con.value = g.contrast ?? 1; toRGB(g.shadows, u.lo.value); toRGB(g.highlights, u.hi.value); }
       u.glare.value = 0;
