@@ -19,6 +19,16 @@ function make(api) {
   want('motion');                     // iPhones ask for motion access on the Play tap
   const feel = new Feel(), ready = new Ready({ text: 'Tap to start' });
   let v, balloons, pops, score, t, spawn, escaped;
+  // Knobs: the numbers that set how it feels (docs/feel-words.md). Sliders in npm run dev (Save to file
+  // writes them back); node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    spawn: [2, .8, 4, 'seconds between balloons at the start'],
+    fastest: [.7, .3, 2, 'seconds between balloons when it is hardest'],
+    ramp: [39, 10, 120, 'seconds until it is as hard as it gets'],
+    rise: [.25, .1, .6, 'how fast balloons float up (metres a second)'],
+    lives: [5, 1, 10, 1, 'balloons that get away before the round ends'],
+    reach: [34, 20, 60, 'how near a tap has to be to pop one (screen units)'],
+  });
   const g = new Gestures({
     tap: (x, y) => tapAt(x, y),
     drag: (x, y, dx, dy) => v?.drag(-dx, -dy),   // no gyro: drag to look around
@@ -34,12 +44,12 @@ function make(api) {
     const col = COLS[(Math.random() * COLS.length) | 0];
     const m = new THREE.Mesh(new THREE.SphereGeometry(.18, 24, 16), pbr(col, { rough: .25, clear: 1 }));
     m.scale.y = 1.2; m.castShadow = true; m.position.set(-Math.sin(a) * d, FLOOR + .3, -Math.cos(a) * d);
-    m.userData = { col, rise: .25 + Math.random() * .2 + t * .004 };
+    m.userData = { col, rise: K.rise + Math.random() * .2 + t * .004 };
     v.scene.add(m); balloons.push(m);
   }
   function tapAt(x, y) {
     if (!v) return;
-    let best = null, bd = 34;
+    let best = null, bd = K.reach;
     for (const b of balloons) { const [sx, sy, z] = v.toScreen(b.position.x, b.position.y, b.position.z); const d = Math.hypot(sx - x, sy - y); if (z < 1 && d < bd) { bd = d; best = b; } }
     if (!best) return;
     score++; api.score(score);
@@ -58,17 +68,18 @@ function make(api) {
     },
     resize(w, h) { W = w; H = h; },
     update(dt) {                                  // tick: 60 below, so dt is exactly 1/60 on every phone
-      v.live(); feel.update(dt);
+      v.live(); if (v.calibrating) return;          // the kit is finding or lining up the floor: wait
+      feel.update(dt);
       if (feel.frozen) return;                    // hit-stop
       if (!ready.update(dt)) return;              // no balloons until the first tap
       t += dt; spawn -= dt;
-      if (spawn <= 0) { spawn = Math.max(.7, 2 - t / 30); addBalloon(); }
+      if (spawn <= 0) { spawn = Math.max(K.fastest, K.spawn - (K.spawn - K.fastest) * t / K.ramp); addBalloon(); }
       for (const b of [...balloons]) {
         b.position.y += b.userData.rise * dt; b.position.x += Math.sin(t * 1.3 + b.id) * .1 * dt;
         if (b.position.y > 2.2) { v.scene.remove(b); balloons.splice(balloons.indexOf(b), 1); escaped++; feel.hurt(); }
       }
       pops.update(dt);
-      if (escaped >= 5) { v.off(); feel.lose(); api.over(); }
+      if (escaped >= K.lives) { v.off(); feel.lose(); api.over(); }
     },
     draw(c) {
       v.look();
@@ -76,13 +87,14 @@ function make(api) {
       v.pointers(c, W, H, balloons.map(b => ({ p: b.position, col: b.userData.col })));   // arrows to balloons off screen
       feel.begin(c); feel.end(c, W, H);
       // The app draws the score top centre (api.scoreArea() says where): this HUD sits top left.
-      c.fillStyle = '#fff'; c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText('Escaped ' + escaped + '/5', 14, 26);
+      c.fillStyle = '#fff'; c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText('Escaped ' + escaped + '/' + K.lives, 14, 26);
       ready.draw(c, W, H);
       arNote(c, v, W, H);
     },
-    down(x, y, id) { if (ready.go()) return; g.down(x, y, id); },   // the first tap only starts the round
-    move: (x, y, p, id) => g.move(x, y, p, id),
-    up: (x, y, id) => g.up(x, y, id),
+    // touches go to the kit first (its floor step and AR button), then the game
+    down(x, y, id) { if (v?.input?.('down', x, y, id)) return; if (ready.go()) return; g.down(x, y, id); },   // the first tap only starts the round
+    move(x, y, p, id) { if (v?.input?.('move', x, y, id, p)) return; g.move(x, y, p, id); },
+    up(x, y, id) { if (v?.input?.('up', x, y, id)) return; g.up(x, y, id); },
   };
 }
 

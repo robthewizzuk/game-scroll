@@ -31,6 +31,15 @@ function make(api) {
   const stick = new Stick({ r: 26, floating: true, zone: [0, 0, 9999, 9999] });
   const keys = new Keys();
   let p, gems, spikes, score, t;
+  // Knobs: the numbers that set how it feels (docs/feel-words.md). Sliders in npm run dev (Save to file
+  // writes them back); node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    speed: [80, 30, 160, 'how fast the hero runs (units a second)'],
+    every: [3, 1, 8, 1, 'gems picked up between new spikes'],
+    spike: [30, 10, 70, 'how fast spikes bounce around'],
+    reach: [10, 6, 16, 'how close counts as picking up a gem'],
+    hitbox: [11, 6, 16, 'how close a spike has to come to hit'],
+  });
   const place = () => ({ x: 16 + Math.random() * (W - 32), y: 16 + Math.random() * (H - 32) });
 
   return {
@@ -43,17 +52,17 @@ function make(api) {
       t += dt;
       const a = stick.active ? stick : keys.axis();
       p.wx = p.x; p.wy = p.y;                     // keep where it was: draw() shows the moment between
-      p.x = Math.max(8, Math.min(W - 8, p.x + a.x * 80 * dt)); p.y = Math.max(8, Math.min(H - 8, p.y + a.y * 80 * dt));
-      for (const g of gems) if (Math.hypot(g.x - p.x, g.y - p.y) < 10) {
+      p.x = Math.max(8, Math.min(W - 8, p.x + a.x * K.speed * dt)); p.y = Math.max(8, Math.min(H - 8, p.y + a.y * K.speed * dt));
+      for (const g of gems) if (Math.hypot(g.x - p.x, g.y - p.y) < K.reach) {
         score++; api.score(score);
         feel.coin(g.x, g.y - 6, { color: '#f8d838', pitch: 1 + score * .02 });
         Object.assign(g, place());
-        if (score % 3 === 0) { const s = place(); spikes.push({ ...s, wx: s.x, wy: s.y, vx: (Math.random() < .5 ? -1 : 1) * 30, vy: (Math.random() < .5 ? -1 : 1) * 24 }); }
+        if (score % K.every === 0) { const s = place(); spikes.push({ ...s, wx: s.x, wy: s.y, vx: (Math.random() < .5 ? -1 : 1) * K.spike, vy: (Math.random() < .5 ? -1 : 1) * K.spike * .8 }); }
       }
       for (const s of spikes) {
         s.wx = s.x; s.wy = s.y; s.x += s.vx * dt; s.y += s.vy * dt;
         if (s.x < 8 || s.x > W - 8) s.vx *= -1; if (s.y < 8 || s.y > H - 8) s.vy *= -1;
-        if (Math.hypot(s.x - p.x, s.y - p.y) < 11) { feel.boom(p.x, p.y - 6, { size: .7 }); feel.lose(); api.over(); }
+        if (Math.hypot(s.x - p.x, s.y - p.y) < K.hitbox) { feel.boom(p.x, p.y - 6, { size: .7 }); feel.lose(); api.over(); }
       }
     },
     draw(c) {

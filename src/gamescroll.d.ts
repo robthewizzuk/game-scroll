@@ -2164,8 +2164,9 @@ export interface BrainsPart {
   unpackWeights(s: string): { sizes: number[]; w: Float32Array } | null;
 }
 
-/** A tweak spec value: a number, [value, min, max, step?], a boolean, a '#colour', [choice, ...choices], or a function (a button). */
-export type TweakSpec = Record<string, number | [number, number, number, number?] | boolean | string | string[] | (() => void)>;
+/** A tweak spec value: a number, [value, min, max, step?, 'what it does'?], a boolean, a '#colour', [choice, ...choices], or a function (a button).
+ *  A game's knobs (the numbers that set how it feels) go in one gs.tweak('Feel', { ... }) block, with the words: docs/feel-words.md. */
+export type TweakSpec = Record<string, number | [number, number, number] | [number, number, number, number | string] | [number, number, number, number, string] | boolean | string | string[] | (() => void)>;
 /** Live sliders (npm run dev only); elsewhere it returns the starting values. Read the fields where they're used. */
 export interface TweakFn {
   (name: string, spec: TweakSpec): Record<string, Loose>;

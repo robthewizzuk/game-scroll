@@ -12,7 +12,9 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); the kit reference 
    `title`, `tag` and `hint`) and from `docs/game-ideas.md`. A new mechanic, not a reskin.
 2. Start from a template: `npm run new <id> --style <phone|pocket|color|advance|console|nextgen|ar|board>`.
    It writes `src/games/<id>.js`, a small working game. Then change it into the new game.
-3. Write the game (rules below). Use `gs` for everything shared. To see how a part is used in a real game,
+3. Write the game (rules below). Use `gs` for everything shared. Keep the numbers that set how it feels in the
+   template's knobs block (`gs.tweak('Feel', { ... })`): a change asked for in words ("slower", "floatier")
+   is then one number, and [docs/feel-words.md](docs/feel-words.md) says which. To see how a part is used in a real game,
    `node scripts/examples.mjs <name>` (`rope`, `Physics.rope`, `Feel.coin`, `gs.physics`): the shortest games
    that use it with the lines, plus its declaration in `src/gamescroll.d.ts` and its place in `docs/maker-kit.md`.
 4. Check it, and fix whatever fails: `node scripts/check.mjs <id>` runs all of the checks below in about
@@ -222,7 +224,7 @@ Pixel styles (Pocket, Color, Advance): use `new Feel({ pixel: true })`, whole-pi
   `pour({ x, y, z, rate, speed })` taps, `fill({ y1 })`, `splash`, solid `ball`/`box`/`tube` (`hollow` cups and tanks, `set()` or `follow` to move), `ground(fn)`, `drain`, `push` (blast), `update(dt)`; `amount(box)`, `level(x, z)`, `wet(x, y, z)`, `full`. Cups and gaps at least six drops wide (`fluid.dropSize`); try `{ gpu: false, drops: 600 }` once, which is what slow phones run.
 - `gs.gas` (3D): `Gas(view, { box, kind: 'smoke'|'fire'|'steam'|'dust'|'toxic'|'magic', open: false (a closed room), lamp: true })` smoke and fire that flow: they rise, curl, spread under a ceiling, go round solid things and with the wind (a lit volume of hundreds of thousands of cells on WebGPU, soft puffs in a coarse grid elsewhere; make it once, `clear()` in `reset()`):
   `fire({ x, y, z, size, power })` (with `dir`, `speed`: a torch, a jet), `smoke({ rate, heat })`, `fan({ dir, speed })`, `burst(x, y, z, { size })` an explosion, `puff` (dust, a smoke bomb), `wind`, solid `ball`/`box`/`tube` (`set()` or `follow` to move), `solid(fn)` walls, `ground(fn)`, `update(dt)`; `smokeAt`, `heatAt`, `flowAt`, `sees(a, b)` (how much shows through the smoke), `smokeIn(box)`, `glow`. Keep the box small; gaps at least three cells wide (`gas.cell`), fires at least half a unit; try `{ gpu: false, cells: 5000 }` once, which is what slow phones run.
-- `gs.tweak(name, { speed: 3, grip: [.8, 0, 1] })`: live sliders in `npm run dev` (starting values elsewhere); read fields where used.
+- `gs.tweak(name, { speed: 3, grip: [.8, 0, 1, 'how hard the tyres hold'] })`: live sliders in `npm run dev` (starting values elsewhere); read fields where used. **Knobs**: keep the numbers that set how a game feels in one `const K = gs.tweak('Feel', { ... })` block with a range and a few words each (every template has one); `node scripts/knobs.mjs <id>` lists and changes them (`speed*0.8`), the panel's Save to file writes sliders back, and [docs/feel-words.md](docs/feel-words.md) says which knob a word like *floaty*, *snappy*, *punchy* or *unfair* moves.
 - `gs.prefs` (read only): the player's Reduce motion setting, `reduceMotion`, `motion`. Shake, flash and
   camera kicks already follow it; scale your own big effects by `gs.prefs.motion`.
 - `gs.math`: `rng(seed)`, `daily(salt)`, `noise2`, `noise3`, `fbm`, `vec`, `overlap`, `Grid`, `Timers`, `angleDiff`, `wrap`.
