@@ -448,6 +448,9 @@ function world() {
   const v = new HDView({ bg: '#c9c3b2', env: .55, sky: '#c8d2e0', ground: '#4a4434', amb: .42, fov: 62 });
   v.cam.near = .3; v.cam.far = 1600; v.cam.updateProjectionMatrix();
   v.exposure = 1; v.bloom = .3;
+  // the valley below the nests drawn into pictures round the camera and shown from them while the camera keeps still (WebGPU): what is
+  // still and over 150 m off is drawn a quarter at a time every few frames instead of every frame; people, the train and the scope stay live
+  v.farWorld = { from: 150 };
   const sl = sun('#fff0d8', 2.8, 34, [.9, .35, -.3]); v.scene.add(sl, sl.target); v.onTier(T => { sl.setTier(T); WD?.meadow?.(T); });
   v.sun = sl;
   sl.softShadows(1.4);   // shadows sharp where they touch and soft further out (WebGPU)

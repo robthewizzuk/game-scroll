@@ -9,7 +9,8 @@ export { thinReady };
 import { head as headOf, eyeOf, mouthY, noseOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, mouthHalf, beardArea, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
 import { hairStrips } from './human-hair.js';
-import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
+import { armourPieces, armourShapes, ARMOUR_STAMP } from './human-armour.js';
+import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, hoseRows, quilt, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
 export { ss, bump, HC, EYE, eyeOf, mouthY, noseOf, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine, mouthHalf, beardArea };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
@@ -104,7 +105,8 @@ function sleeves(a, dx) {
   const sleeve = new Loft(short ? rows.filter(r => r[0] > 1.25).concat([[1.215, hem[1] + .003, hem[2] + .003, hem[3], .198 + dx, hem[5], hem[6] + .003, hem[7]]]) : rows);   // (a short one ends above the elbow, a little wider than the arm in it)
   // (folds where the elbow bends: deepest in its crook, in front, and only a ripple over its point; the crook's lie where its bones' shares ripple, crook() above)
   const elbow = (x, y, z) => { const th = Math.atan2(x - cx, z + .01), w = lumps(x * 11, y * 15, z * 11); return bump(y, 1.17, .06) * sin(y * 190 + th * 2.4 + 3.6 * w) * (.0007 + .0023 * ss(-.3, .8, cos(th))) + .002 * bump(y, 1.39, .05) * sin(th * 6 + y * 30 + 3 * w); };
-  const SL = { loft: sleeve, slot: 'top', part: 'arm', mirror: true, space: sp, lumpy: [.06, .0018], folds: elbow, foldMax: .004, blend: .014 }, onA = s => on(SL, { space: sp, part: 'arm', mirror: true, ...s }); S.push(SL);
+  const pad = top.kind === 'gambeson' ? (x, y, z) => .0028 * (1 - Math.abs(sin(y * 62)) ** 10) - .001 : null;   // (a padded sleeve quilted in rings)
+  const SL = { loft: sleeve, slot: 'top', part: 'arm', mirror: true, space: sp, lumpy: [.06, .0018], folds: pad ? (x, y, z) => elbow(x, y, z) + pad(x, y, z) : elbow, foldMax: pad ? .007 : .004, blend: .014 }, onA = s => on(SL, { space: sp, part: 'arm', mirror: true, ...s }); S.push(SL);
   const cap = { ...capOf(LM, e, b.muscle), at: [.187 + dx, 1.403, -.013] }; S.push(onA({ ...cap, slot: 'top', blend: .014 }));
   if (short) S.push({ loft: sleeveRows(LM, -.0035, b.muscle).filter(r => r[0] < 1.3).map(shift), slot: 'skin', part: 'arm', mirror: true, space: sp, blend: .006 });
   else S.push(onA({ band: sleeve, y: [.892, .945], out: .003, slot: top.cuffs ? 'trim' : 'top', edge: .002, stitch: true }), { ball: .0305, at: [.2 + dx, .884, .004], space: sp, mirror: true, cut: true, blend: .004 });   // a cuff, open at the wrist
@@ -126,20 +128,20 @@ function sleeves(a, dx) {
 /** The trunk: torso, arms, hips, legs and feet, in what they wear (the hands are pieces of their own). */
 function trunk(a) {
   const { build: b, top, legs, feet, belt, web } = a, S = [], kind = top.kind, HP = b.hips, LM = b.limbs, nk = b.neck ?? 1;
-  const skirted = kind === 'tunic' || kind === 'smock';
+  const skirted = kind === 'tunic' || kind === 'smock' || kind === 'gambeson', padded = kind === 'gambeson';
   const torso = torsoOf(b, kind), X = studs(), forms = torsoForms(b);
   // gathers where the belt pulls the cloth in, a little slack under the chest
   const gather = (x, y, z) => { const th = Math.atan2(x, z); return .003 * ss(1.22, 1.1, y) * ss(1.0, 1.06, y) * sin(th * 13 + 4 * lumps(x * 11, y * 4, z * 11)) + .0025 * bump(y, 1.21, .03) * lumps(x * 22, y * 30, z * 22); };
   // (the cloth's own unevenness fades out at the neck, where skin lies close over it: lower down under a round neck, whose edge lies on the skin)
-  const even = top.collar === false ? 1.47 : 1.5, wear = (x, y, z) => forms(x, y, z) + .002 * lumps(x / .07, y / .07 + 7.3, z / .07) * ss(even, even - .05, y) + (belt ? gather(x, y, z) : 0);
+  const even = top.collar === false ? 1.47 : 1.5, wear = (x, y, z) => forms(x, y, z) + .002 * lumps(x / .07, y / .07 + 7.3, z / .07) * ss(even, even - .05, y) + (belt ? gather(x, y, z) : 0) + (padded ? quilt(x, y, z, 0, torso.sec(y)[2], 11) * ss(1.5, 1.44, y) : 0);
   const T = { loft: torso, slot: 'top', part: 'torso', folds: wear, foldMax: .011, blend: 0 }; S.push(T);
   const arms = sleeves(a, .176 * (b.shoulders - 1)); S.push(...arms);   // the arms, of one skin with it
   let K = T, skirtL = null;   // what hangs at the hips lies on: the tunic's skirt, or the trunk itself
   if (skirted) {
-    const len = kind === 'smock' ? .74 : .8, fl = kind === 'smock' ? 1.04 : 1;
+    const len = kind === 'smock' ? .74 : padded ? .72 : .8, fl = kind === 'smock' ? 1.04 : padded ? 1.08 : 1;
     // (it hangs from the belt out over the seat and then straight down)
     const skirt = new Loft([row(len, .204 * HP * fl, .122 * fl, -.16 * HP * fl, -.014, 2.3, 2.5), row(len + .03, .204 * HP * fl, .122 * fl, -.16 * HP * fl, -.014, 2.3, 2.5), row(.92, .198 * HP, .114, -.157 * HP, -.014, 2.3, 2.5), row(.97, .19 * HP, .112, -.147 * HP, -.012, 2.3, 2.5), over(torso, 1.03, .0015), over(torso, 1.075, .0005)]);
-    const flute = (x, y, z) => { const th = Math.atan2(x, z); return .0035 * ss(1.04, .9, y) * sin(th * 9 + 3 * lumps(x * 7, 1, z * 7)); };
+    const flute = padded ? (x, y, z) => quilt(x, y, z, 0, -.014, 13) : (x, y, z) => { const th = Math.atan2(x, z); return .0035 * ss(1.04, .9, y) * sin(th * 9 + 3 * lumps(x * 7, 1, z * 7)); };
     K = { loft: skirt, slot: 'top', part: 'skirt', lumpy: [.08, .003], folds: flute, blend: .012 }; S.push(K);
     // the hem: a narrow turned edge, so the skirt ends in one straight line; what is under that line is in its shade, and takes the colour of the legs
     // (not hollowed out underneath: cloth this close to the thighs leaves a gap thinner than the mesh can show, and it came out ragged)
@@ -156,7 +158,7 @@ function trunk(a) {
   S.push({ loft: seat, slot: 'legs', part: 'hips', blend: .005 }, { ...seatRounds(b), mirror: true, slot: 'legs', part: 'hips', blend: .03 });
   if (!skirted && kind !== 'blouse') S.push({ band: torso, y: [1.0, 1.056], out: .0042, slot: 'legs', part: 'hips', edge: .0025, stitch: true });   // the waistband, over a shirt tucked in
   const fl = legs.kind === 'breeches' ? 1.16 : 1, tall = feet.kind === 'tall', gait = feet.kind === 'gaiters', tuck = tall || gait;
-  const leg = new Loft(legRows(b, fl, lowRows(b, feet.kind)));
+  const legR = legRows(b, fl, lowRows(b, feet.kind)), leg = new Loft(legs.kind === 'hose' ? hoseRows(legR) : legR);
   // (folds behind the knee, where it bends, and hardly any over the kneecap)
   const knee = (x, y, z) => { const th = Math.atan2(abs(x) - .097, z), w = lumps(x * 9, y * 13, z * 9); return bump(y, .535, .06) * sin(y * 170 + th * 2.2 + 3.6 * w) * (.0003 + .0022 * ss(.3, -.8, cos(th))) + (tuck ? .004 * bump(y, .49, .035) * sin(th * 7 + 3 * w) : .0028 * bump(y, .112, .024) * ss(-.3, .7, cos(th)) + .0012 * bump(y, .17, .05) * sin(y * 150 + th * 2.6 + 3.6 * w)); };
   const LG = { loft: leg, slot: 'legs', part: 'leg', mirror: true, lumpy: [.07, .0022], folds: knee, blend: .018 }; S.push(LG);
@@ -529,6 +531,50 @@ const HATS = new Map(Object.entries({
     S.push(HOLLOW);
     return { S, ghost: [cap] };
   },
+  // ---- helms (fantasy and the old world's; steel: the armour's colour, slot 'plate')
+  // a nasal helm: a tall cone of a skull with a band round its rim and a bar down over the nose
+  nasal(o) {
+    const n = [0, .985, -.17], off = HC[1] * .985 - HC[2] * .17 + .012, dome = { ball: [.1, .128, .122], at: Hd(0, .014, -.01), clip: [n, off, .003] };
+    const S = [{ ...dome, slot: 'plate', blend: 0 }, { taper: [Hd(0, .06, -.01), Hd(0, .158, -.022)], r: [.068, .004], slot: 'plate', blend: .05 },
+      { ball: [.105, .133, .127], at: Hd(0, .014, -.01), clip: [[n, off, .002], [[0, -.985, .17], -(off + .022), .002]], slot: 'plate', blend: .004 },
+      { box: [.02, .07, .007], round: .003, at: Hd(0, -.004, .112), rot: [-.12, 0, 0], slot: 'plate', blend: .006 }];
+    S.push({ ball: [.091, .118, .113], at: Hd(0, .008, -.01), cut: true, blend: .003 });
+    return { S, ghost: [dome] };
+  },
+  // a kettle hat: a round skull and a wide brim that slopes down all round
+  kettle(o) {
+    const n = [0, .99, -.12], off = HC[1] * .99 - HC[2] * .12 + .02, dome = { ball: [.1, .124, .12], at: Hd(0, .016, -.01), clip: [n, off, .003] };
+    const brim = new Loft([[HC[1] - .012, .175, .185, HC[2] - .012], [HC[1] + .025, .135, .145, HC[2] - .012], [HC[1] + .062, .098, .108, HC[2] - .012]]);
+    const S = [{ ...dome, slot: 'plate', blend: 0 }, { ball: [.0055, .12, .1], at: Hd(0, .02, -.012), clip: [[0, 1, 0], HC[1] + .06, .004], slot: 'plate', blend: .01 },
+      { loft: brim, shell: .006, clip: [[[0, -1, 0], -(HC[1] + .056), .002], [[0, 1, 0], HC[1] - .006, .002]], slot: 'plate', blend: .006 }];
+    S.push({ ball: [.091, .115, .111], at: Hd(0, .01, -.01), cut: true, blend: .003 });
+    return { S, ghost: [dome, { loft: brim }] };
+  },
+  // a sallet: a rounded skull swept back into a tail over the nape, a visor over the eyes with a slit to see through, a low ridge
+  sallet(o) {
+    const S = [{ ball: [.104, .13, .13], at: Hd(0, .012, -.016), clip: [[[0, 1, 0], HC[1] - .03, .004]], slot: 'plate', blend: 0 },
+      { ball: [.118, .022, .13], at: Hd(0, -.07, -.062), rot: [-.42, 0, 0], clip: [[[0, 0, -1], -(HC[2] - .03), .012]], slot: 'plate', blend: .03 },
+      { ball: [.103, .1, .118], at: Hd(0, -.012, -.006), clip: [[[0, 0, 1], HC[2] + .03, .004], [[0, 1, 0], HC[1] - .052, .003]], slot: 'plate', blend: .012 },
+      { ball: [.0048, .132, .11], at: Hd(0, .016, -.02), clip: [[0, 1, 0], HC[1] + .07, .004], slot: 'plate', blend: .008 }];
+    S.push({ box: [.13, .011, .06], round: .004, at: Hd(0, .002, .1), cut: true, blend: .002 });   // the slit
+    S.push({ ball: [.093, .121, .121], at: Hd(0, .008, -.012), cut: true, blend: .003 });
+    return { S, ghost: [{ ball: [.104, .13, .13], at: Hd(0, .012, -.016) }] };
+  },
+  // a great helm: a flat-topped drum over the whole head, slits for the eyes, a cross of strips over the face and holes to breathe
+  great(o) {
+    const top = HC[1] + .13, low = HC[1] - .17, z = HC[2] - .006, drum = (y0, y1, g) => new Loft([[y0, .116 + g, .128 + g, z, 0, 2.6, .122 + g, 2.6], [y1 - .02, .118 + g, .13 + g, z, 0, 2.6, .124 + g, 2.6], [y1, .108 + g, .12 + g, z, 0, 2.6, .114 + g, 2.6]]);
+    const S = [{ loft: drum(low, top, 0), slot: 'plate', blend: 0 },
+      { box: [.016, .27, .01], round: .003, at: Hd(0, -.02, .128), slot: 'plate', blend: .006 }, { box: [.2, .018, .02], round: .004, at: Hd(0, .03, .118), slot: 'plate', blend: .008 }];
+    for (const s of [1, -1]) S.push({ box: [.07, .012, .1], round: .004, at: Hd(s * .046, .012, .11), cut: true, blend: .002 });   // the eyes' slits
+    for (let i = 0; i < 5; i++) for (let j = 0; j < 2; j++) S.push({ ball: .0045, at: Hd((.03 + j * .02) * (i % 2 ? 1 : -1) * (1 + (i >> 1) * .3), -.06 - (i >> 1) * .022, .125), cut: true, blend: .001 });   // breaths
+    S.push({ loft: drum(low - .02, top - .01, -.008), cut: true, blend: .003 });
+    return { S, ghost: [] };
+  },
+  // a circlet: a thin band of metal round the brow with a stone set in front
+  circlet(o) {
+    const S = [{ band: new Loft([[HC[1] + .02, .083, .099, HC[2] - .006], [HC[1] + .07, .083, .099, HC[2] - .006]]), y: [HC[1] + .04, HC[1] + .049], out: .004, edge: .002, slot: 'plate', blend: 0 }, { ball: [.0095, .012, .006], at: Hd(0, .052, .104), rot: [.15, 0, 0], slot: 'badge', blend: .002 }];
+    return { S, ghost: [] };
+  },
   // a hood of loose cloth, open at the face, gathered at the neck
   hood(o) {
     const S = [{ ball: [.094, .112, .118], at: Hd(0, .016, -.013), slot: 'hat', lumpy: [.04, .005], blend: 0 }, { ball: [.085, .06, .08], at: Hd(0, -.1, -.03), slot: 'hat', lumpy: [.03, .005], blend: .04 },
@@ -686,6 +732,8 @@ export function jobsFor(sp) {
   add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', moustache: bit(sp.moustache), ...(sp.face.real && sp.beard ? { beard: sp.beard } : {}), hat: hatA, foot: top.collar === false ? sp.build.shoulders : 0 });
   if (hatA) add('hat', hatA);
   if (sp.pack && PACKS.has(sp.pack.kind)) add('pack', { kind: sp.pack.kind });
+  // armour: each piece a job of its own, shared by everyone of the same build in it (human-armour.js)
+  for (const q of armourPieces(sp.armour)) add('armour', { piece: q.piece, kind: q.kind, side: q.side, build: sp.build, ...(q.bone === 'spine' || q.bone === 'hips' ? { top: top.kind } : {}), ...(/^(leg|knee|shin)/.test(q.bone) ? { feet: sp.feet.kind, legs: sp.legs.kind } : {}) }, { q });
   for (const g of sp.gear) add('gear', { shapes: g.shapes, cell: g.cell || .004, keep: g.keep || [.3, .06, .012], err: g.err || null, blend: g.blend ?? .004 }, { g, local: !plain(g.shapes) });
   // what is worn round the neck: a collar (every top but a round-necked one has one), a scarf
   if (top.collar !== false || ex.scarf) add('collar', { build: sp.build, top: { kind: top.kind, collar: top.collar === false ? false : bit(top.collar), tabs: bit(top.tabs) }, scarf: bit(ex.scarf) });
@@ -719,9 +767,10 @@ export function sculpt({ kind, a }) {
     const make = listed(kind === 'hat' ? HATS : PACKS, a.kind); if (!make) throw new Error(`gs.models.human: no ${kind} called '${a.kind}'`);
     return kind === 'hat' ? finish(make(a).S, { cell: .004, bones: whole, keep: [.3, .06, .012], blend: .006 }) : finish(make(), { cell: .006, bones: whole, keep: [.25, .06, .012], blend: .006 });
   }
+  if (kind === 'armour') { const S = armourShapes(a); return finish(S, { cell: .004, bones: whole, keep: [.05, .015, .005], err: [.002, .008, .03], blend: .004, extra: S.extra || null }); }
   return finish(a.shapes, { cell: a.cell, bones: whole, keep: a.keep, err: a.err || undefined, blend: a.blend });
 }
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, trunkCreases, crook, ham, lap, RIPPLE, BONES, BETWEEN, BULGE, AT, OUT, collar, collarRows, turnOf, RIM, BODY_STAMP, sleeves, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, hairStrips, eyeball, realEyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, trunkCreases, crook, ham, lap, RIPPLE, BONES, BETWEEN, BULGE, AT, OUT, collar, collarRows, turnOf, RIM, BODY_STAMP, sleeves, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, hairStrips, eyeball, realEyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ARMOUR_STAMP, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
