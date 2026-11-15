@@ -242,9 +242,9 @@ export const frameGenOne = () => fgPick === 'thirty';
  * code ran past a refresh): from now on it asks the screen for slackRate() and shows that frame on the middle
  * refresh or the one after. False if it already does, or the screen has no such rate.
  */
-export function frameGenSlack(id) {
+export function frameGenSlack(id, why = '') {
   if (!id || fgPick !== 'thirty' || settled[id]?.fgSlack || !slackRate()) return false;
-  settle(id, { fgSlack: true }); return true;
+  settle(id, { fgSlack: true }); note(id, `${slackRate()} Hz${why ? ` after ${why}` : ''}`); return true;
 }
 // the most refreshes per real frame a game that switched itself to ahead still guesses (60 fps on a 144 Hz
 // screen is 2.4); past it the frames between are blended (frameGenFor)
@@ -304,10 +304,15 @@ export function frameGenFor(def) {
  * the real frame's refresh): from now on its pace is 'first' (each refresh holds one frame's work). False if it
  * already is.
  */
-export function frameGenPace(id) {
+export function frameGenPace(id, why = '') {
   if (!id || settled[id]?.fgPace === 'first') return false;   // ('early' falls back to 'first' the same way)
-  settle(id, { fgPace: 'first' }); return true;
+  // (not 30 → 60 where the screen has a spare refresh: 'first' there would give a real frame one 120 Hz refresh)
+  if (fgPick === 'thirty' && slackRate()) return false;
+  settle(id, { fgPace: 'first' }); note(id, `pace first${why ? ` after ${why}` : ''}`); return true;
 }
+// what frame generation tried for each game this session, for frameGenStatus (the frame lab's GSFG line)
+const fgTrail = new Map();
+const note = (id, t) => { const a = fgTrail.get(id) || []; a.push(t); fgTrail.set(id, a.slice(-4)); };
 /**
  * Blend's pace for this game now (hd3d-gpu.js GpuChain): 'early' (30 → 60) shows the last real frame on the real
  * frame's own refresh before the new one is drawn, and sends the new one's work to the chip once that refresh's
@@ -325,7 +330,8 @@ export function frameGenPaceOf(def, steps) {
   // 30 → 60: the real frame's work is sent after its refresh's picture (the last real frame) is handed over, so it has
   // that refresh and the next on the chip (pace 'early'); unless it came late here before (then 'first')
   // (a 'first' kept from before the spare refresh was tried, or from Auto, waits until that has been tried too)
-  if (fgPick === 'thirty') return (paceWas = was?.fgPace === 'first' && (was.fgSlack || !slackRate()) ? 'first' : 'early');
+  // (30 → 60 goes from 60 Hz to the spare refresh at 120 Hz, then off; 'first' only on a screen with no spare refresh)
+  if (fgPick === 'thirty') return (paceWas = was?.fgPace === 'first' && !slackRate() ? 'first' : 'early');
   if (was?.fgPace === 'first' || was?.fgHow === 'ahead' || c.id !== (def?.id ?? null) || !(c.nr >= READS) || !(made > 0)) return (paceWas = 'first');
   return (paceWas = c.real + made < rf * (paceWas === 'after' ? .8 : .65) ? 'after' : 'first');
 }
@@ -381,7 +387,7 @@ export function frameGenRoom(def) {
   return early ? 800 / thirtyRate(hz) - (madeGuess() || rf * .2) : .8 * rf;
 }
 // 30 → 60 on 'early' for this game (not fallen back to 'first')
-const thirtyPace = def => { const w = settled[def?.id]; return !(w?.fgPace === 'first' && (w.fgSlack || !slackRate())); };
+const thirtyPace = def => !(settled[def?.id]?.fgPace === 'first' && !slackRate());
 /** Auto would make frames between for this game at rate real frames a second, and they'd fit (frameGenFits). */
 export function frameGenCould(def, rate) {
   if (!is3D(def) || def.frameGen === false || fgPick === 'off' || !speed.gpu || hz < fgMinHz() || fgFailed.has(def.id) || pick !== 'auto') return false;
@@ -396,7 +402,7 @@ export function frameGenStatus(def) {
   if (pick !== 'auto') return `Off while Frame rate is set to ${pick}: set it to Auto.`;
   if (hz < fgMinHz()) return `Off: this screen runs at ${hz} Hz, so there are no refreshes in between to fill.${fgPick !== 'thirty' ? ' 30 → 60 fills a 60 Hz screen.' : ''}`;
   if (!speed.gpu) return `Off: ${name} draws with WebGL here (an effect it uses isn’t ready for WebGPU).`;
-  if (fgFailed.has(def.id)) return `Off for ${name} until the app restarts: the phone was too busy for the frames in between${fgWhy.get(def.id) ? ` (${fgWhy.get(def.id)})` : ''}.`;
+  if (fgFailed.has(def.id)) return `Off for ${name} until the app restarts: the phone was too busy for the frames in between${fgWhy.get(def.id) ? ` (${fgWhy.get(def.id)})` : ''}.${fgTrail.get(def.id)?.length ? ` Before that: ${fgTrail.get(def.id).join('; ')}.` : ''}`;
   const fr = fgRate(def);
   if (fr && fgPick === 'auto' && !frameGenFits(def, fr)) return `Off for ${name}: a frame takes the graphics chip longer than a refresh holds (${(1000 / hz).toFixed(1)} ms), so frames made between would come late.`;
   const how = frameGenFor(def);

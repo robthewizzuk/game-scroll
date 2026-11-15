@@ -3443,9 +3443,9 @@ console.log('physics ok');
   assert.equal(sp.frameGenSlack(g4.id), true, 'the frames between came late: a spare refresh');
   assert.equal(sp.frameGenSlack(g4.id), false, 'once');
   assert.equal(sp.screenWant(g4), 120, 'so the screen is asked for 120');
-  assert.equal(sp.frameGenPaceOf(g4, 4), 'first', "after which the 'first' kept from before counts");
-  sp.settle(g4.id, { fgPace: null });
-  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', 'pace early on the faster screen');
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', "pace early on the faster screen, whatever 'first' was kept from before (Parcel Dash, Rob 2026-11-15: 'first' at 120 Hz gives a real frame one 8 ms refresh)");
+  assert.equal(sp.frameGenPace(g4.id, 'x'), false, "and no 'first' to fall back to there: off next");
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', 'still early');
   for (let i = 0, t = 60000; i < 80; i++) sp.tick(t += 1000 / 120);
   assert.equal(sp.fpsFor(g4), 30, 'still 30 real frames a second');
   assert.match(sp.frameGenStatus(g4), /makes 30 more \(blend, each real frame given two refreshes of the graphics chip, the screen at 120 Hz so the frame between has a spare refresh\)/, 'Settings says so');
@@ -3461,6 +3461,8 @@ console.log('physics ok');
     assert.deepEqual(run([1, 3]), [3], 'or the one after, when the middle one did not come');
     assert.deepEqual(run([2, 3, 4]), [2, 4], 'and the next real frame shown on time if it is late');
   }
+  sp.frameGenFailed(g4.id, '32% of the refreshes between didn’t come');
+  assert.match(sp.frameGenStatus(g4), /Off for .*32% of the refreshes between.*Before that: 120 Hz/, 'Settings says what was tried before it went off');
   screen.rates = []; screen.top = 0;
   for (let i = 0, t = 80000; i < 80; i++) sp.tick(t += 1000 / 60);
   sp.setFrameGenPick('auto');
@@ -7747,7 +7749,7 @@ console.log('physics ok');
   console.log('memory guard: levels from the phone\'s readings and warnings, up at once, down after a calm spell ok');
 }
 
-// effects that step down by their own cost (hd3d.js pickEffect): the costliest effect that takes a real share of the chip
+// effects that step down by their own cost (hd3d.js pickEffect): the most chip time saved for the picture lost, among effects that take a real share of the chip
 {
   const { pickEffect } = await import('../src/kit/hd3d.js');
   const on = new Set(['ao', 'bloom', 'reflections', 'light shafts']);
@@ -7755,8 +7757,13 @@ console.log('physics ok');
   assert.equal(pickEffect(on, { ao: 2 }, 12, { scene: 6, ao: 2.5, bloom: 1.2, reflections: 1.8 }), 'reflections', 'one at its smallest is passed over');
   assert.equal(pickEffect(on, {}, 12, { scene: 11, ao: .4, bloom: .3 }), null, 'none takes a real share: the resolution steps instead');
   assert.equal(pickEffect(new Set(['bloom']), {}, 12, { scene: 6, ao: 3, bloom: 2 }), 'bloom', 'only an effect the frame drew');
-  assert.equal(pickEffect(on, {}, null, null), 'light shafts', 'where the chip doesn\'t say: a fixed order, what shows least first');
-  assert.equal(pickEffect(on, { 'light shafts': 1, bloom: 1 }, null, null), 'reflections', 'one step each');
+  assert.equal(pickEffect(on, {}, 12, { scene: 6, ao: 1.6, bloom: 3, reflections: 1.5 }), 'ao', 'bloom costs most but shows: one that shows nothing goes first');
+  assert.equal(pickEffect(on, { ao: 2, reflections: 2 }, 12, { scene: 6, ao: 1.6, bloom: 3, reflections: 1.5 }), 'bloom', 'and bloom once nothing else can step');
+  assert.equal(pickEffect(on, { reflections: 1 }, 12, { scene: 6, ao: 1.6, reflections: 1.5 }), 'ao', 'what a step saves: from 1 to .7 51% of its time, from .7 to .5 49% of what it takes at .7');
+  assert.equal(pickEffect(on, { reflections: 1 }, 12, { scene: 6, ao: 1.4, reflections: 1.5 }), 'reflections', 'so near enough the time it takes now');
+  assert.equal(pickEffect(on, {}, null, null), 'ao', 'where the chip doesn\'t say: a fixed order, the costliest that shows least first');
+  assert.equal(pickEffect(on, { ao: 1, reflections: 1 }, null, null), 'light shafts', 'one step each');
+  assert.equal(pickEffect(on, { ao: 1, reflections: 1, 'light shafts': 1 }, null, null), 'bloom', 'bloom last');
   assert.equal(pickEffect(new Set(['ao']), { ao: 1 }, null, null), null, 'then the resolution');
   console.log('gs.hd effects that step down by their own cost ok');
 }
