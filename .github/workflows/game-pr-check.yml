@@ -141,7 +141,7 @@ jobs:
           # the app shell, the sound and the 2D looks
           part app 'src/(main|saves|soundtrack|sfx|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill|update)\.js|src/kit/(sound|voice-fx|acoustics|instruments|compose|foley|awake|rhythm|lazy|cleanup|tick|progress|fontlib|font-files|pixel|gfx|materials2d|sketch|icons|icon-data)\.js|scripts/(app-test\.cjs|sound-test)|index\.html|vite\.config\.js'
           # the app shell, the tour and the engine test scenes
-          part app-scenes 'src/(main|saves|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(awake|lazy|cleanup|tick|progress)\.js|scripts/app-test\.cjs|index\.html|vite\.config\.js'
+          part app-scenes 'src/(main|saves|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(awake|lazy|cleanup|tick|progress|crowd)\.js|scripts/app-test\.cjs|index\.html|vite\.config\.js'
           # the feed, the link code and the games catalogue
           part share-link 'src/(main|share|remote)\.js|scripts/(share-link|build-games)\.mjs|index\.html|vite\.config\.js'
 

@@ -391,6 +391,7 @@ const PAIRS = {
   spread: { title: 'Every sample vs spread over frames', a: 'every sample every frame', b: 'spread over frames', set: on => { HD.spread = on; }, needs: spreadCan, no: 'Spreading effects over frames needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   aoBack: { title: 'Ambient occlusion on everything vs on bounce light only', a: 'on the whole picture (as before)', b: 'on the light that bounces only', set: on => { HD.aoBack = on; }, needs: () => HD?.info.backend === 'webgpu' && HD.tier >= 2, no: 'Ambient occlusion in the shading needs WebGPU and a tier with ambient occlusion (high or ultra), so there is nothing to compare.' },
   gridDecals: { title: 'Decals as meshes vs in the lamps\' grid', a: 'a mesh cut from the surface for each, one draw each (as before)', b: 'boxes in the lamps\' grid, no draws', set: on => { HD.gridDecals = on; }, needs: () => HD?.info.backend === 'webgpu', no: 'Decals in the lamps\' grid need WebGPU, so there is nothing to compare.' },
+  far: { title: 'Far world drawn live vs from its pictures', a: 'everything drawn every frame', b: 'the far world from pictures round the camera (v.farWorld)', set: on => { HD.farWorld = on ? undefined : false; }, needs: () => HD?.info.backend === 'webgpu' && !!HD.info.far, no: 'Only a WebGPU game with the far world as pictures (v.farWorld, Long Shadow) has this to compare.' },
   oled: { title: 'OLED dimming off vs on', a: 'as drawn', b: 'big bright areas dimmed (while saving power)', set: on => { heat.oledForce = on ? 1 : 0; } },
   sky: { title: 'The sky as before vs as the big engines draw it', a: 'Preetham sky, painted clouds', b: 'Hillaire\'s air, marched clouds', set: on => { HD.atmosphere = HD.clouds = on; }, needs: skyCan, no: 'The physical air and marched clouds need WebGPU and a game with a gs.sky Sky (physical, or with clouds on high or ultra), so there is nothing to compare.' },
 };
@@ -406,7 +407,7 @@ function cloudsCan() { return HD?.info.backend === 'webgpu' && (/clouds/.test(HD
 async function runAB(key) {
   const s = UI.s, P = PAIRS[key]; if (!s || !HD || !is3D(s.def)) return UI.flash('A/B needs a Next Gen or AR game on screen.');
   if (P.needs && !P.needs()) return UI.flash(P.no || 'This phone has no WebGPU, so there is nothing to compare.');
-  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, oled: heat.oledForce, pick: gpuPick() }, was = frozen;
+  const keep = { upscale: HD.upscale, upscaler: HD.upscaler, scale: HD.scale, force: HD.force, tune: HD.sgsrTune, mip: HD.mipBias, half: HD.half, spread: HD.spread, aoBack: HD.aoBack, far: HD.farWorld, grid: HD.gridDecals, atm: HD.atmosphere, clouds: HD.clouds, oled: heat.oledForce, pick: gpuPick() }, was = frozen;
   setFrozen(true); UI.busy(`A/B: ${P.title}…`);
   try {
     const shotsAB = [];
@@ -420,7 +421,7 @@ async function runAB(key) {
     shots.push(shot); viewer(shot);
   } catch (e) { UI.flash('A/B did not finish: ' + (e?.message || e)); }
   finally {
-    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; heat.oledForce = keep.oled; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
+    HD.upscale = keep.upscale; HD.upscaler = keep.upscaler; HD.scale = keep.scale; HD.force = keep.force; HD.sgsrTune = keep.tune; HD.mipBias = keep.mip; HD.half = keep.half; HD.spread = keep.spread; HD.aoBack = keep.aoBack; HD.farWorld = keep.far; HD.gridDecals = keep.grid; HD.atmosphere = keep.atm; HD.clouds = keep.clouds; heat.oledForce = keep.oled; if (gpuPick() !== keep.pick) setGpuPick(keep.pick);
     setFrozen(was); UI.busy('');
   }
 }
